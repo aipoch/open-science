@@ -57,8 +57,7 @@ import {
   deleteSession,
   flushSessionPersistence,
   isSessionPersistenceDeferredError,
-  saveSessionInOrder,
-  toPersistedSessionForAuthorityMaterialization
+  saveSessionInOrder
 } from '../session-persistence/session-persistence'
 import { toPersistedSession, useSessionStore, type ChatMessage } from '../../stores/session-store'
 import {
@@ -412,36 +411,30 @@ const readingSourceForSend = (
 
 const linkPdfContextForSend = async ({
   sessionId,
-  messageId,
+  pendingSessionId,
   projectId,
   sources,
   pdfReadingPosition,
   readingSource,
   excludeSinglePage = false,
-  persistSessionBeforeLink = false,
   materializedRuntimeRevision
 }: {
   sessionId: string
-  messageId?: string
+  pendingSessionId?: string
   projectId: string | undefined
   sources: SessionPdfContextSource[]
   pdfReadingPosition?: PdfReadingPosition
   readingSource?: SessionPdfContextSource
   excludeSinglePage?: boolean
-  persistSessionBeforeLink?: boolean
   materializedRuntimeRevision?: number
 }): Promise<MessagePdfContextSnapshot | undefined> => {
   if (!projectId) throw new Error('The PDF Project is unavailable for Session context.')
-  let source = useSessionStore.getState().sessions.find((candidate) => candidate.id === sessionId)
-  if (!source) throw new Error(`Session not found: ${sessionId}`)
-  let expectedRevision = materializedRuntimeRevision ?? source.runtimeContext?.revision ?? 0
-
-  // A new Agent Session is bound in memory before its first durable save. Materialize that Session
-  // before asking Main's PDF-context owner to patch its runtime context.
-  if (persistSessionBeforeLink) {
-    const durable = await saveSessionInOrder(toPersistedSessionForAuthorityMaterialization(source))
-    expectedRevision = durable.runtimeContext?.revision ?? 0
-  }
+  const localSessionId = pendingSessionId ?? sessionId
+  let source = useSessionStore
+    .getState()
+    .sessions.find((candidate) => candidate.id === localSessionId)
+  if (!source) throw new Error(`Session not found: ${localSessionId}`)
+  const expectedRevision = materializedRuntimeRevision ?? source.runtimeContext?.revision ?? 0
 
   const runtimeContext: SessionRuntimeContext = await window.api.sessions.linkPdfContext({
     projectId,
@@ -477,8 +470,8 @@ const linkPdfContextForSend = async ({
       }
     : undefined
 
-  source = useSessionStore.getState().sessions.find((candidate) => candidate.id === sessionId)
-  if (!source) throw new Error(`Session not found: ${sessionId}`)
+  source = useSessionStore.getState().sessions.find((candidate) => candidate.id === localSessionId)
+  if (!source) throw new Error(`Session not found: ${localSessionId}`)
   useSessionStore.getState().applyDurableSessionProjection({
     source,
     session: {
@@ -488,19 +481,6 @@ const linkPdfContextForSend = async ({
     },
     mode: 'runtime-context-authority'
   })
-  if (messageId && messagePdfContext) {
-    useSessionStore.getState().replaceMessagePdfContext({
-      sessionId,
-      messageId,
-      pdfContext: messagePdfContext
-    })
-    const linked = useSessionStore
-      .getState()
-      .sessions.find((candidate) => candidate.id === sessionId)
-    if (linked) {
-      await saveSessionInOrder(toPersistedSessionForAuthorityMaterialization(linked))
-    }
-  }
   return messagePdfContext
 }
 
@@ -761,6 +741,48 @@ const startPendingPrompt = (
       providerSessionId: created.providerSessionId,
       providerContinuityToken: created.providerContinuityToken
     })
+    let attachments = request.attachments
+    let pdfContext = request.pdfContext
+    let delegationAuthority: ReturnType<typeof toPersistedSession> | undefined
+    const bindPreparedPrompt = (): string | undefined => {
+      const bound = useSessionStore.getState().bindPendingSession({
+        pendingSessionId: pending.sessionId,
+        sessionId: created.sessionId,
+        cwd,
+        agentFrameworkId: created.frameworkId,
+        agentBackendId: created.backendId,
+        providerSessionId: created.providerSessionId,
+        providerContinuityToken: created.providerContinuityToken,
+        wslSetup: created.wslSetup,
+        preparationId: promptPreparation!.id,
+        preparationBaseline: promptPreparation!.authority
+      })
+      if (!bound) return undefined
+      onSessionBound?.(pending.sessionId, created.sessionId)
+      if (delegationAuthority)
+        useSessionStore.getState().applyDelegationPolicyAuthority(promptPreparation!.authority)
+      return bound?.messageId
+    }
+    const rollbackCancelledPreparation = async (): Promise<void> => {
+      const current = useSessionStore.getState().sessions.find(({ id }) => id === pending.sessionId)
+      // Keep Stop/retry attached to the created identity, but never bind a newer pending run
+      // to this attempt's preparation after Stop followed by Send.
+      if (
+        current?.isPending &&
+        !current.activeRun &&
+        current.messages.some(({ id }) => id === pending.messageId)
+      )
+        bindPreparedPrompt()
+      const rollback = await attemptWorkspacePromptRollback(promptPreparation!)
+      if (rollback.failure !== undefined) {
+        if (!useSessionStore.getState().sessions.some(({ id }) => id === created.sessionId))
+          useSessionStore.getState().upsertPersistedSession(promptPreparation!.authority)
+        reportWorkspaceOperationError(
+          created.sessionId,
+          describeWorkspacePromptRollbackFailure(undefined, rollback.failure)
+        )
+      }
+    }
     let seedPersisted = false
     try {
       const durableSeed = await saveSessionInOrder(seed)
@@ -768,10 +790,91 @@ const startPendingPrompt = (
       if (!ownsPrompt(pending.sessionId, pending.messageId)) return undefined
       promptPreparation = await prepareWorkspacePrompt(durableSeed, pending.messageId, 'new')
       if (!ownsPrompt(pending.sessionId, pending.messageId)) {
-        await rollbackWorkspacePrompt(promptPreparation)
+        await rollbackCancelledPreparation()
         return undefined
       }
+      // Keep the optimistic prompt pending until its immutable inputs are complete. Binding
+      // publishes append/start intents and makes the Session visible to the background saver.
+      if (pendingSession.delegationPolicyAuthorityPending) {
+        delegationAuthority = await window.api.sessions.setDelegationPolicy(
+          durableSeed.projectId,
+          durableSeed.id,
+          pendingSession.delegationPolicy ?? 'allow'
+        )
+        promptPreparation.authority = delegationAuthority
+        if (!ownsPrompt(pending.sessionId, pending.messageId)) {
+          await rollbackCancelledPreparation()
+          return undefined
+        }
+      }
+      attachments = await finalizeWorkspaceAttachments({
+        sessionId: created.sessionId,
+        attachments,
+        projectId: request.projectId
+      })
+      useSessionStore.getState().replaceMessageUploads({
+        sessionId: pending.sessionId,
+        messageId: pending.messageId,
+        uploads: attachments.map(toPersistedUploadedAttachment)
+      })
+      if (!ownsPrompt(pending.sessionId, pending.messageId)) {
+        await rollbackCancelledPreparation()
+        return undefined
+      }
+      const pdfContextSources = [
+        ...finalizedPdfContextSources({
+          attachmentIds: eligiblePendingPdfContext.attachmentIds,
+          attachments
+        }),
+        ...eligiblePendingPdfContext.versions
+      ].slice(0, Math.max(0, MAX_SESSION_PDF_CONTEXTS - (pdfContext?.bindings.length ?? 0)))
+      if (pdfContextSources.length > 0) {
+        pdfContext = await linkPdfContextForSend({
+          sessionId: created.sessionId,
+          pendingSessionId: pending.sessionId,
+          projectId: request.projectId,
+          sources: pdfContextSources,
+          pdfReadingPosition: request.pdfReadingPosition,
+          readingSource: readingSourceForSend(request, attachments),
+          excludeSinglePage: true,
+          materializedRuntimeRevision:
+            (delegationAuthority ?? durableSeed).runtimeContext?.revision ?? 0
+        })
+        if (!ownsPrompt(pending.sessionId, pending.messageId)) {
+          await rollbackCancelledPreparation()
+          return undefined
+        }
+        if (pdfContext)
+          useSessionStore.getState().replaceMessagePdfContext({
+            sessionId: pending.sessionId,
+            messageId: pending.messageId,
+            pdfContext
+          })
+      }
     } catch (error) {
+      if (promptPreparation) {
+        if (!ownsPrompt(pending.sessionId, pending.messageId)) {
+          await rollbackCancelledPreparation()
+          return undefined
+        }
+        const messageId = bindPreparedPrompt()
+        if (isSessionSizeLimitError(error)) onSessionSizeLimit?.(created.sessionId)
+        if (pendingSession.delegationPolicyAuthorityPending && !delegationAuthority) {
+          try {
+            await runtime.deleteSession?.(created.sessionId)
+          } catch (cleanupError) {
+            console.warn('Agent Session cleanup after persistence failure failed', cleanupError)
+          }
+        }
+        if (messageId && ownsPrompt(created.sessionId, messageId))
+          await rejectPreparedPrompt(
+            created.sessionId,
+            errorMessage(error),
+            promptPreparation,
+            request.onPreparationRejected
+          )
+        return undefined
+      }
       if (isSessionSizeLimitError(error)) onSessionSizeLimit?.(pending.sessionId)
       // The pending Session retries by creating a new Agent Session, so the seed persisted under
       // created.sessionId (it may carry copied Branch history) would otherwise remain as a ghost.
@@ -791,119 +894,15 @@ const startPendingPrompt = (
       )
       return undefined
     }
-    const bound = useSessionStore.getState().bindPendingSession({
-      pendingSessionId: pending.sessionId,
-      sessionId: created.sessionId,
-      cwd,
-      agentFrameworkId: created.frameworkId,
-      agentBackendId: created.backendId,
-      providerSessionId: created.providerSessionId,
-      providerContinuityToken: created.providerContinuityToken,
-      wslSetup: created.wslSetup,
-      preparationId: promptPreparation.id,
-      preparationBaseline: promptPreparation.authority
-    })
-    onSessionBound?.(pending.sessionId, created.sessionId)
-    const boundMessageId = bound?.messageId
+    const boundMessageId = bindPreparedPrompt()
     if (!boundMessageId || !ownsPrompt(created.sessionId, boundMessageId)) return undefined
 
-    const boundSession = useSessionStore
-      .getState()
-      .sessions.find((session) => session.id === created.sessionId)
-    let sessionMaterialized = false
-    let materializedRuntimeRevision: number | undefined
     if (
-      boundSession &&
-      (boundSession.delegationPolicyAuthorityPending || boundSession.enabledComputeHosts?.length)
-    ) {
-      try {
-        if (boundSession.delegationPolicyAuthorityPending) {
-          const authoritative = await confirmPendingDelegationPolicyAuthority(boundSession)
-          materializedRuntimeRevision = authoritative?.runtimeContext?.revision ?? 0
-        } else {
-          const materialized = await saveSessionInOrder(
-            toPersistedSessionForAuthorityMaterialization(boundSession)
-          )
-          materializedRuntimeRevision = materialized.runtimeContext?.revision ?? 0
-        }
-        sessionMaterialized = true
-      } catch (error) {
-        if (isSessionSizeLimitError(error)) onSessionSizeLimit?.(created.sessionId)
-        try {
-          const snapshot = await runtime.deleteSession?.(created.sessionId)
-          if (
-            runtime.deleteSession &&
-            (!snapshot || snapshot.sessionIds.includes(created.sessionId))
-          ) {
-            console.warn('Agent Session cleanup after persistence failure did not complete')
-          }
-        } catch (cleanupError) {
-          console.warn('Agent Session cleanup after persistence failure failed', cleanupError)
-        }
-        if (ownsPrompt(created.sessionId, boundMessageId)) {
-          await rejectPreparedPrompt(
-            created.sessionId,
-            errorMessage(error),
-            promptPreparation,
-            request.onPreparationRejected
-          )
-        }
-        return undefined
-      }
-      if (!ownsPrompt(created.sessionId, boundMessageId)) return undefined
-    }
-
-    let attachments = request.attachments
-    let pdfContext = request.pdfContext
-    try {
-      attachments = await finalizeWorkspaceAttachments({
-        sessionId: created.sessionId,
-        attachments,
-        projectId: request.projectId
-      })
-      useSessionStore.getState().replaceMessageUploads({
-        sessionId: created.sessionId,
-        messageId: boundMessageId,
-        uploads: attachments.map(toPersistedUploadedAttachment)
-      })
-      const pdfContextSources = [
-        ...finalizedPdfContextSources({
-          attachmentIds: eligiblePendingPdfContext.attachmentIds,
-          attachments
-        }),
-        ...eligiblePendingPdfContext.versions
-      ].slice(0, Math.max(0, MAX_SESSION_PDF_CONTEXTS - (pdfContext?.bindings.length ?? 0)))
-      if (pdfContextSources.length > 0) {
-        pdfContext = await linkPdfContextForSend({
-          sessionId: created.sessionId,
-          messageId: boundMessageId,
-          projectId: request.projectId,
-          sources: pdfContextSources,
-          pdfReadingPosition: request.pdfReadingPosition,
-          readingSource: readingSourceForSend(request, attachments),
-          excludeSinglePage: true,
-          persistSessionBeforeLink: !sessionMaterialized,
-          materializedRuntimeRevision
-        })
-      }
-      if (
-        pdfContext &&
-        (eligiblePendingPdfContext.attachmentIds.length > 0 ||
-          eligiblePendingPdfContext.versions.length > 0)
-      ) {
-        onPdfContextLinked?.(created.sessionId, pdfContext)
-      }
-    } catch (error) {
-      if (isSessionSizeLimitError(error)) onSessionSizeLimit?.(created.sessionId)
-      await rejectPreparedPrompt(
-        created.sessionId,
-        errorMessage(error),
-        promptPreparation,
-        request.onPreparationRejected
-      )
-      return undefined
-    }
-    if (!ownsPrompt(created.sessionId, boundMessageId)) return undefined
+      pdfContext &&
+      (eligiblePendingPdfContext.attachmentIds.length > 0 ||
+        eligiblePendingPdfContext.versions.length > 0)
+    )
+      onPdfContextLinked?.(created.sessionId, pdfContext)
 
     try {
       const ready = useSessionStore

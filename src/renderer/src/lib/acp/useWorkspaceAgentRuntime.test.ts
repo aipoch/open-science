@@ -1,3 +1,5 @@
+import { sanitizeRendererSaveSessionOptions } from '../../../../main/session-persistence/renderer-save-options'
+import { LiteratureDocumentReader } from '../../../../main/literature/document-reader'
 import { initI18n, prepareI18nLocale } from '../../i18n'
 import { useWorkspaceOperationErrors } from './workspace-operation-error'
 import { RuntimeSessionOwner } from '../../../../main/session-persistence/runtime-session-owner'
@@ -11,7 +13,7 @@ import {
 } from '../../stores/session-conversation-intents'
 import type { ArtifactReference } from '../../../../shared/artifacts'
 import { SessionPdfContextOwner } from '../../../../main/session-persistence/pdf-context-owner'
-import { inspectPdfPageCount } from '../../../../main/uploads/attachment-media'
+import { extractPdfText, inspectPdfPageCount } from '../../../../main/uploads/attachment-media'
 import type {
   AcpPermissionRequest,
   AcpRuntimeEvent,
@@ -50,7 +52,10 @@ import {
   createInitialPreviewWorkbenchState,
   usePreviewWorkbenchStore
 } from '../../stores/preview-workbench-store'
-import { resetSessionPersistenceWriteFailuresForTests } from '../session-persistence/session-persistence'
+import {
+  saveSessionInOrder,
+  resetSessionPersistenceWriteFailuresForTests
+} from '../session-persistence/session-persistence'
 import { applyWorkspaceRuntimeEvent } from './workspace-events'
 import {
   clearLinkedPendingPdfContext,
@@ -85,6 +90,7 @@ import {
 
 vi.mock('../../../../main/uploads/attachment-media', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../../main/uploads/attachment-media')>()),
+  extractPdfText: vi.fn(),
   inspectPdfPageCount: vi.fn()
 }))
 
@@ -244,10 +250,11 @@ const createSessionPolicyApi = (): {
       const session = useSessionStore
         .getState()
         .sessions.find((candidate) => candidate.id === sessionId)
-      if (!session) throw new Error(`Session not found: ${sessionId}`)
+      const source = testDurableSessions.get(sessionId) ?? (session && toPersistedSession(session))
+      if (!source) throw new Error(`Session not found: ${sessionId}`)
       const authority = {
-        ...toPersistedSession(session),
-        revision: (session.revision ?? 0) + 1,
+        ...source,
+        revision: (source.revision ?? 0) + 1,
         delegationPolicy: policy
       }
       testDurableSessions.set(sessionId, authority)
@@ -5493,6 +5500,268 @@ describe('workspace agent message sending', () => {
     )
   })
 
+  it.each([
+    'new',
+    'existing',
+    'new-notification',
+    'cancel-upload',
+    'cancel-link',
+    'cancel-link-error',
+    'cancel-rollback-error',
+    'cancel-superseded'
+  ] as const)(
+    'preserves Reading PDF admission through Main persistence: %s',
+    async (sessionKind) => {
+      vi.spyOn(Date, 'now').mockReturnValue(1_790_000_000_000)
+      const staged = createAttachment({
+        name: 'paper.pdf',
+        originalName: 'paper.pdf',
+        mimeType: 'application/pdf'
+      })
+      const finalized = createAttachment({
+        ...staged,
+        sessionId: 'transport-session-1',
+        versionId: 'pdf-version-1',
+        versionNumber: 1,
+        checksum: 'a'.repeat(64),
+        path: 'upload-version:project-1/transport-session-1/pdf-version-1'
+      })
+      const pdfContext: SessionPdfContext = {
+        version: 1,
+        bindings: [
+          {
+            version: 1,
+            bindingId: 'binding-1',
+            sourceKind: 'upload-version',
+            sourceFileId: staged.id,
+            sourceVersionId: finalized.versionId!,
+            sourceSessionId: finalized.sessionId,
+            name: staged.name,
+            mimeType: 'application/pdf',
+            sizeBytes: staged.size,
+            checksum: 'a'.repeat(64),
+            linkedAt: 1
+          }
+        ]
+      }
+      let durable: PersistedChatSession | undefined
+      const preparationReached = createDeferred<void>()
+      const continuePreparation = createDeferred<void>()
+      let failRollback = sessionKind === 'cancel-rollback-error'
+      const persistence = new SessionPersistenceStateOwner({
+        repository: {
+          loadSessionWithDiagnostics: async () =>
+            durable
+              ? { status: 'found', session: structuredClone(durable) }
+              : { status: 'missing' },
+          saveSession: async (candidate) => {
+            durable = { ...structuredClone(candidate), revision: (durable?.revision ?? 0) + 1 }
+            return structuredClone(durable)
+          }
+        },
+        fileIndex: { syncSession: vi.fn(async () => []) },
+        assertMutable: vi.fn(),
+        notifyFilesChanged: vi.fn(),
+        notifyRuntimeContextSessionUpdated: vi.fn((session) => {
+          if (sessionKind === 'new-notification')
+            useSessionStore.getState().upsertPersistedSession(session)
+        }),
+        log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+      })
+      if (sessionKind === 'existing') {
+        durable = materializeSessionConversationGraph({
+          id: 'transport-session-1',
+          projectId: 'project-1',
+          title: 'Reading',
+          cwd: '/workspace/project',
+          status: 'idle',
+          messages: [],
+          createdAt: 1,
+          updatedAt: 1,
+          runtimeTranscriptOwner: 'main'
+        })
+        useSessionStore.getState().hydrateSessions([durable])
+      }
+      vi.stubGlobal('window', {
+        api: {
+          uploads: {
+            finalizeSession: vi.fn(async () => {
+              if (sessionKind === 'cancel-upload') {
+                preparationReached.resolve()
+                await continuePreparation.promise
+              }
+              return [finalized]
+            })
+          },
+          sessions: {
+            saveSession: (candidate: PersistedChatSession, options?: SaveSessionOptions) => {
+              if (
+                failRollback &&
+                options?.conversationCommands?.some(({ kind }) => kind === 'rollback-prompt')
+              )
+                return Promise.reject(new Error('Rollback write failed'))
+              return persistence.saveSession(
+                candidate,
+                sanitizeRendererSaveSessionOptions(options, candidate)
+              )
+            },
+            loadOne: async () => durable && structuredClone(durable),
+            filterPdfContextCandidates: vi.fn().mockResolvedValue({
+              sources: [],
+              pendingAttachmentIds: [staged.id]
+            }),
+            linkPdfContext: async (request: {
+              projectId: string
+              sessionId: string
+              expectedRevision: number
+            }) => {
+              if (
+                sessionKind === 'cancel-link' ||
+                sessionKind === 'cancel-link-error' ||
+                sessionKind === 'cancel-rollback-error' ||
+                sessionKind === 'cancel-superseded'
+              ) {
+                preparationReached.resolve()
+                await continuePreparation.promise
+                if (sessionKind === 'cancel-link-error') throw new Error('PDF linking failed')
+              }
+              return persistence.patchRuntimeContext({ ...request, patch: { pdfContext } })
+            }
+          }
+        }
+      })
+      const runtime = {
+        state: createSnapshot(sessionKind === 'existing' ? ['transport-session-1'] : []),
+        createSession: vi.fn().mockResolvedValue({
+          sessionId: 'transport-session-1',
+          cwd: '/workspace/project'
+        }),
+        resumeSession: vi.fn(),
+        resetSessionContext: vi.fn(),
+        cancel: vi.fn(),
+        sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+      }
+      const sending = sendWorkspaceMessage(
+        runtime,
+        {
+          sessionId: sessionKind === 'existing' ? 'transport-session-1' : undefined,
+          text: 'Summarize the full paper',
+          attachments: [staged],
+          pendingPdfContextAttachmentIds: [staged.id],
+          cwd: '/workspace/project',
+          projectId: 'project-1'
+        },
+        {
+          awaitPendingPreparation: true,
+          onSessionBound: () => {
+            if (sessionKind !== 'new-notification') return
+            // A saver can observe the new canonical identity synchronously at binding.
+            const source = useSessionStore
+              .getState()
+              .sessions.find(({ id }) => id === 'transport-session-1')!
+            expect(source.messages.at(-1)?.pdfContext?.bindings).toEqual(pdfContext.bindings)
+          },
+          flushPersistence: async () => {
+            const source = useSessionStore
+              .getState()
+              .sessions.find(({ id }) => id === 'transport-session-1')
+            if (source) await saveSessionInOrder(toPersistedSession(source))
+          }
+        }
+      )
+      if (sessionKind.startsWith('cancel-')) {
+        await preparationReached.promise
+        const pending = useSessionStore.getState().sessions.find(({ isPending }) => isPending)!
+        expect(durable?.promptPreparation).toBeDefined()
+        await cancelWorkspaceRun(runtime, pending.id)
+        const replacement =
+          sessionKind === 'cancel-superseded'
+            ? useSessionStore.getState().appendUserMessage({
+                sessionId: pending.id,
+                content: 'A newer request',
+                cwd: '/workspace/project',
+                projectId: 'project-1'
+              })
+            : undefined
+        continuePreparation.resolve()
+        await sending
+        expect(runtime.sendPrompt).not.toHaveBeenCalled()
+        expect(runtime.cancel).not.toHaveBeenCalled()
+        if (sessionKind === 'cancel-rollback-error') {
+          expect(durable?.promptPreparation).toBeDefined()
+          expect(useWorkspaceOperationErrors.getState().errors['transport-session-1']).toContain(
+            'Rollback write failed'
+          )
+          failRollback = false
+          await cancelWorkspaceRun(runtime, 'transport-session-1')
+          expect(runtime.cancel).not.toHaveBeenCalled()
+        }
+        expect(durable?.promptPreparation).toBeUndefined()
+        expect(durable?.activeRun).toBeUndefined()
+        expect(durable?.messages).toEqual([])
+        if (replacement) {
+          expect(
+            useSessionStore.getState().sessions.find(({ id }) => id === pending.id)
+          ).toMatchObject({
+            isPending: true,
+            activeRun: { promptMessageId: replacement.messageId }
+          })
+          return
+        }
+        expect(
+          useSessionStore.getState().sessions.find(({ id }) => id === 'transport-session-1')
+        ).toMatchObject({
+          isPending: false,
+          status: 'idle',
+          activeRun: undefined
+        })
+        return
+      }
+      const sent = await sending
+      expect(useWorkspaceOperationErrors.getState().errors).toEqual({})
+      expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+      expect(durable?.runtimeContext?.pdfContext).toEqual(pdfContext)
+      expect(
+        useSessionStore.getState().sessions.find(({ id }) => id === sent!.sessionId)?.runtimeContext
+          ?.pdfContext
+      ).toEqual(pdfContext)
+      // Keep the renderer send, Main command sanitization/persistence, and public reader real.
+      // Only provider execution, repository I/O, upload resolution and PDF extraction are doubles.
+      const text = '--- Page 1 ---\nStudy methods.\n--- Page 2 ---\nStudy findings.'
+      vi.mocked(extractPdfText).mockResolvedValue({ text, pageCount: 2, truncated: false })
+      const reader = new LiteratureDocumentReader({
+        storageRoot: '/unused-sequential-reader',
+        sessions: { loadSessionForContinuation: async () => structuredClone(durable!) },
+        sources: {
+          resolveVersion: vi.fn(async () => ({
+            sourceKind: 'upload-version' as const,
+            sourceFileId: staged.id,
+            sourceVersionId: finalized.versionId!,
+            sourceSessionId: finalized.sessionId,
+            filename: staged.name,
+            contentType: 'application/pdf',
+            sizeBytes: staged.size,
+            checksum: 'a'.repeat(64),
+            path: finalized.path
+          }))
+        }
+      })
+      await expect(
+        reader.readCurrent({
+          projectId: 'project-1',
+          sessionId: 'transport-session-1',
+          promptMessageId: sent!.messageId,
+          input: { documentId: 'binding-1' }
+        })
+      ).resolves.toMatchObject({
+        scope: 'full-document',
+        document: { id: 'binding-1', name: 'paper.pdf' },
+        passage: { text },
+        nextCursor: null
+      })
+    }
+  )
+
   it('links staged and immutable PDFs atomically before the first Session prompt', async () => {
     const stagedPdf = createAttachment({
       id: 'pdf-upload-1',
@@ -5998,7 +6267,7 @@ describe('workspace agent message sending', () => {
       saveSession.mock.calls.map(
         ([, options]) => options?.conversationCommands?.map(({ kind }) => kind) ?? []
       )
-    ).toEqual([[], ['prepare-prompt'], ['append-user', 'start-run'], []])
+    ).toEqual([[], ['prepare-prompt'], ['append-user', 'start-run']])
     expect(saveSession.mock.calls[0]?.[0]).toMatchObject({ delegationPolicy: 'allow' })
     expect(setDelegationPolicy).toHaveBeenCalledWith(
       'project-1',
@@ -6150,14 +6419,7 @@ describe('workspace agent message sending', () => {
     const saveSession = vi.fn(async (session: PersistedChatSession, options?: SaveSessionOptions) =>
       acknowledgeTestSessionCommands(session, options)
     )
-    const setDelegationPolicy = vi.fn(async () => {
-      const session = useSessionStore.getState().sessions[0]
-      return {
-        ...toPersistedSession(session),
-        revision: (session.revision ?? 0) + 1,
-        delegationPolicy: 'deny' as const
-      }
-    })
+    const setDelegationPolicy = createSessionPolicyApi().setDelegationPolicy
     const linkPdfContext = vi.fn().mockRejectedValue(new SessionSizeLimitError())
     vi.stubGlobal('window', {
       api: {

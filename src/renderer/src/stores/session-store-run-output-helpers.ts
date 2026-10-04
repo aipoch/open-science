@@ -728,10 +728,20 @@ export const projectMessagePdfContext = (
       ? { ...message, pdfContext: input.pdfContext, updatedAt: now }
       : message
   )
+  const synchronizedGraph = synchronizeSessionGraph(session, messages, now)
   return {
     ...session,
     messages,
-    conversationGraph: synchronizeSessionGraph(session, messages, now),
+    // This explicit update owns the payload even when upload finalization occurred in the
+    // same millisecond. Generic projection synchronization deliberately lets the graph win ties.
+    conversationGraph: {
+      ...synchronizedGraph,
+      messages: synchronizedGraph.messages.map((message) =>
+        message.id === input.messageId
+          ? { ...message, pdfContext: input.pdfContext, updatedAt: now }
+          : message
+      )
+    },
     updatedAt: now
   }
 }
