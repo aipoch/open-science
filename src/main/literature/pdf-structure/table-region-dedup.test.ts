@@ -188,6 +188,27 @@ it('keeps a wide narrative table when the overlapping numeric grid has no matchi
   expect(narrativeDuplicateTableIndices([outer, inner])).toEqual(new Set())
 })
 
+it('keeps long stub labels when they are assigned table cells', () => {
+  const outer = {
+    cropRect: [152, 752, 753, 837],
+    grid: [
+      ['A long study arm label with details.', 'Guardrails', 'MT Bench'],
+      ['Another long study arm label with details.', 'No system prompt', '6.84 ± 0.07']
+    ],
+    unassigned: []
+  }
+  const inner = {
+    cropRect: [455, 769, 759, 855],
+    grid: [
+      ['', 'Guardrails', 'MT Bench'],
+      ['', 'No system prompt', '6.84 ± 0.07'],
+      ['', 'Llama 2 system prompt', '6.38 ± 0.07']
+    ],
+    unassigned: []
+  }
+  expect(narrativeDuplicateTableIndices([outer, inner])).toEqual(new Set())
+})
+
 it('drops a numeric left-column spill when the remaining rows match a clean grid', () => {
   const outer = {
     cropRect: [398, 250, 762, 1060],

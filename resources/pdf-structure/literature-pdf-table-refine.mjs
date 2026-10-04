@@ -962,6 +962,38 @@ export function recoverClippedRightLabelCrop(table, pageItems) {
     /^[<>≤≥−+-]?\d[\d.,%()±–—+/<>=-]*$/u.test(item.text.trim())
   )
   if (numericOrHeader.length < 2 || numeric.length < 2) return
+  const columns = (table.structure?.objects ?? [])
+    .filter((object) => object.label === 'table column')
+    .sort((a, b) => b.rect[2] - a.rect[2])
+  const terminalColumn = columns[0]
+  if (
+    terminalColumn &&
+    clipped.some(
+      (item) =>
+        item.rect[0] < crop[2] - height * 3.5 ||
+        item.rect[0] > crop[2] + height * 0.25 ||
+        item.rect[0] < crop[0] + terminalColumn.rect[0] - height * 0.5
+    )
+  )
+    return
+  const modelRows = (table.structure?.objects ?? []).filter(
+    (object) => object.label === 'table row'
+  )
+  if (modelRows.length) {
+    const matchedRows = clipped.map((item) =>
+      modelRows.findIndex(
+        (row) =>
+          item.rect[1] < crop[1] + row.rect[3] + height * 0.35 &&
+          item.rect[3] > crop[1] + row.rect[1] - height * 0.35
+      )
+    )
+    const covered = matchedRows.filter((index) => index >= 0)
+    if (
+      covered.length >= 2 &&
+      (covered.length !== clipped.length || new Set(covered).size !== covered.length)
+    )
+      return
+  }
   const right = Math.max(...clipped.map((item) => item.rect[2])) + height * 0.2
   if (!(right > crop[2]) || right - crop[2] > height * 1.5) return
   return [crop[0], crop[1], right, crop[3]]

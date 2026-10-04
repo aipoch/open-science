@@ -238,9 +238,7 @@ export function narrativeDuplicateTableIndices(tables) {
     const outerWidth = a[2] - a[0]
     const outerHeight = a[3] - a[1]
     if (outerWidth <= 0 || outerHeight <= 0) continue
-    const narrative = [...(outer.unassigned ?? []), ...(outer.grid ?? []).flat()].some(
-      (text) => text.trim().split(/\s+/u).length >= 8
-    )
+    const narrative = (outer.unassigned ?? []).some((text) => text.trim().split(/\s+/u).length >= 8)
     if (!narrative) continue
     for (let innerIndex = 0; innerIndex < tables.length; innerIndex++) {
       if (innerIndex === outerIndex) continue
