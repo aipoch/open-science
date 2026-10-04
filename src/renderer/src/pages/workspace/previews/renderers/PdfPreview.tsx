@@ -3614,7 +3614,10 @@ export const PdfPreviewContent = ({
 }
 
 const PdfPreviewRendererContent = (
-  props: PreviewFileRendererProps & { structureSource?: PdfStructureSource }
+  props: PreviewFileRendererProps & {
+    structureSource?: PdfStructureSource
+    packageSessionId?: string
+  }
 ): React.JSX.Element => {
   const target = resolvePdfContextTarget(props.item)
   const libraryAnnotations = usePdfAnnotations()
@@ -3811,6 +3814,7 @@ const PdfPreviewRendererContent = (
   const bookmarkSourceVersionId = target?.sourceVersionId
   const pdfBookmarkResolutionKey =
     !isLibrary &&
+    !props.packageSessionId &&
     bookmarkSourceKind &&
     bookmarkSourceFileId &&
     bookmarkSourceVersionId &&
@@ -3877,13 +3881,25 @@ const PdfPreviewRendererContent = (
   ])
   const currentPdfBookmarkResolution =
     pdfBookmarkResolution?.key === pdfBookmarkResolutionKey ? pdfBookmarkResolution : undefined
-  const pdfBookmarkSource = isLibrary
-    ? libraryAnnotations.source
-    : (currentPdfBookmarkResolution?.source ?? libraryAnnotations.source)
-  const pdfBookmarkSourceUnavailable = isLibrary
-    ? Boolean(libraryAnnotations.loadError)
-    : (currentPdfBookmarkResolution?.unavailable ??
-      Boolean(target && props.item.projectId && ownerSessionId && !pdfBookmarkResolutionKey))
+  const packageSource = props.packageSessionId
+    ? libraryAnnotations.annotations.find(
+        ({ target: { source } }) =>
+          source.projectId === props.item.projectId &&
+          source.kind === bookmarkSourceKind &&
+          source.sourceFileId === bookmarkSourceFileId &&
+          source.versionId === bookmarkSourceVersionId
+      )?.target.source
+    : undefined
+  const pdfBookmarkSource = props.packageSessionId
+    ? packageSource
+    : isLibrary
+      ? libraryAnnotations.source
+      : (currentPdfBookmarkResolution?.source ?? libraryAnnotations.source)
+  const pdfBookmarkSourceUnavailable =
+    isLibrary || props.packageSessionId
+      ? Boolean(libraryAnnotations.loadError)
+      : (currentPdfBookmarkResolution?.unavailable ??
+        Boolean(target && props.item.projectId && ownerSessionId && !pdfBookmarkResolutionKey))
   const [nativeImportProgress, setNativeImportProgress] =
     useState<PdfNativeAnnotationImportProgress>()
   const nativeSourceKind = pdfBookmarkSource?.kind
@@ -4006,6 +4022,15 @@ export const PdfPreviewRenderer = (props: PreviewFileRendererProps): React.JSX.E
   const parentAnnotations = usePdfAnnotations()
   const target = resolvePdfContextTarget(props.item)
   const { projectId } = props.item
+  const packageSessionId = useSessionStore(
+    (state) =>
+      state.sessions.find(
+        (session) =>
+          session.id === props.item.sessionId &&
+          session.projectId === projectId &&
+          session.packageOrigin
+      )?.id
+  )
   const sourceKind = target?.sourceKind
   const sourceFileId = target?.sourceFileId
   const sourceVersionId = target?.sourceVersionId
@@ -4028,19 +4053,26 @@ export const PdfPreviewRenderer = (props: PreviewFileRendererProps): React.JSX.E
       </PdfAnnotationsProvider>
     )
   }
-  if (!target || parentAnnotations.document?.versionId === target.sourceVersionId)
+  if (
+    !target ||
+    (!packageSessionId && parentAnnotations.document?.versionId === target.sourceVersionId)
+  )
     return <PdfPreviewRendererContent {...props} structureSource={structureSource} />
-  const library = target.sourceKind === 'literature-attachment-version'
+  const library = !packageSessionId && target.sourceKind === 'literature-attachment-version'
   return (
     <PdfAnnotationsProvider
       literatureVersionId={library ? target.sourceVersionId : undefined}
       projectId={library ? undefined : props.item.projectId}
-      sessionId={library ? undefined : parentAnnotations.sessionId}
+      sessionId={library ? undefined : (packageSessionId ?? parentAnnotations.sessionId)}
       sourceFileId={target.sourceFileId}
       versionId={target.sourceVersionId}
-      writable={!parentAnnotations.scoped || parentAnnotations.available}
+      writable={!packageSessionId && (!parentAnnotations.scoped || parentAnnotations.available)}
     >
-      <PdfPreviewRendererContent {...props} structureSource={structureSource} />
+      <PdfPreviewRendererContent
+        {...props}
+        structureSource={structureSource}
+        packageSessionId={packageSessionId}
+      />
     </PdfAnnotationsProvider>
   )
 }
