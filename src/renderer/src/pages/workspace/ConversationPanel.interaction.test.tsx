@@ -1070,6 +1070,48 @@ describe('ConversationPanel header spacing', () => {
     expect(exportDiagnostics).toHaveBeenCalledWith(expect.objectContaining({ id: session.id }))
   })
 
+  it('opens an empty side chat from the persistent header menu without sending the main draft', async () => {
+    const createDraft = vi.fn(() => 'empty-side-chat')
+    const start = vi.fn()
+    const changeDoc = vi.fn()
+    renderPanel({
+      view: {
+        activeSession: {
+          id: 'header-session',
+          projectId: 'project-a',
+          title: 'Research',
+          cwd: '/workspace',
+          status: 'running',
+          messages: planOriginMessages(),
+          createdAt: 1,
+          updatedAt: 2
+        }
+      },
+      composer: {
+        view: { doc: docFromText('Keep this draft') },
+        actions: { changeDoc }
+      },
+      sideChat: { createDraft },
+      conversation: { actions: { sideChat: { start } } },
+      sessionTools: { exportDiagnostics: vi.fn() }
+    })
+    const header = getConversationHeader()
+    const trigger = header.querySelector<HTMLButtonElement>('[aria-label="Session actions"]')!
+    const diagnostics = header.querySelector('[aria-label="Export diagnostics…"]')!
+    expect(
+      diagnostics.compareDocumentPosition(trigger) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    expect(trigger.className).not.toMatch(/opacity-0|invisible|hidden/)
+    await act(async () => trigger.click())
+    await act(async () =>
+      document.querySelector<HTMLElement>('[data-action-id="new-side-chat"]')!.click()
+    )
+    expect(createDraft).toHaveBeenCalledExactlyOnceWith()
+    expect(start).not.toHaveBeenCalled()
+    expect(changeDoc).not.toHaveBeenCalled()
+    expect(getComposerEditor().textContent).toContain('Keep this draft')
+  })
+
   it('opens Session information and routes editing through the owner', () => {
     const session: ChatSession = {
       id: 'info-session',

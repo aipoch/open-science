@@ -599,6 +599,12 @@ Active-dialog menus and other foreground child layers retain their own ordering.
 
 ### Session information
 
+- Keep a persistent ellipsis menu immediately after the diagnostics button in the conversation
+  header for an existing Session. Use the shared action-menu catalog and bindings. Its New side
+  chat action opens an empty side chat and preserves the main composer's draft, annotations and
+  attachments; it never sends the main draft. Retain the existing Side chat availability policy
+  and display the reason on unavailable actions. The composer entry retains its draft-send behavior.
+
 The upper-right pin toggles the current Session through the shared Session controller, moving it into or out of the sidebar’s pinned section. Its pressed state follows the Session store; it stays disabled until Session persistence is ready.
 
 - The conversation header's Session number and title open a click- and keyboard-accessible,

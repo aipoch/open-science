@@ -9,6 +9,7 @@ import {
   PackageOperationIndicator
 } from '@/components/SessionPackageOperation'
 import { SessionInfoPopover } from './SessionInfoPopover'
+import { SessionHeaderMenu } from './SessionHeaderMenu'
 import { sessionExportLocked, usePackageOperationStore } from '@/stores/package-operation-store'
 import { AnnotationTransferSource } from './annotations/AnnotationTransferSource'
 import { useAnnotationDrop } from './annotations/use-annotation-drop'
@@ -1447,6 +1448,14 @@ const ConversationPanel = ({
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
+          )}
+          {activeSession && (
+            <SessionHeaderMenu
+              key={activeSession.id}
+              sessionId={activeSession.id}
+              createSideChat={sideChatController.createDraft}
+              disabledReason={openSideChatReason}
+            />
           )}
           <PackageExportProgressButton />
           <NotificationBell className="md:hidden" />

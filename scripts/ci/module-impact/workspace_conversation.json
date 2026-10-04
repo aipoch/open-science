@@ -86,7 +86,9 @@
     "src/renderer/src/pages/workspace/workspace-tool-activity-style.test.ts",
     "src/renderer/src/pages/workspace/workspace-tool-activity-style.ts",
     "src/renderer/src/pages/workspace/TurnOutcomeNotice.tsx",
-    "src/renderer/src/pages/workspace/TurnOutcomeNotice.test.tsx"
+    "src/renderer/src/pages/workspace/TurnOutcomeNotice.test.tsx",
+    "src/renderer/src/pages/workspace/SessionHeaderMenu.tsx",
+    "src/renderer/src/pages/workspace/SessionHeaderMenu.test.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/workspace/ComposerMessageQueue.tsx",
@@ -160,7 +162,8 @@
       "src/renderer/src/pages/workspace/workspace-tool-activity-details.test.ts",
       "src/renderer/src/pages/workspace/workspace-tool-activity-groups.test.ts",
       "src/renderer/src/pages/workspace/workspace-tool-activity-style.test.ts",
-      "src/renderer/src/pages/workspace/TurnOutcomeNotice.test.tsx"
+      "src/renderer/src/pages/workspace/TurnOutcomeNotice.test.tsx",
+      "src/renderer/src/pages/workspace/SessionHeaderMenu.test.tsx"
     ],
     "contract": [],
     "consumer": [

@@ -515,7 +515,8 @@
       "src/renderer/src/pages/workspace/TurnOutcomeNotice.test.tsx",
       "src/renderer/src/lib/acp/workspace-prompt-admission.test.ts",
       "src/renderer/src/lib/acp/workspace-prompt-rollback-failure.test.ts",
-      "src/renderer/src/lib/acp/workspace-runtime-overflow-recovery-failures.test.ts"
+      "src/renderer/src/lib/acp/workspace-runtime-overflow-recovery-failures.test.ts",
+      "src/renderer/src/pages/workspace/SessionHeaderMenu.test.tsx"
     ]
   },
   "capabilityOverlays": [],
