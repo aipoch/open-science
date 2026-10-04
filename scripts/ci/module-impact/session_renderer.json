@@ -307,6 +307,7 @@
       "src/renderer/src/pages/workspace/previews/preview-file-reader.test.ts",
       "src/renderer/src/pages/workspace/previews/preview-pagination-contract.test.tsx",
       "src/renderer/src/pages/workspace/previews/preview-registry.test.tsx",
+      "src/renderer/src/pages/workspace/previews/preview-source-status.test.ts",
       "src/renderer/src/pages/workspace/previews/renderers/CsvPreview.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/ImagePreview.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/JsonPreview.test.tsx",
