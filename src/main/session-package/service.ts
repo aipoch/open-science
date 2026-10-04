@@ -1,3 +1,15 @@
+import type {
+  ListPdfAnnotationsRequest,
+  PdfAnnotationListResult
+} from '../../shared/pdf-annotations'
+import {
+  capturePackagePdfNotes,
+  filterPackagePdfNotes,
+  namespacePackagePdfNotes,
+  retainInheritedPdfNotes,
+  type PackagePdfNotes
+} from './pdf-notes'
+import type { PackageFileSelection } from '../../shared/session-package'
 import { replayAnnotationTarget, splitReplayReferenceText } from '../../shared/replay-reference'
 import {
   DEFAULT_PERMISSION_PROFILE,
@@ -165,7 +177,7 @@ type PackageExportOptions = {
     signal: AbortSignal,
     summary: PackageSelectionSummary,
     title: string
-  ) => Promise<readonly string[]>
+  ) => Promise<readonly string[] | PackageFileSelection>
   signal?: AbortSignal
   onProgress?: (progress: PackageProgress) => void
 }
@@ -479,18 +491,23 @@ export class SessionPackageService {
     files: PackageSelectableFile[],
     summary: PackageSelectionSummary,
     title: string
-  ): Promise<readonly string[]> {
+  ): Promise<PackageFileSelection> {
     if (files.length > 10000 || summary.retainedFiles.length > 10000)
       throw new Error('Session package exceeds the file count limit.')
-    const excluded = options.selectFiles
+    const selected = options.selectFiles
       ? await this.waitForUser(() => options.selectFiles!(files, this.signal, summary, title))
       : []
+    const selection: PackageFileSelection =
+      'excludedStorageKeys' in selected
+        ? selected
+        : { excludedStorageKeys: selected, includePdfNotes: false }
+    const excluded = selection.excludedStorageKeys
     const keys = new Set(excluded)
     if (files.some((file) => file.requiredForEvidence && keys.has(file.storageKey)))
       throw new Error(
         'An excluded file also exists in retained research evidence. Include that file to export this Session.'
       )
-    return excluded
+    return selection
   }
 
   async close(): Promise<void> {
@@ -595,31 +612,34 @@ export class SessionPackageService {
       const optionalKeys = new Set(
         [...selectable, ...inheritedExclusions].map((file) => file.storageKey)
       )
-      const excluded = new Set(
-        await this.chooseFiles(
-          options,
-          markRequiredPackageFiles(
-            records,
-            selectable,
-            manifest.inventory.filter(
-              (entry) => !entry.storageKey || !optionalKeys.has(entry.storageKey)
-            )
-          ),
-          {
-            metadataBytes: manifest.inventory
-              .filter((entry) => !entry.storageKey)
-              .reduce((sum, entry) => sum + entry.sizeBytes, 0),
-            retainedFiles: manifest.inventory
-              .filter((entry) => entry.storageKey && !optionalKeys.has(entry.storageKey))
-              .map((entry) => ({
-                storageKey: entry.storageKey!,
-                filename: entry.storageKey!,
-                sizeBytes: entry.sizeBytes
-              }))
-          },
-          session.title
-        )
+      const selection = await this.chooseFiles(
+        options,
+        markRequiredPackageFiles(
+          records,
+          selectable,
+          manifest.inventory.filter(
+            (entry) => !entry.storageKey || !optionalKeys.has(entry.storageKey)
+          )
+        ),
+        {
+          pdfNotesAvailable: !!records.pdfNotes?.length,
+          metadataBytes: manifest.inventory
+            .filter((entry) => !entry.storageKey)
+            .reduce((sum, entry) => sum + entry.sizeBytes, 0),
+          retainedFiles: manifest.inventory
+            .filter((entry) => entry.storageKey && !optionalKeys.has(entry.storageKey))
+            .map((entry) => ({
+              storageKey: entry.storageKey!,
+              filename: entry.storageKey!,
+              sizeBytes: entry.sizeBytes
+            }))
+        },
+        session.title
       )
+      const excluded = new Set(selection.excludedStorageKeys)
+      if (!selection.includePdfNotes && !options.consumeSnapshot) delete records.pdfNotes
+      filterPackagePdfNotes(records, new Set([...excluded, ...alreadyExcluded]))
+      const forwardedRecordsJson = JSON.stringify(records)
       const additional = selectable
         .filter((file) => excluded.has(file.storageKey))
         .map(({ storageKey, filename, sizeBytes }) => ({ storageKey, filename, sizeBytes }))
@@ -640,13 +660,19 @@ export class SessionPackageService {
               (!entry.storageKey || !excluded.has(entry.storageKey))
           )
           .map((entry) =>
-            entry.path === 'session.json' && forwardedSessionJson
+            entry.path === 'records.json'
               ? {
                   ...entry,
-                  sizeBytes: Buffer.byteLength(forwardedSessionJson),
-                  checksum: sha256(forwardedSessionJson)
+                  sizeBytes: Buffer.byteLength(forwardedRecordsJson),
+                  checksum: sha256(forwardedRecordsJson)
                 }
-              : entry
+              : entry.path === 'session.json' && forwardedSessionJson
+                ? {
+                    ...entry,
+                    sizeBytes: Buffer.byteLength(forwardedSessionJson),
+                    checksum: sha256(forwardedSessionJson)
+                  }
+                : entry
           ),
         excludedFiles: [...manifest.excludedFiles, ...additional]
       }
@@ -671,6 +697,10 @@ export class SessionPackageService {
             this.signal.throwIfAborted()
             if (copiedPaths.has(entry.path)) continue
             copiedPaths.add(entry.path)
+            if (entry.path === 'records.json') {
+              await writeFile(join(staging, entry.path), forwardedRecordsJson)
+              continue
+            }
             if (entry.path === 'session.json' && forwardedSessionJson) {
               await writeFile(join(staging, entry.path), forwardedSessionJson)
               continue
@@ -768,6 +798,13 @@ export class SessionPackageService {
         retainedOrigin.literature,
         retainedOrigin.identities
       ) as NonNullable<PackageRecords['literature']>
+    const inheritedPdfNotes = namespacePackagePdfNotes(
+      mapPackageReferences(
+        retainedOrigin?.pdfNotes ?? [],
+        retainedOrigin?.identities ?? {}
+      ) as PackagePdfNotes,
+      request.sessionId
+    )
     const literatureSources = await capturePackageLiterature(
       client,
       session,
@@ -825,26 +862,40 @@ export class SessionPackageService {
       })
     }
     const sessionJson = JSON.stringify({ version: 2, session: sharedSession })
-    const recordsJson = JSON.stringify(records)
-    const metadataBytes =
+    let recordsJson = JSON.stringify(records)
+    let metadataBytes =
       Buffer.byteLength(sessionJson) +
       Buffer.byteLength(recordsJson) +
       Buffer.byteLength(PACKAGE_README)
+    const selection = await this.chooseFiles(
+      options,
+      markRequiredPackageFiles(records, selectable, [
+        ...retainedFiles,
+        ...[sessionJson, recordsJson, PACKAGE_README].map((content) => ({
+          sizeBytes: Buffer.byteLength(content),
+          checksum: sha256(content)
+        }))
+      ]),
+      {
+        retainedFiles,
+        metadataBytes,
+        pdfNotesAvailable: selectable.some((file) => /\.pdf$/i.test(file.filename))
+      },
+      session.title
+    )
     const excludedKeys = new Set([
-      ...(await this.chooseFiles(
-        options,
-        markRequiredPackageFiles(records, selectable, [
-          ...retainedFiles,
-          ...[sessionJson, recordsJson, PACKAGE_README].map((content) => ({
-            sizeBytes: Buffer.byteLength(content),
-            checksum: sha256(content)
-          }))
-        ]),
-        { retainedFiles, metadataBytes },
-        session.title
-      )),
+      ...selection.excludedStorageKeys,
       ...inheritedExclusions.map((file) => file.storageKey)
     ])
+    if (selection.includePdfNotes) {
+      records.pdfNotes = await capturePackagePdfNotes(client, records, excludedKeys)
+      retainInheritedPdfNotes(records, inheritedPdfNotes, excludedKeys)
+      recordsJson = JSON.stringify(records)
+      metadataBytes =
+        Buffer.byteLength(sessionJson) +
+        Buffer.byteLength(recordsJson) +
+        Buffer.byteLength(PACKAGE_README)
+    }
     const excludedFiles = [
       ...new Map(
         [...selectable, ...inheritedExclusions].map((file) => [file.storageKey, file])
@@ -1100,6 +1151,14 @@ export class SessionPackageService {
           request,
           this.signal
         )
+        if (selection.includePdfNotes) {
+          currentRecords.pdfNotes = await capturePackagePdfNotes(
+            client,
+            currentRecords,
+            excludedKeys
+          )
+          retainInheritedPdfNotes(currentRecords, inheritedPdfNotes, excludedKeys)
+        }
         if (
           current.status !== 'found' ||
           !isDeepStrictEqual(
@@ -1686,12 +1745,60 @@ export class SessionPackageService {
     }
   }
 
+  async readPdfNotes(request: ListPdfAnnotationsRequest): Promise<PdfAnnotationListResult> {
+    if (!request.projectId || !request.sessionId)
+      throw new Error('Package note scope is unavailable.')
+    const origin = await this.readOrigin({
+      projectId: request.projectId,
+      sessionId: request.sessionId
+    })
+    const snapshots = namespacePackagePdfNotes(
+      mapPackageReferences(origin.pdfNotes ?? [], origin.identities) as PackagePdfNotes,
+      request.sessionId
+    )
+    const selected = snapshots.filter(
+      (snapshot) => !request.versionId || snapshot.versionId === request.versionId
+    )
+    const tags = new Map(selected.flatMap((snapshot) => snapshot.tags).map((tag) => [tag.id, tag]))
+    const annotations = [
+      ...new Map(
+        selected.flatMap((snapshot) => snapshot.annotations).map((note) => [note.id, note])
+      ).values()
+    ]
+      .filter(
+        (note) =>
+          note.projectId === request.projectId &&
+          (!request.sourceFileId || note.target.source.sourceFileId === request.sourceFileId) &&
+          (!request.id || note.id === request.id)
+      )
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))
+    const after = annotations.filter(
+      (note) =>
+        !request.cursor ||
+        note.createdAt > request.cursor.createdAt ||
+        (note.createdAt === request.cursor.createdAt && note.id > request.cursor.id)
+    )
+    const items = after.slice(0, request.limit ?? 50)
+    const last = after.length > items.length ? items.at(-1) : undefined
+    return {
+      items,
+      total: annotations.length,
+      readonlyIds: items.map((note) => note.id),
+      snapshotTags: [...tags.values()],
+      ...(request.versionId && selected[0]?.nativeImport
+        ? { nativeImport: selected[0].nativeImport }
+        : {}),
+      ...(last ? { nextCursor: { createdAt: last.createdAt, id: last.id } } : {})
+    }
+  }
+
   async readOrigin(request: SessionPackageRequest): Promise<{
     sourceManifest: SessionPackageManifest
     identities: Record<string, string>
     files: SessionPackageReceipt['files']
     history?: PackageHistory
     literature?: import('./literature').PackageLiterature
+    pdfNotes?: PackagePdfNotes
     originSessionIds: string[]
   }> {
     const safe = sessionPackageRequestSchema.parse(request)
@@ -1732,6 +1839,7 @@ export class SessionPackageService {
       files: receipt.files,
       history: records.history,
       literature: records.literature,
+      pdfNotes: records.pdfNotes,
       originSessionIds: records.tables.FileOriginSession.map(
         (row) => receipt.identities[String(row.sessionId)]
       )

@@ -1,8 +1,5 @@
-import type {
-  PdfSharingRequest,
-  PdfSharingPreview,
-  PdfAnnotationSource
-} from '../../shared/pdf-annotations'
+import type { PdfAddToLiteratureRequest, PdfAnnotationSource } from '../../shared/pdf-annotations'
+import { literatureItemInputSchema } from '../../shared/literature'
 import { nativeImportReceipt } from '../pdf-annotations/native-import'
 import { inspectPdfPageCount, MAX_AUTO_EXTRACT_PDF_BYTES } from '../uploads/attachment-media'
 import {
@@ -36,10 +33,10 @@ import type { CreatePdfAnnotationRequest } from '../../shared/pdf-annotations'
 type LiteraturePdfImporterOptions = Readonly<{
   uploads: Pick<UploadRepository, 'deleteUpload' | 'resolveManagedUploadPath'>
   content: Pick<ContentRepository, 'withPublishedContent' | 'verify' | 'sweep'>
-  catalog: Pick<LiteratureCatalog, 'attachContent' | 'get'>
+  catalog: Pick<LiteratureCatalog, 'attachContent' | 'get' | 'findItemByPdf'>
   annotations?: Pick<PdfAnnotationRepository, 'createMany'>
-  sharing?: {
-    annotations: Pick<PdfAnnotationRepository, 'previewSharing' | 'commitSharing' | 'notifySharing'>
+  workspace?: {
+    annotations: Pick<PdfAnnotationRepository, 'notifySharing'>
     sources: {
       withVerifiedSource<T>(
         source: PdfAnnotationSource,
@@ -101,112 +98,54 @@ class LiteraturePdfImporter {
     return { cancelled: true }
   }
 
-  async share(request: PdfSharingRequest, signal?: AbortSignal): Promise<PdfSharingPreview> {
-    const sharing = this.options.sharing
-    if (!sharing) throw new Error('PDF sharing is unavailable.')
-    return sharing.sources.withVerifiedSource(request.source, async (lease, source) => {
+  async addToLiterature(
+    request: PdfAddToLiteratureRequest,
+    signal?: AbortSignal
+  ): Promise<LiteraturePdfImportReceipt> {
+    const workspace = this.options.workspace
+    if (!workspace) throw new Error('Workspace PDF import is unavailable.')
+    return workspace.sources.withVerifiedSource(request.source, async (lease, source) => {
       signal?.throwIfAborted()
-      const item = await this.options.catalog.get(request.itemId)
-      if (!item || item.deletedAt || item.mergedIntoItemId)
+      const existing = request.itemId
+        ? await this.options.catalog.get(request.itemId)
+        : await this.options.catalog.findItemByPdf(source.checksum, lease.size)
+      if (request.itemId && (!existing || existing.deletedAt || existing.mergedIntoItemId))
         throw new Error('Literature Item is unavailable.')
-      const versions = item.attachments.flatMap((attachment) =>
-        attachment.versions.map((version) => ({ ...version, attachmentId: attachment.id }))
-      )
-      const existing = request.targetVersionId
-        ? versions.find((version) => version.id === request.targetVersionId)
-        : versions.find((version) => version.checksum === source.checksum)
-      if (request.targetVersionId && !existing)
-        throw new Error('Literature attachment is unavailable.')
-      if (existing && (existing.checksum !== source.checksum || existing.sizeBytes !== lease.size))
-        throw new Error('PDF contents do not match.')
-      const target: PdfAnnotationSource = {
-        kind: 'literature-attachment-version',
-        sourceFileId: existing?.attachmentId ?? `pending:${item.id}`,
-        versionId: existing?.id ?? `pending:${item.id}`,
-        checksum: source.checksum,
-        name: existing?.filename ?? source.name,
-        path: createLiteratureAttachmentVersionReference(existing?.id ?? `pending:${item.id}`)
-      }
-      const parsed = await parseNativePdfAnnotations(lease.path, { signal })
-      await lease.verifyUnchanged()
-      const context = JSON.stringify([item.id, item.metadataRevision, existing?.id ?? null])
-      const perform = async (targetLease?: {
-        path: string
-        verifyUnchanged(): Promise<void>
-      }): Promise<PdfSharingPreview> => {
-        const preview = await sharing.annotations.previewSharing(
-          source,
-          target,
-          parsed.annotations,
-          context
-        )
-        if (!request.token) return { ...preview, targetVersionId: existing?.id }
-        if (preview.token !== request.token)
-          throw new Error('PDF sharing preview expired. Review the current notes again.')
-        signal?.throwIfAborted()
-        return this.options.content.withPublishedContent(
-          { sourcePath: lease.path, contentType: 'application/pdf' },
-          async (content) => {
-            if (content.checksum !== source.checksum || Number(content.sizeBytes) !== lease.size)
-              throw new Error('PDF contents do not match.')
-            await lease.verifyUnchanged()
-            await targetLease?.verifyUnchanged()
-            signal?.throwIfAborted()
-            const attached = await this.options.catalog.attachContent(
-              {
-                itemId: item.id,
-                attachmentId: existing?.attachmentId,
-                contentBlobId: content.id,
-                filename: source.name,
-                contentType: 'application/pdf',
-                sizeBytes: lease.size,
-                checksum: source.checksum,
-                pageCount: parsed.pageCount,
-                expectedMetadataRevision: item.metadataRevision
-              },
-              async (tx, result) => {
-                signal?.throwIfAborted()
-                if (existing && result.versionId !== existing.id)
-                  throw new Error('PDF sharing preview expired. Review the current notes again.')
-                const actual = {
-                  ...target,
-                  sourceFileId: result.attachmentId,
-                  versionId: result.versionId,
-                  path: createLiteratureAttachmentVersionReference(result.versionId)
-                }
-                // An unexpected concurrent attachment has its own state: the snapshot token rejects it.
-                await sharing.annotations.commitSharing(
-                  tx,
-                  source,
-                  actual,
-                  lease.size,
-                  parsed.annotations,
-                  context,
-                  request.token!,
-                  request.decisions
-                )
-                await verifySharingBytes(lease.path, source.checksum, lease.size)
-                if (targetLease)
-                  await verifySharingBytes(targetLease.path, source.checksum, lease.size)
-              }
-            )
-            await sharing.annotations.notifySharing(source)
-            return {
-              ...preview,
-              shared: true,
-              committed: true,
-              targetVersionId: attached.versionId
-            }
-          }
-        )
-      }
-      // Validate the target's actual bytes too; neither side's metadata is sufficient evidence.
-      return existing
-        ? sharing.sources.withVerifiedSource(target, async (targetLease) => {
-            if (targetLease.size !== lease.size) throw new Error('PDF contents do not match.')
-            return perform(targetLease)
+      const itemId = existing?.id ?? `pdf-import:${request.operationId}`
+      const newItem = existing
+        ? undefined
+        : literatureItemInputSchema.parse({
+            itemType: 'journalArticle',
+            title: request.title
           })
-        : perform()
+      return this.options.content.withPublishedContent(
+        { sourcePath: lease.path, contentType: 'application/pdf' },
+        async (content) => {
+          if (content.checksum !== source.checksum || Number(content.sizeBytes) !== lease.size)
+            throw new Error('PDF contents do not match.')
+          await lease.verifyUnchanged()
+          signal?.throwIfAborted()
+          const attached = await this.options.catalog.attachContent(
+            {
+              itemId,
+              contentBlobId: content.id,
+              filename: source.name,
+              contentType: 'application/pdf',
+              sizeBytes: lease.size,
+              checksum: source.checksum
+            },
+            async () => {
+              signal?.throwIfAborted()
+              await verifySharingBytes(lease.path, source.checksum, lease.size)
+            },
+            newItem
+          )
+          await workspace.annotations.notifySharing(source)
+          const item = await this.options.catalog.get(attached.itemId ?? itemId)
+          if (!item) throw new Error('Literature Item is unavailable.')
+          return { item }
+        }
+      )
     })
   }
 

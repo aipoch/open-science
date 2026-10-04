@@ -12,6 +12,8 @@ import {
 import type { LiteratureSmartCollections } from './smart-collections'
 import type { JournalAttributes } from './journal-attributes'
 import { deletePdfAnnotations, readAnnotations } from '../pdf-annotations/repository'
+import { ensureBinding } from '../pdf-annotations/document-store'
+import { createLiteratureAttachmentVersionReference } from '../../shared/literature'
 import { ApplicationCommandError } from '../../shared/application-command-contract'
 import {
   LITERATURE_OVERSIZED_REFERENCE,
@@ -106,7 +108,11 @@ type AttachLiteratureContentInput = Readonly<{
   pageCount?: number
 }>
 
-type AttachedLiteratureContent = Readonly<{ attachmentId: string; versionId: string }>
+type AttachedLiteratureContent = Readonly<{
+  attachmentId: string
+  versionId: string
+  itemId?: string
+}>
 
 type ApplyLiteratureMetadataInput = Readonly<{
   operationId?: string
@@ -542,11 +548,13 @@ const resolveImportItems = (
 
 const createItem = async (
   transaction: Prisma.TransactionClient,
-  item: LiteratureItemInput
+  item: LiteratureItemInput,
+  id?: string
 ): Promise<string> => {
   const identifiers = normalizedIdentifiers(item.identifiers)
   const created = await transaction.literatureItem.create({
     data: {
+      id,
       itemType: item.itemType,
       title: normalizeSpace(item.title),
       normalizedTitle: normalizeSearchText(item.title),
@@ -768,6 +776,24 @@ const transferSourceRecords = async (
   }
 }
 
+const registerAttachmentNotes = async (
+  transaction: Prisma.TransactionClient,
+  versionId: string
+): Promise<void> => {
+  const version = await transaction.literatureAttachmentVersion.findUniqueOrThrow({
+    where: { id: versionId }
+  })
+  if (version.contentType.split(';', 1)[0].trim().toLowerCase() !== 'application/pdf') return
+  await ensureBinding(transaction, {
+    kind: 'literature-attachment-version',
+    sourceFileId: version.attachmentId,
+    versionId,
+    checksum: version.checksum,
+    name: version.filename,
+    path: createLiteratureAttachmentVersionReference(versionId)
+  })
+}
+
 const acceptInboxCandidate = async (
   transaction: Prisma.TransactionClient,
   candidateId: string
@@ -805,8 +831,9 @@ const acceptInboxCandidate = async (
     const existing = await transaction.literatureAttachmentVersion.findFirst({
       where: { checksum: pdf.checksum, attachment: { itemId } }
     })
-    if (!existing)
-      await transaction.literatureAttachment.create({
+    if (existing) await registerAttachmentNotes(transaction, existing.id)
+    else {
+      const attachment = await transaction.literatureAttachment.create({
         data: {
           itemId,
           kind: 'fullText',
@@ -824,8 +851,11 @@ const acceptInboxCandidate = async (
               versionNumber: 1
             }
           }
-        }
+        },
+        include: { versions: true }
       })
+      await registerAttachmentNotes(transaction, attachment.versions[0].id)
+    }
   }
   await transaction.literatureInboxPdf.deleteMany({ where: { candidateId } })
   return { kind: 'item', id: itemId, state: 'linked' }
@@ -1653,12 +1683,30 @@ class LiteratureCatalog {
     return updated
   }
 
+  async findItemByPdf(
+    checksum: string,
+    sizeBytes: number
+  ): Promise<LiteratureItemView | undefined> {
+    const client = await this.getClient()
+    const version = await client.literatureAttachmentVersion.findFirst({
+      where: {
+        checksum,
+        sizeBytes: BigInt(sizeBytes),
+        attachment: { item: { deletedAt: null, mergedIntoItemId: null } }
+      },
+      select: { attachment: { select: { itemId: true } } },
+      orderBy: { id: 'asc' }
+    })
+    return version ? ((await this.get(version.attachment.itemId)) ?? undefined) : undefined
+  }
+
   async attachContent(
     input: AttachLiteratureContentInput,
     onAttached?: (
       transaction: Prisma.TransactionClient,
       result: AttachedLiteratureContent
-    ) => Promise<void>
+    ) => Promise<void>,
+    newItem?: LiteratureItemInput
   ): Promise<AttachedLiteratureContent> {
     const provenanceJson = input.provenance
       ? canonicalJson(literaturePdfProvenanceSchema.parse(input.provenance))
@@ -1690,23 +1738,13 @@ class LiteratureCatalog {
         const finish = async (
           result: AttachedLiteratureContent
         ): Promise<AttachedLiteratureContent> => {
+          await registerAttachmentNotes(transaction, result.versionId)
           await onAttached?.(transaction, result)
           return result
         }
-        const [item, blob] = await Promise.all([
-          transaction.literatureItem.findFirst({
-            where: { id: itemId, deletedAt: null },
-            select: { id: true, metadataRevision: true }
-          }),
-          transaction.contentBlob.findUnique({ where: { id: input.contentBlobId } })
-        ])
-        if (!item) throw new Error('Literature Item is unavailable.')
-        if (
-          input.expectedMetadataRevision !== undefined &&
-          item.metadataRevision !== input.expectedMetadataRevision
-        ) {
-          throw new Error('Literature Item changed before the PDF could be attached.')
-        }
+        const blob = await transaction.contentBlob.findUnique({
+          where: { id: input.contentBlobId }
+        })
         if (
           !blob ||
           blob.state !== 'available' ||
@@ -1715,6 +1753,38 @@ class LiteratureCatalog {
           (blob.contentType !== null && blob.contentType !== contentType)
         ) {
           throw new Error('Literature attachment bytes do not match the content authority.')
+        }
+        if (newItem) {
+          // Recheck inside the writing transaction: independent windows may both have observed
+          // an empty catalog before asking to add the same PDF.
+          const duplicate = await transaction.literatureAttachmentVersion.findFirst({
+            where: {
+              checksum: input.checksum,
+              sizeBytes: BigInt(input.sizeBytes),
+              attachment: { item: { deletedAt: null, mergedIntoItemId: null } }
+            },
+            include: { attachment: { select: { itemId: true } } },
+            orderBy: { id: 'asc' }
+          })
+          if (duplicate)
+            return finish({
+              attachmentId: duplicate.attachmentId,
+              versionId: duplicate.id,
+              itemId: duplicate.attachment.itemId
+            })
+          if (!(await transaction.literatureItem.findUnique({ where: { id: itemId } })))
+            await createItem(transaction, literatureItemInputSchema.parse(newItem), itemId)
+        }
+        const item = await transaction.literatureItem.findFirst({
+          where: { id: itemId, deletedAt: null },
+          select: { id: true, metadataRevision: true }
+        })
+        if (!item) throw new Error('Literature Item is unavailable.')
+        if (
+          input.expectedMetadataRevision !== undefined &&
+          item.metadataRevision !== input.expectedMetadataRevision
+        ) {
+          throw new Error('Literature Item changed before the PDF could be attached.')
         }
 
         if (!input.attachmentId) {
@@ -1774,7 +1844,7 @@ class LiteratureCatalog {
         })
         return finish({ attachmentId: attachment.id, versionId: version.id })
       },
-      { itemIds: [itemId] }
+      (result) => ({ itemIds: [result.itemId ?? itemId] })
     )
   }
 

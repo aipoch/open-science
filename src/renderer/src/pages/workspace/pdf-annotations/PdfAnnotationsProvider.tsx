@@ -1,3 +1,4 @@
+import type { TagView } from '../../../../../shared/tags'
 import { useTagStore } from '@/stores/tag-store'
 import { createRef, useCallback, useEffect, useMemo, useState } from 'react'
 
@@ -18,6 +19,7 @@ type Change = Readonly<{ before?: PdfAnnotation; after?: PdfAnnotation }>
 type Runtime = {
   scopeKey: string
   sourceGroups: PdfAnnotationSource[][]
+  readonlyIds: Set<string>
   active: boolean
   items: Map<string, PdfAnnotation>
   overlays: Map<string, PdfAnnotation | null>
@@ -53,6 +55,10 @@ type ScopeState = Readonly<{
   key: string
   annotations: readonly PdfAnnotation[]
   source?: PdfAnnotationSource
+  snapshotTags?: TagView[]
+  readonlyIds?: string[]
+  readOnly?: boolean
+  reconciliationSources?: PdfAnnotationSource[]
   sourceGroups?: PdfAnnotationSource[][]
   loading: boolean
   loadError?: string
@@ -96,6 +102,7 @@ const PdfAnnotationsProvider = ({
       ref.current = {
         scopeKey,
         sourceGroups: [],
+        readonlyIds: new Set(),
         active: false,
         items: new Map(),
         overlays: new Map(),
@@ -163,7 +170,11 @@ const PdfAnnotationsProvider = ({
     const load = async (): Promise<void> => {
       let cursor: { createdAt: string; id: string } | undefined
       const loaded = new Map<string, PdfAnnotation>()
+      let snapshotTags: TagView[] | undefined
+      const readonlyIds: string[] = []
+      let readOnly = false
       let sourceGroups: PdfAnnotationSource[][] | undefined
+      let reconciliationSources: PdfAnnotationSource[] | undefined
       let source: PdfAnnotationSource | undefined
       do {
         const result = await window.api.pdfAnnotations.list({
@@ -174,7 +185,11 @@ const PdfAnnotationsProvider = ({
           limit: PDF_ANNOTATION_LIMITS.pageSize
         })
         if (!active) return
+        readonlyIds.push(...(result.readonlyIds ?? []))
+        readOnly ||= result.readOnly === true
+        snapshotTags ??= result.snapshotTags
         sourceGroups ??= result.sourceGroups
+        reconciliationSources ??= result.reconciliationSources
         source ??=
           result.source ?? (sourceFileId && versionId ? result.items[0]?.target.source : undefined)
         for (const item of result.items) loaded.set(item.id, item)
@@ -186,6 +201,7 @@ const PdfAnnotationsProvider = ({
       }
       const previousGroups = runtime.current.sourceGroups
       runtime.current.sourceGroups = sourceGroups ?? []
+      runtime.current.readonlyIds = new Set(readonlyIds)
       // A refreshed external edit invalidates this document's local inverse commands.
       const changedSources = new Set<string>()
       const groupKey = (group: readonly PdfAnnotationSource[]): string =>
@@ -230,6 +246,10 @@ const PdfAnnotationsProvider = ({
             ? previous.source
             : source,
         sourceGroups,
+        reconciliationSources,
+        readonlyIds,
+        snapshotTags,
+        readOnly,
         loading: false,
         pending: runtime.current.pending,
         undoSources: runtime.current.undo.map((change) =>
@@ -426,6 +446,7 @@ const PdfAnnotationsProvider = ({
   const create = useCallback<PdfAnnotationPort['create']>(
     (id, target, kind, color, tagIds, note) =>
       enqueue(async () => {
+        if (runtime.current.readonlyIds.has(id)) throw unavailableError()
         const before = runtime.current.items.get(id)
         const created = await window.api.pdfAnnotations.create({
           id,
@@ -446,6 +467,7 @@ const PdfAnnotationsProvider = ({
   const update = useCallback<PdfAnnotationPort['update']>(
     (id, input) =>
       enqueue(async () => {
+        if (runtime.current.readonlyIds.has(id)) throw unavailableError()
         const before = runtime.current.items.get(id)
         if (!before) throw new Error('PDF annotation not found. Reload annotations and try again.')
         const next = {
@@ -471,6 +493,7 @@ const PdfAnnotationsProvider = ({
   const remove = useCallback<PdfAnnotationPort['remove']>(
     (id) =>
       enqueue(async () => {
+        if (runtime.current.readonlyIds.has(id)) throw unavailableError()
         const before = runtime.current.items.get(id)
         if (!before) throw new Error('PDF annotation not found. Reload annotations and try again.')
         const result = await window.api.pdfAnnotations.delete({
@@ -582,7 +605,13 @@ const PdfAnnotationsProvider = ({
       scoped: Boolean(scopeKey),
       sessionId,
       source: state.key === scopeKey ? state.source : undefined,
-      available: Boolean(scopeKey) && writable,
+      available: Boolean(scopeKey) && writable && !state.readOnly,
+      snapshotTags: state.snapshotTags,
+      isSnapshot: (id) => !!state.readonlyIds?.includes(id),
+      canEdit: (id) =>
+        Boolean(scopeKey) && writable && !state.readOnly && !state.readonlyIds?.includes(id),
+      needsReconciliation: (source) =>
+        !!state.reconciliationSources?.some((entry) => sourceKey(entry) === sourceKey(source)),
       shared: (source) =>
         !!state.sourceGroups?.some((group) =>
           group.some((entry) => sourceKey(entry) === sourceKey(source))

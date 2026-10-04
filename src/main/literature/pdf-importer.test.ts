@@ -94,6 +94,7 @@ describe('LiteraturePdfImporter', () => {
         )
       },
       catalog: {
+        findItemByPdf: vi.fn().mockResolvedValue(undefined),
         attachContent: vi.fn(async () => ({
           attachmentId: 'attachment-1',
           versionId: 'version-1'

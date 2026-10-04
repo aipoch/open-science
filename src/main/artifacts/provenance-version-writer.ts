@@ -1,3 +1,4 @@
+import { bindManagedPdfVersion } from '../pdf-annotations/document-store'
 import { mkdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
@@ -655,6 +656,7 @@ class ArtifactProvenanceVersionWriter {
           checksum: persisted.checksum,
           sizeBytes: persisted.sizeBytes
         })
+        await bindManagedPdfVersion(transaction, 'artifact-version', persisted.id)
         await transaction.artifactLineage.update({
           where: { id: persisted.artifactId },
           data: { filename: request.filename }

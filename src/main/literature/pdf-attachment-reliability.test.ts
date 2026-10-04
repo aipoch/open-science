@@ -188,7 +188,7 @@ describe('Literature PDF attachment reliability', () => {
       catalog,
       content,
       uploads: { resolveManagedUploadPath: async () => path, deleteUpload: async () => undefined },
-      sharing: {
+      workspace: {
         annotations,
         sources: {
           async withVerifiedSource(selected, operation) {
@@ -218,38 +218,38 @@ describe('Literature PDF attachment reliability', () => {
               ).toBe(selected.checksum)
             }
             await verifyUnchanged()
+            if (rejectFinalVerification) throw new Error('Source bytes changed')
+            await annotations.registerVerifiedSource(selected, bytes.length)
             return operation({ path, size: bytes.length, verifyUnchanged }, selected)
           }
         }
       }
     })
-    const input = { source, itemId: request.itemId, decisions: [] }
-    const preview = await importer.share(input)
-    expect((await catalog.get(request.itemId))!.attachments).toHaveLength(0)
-    const commit = annotations.commitSharing.bind(annotations)
-    vi.spyOn(annotations, 'commitSharing').mockImplementationOnce(async (...args) => {
-      await commit(...args)
-      throw new Error('Injected failure after linking')
-    })
-    await expect(importer.share({ ...input, token: preview.token })).rejects.toThrow(
-      'Injected failure'
+    const input = { source, itemId: request.itemId, operationId: crypto.randomUUID() }
+    const attach = catalog.attachContent.bind(catalog)
+    vi.spyOn(catalog, 'attachContent').mockImplementationOnce((input, onAttached, newItem) =>
+      attach(
+        input,
+        async (tx, result) => {
+          await onAttached?.(tx, result)
+          throw new Error('Injected failure after attaching')
+        },
+        newItem
+      )
     )
+    await expect(importer.addToLiterature(input)).rejects.toThrow('Injected failure')
     expect((await catalog.get(request.itemId))!.attachments).toHaveLength(0)
-    expect(await client!.pdfAnnotationSourceBinding.count()).toBe(1)
-    const committed = await importer.share({ ...input, token: preview.token })
-    expect(committed.committed).toBe(true)
-    const library = await annotations.list({ literatureVersionId: committed.targetVersionId! })
+    const committed = await importer.addToLiterature(input)
+    const versionId = committed.item.attachments[0].versions[0].id
+    const library = await annotations.list({ literatureVersionId: versionId })
     expect(library.items.map((note) => note.id)).toEqual(['workspace-note'])
-    const reopened = await importer.share(input)
-    expect(reopened.shared).toBe(true)
+    await importer.addToLiterature(input)
     rejectFinalVerification = true
-    await expect(importer.share({ ...input, token: reopened.token })).rejects.toThrow(
-      'Target bytes changed'
-    )
+    await expect(importer.addToLiterature(input)).rejects.toThrow('Source bytes changed')
     expect((await catalog.get(request.itemId))!.attachments).toHaveLength(1)
     expect(await client!.pdfAnnotation.count()).toBe(1)
     rejectFinalVerification = false
-    await importer.share({ ...input, token: reopened.token })
+    await importer.addToLiterature(input)
     expect((await catalog.get(request.itemId))!.attachments[0].versions).toHaveLength(1)
   })
 

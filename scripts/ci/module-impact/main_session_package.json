@@ -50,7 +50,8 @@
     "src/main/session-package/sensitive-content.ts",
     "src/main/session-package/sensitive-content.test.ts",
     "src/main/session-package/json-syntax.ts",
-    "src/main/session-package/json-syntax.test.ts"
+    "src/main/session-package/json-syntax.test.ts",
+    "src/main/session-package/pdf-notes.ts"
   ],
   "interfacePaths": [
     "src/main/session-package/desktop.ts",
@@ -59,7 +60,8 @@
     "src/main/session-package/inspection-worker.ts",
     "src/main/session-package/literature-reader.ts",
     "src/main/session-package/quit-guard.ts",
-    "src/main/session-package/service.ts"
+    "src/main/session-package/service.ts",
+    "src/main/session-package/pdf-notes.ts"
   ],
   "consumerModules": [],
   "testFiles": {

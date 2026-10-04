@@ -192,7 +192,7 @@ export async function composeResearchCatalog({
     content: contentRepository,
     catalog: literatureCatalog,
     annotations: pdfAnnotationRepository,
-    sharing: { annotations: pdfAnnotationRepository, sources: pdfAnnotationService },
+    workspace: { annotations: pdfAnnotationRepository, sources: pdfAnnotationService },
     onNativeImportProgress: (progress) =>
       applicationEvents.publish('pdf-annotations:import-progress', progress)
   })

@@ -34,11 +34,18 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     CONSTRAINT "bookmarks_json_check" CHECK (json_valid("sourceJson") AND json_type("sourceJson") = 'object' AND json_valid("selectorJson") AND json_type("selectorJson") = 'object' AND length("sourceJson") <= 65536 AND length("selectorJson") <= 65536),
     CONSTRAINT "bookmarks_content_check" CHECK (length("note") <= 2000 AND ("quote" IS NULL OR length("quote") BETWEEN 1 AND 4000) AND ("kind" != 'text' OR "quote" IS NOT NULL))
 );`,
-  `CREATE TABLE IF NOT EXISTS "pdf_annotation_documents" (
+  `CREATE TABLE IF NOT EXISTS "pdf_documents" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "checksum" TEXT NOT NULL,
+    "sizeBytes" BIGINT NOT NULL
+);`,
+  `CREATE TABLE IF NOT EXISTS "pdf_annotation_documents" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "pdfDocumentId" TEXT,
+    "checksum" TEXT NOT NULL,
     "sizeBytes" BIGINT,
-    "revision" INTEGER NOT NULL DEFAULT 0
+    "revision" INTEGER NOT NULL DEFAULT 0,
+    CONSTRAINT "pdf_annotation_documents_pdfDocumentId_fkey" FOREIGN KEY ("pdfDocumentId") REFERENCES "pdf_documents" ("id") ON DELETE CASCADE ON UPDATE CASCADE
 );`,
   `CREATE TABLE IF NOT EXISTS "pdf_annotation_sources" (
     "id" TEXT NOT NULL PRIMARY KEY,
@@ -429,6 +436,7 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
 );`,
   `CREATE TABLE IF NOT EXISTS "ContentBlob" (
     "id" TEXT NOT NULL PRIMARY KEY,
+    "pdfDocumentId" TEXT,
     "checksum" TEXT NOT NULL,
     "storageKey" TEXT NOT NULL,
     "sizeBytes" BIGINT NOT NULL,
@@ -438,6 +446,7 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "verifiedAt" DATETIME,
     "lastVerificationFailure" TEXT,
     "lastVerificationAttemptAt" DATETIME,
+    CONSTRAINT "ContentBlob_pdfDocumentId_fkey" FOREIGN KEY ("pdfDocumentId") REFERENCES "pdf_documents" ("id") ON DELETE RESTRICT ON UPDATE CASCADE,
     CONSTRAINT "ContentBlob_state_check" CHECK ("state" IN ('staging', 'available', 'quarantined')),
     CONSTRAINT "ContentBlob_sizeBytes_check" CHECK ("sizeBytes" >= 0)
 );`,
@@ -1233,6 +1242,8 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
 const RUNTIME_SCHEMA_INDEX_DDLS = [
   `CREATE INDEX IF NOT EXISTS "bookmarks_projectId_sessionId_createdAt_id_idx" ON "bookmarks"("projectId", "sessionId", "createdAt", "id");`,
   `CREATE INDEX IF NOT EXISTS "bookmarks_projectId_sessionId_sourceKind_sourceId_idx" ON "bookmarks"("projectId", "sessionId", "sourceKind", "sourceId");`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "pdf_documents_checksum_sizeBytes_key" ON "pdf_documents"("checksum", "sizeBytes");`,
+  `CREATE INDEX IF NOT EXISTS "pdf_annotation_documents_pdfDocumentId_idx" ON "pdf_annotation_documents"("pdfDocumentId");`,
   `CREATE INDEX IF NOT EXISTS "pdf_annotation_sources_projectId_sourceFileId_versionId_idx" ON "pdf_annotation_sources"("projectId", "sourceFileId", "versionId");`,
   `CREATE INDEX IF NOT EXISTS "pdf_annotation_sources_documentId_idx" ON "pdf_annotation_sources"("documentId");`,
   `CREATE INDEX IF NOT EXISTS "pdf_annotation_aliases_annotationId_idx" ON "pdf_annotation_aliases"("annotationId");`,
@@ -1285,6 +1296,7 @@ const RUNTIME_SCHEMA_INDEX_DDLS = [
   `CREATE UNIQUE INDEX IF NOT EXISTS "UploadFile_id_currentVersionId_key" ON "UploadFile"("id", "currentVersionId");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "ContentBlob_storageKey_key" ON "ContentBlob"("storageKey");`,
   `CREATE INDEX IF NOT EXISTS "ContentBlob_checksum_sizeBytes_idx" ON "ContentBlob"("checksum", "sizeBytes");`,
+  `CREATE INDEX IF NOT EXISTS "ContentBlob_pdfDocumentId_idx" ON "ContentBlob"("pdfDocumentId");`,
   `CREATE INDEX IF NOT EXISTS "ContentBlob_state_createdAt_idx" ON "ContentBlob"("state", "createdAt");`,
   `CREATE INDEX IF NOT EXISTS "LiteratureItem_deletedAt_updatedAt_idx" ON "LiteratureItem"("deletedAt", "updatedAt");`,
   `CREATE INDEX IF NOT EXISTS "LiteratureItem_mergedIntoItemId_idx" ON "LiteratureItem"("mergedIntoItemId");`,
@@ -1404,6 +1416,7 @@ const RUNTIME_SCHEMA_TARGET_SQL = [
 const RUNTIME_SCHEMA_TABLES = [
   'Project',
   'bookmarks',
+  'pdf_documents',
   'pdf_annotation_documents',
   'pdf_annotation_sources',
   'pdf_annotation_aliases',

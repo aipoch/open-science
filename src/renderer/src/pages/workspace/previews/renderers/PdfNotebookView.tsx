@@ -1,5 +1,5 @@
+import { PdfReconciliationDialog } from '../../pdf-annotations/PdfReconciliationDialog'
 import { pdfAnnotationSourceKey } from '../../pdf-annotations/pdf-annotation-index'
-import { PdfSharingDialog } from '../../pdf-annotations/PdfSharingDialog'
 import type { PdfAnnotation, PdfAnnotationSource } from '../../../../../../shared/pdf-annotations'
 import type { TagView } from '../../../../../../shared/tags'
 import { useTagStore } from '@/stores/tag-store'
@@ -399,7 +399,11 @@ const PdfNotebookView = ({
 
   const scopedPage = editingId || newNoteKind ? editingPage : currentPage
   const effectiveSort = sidebar ? 'page' : sort
-  const globalTags = useTagStore((state) => state.tags)
+  const localTags = useTagStore((state) => state.tags)
+  const globalTags = useMemo(
+    () => [...localTags, ...(annotationPort.snapshotTags ?? [])],
+    [localTags, annotationPort.snapshotTags]
+  )
   const tagsById = useMemo(() => new Map(globalTags.map((tag) => [tag.id, tag])), [globalTags])
   const tagNames = useCallback(
     (ids: readonly string[]) =>
@@ -765,8 +769,8 @@ const PdfNotebookView = ({
             {t('Notes are shared with linked sources. Edits and deletions apply everywhere.')}
           </p>
         ) : null}
-        {annotationPort.available ? (
-          <PdfSharingDialog
+        {annotationPort.available && annotationPort.needsReconciliation?.(source) ? (
+          <PdfReconciliationDialog
             key={pdfAnnotationSourceKey(source)}
             source={source}
             onChanged={annotationPort.retryLoad}
@@ -1308,12 +1312,20 @@ const PdfNotebookView = ({
                             )}
                             title={bookmark.externalSubtype ?? undefined}
                           >
-                            {bookmark.origin === 'imported' ? t('Imported') : t('Created')}
+                            {annotationPort.isSnapshot?.(bookmark.id)
+                              ? t('Read-only snapshot')
+                              : bookmark.origin === 'imported'
+                                ? t('Imported')
+                                : t('Created')}
                           </span>
                           <PdfAnnotationTagControls
                             annotation={bookmark}
                             tags={globalTags}
-                            disabled={!available || pendingId === bookmark.id}
+                            disabled={
+                              !available ||
+                              annotationPort.canEdit?.(bookmark.id) === false ||
+                              pendingId === bookmark.id
+                            }
                             onChange={(tagIds) => void updateTags(bookmark.id, tagIds)}
                           />
                         </div>
@@ -1333,7 +1345,10 @@ const PdfNotebookView = ({
                             type="button"
                             aria-label={t('Edit annotation note')}
                             disabled={
-                              !available || pendingId === bookmark.id || editingId !== undefined
+                              !available ||
+                              annotationPort.canEdit?.(bookmark.id) === false ||
+                              pendingId === bookmark.id ||
+                              editingId !== undefined
                             }
                             onClick={() => {
                               setEditingPage(currentPage)
@@ -1347,7 +1362,11 @@ const PdfNotebookView = ({
                           <button
                             type="button"
                             aria-label={t('Delete annotation')}
-                            disabled={!available || pendingId === bookmark.id}
+                            disabled={
+                              !available ||
+                              annotationPort.canEdit?.(bookmark.id) === false ||
+                              pendingId === bookmark.id
+                            }
                             onClick={() => void deleteAnnotation(bookmark.id)}
                             className="grid size-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                           >

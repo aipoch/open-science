@@ -122,6 +122,7 @@ it('keeps writes committed during a stale paged load', async () => {
   const load = deferred<PdfAnnotationListResult>()
   window.api = {
     pdfAnnotations: {
+      reconcile: vi.fn().mockResolvedValue(null),
       list: vi.fn(() => load.promise),
       create: vi.fn().mockResolvedValue(annotation),
       update: vi.fn(),
@@ -144,6 +145,7 @@ it('does not publish a pending write into a different Session', async () => {
   const save = deferred<PdfAnnotation>()
   window.api = {
     pdfAnnotations: {
+      reconcile: vi.fn().mockResolvedValue(null),
       list: vi.fn().mockResolvedValue({ items: [], total: 0 }),
       create: vi.fn(() => save.promise),
       update: vi.fn(),
@@ -210,6 +212,7 @@ it('preserves list failures for retry instead of treating them as an empty noteb
     .mockResolvedValue({ items: [annotation], total: 1 })
   window.api = {
     pdfAnnotations: {
+      reconcile: vi.fn().mockResolvedValue(null),
       list,
       create: vi.fn(),
       update: vi.fn(),
@@ -295,6 +298,7 @@ const installStore = (initial: PdfAnnotation[] = []): Map<string, PdfAnnotation>
   const timestamp = (): string => new Date(Date.UTC(2026, 8, 20, 0, 0, ++tick)).toISOString()
   window.api = {
     pdfAnnotations: {
+      reconcile: vi.fn().mockResolvedValue(null),
       list: vi.fn(async () => ({ items: [...items.values()], total: items.size })),
       create: vi.fn(async (request) => {
         const { createdAt, ...content } = request
@@ -627,6 +631,7 @@ it('uses the shared Literature version scope for writes and history without a Se
   }
   window.api = {
     pdfAnnotations: {
+      reconcile: vi.fn().mockResolvedValue(null),
       list: vi.fn().mockResolvedValue({ items: [], total: 0, source: global.target.source }),
       create: vi.fn().mockResolvedValue(global),
       delete: vi.fn().mockResolvedValue({ deleted: true })

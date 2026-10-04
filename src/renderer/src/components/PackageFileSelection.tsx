@@ -34,7 +34,7 @@ export const PackageFileSelection = ({
 }: {
   files: PackageSelectableFile[]
   summary?: PackageSelectionSummary
-  onSelect: (excludedStorageKeys: string[]) => void
+  onSelect: (excludedStorageKeys: string[], includePdfNotes?: boolean) => void
   onCancel: () => void
   notice?: React.ReactNode
   children?: React.ReactNode
@@ -46,6 +46,7 @@ export const PackageFileSelection = ({
   const { excludedStorageKeys, selectionPreset, threshold, setThreshold } =
     usePackageOperationStore()
   const [query, setQuery] = useState('')
+  const [includePdfNotes, setIncludePdfNotes] = useState(false)
   const [customizing, setCustomizing] = useState(false)
   const [page, setPage] = useState(0)
   const [retainedPage, setRetainedPage] = useState(0)
@@ -691,11 +692,24 @@ export const PackageFileSelection = ({
         </p>
         {notice}
       </div>
+      {summary?.pdfNotesAvailable ? (
+        <label className="flex items-start gap-2 px-5 py-3 text-sm">
+          <input
+            type="checkbox"
+            checked={includePdfNotes}
+            onChange={(event) => setIncludePdfNotes(event.target.checked)}
+          />
+          {t('Include shared PDF notes and annotations from all projects as a read-only snapshot')}
+        </label>
+      ) : null}
       <div className={`${dialogFooterClassName} shrink-0 flex-wrap`}>
         <Button variant="ghost" className={dialogCancelButtonClassName} onClick={onCancel}>
           {t('Cancel')}
         </Button>
-        <Button disabled={requiredOversized} onClick={() => onSelect([...excluded])}>
+        <Button
+          disabled={requiredOversized}
+          onClick={() => onSelect([...excluded], includePdfNotes)}
+        >
           {t('Export')}
         </Button>
       </div>

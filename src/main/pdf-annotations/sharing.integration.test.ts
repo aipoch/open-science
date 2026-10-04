@@ -1,3 +1,7 @@
+import {
+  registerVerifiedPdfContent,
+  removeUnreferencedPdfDocument
+} from '../pdf-documents/identity'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -132,7 +136,7 @@ afterEach(async () => {
   await client.$disconnect()
   await rm(root, { recursive: true, force: true })
 })
-it('shares only explicitly linked sources and preserves notes through either source deletion and restart', async () => {
+it('keeps unverified historical groups isolated while sharing explicitly linked sources and preserves notes through either source deletion and restart', async () => {
   const original = await repository.create(note('original'))
   await repository.create(note('private', { ...source, projectId: 'other' }))
   await repository.create(
@@ -273,4 +277,133 @@ it('rejects an old ID reconciled between the recovery read and create transactio
   })
   await expect(repository.create(note('stale-undo'))).rejects.toThrow('reconciled')
   expect(await client.pdfAnnotation.count()).toBe(1)
+})
+
+it('automatically shares verified bytes across projects and Literature, while new bytes stay separate', async () => {
+  await repository.registerVerifiedSource(source, 100)
+  const created = await repository.create(note('one-copy'))
+  const other = {
+    ...source,
+    projectId: 'other',
+    sourceFileId: 'independent',
+    versionId: 'independent-v'
+  }
+  await repository.registerVerifiedSource(other, 100)
+  await repository.registerVerifiedSource(target, 100)
+  expect(await client.pdfDocument.count()).toBe(1)
+  expect(await client.pdfAnnotationDocument.count()).toBe(1)
+  for (const scope of [
+    { projectId: 'p' },
+    { projectId: 'other' },
+    { literatureVersionId: target.versionId }
+  ])
+    expect((await repository.list(scope)).items.map((row) => row.id)).toEqual([created.id])
+  const competing = await Promise.allSettled([
+    repository.update({
+      projectId: 'other',
+      id: created.id,
+      expectedUpdatedAt: created.updatedAt,
+      note: 'Other project'
+    }),
+    repository.update({
+      literatureVersionId: target.versionId,
+      id: created.id,
+      expectedUpdatedAt: created.updatedAt,
+      note: 'Literature'
+    })
+  ])
+  expect(competing.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+  const next = { ...source, versionId: 'new-version', checksum: 'd'.repeat(64) }
+  await repository.registerVerifiedSource(next, 101)
+  expect((await repository.list({ projectId: 'p', versionId: next.versionId })).items).toEqual([])
+  await new ProjectRepository(async () => client).delete('p')
+  await client.$disconnect()
+  client = createProjectDbClient(root)
+  expect((await repository.list({ projectId: 'other' })).items.map((row) => row.id)).toEqual([
+    created.id
+  ])
+  const current = (await repository.list({ literatureVersionId: target.versionId })).items[0]
+  await repository.delete({
+    literatureVersionId: target.versionId,
+    id: current.id,
+    expectedUpdatedAt: current.updatedAt
+  })
+  expect((await repository.list({ projectId: 'other' })).items).toEqual([])
+})
+
+it('keeps independent native edits pending under one byte identity and rejects stale decisions', async () => {
+  const left = await imported(source, 'a')
+  const right = await imported(target, 'c')
+  await repository.update({ projectId: 'p', id: left, note: 'Workspace edit' })
+  await repository.update({
+    literatureVersionId: target.versionId,
+    id: right,
+    note: 'Library edit'
+  })
+  expect(await repository.registerVerifiedSource(source, 100)).toBe(false)
+  expect(await repository.registerVerifiedSource(target, 100)).toBe(true)
+  expect(await client.pdfDocument.count()).toBe(1)
+  const preview = await repository.reconcileSource(target, 100, [draft])
+  expect(preview?.conflicts).toHaveLength(1)
+  expect((await repository.list({ projectId: 'p' })).reconciliationSources).toBeDefined()
+  await repository.update({ projectId: 'p', id: left, note: 'Later edit' })
+  await expect(
+    repository.reconcileSource(target, 100, [draft], preview!.token, [
+      { key: draft.stableKey, choice: 'both' }
+    ])
+  ).rejects.toThrow('expired')
+  const refreshed = await repository.reconcileSource(target, 100, [draft])
+  await repository.reconcileSource(target, 100, [draft], refreshed!.token, [
+    { key: draft.stableKey, choice: 'both' }
+  ])
+  const result = await repository.list({ literatureVersionId: target.versionId })
+  expect(result.items.map((row) => row.note).sort()).toEqual(['Later edit', 'Library edit'])
+  expect(result.reconciliationSources).toBeUndefined()
+  expect(await client.pdfAnnotationDocument.count()).toBe(1)
+})
+
+it('does not reimport deleted native notes when an independent project opens the same PDF', async () => {
+  await repository.registerVerifiedSource(source, 100)
+  const id = await imported(source, 'a')
+  await repository.delete({ projectId: 'p', id })
+  const other = { ...source, projectId: 'other', versionId: 'other-v' }
+  await repository.registerVerifiedSource(other, 100)
+  await imported(other, 'c')
+  expect((await repository.list({ projectId: 'other' })).items).toEqual([])
+  expect(await repository.nativeImportReceipt({ projectId: 'other' }, other)).toMatchObject({
+    nativeRefs: [{ id: '12R', pageNumber: 1 }]
+  })
+})
+
+it('retains the shared document until the final managed content and source are removed', async () => {
+  // Legacy note exists before the PDF identity layer has seen either source.
+  await repository.create(note('retained', target))
+  await client.contentBlob.update({ where: { id: 'blob' }, data: { verifiedAt: new Date() } })
+  const document = await client.$transaction((tx) =>
+    registerVerifiedPdfContent(tx, { checksum, sizeBytes: 100n })
+  )
+  await client.contentBlob.create({
+    data: {
+      id: 'other-physical-copy',
+      checksum,
+      storageKey: 'other.pdf',
+      sizeBytes: 100n,
+      state: 'available',
+      verifiedAt: new Date(),
+      pdfDocumentId: document.id
+    }
+  })
+  await client.$transaction(async (tx) => {
+    await deletePdfAnnotations(tx, { sourceKind: target.kind, versionId: target.versionId })
+    await tx.literatureItem.delete({ where: { id: 'item' } })
+    await tx.contentBlob.delete({ where: { id: 'blob' } })
+    await removeUnreferencedPdfDocument(tx, document.id)
+  })
+  expect(await client.pdfAnnotation.count()).toBe(1)
+  await client.$transaction(async (tx) => {
+    await tx.contentBlob.delete({ where: { id: 'other-physical-copy' } })
+    await removeUnreferencedPdfDocument(tx, document.id)
+  })
+  expect(await client.pdfDocument.count()).toBe(0)
+  expect(await client.pdfAnnotation.count()).toBe(0)
 })

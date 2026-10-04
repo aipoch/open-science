@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { TAG_RESOURCE_ID_MAX_LENGTH } from './tags'
+import { TAG_RESOURCE_ID_MAX_LENGTH, tagViewSchema } from './tags'
 import { defineApplicationCommandContract, validationCodec } from './application-command-contract'
 import {
   PDF_MARK_COLORS,
@@ -245,8 +245,16 @@ export const pdfAnnotationListResultSchema = z
     items: z.array(pdfAnnotationSchema).max(PDF_ANNOTATION_LIMITS.pageSize),
     total: z.number().int().nonnegative(),
     nativeImport: pdfNativeImportReceiptSchema.optional(),
+    snapshotTags: z.array(tagViewSchema).max(10000).optional(),
+    readOnly: z.boolean().optional(),
+    readonlyIds: z.array(identity).max(PDF_ANNOTATION_LIMITS.pageSize).optional(),
     source: z
       .custom<PdfAnnotationSource>((value) => sanitizePdfDocumentSource(value) !== undefined)
+      .optional(),
+    reconciliationSources: z
+      .array(
+        z.custom<PdfAnnotationSource>((value) => sanitizePdfDocumentSource(value) !== undefined)
+      )
       .optional(),
     sourceGroups: z
       .array(
@@ -278,33 +286,6 @@ export type PdfNativeAnnotationCancelRequest = z.infer<
   typeof pdfNativeAnnotationCancelRequestSchema
 >
 
-export const pdfAnnotationApplicationCommandContracts = Object.freeze({
-  list: defineApplicationCommandContract(
-    validationCodec(z.tuple([listPdfAnnotationsRequestSchema])),
-    validationCodec(pdfAnnotationListResultSchema)
-  ),
-  create: defineApplicationCommandContract(
-    validationCodec(z.tuple([createPdfAnnotationRequestSchema])),
-    validationCodec(pdfAnnotationSchema)
-  ),
-  update: defineApplicationCommandContract(
-    validationCodec(z.tuple([updatePdfAnnotationRequestSchema])),
-    validationCodec(pdfAnnotationSchema)
-  ),
-  delete: defineApplicationCommandContract(
-    validationCodec(z.tuple([deletePdfAnnotationRequestSchema])),
-    validationCodec(deletePdfAnnotationResultSchema)
-  ),
-  importNative: defineApplicationCommandContract(
-    validationCodec(z.tuple([pdfNativeAnnotationImportRequestSchema])),
-    validationCodec(pdfNativeAnnotationImportResultSchema)
-  ),
-  cancelImport: defineApplicationCommandContract(
-    validationCodec(z.tuple([pdfNativeAnnotationCancelRequestSchema])),
-    validationCodec(z.object({ cancelled: z.boolean() }).strict())
-  )
-})
-
 export {
   pdfNativeAnnotationCancelRequestSchema,
   pdfNativeAnnotationImportProgressSchema,
@@ -312,24 +293,23 @@ export {
   pdfNativeAnnotationImportResultSchema
 }
 
-// Explicit association, never a hash-based search across projects.
+// Historical native annotation reconciliation; normal source identity needs no share action.
 export const pdfSharingDecisionSchema = z
   .object({ key: identity, choice: z.enum(['left', 'right', 'both', 'delete']) })
   .strict()
-export const pdfSharingRequestSchema = z
+export const pdfAddToLiteratureRequestSchema = z
   .object({
     source: z.custom<PdfAnnotationSource>(
       (value) => sanitizePdfDocumentSource(value) !== undefined
     ),
-    itemId: identity,
-    targetVersionId: identity.optional(),
-    token: z
-      .string()
-      .regex(/^[a-f0-9]{64}$/)
-      .optional(),
-    decisions: z.array(pdfSharingDecisionSchema).max(1000).default([])
+    operationId: z.string().uuid(),
+    itemId: identity.optional(),
+    title: z.string().trim().min(1).max(2000).optional()
   })
   .strict()
+  .refine((value) => !!value.itemId !== !!value.title)
+export type PdfAddToLiteratureRequest = z.infer<typeof pdfAddToLiteratureRequestSchema>
+
 export const pdfSharingPreviewSchema = z
   .object({
     token: z.string(),
@@ -369,10 +349,50 @@ export const pdfSharingPreviewSchema = z
     committed: z.boolean().optional()
   })
   .strict()
-export type PdfSharingRequest = z.infer<typeof pdfSharingRequestSchema>
 export type PdfSharingDecision = z.infer<typeof pdfSharingDecisionSchema>
 export type PdfSharingPreview = z.infer<typeof pdfSharingPreviewSchema>
-export const pdfSharingContract = defineApplicationCommandContract(
-  validationCodec(z.tuple([pdfSharingRequestSchema])),
-  validationCodec(pdfSharingPreviewSchema)
-)
+
+export const pdfReconcileRequestSchema = z
+  .object({
+    source: z.custom<PdfAnnotationSource>(
+      (value) => sanitizePdfDocumentSource(value) !== undefined
+    ),
+    token: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
+    decisions: z.array(pdfSharingDecisionSchema).max(1000).default([])
+  })
+  .strict()
+export type PdfReconcileRequest = z.infer<typeof pdfReconcileRequestSchema>
+
+export const pdfAnnotationApplicationCommandContracts = Object.freeze({
+  reconcile: defineApplicationCommandContract(
+    validationCodec(z.tuple([pdfReconcileRequestSchema])),
+    validationCodec(pdfSharingPreviewSchema.nullable())
+  ),
+  list: defineApplicationCommandContract(
+    validationCodec(z.tuple([listPdfAnnotationsRequestSchema])),
+    validationCodec(pdfAnnotationListResultSchema)
+  ),
+  create: defineApplicationCommandContract(
+    validationCodec(z.tuple([createPdfAnnotationRequestSchema])),
+    validationCodec(pdfAnnotationSchema)
+  ),
+  update: defineApplicationCommandContract(
+    validationCodec(z.tuple([updatePdfAnnotationRequestSchema])),
+    validationCodec(pdfAnnotationSchema)
+  ),
+  delete: defineApplicationCommandContract(
+    validationCodec(z.tuple([deletePdfAnnotationRequestSchema])),
+    validationCodec(deletePdfAnnotationResultSchema)
+  ),
+  importNative: defineApplicationCommandContract(
+    validationCodec(z.tuple([pdfNativeAnnotationImportRequestSchema])),
+    validationCodec(pdfNativeAnnotationImportResultSchema)
+  ),
+  cancelImport: defineApplicationCommandContract(
+    validationCodec(z.tuple([pdfNativeAnnotationCancelRequestSchema])),
+    validationCodec(z.object({ cancelled: z.boolean() }).strict())
+  )
+})

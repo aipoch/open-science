@@ -440,7 +440,8 @@
       "src/renderer/src/pages/literature/journals/JournalAlignment.render.test.tsx",
       "src/renderer/src/pages/literature/list/LiteratureFilters.render.test.tsx",
       "src/renderer/src/pages/literature/literature-localization.render.test.tsx",
-      "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.interaction.test.tsx"
+      "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.interaction.test.tsx",
+      "src/renderer/src/pages/workspace/pdf-annotations/PdfDocumentDialogs.test.tsx"
     ]
   },
   "capabilityOverlays": [],

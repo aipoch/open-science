@@ -1,3 +1,4 @@
+import { validatePackagePdfNotes, type PackagePdfNotes } from './pdf-notes'
 import { parseOwnedExecutionFileEvidenceSummary } from '../../shared/execution-file-evidence'
 import {
   packageLiteratureSchema,
@@ -65,6 +66,7 @@ export type NativeRow = Record<string, string | number | boolean | null>
 export type PackageRecords = {
   schemaVersion: 1
   tables: Record<NativeTable, NativeRow[]>
+  pdfNotes?: PackagePdfNotes
   literature?: PackageLiterature
   history?: PackageHistory
   reproducibility?: PackageReproducibility
@@ -349,6 +351,7 @@ export const parseNativeRecords = (value: unknown): PackageRecords => {
     }
   }
   validatePackageLiterature(value as PackageRecords)
+  validatePackagePdfNotes(value as PackageRecords)
   return value as PackageRecords
 }
 

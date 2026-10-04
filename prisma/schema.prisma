@@ -64,10 +64,26 @@ model Bookmark {
   @@map("bookmarks")
 }
 
-// Multiple explicitly associated source versions can share one annotation document.
-// Equal content alone does not grant access or merge independently uploaded notes.
+// Personal-database PDF identity. Only verified immutable bytes may acquire this identity.
+// Existing Upload/Artifact/Literature/Inbox version references own the source lifecycle through
+// ContentBlob; a second source registry would duplicate those authoritative relationships.
+model PdfDocument {
+  id                  String                  @id
+  checksum            String
+  sizeBytes           BigInt
+  content             ContentBlob[]
+  annotationDocuments PdfAnnotationDocument[]
+
+  @@unique([checksum, sizeBytes])
+  @@map("pdf_documents")
+}
+
+// Legacy groups remain separate until conflicting native edits have been reconciled.
+// New sources of one verified PdfDocument use its canonical annotation group.
 model PdfAnnotationDocument {
   id          String                       @id
+  pdfDocumentId String?
+  pdfDocument PdfDocument? @relation(fields: [pdfDocumentId], references: [id], onDelete: Cascade)
   checksum    String
   sizeBytes   BigInt?
   revision    Int                          @default(0)
@@ -76,6 +92,7 @@ model PdfAnnotationDocument {
   imports     PdfAnnotationImport[]
   aliases     PdfAnnotationAlias[]
 
+  @@index([pdfDocumentId])
   @@map("pdf_annotation_documents")
 }
 
@@ -564,6 +581,8 @@ model UploadFile {
 // in those domain models rather than being folded into storage.
 model ContentBlob {
   id                           String                        @id
+  pdfDocumentId                String?
+  pdfDocument                  PdfDocument? @relation(fields: [pdfDocumentId], references: [id], onDelete: Restrict)
   checksum                     String
   storageKey                   String                        @unique
   sizeBytes                    BigInt
@@ -577,6 +596,7 @@ model ContentBlob {
   literatureInboxPdfs          LiteratureInboxPdf[]
 
   @@index([checksum, sizeBytes])
+  @@index([pdfDocumentId])
   @@index([state, createdAt])
 }
 

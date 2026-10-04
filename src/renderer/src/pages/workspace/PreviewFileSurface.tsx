@@ -1,3 +1,5 @@
+import { PdfAddToLiteratureDialog } from './pdf-annotations/PdfAddToLiteratureDialog'
+import type { PdfAnnotationSource } from '../../../../shared/pdf-annotations'
 import { PdfExportProvider } from './pdf-annotations/PdfExportProvider'
 import { useVersionHistoryPages } from './use-version-history-pages'
 import { VersionHistoryLoadButton } from './VersionHistoryLoadButton'
@@ -71,7 +73,11 @@ import {
   useManagedFileDownload,
   type ManagedFileDownloadController
 } from './use-managed-file-download'
-import { usePdfContextAction, type PdfContextAction } from './use-pdf-context-action'
+import {
+  resolvePdfContextTarget,
+  usePdfContextAction,
+  type PdfContextAction
+} from './use-pdf-context-action'
 import {
   createProjectFileResolveRequest,
   createPreviewFileItemForArtifactVersion,
@@ -700,6 +706,7 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
     // Bumping this token remounts the content tree so a local file is re-read from disk.
     const [reloadToken, setReloadToken] = useState(0)
     const [copied, setCopied] = useState(false)
+    const [addPdfSource, setAddPdfSource] = useState<{ key: string; source: PdfAnnotationSource }>()
     const [saveAsArtifactState, setSaveAsArtifactState] = useState<SaveAsArtifactState>('idle')
     const [localActionFailure, setLocalActionFailure] = useState<LocalFileActionFailure>()
     const copiedTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
@@ -1420,6 +1427,32 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
     const managedDownloadUnavailable =
       (resolvedPreviewItem.source === 'artifact' || resolvedPreviewItem.source === 'upload') &&
       (!resolvedPreviewItem.projectId || !resolvedPreviewItem.managedFileId)
+    const addPdfTarget = resolvePdfContextTarget(resolvedPreviewItem)
+    const addPdfSessionId = managedNavigationInspect?.sessionId ?? resolvedPreviewItem.sessionId
+    const addPdfBinding =
+      addPdfTarget &&
+      addPdfTarget.sourceKind !== 'literature-attachment-version' &&
+      addPdfTarget.sourceFileId &&
+      projectId &&
+      addPdfSessionId &&
+      !annotationVersionPending
+        ? {
+            'pdf-add-to-literature': {
+              execute: async () => {
+                const result = await window.api.bookmarks.resolvePdfSource({
+                  projectId,
+                  sessionId: addPdfSessionId,
+                  sourceKind: addPdfTarget.sourceKind as 'upload-version' | 'artifact-version',
+                  sourceFileId: addPdfTarget.sourceFileId!,
+                  versionId: addPdfTarget.sourceVersionId
+                })
+                if (!result.ok)
+                  throw new Error(t('PDF annotations are unavailable for this source.'))
+                setAddPdfSource({ key: previewIdentityKey, source: result.source })
+              }
+            }
+          }
+        : {}
     const previewActionBindings: PreviewActionBindings =
       resolvedPreviewItem.source === 'local'
         ? {
@@ -1438,6 +1471,7 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
             close: { execute: closePreview }
           }
         : {
+            ...addPdfBinding,
             ...(visiblePdfContextAction
               ? {
                   'pdf-context': {
@@ -1495,6 +1529,13 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
           if (open) contextMenuComposerFocusRequestedRef.current = false
         }}
       >
+        {addPdfSource?.key === previewIdentityKey ? (
+          <PdfAddToLiteratureDialog
+            key={previewIdentityKey}
+            source={addPdfSource.source}
+            onClose={() => setAddPdfSource(undefined)}
+          />
+        ) : null}
         <PreviewActionMenuAdapterProvider targetId={previewActionTargetId}>
           <ActionMenuTarget<PreviewCapabilityId, undefined>
             targetId={previewActionTargetId}

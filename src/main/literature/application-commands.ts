@@ -1,8 +1,5 @@
-import {
-  pdfSharingContract,
-  type PdfSharingRequest,
-  type PdfSharingPreview
-} from '../../shared/pdf-annotations'
+import type { PdfAddToLiteratureRequest } from '../../shared/pdf-annotations'
+import { pdfAddToLiteratureContract } from '../../shared/literature'
 import {
   journalAttributesContract,
   type JournalRequest,
@@ -52,7 +49,10 @@ import {
 } from '../application-command-router'
 
 type LiteratureCommandOwner = Readonly<{
-  sharePdf(request: PdfSharingRequest, signal?: AbortSignal): Promise<PdfSharingPreview>
+  addPdf(
+    request: PdfAddToLiteratureRequest,
+    signal?: AbortSignal
+  ): Promise<LiteraturePdfImportReceipt>
   journals(request: JournalRequest): Promise<JournalResult>
   exportRecord(request: LiteratureExportRecordRequest): Promise<LiteratureExportRecordResult>
   jobs(request: LiteratureJobRequest): Promise<LiteratureJobsResult>
@@ -79,11 +79,11 @@ type LiteratureCommandOwner = Readonly<{
 }>
 
 const literatureApplicationCommands = Object.freeze({
-  sharePdf: defineApplicationCommand<
-    'literature:share-pdf',
-    readonly [PdfSharingRequest],
-    PdfSharingPreview
-  >('literature:share-pdf', pdfSharingContract),
+  addPdf: defineApplicationCommand<
+    'literature:add-pdf',
+    readonly [PdfAddToLiteratureRequest],
+    LiteraturePdfImportReceipt
+  >('literature:add-pdf', pdfAddToLiteratureContract),
   journals: defineApplicationCommand<
     'literature:journals',
     readonly [JournalRequest],
@@ -179,7 +179,7 @@ const literatureApplicationCommandGroup = defineApplicationCommandGroup('literat
   literatureApplicationCommands.get,
   literatureApplicationCommands.sources,
   literatureApplicationCommands.importPdf,
-  literatureApplicationCommands.sharePdf,
+  literatureApplicationCommands.addPdf,
   literatureApplicationCommands.cancelPdfImport,
   literatureApplicationCommands.importRecords,
   literatureApplicationCommands.search,
@@ -212,8 +212,8 @@ const registerLiteratureApplicationCommands = (
       'literature:get': ({ args }) => withDataRootWrite(() => owner.get(args[0])),
       'literature:import-pdf': ({ args, callerLease }) =>
         withDataRootWrite(() => owner.importPdf(args[0], callerLease.signal)),
-      'literature:share-pdf': ({ args, callerLease }) =>
-        withDataRootWrite(() => owner.sharePdf(args[0], callerLease.signal)),
+      'literature:add-pdf': ({ args, callerLease }) =>
+        withDataRootWrite(() => owner.addPdf(args[0], callerLease.signal)),
       'literature:cancel-pdf-import': ({ args }) => owner.cancelPdfImport(args[0]),
       'literature:import-records': ({ args }) =>
         withDataRootWrite(() => owner.importRecords(args[0])),

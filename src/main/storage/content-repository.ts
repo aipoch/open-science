@@ -6,6 +6,10 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { recoverAnchoredRemoval, removeAnchoredFile } from '../uploads/atomic-no-replace-publisher'
 
 import type { PrismaClient } from '@prisma/client'
+import {
+  registerPublishedPdfContent,
+  removeUnreferencedPdfDocument
+} from '../pdf-documents/identity'
 import { NodeVersionFileOperator } from '../managed-file-versions/version-file-operator'
 import type { ManagedFileReadLease } from '../managed-file-versions/service'
 
@@ -210,6 +214,7 @@ class ContentRepository {
       if (existing?.state === 'available') {
         const verification = await this.verifyLocked(id)
         if (verification.state === 'available') {
+          await client.$transaction((tx) => registerPublishedPdfContent(tx, verification.content))
           await request.commit?.(verification.content)
           return retain(verification.content)
         }
@@ -284,6 +289,7 @@ class ContentRepository {
           checksum
         })
         const content = await this.open(id)
+        await client.$transaction((tx) => registerPublishedPdfContent(tx, content))
         await request.commit?.(content)
         return retain(content)
       } catch (error) {
@@ -710,7 +716,10 @@ class ContentRepository {
         )
       }
     }
-    await client.contentBlob.deleteMany({ where: { id: contentId, state: 'quarantined' } })
+    await client.$transaction(async (tx) => {
+      await tx.contentBlob.deleteMany({ where: { id: contentId, state: 'quarantined' } })
+      if (claimed.pdfDocumentId) await removeUnreferencedPdfDocument(tx, claimed.pdfDocumentId)
+    })
     this.verifiedContent.delete(contentId)
     return true
   }

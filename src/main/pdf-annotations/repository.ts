@@ -1,4 +1,5 @@
 import { previewSharing, commitSharing } from './sharing'
+import { registerVerifiedPdfContent } from '../pdf-documents/identity'
 import type { PdfNativeAnnotationDraft } from './native-import-core'
 import type { PdfSharingPreview, PdfSharingDecision } from '../../shared/pdf-annotations'
 import {
@@ -57,6 +58,10 @@ import {
 type Client = Pick<
   PrismaClient,
   | '$transaction'
+  | 'pdfDocument'
+  | 'contentBlob'
+  | 'uploadVersion'
+  | 'artifactVersion'
   | 'pdfAnnotationDocument'
   | 'pdfAnnotationSourceBinding'
   | 'pdfAnnotationAlias'
@@ -70,6 +75,10 @@ type Client = Pick<
 >
 type Transaction = Pick<
   Prisma.TransactionClient,
+  | 'pdfDocument'
+  | 'contentBlob'
+  | 'uploadVersion'
+  | 'artifactVersion'
   | 'pdfAnnotationDocument'
   | 'pdfAnnotationSourceBinding'
   | 'pdfAnnotationAlias'
@@ -353,6 +362,83 @@ class PdfAnnotationRepository {
     }
   }
 
+  async registerVerifiedSource(source: PdfAnnotationSource, sizeBytes: number): Promise<boolean> {
+    const client = await this.getClient()
+    const result = await client.$transaction(async (tx) => {
+      await requireDocumentOwner(tx, {
+        ...source,
+        sourceKind: source.kind,
+        projectId: source.projectId ?? null
+      })
+      const document = await registerVerifiedPdfContent(tx, {
+        checksum: source.checksum,
+        sizeBytes: BigInt(sizeBytes)
+      })
+      const previous = await tx.pdfAnnotationSourceBinding.findUnique({
+        where: { id: bindingId(source) }
+      })
+      const binding = await ensureBinding(tx, source, document)
+      return {
+        changed: previous?.documentId !== binding.documentId,
+        pending:
+          (await tx.pdfAnnotationDocument.count({ where: { pdfDocumentId: document.id } })) > 1
+      }
+    })
+    if (result.changed) await this.notifySharing(source)
+    return result.pending
+  }
+
+  async reconcileSource(
+    source: PdfAnnotationSource,
+    sizeBytes: number,
+    drafts: readonly PdfNativeAnnotationDraft[],
+    token?: string,
+    decisions: readonly PdfSharingDecision[] = []
+  ): Promise<PdfSharingPreview | null> {
+    const client = await this.getClient()
+    let merged = false
+    const result = await client.$transaction(async (tx) => {
+      await requireDocumentOwner(tx, {
+        ...source,
+        sourceKind: source.kind,
+        projectId: source.projectId ?? null
+      })
+      const binding = await ensureBinding(tx, source)
+      const document = await tx.pdfAnnotationDocument.findUniqueOrThrow({
+        where: { id: binding.documentId }
+      })
+      if (!document.pdfDocumentId || document.sizeBytes !== BigInt(sizeBytes))
+        throw new Error('PDF content identity is not verified.')
+      const groups = await tx.pdfAnnotationDocument.findMany({
+        where: { pdfDocumentId: document.pdfDocumentId, id: { not: document.pdfDocumentId } },
+        orderBy: { id: 'asc' }
+      })
+      for (const group of groups) {
+        const documents = { left: document.pdfDocumentId, right: group.id }
+        const context = `reconcile:${document.pdfDocumentId}`
+        const preview = await previewSharing(tx, source, source, drafts, context, documents)
+        if (preview.conflicts.length && !token) return preview
+        await commitSharing(
+          tx,
+          source,
+          source,
+          sizeBytes,
+          drafts,
+          context,
+          token ?? preview.token,
+          decisions,
+          documents
+        )
+        merged = true
+        // A decision token covers exactly one conflicting group. The next group is reviewed anew.
+        if (token) return { ...preview, committed: true, shared: true }
+      }
+      return null
+    })
+    if (merged) await this.notifySharing(source)
+    return result
+  }
+
   async previewSharing(
     source: PdfAnnotationSource,
     target: PdfAnnotationSource,
@@ -434,6 +520,25 @@ class PdfAnnotationRepository {
       const sourceGroups = documents
         .filter((document) => document.sources.length > 1)
         .map((document) => document.sources.map(bindingSource))
+      const pending = await transaction.pdfAnnotationDocument.findMany({
+        where: {
+          pdfDocumentId: {
+            in: documents.flatMap((document) =>
+              document.pdfDocumentId ? [document.pdfDocumentId] : []
+            )
+          }
+        },
+        select: { id: true, pdfDocumentId: true }
+      })
+      const reconciliationSources = documents
+        .filter(
+          (document) =>
+            document.pdfDocumentId &&
+            pending.some(
+              (group) => group.pdfDocumentId === document.pdfDocumentId && group.id !== document.id
+            )
+        )
+        .flatMap((document) => document.sources.map(bindingSource))
       const projected = await Promise.all(
         rows.slice(0, limit).map((row) => scopedRow(transaction, row, request))
       )
@@ -452,6 +557,7 @@ class PdfAnnotationRepository {
         items: page,
         total,
         ...(sourceGroups.length ? { sourceGroups } : {}),
+        ...(reconciliationSources.length ? { reconciliationSources } : {}),
         ...(receipt
           ? { nativeImport: pdfNativeImportReceiptSchema.parse(JSON.parse(receipt.resultJson)) }
           : {}),

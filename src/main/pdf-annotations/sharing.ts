@@ -28,9 +28,11 @@ const receipt = (
   row: PdfAnnotationImport | null
 ): ReturnType<typeof pdfNativeImportReceiptSchema.parse> | undefined =>
   row ? pdfNativeImportReceiptSchema.parse(JSON.parse(row.resultJson)) : undefined
+type Documents = { left: string; right: string }
 const snapshot = async (
   tx: DocumentTransaction,
-  source: PdfAnnotationSource
+  source: PdfAnnotationSource,
+  documentOverride?: string
 ): Promise<{
   binding: Awaited<ReturnType<typeof tx.pdfAnnotationSourceBinding.findUnique>>
   sources: Awaited<ReturnType<typeof tx.pdfAnnotationSourceBinding.findMany>>
@@ -42,7 +44,7 @@ const snapshot = async (
   const binding = await tx.pdfAnnotationSourceBinding.findUnique({
     where: { id: bindingId(source) }
   })
-  const documentId = binding?.documentId
+  const documentId = documentOverride ?? binding?.documentId
   if (binding && binding.checksum !== source.checksum)
     throw new Error('PDF source content changed.')
   return {
@@ -117,12 +119,13 @@ const inspect = async (
   source: PdfAnnotationSource,
   target: PdfAnnotationSource,
   drafts: readonly PdfNativeAnnotationDraft[],
-  context: string
+  context: string,
+  documents?: Documents
 ): Promise<{ preview: PdfSharingPreview; left: Snapshot; right: Snapshot; pairs: Pair[] }> => {
   if (source.checksum !== target.checksum) throw new Error('PDF contents do not match.')
-  const left = await snapshot(tx, source),
-    right = await snapshot(tx, target)
-  const shared = !!left.binding && left.binding.documentId === right.binding?.documentId
+  const left = await snapshot(tx, source, documents?.left),
+    right = await snapshot(tx, target, documents?.right)
+  const shared = !!left.document && left.document.id === right.document?.id
   const pairs: Pair[] = shared
     ? []
     : drafts
@@ -221,8 +224,10 @@ export const previewSharing = async (
   source: PdfAnnotationSource,
   target: PdfAnnotationSource,
   drafts: readonly PdfNativeAnnotationDraft[],
-  context: string
-): Promise<PdfSharingPreview> => (await inspect(tx, source, target, drafts, context)).preview
+  context: string,
+  documents?: Documents
+): Promise<PdfSharingPreview> =>
+  (await inspect(tx, source, target, drafts, context, documents)).preview
 
 export const commitSharing = async (
   tx: DocumentTransaction,
@@ -232,9 +237,10 @@ export const commitSharing = async (
   drafts: readonly PdfNativeAnnotationDraft[],
   context: string,
   token: string,
-  decisions: readonly PdfSharingDecision[]
+  decisions: readonly PdfSharingDecision[],
+  documents?: Documents
 ): Promise<void> => {
-  const inspection = await inspect(tx, source, target, drafts, context)
+  const inspection = await inspect(tx, source, target, drafts, context, documents)
   if (inspection.preview.token !== token)
     throw new Error('PDF sharing preview expired. Review the current notes again.')
   if (inspection.preview.shared) return
@@ -254,8 +260,8 @@ export const commitSharing = async (
     )
       throw new Error('Invalid PDF sharing decisions.')
   }
-  const l = await ensureBinding(tx, source),
-    r = await ensureBinding(tx, target)
+  const l = documents ? { documentId: documents.left } : await ensureBinding(tx, source),
+    r = documents ? { documentId: documents.right } : await ensureBinding(tx, target)
   const documentId = l.documentId
   for (const pair of inspection.pairs) {
     const lrow = pair.left.row,

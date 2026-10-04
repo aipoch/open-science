@@ -1,3 +1,4 @@
+import type { PackageFileSelection } from '../../shared/session-package'
 import { randomUUID } from 'node:crypto'
 import { createLogger } from '../logger'
 import {
@@ -35,7 +36,7 @@ export class SessionPackageOperation {
   private importResponse?: (target?: SessionPackageImportRequest) => void
   private pendingImports: NonNullable<PackageOperationSnapshot['pendingImports']> = []
   private importQueueFull = false
-  private selection?: (keys: readonly string[]) => void
+  private selection?: (selection: PackageFileSelection) => void
   private lastProgressAt = 0
   private autoRate = PACKAGE_DEFAULT_IO_BYTES_PER_SECOND
   private autoAdjustedAt = 0
@@ -225,13 +226,13 @@ export class SessionPackageOperation {
     files: PackageSelectableFile[],
     budgetSignal?: AbortSignal,
     summary?: PackageSelectionSummary
-  ): Promise<readonly string[]> => {
+  ): Promise<PackageFileSelection> => {
     const signal =
       this.controller &&
       AbortSignal.any([this.controller.signal, ...(budgetSignal ? [budgetSignal] : [])])
     if (!signal || !this.current) throw new Error('No active package operation.')
     signal.throwIfAborted()
-    const selected = new Promise<readonly string[]>((resolve, reject) => {
+    const selected = new Promise<PackageFileSelection>((resolve, reject) => {
       const abort = (): void => {
         this.selection = undefined
         reject(signal.reason)
@@ -329,7 +330,10 @@ export class SessionPackageOperation {
       if (files.some((file) => file.requiredForEvidence && keys.has(file.storageKey)))
         throw new Error('Invalid package selection.')
       this.current = { ...this.current, state: 'running', files: undefined, summary: undefined }
-      this.selection([...keys])
+      this.selection({
+        excludedStorageKeys: [...keys],
+        includePdfNotes: request.includePdfNotes === true
+      })
       this.publish()
     }
     return this.snapshot

@@ -71,7 +71,10 @@ const createMockClient = (
     findFirst: vi.fn().mockResolvedValue(null),
     deleteMany: vi.fn().mockResolvedValue({ count: 1 })
   }
-  const pdfAnnotationDocument = { delete: vi.fn().mockResolvedValue({}) }
+  const pdfAnnotationDocument = {
+    findUnique: vi.fn().mockResolvedValue({ id: 'document-1', pdfDocumentId: null }),
+    delete: vi.fn().mockResolvedValue({})
+  }
   const bookmark = { deleteMany: vi.fn().mockResolvedValue({ count: 1 }) }
   const visionEvidence = { deleteMany: vi.fn().mockResolvedValue({ count: 1 }) }
   const memoryEntry = { deleteMany: vi.fn().mockResolvedValue({ count: 1 }) }

@@ -448,13 +448,26 @@ test('shares Workspace notes with Literature across two windows and reopening', 
   await page.getByLabel('Document note', { exact: true }).fill('Created in Workspace')
   await page.getByRole('button', { name: 'Save', exact: true }).click()
   await expect(page.locator('[data-annotation-id]')).toContainText('Created in Workspace')
-  await page.getByRole('button', { name: 'Share notes with Literature', exact: true }).click()
-  const sharing = page.getByRole('dialog', { name: 'Share notes with Literature', exact: true })
-  await sharing.getByRole('textbox', { name: 'Search references' }).fill('Shared PDF reference')
-  await sharing.getByRole('button', { name: 'Create reference and review sharing' }).click()
-  await expect(sharing.getByText('shared-paper.pdf — Shared PDF project')).toBeVisible()
-  await sharing.getByRole('button', { name: 'Link sources and share notes' }).click()
-  await expect(sharing).toBeHidden()
+  expect(
+    await page.evaluate(
+      async () =>
+        (
+          await window.api.literature.search({
+            scope: 'library',
+            entryKind: 'paper',
+            limit: 10
+          })
+        ).entries.length
+    )
+  ).toBe(0)
+  await app.setMainWindowZoomFactor(1.25)
+  await page.getByTestId('preview-file-content-surface').click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Add to Literature', exact: true }).click()
+  const adding = page.getByRole('dialog', { name: 'Add to Literature', exact: true })
+  await adding.getByRole('textbox', { name: 'Search references' }).fill('Shared PDF reference')
+  await adding.getByRole('button', { name: 'Add to Literature', exact: true }).click()
+  await expect(adding).toBeHidden()
+  await app.setMainWindowZoomFactor(1)
   const identity = await page.evaluate(async () => {
     const project = (await window.api.projects.list()).find(
       (project) => project.name === 'Shared PDF project'
@@ -548,7 +561,7 @@ test('shares Workspace notes with Literature across two windows and reopening', 
   ).toBe(0)
 })
 
-test('reviews conflicting native notes and rejects a stale sharing decision', async ({
+test('shares independently imported native notes without duplication or resurrection', async ({
   app
 }, testInfo) => {
   test.setTimeout(180_000)
@@ -636,48 +649,34 @@ test('reviews conflicting native notes and rejects a stale sharing decision', as
       expectedUpdatedAt: note.updatedAt
     })
   }, versionId)
-  await page.getByRole('button', { name: 'Share notes with Literature', exact: true }).click()
-  const dialog = page.getByRole('dialog', { name: 'Share notes with Literature', exact: true })
-  await dialog
-    .getByRole('textbox', { name: 'Search references' })
-    .fill('Independent native reference')
-  await dialog.getByRole('button', { name: 'Independent native reference', exact: true }).click()
-  await expect(dialog.getByText('Workspace: Workspace edit', { exact: true })).toBeVisible()
-  await expect(dialog.getByText('Literature: Literature edit', { exact: true })).toBeVisible()
-  const link = dialog.getByRole('button', { name: 'Link sources and share notes' })
-  await expect(link).toBeDisabled()
-  await dialog.getByRole('combobox', { name: 'Resolve annotation conflict' }).click()
-  await page.getByRole('option', { name: 'Keep both as separate notes', exact: true }).click()
-  await page.screenshot({ path: testInfo.outputPath('review-native-conflict.png') })
-  await other.evaluate(
-    (note) =>
-      window.api.pdfAnnotations.update({
-        projectId: note.projectId!,
-        id: note.id,
-        note: 'Workspace edit after preview',
-        expectedUpdatedAt: note.updatedAt
-      }),
-    left
-  )
-  await link.click()
-  await expect(dialog.getByRole('alert')).toContainText('Review the current notes again')
-  await dialog.getByRole('button', { name: 'Review sharing', exact: true }).click()
-  await expect(
-    dialog.getByText('Workspace: Workspace edit after preview', { exact: true })
-  ).toBeVisible()
-  await dialog.getByRole('combobox', { name: 'Resolve annotation conflict' }).click()
-  await page.getByRole('option', { name: 'Keep both as separate notes', exact: true }).click()
-  await link.click()
-  await expect(dialog).toBeHidden()
-  await expect(page.locator('[data-annotation-id]')).toHaveCount(2)
-  const rows = await other.evaluate(
+  const library = await other.evaluate(
     async (literatureVersionId) =>
-      (await window.api.pdfAnnotations.list({ literatureVersionId })).items,
+      (await window.api.pdfAnnotations.list({ literatureVersionId })).items[0],
     versionId
   )
-  expect(rows.map((row) => row.note).sort()).toEqual([
-    'Literature edit',
-    'Workspace edit after preview'
-  ])
-  expect(rows.every((row) => row.origin === 'user')).toBe(true)
+  expect(library.id).toBe(left.id)
+  await expect(page.locator('[data-annotation-id]')).toHaveCount(1)
+  await expect(page.locator('[data-annotation-id]')).toContainText('Literature edit')
+  await other.getByRole('button', { name: 'Preview native.pdf', exact: true }).click()
+  await other.getByRole('tab', { name: 'Notes & Annotations', exact: true }).click()
+  await expect(other.locator('[data-annotation-id]')).toContainText('Literature edit')
+  await other.screenshot({ path: testInfo.outputPath('independent-import-shared-notes.png') })
+  await other.evaluate(
+    (note) =>
+      window.api.pdfAnnotations.delete({
+        literatureVersionId: note.literatureVersionId!,
+        id: note.id,
+        expectedUpdatedAt: note.updatedAt
+      }),
+    library
+  )
+  await expect(page.locator('[data-annotation-id]')).toHaveCount(0)
+  const reopened = await app.restart()
+  expect(
+    await reopened.evaluate(
+      async (literatureVersionId) =>
+        (await window.api.pdfAnnotations.list({ literatureVersionId })).total,
+      versionId
+    )
+  ).toBe(0)
 })

@@ -69,7 +69,13 @@ export type PackageSelectableFile = PackageExcludedFile & {
   dependentFiles: string[]
 }
 
+export type PackageFileSelection = {
+  excludedStorageKeys: readonly string[]
+  includePdfNotes: boolean
+}
+
 export type PackageSelectionSummary = {
+  pdfNotesAvailable?: boolean
   retainedFiles: PackageExcludedFile[]
   metadataBytes: number
 }
@@ -154,7 +160,8 @@ export const packageOperationRequestSchema = z.discriminatedUnion('action', [
     .object({
       action: z.literal('select'),
       operationId: identity,
-      excludedStorageKeys: z.array(z.string().max(2048)).max(10000)
+      excludedStorageKeys: z.array(z.string().max(2048)).max(10000),
+      includePdfNotes: z.boolean().optional()
     })
     .strict()
 ])
@@ -327,7 +334,8 @@ const packageOperationSnapshotSchema: z.ZodType<PackageOperationSnapshot> = z
     summary: z
       .object({
         retainedFiles: z.array(packageExcludedFileSchema).max(10000),
-        metadataBytes: z.number().nonnegative()
+        metadataBytes: z.number().nonnegative(),
+        pdfNotesAvailable: z.boolean().optional()
       })
       .strict()
       .optional(),

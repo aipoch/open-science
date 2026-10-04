@@ -1,8 +1,19 @@
-// Immutable migration snapshot. Equal bytes never merge independent sources.
+// Immutable migration snapshot. Legacy notes are reconciled only after content verification.
 const pdfAnnotationSharingMigration = {
   id: '0048_pdf_annotation_sharing',
   statements: [
-    'CREATE TABLE IF NOT EXISTS "pdf_annotation_documents" (\n    "id" TEXT NOT NULL PRIMARY KEY,\n    "checksum" TEXT NOT NULL,\n    "sizeBytes" BIGINT,\n    "revision" INTEGER NOT NULL DEFAULT 0\n);',
+    'CREATE TABLE IF NOT EXISTS "pdf_documents" ("id" TEXT NOT NULL PRIMARY KEY, "checksum" TEXT NOT NULL, "sizeBytes" BIGINT NOT NULL);',
+    'CREATE UNIQUE INDEX IF NOT EXISTS "pdf_documents_checksum_sizeBytes_key" ON "pdf_documents"("checksum", "sizeBytes");',
+    'CREATE TABLE IF NOT EXISTS "ContentBlob_pdf_identity" (\n    "id" TEXT NOT NULL PRIMARY KEY,\n    "pdfDocumentId" TEXT,\n    "checksum" TEXT NOT NULL,\n    "storageKey" TEXT NOT NULL,\n    "sizeBytes" BIGINT NOT NULL,\n    "contentType" TEXT,\n    "state" TEXT NOT NULL DEFAULT \'staging\',\n    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    "verifiedAt" DATETIME,\n    "lastVerificationFailure" TEXT,\n    "lastVerificationAttemptAt" DATETIME,\n    CONSTRAINT "ContentBlob_pdfDocumentId_fkey" FOREIGN KEY ("pdfDocumentId") REFERENCES "pdf_documents" ("id") ON DELETE RESTRICT ON UPDATE CASCADE,\n    CONSTRAINT "ContentBlob_state_check" CHECK ("state" IN (\'staging\', \'available\', \'quarantined\')),\n    CONSTRAINT "ContentBlob_sizeBytes_check" CHECK ("sizeBytes" >= 0)\n);',
+    'INSERT INTO "ContentBlob_pdf_identity" ("id", "checksum", "storageKey", "sizeBytes", "contentType", "state", "createdAt", "verifiedAt", "lastVerificationFailure", "lastVerificationAttemptAt") SELECT "id", "checksum", "storageKey", "sizeBytes", "contentType", "state", "createdAt", "verifiedAt", "lastVerificationFailure", "lastVerificationAttemptAt" FROM "ContentBlob"',
+    'DROP TABLE "ContentBlob"',
+    'ALTER TABLE "ContentBlob_pdf_identity" RENAME TO "ContentBlob"',
+    'CREATE UNIQUE INDEX IF NOT EXISTS "ContentBlob_storageKey_key" ON "ContentBlob"("storageKey");',
+    'CREATE INDEX IF NOT EXISTS "ContentBlob_checksum_sizeBytes_idx" ON "ContentBlob"("checksum", "sizeBytes");',
+    'CREATE INDEX IF NOT EXISTS "ContentBlob_state_createdAt_idx" ON "ContentBlob"("state", "createdAt");',
+    'CREATE INDEX IF NOT EXISTS "ContentBlob_pdfDocumentId_idx" ON "ContentBlob"("pdfDocumentId");',
+    'CREATE TABLE IF NOT EXISTS "pdf_annotation_documents" (\n    "id" TEXT NOT NULL PRIMARY KEY,\n    "pdfDocumentId" TEXT,\n    "checksum" TEXT NOT NULL,\n    "sizeBytes" BIGINT,\n    "revision" INTEGER NOT NULL DEFAULT 0,\n    CONSTRAINT "pdf_annotation_documents_pdfDocumentId_fkey" FOREIGN KEY ("pdfDocumentId") REFERENCES "pdf_documents" ("id") ON DELETE CASCADE ON UPDATE CASCADE\n);',
+    'CREATE INDEX IF NOT EXISTS "pdf_annotation_documents_pdfDocumentId_idx" ON "pdf_annotation_documents"("pdfDocumentId");',
     'CREATE TABLE IF NOT EXISTS "pdf_annotation_sources" (\n    "id" TEXT NOT NULL PRIMARY KEY,\n    "documentId" TEXT NOT NULL,\n    "projectId" TEXT,\n    "sourceSessionId" TEXT,\n    "sourceKind" TEXT NOT NULL,\n    "sourceFileId" TEXT NOT NULL,\n    "versionId" TEXT NOT NULL,\n    "checksum" TEXT NOT NULL,\n    "name" TEXT NOT NULL,\n    "path" TEXT NOT NULL,\n    CONSTRAINT "pdf_annotation_sources_documentId_fkey" FOREIGN KEY ("documentId") REFERENCES "pdf_annotation_documents" ("id") ON DELETE CASCADE ON UPDATE CASCADE\n);',
     'CREATE TABLE IF NOT EXISTS "pdf_annotation_aliases" (\n    "id" TEXT NOT NULL PRIMARY KEY,\n    "documentId" TEXT NOT NULL,\n    "annotationId" TEXT,\n    CONSTRAINT "pdf_annotation_aliases_documentId_fkey" FOREIGN KEY ("documentId") REFERENCES "pdf_annotation_documents" ("id") ON DELETE CASCADE ON UPDATE CASCADE\n);',
     'INSERT OR IGNORE INTO "pdf_annotation_documents" (id, checksum) SELECT json_array("projectId", "sourceKind", "sourceFileId", "versionId", "checksum"), checksum FROM "pdf_annotations"',
@@ -32,6 +43,14 @@ const pdfAnnotationSharingMigration = {
   ],
   operations: [],
   verifiers: [
+    { kind: 'table-exists', version: 1, table: 'pdf_documents' },
+    { kind: 'column-exists', version: 1, table: 'ContentBlob', column: 'pdfDocumentId' },
+    {
+      kind: 'column-exists',
+      version: 1,
+      table: 'pdf_annotation_documents',
+      column: 'pdfDocumentId'
+    },
     {
       kind: 'table-exists',
       version: 1,

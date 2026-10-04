@@ -105,6 +105,51 @@ describe('LiteratureCatalog', () => {
     return new LiteratureCatalog(async () => client!)
   }
 
+  it('creates one reference for concurrent Add PDF requests and rolls back a failed new reference', async () => {
+    const catalog = await setup()
+    const checksum = 'd'.repeat(64)
+    await client!.contentBlob.create({
+      data: {
+        id: 'add-blob',
+        checksum,
+        storageKey: 'add.pdf',
+        sizeBytes: 128n,
+        contentType: 'application/pdf',
+        state: 'available',
+        verifiedAt: new Date()
+      }
+    })
+    const input = {
+      itemId: 'new-one',
+      contentBlobId: 'add-blob',
+      filename: 'paper.pdf',
+      contentType: 'application/pdf',
+      sizeBytes: 128,
+      checksum
+    }
+    const item = literatureItemInputSchema.parse({ itemType: 'journalArticle', title: 'New paper' })
+    await expect(
+      catalog.attachContent(
+        input,
+        async () => {
+          throw new Error('rollback')
+        },
+        item
+      )
+    ).rejects.toThrow('rollback')
+    expect(await client!.literatureItem.count()).toBe(0)
+    const results = await Promise.all([
+      catalog.attachContent(input, undefined, item),
+      catalog.attachContent({ ...input, itemId: 'new-two' }, undefined, item)
+    ])
+    expect(results[0].versionId).toBe(results[1].versionId)
+    expect(await client!.literatureItem.count()).toBe(1)
+    expect(await client!.literatureAttachmentVersion.count()).toBe(1)
+    await expect(
+      catalog.attachContent({ ...input, contentBlobId: 'missing' }, undefined, item)
+    ).rejects.toThrow('content authority')
+  })
+
   it('searches PDF notes and quotes under Library with stable mixed pagination and active source scopes', async () => {
     const catalog = await setup()
     const item = await catalog.transact({

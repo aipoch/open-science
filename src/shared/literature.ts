@@ -14,7 +14,7 @@ import {
   createLiteratureAttachmentVersionReference,
   parseLiteratureAttachmentVersionReference
 } from './literature-attachment-reference'
-import { pdfAnnotationSchema } from './pdf-annotations'
+import { pdfAnnotationSchema, pdfAddToLiteratureRequestSchema } from './pdf-annotations'
 import { literatureFailureSchema } from './literature-failure'
 import { z } from 'zod'
 
@@ -753,6 +753,10 @@ const literaturePdfImportReceiptSchema = z
       .optional()
   })
   .strict()
+export const pdfAddToLiteratureContract = defineApplicationCommandContract(
+  validationCodec(z.tuple([pdfAddToLiteratureRequestSchema])),
+  validationCodec(literaturePdfImportReceiptSchema)
+)
 const literaturePdfCancelImportRequestSchema = z
   .object({ operationId: nonEmptyTextSchema })
   .strict()

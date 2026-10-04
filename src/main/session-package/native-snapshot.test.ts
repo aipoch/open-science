@@ -1,3 +1,4 @@
+import { validatePackagePdfNotes } from './pdf-notes'
 import { PrismaClient } from '@prisma/client'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -291,3 +292,60 @@ it.each([
     expect(projected.tables[versions]).toEqual(source.tables[versions])
   }
 )
+
+it('rejects PDF snapshots with foreign owners, duplicate notes or missing tag definitions', () => {
+  const records = {
+    schemaVersion: 1,
+    tables: {
+      UploadFile: [{ id: 'file', projectId: 'project', sessionId: 'session' }],
+      UploadVersion: [{ id: 'version', uploadFileId: 'file', checksum: 'a'.repeat(64) }],
+      ArtifactVersion: [],
+      ArtifactLineage: []
+    },
+    pdfNotes: [
+      {
+        versionId: 'version',
+        tags: [],
+        annotations: [
+          {
+            id: 'note',
+            version: 1,
+            projectId: 'project',
+            sessionId: 'session',
+            target: {
+              source: {
+                kind: 'upload-version',
+                projectId: 'project',
+                sessionId: 'session',
+                sourceFileId: 'file',
+                versionId: 'version',
+                checksum: 'a'.repeat(64),
+                name: 'paper.pdf',
+                path: 'upload-version:version'
+              },
+              selector: { kind: 'document-note', coordinateVersion: 1 }
+            },
+            kind: 'document-note',
+            origin: 'user',
+            note: 'Read only',
+            tagIds: [],
+            createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z'
+          }
+        ]
+      }
+    ]
+  } as unknown as PackageRecords
+  expect(() => validatePackagePdfNotes(records)).not.toThrow()
+  const note = records.pdfNotes![0].annotations[0]
+  note.projectId = 'foreign'
+  note.target = { ...note.target, source: { ...note.target.source, projectId: 'foreign' } }
+  expect(() => validatePackagePdfNotes(records)).toThrow('do not match')
+  note.projectId = 'project'
+  note.target = { ...note.target, source: { ...note.target.source, projectId: 'project' } }
+  note.tagIds = ['missing']
+  expect(() => validatePackagePdfNotes(records)).toThrow('do not match')
+  note.tagIds = []
+  records.pdfNotes![0].annotations.push(note)
+  expect(() => validatePackagePdfNotes(records)).toThrow('duplicate')
+})
