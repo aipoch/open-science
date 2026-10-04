@@ -4,6 +4,7 @@ import type { PrismaClient } from '@prisma/client'
 import {
   pdfAnnotationSchema,
   pdfNativeImportReceiptSchema,
+  type ListPdfAnnotationsRequest,
   type PdfAnnotationSource
 } from '../../shared/pdf-annotations'
 import { tagViewSchema } from '../../shared/tags'
@@ -26,6 +27,46 @@ export const packagePdfNotesSchema = z
   )
   .max(1000)
 export type PackagePdfNotes = z.infer<typeof packagePdfNotesSchema>
+
+// Resolve from restored package versions even when every snapshot annotation was deleted.
+export const readPackagePdfSource = async (
+  client: PrismaClient,
+  request: ListPdfAnnotationsRequest
+): Promise<PdfAnnotationSource | undefined> => {
+  const { projectId, sessionId, sourceFileId, versionId } = request
+  if (!projectId || !sessionId || !versionId) return undefined
+  const owner = { projectId, sessionId, ...(sourceFileId ? { id: sourceFileId } : {}) }
+  const [upload, artifact] = await Promise.all([
+    client.uploadVersion.findFirst({
+      where: { id: versionId, state: 'ready', uploadFile: owner },
+      include: { uploadFile: true }
+    }),
+    client.artifactVersion.findFirst({
+      where: { id: versionId, state: 'finalized', artifact: owner },
+      include: { artifact: true }
+    })
+  ])
+  const version = upload ?? artifact
+  const fileId = upload?.uploadFile.id ?? artifact?.artifact.id
+  if (!version || !fileId) return undefined
+  return {
+    kind: upload ? 'upload-version' : 'artifact-version',
+    projectId,
+    sessionId,
+    sourceFileId: fileId,
+    versionId,
+    checksum: version.checksum,
+    name: version.filename,
+    path: upload
+      ? createUploadVersionReference(versionId, { projectId, sessionId, fileId })
+      : createArtifactVersionLocator({
+          projectId,
+          appSessionId: sessionId,
+          artifactId: fileId,
+          versionId
+        })
+  }
+}
 
 export const capturePackagePdfNotes = async (
   client: PrismaClient,

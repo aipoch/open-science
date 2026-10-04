@@ -6,6 +6,7 @@ import {
   capturePackagePdfNotes,
   filterPackagePdfNotes,
   namespacePackagePdfNotes,
+  readPackagePdfSource,
   retainInheritedPdfNotes,
   type PackagePdfNotes
 } from './pdf-notes'
@@ -1780,14 +1781,17 @@ export class SessionPackageService {
     )
     const items = after.slice(0, request.limit ?? 50)
     const last = after.length > items.length ? items.at(-1) : undefined
+    const source =
+      request.versionId && selected.length
+        ? await readPackagePdfSource(await this.options.getClient(), request)
+        : undefined
     return {
       items,
       total: annotations.length,
       readonlyIds: items.map((note) => note.id),
       snapshotTags: [...tags.values()],
-      ...(request.versionId && selected[0]?.nativeImport
-        ? { nativeImport: selected[0].nativeImport }
-        : {}),
+      ...(source ? { source } : {}),
+      ...(source && selected[0]?.nativeImport ? { nativeImport: selected[0].nativeImport } : {}),
       ...(last ? { nextCursor: { createdAt: last.createdAt, id: last.id } } : {})
     }
   }

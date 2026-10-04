@@ -903,9 +903,24 @@ describe('PdfPreviewContent', () => {
     expect(window.api.previewResources.release).not.toHaveBeenCalled()
   })
 
-  it.each(['upload', 'artifact'] as const)(
-    'shows package %s PDF snapshots without live notes or mutation controls',
-    async (sourceKind) => {
+  it.each([
+    ['upload', false],
+    ['artifact', false],
+    ['upload', true],
+    ['artifact', true]
+  ] as const)(
+    'shows package %s PDF snapshots without live notes or mutation controls (receipt only: %s)',
+    async (sourceKind, receiptOnly) => {
+      const setValue = vi.fn()
+      vi.mocked(createManagedPdfLoadingTask).mockReturnValue({
+        promise: Promise.resolve({
+          numPages: 1,
+          getPage,
+          destroy: destroyDocument,
+          annotationStorage: { setValue }
+        }),
+        destroy: vi.fn().mockResolvedValue(undefined)
+      } as never)
       const annotation: SavedPdfAnnotation = {
         id: 'package-note',
         projectId: 'project-1',
@@ -991,12 +1006,21 @@ describe('PdfPreviewContent', () => {
       }
       expectReadOnly()
       await act(async () => {
-        resolveNotes({
-          items: [annotation],
-          total: 1,
+        const result: PdfAnnotationListResult = {
+          items: receiptOnly ? [] : [annotation],
+          total: receiptOnly ? 0 : 1,
           readOnly: true,
-          readonlyIds: [annotation.id]
-        })
+          readonlyIds: receiptOnly ? [] : [annotation.id],
+          source: annotation.target.source,
+          nativeImport: {
+            nativeRefs: [{ id: '12R', pageNumber: 1 }],
+            pageCount: 1,
+            unsupportedCount: 0,
+            truncated: false
+          }
+        }
+        list.mockResolvedValue(result)
+        resolveNotes(result)
         await flush()
       })
       expectReadOnly()
@@ -1006,15 +1030,20 @@ describe('PdfPreviewContent', () => {
           ctrlKey: false
         })
       )
-      expect(container.querySelector('[data-pdf-notebook-view]')?.textContent).toContain(
-        'Packaged evidence'
-      )
-      expect(
-        screen.getByRole('button', { name: 'Edit annotation note' }).hasAttribute('disabled')
-      ).toBe(true)
-      expect(
-        screen.getByRole('button', { name: 'Delete annotation' }).hasAttribute('disabled')
-      ).toBe(true)
+      expect(setValue).toHaveBeenCalledWith('12R', { noView: true })
+      if (!receiptOnly) {
+        expect(container.querySelector('[data-pdf-notebook-view]')?.textContent).toContain(
+          'Packaged evidence'
+        )
+        expect(
+          screen.getByRole('button', { name: 'Edit annotation note' }).hasAttribute('disabled')
+        ).toBe(true)
+        expect(
+          screen.getByRole('button', { name: 'Delete annotation' }).hasAttribute('disabled')
+        ).toBe(true)
+      } else {
+        expect(screen.queryByRole('button', { name: 'Edit annotation note' })).toBeNull()
+      }
       expect(container.textContent).not.toContain(
         'PDF annotations are unavailable for this source.'
       )

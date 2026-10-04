@@ -3881,15 +3881,14 @@ const PdfPreviewRendererContent = (
   ])
   const currentPdfBookmarkResolution =
     pdfBookmarkResolution?.key === pdfBookmarkResolutionKey ? pdfBookmarkResolution : undefined
-  const packageSource = props.packageSessionId
-    ? libraryAnnotations.annotations.find(
-        ({ target: { source } }) =>
-          source.projectId === props.item.projectId &&
-          source.kind === bookmarkSourceKind &&
-          source.sourceFileId === bookmarkSourceFileId &&
-          source.versionId === bookmarkSourceVersionId
-      )?.target.source
-    : undefined
+  const packageSource =
+    props.packageSessionId &&
+    libraryAnnotations.source?.projectId === props.item.projectId &&
+    libraryAnnotations.source?.kind === bookmarkSourceKind &&
+    libraryAnnotations.source?.sourceFileId === bookmarkSourceFileId &&
+    libraryAnnotations.source?.versionId === bookmarkSourceVersionId
+      ? libraryAnnotations.source
+      : undefined
   const pdfBookmarkSource = props.packageSessionId
     ? packageSource
     : isLibrary

@@ -4379,127 +4379,213 @@ it('round-trips portable history without local Session selection links', async (
   ).toBeUndefined()
 })
 
-it('exports shared PDF notes only by opt-in and keeps imported and forked notes inert', async () => {
-  const source = await createProvenanceTestFixture()
-  const target = await createProvenanceTestFixture()
-  fixtures.push(source, target)
-  initDataRoot(source.storageRoot)
-  await source.client.project.create({ data: { id: 'project-1', name: 'PDF source' } })
-  await new SessionRepository(source.storageRoot).saveSession({
-    id: 'session-1',
-    projectId: 'project-1',
-    title: 'Paper',
-    cwd: '',
-    status: 'idle',
-    createdAt: 1,
-    updatedAt: 2,
-    messages: []
-  })
-  const bytes = Buffer.from('%PDF-1.4\npackage notes fixture\n%%EOF')
-  const storageKey = 'uploads/project-1/session-1/file/versions/version/paper.pdf'
-  await mkdir(dirname(join(source.storageRoot, storageKey)), { recursive: true })
-  await writeFile(join(source.storageRoot, storageKey), bytes)
-  await source.client.fileOriginSession.create({
-    data: { projectId: 'project-1', sessionId: 'session-1' }
-  })
-  await source.client.uploadFile.create({
-    data: {
-      id: 'file',
+it.each(['upload', 'artifact'] as const)(
+  'exports shared %s PDF notes only by opt-in and keeps imported and forked notes inert',
+  async (kind) => {
+    const source = await createProvenanceTestFixture()
+    const target = await createProvenanceTestFixture()
+    fixtures.push(source, target)
+    initDataRoot(source.storageRoot)
+    await source.client.project.create({ data: { id: 'project-1', name: 'PDF source' } })
+    await new SessionRepository(source.storageRoot).saveSession({
+      id: 'session-1',
       projectId: 'project-1',
-      sessionId: 'session-1',
-      filename: 'paper.pdf',
-      originalFilename: 'paper.pdf',
-      versions: {
-        create: {
-          id: 'version',
-          versionNumber: 1,
-          state: 'ready',
-          contentStorageKey: storageKey,
+      title: 'Paper',
+      cwd: '',
+      status: 'idle',
+      createdAt: 1,
+      updatedAt: 2,
+      messages: []
+    })
+    const bytes = Buffer.from('%PDF-1.4\npackage notes fixture\n%%EOF')
+    const storageKey = `${kind}s/project-1/session-1/file/versions/version/paper.pdf`
+    await mkdir(dirname(join(source.storageRoot, storageKey)), { recursive: true })
+    await writeFile(join(source.storageRoot, storageKey), bytes)
+    await source.client.fileOriginSession.create({
+      data: { projectId: 'project-1', sessionId: 'session-1' }
+    })
+    if (kind === 'upload') {
+      await source.client.uploadFile.create({
+        data: {
+          id: 'file',
+          projectId: 'project-1',
+          sessionId: 'session-1',
           filename: 'paper.pdf',
           originalFilename: 'paper.pdf',
-          contentType: 'application/pdf',
-          sizeBytes: BigInt(bytes.length),
-          checksum: sha256(bytes)
+          versions: {
+            create: {
+              id: 'version',
+              versionNumber: 1,
+              state: 'ready',
+              contentStorageKey: storageKey,
+              filename: 'paper.pdf',
+              originalFilename: 'paper.pdf',
+              contentType: 'application/pdf',
+              sizeBytes: BigInt(bytes.length),
+              checksum: sha256(bytes)
+            }
+          }
         }
-      }
+      })
+      await source.client.uploadFile.update({
+        where: { id: 'file' },
+        data: { currentVersionId: 'version' }
+      })
+    } else {
+      await source.client.artifactLineage.create({
+        data: {
+          id: 'file',
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          filename: 'paper.pdf',
+          normalizedFilename: 'paper.pdf',
+          versions: {
+            create: {
+              id: 'version',
+              versionNumber: 1,
+              state: 'finalized',
+              originKind: 'legacy',
+              contentStorageKey: storageKey,
+              filename: 'paper.pdf',
+              contentType: 'application/pdf',
+              sizeBytes: BigInt(bytes.length),
+              checksum: sha256(bytes)
+            }
+          }
+        }
+      })
+      await source.client.artifactLineage.update({
+        where: { id: 'file' },
+        data: { currentVersionId: 'version' }
+      })
     }
-  })
-  await source.client.uploadFile.update({
-    where: { id: 'file' },
-    data: { currentVersionId: 'version' }
-  })
-  const pdf = {
-    kind: 'upload-version' as const,
-    projectId: 'project-1',
-    sessionId: 'session-1',
-    sourceFileId: 'file',
-    versionId: 'version',
-    checksum: sha256(bytes),
-    name: 'paper.pdf',
-    path: createUploadVersionReference('version', {
+    const pdf = {
+      kind: kind === 'upload' ? ('upload-version' as const) : ('artifact-version' as const),
       projectId: 'project-1',
       sessionId: 'session-1',
-      fileId: 'file'
+      sourceFileId: 'file',
+      versionId: 'version',
+      checksum: sha256(bytes),
+      name: 'paper.pdf',
+      path:
+        kind === 'artifact'
+          ? createArtifactVersionLocator({
+              projectId: 'project-1',
+              appSessionId: 'session-1',
+              artifactId: 'file',
+              versionId: 'version'
+            })
+          : createUploadVersionReference('version', {
+              projectId: 'project-1',
+              sessionId: 'session-1',
+              fileId: 'file'
+            })
+    }
+    const notes = new PdfAnnotationRepository(async () => source.client)
+    await notes.registerVerifiedSource(pdf, bytes.length)
+    await notes.create({
+      id: 'shared-note',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      target: { source: pdf, selector: { kind: 'document-note', coordinateVersion: 1 } },
+      kind: 'document-note',
+      note: 'Shared private observation',
+      tagIds: []
     })
-  }
-  const notes = new PdfAnnotationRepository(async () => source.client)
-  await notes.registerVerifiedSource(pdf, bytes.length)
-  await notes.create({
-    id: 'shared-note',
-    projectId: 'project-1',
-    sessionId: 'session-1',
-    target: { source: pdf, selector: { kind: 'document-note', coordinateVersion: 1 } },
-    kind: 'document-note',
-    note: 'Shared private observation',
-    tagIds: []
-  })
-  const exporter = new SessionPackageService({
-    storageRoot: source.storageRoot,
-    getClient: async () => source.client
-  })
-  const importer = new SessionPackageService({
-    storageRoot: target.storageRoot,
-    getClient: async () => target.client
-  })
-  const scope = { projectId: 'project-1', sessionId: 'session-1' }
-  try {
-    const plain = join(source.storageRoot, 'plain.science')
-    await exporter.exportTo(scope, plain)
-    const shared = join(source.storageRoot, 'shared.science')
-    await exporter.exportTo(scope, shared, {
-      selectFiles: async () => ({ excludedStorageKeys: [], includePdfNotes: true })
+    const exporter = new SessionPackageService({
+      storageRoot: source.storageRoot,
+      getClient: async () => source.client
     })
-    initDataRoot(target.storageRoot)
-    const plainSession = await importer.importFrom(plain)
-    expect((await importer.readPdfNotes(plainSession)).items).toEqual([])
-    const imported = await importer.importFrom(shared)
-    const snapshot = await importer.readPdfNotes(imported)
-    expect(snapshot.items.map((note) => note.note)).toEqual(['Shared private observation'])
-    expect(snapshot.readonlyIds).toEqual(snapshot.items.map((note) => note.id))
-    expect(await target.client.pdfAnnotation.count()).toBe(0)
-    const fork = await importer.fork(imported)
-    expect((await importer.readPdfNotes(fork)).items.map((note) => note.note)).toEqual([
-      'Shared private observation'
-    ])
-    const forwarded = join(target.storageRoot, 'forward.science')
-    await importer.exportTo(imported, forwarded, {
-      selectFiles: async (files) => ({
-        excludedStorageKeys: files.map((file) => file.storageKey),
-        includePdfNotes: true
+    const importer = new SessionPackageService({
+      storageRoot: target.storageRoot,
+      getClient: async () => target.client
+    })
+    const scope = { projectId: 'project-1', sessionId: 'session-1' }
+    try {
+      const plain = join(source.storageRoot, 'plain.science')
+      await exporter.exportTo(scope, plain)
+      const shared = join(source.storageRoot, 'shared.science')
+      await exporter.exportTo(scope, shared, {
+        selectFiles: async () => ({ excludedStorageKeys: [], includePdfNotes: true })
       })
-    })
-    const excluded = await importer.importFrom(forwarded)
-    expect((await importer.readPdfNotes(excluded)).items).toEqual([])
-    const refork = join(target.storageRoot, 'fork.science')
-    await importer.exportTo(fork, refork, {
-      selectFiles: async () => ({ excludedStorageKeys: [], includePdfNotes: true })
-    })
-    const roundtrip = await importer.importFrom(refork)
-    expect((await importer.readPdfNotes(roundtrip)).items.map((note) => note.note)).toEqual([
-      'Shared private observation'
-    ])
-    expect(await target.client.pdfAnnotation.count()).toBe(0)
-  } finally {
-    await Promise.all([exporter.close(), importer.close()])
-  }
-}, 60_000)
+      initDataRoot(target.storageRoot)
+      const plainSession = await importer.importFrom(plain)
+      expect((await importer.readPdfNotes(plainSession)).items).toEqual([])
+      const imported = await importer.importFrom(shared)
+      const snapshot = await importer.readPdfNotes(imported)
+      expect(snapshot.items.map((note) => note.note)).toEqual(['Shared private observation'])
+      expect(snapshot.readonlyIds).toEqual(snapshot.items.map((note) => note.id))
+      expect(await target.client.pdfAnnotation.count()).toBe(0)
+      const fork = await importer.fork(imported)
+      expect((await importer.readPdfNotes(fork)).items.map((note) => note.note)).toEqual([
+        'Shared private observation'
+      ])
+      const forwarded = join(target.storageRoot, 'forward.science')
+      await importer.exportTo(imported, forwarded, {
+        selectFiles: async (files) => ({
+          excludedStorageKeys: files.map((file) => file.storageKey),
+          includePdfNotes: true
+        })
+      })
+      const excluded = await importer.importFrom(forwarded)
+      expect((await importer.readPdfNotes(excluded)).items).toEqual([])
+      const refork = join(target.storageRoot, 'fork.science')
+      await importer.exportTo(fork, refork, {
+        selectFiles: async () => ({ excludedStorageKeys: [], includePdfNotes: true })
+      })
+      const roundtrip = await importer.importFrom(refork)
+      expect((await importer.readPdfNotes(roundtrip)).items.map((note) => note.note)).toEqual([
+        'Shared private observation'
+      ])
+      expect(await target.client.pdfAnnotation.count()).toBe(0)
+
+      const nativeImport = {
+        nativeRefs: [{ id: '12R', pageNumber: 1 }],
+        pageCount: 1,
+        unsupportedCount: 0,
+        truncated: false
+      }
+      await notes.createMany([], { scope, source: pdf, result: nativeImport })
+      await notes.delete({ ...scope, id: 'shared-note' })
+      initDataRoot(source.storageRoot)
+      const receiptFile = join(source.storageRoot, 'receipt-only.science')
+      await exporter.exportTo(scope, receiptFile, {
+        selectFiles: async () => ({ excludedStorageKeys: [], includePdfNotes: true })
+      })
+      initDataRoot(target.storageRoot)
+      const receiptSession = await importer.importFrom(receiptFile)
+      const restored =
+        kind === 'upload'
+          ? await target.client.uploadVersion.findFirstOrThrow({
+              where: { uploadFile: { sessionId: receiptSession.sessionId } }
+            })
+          : await target.client.artifactVersion.findFirstOrThrow({
+              where: { artifact: { sessionId: receiptSession.sessionId } }
+            })
+      const restoredFileId =
+        'uploadFileId' in restored ? restored.uploadFileId : restored.artifactId
+      const receiptScope = {
+        ...receiptSession,
+        sourceFileId: restoredFileId,
+        versionId: restored.id
+      }
+      expect(await importer.readPdfNotes(receiptScope)).toMatchObject({
+        items: [],
+        nativeImport,
+        source: {
+          ...receiptSession,
+          kind: pdf.kind,
+          sourceFileId: restoredFileId,
+          versionId: restored.id,
+          checksum: pdf.checksum
+        }
+      })
+      const wrongFile = await importer.readPdfNotes({ ...receiptScope, sourceFileId: 'unrelated' })
+      expect(wrongFile.source).toBeUndefined()
+      expect(wrongFile.nativeImport).toBeUndefined()
+    } finally {
+      await Promise.all([exporter.close(), importer.close()])
+    }
+  },
+  60_000
+)

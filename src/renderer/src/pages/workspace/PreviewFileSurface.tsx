@@ -1426,12 +1426,16 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
       (!resolvedPreviewItem.projectId || !resolvedPreviewItem.managedFileId)
     const addPdfTarget = resolvePdfContextTarget(resolvedPreviewItem)
     const addPdfSessionId = managedNavigationInspect?.sessionId ?? resolvedPreviewItem.sessionId
+    const addPdfReadOnly = useSessionStore((state) =>
+      Boolean(state.sessions.find((session) => session.id === addPdfSessionId)?.packageOrigin)
+    )
     const addPdfBinding =
       addPdfTarget &&
       addPdfTarget.sourceKind !== 'literature-attachment-version' &&
       addPdfTarget.sourceFileId &&
       projectId &&
       addPdfSessionId &&
+      !addPdfReadOnly &&
       !annotationVersionPending
         ? {
             'pdf-add-to-literature': {
