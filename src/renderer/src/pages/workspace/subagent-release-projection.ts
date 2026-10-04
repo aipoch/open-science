@@ -84,6 +84,7 @@ const projectSessionSubagents = (
   const children = projectActiveRootDelegatedFrames(session).map((frame): SessionSubagentChild => {
     const attempt = latestAttempt(session, frame.id)
     const awaitingPermission =
+      !session.packageOrigin &&
       frame.status === 'running' &&
       permissions.some(
         (permission) =>
@@ -91,9 +92,11 @@ const projectSessionSubagents = (
           permission.delegated?.frameId === frame.id &&
           (!attempt || permission.delegated.attemptId === attempt.id)
       )
-    const awaitingUser = session.runtimeContext?.delegatedWork?.questionRequests?.some(
-      (request) => request.sourceFrameId === frame.id && request.status === 'pending'
-    )
+    const awaitingUser =
+      !session.packageOrigin &&
+      session.runtimeContext?.delegatedWork?.questionRequests?.some(
+        (request) => request.sourceFrameId === frame.id && request.status === 'pending'
+      )
     return {
       frameId: frame.id,
       title: titleForFrame(frame),
@@ -105,9 +108,9 @@ const projectSessionSubagents = (
   })
 
   return {
-    runningCount: children.filter(
-      ({ status }) => status === 'running' || status === 'awaiting_user'
-    ).length,
+    runningCount: session.packageOrigin
+      ? 0
+      : children.filter(({ status }) => status === 'running' || status === 'awaiting_user').length,
     children
   }
 }
@@ -117,7 +120,12 @@ const projectAnswerableDelegatedQuestions = (
 ): readonly DelegatedQuestionRequest[] => {
   const graph = session?.conversationGraph
   const owner = session?.runtimeContext?.delegatedWork
-  if (!graph || !owner?.questionRequests || owner.questionRequestsQuarantine !== undefined) {
+  if (
+    session?.packageOrigin ||
+    !graph ||
+    !owner?.questionRequests ||
+    owner.questionRequestsQuarantine !== undefined
+  ) {
     return []
   }
   const root = graph.frames.find((frame) => frame.id === graph.rootFrameId && frame.kind === 'root')

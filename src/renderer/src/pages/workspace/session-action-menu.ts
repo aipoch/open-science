@@ -109,9 +109,16 @@ const hasTransferActivity = ({ session, presentedStatus }: SessionActionInvocati
   session.runtimeContext?.permission?.state === 'pending' ||
   session.runtimeContext?.plan?.approval === 'pending'
 
+// Imported runtime fields are evidence; transient renderer work still blocks a transfer.
+// Fork keeps the stricter admission below because its destination is writable.
+const hasExportActivity = (invocation: SessionActionInvocation): boolean =>
+  invocation.session.packageOrigin
+    ? Boolean(invocation.session.compacting || invocation.session.agentPromptInFlight)
+    : hasTransferActivity(invocation)
+
 const isExportDisabled = (invocation: SessionActionInvocation): boolean =>
   (invocation.session.activeMessageCount ?? invocation.session.messages.length) === 0 ||
-  hasTransferActivity(invocation)
+  hasExportActivity(invocation)
 
 const forkDisabledDescription = (
   options: SessionActionOptions,
@@ -173,7 +180,7 @@ export const createSessionActionBindings = (
     disabled: (invocation) =>
       !options.canMutateConversations ||
       Boolean(options.packageBusy) ||
-      hasTransferActivity(invocation)
+      hasExportActivity(invocation)
   },
   'export-diagnostics': {
     execute: ({ session }) => options.onExportDiagnostics?.(session),

@@ -179,22 +179,23 @@ const createConversationExportService = (
     }
     if (
       deps.isSessionActive(request.projectId, request.sessionId) ||
-      hasCurrentRunningDelegatedAttempt(session) ||
-      session.runtimeContext?.permission?.state === 'pending' ||
-      session.runtimeContext?.plan?.approval === 'pending' ||
-      session.runtimeContext?.delegatedWork?.messageCommands?.some(
-        (command) =>
-          command.receipt.status === 'queued' ||
-          (command.receipt.status === 'uncertain' && command.receipt.resolution === 'pending')
-      ) ||
-      (session.runtimeContext?.plan?.delivery &&
-        ['queued', 'delivering'].includes(session.runtimeContext.plan.delivery.state)) ||
-      session.runtimeContext?.delegatedWork?.questionRequests?.some(
-        (question) => question.status === 'pending'
-      ) ||
-      session.activeRun ||
-      session.status === 'running' ||
-      session.status.startsWith('waiting-')
+      (!session.packageOrigin &&
+        (hasCurrentRunningDelegatedAttempt(session) ||
+          session.runtimeContext?.permission?.state === 'pending' ||
+          session.runtimeContext?.plan?.approval === 'pending' ||
+          session.runtimeContext?.delegatedWork?.messageCommands?.some(
+            (command) =>
+              command.receipt.status === 'queued' ||
+              (command.receipt.status === 'uncertain' && command.receipt.resolution === 'pending')
+          ) ||
+          (session.runtimeContext?.plan?.delivery &&
+            ['queued', 'delivering'].includes(session.runtimeContext.plan.delivery.state)) ||
+          session.runtimeContext?.delegatedWork?.questionRequests?.some(
+            (question) => question.status === 'pending'
+          ) ||
+          session.activeRun ||
+          session.status === 'running' ||
+          session.status.startsWith('waiting-')))
     ) {
       throw new Error('Wait for the conversation to finish before exporting it.')
     }

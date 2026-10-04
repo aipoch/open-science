@@ -511,7 +511,7 @@ export class SessionPackageService {
       safe.sessionId
     )
     if (loaded.status !== 'found') throw new Error('Session not found or unreadable.')
-    assertSettledHistory(loaded.session)
+    if (!loaded.session.packageOrigin) assertSettledHistory(loaded.session)
     if (this.options.isSessionActive?.(safe.projectId, safe.sessionId))
       throw new Error('The Session is still active.')
   }
@@ -537,10 +537,12 @@ export class SessionPackageService {
       request.sessionId
     )
     if (loaded.status !== 'found') throw new Error('Session not found or unreadable.')
-    assertSettledHistory(loaded.session)
+    if (!loaded.session.packageOrigin) assertSettledHistory(loaded.session)
     // Remove local selectors before collecting annotation file dependencies as well.
     const session = withoutPrivateAuthority(loaded.session)
     if (session.packageOrigin) {
+      if (this.options.isSessionActive?.(request.projectId, request.sessionId))
+        throw new Error('The Session is still active.')
       // Forward the retained source package, never relabel locally derived hashes as original.
       const origin = await this.readOrigin(request)
       const source = join(

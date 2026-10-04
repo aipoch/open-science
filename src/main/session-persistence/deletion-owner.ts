@@ -171,9 +171,10 @@ const isSessionArchiveBlocked = (session: PersistedChatSession): boolean =>
   ARCHIVE_BLOCKING_SESSION_STATUSES.has(session.status)
 
 const isSessionArchiveBlockedByPersistedWork = (session: PersistedChatSession): boolean =>
-  isSessionArchiveBlocked(session) ||
-  hasCurrentRunningDelegatedAttempt(session) ||
-  hasAnswerableDelegatedQuestion(session)
+  !session.packageOrigin &&
+  (isSessionArchiveBlocked(session) ||
+    hasCurrentRunningDelegatedAttempt(session) ||
+    hasAnswerableDelegatedQuestion(session))
 
 class SessionPersistenceDeletionOwner {
   private readonly repository: SessionDeletionRepository

@@ -3422,6 +3422,37 @@ describe('PreviewFileSurface PDF context action matrix', () => {
     ]
   }
 
+  it.each([false, true])(
+    'hides PDF context actions in imported history (already linked: %s)',
+    async (linked) => {
+      selectPdfContextSession(linked ? linkedPdfContext : undefined)
+      useSessionStore.setState((state) => ({
+        sessions: state.sessions.map((session) => ({
+          ...session,
+          packageOrigin: {
+            importId: 'import-1',
+            sourceProjectId: 'source-project',
+            sourceSessionId: 'source-session',
+            importedAt: 1,
+            manifestChecksum: 'a'.repeat(64)
+          }
+        }))
+      }))
+      const { linkPdfContext, unlinkPdfContext } = installPdfContextApi()
+      await act(async () => {
+        root.render(<PreviewFileSurface item={pdfItem} onClose={vi.fn()} />)
+        await Promise.resolve()
+      })
+      expect(container.textContent).not.toContain('Read with agent')
+      expect(container.textContent).not.toContain('Remove PDF from context')
+      expect(linkPdfContext).not.toHaveBeenCalled()
+      expect(unlinkPdfContext).not.toHaveBeenCalled()
+      expect(useSessionStore.getState().sessions[0].runtimeContext?.pdfContext).toEqual(
+        linked ? linkedPdfContext : undefined
+      )
+    }
+  )
+
   it('adds an Artifact PDF Version to the active Session context from the header action', async () => {
     selectPdfContextSession()
     const { linkPdfContext } = installPdfContextApi()

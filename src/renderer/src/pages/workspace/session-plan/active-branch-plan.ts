@@ -6,7 +6,7 @@ import type { ActivePlanProjection } from '../../../../../shared/session-plan/co
 const selectActiveBranchPlan = (
   session: ChatSession | undefined
 ): ActivePlanProjection | undefined => {
-  if (!session?.activePlanProjection) return undefined
+  if (session?.packageOrigin || !session?.activePlanProjection) return undefined
 
   const visibleMessageIds = new Set(session.messages.map((message) => message.id))
   const origin = session.activePlanProjection.originatingPromptMessageId

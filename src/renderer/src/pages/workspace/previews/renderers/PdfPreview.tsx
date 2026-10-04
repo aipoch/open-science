@@ -3619,15 +3619,16 @@ const PdfPreviewRendererContent = (
   const target = resolvePdfContextTarget(props.item)
   const libraryAnnotations = usePdfAnnotations()
   const isLibrary = target?.sourceKind === 'literature-attachment-version'
-  const ownerSessionId = useSessionStore((state) => {
+  const ownerSession = useSessionStore((state) => {
     const session = state.sessions.find(
       (candidate) =>
         candidate.id === state.selectedSessionId &&
         candidate.projectId === props.item.projectId &&
         candidate.archivedAt === undefined
     )
-    return session?.id
+    return session
   })
+  const ownerSessionId = ownerSession?.id
   const isDraftReadingSource = usePreviewWorkbenchStore((state) =>
     Boolean(
       !ownerSessionId &&
@@ -3980,7 +3981,7 @@ const PdfPreviewRendererContent = (
       pdfEvidenceSource={pdfEvidenceSource}
       structureSource={props.structureSource}
       pdfBookmarkSource={pdfBookmarkSource}
-      pdfBookmarkSourceUnavailable={pdfBookmarkSourceUnavailable}
+      pdfBookmarkSourceUnavailable={!ownerSession?.packageOrigin && pdfBookmarkSourceUnavailable}
       pdfRevealSource={pdfRevealSource}
       nativeImportProgress={
         !isLibrary &&

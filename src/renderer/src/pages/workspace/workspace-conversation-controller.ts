@@ -190,11 +190,14 @@ const usePlanProjectionRecovery = (
   const status = activeSession?.status
   const projection = activeSession?.activePlanProjection
   const hasRuntimePlan = Boolean(activeSession?.runtimeContext?.plan)
+  // Imported Plans are historical evidence, not recoverable execution authority.
+  const isImported = Boolean(activeSession?.packageOrigin)
 
   useEffect(() => {
     if (
       !sessionId ||
       !projectId ||
+      isImported ||
       projection ||
       !ports ||
       (status !== 'waiting-plan-approval' && !hasRuntimePlan)
@@ -234,11 +237,12 @@ const usePlanProjectionRecovery = (
       cancelled = true
       if (retryTimer !== undefined) window.clearTimeout(retryTimer)
     }
-  }, [hasRuntimePlan, ports, projectId, projection, sessionId, status])
+  }, [hasRuntimePlan, isImported, ports, projectId, projection, sessionId, status])
 
   return Boolean(
     ports &&
     sessionId &&
+    !isImported &&
     !projection &&
     (status === 'waiting-plan-approval' || hasRuntimePlan) &&
     errorSessionId === sessionId
@@ -678,7 +682,7 @@ const useWorkspaceConversationController = (
       if (!isPersistenceReady) throw new Error('Session persistence is unavailable.')
       const session = activeSession ? optionsRef.current.getSession(activeSession.id) : undefined
       const plan = selectActiveBranchPlan(session)
-      if (!session || session.activeRun || plan?.approval !== 'pending') {
+      if (!session || session.packageOrigin || session.activeRun || plan?.approval !== 'pending') {
         throw new Error('The pending Plan is no longer available for a response.')
       }
       if (!agentConfigurationReady) {
@@ -821,7 +825,7 @@ const useWorkspaceConversationController = (
       revise: canRevise(options) || canQueueRevision(options),
       resume: canResume(options),
       branch: !queueBlocksActiveSession && canBranch(options),
-      planResponse: options.isPersistenceReady
+      planResponse: options.isPersistenceReady && !options.activeSession?.packageOrigin
     },
     actions,
     queue: {

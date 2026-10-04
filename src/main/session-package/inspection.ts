@@ -13,7 +13,8 @@ export const assertSettledHistory = (session: PersistedChatSession): void => {
     session.activeRun ||
     session.status === 'running' ||
     session.status.startsWith('waiting-') ||
-    hasCurrentRunningDelegatedAttempt(session) ||
+    // Package metadata is untrusted; claimed import identity cannot bypass source validation.
+    hasCurrentRunningDelegatedAttempt({ runtimeContext: context }) ||
     context?.permission?.state === 'pending' ||
     context?.plan?.approval === 'pending' ||
     context?.delegatedWork?.messageCommands?.some(

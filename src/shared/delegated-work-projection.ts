@@ -2,19 +2,21 @@ import { resolveMessageBranchPath, type PersistedAgentFrame } from './conversati
 import type { PersistedChatSession } from './session-persistence'
 
 // Resource-safety checks (quit, migration, archive) must consider every delegated record in the
-// Session, including work attached to an inactive conversation branch. An Attempt is "current" only
+// writable Session, including work attached to an inactive conversation branch. An Attempt is "current" only
 // when it is the record's latest Attempt; an older running value is historical once a continuation
-// has appended a newer terminal Attempt.
+// has appended a newer terminal Attempt. Imported records are historical evidence.
 const hasCurrentRunningDelegatedAttempt = (
-  session: Pick<PersistedChatSession, 'runtimeContext'> | undefined
+  session: Pick<PersistedChatSession, 'runtimeContext' | 'packageOrigin'> | undefined
 ): boolean =>
+  !session?.packageOrigin &&
   session?.runtimeContext?.delegatedWork?.records.some(
     (record) => record.attempts.at(-1)?.status === 'running'
   ) === true
 
 const earliestCurrentDelegatedAttemptStartedAt = (
-  session: Pick<PersistedChatSession, 'runtimeContext'> | undefined
+  session: Pick<PersistedChatSession, 'runtimeContext' | 'packageOrigin'> | undefined
 ): number | undefined => {
+  if (session?.packageOrigin) return undefined
   const startedAt =
     session?.runtimeContext?.delegatedWork?.records.flatMap((record) => {
       const attempt = record.attempts.at(-1)
@@ -24,8 +26,10 @@ const earliestCurrentDelegatedAttemptStartedAt = (
 }
 
 const hasAnswerableDelegatedQuestion = (
-  session: Pick<PersistedChatSession, 'conversationGraph' | 'runtimeContext'> | undefined
+  session:
+    Pick<PersistedChatSession, 'conversationGraph' | 'runtimeContext' | 'packageOrigin'> | undefined
 ): boolean => {
+  if (session?.packageOrigin) return false
   const graph = session?.conversationGraph
   const owner = session?.runtimeContext?.delegatedWork
   if (!graph || !owner?.questionRequests || owner.questionRequestsQuarantine !== undefined) {
