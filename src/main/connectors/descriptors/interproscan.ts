@@ -19,7 +19,7 @@ const MAX_SEQUENCE_LENGTH = 10_000
 const MAX_SEQUENCE_COUNT = 1_000
 const MAX_SUBMISSION_BYTES = 4 * 1024 * 1024
 const CONTACT_EMAIL_GUIDANCE =
-  'Set a contact email in Settings → Privacy → Share contact email with research data services.'
+  'Set a contact email in Settings → Credentials → Literature access. This email is sent to EMBL-EBI when submitting a job.'
 const SUBMISSION_UNKNOWN =
   'InterProScan submission outcome is uncertain; the job may already exist, but no usable job_id was received. Do not resubmit automatically.'
 const LIFECYCLE_GUIDANCE =

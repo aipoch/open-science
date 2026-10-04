@@ -61,9 +61,15 @@ describe('InterProScan submission', () => {
     [{ ncbiEmail: 'invalid-address' }, 'contact_email_invalid']
   ])('requires a valid contact email before dispatch (%j)', async (auth, message) => {
     const fetchImpl = vi.fn<typeof fetch>()
-    await expect(
-      submissionEngine(fetchImpl).call(submit, { sequence: 'MKT' }, auth)
-    ).rejects.toThrow(message)
+    const pending = submissionEngine(fetchImpl).call(submit, { sequence: 'MKT' }, auth)
+    await expect(pending).rejects.toThrow(message)
+    for (const guidance of [
+      'Settings → Credentials → Literature access',
+      'This email is sent to EMBL-EBI when submitting a job.'
+    ]) {
+      await expect(pending).rejects.toThrow(guidance)
+      expect(submit.description).toContain(guidance)
+    }
     expect(fetchImpl).not.toHaveBeenCalled()
   })
 
