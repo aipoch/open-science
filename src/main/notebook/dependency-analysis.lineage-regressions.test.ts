@@ -962,6 +962,61 @@ describe('file lineage identity and completeness guards', () => {
     ])
   })
 
+  it.skipIf(process.platform !== 'win32')(
+    'matches case variants using Windows filesystem semantics',
+    () => {
+      const root = join(tmpdir(), 'lineage-path-case')
+      const producer = run('producer', root, [
+        {
+          path: join(root, 'Outputs/result.json'),
+          relativePath: 'Outputs/result.json',
+          kind: 'other',
+          createdByRunId: 'producer',
+          change: 'created',
+          checksum: 'd'.repeat(64)
+        }
+      ])
+      const consumer = run('consumer', root)
+      const projection = projectNotebookFileDependencies([
+        { run: producer, facts, fileAccess: access([], ['Outputs/result.json']) },
+        { run: consumer, facts, fileAccess: access(['outputs/RESULT.JSON'], []) }
+      ] satisfies readonly AnalyzedNotebookRun[])
+      expect(projection.consumer).toEqual([
+        expect.objectContaining({ producerRunId: 'producer', confidence: 'verified' })
+      ])
+    }
+  )
+
+  it('withholds a read-after-write edge when statement order is unavailable', () => {
+    const root = join(tmpdir(), 'lineage-read-after-write')
+    const output = join(root, 'result.json')
+    const producer = run('producer', root, [
+      {
+        path: output,
+        relativePath: 'result.json',
+        kind: 'other',
+        createdByRunId: 'producer',
+        change: 'created',
+        checksum: 'e'.repeat(64)
+      }
+    ])
+    const rewrite = run('rewrite', root, [
+      {
+        path: output,
+        relativePath: 'result.json',
+        kind: 'other',
+        createdByRunId: 'rewrite',
+        change: 'modified',
+        checksum: 'f'.repeat(64)
+      }
+    ])
+    const projection = projectNotebookFileDependencies([
+      { run: producer, facts, fileAccess: access([], ['result.json']) },
+      { run: rewrite, facts, fileAccess: access(['result.json'], ['result.json']) }
+    ] satisfies readonly AnalyzedNotebookRun[])
+    expect(projection.rewrite).toBeUndefined()
+  })
+
   it('withholds an older producer when a complete write has no observed generation', () => {
     const root = join(tmpdir(), 'lineage-missing-generation')
     const output = join(root, 'result.json')

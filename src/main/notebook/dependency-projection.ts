@@ -106,12 +106,15 @@ const portablePath = (value: string): string =>
     .replace(/^\.\//u, '')
     .replace(/\/{2,}/gu, '/')
 
+const lineagePathCase = (value: string): string =>
+  process.platform === 'win32' ? value.toLowerCase() : value
+
 const lineagePathKey = (run: NotebookRunRecord, value: string): string => {
-  const portable = portablePath(value)
+  const portable = lineagePathCase(portablePath(value))
   const workingDirectory = run.cwdAfter ?? run.cwdBefore ?? run.frozenShellContext?.cwd
-  if (isAbsolute(value)) return `absolute:${portablePath(normalize(value))}`
+  if (isAbsolute(value)) return `absolute:${lineagePathCase(portablePath(normalize(value)))}`
   if (workingDirectory !== undefined)
-    return `absolute:${portablePath(normalize(resolve(workingDirectory, value)))}`
+    return `absolute:${lineagePathCase(portablePath(normalize(resolve(workingDirectory, value))))}`
   // Runs recorded before cwd evidence existed remain matchable only by their exact
   // portable spelling. Do not infer that a `data/` prefix is an alias for another file.
   return `relative:${portable}`
@@ -2004,9 +2007,15 @@ const projectNotebookFileDependencies = (
   for (const { run, fileAccess } of analyzedRuns) {
     if (run.status === 'completed' && fileAccess?.readState === 'complete') {
       const dependencies: NotebookFileDependency[] = []
+      const writeKeys = new Set(
+        (fileAccess.writes ?? []).map((rawPath) => lineagePathKey(run, rawPath))
+      )
       for (const rawPath of fileAccess.reads) {
         const path = portablePath(rawPath)
         const key = lineagePathKey(run, rawPath)
+        // Static extraction does not retain statement order. If a run both reads and
+        // writes the same path, do not attribute the read to an older producer.
+        if (writeKeys.has(key)) continue
         if (ambiguousPaths.has(key)) continue
         const producer = producers.get(key)
         if (!producer || producer.runId === run.runId) continue
@@ -2015,7 +2024,9 @@ const projectNotebookFileDependencies = (
           path,
           ...(producer.generationId ? { generationId: producer.generationId } : {}),
           ...(producer.checksum ? { checksum: producer.checksum } : {}),
-          confidence: (producer.checksum ? 'verified' : 'advisory') as NotebookFileDependency['confidence']
+          confidence: (producer.checksum ? 'verified' : 'advisory') as NotebookFileDependency[
+            'confidence'
+          ]
         })
       }
       if (dependencies.length) dependenciesByRunId[run.runId] = dependencies
