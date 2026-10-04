@@ -55,6 +55,38 @@ test('analyzes an uploaded PDF without Literature, message binding or note-write
           .requests.length
     )
   ).toBe(1)
+  // Completed and restored results keep retry controls behind an explicit disclosure.
+  await expect(page.locator('[data-pdf-figures-content] > header')).toHaveCount(0)
+  for (const width of [1100, 420]) {
+    await page.setViewportSize({ width, height: 850 })
+    const options = page.getByRole('button', { name: 'PDF analysis options', exact: true })
+    await expect(options).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Analyze again', exact: true })).toHaveCount(0)
+    await options.focus()
+    await page.keyboard.press('Enter')
+    await page.getByRole('combobox', { name: 'Parallel pages' }).click()
+    await page.getByRole('option', { name: '4x', exact: true }).click()
+    await expect(page.getByRole('dialog', { name: 'PDF analysis options' })).toBeVisible()
+    expect(
+      await page.evaluate(
+        () =>
+          (window as unknown as { uploadedPdfAudit: { requests: unknown[] } }).uploadedPdfAudit
+            .requests.length
+      )
+    ).toBe(1)
+    await page.keyboard.press('Escape')
+    await expect(options).toBeFocused()
+  }
+  await page.getByRole('button', { name: 'PDF analysis options', exact: true }).click()
+  await page.getByRole('button', { name: 'Analyze again', exact: true }).click()
+  await expect(page.getByRole('cell', { name: '42', exact: true })).toBeVisible()
+  expect(
+    await page.evaluate(
+      () =>
+        (window as unknown as { uploadedPdfAudit: { requests: unknown[] } }).uploadedPdfAudit
+          .requests.length
+    )
+  ).toBe(2)
   expect(errors).toEqual([])
 })
 

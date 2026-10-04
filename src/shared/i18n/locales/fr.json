@@ -135,6 +135,7 @@
     "More items": "Plus de sessions"
   },
   "renderer": {
+    "PDF analysis options": "Options d’analyse du PDF",
     "Retrieve GEO series metadata, samples and supplementary-file links.": "Récupérer les métadonnées, les échantillons et les liens vers les fichiers supplémentaires d’une série GEO.",
     "Find GEO Series Matrix and NCBI RNA-seq count file links for manual download.": "Rechercher les liens vers les fichiers Series Matrix de GEO et les fichiers de comptages RNA-seq du NCBI pour un téléchargement manuel.",
     "Check decompressed GEO matrix structure, dimensions and sample alignment before analysis.": "Vérifier la structure, les dimensions et la correspondance des échantillons d’une matrice GEO décompressée avant l’analyse.",

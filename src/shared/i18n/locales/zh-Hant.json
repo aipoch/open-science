@@ -133,6 +133,7 @@
     "More items": "更多會話"
   },
   "renderer": {
+    "PDF analysis options": "PDF 分析選項",
     "Retrieve GEO series metadata, samples and supplementary-file links.": "取得 GEO 系列的中繼資料、樣本與補充檔案連結。",
     "Find GEO Series Matrix and NCBI RNA-seq count file links for manual download.": "尋找 GEO Series Matrix 與 NCBI RNA-seq 計數檔案的連結，以便手動下載。",
     "Check decompressed GEO matrix structure, dimensions and sample alignment before analysis.": "在分析前檢查解壓縮後的 GEO 矩陣結構、維度與樣本對應關係。",
