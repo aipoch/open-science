@@ -29,7 +29,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      windows_runtime_changed: ${{ steps.runtime_change.outputs.changed }}
+      windows_runtime_source_changed: ${{ steps.runtime_change.outputs.source_changed }}
+      windows_runtime_catalog_changed: ${{ steps.runtime_change.outputs.catalog_changed }}
     permissions:
       contents: read
     steps:
@@ -54,81 +55,59 @@ jobs:
       - name: Detect Windows runtime changes
         id: runtime_change
         shell: bash
+        env:
+          CDN_BASE_URL: ${{ vars.CDN_BASE_URL }}
+          S3_PREFIX: ${{ vars.S3_PREFIX }}
         run: |
           if [ "$GITHUB_EVENT_NAME" != "push" ] || [[ "$GITHUB_REF" != refs/tags/v* ]]; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           previous_tag=$(git describe --tags --match 'v*' --abbrev=0 "$GITHUB_SHA^" 2>/dev/null || true)
           if [ -z "$previous_tag" ]; then
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-            echo "No previous version tag found; preparing the runtime for the first stable release."
-            exit 0
-          fi
-          runtime_paths=(
-            'packages/notebook-network-sandbox/vendor/windows-runtime/sources.json'
-            'packages/notebook-network-sandbox/vendor/windows-runtime/*.patch'
-            'packages/notebook-network-sandbox/vendor/windows-runtime/build.ps1'
-            'packages/notebook-network-sandbox/vendor/windows-runtime/npm/**'
-            'scripts/check-windows-notebook-runtime.mjs'
-            'scripts/stage-windows-notebook-components.mjs'
-            'scripts/windows-runtime-cdn.mjs'
-            'src/main/notebook/windows-runtime-catalog.json'
-            '.github/actions/windows-notebook-runtime/action.yml'
-          )
-          if git diff --quiet "$previous_tag" "$GITHUB_SHA" -- "${runtime_paths[@]}"; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "Windows runtime inputs are unchanged since $previous_tag; reusing the immutable CDN objects."
+            source_changed=true
+            catalog_changed=true
+            echo "No previous version tag found; requiring the reviewed runtime catalog and CDN objects."
           else
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-            echo "Windows runtime inputs changed since $previous_tag; preparing and signing a new runtime."
+            runtime_paths=(
+              'packages/notebook-network-sandbox/vendor/windows-runtime/sources.json'
+              'packages/notebook-network-sandbox/vendor/windows-runtime/*.patch'
+              'packages/notebook-network-sandbox/vendor/windows-runtime/build.ps1'
+              'packages/notebook-network-sandbox/vendor/windows-runtime/npm/**'
+              'scripts/check-windows-notebook-runtime.mjs'
+              'scripts/stage-windows-notebook-components.mjs'
+              'scripts/windows-runtime-cdn.mjs'
+              '.github/actions/windows-notebook-runtime/action.yml'
+            )
+            source_changed=false
+            catalog_changed=false
+            if ! git diff --quiet "$previous_tag" "$GITHUB_SHA" -- "${runtime_paths[@]}"; then
+              source_changed=true
+            fi
+            if ! git diff --quiet "$previous_tag" "$GITHUB_SHA" -- src/main/notebook/windows-runtime-catalog.json; then
+              catalog_changed=true
+            fi
+            echo "Runtime source changed since $previous_tag: $source_changed"
+            echo "Runtime catalog changed since $previous_tag: $catalog_changed"
           fi
+          if [ "$source_changed" = true ] && [ "$catalog_changed" != true ]; then
+            echo 'Runtime source changed without a catalog update. Run the runtime signing/staging flow, merge the catalog, publish its CDN objects, then create the application tag.' >&2
+            exit 1
+          fi
+          echo "source_changed=$source_changed" >> "$GITHUB_OUTPUT"
+          echo "catalog_changed=$catalog_changed" >> "$GITHUB_OUTPUT"
 
-  # Prepare the exact runtime consumed by a stable release. The called workflow runs in this
-  # release run, so its artifact ID can flow directly to signing without operator copy/paste.
-  windows-notebook-runtime:
-    name: Prepare Windows Notebook runtime
-    needs: release-preflight
-    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && needs['release-preflight'].outputs.windows_runtime_changed == 'true' }}
-    uses: ./.github/workflows/windows-notebook-runtime.yml
-    permissions:
-      contents: read
-
-  windows-runtime-sign:
-    name: Sign Windows Notebook runtime
-    needs: [release-preflight, windows-notebook-runtime]
-    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && needs['release-preflight'].outputs.windows_runtime_changed == 'true' }}
-    uses: ./.github/workflows/windows-runtime-sign.yml
-    permissions:
-      actions: read
-      contents: read
-      id-token: write
-    with:
-      source_run: ${{ github.run_id }}
-      artifact_id: ${{ needs['windows-notebook-runtime'].outputs.artifact_id }}
-      source_kind: release
-
-  windows-runtime-cdn:
-    name: Publish Windows runtime CDN
-    needs: [release-preflight, windows-runtime-sign]
-    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && needs['release-preflight'].outputs.windows_runtime_changed == 'true' }}
-    uses: ./.github/workflows/windows-runtime-cdn.yml
-    with:
-      source_run: ${{ github.run_id }}
-      artifact_id: ${{ needs['windows-runtime-sign'].outputs.artifact_id }}
-      dry_run: false
-    secrets: inherit
+      - name: Verify reviewed Windows runtime CDN objects
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          CDN_BASE_URL: ${{ vars.CDN_BASE_URL }}
+          S3_PREFIX: ${{ vars.S3_PREFIX }}
+        run: node scripts/windows-runtime-cdn.mjs check
 
   # Build the platform matrix (macOS arm64/x64 + Linux + Windows x64) via the reusable workflow.
   # secrets: inherit forwards the optional signing/notarization secrets. macOS is signed but NOT
   # notarized here — notarization is decoupled into the notarize-mac job below.
   build:
-    needs: [release-preflight, windows-runtime-cdn]
-    if: >-
-      ${{ always() && needs['release-preflight'].result == 'success' &&
-      (github.event_name != 'push' || !startsWith(github.ref, 'refs/tags/v') ||
-      needs['release-preflight'].outputs.windows_runtime_changed == 'false' ||
-      needs['windows-runtime-cdn'].result == 'success') }}
+    needs: release-preflight
     uses: ./.github/workflows/build.yml
     permissions:
       contents: read

@@ -1061,15 +1061,14 @@ if ($artifactSaveBase -eq $artifactSaveCommit) {
     const validateTag = findStep(preflight, 'Validate desktop release tag')
     const verifyMain = findStep(preflight, 'Verify release commit is on main')
     const stableTagCondition = "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')"
-    const versionTagCondition =
-      "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')"
 
     expect(preflight).toMatchObject({
       permissions: { contents: 'read' },
       'runs-on': 'ubuntu-latest'
     })
     expect(preflight.outputs).toEqual({
-      windows_runtime_changed: '${{ steps.runtime_change.outputs.changed }}'
+      windows_runtime_source_changed: '${{ steps.runtime_change.outputs.source_changed }}',
+      windows_runtime_catalog_changed: '${{ steps.runtime_change.outputs.catalog_changed }}'
     })
     expect(checkout).toMatchObject({
       uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
@@ -1086,37 +1085,21 @@ if ($artifactSaveBase -eq $artifactSaveCommit) {
     expect(runtimeChange).toMatchObject({ id: 'runtime_change', shell: 'bash' })
     expect(runtimeChange.run).toContain("git describe --tags --match 'v*'")
     expect(runtimeChange.run).toContain('src/main/notebook/windows-runtime-catalog.json')
-    expect(runtimeChange.run).toContain('reusing the immutable CDN objects')
-    expect(release.jobs['windows-notebook-runtime']).toMatchObject({
-      needs: 'release-preflight',
-      uses: './.github/workflows/windows-notebook-runtime.yml'
-    })
-    expect(release.jobs['windows-notebook-runtime'].if).toContain(versionTagCondition)
-    expect(release.jobs['windows-runtime-sign']).toMatchObject({
-      needs: ['release-preflight', 'windows-notebook-runtime'],
-      uses: './.github/workflows/windows-runtime-sign.yml',
-      with: {
-        source_run: '${{ github.run_id }}',
-        artifact_id: "${{ needs['windows-notebook-runtime'].outputs.artifact_id }}",
-        source_kind: 'release'
+    expect(runtimeChange.run).toContain('Runtime source changed without a catalog update')
+    const verifyRuntime = findStep(preflight, 'Verify reviewed Windows runtime CDN objects')
+    expect(verifyRuntime).toMatchObject({
+      if: "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')",
+      run: 'node scripts/windows-runtime-cdn.mjs check',
+      env: {
+        CDN_BASE_URL: '${{ vars.CDN_BASE_URL }}',
+        S3_PREFIX: '${{ vars.S3_PREFIX }}'
       }
     })
-    expect(release.jobs['windows-runtime-sign'].if).toContain(versionTagCondition)
-    expect(release.jobs['windows-runtime-cdn']).toMatchObject({
-      needs: ['release-preflight', 'windows-runtime-sign'],
-      uses: './.github/workflows/windows-runtime-cdn.yml',
-      with: {
-        source_run: '${{ github.run_id }}',
-        artifact_id: "${{ needs['windows-runtime-sign'].outputs.artifact_id }}",
-        dry_run: false
-      }
-    })
-    expect(release.jobs['windows-runtime-cdn'].if).toContain(versionTagCondition)
-    expect(release.jobs.build.needs).toEqual(['release-preflight', 'windows-runtime-cdn'])
-    expect(release.jobs.build.if).toContain(
-      "needs['release-preflight'].outputs.windows_runtime_changed == 'false'"
-    )
-    expect(release.jobs.build.if).toContain("needs['windows-runtime-cdn'].result == 'success'")
+    expect(release.jobs['windows-notebook-runtime']).toBeUndefined()
+    expect(release.jobs['windows-runtime-sign']).toBeUndefined()
+    expect(release.jobs['windows-runtime-cdn']).toBeUndefined()
+    expect(release.jobs.build.needs).toBe('release-preflight')
+    expect(release.jobs.build.if).toBeUndefined()
     expect(release.jobs.build.with?.sign_windows).toBe(
       "${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}"
     )
