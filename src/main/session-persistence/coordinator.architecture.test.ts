@@ -1811,7 +1811,8 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/acp/approved-handoff-outcome.integration.test.ts',
       'src/main/acp/approved-handoff-outcome.test.ts',
       'src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx',
-      'src/renderer/src/lib/acp/workspace-prompt-rollback-failure.test.ts'
+      'src/renderer/src/lib/acp/workspace-prompt-rollback-failure.test.ts',
+      'src/main/agent-framework/claude-shared-settings.integration.test.ts'
     ])
     expect(sessionPersistence.capabilityOverlays).toEqual([
       'windows_sensitive',
