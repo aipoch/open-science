@@ -38,7 +38,6 @@
     "src/main/pdf-annotations/document-store.ts",
     "src/main/pdf-annotations/sharing.ts",
     "src/main/pdf-annotations/sharing.integration.test.ts",
-    "src/renderer/src/pages/workspace/pdf-annotations/PdfAddToLiteratureDialog.tsx",
     "src/renderer/src/pages/workspace/pdf-annotations/PdfReconciliationDialog.tsx",
     "src/renderer/src/pages/workspace/pdf-annotations/PdfDocumentDialogs.test.tsx"
   ],

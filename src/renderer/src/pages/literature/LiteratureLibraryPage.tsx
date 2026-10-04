@@ -1215,6 +1215,15 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     requestMetadataExit
   })
 
+  const pendingPdfImport = useNavigationStore((state) => state.pendingLiteraturePdfImport)
+  useEffect(() => {
+    if (!pendingPdfImport || projectId !== pendingPdfImport.projectId) return
+    queueMicrotask(() => {
+      const source = useNavigationStore.getState().consumeLiteraturePdfImport(pendingPdfImport)
+      if (source) beginPdfImport(source)
+    })
+  }, [beginPdfImport, pendingPdfImport, projectId])
+
   const {
     pendingDecisions,
     decisionFailures,

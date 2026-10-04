@@ -1,5 +1,6 @@
 import {
   BookOpen,
+  BookOpenText,
   ClipboardCopy,
   Download,
   Eye,
@@ -40,7 +41,7 @@ export const PREVIEW_CAPABILITY_CATALOG: Record<PreviewCapabilityId, ActionMenuD
   'open-source': { labelKey: 'Open source in browser', icon: ExternalLink },
   'copy-source-url': { labelKey: 'Copy link', icon: Link },
   'pdf-context': { labelKey: 'Read with agent', icon: BookOpen },
-  'pdf-add-to-literature': { labelKey: 'Add to Literature', icon: PackagePlus },
+  'pdf-add-to-literature': { labelKey: 'Add to Literature', icon: BookOpenText },
   'copy-path': { labelKey: 'Copy path', icon: ClipboardCopy },
   'save-as-artifact': { labelKey: 'Save as artifact', icon: PackagePlus },
   provenance: { labelKey: 'Provenance', icon: GitBranch },

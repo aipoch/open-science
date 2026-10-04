@@ -460,15 +460,6 @@ test('shares Workspace notes with Literature across two windows and reopening', 
         ).entries.length
     )
   ).toBe(0)
-  await page.evaluate(
-    (item) => window.api.literature.transact({ kind: 'create-item', item }),
-    literatureItemInputSchema.parse({
-      itemType: 'journalArticle',
-      title: 'Existing research reference',
-      issuedText: '2025',
-      containerTitle: 'Research methods'
-    })
-  )
   await app.setMainWindowSize(1440, 960)
   await page.getByTestId('preview-file-content-surface').click({ button: 'right' })
   await expect(page.getByRole('menuitem', { name: 'Add to Literature', exact: true })).toBeVisible()
@@ -477,19 +468,16 @@ test('shares Workspace notes with Literature across two windows and reopening', 
   await app.setMainWindowZoomFactor(1.25)
   await page.getByTestId('preview-file-content-surface').click({ button: 'right' })
   await page.getByRole('menuitem', { name: 'Add to Literature', exact: true }).click()
-  const adding = page.getByRole('dialog', { name: 'Add to Literature', exact: true })
+  const adding = page.getByRole('dialog', { name: 'Import PDF', exact: true })
   await app.setMainWindowZoomFactor(1)
-  await adding.getByRole('button', { name: /Existing research reference/ }).click()
+  await expect(adding).toBeVisible()
   await expect(
-    adding.getByRole('button', { name: 'Attach to reference', exact: true })
+    page.getByRole('heading', { name: 'Shared PDF project', exact: true, includeHidden: true })
   ).toBeVisible()
-  await page.screenshot({ path: testInfo.outputPath('attach-to-reference-dialog.png') })
-  await adding.getByRole('textbox', { name: 'Search references' }).fill('Shared PDF reference')
-  await expect(adding.getByRole('status')).toHaveText('No matching references')
-  await page.screenshot({ path: testInfo.outputPath('add-to-literature-dialog.png') })
-  await adding.getByRole('button', { name: 'Add to Literature', exact: true }).click()
+  await adding.getByRole('textbox', { name: 'Title', exact: true }).fill('Shared PDF reference')
+  await page.screenshot({ path: testInfo.outputPath('workspace-pdf-import.png') })
+  await adding.getByRole('button', { name: 'Save', exact: true }).click()
   await expect(adding).toBeHidden()
-  await app.setMainWindowZoomFactor(1)
   const identity = await page.evaluate(async () => {
     const project = (await window.api.projects.list()).find(
       (project) => project.name === 'Shared PDF project'
@@ -503,8 +491,17 @@ test('shares Workspace notes with Literature across two windows and reopening', 
     })
     const item = result.entries.find((entry) => 'item' in entry)!
     if (!('attachments' in item)) throw new Error('Missing reference')
+    if (!item.projectIds.includes(project.id)) throw new Error('Missing Project reference link')
     return { projectId: project.id, id: note.id, versionId: item.attachments[0].versions[0].id }
   })
+  await page
+    .getByRole('dialog', { name: 'Shared PDF reference', exact: true })
+    .getByRole('button', { name: 'Close', exact: true })
+    .click()
+  await page.screenshot({ path: testInfo.outputPath('workspace-pdf-imported.png') })
+  await page.getByRole('button', { name: 'Back to Project', exact: true }).click()
+  await page.getByRole('tab', { name: 'Notes & Annotations', exact: true }).click()
+  await expect(page.locator('[data-annotation-id]')).toContainText('Created in Workspace')
   const other = await app.openAdditionalRenderer()
   await other.getByRole('button', { name: 'Library', exact: true }).click()
   await other.getByRole('button', { name: 'All references', exact: true }).click()

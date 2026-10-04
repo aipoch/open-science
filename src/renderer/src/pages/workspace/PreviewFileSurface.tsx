@@ -1,5 +1,3 @@
-import { PdfAddToLiteratureDialog } from './pdf-annotations/PdfAddToLiteratureDialog'
-import type { PdfAnnotationSource } from '../../../../shared/pdf-annotations'
 import { PdfExportProvider } from './pdf-annotations/PdfExportProvider'
 import { useVersionHistoryPages } from './use-version-history-pages'
 import { VersionHistoryLoadButton } from './VersionHistoryLoadButton'
@@ -706,7 +704,6 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
     // Bumping this token remounts the content tree so a local file is re-read from disk.
     const [reloadToken, setReloadToken] = useState(0)
     const [copied, setCopied] = useState(false)
-    const [addPdfSource, setAddPdfSource] = useState<{ key: string; source: PdfAnnotationSource }>()
     const [saveAsArtifactState, setSaveAsArtifactState] = useState<SaveAsArtifactState>('idle')
     const [localActionFailure, setLocalActionFailure] = useState<LocalFileActionFailure>()
     const copiedTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
@@ -1439,6 +1436,7 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
         ? {
             'pdf-add-to-literature': {
               execute: async () => {
+                const navigationRevision = useNavigationStore.getState().userNavigationRevision
                 const result = await window.api.bookmarks.resolvePdfSource({
                   projectId,
                   sessionId: addPdfSessionId,
@@ -1448,7 +1446,11 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
                 })
                 if (!result.ok)
                   throw new Error(t('PDF annotations are unavailable for this source.'))
-                setAddPdfSource({ key: previewIdentityKey, source: result.source })
+                if (useNavigationStore.getState().userNavigationRevision !== navigationRevision)
+                  return
+                useNavigationStore.getState().openProjectLiterature(projectId, 'user', {
+                  pdf: result.source
+                })
               }
             }
           }
@@ -1529,13 +1531,6 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
           if (open) contextMenuComposerFocusRequestedRef.current = false
         }}
       >
-        {addPdfSource?.key === previewIdentityKey ? (
-          <PdfAddToLiteratureDialog
-            key={previewIdentityKey}
-            source={addPdfSource.source}
-            onClose={() => setAddPdfSource(undefined)}
-          />
-        ) : null}
         <PreviewActionMenuAdapterProvider targetId={previewActionTargetId}>
           <ActionMenuTarget<PreviewCapabilityId, undefined>
             targetId={previewActionTargetId}

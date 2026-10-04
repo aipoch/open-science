@@ -303,3 +303,67 @@ it('uses geometry to end a structured abstract even when the final line has no E
   expect(draft.abstract).toContain('Conclusions: The evidence supports further investigation.')
   expect(draft.abstract).not.toContain('body text')
 })
+
+vi.mock('../../workspace/previews/managed-pdf-document', () => ({
+  createManagedPdfLoadingTask: () => pdf.getDocument({ managed: true })
+}))
+
+it.each(['upload-version', 'artifact-version'] as const)(
+  'extracts the exact Workspace %s through a released preview capability',
+  async (kind) => {
+    const { destroy } = setup('', [item(title, 18)], 1)
+    const acquire = vi.fn().mockResolvedValue({ id: 'resource', size: 100 })
+    const release = vi.fn().mockResolvedValue(undefined)
+    window.api.previewResources = { acquire, release } as never
+    const source = {
+      kind,
+      projectId: 'project',
+      sessionId: 'session',
+      sourceFileId: 'file',
+      versionId: 'version',
+      name: 'paper.pdf',
+      path: `${kind}:version`,
+      checksum: 'a'.repeat(64)
+    }
+    expect((await extractLiteraturePdfDraft(source, fallback)).title).toBe(
+      'Generic publisher title'
+    )
+    expect(acquire).toHaveBeenCalledExactlyOnceWith({
+      source: kind === 'upload-version' ? 'upload' : 'artifact',
+      projectId: 'project',
+      fileId: 'file',
+      versionId: 'version'
+    })
+    expect(destroy).toHaveBeenCalledOnce()
+    expect(release).toHaveBeenCalledExactlyOnceWith({ resourceId: 'resource' })
+  }
+)
+
+it('releases an oversized Workspace PDF without allocating or parsing its bytes', async () => {
+  setup()
+  const release = vi.fn().mockResolvedValue(undefined)
+  window.api.previewResources = {
+    acquire: vi.fn().mockResolvedValue({ id: 'large', size: 51 * 1024 * 1024 }),
+    release
+  } as never
+  pdf.getDocument.mockClear()
+  const notice = vi.fn()
+  expect(
+    await extractLiteraturePdfDraft(
+      {
+        kind: 'upload-version',
+        projectId: 'project',
+        sourceFileId: 'file',
+        versionId: 'version',
+        name: 'paper.pdf',
+        path: 'upload-version:version',
+        checksum: 'a'.repeat(64)
+      },
+      fallback,
+      notice
+    )
+  ).toBe(fallback)
+  expect(pdf.getDocument).not.toHaveBeenCalled()
+  expect(notice).toHaveBeenCalledWith({ textUnavailable: true })
+  expect(release).toHaveBeenCalledWith({ resourceId: 'large' })
+})

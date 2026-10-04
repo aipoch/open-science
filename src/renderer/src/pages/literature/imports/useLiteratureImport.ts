@@ -1,3 +1,4 @@
+import type { PdfAnnotationSource } from '../../../../../shared/pdf-annotations'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import type { TFunction } from 'i18next'
 import { useCallback, useMemo, useRef, useState } from 'react'
@@ -90,7 +91,7 @@ export function useLiteratureImport({
   createdItemId: string | undefined
   dialogItemEditor:
     | {
-        file: File | undefined
+        file: File | PdfAnnotationSource | undefined
         draft: LiteratureItemInput | undefined
         metadataNotice: string | undefined
         reading: boolean
@@ -108,7 +109,7 @@ export function useLiteratureImport({
   setDuplicatePolicy: React.Dispatch<React.SetStateAction<LiteratureDuplicatePolicy>>
   isImportingRecords: boolean
   createManualItem: (item?: LiteratureItemInput) => Promise<void>
-  beginPdfImport: (file: File) => void
+  beginPdfImport: (file: File | PdfAnnotationSource) => void
   closeItemEditor: () => void
   previewRecordImport: (file: File) => Promise<void>
   commitRecordImport: () => Promise<void>
@@ -130,10 +131,10 @@ export function useLiteratureImport({
     >
     projectId?: string
     collectionId?: string
-    file?: File
+    file?: File | PdfAnnotationSource
     pdfItem?: LiteratureItemView
   }>(undefined)
-  const [pendingImportPdf, setPendingImportPdf] = useState<File>()
+  const [pendingImportPdf, setPendingImportPdf] = useState<File | PdfAnnotationSource>()
   const [pendingImportMetadataNotice, setPendingImportMetadataNotice] = useState<string>()
   const [pendingImportDraft, setPendingImportDraft] = useState<LiteratureItemInput>()
   const [isReadingImportMetadata, setIsReadingImportMetadata] = useState(false)
@@ -215,19 +216,29 @@ export function useLiteratureImport({
         pending.destination = undefined
       }
       if (pending.file && !pending.pdfItem) {
-        staged = await pdfStaging.stagePdf(pending.file, transferId)
-        await window.api.uploads.claimLocalFile?.({ transferId })
-        pdfStaging.finishPdfStaging()
-        const operationId = crypto.randomUUID()
-        pdfStaging.trackNativeImport(operationId)
-        pending.pdfItem = (
-          await window.api.literature.importPdf({
-            itemId: pending.id,
-            attachment: staged,
-            operationId
-          })
-        ).item
-        pdfStaging.trackNativeImport(undefined)
+        if ('kind' in pending.file) {
+          pending.pdfItem = (
+            await window.api.literature.addPdf({
+              source: pending.file,
+              itemId: pending.id,
+              operationId: transferId
+            })
+          ).item
+        } else {
+          staged = await pdfStaging.stagePdf(pending.file, transferId)
+          await window.api.uploads.claimLocalFile?.({ transferId })
+          pdfStaging.finishPdfStaging()
+          const operationId = crypto.randomUUID()
+          pdfStaging.trackNativeImport(operationId)
+          pending.pdfItem = (
+            await window.api.literature.importPdf({
+              itemId: pending.id,
+              attachment: staged,
+              operationId
+            })
+          ).item
+          pdfStaging.trackNativeImport(undefined)
+        }
       }
       const created = pending.pdfItem ?? (await detailController.read(pending.id))
       if (!created) throw new Error('Literature Item is unavailable after creating.')
@@ -278,7 +289,7 @@ export function useLiteratureImport({
     }
   }
 
-  const beginPdfImport = (file: File): void => {
+  const beginPdfImport = (file: File | PdfAnnotationSource): void => {
     setDuplicatePolicy('reuse')
     const fallback = { ...emptyLiteratureItem(), title: titleFromPdfFilename(file.name) }
     const generation = ++importMetadataGenerationRef.current
