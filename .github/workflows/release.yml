@@ -77,6 +77,10 @@ jobs:
               'scripts/stage-windows-notebook-components.mjs'
               'scripts/windows-runtime-cdn.mjs'
               '.github/actions/windows-notebook-runtime/action.yml'
+              '.github/workflows/windows-notebook-runtime.yml'
+              '.github/workflows/windows-runtime-sign.yml'
+              '.github/workflows/windows-runtime-cdn.yml'
+              '.github/workflows/stage-runtime-bundle.yml'
             )
             source_changed=false
             catalog_changed=false

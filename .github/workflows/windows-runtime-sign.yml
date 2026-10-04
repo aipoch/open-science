@@ -14,11 +14,6 @@ on:
         description: Exact unsigned Windows runtime artifact ID from source_run
         type: string
         required: true
-      source_kind:
-        description: Validated source workflow kind (prepare or release)
-        type: string
-        required: false
-        default: prepare
     outputs:
       artifact_id:
         description: Signed Windows runtime artifact ID
@@ -33,11 +28,6 @@ on:
         description: Exact unsigned Windows runtime artifact ID from source_run
         type: string
         required: true
-      source_kind:
-        description: Use prepare for a main runtime run
-        type: choice
-        options: [prepare]
-        default: prepare
 
 permissions:
   actions: read
@@ -55,7 +45,7 @@ jobs:
     timeout-minutes: 30
     # Runtime preparation is signed from main under its own protected environment. The application
     # release environment remains tag-only and is used by build.yml for installer signing.
-    environment: ${{ inputs.source_kind == 'prepare' && 'windows-runtime-signing' || 'windows-signing' }}
+    environment: windows-runtime-signing
     permissions:
       actions: read
       contents: read
@@ -74,35 +64,24 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SOURCE_RUN: ${{ inputs.source_run }}
           ARTIFACT_ID: ${{ inputs.artifact_id }}
-          SOURCE_KIND: ${{ inputs.source_kind }}
         run: |
           if ($env:SOURCE_RUN -notmatch '^\d+$' -or $env:ARTIFACT_ID -notmatch '^\d+$') {
             throw 'Numeric source run and artifact IDs are required.'
           }
-          if ($env:SOURCE_KIND -notin @('prepare', 'release')) {
-            throw 'Source kind must be prepare or release.'
+          if ($env:GITHUB_REF -ne 'refs/heads/main') {
+            throw 'Runtime signing must run from main.'
           }
           $run = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:SOURCE_RUN" | ConvertFrom-Json
           if ($LASTEXITCODE -ne 0 -or $run.conclusion -ne 'success') {
             throw 'Source run must have succeeded.'
           }
-          if ($env:SOURCE_KIND -eq 'prepare') {
-            if (
-              $run.name -ne 'Prepare Windows Notebook runtime' -or
-              $run.head_branch -ne 'main' -or
-              $env:GITHUB_REF -ne 'refs/heads/main'
-            ) {
-              throw 'Prepare source run must be a successful runtime run on main.'
-            }
-          } else {
-            if (
-              $run.name -ne 'Release' -or
-              [long]$run.id -ne [long]$env:GITHUB_RUN_ID -or
-              $env:GITHUB_EVENT_NAME -ne 'push' -or
-              $env:GITHUB_REF -notmatch '^refs/tags/v'
-            ) {
-              throw 'Release source run must be this successful version-tag release run.'
-            }
+          if (
+            $run.name -ne 'Prepare Windows Notebook runtime' -or
+            $run.path -ne '.github/workflows/windows-notebook-runtime.yml' -or
+            $run.head_branch -ne 'main' -or
+            $run.event -notin @('push', 'workflow_dispatch')
+          ) {
+            throw 'Source must be a successful Prepare Windows Notebook runtime push or dispatch run on main.'
           }
           $artifact = gh api "repos/$env:GITHUB_REPOSITORY/actions/artifacts/$env:ARTIFACT_ID" | ConvertFrom-Json
           if (
@@ -203,7 +182,7 @@ jobs:
             'AZURE_SIGNING_PUBLISHER'
           )) {
             if ([string]::IsNullOrWhiteSpace((Get-Item "env:$name").Value)) {
-              throw "Missing windows-signing variable: $name"
+              throw "Missing windows-runtime-signing variable: $name"
             }
           }
 

@@ -22,7 +22,13 @@ type Workflow = {
       environment?: string
       permissions?: Record<string, string>
       outputs?: Record<string, string>
-      steps: Array<{ name: string; uses?: string; run?: string; with?: Record<string, unknown> }>
+      steps: Array<{
+        id?: string
+        name: string
+        uses?: string
+        run?: string
+        with?: Record<string, unknown>
+      }>
     }
   >
 }
@@ -45,31 +51,32 @@ it('signs a verified runtime artifact without granting CDN publication access', 
   const steps = sign.steps
   expect(workflow.on.workflow_dispatch.inputs).toMatchObject({
     source_run: { required: true, type: 'string' },
-    artifact_id: { required: true, type: 'string' },
-    source_kind: { default: 'prepare', type: 'choice', options: ['prepare'] }
+    artifact_id: { required: true, type: 'string' }
   })
   expect(workflow.on.workflow_call).toMatchObject({
     inputs: {
       source_run: { required: true, type: 'string' },
-      artifact_id: { required: true, type: 'string' },
-      source_kind: { default: 'prepare', required: false, type: 'string' }
+      artifact_id: { required: true, type: 'string' }
     },
     outputs: { artifact_id: { value: '${{ jobs.sign.outputs.artifact_id }}' } }
   })
   expect(workflow.permissions).toEqual({ actions: 'read', contents: 'read', 'id-token': 'write' })
   expect(sign).toMatchObject({
-    environment:
-      "${{ inputs.source_kind == 'prepare' && 'windows-runtime-signing' || 'windows-signing' }}",
+    environment: 'windows-runtime-signing',
     permissions: { actions: 'read', contents: 'read', 'id-token': 'write' }
   })
   expect(sign.outputs).toEqual({ artifact_id: '${{ steps.upload.outputs.artifact-id }}' })
-  expect(findStep(steps, 'Verify source run and artifact').run).toContain(
-    "SOURCE_KIND -notin @('prepare', 'release')"
-  )
+  expect(workflow.on.workflow_dispatch.inputs).not.toHaveProperty('source_kind')
+  expect(workflow.on.workflow_call.inputs).not.toHaveProperty('source_kind')
   expect(findStep(steps, 'Verify source run and artifact').run).toContain(
     "$env:GITHUB_REF -ne 'refs/heads/main'"
   )
-  expect(findStep(steps, 'Verify source run and artifact').run).toContain("run.name -ne 'Release'")
+  expect(findStep(steps, 'Verify source run and artifact').run).toContain(
+    "$run.event -notin @('push', 'workflow_dispatch')"
+  )
+  expect(findStep(steps, 'Verify source run and artifact').run).toContain(
+    "$run.path -ne '.github/workflows/windows-notebook-runtime.yml'"
+  )
   expect(findStep(steps, 'Download unsigned runtime').with).toMatchObject({
     'artifact-ids': '${{ inputs.artifact_id }}',
     'run-id': '${{ inputs.source_run }}'
