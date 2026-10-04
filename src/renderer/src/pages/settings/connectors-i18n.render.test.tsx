@@ -94,6 +94,31 @@ afterEach(() => {
 
 describe('ConnectorAddForm copy', () => {
   it.each(['de', 'es', 'fr', 'zh-Hans', 'zh-Hant', 'ja', 'ko', 'ru'] as const)(
+    'renders the GWAS summary statistics description from the %s catalog without fallback',
+    async (locale) => {
+      await prepareI18nLocale(locale)
+      const english =
+        'List GWAS summary statistics files, YAML metadata, reference genomes and standard column definitions by GCST accession.'
+      const fallback = 'Full API contract from the main process'
+      const id = 'human-genetics/gwas_get_summary_statistics'
+      const translated = i18next.getResource(locale, 'renderer', english)
+      expect(typeof translated).toBe('string')
+      expect(translated).not.toBe('')
+      expect(translated).not.toBe(english)
+      act(() => {
+        root.render(
+          <p>{connectorToolDescription(id, fallback, i18next.getFixedT(locale, 'renderer'))}</p>
+        )
+      })
+      expect(container.textContent).toBe(translated)
+      expect(container.textContent).not.toContain(fallback)
+      expect(connectorToolDescription(id, fallback, i18next.getFixedT('en', 'renderer'))).toBe(
+        english
+      )
+    }
+  )
+
+  it.each(['de', 'es', 'fr', 'zh-Hans', 'zh-Hant', 'ja', 'ko', 'ru'] as const)(
     'localizes IEDB discovery and evidence tools in %s',
     async (locale) => {
       await prepareI18nLocale(locale)

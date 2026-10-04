@@ -152,6 +152,38 @@ afterEach(() => {
 })
 
 describe('StoragePanel', () => {
+  it('warns about a historical spaced root and lets the user cancel without changing it', async () => {
+    const dataRoot = '/Users/test/Library/Application Support/OpenScience'
+    vi.mocked(window.api.storage.getInfo).mockResolvedValue({ ...richInfo, dataRoot })
+    vi.mocked(window.api.storage.getStatus).mockResolvedValue({ ...richInfo, dataRoot })
+    await act(async () => root.render(<StoragePanel />))
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      'The current data location contains spaces'
+    )
+    expect(container.textContent).toContain('keep the current location')
+    await act(async () => clickButton((button) => button.textContent === 'Change location'))
+    const dialog = document.body.querySelector('[role="alertdialog"]')!
+    await act(async () => {
+      Array.from(dialog.querySelectorAll<HTMLButtonElement>('button'))
+        .find((button) => button.textContent === 'Cancel')!
+        .click()
+    })
+    expect(document.body.querySelector('[role="alertdialog"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Data root path"]')?.textContent).toBe(dataRoot)
+    expect(window.api.storage.migrate).not.toHaveBeenCalled()
+    expect(window.api.storage.setDataRootAndRelaunch).not.toHaveBeenCalled()
+    expect(window.api.storage.commitAndRelaunch).not.toHaveBeenCalled()
+  })
+
+  it('does not warn about spaced Windows data roots', async () => {
+    Object.assign(window.api, { platform: 'win32' })
+    const dataRoot = 'C:\\Users\\Test User\\Open-Science'
+    vi.mocked(window.api.storage.getInfo).mockResolvedValue({ ...richInfo, dataRoot })
+    vi.mocked(window.api.storage.getStatus).mockResolvedValue({ ...richInfo, dataRoot })
+    await act(async () => root.render(<StoragePanel />))
+    expect(container.textContent).not.toContain('The current data location contains spaces')
+  })
+
   const renderEditor = async (): Promise<void> => {
     vi.mocked(window.api.storage.getInfo).mockResolvedValue({ ...richInfo, isDefault: false })
     await act(async () => root.render(<StoragePanel />))

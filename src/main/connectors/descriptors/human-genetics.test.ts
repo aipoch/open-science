@@ -11,6 +11,7 @@ const EXPECTED_IDS = [
   'gwas_search_studies',
   'gwas_get_study',
   'gwas_get_variant',
+  'gwas_get_summary_statistics',
   'eqtl_list_datasets',
   'eqtl_associations',
   'phewas_instances',

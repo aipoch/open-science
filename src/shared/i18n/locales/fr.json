@@ -135,6 +135,7 @@
     "More items": "Plus de sessions"
   },
   "renderer": {
+    "List GWAS summary statistics files, YAML metadata, reference genomes and standard column definitions by GCST accession.": "Lister les fichiers de statistiques récapitulatives GWAS, les métadonnées YAML, les génomes de référence et les définitions standard des colonnes à partir d’un identifiant GCST.",
     "PDF analysis options": "Options d’analyse du PDF",
     "Retrieve GEO series metadata, samples and supplementary-file links.": "Récupérer les métadonnées, les échantillons et les liens vers les fichiers supplémentaires d’une série GEO.",
     "Find GEO Series Matrix and NCBI RNA-seq count file links for manual download.": "Rechercher les liens vers les fichiers Series Matrix de GEO et les fichiers de comptages RNA-seq du NCBI pour un téléchargement manuel.",
@@ -7212,6 +7213,7 @@
     "Keep existing note": "Conserver la note existante",
     "Keep historical note": "Conserver la note antérieure",
     "Include shared PDF notes and annotations from all projects as a read-only snapshot": "Inclure les notes et annotations PDF partagées de tous les projets dans un instantané en lecture seule",
-    "Read-only snapshot": "Instantané en lecture seule"
+    "Read-only snapshot": "Instantané en lecture seule",
+    "The current data location contains spaces. R environments cannot run reliably here. Use Change location to move your data to a path without spaces. You can cancel and keep the current location; your existing data will remain available.": "Le chemin actuel des données contient des espaces. Les environnements R ne peuvent pas y fonctionner de manière fiable. Utilisez « Changer d’emplacement » pour déplacer vos données vers un chemin sans espaces. Vous pouvez annuler et conserver l’emplacement actuel ; vos données existantes resteront accessibles."
   }
 }

@@ -48,6 +48,7 @@ import {
 } from './migration-marker'
 import { withDataRootWrite } from './migration-state'
 import { operationJournalPath, RuntimeOperationJournal } from '../notebook/operation-journal'
+import { exportRuntimeLocks as exportRuntimeLockBundle } from '../notebook/runtime-relocation'
 import type { Logger } from '../logger'
 import { DataRootCleanupJournal } from './data-root-cleanup'
 
@@ -2497,6 +2498,40 @@ describe('discardStagedCopy', () => {
 })
 
 describe('runtime preservation + old-runtime cleanup', () => {
+  it('carries an unconsumed R lock into the verified inventory on another migration', async () => {
+    const deps = fakeDeps()
+    const pendingDir = join(currentDataRoot, 'runtime', 'envs.lock')
+    await mkdir(pendingDir, { recursive: true })
+    const pending = '@EXPLICIT\nhttps://example.test/r-base-4.4.conda#abc\n'
+    await writeFile(join(pendingDir, 'default-r.lock'), pending)
+    await mkdir(join(currentDataRoot, 'runtime', 'pkgs'), { recursive: true })
+    await writeFile(join(currentDataRoot, 'runtime', 'pkgs', 'r-base-4.4.conda'), 'archive')
+    const capture = vi.fn()
+    const result = await runDataRootMigration(
+      {
+        currentDataRoot,
+        runtime: deps.runtime,
+        notebook: deps.notebook,
+        exportRuntimeLocks: (from, to) => exportRuntimeLockBundle(from, to, { mm: '/mm', capture })
+      },
+      emptyParent,
+      runOpts()
+    )
+    expect(result.ok).toBe(true)
+    const target = dataRootFor(emptyParent)
+    expect(await readFile(join(target, 'runtime', 'envs.lock', 'default-r.lock'), 'utf8')).toBe(
+      pending
+    )
+    expect(await readFile(join(target, 'runtime', 'pkgs', 'r-base-4.4.conda'), 'utf8')).toBe(
+      'archive'
+    )
+    expect((await readMigrationMarker(target))?.runtimeLockInventory).toEqual(
+      await scanInventory(target, [join('runtime', 'envs.lock')])
+    )
+    expect(await readFile(join(pendingDir, 'default-r.lock'), 'utf8')).toBe(pending)
+    expect(capture).not.toHaveBeenCalled()
+  })
+
   it('exports env locks and copies the pkgs cache when envs are preserved', async () => {
     const deps = fakeDeps()
     const exportRuntimeLocks = vi.fn(async (_source: string, target: string) => {

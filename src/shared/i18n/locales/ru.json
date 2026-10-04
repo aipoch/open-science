@@ -136,6 +136,7 @@
     "More items": "Другие сеансы"
   },
   "renderer": {
+    "List GWAS summary statistics files, YAML metadata, reference genomes and standard column definitions by GCST accession.": "Получить список файлов сводной статистики GWAS, метаданные YAML, референсные геномы и стандартные определения столбцов по идентификатору GCST.",
     "PDF analysis options": "Параметры анализа PDF",
     "Retrieve GEO series metadata, samples and supplementary-file links.": "Получить метаданные серии GEO, образцы и ссылки на дополнительные файлы.",
     "Find GEO Series Matrix and NCBI RNA-seq count file links for manual download.": "Найти ссылки на файлы GEO Series Matrix и файлы счётчиков RNA-seq от NCBI для скачивания вручную.",
@@ -7351,6 +7352,7 @@
     "Keep existing note": "Сохранить существующую заметку",
     "Keep historical note": "Сохранить прежнюю заметку",
     "Include shared PDF notes and annotations from all projects as a read-only snapshot": "Включить общие заметки и аннотации PDF из всех проектов в снимок только для чтения",
-    "Read-only snapshot": "Снимок только для чтения"
+    "Read-only snapshot": "Снимок только для чтения",
+    "The current data location contains spaces. R environments cannot run reliably here. Use Change location to move your data to a path without spaces. You can cancel and keep the current location; your existing data will remain available.": "Текущий путь к данным содержит пробелы. Среды R не могут надёжно работать в этой папке. Используйте «Изменить расположение», чтобы переместить данные по пути без пробелов. Можно отменить перемещение и оставить текущее расположение; существующие данные останутся доступны."
   }
 }

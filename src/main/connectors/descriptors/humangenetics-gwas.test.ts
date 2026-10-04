@@ -1,9 +1,13 @@
 import { describe, it, expect, vi } from 'vitest'
+import Ajv2020 from 'ajv/dist/2020'
 import { ParserEngine } from '../engine'
 import { HUMANGENETICS_GWAS_TOOLS } from './humangenetics-gwas'
 
 const jsonRes = (body: unknown): Response =>
   ({ ok: true, status: 200, json: async () => body }) as Response
+
+const textRes = (body: string): Response =>
+  ({ ok: true, status: 200, text: async () => body }) as Response
 
 // Mirrors the engine's non-retryable 4xx path so the get_* tools see an HTTP 404 error.
 const errRes = (status: number): Response =>
@@ -310,5 +314,283 @@ describe('gwas_get_variant', () => {
     }
     expect(out.found).toBe(false)
     expect(out.variant).toBeNull()
+  })
+})
+
+describe('gwas_get_summary_statistics', () => {
+  it('rejects an empty metadata selector while allowing omission and exact filenames', () => {
+    const validate = new Ajv2020({ strict: true }).compile(
+      tool('gwas_get_summary_statistics').input
+    )
+    expect(validate({ accession_id: 'GCST90000123', metadata_file: '' })).toBe(false)
+    expect(validate.errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ instancePath: '/metadata_file', keyword: 'minLength' })
+      ])
+    )
+    expect(validate({ accession_id: 'GCST90000123' })).toBe(true)
+    expect(
+      validate({
+        accession_id: 'GCST90000123',
+        metadata_file: 'GCST90000123.h.tsv.gz-meta.yaml'
+      })
+    ).toBe(true)
+  })
+
+  it('derives the thousand-study FTP bucket, lists original/harmonised files and parses YAML', async () => {
+    const fetchImpl = vi.fn().mockImplementation((url: string) => {
+      if (url.endsWith('/GCST90000123/')) {
+        return Promise.resolve(
+          textRes(`
+            <a href="GCST90000123.tsv.gz">GCST90000123.tsv.gz</a>
+            <a href="GCST90000123.tsv.gz-meta.yaml">GCST90000123.tsv.gz-meta.yaml</a>
+            <a href="README.txt">README.txt</a>
+            <a href="md5sum.txt">md5sum.txt</a>
+            <a href="harmonised/">harmonised/</a>
+          `)
+        )
+      }
+      if (url.endsWith('/GCST90000123/harmonised/')) {
+        return Promise.resolve(
+          textRes(`
+            <a href="GCST90000123.h.tsv.gz">GCST90000123.h.tsv.gz</a>
+            <a href="GCST90000123.h.tsv.gz-meta.yaml">GCST90000123.h.tsv.gz-meta.yaml</a>
+            <a href="GCST90000123.h.tsv.gz.tbi">GCST90000123.h.tsv.gz.tbi</a>
+            <a href="report.txt">report.txt</a>
+          `)
+        )
+      }
+      if (url.endsWith('GCST90000123.tsv.gz-meta.yaml')) {
+        return Promise.resolve(
+          textRes(`gwas_id: GCST90000123\ngenome_assembly: GRCh37\nis_harmonised: false\n`)
+        )
+      }
+      if (url.endsWith('GCST90000123.h.tsv.gz-meta.yaml')) {
+        return Promise.resolve(
+          textRes(
+            `gwas_id: GCST90000123\ngenome_assembly: GRCh38\nis_harmonised: true\nharmonisation_reference: https://reference.example/GRCh38.fa\n`
+          )
+        )
+      }
+      throw new Error(`unexpected URL ${url}`)
+    })
+
+    const out = (await run(
+      'gwas_get_summary_statistics',
+      { accession_id: 'GCST90000123' },
+      fetchImpl
+    )) as {
+      found: boolean
+      accession_id: string
+      directory_url: string
+      files: Array<{ name: string; scope: string; kind: string; url: string }>
+      metadata: Array<{ scope: string; metadata: Record<string, unknown> }>
+      reference_genomes: string[]
+      harmonisation_references: string[]
+      column_definitions: Array<{ name: string; required: boolean }>
+      column_definitions_source: string
+    }
+
+    expect(out.found).toBe(true)
+    expect(out.accession_id).toBe('GCST90000123')
+    expect(out.directory_url).toBe(
+      'https://ftp.ebi.ac.uk/pub/databases/gwas/summary_statistics/GCST90000001-GCST90001000/GCST90000123/'
+    )
+    expect(out.files.map((file) => `${file.scope}:${file.kind}:${file.name}`).sort()).toEqual(
+      [
+        'original:data:GCST90000123.tsv.gz',
+        'original:metadata:GCST90000123.tsv.gz-meta.yaml',
+        'original:readme:README.txt',
+        'original:checksum:md5sum.txt',
+        'harmonised:data:GCST90000123.h.tsv.gz',
+        'harmonised:metadata:GCST90000123.h.tsv.gz-meta.yaml',
+        'harmonised:index:GCST90000123.h.tsv.gz.tbi',
+        'harmonised:other:report.txt'
+      ].sort()
+    )
+    expect(out.metadata.map((entry) => entry.metadata.genome_assembly)).toEqual([
+      'GRCh37',
+      'GRCh38'
+    ])
+    expect(out.reference_genomes).toEqual(['GRCh37', 'GRCh38'])
+    expect(out.harmonisation_references).toEqual(['https://reference.example/GRCh38.fa'])
+    expect(out.column_definitions_source).toBe('GWAS-SSF standard')
+    expect(out.column_definitions.find((column) => column.name === 'chromosome')?.required).toBe(
+      true
+    )
+    expect(out.column_definitions.find((column) => column.name === 'beta')?.required).toBe(false)
+  })
+
+  it('rejects malformed accessions before making an upstream request', async () => {
+    const fetchImpl = vi.fn()
+    await expect(
+      run('gwas_get_summary_statistics', { accession_id: '../GCST90000123' }, fetchImpl)
+    ).rejects.toThrow(/accession_id must be a GWAS Catalog accession/)
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('returns found:false for an accession without an FTP directory', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(errRes(404))
+    const out = (await run(
+      'gwas_get_summary_statistics',
+      { accession_id: 'GCST90000123' },
+      fetchImpl
+    )) as {
+      found: boolean
+      accession_id: string
+      files: unknown[]
+      metadata: unknown[]
+      reference_genomes: unknown[]
+    }
+    expect(out).toMatchObject({
+      found: false,
+      accession_id: 'GCST90000123',
+      files: [],
+      metadata: [],
+      reference_genomes: [],
+      harmonisation_references: [],
+      column_definitions: expect.arrayContaining([
+        expect.objectContaining({ name: 'chromosome', required: true })
+      ]),
+      column_definitions_source: 'GWAS-SSF standard'
+    })
+    expect(fetchImpl).toHaveBeenCalledOnce()
+  })
+
+  it('keeps original files when a stale harmonised directory link returns 404', async () => {
+    const fetchImpl = vi.fn().mockImplementation((url: string) => {
+      if (url.endsWith('/GCST90000123/')) {
+        return Promise.resolve(
+          textRes(
+            '<a href="GCST90000123.tsv.gz">raw</a><a href="GCST90000123.tsv.gz-meta.yaml">meta</a><a href="harmonised/">harmonised</a>'
+          )
+        )
+      }
+      if (url.endsWith('/harmonised/')) return Promise.resolve(errRes(404))
+      if (url.endsWith('.yaml')) return Promise.resolve(textRes('genome_assembly: GRCh37\n'))
+      throw new Error(`unexpected URL ${url}`)
+    })
+    const out = (await run(
+      'gwas_get_summary_statistics',
+      { accession_id: 'GCST90000123' },
+      fetchImpl
+    )) as {
+      found: boolean
+      files: Array<{ scope: string }>
+    }
+    expect(out.found).toBe(true)
+    expect(out.files.every((file) => file.scope === 'original')).toBe(true)
+  })
+
+  it('filters metadata and reference summaries while retaining the complete file listing', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        textRes(
+          '<a href="raw.tsv.gz">raw</a><a href="raw-meta.yaml">meta</a><a href="harmonised/">harmonised</a>'
+        )
+      )
+      .mockResolvedValueOnce(
+        textRes('<a href="harm.h.tsv.gz">data</a><a href="harm-meta.yaml">meta</a>')
+      )
+      .mockResolvedValueOnce(
+        textRes(
+          'genome_assembly: GRCh38\nharmonisation_reference: https://reference.example/GRCh38.fa\n'
+        )
+      )
+    const out = await run(
+      'gwas_get_summary_statistics',
+      { accession_id: 'GCST90000123', metadata_file: 'harm-meta.yaml' },
+      fetchImpl
+    )
+    expect(out).toMatchObject({
+      found: true,
+      files: [
+        { name: 'raw-meta.yaml', scope: 'original' },
+        { name: 'raw.tsv.gz', scope: 'original' },
+        { name: 'harm-meta.yaml', scope: 'harmonised' },
+        { name: 'harm.h.tsv.gz', scope: 'harmonised' }
+      ],
+      metadata: [{ name: 'harm-meta.yaml', scope: 'harmonised' }],
+      reference_genomes: ['GRCh38'],
+      harmonisation_references: ['https://reference.example/GRCh38.fa']
+    })
+    expect(fetchImpl).toHaveBeenCalledTimes(3)
+    expect(fetchImpl).toHaveBeenLastCalledWith(
+      expect.stringContaining('/harmonised/harm-meta.yaml'),
+      expect.any(Object)
+    )
+  })
+
+  it('rejects an unknown metadata filename without fetching any YAML', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        textRes('<a href="raw.tsv.gz">raw</a><a href="raw-meta.yaml">meta</a>')
+      )
+    await expect(
+      run(
+        'gwas_get_summary_statistics',
+        { accession_id: 'GCST90000123', metadata_file: 'missing-meta.yaml' },
+        fetchImpl
+      )
+    ).rejects.toThrow("No summary-statistics metadata file named 'missing-meta.yaml' was found.")
+    expect(fetchImpl).toHaveBeenCalledOnce()
+  })
+
+  it('returns legacy files without inventing metadata or reference genomes', async () => {
+    const fetchImpl = vi.fn().mockResolvedValueOnce(textRes('<a href="old.txt.gz">data</a>'))
+    const out = await run(
+      'gwas_get_summary_statistics',
+      { accession_id: 'GCST90000123' },
+      fetchImpl
+    )
+    expect(out).toMatchObject({
+      found: true,
+      files: [{ name: 'old.txt.gz', scope: 'original' }],
+      metadata: [],
+      reference_genomes: [],
+      harmonisation_references: []
+    })
+    expect(fetchImpl).toHaveBeenCalledOnce()
+  })
+
+  it('propagates a metadata 404 instead of reporting the study directory as absent', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(textRes('<a href="raw-meta.yaml">meta</a>'))
+      .mockResolvedValueOnce(errRes(404))
+    await expect(
+      run('gwas_get_summary_statistics', { accession_id: 'GCST90000123' }, fetchImpl)
+    ).rejects.toThrow(/HTTP 404/)
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+  })
+
+  it.each([
+    ['malformed YAML', 'value: [', /unexpected end/],
+    ['a YAML scalar', 'GRCh38', /is not a YAML object/],
+    ['a YAML sequence', '- GRCh38', /is not a YAML object/]
+  ])('rejects %s instead of returning a successful package', async (_name, yaml, error) => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(textRes('<a href="raw-meta.yaml">meta</a>'))
+      .mockResolvedValueOnce(textRes(yaml as string))
+    await expect(
+      run('gwas_get_summary_statistics', { accession_id: 'GCST90000123' }, fetchImpl)
+    ).rejects.toThrow(error)
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+  })
+
+  it('propagates a harmonised directory 403 instead of silently omitting its files', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        textRes('<a href="raw.tsv.gz">raw</a><a href="harmonised/">harmonised</a>')
+      )
+      .mockResolvedValueOnce(errRes(403))
+    await expect(
+      run('gwas_get_summary_statistics', { accession_id: 'GCST90000123' }, fetchImpl)
+    ).rejects.toThrow(/HTTP 403/)
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
   })
 })

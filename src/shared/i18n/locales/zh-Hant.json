@@ -133,6 +133,7 @@
     "More items": "更多會話"
   },
   "renderer": {
+    "List GWAS summary statistics files, YAML metadata, reference genomes and standard column definitions by GCST accession.": "依 GCST 編號列出 GWAS 彙總統計檔案、YAML 中繼資料、參考基因組和標準欄位定義。",
     "PDF analysis options": "PDF 分析選項",
     "Retrieve GEO series metadata, samples and supplementary-file links.": "取得 GEO 系列的中繼資料、樣本與補充檔案連結。",
     "Find GEO Series Matrix and NCBI RNA-seq count file links for manual download.": "尋找 GEO Series Matrix 與 NCBI RNA-seq 計數檔案的連結，以便手動下載。",
@@ -6884,6 +6885,7 @@
     "Keep existing note": "保留現有筆記",
     "Keep historical note": "保留歷史筆記",
     "Include shared PDF notes and annotations from all projects as a read-only snapshot": "將所有專案共用的 PDF 筆記和註解作為唯讀快照匯出",
-    "Read-only snapshot": "唯讀快照"
+    "Read-only snapshot": "唯讀快照",
+    "The current data location contains spaces. R environments cannot run reliably here. Use Change location to move your data to a path without spaces. You can cancel and keep the current location; your existing data will remain available.": "目前的資料位置包含空格，R 環境無法在此可靠執行。請使用「變更位置」將資料移至不含空格的路徑。您可以取消並保留目前位置，現有資料仍可存取。"
   }
 }

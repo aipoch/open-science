@@ -35,6 +35,79 @@ const LOCK_STDOUT = [
 ].join('\n')
 
 describe('exportRuntimeLocks', () => {
+  it.each(['/mm', undefined])(
+    'carries pending R locks without materialized prefixes (mm: %s)',
+    async (mm) => {
+      const from = join(await makeRoot(), 'Application Support')
+      const to = await makeRoot()
+      const locks = envsLockDir(runtimeRoot(from))
+      await mkdir(locks, { recursive: true })
+      const pending =
+        '@EXPLICIT\nhttps://conda.anaconda.org/conda-forge/noarch/r-base-4.4.conda#abc\n'
+      await writeFile(join(locks, 'default-r.lock'), pending)
+      const capture = vi.fn()
+
+      expect(await exportRuntimeLocks(from, to, { mm, capture })).toEqual(['default-r'])
+      expect(await readFile(join(envsLockDir(runtimeRoot(to)), 'default-r.lock'), 'utf8')).toBe(
+        pending
+      )
+      expect(await readFile(join(locks, 'default-r.lock'), 'utf8')).toBe(pending)
+      expect(capture).not.toHaveBeenCalled()
+    }
+  )
+
+  it('merges pending locks with fresh exports without replacing them from a partial prefix', async () => {
+    const from = await makeRoot()
+    const to = await makeRoot()
+    const locks = envsLockDir(runtimeRoot(from))
+    await mkdir(locks, { recursive: true })
+    const pending =
+      '@EXPLICIT\nhttps://conda.anaconda.org/conda-forge/noarch/r-base-4.4.conda#abc\n'
+    await writeFile(join(locks, 'default-r.lock'), pending)
+    await seedEnv(from, 'default-r', 'r')
+    await seedEnv(from, DEFAULT_PY_ENV, 'python')
+    const capture = vi.fn().mockResolvedValue(LOCK_STDOUT)
+
+    expect((await exportRuntimeLocks(from, to, { mm: '/mm', capture })).sort()).toEqual([
+      DEFAULT_PY_ENV,
+      'default-r'
+    ])
+    expect(capture).toHaveBeenCalledOnce()
+    expect(capture.mock.calls[0][0]).toContain(envPrefix(runtimeRoot(from), DEFAULT_PY_ENV))
+    expect(await readFile(join(envsLockDir(runtimeRoot(to)), 'default-r.lock'), 'utf8')).toBe(
+      pending
+    )
+  })
+
+  it('publishes no partial receipt when pending locks coexist with an unexportable environment', async () => {
+    const from = await makeRoot()
+    const to = await makeRoot()
+    const locks = envsLockDir(runtimeRoot(from))
+    await mkdir(locks, { recursive: true })
+    await writeFile(
+      join(locks, 'default-r.lock'),
+      '@EXPLICIT\nhttps://example.test/r-base-4.4.conda#abc\n'
+    )
+    await seedEnv(from, DEFAULT_PY_ENV, 'python')
+    await expect(exportRuntimeLocks(from, to, { mm: undefined, capture: vi.fn() })).rejects.toThrow(
+      'micromamba'
+    )
+    await expect(readdir(envsLockDir(runtimeRoot(to)))).rejects.toThrow()
+  })
+
+  it('rejects an invalid pending lock before publishing any fresh exports', async () => {
+    const from = await makeRoot()
+    const to = await makeRoot()
+    const locks = envsLockDir(runtimeRoot(from))
+    await mkdir(locks, { recursive: true })
+    await writeFile(join(locks, 'default-r.lock'), '@EXPLICIT\n')
+    await seedEnv(from, DEFAULT_PY_ENV, 'python')
+    await expect(
+      exportRuntimeLocks(from, to, { mm: '/mm', capture: vi.fn().mockResolvedValue(LOCK_STDOUT) })
+    ).rejects.toThrow('no package URLs')
+    await expect(readdir(envsLockDir(runtimeRoot(to)))).rejects.toThrow()
+  })
+
   it('exports a normalized @EXPLICIT lock per materialized env into the new root', async () => {
     const from = await makeRoot()
     const to = await makeRoot()

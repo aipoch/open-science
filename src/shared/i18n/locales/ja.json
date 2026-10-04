@@ -133,6 +133,7 @@
     "More items": "その他のセッション"
   },
   "renderer": {
+    "List GWAS summary statistics files, YAML metadata, reference genomes and standard column definitions by GCST accession.": "GCST アクセッション番号で GWAS 要約統計量ファイル、YAML メタデータ、参照ゲノム、標準の列定義を一覧表示します。",
     "PDF analysis options": "PDF 解析オプション",
     "Retrieve GEO series metadata, samples and supplementary-file links.": "GEO シリーズのメタデータ、サンプル、補足ファイルへのリンクを取得。",
     "Find GEO Series Matrix and NCBI RNA-seq count file links for manual download.": "手動でダウンロードするための GEO Series Matrix と NCBI RNA-seq カウントファイルへのリンクを検索。",
@@ -6884,6 +6885,7 @@
     "Keep existing note": "既存のノートを保持",
     "Keep historical note": "過去のノートを保持",
     "Include shared PDF notes and annotations from all projects as a read-only snapshot": "すべてのプロジェクトで共有する PDF のノートと注釈を読み取り専用スナップショットとして含める",
-    "Read-only snapshot": "読み取り専用スナップショット"
+    "Read-only snapshot": "読み取り専用スナップショット",
+    "The current data location contains spaces. R environments cannot run reliably here. Use Change location to move your data to a path without spaces. You can cancel and keep the current location; your existing data will remain available.": "現在のデータ保存先のパスに空白が含まれているため、R 環境は正常に動作しない場合があります。「保存先を変更」で空白を含まないパスにデータを移動してください。キャンセルして現在の保存先を維持することもできます。既存のデータには引き続きアクセスできます。"
   }
 }

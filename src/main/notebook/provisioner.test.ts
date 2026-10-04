@@ -121,6 +121,204 @@ const makeDeps = (root: string, overrides: Partial<ProvisionerDeps> = {}): Provi
   }
 }
 
+describe('historical R prefixes containing spaces', () => {
+  it.each(['darwin', 'linux'] as const)(
+    'rejects R provisioning before fetching packages on %s',
+    async (platform) => {
+      const root = join(makeRoot(), 'Application Support', 'runtime')
+      const fetchBundle = vi.fn(makeDeps(root).fetchBundle)
+      const provisioner = new DefaultRuntimeProvisioner(makeDeps(root, { platform, fetchBundle }))
+      await expect(provisioner.provisionR(() => {})).rejects.toThrow(/spaces.*Settings.*Storage/)
+      expect(fetchBundle).not.toHaveBeenCalled()
+      expect(readRReadyMarker(root)).toBeUndefined()
+    }
+  )
+
+  it.each(['provision', 'repair'] as const)(
+    'preserves the old R environment and bindings before %s',
+    async (operation) => {
+      const root = join(makeRoot(), 'Application Support', 'runtime')
+      const prefix = envPrefix(root, DEFAULT_R_ENV, 'darwin')
+      mkdirSync(join(prefix, 'bin'), { recursive: true })
+      writeFileSync(rBin(prefix, 'darwin'), 'old R launcher')
+      writeFileSync(join(prefix, 'user-package'), 'keep this package')
+      const onStarting = vi.fn(async () => {})
+      const clearPrefixBlock = vi.fn()
+      const fetchBundle = vi.fn(makeDeps(root).fetchBundle)
+      const provisioner = new DefaultRuntimeProvisioner(
+        makeDeps(root, {
+          platform: 'darwin',
+          fetchBundle,
+          clearPrefixBlock,
+          verify: async () => {
+            throw new Error('/etc/ldpaths: No such file or directory')
+          }
+        })
+      )
+      const result =
+        operation === 'repair'
+          ? provisioner.repair('r', () => {}, { force: true, onStarting })
+          : provisioner.provisionR(() => {})
+      await expect(result).rejects.toThrow(/spaces.*Settings.*Storage/)
+      expect(readFileSync(join(prefix, 'user-package'), 'utf8')).toBe('keep this package')
+      expect(onStarting).not.toHaveBeenCalled()
+      expect(clearPrefixBlock).not.toHaveBeenCalled()
+      expect(fetchBundle).not.toHaveBeenCalled()
+    }
+  )
+
+  it('rejects named R creation before resolving a channel or running an installer', async () => {
+    const root = join(makeRoot(), 'Application Support', 'runtime')
+    const channel = vi.fn(async () => 'conda-forge')
+    const runArgv = vi.fn(makeDeps(root).runArgv)
+    const provisioner = new DefaultRuntimeProvisioner(
+      makeDeps(root, { platform: 'darwin', channel, runArgv })
+    )
+    await expect(provisioner.createNamedEnvironment('analysis', 'r')).rejects.toThrow(/spaces/)
+    expect(channel).not.toHaveBeenCalled()
+    expect(runArgv).not.toHaveBeenCalled()
+  })
+
+  it('keeps Python provisioning available at a historical spaced root', async () => {
+    const root = join(makeRoot(), 'Application Support', 'runtime')
+    const provisioner = new DefaultRuntimeProvisioner(makeDeps(root, { platform: 'darwin' }))
+    await expect(provisioner.provisionPython(() => {})).resolves.toBeUndefined()
+  })
+
+  it('continues to provision R in spaced Windows roots', async () => {
+    const root = join(makeRoot(), 'Test User', 'runtime')
+    const provisioner = new DefaultRuntimeProvisioner(makeDeps(root, { platform: 'win32' }))
+    await expect(provisioner.provisionR(() => {})).resolves.toBeUndefined()
+    expect(readRReadyMarker(root)).toBeDefined()
+  })
+
+  it('rejects imported R environments before writing their restore files', async () => {
+    const root = join(makeRoot(), 'Application Support', 'runtime')
+    const runArgv = vi.fn()
+    const lock: NotebookEnvironmentLock = {
+      schemaVersion: 1,
+      format: 'environment-lock-bundle',
+      kernelKind: 'r',
+      environmentName: 'analysis',
+      components: [
+        {
+          ecosystem: 'conda',
+          format: 'conda-explicit-md5',
+          resolution: 'locked',
+          explicitLock: `@EXPLICIT\nhttps://repo.example.test/r-base-4.4.conda#${'0'.repeat(32)}\n`,
+          packages: ['r-base']
+        }
+      ],
+      untrackedPackages: []
+    }
+    const provisioner = new DefaultRuntimeProvisioner(
+      makeDeps(root, { platform: 'darwin', runArgv })
+    )
+    await expect(
+      provisioner.createNamedEnvironmentFromLock('analysis', 'r', lock, 'b'.repeat(64))
+    ).rejects.toThrow(/spaces/)
+    expect(existsSync(join(root, 'imported-locks'))).toBe(false)
+    expect(runArgv).not.toHaveBeenCalled()
+  })
+
+  it('keeps a named R relocation lock even when its interpreter has not been materialized', async () => {
+    const root = join(makeRoot(), 'Application Support', 'runtime')
+    mkdirSync(envsLockDir(root), { recursive: true })
+    const lockPath = join(envsLockDir(root), 'analysis.lock')
+    const contents = `@EXPLICIT\nhttps://conda.anaconda.org/conda-forge/osx-arm64/r-base-4.4.conda#${'0'.repeat(32)}\n`
+    writeFileSync(lockPath, contents)
+    const progress = vi.fn()
+    const provisioner = new DefaultRuntimeProvisioner(makeDeps(root, { platform: 'darwin' }))
+    await provisioner.restoreRelocatedEnvs(progress)
+    expect(readFileSync(lockPath, 'utf8')).toBe(contents)
+    expect(progress.mock.calls.some(([value]) => value.phase === 'restore')).toBe(false)
+    expect(existsSync(envPrefix(root, 'analysis', 'darwin'))).toBe(false)
+  })
+
+  it('keeps an unreadable relocation entry without failing restoration at a spaced root', async () => {
+    const root = join(makeRoot(), 'Application Support', 'runtime')
+    const lockPath = join(envsLockDir(root), 'analysis.lock')
+    mkdirSync(lockPath, { recursive: true })
+    const runArgv = vi.fn()
+    const provisioner = new DefaultRuntimeProvisioner(
+      makeDeps(root, { platform: 'darwin', runArgv })
+    )
+    await expect(provisioner.restoreRelocatedEnvs(() => {})).resolves.toBeUndefined()
+    expect(existsSync(lockPath)).toBe(true)
+    expect(runArgv).not.toHaveBeenCalled()
+  })
+
+  it.each(
+    [DEFAULT_PY_ENV, DEFAULT_R_ENV, 'analysis'].flatMap((name) =>
+      [false, true].map((materialized) => ({ name, materialized }))
+    )
+  )(
+    'restores a mixed Python/R $name at a spaced root (materialized: $materialized)',
+    async ({ name, materialized }) => {
+      const root = join(makeRoot(), 'Application Support', 'runtime')
+      const prefix = envPrefix(root, name, 'darwin')
+      mkdirSync(envsLockDir(root), { recursive: true })
+      mkdirSync(pkgsCache(root), { recursive: true })
+      const packages = ['python-3.12.conda', 'r-base-4.4.conda']
+      const lockPath = join(envsLockDir(root), `${name}.lock`)
+      for (const archive of packages) {
+        writeFileSync(join(pkgsCache(root), archive), RELOCATION_ARCHIVE_CONTENT)
+      }
+      writeFileSync(
+        lockPath,
+        '@EXPLICIT\n' +
+          packages
+            .map(
+              (archive) =>
+                `https://conda.anaconda.org/conda-forge/osx-arm64/${archive}#${RELOCATION_ARCHIVE_MD5}\n`
+            )
+            .join('')
+      )
+      const materialize = (): void => {
+        mkdirSync(join(prefix, 'bin'), { recursive: true })
+        writeFileSync(pythonBin(prefix, 'darwin'), 'python')
+        writeFileSync(rBin(prefix, 'darwin'), 'R')
+      }
+      if (materialized) materialize()
+      const runArgv = vi.fn(async () => materialize())
+      const verify = vi.fn(async () => {})
+      const provisioner = new DefaultRuntimeProvisioner(
+        makeDeps(root, { platform: 'darwin', runArgv, verify })
+      )
+      await provisioner.restoreRelocatedEnvs(() => {})
+      expect(verify).toHaveBeenCalledWith(pythonBin(prefix, 'darwin'), prefix)
+      expect(runArgv).toHaveBeenCalledTimes(materialized ? 0 : 1)
+      expect(existsSync(lockPath)).toBe(false)
+      expect(readFileSync(pythonBin(prefix, 'darwin'), 'utf8')).toBe('python')
+      // Restoring Python must not certify the R launcher that still cannot run in this path.
+      if (name === DEFAULT_R_ENV) expect(readRReadyMarker(root)).toBeUndefined()
+      if (name === DEFAULT_PY_ENV) expect(readReadyMarker(root)).toBeDefined()
+    }
+  )
+
+  it('retains relocated R locks and old packages instead of retrying a destructive rebuild', async () => {
+    const root = join(makeRoot(), 'Application Support', 'runtime')
+    const prefix = envPrefix(root, DEFAULT_R_ENV, 'darwin')
+    mkdirSync(join(prefix, 'bin'), { recursive: true })
+    writeFileSync(rBin(prefix, 'darwin'), 'old R launcher')
+    writeRelocationLock(root, DEFAULT_R_ENV)
+    const runArgv = vi.fn(makeDeps(root).runArgv)
+    const provisioner = new DefaultRuntimeProvisioner(
+      makeDeps(root, {
+        platform: 'darwin',
+        runArgv,
+        verify: async () => {
+          throw new Error('/etc/ldpaths: No such file or directory')
+        }
+      })
+    )
+    await provisioner.restoreRelocatedEnvs(() => {})
+    expect(readFileSync(rBin(prefix, 'darwin'), 'utf8')).toBe('old R launcher')
+    expect(existsSync(join(envsLockDir(root), `${DEFAULT_R_ENV}.lock`))).toBe(true)
+    expect(runArgv).not.toHaveBeenCalled()
+  })
+})
+
 describe('DefaultRuntimeProvisioner.provisionPython', () => {
   it('maintains the package cache under the materialize journal after fetching the runtime', async () => {
     const root = makeRoot()
