@@ -39,6 +39,29 @@ const invocation = (session: ChatSession): SessionActionInvocation => ({
 })
 
 describe('session action menu', () => {
+  it('hides capabilities omitted by a menu owner', () => {
+    const bindings = createSessionActionBindings({
+      canMutateConversations: true,
+      canDeleteConversations: true,
+      canDownloadArtifacts: true,
+      onTogglePin: vi.fn(),
+      onRenameSession: vi.fn()
+    })
+    const entries = resolveActionMenuEntries(
+      {
+        identityKey: 'limited-owner',
+        catalog: SESSION_ACTION_CATALOG,
+        recipe: SESSION_ACTION_RECIPE,
+        bindings
+      },
+      invocation(createSession())
+    )
+    const actions = entries.flatMap((entry) => (entry.kind === 'action' ? [entry.action] : []))
+    expect(actions).not.toContain('download-artifacts')
+    expect(actions).not.toContain('view-notebook')
+    expect(actions).not.toContain('delete')
+  })
+
   it('offers discussion and replay for ordinary running Sessions and forwards the selected source', async () => {
     const onViewReplay = vi.fn()
     const onDiscussSession = vi.fn(async () => undefined)

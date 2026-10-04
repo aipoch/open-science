@@ -270,6 +270,33 @@ describe('WorkspacePage send gate while compacting', () => {
     })
   }
 
+  it('binds header pin actions to the existing Session owner and disables mutations before persistence is ready', async () => {
+    const togglePinned = vi
+      .spyOn(useSessionStore.getState(), 'togglePinned')
+      .mockImplementation(() => {})
+    await renderPage()
+    const session = useSessionStore.getState().sessions[0]
+    await act(async () => {
+      await conversationProps.sessionTools.menuBindings?.['toggle-pin']?.execute({
+        session,
+        presentedStatus: session.status
+      })
+    })
+    expect(togglePinned).toHaveBeenCalledWith(session.id)
+    await act(async () => {
+      root.render(
+        <WorkspacePage
+          isSessionPersistenceHydrated={true}
+          isSessionPersistenceReady={false}
+          canDeleteConversations={false}
+        />
+      )
+    })
+    expect(conversationProps.sessionTools.menuBindings?.['toggle-pin']?.disabled).toBe(true)
+    expect(conversationProps.sessionTools.menuBindings?.edit?.disabled).toBe(true)
+    togglePinned.mockRestore()
+  })
+
   it.each(['codex-shared', 'codex-isolated'] as const)(
     'keeps Side chat available when the global main provider changes to %s',
     async (type) => {

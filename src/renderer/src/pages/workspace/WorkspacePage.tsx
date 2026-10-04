@@ -29,7 +29,8 @@ import {
 } from '@/lib/session-persistence/session-persistence'
 import { forkSession, sessionForkAvailable } from '@/lib/session-fork'
 import { exportSessionPackage, sessionPackageExportAvailable } from '@/lib/session-package-export'
-import { usePackageOperationStore } from '@/stores/package-operation-store'
+import { packageOperationActive, usePackageOperationStore } from '@/stores/package-operation-store'
+import { createSessionActionBindings } from './session-action-menu'
 import { useMemoryStore } from '@/stores/memory-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
@@ -280,6 +281,7 @@ const WorkspacePage = ({
   >({})
   const previewFocusFallbackRef = useRef<HTMLElement>(null)
   const sessionInfoReturnFocusRef = useRef<HTMLElement | null>(null)
+  const packageBusy = usePackageOperationStore((state) => packageOperationActive(state.operation))
   const manualReviewPendingSessionIdsRef = useRef(new Set<string>())
   const syncPreviewPanelState = usePreviewWorkbenchStore((state) => state.syncPanelState)
   const runtime = useWorkspaceAgentRuntime()
@@ -1789,6 +1791,32 @@ const WorkspacePage = ({
                   }
                 }}
                 sessionTools={{
+                  menuBindings: createSessionActionBindings({
+                    canMutateConversations: isSessionPersistenceReady,
+                    canDeleteConversations: false,
+                    canDownloadArtifacts: false,
+                    canArchiveSession,
+                    packageBusy,
+                    onTogglePin: sessionController.actions.togglePin,
+                    onRenameSession: (session) => {
+                      sessionInfoReturnFocusRef.current = document.querySelector<HTMLElement>(
+                        '[data-testid="session-header-menu-trigger"]'
+                      )
+                      sessionController.actions.openEdit(session)
+                    },
+                    onForkSession: sessionForkAvailable() ? forkSession : undefined,
+                    onExportSession:
+                      typeof window.api.sessions?.exportConversation === 'function'
+                        ? sessionController.actions.openExportConversation
+                        : undefined,
+                    onExportPackage: sessionPackageExportAvailable()
+                      ? openPackageExport
+                      : undefined,
+                    onExportDiagnostics: sessionDiagnosticsAvailable()
+                      ? openDiagnostics
+                      : undefined,
+                    onArchiveSession: sessionController.actions.archive
+                  }),
                   exportDiagnostics: sessionDiagnosticsAvailable() ? openDiagnostics : undefined,
                   togglePin: isSessionPersistenceReady
                     ? sessionController.actions.togglePin

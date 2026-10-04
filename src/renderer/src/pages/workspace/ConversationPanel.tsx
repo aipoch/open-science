@@ -433,6 +433,7 @@ type ConversationPanelWorkflows = {
 }
 
 type ConversationPanelSessionTools = {
+  menuBindings?: React.ComponentProps<typeof SessionHeaderMenu>['bindings']
   exportDiagnostics?: (session: ChatSession) => void
   togglePin?: (session: ChatSession) => void
   editSession?: (session: ChatSession) => void
@@ -1452,7 +1453,8 @@ const ConversationPanel = ({
           {activeSession && (
             <SessionHeaderMenu
               key={activeSession.id}
-              sessionId={activeSession.id}
+              session={activeSession}
+              bindings={sessionTools.menuBindings}
               createSideChat={sideChatController.createDraft}
               disabledReason={openSideChatReason}
             />

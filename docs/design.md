@@ -600,7 +600,9 @@ Active-dialog menus and other foreground child layers retain their own ordering.
 ### Session information
 
 - Keep a persistent ellipsis menu immediately after the diagnostics button in the conversation
-  header for an existing Session. Use the shared action-menu catalog and bindings. Its New side
+  header for an existing Session. Reuse the sidebar action catalog and owner bindings for Edit,
+  Pin/Unpin, Fork, the Export submenu, and Archive, including their existing availability and
+  confirmation rules. Group Edit/Pin, Side chat/Fork, Export, and Archive with separators. Its New side
   chat action opens an empty side chat and preserves the main composer's draft, annotations and
   attachments; it never sends the main draft. Retain the existing Side chat availability policy
   and display the reason on unavailable actions. The composer entry retains its draft-send behavior.
