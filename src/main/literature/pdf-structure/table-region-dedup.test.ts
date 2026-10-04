@@ -167,6 +167,27 @@ it('drops a refined narrative duplicate beside the numeric grid', () => {
   expect(narrativeDuplicateTableIndices([outer, inner])).toEqual(new Set([0]))
 })
 
+it('keeps a wide narrative table when the overlapping numeric grid has no matching cells', () => {
+  const outer = {
+    cropRect: [152, 752, 753, 837],
+    grid: [
+      ['A long explanatory sentence belongs to this table.', 'Left metric', 'Right metric'],
+      ['A second narrative row remains in the same table.', 'Alpha', 'Beta']
+    ],
+    unassigned: ['The surrounding prose is part of the table.']
+  }
+  const inner = {
+    cropRect: [455, 769, 759, 855],
+    grid: [
+      ['', 'Other metric', 'Score'],
+      ['', 'Gamma', '1.2'],
+      ['', 'Delta', '2.4']
+    ],
+    unassigned: []
+  }
+  expect(narrativeDuplicateTableIndices([outer, inner])).toEqual(new Set())
+})
+
 it('drops a numeric left-column spill when the remaining rows match a clean grid', () => {
   const outer = {
     cropRect: [398, 250, 762, 1060],

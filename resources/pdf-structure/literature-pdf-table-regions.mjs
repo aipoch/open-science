@@ -205,6 +205,32 @@ export function narrativeDuplicateTableIndices(tables) {
     }
     return compared ? matched / compared : 0
   }
+  const contentMatchEvidence = (outer, inner) => {
+    let compared = 0
+    let matchedRows = 0
+    let matchedCells = 0
+    for (const row of outer.grid ?? []) {
+      const source = row.slice(1).map(normalizeCell)
+      const populated = source.filter(Boolean)
+      if (!populated.length) continue
+      compared += populated.length
+      let best = 0
+      for (const candidate of inner.grid ?? []) {
+        const normalized = candidate.map(normalizeCell)
+        for (let offset = 0; offset <= normalized.length - source.length; offset++) {
+          const equal = source.filter(
+            (value, index) => value && value === normalized[index + offset]
+          ).length
+          best = Math.max(best, equal)
+        }
+      }
+      if (best >= 2) {
+        matchedRows += 1
+        matchedCells += best
+      }
+    }
+    return { compared, matchedRows, matchedCells }
+  }
   for (let outerIndex = 0; outerIndex < tables.length; outerIndex++) {
     const outer = tables[outerIndex]
     const a = outer?.cropRect
@@ -228,6 +254,7 @@ export function narrativeDuplicateTableIndices(tables) {
       const numericCells = (inner.grid ?? []).flat().filter((text) => /\d/u.test(text.trim()))
       const innerRows = inner.grid?.length ?? 0
       const innerColumns = Math.max(0, ...(inner.grid ?? []).map((row) => row.length))
+      const evidence = contentMatchEvidence(outer, inner)
       if (
         b[0] > a[0] + outerWidth * 0.3 &&
         b[2] >= a[2] - 20 &&
@@ -235,7 +262,10 @@ export function narrativeDuplicateTableIndices(tables) {
         overlap >= 0.35 &&
         innerRows >= 2 &&
         innerColumns >= 2 &&
-        numericCells.length >= 2
+        numericCells.length >= 2 &&
+        evidence.matchedRows >= 2 &&
+        evidence.matchedCells >= 4 &&
+        evidence.matchedCells / Math.max(1, evidence.compared) >= 0.6
       ) {
         duplicate.add(outerIndex)
         break
