@@ -436,6 +436,9 @@ describe('external wide table geometry repairs', () => {
       'Multimodal (Gemma)',
       '0.24'
     ])
+    expect(
+      unassigned.reconciliationItems?.some((item: { text: string }) => item.text === '0.24')
+    ).toBe(true)
     expect(cells.find((cell) => cell.row === 1 && cell.column === 0)?.text).toBe(
       'Multimodal (Gemma)'
     )

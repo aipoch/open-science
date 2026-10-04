@@ -86,15 +86,21 @@ export function deduplicateTableRegions(tables, items, captions = []) {
           item.rect[2] <= b[0] + 2 &&
           item.text.trim().split(/\s+/).length >= 8
       )
-      const inside = items.filter(
+      const outerColumns = (outer.structure?.objects ?? [])
+        .filter((object) => object.label === 'table column' && Array.isArray(object.rect))
+        .map((object) => object.rect.map((value, index) => value + (index % 2 ? a[1] : a[0])))
+      const unownedOutside = outside.filter(
+        (item) => !outerColumns.some((column) => inside(column, item))
+      )
+      const insideItems = items.filter(
         (item) => item.horizontal && intersect(item.rect, b) > 0 && item.text.trim()
       )
-      const numeric = inside.filter((item) => /\d/.test(item.text)).length
+      const numeric = insideItems.filter((item) => /\d/.test(item.text)).length
       const rows =
         inner.structure?.objects?.filter((object) => object.label === 'table row').length ?? 0
       const columns =
         inner.structure?.objects?.filter((object) => object.label === 'table column').length ?? 0
-      if (outside.length && numeric >= 2 && rows >= 2 && columns >= 2)
+      if (unownedOutside.length && numeric >= 2 && rows >= 2 && columns >= 2)
         duplicateNarrativeTables.add(outer)
     }
   }

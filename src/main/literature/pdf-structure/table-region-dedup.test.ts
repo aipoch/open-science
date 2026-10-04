@@ -122,6 +122,21 @@ it('drops a prose-containing detector box when a narrower right table proves own
   expect(deduplicateTableRegions([outer, inner], items)).toEqual([inner])
 })
 
+it('keeps a wide table whose long stub label belongs to its first column', () => {
+  const outer = syntheticTable('outer', [0, 0, 1000, 300], 4)
+  const inner = syntheticTable('inner', [550, 80, 990, 280], 2)
+  const items = [
+    token('A long explanatory label belongs to the first table column.', [40, 90, 240, 105]),
+    token('Guardrails', [620, 95, 700, 110]),
+    token('MT Bench', [800, 95, 880, 110]),
+    token('No system prompt', [580, 140, 750, 155]),
+    token('6.84', [820, 140, 860, 155]),
+    token('Llama 2 system prompt', [580, 180, 760, 195]),
+    token('6.38', [820, 180, 860, 195])
+  ]
+  expect(deduplicateTableRegions([outer, inner], items)).toHaveLength(2)
+})
+
 it('keeps independent adjacent tables without a prose-plus-grid witness', () => {
   const left = syntheticTable('left', [0, 0, 450, 200])
   const right = syntheticTable('right', [550, 0, 1000, 200])

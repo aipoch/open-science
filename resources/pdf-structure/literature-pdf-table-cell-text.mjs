@@ -2939,6 +2939,10 @@ export function populateTableCellText({
       value: splitSourceItems,
       enumerable: false
     })
+  Object.defineProperty(unassigned, 'reconciliationItems', {
+    value: items,
+    enumerable: false
+  })
   return unassigned
 }
 
