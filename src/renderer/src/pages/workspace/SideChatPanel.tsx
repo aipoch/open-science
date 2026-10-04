@@ -11,6 +11,7 @@ import { requestAnnotationReveal } from './annotations/annotation-reveal'
 import { PresentedAgentMarkdown } from '@/components/streamdown/AgentMarkdown'
 import { useSmoothStreamingContent } from '@/components/streamdown/use-smooth-streaming-content'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { ArrowUp, Square, X } from 'lucide-react'
@@ -46,6 +47,7 @@ type SideChatPanelProps = Readonly<{
   onCancel: () => void
   onClose: () => void
   controls?: ReactNode
+  headerTitle?: ReactNode
   headerAction?: ReactNode
   sendDisabledReason?: string
   onRetryRestore?: () => void
@@ -164,6 +166,7 @@ const SideChatPanel = ({
   onCancel,
   onClose,
   controls,
+  headerTitle,
   headerAction,
   sendDisabledReason,
   onRetryRestore
@@ -257,28 +260,35 @@ const SideChatPanel = ({
   return (
     <section data-testid="side-chat-panel" className="h-full min-h-0">
       <div className="flex h-full min-h-0 flex-col">
-        <div
-          data-testid="side-chat-header"
-          className="relative z-20 flex h-12 shrink-0 items-center gap-2 border-b border-border-200 bg-bg-000 px-4 pt-1"
-        >
-          <div className="flex-1" />
-          {headerAction}
-          <TooltipProvider delayDuration={200}>
+        <TooltipProvider>
+          <div
+            data-testid="side-chat-header"
+            className="relative z-20 flex shrink-0 items-center gap-1 border-b border-border-200 bg-bg-000 px-2 py-1"
+          >
+            <div className="min-w-0 flex-1">
+              {headerTitle ?? (
+                <span className="px-2 text-[13px] font-semibold">{t('Side chat')}</span>
+              )}
+            </div>
+            {headerAction}
             <Tooltip>
               <TooltipTrigger asChild>
-                <button
+                <Button
                   type="button"
-                  className="grid size-7 place-items-center rounded-md text-text-300 transition-colors duration-150 hover:bg-bg-200 hover:text-text-000 focus-visible:keyboard-focus active:bg-bg-300 motion-reduce:transition-none"
+                  variant="ghost"
+                  size="icon"
                   aria-label={t('Close Side chat')}
                   onClick={onClose}
                 >
                   <X className="size-4" aria-hidden="true" />
-                </button>
+                </Button>
               </TooltipTrigger>
-              <TooltipContent side="top">{t('Close Side chat')}</TooltipContent>
+              <TooltipContent side="bottom" align="end">
+                {t('Close Side chat')}
+              </TooltipContent>
             </Tooltip>
-          </TooltipProvider>
-        </div>
+          </div>
+        </TooltipProvider>
         <div
           data-testid="side-chat-message-viewport"
           className="relative min-h-0 flex-1 overflow-hidden"

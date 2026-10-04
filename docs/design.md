@@ -568,7 +568,8 @@ Active-dialog menus and other foreground child layers retain their own ordering.
 - Use `Tabs` for files, views, and viewer top bars.
 - Active tab: `h-8 rounded-md bg-accent px-3 py-1.5 text-sm text-accent-foreground`.
 - Inactive tab: `h-8 rounded-md px-3 py-1.5 text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground`.
-- Tab container: `h-11 px-2 overflow-x-auto`.
+- Tab container: `h-11 px-2 overflow-x-auto`. The preview tab strip reuses `scrollbar-auto-hide` from the session list for a thin, transparent-track scrollbar revealed on hover or keyboard focus. Preserve horizontal scrolling and selected-tab reveal.
+- Side chat tabs use the same decorative `size-3.5` Lucide icon treatment as other tool tabs.
 - Close icon: `size-4 rounded-sm opacity-0 group-hover:opacity-100 focus-visible:opacity-100`.
 - Use `ToggleGroup type="single"` for grid/list mutually exclusive switches.
 
@@ -972,6 +973,7 @@ The upper-right pin toggles the current Session through the shared Session contr
 - Activity stream: `ScrollArea className="min-w-0 flex-1"`.
 - Composer: fixed to the bottom of the activity stream and constrained to `max-w-4xl`, with the composer text track aligned to the message content.
 - Right viewer area: `border-l border-border/20`.
+- Side chat headers follow Replay chrome: a compact title/information popover on the left and ghost icon actions for the main Session, full screen, and close on the right. The information popover identifies the owning Session; it does not represent the exact conversation context snapshot. Reuse tool-panel expansion so draft, transcript and running state survive layout changes; returning to the main Session collapses the expanded surface.
 - Desktop side-panel dividers reveal a centered, full-height 2px `text-200` line on hover,
   keyboard focus, and drag. Mouse resize targets extend 10px to either side of the divider;
   collapsed dividers stay hidden and disabled. Keep the one-pixel layout footprint.

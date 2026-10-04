@@ -1,0 +1,80 @@
+import { expect, test } from '@playwright/test'
+
+for (const dark of [false, true]) {
+  test(`keeps Side chat intact through information and full screen controls (${dark ? 'dark' : 'light'})`, async ({
+    page
+  }, testInfo) => {
+    await page.setViewportSize({ width: 414, height: 800 })
+    await page.goto(`/side-chat-toolbar.html?${dark ? 'dark' : ''}`)
+    const tab = page.getByRole('tab', { name: 'Side chat', exact: true })
+    await tab.click()
+    const panel = page.getByTestId('side-chat-panel')
+    const draft = panel.getByRole('textbox')
+    await expect(panel).toBeVisible()
+    await expect(tab.locator('svg')).toHaveAttribute('aria-hidden', 'true')
+    await draft.fill('Keep this unfinished question')
+    await draft.evaluate((node) => node.setAttribute('data-mount-marker', 'original'))
+    const info = page.getByRole('button', { name: 'Session information: Side chat' })
+    await info.click()
+    await expect(page.getByRole('dialog')).toContainText('Review the effect sizes')
+    await page.keyboard.press('Escape')
+    await expect(info).toBeFocused()
+    await page.getByRole('button', { name: 'Enter full screen' }).click()
+    const expanded = page.getByRole('dialog', { name: 'Side chat', exact: true })
+    await expect(expanded).toBeVisible()
+    await expect(draft).toHaveAttribute('data-mount-marker', 'original')
+    await info.click()
+    await expect(page.getByRole('heading', { name: /Comparing treatment outcomes/ })).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(expanded).toBeVisible()
+    await expect(info).toBeFocused()
+    await page.screenshot({ path: testInfo.outputPath('expanded.png') })
+    await page.keyboard.press('Escape')
+    await expect(expanded).toHaveCount(0)
+    await expect(tab).toBeFocused()
+    await expect(draft).toHaveValue('Keep this unfinished question')
+    await page.getByRole('button', { name: 'Enter full screen' }).click()
+    await page.getByRole('button', { name: 'View main session' }).click()
+    await expect(expanded).toHaveCount(0)
+    await expect(page.locator('#navigation-result')).toHaveText('Main session opened')
+    await expect(draft).toHaveAttribute('data-mount-marker', 'original')
+    await expect(panel).toContainText('Compare the confidence intervals')
+
+    for (const width of [320, 375, 414, 768]) {
+      await page.setViewportSize({ width, height: 800 })
+      const header = page.getByTestId('side-chat-header')
+      expect(await header.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true)
+      await expect(
+        page.getByRole('button', { name: 'Close Side chat', exact: true })
+      ).toBeInViewport()
+    }
+    const tabs = page.getByTestId('preview-tab-strip')
+    await tabs.hover()
+    expect(await tabs.evaluate((node) => getComputedStyle(node).scrollbarWidth)).toBe('thin')
+    const initial = await tabs.evaluate((node) => node.scrollLeft)
+    expect(initial).toBeGreaterThan(0)
+    await page.mouse.wheel(-600, 0)
+    await expect.poll(() => tabs.evaluate((node) => node.scrollLeft)).toBeLessThan(initial)
+    await tab.focus()
+    await page.keyboard.press('Home')
+    await expect(page.getByRole('tab').first()).toBeFocused()
+    await page.keyboard.press('End')
+    await expect(tab).toBeFocused()
+    await expect(tab).toBeInViewport()
+    await page.screenshot({ path: testInfo.outputPath('toolbar.png') })
+  })
+}
+
+test('keeps missing-parent controls disabled and retains active-chat close protection', async ({
+  page
+}) => {
+  await page.goto('/side-chat-toolbar.html?missing&running')
+  await page.getByRole('tab', { name: 'Side chat', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Session information: Side chat' })).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'View main session' })).toBeDisabled()
+  await page.getByRole('button', { name: 'Enter full screen' }).click()
+  await page.getByRole('button', { name: 'Close Side chat', exact: true }).click()
+  await expect(page.getByRole('alertdialog')).toBeVisible()
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(page.getByTestId('side-chat-panel')).toBeVisible()
+})

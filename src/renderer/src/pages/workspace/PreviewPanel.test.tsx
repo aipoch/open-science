@@ -1727,12 +1727,43 @@ describe('PreviewPanel', () => {
       'Side chat'
     )
     expect(container.querySelector('[role="tab"]')?.textContent).not.toContain('Main analysis')
+    expect(container.querySelector('[role="tab"] svg')?.getAttribute('aria-hidden')).toBe('true')
+    expect(
+      container
+        .querySelector('[data-testid="preview-tab-strip"]')
+        ?.classList.contains('scrollbar-auto-hide')
+    ).toBe(true)
+    const information = panel!.querySelector<HTMLButtonElement>(
+      '[aria-label="Session information: Side chat"]'
+    )!
+    await act(async () => information.click())
+    expect(document.body.querySelector('[role="dialog"]')?.textContent).toContain('Main analysis')
+    expect(document.body.querySelector('[role="dialog"]')?.textContent).toContain(
+      'Compare the two cohorts'
+    )
+    await act(async () => information.click())
+    await act(async () => chat.setDraft('Keep this unfinished question'))
+    const textarea = panel!.querySelector('textarea')!
+    const enterFullScreen = (): void =>
+      panel!.querySelector<HTMLButtonElement>('[aria-label="Enter full screen"]')!.click()
+    await act(async () => enterFullScreen())
+    expect(panel!.closest('[role="dialog"]')).not.toBeNull()
+    expect(panel!.querySelector('textarea')).toBe(textarea)
+    expect(textarea.value).toBe('Keep this unfinished question')
+    expect(panel!.textContent).toContain('Question in the right panel')
+    await act(async () =>
+      panel!.querySelector<HTMLButtonElement>('[aria-label="Exit full screen"]')!.click()
+    )
+    expect(panel!.closest('[role="dialog"]')).toBeNull()
+    expect(panel!.querySelector('textarea')).toBe(textarea)
+    await act(async () => enterFullScreen())
     const viewMain = panel!.querySelector<HTMLButtonElement>('[aria-label="View main session"]')!
     await act(async () => viewMain.click())
     expect(openSession).toHaveBeenCalledWith('default', 'right-parent', 'user')
-    await act(async () => viewMain.focus())
-    expect(document.body.textContent).toContain('Main analysis')
-    expect(document.body.textContent).toContain('Compare the two cohorts')
+    expect(usePreviewWorkbenchStore.getState().expandedToolItemId).toBeNull()
+    expect(panel!.querySelector('textarea')).toBe(textarea)
+    expect(window.api.sideChat.cancel).not.toHaveBeenCalled()
+    expect(window.api.sideChat.close).not.toHaveBeenCalled()
     openSession.mockRestore()
   })
 
