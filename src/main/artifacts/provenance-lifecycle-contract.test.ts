@@ -286,6 +286,25 @@ describe('artifact provenance durable lifecycle contract', () => {
     ).rejects.toMatchObject({ name: 'ArtifactFinalizationProofError' })
   })
 
+  it('retries finalization when Prisma reports an expired interactive transaction', async () => {
+    const value = await fixture()
+    const session = durableSession(value.storageRoot)
+    const repository = new ArtifactProvenanceRepository({
+      ...value.repositoryOptions,
+      loadSession: async () => session
+    })
+    await value.stagePng('expired transaction bytes')
+    const version = await repository.createVersion(versionRequest(session))
+    const request = finalizationRequest(version.versionId, session)
+    const transaction = vi.spyOn(value.client, '$transaction')
+    transaction.mockImplementationOnce(async () => {
+      throw { code: 'P2028' }
+    })
+
+    await expect(repository.finalizeRun(request)).resolves.toHaveLength(1)
+    expect(transaction).toHaveBeenCalledTimes(2)
+  })
+
   it.each([
     ['staging-files', false],
     ['renamed-files', false],

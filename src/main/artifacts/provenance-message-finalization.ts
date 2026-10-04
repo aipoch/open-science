@@ -66,6 +66,24 @@ type ArtifactProvenanceMessageFinalizerOptions = {
   ) => Promise<ArtifactVersionFile>
 }
 
+const isExpiredTransactionError = (error: unknown): boolean =>
+  typeof error === 'object' && error !== null && 'code' in error && error.code === 'P2028'
+
+const runFinalizationTransaction = async <Result>(
+  client: Pick<PrismaClient, '$transaction'>,
+  operation: (transaction: Prisma.TransactionClient) => Promise<Result>
+): Promise<Result> => {
+  try {
+    return await client.$transaction(operation, { maxWait: 10_000 })
+  } catch (error) {
+    // An interactive transaction can outlive the process suspension that started it. Prisma then
+    // reports P2028 when the client resumes; replaying this fenced database operation once starts
+    // from a fresh transaction without repeating the external file publication.
+    if (!isExpiredTransactionError(error)) throw error
+    return client.$transaction(operation, { maxWait: 10_000 })
+  }
+}
+
 export type ArtifactFinalizationProofReason =
   | 'claim-context-missing'
   | 'claim-version-ids-missing'
@@ -435,7 +453,7 @@ export class ArtifactProvenanceMessageFinalizer {
     const ancestry = validateDurableMessageOwnership(durableSession, request)
     const normalizedRequest = normalizeArtifactFinalizationProofRequest({ ...request, ...ancestry })
     const client = await this.options.getClient()
-    const versions = await client.$transaction(async (transaction) => {
+    const versions = await runFinalizationTransaction(client, async (transaction) => {
       const matching = await loadArtifactFinalizationProofVersions(transaction, normalizedRequest)
       validateArtifactFinalizationProof(matching, normalizedRequest)
       if (matching.some((version) => version.state !== 'finalized')) {
@@ -471,7 +489,7 @@ export class ArtifactProvenanceMessageFinalizer {
   ): Promise<ArtifactVersionFile[]> {
     const normalizedRequest = normalizeArtifactFinalizationProofRequest(request)
     const client = await this.options.getClient()
-    const versions = await client.$transaction(async (transaction) => {
+    const versions = await runFinalizationTransaction(client, async (transaction) => {
       const matching = await loadArtifactFinalizationProofVersions(transaction, normalizedRequest)
       // Validate the complete proof from the same transaction that commits message ownership. Recovery
       // does not touch compatibility storage until this transaction succeeds.
