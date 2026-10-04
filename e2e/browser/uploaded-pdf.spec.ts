@@ -134,3 +134,41 @@ test('PDF navigation explains missing outlines and floats without shrinking narr
   await expect(navigation).toHaveCSS('position', 'relative')
   await expect.poll(() => scroller.evaluate((el) => el.getBoundingClientRect().width)).toBe(910)
 })
+
+test('keeps analysis options visible for a cached singleton figure on desktop', async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1100, height: 850 })
+  await page.goto('/uploaded-pdf.html')
+  await page.getByRole('tab', { name: 'Figures & Tables' }).click()
+  await page.getByRole('button', { name: 'Analyze PDF', exact: true }).click()
+  await expect(page.getByRole('table', { name: 'Candidate table' })).toBeVisible()
+  await page.getByRole('button', { name: 'Close preview' }).click()
+  // Restore one image-only result: no table switcher or continuation-page heading.
+  await page.evaluate(() => {
+    const readCached = window.api.pdfStructure.readCached
+    window.api.pdfStructure.readCached = async (request) => {
+      const result = await readCached(request)
+      return (
+        result && {
+          ...result,
+          elements: result.elements.map((element) => ({
+            ...element,
+            kind: 'figure',
+            table: undefined
+          }))
+        }
+      )
+    }
+  })
+  await page.getByRole('button', { name: 'Open preview' }).click()
+  await page.getByRole('tab', { name: 'Figures & Tables' }).click()
+  await expect(page.getByRole('group', { name: 'Table preview' })).toHaveCount(0)
+  await expect(page.locator('[data-pdf-figure-detail] article')).toHaveCount(1)
+  const options = page.getByRole('button', { name: 'PDF analysis options', exact: true })
+  await expect(options).toBeVisible()
+  await options.click()
+  await expect(page.getByRole('combobox', { name: 'Parallel pages' })).toBeVisible()
+  await page.getByRole('button', { name: 'Analyze again', exact: true }).click()
+  await expect(page.getByRole('table', { name: 'Candidate table' })).toBeVisible()
+})
