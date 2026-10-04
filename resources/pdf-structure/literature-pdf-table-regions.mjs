@@ -90,7 +90,10 @@ export function deduplicateTableRegions(tables, items, captions = []) {
         .filter((object) => object.label === 'table column' && Array.isArray(object.rect))
         .map((object) => object.rect.map((value, index) => value + (index % 2 ? a[1] : a[0])))
       const unownedOutside = outside.filter(
-        (item) => !outerColumns.some((column) => inside(column, item))
+        (item) =>
+          !outerColumns.length ||
+          item.rect[0] < Math.min(...outerColumns.map((column) => column[0])) ||
+          item.rect[2] > Math.max(...outerColumns.map((column) => column[2]))
       )
       const insideItems = items.filter(
         (item) => item.horizontal && intersect(item.rect, b) > 0 && item.text.trim()

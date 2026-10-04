@@ -55,6 +55,30 @@ export function recoverWideNumericRows({ items, cells, rows, columnRects, header
   if (candidates.length < 3) return 0
   let recovered = 0
   const claimedRows = new Set()
+  const splitClaimedRow = (target, candidate) => {
+    const { row, rowIndex } = target
+    const center = (row.rect[1] + row.rect[3]) / 2
+    const split = Math.max(row.rect[1] + 1, Math.min(row.rect[3] - 1, (center + candidate.y) / 2))
+    const before = candidate.y < center
+    const insertIndex = before ? rowIndex : rowIndex + 1
+    const newRow = {
+      rect: before
+        ? [row.rect[0], row.rect[1], row.rect[2], split]
+        : [row.rect[0], split, row.rect[2], row.rect[3]],
+      origin: 'source-wide-numeric-row'
+    }
+    if (before) row.rect[1] = split
+    else row.rect[3] = split
+    for (const cell of cells) if (cell.row >= insertIndex) cell.row += 1
+    const targetIndex = before ? rowIndex + 1 : rowIndex
+    for (const cell of cells.filter((cell) => cell.row === targetIndex)) {
+      cell.rect[1] = row.rect[1]
+      cell.rect[3] = row.rect[3]
+    }
+    rows.splice(insertIndex, 0, newRow)
+    repairs.push('wide-numeric-row-split')
+    return { row: newRow, rowIndex: insertIndex }
+  }
   for (const candidate of candidates) {
     let data = bodyRows()
     let target = data
@@ -85,8 +109,8 @@ export function recoverWideNumericRows({ items, cells, rows, columnRects, header
       target = { row, rowIndex: rows.length - 1 }
       repairs.push('wide-numeric-trailing-row-recovered')
     }
-    if (claimedRows.has(target.rowIndex)) continue
-    claimedRows.add(target.rowIndex)
+    if (claimedRows.has(target.row)) target = splitClaimedRow(target, candidate)
+    claimedRows.add(target.row)
     const { rowIndex, row } = target
     const existing = cells.filter((cell) => cell.row === rowIndex)
     const needsCells =
@@ -163,7 +187,7 @@ export function recoverUnassignedDenseRows({
       (item) => /\p{L}/u.test(item.text) && !/^[✓✗×xX]$/u.test(item.text.trim())
     )
     if (indicators.length < Math.max(3, rowCells.length - 2) || labels.length !== 1) continue
-    if (rowCells.some((cell) => cell.rowSpan !== 1 || cell.colSpan !== 1)) continue
+    if (rowCells.some((cell) => (cell.rowSpan ?? 1) !== 1 || (cell.colSpan ?? 1) !== 1)) continue
     const label = labels[0]
     const nearest = (item) =>
       rowCells
@@ -1470,6 +1494,42 @@ export function populateTableCellText({
       continue
     }
     assignments.set(item, candidates[0].cell)
+  }
+  // A source word can be split at the first numeric lane when the tail of a
+  // row label extends a few pixels past the model's column boundary. Keep a
+  // compact numeric suffix with its adjacent alphabetic label when a real
+  // numeric value follows in the same lane; an isolated numeric field stays
+  // owned by its predicted column.
+  for (const item of items.filter((candidate) => /^\d{1,3}$/u.test(candidate.text.trim()))) {
+    const cell = assignments.get(item)
+    if (!cell || cell.column <= 0 || !item.horizontal) continue
+    const previous = items
+      .filter((candidate) => {
+        const owner = assignments.get(candidate)
+        return (
+          owner?.row === cell.row &&
+          owner.column === cell.column - 1 &&
+          candidate !== item &&
+          candidate.horizontal &&
+          /\p{L}/u.test(candidate.text) &&
+          candidate.rect[2] <= item.rect[0] + 0.5 &&
+          item.rect[0] - candidate.rect[2] <= item.height * 0.08
+        )
+      })
+      .sort((a, b) => b.rect[2] - a.rect[2])[0]
+    if (!previous) continue
+    const following = items
+      .filter(
+        (candidate) =>
+          assignments.get(candidate) === cell &&
+          candidate !== item &&
+          candidate.rect[0] >= item.rect[2] + item.height * 0.3 &&
+          /^[−+-]?\d/u.test(candidate.text.trim())
+      )
+      .sort((a, b) => a.rect[0] - b.rect[0])[0]
+    if (!following) continue
+    assignments.set(item, assignments.get(previous))
+    repairs.push('inline-fragment-reassigned')
   }
   // Source-backed section spans can begin a few pixels below a wrapped label's
   // glyph box. Let only those explicit spans claim a descriptive heading when

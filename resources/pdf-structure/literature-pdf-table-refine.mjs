@@ -735,7 +735,7 @@ export function recoverRuledBottomBoundaryCrop(table, pageItems, rules) {
             )
             .filter((column) => column >= 0)
         )
-        return occupied.size >= Math.max(2, columnRects.length - 1)
+        return occupied.size >= Math.max(3, columnRects.length - 1)
       })
     if (alignedDataRow) continue
     const body = pageItems.filter(
@@ -10247,16 +10247,20 @@ export function refineTable(
     issues,
     repairs
   })
+  const reconciledItems = unassigned.reconciliationItems ?? []
+  const boundaryWitnessItems = pageItems.filter(
+    (item) => item.rect[1] >= table.cropRect[3] - 2 && !reconciledItems.includes(item)
+  )
   const finalBounds = reconcileNativeFinalCellBounds({
     table,
     cells,
     rows,
     columnRects,
     tokens: unassigned.reconciliationItems?.length
-      ? unassigned.reconciliationItems
+      ? [...unassigned.reconciliationItems, ...boundaryWitnessItems]
       : unassigned.sourceItems?.length
-        ? [...sourceItems, ...unassigned.sourceItems]
-        : sourceItems,
+        ? [...sourceItems, ...unassigned.sourceItems, ...boundaryWitnessItems]
+        : [...sourceItems, ...boundaryWitnessItems],
     rules: sourceRules,
     unassigned,
     clipped,

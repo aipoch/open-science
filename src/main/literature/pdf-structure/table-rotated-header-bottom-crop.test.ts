@@ -285,6 +285,58 @@ describe('external wide table geometry repairs', () => {
     expect(items.map((item) => item.text)).toContain('Gamma')
   })
 
+  it('splits a broad model band when two source baselines share it', () => {
+    const columnRects = Array.from({ length: 8 }, (_, column) => [
+      column * 40,
+      0,
+      (column + 1) * 40,
+      120
+    ])
+    const rows = [
+      { rect: [0, 0, 320, 20], origin: 'source-native-header' },
+      { rect: [0, 20, 320, 80], origin: 'model' },
+      { rect: [0, 80, 320, 120], origin: 'model' }
+    ]
+    const cells = rows.flatMap((row, rowIndex) =>
+      Array.from({ length: 8 }, (_, column) => ({
+        row: rowIndex,
+        column,
+        rowSpan: 1,
+        colSpan: rowIndex === 1 && column === 0 ? 8 : 1,
+        rect: [column * 40, row.rect[1], (column + 1) * 40, row.rect[3]],
+        items: [],
+        text: ''
+      }))
+    )
+    const values = (
+      label: string,
+      y: number
+    ): { text: string; rect: number[]; horizontal: boolean; baseline: number; height: number } => ({
+      text: `${label} 1 2 3 4 5 6 7`,
+      rect: [0, y, 320, y + 10],
+      horizontal: true,
+      baseline: y + 10,
+      height: 10
+    })
+    const items = [values('Alpha', 22), values('Beta', 47), values('Gamma', 82)]
+    const repairs: string[] = []
+    expect(
+      recoverWideNumericRows({
+        items,
+        cells,
+        rows,
+        columnRects,
+        headerRows: [0],
+        repairs
+      })
+    ).toBe(3)
+    expect(rows).toHaveLength(4)
+    expect(repairs).toContain('wide-numeric-row-split')
+    expect(items.map((item) => item.text)).toEqual(
+      expect.arrayContaining(['Alpha', 'Beta', 'Gamma', '1', '2', '3', '4', '5', '6', '7'])
+    )
+  })
+
   it('inserts an anonymous missing continuation row before a spanning model stub', () => {
     const columnRects = Array.from({ length: 8 }, (_, column) => [
       column * 40,
