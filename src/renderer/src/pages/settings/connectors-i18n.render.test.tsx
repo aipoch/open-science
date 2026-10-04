@@ -440,7 +440,10 @@ describe('ConnectorAddForm copy', () => {
         'cellxgene-discover',
         'Public collections, datasets, versions and file download links from CELLxGENE Discover.'
       ],
-      ['interproscan', 'InterProScan job status and TSV result retrieval via EMBL-EBI.'],
+      [
+        'interproscan',
+        'InterProScan protein sequence submission, job status and TSV result retrieval via EMBL-EBI.'
+      ],
       ['zenodo', 'Public research records, versions and file metadata from Zenodo.'],
       [
         'genes',
@@ -548,6 +551,10 @@ describe('ConnectorAddForm copy', () => {
       [
         'pathway-commons/pathway_commons_export',
         'Export Pathway Commons entities in BioPAX, GSEA, SIF, TXT, SBGN, or JSON-LD.'
+      ],
+      [
+        'interproscan/submit',
+        'Submit protein sequences to InterProScan and retain the returned job ID.'
       ],
       [
         'interproscan/status',

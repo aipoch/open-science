@@ -130,7 +130,7 @@ describe('ConnectorDetailView', () => {
       id: 'interproscan',
       displayName: 'InterProScan',
       description: 'API contract',
-      tools: ['status', 'results'].map((method) => ({
+      tools: ['submit', 'status', 'results'].map((method) => ({
         id: `interproscan/${method}`,
         method,
         description: 'API contract',
@@ -143,8 +143,10 @@ describe('ConnectorDetailView', () => {
       root.render(<ConnectorDetailView id="interproscan" />)
     })
     try {
-      expect(container.textContent).toContain('查询 InterProScan 作业状态并获取 TSV 结果')
-      for (const method of ['status', 'results']) {
+      expect(container.textContent).toContain(
+        '向 InterProScan 提交蛋白质序列、查询任务状态并获取 TSV 结果'
+      )
+      for (const method of ['submit', 'status', 'results']) {
         const button = Array.from(container.querySelectorAll('button')).find((item) =>
           item.textContent?.includes(method)
         )!
@@ -154,7 +156,7 @@ describe('ConnectorDetailView', () => {
       expect(container.textContent).toContain('至少等待 10 秒')
       expect(container.textContent).toContain('完整 TSV 报告')
       expect(container.textContent).not.toContain('API contract')
-      expect(container.querySelectorAll('[role="radiogroup"]')).toHaveLength(2)
+      expect(container.querySelectorAll('[role="radiogroup"]')).toHaveLength(3)
     } finally {
       await act(async () => {
         await i18next.changeLanguage('en')

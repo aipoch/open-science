@@ -764,7 +764,7 @@ const PdfNotebookView = ({
         )
       }
     >
-      <header className="shrink-0 border-b border-border bg-bg-000 px-3 py-2.5">
+      <header className="shrink-0 border-b border-border bg-bg-000 px-3 py-1">
         {annotationPort.available && annotationPort.needsReconciliation?.(source) ? (
           <PdfReconciliationDialog
             key={pdfAnnotationSourceKey(source)}
@@ -871,7 +871,7 @@ const PdfNotebookView = ({
                       type="button"
                       size="sm"
                       variant="outline"
-                      className="h-8 shrink-0 px-2 @min-[36rem]/pdf-notebook:px-2.5"
+                      className="h-8 shrink-0 px-2 text-xs @min-[36rem]/pdf-notebook:px-2.5"
                       aria-label={
                         filtered.length < all.length
                           ? t('Export filtered notes')
@@ -927,7 +927,7 @@ const PdfNotebookView = ({
                       type="button"
                       size="sm"
                       variant="ghost"
-                      className="h-8 shrink-0 px-2"
+                      className="h-8 shrink-0 px-2 text-xs"
                       aria-label={t('Add note')}
                       disabled={!available}
                     >
@@ -1007,7 +1007,7 @@ const PdfNotebookView = ({
                 />
                 <Button
                   type="button"
-                  size="icon-sm"
+                  size="icon"
                   variant="ghost"
                   aria-label={t('Refresh')}
                   disabled={loading || pendingId !== undefined || editingId !== undefined}

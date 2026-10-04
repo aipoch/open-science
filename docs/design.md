@@ -285,11 +285,12 @@ colors communicate a successful or failed probe/migration result.
 
 ### Named Layer Tokens
 
-| Token                     | Tailwind class    | Value | Usage                                                                |
-| ------------------------- | ----------------- | ----- | -------------------------------------------------------------------- |
-| `--z-index-modal`         | `z-modal`         | `50`  | Standard portaled modal layer (e.g. the notification center popover) |
-| `--z-index-toast`         | `z-toast`         | `40`  | Background notices and undo snackbars below modal backdrops          |
-| `--z-index-markdown-menu` | `z-markdown-menu` | `200` | Streamdown Mermaid and table format menus above fullscreen content   |
+| Token                     | Tailwind class    | Value  | Usage                                                                |
+| ------------------------- | ----------------- | ------ | -------------------------------------------------------------------- |
+| `--z-index-modal`         | `z-modal`         | `50`   | Standard portaled modal layer (e.g. the notification center popover) |
+| `--z-index-toast`         | `z-toast`         | `40`   | Background notices and undo snackbars below modal backdrops          |
+| `--z-index-markdown-menu` | `z-markdown-menu` | `200`  | Streamdown Mermaid and table format menus above fullscreen content   |
+| `--z-index-titlebar`      | —                 | `1000` | Windows application menu row above renderer overlays                 |
 
 Shared `Dialog` and `AlertDialog` own modal stacking through `overlay-layer.ts`.
 Their root advances the inherited layer by 20 (the first modal is 60); Select,
@@ -421,6 +422,9 @@ Active-dialog menus and other foreground child layers retain their own ordering.
 - Brand loading indicators may use fixed-geometry transform and opacity motion for orbiting or gathering particles; they must become static under `prefers-reduced-motion`, and the full-canvas startup logo is capped at 30 drawn frames per second.
 
 ### PDF reading and annotations
+
+- PDF floating toolbars use 28px fine-pointer buttons, at least 24px-wide split disclosures, compact gaps and 44px coarse-pointer targets. Keep selected states, focus indicators and tooltips. Notes & Annotations uses 32px controls, 12px utility text and 4px vertical toolbar padding, matching Replay density.
+- Completed PDF analysis shows the figures/tables directly, including cached results on reopen, with a screen-reader completion announcement. Keep analysis options (parallel pages and explicit re-analysis) in the result header's overflow popover, or beside the empty-result message. Loading, active progress, cancellation, partial results and failures retain their existing visible feedback and recovery actions.
 
 - Original PDF, Figures & Tables, and Notes & Annotations use distinct leading document, image, and notebook icons with visible labels. Figures & Tables also accepts finalized upload/artifact PDF versions independently of Literature membership, Agent context, or annotation write access. Opening Figures & Tables restores cached results only. New analysis requires an explicit Analyze PDF or Download and continue action; uploading, opening a preview, and switching tabs never start analysis. Cancellation does not automatically restart analysis.
 - Parsed PDF tables in Figures & Tables preserve source row/column spans, use a collapsed border on every cell, and share one neutral theme surface without inferring headers from the first row or merged cells. Text and numbers use the same start alignment, with tabular digits and numeric no-wrap retained. Only the hovered cell is tinted, including when it spans multiple rows; row-spanning content stays vertically centered. Minimum widths apply uniformly because the first DOM cell below a rowspan may belong to a later column. These rules also apply to cached tables and do not change source text or exports.

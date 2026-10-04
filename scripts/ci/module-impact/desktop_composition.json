@@ -1138,6 +1138,7 @@
       "src/main/notebook/dependency-analysis.repl.test.ts",
       "src/main/connectors/descriptors/genomes-blast.test.ts",
       "src/main/connectors/descriptors/genomes-clustal.test.ts",
+      "src/main/connectors/descriptors/interproscan.test.ts",
       "src/main/connectors/descriptors/genomes.test.ts",
       "src/main/notebook/compute-evidence-recovery.integration.test.ts",
       "src/main/session-persistence/runtime-resume-recovery.test.ts",

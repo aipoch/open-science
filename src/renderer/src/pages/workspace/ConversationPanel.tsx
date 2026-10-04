@@ -1395,7 +1395,9 @@ const ConversationPanel = ({
       >
         <header
           data-testid="conversation-header"
-          className="flex shrink-0 items-center gap-2 px-4 pb-3 pt-2 max-md:px-2 max-md:pb-2 max-md:pt-[max(env(safe-area-inset-top),0.5rem)]"
+          className={`flex shrink-0 items-center gap-2 px-4 pb-3 pt-2 max-md:px-2 max-md:pb-2 max-md:pt-[max(env(safe-area-inset-top),0.5rem)] ${
+            isPreviewPanelCollapsed ? 'md:pr-12' : ''
+          }`}
         >
           <button
             type="button"

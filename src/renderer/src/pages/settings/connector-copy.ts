@@ -26,7 +26,9 @@ export function connectorDescription(
     )
   }
   if (connector.id === 'interproscan') {
-    return t('InterProScan job status and TSV result retrieval via EMBL-EBI.')
+    return t(
+      'InterProScan protein sequence submission, job status and TSV result retrieval via EMBL-EBI.'
+    )
   }
   if (connector.id === 'zenodo') {
     return t('Public research records, versions and file metadata from Zenodo.')
@@ -162,6 +164,8 @@ export function connectorToolDescription(id: string, fallback: string, t: TFunct
       return t('Query Pathway Commons gene neighborhoods and network paths.')
     case 'pathway-commons/pathway_commons_export':
       return t('Export Pathway Commons entities in BioPAX, GSEA, SIF, TXT, SBGN, or JSON-LD.')
+    case 'interproscan/submit':
+      return t('Submit protein sequences to InterProScan and retain the returned job ID.')
     case 'interproscan/status':
       return t('Check an InterProScan job once. Wait at least 10 seconds between checks.')
     case 'interproscan/results':

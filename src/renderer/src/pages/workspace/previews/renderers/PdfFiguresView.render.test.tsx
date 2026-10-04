@@ -125,12 +125,20 @@ const api = {
 const clipboard = vi.fn(async () => undefined),
   navigate = vi.fn()
 const click = async (text: string): Promise<void> => {
-  const buttons = [...container.querySelectorAll('button')]
+  const buttons = [...document.querySelectorAll('button')]
   const button =
     buttons.find((b) => b.textContent === text) ??
     buttons.find((b) => b.textContent?.includes(text))
   expect(button).toBeDefined()
   await act(async () => button!.click())
+}
+const openAnalysisOptions = async (): Promise<void> => {
+  const trigger = container.querySelector<HTMLButtonElement>('[aria-label="PDF analysis options"]')
+  expect(trigger).not.toBeNull()
+  await act(async () => trigger!.click())
+  expect(
+    document.querySelector('[role="dialog"][aria-label="PDF analysis options"]')
+  ).not.toBeNull()
 }
 beforeEach(async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
@@ -221,6 +229,13 @@ it('restores persisted results automatically when the tab opens and the preview 
   expect(container.textContent).toContain('Merged header')
   expect(api.pdfStructure.parse).not.toHaveBeenCalled()
   expect(api.localModels.install).not.toHaveBeenCalled()
+  expect(container.querySelector('header')).toBeNull()
+  expect(container.querySelector('[aria-label="Parallel pages"]')).toBeNull()
+  expect(container.querySelector('[role="status"]')?.classList.contains('sr-only')).toBe(true)
+  await openAnalysisOptions()
+  await selectParallelPages(4)
+  expect(document.querySelector('[aria-label="Parallel pages"]')?.textContent).toBe('4x')
+  expect(api.pdfStructure.parse).not.toHaveBeenCalled()
 })
 
 it('restores a completed empty result without offering the initial analysis action', async () => {
@@ -736,6 +751,8 @@ it('shows previously loaded figures immediately without another thumbnail read',
   expect(container.querySelector('[aria-label="Figure and table index"]')?.textContent).toContain(
     'Page 1'
   )
+  expect(container.querySelector('header')).toBeNull()
+  await openAnalysisOptions()
   await click('Analyze again')
   expect(api.pdfStructure.readThumbnail).toHaveBeenCalledTimes(3)
   expect(container.querySelector('[data-pdf-image-frame]')?.getAttribute('aria-busy')).toBe('true')
@@ -1323,15 +1340,15 @@ it('presents an empty successful analysis as complete without an initial analysi
   expect(api.pdfStructure.parse).toHaveBeenCalledTimes(2)
   expect(container.querySelector('[role="status"]')?.textContent).toContain('Analysis complete')
   expect(container.querySelector('h3')?.textContent).toBe('No figures or tables detected')
-  expect(container.querySelector('header')?.textContent).toContain('Analysis complete')
-  expect(container.querySelector('header p')?.getAttribute('title')).toBe('Extracted 2 / 2 pages')
+  expect(container.querySelector('header')).toBeNull()
+  expect(container.querySelector('[role="status"]')?.classList.contains('sr-only')).toBe(true)
   expect(container.textContent).not.toContain('Analyze PDF')
   expect(container.textContent).not.toContain('Scanned and rotated pages')
   expect(container.textContent).not.toContain('Download size')
-  expect([...container.querySelectorAll('button')].map((b) => b.textContent)).toEqual([
-    'Analyze again',
-    '1x'
-  ])
+  expect(container.querySelector('[aria-label="Parallel pages"]')).toBeNull()
+  expect(container.textContent).not.toContain('Analyze again')
+  await openAnalysisOptions()
+  expect(api.pdfStructure.parse).toHaveBeenCalledTimes(2)
   await click('Analyze again')
   expect(api.pdfStructure.parse).toHaveBeenCalledTimes(4)
 })
@@ -1723,7 +1740,7 @@ it('does not automatically restart a cancelled or failed uploaded-PDF request af
 
 const selectParallelPages = async (value: 1 | 2 | 4): Promise<void> => {
   await act(async () =>
-    fireEvent.keyDown(container.querySelector('[aria-label="Parallel pages"]')!, {
+    fireEvent.keyDown(document.querySelector('[aria-label="Parallel pages"]')!, {
       key: 'ArrowDown'
     })
   )

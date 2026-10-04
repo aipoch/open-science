@@ -21,6 +21,7 @@ import {
   subscribeAnnotationReveal
 } from '../annotations/annotation-reveal'
 import { HighlightedCodeLines } from '../HighlightedCodeLines'
+import { SourcePreviewContent } from './renderers/SourcePreview'
 import { PreviewTextAnnotationSurface } from './PreviewTextAnnotationSurface'
 import { PdfAnnotationsProvider } from '../pdf-annotations/PdfAnnotationsProvider'
 import { BookmarksProvider } from '../bookmarks/BookmarksProvider'
@@ -85,7 +86,14 @@ describe('PreviewTextAnnotationSurface', () => {
     // returns the same object that was set, so reveal and surface cleanups
     // operate on the same collection instead of stacked replacements.
     const singleton = {
-      add: (range: Range) => registeredRanges.add(range),
+      add: (range: Range) => {
+        if (!(range instanceof Range)) {
+          throw new TypeError(
+            "Failed to execute 'add' on 'Highlight': parameter 1 is not of type 'Range'."
+          )
+        }
+        return registeredRanges.add(range)
+      },
       delete: (range: Range) => registeredRanges.delete(range)
     }
     Object.defineProperty(globalThis, 'CSS', {
@@ -228,6 +236,7 @@ describe('PreviewTextAnnotationSurface', () => {
     bookmarkApi,
     pdfAnnotationApi,
     quickTextMark,
+    children,
     content = 'Experiment result: confidence intervals overlap.'
   }: {
     activeAnnotations?: readonly Annotation[]
@@ -248,6 +257,7 @@ describe('PreviewTextAnnotationSurface', () => {
       color: 'yellow' | 'blue' | 'green' | 'pink' | 'purple'
     }
     content?: string
+    children?: React.ReactNode
   } = {}): Promise<void> => {
     if (bookmarkApi) window.api = { bookmarks: bookmarkApi } as unknown as Window['api']
     if (pdfAnnotationApi) window.api = { ...window.api, pdfAnnotations: pdfAnnotationApi }
@@ -271,7 +281,7 @@ describe('PreviewTextAnnotationSurface', () => {
         pdfExtractorVersion={pdfEvidenceSource || pdfAnnotationApi ? 'pdfjs-5.4.624' : undefined}
         annotationBlockedByHistoricalVersion={annotationBlockedByHistoricalVersion}
       >
-        <p>{content}</p>
+        {children ?? <p>{content}</p>}
       </PreviewTextAnnotationSurface>
     )
     await act(async () => {
@@ -477,6 +487,134 @@ describe('PreviewTextAnnotationSurface', () => {
     expect(screen.queryByRole('button', { name: 'Edit bookmark note' })).not.toBeNull()
     await act(async () => root.render(null))
     expect(registeredRanges.size).toBe(0)
+  })
+
+  it.each([
+    { quote: 'quote removed when the report was regenerated', content: annotation().quote },
+    { quote: 'repeated quote', content: `${annotation().quote}. repeated quote; repeated quote` }
+  ])(
+    'skips an unresolvable bookmark ($quote) while retaining valid highlights',
+    async ({ quote, content }) => {
+      // The source identity matches, but its quote is absent or ambiguous. The browser
+      // rejects an unresolved Range; a stale bookmark must not take down valid ones.
+      const stale = {
+        id: 'bookmark-stale-quote',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        version: 1,
+        note: 'v1 note',
+        createdAt: '2026-09-14T00:00:00.000Z',
+        updatedAt: '2026-09-14T00:00:00.000Z',
+        target: {
+          kind: 'text',
+          quote,
+          source: {
+            kind: 'project-file',
+            projectId: 'project-1',
+            path: '/project/notes.md',
+            name: 'notes.md',
+            fileSource: 'artifact',
+            sourceFileId: 'artifact-1',
+            versionId: 'version-7',
+            sessionId: 'session-1'
+          }
+        }
+      } satisfies Bookmark
+      const valid: Bookmark = {
+        ...stale,
+        id: 'bookmark-valid-quote',
+        target: { ...stale.target, quote: annotation().quote }
+      }
+      const bookmarkApi = {
+        list: vi.fn().mockResolvedValue({ items: [stale, valid], total: 2 })
+      } as unknown as Window['api']['bookmarks']
+      const previewItem = item({ managedFileId: 'artifact-1' })
+      await expect(renderSurface({ bookmarkApi, previewItem, content })).resolves.toBeUndefined()
+      expect([...registeredRanges].map((range) => range.toString())).toEqual([annotation().quote])
+      expect(screen.getAllByRole('button', { name: 'Edit bookmark note' })).toHaveLength(1)
+
+      await renderSurface({ bookmarkApi, previewItem, content: `${annotation().quote}. ${quote}` })
+      expect([...registeredRanges].map((range) => range.toString()).sort()).toEqual(
+        [annotation().quote, quote].sort()
+      )
+      expect(screen.getAllByRole('button', { name: 'Edit bookmark note' })).toHaveLength(2)
+      await act(async () => root.render(null))
+      expect(registeredRanges.size).toBe(0)
+    }
+  )
+
+  it('opens a paginated source with a bookmark outside the first slice and restores it on navigation', async () => {
+    const quote = 'bookmarked result on the second page'
+    const saved: Bookmark = {
+      id: 'bookmark-second-page',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      version: 1,
+      note: 'saved on page two',
+      createdAt: '2026-09-14T00:00:00.000Z',
+      updatedAt: '2026-09-14T00:00:00.000Z',
+      target: {
+        kind: 'text',
+        quote,
+        source: {
+          kind: 'project-file',
+          projectId: 'project-1',
+          path: '/project/notes.md',
+          fileSource: 'artifact',
+          sourceFileId: 'artifact-1',
+          versionId: 'version-7'
+        }
+      }
+    }
+    const bookmarkApi = {
+      list: vi.fn().mockResolvedValue({ items: [saved], total: 1 })
+    } as unknown as Window['api']['bookmarks']
+    const content = [
+      ...Array.from({ length: 2000 }, (_, index) => `line ${index + 1}`),
+      quote
+    ].join('\n')
+    const render = (): Promise<void> =>
+      renderSurface({
+        bookmarkApi,
+        previewItem: item({ managedFileId: 'artifact-1' }),
+        children: <SourcePreviewContent content={content} />
+      })
+    await expect(render()).resolves.toBeUndefined()
+    expect(registeredRanges.size).toBe(0)
+    await act(async () =>
+      fireEvent.click(container.querySelector('[aria-label="Next preview page"]')!)
+    )
+    expect([...registeredRanges].map((range) => range.toString())).toEqual([quote])
+  })
+
+  it('clears bookmark ranges from their named highlight when text disappears and on unmount', async () => {
+    // The browser registry has a distinct collection per name; the legacy draft
+    // collection cannot stand in for the personal-bookmark collection.
+    const highlights = new Map<string, Highlight>()
+    vi.stubGlobal('CSS', { highlights })
+    const ranges = (): AbstractRange[] =>
+      [...highlights.values()].flatMap((highlight) => [...highlight])
+    const saved: Bookmark = {
+      id: 'bookmark-cleanup',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      version: 1,
+      note: '',
+      createdAt: '2026-09-14T00:00:00.000Z',
+      updatedAt: '2026-09-14T00:00:00.000Z',
+      target: { kind: 'text', quote: annotation().quote, source: annotation().source }
+    }
+    const bookmarkApi = {
+      list: vi.fn().mockResolvedValue({ items: [saved], total: 1 })
+    } as unknown as Window['api']['bookmarks']
+    await renderSurface({ bookmarkApi })
+    expect(ranges().map((range) => range.toString())).toEqual([annotation().quote])
+    await renderSurface({ bookmarkApi, content: 'A different visible page.' })
+    expect(ranges()).toHaveLength(0)
+    await renderSurface({ bookmarkApi })
+    expect(ranges().map((range) => range.toString())).toEqual([annotation().quote])
+    await act(async () => root.render(null))
+    expect(ranges()).toHaveLength(0)
   })
 
   it('reveals an exact project-file bookmark and reports a missing quote', async () => {

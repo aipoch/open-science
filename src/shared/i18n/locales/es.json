@@ -136,6 +136,7 @@
   },
   "renderer": {
     "List GWAS summary statistics files, YAML metadata, reference genomes and standard column definitions by GCST accession.": "Consultar archivos de estadísticas resumidas de GWAS, metadatos YAML, genomas de referencia y definiciones estándar de columnas mediante un identificador GCST.",
+    "PDF analysis options": "Opciones de análisis del PDF",
     "Retrieve GEO series metadata, samples and supplementary-file links.": "Obtener metadatos, muestras y enlaces a archivos complementarios de una serie de GEO.",
     "Find GEO Series Matrix and NCBI RNA-seq count file links for manual download.": "Buscar enlaces a archivos Series Matrix de GEO y de recuentos de RNA-seq de NCBI para su descarga manual.",
     "Check decompressed GEO matrix structure, dimensions and sample alignment before analysis.": "Comprobar la estructura, las dimensiones y la correspondencia de las muestras de una matriz de GEO descomprimida antes del análisis.",
@@ -6628,7 +6629,8 @@
     "Automatic updates pause after {{run}} requests per run or {{day}} across all collections in 24 hours. Retries count toward these limits.": "Las actualizaciones automáticas se pausan tras {{run}} solicitudes por ejecución o {{day}} entre todas las colecciones en 24 horas. Los reintentos cuentan para estos límites.",
     "Check an InterProScan job once. Wait at least 10 seconds between checks.": "Consultar una vez el estado de una tarea de InterProScan. Espere al menos 10 segundos entre consultas.",
     "Retrieve the complete TSV report for a finished InterProScan job. Results expire at the service.": "Obtener el informe TSV completo de una tarea de InterProScan finalizada. Los resultados caducan en el servicio.",
-    "InterProScan job status and TSV result retrieval via EMBL-EBI.": "Consulta del estado de trabajos y resultados TSV de InterProScan mediante EMBL-EBI.",
+    "InterProScan protein sequence submission, job status and TSV result retrieval via EMBL-EBI.": "Envío de secuencias de proteínas a InterProScan, consulta del estado de tareas y obtención de resultados TSV mediante EMBL-EBI.",
+    "Submit protein sequences to InterProScan and retain the returned job ID.": "Envíe secuencias de proteínas a InterProScan y conserve el ID de tarea devuelto.",
     "Genome annotation, sequence similarity search, multiple sequence alignment and browser tracks via NCBI, EMBL-EBI, Ensembl and UCSC.": "Anotación genómica, búsqueda de similitud de secuencias, alineación múltiple y pistas del navegador mediante NCBI, EMBL-EBI, Ensembl y UCSC.",
     "Submit three or more protein, DNA or RNA sequences to Clustal Omega for asynchronous multiple sequence alignment.": "Envíe tres o más secuencias de proteínas, ADN o ARN a Clustal Omega para una alineación múltiple asíncrona.",
     "Check a Clustal Omega job once. Wait at least 10 seconds between checks.": "Consulte una vez el estado de una tarea de Clustal Omega. Espere al menos 10 segundos entre consultas.",

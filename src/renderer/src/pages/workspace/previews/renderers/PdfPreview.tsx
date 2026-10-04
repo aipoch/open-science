@@ -538,9 +538,9 @@ const PdfInteractionControls = ({
         data-pdf-controls="interaction"
         role="group"
         aria-label={t('PDF interaction tools')}
-        className="pdf-annotation-toolbar absolute top-3 left-3 z-40 max-w-[calc(100%-1.5rem)] rounded-xl border border-border bg-popover p-1 text-popover-foreground shadow-menu"
+        className="pdf-annotation-toolbar absolute top-3 left-3 z-40 max-w-[calc(100%-1.5rem)] rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-menu"
       >
-        <div className="flex flex-wrap items-center gap-1">
+        <div className="flex flex-wrap items-center gap-0.5">
           {navigationAvailable ? (
             <>
               <Tooltip>
@@ -549,7 +549,7 @@ const PdfInteractionControls = ({
                     type="button"
                     variant={navigationOpen ? 'secondary' : 'ghost'}
                     size="icon-sm"
-                    className="size-8 text-text-100 hover:text-text-000 [@media(pointer:coarse)]:size-11"
+                    className="size-7 text-text-100 hover:text-text-000 [@media(pointer:coarse)]:size-11"
                     aria-label={navigationOpen ? t('Hide navigation') : t('Show navigation')}
                     aria-controls="pdf-navigation-sidebar"
                     aria-expanded={navigationOpen}
@@ -562,7 +562,7 @@ const PdfInteractionControls = ({
                   label={navigationOpen ? t('Hide navigation') : t('Show navigation')}
                 />
               </Tooltip>
-              <span className="mx-1 h-5 w-px shrink-0 bg-border" aria-hidden="true" />
+              <span className="mx-0.5 h-4 w-px shrink-0 bg-border" aria-hidden="true" />
             </>
           ) : null}
           {actions.map(({ mode: actionMode, label, icon: Icon }) => (
@@ -572,7 +572,7 @@ const PdfInteractionControls = ({
                   type="button"
                   variant={mode === actionMode ? 'secondary' : 'ghost'}
                   size="icon-sm"
-                  className="size-8 text-text-100 hover:text-text-000 [@media(pointer:coarse)]:size-11"
+                  className="size-7 text-text-100 hover:text-text-000 [@media(pointer:coarse)]:size-11"
                   aria-label={label}
                   aria-pressed={mode === actionMode}
                   onClick={() => onModeChange(actionMode)}
@@ -583,7 +583,7 @@ const PdfInteractionControls = ({
               <PdfToolbarTooltip label={label} />
             </Tooltip>
           ))}
-          <span className="mx-1 h-5 w-px shrink-0 bg-border" aria-hidden="true" />
+          <span className="mx-0.5 h-4 w-px shrink-0 bg-border" aria-hidden="true" />
           <div
             className="annotation-style-split flex shrink-0 items-center rounded-md"
             data-open={styleOpen}
@@ -595,7 +595,7 @@ const PdfInteractionControls = ({
                   variant={mode === 'text-annotation' ? 'secondary' : 'ghost'}
                   size="icon-sm"
                   className={cn(
-                    'annotation-style-apply size-8 rounded-r-none p-0',
+                    'annotation-style-apply size-7 rounded-r-none p-0',
                     !canAnnotateText && 'opacity-50 cursor-not-allowed'
                   )}
                   aria-disabled={!canAnnotateText}
@@ -648,7 +648,7 @@ const PdfInteractionControls = ({
                       variant="ghost"
                       size="icon-sm"
                       className={cn(
-                        'annotation-style-trigger h-8 w-6 rounded-l-none text-muted-foreground',
+                        'annotation-style-trigger h-7 w-6 rounded-l-none text-muted-foreground',
                         !canAnnotateText && 'opacity-50 cursor-not-allowed'
                       )}
                       aria-disabled={!canAnnotateText}
@@ -722,7 +722,7 @@ const PdfInteractionControls = ({
                     type="button"
                     variant={mode === 'area' || mode === 'area-annotation' ? 'secondary' : 'ghost'}
                     size="icon-sm"
-                    className="pdf-area-action annotation-style-apply size-8 rounded-r-none p-0"
+                    className="pdf-area-action annotation-style-apply size-7 rounded-r-none p-0"
                     disabled={!canAnnotateArea && !canSelectArea}
                     aria-pressed={mode === 'area' || mode === 'area-annotation'}
                     aria-label={
@@ -786,7 +786,7 @@ const PdfInteractionControls = ({
                         type="button"
                         variant="ghost"
                         size="icon-sm"
-                        className="pdf-area-menu-trigger annotation-style-trigger h-8 w-6 rounded-l-none text-muted-foreground"
+                        className="pdf-area-menu-trigger annotation-style-trigger h-7 w-6 rounded-l-none text-muted-foreground"
                         aria-label={t('Area selection actions')}
                         onPointerEnter={(event) => {
                           cancelOptionsHover()
@@ -870,14 +870,14 @@ const PdfInteractionControls = ({
               </DropdownMenu>
             </div>
           ) : null}
-          <span className="mx-1 h-5 w-px shrink-0 bg-border" aria-hidden="true" />
+          <span className="mx-0.5 h-4 w-px shrink-0 bg-border" aria-hidden="true" />
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
                 type="button"
                 variant={searchOpen ? 'secondary' : 'ghost'}
                 size="icon-sm"
-                className="size-8 text-text-100 hover:text-text-000"
+                className="size-7 text-text-100 hover:text-text-000"
                 aria-label={t('Search')}
                 aria-pressed={searchOpen}
                 onClick={onSearchToggle}
@@ -1040,11 +1040,11 @@ const PdfZoomControls = ({
         data-pdf-controls="view"
         role="group"
         aria-label={t('PDF view controls')}
-        className="absolute right-3 bottom-3 z-10 flex min-h-10 items-center gap-1 rounded-xl border border-border-300/50 bg-bg-000/90 p-1 shadow-sm backdrop-blur"
+        className="absolute right-3 bottom-3 z-10 flex min-h-9 items-center gap-1 rounded-lg border border-border-300/50 bg-bg-000/90 p-1 shadow-sm backdrop-blur"
       >
         <div
           data-pdf-page-control
-          className="inline-flex h-8 items-center gap-0.5 border-r border-border-300/60 pr-1 text-[11px] tabular-nums text-text-200"
+          className="inline-flex h-7 items-center gap-0.5 border-r border-border-300/60 pr-1 text-[11px] tabular-nums text-text-200"
         >
           {editingPage ? (
             <Input
@@ -1096,7 +1096,7 @@ const PdfZoomControls = ({
             {pageCount}
           </span>
         </div>
-        <span className="inline-flex h-8 min-w-[3ch] items-center justify-center px-1 text-center text-[11px] tabular-nums text-text-200">
+        <span className="inline-flex h-7 min-w-[3ch] items-center justify-center px-1 text-center text-[11px] tabular-nums text-text-200">
           {Math.round(zoom * 100)}%
         </span>
         {actions.map(({ label, icon: Icon, onClick, disabled }) => (
@@ -1106,7 +1106,7 @@ const PdfZoomControls = ({
                 type="button"
                 variant="ghost"
                 size="icon-sm"
-                className="h-8 w-8 text-text-100 hover:text-text-000 [@media(pointer:coarse)]:size-11"
+                className="size-7 text-text-100 hover:text-text-000 [@media(pointer:coarse)]:size-11"
                 aria-label={label}
                 disabled={disabled}
                 onClick={onClick}

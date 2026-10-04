@@ -14,6 +14,7 @@ import {
   SelectValue
 } from '@/components/ui/select'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { ErrorNotice } from '@/components/error-notice'
 import { DownloadProgressLine } from '@/components/DownloadProgressLine'
 import {
@@ -24,7 +25,7 @@ import {
   ScanSearch,
   RefreshCw,
   LoaderCircle,
-  CircleCheck,
+  Ellipsis,
   ImageOff,
   ChevronLeft,
   ChevronRight,
@@ -295,7 +296,8 @@ const CandidateDetails = ({
   onNavigate,
   hideCaption = false,
   showPage = false,
-  imageOnly = false
+  imageOnly = false,
+  analysisOptions
 }: {
   selected: Selection
   source: PdfStructureSource
@@ -304,6 +306,7 @@ const CandidateDetails = ({
   hideCaption?: boolean
   showPage?: boolean
   imageOnly?: boolean
+  analysisOptions?: React.ReactNode
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const { result, element } = selected
@@ -399,8 +402,8 @@ const CandidateDetails = ({
     <article className="space-y-3 text-sm">
       <div
         className={cn(
-          'flex-wrap items-center gap-3 border-b border-border-200 pb-2 @min-[640px]:flex',
-          hasTable || showPage ? 'flex' : 'hidden'
+          'flex flex-wrap items-center gap-3 border-b border-border-200 pb-2',
+          !hasTable && !showPage && '@max-[640px]:hidden'
         )}
       >
         <div className={cn('items-center gap-3 @min-[640px]:flex', showPage ? 'flex' : 'hidden')}>
@@ -449,6 +452,9 @@ const CandidateDetails = ({
           {t('Show in PDF')}
           <ArrowUpRight className="size-3.5" aria-hidden="true" />
         </Button>
+        {analysisOptions ? (
+          <div className="hidden @min-[640px]:block">{analysisOptions}</div>
+        ) : null}
       </div>
       {!hasTable || showImage ? (
         <div
@@ -1029,6 +1035,47 @@ export const PdfFiguresView = ({
       </Select>
     </TooltipProvider>
   )
+  const analysisOptions = (
+    <Popover>
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger
+            asChild
+            onFocus={(event) => {
+              if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+            }}
+          >
+            <PopoverTrigger asChild>
+              <Button variant="ghost" size="icon-sm" aria-label={t('PDF analysis options')}>
+                <Ellipsis className="size-4" aria-hidden="true" />
+              </Button>
+            </PopoverTrigger>
+          </TooltipTrigger>
+          <TooltipContent>{t('PDF analysis options')}</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+      <PopoverContent
+        align="end"
+        className="w-60 space-y-3 border border-border bg-popover p-3 text-popover-foreground"
+        aria-label={t('PDF analysis options')}
+      >
+        <div className="flex items-center justify-between gap-3">
+          <span>{t('Parallel pages')}</span>
+          {concurrencySelect}
+        </div>
+        <Button
+          size="sm"
+          variant="outline"
+          className="w-full"
+          disabled={!model || restoring}
+          onClick={() => void extract()}
+        >
+          <RefreshCw className="size-3.5" aria-hidden="true" />
+          {t('Analyze again')}
+        </Button>
+      </PopoverContent>
+    </Popover>
+  )
   const progressTrack = (
     <div
       role="progressbar"
@@ -1067,7 +1114,10 @@ export const PdfFiguresView = ({
       className="@container flex size-full flex-col overflow-hidden bg-bg-000 text-text-000"
       data-pdf-figures-content
     >
-      {(completed > 0 && (analysisComplete || entries.length > 0)) || (error && !busy) ? (
+      <span role="status" aria-atomic="true" className="sr-only">
+        {analysisComplete ? t('Analysis complete') : null}
+      </span>
+      {!analysisComplete && ((completed > 0 && entries.length > 0) || (error && !busy)) ? (
         <header
           className={cn(
             'shrink-0 space-y-2 border-b border-border-200 px-3 @min-[640px]:px-4',
@@ -1090,19 +1140,15 @@ export const PdfFiguresView = ({
                     className="size-4 shrink-0 animate-spin text-primary motion-reduce:animate-none"
                     aria-hidden="true"
                   />
-                ) : analysisComplete ? (
-                  <CircleCheck className="size-4 shrink-0 text-primary" aria-hidden="true" />
                 ) : null}
                 {restoring
                   ? t('Loading…')
                   : busy
                     ? busyLabel
-                    : analysisComplete
-                      ? t('Analysis complete')
-                      : t('Extracted {{completed}} / {{total}} pages', {
-                          completed: results.length,
-                          total: pageCount
-                        })}
+                    : t('Extracted {{completed}} / {{total}} pages', {
+                        completed: results.length,
+                        total: pageCount
+                      })}
               </span>
             </p>
             <div className="flex shrink-0 items-center gap-2">
@@ -1247,6 +1293,7 @@ export const PdfFiguresView = ({
             >
               <ArrowUpRight className="size-4" aria-hidden="true" />
             </Button>
+            {analysisComplete ? analysisOptions : null}
           </div>
           <nav
             className="hidden shrink-0 overflow-y-auto border-r border-border-200 bg-bg-20 p-2 @min-[640px]:block @min-[640px]:w-60"
@@ -1327,6 +1374,7 @@ export const PdfFiguresView = ({
                     source={source}
                     onNavigate={onNavigate}
                     showPage={parts.length > 1}
+                    analysisOptions={analysisComplete && index === 0 ? analysisOptions : undefined}
                     hideCaption={active.combinedTable ? index > 0 : index < parts.length - 1}
                     imageOnly={!!active.combinedTable && index > 0}
                   />
@@ -1387,12 +1435,9 @@ export const PdfFiguresView = ({
         </div>
       ) : analysisComplete ? (
         <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-6">
-          <div role="status" className="max-w-md text-center">
-            <div className="mx-auto mb-5 flex size-16 items-center justify-center rounded-full bg-primary/8">
-              <CircleCheck className="size-8 text-primary" aria-hidden="true" />
-            </div>
-            <p className="text-sm font-medium text-primary">{t('Analysis complete')}</p>
-            <h3 className="mt-2 text-xl font-medium">{t('No figures or tables detected')}</h3>
+          <div className="max-w-md space-y-3 text-center">
+            <h3 className="text-sm font-medium">{t('No figures or tables detected')}</h3>
+            {analysisOptions}
           </div>
         </div>
       ) : (
