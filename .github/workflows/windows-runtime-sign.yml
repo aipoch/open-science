@@ -4,6 +4,25 @@ name: Sign Windows Notebook runtime
 # This workflow never publishes a GitHub Release or writes to the runtime CDN. Its output is the
 # exact signed runtime artifact consumed by windows-runtime-cdn.yml.
 on:
+  workflow_call:
+    inputs:
+      source_run:
+        description: Successful runtime-producing workflow run
+        type: string
+        required: true
+      artifact_id:
+        description: Exact unsigned Windows runtime artifact ID from source_run
+        type: string
+        required: true
+      source_kind:
+        description: Validated source workflow kind (prepare or release)
+        type: string
+        required: false
+        default: prepare
+    outputs:
+      artifact_id:
+        description: Signed Windows runtime artifact ID
+        value: ${{ jobs.sign.outputs.artifact_id }}
   workflow_dispatch:
     inputs:
       source_run:
@@ -14,6 +33,11 @@ on:
         description: Exact unsigned Windows runtime artifact ID from source_run
         type: string
         required: true
+      source_kind:
+        description: Use prepare for a main runtime run; release is reserved for tagged releases
+        type: choice
+        options: [prepare, release]
+        default: prepare
 
 permissions:
   actions: read
@@ -34,6 +58,8 @@ jobs:
       actions: read
       contents: read
       id-token: write
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -46,18 +72,31 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SOURCE_RUN: ${{ inputs.source_run }}
           ARTIFACT_ID: ${{ inputs.artifact_id }}
+          SOURCE_KIND: ${{ inputs.source_kind }}
         run: |
           if ($env:SOURCE_RUN -notmatch '^\d+$' -or $env:ARTIFACT_ID -notmatch '^\d+$') {
             throw 'Numeric source run and artifact IDs are required.'
           }
+          if ($env:SOURCE_KIND -notin @('prepare', 'release')) {
+            throw 'Source kind must be prepare or release.'
+          }
           $run = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:SOURCE_RUN" | ConvertFrom-Json
-          if (
-            $LASTEXITCODE -ne 0 -or
-            $run.name -ne 'Prepare Windows Notebook runtime' -or
-            $run.conclusion -ne 'success' -or
-            $run.head_branch -ne 'main'
-          ) {
-            throw 'Source run must be a successful Prepare Windows Notebook runtime run on main.'
+          if ($LASTEXITCODE -ne 0 -or $run.conclusion -ne 'success') {
+            throw 'Source run must have succeeded.'
+          }
+          if ($env:SOURCE_KIND -eq 'prepare') {
+            if ($run.name -ne 'Prepare Windows Notebook runtime' -or $run.head_branch -ne 'main') {
+              throw 'Prepare source run must be a successful runtime run on main.'
+            }
+          } else {
+            if (
+              $run.name -ne 'Release' -or
+              [long]$run.id -ne [long]$env:GITHUB_RUN_ID -or
+              $env:GITHUB_EVENT_NAME -ne 'push' -or
+              $env:GITHUB_REF -notmatch '^refs/tags/v'
+            ) {
+              throw 'Release source run must be this successful version-tag release run.'
+            }
           }
           $artifact = gh api "repos/$env:GITHUB_REPOSITORY/actions/artifacts/$env:ARTIFACT_ID" | ConvertFrom-Json
           if (
@@ -220,6 +259,7 @@ jobs:
           Write-Host "Verified signed and timestamped runtime PE files: $($files.Count)"
 
       - name: Upload signed runtime artifact
+        id: upload
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: windows-notebook-runtime-signed-${{ github.run_id }}-${{ github.run_attempt }}

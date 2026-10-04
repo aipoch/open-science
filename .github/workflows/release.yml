@@ -49,11 +49,50 @@ jobs:
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main
 
+  # Prepare the exact runtime consumed by a stable release. The called workflow runs in this
+  # release run, so its artifact ID can flow directly to signing without operator copy/paste.
+  windows-notebook-runtime:
+    name: Prepare Windows Notebook runtime
+    needs: release-preflight
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+    uses: ./.github/workflows/windows-notebook-runtime.yml
+    permissions:
+      contents: read
+
+  windows-runtime-sign:
+    name: Sign Windows Notebook runtime
+    needs: [release-preflight, windows-notebook-runtime]
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+    uses: ./.github/workflows/windows-runtime-sign.yml
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    with:
+      source_run: ${{ github.run_id }}
+      artifact_id: ${{ needs['windows-notebook-runtime'].outputs.artifact_id }}
+      source_kind: release
+
+  windows-runtime-cdn:
+    name: Publish Windows runtime CDN
+    needs: [release-preflight, windows-runtime-sign]
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+    uses: ./.github/workflows/windows-runtime-cdn.yml
+    with:
+      source_run: ${{ github.run_id }}
+      artifact_id: ${{ needs['windows-runtime-sign'].outputs.artifact_id }}
+      dry_run: false
+    secrets: inherit
+
   # Build the platform matrix (macOS arm64/x64 + Linux + Windows x64) via the reusable workflow.
   # secrets: inherit forwards the optional signing/notarization secrets. macOS is signed but NOT
   # notarized here — notarization is decoupled into the notarize-mac job below.
   build:
-    needs: release-preflight
+    needs: [release-preflight, windows-runtime-cdn]
+    if: >-
+      ${{ always() && needs.release-preflight.result == 'success' &&
+      (github.event_name != 'push' || !startsWith(github.ref, 'refs/tags/v') ||
+      needs['windows-runtime-cdn'].result == 'success') }}
     uses: ./.github/workflows/build.yml
     permissions:
       contents: read

@@ -1061,6 +1061,8 @@ if ($artifactSaveBase -eq $artifactSaveCommit) {
     const validateTag = findStep(preflight, 'Validate desktop release tag')
     const verifyMain = findStep(preflight, 'Verify release commit is on main')
     const stableTagCondition = "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')"
+    const versionTagCondition =
+      "${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}"
 
     expect(preflight).toMatchObject({
       permissions: { contents: 'read' },
@@ -1077,7 +1079,33 @@ if ($artifactSaveBase -eq $artifactSaveCommit) {
       if: stableTagCondition,
       run: 'git merge-base --is-ancestor "$GITHUB_SHA" origin/main'
     })
-    expect(release.jobs.build.needs).toBe('release-preflight')
+    expect(release.jobs['windows-notebook-runtime']).toMatchObject({
+      needs: 'release-preflight',
+      uses: './.github/workflows/windows-notebook-runtime.yml',
+      if: versionTagCondition
+    })
+    expect(release.jobs['windows-runtime-sign']).toMatchObject({
+      needs: ['release-preflight', 'windows-notebook-runtime'],
+      uses: './.github/workflows/windows-runtime-sign.yml',
+      if: versionTagCondition,
+      with: {
+        source_run: '${{ github.run_id }}',
+        artifact_id: "${{ needs['windows-notebook-runtime'].outputs.artifact_id }}",
+        source_kind: 'release'
+      }
+    })
+    expect(release.jobs['windows-runtime-cdn']).toMatchObject({
+      needs: ['release-preflight', 'windows-runtime-sign'],
+      uses: './.github/workflows/windows-runtime-cdn.yml',
+      if: versionTagCondition,
+      with: {
+        source_run: '${{ github.run_id }}',
+        artifact_id: "${{ needs['windows-runtime-sign'].outputs.artifact_id }}",
+        dry_run: false
+      }
+    })
+    expect(release.jobs.build.needs).toEqual(['release-preflight', 'windows-runtime-cdn'])
+    expect(release.jobs.build.if).toContain("needs['windows-runtime-cdn'].result == 'success'")
     expect(release.jobs.build.with?.sign_windows).toBe(
       "${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}"
     )
