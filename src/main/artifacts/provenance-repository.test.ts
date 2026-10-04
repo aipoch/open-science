@@ -14,9 +14,13 @@ import {
 import { tmpdir } from 'node:os'
 import { dirname, join, sep } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { strFromU8, unzipSync } from 'fflate'
 
 import type { ArtifactVersionFile } from '../../shared/artifact-provenance'
-import { createLinearConversationGraph } from '../../shared/conversation-graph'
+import {
+  createLinearConversationGraph,
+  projectConversationMessage
+} from '../../shared/conversation-graph'
 import type { NotebookEnvironmentManifest } from '../../shared/notebook'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
@@ -37,6 +41,17 @@ import {
 import { requireAgentArtifactVersion } from './provenance-version-kind'
 import { ArtifactProvenanceVersionWriter } from './provenance-version-writer'
 import { ArtifactRepository } from './repository'
+import {
+  buildAggregateCompleteRoCrateArchive,
+  buildAggregateRoCrateMetadata,
+  SESSION_LIGHTWEIGHT_PROFILE
+} from './ro-crate-aggregate-export'
+import {
+  buildArtifactVersionRoCrateMetadata,
+  type ArtifactVersionRoCrateSource
+} from './ro-crate-export'
+import { createProvenanceTestFixture } from './provenance-test-fixtures'
+import { sha256 } from './provenance-canonical'
 import { ContentRepository } from '../storage/content-repository'
 import { ArtifactWriteBudgetOwner } from './write-budget-owner'
 import {
@@ -5988,5 +6003,126 @@ describe('artifact provenance repository', () => {
     await writeFile(contentPath, 'x')
     await repository.deleteProjectProvenance('project-1')
     await expect(client.uploadFile.count({ where: { projectId: 'project-1' } })).resolves.toBe(0)
+  })
+
+  it('exports finalized repository provenance as RO-Crate artifact and session profiles', async () => {
+    const fixture = await createProvenanceTestFixture()
+    try {
+      const conversationGraph = createLinearConversationGraph({
+        sessionId: 'session-1',
+        messages: [
+          {
+            id: 'prompt-1',
+            role: 'user',
+            content: 'save a result',
+            status: 'complete',
+            eventIds: [],
+            createdAt: 1,
+            updatedAt: 1
+          },
+          {
+            id: 'message-1',
+            role: 'agent',
+            content: 'saved result',
+            status: 'complete',
+            eventIds: [],
+            createdAt: 2,
+            updatedAt: 2
+          }
+        ],
+        frameworkId: 'codex',
+        model: 'gpt-5',
+        createdAt: 1,
+        updatedAt: 2
+      })
+      const session: PersistedChatSession = {
+        id: 'session-1',
+        projectId: 'project-1',
+        title: 'RO-Crate repository fixture',
+        cwd: join(fixture.storageRoot, 'workspace'),
+        status: 'idle',
+        messages: conversationGraph.messages.map(projectConversationMessage),
+        conversationGraph,
+        createdAt: 1,
+        updatedAt: 2
+      }
+      const repository = new ArtifactProvenanceRepository({
+        ...fixture.repositoryOptions,
+        loadSession: async () => session
+      })
+      await fixture.stagePng('real repository bytes')
+      const finalization = {
+        projectId: 'project-1',
+        appSessionId: 'session-1',
+        artifactRunId: 'artifact-run-1',
+        rootFrameId: conversationGraph.rootFrameId,
+        agentFrameId: conversationGraph.activeFrameId,
+        messageBranchId: conversationGraph.branches[0]!.id,
+        runtimeSegmentId: conversationGraph.runtimeSegments[0]!.id,
+        promptMessageId: 'prompt-1',
+        messageId: 'message-1'
+      }
+      const version = await repository.createVersion({
+        ...finalization,
+        artifactStorageSessionId: 'artifact-session-1',
+        writeOperationId: 'write-repository-ro-crate-1',
+        writeRequestChecksum: 'a'.repeat(64),
+        filename: 'plot.png',
+        contentType: 'image/png'
+      })
+      await repository.finalizeRun({ ...finalization, artifactVersionIds: [version.versionId] })
+      const provenance = await repository.getVersionProvenance(
+        {
+          projectId: version.projectId,
+          appSessionId: version.sessionId,
+          artifactId: version.artifactId,
+          versionId: version.versionId
+        },
+        { execution: true, messages: false, review: true }
+      )
+      const source: ArtifactVersionRoCrateSource = {
+        descriptor: provenance.descriptor,
+        contentStatus: provenance.contentStatus,
+        evidence: provenance.evidence,
+        execution: provenance.execution,
+        ...(provenance.review.state === 'available' ? { review: provenance.review.value } : {})
+      }
+      const sourceScope = {
+        scope: 'session' as const,
+        projectId: version.projectId,
+        sessionId: version.sessionId,
+        snapshotCapturedAt: '2026-09-12T00:00:00.000Z',
+        displayNameSnapshot: 'Repository fixture',
+        versions: [source]
+      }
+
+      expect(
+        buildArtifactVersionRoCrateMetadata(source)['@graph'].find(
+          (candidate) => candidate['@id'] === './'
+        )?.conformsTo
+      ).toEqual({ '@id': 'urn:open-science:ro-crate-profile:artifact-version-lightweight' })
+      expect(
+        buildAggregateRoCrateMetadata(sourceScope)['@graph'].find(
+          (candidate) => candidate['@id'] === './'
+        )?.conformsTo
+      ).toEqual({ '@id': SESSION_LIGHTWEIGHT_PROFILE })
+
+      const bytes = await readFile(version.path)
+      const complete = await buildAggregateCompleteRoCrateArchive(sourceScope, {
+        readVersionContent: async () => bytes,
+        readInputContent: async () => undefined
+      })
+      const files = unzipSync(complete)
+      const metadata = JSON.parse(strFromU8(files['ro-crate-metadata.json']!)) as {
+        '@graph': Array<Record<string, unknown>>
+      }
+      const payload = metadata['@graph'].find((candidate) =>
+        String(candidate['@id']).startsWith('data/sha256/')
+      )
+      expect(payload).toMatchObject({ '@type': 'File', sha256: sha256(bytes) })
+      expect(Buffer.from(files[String(payload!['@id'])]!)).toEqual(bytes)
+    } finally {
+      await fixture.dispose()
+    }
   })
 })

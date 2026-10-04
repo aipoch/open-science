@@ -166,6 +166,24 @@ const execution = (): ArtifactExecutionSnapshot => ({
   ]
 })
 
+const environmentLock = (): {
+  checksum: string
+  serialized: string
+} => {
+  const serialized = `${JSON.stringify(
+    {
+      schemaVersion: 1,
+      format: 'environment-lock-bundle',
+      kernelKind: 'python',
+      environmentName: 'analysis',
+      components: []
+    },
+    null,
+    2
+  )}\n`
+  return { checksum: sha256(serialized), serialized }
+}
+
 const check = (): ReviewCheck => ({
   id: 'check-1',
   reviewId: 'review-1',
@@ -364,6 +382,99 @@ describe('Artifact Version RO-Crate export', () => {
       '@type': 'Review',
       itemReviewed: { '@id': 'urn:open-science:version:version-1' }
     })
+  })
+
+  it('references a captured environment lock and attaches it to the environment', () => {
+    const lock = environmentLock()
+    const value = source()
+    value.execution!.runs[0]!.environmentLock = {
+      state: 'available',
+      format: 'environment-lock-bundle',
+      lockChecksum: lock.checksum
+    }
+
+    const document = buildArtifactVersionRoCrateMetadata(value)
+    const lockId = `urn:sha256:${lock.checksum}`
+    expect(entity(document, lockId)).toMatchObject({
+      '@type': 'File',
+      name: 'Captured environment lock',
+      sha256: lock.checksum,
+      encodingFormat: 'application/json'
+    })
+    expect(entity(document, '#environment').isRelatedTo).toEqual([{ '@id': lockId }])
+    expect(entity(document, '#create-action/run-1').instrument).toEqual([
+      { '@id': '#producer-code' },
+      { '@id': '#environment' },
+      { '@id': lockId }
+    ])
+    expect(entity(document, './').hasPart).toEqual(expect.arrayContaining([{ '@id': lockId }]))
+
+    const withoutLockEntities = buildArtifactVersionRoCrateMetadata(value, new Map(), {
+      includeEnvironmentLockEntities: false
+    })
+    expect(entity(withoutLockEntities, '#create-action/run-1').instrument).toEqual([
+      { '@id': '#producer-code' },
+      { '@id': '#environment' }
+    ])
+    expect(withoutLockEntities['@graph'].some((entry) => entry['@id'] === lockId)).toBe(false)
+  })
+
+  it('keeps a SoftwareApplication owner when only a lock is available', () => {
+    const lock = environmentLock()
+    const value = source()
+    value.evidence.environment = undefined
+    value.evidence.environment_status = {
+      state: 'unavailable',
+      reason: 'environment-not-supported'
+    }
+    value.execution!.runs[0]!.environmentLock = {
+      state: 'partial',
+      format: 'environment-lock-bundle',
+      lockChecksum: lock.checksum
+    }
+
+    const document = buildArtifactVersionRoCrateMetadata(value)
+    expect(entity(document, '#environment')).toMatchObject({
+      '@type': 'SoftwareApplication',
+      isRelatedTo: [{ '@id': `urn:sha256:${lock.checksum}` }]
+    })
+  })
+
+  it('must include every captured environment lock in a complete crate', async () => {
+    const lock = environmentLock()
+    const fixture = completeSource()
+    fixture.source.execution!.runs[0]!.environmentLock = {
+      state: 'partial',
+      format: 'environment-lock-bundle',
+      lockChecksum: lock.checksum,
+      partialReasons: ['native-lock-file-best-effort']
+    }
+    const readers = {
+      readVersionContent: async () => fixture.payload,
+      readInputContent: async () => fixture.input,
+      readEnvironmentLock: async (checksum: string) =>
+        checksum === lock.checksum ? lock.serialized : undefined
+    }
+
+    const files = unzipSync(
+      await buildArtifactVersionCompleteRoCrateArchive(fixture.source, readers)
+    )
+    const lockPath = `provenance/environment-locks/${lock.checksum}.json`
+    expect(strFromU8(files[lockPath]!)).toBe(lock.serialized)
+    const metadata = JSON.parse(
+      strFromU8(files['ro-crate-metadata.json']!)
+    ) as RoCrateMetadataDocument
+    expect(entity(metadata, lockPath)).toMatchObject({
+      '@type': 'File',
+      contentSize: String(Buffer.byteLength(lock.serialized)),
+      sha256: lock.checksum
+    })
+    await expect(
+      buildArtifactVersionCompleteRoCrateArchive(fixture.source, {
+        readVersionContent: async () => fixture.payload,
+        readInputContent: async () => fixture.input
+      })
+    ).rejects.toThrow('Environment lock is required')
   })
 
   it('synthesizes a publication CreateAction without an execution snapshot', () => {

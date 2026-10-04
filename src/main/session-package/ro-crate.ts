@@ -185,7 +185,12 @@ export const buildSessionPackageRoCrateMetadata = async (
         execution
       },
       new Map(),
-      { profile: 'complete', packagedDataPaths, omittedDataReasons }
+      {
+        profile: 'complete',
+        packagedDataPaths,
+        omittedDataReasons,
+        includeEnvironmentLockEntities: false
+      }
     )
     const scope = artifactId(row.id)
     artifactIds.push(scope)

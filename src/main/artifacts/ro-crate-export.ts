@@ -11,6 +11,8 @@ import { sha256 } from './provenance-canonical'
 
 const RO_CRATE_CONTEXT = 'https://w3id.org/ro/crate/1.1/context'
 const RO_CRATE_SPECIFICATION = 'https://w3id.org/ro/crate/1.1'
+const NO_ADDITIONAL_RIGHTS =
+  'License information was not provided. This export grants no additional usage rights.'
 // Lightweight profile: metadata + provenance records only. Data payloads are referenced by
 // SHA-256 checksum and are not packaged. The complete profile includes verified available bytes.
 const LIGHTWEIGHT_PROFILE = 'urn:open-science:ro-crate-profile:artifact-version-lightweight'
@@ -31,6 +33,7 @@ type ArtifactVersionRoCrateSource = Pick<
 type ArtifactVersionRoCrateContentReaders = {
   readVersionContent: (versionId: string) => Promise<Uint8Array | undefined>
   readInputContent: (input: ArtifactVersionInputEvidence) => Promise<Uint8Array | undefined>
+  readEnvironmentLock?: (checksum: string) => Promise<string | undefined>
 }
 
 // Package snapshots can provide the same immutable evidence without loading renderer projections.
@@ -46,9 +49,18 @@ type RoCrateMetadataOptions = {
   profile?: 'lightweight' | 'complete'
   packagedDataPaths?: ReadonlyMap<string, string>
   omittedDataReasons?: ReadonlyMap<string, string>
+  packagedEnvironmentLockPaths?: ReadonlyMap<string, string>
+  packagedEnvironmentLockContents?: ReadonlyMap<string, string>
+  rootId?: string
+  rootName?: string
+  contextualIdPrefix?: string
+  includeMetadataDescriptor?: boolean
+  includeEnvironmentLockEntities?: boolean
 }
 
 const fragment = (value: string): string => value.replace(/[^a-zA-Z0-9._~-]+/gu, '-')
+
+const uriPath = (path: string): string => path.split('/').map(encodeURIComponent).join('/')
 
 const reference = (id: string): { '@id': string } => ({ '@id': id })
 
@@ -62,6 +74,21 @@ const propertyValue = (
 })
 
 const versionEntityId = (versionId: string): string => `urn:open-science:version:${versionId}`
+
+const environmentLockChecksums = (source: {
+  execution?: Pick<ArtifactExecutionSnapshot, 'runs'>
+}): string[] =>
+  [
+    ...new Set(
+      (source.execution?.runs ?? []).flatMap((run) =>
+        run.environmentLock &&
+        run.environmentLock.state !== 'unavailable' &&
+        /^[a-f0-9]{64}$/u.test(run.environmentLock.lockChecksum)
+          ? [run.environmentLock.lockChecksum]
+          : []
+      )
+    )
+  ].sort()
 
 const notebookActionStatus = (
   status: 'queued' | 'running' | 'completed' | 'failed' | 'timeout' | 'interrupted' | 'cancelled'
@@ -128,14 +155,33 @@ const buildArtifactVersionRoCrateMetadata = (
 ): RoCrateMetadataDocument => {
   const { descriptor, evidence } = source
   const profile = options.profile ?? 'lightweight'
+  const rootId = options.rootId ?? './'
+  const contextualId = (path: string): string =>
+    options.contextualIdPrefix ? `#${options.contextualIdPrefix}/${path}` : `#${path}`
+  const scopedContextualId = (path: string, standaloneId: string): string =>
+    options.contextualIdPrefix ? contextualId(path) : standaloneId
   // ZIP entry names are filesystem paths; JSON-LD identifiers are URI references.
   const packagedDataPaths = new Map(
-    [...(options.packagedDataPaths ?? [])].map(([versionId, path]) => [
-      versionId,
-      path.split('/').map(encodeURIComponent).join('/')
+    [...(options.packagedDataPaths ?? [])].map(([versionId, path]) => [versionId, uriPath(path)])
+  )
+  const packagedEnvironmentLockPaths = new Map(
+    [...(options.packagedEnvironmentLockPaths ?? [])].map(([checksum, path]) => [
+      checksum,
+      uriPath(path)
     ])
   )
   const omittedDataReasons = options.omittedDataReasons ?? new Map<string, string>()
+  const environmentLockIds =
+    options.includeEnvironmentLockEntities === false
+      ? new Map<string, string>()
+      : new Map(
+          environmentLockChecksums(source).map((checksum) => [
+            checksum,
+            packagedEnvironmentLockPaths.get(checksum) ?? `urn:sha256:${checksum}`
+          ])
+        )
+  const environmentLockId = (checksum: string): string | undefined =>
+    environmentLockIds.get(checksum)
   const payloadId =
     packagedDataPaths.get(evidence.version_id) ?? versionEntityId(evidence.version_id)
   const graph: RoCrateEntity[] = []
@@ -192,7 +238,10 @@ const buildArtifactVersionRoCrateMetadata = (
       }
     })
 
-  const agentId = `urn:open-science:agent:${fragment(evidence.conversation.agent_frame_id)}`
+  const agentId = scopedContextualId(
+    `agent/${fragment(evidence.conversation.agent_frame_id)}`,
+    `urn:open-science:agent:${fragment(evidence.conversation.agent_frame_id)}`
+  )
   const agentEntity: RoCrateEntity = {
     '@type': 'SoftwareAgent',
     '@id': agentId,
@@ -209,19 +258,27 @@ const buildArtifactVersionRoCrateMetadata = (
   let producerCodeId: string | undefined
   let connectorToolId: string | undefined
   if (notebookProducer && evidence.reproduction_code) {
-    producerCodeId = '#producer-code'
+    producerCodeId = contextualId('producer-code')
   } else if (connectorProducer) {
-    connectorToolId = `urn:open-science:connector:${fragment(connectorProducer.connector_id)}/tool:${fragment(connectorProducer.tool_id)}`
+    connectorToolId = scopedContextualId(
+      `connector/${fragment(connectorProducer.connector_id)}/tool/${fragment(connectorProducer.tool_id)}`,
+      `urn:open-science:connector:${fragment(connectorProducer.connector_id)}/tool:${fragment(connectorProducer.tool_id)}`
+    )
   }
 
   const environment = evidence.environment
+  const lockRun = (source.execution?.runs ?? []).find(
+    (run) => run.environmentLock && run.environmentLock.state !== 'unavailable'
+  )
   let environmentId: string | undefined
   const packageIds: string[] = []
+  if (environment || environmentLockIds.size) {
+    environmentId = contextualId('environment')
+  }
   if (environment) {
-    environmentId = '#environment'
     const seenPackages = new Set<string>()
     for (const pkg of environment.packages) {
-      const id = `#package/${fragment(pkg.ecosystem)}/${fragment(pkg.name)}`
+      const id = contextualId(`package/${fragment(pkg.ecosystem)}/${fragment(pkg.name)}`)
       if (seenPackages.has(id)) continue
       seenPackages.add(id)
       packageIds.push(id)
@@ -232,7 +289,7 @@ const buildArtifactVersionRoCrateMetadata = (
   const kernelId = (kind: string): string => {
     const existing = kernelIds.get(kind)
     if (existing) return existing
-    const id = `#kernel/${fragment(kind)}`
+    const id = contextualId(`kernel/${fragment(kind)}`)
     kernelIds.set(kind, id)
     return id
   }
@@ -240,10 +297,33 @@ const buildArtifactVersionRoCrateMetadata = (
   const inputsByVersionId = new Map(
     evidence.inputs.map((input) => [input.input_file_version_id, input])
   )
+  for (const input of evidence.inputs) {
+    if (input.input_file_version_id === evidence.version_id) {
+      throw new Error(`RO-Crate cyclic input reference: ${evidence.version_id}`)
+    }
+  }
+  for (const run of source.execution?.runs ?? []) {
+    if (
+      run.environmentLock &&
+      run.environmentLock.state !== 'unavailable' &&
+      !/^[a-f0-9]{64}$/u.test(run.environmentLock.lockChecksum)
+    ) {
+      throw new Error(
+        `RO-Crate environment lock checksum is invalid: ${run.environmentLock.lockChecksum}`
+      )
+    }
+  }
   const createActionEntities: RoCrateEntity[] = []
   const runs = source.execution?.runs ?? []
   const producerRunId = notebookProducer?.producer_run_id
   for (const run of runs) {
+    for (const key of run.inputFileVersionKeys) {
+      if (!inputsByVersionId.has(key.inputFileVersionId)) {
+        throw new Error(
+          `RO-Crate CreateAction contains unknown input reference: ${key.inputFileVersionId}`
+        )
+      }
+    }
     const isProducerRun = run.runId === producerRunId
     const instruments: Array<{ '@id': string }> = []
     if (isProducerRun && producerCodeId) instruments.push(reference(producerCodeId))
@@ -252,6 +332,10 @@ const buildArtifactVersionRoCrateMetadata = (
       instruments.push(reference(environmentId))
     } else {
       instruments.push(reference(kernelId(run.kernelKind)))
+    }
+    if (run.environmentLock && run.environmentLock.state !== 'unavailable') {
+      const lockId = environmentLockId(run.environmentLock.lockChecksum)
+      if (lockId) instruments.push(reference(lockId))
     }
     const objectIds = [
       ...new Set(
@@ -267,7 +351,7 @@ const buildArtifactVersionRoCrateMetadata = (
     ]
     createActionEntities.push({
       '@type': 'CreateAction',
-      '@id': `#create-action/${fragment(run.runId)}`,
+      '@id': contextualId(`create-action/${fragment(run.runId)}`),
       name: `Notebook run ${run.runIndex} (${run.kernelKind})`,
       actionStatus: notebookActionStatus(run.status),
       startTime: run.startedAt,
@@ -291,9 +375,10 @@ const buildArtifactVersionRoCrateMetadata = (
     if (producerCodeId) instruments.push(reference(producerCodeId))
     if (connectorToolId) instruments.push(reference(connectorToolId))
     if (environmentId) instruments.push(reference(environmentId))
+    instruments.push(...[...environmentLockIds.values()].map(reference))
     createActionEntities.push({
       '@type': 'CreateAction',
-      '@id': '#create-action/publication',
+      '@id': contextualId('create-action/publication'),
       name: 'Artifact version publication',
       actionStatus:
         evidence.execution_status.state === 'unavailable'
@@ -329,7 +414,7 @@ const buildArtifactVersionRoCrateMetadata = (
   const computeActionEntities: RoCrateEntity[] = (evidence.compute_executions ?? []).map(
     (compute) => ({
       '@type': 'CreateAction',
-      '@id': `#create-action/compute/${fragment(compute.activity_id)}`,
+      '@id': contextualId(`create-action/compute/${fragment(compute.activity_id)}`),
       name: `Compute job ${compute.shape}`,
       actionStatus: computeActionStatus(compute.status),
       description: `Remote compute execution on provider ${compute.provider_id} (status: ${compute.status}).`
@@ -342,19 +427,19 @@ const buildArtifactVersionRoCrateMetadata = (
   const checkEntities: RoCrateEntity[] = []
   if (review) {
     const assessment = review.selectedVersionAssessment
-    const reviewerId = `#reviewer/${fragment(assessment.model)}`
+    const reviewerId = contextualId(`reviewer/${fragment(assessment.model)}`)
     reviewerEntity = {
       '@type': 'SoftwareAgent',
       '@id': reviewerId,
       name: assessment.model,
       description: 'Automated reviewer model that assessed this Artifact Version.'
     }
-    const checkIds = review.selectedVersionChecks.map(
-      (check) => `#review-check/${fragment(check.id)}`
+    const checkIds = review.selectedVersionChecks.map((check) =>
+      contextualId(`review-check/${fragment(check.id)}`)
     )
     assessActionEntity = {
       '@type': 'AssessAction',
-      '@id': `#review/${fragment(assessment.id)}`,
+      '@id': contextualId(`review/${fragment(assessment.id)}`),
       name: 'Artifact version review',
       actionStatus: reviewActionStatus(assessment.lifecycle),
       startTime: isoFromEpochMs(assessment.createdAt),
@@ -415,13 +500,16 @@ const buildArtifactVersionRoCrateMetadata = (
   const environmentEntity: RoCrateEntity | undefined = environment
     ? {
         '@type': 'SoftwareApplication',
-        '@id': '#environment',
+        '@id': environmentId!,
         name: environment.environment_name,
         applicationCategory: 'Notebook execution environment',
         ...(environment.runtime_version ? { softwareVersion: environment.runtime_version } : {}),
         ...(environment.platform ? { operatingSystem: environment.platform } : {}),
         ...(environment.architecture ? { processorRequirements: environment.architecture } : {}),
         ...(packageIds.length ? { softwareRequirements: packageIds.map(reference) } : {}),
+        ...(environmentLockIds.size
+          ? { isRelatedTo: [...environmentLockIds.values()].map(reference) }
+          : {}),
         additionalProperty: [
           propertyValue('kernelKind', environment.kernel_kind),
           propertyValue('captureStatus', environment.capture_status),
@@ -430,20 +518,34 @@ const buildArtifactVersionRoCrateMetadata = (
         description:
           'Immutable environment inventory observed at production time. This is an audit record, not a solver lockfile; it does not capture every external runtime, system library, or package source, and cannot by itself recreate the environment.'
       }
-    : undefined
+    : environmentLockIds.size
+      ? {
+          '@type': 'SoftwareApplication',
+          '@id': environmentId!,
+          name: lockRun?.environmentName ?? 'Notebook execution environment',
+          applicationCategory: 'Notebook execution environment',
+          ...(lockRun
+            ? { additionalProperty: [propertyValue('kernelKind', lockRun.kernelKind)] }
+            : {}),
+          isRelatedTo: [...environmentLockIds.values()].map(reference),
+          description:
+            'A captured environment lock is available, but the full production-time environment inventory was not recorded.'
+        }
+      : undefined
   const packageEntities: RoCrateEntity[] = environment
     ? environment.packages
         .filter(
           (pkg, index, packages) =>
             packages.findIndex(
               (candidate) =>
-                fragment(candidate.ecosystem) === fragment(pkg.ecosystem) &&
-                fragment(candidate.name) === fragment(pkg.name)
+                contextualId(
+                  `package/${fragment(candidate.ecosystem)}/${fragment(candidate.name)}`
+                ) === contextualId(`package/${fragment(pkg.ecosystem)}/${fragment(pkg.name)}`)
             ) === index
         )
         .map((pkg) => ({
           '@type': 'SoftwareApplication',
-          '@id': `#package/${fragment(pkg.ecosystem)}/${fragment(pkg.name)}`,
+          '@id': contextualId(`package/${fragment(pkg.ecosystem)}/${fragment(pkg.name)}`),
           name: pkg.name,
           ...(pkg.version ? { softwareVersion: pkg.version } : {}),
           additionalProperty: [
@@ -452,14 +554,42 @@ const buildArtifactVersionRoCrateMetadata = (
           ]
         }))
     : []
+  const environmentLockEntities: RoCrateEntity[] = [...environmentLockIds].map(([checksum, id]) => {
+    const packaged = packagedEnvironmentLockPaths.has(checksum)
+    return {
+      '@type': 'File',
+      '@id': id,
+      name: 'Captured environment lock',
+      sha256: checksum,
+      encodingFormat: 'application/json',
+      ...(packaged
+        ? {
+            contentSize: String(
+              Buffer.byteLength(
+                options.packagedEnvironmentLockContents?.get(checksum) ?? '',
+                'utf8'
+              )
+            ),
+            description:
+              'Exact serialized environment lock included in this RO-Crate and verified against its declared SHA-256 checksum.'
+          }
+        : {
+            description:
+              'Captured environment lock referenced by SHA-256 checksum. The complete profile includes the serialized lock when it is available.'
+          })
+    }
+  })
 
   const rootEntity: RoCrateEntity = {
     '@type': 'Dataset',
-    '@id': './',
-    name: `${evidence.filename} (Artifact Version v${evidence.version_number}) RO-Crate`,
+    '@id': rootId,
+    name:
+      options.rootName ??
+      `${evidence.filename} (Artifact Version v${evidence.version_number}) RO-Crate`,
     // This crate describes the immutable version's publication, not the export time.
     datePublished: evidence.created_at,
-    license: 'License information was not provided. This export grants no additional usage rights.',
+    ...(options.rootId ? { version: `v${evidence.version_number}` } : {}),
+    license: NO_ADDITIONAL_RIGHTS,
     description:
       profile === 'lightweight'
         ? 'Open Science Artifact Version provenance crate (lightweight profile). Serializes the provenance captured for one immutable Artifact Version — checksums, producer code, execution history, exact input references, environment inventory, message-branch context, and reviewer evidence — as RO-Crate 1.1 metadata. Provenance is an audit and traceability record, not a deterministic replay contract. Data payloads and input files are referenced by SHA-256 checksum and are not included.'
@@ -472,7 +602,8 @@ const buildArtifactVersionRoCrateMetadata = (
       ...new Set([
         ...sidecarEntities.map((entity) => entity['@id']),
         payloadId,
-        ...inputEntities.map((entity) => entity['@id'])
+        ...inputEntities.map((entity) => entity['@id']),
+        ...environmentLockEntities.map((entity) => entity['@id'])
       ])
     ].map(reference),
     ...(contextualIds.length ? { mentions: contextualIds.map(reference) } : {})
@@ -481,15 +612,16 @@ const buildArtifactVersionRoCrateMetadata = (
   const metadataDescriptor: RoCrateEntity = {
     '@type': 'CreativeWork',
     '@id': 'ro-crate-metadata.json',
-    about: reference('./'),
+    about: reference(rootId),
     conformsTo: reference(RO_CRATE_SPECIFICATION)
   }
 
-  add(metadataDescriptor)
+  if (options.includeMetadataDescriptor !== false) add(metadataDescriptor)
   add(rootEntity)
   for (const entity of sidecarEntities) add(entity)
   add(payloadFile)
   for (const entity of inputEntities) add(entity)
+  for (const entity of environmentLockEntities) add(entity)
   add(agentEntity, true)
   if (producerCodeEntity) add(producerCodeEntity, true)
   if (connectorToolEntity) add(connectorToolEntity, true)
@@ -500,7 +632,7 @@ const buildArtifactVersionRoCrateMetadata = (
       {
         '@type': 'SoftwareApplication',
         '@id': id,
-        name: `${id.replace('#kernel/', '')} kernel`,
+        name: `${id.slice(id.lastIndexOf('/') + 1)} kernel`,
         applicationCategory: 'Notebook kernel'
       },
       true
@@ -602,10 +734,30 @@ const buildArtifactVersionCompleteRoCrateArchive = async (
     )
   }
 
+  const packagedEnvironmentLockPaths = new Map<string, string>()
+  const packagedEnvironmentLockContents = new Map<string, string>()
+  for (const checksum of environmentLockChecksums(source)) {
+    if (!readers.readEnvironmentLock) {
+      throw new Error(`Environment lock is required for complete RO-Crate export: ${checksum}`)
+    }
+    const serialized = await readers.readEnvironmentLock(checksum)
+    if (serialized === undefined) {
+      throw new Error(`Environment lock is required for complete RO-Crate export: ${checksum}`)
+    }
+    if (sha256(serialized) !== checksum) {
+      throw new Error(`Environment lock checksum mismatch: ${checksum}`)
+    }
+    const path = `provenance/environment-locks/${checksum}.json`
+    packagedEnvironmentLockPaths.set(checksum, path)
+    packagedEnvironmentLockContents.set(checksum, serialized)
+  }
+
   const metadata = buildArtifactVersionRoCrateMetadata(source, sidecars, {
     profile: 'complete',
     packagedDataPaths,
-    omittedDataReasons
+    omittedDataReasons,
+    packagedEnvironmentLockPaths,
+    packagedEnvironmentLockContents
   })
   const entries: Zippable = {
     'ro-crate-metadata.json': [strToU8(serializeRoCrateMetadata(metadata)), { mtime: ZIP_MTIME }],
@@ -614,6 +766,12 @@ const buildArtifactVersionCompleteRoCrateArchive = async (
     ),
     ...Object.fromEntries(
       [...dataEntries].map(([path, bytes]) => [path, [bytes, { mtime: ZIP_MTIME, level: 0 }]])
+    ),
+    ...Object.fromEntries(
+      [...packagedEnvironmentLockContents].map(([checksum, content]) => [
+        packagedEnvironmentLockPaths.get(checksum)!,
+        [strToU8(content), { mtime: ZIP_MTIME }]
+      ])
     )
   }
   return zipSync(entries, { level: 6 })
@@ -626,12 +784,17 @@ export {
   serializeRoCrateMetadata,
   COMPLETE_PROFILE,
   LIGHTWEIGHT_PROFILE,
+  NO_ADDITIONAL_RIGHTS,
   RO_CRATE_CONTEXT,
-  RO_CRATE_SPECIFICATION
+  RO_CRATE_SPECIFICATION,
+  ZIP_MTIME,
+  environmentLockChecksums,
+  provenanceSidecars
 }
 export type {
   ArtifactVersionRoCrateContentReaders,
   ArtifactVersionRoCrateSource,
   RoCrateEntity,
-  RoCrateMetadataDocument
+  RoCrateMetadataDocument,
+  RoCrateMetadataOptions
 }
