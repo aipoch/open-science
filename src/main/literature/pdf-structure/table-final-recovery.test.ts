@@ -85,7 +85,7 @@ it('extends outer model rows and columns when a crop grows', () => {
       ]
     }
   }
-  const rebased = rebaseTableCrop(table, [-20, -10, 230, 130])
+  const rebased = rebaseTableCrop(table, [-20, -10, 230, 130], true)
   expect(rebased.structure.objects).toContainEqual({
     label: 'table column',
     rect: [0, 10, 120, 110]

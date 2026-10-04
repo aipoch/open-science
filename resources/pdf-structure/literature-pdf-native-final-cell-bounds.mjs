@@ -46,7 +46,10 @@ function isAdjacentProseClipping(clipped, source, cropRect) {
     (item) => item.rect[2] <= left - em * 0.25 && item.rect[2] > cropRect[0]
   )
   const bottomMargin = clipped.every(
-    (item) => item.rect[1] >= bottom + em * 0.5 && item.rect[1] < cropRect[3]
+    (item) =>
+      item.rect[1] >= bottom + em * 0.5 &&
+      item.rect[1] < cropRect[3] &&
+      (item.rect[2] <= left - em * 0.25 || item.rect[0] >= right + em * 0.25)
   )
   const rightMargin = clipped.every(
     (item) => item.rect[0] >= right + em * 0.25 && item.rect[0] < cropRect[2]

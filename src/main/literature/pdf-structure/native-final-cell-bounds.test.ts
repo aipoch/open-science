@@ -240,7 +240,7 @@ it('retains clipped evidence when final crop contains an owner with unproved col
   })
   expect(r.clipped).toEqual([item])
 })
-it('drops a complete table boundary diagnostic when the clipped run is adjacent prose', () => {
+it('retains aligned bottom notes as table-boundary diagnostics', () => {
   const { x, v } = view('columns')
   v.cropRect[3] = 800
   const repairs: string[] = []
@@ -262,8 +262,8 @@ it('drops a complete table boundary diagnostic when the clipped run is adjacent 
     ],
     repairs
   })
-  expect(r.clipped).toEqual([])
-  expect(repairs).toContain('adjacent-prose-boundary-suppressed')
+  expect(r.clipped).toHaveLength(2)
+  expect(repairs).not.toContain('adjacent-prose-boundary-suppressed')
 })
 it('restores only the independent native title span and separates the next native band', () => {
   const x = fixture('native-independent-title-before-separate-next-band')

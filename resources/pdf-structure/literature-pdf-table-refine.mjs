@@ -1154,11 +1154,12 @@ export function refineTable(
   table = separateAdjacentNumericPanel(table, pageItems, rules)
   const originalCrop = table.cropRect
   const wideBottomCrop = recoverWideTableBottomCrop(table, pageItems, rules)
-  if (wideBottomCrop) table = rebaseTableCrop(table, wideBottomCrop)
+  if (wideBottomCrop) table = rebaseTableCrop(table, wideBottomCrop, true)
   const completeTerminalSourceRowCrop = recoverCompleteTerminalSourceRowCrop(table, pageItems)
-  if (completeTerminalSourceRowCrop) table = rebaseTableCrop(table, completeTerminalSourceRowCrop)
+  if (completeTerminalSourceRowCrop)
+    table = rebaseTableCrop(table, completeTerminalSourceRowCrop, true)
   const ruledBottomBoundaryCrop = recoverRuledBottomBoundaryCrop(table, pageItems, rules)
-  if (ruledBottomBoundaryCrop) table = rebaseTableCrop(table, ruledBottomBoundaryCrop)
+  if (ruledBottomBoundaryCrop) table = rebaseTableCrop(table, ruledBottomBoundaryCrop, true)
   const sourceRules = rules
   const unnumberedTitleCrop = recoverClippedUnnumberedTitleCrop(table, pageItems, sourceRules)
   if (unnumberedTitleCrop) table = rebaseTableCrop(table, unnumberedTitleCrop)
@@ -1812,27 +1813,27 @@ export function refineTable(
     recordGrid?.cropRect &&
     recordGrid.cropRect.some((v, n) => v !== table.cropRect[n])
   ) {
-    table = rebaseTableCrop(table, recordGrid.cropRect)
+    table = rebaseTableCrop(table, recordGrid.cropRect, true)
     ;[left, top, right, bottom] = table.cropRect
   }
   const sideBySideCrop = recoverClippedSideBySideCrop(table, pageItems)
   if (sideBySideCrop) {
-    table = rebaseTableCrop(table, sideBySideCrop)
+    table = rebaseTableCrop(table, sideBySideCrop, true)
     ;[left, top, right, bottom] = table.cropRect
   }
   const clippedLeftLabelCrop = recoverClippedLeftLabelCrop(table, pageItems)
   if (clippedLeftLabelCrop) {
-    table = rebaseTableCrop(table, clippedLeftLabelCrop)
+    table = rebaseTableCrop(table, clippedLeftLabelCrop, true)
     ;[left, top, right, bottom] = table.cropRect
   }
   const clippedRightLabelCrop = recoverClippedRightLabelCrop(table, pageItems)
   if (clippedRightLabelCrop) {
-    table = rebaseTableCrop(table, clippedRightLabelCrop)
+    table = rebaseTableCrop(table, clippedRightLabelCrop, true)
     ;[left, top, right, bottom] = table.cropRect
   }
   const clippedSimpleBody = recoverClippedSimpleBodyCrop(table, pageItems, captions)
   if (clippedSimpleBody) {
-    table = rebaseTableCrop(table, clippedSimpleBody.cropRect)
+    table = rebaseTableCrop(table, clippedSimpleBody.cropRect, true)
     const firstColumn = table.structure.objects
       .filter((object) => object.label === 'table column')
       .sort((a, b) => a.rect[0] - b.rect[0])[0]
@@ -10236,7 +10237,8 @@ export function refineTable(
     clipped,
     repairs
   })
-  if (finalBounds.cropRect !== table.cropRect) table = rebaseTableCrop(table, finalBounds.cropRect)
+  if (finalBounds.cropRect !== table.cropRect)
+    table = rebaseTableCrop(table, finalBounds.cropRect, true)
   if (clipped.length && !finalBounds.clipped.length) issues.delete('text-crosses-crop-boundary')
   // A neighboring prose column can leave one or more empty detector columns
   // in front of an otherwise complete native table. If the only text crossing
@@ -10272,9 +10274,7 @@ export function refineTable(
   const firstModelColumn = columns
     .filter((column) => Array.isArray(column.rect))
     .sort((a, b) => a.rect[0] - b.rect[0])[0]
-  const firstModelColumnLeft = firstModelColumn
-    ? table.cropRect[0] + firstModelColumn.rect[0]
-    : Infinity
+  const firstModelColumnLeft = firstModelColumn ? firstModelColumn.rect[0] : Infinity
   const clippedProseOnly =
     clipped.length > 0 &&
     clipped.every(
