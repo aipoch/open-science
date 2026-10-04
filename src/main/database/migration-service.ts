@@ -1,3 +1,4 @@
+import { schedulerWalltimeMigration } from './migrations/0048-scheduler-walltime'
 import { journalAttributesMigration } from './migrations/0046-journal-attributes'
 import { sessionReplayMigration } from './migrations/0047-session-replay'
 import { literatureSmartCollectionsMigration } from './migrations/0044-literature-smart-collections'
@@ -895,6 +896,17 @@ const MIGRATION_MANIFEST = [
       sessionReplayMigration.statements,
       sessionReplayMigration.verifiers,
       sessionReplayMigration.operations
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...schedulerWalltimeMigration,
+    checksum: checksumMigrationPayload(
+      schedulerWalltimeMigration.id,
+      schedulerWalltimeMigration.statements,
+      schedulerWalltimeMigration.verifiers,
+      schedulerWalltimeMigration.operations
     ),
     backupOnApply: 'required',
     backupRetention: 'retain'

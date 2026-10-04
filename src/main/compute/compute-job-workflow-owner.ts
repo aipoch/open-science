@@ -32,7 +32,13 @@ import {
   UnencryptedComputeJobPersistenceApprovalRequiredError
 } from './job-repository'
 import { assertSafeInputDestination, validateHarvestConfig } from './harvest-classifier'
-import { hasLeadingSlurmDirective, SlurmDriverError, validateSlurmCommand } from './slurm-driver'
+import {
+  hasLeadingSlurmDirective,
+  SCHEDULER_MAX_WALLTIME_SECONDS,
+  SlurmDriverError,
+  validateSlurmCommand
+} from './slurm-driver'
+import { resolveComputeDriverId, UnsupportedSchedulerDriverError } from './job-driver'
 import type { ComputeHostRepository } from './repository'
 import { GLOB_CHARS, SHELL_UNSAFE_CHARS } from './remote-path-security'
 import { getJobHarvestDir, workspaceRelativePath } from './workspace-path'
@@ -234,9 +240,26 @@ export class ComputeJobWorkflowOwner {
     if (!host) {
       throw new Error(`No compute host found with provider id "${providerId}".`)
     }
-    if (host.executionMode === 'slurm') {
+
+    let driverId: ReturnType<typeof resolveComputeDriverId>
+    try {
+      driverId = resolveComputeDriverId(host)
+    } catch (error) {
+      if (!(error instanceof UnsupportedSchedulerDriverError)) throw error
+      const exposed = error as UnsupportedSchedulerDriverError & {
+        computeCallError: ComputeCallError
+      }
+      exposed.computeCallError = {
+        error_code: 'invalid_resources',
+        message: error.message,
+        retry_after_user_action: true
+      }
+      throw exposed
+    }
+
+    if (driverId === 'slurm') {
       try {
-        validateSlurmCommand(command)
+        validateSlurmCommand(command, options.resourceRequest)
       } catch (error) {
         if (!(error instanceof SlurmDriverError)) throw error
         const exposed = error as SlurmDriverError & { computeCallError: ComputeCallError }
@@ -283,13 +306,18 @@ export class ComputeJobWorkflowOwner {
         }
         throw error
       }
-      if (rawTimeout > JOB_MAX_TIMEOUT_SECONDS) {
+      const maxTimeoutSeconds =
+        driverId === 'slurm' ? SCHEDULER_MAX_WALLTIME_SECONDS : JOB_MAX_TIMEOUT_SECONDS
+      if (rawTimeout > maxTimeoutSeconds) {
         const error = new Error(
-          `timeoutSeconds ${rawTimeout} exceeds the 7-day maximum. The Compute Job was not submitted.`
+          `timeoutSeconds ${rawTimeout} exceeds the maximum (${maxTimeoutSeconds}s). The Compute Job was not submitted.`
         ) as Error & { computeCallError: ComputeCallError }
         error.computeCallError = {
           error_code: 'timeout',
-          message: `timeoutSeconds exceeds the 7-day (${JOB_MAX_TIMEOUT_SECONDS}s) maximum. The Compute Job was not submitted.`,
+          message:
+            driverId === 'slurm'
+              ? `timeoutSeconds exceeds the scheduler maximum (${maxTimeoutSeconds}s). The Compute Job was not submitted.`
+              : `timeoutSeconds exceeds the 7-day (${JOB_MAX_TIMEOUT_SECONDS}s) maximum. The Compute Job was not submitted.`,
           retry_after_user_action: false
         }
         throw error
@@ -338,7 +366,7 @@ export class ComputeJobWorkflowOwner {
       intent,
       command_preview: commandPreview,
       command_full: command,
-      execution_mode: host.executionMode ?? 'direct_ssh',
+      execution_mode: driverId,
       environment: options.environment,
       inputs_summary: inputsSummary || undefined,
       resources: options.resourceRequest,
@@ -430,7 +458,7 @@ export class ComputeJobWorkflowOwner {
         providerId: host.providerId,
         shape: host.shape,
         // Snapshot execution semantics so later Host edits cannot move an active Job between drivers.
-        executionMode: host.executionMode ?? 'direct_ssh',
+        executionMode: driverId,
         sessionId: context.sessionId,
         projectId: context.projectId,
         intent,

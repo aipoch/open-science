@@ -125,7 +125,7 @@ describe('ComputeAddForm password authentication', () => {
     expect(useComputeStore.getState().createPasswordHost).toHaveBeenCalledWith({
       sshAlias: 'cluster',
       detailsDoc: undefined,
-      executionMode: 'direct_ssh',
+      executionMode: 'auto',
       authenticationMode: 'password',
       username: 'researcher',
       port: 2222,
@@ -159,7 +159,7 @@ describe('ComputeAddForm password authentication', () => {
     expect(useComputeStore.getState().createHost).toHaveBeenCalledWith({
       sshAlias: 'cluster',
       detailsDoc: undefined,
-      executionMode: 'direct_ssh',
+      executionMode: 'auto',
       sshOverrides: {
         user: 'researcher',
         port: 2222,

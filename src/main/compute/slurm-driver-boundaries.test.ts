@@ -6,7 +6,8 @@ import {
   cancelSlurmJob,
   dispatchSlurmJob,
   pollSlurmJobs,
-  recoverSlurmJob
+  recoverSlurmJob,
+  SlurmDriver
 } from './slurm-driver'
 
 const job = (command: string): Pick<ComputeJob, 'job_id' | 'command' | 'timeout_seconds'> => ({
@@ -35,6 +36,16 @@ const success = (stdout: string): Awaited<ReturnType<ComputeConnectionLease['run
 })
 
 describe('Slurm lifecycle boundaries', () => {
+  it('exposes scheduler status through the common driver interface keyed by Open-Science job id', async () => {
+    const connection = {
+      run: async (command: string) =>
+        success(command.startsWith('sacct ') ? '123|FAILED|2:0\n' : '')
+    } as unknown as ComputeConnectionLease
+
+    const observations = await new SlurmDriver().poll([entry], connection)
+    expect(observations.get('test-job')).toMatchObject({ kind: 'terminal', state: 'FAILED' })
+  })
+
   it('adopts a receipt only after scheduler-owned name and workdir metadata match', async () => {
     const connection = {
       run: async () =>
@@ -96,6 +107,56 @@ describe('Slurm lifecycle boundaries', () => {
     } as unknown as ComputeConnectionLease
     expect(await cancelSlurmJob(handle, connection)).toBe(false)
   })
+  it('renders bounded structured scheduler resource requests as sbatch directives', () => {
+    const script = buildSlurmScript(
+      {
+        ...job('echo done'),
+        resource_request: JSON.stringify({
+          partition: 'gpu',
+          walltimeSeconds: 7200,
+          cpus: 4,
+          memoryMb: 8192,
+          gpus: 1
+        })
+      },
+      handle.workdir
+    )
+
+    expect(script).toContain('#SBATCH --partition=gpu')
+    expect(script).toContain('#SBATCH --time=120')
+    expect(script).toContain('#SBATCH --cpus-per-task=4')
+    expect(script).toContain('#SBATCH --mem=8192M')
+    expect(script).toContain('#SBATCH --gres=gpu:1')
+  })
+
+  it.each([
+    { partition: 'gpu; rm -rf /' },
+    { walltimeSeconds: 0 },
+    { cpus: 1.5 },
+    { memoryMb: -1 },
+    { gpus: 2048 },
+    { unknown: 'value' }
+  ])('rejects invalid or unbounded resource request %j', (resources) => {
+    expect(() =>
+      buildSlurmScript(
+        { ...job('echo done'), resource_request: JSON.stringify(resources) },
+        handle.workdir
+      )
+    ).toThrow()
+  })
+
+  it('rejects a resource request that duplicates an explicit command directive', () => {
+    expect(() =>
+      buildSlurmScript(
+        {
+          ...job('#SBATCH --partition=cpu\necho done'),
+          resource_request: JSON.stringify({ partition: 'gpu' })
+        },
+        handle.workdir
+      )
+    ).toThrow(/partition/i)
+  })
+
   it('retains a user time limit and resources before the first executable line', () => {
     const script = buildSlurmScript(
       job('#SBATCH --partition=cpu\n#SBATCH --time=00:05:00\necho done'),
@@ -191,6 +252,45 @@ describe('Slurm lifecycle boundaries', () => {
     const result = (await pollSlurmJobs([entry], connection)).get('123')
     expect(result?.kind).toBe('terminal')
     if (result?.kind === 'terminal') expect(result.exitCode).not.toBe(0)
+  })
+
+  it('fails closed when sbatch is missing', async () => {
+    const connection = {
+      run: async () => ({
+        ...success(''),
+        exitCode: 127,
+        stderr: 'bash: sbatch: command not found'
+      })
+    } as unknown as ComputeConnectionLease
+
+    await expect(dispatchSlurmJob(entry.job, connection, handle.workdir)).rejects.toMatchObject({
+      code: 'dispatch_failed'
+    })
+  })
+
+  it.each(['squeue', 'sacct'] as const)('fails closed when %s is missing', async (missing) => {
+    const connection = {
+      run: async (command: string) => {
+        if (command.startsWith(`${missing} `) || command.startsWith(`${missing}\n`)) {
+          return { ...success(''), exitCode: 127, stderr: `bash: ${missing}: command not found` }
+        }
+        return success('')
+      }
+    } as unknown as ComputeConnectionLease
+
+    await expect(pollSlurmJobs([entry], connection)).rejects.toThrow(/command not found/)
+  })
+
+  it('treats repeated cancellation of an already terminal job as idempotent', async () => {
+    const connection = {
+      run: async (command: string) =>
+        command.startsWith('squeue ')
+          ? success('')
+          : success(command.startsWith('sacct ') ? '123|CANCELLED|0:15\n' : '')
+    } as unknown as ComputeConnectionLease
+
+    await expect(cancelSlurmJob(handle, connection)).resolves.toBe(true)
+    await expect(cancelSlurmJob(handle, connection)).resolves.toBe(true)
   })
 
   it('surfaces an accounting command failure as an actionable error', async () => {

@@ -139,7 +139,7 @@ describe('database startup logging', () => {
               '0044_literature_smart_collections',
               '0045_literature_smart_pause_run',
               '0046_journal_attributes',
-              '0047_session_replay'
+              '0047_session_replay', '0048_scheduler_walltime'
             ],
             adoptedLegacy: true
           })

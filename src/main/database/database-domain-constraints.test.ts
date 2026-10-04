@@ -136,7 +136,7 @@ describe('database domain constraints', () => {
       },
       {
         name: 'ComputeJob.timeoutSeconds upper bound',
-        sql: `UPDATE "ComputeJob" SET "timeoutSeconds" = 604801 WHERE "id" = 'base-job'`
+        sql: `UPDATE "ComputeJob" SET "timeoutSeconds" = 31536001 WHERE "id" = 'base-job'`
       },
       {
         name: 'ComputeJob notification state',

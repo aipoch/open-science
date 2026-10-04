@@ -52,7 +52,7 @@ export function ComputeAddForm({ onCreated, onCancel }: ComputeAddFormProps): Re
   const [identityFile, setIdentityFile] = useState('')
   const [authenticationMode, setAuthenticationMode] =
     useState<ComputeAuthenticationMode>('ssh_config')
-  const [executionMode, setExecutionMode] = useState<ComputeExecutionMode>('direct_ssh')
+  const [executionMode, setExecutionMode] = useState<ComputeExecutionMode>('auto')
   const [password, setPassword] = useState('')
   const [operationId] = useState(() => crypto.randomUUID())
   const [passwordCapability, setPasswordCapability] = useState<

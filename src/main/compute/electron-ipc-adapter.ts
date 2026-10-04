@@ -35,7 +35,7 @@ const finiteNumberSchema = z.number().finite()
 const integerSchema = finiteNumberSchema.int()
 const stringArraySchema = z.array(z.string())
 const detailsAuthorSchema = z.enum(['user', 'agent']) satisfies z.ZodType<DetailsAuthor>
-const executionModeSchema = z.enum(['direct_ssh', 'slurm'])
+const executionModeSchema = z.enum(['auto', 'direct_ssh', 'slurm'])
 
 const createComputeHostRequestSchema = z
   .object({

@@ -3999,6 +3999,7 @@
     "Authentication method": "认证方式",
     "Configuration": "配置",
     "Execution mode": "执行模式",
+    "Use the scheduler detected by the latest host probe, falling back to Direct SSH when none is found.": "使用最近一次主机探测发现的调度器，未发现时回退到直接 SSH。",
     "Direct SSH": "直接 SSH",
     "Run jobs and command calls directly on the SSH login host.": "直接在 SSH 登录主机上运行作业和命令调用。",
     "Slurm": "Slurm",

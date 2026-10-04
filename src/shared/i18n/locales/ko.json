@@ -3998,6 +3998,7 @@
     "Authentication method": "인증방법",
     "Configuration": "구성",
     "Execution mode": "실행 모드",
+    "Use the scheduler detected by the latest host probe, falling back to Direct SSH when none is found.": "최신 호스트 프로브에서 감지된 스케줄러를 사용하고, 없으면 Direct SSH로 대체합니다.",
     "Direct SSH": "직접 SSH",
     "Run jobs and command calls directly on the SSH login host.": "SSH 로그인 호스트에서 작업과 명령 호출을 직접 실행합니다.",
     "Slurm": "Slurm",

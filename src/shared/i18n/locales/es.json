@@ -4274,6 +4274,7 @@
     "Authentication method": "Método de autenticación",
     "Configuration": "Configuración",
     "Execution mode": "Modo de ejecución",
+    "Use the scheduler detected by the latest host probe, falling back to Direct SSH when none is found.": "Usa el planificador detectado por la última comprobación del host y recurre a SSH directo si no se encuentra ninguno.",
     "Direct SSH": "SSH directo",
     "Run jobs and command calls directly on the SSH login host.": "Ejecutar trabajos y llamadas de comandos directamente en el host de inicio de sesión SSH.",
     "Slurm": "Slurm",

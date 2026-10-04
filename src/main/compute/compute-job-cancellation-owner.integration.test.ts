@@ -177,6 +177,33 @@ describe('Compute Job cancellation owner (SQLite + fake SSH)', () => {
     })
   })
 
+  it('marks a never-started Direct SSH cancellation as remote-workdir absent', async () => {
+    const { jobs, operations, createJob } = await setup()
+    await createJob('submitted')
+    const probeOutput = [
+      'OPEN_SCIENCE_DISPATCH_RECOVERY_V1',
+      'workdir:0',
+      'exit_code:',
+      'pid:',
+      'cwd_match:0',
+      ''
+    ].join('\n')
+    const run = vi.fn<ComputeConnectionLease['run']>().mockResolvedValue(success(probeOutput))
+    const owner = new ComputeJobCancellationOwner(operations, jobs)
+    const reaper = new ComputeJobCancellationReaper(operations, jobs, {
+      acquire: vi.fn(async () => ({ run }) as unknown as ComputeConnectionLease)
+    })
+
+    await owner.request('job-1', scope)
+    await reaper.runOnce()
+
+    await expect(jobs.get('job-1')).resolves.toMatchObject({
+      status: 'failed',
+      remote_cleanup_disposition: 'cleaned',
+      harvested_at: expect.any(Number)
+    })
+  })
+
   it.each(['owned', 'mismatch', 'absent'] as const)(
     'confirms a running cancellation when process evidence is %s',
     async (evidence) => {

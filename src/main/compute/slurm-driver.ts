@@ -7,12 +7,24 @@ import {
 import { quoteRemotePath, shellSingleQuote } from './remote-path-security'
 import { toBase64, type SlurmRemoteHandle } from './remote-job-contract'
 import { applyComputeEnvironment } from './compute-environment'
+import type {
+  ComputeJobDriver,
+  DriverCancelContext,
+  DriverCancelResult,
+  DriverPollEntry,
+  DriverRecoveryContext,
+  DriverSubmitContext
+} from './job-driver'
 
 const SLURM_TIMEOUT_MS = 120_000
 const SLURM_POLL_TIMEOUT_MS = 30_000
 const TAIL_BYTES = 65_536
 const SUBMISSION_ERROR_FILE = 'scheduler_submit_error'
 const SUBMISSION_ERROR_MAX_BYTES = 4096
+export const SCHEDULER_MAX_WALLTIME_SECONDS = 31_536_000
+const SCHEDULER_MAX_CPUS = 65_536
+const SCHEDULER_MAX_MEMORY_MB = 1_048_576
+const SCHEDULER_MAX_GPUS = 1024
 
 export type SlurmObservation =
   | { kind: 'active'; state: string; reason?: string }
@@ -137,22 +149,161 @@ export const hasLeadingSlurmDirective = (command: string): boolean => {
   return false
 }
 
-export const validateSlurmCommand = (command: string): void => {
-  commandDirectives(command)
+type SlurmResourceRequest = {
+  partition?: string
+  walltimeSeconds?: number
+  cpus?: number
+  memoryMb?: number
+  gpus?: number
+}
+
+const resourceRequestError = (message: string): SlurmDriverError =>
+  new SlurmDriverError('invalid_resources', `Invalid scheduler resource request: ${message}`)
+
+const boundedInteger = (value: unknown, field: string, maximum: number): number | undefined => {
+  if (value === undefined) return undefined
+  if (!Number.isInteger(value) || (value as number) < 1 || (value as number) > maximum) {
+    throw resourceRequestError(`${field} must be an integer between 1 and ${maximum}.`)
+  }
+  return value as number
+}
+
+const parseSlurmResourceRequest = (raw: string | undefined): SlurmResourceRequest => {
+  if (raw === undefined) return {}
+  let value: unknown
+  try {
+    value = JSON.parse(raw)
+  } catch {
+    throw resourceRequestError('resources must be valid JSON.')
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw resourceRequestError('resources must be a JSON object.')
+  }
+  const record = value as Record<string, unknown>
+  const allowed = new Set([
+    'partition',
+    'walltimeSeconds',
+    'walltime',
+    'cpus',
+    'cpusPerTask',
+    'memoryMb',
+    'memory',
+    'gpus',
+    'gpu'
+  ])
+  const unknown = Object.keys(record).filter((key) => !allowed.has(key))
+  if (unknown.length > 0) {
+    throw resourceRequestError(
+      `unsupported field${unknown.length === 1 ? '' : 's'}: ${unknown.join(', ')}.`
+    )
+  }
+  const rawPartition = record.partition
+  if (
+    rawPartition !== undefined &&
+    (typeof rawPartition !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(rawPartition))
+  ) {
+    throw resourceRequestError(
+      'partition must be 1-64 letters, numbers, periods, underscores, or hyphens.'
+    )
+  }
+  const partition = typeof rawPartition === 'string' ? rawPartition : undefined
+  return {
+    ...(partition !== undefined ? { partition } : {}),
+    walltimeSeconds: boundedInteger(
+      record.walltimeSeconds ?? record.walltime,
+      'walltimeSeconds',
+      SCHEDULER_MAX_WALLTIME_SECONDS
+    ),
+    cpus: boundedInteger(record.cpus ?? record.cpusPerTask, 'cpus', SCHEDULER_MAX_CPUS),
+    memoryMb: boundedInteger(record.memoryMb ?? record.memory, 'memoryMb', SCHEDULER_MAX_MEMORY_MB),
+    gpus: boundedInteger(record.gpus ?? record.gpu, 'gpus', SCHEDULER_MAX_GPUS)
+  }
+}
+
+const resourceDirectives = (
+  resources: SlurmResourceRequest,
+  commandDirectiveLines: readonly string[]
+): { directives: string[]; hasTime: boolean } => {
+  const requested: Array<{ field: keyof SlurmResourceRequest; option: string; directive: string }> =
+    []
+  if (resources.partition !== undefined) {
+    requested.push({
+      field: 'partition',
+      option: '--partition',
+      directive: `#SBATCH --partition=${resources.partition}`
+    })
+  }
+  if (resources.walltimeSeconds !== undefined) {
+    requested.push({
+      field: 'walltimeSeconds',
+      option: '--time',
+      directive: `#SBATCH --time=${Math.ceil(resources.walltimeSeconds / 60)}`
+    })
+  }
+  if (resources.cpus !== undefined) {
+    requested.push({
+      field: 'cpus',
+      option: '--cpus-per-task',
+      directive: `#SBATCH --cpus-per-task=${resources.cpus}`
+    })
+  }
+  if (resources.memoryMb !== undefined) {
+    requested.push({
+      field: 'memoryMb',
+      option: '--mem',
+      directive: `#SBATCH --mem=${resources.memoryMb}M`
+    })
+  }
+  if (resources.gpus !== undefined) {
+    requested.push({
+      field: 'gpus',
+      option: '--gres',
+      directive: `#SBATCH --gres=gpu:${resources.gpus}`
+    })
+  }
+  for (const item of requested) {
+    if (commandDirectiveLines.some((line) => line.includes(`${item.option}=`))) {
+      throw resourceRequestError(
+        `${item.field} duplicates an explicit ${item.option} directive in the command.`
+      )
+    }
+  }
+  return {
+    directives: requested.map(({ directive }) => directive),
+    hasTime: resources.walltimeSeconds !== undefined
+  }
+}
+
+export const validateSlurmCommand = (command: string, resourceRequest?: string): void => {
+  const parsed = commandDirectives(command)
+  resourceDirectives(parseSlurmResourceRequest(resourceRequest), parsed.directives)
 }
 
 export const buildSlurmScript = (
-  job: Pick<ComputeJob, 'job_id' | 'command' | 'timeout_seconds'> & { environment?: string },
+  job: Pick<ComputeJob, 'job_id' | 'command' | 'timeout_seconds'> & {
+    environment?: string
+    resource_request?: string
+  },
   workdir: string
 ): string => {
   const timeout = job.timeout_seconds ?? 86_400
+  if (!Number.isInteger(timeout) || timeout < 1 || timeout > SCHEDULER_MAX_WALLTIME_SECONDS) {
+    throw resourceRequestError(
+      `timeout_seconds must be an integer between 1 and ${SCHEDULER_MAX_WALLTIME_SECONDS}.`
+    )
+  }
   const parsedDirectives = commandDirectives(applyComputeEnvironment(job.command, job.environment))
+  const resources = parseSlurmResourceRequest(job.resource_request)
+  const requestedResources = resourceDirectives(resources, parsedDirectives.directives)
   return [
     '#!/usr/bin/env bash',
     `#SBATCH --job-name=${jobName(job.job_id, workdir)}`,
     '#SBATCH --output=stdout',
     '#SBATCH --error=stderr',
-    ...(parsedDirectives.hasTime ? [] : [`#SBATCH --time=${Math.max(1, Math.ceil(timeout / 60))}`]),
+    ...(!requestedResources.hasTime && !parsedDirectives.hasTime
+      ? [`#SBATCH --time=${Math.max(1, Math.ceil(timeout / 60))}`]
+      : []),
+    ...requestedResources.directives,
     ...parsedDirectives.directives,
     `timeout -s TERM -k 30s ${timeout} bash -l -c ${shellSingleQuote(`if [ -r ~/.bashrc ]; then . ~/.bashrc || exit $?; fi\n${parsedDirectives.workload}`)}`,
     'exit "$?"',
@@ -474,3 +625,50 @@ export const cancelSlurmJob = async (
     .find(([id]) => id === handle.scheduler_job_id)
   return parent?.[1] !== undefined && isTerminalSlurmState(parent[1])
 }
+
+export class SlurmDriver implements ComputeJobDriver<SlurmRemoteHandle, SlurmObservation> {
+  readonly id = 'slurm' as const
+
+  async submit({ job, connection, workdir, lifecycle }: DriverSubmitContext): Promise<void> {
+    const handle = await dispatchSlurmJob(job, connection, workdir)
+    await lifecycle.dispatchSubmitted(job.job_id, JSON.stringify(handle))
+  }
+
+  async recover({
+    job,
+    connection
+  }: DriverRecoveryContext): Promise<SlurmRemoteHandle | undefined> {
+    return recoverSlurmJob(job, connection)
+  }
+
+  async poll(
+    entries: readonly DriverPollEntry<SlurmRemoteHandle>[],
+    connection: ComputeConnectionLease
+  ): Promise<Map<string, SlurmObservation>> {
+    const observations = await pollSlurmJobs([...entries], connection)
+    return new Map(
+      entries.flatMap(({ job, handle }) => {
+        const observation = observations.get(handle.scheduler_job_id)
+        return observation ? [[job.job_id, observation] as const] : []
+      })
+    )
+  }
+
+  async cancel({
+    job,
+    handle,
+    connection
+  }: DriverCancelContext<SlurmRemoteHandle>): Promise<DriverCancelResult<SlurmRemoteHandle>> {
+    if (handle?.driver === 'slurm') {
+      return { confirmed: await cancelSlurmJob(handle, connection) }
+    }
+    const recoveredHandle = await recoverSlurmJob(job, connection)
+    if (!recoveredHandle) return { confirmed: false }
+    return {
+      confirmed: await cancelSlurmJob(recoveredHandle, connection),
+      recoveredHandle
+    }
+  }
+}
+
+export const slurmDriver = new SlurmDriver()

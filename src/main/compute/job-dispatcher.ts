@@ -6,10 +6,8 @@ import { hasImmutableExecutionFileEvidenceReference } from '../../shared/executi
 import { createLogger, errorLogFields } from '../logger'
 import { decodeDataPath } from '../storage/data-path'
 import {
-  isConnectionStdoutTruncated,
   classifyConnectionFailure,
   ComputeConnectionError,
-  redactConnectionOutputs,
   type ComputeConnectionBrokerAcquirer,
   type ComputeConnectionLease
 } from './connection-broker'
@@ -18,17 +16,15 @@ import type { ComputeJobRepository } from './job-repository'
 import type { ComputeHostRepository } from './repository'
 import { sharedDispatchTracker, type DispatchTracker } from './dispatch-tracker'
 import { ComputeJobLifecycle } from './compute-job-lifecycle'
-import { classifyComputeJobExit, probeRemoteLaunch } from './remote-launch-recovery'
 import {
   cleanupComputeJobFileEvidence,
   publishComputeJobFileEvidence,
   settleComputeJobFileEvidence
 } from '../notebook/working-file-observer'
-import { applyComputeEnvironment } from './compute-environment'
-import { dispatchSlurmJob, SlurmDriverError } from './slurm-driver'
-import { toBase64, type RemoteHandle } from './remote-job-contract'
-import { remoteJobPidOwnershipFunctionLines } from './remote-job-process'
+import { SlurmDriverError } from './slurm-driver'
+import { createComputeJobDriver } from './job-driver'
 
+export { buildLauncherScript, REMOTE_PROCESS_OWNERSHIP_FUNCTION } from './direct-ssh-driver'
 export {
   toBase64,
   type ComputeRemoteHandle,
@@ -36,36 +32,7 @@ export {
   type SlurmRemoteHandle
 } from './remote-job-contract'
 
-// Maximum number of bytes for the per-job dispatch SSH command (enough for base64 of large scripts).
-const DISPATCH_MAX_OUTPUT_BYTES = 4 * 1024
-
-// Timeout for the dispatch SSH connection (mkdir + write files + launch). Generous to accommodate
-// slow cluster file systems; the job itself runs detached so the connection can close after.
-const DISPATCH_TIMEOUT_MS = 120_000
 const log = createLogger('compute')
-
-export const REMOTE_PROCESS_OWNERSHIP_FUNCTION = [
-  ...remoteJobPidOwnershipFunctionLines(),
-  'process_owned_by_workdir() {',
-  '  workdir=$2',
-  '  job_pid_is_owned "$1"',
-  '}'
-].join('\n')
-
-// Builds the launcher.sh script content for a given job.
-// Uses timeout(1) with SIGTERM then SIGKILL after 30s grace. The login shell loads profile
-// configuration, then attempts to source a readable .bashrc (non-interactive bash does not do so
-// itself). A missing .bashrc is a no-op; a source failure returns through the normal exit-code
-// lifecycle. A .bashrc may deliberately return early for non-interactive shells. exec then replaces
-// the initialized shell with the user workload shell.
-// exit_code is written via a tmp→rename atomic pattern so the poller never reads a partial value.
-export const buildLauncherScript = (timeoutSeconds: number): string => {
-  return (
-    '#!/usr/bin/env bash\n' +
-    `timeout -s TERM -k 30s ${timeoutSeconds} bash -l -c 'if [ -r ~/.bashrc ]; then . ~/.bashrc || exit $?; fi; exec bash command.sh' > stdout 2> stderr\n` +
-    'echo $? > exit_code.tmp && mv exit_code.tmp exit_code\n'
-  )
-}
 
 // Computes the SHA-256 hash of a command string for auditing and deduplication.
 export const hashCommand = (command: string): string =>
@@ -275,8 +242,6 @@ async function dispatchJobInner(jobId: string, deps: DispatcherDeps): Promise<vo
   }
 
   const workdir = job.remote_workdir ?? computeLegacyRemoteWorkdir(host.scratchRoot, jobId)
-  const timeoutSecs = job.timeout_seconds ?? 86400 // default 24h
-
   // Stage inputs declared in the manifest (all-or-nothing: failure → dispatch_failed).
   if (job.input_manifest) {
     let entries: StagedInputEntry[]
@@ -323,168 +288,6 @@ async function dispatchJobInner(jobId: string, deps: DispatcherDeps): Promise<vo
     }
   }
 
-  const commandScript = applyComputeEnvironment(job.command, job.environment)
-
-  if (job.execution_mode === 'slurm') {
-    const handle = await dispatchSlurmJob(job, connection, workdir)
-    await lifecycle.dispatchSubmitted(jobId, JSON.stringify(handle))
-    return
-  }
-
-  // Build scripts.
-  const launcherScript = buildLauncherScript(timeoutSecs)
-
-  // Encode to base64 to avoid all shell quoting/injection issues.
-  const commandB64 = toBase64(commandScript)
-  const launcherB64 = toBase64(launcherScript)
-
-  // One SSH command: mkdir workdir, write scripts via base64 pipes, launch detached, echo pid.
-  // Stdout = the pid (we echo it last).
-  const quotedWorkdir = quoteRemotePath(workdir)
-  const dispatchCmd = [
-    `mkdir -p ${quotedWorkdir}`,
-    `cd ${quotedWorkdir}`,
-    // Write command.sh and launcher.sh via base64 to avoid heredoc/quoting issues.
-    `printf '%s' ${JSON.stringify(commandB64)} | base64 -d > command.sh`,
-    `printf '%s' ${JSON.stringify(launcherB64)} | base64 -d > launcher.sh`,
-    `chmod +x command.sh launcher.sh`,
-    // Detached launch: nohup + setsid so the process survives SSH disconnect.
-    `nohup setsid bash launcher.sh >/dev/null 2>&1 &`,
-    // Write pid to file AND echo it so we can read it back in this round-trip.
-    `LAUNCHED_PID=$!`,
-    `echo $LAUNCHED_PID > job.pid`,
-    `echo $LAUNCHED_PID`
-  ].join('\n')
-
-  let runResult
-  try {
-    runResult = await connection.run(dispatchCmd, {
-      timeoutMs: DISPATCH_TIMEOUT_MS,
-      loginShell: false,
-      maxOutputBytes: DISPATCH_MAX_OUTPUT_BYTES
-    })
-  } catch (error) {
-    if (isDefinitivePreLaunchConnectionError(error)) throw error
-    await recoverAmbiguousRemoteLaunch(job, connection, workdir, lifecycle)
-    return
-  }
-
-  const connectionFailure = classifyConnectionFailure(runResult, false)
-  if (connectionFailure) {
-    if (isDefinitivePreLaunchResult(runResult, connectionFailure)) throw connectionFailure
-    await recoverAmbiguousRemoteLaunch(job, connection, workdir, lifecycle)
-    return
-  }
-
-  // Non-connection failure (mkdir, base64, etc.)
-  if (runResult.exitCode !== 0) {
-    await lifecycle.dispatchError(jobId, {
-      errorCode: 'dispatch_failed',
-      stderrTail: 'The remote Compute Job launcher failed.'
-    })
-    return
-  }
-
-  // The dispatch protocol is exactly one positive integer line. Partial output and permissive
-  // parseInt prefixes are ambiguous because adopting the wrong PID can later target another job.
-  const pidOutput = runResult.stdout.trim()
-  const pid = /^[1-9]\d*$/.test(pidOutput) ? Number(pidOutput) : Number.NaN
-  if (isConnectionStdoutTruncated(runResult) || !Number.isSafeInteger(pid) || pid <= 1) {
-    await recoverAmbiguousRemoteLaunch(job, connection, workdir, lifecycle, runResult.stdout)
-    return
-  }
-
-  // Build the remote handle JSON.
-  const handle: RemoteHandle = {
-    pid,
-    exit_code_path: `${workdir}/exit_code`,
-    stdout_path: `${workdir}/stdout`,
-    stderr_path: `${workdir}/stderr`,
-    workdir
-  }
-
-  await lifecycle.dispatchRunning(jobId, JSON.stringify(handle))
-}
-
-const isDefinitivePreLaunchConnectionError = (error: unknown): boolean =>
-  error instanceof ComputeConnectionError &&
-  error.code !== 'host_unreachable' &&
-  error.code !== 'timeout'
-
-const isDefinitivePreLaunchResult = (
-  result: { stderr: string },
-  failure: ComputeConnectionError
-): boolean => {
-  if (failure.code !== 'host_unreachable' && failure.code !== 'timeout') return true
-  if (failure.code === 'timeout') return false
-  const stderr = result.stderr.toLowerCase()
-  return (
-    stderr.includes('connection refused') ||
-    stderr.includes('network is unreachable') ||
-    stderr.includes('no route to host') ||
-    stderr.includes('could not resolve hostname')
-  )
-}
-
-const recoverAmbiguousRemoteLaunch = async (
-  job: ComputeJob,
-  connection: ComputeConnectionLease,
-  workdir: string,
-  lifecycle: ComputeJobLifecycle,
-  invalidProtocolOutput?: string
-): Promise<void> => {
-  let observation
-  try {
-    observation = await probeRemoteLaunch(connection, workdir)
-  } catch (error) {
-    // A failed recovery probe cannot distinguish "not launched" from "launched but unreachable".
-    // Keep the durable submitted row for the poller to retry instead of inventing a terminal error.
-    await lifecycle.recordPollError(
-      job.job_id,
-      'submitted',
-      error instanceof ComputeConnectionError ? error.code : 'dispatch_recovery_probe_failed'
-    )
-    return
-  }
-
-  if (observation.kind === 'running') {
-    await lifecycle.dispatchRunning(job.job_id, JSON.stringify(observation.handle))
-    return
-  }
-  if (observation.kind === 'exited') {
-    const exitCode = observation.exitCode
-    const { status, errorCode } = classifyComputeJobExit(job, exitCode)
-    await lifecycle.finishPolled(job.job_id, {
-      status,
-      exitCode,
-      errorCode,
-      stdoutTail: null,
-      stderrTail: null
-    })
-    return
-  }
-  if (observation.kind === 'vanished') {
-    await lifecycle.finishPolled(job.job_id, {
-      status: 'failed',
-      errorCode: 'process_vanished',
-      stdoutTail: null,
-      stderrTail: null
-    })
-    return
-  }
-  if (observation.kind === 'not_started' && invalidProtocolOutput !== undefined) {
-    const [safeStdout = ''] = await redactConnectionOutputs(connection, [invalidProtocolOutput])
-    const stderrTail = `Could not read pid from dispatch output: ${JSON.stringify(safeStdout)}`
-    await lifecycle.dispatchError(job.job_id, { errorCode: 'dispatch_failed', stderrTail })
-    return
-  }
-  if (observation.kind === 'pending' || observation.kind === 'not_started') {
-    await lifecycle.recordPollError(job.job_id, 'submitted', 'dispatch_recovery_pending')
-    return
-  }
-  if (observation.kind === 'ambiguous') {
-    await lifecycle.recordPollError(job.job_id, 'submitted', 'dispatch_recovery_ambiguous')
-  }
-  // An inconclusive workdir — including one not created yet immediately after response loss — is
-  // genuinely ambiguous. The poller retries the same non-destructive probe on its next tick.
+  const driver = createComputeJobDriver(job.execution_mode ?? 'direct_ssh')
+  await driver.submit({ job, connection, workdir, lifecycle })
 }

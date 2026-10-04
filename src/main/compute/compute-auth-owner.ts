@@ -203,7 +203,7 @@ class ComputeAuthOwner {
       alias,
       profile.displayName,
       request.detailsDoc ?? '',
-      request.executionMode ?? 'direct_ssh',
+      request.executionMode ?? 'auto',
       username,
       profile.port,
       request.password

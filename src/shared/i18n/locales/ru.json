@@ -4383,6 +4383,7 @@
     "Authentication method": "Способ аутентификации",
     "Configuration": "Настройки",
     "Execution mode": "Режим выполнения",
+    "Use the scheduler detected by the latest host probe, falling back to Direct SSH when none is found.": "Используйте планировщик, обнаруженный при последней проверке хоста, и переключайтесь на Direct SSH, если он не найден.",
     "Direct SSH": "Прямое SSH-подключение",
     "Run jobs and command calls directly on the SSH login host.": "Выполнять задания и вызовы команд непосредственно на хосте входа по SSH.",
     "Slurm": "Slurm",

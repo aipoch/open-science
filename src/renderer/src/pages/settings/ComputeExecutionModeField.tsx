@@ -12,11 +12,18 @@ import {
 
 const EXECUTION_MODES: ReadonlyArray<{
   mode: ComputeExecutionMode
-  label: 'Direct SSH' | 'Slurm'
+  label: 'Auto' | 'Direct SSH' | 'Slurm'
   description:
+    | 'Use the scheduler detected by the latest host probe, falling back to Direct SSH when none is found.'
     | 'Run jobs and command calls directly on the SSH login host.'
     | 'Submit and manage jobs through Slurm; command calls still run on the SSH login host.'
 }> = [
+  {
+    mode: 'auto',
+    label: 'Auto',
+    description:
+      'Use the scheduler detected by the latest host probe, falling back to Direct SSH when none is found.'
+  },
   {
     mode: 'direct_ssh',
     label: 'Direct SSH',

@@ -3998,6 +3998,7 @@
     "Authentication method": "認証方法",
     "Configuration": "設定",
     "Execution mode": "実行モード",
+    "Use the scheduler detected by the latest host probe, falling back to Direct SSH when none is found.": "最新のホストプローブで検出されたスケジューラーを使用し、見つからない場合は Direct SSH にフォールバックします。",
     "Direct SSH": "直接 SSH",
     "Run jobs and command calls directly on the SSH login host.": "SSH ログインホストでジョブとコマンド呼び出しを直接実行します。",
     "Slurm": "Slurm",

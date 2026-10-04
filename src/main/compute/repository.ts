@@ -215,7 +215,7 @@ const asShape = (value: string): ComputeHostShape => {
 }
 
 const asExecutionMode = (value: string): ComputeExecutionMode => {
-  if (value === 'direct_ssh' || value === 'slurm') return value
+  if (value === 'auto' || value === 'direct_ssh' || value === 'slurm') return value
   throw new Error(`Compute Host data is corrupt or unsupported: unknown execution mode ${value}.`)
 }
 
@@ -257,7 +257,7 @@ const toHost = (row: PrismaComputeHost, hasCredential = false): ComputeHost => (
   providerId: row.providerId,
   displayName: row.displayName,
   shape: asShape(row.shape),
-  executionMode: asExecutionMode(row.executionMode ?? 'direct_ssh'),
+  executionMode: asExecutionMode(row.executionMode ?? 'auto'),
   sshAlias: row.sshAlias,
   sshOverrides: parseComputeJson(row.sshOverrides, decodeSshOverrides, 'sshOverrides'),
   authentication: {
@@ -350,7 +350,7 @@ class ComputeHostRepository {
   // Creates a host record. Validates the alias, the 32 KiB details cap, and rejects a duplicate
   // provider_id with a readable error before inserting. No SSH connection is made in Phase 1.
   async create(request: CreateComputeHostRequest): Promise<ComputeHost> {
-    const executionMode = asExecutionMode(request.executionMode ?? 'direct_ssh')
+    const executionMode = asExecutionMode(request.executionMode ?? 'auto')
     const profile = validateHostConnectionProfile({
       sshAlias: request.sshAlias,
       displayName: request.displayName,
@@ -432,7 +432,7 @@ class ComputeHostRepository {
       const host = await transaction.computeHost.create({
         data: {
           providerId,
-          executionMode: asExecutionMode(request.executionMode ?? 'direct_ssh'),
+          executionMode: asExecutionMode(request.executionMode ?? 'auto'),
           displayName: request.displayName?.trim() || alias,
           sshAlias: alias,
           sshOverrides: serializeOverrides({ user: request.username, port: request.port }),

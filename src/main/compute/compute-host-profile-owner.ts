@@ -284,10 +284,12 @@ export class ComputeHostProfileOwner {
       parsed.detectedScheduler && parsed.detectedScheduler !== 'none'
         ? 'scheduler_cluster'
         : 'direct_ssh'
+    const configuredExecutionMode = host.executionMode ?? 'auto'
+    const usesSlurm =
+      configuredExecutionMode === 'slurm' ||
+      (configuredExecutionMode === 'auto' && parsed.detectedScheduler === 'slurm')
     const result: ProbeResult = {
-      ok:
-        parsed.scratchWritable !== false &&
-        (host.executionMode !== 'slurm' || parsed.schedulerAvailable !== false),
+      ok: parsed.scratchWritable !== false && (!usesSlurm || parsed.schedulerAvailable !== false),
       sshConnected: true,
       commandExecutable: true,
       scratchPath: parsed.scratchPath,

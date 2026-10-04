@@ -726,6 +726,100 @@ describe('ComputeJobWorkflowOwner.submitJob', () => {
     }
   )
 
+  it('auto-selects Slurm from the host probe and allows a scheduler walltime beyond seven days', async () => {
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo: jobRepo, createCalls } = makeJobRepo()
+    const { repo } = makeRepo(
+      sampleHost({
+        executionMode: 'auto',
+        shape: 'scheduler_cluster',
+        probeResult: {
+          ok: true,
+          probedAt: '2026-09-01T00:00:00.000Z',
+          exitCode: 0,
+          errorTail: null,
+          detectedScheduler: 'slurm'
+        }
+      })
+    )
+    const requestWithContext = vi.fn(() => Promise.resolve('once' as const))
+    const broker = {
+      request: vi.fn(),
+      requestWithContext,
+      respond: vi.fn()
+    } as unknown as ComputeApprovalBroker
+
+    await makeOwner(runner, repo, broker, jobRepo).submitJob(
+      'ssh:biowulf',
+      'long scheduler job',
+      'echo hi',
+      { timeoutSeconds: 8 * 24 * 3600 },
+      { sessionId: 's1', projectId: 'p1' }
+    )
+
+    expect(requestWithContext).toHaveBeenCalledWith(
+      expect.objectContaining({ execution_mode: 'slurm', timeout_seconds: 8 * 24 * 3600 }),
+      expect.anything(),
+      undefined
+    )
+    expect(createCalls).toHaveBeenCalledWith(
+      expect.objectContaining({ executionMode: 'slurm', timeoutSeconds: 8 * 24 * 3600 })
+    )
+  })
+
+  it('fails closed rather than submitting directly when auto detects PBS or LSF', async () => {
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo: jobRepo, createCalls } = makeJobRepo()
+    const { repo } = makeRepo(
+      sampleHost({
+        executionMode: 'auto',
+        shape: 'scheduler_cluster',
+        probeResult: {
+          ok: true,
+          probedAt: '2026-09-01T00:00:00.000Z',
+          exitCode: 0,
+          errorTail: null,
+          detectedScheduler: 'pbs'
+        }
+      })
+    )
+
+    const broker = {
+      request: vi.fn(),
+      requestWithContext: vi.fn(),
+      respond: vi.fn()
+    } as unknown as ComputeApprovalBroker
+
+    await expect(
+      makeOwner(runner, repo, broker, jobRepo).submitJob(
+        'ssh:biowulf',
+        'unsupported scheduler',
+        'echo hi',
+        {},
+        { sessionId: 's1', projectId: 'p1' }
+      )
+    ).rejects.toMatchObject({
+      computeCallError: {
+        error_code: 'invalid_resources',
+        retry_after_user_action: true
+      }
+    })
+    expect(createCalls).not.toHaveBeenCalled()
+    expect(broker.requestWithContext).not.toHaveBeenCalled()
+  })
+
   it('rejects an unsafe environment name before approval or persistence', async () => {
     const runner = makeFakeRunner({
       exitCode: 0,

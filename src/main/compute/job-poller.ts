@@ -4,7 +4,6 @@ import type { ComputeJob, JobSummary } from '../../shared/compute'
 import type { ComputeJobRepository } from './job-repository'
 import type { ComputeHostRepository } from './repository'
 import {
-  isConnectionStdoutTruncated,
   classifyConnectionFailure,
   ComputeConnectionError,
   redactConnectionOutputs,
@@ -18,19 +17,15 @@ import {
   type RemoteHandle
 } from './job-dispatcher'
 import { JobHarvestScheduler, type HarvestFn } from './job-harvest-scheduler'
-import { parsePollOutput } from './job-poll-output'
 import { sharedDispatchTracker, type DispatchTracker } from './dispatch-tracker'
 import { emitJobNotification } from './job-notifier'
 import { ComputeJobLifecycle } from './compute-job-lifecycle'
 import { cleanupCommand } from './job-deletion-owner'
-import {
-  probeRemoteJobProcessOwnership,
-  terminateRemoteJobProcessIfOwned
-} from './remote-job-process'
 import { classifyComputeJobExit } from './remote-launch-recovery'
 import { SubmittedJobRecovery, type SubmittedJobRecoveryResult } from './submitted-job-recovery'
 import { parseRemoteJobHandle, parseRemoteJobWorkdir } from './remote-job-handle'
-import { pollSlurmJobs, recoverSlurmJob, type SlurmObservation } from './slurm-driver'
+import { slurmDriver, type SlurmObservation } from './slurm-driver'
+import { directSshDriver, type DirectPollObservation } from './direct-ssh-driver'
 import type { SlurmRemoteHandle } from './job-dispatcher'
 
 // Polling interval: 15 seconds (design.md §8).
@@ -45,15 +40,11 @@ const PROCESS_VANISHED_TICKS = 2
 // Timeout for the per-host poll SSH command.
 const POLL_TIMEOUT_MS = 30_000
 
-// Per-job output budget for a poll: two tails (stdout+stderr) plus marker/pid/exit-code lines.
-// The 1 KiB pad covers the seven nonce-prefixed marker lines and the exit-code/alive output.
-const PER_JOB_POLL_BYTES = TAIL_MAX_BYTES * 2 + 1024
-
 // Maximum jobs polled in a single SSH round-trip. All non-terminal jobs for one provider used to be
 // batched into ONE ssh call sized for a single job, so a provider with N running jobs overflowed the
 // output cap and the trailing jobs' sections were silently dropped (truncation keeps the head). We
 // now poll in sub-batches of at most this many jobs, sizing the output cap to the sub-batch, which
-// bounds peak memory per call (~POLL_BATCH_MAX_JOBS × PER_JOB_POLL_BYTES ≈ 1 MiB) while guaranteeing
+// bounds peak memory per call while guaranteeing
 // every job's section fits.
 const POLL_BATCH_MAX_JOBS = 8
 
@@ -420,7 +411,7 @@ export class JobPoller {
       let handle = parsed?.driver === 'slurm' ? parsed : undefined
       if (!handle && (job.status === 'submitted' || job.status === 'running')) {
         try {
-          handle = await recoverSlurmJob(job, connection)
+          handle = await slurmDriver.recover({ job, connection })
         } catch (error) {
           await this.lifecycle.recordPollError(
             job.job_id,
@@ -465,7 +456,7 @@ export class JobPoller {
 
     let observations: Map<string, SlurmObservation>
     try {
-      observations = await pollSlurmJobs(dispatchable, connection)
+      observations = await slurmDriver.poll(dispatchable, connection)
     } catch (error) {
       if (signal.aborted) return
       const code =
@@ -482,9 +473,9 @@ export class JobPoller {
       return
     }
 
-    for (const { job, handle } of dispatchable) {
+    for (const { job } of dispatchable) {
       if (signal.aborted) return
-      const observation = observations.get(handle.scheduler_job_id)
+      const observation = observations.get(job.job_id)
       if (!observation) continue
       if (observation.kind === 'unknown') {
         await this.lifecycle.recordPollError(
@@ -648,76 +639,75 @@ export class JobPoller {
     this.trackBackground(task)
   }
 
-  // Polls one sub-batch of jobs (all with handles) in a single SSH round-trip, sizing the output cap
-  // to the batch so no job's section is truncated away.
+  // Polls one sub-batch of direct-SSH jobs through the shared driver seam. The driver owns the
+  // process-ownership protocol; the poller owns lifecycle application and retry classification.
   private async _pollBatch(
     jobs: ComputeJob[],
     connection: ComputeConnectionLease,
     signal: AbortSignal
   ): Promise<void> {
-    // Prefix structural markers with an unpredictable nonce so job output cannot spoof them.
-    const nonce = this.makeNonceFn()
-
-    // Build one ownership/status/tail command section per job.
-    const parts: string[] = [REMOTE_PROCESS_OWNERSHIP_FUNCTION]
-    const batched: ComputeJob[] = []
+    const batched: Array<{ job: ComputeJob; handle: RemoteHandle }> = []
     for (const job of jobs) {
       const handle = parseRemoteJobHandle(job.remote_handle, job.remote_workdir)
       if (!handle || handle.driver === 'slurm') continue
-      batched.push(job)
-
-      parts.push(
-        `echo "${nonce}JOB_START:${job.job_id}"`,
-        `workdir=$(cd -- ${quoteRemotePath(handle.workdir)} 2>/dev/null && pwd -P || true)`,
-        `process_owned_by_workdir ${handle.pid} "$workdir"; case $? in 0) echo "${nonce}alive:1" ;; 1|3) echo "${nonce}alive:0" ;; *) echo "${nonce}alive:unknown" ;; esac`,
-        `if [ -f ${quoteRemotePath(handle.exit_code_path)} ]; then POLL_EXIT_CODE=$(cat ${quoteRemotePath(handle.exit_code_path)}); else POLL_EXIT_CODE=; fi; printf '${nonce}exit:%s\\n' "$POLL_EXIT_CODE"`,
-        `tail -c ${TAIL_MAX_BYTES} ${quoteRemotePath(handle.stdout_path)} 2>/dev/null || true`,
-        `printf '\n%s\n' '${nonce}STDOUT_END:${job.job_id}'`,
-        `tail -c ${TAIL_MAX_BYTES} ${quoteRemotePath(handle.stderr_path)} 2>/dev/null || true`,
-        `printf '\n%s\n' '${nonce}STDERR_END:${job.job_id}'`
-      )
+      batched.push({ job, handle })
     }
-
     if (batched.length === 0) return
 
-    // Size the output cap to this batch: one PER_JOB_POLL_BYTES budget per job that emits a section.
-    const maxOutputBytes = batched.length * PER_JOB_POLL_BYTES
-    const pollCmd = parts.join('\n')
-    let runResult
+    let observations: Map<string, DirectPollObservation>
     try {
-      runResult = await connection.run(pollCmd, {
-        timeoutMs: POLL_TIMEOUT_MS,
-        loginShell: false,
-        maxOutputBytes,
-        signal
+      observations = await directSshDriver.poll(batched, connection, {
+        signal,
+        nonce: this.makeNonceFn()
       })
-    } catch (err) {
+    } catch (error) {
       if (signal.aborted) return
-      // SSH threw — record lastPollError for each job but do NOT flip status (design.md §8 boundary 2).
-      const errorCode = err instanceof ComputeConnectionError ? err.code : 'host_unreachable'
-      await this._recordPollError(batched, errorCode, signal)
+      const errorCode = error instanceof ComputeConnectionError ? error.code : 'host_unreachable'
+      await this._recordPollError(
+        batched.map(({ job }) => job),
+        errorCode,
+        signal
+      )
       return
     }
 
     if (signal.aborted) return
-
-    const connectionFailure = classifyConnectionFailure(runResult, false)
-    if (connectionFailure) {
-      // Host unreachable — record error per job but do NOT flip status (design.md §8 boundary 2).
-      await this._recordPollError(batched, connectionFailure.code, signal)
-      return
+    const unknown = batched
+      .map(({ job }) => job)
+      .filter((job) => observations.get(job.job_id)?.kind === 'unknown')
+    if (unknown.length > 0) {
+      const diagnostic =
+        observations.get(unknown[0]!.job_id)?.kind === 'unknown'
+          ? (observations.get(unknown[0]!.job_id) as { diagnostic: string }).diagnostic
+          : 'poll_protocol_incomplete'
+      await this._recordPollError(unknown, diagnostic, signal, false)
     }
 
-    if (isConnectionStdoutTruncated(runResult)) {
-      await this._recordPollError(batched, 'poll_protocol_incomplete', signal, false)
-      return
+    const complete = batched.flatMap(({ job }) => {
+      const observation = observations.get(job.job_id)
+      return observation?.kind === 'complete' ? [{ job, observation }] : []
+    })
+    if (complete.length === 0) return
+    const safeTails = await redactConnectionOutputs(
+      connection,
+      complete.flatMap(({ observation }) => [observation.stdoutTail, observation.stderrTail])
+    )
+    if (signal.aborted) return
+    for (const [index, { job, observation }] of complete.entries()) {
+      if (signal.aborted) return
+      await this._applyPollResult(
+        job,
+        {
+          alive: observation.alive,
+          exitCode: observation.exitCode,
+          hasExitCode: observation.hasExitCode,
+          stdoutTail: safeTails[index * 2] ?? '',
+          stderrTail: safeTails[index * 2 + 1] ?? ''
+        },
+        connection,
+        signal
+      )
     }
-
-    // Parse the batched output using nonce-prefixed markers. Pass target for poller fallback kill.
-    // A truncated result should be impossible now that the cap is sized to the batch, but if it ever
-    // happens the head is kept, so leading jobs still parse; any job whose section was dropped simply
-    // stays non-terminal and is re-polled next tick (its remote exit_code file persists).
-    await this._parsePollOutput(runResult.stdout, batched, nonce, connection, signal)
   }
 
   // Records a transient SSH connectivity error for each job without changing job status.
@@ -732,45 +722,6 @@ export class JobPoller {
       if (signal.aborted) return
       if (job.status !== 'submitted' && job.status !== 'running') continue
       await this.lifecycle.recordPollError(job.job_id, job.status, message, retryAfterUserAction)
-    }
-  }
-
-  // Parses the batched poll output and updates each job accordingly. All structural markers carry
-  // the per-tick `nonce` prefix so adversarial job tail content cannot collide with them.
-  // `target` is threaded through so _applyPollResult can issue the poller-fallback kill command.
-  private async _parsePollOutput(
-    output: string,
-    jobs: ComputeJob[],
-    nonce: string,
-    connection: ComputeConnectionLease,
-    signal: AbortSignal
-  ): Promise<void> {
-    const parsedResults = parsePollOutput(output, jobs, nonce)
-    const completeResults = parsedResults.filter((result) => result.status === 'complete')
-    const incompleteJobs = parsedResults
-      .filter((result) => result.status === 'incomplete')
-      .map((result) => result.job)
-    await this._recordPollError(incompleteJobs, 'poll_protocol_incomplete', signal, false)
-
-    const safeTails = await redactConnectionOutputs(
-      connection,
-      completeResults.flatMap(({ stdoutTail, stderrTail }) => [stdoutTail, stderrTail])
-    )
-    if (signal.aborted) return
-    for (const [index, result] of completeResults.entries()) {
-      if (signal.aborted) return
-      await this._applyPollResult(
-        result.job,
-        {
-          alive: result.alive,
-          exitCode: result.exitCode,
-          hasExitCode: result.hasExitCode,
-          stdoutTail: safeTails[index * 2] ?? '',
-          stderrTail: safeTails[index * 2 + 1] ?? ''
-        },
-        connection,
-        signal
-      )
     }
   }
 
@@ -879,30 +830,12 @@ export class JobPoller {
           await this._recordTimeoutTerminationUnconfirmed(current)
           return
         }
-        // Probe failures are unknown ownership and fail closed. The termination operation repeats
-        // the same cwd guard before signalling, closing the probe-to-signal PID reuse window.
         try {
-          const ownership = await probeRemoteJobProcessOwnership(
-            handle.pid,
-            handle.workdir,
-            connection
-          )
-          if (ownership === 'unknown') {
+          const cancellation = await directSshDriver.cancel({ job: current, handle, connection })
+          if (!cancellation.confirmed) {
             if (signal.aborted) return
             await this._recordTimeoutTerminationUnconfirmed(current)
             return
-          }
-          if (ownership === 'owned') {
-            const terminated = await terminateRemoteJobProcessIfOwned(
-              handle.pid,
-              handle.workdir,
-              connection
-            )
-            if (!terminated) {
-              if (signal.aborted) return
-              await this._recordTimeoutTerminationUnconfirmed(current)
-              return
-            }
           }
         } catch {
           if (signal.aborted) return

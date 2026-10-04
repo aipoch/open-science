@@ -76,7 +76,7 @@ export type CreateJobRequest = {
   id: string
   providerId: string
   shape: string
-  executionMode?: import('../../shared/compute').ComputeExecutionMode
+  executionMode?: import('../../shared/compute').ComputeDriverId
   sessionId: string
   projectId: string
   intent: string

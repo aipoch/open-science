@@ -200,7 +200,7 @@ export function ComputeHostDetail({
 
   // Execution mode editor state
   const [isEditingExecutionMode, setIsEditingExecutionMode] = useState(false)
-  const [executionModeInput, setExecutionModeInput] = useState<ComputeExecutionMode>('direct_ssh')
+  const [executionModeInput, setExecutionModeInput] = useState<ComputeExecutionMode>('auto')
   const [executionModeSaving, setExecutionModeSaving] = useState(false)
   const [executionModeError, setExecutionModeError] = useState<DetailError | undefined>(undefined)
 
@@ -258,7 +258,7 @@ export function ComputeHostDetail({
     )
   }
 
-  const executionMode = host.executionMode ?? 'direct_ssh'
+  const executionMode = host.executionMode ?? 'auto'
   const schedulerDetected =
     host.probeResult?.ok === true &&
     host.probeResult.detectedScheduler != null &&
@@ -740,11 +740,15 @@ export function ComputeHostDetail({
         className="mt-6"
         title={t('Execution mode')}
         description={
-          executionMode === 'slurm'
+          executionMode === 'auto'
             ? t(
-                'Submit and manage jobs through Slurm; command calls still run on the SSH login host.'
+                'Use the scheduler detected by the latest host probe, falling back to Direct SSH when none is found.'
               )
-            : t('Run jobs and command calls directly on the SSH login host.')
+            : executionMode === 'slurm'
+              ? t(
+                  'Submit and manage jobs through Slurm; command calls still run on the SSH login host.'
+                )
+              : t('Run jobs and command calls directly on the SSH login host.')
         }
         action={
           !isEditingExecutionMode ? (
@@ -799,7 +803,11 @@ export function ComputeHostDetail({
             <div>
               <span className="text-muted-foreground">{t('Configured mode')}</span>
               <p className="font-medium text-foreground">
-                {executionMode === 'slurm' ? t('Slurm') : t('Direct SSH')}
+                {executionMode === 'auto'
+                  ? t('Auto')
+                  : executionMode === 'slurm'
+                    ? t('Slurm')
+                    : t('Direct SSH')}
               </p>
             </div>
             <div>

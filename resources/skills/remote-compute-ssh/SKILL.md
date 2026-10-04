@@ -196,9 +196,11 @@ limit from `timeoutSeconds`. Open-Science owns the job name, working directory, 
 directives. Avoid job arrays because one Open-Science job tracks one scheduler job and one output
 harvest. Submit independent work as separate jobs and use the Session concurrency limit when needed.
 
-For Slurm, request resources with one `#SBATCH --option=value` directive per line (or a value-free
-flag such as `#SBATCH --exclusive`). The legacy `resources` option is descriptive metadata; it
-does not allocate CPUs, memory, or GPUs. `timeoutSeconds` limits workload runtime, not queue wait;
+For Slurm, you may request resources either with one `#SBATCH --option=value` directive per line
+(or a value-free flag such as `#SBATCH --exclusive`) or with the `resources` object. Supported
+`resources` keys are `partition`, `walltimeSeconds`, `cpus`, `memoryMb`, and `gpus`; Open-Science
+validates and translates them to `#SBATCH` directives. Do not duplicate the same option in both
+places. `timeoutSeconds` limits workload runtime, not queue wait; `walltimeSeconds` or
 `#SBATCH --time` sets the scheduler allocation limit. Neither is a promise of queue start time.
 
 The non-blocking job `status()` and `result()` snapshots include `scheduler_job_id` when known,

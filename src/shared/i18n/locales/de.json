@@ -3841,6 +3841,7 @@
     "Authentication method": "Authentifizierungsmethode",
     "Configuration": "Konfiguration",
     "Execution mode": "Ausführungsmodus",
+    "Use the scheduler detected by the latest host probe, falling back to Direct SSH when none is found.": "Verwenden Sie den bei der letzten Host-Prüfung erkannten Scheduler, und weichen Sie auf Direct SSH aus, wenn keiner gefunden wird.",
     "Direct SSH": "Direktes SSH",
     "Run jobs and command calls directly on the SSH login host.": "Aufträge und Befehlsaufrufe direkt auf dem SSH-Anmeldehost ausführen.",
     "Slurm": "Slurm",

@@ -418,7 +418,7 @@
     {
       "tableName": "ComputeJob",
       "name": "ComputeJob_timeoutSeconds_check",
-      "expression": "\"timeoutSeconds\" IS NULL OR \"timeoutSeconds\" BETWEEN 1 AND 604800"
+      "expression": "\"timeoutSeconds\" IS NULL OR \"timeoutSeconds\" BETWEEN 1 AND 31536000"
     },
     {
       "tableName": "ComputeJob",

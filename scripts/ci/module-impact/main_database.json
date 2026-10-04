@@ -79,6 +79,7 @@
     "src/main/database/migrations/0045-literature-smart-pause-run.ts",
     "src/main/database/migrations/0046-journal-attributes.ts",
     "src/main/database/migrations/0047-session-replay.ts",
+    "src/main/database/migrations/0048-scheduler-walltime.ts",
     "src/main/database/notification-attention-metadata-migration.test.ts",
     "src/main/database/pdf-annotations-migration.test.ts",
     "src/main/database/permission-approval-summary.test.ts",

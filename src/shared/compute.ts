@@ -8,7 +8,8 @@
 // Host topology, inferred by probe in a later issue. Persisted so downstream issues can branch on it;
 // Phase 1 never reads it for behavior.
 export type ComputeHostShape = 'direct_ssh' | 'scheduler_cluster' | 'bridge_runner'
-export type ComputeExecutionMode = 'direct_ssh' | 'slurm'
+export type ComputeDriverId = 'direct_ssh' | 'slurm'
+export type ComputeExecutionMode = 'auto' | ComputeDriverId
 
 export type ComputeHostPreferenceValidationErrorCode = 'invalid_provider_id' | 'host_not_found'
 
@@ -169,7 +170,7 @@ export const computeHostSummary = (host: ComputeHost): ComputeHostSummary => ({
   provider_id: host.providerId,
   display_name: host.displayName,
   shape: host.shape,
-  execution_mode: host.executionMode ?? 'direct_ssh',
+  execution_mode: host.executionMode ?? 'auto',
   status:
     host.probeResult === undefined
       ? 'not_probed'
@@ -350,7 +351,7 @@ export type ComputeApprovalRequestInfo = ComputeApprovalRequestBase &
         operation: 'submit_job'
         command_preview: string
         command_full: string
-        execution_mode?: ComputeExecutionMode
+        execution_mode?: ComputeDriverId
         environment?: string
         inputs_summary?: string
         resources?: string
@@ -410,7 +411,7 @@ export type ComputeJob = {
   job_id: string
   provider_id: string
   shape: string
-  execution_mode?: ComputeExecutionMode
+  execution_mode?: ComputeDriverId
   session_id: string
   project_id: string
   status: ComputeJobStatus
