@@ -111,7 +111,7 @@ const lineagePathCase = (value: string): string =>
 
 const lineagePathKey = (run: NotebookRunRecord, value: string): string => {
   const portable = lineagePathCase(portablePath(value))
-  const workingDirectory = run.cwdAfter ?? run.cwdBefore ?? run.frozenShellContext?.cwd
+  const workingDirectory = run.cwdBefore ?? run.cwdAfter ?? run.frozenShellContext?.cwd
   if (isAbsolute(value)) return `absolute:${lineagePathCase(portablePath(normalize(value)))}`
   if (workingDirectory !== undefined)
     return `absolute:${lineagePathCase(portablePath(normalize(resolve(workingDirectory, value))))}`
@@ -136,7 +136,7 @@ const observedScopedGenerations = (
   scopes: readonly NotebookSourceFileWriteScope[]
 ): NotebookWorkingFile[] =>
   run.workingFiles.filter((file) => {
-    const workingDirectory = run.cwdAfter ?? run.cwdBefore ?? run.frozenShellContext?.cwd
+    const workingDirectory = run.cwdBefore ?? run.cwdAfter ?? run.frozenShellContext?.cwd
     const candidatePath =
       workingDirectory !== undefined
         ? portablePath(relative(workingDirectory, file.path))
@@ -2009,7 +2009,7 @@ const projectNotebookFileDependencies = (
     ambiguousPaths.add(key)
   }
   const scopeCandidatePath = (run: NotebookRunRecord, path: string): string => {
-    const workingDirectory = run.cwdAfter ?? run.cwdBefore ?? run.frozenShellContext?.cwd
+    const workingDirectory = run.cwdBefore ?? run.cwdAfter ?? run.frozenShellContext?.cwd
     return workingDirectory === undefined
       ? portablePath(path)
       : portablePath(relative(workingDirectory, path))
@@ -2095,6 +2095,27 @@ const projectNotebookFileDependencies = (
       } else {
         for (const generation of observedChanges) markAmbiguous(run, generation)
         for (const rawPath of fileAccess?.writes ?? []) markPathAmbiguous(run, rawPath)
+        for (const scope of fileAccess?.writeScopes ?? []) {
+          for (const generation of observedScopedGenerations(run, [scope]))
+            markAmbiguous(run, generation)
+          markScopeAmbiguous(run, scope)
+        }
+      }
+    } else {
+      // Incomplete runs may still have modified files. Keep their evidence as an
+      // ambiguity barrier, but never register their generations as valid producers.
+      for (const generation of run.workingFiles.filter(
+        (file) =>
+          file.createdByRunId === run.runId ||
+          file.change === 'created' ||
+          file.change === 'modified'
+      ))
+        markAmbiguous(run, generation)
+      for (const rawPath of fileAccess?.writes ?? []) markPathAmbiguous(run, rawPath)
+      for (const scope of fileAccess?.writeScopes ?? []) {
+        for (const generation of observedScopedGenerations(run, [scope]))
+          markAmbiguous(run, generation)
+        markScopeAmbiguous(run, scope)
       }
     }
   }

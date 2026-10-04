@@ -1052,4 +1052,48 @@ describe('file lineage identity and completeness guards', () => {
     ] satisfies readonly AnalyzedNotebookRun[])
     expect(projection.consumer).toBeUndefined()
   })
+
+  it('withholds an older producer after an incomplete observed overwrite', () => {
+    const root = join(tmpdir(), 'lineage-incomplete-overwrite')
+    const output = join(root, 'result.json')
+    const producer = run('producer', root, [
+      {
+        path: output,
+        relativePath: 'result.json',
+        kind: 'other',
+        createdByRunId: 'producer',
+        change: 'created',
+        checksum: 'g'.repeat(64)
+      }
+    ])
+    const interrupted: NotebookRunRecord = {
+      ...run('interrupted', root, [
+        {
+          path: output,
+          relativePath: 'result.json',
+          kind: 'other',
+          createdByRunId: 'interrupted',
+          change: 'modified',
+          checksum: 'h'.repeat(64)
+        }
+      ]),
+      status: 'failed'
+    }
+    const projection = projectNotebookFileDependencies([
+      { run: producer, facts, fileAccess: access([], ['result.json']) },
+      {
+        run: interrupted,
+        facts,
+        fileAccess: {
+          ...access([], ['result.json']),
+          readState: 'partial',
+          writeState: 'partial',
+          externalState: 'partial',
+          reasonCodes: ['dynamic-path-unresolved']
+        }
+      },
+      { run: run('consumer', root), facts, fileAccess: access(['result.json'], []) }
+    ] satisfies readonly AnalyzedNotebookRun[])
+    expect(projection.consumer).toBeUndefined()
+  })
 })
