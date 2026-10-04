@@ -2,7 +2,8 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import type { RequestPermissionRequest } from '@agentclientprotocol/sdk'
+import type { RequestPermissionRequest, RequestPermissionResponse } from '@agentclientprotocol/sdk'
+import { ClaudeAcpAgent } from '@agentclientprotocol/claude-agent-acp/dist/acp-agent.js'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
@@ -62,6 +63,58 @@ const createPermissionRequest = (sessionId = 'session-1'): RequestPermissionRequ
     { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
     { optionId: 'reject-once', name: 'Reject once', kind: 'reject_once' }
   ]
+})
+
+describe('issue #3284 shared permission boundary', () => {
+  it.each(permissionRoutes)(
+    'keeps rejection observable but authorizes the next request independently on $modelRoute',
+    async (route) => {
+      const emit = vi.fn()
+      const settled = vi.fn()
+      const broker = new AcpPermissionBroker(emit, undefined, undefined, settled)
+      const context = {
+        ...route,
+        mcpServerNames: ['open-science-notebook'],
+        promptMessageId: 'same-prompt',
+        interactionSequence: 1
+      }
+      const shellRequest = createPermissionRequest()
+      shellRequest.toolCall = {
+        toolCallId: 'denied-shell',
+        title: 'printf permission-probe',
+        kind: 'execute',
+        rawInput: { command: 'printf permission-probe' }
+      }
+      const shell = broker.requestPermission(shellRequest, context)
+      const first = broker.getPendingRequests()[0]
+      await broker.respond({ requestId: first.requestId, optionId: 'reject-once' })
+      expect(await shell).toEqual({ outcome: { outcome: 'selected', optionId: 'reject-once' } })
+      expect(settled).toHaveBeenCalledWith(first.requestId, 'rejected', first)
+
+      const notebookRequest = withTrustedMcpToolIdentity(
+        {
+          ...createPermissionRequest(),
+          toolCall: {
+            toolCallId: 'following-notebook',
+            title: 'Notebook execution',
+            kind: 'execute',
+            rawInput: { language: 'python', code: 'print("permission-probe", end="")' }
+          }
+        },
+        'open-science-notebook/notebook_execute'
+      )
+      const notebook = broker.requestPermission(notebookRequest, context)
+      expect(emit).toHaveBeenCalledTimes(2)
+      const second = broker.getPendingRequests()[0]
+      expect(second.sessionId).toBe(first.sessionId)
+      expect(second.toolCallId).toBe('following-notebook')
+      expect(JSON.stringify(second)).not.toContain('denied-shell')
+      await broker.respond({ requestId: second.requestId, optionId: 'allow-once' })
+      expect(await notebook).toEqual({ outcome: { outcome: 'selected', optionId: 'allow-once' } })
+      expect(settled).toHaveBeenLastCalledWith(second.requestId, 'resolved', second)
+      expect(broker.getPendingRequests()).toEqual([])
+    }
+  )
 })
 
 // Builds a notebook tool permission request that also offers an "always allow" option.
@@ -225,10 +278,191 @@ const restoredContinuationFixture = async (): Promise<{
   return { permission, continuation, policy, providerRequest }
 }
 
+// Public SDK callback, with only the upstream in-memory Session fixture seeded. No model,
+// external process, tool execution, or production test seam is needed for these permission checks.
+const permissionAgent = (
+  requestPermission: (request: RequestPermissionRequest) => Promise<RequestPermissionResponse>
+): ReturnType<ClaudeAcpAgent['canUseTool']> => {
+  const agent = new ClaudeAcpAgent({
+    requestPermission,
+    sessionUpdate: vi.fn().mockResolvedValue(undefined)
+  } as unknown as ConstructorParameters<typeof ClaudeAcpAgent>[0])
+  agent.sessions['issue-3284'] = {
+    cwd: process.cwd(),
+    modes: {
+      currentModeId: 'default',
+      availableModes: [{ id: 'default' }, { id: 'plan' }]
+    },
+    emittedToolCalls: new Set<string>(),
+    liveBackgroundTasks: new Map()
+  } as unknown as ClaudeAcpAgent['sessions'][string]
+  return agent.canUseTool('issue-3284')
+}
+
+describe('issue #3284 permission rejection', () => {
+  it.each(['Bash', 'ExitPlanMode'])(
+    'explains host-disabled permission prompts in the model-visible %s denial',
+    async (toolName) => {
+      const emit = vi.fn()
+      const broker = new AcpPermissionBroker(emit)
+      const canUseTool = permissionAgent((request) =>
+        broker.requestPermission(request, {
+          profile: 'ask',
+          frameworkId: 'claude-code',
+          permissionPrompts: 'none'
+        })
+      )
+
+      const result = await canUseTool(
+        toolName,
+        { command: 'printf permission-probe' },
+        {
+          signal: new AbortController().signal,
+          requestId: 'host-denied-request',
+          toolUseID: 'host-denied-shell'
+        }
+      )
+
+      expect(emit).not.toHaveBeenCalled()
+      expect(result?.behavior).toBe('deny')
+      // The host knows why it denied the request. It must not blame an absent user or lose that reason.
+      if (result?.behavior !== 'deny') throw new Error('Expected a permission denial')
+      expect(result.message).toMatch(/permission prompts.*disabled/i)
+    }
+  )
+
+  it.each([
+    undefined,
+    null,
+    { version: 2, reason: 'Unsupported version' },
+    { version: 1, reason: 42 },
+    { version: 1, reason: '   ' }
+  ])(
+    'retains the generic rejection for absent or unsupported denial metadata: %j',
+    async (denial) => {
+      const canUseTool = permissionAgent(async () => ({
+        outcome: { outcome: 'selected', optionId: 'reject' },
+        _meta: { 'open-science/permission-denial': denial }
+      }))
+      await expect(
+        canUseTool(
+          'Bash',
+          {},
+          {
+            signal: new AbortController().signal,
+            requestId: 'fallback-request',
+            toolUseID: 'fallback-tool'
+          }
+        )
+      ).resolves.toEqual({ behavior: 'deny', message: 'User refused permission to run tool' })
+    }
+  )
+
+  it('characterizes a rejected shell followed by an independently approved Notebook request', async () => {
+    const emit = vi.fn()
+    const settled = vi.fn()
+    const broker = new AcpPermissionBroker(emit, undefined, undefined, settled)
+    const canUseTool = permissionAgent((request) =>
+      broker.requestPermission(request, {
+        profile: 'ask',
+        frameworkId: 'claude-code',
+        mcpServerNames: ['open-science-notebook'],
+        promptMessageId: 'same-prompt',
+        interactionSequence: 1
+      })
+    )
+    const signal = new AbortController().signal
+    const shell = canUseTool(
+      'Bash',
+      { command: 'printf permission-probe' },
+      {
+        signal,
+        requestId: 'shell-request',
+        toolUseID: 'shell'
+      }
+    )
+    await vi.waitFor(() => expect(emit).toHaveBeenCalledTimes(1))
+    await broker.respond({ requestId: emit.mock.calls[0][0].requestId, optionId: 'reject' })
+    expect(await shell).toEqual({
+      behavior: 'deny',
+      message: 'User refused permission to run tool'
+    })
+
+    // Deterministically supply the second request from the report. This does not simulate the
+    // model deciding to circumvent a denial, and neither harmless payload is actually executed.
+    const input = { language: 'python', code: 'print("permission-probe", end="")' }
+    const notebook = canUseTool('mcp__open-science-notebook__notebook_execute', input, {
+      signal,
+      requestId: 'notebook-request',
+      toolUseID: 'notebook'
+    })
+    await vi.waitFor(() => expect(emit).toHaveBeenCalledTimes(2))
+    await broker.respond({ requestId: emit.mock.calls[1][0].requestId, optionId: 'allow' })
+    expect(await notebook).toEqual({ behavior: 'allow', updatedInput: input })
+    expect(settled.mock.calls.map((call) => call[1])).toEqual(['rejected', 'resolved'])
+    expect(broker.getPendingRequests()).toEqual([])
+    expect(signal.aborted).toBe(false)
+  })
+
+  it('keeps a cancelled permission distinct from a rejected tool', async () => {
+    const canUseTool = permissionAgent(async () => ({
+      outcome: { outcome: 'cancelled' },
+      _meta: {
+        'open-science/permission-denial': { version: 1, reason: 'Must not replace cancellation' }
+      }
+    }))
+    await expect(
+      canUseTool(
+        'Bash',
+        { command: 'printf permission-probe' },
+        {
+          signal: new AbortController().signal,
+          requestId: 'cancelled-request',
+          toolUseID: 'cancelled-shell'
+        }
+      )
+    ).rejects.toThrow('Tool use aborted')
+  })
+
+  it('does not let denial metadata change an allow decision', async () => {
+    const canUseTool = permissionAgent(async () => ({
+      outcome: { outcome: 'selected', optionId: 'allow' },
+      _meta: { 'open-science/permission-denial': { version: 1, reason: 'Not a rejection' } }
+    }))
+    const input = { command: 'printf permission-probe' }
+    await expect(
+      canUseTool('Bash', input, {
+        signal: new AbortController().signal,
+        requestId: 'allowed-request',
+        toolUseID: 'allowed-tool'
+      })
+    ).resolves.toEqual({ behavior: 'allow', updatedInput: input })
+  })
+
+  it('bounds and trims model-visible denial feedback', async () => {
+    const reason = 'x'.repeat(3000)
+    const canUseTool = permissionAgent(async () => ({
+      outcome: { outcome: 'selected', optionId: 'reject' },
+      _meta: { 'open-science/permission-denial': { version: 1, reason: `  ${reason}  ` } }
+    }))
+    await expect(
+      canUseTool(
+        'Bash',
+        {},
+        {
+          signal: new AbortController().signal,
+          requestId: 'bounded-request',
+          toolUseID: 'bounded-tool'
+        }
+      )
+    ).resolves.toEqual({ behavior: 'deny', message: 'x'.repeat(2048) })
+  })
+})
+
 describe('ACP permission broker', () => {
-  it.each(['claude-code', 'opencode', 'codex'] as const)(
-    'denies unapproved %s tools without parking or persisting unattended work',
-    async (frameworkId) => {
+  it.each(permissionRoutes)(
+    'denies unapproved $modelRoute tools without parking or persisting unattended work',
+    async ({ frameworkId, modelRoute }) => {
       const emit = vi.fn()
       const settled = vi.fn()
       const persist = vi.fn(async () => true)
@@ -245,11 +479,25 @@ describe('ACP permission broker', () => {
         broker.requestPermission(request, {
           profile: 'ask',
           frameworkId,
+          modelRoute,
           permissionPrompts: 'none',
           projectId: 'p',
           promptMessageId: 'm'
         })
-      ).resolves.toEqual({ outcome: { outcome: 'selected', optionId: 'reject-once' } })
+      ).resolves.toEqual({
+        outcome: { outcome: 'selected', optionId: 'reject-once' },
+        ...(frameworkId === 'claude-code'
+          ? {
+              _meta: {
+                'open-science/permission-denial': {
+                  version: 1,
+                  reason:
+                    'Permission prompts are disabled for this execution, so the host cannot request the approval required to run this tool.'
+                }
+              }
+            }
+          : {})
+      })
       expect(settled).toHaveBeenCalledWith(
         expect.any(String),
         'rejected',
