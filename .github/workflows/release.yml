@@ -28,6 +28,8 @@ jobs:
     name: Release preflight
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    outputs:
+      windows_runtime_changed: ${{ steps.runtime_change.outputs.changed }}
     permissions:
       contents: read
     steps:
@@ -49,12 +51,45 @@ jobs:
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main
 
+      - name: Detect Windows runtime changes
+        id: runtime_change
+        shell: bash
+        run: |
+          if [ "$GITHUB_EVENT_NAME" != "push" ] || [[ "$GITHUB_REF" != refs/tags/v* ]]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          previous_tag=$(git describe --tags --match 'v*' --abbrev=0 "$GITHUB_SHA^" 2>/dev/null || true)
+          if [ -z "$previous_tag" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "No previous version tag found; preparing the runtime for the first stable release."
+            exit 0
+          fi
+          runtime_paths=(
+            'packages/notebook-network-sandbox/vendor/windows-runtime/sources.json'
+            'packages/notebook-network-sandbox/vendor/windows-runtime/*.patch'
+            'packages/notebook-network-sandbox/vendor/windows-runtime/build.ps1'
+            'packages/notebook-network-sandbox/vendor/windows-runtime/npm/**'
+            'scripts/check-windows-notebook-runtime.mjs'
+            'scripts/stage-windows-notebook-components.mjs'
+            'scripts/windows-runtime-cdn.mjs'
+            'src/main/notebook/windows-runtime-catalog.json'
+            '.github/actions/windows-notebook-runtime/action.yml'
+          )
+          if git diff --quiet "$previous_tag" "$GITHUB_SHA" -- "${runtime_paths[@]}"; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Windows runtime inputs are unchanged since $previous_tag; reusing the immutable CDN objects."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "Windows runtime inputs changed since $previous_tag; preparing and signing a new runtime."
+          fi
+
   # Prepare the exact runtime consumed by a stable release. The called workflow runs in this
   # release run, so its artifact ID can flow directly to signing without operator copy/paste.
   windows-notebook-runtime:
     name: Prepare Windows Notebook runtime
     needs: release-preflight
-    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && needs['release-preflight'].outputs.windows_runtime_changed == 'true' }}
     uses: ./.github/workflows/windows-notebook-runtime.yml
     permissions:
       contents: read
@@ -62,7 +97,7 @@ jobs:
   windows-runtime-sign:
     name: Sign Windows Notebook runtime
     needs: [release-preflight, windows-notebook-runtime]
-    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && needs['release-preflight'].outputs.windows_runtime_changed == 'true' }}
     uses: ./.github/workflows/windows-runtime-sign.yml
     permissions:
       actions: read
@@ -76,7 +111,7 @@ jobs:
   windows-runtime-cdn:
     name: Publish Windows runtime CDN
     needs: [release-preflight, windows-runtime-sign]
-    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && needs['release-preflight'].outputs.windows_runtime_changed == 'true' }}
     uses: ./.github/workflows/windows-runtime-cdn.yml
     with:
       source_run: ${{ github.run_id }}
@@ -90,8 +125,9 @@ jobs:
   build:
     needs: [release-preflight, windows-runtime-cdn]
     if: >-
-      ${{ always() && needs.release-preflight.result == 'success' &&
+      ${{ always() && needs['release-preflight'].result == 'success' &&
       (github.event_name != 'push' || !startsWith(github.ref, 'refs/tags/v') ||
+      needs['release-preflight'].outputs.windows_runtime_changed == 'false' ||
       needs['windows-runtime-cdn'].result == 'success') }}
     uses: ./.github/workflows/build.yml
     permissions:
