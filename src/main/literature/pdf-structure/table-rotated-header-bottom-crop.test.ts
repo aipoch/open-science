@@ -57,6 +57,20 @@ describe('external wide table geometry repairs', () => {
     expect(rotatedColumnHeaderAssignments(items, cells).size).toBe(0)
   })
 
+  it('does not promote vertical labels from a body band into the header row', () => {
+    const cells = [cell(0, 0, 20), cell(1, 20, 40), cell(2, 40, 60), cell(3, 60, 80)]
+    const items = [0, 1, 2, 3].map((column) => ({
+      text: `Body-${column}`,
+      rect: [column * 20 + 6, 48, column * 20 + 14, 72],
+      horizontal: false,
+      height: 24,
+      baseline: 72
+    }))
+    expect(rotatedColumnHeaderAssignments(items, cells, [{ rect: [0, 0, 80, 30] }], [0]).size).toBe(
+      0
+    )
+  })
+
   it('extends a wide crop to a witnessed native closing rule', () => {
     const table = {
       cropRect: [0, 0, 160, 50],
@@ -131,6 +145,7 @@ describe('external wide table geometry repairs', () => {
         items,
         cells,
         rows,
+        headerRows: [0],
         assignments,
         ambiguousAssignments,
         repairs
@@ -139,6 +154,42 @@ describe('external wide table geometry repairs', () => {
     expect([...assignments.values()].map((cell) => cell.column)).toEqual([0, 1, 2, 3])
     expect(assignments.size).toBe(4)
     expect(repairs).toContain('unassigned-dense-row-recovered')
+  })
+
+  it('does not rewrite an unassigned second header row', () => {
+    const rows = [0, 20, 40].map((top) => ({ rect: [0, top, 300, top + 20] }))
+    const cells = rows.flatMap((row, rowIndex) =>
+      Array.from({ length: 4 }, (_, column) => ({
+        row: rowIndex,
+        column,
+        rowSpan: 1,
+        colSpan: 1,
+        rect: [column * 75, row.rect[1], (column + 1) * 75, row.rect[3]],
+        items: [],
+        text: ''
+      }))
+    )
+    const items = [
+      { text: 'Subgroup', rect: [4, 24, 60, 34], horizontal: true },
+      { text: '✓', rect: [90, 24, 102, 34], horizontal: true },
+      { text: '✗', rect: [165, 24, 177, 34], horizontal: true },
+      { text: '✓', rect: [240, 24, 252, 34], horizontal: true }
+    ]
+    const assignments = new Map()
+    const repairs: string[] = []
+    expect(
+      recoverUnassignedDenseRows({
+        items,
+        cells,
+        rows,
+        headerRows: [0, 1],
+        assignments,
+        ambiguousAssignments: new Set(),
+        repairs
+      })
+    ).toBe(0)
+    expect(assignments.size).toBe(0)
+    expect(repairs).not.toContain('unassigned-dense-row-recovered')
   })
 
   it('rebuilds anonymous parallel numeric rows and preserves every lane', () => {

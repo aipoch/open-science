@@ -139,12 +139,14 @@ export function recoverUnassignedDenseRows({
   items,
   cells,
   rows,
+  headerRows = [],
   assignments,
   ambiguousAssignments,
   repairs
 }) {
   let recovered = 0
   for (let rowIndex = 1; rowIndex < rows.length; rowIndex++) {
+    if (headerRows.includes(rowIndex)) continue
     const row = rows[rowIndex]
     const rowCells = cells.filter((cell) => cell.row === rowIndex)
     if (!rowCells.length || rowCells.some((cell) => [...assignments.values()].includes(cell)))
@@ -858,7 +860,7 @@ export function recoverNativeMidRowNarrativeTail({
   return true
 }
 
-export function rotatedColumnHeaderAssignments(items, cells) {
+export function rotatedColumnHeaderAssignments(items, cells, rows = [], headerRows = [0]) {
   const labels = items
     .filter(
       (item) =>
@@ -868,11 +870,25 @@ export function rotatedColumnHeaderAssignments(items, cells) {
     )
     .sort((a, b) => a.rect[0] - b.rect[0])
   const columns = cells
-    .filter((cell) => cell.row === 0 && cell.rowSpan === 1 && cell.colSpan === 1)
+    .filter((cell) => headerRows.includes(cell.row) && cell.rowSpan === 1 && cell.colSpan === 1)
     .sort((a, b) => a.rect[0] - b.rect[0])
+  const headerRects = columns.map((cell) => cell.rect)
+  const headerTop = Math.min(...headerRects.map((rect) => rect[1]))
+  const headerBottom = Math.max(...headerRects.map((rect) => rect[3]))
+  const headerCenter = (headerTop + headerBottom) / 2
   const candidates = []
   const used = new Set()
   for (const item of labels) {
+    const height = Number.isFinite(item.height) ? item.height : item.rect[3] - item.rect[1]
+    const tolerance = Math.max(2, height * 0.35)
+    const centerY = (item.rect[1] + item.rect[3]) / 2
+    if (
+      rows.length &&
+      (!Number.isFinite(headerTop) ||
+        !Number.isFinite(headerBottom) ||
+        Math.abs(centerY - headerCenter) > (headerBottom - headerTop) / 2 + tolerance)
+    )
+      continue
     const center = (item.rect[0] + item.rect[2]) / 2
     const match = columns
       .filter((cell) => !used.has(cell))
@@ -882,7 +898,7 @@ export function rotatedColumnHeaderAssignments(items, cells) {
     used.add(match.cell)
     candidates.push({ item, cell: match.cell })
   }
-  const width = cells.filter((cell) => cell.row === 0).length
+  const width = cells.filter((cell) => headerRows.includes(cell.row)).length
   if (candidates.length < 3 || columns.length < 3 || candidates.length < Math.ceil(width * 0.5))
     return new Map()
   return new Map(candidates.map(({ item, cell }) => [item, cell]))
@@ -1104,7 +1120,7 @@ export function populateTableCellText({
   // A narrow vertical label can be a real first-row column header. Keep this
   // proof separate from rotated stub labels: it requires a single-column
   // row-zero cell and enough neighboring labels to establish a header band.
-  const rotatedHeaderCells = rotatedColumnHeaderAssignments(items, cells)
+  const rotatedHeaderCells = rotatedColumnHeaderAssignments(items, cells, rows, headerRows)
   if (rotatedHeaderCells.size) repairs.push('rotated-column-header-recovered')
   if (repairs.includes('wide-numeric-columns-recovered'))
     recoverWideNumericRows({ items, cells, rows, columnRects, headerRows, repairs })
@@ -2471,6 +2487,7 @@ export function populateTableCellText({
     items,
     cells,
     rows,
+    headerRows,
     assignments,
     ambiguousAssignments,
     repairs
