@@ -407,6 +407,57 @@ it.each([undefined, 'session-1'])(
   }
 )
 
+it('keeps library notes accessible when automatic native reconciliation cannot parse the PDF', async () => {
+  const { options, service } = fixture()
+  vi.mocked(options.repository.registerVerifiedSource).mockResolvedValue(true)
+  const notes = { items: [], total: 0 }
+  vi.mocked(options.repository.list).mockResolvedValue(notes)
+  parseNative.mockRejectedValueOnce(new Error('Password required'))
+  const scope = { literatureVersionId: 'version-1' }
+  expect(await service.list(scope)).toMatchObject(notes)
+  expect(options.repository.registerVerifiedSource).toHaveBeenCalledOnce()
+  expect(options.repository.reconcileSource).not.toHaveBeenCalled()
+  const lease = await options.literature.openContent('version-1')
+  expect(lease.close).toHaveBeenCalledOnce()
+
+  // A later successful parse can still reconcile; the failure did not record an empty baseline.
+  parseNative.mockResolvedValue(parsed)
+  await service.list(scope)
+  expect(options.repository.reconcileSource).toHaveBeenCalledWith(
+    expect.objectContaining({ kind: 'literature-attachment-version' }),
+    lease.size,
+    parsed.annotations
+  )
+})
+
+it('keeps Workspace writes available after optional parsing fails but propagates reconciliation errors', async () => {
+  const { options, service } = fixture()
+  vi.mocked(options.repository.registerVerifiedSource).mockResolvedValue(true)
+  parseNative.mockRejectedValueOnce(new Error('Invalid PDF structure'))
+  await service.create(request)
+  expect(options.repository.create).toHaveBeenCalledOnce()
+  expect(options.repository.reconcileSource).not.toHaveBeenCalled()
+
+  parseNative.mockResolvedValue(parsed)
+  vi.mocked(options.repository.reconcileSource).mockRejectedValue(new Error('Database unavailable'))
+  await expect(service.create(request)).rejects.toThrow('Database unavailable')
+  expect(options.repository.create).toHaveBeenCalledOnce()
+})
+
+it('cancels automatic reconciliation with the native import and releases its lease', async () => {
+  const { options, service } = fixture()
+  vi.mocked(options.repository.registerVerifiedSource).mockResolvedValue(true)
+  parseNative.mockImplementation(async (_path, { signal }) => {
+    service.cancelImport({ operationId: importRequest.operationId })
+    signal.throwIfAborted()
+  })
+  expect(await service.importNative(importRequest)).toMatchObject({ cancelled: true })
+  expect(options.repository.reconcileSource).not.toHaveBeenCalled()
+  expect(options.repository.createMany).not.toHaveBeenCalled()
+  const resolved = (await options.resolveSessionPdfVersion(importRequest))!
+  expect((await resolved.openContent!()).close).toHaveBeenCalledOnce()
+})
+
 it('holds verified sharing leases inside the writable source authority and closes on failure', async () => {
   const { options, service } = fixture()
   const source = request.target.source

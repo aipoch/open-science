@@ -3,6 +3,7 @@ import { createArtifactVersionLocator } from '../../shared/artifact-provenance'
 import { createUploadVersionReference } from '../../shared/uploads'
 import { createLiteratureAttachmentVersionReference } from '../../shared/literature'
 import type { LiteratureAttachmentAuthority } from '../literature/attachment-authority'
+import { createLogger, diagnosticErrorFields } from '../logger'
 import type { PdfAnnotationScope, PdfAnnotationSource } from '../../shared/pdf-annotations'
 import { isDeepStrictEqual } from 'node:util'
 import { createHash } from 'node:crypto'
@@ -35,6 +36,8 @@ import type {
   PdfNativeAnnotationImportRequest,
   PdfNativeAnnotationImportResult
 } from '../../shared/pdf-annotations'
+
+const log = createLogger('pdf-annotations')
 
 type Options = Readonly<{
   repository: Pick<
@@ -118,10 +121,22 @@ class PdfAnnotationService {
 
   private async prepareSource(
     source: PdfAnnotationSource,
-    lease: { path: string; size: number }
+    lease: { path: string; size: number },
+    signal = this.shutdown.signal
   ): Promise<void> {
     if (await this.options.repository.registerVerifiedSource(source, lease.size)) {
-      const parsed = await parseNativePdfAnnotations(lease.path)
+      const parsed = await parseNativePdfAnnotations(lease.path, { signal }).catch((error) => {
+        signal.throwIfAborted()
+        if (error instanceof Error && error.name === 'AbortError') throw error
+        // Keep historical groups pending: a failed parse is not an empty native baseline.
+        log.warn(
+          'Could not prepare native PDF annotation reconciliation',
+          diagnosticErrorFields(error)
+        )
+        return undefined
+      })
+      signal.throwIfAborted()
+      if (!parsed) return
       await this.options.repository.reconcileSource(source, lease.size, parsed.annotations)
     }
   }
@@ -432,7 +447,7 @@ class PdfAnnotationService {
     const identityLease = await resolved.openContent()
     try {
       await identityLease.verifyUnchanged()
-      await this.prepareSource(source, identityLease)
+      await this.prepareSource(source, identityLease, signal)
     } finally {
       await identityLease.close()
     }
