@@ -391,14 +391,12 @@ const WorkspacePage = ({
     generation: 0
   }))
   if (panelIdentity.projectId !== scopedProjectId || panelIdentity.sessionId !== panelSessionId) {
-    const startsPendingConversation = !panelIdentity.sessionId && activeSession?.isPending === true
     const bindsPendingConversation =
       panelIdentity.pendingMessageId !== undefined &&
       activeSession?.messages[0]?.id === panelIdentity.pendingMessageId &&
       !useSessionStore.getState().sessions.some((session) => session.id === panelIdentity.sessionId)
     const continuesComposer =
-      panelIdentity.projectId === scopedProjectId &&
-      (startsPendingConversation || bindsPendingConversation)
+      panelIdentity.projectId === scopedProjectId && bindsPendingConversation
     setPanelIdentity({
       projectId: scopedProjectId,
       sessionId: panelSessionId,
@@ -698,6 +696,23 @@ const WorkspacePage = ({
     composer,
     session: sessionController,
     runtime,
+    onNewSessionAppended: (message) => {
+      const state = useSessionStore.getState()
+      if (
+        state.selectedSessionId !== message.sessionId ||
+        !state.sessions.some((session) => session.id === message.sessionId && session.isPending)
+      )
+        return
+      // Only this panel's own first send may retain its instance. Selecting an
+      // unrelated pending Session follows the ordinary remount path above.
+      setPanelIdentity((current) =>
+        current.projectId === scopedProjectId &&
+        current.generation === panelIdentity.generation &&
+        !current.sessionId
+          ? { ...current, sessionId: message.sessionId, pendingMessageId: message.messageId }
+          : current
+      )
+    },
     sideChat: !sideChatDisabledReason ? { start: sideChat.start } : undefined,
     sideChatOpen: sideChat.view !== undefined,
     resetNewConversationSettings: () => {

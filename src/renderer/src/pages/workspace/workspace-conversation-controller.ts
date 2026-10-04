@@ -124,6 +124,7 @@ type WorkspaceConversationControllerOptions = {
   sideChat?: Readonly<{ start: (text: string) => Promise<boolean> }>
   sideChatOpen: boolean
   resetNewConversationSettings: () => void
+  onNewSessionAppended?: (message: { sessionId: string; messageId: string }) => void
   abortFixLoop: (request: { projectId: string; appSessionId: string }) => Promise<unknown>
   getSession: (sessionId: string) => ChatSession | undefined
   subscribeSessionChanges: (listener: () => void) => () => void
@@ -562,7 +563,11 @@ const useWorkspaceConversationController = (
         void runtime
           .sendMessage({
             sessionId,
-            onMessageAppended: clearOptimisticMessage,
+            onMessageAppended: (message) => {
+              clearOptimisticMessage()
+              if (wasNewConversation && !sessionId && !branchInNewSession)
+                current.onNewSessionAppended?.(message)
+            },
             onPreparationRejected: (message, rejectedSessionId, finalizedAttachments) => {
               preparationRejected = true
               clearOptimisticMessage()

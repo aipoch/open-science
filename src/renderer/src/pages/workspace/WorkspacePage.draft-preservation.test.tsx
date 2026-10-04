@@ -673,12 +673,19 @@ describe('WorkspacePage draft preservation', () => {
     }
     // Use the current Project identity from the live new-conversation props.
     pending.projectId = useNavigationStore.getState().activeProjectId!
-    await act(async () =>
+    runtime.sendMessage.mockImplementationOnce(async (input) => {
       useSessionStore.setState((state) => ({
         sessions: [...state.sessions, pending],
         selectedSessionId: pending.id
       }))
+      input.onMessageAppended?.({ sessionId: pending.id, messageId: 'new-prompt' })
+      return { sessionId: pending.id, messageId: 'new-prompt' }
+    })
+    await act(async () => conversationProps.composer.actions.changeDoc(textDoc('Research this')))
+    await act(async () =>
+      conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [] })
     )
+    expect(runtime.sendMessage).toHaveBeenCalledOnce()
     expect(container.querySelector('[data-testid="conversation"]')).toBe(panel)
     await act(async () =>
       useSessionStore.setState((state) => ({
@@ -691,6 +698,23 @@ describe('WorkspacePage draft preservation', () => {
     expect(container.querySelector('[data-testid="conversation"]')).toBe(panel)
     await openSession('sess-a')
     expect(container.querySelector('[data-testid="conversation"]')).not.toBe(panel)
+  })
+
+  it('remounts the new panel when selecting an existing pending Session', async () => {
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === 'sess-a' ? { ...session, isPending: true, status: 'running' } : session
+      )
+    }))
+    await renderPage()
+    await act(async () => sidebarProps.onNewConversation())
+    const panel = container.querySelector('[data-testid="conversation"]')
+    const detail = container.querySelector<HTMLButtonElement>('[data-testid="open-local-detail"]')!
+    await act(async () => detail.click())
+    expect(container.querySelector('[data-testid="local-detail-session"]')).not.toBeNull()
+    await openSession('sess-a')
+    expect(container.querySelector('[data-testid="conversation"]')).not.toBe(panel)
+    expect(container.querySelector('[data-testid="local-detail-session"]')).toBeNull()
   })
 
   it('keeps pending Stop and Resume guards across a Session round trip', async () => {
