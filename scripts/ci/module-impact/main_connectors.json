@@ -332,8 +332,7 @@
       "src/main/acp/approved-handoff-outcome.integration.test.ts",
       "src/main/acp/approved-handoff-outcome.test.ts",
       "src/main/connectors/descriptors/omics-geo-matrix.test.ts",
-      "src/main/connectors/descriptors/iedb.test.ts",
-      "src/main/agent-framework/claude-shared-settings.integration.test.ts"
+      "src/main/connectors/descriptors/iedb.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

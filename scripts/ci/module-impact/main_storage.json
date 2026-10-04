@@ -741,8 +741,7 @@
       "src/renderer/src/lib/compute/useJobAnalysisEffect.render.test.tsx",
       "src/main/acp/approved-handoff-outcome.integration.test.ts",
       "src/main/acp/approved-handoff-outcome.test.ts",
-      "src/main/pdf-annotations/sharing.integration.test.ts",
-      "src/main/agent-framework/claude-shared-settings.integration.test.ts"
+      "src/main/pdf-annotations/sharing.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

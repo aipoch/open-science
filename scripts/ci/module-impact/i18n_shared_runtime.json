@@ -687,8 +687,7 @@
       "src/main/acp/approved-handoff-outcome.test.ts",
       "src/renderer/src/lib/acp/workspace-prompt-rollback-failure.test.ts",
       "src/renderer/src/lib/acp/workspace-runtime-overflow-recovery-failures.test.ts",
-      "src/renderer/src/pages/workspace/SessionHeaderMenu.test.tsx",
-      "src/main/agent-framework/claude-shared-settings.integration.test.ts"
+      "src/renderer/src/pages/workspace/SessionHeaderMenu.test.tsx"
     ]
   },
   "capabilityOverlays": [],

@@ -11,8 +11,6 @@ import { claudeCliPath } from '@agentclientprotocol/claude-agent-acp/dist/acp-ag
 import { beforeAll, describe, expect, it } from 'vitest'
 import { claudeCodeFramework } from './claude-code'
 import { provisionAppClaudePrivateProfile } from '../settings/claude-config-provision'
-import { AgentBackendResolver } from '../settings/backend-resolver'
-import { SETTINGS_FILE_VERSION } from '../../shared/settings'
 import { terminateProcessTree } from '../process-tree'
 
 const instruction = 'ISSUE_3283_PERSONAL_INSTRUCTION'
@@ -173,55 +171,6 @@ child.on('exit',code=>process.exit(code??1));
   const privateSettings = await provisionAppClaudePrivateProfile(privateProfileDir)
   const projectionRoot = join(root, 'skills')
   await mkdir(projectionRoot)
-  const unused = async (): Promise<never> => {
-    throw new Error('Unexpected non-Claude runtime')
-  }
-  const resolver = new AgentBackendResolver({
-    storageRoot,
-    userClaudeDir: profile,
-    skillRuntimeMcpEntryPath: join(root, 'unused-mcp.js'),
-    readSettings: async () => ({
-      version: SETTINGS_FILE_VERSION,
-      activeProviderId: 'claude-shared',
-      providers: [{ id: 'claude-shared', type: 'claude-shared', name: 'Claude' }]
-    }),
-    providers: {
-      resolveRuntimeTarget: () => ({
-        providerId: 'claude-shared',
-        providerType: 'claude-shared',
-        effectiveModel: 'claude-sonnet-4-5',
-        apiEndpoints: ['anthropic'],
-        provider: { type: 'claude-shared', model: 'claude-sonnet-4-5' },
-        reasoningEffortProfile: { supported: false },
-        frameworkCompatible: true,
-        modelBridgeSupported: false,
-        needsChatResponsesBridge: false,
-        needsNativeResponsesCompatibility: false
-      }),
-      resolveRuntimeModelCatalog: () => [],
-      resolveRuntimeReasoningEffortProfile: () => ({ supported: false })
-    },
-    runtime: {
-      resolveClaudeExecutable: async () => launcher,
-      provisionClaudeRuntimeConfig: async () => ({
-        privateProfileDir,
-        settingsPath: join(privateProfileDir, 'settings.json'),
-        privateSettings,
-        skillProjection: { root: projectionRoot, revision: 'probe' }
-      }),
-      resolveOpencodeExecutable: unused,
-      resolveCodeBuddyExecutable: unused,
-      resolveCodexExecutable: unused,
-      probeCodexNativeVersion: unused,
-      materializeAgentSkills: unused,
-      materializeAgentConfigFiles: unused,
-      reserveOpenCodeUsagePort: unused,
-      resolveCodexProxyEnvironment: unused
-    },
-    connectors: { connectorSkillNames: () => [] }
-  })
-  const config = await resolver.resolveActiveSpawnConfig()
-  expect(config.envOverrides.CLAUDE_CONFIG_DIR).toBe(profile)
   const env: NodeJS.ProcessEnv = {}
   for (const key of [
     'PATH',
@@ -239,7 +188,9 @@ child.on('exit',code=>process.exit(code??1));
   ]) {
     if (process.env[key] !== undefined) env[key] = process.env[key]
   }
-  Object.assign(env, config.envOverrides, {
+  Object.assign(env, {
+    CLAUDE_CONFIG_DIR: profile,
+    CLAUDE_CODE_EXECUTABLE: launcher,
     HOME: root,
     USERPROFILE: root,
     APPDATA: join(root, 'appdata'),
@@ -254,7 +205,18 @@ child.on('exit',code=>process.exit(code??1));
   })
   const setup = claudeCodeFramework.buildSessionSetup({
     systemPromptAppends: [appInstruction],
-    sessionOptions: config.sessionOptions
+    // The resolver's shared-provider policy is checked in backend-resolver.test.ts. Exercise
+    // that public session-options contract here without importing the multi-provider coordinator.
+    sessionOptions: {
+      settings: privateSettings,
+      settingSources: [],
+      strictMcpConfig: true,
+      permissionMode: 'default',
+      additionalDirectories: [projectionRoot],
+      sandbox: {
+        filesystem: { allowRead: [projectionRoot], denyWrite: [projectionRoot] }
+      }
+    }
   })
   const child = spawn(
     process.execPath,
