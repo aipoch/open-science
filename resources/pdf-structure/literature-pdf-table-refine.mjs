@@ -863,6 +863,20 @@ export function recoverClippedSideBySideCrop(table, pageItems) {
   const leftRows = new Set(left.map(rowOf).filter((row) => row >= 0))
   const rightRows = new Set(right.map(rowOf).filter((row) => row >= 0))
   if (leftRows.size < 4 || rightRows.size < 4) return
+  const interiorRows = new Set(
+    pageItems
+      .filter(
+        (item) =>
+          item.rect[0] >= crop[0] &&
+          item.rect[2] <= crop[2] &&
+          item.rect[1] >= crop[1] &&
+          item.rect[3] <= crop[3]
+      )
+      .map(rowOf)
+      .filter((row) => row >= 0)
+  )
+  const sharedRows = [...leftRows].filter((row) => rightRows.has(row) && interiorRows.has(row))
+  if (sharedRows.length < 4) return
   const leftLabels = left.filter(
     (item) => /\p{L}/u.test(item.text.trim()) && !/^[-+]?\d[\d.,%]*$/u.test(item.text.trim())
   )
@@ -10236,10 +10250,19 @@ export function refineTable(
           ...cells.filter((cell) => cell.column === firstOwnedColumn).map((cell) => cell.rect[0])
         )
       : Infinity
+  const firstModelColumn = columns
+    .filter((column) => Array.isArray(column.rect))
+    .sort((a, b) => a.rect[0] - b.rect[0])[0]
+  const firstModelColumnLeft = firstModelColumn
+    ? table.cropRect[0] + firstModelColumn.rect[0]
+    : Infinity
   const clippedProseOnly =
     clipped.length > 0 &&
     clipped.every(
-      (item) => item.text.trim().split(/\s+/u).length >= 3 && item.rect[2] <= firstOwnedLeft + 1
+      (item) =>
+        item.text.trim().split(/\s+/u).length >= 3 &&
+        item.rect[2] <= firstOwnedLeft + 1 &&
+        item.rect[2] <= firstModelColumnLeft + 1
     )
   if (leadingEmpty && clippedProseOnly && Number.isFinite(firstOwnedLeft)) {
     outputCrop = [Math.max(table.cropRect[0], firstOwnedLeft - 1.5), ...table.cropRect.slice(1)]

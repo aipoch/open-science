@@ -167,9 +167,8 @@ it('does not merge a neighboring numeric panel into a table crop', () => {
   const table = model(3, [0, 20, 40, 60, 80, 100, 120])
   table.cropRect = [50, 0, 250, 120]
   const items = [
-    item('Neighboring panel', 20, 3),
     ...Array.from({ length: 6 }, (_, row) => [
-      item(String(10 + row), 20, row * 18 + 3),
+      item(`Neighboring row ${row}`, 20, row * 18 + 3),
       item(String(20 + row), 248, row * 18 + 3)
     ]).flat()
   ]
