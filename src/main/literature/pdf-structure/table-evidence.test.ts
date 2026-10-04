@@ -455,7 +455,10 @@ it('rejects a lettered contents directory with dotted page leaders', () => {
     hasTableEvidence(
       {
         ...fixture.table,
-        grid: fixture.table.grid.map(([marker, entry]) => [marker, entry.replace(/\./g, '')])
+        grid: fixture.table.grid.map(([marker, entry]: [string, string]) => [
+          marker,
+          entry.replace(/\./g, '')
+        ])
       },
       undefined,
       fixture.tokens

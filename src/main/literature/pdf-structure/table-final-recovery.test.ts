@@ -58,6 +58,18 @@ it('extends a narrow table when every terminal source-text cell crosses the crop
   expect(crop?.slice(0, 3)).toEqual([0, 0, 500])
 })
 
+it('extends a raw detector crop from a complete terminal source row', () => {
+  const fixture = readPdfFixture(
+    resolve('src/main/literature/pdf-structure/fixtures/complete-terminal-source-row-crop.jsonl')
+  )
+  const table = structuredClone(fixture.table)
+  delete table.rows
+  delete table.cells
+  const crop = recoverCompleteTerminalSourceRowCrop(table, fixture.items)
+  expect(crop?.[3]).toBeGreaterThan(96)
+  expect(crop?.slice(0, 3)).toEqual([0, 0, 500])
+})
+
 it('recovers a clipped repeated group header without adding rows or columns', () => {
   const columns = [0, 100, 200].map((start) => [start, 0, start + 100, 40])
   const header = columns.map((rect, column) => ({
@@ -190,7 +202,7 @@ it('recovers the anonymous clipped terminal-column fixture', () => {
 it('does not expand a right edge for an isolated neighboring line', () => {
   const table = model(2, [0, 20, 40, 60])
   table.cropRect = [100, 0, 200, 80]
-  expect(recoverClippedRightLabelCrop(table, [item('neighbor', 198, 20, 20, 10)])).toBeUndefined()
+  expect(recoverClippedRightLabelCrop(table, [item('neighbor', 198, 20, 20)])).toBeUndefined()
 })
 
 it('recovers an omitted first line of a grouped multiline stub', () => {
@@ -284,7 +296,8 @@ it('splits two complete slash-score runs into empty leading lanes', () => {
     origin: index === 0 ? 'model' : 'source-text',
     index
   }))
-  const cells = Array.from({ length: 3 }, (_, row) =>
+  type SlashCell = { row: number; column: number; rowSpan: number; colSpan: number; rect: number[] }
+  const cells: SlashCell[] = Array.from({ length: 3 }, (_, row) =>
     Array.from({ length: 9 }, (_, column) => ({
       row,
       column,
@@ -297,15 +310,18 @@ it('splits two complete slash-score runs into empty leading lanes', () => {
     item('88.8/66.3 81.1/58.4 86.4/64.9 74.8/54.0', 105, 22, 390),
     item('88.7/65.9 81.7/58.6 86.4/64.5 75.6/54.3', 105, 42, 390)
   ]
-  const assigned = [
+  const pair = (
+    source: ReturnType<typeof item>,
+    cell: SlashCell
+  ): [ReturnType<typeof item>, SlashCell] => [source, cell]
+  const assigned: [ReturnType<typeof item>, SlashCell][] = [
     ...[1, 2].flatMap((row) => [
-      [item(`Method ${row}`, 5, row * 20 + 2), cells[row * 9]],
-      ...[5, 6, 7, 8].map((column) => [
-        item(String(80 + column), column * 100 + 10, row * 20 + 2),
-        cells[row * 9 + column]
-      ])
+      pair(item(`Method ${row}`, 5, row * 20 + 2), cells[row * 9]),
+      ...[5, 6, 7, 8].map((column) =>
+        pair(item(String(80 + column), column * 100 + 10, row * 20 + 2), cells[row * 9 + column])
+      )
     ])
-  ] as const
+  ]
   const assignments = new Map(assigned)
   const repairs: string[] = []
   expect(

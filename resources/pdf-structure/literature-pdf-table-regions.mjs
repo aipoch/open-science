@@ -70,10 +70,12 @@ export function deduplicateTableRegions(tables, items, captions = []) {
         Math.max(1, Math.min(a[3] - a[1], b[3] - b[1]))
       const outerWidth = a[2] - a[0]
       const innerWidth = b[2] - b[0]
+      const horizontalOverlap = Math.max(0, Math.min(a[2], b[2]) - Math.max(a[0], b[0]))
       if (
         b[0] <= a[0] + outerWidth * 0.3 ||
         b[2] < a[2] - 14 ||
         innerWidth >= outerWidth * 0.8 ||
+        horizontalOverlap / Math.max(1, Math.min(outerWidth, innerWidth)) < 0.35 ||
         vertical < 0.35
       )
         continue
@@ -261,7 +263,7 @@ export function narrativeDuplicateTableIndices(tables) {
     const outerHeight = a[3] - a[1]
     const firstColumn = outerRows.map((row) => normalizeCell(row[0])).filter(Boolean)
     const numericFirst = firstColumn.filter((value) =>
-      /^[<>≤≥+\-]?\d[\d.,]*(?:[kKmMbB])?$/u.test(value)
+      /^[<>≤≥+-]?\d[\d.,]*(?:[kKmMbB])?$/u.test(value)
     )
     if (numericFirst.length < Math.max(2, Math.ceil(firstColumn.length * 0.55))) continue
     for (let innerIndex = 0; innerIndex < tables.length; innerIndex++) {

@@ -55,7 +55,7 @@ it('recovers a complete numbered record straddling duplicate empty bands', () =>
     latitude: string,
     size: string,
     y: number
-  ) => [
+  ): Record<string, unknown>[] => [
     token(id, 8, y),
     token(name, 70, y),
     token(date, 108, y),
@@ -143,7 +143,7 @@ it('assigns a fully unassigned numbered row to the nearer duplicate band', () =>
     latitude: string,
     size: string,
     y: number
-  ) => [
+  ): Record<string, unknown>[] => [
     token(id, 8, y),
     token(name, 70, y),
     token(date, 108, y),
@@ -303,9 +303,11 @@ it('assigns a complete unassigned data row to an existing empty model row', () =
   })
   expect(recovered).toBe(1)
   expect(repairs).toContain('unassigned-complete-model-row-recovered')
-  expect(source.map((item: { text: string }) => assignments.get(item)?.column)).toEqual([
-    1, 2, 3, 4, 5, 6, 7
-  ])
+  expect(
+    source.map(
+      (item: { text: string }) => (assignments.get(item) as { column?: number } | undefined)?.column
+    )
+  ).toEqual([1, 2, 3, 4, 5, 6, 7])
   expect(cells.filter((cell) => cell.row === 2)).toHaveLength(8)
 })
 

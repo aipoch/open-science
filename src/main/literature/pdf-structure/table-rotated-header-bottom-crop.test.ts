@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-const runtime = (name: string) =>
+const runtime = (name: string): string =>
   new URL(`../../../../resources/pdf-structure/${name}.mjs`, import.meta.url).href
 
 const {
@@ -12,7 +12,17 @@ const {
 } = await import(runtime('literature-pdf-table-cell-text'))
 const { recoverWideTableBottomCrop } = await import(runtime('literature-pdf-table-refine'))
 
-const cell = (column: number, left: number, right: number) => ({
+const cell = (
+  column: number,
+  left: number,
+  right: number
+): {
+  row: number
+  column: number
+  rowSpan: number
+  colSpan: number
+  rect: number[]
+} => ({
   row: 0,
   column,
   rowSpan: 1,
@@ -100,7 +110,14 @@ describe('external wide table geometry repairs', () => {
         sourceRects: []
       }))
     )
-    const item = (text: string, x: number) => ({
+    const item = (
+      text: string,
+      x: number
+    ): {
+      text: string
+      rect: number[]
+      horizontal: boolean
+    } => ({
       text,
       rect: [x, 20, x + 12, 40],
       horizontal: true
@@ -144,10 +161,20 @@ describe('external wide table geometry repairs', () => {
         rowSpan: 1,
         colSpan: rowIndex === 1 && column === 0 ? 8 : 1,
         rect: [column * 40, row.rect[1], (column + 1) * 40, row.rect[3]],
-        items: []
+        items: [],
+        text: ''
       }))
     )
-    const values = (label: string, y: number) => ({
+    const values = (
+      label: string,
+      y: number
+    ): {
+      text: string
+      rect: number[]
+      horizontal: boolean
+      baseline: number
+      height: number
+    } => ({
       text: `${label} 1 2 3 4 5 6 7`,
       rect: [0, y, 320, y + 10],
       horizontal: true,
@@ -195,10 +222,21 @@ describe('external wide table geometry repairs', () => {
         rowSpan: rowIndex === 2 && column === 0 ? 2 : 1,
         colSpan: 1,
         rect: [column * 40, row.rect[1], (column + 1) * 40, row.rect[3]],
-        items: []
+        items: [],
+        text: ''
       }))
     )
-    const item = (text: string, column: number, y: number) => ({
+    const item = (
+      text: string,
+      column: number,
+      y: number
+    ): {
+      text: string
+      rect: number[]
+      horizontal: boolean
+      baseline: number
+      height: number
+    } => ({
       text,
       rect: [column * 40 + 4, y, column * 40 + 20, y + 10],
       horizontal: true,
@@ -262,10 +300,20 @@ describe('external wide table geometry repairs', () => {
         rowSpan: 1,
         colSpan: 1,
         rect: [column * 40, row.rect[1], (column + 1) * 40, row.rect[3]],
-        items: []
+        items: [],
+        text: ''
       }))
     )
-    const item = (text: string, column: number) => ({
+    const item = (
+      text: string,
+      column: number
+    ): {
+      text: string
+      rect: number[]
+      horizontal: boolean
+      baseline: number
+      height: number
+    } => ({
       text,
       rect: [column * 40 + 4, 24, column * 40 + 30, 34],
       horizontal: true,
@@ -329,7 +377,8 @@ describe('external wide table geometry repairs', () => {
         rowSpan: 1,
         colSpan: 1,
         rect: [column * 30, row.rect[1], (column + 1) * 30, row.rect[3]],
-        items: []
+        items: [],
+        text: ''
       }))
     )
     const fused = {
@@ -384,7 +433,8 @@ describe('external wide table geometry repairs', () => {
         rowSpan: 1,
         colSpan: 1,
         rect: [column * 30, row.rect[1], (column + 1) * 30, row.rect[3]],
-        items: []
+        items: [],
+        text: ''
       }))
     )
     const fused = {
@@ -432,7 +482,8 @@ describe('external wide table geometry repairs', () => {
         rowSpan: 1,
         colSpan: 1,
         rect: [column * 30, row.rect[1], (column + 1) * 30, row.rect[3]],
-        items: []
+        items: [],
+        text: ''
       }))
     )
     const fused = {

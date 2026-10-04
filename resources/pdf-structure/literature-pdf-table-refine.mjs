@@ -167,8 +167,7 @@ import {
 } from './literature-pdf-table-cell-merges.mjs'
 import {
   populateTableCellText,
-  reconcileFragmentedCountHeaders,
-  recoverUnassignedRepeatedGroupLabels
+  reconcileFragmentedCountHeaders
 } from './literature-pdf-table-cell-text.mjs'
 import { captionKind } from './literature-pdf-caption-group.mjs'
 import { recoverSegmentedLeafHeaderBand } from './literature-pdf-segmented-header-band.mjs'
@@ -564,7 +563,58 @@ export function recoverCompleteTerminalSourceRowCrop(table, pageItems) {
   const rows = table?.rows
   const cells = table?.cells
   const columns = table?.structure?.objects?.filter((object) => object.label === 'table column')
-  if (!crop || !Array.isArray(rows) || !Array.isArray(cells) || !columns?.length) return
+  if (!crop || !columns?.length) return
+  if (!Array.isArray(rows) || !Array.isArray(cells)) {
+    const width = crop[2] - crop[0]
+    const height = crop[3] - crop[1]
+    if (!(width > 0 && height > 0)) return
+    const absoluteColumns = columns.map((column) => [
+      column.rect[0] + crop[0],
+      column.rect[1] + crop[1],
+      column.rect[2] + crop[0],
+      column.rect[3] + crop[1]
+    ])
+    const heights = (pageItems ?? [])
+      .map((item) => item.height)
+      .filter((value) => Number.isFinite(value) && value > 0)
+      .sort((a, b) => a - b)
+    const lineHeight = heights[Math.floor(heights.length / 2)]
+    if (!(lineHeight > 0)) return
+    const source = (pageItems ?? []).filter(
+      (item) =>
+        item.horizontal &&
+        item.rect[1] < crop[3] + lineHeight * 1.6 &&
+        item.rect[3] > crop[3] - lineHeight * 0.4 &&
+        item.rect[0] < crop[2] &&
+        item.rect[2] > crop[0] &&
+        item.text.trim()
+    )
+    const groups = []
+    const baselineOf = (item) => (Number.isFinite(item.baseline) ? item.baseline : item.rect[3])
+    for (const item of source.sort(
+      (a, b) => baselineOf(a) - baselineOf(b) || a.rect[0] - b.rect[0]
+    )) {
+      const group = groups.at(-1)
+      if (group && Math.abs(baselineOf(group[0]) - baselineOf(item)) <= lineHeight * 0.35)
+        group.push(item)
+      else groups.push([item])
+    }
+    const terminal = groups
+      .filter((group) => group.some((item) => item.rect[3] > crop[3] + 0.5))
+      .at(-1)
+    if (!terminal || terminal.length < Math.max(5, Math.ceil(absoluteColumns.length * 0.7))) return
+    const numeric = terminal.filter((item) => /\d/.test(item.text)).length
+    if (numeric < Math.max(4, Math.ceil(absoluteColumns.length * 0.5))) return
+    if (
+      absoluteColumns.some(
+        (column) => !terminal.some((item) => item.rect[0] < column[2] && item.rect[2] > column[0])
+      )
+    )
+      return
+    const bottom = Math.max(...terminal.map((item) => item.rect[3]))
+    if (bottom - crop[3] > lineHeight * 1.4) return
+    return [crop[0], crop[1], crop[2], bottom + Math.min(1.5, lineHeight * 0.2)]
+  }
   const lastRow = rows.at(-1)
   const rowIndex = (table.grid?.length ?? 0) - 1
   if (!lastRow || lastRow.origin !== 'source-text' || rowIndex < 0) return
@@ -2318,7 +2368,7 @@ export function refineTable(
   // repeated metric sequence. Rebuild only a small deficit from repeated
   // numeric evidence, preserving the measured stub and crop boundaries.
   if (!recordGrid && externalCaptions.length && columns.length >= 8) {
-    const numericToken = (value) => /^[<>≤≥−+\-]?\d+(?:[.,]\d+)?%?$/.test(value)
+    const numericToken = (value) => /^[<>≤≥−+-]?\d+(?:[.,]\d+)?%?$/.test(value)
     const counts = items
       .filter((item) => item.horizontal && item.rect[0] >= columns[0].rect[2] - 2)
       .map((item) => item.text.trim().split(/\s+/u).filter(numericToken).length)
@@ -9786,8 +9836,8 @@ export function refineTable(
     const wideTokens = item.text.trim().split(/\s+/u)
     const numericWideRun =
       wideTokens.length >= 8 &&
-      wideTokens.filter((token) => /^[<>≤≥−+\-]?\d+(?:[.,]\d+)?%?$/.test(token)).length >= 8 &&
-      wideTokens.slice(1).every((token) => /^[<>≤≥−+\-]?\d+(?:[.,]\d+)?%?$/.test(token))
+      wideTokens.filter((token) => /^[<>≤≥−+-]?\d+(?:[.,]\d+)?%?$/.test(token)).length >= 8 &&
+      wideTokens.slice(1).every((token) => /^[<>≤≥−+-]?\d+(?:[.,]\d+)?%?$/.test(token))
     if (numericWideRun && columns.length >= 8) continue
     const row = rows.findIndex(
       (candidate) =>

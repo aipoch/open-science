@@ -591,7 +591,8 @@ it.each(['body-font', 'table', 'competing-caption', 'far-caption', 'incomplete-c
     const f = illustratedText(),
       tables: number[][] = [],
       captions = [f.caption]
-    if (reason === 'body-font') f.page.lines.slice(0, 7).forEach((line) => (line.fontSize = 10))
+    if (reason === 'body-font')
+      f.page.lines.slice(0, 7).forEach((line: { fontSize?: number }) => (line.fontSize = 10))
     if (reason === 'table') tables.push([50, 80, 550, 150])
     if (reason === 'competing-caption')
       captions.push({ page: 1, lines: ['Figure 3. Other.'], rect: [60, 90, 200, 100] })

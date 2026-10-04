@@ -82,7 +82,9 @@ it('recovers two same-row raster panels when the first association leaves the ca
     caption(['Figure 9. Paired plots.'], [70, 372, 535, 392])
   ])[0]
   expect(result.rect).toHaveLength(4)
-  result.rect.forEach((value, index) => expect(value).toBeCloseTo([70, 110, 535, 360][index]))
+  result.rect.forEach((value: number, index: number) =>
+    expect(value).toBeCloseTo([70, 110, 535, 360][index])
+  )
 })
 const arrayInput = (): {
   page: {

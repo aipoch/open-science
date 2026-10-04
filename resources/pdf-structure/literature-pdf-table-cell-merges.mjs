@@ -633,7 +633,7 @@ export function resolveTableCellMerges({
       .filter((item) => item.horizontal && inside(union(slots), item))
       .sort((a, b) => a.rect[0] - b.rect[0])
     const words = source.flatMap((item) => item.text.trim().split(/\s+/u))
-    const numeric = (value) => /^[<>≤≥−+\-]?\d+(?:[.,]\d+)?%?$/.test(value)
+    const numeric = (value) => /^[<>≤≥−+-]?\d+(?:[.,]\d+)?%?$/.test(value)
     const first = words.findIndex((value) => numeric(value))
     return (
       first > 0 &&

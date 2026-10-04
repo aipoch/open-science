@@ -17,7 +17,7 @@ const BACKSPACE = String.fromCharCode(8)
 // path remains unchanged.
 export function recoverWideNumericRows({ items, cells, rows, columnRects, headerRows, repairs }) {
   if (columnRects.length < 8) return 0
-  const numeric = (value) => /^[<>≤≥−+\-]?\d+(?:[.,]\d+)?%?$/.test(value)
+  const numeric = (value) => /^[<>≤≥−+-]?\d+(?:[.,]\d+)?%?$/.test(value)
   const expected = columnRects.length - 1
   const bodyRows = () =>
     rows
@@ -198,7 +198,7 @@ export function recoverUnassignedNumericContinuationRows({
   assignments,
   repairs
 }) {
-  const numeric = (text) => /^[<>≤≥−+\-]?\d+(?:[.,]\d+)?%?$/.test(text.trim())
+  const numeric = (text) => /^[<>≤≥−+-]?\d+(?:[.,]\d+)?%?$/.test(text.trim())
   const sourceGroups = []
   for (const item of items
     .filter((candidate) => !assignments.has(candidate) && candidate.horizontal)
@@ -455,8 +455,8 @@ export function recoverUnassignedBracketIntervalRows({
     captions.filter((caption) => /^table\b/i.test(caption.lines?.[0] ?? '')).length !== 1
   )
     return 0
-  const interval = /^\[\s*[−+\-]?\d+(?:\.\d+)?\s*,\s*[−+\-]?\d+(?:\.\d+)?\s*\]$/u
-  const wideIntervalPattern = /\[\s*[−+\-]?\d+(?:\.\d+)?\s*,\s*[−+\-]?\d+(?:\.\d+)?\s*\]/gu
+  const interval = /^\[\s*[−+-]?\d+(?:\.\d+)?\s*,\s*[−+-]?\d+(?:\.\d+)?\s*\]$/u
+  const wideIntervalPattern = /\[\s*[−+-]?\d+(?:\.\d+)?\s*,\s*[−+-]?\d+(?:\.\d+)?\s*\]/gu
   const wideExpansions = []
   const intervalItems = []
   for (const item of items) {
@@ -543,7 +543,7 @@ export function recoverUnassignedBracketIntervalRows({
       source.some(
         (item) =>
           assignments.get(item)?.column === column &&
-          /^[−+\-]?\d+(?:\.\d+)?$/u.test(item.text.trim())
+          /^[−+-]?\d+(?:\.\d+)?$/u.test(item.text.trim())
       )
     )
     const aggregate = source.some(
@@ -638,7 +638,7 @@ export function recoverUnassignedBracketIntervalRows({
     return !owners.length || owners.some((owner) => owner.row !== line.target.rowIndex)
   }).length
   if (!changed) return 0
-  for (const { line, pieces } of recoveries) {
+  for (const { pieces } of recoveries) {
     for (const { item, cell } of pieces) {
       assignments.set(item, cell)
       ambiguousAssignments.delete(item)
@@ -981,9 +981,7 @@ export function recoverUnassignedCompleteModelRows({
 }) {
   if (columnRects.length < 3) return 0
   const numeric = (value) =>
-    /^[<>≤≥−+\-]?\d[\d.,]*(?:\s*\/\s*[<>≤≥−+\-]?\d[\d.,]*)*(?:%|[A-Za-z]{1,3})?$/u.test(
-      value.trim()
-    )
+    /^[<>≤≥−+-]?\d[\d.,]*(?:\s*\/\s*[<>≤≥−+-]?\d[\d.,]*)*(?:%|[A-Za-z]{1,3})?$/u.test(value.trim())
   const owned = (cell) => [...assignments.values()].some((owner) => owner === cell)
   const rowCells = (rowIndex) =>
     cells.filter((cell) => cell.row === rowIndex).sort((a, b) => a.column - b.column)
@@ -1129,7 +1127,7 @@ export function populateTableCellText({
     if (!item.horizontal) continue
     const match = item.text
       .trim()
-      .match(/^((?:n\/r)|[<>≤≥−+\-]?\d[\d.,]*(?:[KMB]|%|[A-Za-z]{1,3})?)\s+(\p{L}[\p{L}\-]*)$/iu)
+      .match(/^((?:n\/r)|[<>≤≥−+-]?\d[\d.,]*(?:[KMB]|%|[A-Za-z]{1,3})?)\s+(\p{L}[\p{L}-]*)$/iu)
     if (!match) continue
     const rowIndex = rows.findIndex((row) => {
       const overlap = intersect(row.rect, item.rect) / Math.max(1, area(item.rect))
@@ -1207,7 +1205,7 @@ export function populateTableCellText({
   for (const item of items) {
     const fusedLabelValue = item.text
       .trim()
-      .match(/^(.*\([^)]*\))\s+([<>≤≥−+\-]?\d+(?:[.,]\d+)?%?)$/u)
+      .match(/^(.*\([^)]*\))\s+([<>≤≥−+-]?\d+(?:[.,]\d+)?%?)$/u)
     if (
       item.horizontal &&
       fusedLabelValue &&
@@ -1228,7 +1226,7 @@ export function populateTableCellText({
           candidate !== item &&
           candidate.horizontal &&
           inside(rows[rowIndex]?.rect ?? [0, 0, 0, 0], candidate) &&
-          /^[<>≤≥−+\-]?\d+(?:[.,]\d+)?%?$/u.test(candidate.text.trim())
+          /^[<>≤≥−+-]?\d+(?:[.,]\d+)?%?$/u.test(candidate.text.trim())
       )
       if (
         rowIndex >= 0 &&

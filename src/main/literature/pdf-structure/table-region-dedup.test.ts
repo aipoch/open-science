@@ -75,8 +75,16 @@ it('keeps a right-column table inside the lane of its original caption', () => {
   expect(result.structure.objects[0].rect).toEqual([38, 0, 288, 400])
 })
 
-const object = (label: string, rect: number[]) => ({ label, rect })
-const syntheticTable = (id: string, cropRect: number[], columns = 2) => ({
+const object = (label: string, rect: number[]): { label: string; rect: number[] } => ({
+  label,
+  rect
+})
+type SyntheticTable = {
+  id: string
+  cropRect: number[]
+  structure: { objects: { label: string; rect: number[] }[] }
+}
+const syntheticTable = (id: string, cropRect: number[], columns = 2): SyntheticTable => ({
   id,
   cropRect,
   structure: {
@@ -90,7 +98,14 @@ const syntheticTable = (id: string, cropRect: number[], columns = 2) => ({
     ]
   }
 })
-const token = (text: string, rect: number[]) => ({ text, rect, horizontal: true })
+const token = (
+  text: string,
+  rect: number[]
+): { text: string; rect: number[]; horizontal: boolean } => ({
+  text,
+  rect,
+  horizontal: true
+})
 
 it('drops a prose-containing detector box when a narrower right table proves ownership', () => {
   const outer = syntheticTable('outer', [0, 0, 1000, 300], 4)
@@ -117,6 +132,18 @@ it('keeps independent adjacent tables without a prose-plus-grid witness', () => 
     token('34', [600, 60, 620, 75])
   ]
   expect(deduplicateTableRegions([left, right], items)).toHaveLength(2)
+})
+
+it('keeps an independent adjacent grid when a wide detector has a prose cell', () => {
+  const outer = syntheticTable('outer', [0, 0, 700, 200], 4)
+  const right = syntheticTable('right', [750, 0, 1200, 200], 2)
+  const items = [
+    token('A long explanatory sentence belongs to the left table.', [40, 20, 600, 35]),
+    token('Header', [800, 20, 860, 35]),
+    token('12', [800, 60, 820, 75]),
+    token('34', [800, 100, 820, 115])
+  ]
+  expect(deduplicateTableRegions([outer, right], items)).toHaveLength(2)
 })
 
 it('drops a refined narrative duplicate beside the numeric grid', () => {

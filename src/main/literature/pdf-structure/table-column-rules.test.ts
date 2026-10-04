@@ -174,7 +174,18 @@ it('recovers a borderless two-column header clipped above the detector crop', ()
       ]
     }
   }
-  const token = (text: string, x: number, y: number, width: number) => ({
+  const token = (
+    text: string,
+    x: number,
+    y: number,
+    width: number
+  ): {
+    text: string
+    rect: number[]
+    baseline: number
+    height: number
+    horizontal: boolean
+  } => ({
     text,
     rect: [x, y, x + width, y + 10],
     baseline: y + 10,
