@@ -162,6 +162,50 @@ it('does not extend a crop for an unruled or misaligned leading text band', asyn
   ).toBeUndefined()
 })
 
+it('recovers a borderless two-column header clipped above the detector crop', () => {
+  const raw = {
+    cropRect: [0, 20, 200, 100],
+    structure: {
+      objects: [
+        { label: 'table column', rect: [0, 0, 100, 80] },
+        { label: 'table column', rect: [100, 0, 200, 80] },
+        { label: 'table row', rect: [0, 15, 200, 28] },
+        { label: 'table row', rect: [0, 32, 200, 45] }
+      ]
+    }
+  }
+  const token = (text: string, x: number, y: number, width: number) => ({
+    text,
+    rect: [x, y, x + width, y + 10],
+    baseline: y + 10,
+    height: 10,
+    horizontal: true
+  })
+  const result = refineTable(
+    raw,
+    [
+      token('Parameter', 10, 8, 70),
+      token('Value', 120, 8, 50),
+      token('dim', 10, 36, 40),
+      token('4096', 120, 36, 40),
+      token('heads', 10, 53, 40),
+      token('32', 120, 53, 20)
+    ],
+    [],
+    [],
+    [
+      [0, 31, 200, 31],
+      [0, 80, 200, 80]
+    ]
+  )
+  expect(result.grid.slice(0, 3)).toEqual([
+    ['Parameter', 'Value'],
+    ['dim', '4096'],
+    ['heads', '32']
+  ])
+  expect(result.unassigned).toEqual([])
+})
+
 const { hasHorizontalTableRuleBetween } = await import(
   pathToFileURL(resolve('resources/pdf-structure/literature-pdf-table-rules.mjs')).href
 )
