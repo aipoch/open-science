@@ -219,7 +219,11 @@ describe('registry + catalog', () => {
   })
 
   it('registers InterProScan separately and validates its bounded input contract', () => {
-    expect(getConnectorTools('interproscan').map((tool) => tool.id)).toEqual(['status', 'results'])
+    expect(getConnectorTools('interproscan').map((tool) => tool.id)).toEqual([
+      'submit',
+      'status',
+      'results'
+    ])
     expect(getDescriptor('protein-annotation', 'submit')).toBeUndefined()
     for (const method of ['status', 'results']) {
       expect(() =>
@@ -228,6 +232,17 @@ describe('registry + catalog', () => {
         })
       ).toThrow(/invalid_arguments/)
     }
+    expect(() =>
+      validateToolArguments(getDescriptor('interproscan', 'submit')!, {
+        sequence: 'MKT',
+        title: 'example'
+      })
+    ).not.toThrow()
+    expect(() =>
+      validateToolArguments(getDescriptor('interproscan', 'submit')!, {
+        sequence: ''
+      })
+    ).toThrow(/invalid_arguments/)
   })
   it('resolves a tool by connector+method', () => {
     expect(getDescriptor('chemistry', 'pubchem_get_compounds')?.id).toBe('pubchem_get_compounds')

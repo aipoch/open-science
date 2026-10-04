@@ -39,6 +39,51 @@ describe('ConnectorService', () => {
     expect(svc.isEnabled('protein-annotation')).toBe(true)
     expect(fetchImpl).toHaveBeenCalledOnce()
   })
+  it('routes InterProScan submit with configured contact email and honors policy before dispatch', async () => {
+    const job = 'iprscan5-R20260922-123456-0123-12345678-p1m'
+    const fetchImpl = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(job))
+    const settings = {
+      enabledIds: [],
+      autoAllowIds: [],
+      contactEmail: '',
+      ncbiApiKeyRef: 'key-ref',
+      disabledConnectorIds: [] as string[],
+      blockedToolIds: [] as string[]
+    }
+    const svc = new ConnectorService({
+      engine: new ParserEngine({ fetchImpl }),
+      getConnectors: () => settings,
+      resolveApiKey: () => 'PRIVATE_KEY'
+    })
+    try {
+      await expect(
+        svc.call('interproscan', 'submit', { sequence: 'MKT' }, internal)
+      ).rejects.toThrow('contact_email_required')
+      settings.contactEmail = 'interpro@example.org'
+      await expect(
+        svc.call('interproscan', 'submit', { sequence: 123 }, internal)
+      ).rejects.toThrow()
+      expect(fetchImpl).not.toHaveBeenCalled()
+      await expect(
+        svc.call('interproscan', 'submit', { sequence: 'MKT' }, internal)
+      ).resolves.toMatchObject({ job_id: job, sequence_count: 1 })
+      const body = new URLSearchParams(fetchImpl.mock.calls[0][1]!.body as string)
+      expect(body.get('email')).toBe(settings.contactEmail)
+      expect(body.toString()).not.toContain('PRIVATE_KEY')
+      settings.blockedToolIds.push('interproscan/submit')
+      await expect(
+        svc.call('interproscan', 'submit', { sequence: 'MKT' }, internal)
+      ).rejects.toThrow('tool blocked by policy: interproscan/submit')
+      settings.disabledConnectorIds.push('interproscan')
+      await expect(
+        svc.call('interproscan', 'submit', { sequence: 'MKT' }, internal)
+      ).rejects.toThrow(/disabled/)
+      expect(fetchImpl).toHaveBeenCalledOnce()
+    } finally {
+      fetchImpl.mockRestore()
+    }
+  })
+
   it('routes new public literature tools without OpenAlex credentials and respects existing tool blocks', async () => {
     const fetchImpl = vi
       .fn()
