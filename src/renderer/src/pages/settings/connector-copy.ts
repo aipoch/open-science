@@ -68,6 +68,10 @@ export function connectorDescription(
 
 export function connectorToolDescription(id: string, fallback: string, t: TFunction): string {
   switch (id) {
+    case 'human-genetics/gwas_get_summary_statistics':
+      return t(
+        'List GWAS summary statistics files, YAML metadata, reference genomes and standard column definitions by GCST accession.'
+      )
     case 'iedb/search_epitopes':
       return t('Search immune epitopes by sequence, host, antigen and MHC.')
     case 'iedb/search_antigens':

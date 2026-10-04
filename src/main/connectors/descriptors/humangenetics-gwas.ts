@@ -1,4 +1,5 @@
 import type { ToolContext, ToolDescriptor } from '../types'
+import { JSON_SCHEMA, load as loadYaml } from 'js-yaml'
 
 // NHGRI-EBI GWAS Catalog REST API v2. The v2 endpoints return flat snake_case records wrapped in a
 // HAL collection (`_embedded` + `page` + `_links.next`) — the association record already carries the
@@ -6,6 +7,115 @@ import type { ToolContext, ToolDescriptor } from '../types'
 // projection only exposes across several linked resources, so every tool here reads v2 directly.
 const BASE = 'https://www.ebi.ac.uk/gwas/rest/api/v2'
 const PAGE_SIZE = 500
+const SUMMARY_STATS_BASE = 'https://ftp.ebi.ac.uk/pub/databases/gwas/summary_statistics'
+
+type SummaryStatsScope = 'original' | 'harmonised'
+type SummaryStatsFileKind = 'data' | 'metadata' | 'index' | 'log' | 'readme' | 'checksum' | 'other'
+
+type SummaryStatsFile = {
+  name: string
+  url: string
+  scope: SummaryStatsScope
+  kind: SummaryStatsFileKind
+}
+
+const SUMMARY_STATS_COLUMN_DEFINITIONS = [
+  {
+    name: 'chromosome',
+    required: true,
+    description: 'Chromosome where the variant is located.'
+  },
+  {
+    name: 'base_pair_location',
+    required: true,
+    description: 'Base-pair location on the chromosome.'
+  },
+  {
+    name: 'effect_allele',
+    required: true,
+    description: 'Allele associated with the effect.'
+  },
+  {
+    name: 'other_allele',
+    required: true,
+    description: 'Non-effect allele.'
+  },
+  {
+    name: 'beta',
+    required: false,
+    alternative_group: 'effect_size',
+    description:
+      'Effect size measured as beta. At least one effect_size field is required by GWAS-SSF.'
+  },
+  {
+    name: 'odds_ratio',
+    required: false,
+    alternative_group: 'effect_size',
+    description:
+      'Effect size measured as an odds ratio. At least one effect_size field is required by GWAS-SSF.'
+  },
+  {
+    name: 'hazard_ratio',
+    required: false,
+    alternative_group: 'effect_size',
+    description:
+      'Effect size measured as a hazard ratio. At least one effect_size field is required by GWAS-SSF.'
+  },
+  {
+    name: 'z-score',
+    required: false,
+    alternative_group: 'effect_size',
+    description:
+      'Effect represented as a z-score when no beta, odds ratio or hazard ratio exists. At least one effect_size field is required by GWAS-SSF. The z-score must correspond to the same test as the p-value, with standard_error set to #NA.'
+  },
+  {
+    name: 'standard_error',
+    required: true,
+    description: 'Standard error of the effect.'
+  },
+  {
+    name: 'effect_allele_frequency',
+    required: true,
+    description: 'Frequency of the effect allele in the control population.'
+  },
+  {
+    name: 'p_value',
+    required: false,
+    alternative_group: 'significance',
+    description:
+      'P-value of the association statistic. At least one significance field is required by GWAS-SSF.'
+  },
+  {
+    name: 'neg_log_10_p_value',
+    required: false,
+    alternative_group: 'significance',
+    description:
+      'Negative log10 p-value of the association statistic. At least one significance field is required by GWAS-SSF.'
+  },
+  {
+    name: 'variant_id',
+    required: false,
+    description: 'Internal chromosome-position-reference-alternate variant identifier.'
+  },
+  { name: 'rs_id', required: false, description: 'The dbSNP rsID of the variant.' },
+  { name: 'info', required: false, description: 'Imputation information metric.' },
+  {
+    name: 'ci_lower',
+    required: false,
+    description: 'Lower confidence interval for the odds ratio.'
+  },
+  {
+    name: 'ci_upper',
+    required: false,
+    description: 'Upper confidence interval for the odds ratio.'
+  },
+  {
+    name: 'ref_allele',
+    required: false,
+    description: 'Whether the reference allele is the effect or other allele.'
+  },
+  { name: 'n', required: false, description: 'Sample size per variant.' }
+] as const
 
 // ---- upstream v2 JSON shapes (only the fields the lean rows surface) ------------------------
 
@@ -198,6 +308,137 @@ function toVariantRow(v: V2Variant): Record<string, unknown> {
   }
 }
 
+function summaryStatsAccession(value: unknown): string {
+  const accession = String(value ?? '')
+    .trim()
+    .toUpperCase()
+  if (!/^GCST\d+$/.test(accession)) {
+    throw new Error('accession_id must be a GWAS Catalog accession such as GCST90000123.')
+  }
+  return accession
+}
+
+function summaryStatsDirectory(accession: string): string {
+  const digits = accession.slice(4)
+  const width = Math.max(6, digits.length)
+  const number = Number(digits)
+  if (!Number.isSafeInteger(number) || number < 1) {
+    throw new Error('accession_id must contain a positive GWAS Catalog accession number.')
+  }
+  const start = Math.floor((number - 1) / 1000) * 1000 + 1
+  const end = start + 999
+  const format = (n: number): string => String(n).padStart(width, '0')
+  return `${SUMMARY_STATS_BASE}/GCST${format(start)}-GCST${format(end)}/${accession}/`
+}
+
+function summaryStatsFileKind(name: string): SummaryStatsFileKind {
+  const lower = name.toLowerCase()
+  if (lower.endsWith('.yaml') || lower.endsWith('.yml')) return 'metadata'
+  if (lower === 'md5sum.txt' || lower === 'md5sums.txt') return 'checksum'
+  if (lower === 'readme.txt' || lower === 'readme') return 'readme'
+  if (lower.endsWith('.log')) return 'log'
+  if (lower.endsWith('.tbi') || lower.endsWith('.csi')) return 'index'
+  if (/\.(?:tsv|csv)(?:\.gz)?$/i.test(name)) return 'data'
+  return 'other'
+}
+
+function parseSummaryStatsDirectory(
+  html: string,
+  directoryUrl: string,
+  scope: SummaryStatsScope
+): SummaryStatsFile[] {
+  const directory = new URL(directoryUrl)
+  const files: SummaryStatsFile[] = []
+  const seen = new Set<string>()
+  const links = html.matchAll(/<a\b[^>]*href\s*=\s*["']([^"']+)["'][^>]*>/gi)
+  for (const match of links) {
+    const href = match[1]?.trim()
+    if (!href || href.startsWith('../') || href.startsWith('?') || href.startsWith('#')) continue
+    let url: URL
+    try {
+      url = new URL(href, directory)
+    } catch {
+      continue
+    }
+    if (url.origin !== directory.origin || !url.pathname.startsWith(directory.pathname)) continue
+    if (url.pathname.endsWith('/')) continue
+    let name: string
+    try {
+      name = decodeURIComponent(url.pathname.slice(directory.pathname.length))
+    } catch {
+      continue
+    }
+    if (!name || name.includes('/') || seen.has(url.href)) continue
+    seen.add(url.href)
+    files.push({ name, url: url.href, scope, kind: summaryStatsFileKind(name) })
+  }
+  return files.sort((a, b) => a.name.localeCompare(b.name))
+}
+
+async function listSummaryStatsFiles(
+  ctx: ToolContext,
+  accession: string
+): Promise<{ directory_url: string; files: SummaryStatsFile[] }> {
+  const directoryUrl = summaryStatsDirectory(accession)
+  const originalHtml = await ctx.fetchText(directoryUrl, 'text/html')
+  const originalFiles = parseSummaryStatsDirectory(originalHtml, directoryUrl, 'original')
+  const harmonisedLink = `${directoryUrl}harmonised/`
+  const hasHarmonised = /href\s*=\s*["']harmonised\/?["']/i.test(originalHtml)
+  let harmonisedFiles: SummaryStatsFile[] = []
+  if (hasHarmonised) {
+    try {
+      harmonisedFiles = parseSummaryStatsDirectory(
+        await ctx.fetchText(harmonisedLink, 'text/html'),
+        harmonisedLink,
+        'harmonised'
+      )
+    } catch (err) {
+      // A directory can retain a stale harmonised link while its generated output is being rotated.
+      // The original package remains useful, so treat only that child-directory 404 as absence.
+      if (!isNotFound(err)) throw err
+    }
+  }
+  if (originalFiles.length === 0) {
+    throw new Error(`GWAS summary-statistics directory ${directoryUrl} contained no files.`)
+  }
+  return { directory_url: directoryUrl, files: [...originalFiles, ...harmonisedFiles] }
+}
+
+function asMetadataObject(value: unknown, url: string): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`GWAS summary-statistics metadata at ${url} is not a YAML object.`)
+  }
+  return value as Record<string, unknown>
+}
+
+async function fetchSummaryStatsMetadata(
+  ctx: ToolContext,
+  files: SummaryStatsFile[],
+  requestedFileName?: string
+): Promise<
+  Array<{ name: string; url: string; scope: SummaryStatsScope; metadata: Record<string, unknown> }>
+> {
+  const metadataFiles = files.filter((file) => file.kind === 'metadata')
+  const selected = requestedFileName
+    ? metadataFiles.filter((file) => file.name === requestedFileName)
+    : metadataFiles
+  if (requestedFileName && selected.length === 0) {
+    throw new Error(`No summary-statistics metadata file named '${requestedFileName}' was found.`)
+  }
+  const results = []
+  for (const file of selected) {
+    const raw = await ctx.fetchText(file.url, 'text/yaml, application/yaml, text/plain')
+    const parsed = loadYaml(raw, { schema: JSON_SCHEMA })
+    results.push({
+      name: file.name,
+      url: file.url,
+      scope: file.scope,
+      metadata: asMetadataObject(parsed, file.url)
+    })
+  }
+  return results
+}
+
 // Fetches p-value-ascending association rows for one v2 filter param and shapes the common envelope.
 async function fetchAssociations(
   ctx: ToolContext,
@@ -216,7 +457,7 @@ async function fetchAssociations(
   }
 }
 
-// ---- the 7 tools ----------------------------------------------------------------------------
+// ---- the 8 tools ----------------------------------------------------------------------------
 
 export const HUMANGENETICS_GWAS_TOOLS: ToolDescriptor[] = [
   {
@@ -436,6 +677,81 @@ export const HUMANGENETICS_GWAS_TOOLS: ToolDescriptor[] = [
       } catch (err) {
         if (isNotFound(err)) return { found: false, rs_id: rsId, variant: null }
         throw err
+      }
+    }
+  },
+  {
+    id: 'gwas_get_summary_statistics',
+    connector: 'human-genetics',
+    description:
+      'Inspect the complete GWAS Catalog summary-statistics package for one GCST accession without downloading the potentially huge data files. Returns found=false when the accession has no FTP directory; otherwise returns the HTTPS FTP directory, original and harmonised file listings, parsed -meta.yaml records, the genome assemblies and harmonisation references declared by those records, and the current GWAS-SSF standard column definitions. The column definitions describe the standard, not an observed header from a compressed data file. Use the returned file URLs to download a selected full dataset. Args: accession_id (GCST accession, e.g. GCST90000123); metadata_file (optional exact YAML filename to limit metadata parsing and both reference summaries; the file listing remains complete). The FTP directory is derived from the accession’s thousand-study bucket; malformed YAML or an unreadable existing directory remains an upstream error.',
+    input: {
+      type: 'object',
+      properties: {
+        accession_id: { type: 'string', description: 'GWAS Catalog accession, e.g. GCST90000123' },
+        metadata_file: {
+          type: 'string',
+          minLength: 1,
+          description:
+            'Optional exact YAML filename from the directory listing. Restricts metadata and both reference summaries to matching records; files remains the complete listing.'
+        }
+      },
+      required: ['accession_id']
+    },
+    required: ['accession_id'],
+    returns:
+      '{found, accession_id, directory_url, files[], metadata[], reference_genomes[], harmonisation_references[], column_definitions[], column_definitions_source} — found=false means no FTP directory exists: files, metadata, reference_genomes and harmonisation_references are empty, while column_definitions and column_definitions_source are retained. Otherwise files include scope (original|harmonised), kind, name and URL; metadata contains parsed YAML objects, and both reference summaries are derived only from those returned records. Each alternative_group in the standard column definitions requires at least one member, although individual members have required=false.',
+    example:
+      'const result = await host.mcp("human-genetics", "gwas_get_summary_statistics", {"accession_id": "GCST90000123"})',
+    run: async (ctx, a) => {
+      const accessionId = summaryStatsAccession(a.accession_id)
+      const directoryUrl = summaryStatsDirectory(accessionId)
+      let listed: { directory_url: string; files: SummaryStatsFile[] }
+      try {
+        listed = await listSummaryStatsFiles(ctx, accessionId)
+      } catch (err) {
+        if (!isNotFound(err)) throw err
+        return {
+          found: false,
+          accession_id: accessionId,
+          directory_url: directoryUrl,
+          files: [],
+          metadata: [],
+          reference_genomes: [],
+          harmonisation_references: [],
+          column_definitions: SUMMARY_STATS_COLUMN_DEFINITIONS,
+          column_definitions_source: 'GWAS-SSF standard'
+        }
+      }
+      const metadata = await fetchSummaryStatsMetadata(
+        ctx,
+        listed.files,
+        a.metadata_file == null ? undefined : String(a.metadata_file)
+      )
+      const referenceGenomes = [
+        ...new Set(
+          metadata
+            .map((entry) => entry.metadata.genome_assembly)
+            .filter((value): value is string => typeof value === 'string' && value.length > 0)
+        )
+      ]
+      const harmonisationReferences = [
+        ...new Set(
+          metadata
+            .map((entry) => entry.metadata.harmonisation_reference)
+            .filter((value): value is string => typeof value === 'string' && value.length > 0)
+        )
+      ]
+      return {
+        found: true,
+        accession_id: accessionId,
+        directory_url: listed.directory_url,
+        files: listed.files,
+        metadata,
+        reference_genomes: referenceGenomes,
+        harmonisation_references: harmonisationReferences,
+        column_definitions: SUMMARY_STATS_COLUMN_DEFINITIONS,
+        column_definitions_source: 'GWAS-SSF standard'
       }
     }
   }

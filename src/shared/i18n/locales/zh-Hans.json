@@ -133,6 +133,7 @@
     "More items": "更多会话"
   },
   "renderer": {
+    "List GWAS summary statistics files, YAML metadata, reference genomes and standard column definitions by GCST accession.": "按 GCST 编号列出 GWAS 汇总统计文件、YAML 元数据、参考基因组和标准列定义。",
     "Retrieve GEO series metadata, samples and supplementary-file links.": "获取 GEO 系列的元数据、样本和补充文件链接。",
     "Find GEO Series Matrix and NCBI RNA-seq count file links for manual download.": "查找 GEO Series Matrix 和 NCBI RNA-seq 计数文件的链接，以便手动下载。",
     "Check decompressed GEO matrix structure, dimensions and sample alignment before analysis.": "在分析前检查解压后的 GEO 矩阵结构、维度和样本对应关系。",

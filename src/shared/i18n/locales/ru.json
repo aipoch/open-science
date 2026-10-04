@@ -136,6 +136,7 @@
     "More items": "Другие сеансы"
   },
   "renderer": {
+    "List GWAS summary statistics files, YAML metadata, reference genomes and standard column definitions by GCST accession.": "Получить список файлов сводной статистики GWAS, метаданные YAML, референсные геномы и стандартные определения столбцов по идентификатору GCST.",
     "Retrieve GEO series metadata, samples and supplementary-file links.": "Получить метаданные серии GEO, образцы и ссылки на дополнительные файлы.",
     "Find GEO Series Matrix and NCBI RNA-seq count file links for manual download.": "Найти ссылки на файлы GEO Series Matrix и файлы счётчиков RNA-seq от NCBI для скачивания вручную.",
     "Check decompressed GEO matrix structure, dimensions and sample alignment before analysis.": "Проверить структуру, размерность и соответствие образцов распакованной матрицы GEO перед анализом.",

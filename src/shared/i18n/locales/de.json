@@ -134,6 +134,7 @@
     "More items": "Weitere Sitzungen"
   },
   "renderer": {
+    "List GWAS summary statistics files, YAML metadata, reference genomes and standard column definitions by GCST accession.": "Dateien mit GWAS-Summarystatistiken, YAML-Metadaten, Referenzgenome und Standardspaltendefinitionen anhand einer GCST-Zugangsnummer auflisten.",
     "Retrieve GEO series metadata, samples and supplementary-file links.": "Metadaten, Proben und Links zu ergänzenden Dateien einer GEO-Serie abrufen.",
     "Find GEO Series Matrix and NCBI RNA-seq count file links for manual download.": "Links zu GEO Series Matrix-Dateien und NCBI-RNA-seq-Zähldateien zum manuellen Herunterladen finden.",
     "Check decompressed GEO matrix structure, dimensions and sample alignment before analysis.": "Struktur, Dimensionen und Probenzuordnung einer dekomprimierten GEO-Matrix vor der Analyse prüfen.",
