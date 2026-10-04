@@ -1131,6 +1131,7 @@ export function populateTableCellText({
   // label or a wrapped cell must continue to use the original token.
   const forcedCells = new Map()
   const splitWideRuns = []
+  const splitSourceItems = []
   // A few PDF producers emit a count or an explicit missing-value marker and
   // its data type as one source run (for example, `138K Real` or `n/r Private`)
   // while the native grid still exposes two
@@ -1351,6 +1352,7 @@ export function populateTableCellText({
         1,
         ...parts.map(({ item: part, owner }) => {
           forcedCells.set(part, owner)
+          splitSourceItems.push(part)
           return part
         })
       )
@@ -2926,6 +2928,14 @@ export function populateTableCellText({
     .filter((item) => item.text.split(BACKSPACE).join('').trim())
     .map((item) => item.text)
   if (!unassigned.length) issues.delete('unassigned-source-text')
+  // Final native-bound reconciliation still needs the derived token boxes
+  // created above. Keep them on the legacy array return without changing its
+  // observable shape for callers that only consume the unassigned strings.
+  if (splitSourceItems.length)
+    Object.defineProperty(unassigned, 'sourceItems', {
+      value: splitSourceItems,
+      enumerable: false
+    })
   return unassigned
 }
 

@@ -384,24 +384,27 @@ describe('external wide table geometry repairs', () => {
     ]
     const issues = new Set<string>()
     const repairs: string[] = []
-    expect(
-      populateTableCellText({
-        cells,
-        items,
-        pageItems: items,
-        rows,
-        columnRects,
-        headerRows: [0],
-        rules: [],
-        bottom: 40,
-        recordGrid: undefined,
-        scheduleGrid: false,
-        nativeMathOrder: undefined,
-        rotatedContinuation: false,
-        issues,
-        repairs
-      })
-    ).toEqual([])
+    const unassigned = populateTableCellText({
+      cells,
+      items,
+      pageItems: items,
+      rows,
+      columnRects,
+      headerRows: [0],
+      rules: [],
+      bottom: 40,
+      recordGrid: undefined,
+      scheduleGrid: false,
+      nativeMathOrder: undefined,
+      rotatedContinuation: false,
+      issues,
+      repairs
+    })
+    expect(unassigned).toEqual([])
+    expect(unassigned.sourceItems?.map((item: { text: string }) => item.text)).toEqual([
+      'Multimodal (Gemma)',
+      '0.24'
+    ])
     expect(cells.find((cell) => cell.row === 1 && cell.column === 0)?.text).toBe(
       'Multimodal (Gemma)'
     )

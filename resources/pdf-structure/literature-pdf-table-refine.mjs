@@ -10211,7 +10211,9 @@ export function refineTable(
     cells,
     rows,
     columnRects,
-    tokens: sourceItems,
+    tokens: unassigned.sourceItems?.length
+      ? [...sourceItems, ...unassigned.sourceItems]
+      : sourceItems,
     rules: sourceRules,
     unassigned,
     clipped,
