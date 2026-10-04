@@ -460,6 +460,15 @@ test('shares Workspace notes with Literature across two windows and reopening', 
         ).entries.length
     )
   ).toBe(0)
+  await page.evaluate(
+    (item) => window.api.literature.transact({ kind: 'create-item', item }),
+    literatureItemInputSchema.parse({
+      itemType: 'journalArticle',
+      title: 'Existing research reference',
+      issuedText: '2025',
+      containerTitle: 'Research methods'
+    })
+  )
   await app.setMainWindowSize(1440, 960)
   await page.getByTestId('preview-file-content-surface').click({ button: 'right' })
   await expect(page.getByRole('menuitem', { name: 'Add to Literature', exact: true })).toBeVisible()
@@ -470,7 +479,13 @@ test('shares Workspace notes with Literature across two windows and reopening', 
   await page.getByRole('menuitem', { name: 'Add to Literature', exact: true }).click()
   const adding = page.getByRole('dialog', { name: 'Add to Literature', exact: true })
   await app.setMainWindowZoomFactor(1)
+  await adding.getByRole('button', { name: /Existing research reference/ }).click()
+  await expect(
+    adding.getByRole('button', { name: 'Attach to reference', exact: true })
+  ).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('attach-to-reference-dialog.png') })
   await adding.getByRole('textbox', { name: 'Search references' }).fill('Shared PDF reference')
+  await expect(adding.getByRole('status')).toHaveText('No matching references')
   await page.screenshot({ path: testInfo.outputPath('add-to-literature-dialog.png') })
   await adding.getByRole('button', { name: 'Add to Literature', exact: true }).click()
   await expect(adding).toBeHidden()
