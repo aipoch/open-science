@@ -15,6 +15,7 @@ import {
   FileText,
   Plus,
   Highlighter,
+  Info,
   NotebookPen,
   Loader2,
   MessageSquareText,
@@ -764,11 +765,6 @@ const PdfNotebookView = ({
       }
     >
       <header className="shrink-0 border-b border-border bg-bg-000 px-3 py-2.5">
-        {annotationPort.shared?.(source) ? (
-          <p className="mb-2 text-xs text-muted-foreground">
-            {t('Notes are shared with linked sources. Edits and deletions apply everywhere.')}
-          </p>
-        ) : null}
         {annotationPort.available && annotationPort.needsReconciliation?.(source) ? (
           <PdfReconciliationDialog
             key={pdfAnnotationSourceKey(source)}
@@ -898,6 +894,26 @@ const PdfNotebookView = ({
                 </Tooltip>
               </>
             )}
+            {annotationPort.shared?.(source) ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    className="shrink-0 text-muted-foreground"
+                    aria-label={t(
+                      'Notes are shared with linked sources. Edits and deletions apply everywhere.'
+                    )}
+                  >
+                    <Info className="size-3.5" aria-hidden="true" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent className="z-[120]">
+                  {t('Notes are shared with linked sources. Edits and deletions apply everywhere.')}
+                </TooltipContent>
+              </Tooltip>
+            ) : null}
             <DropdownMenu modal={false}>
               <Tooltip>
                 <TooltipTrigger

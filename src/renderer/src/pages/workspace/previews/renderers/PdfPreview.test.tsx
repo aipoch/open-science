@@ -18,7 +18,8 @@ import {
 } from '../../annotations/annotation-reveal'
 import type {
   PdfAnnotation as SavedPdfAnnotation,
-  PdfAnnotationListResult
+  PdfAnnotationListResult,
+  PdfNativeAnnotationImportProgress
 } from '../../../../../../shared/pdf-annotations'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { PdfAnnotationsProvider } from '../../pdf-annotations/PdfAnnotationsProvider'
@@ -213,6 +214,57 @@ describe('PdfPreviewContent', () => {
   const flush = async (): Promise<void> => {
     for (let i = 0; i < 20; i++) await Promise.resolve()
   }
+  it('hides successful native import receipts, while keeping progress and incomplete-import warnings', async () => {
+    const cancel = vi.fn()
+    const renderProgress = async (
+      phase: PdfNativeAnnotationImportProgress['phase'],
+      overrides: Partial<PdfNativeAnnotationImportProgress> = {}
+    ): Promise<void> => {
+      await act(async () => {
+        root.render(
+          <PdfPreviewContent
+            path="/audit/import.pdf"
+            name="import.pdf"
+            onCancelNativeImport={cancel}
+            nativeImportProgress={{
+              operationId: 'import-1',
+              phase,
+              pageCount: 2,
+              pagesProcessed: 2,
+              importedCount: 3,
+              unsupportedCount: 0,
+              truncated: false,
+              ...overrides
+            }}
+          />
+        )
+        await flush()
+      })
+    }
+    await renderProgress('parsing')
+    expect(screen.getByRole('status').textContent).toContain('Importing native annotations')
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Cancel' })))
+    expect(cancel).toHaveBeenCalledOnce()
+    await renderProgress('saving')
+    expect(screen.getByRole('status').textContent).toContain('Saving imported annotations')
+    expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull()
+    for (const importedCount of [0, 3]) {
+      await renderProgress('completed', { importedCount })
+      expect(screen.queryByRole('status')).toBeNull()
+      expect(container.textContent).not.toContain('Imported')
+    }
+    await renderProgress('failed')
+    expect(screen.getByRole('status').textContent).toContain('Native annotation import failed.')
+    await renderProgress('cancelled')
+    expect(screen.getByRole('status').textContent).toContain('Native annotation import cancelled.')
+    await renderProgress('completed', { truncated: true })
+    expect(screen.getByRole('status').textContent).toContain(
+      'Native annotation import limit reached.'
+    )
+    await renderProgress('completed', { unsupportedCount: 2 })
+    expect(screen.getByRole('status').textContent).toContain('Unsupported native annotations: 2')
+  })
+
   const observe = (): {
     targets: Element[]
     disconnect: ReturnType<typeof vi.fn>

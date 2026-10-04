@@ -124,6 +124,47 @@ describe('PdfNotebookView', () => {
     await act(async () => fireEvent.click(item))
   }
 
+  it.each([true, false])(
+    'reveals shared-note guidance on focus instead of a permanent banner (sidebar=%s)',
+    async (sidebar) => {
+      const useOriginalPdfAnnotations = annotationContext.usePdfAnnotations
+      vi.spyOn(annotationContext, 'usePdfAnnotations').mockImplementation(() => ({
+        ...useOriginalPdfAnnotations(),
+        shared: () => true
+      }))
+      await act(async () =>
+        root.render(
+          <PdfAnnotationsProvider projectId="project-1" sessionId="session-1">
+            <PdfNotebookView source={source} active sidebar={sidebar} />
+          </PdfAnnotationsProvider>
+        )
+      )
+      const explanation =
+        'Notes are shared with linked sources. Edits and deletions apply everywhere.'
+      expect(container.textContent).not.toContain(explanation)
+      const info = getByRole(container, 'button', { name: explanation })
+      await act(async () => info.focus())
+      await waitFor(() =>
+        expect(getByRole(document.body, 'tooltip').textContent).toContain(explanation)
+      )
+    }
+  )
+
+  it('omits shared-note guidance for an unshared source', async () => {
+    await act(async () =>
+      root.render(
+        <PdfAnnotationsProvider projectId="project-1" sessionId="session-1">
+          <PdfNotebookView source={source} active />
+        </PdfAnnotationsProvider>
+      )
+    )
+    expect(
+      container.querySelector(
+        '[aria-label="Notes are shared with linked sources. Edits and deletions apply everywhere."]'
+      )
+    ).toBeNull()
+  })
+
   it('bounds mounted cards while searching all notes and allowing another batch', async () => {
     const items = Array.from({ length: 205 }, (_, index) => ({
       ...bookmark(`note-${index}`, `Evidence ${index}`, 'highlight'),

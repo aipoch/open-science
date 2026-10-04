@@ -3093,7 +3093,10 @@ export const PdfPreviewContent = ({
             {t('PDF annotations are unavailable for this source.')}
           </p>
         ) : null}
-        {nativeImportProgress ? (
+        {nativeImportProgress &&
+        (nativeImportProgress.phase !== 'completed' ||
+          nativeImportProgress.truncated ||
+          nativeImportProgress.unsupportedCount > 0) ? (
           <div
             role="status"
             className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-3 py-1.5 text-xs text-muted-foreground"

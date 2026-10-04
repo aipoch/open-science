@@ -1624,6 +1624,7 @@ describe('ConversationPanel composer intake', () => {
 
     const suggestion = container.querySelector('[data-testid="automatic-reading-suggestion"]')
     expect(suggestion?.textContent).toContain('Reading')
+    expect(suggestion?.querySelector('svg.lucide-book-open[aria-hidden="true"]')).not.toBeNull()
     expect(suggestion?.textContent).toContain('1 PDF will be linked when sent')
     expect(container.textContent).toContain('paper.pdf')
 
@@ -1754,6 +1755,7 @@ describe('ConversationPanel composer intake', () => {
     const bar = container.querySelector('[data-testid="pdf-context-bar"]')
     expect(bar?.className.split(/\s+/)).toContain('rounded-t-2xl')
     expect(bar?.textContent).toContain('Reading')
+    expect(bar?.querySelector('svg.lucide-book-open[aria-hidden="true"]')).not.toBeNull()
     expect(bar?.textContent).toContain('paper.pdf')
     expect(bar?.textContent).toContain('second.pdf')
     expect(bar?.textContent).toContain('third.pdf')
