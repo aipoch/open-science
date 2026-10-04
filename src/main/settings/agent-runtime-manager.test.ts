@@ -1473,7 +1473,17 @@ describe('AgentRuntimeManager', () => {
       1,
       executablePath,
       expect.objectContaining({ CLAUDE_CONFIG_DIR: join(storageRoot, 'user-claude') }),
-      ['--settings', join(configDir, 'settings.json'), '--add-dir', projectionRoot]
+      [
+        '--settings',
+        join(configDir, 'settings.json'),
+        '--setting-sources',
+        '',
+        '--strict-mcp-config',
+        '--permission-mode',
+        'default',
+        '--add-dir',
+        projectionRoot
+      ]
     )
     expect(executeClaudeProbe).toHaveBeenNthCalledWith(
       2,

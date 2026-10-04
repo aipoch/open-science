@@ -600,6 +600,10 @@ export class AgentBackendResolver {
             // The SDK rejects a settings file path combined with a session sandbox. Pass the exact
             // app-owned settings snapshot instead; settingsPath remains the CLI probe seam.
             settings: runtimeConfig.privateSettings,
+            // Share login and transcript storage, not personal instructions, tools or permissions.
+            settingSources: [],
+            strictMcpConfig: true,
+            permissionMode: 'default',
             ...skillProjectionOptions
           }
         : usesAppProviderTransport(provider.type)

@@ -188,7 +188,8 @@
       "src/main/notebook/runtime-service.rpc-retirement.test.ts",
       "src/main/session-persistence/ipc.test.ts",
       "src/main/acp/approved-handoff-outcome.integration.test.ts",
-      "src/main/acp/approved-handoff-outcome.test.ts"
+      "src/main/acp/approved-handoff-outcome.test.ts",
+      "src/main/agent-framework/claude-shared-settings.integration.test.ts"
     ]
   },
   "capabilityOverlays": [],

@@ -322,7 +322,8 @@
       "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts",
       "src/shared/renderer-surface-inventory.test.ts",
       "src/shared/renderer-surface-matrix.test.ts",
-      "src/main/database/pdf-annotations-migration.test.ts"
+      "src/main/database/pdf-annotations-migration.test.ts",
+      "src/main/agent-framework/claude-shared-settings.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions"],

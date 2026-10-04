@@ -1180,6 +1180,11 @@ export class AgentRuntimeManager {
         await this.executeClaudeProbe(executablePath, env, [
           '--settings',
           runtimeConfig.settingsPath,
+          '--setting-sources',
+          '',
+          '--strict-mcp-config',
+          '--permission-mode',
+          'default',
           '--add-dir',
           runtimeConfig.skillProjection.root
         ])

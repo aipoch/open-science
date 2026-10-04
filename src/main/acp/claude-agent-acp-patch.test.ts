@@ -1,5 +1,7 @@
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import type { McpServerStatus, Query } from '@anthropic-ai/claude-agent-sdk'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -130,4 +132,84 @@ it('counts Claude cache reads and writes once while excluding completion tokens'
       output_tokens: 5_000
     })
   ).toBe(190_100)
+})
+
+it('keeps excluded settings out of initialization, file updates and cwd changes, then disposes watchers', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'open-science-settings-sources-'))
+  const entry = join(root, 'settings-probe.mjs')
+  writeFileSync(
+    entry,
+    `
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
+import { SettingsManager } from ${JSON.stringify(import.meta.resolve('@agentclientprotocol/claude-agent-acp/dist/settings.js'))};
+const root = process.env.HOME;
+const profile = process.env.CLAUDE_CONFIG_DIR;
+const cwd = join(root, 'workspace');
+const nextCwd = join(root, 'next');
+await mkdir(profile, {recursive:true});
+await mkdir(cwd);
+await mkdir(join(nextCwd, '.claude'), {recursive:true});
+const writeUser = mode => writeFile(join(profile, 'settings.json'), JSON.stringify({permissions:{defaultMode:mode}}));
+await writeUser('auto');
+await writeFile(join(nextCwd, '.claude', 'settings.json'), JSON.stringify({permissions:{defaultMode:'plan'}}));
+let selectedUpdates = 0;
+let excludedUpdates = 0;
+const selected = new SettingsManager(cwd, {settingSources:['user'], onChange:()=>selectedUpdates++});
+const excluded = new SettingsManager(cwd, {settingSources:[], onChange:()=>excludedUpdates++});
+try {
+  await selected.initialize();
+  await excluded.initialize();
+  const initial = excluded.getSettings().permissions?.defaultMode ?? null;
+  const selectedInitial = selected.getSettings().permissions?.defaultMode;
+  await writeUser('acceptEdits');
+  const deadline = Date.now() + 3000;
+  while (selected.getSettings().permissions?.defaultMode !== 'acceptEdits' && Date.now() < deadline) await delay(20);
+  const updated = excluded.getSettings().permissions?.defaultMode ?? null;
+  const selectedUpdated = selected.getSettings().permissions?.defaultMode;
+  await excluded.setCwd(nextCwd);
+  const moved = excluded.getSettings().permissions?.defaultMode ?? null;
+  await delay(150);
+  selected.dispose();
+  excluded.dispose();
+  const updatesBeforeDispose = selectedUpdates + excludedUpdates;
+  await writeUser('default');
+  await delay(200);
+  console.log(JSON.stringify({initial, updated, moved, selectedInitial, selectedUpdated, excludedUpdates,
+    updatesAfterDispose: selectedUpdates + excludedUpdates - updatesBeforeDispose}));
+} finally {
+  selected.dispose();
+  excluded.dispose();
+}
+`
+  )
+  const env: NodeJS.ProcessEnv = {
+    PATH: process.env.PATH,
+    SystemRoot: process.env.SystemRoot,
+    SYSTEMROOT: process.env.SYSTEMROOT,
+    TEMP: process.env.TEMP,
+    TMP: process.env.TMP,
+    TMPDIR: process.env.TMPDIR,
+    HOME: root,
+    USERPROFILE: root,
+    CLAUDE_CONFIG_DIR: join(root, '.claude')
+  }
+  try {
+    const { stdout } = await promisify(execFile)(process.execPath, [entry], {
+      env,
+      timeout: 10_000
+    })
+    expect(JSON.parse(stdout)).toEqual({
+      initial: null,
+      updated: null,
+      moved: null,
+      selectedInitial: 'auto',
+      selectedUpdated: 'acceptEdits',
+      excludedUpdates: 0,
+      updatesAfterDispose: 0
+    })
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 })

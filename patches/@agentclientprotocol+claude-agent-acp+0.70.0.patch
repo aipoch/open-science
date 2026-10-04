@@ -135,7 +135,24 @@ diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.j
          return {};
      }
      async setSessionMode(params) {
-@@ -4995,6 +5063,7 @@
+@@ -4715,6 +4783,7 @@
+         const input = new Pushable();
+         const settingsManager = new SettingsManager(params.cwd, {
+             logger: this.logger,
++            settingSources: params._meta?.claudeCode?.options?.settingSources,
+         });
+         await settingsManager.initialize();
+         const mcpServers = {};
+@@ -4761,7 +4830,7 @@
+                 };
+             }
+         }
+-        const permissionMode = resolvePermissionMode(settingsManager.getSettings().permissions?.defaultMode, this.logger);
++        const permissionMode = resolvePermissionMode(params._meta?.claudeCode?.options?.permissionMode ?? settingsManager.getSettings().permissions?.defaultMode, this.logger);
+         // Extract options from _meta if provided
+         const sessionMeta = params._meta;
+         const userProvidedOptions = sessionMeta?.claudeCode?.options;
+@@ -4995,6 +5064,7 @@
          let initializationResult;
          try {
              initializationResult = await q.initializationResult();
@@ -143,7 +160,7 @@ diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.j
          }
          catch (error) {
              if (creationOpts.resume &&
-@@ -5259,15 +5328,10 @@
+@@ -5259,15 +5329,10 @@
              session.accumulatedUsage.cachedWriteTokens,
      };
  }
@@ -163,7 +180,7 @@ diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.j
  }
  /**
   * Build the `data` payload attached to a `RequestError.internalError` when we
-@@ -5284,7 +5348,7 @@
+@@ -5284,7 +5349,7 @@
  }
  /** Project a nullable API usage object into our non-null snapshot shape.
   *  Both SDK message_start and assistant message `usage` have `number | null`
@@ -172,3 +189,63 @@ diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.j
   *  NaN. `input_tokens`/`output_tokens` are typed `number` by the SDK but
   *  synthetic or third-party-backend stream events have been observed emitting
   *  them as null/undefined — coerce those too so a malformed upstream event
+diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/settings.d.ts b/node_modules/@agentclientprotocol/claude-agent-acp/dist/settings.d.ts
+--- a/node_modules/@agentclientprotocol/claude-agent-acp/dist/settings.d.ts
++++ b/node_modules/@agentclientprotocol/claude-agent-acp/dist/settings.d.ts
+@@ -1,5 +1,6 @@
+-import { type Settings } from "@anthropic-ai/claude-agent-sdk";
++import { type Settings, type SettingSource } from "@anthropic-ai/claude-agent-sdk";
+ export interface SettingsManagerOptions {
++    settingSources?: SettingSource[];
+     onChange?: () => void;
+     logger?: {
+         log: (...args: any[]) => void;
+@@ -20,6 +21,7 @@
+     private effective;
+     private watchers;
+     private onChange?;
++    private settingSources;
+     private logger;
+     private initialized;
+     private disposed;
+diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/settings.js b/node_modules/@agentclientprotocol/claude-agent-acp/dist/settings.js
+--- a/node_modules/@agentclientprotocol/claude-agent-acp/dist/settings.js
++++ b/node_modules/@agentclientprotocol/claude-agent-acp/dist/settings.js
+@@ -39,6 +39,7 @@
+     effective = {};
+     watchers = [];
+     onChange;
++    settingSources;
+     logger;
+     initialized = false;
+     disposed = false;
+@@ -47,6 +48,7 @@
+     constructor(cwd, options) {
+         this.cwd = cwd;
+         this.onChange = options?.onChange;
++        this.settingSources = [...(options?.settingSources ?? ["user", "project", "local"])];
+         this.logger = options?.logger ?? console;
+     }
+     /**
+@@ -75,9 +77,9 @@
+      */
+     getWatchedPaths() {
+         return [
+-            path.join(CLAUDE_CONFIG_DIR, "settings.json"),
+-            path.join(this.cwd, ".claude", "settings.json"),
+-            path.join(this.cwd, ".claude", "settings.local.json"),
++            ...(this.settingSources.includes("user") ? [path.join(CLAUDE_CONFIG_DIR, "settings.json")] : []),
++            ...(this.settingSources.includes("project") ? [path.join(this.cwd, ".claude", "settings.json")] : []),
++            ...(this.settingSources.includes("local") ? [path.join(this.cwd, ".claude", "settings.local.json")] : []),
+             getManagedSettingsPath(),
+         ];
+     }
+@@ -87,7 +89,7 @@
+      */
+     async loadAllSettings() {
+         try {
+-            const resolved = await resolveSettings({ cwd: this.cwd });
++            const resolved = await resolveSettings({ cwd: this.cwd, settingSources: this.settingSources });
+             this.effective = filterEscalatingDefaultMode(resolved);
+         }
+         catch (error) {

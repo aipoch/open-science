@@ -101,7 +101,7 @@ export const claudeCodeFramework: AgentFramework = {
 
   buildSessionSetup(ctx: SessionSetupContext): SessionSetup {
     // settingSources:['user'] excludes workspace settings that could override the active provider.
-    // Shared mode adds app-owned settings/plugins at the SDK flag layer via sessionOptions.
+    // Shared mode excludes personal sources and supplies app-owned settings through sessionOptions.
     const sessionOptions = { ...(ctx.sessionOptions ?? {}) }
     const skillRuntime = recordValue(sessionOptions[OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION])
     delete sessionOptions[OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION]
