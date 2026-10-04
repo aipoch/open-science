@@ -198,6 +198,51 @@ export class ComputeJobRepository {
     return rows.map(this.toJob)
   }
 
+  // Returns the bounded, decrypted job projection needed to associate harvested outputs with their
+  // Artifact execution evidence. Priority jobs are the exact output owners observed by provenance.
+  async findByProducer(
+    projectId: string,
+    sessionId: string,
+    producerRunId: string,
+    priorityJobIds: readonly string[] = []
+  ): Promise<{ jobs: ComputeJob[]; omittedJobCount: number }> {
+    const client = await this.getClient()
+    const prioritized = [...new Set(priorityJobIds)].slice(0, 100)
+    const priorityJobs =
+      prioritized.length > 0
+        ? await client.computeJob.findMany({
+            where: {
+              projectId,
+              sessionId,
+              producerRunId,
+              id: { in: prioritized }
+            },
+            orderBy: [{ createdAt: 'asc' }, { id: 'asc' }]
+          })
+        : []
+    const jobs = await client.computeJob.findMany({
+      where: {
+        projectId,
+        sessionId,
+        producerRunId,
+        ...(prioritized.length > 0 ? { id: { notIn: prioritized } } : {})
+      },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      take: 101 - priorityJobs.length
+    })
+    const selectedRows = [...priorityJobs, ...jobs]
+      .slice(0, 100)
+      .sort(
+        (left, right) =>
+          left.createdAt.getTime() - right.createdAt.getTime() ||
+          (left.id < right.id ? -1 : left.id > right.id ? 1 : 0)
+      )
+    return {
+      jobs: selectedRows.map(this.toJob),
+      omittedJobCount: Math.max(0, priorityJobs.length + jobs.length - selectedRows.length)
+    }
+  }
+
   async listOwners(): Promise<ComputeJobSessionOwner[]> {
     const client = await this.getClient()
     return client.computeJob.findMany({

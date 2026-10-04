@@ -902,11 +902,34 @@ describe('artifact provenance producer and source validation', () => {
         status: 'success',
         createdAt: new Date(2000),
         intent: 'produce binary results',
-        command: 'generate-results',
-        commandHash: sha256('generate-results'),
+        command: 'python run_analysis.py --input input.csv',
+        commandHash: sha256('python run_analysis.py --input input.csv'),
+        environment: 'protein-gpu',
+        inputManifest: JSON.stringify([
+          {
+            kind: 'upload',
+            label: 'input data',
+            dstFilename: 'input.csv',
+            generationId: 'generation-1',
+            checksum: 'a'.repeat(64),
+            sizeBytes: 12
+          },
+          {
+            kind: 'symlink',
+            label: 'reference data',
+            remotePath: '/reference/reference.csv',
+            dstFilename: 'reference.csv'
+          }
+        ]),
         producerRunId,
         fileEvidence: JSON.stringify(fileEvidence),
-        harvestedAt: new Date()
+        timeoutSeconds: 3600,
+        remoteWorkdir: '/scratch/compute-job-cross-turn',
+        exitCode: 0,
+        submittedAt: new Date(2100),
+        startedAt: new Date(2200),
+        finishedAt: new Date(2300),
+        harvestedAt: new Date(2400)
       }
     })
 
@@ -993,14 +1016,68 @@ describe('artifact provenance producer and source validation', () => {
     const versionRow = requireAgentArtifactVersion(
       await value.client.artifactVersion.findUniqueOrThrow({ where: { id: version.versionId } })
     )
-    expect(JSON.parse(versionRow.evidenceJson)).toMatchObject({
+    const evidence = JSON.parse(versionRow.evidenceJson)
+    expect(evidence).toMatchObject({
       producer: { producer_run_id: producerRunId },
       compute_executions: expect.arrayContaining([expect.objectContaining({ activity_id: jobId })])
     })
+    const core = await value.repository.getVersionCore({
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      artifactId: version.artifactId,
+      versionId: version.versionId
+    })
+    expect(core.evidence.compute_executions).toEqual(evidence.compute_executions)
     expect(
-      JSON.parse(versionRow.evidenceJson).compute_executions.map(
-        (activity: { activity_id: string }) => activity.activity_id
+      evidence.compute_executions.find(
+        (activity: { activity_id: string }) => activity.activity_id === jobId
       )
+    ).toMatchObject({
+      status: 'success',
+      command: {
+        state: 'available',
+        command: 'python run_analysis.py --input input.csv',
+        command_hash: sha256('python run_analysis.py --input input.csv')
+      },
+      inputs: {
+        state: 'available',
+        declarations: [
+          {
+            kind: 'upload',
+            label: 'input data',
+            destination_filename: 'input.csv',
+            generation_id: 'generation-1',
+            checksum: 'a'.repeat(64),
+            size_bytes: 12
+          },
+          {
+            kind: 'symlink',
+            label: 'reference data',
+            destination_filename: 'reference.csv',
+            remote_path: '/reference/reference.csv'
+          }
+        ]
+      },
+      completion_status: {
+        state: 'available',
+        status: 'success',
+        terminal: true,
+        exit_code: 0,
+        submitted_at: '1970-01-01T00:00:02.100Z',
+        started_at: '1970-01-01T00:00:02.200Z',
+        finished_at: '1970-01-01T00:00:02.300Z'
+      },
+      environment: {
+        state: 'available',
+        execution_mode: 'slurm',
+        environment_name_status: 'declared',
+        environment_name: 'protein-gpu',
+        remote_workdir: '/scratch/compute-job-cross-turn',
+        timeout_seconds: 3600
+      }
+    })
+    expect(
+      evidence.compute_executions.map((activity: { activity_id: string }) => activity.activity_id)
     ).toEqual([
       ...Array.from(
         { length: 99 },
@@ -1013,6 +1090,137 @@ describe('artifact provenance producer and source validation', () => {
         reasonCodes: expect.arrayContaining(['history-truncated'])
       }
     })
+  })
+
+  it('records explicit unavailable compute evidence when durable job details cannot be read', async () => {
+    const value = await fixture()
+    const producerRunId = 'compute-unavailable-run'
+    const jobId = 'compute-job-unavailable'
+    await appendNotebookRun(value, {
+      runId: producerRunId,
+      filename: 'unavailable-marker.png',
+      payload: 'unavailable marker',
+      ownsSource: false,
+      provenanceContext: {
+        messageBranchId: 'branch-parent',
+        runtimeSegmentId: 'runtime-segment-parent',
+        promptMessageId: 'prompt-parent'
+      }
+    })
+
+    const sessionRoot = getNotebookSessionRoot(value.storageRoot, 'project-1', 'session-1')
+    const sourcePath = join(sessionRoot, 'hpc', jobId, 'featured', 'result.txt')
+    const content = Buffer.from('unavailable compute evidence')
+    await mkdir(dirname(sourcePath), { recursive: true })
+    await writeFile(sourcePath, content)
+    await beginComputeJobFileEvidence({
+      storageRoot: value.storageRoot,
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      jobId,
+      producerRunId,
+      inputs: []
+    })
+    const fileEvidence = await publishComputeJobFileEvidence({
+      storageRoot: value.storageRoot,
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      jobId,
+      producerRunId,
+      outputs: [
+        {
+          localPath: sourcePath,
+          relativePath: `hpc/${jobId}/featured/result.txt`
+        }
+      ]
+    })
+    await settleComputeJobFileEvidence({
+      storageRoot: value.storageRoot,
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      jobId,
+      producerRunId,
+      fileEvidence
+    })
+    await value.client.computeJob.create({
+      data: {
+        id: jobId,
+        providerId: 'ssh:test',
+        shape: 'direct_ssh',
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        status: 'running',
+        createdAt: new Date(2000),
+        intent: 'unreadable compute evidence',
+        command: 'open-science:protected:v1:invalid',
+        commandHash: 'b'.repeat(64),
+        sensitiveDataEncrypted: true,
+        environment: 'open-science:protected:v1:invalid',
+        inputManifest: JSON.stringify([
+          'open-science:protected-json:v1',
+          'open-science:protected:v1:invalid'
+        ]),
+        producerRunId,
+        fileEvidence: JSON.stringify(fileEvidence)
+      }
+    })
+
+    await value.compatibilityRepository.writePendingFile(
+      {
+        projectId: 'project-1',
+        sessionId: 'artifact-session-1',
+        runId: 'artifact-run-1',
+        filename: 'result.txt',
+        mimeType: 'text/plain',
+        source: { kind: 'localPath', path: sourcePath }
+      },
+      { allowedImportRoots: [sessionRoot] }
+    )
+    const sourceStat = await stat(sourcePath)
+    const version = await value.repository.createVersion(
+      createArtifactVersionRequest({
+        notebookSessionId: 'session-1',
+        producerRunId,
+        sourceKind: 'localPath',
+        sourceFileObservation: {
+          path: await realpath(sourcePath),
+          sizeBytes: sourceStat.size,
+          mtimeMs: sourceStat.mtimeMs
+        },
+        filename: 'result.txt',
+        contentType: 'text/plain',
+        messageBranchId: 'branch-current',
+        runtimeSegmentId: 'runtime-segment-current',
+        promptMessageId: 'prompt-current',
+        messageBranchAncestry: ['branch-parent', 'branch-current'],
+        messageAncestry: ['prompt-parent', 'prompt-current']
+      })
+    )
+
+    const versionRow = requireAgentArtifactVersion(
+      await value.client.artifactVersion.findUniqueOrThrow({ where: { id: version.versionId } })
+    )
+    const evidence = JSON.parse(versionRow.evidenceJson)
+    const computeEvidence = evidence.compute_executions.find(
+      (activity: { activity_id: string }) => activity.activity_id === jobId
+    )
+    expect(computeEvidence).toMatchObject({
+      status: 'running',
+      command: { state: 'unavailable', reason: 'compute-command-unavailable' },
+      inputs: { state: 'unavailable', reason: 'compute-input-manifest-unavailable' },
+      completion_status: {
+        state: 'unavailable',
+        reason: 'compute-completion-status-unavailable'
+      },
+      environment: { state: 'unavailable', reason: 'compute-environment-unavailable' }
+    })
+    const core = await value.repository.getVersionCore({
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      artifactId: version.artifactId,
+      versionId: version.versionId
+    })
+    expect(core.evidence.compute_executions).toEqual(evidence.compute_executions)
   })
 
   it('infers the exact source owner from an ancestor Branch when producerRunId is omitted', async () => {

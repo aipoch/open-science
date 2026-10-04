@@ -8,6 +8,8 @@ import { ManagedFileVersionService } from '../managed-file-versions/service'
 
 import type {
   AppGeneratedArtifactProducer,
+  ArtifactComputeExecutionEvidence,
+  ArtifactComputeInputDeclaration,
   SaveArtifactVersionRequest,
   ArtifactWriteSourceScope,
   ArtifactLineageProvenance,
@@ -30,8 +32,11 @@ import {
 } from '../../shared/artifacts'
 import {
   hasImmutableExecutionFileEvidenceReference,
-  parseOwnedExecutionFileEvidenceSummary
+  parseOwnedExecutionFileEvidenceSummary,
+  type ExecutionFileEvidenceSummary
 } from '../../shared/execution-file-evidence'
+import type { ComputeJob } from '../../shared/compute'
+import { ComputeJobRepository } from '../compute/job-repository'
 import { ArtifactRepository } from './repository'
 import { ImmutableInputAuthority } from '../immutable-input-authority'
 import { defaultArtifactDurability, type ArtifactDurability } from './durability'
@@ -105,6 +110,7 @@ type ArtifactProvenanceRepositoryOptions = {
   inputAuthority?: Pick<ImmutableInputAuthority, 'validateVersion'>
   compatibilityRepository?: ArtifactRepository
   notebookRepository?: Pick<NotebookRunRepository, 'readSessionDocuments'>
+  computeJobReader?: Pick<ComputeJobRepository, 'findByProducer'>
   dependencyAnalyzer?: Pick<NotebookDependencyAnalyzer, 'project'>
   loadSession?: (
     projectId: string,
@@ -191,6 +197,180 @@ const recordValue = (value: unknown): Record<string, unknown> | undefined =>
     ? (value as Record<string, unknown>)
     : undefined
 
+const MAX_COMPUTE_COMMAND_CHARS = 64 * 1024
+const MAX_COMPUTE_INPUT_DECLARATIONS = 256
+
+const computeCommandEvidence = (
+  job: ComputeJob
+): NonNullable<ArtifactComputeExecutionEvidence['command']> => {
+  const sensitiveFieldsUnavailable =
+    job.integrity_issues?.some((issue) => issue.code === 'sensitive-fields-unavailable') ?? false
+  if (
+    sensitiveFieldsUnavailable ||
+    job.command.length === 0 ||
+    sha256(job.command) !== job.command_hash
+  ) {
+    return { state: 'unavailable', reason: 'compute-command-unavailable' }
+  }
+  const command =
+    job.command.length > MAX_COMPUTE_COMMAND_CHARS
+      ? `${job.command.slice(0, MAX_COMPUTE_COMMAND_CHARS)}\n…[truncated]`
+      : job.command
+  return {
+    state: 'available',
+    command,
+    command_hash: job.command_hash,
+    ...(command !== job.command ? { truncated: true } : {})
+  }
+}
+
+const computeInputDeclaration = (value: unknown): ArtifactComputeInputDeclaration | undefined => {
+  const input = recordValue(value)
+  if (
+    !input ||
+    (input.kind !== 'upload' && input.kind !== 'symlink') ||
+    typeof input.label !== 'string' ||
+    typeof input.dstFilename !== 'string'
+  ) {
+    return undefined
+  }
+  if (input.kind === 'symlink') {
+    return typeof input.remotePath === 'string'
+      ? {
+          kind: 'symlink',
+          label: input.label,
+          destination_filename: input.dstFilename,
+          remote_path: input.remotePath
+        }
+      : undefined
+  }
+  if (
+    (input.generationId !== undefined && typeof input.generationId !== 'string') ||
+    (input.checksum !== undefined && typeof input.checksum !== 'string') ||
+    (input.sizeBytes !== undefined &&
+      (typeof input.sizeBytes !== 'number' ||
+        !Number.isSafeInteger(input.sizeBytes) ||
+        input.sizeBytes < 0))
+  ) {
+    return undefined
+  }
+  return {
+    kind: 'upload',
+    label: input.label,
+    destination_filename: input.dstFilename,
+    ...(input.generationId !== undefined ? { generation_id: input.generationId } : {}),
+    ...(input.checksum !== undefined ? { checksum: input.checksum } : {}),
+    ...(input.sizeBytes !== undefined ? { size_bytes: input.sizeBytes } : {})
+  }
+}
+
+const computeInputsEvidence = (
+  job: ComputeJob
+): NonNullable<ArtifactComputeExecutionEvidence['inputs']> => {
+  const sensitiveFieldsUnavailable =
+    job.integrity_issues?.some((issue) => issue.code === 'sensitive-fields-unavailable') ?? false
+  if (sensitiveFieldsUnavailable) {
+    return { state: 'unavailable', reason: 'compute-input-manifest-unavailable' }
+  }
+  if (job.input_manifest === undefined) {
+    return { state: 'available', declarations: [] }
+  }
+  try {
+    const parsed: unknown = JSON.parse(job.input_manifest)
+    if (!Array.isArray(parsed) || parsed.length > MAX_COMPUTE_INPUT_DECLARATIONS) {
+      return { state: 'unavailable', reason: 'compute-input-manifest-invalid' }
+    }
+    const declarations = parsed.map(computeInputDeclaration)
+    return declarations.some((declaration) => declaration === undefined)
+      ? { state: 'unavailable', reason: 'compute-input-manifest-invalid' }
+      : { state: 'available', declarations: declarations as ArtifactComputeInputDeclaration[] }
+  } catch {
+    return { state: 'unavailable', reason: 'compute-input-manifest-invalid' }
+  }
+}
+
+const computeTimestamp = (value: number | undefined): string | undefined => {
+  if (value === undefined || !Number.isFinite(value)) return undefined
+  const timestamp = new Date(value)
+  return Number.isNaN(timestamp.getTime()) ? undefined : timestamp.toISOString()
+}
+
+const computeCompletionEvidence = (
+  job: ComputeJob
+): NonNullable<ArtifactComputeExecutionEvidence['completion_status']> => {
+  if (job.raw_status !== undefined) {
+    return { state: 'unavailable', reason: 'compute-completion-status-unavailable' }
+  }
+  const terminal =
+    job.status === 'success' ||
+    job.status === 'failed' ||
+    job.status === 'timeout' ||
+    job.status === 'error'
+  if (!terminal) {
+    return { state: 'unavailable', reason: 'compute-completion-status-unavailable' }
+  }
+  const submittedAt = computeTimestamp(job.submitted_at)
+  const startedAt = computeTimestamp(job.started_at)
+  const finishedAt = computeTimestamp(job.finished_at)
+  return {
+    state: 'available',
+    status: job.status,
+    terminal,
+    ...(job.exit_code !== undefined ? { exit_code: job.exit_code } : {}),
+    ...(submittedAt ? { submitted_at: submittedAt } : {}),
+    ...(startedAt ? { started_at: startedAt } : {}),
+    ...(finishedAt ? { finished_at: finishedAt } : {})
+  }
+}
+
+const computeEnvironmentEvidence = (
+  job: ComputeJob
+): NonNullable<ArtifactComputeExecutionEvidence['environment']> => {
+  const sensitiveFieldsUnavailable =
+    job.integrity_issues?.some((issue) => issue.code === 'sensitive-fields-unavailable') ?? false
+  if (sensitiveFieldsUnavailable) {
+    return { state: 'unavailable', reason: 'compute-environment-unavailable' }
+  }
+  const environmentName =
+    job.environment !== undefined && job.environment.length > 0 ? job.environment : undefined
+  const executionMode =
+    job.execution_mode === 'direct_ssh' || job.execution_mode === 'slurm'
+      ? job.execution_mode
+      : 'unknown'
+  return {
+    state: 'available',
+    execution_mode: executionMode,
+    environment_name_status: environmentName ? 'declared' : 'not-declared',
+    ...(environmentName ? { environment_name: environmentName } : {}),
+    ...(job.remote_workdir ? { remote_workdir: job.remote_workdir } : {}),
+    ...(job.timeout_seconds !== undefined ? { timeout_seconds: job.timeout_seconds } : {})
+  }
+}
+
+const computeExecutionEvidence = (
+  job: ComputeJob,
+  fileEvidence: ExecutionFileEvidenceSummary | undefined
+): ArtifactComputeExecutionEvidence => ({
+  activity_id: job.job_id,
+  provider_id: job.provider_id,
+  shape: job.shape,
+  status: job.status,
+  command: computeCommandEvidence(job),
+  inputs: computeInputsEvidence(job),
+  completion_status: computeCompletionEvidence(job),
+  environment: computeEnvironmentEvidence(job),
+  file_evidence: {
+    state: fileEvidence?.state ?? 'unavailable',
+    ...(fileEvidence?.evidenceId ? { evidence_id: fileEvidence.evidenceId } : {}),
+    ...(fileEvidence?.checksum ? { checksum: fileEvidence.checksum } : {}),
+    ...(fileEvidence?.storageKey ? { storage_key: fileEvidence.storageKey } : {}),
+    ...(fileEvidence?.generationCount !== undefined
+      ? { generation_count: fileEvidence.generationCount }
+      : {}),
+    reason_codes: fileEvidence?.reasonCodes ?? ['evidence-persistence-failed']
+  }
+})
+
 const hasServerInferredProducer = (evidenceJson: string): boolean => {
   try {
     const evidence = recordValue(JSON.parse(evidenceJson))
@@ -237,6 +417,7 @@ const journalRecoveryPlan = (
 class ArtifactProvenanceRepository {
   private readonly compatibilityRepository: ArtifactRepository
   private readonly contentRepository: ContentRepository
+  private readonly computeJobReader: Pick<ComputeJobRepository, 'findByProducer'>
   private readonly createId: () => string
   private readonly now: () => Date
   private readonly durability: ArtifactDurability
@@ -261,6 +442,7 @@ class ArtifactProvenanceRepository {
     })
     this.compatibilityRepository =
       options.compatibilityRepository ?? new ArtifactRepository(options.storageRoot)
+    this.computeJobReader = options.computeJobReader ?? new ComputeJobRepository(options.getClient)
     this.notebookRepository =
       options.notebookRepository ?? new NotebookRunRepository(options.storageRoot)
     this.createId = options.createId ?? randomUUID
@@ -368,85 +550,34 @@ class ArtifactProvenanceRepository {
       dependencyAnalyzer: options.dependencyAnalyzer,
       computeJobReader: {
         findByProducer: async (projectId, sessionId, producerRunId, priorityJobIds = []) => {
-          const client = await options.getClient()
-          const select = {
-            id: true,
-            providerId: true,
-            shape: true,
-            status: true,
-            fileEvidence: true,
-            createdAt: true
-          } as const
-          const prioritized = [...new Set(priorityJobIds)].slice(0, 100)
-          const priorityJobs =
-            prioritized.length > 0
-              ? await client.computeJob.findMany({
-                  where: {
-                    projectId,
-                    sessionId,
-                    producerRunId,
-                    id: { in: prioritized }
-                  },
-                  select,
-                  orderBy: [{ createdAt: 'asc' }, { id: 'asc' }]
-                })
-              : []
-          const jobs = await client.computeJob.findMany({
-            where: {
-              projectId,
-              sessionId,
-              producerRunId,
-              ...(prioritized.length > 0 ? { id: { notIn: prioritized } } : {})
-            },
-            select,
-            orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-            take: 101 - priorityJobs.length
-          })
-          // Priority controls inclusion in the bound, not the causal order of selected jobs.
-          const selectedJobs = [...priorityJobs, ...jobs]
-            .slice(0, 100)
-            .sort(
-              (left, right) =>
-                left.createdAt.getTime() - right.createdAt.getTime() ||
-                (left.id < right.id ? -1 : left.id > right.id ? 1 : 0)
-            )
-          const activities = selectedJobs.map((job) => {
-            let fileEvidence
+          const result = await this.computeJobReader.findByProducer(
+            projectId,
+            sessionId,
+            producerRunId,
+            priorityJobIds
+          )
+          const activities = result.jobs.map((job) => {
+            let fileEvidence: ExecutionFileEvidenceSummary | undefined
             try {
-              fileEvidence = job.fileEvidence
-                ? parseOwnedExecutionFileEvidenceSummary(JSON.parse(job.fileEvidence), {
-                    activityId: job.id,
+              fileEvidence = job.file_evidence
+                ? parseOwnedExecutionFileEvidenceSummary(job.file_evidence, {
+                    activityId: job.job_id,
                     activityKind: 'compute-job',
                     parentActivityId: producerRunId,
-                    storageKey: `execution-file-evidence/${projectId}/${sessionId}/activity-${job.id}/evidence.json`
+                    storageKey: `execution-file-evidence/${projectId}/${sessionId}/activity-${job.job_id}/evidence.json`
                   })
                 : undefined
             } catch {
               fileEvidence = undefined
             }
             return {
-              evidence: {
-                activity_id: job.id,
-                provider_id: job.providerId,
-                shape: job.shape,
-                status: job.status as import('../../shared/compute').ComputeJobStatus,
-                file_evidence: {
-                  state: fileEvidence?.state ?? 'unavailable',
-                  ...(fileEvidence?.evidenceId ? { evidence_id: fileEvidence.evidenceId } : {}),
-                  ...(fileEvidence?.checksum ? { checksum: fileEvidence.checksum } : {}),
-                  ...(fileEvidence?.storageKey ? { storage_key: fileEvidence.storageKey } : {}),
-                  ...(fileEvidence?.generationCount !== undefined
-                    ? { generation_count: fileEvidence.generationCount }
-                    : {}),
-                  reason_codes: fileEvidence?.reasonCodes ?? ['evidence-persistence-failed']
-                }
-              },
+              evidence: computeExecutionEvidence(job, fileEvidence),
               ...(fileEvidence ? { fileEvidence } : {})
             }
           })
           return {
             activities,
-            omittedActivityCount: Math.max(0, priorityJobs.length + jobs.length - activities.length)
+            omittedActivityCount: result.omittedJobCount
           }
         },
         findOutputOwners: async (

@@ -280,6 +280,7 @@ describe('Artifact Provenance repository architecture', () => {
     expect(fields(facade)).toEqual(
       [
         'compatibilityRepository',
+        'computeJobReader',
         'contentRepository',
         'createId',
         'durability',
@@ -303,8 +304,17 @@ describe('Artifact Provenance repository architecture', () => {
     expect(mutableFields(facade)).toEqual([])
     expect(topLevelValues(facadeFile)).toEqual(
       [
+        'MAX_COMPUTE_COMMAND_CHARS',
+        'MAX_COMPUTE_INPUT_DECLARATIONS',
         'SAFE_SEGMENT_PATTERN',
         'assertSafeSegment',
+        'computeCommandEvidence',
+        'computeCompletionEvidence',
+        'computeEnvironmentEvidence',
+        'computeExecutionEvidence',
+        'computeInputDeclaration',
+        'computeInputsEvidence',
+        'computeTimestamp',
         'hasServerInferredProducer',
         'journalRecoveryPlan',
         'recordValue'

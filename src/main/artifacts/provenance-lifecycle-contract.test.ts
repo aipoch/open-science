@@ -525,6 +525,51 @@ describe('artifact provenance durable lifecycle contract', () => {
     if (corruptEvidence.producer.state !== 'unavailable') {
       throw new Error('Expected the lifecycle fixture producer to be unavailable.')
     }
+
+    corruptEvidence.compute_executions = [
+      {
+        activity_id: 'compute-job-validation',
+        provider_id: 'ssh:test',
+        shape: 'direct_ssh',
+        status: 'success',
+        command: {
+          state: 'available',
+          command: 'echo evidence',
+          command_hash: sha256('echo evidence')
+        },
+        inputs: { state: 'available', declarations: [] },
+        completion_status: {
+          state: 'available',
+          status: 'success',
+          terminal: true,
+          exit_code: 0
+        },
+        environment: {
+          state: 'available',
+          execution_mode: 'direct_ssh',
+          environment_name_status: 'not-declared'
+        },
+        file_evidence: {
+          state: 'unavailable',
+          reason_codes: ['evidence-persistence-failed']
+        }
+      }
+    ]
+    await persistCorruptEvidence()
+    await expect(repository.getVersionCore(firstIdentity)).resolves.toMatchObject({
+      evidence: { compute_executions: [{ activity_id: 'compute-job-validation' }] }
+    })
+    const computeEvidence = corruptEvidence.compute_executions[0]
+    if (computeEvidence?.command?.state !== 'available') {
+      throw new Error('Expected compute command evidence to be available.')
+    }
+    computeEvidence.command.command_hash = 42 as unknown as string
+    await persistCorruptEvidence()
+    await expect(repository.getVersionCore(firstIdentity)).rejects.toThrow(
+      'Artifact Version core evidence metadata mismatch'
+    )
+    delete corruptEvidence.compute_executions
+
     corruptEvidence.environment_status = {
       state: 'unavailable',
       reason: 'environment-capture-failed'

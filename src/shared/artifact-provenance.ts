@@ -300,11 +300,73 @@ export type ArtifactConnectorExecutionEvidence = {
   arguments_checksum: string
 }
 
+export type ArtifactComputeCommandEvidence =
+  | {
+      state: 'available'
+      command: string
+      command_hash: string
+      truncated?: true
+    }
+  | { state: 'unavailable'; reason: 'compute-command-unavailable' }
+
+export type ArtifactComputeInputDeclaration =
+  | {
+      kind: 'upload'
+      label: string
+      destination_filename: string
+      generation_id?: string
+      checksum?: string
+      size_bytes?: number
+    }
+  | {
+      kind: 'symlink'
+      label: string
+      destination_filename: string
+      remote_path: string
+    }
+
+export type ArtifactComputeInputsEvidence =
+  | {
+      state: 'available'
+      declarations: ArtifactComputeInputDeclaration[]
+    }
+  | {
+      state: 'unavailable'
+      reason: 'compute-input-manifest-unavailable' | 'compute-input-manifest-invalid'
+    }
+
+export type ArtifactComputeCompletionEvidence =
+  | {
+      state: 'available'
+      status: ComputeJobStatus
+      terminal: boolean
+      exit_code?: number
+      submitted_at?: string
+      started_at?: string
+      finished_at?: string
+    }
+  | { state: 'unavailable'; reason: 'compute-completion-status-unavailable' }
+
+export type ArtifactComputeEnvironmentEvidence =
+  | {
+      state: 'available'
+      execution_mode: 'direct_ssh' | 'slurm' | 'unknown'
+      environment_name_status: 'declared' | 'not-declared'
+      environment_name?: string
+      remote_workdir?: string
+      timeout_seconds?: number
+    }
+  | { state: 'unavailable'; reason: 'compute-environment-unavailable' }
+
 export type ArtifactComputeExecutionEvidence = {
   activity_id: string
   provider_id: string
   shape: string
   status: ComputeJobStatus
+  command?: ArtifactComputeCommandEvidence
+  inputs?: ArtifactComputeInputsEvidence
+  completion_status?: ArtifactComputeCompletionEvidence
+  environment?: ArtifactComputeEnvironmentEvidence
   file_evidence: {
     state: 'available' | 'partial' | 'unavailable'
     evidence_id?: string
