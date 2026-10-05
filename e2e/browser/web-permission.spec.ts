@@ -230,3 +230,67 @@ for (const [state, label] of [
     await expect(row).toHaveAttribute('aria-expanded', 'false')
   })
 }
+
+test('windows large review source, reveals distant risks and preserves exact full-source copy', async ({
+  page
+}, testInfo) => {
+  await page.setViewportSize({ width: 768, height: 850 })
+  await page.goto('/web-permission.html?risk=1&large=1&light=1')
+  const review = page.getByTestId('notebook-code-review'),
+    block = review.getByTestId('tool-code-block')
+  await expect(block.locator('[data-code-line]')).toHaveCount(60)
+  await expect(block.locator('[data-code-line="1509"]')).toHaveCount(0)
+  const scrollY = await page.evaluate(() => window.scrollY)
+  await review.getByRole('button', { name: 'Line 1509', exact: true }).click()
+  const target = block.locator('[data-code-line="1509"]')
+  await expect(target).toBeFocused()
+  await expect(target).toHaveAttribute('data-highlighted', 'true')
+  const bounds = await block.boundingBox(),
+    line = await target.boundingBox()
+  expect(line!.y).toBeGreaterThanOrEqual(bounds!.y)
+  expect(line!.y + line!.height).toBeLessThanOrEqual(bounds!.y + bounds!.height)
+  expect(await page.evaluate(() => window.scrollY)).toBe(scrollY)
+  await page.evaluate(() =>
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: async (value: string) => Object.assign(window, { copiedSource: value }) }
+    })
+  )
+  await review.getByRole('button', { name: 'Copy code', exact: true }).click()
+  const source = await page.evaluate(
+    () => (window as unknown as { copiedSource: string }).copiedSource
+  )
+  expect(source.split('\n').length).toBe(1511)
+  expect(source.startsWith('# context\n'.repeat(1500))).toBe(true)
+  expect(source).toContain('os.unlink(a_path)')
+  await page.screenshot({ path: testInfo.outputPath('large-code-review.png'), fullPage: true })
+  await page.getByRole('button', { name: 'Deny', exact: true }).click()
+  expect(
+    await page.evaluate(
+      () => (window as unknown as { webPermissionResponses: unknown[] }).webPermissionResponses
+    )
+  ).toEqual([{ requestId: 'code-risk', optionId: 'deny' }])
+})
+
+test('presents environment switch and variable loss without raw runtime JSON', async ({
+  page
+}, testInfo) => {
+  await page.goto('/web-permission.html?runtime=1&light=1')
+  const selection = page.getByTestId('notebook-runtime-selection')
+  await expect(selection).toContainText('Python base')
+  await expect(selection).toContainText('Python research')
+  await expect(selection).toContainText(
+    "Switching environments clears the current kernel's variables."
+  )
+  await expect(page.getByTestId('tool-code-block')).toHaveCount(0)
+  await page.screenshot({
+    path: testInfo.outputPath('kernel-environment-review.png'),
+    fullPage: true
+  })
+  await page.getByRole('button', { name: 'Allow once', exact: true }).click()
+  expect(
+    await page.evaluate(
+      () => (window as unknown as { webPermissionResponses: unknown[] }).webPermissionResponses
+    )
+  ).toEqual([{ requestId: 'runtime-selection', optionId: 'allow-once' }])
+})

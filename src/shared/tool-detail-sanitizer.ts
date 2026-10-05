@@ -102,6 +102,56 @@ const sanitizeToolContent = (value: unknown): unknown[] | undefined => {
   return entries.length > 0 ? entries : undefined
 }
 
+// Host-owned Notebook reviews carry executable source rather than a generic tool preview.
+// Bound evidence independently so long source survives transport and restart without unbounded JSON.
+const sanitizeNotebookCodeReviewPayload = (value: unknown): unknown | undefined => {
+  if (!isRecord(value) || typeof value.code !== 'string' || value.code.length > 1024 * 1024)
+    return undefined
+  const review = value.notebookCodeRisk
+  if (
+    !isRecord(review) ||
+    typeof review.language !== 'string' ||
+    !['python', 'r', 'repl', 'bash'].includes(review.language) ||
+    !Array.isArray(review.risks) ||
+    !review.risks.length ||
+    !review.risks.every(
+      (risk) =>
+        isRecord(risk) &&
+        typeof risk.operation === 'string' &&
+        typeof risk.source === 'string' &&
+        Number.isInteger(risk.line) &&
+        (risk.line as number) > 0
+    )
+  )
+    return undefined
+  const metadata = Object.fromEntries(
+    ['runId', 'environment', 'runtimeId'].flatMap((key) =>
+      typeof review[key] === 'string' ? [[key, review[key].slice(0, 1024)]] : []
+    )
+  )
+  return sanitizeRawToolPayload(
+    {
+      code: value.code,
+      notebookCodeRisk: {
+        ...metadata,
+        language: review.language,
+        riskCount: Math.max(
+          review.risks.length,
+          Number.isSafeInteger(review.riskCount) && (review.riskCount as number) <= 100_000
+            ? (review.riskCount as number)
+            : 0
+        ),
+        risks: review.risks.slice(0, 128).map((risk) => ({
+          operation: risk.operation.slice(0, 512),
+          source: risk.source.slice(0, 1024),
+          line: risk.line
+        }))
+      }
+    },
+    8 * 1024 * 1024
+  )
+}
+
 // Rebuilds a bounded JSON-safe projection while replacing sensitive fields at every nesting level.
 const sanitizeRawToolPayload = (
   value: unknown,
@@ -123,4 +173,10 @@ const sanitizeRawToolPayload = (
   }
 }
 
-export { capToolDetailText, sanitizeRawToolPayload, sanitizeToolContent, sanitizeToolDetailText }
+export {
+  capToolDetailText,
+  sanitizeRawToolPayload,
+  sanitizeToolContent,
+  sanitizeToolDetailText,
+  sanitizeNotebookCodeReviewPayload
+}

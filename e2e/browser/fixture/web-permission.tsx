@@ -48,7 +48,12 @@ const request: AcpPermissionRequest = {
   ]
 }
 const risk = new URLSearchParams(location.search).has('risk')
-const riskPrefix = new URLSearchParams(location.search).has('long') ? '# context\n'.repeat(48) : ''
+const large = new URLSearchParams(location.search).has('large')
+const riskPrefix = large
+  ? '# context\n'.repeat(1500)
+  : new URLSearchParams(location.search).has('long')
+    ? '# context\n'.repeat(48)
+    : ''
 const riskRequest: AcpPermissionRequest = {
   requestId: 'code-risk',
   sessionId: 'parent',
@@ -64,13 +69,34 @@ const riskRequest: AcpPermissionRequest = {
       language: 'python',
       environment: 'default-python',
       cwd: '/workspace/open-science/.worktree/ledge-permission-analysis/.dev-isolate/storage/notebooks/example-session/data',
-      risks: [{ operation: 'os.unlink', source: 'os.unlink(a_path)', line: riskPrefix ? 57 : 9 }]
+      risks: [
+        {
+          operation: 'os.unlink',
+          source: 'os.unlink(a_path)',
+          line: large ? 1509 : riskPrefix ? 57 : 9
+        }
+      ]
     }
   },
   options: [
     { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
     { optionId: 'deny', name: 'Deny', kind: 'reject_once' }
   ]
+}
+const runtimeSelection = new URLSearchParams(location.search).has('runtime')
+const runtimeRequest: AcpPermissionRequest = {
+  ...riskRequest,
+  requestId: 'runtime-selection',
+  title: 'Select Notebook environment',
+  rawInput: {
+    notebookRuntimeSelection: {
+      language: 'python',
+      runtimeId: 'research',
+      label: 'Python research',
+      previousRuntimeId: 'base',
+      previousLabel: 'Python base'
+    }
+  }
 }
 const responses: Array<{ requestId: string; optionId?: string }> = []
 Object.assign(window, { webPermissionResponses: responses })
@@ -211,7 +237,7 @@ void Promise.resolve(prepareI18nLocale(language)).then(() => {
           <NetworkApproval />
         ) : (
           <PermissionApprovalControls
-            requests={[risk ? riskRequest : request]}
+            requests={[runtimeSelection ? runtimeRequest : risk ? riskRequest : request]}
             onRespond={(requestId, optionId) => {
               responses.push({ requestId, optionId })
             }}

@@ -62,6 +62,8 @@ export type NotebookCodeReview = {
   code: string
   language: string
   environment?: string
+  riskCount?: number
+  uncertain?: boolean
   risks: Array<{ operation: string; source: string; line: number }>
 }
 
@@ -94,6 +96,15 @@ export const readNotebookCodeReview = (rawInput: unknown): NotebookCodeReview | 
           (value, index, values) => typeof value === 'string' && values.indexOf(value) === index
         )
         .join(' · ') || undefined,
+    riskCount:
+      typeof risk.riskCount === 'number' && Number.isSafeInteger(risk.riskCount)
+        ? Math.max(risk.riskCount, risk.risks.length)
+        : risk.risks.length,
+    uncertain: risk.risks.every((finding) =>
+      /\bdynamic\b|\bunresolved\b|analysis (?:limit|unavailable)|^(?:parse-error|parser-unavailable)$|\b(?:script|nested) execution\b/.test(
+        finding.operation.split(': ').at(-1) ?? finding.operation
+      )
+    ),
     risks: risk.risks
   }
 }

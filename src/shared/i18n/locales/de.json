@@ -7302,6 +7302,11 @@
     "This code may make irreversible changes.": "Dieser Code kann irreversible Änderungen vornehmen.",
     "Execution details": "Ausführungsdetails",
     "Code risk review": "Code-Risikoprüfung",
-    "Allowed once": "Einmal erlaubt"
+    "Allowed once": "Einmal erlaubt",
+    "This code could not be fully checked. Review it before execution.": "Dieser Code konnte nicht vollständig geprüft werden. Prüfen Sie ihn vor der Ausführung.",
+    "Showing {{shown}} of {{total}} findings. Review the full code below.": "{{shown}} von {{total}} Befunden werden angezeigt. Prüfen Sie den vollständigen Code unten.",
+    "Current environment": "Aktuelle Umgebung",
+    "Selected environment": "Ausgewählte Umgebung",
+    "Switching environments clears the current kernel's variables.": "Beim Wechsel der Umgebung werden die Variablen des aktuellen Kernels gelöscht."
   }
 }

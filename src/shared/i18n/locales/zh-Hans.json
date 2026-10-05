@@ -7142,6 +7142,11 @@
     "This code may make irreversible changes.": "这段代码可能造成不可逆的更改。",
     "Execution details": "执行详情",
     "Code risk review": "代码风险审查",
-    "Allowed once": "已允许一次"
+    "Allowed once": "已允许一次",
+    "This code could not be fully checked. Review it before execution.": "未能完整检查此代码。运行前请审查。",
+    "Showing {{shown}} of {{total}} findings. Review the full code below.": "当前显示 {{total}} 项发现中的 {{shown}} 项。请审查下方完整代码。",
+    "Current environment": "当前环境",
+    "Selected environment": "所选环境",
+    "Switching environments clears the current kernel's variables.": "切换环境会清除当前内核中的变量。"
   }
 }

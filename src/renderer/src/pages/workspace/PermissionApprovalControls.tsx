@@ -340,7 +340,11 @@ const NotebookCodeReviewDetail = ({
   return (
     <div data-testid="notebook-code-review" className="min-w-0 space-y-3">
       <div className="space-y-2 rounded-md bg-status-warning-surface/60 px-3 py-2.5 text-status-warning-foreground dark:bg-status-warning-dark-surface/60 dark:text-status-warning-dark-foreground">
-        <p className="text-sm">{t('This code may make irreversible changes.')}</p>
+        <p className="text-sm">
+          {review.uncertain
+            ? t('This code could not be fully checked. Review it before execution.')
+            : t('This code may make irreversible changes.')}
+        </p>
         <ul className="space-y-2 text-xs">
           {review.risks.map((risk, index) => (
             <li key={index} className="min-w-0 space-y-1">
@@ -363,6 +367,14 @@ const NotebookCodeReviewDetail = ({
           ))}
         </ul>
       </div>
+      {(review.riskCount ?? 0) > review.risks.length ? (
+        <p className="text-xs text-muted-foreground">
+          {t('Showing {{shown}} of {{total}} findings. Review the full code below.', {
+            shown: review.risks.length,
+            total: review.riskCount
+          })}
+        </p>
+      ) : null}
       <div className="min-w-0 space-y-2">
         <div className="flex items-center justify-between text-xs text-muted-foreground">
           <span>{t('Code')}</span>
@@ -701,7 +713,21 @@ const PermissionApprovalCard = ({
   // Guard against a stale scope no longer offered by the current request.
   const effectiveScope = availableScopes.has(scope) ? scope : defaultScope
   const codeReview = request.appOwned ? readNotebookCodeReview(request.rawInput) : undefined
-  const permCode = codeReview ? undefined : extractPermissionCode(request)
+  const appInput = request.appOwned ? notebookInput(request.rawInput) : {}
+  const selection = appInput.notebookRuntimeSelection
+  const runtimeSelection =
+    selection && typeof selection === 'object' && !Array.isArray(selection)
+      ? (selection as Record<string, unknown>)
+      : undefined
+  const selectedLabel =
+    runtimeSelection && typeof runtimeSelection.label === 'string'
+      ? runtimeSelection.label
+      : undefined
+  const previousLabel =
+    runtimeSelection && typeof runtimeSelection.previousRuntimeId === 'string'
+      ? String(runtimeSelection.previousLabel || runtimeSelection.previousRuntimeId)
+      : undefined
+  const permCode = codeReview || selectedLabel ? undefined : extractPermissionCode(request)
   // A skills/load_skill approval names the skill being loaded; the section resolves the SKILL.md
   // document (managed catalog first, then the connector-aware main resolver) and falls back to the
   // raw JSON input when no source provides the name.
@@ -981,6 +1007,26 @@ const PermissionApprovalCard = ({
           show the SKILL.md document itself — it is the payload being approved. */}
       {codeReview ? (
         <NotebookCodeReviewDetail key={requestId} review={codeReview} />
+      ) : selectedLabel ? (
+        <div data-testid="notebook-runtime-selection" className="space-y-3 text-sm">
+          <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2">
+            {previousLabel ? (
+              <>
+                <dt className="text-muted-foreground">{t('Current environment')}</dt>
+                <dd className="break-all">{previousLabel}</dd>
+              </>
+            ) : null}
+            <dt className="text-muted-foreground">{t('Selected environment')}</dt>
+            <dd className="break-all">{selectedLabel}</dd>
+            <dt className="text-muted-foreground">{t('Language')}</dt>
+            <dd>{String(runtimeSelection?.language || '')}</dd>
+          </dl>
+          {previousLabel ? (
+            <p className="rounded-md bg-status-warning-surface/60 p-3 text-status-warning-foreground dark:bg-status-warning-dark-surface/60 dark:text-status-warning-dark-foreground">
+              {t("Switching environments clears the current kernel's variables.")}
+            </p>
+          ) : null}
+        </div>
       ) : notebookSummary || fileSummary ? (
         <div key={requestId} className="space-y-2">
           <WorkspaceToolSummaryCard

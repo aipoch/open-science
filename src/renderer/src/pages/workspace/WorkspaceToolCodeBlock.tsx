@@ -54,6 +54,20 @@ const WorkspaceToolCodeBlock = ({
   revealLine
 }: WorkspaceToolCodeBlockProps): React.JSX.Element => {
   const { t } = useTranslation()
+  const numbered = showLineNumbers || highlightedLines !== undefined
+  const sourceLines = useMemo(() => (numbered ? source.split('\n') : undefined), [source, numbered])
+  const virtual = !!sourceLines && sourceLines.length > 300
+  const [window, setWindow] = useState({ source, firstLine: 0 })
+  const firstLine = window.source === source ? window.firstLine : 0
+  const setFirstLine = useCallback(
+    (firstLine: number): void => setWindow({ source, firstLine }),
+    [source]
+  )
+  const pendingFocus = useRef<typeof revealLine>(undefined)
+  const startLine = virtual ? Math.min(firstLine, Math.max(0, sourceLines.length - 60)) : 0
+  const visibleLines = virtual ? sourceLines.slice(startLine, startLine + 60) : sourceLines
+  const markedLines = useMemo(() => new Set(highlightedLines), [highlightedLines])
+  const highlightEnabled = Boolean(language) && source.length <= 20_000 && !virtual
   const [highlighted, setHighlighted] = useState<HighlightState | null>(null)
   const copyIdentity = useMemo(() => ({ source }), [source])
   const [copyResult, setCopyResult] = useState<{
@@ -71,7 +85,7 @@ const WorkspaceToolCodeBlock = ({
       ? t('Could not copy code. Try again.')
       : t('Copy code')
   const highlightKey = createHighlightKey(source, language)
-  const highlighter = useCodeHighlighter(Boolean(language))
+  const highlighter = useCodeHighlighter(highlightEnabled)
 
   useEffect(() => {
     return () => {
@@ -96,7 +110,12 @@ const WorkspaceToolCodeBlock = ({
   }, [copyIdentity])
 
   useEffect(() => {
-    if (!language || !highlighter?.supportsLanguage(language as BundledLanguage)) return
+    if (
+      !highlightEnabled ||
+      !language ||
+      !highlighter?.supportsLanguage(language as BundledLanguage)
+    )
+      return
 
     let active = true
     const apply = (result: HighlightResult): void => {
@@ -113,14 +132,23 @@ const WorkspaceToolCodeBlock = ({
     return () => {
       active = false
     }
-  }, [source, language, highlightKey, highlighter])
+  }, [source, language, highlightKey, highlighter, highlightEnabled])
 
   // Only paint tokens that were produced for the currently rendered code and language.
-  const tokens = highlighted?.key === highlightKey ? highlighted.result.tokens : undefined
+  const tokens =
+    highlightEnabled && highlighted?.key === highlightKey ? highlighted.result.tokens : undefined
 
   useEffect(() => {
     const viewport = codeViewport.current
     if (!viewport || !revealLine || !Number.isInteger(revealLine.line)) return
+    if (virtual && sourceLines) {
+      const line = Math.min(sourceLines.length, Math.max(1, revealLine.line))
+      viewport.scrollTop = Math.max(0, (line - 1) * 19.5 - viewport.clientHeight / 2)
+      viewport.scrollLeft = 0
+      pendingFocus.current = revealLine
+      setFirstLine(Math.max(0, Math.floor(viewport.scrollTop / 19.5) - 8))
+      return
+    }
     const target = viewport.querySelector<HTMLElement>(`[data-code-line="${revealLine.line}"]`)
     if (!target) return
     // Scroll only this code viewport, preserving the surrounding conversation position.
@@ -130,7 +158,18 @@ const WorkspaceToolCodeBlock = ({
       (viewport.clientHeight - target.clientHeight) / 2
     viewport.scrollLeft = 0
     target.focus({ preventScroll: true })
-  }, [revealLine, source])
+  }, [revealLine, source, virtual, sourceLines, setFirstLine])
+  useEffect(() => {
+    if (virtual && revealLine && pendingFocus.current === revealLine) {
+      const target = codeViewport.current?.querySelector<HTMLElement>(
+        `[data-code-line="${revealLine.line}"]`
+      )
+      if (target) {
+        target.focus({ preventScroll: true })
+        pendingFocus.current = undefined
+      }
+    }
+  }, [virtual, firstLine, revealLine])
 
   const renderTokens = (line: HighlightResult['tokens'][number]): React.ReactNode =>
     line.map((token, tokenIndex) => (
@@ -147,8 +186,6 @@ const WorkspaceToolCodeBlock = ({
         {token.content}
       </span>
     ))
-  const numbered = showLineNumbers || highlightedLines !== undefined
-  const sourceLines = numbered ? source.split('\n') : undefined
 
   return (
     <div
@@ -193,6 +230,12 @@ const WorkspaceToolCodeBlock = ({
       )}
       <pre
         ref={codeViewport}
+        onScroll={
+          virtual
+            ? (event) =>
+                setFirstLine(Math.max(0, Math.floor(event.currentTarget.scrollTop / 19.5) - 8))
+            : undefined
+        }
         data-testid="tool-code-block"
         data-language={language}
         className={cn('m-0 max-h-[320px] overflow-auto py-2.5', numbered ? 'px-0' : 'px-3')}
@@ -203,13 +246,18 @@ const WorkspaceToolCodeBlock = ({
             numbered && 'w-max min-w-full'
           )}
         >
-          {sourceLines
-            ? sourceLines.map((line, index) => {
-                const marked = highlightedLines?.includes(index + 1)
+          {virtual && (
+            <span aria-hidden="true" className="block" style={{ height: startLine * 19.5 }} />
+          )}
+          {visibleLines
+            ? visibleLines.map((line, offset) => {
+                const index = startLine + offset
+                const marked = markedLines.has(index + 1)
                 const lineTokens = tokens?.[index]
                 return (
                   <span
                     key={index}
+                    style={virtual ? { height: 19.5, lineHeight: '19.5px' } : undefined}
                     data-code-line={index + 1}
                     data-highlighted={marked || undefined}
                     tabIndex={-1}
@@ -232,7 +280,7 @@ const WorkspaceToolCodeBlock = ({
                       {lineTokens?.map((token) => token.content).join('') === line
                         ? renderTokens(lineTokens)
                         : line}
-                      {index < sourceLines.length - 1 ? '\n' : null}
+                      {index < (sourceLines?.length ?? 0) - 1 ? '\n' : null}
                     </span>
                   </span>
                 )
@@ -245,6 +293,13 @@ const WorkspaceToolCodeBlock = ({
                   </Fragment>
                 ))
               : source}
+          {virtual && sourceLines && (
+            <span
+              aria-hidden="true"
+              className="block"
+              style={{ height: Math.max(0, sourceLines.length - startLine - 60) * 19.5 }}
+            />
+          )}
         </code>
       </pre>
     </div>

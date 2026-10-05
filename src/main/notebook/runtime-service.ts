@@ -471,11 +471,20 @@ class NotebookRuntimeService {
           (previous.kernelDispatched === true || previous.status === 'completed') &&
           ['completed', 'failed', 'timeout'].includes(previous.status)
       )
-      .map((previous) => previous.script)
+      .map((previous) => ({
+        script: previous.script,
+        incomplete: previous.status !== 'completed'
+      }))
     const risks: NotebookCodeRisk[] =
       run.shellRuntime?.kind === 'powershell'
         ? await analyzePowerShellCodeRisk(run.script, signal, run.shellRuntime.version)
-        : await analyzeNotebookCodeRisk(run.kernelKind, run.script, context, previousSources)
+        : await analyzeNotebookCodeRisk(
+            run.kernelKind,
+            run.script,
+            context,
+            previousSources,
+            signal
+          )
     signal?.throwIfAborted()
     if (!risks.length) return
     const approved = await this.executionApproval({
@@ -1053,7 +1062,8 @@ class NotebookRuntimeService {
                           runtimeId: binding.runtimeId,
                           label: binding.label,
                           interpreterPath: binding.interpreterPath,
-                          previousRuntimeId: current?.runtimeId
+                          previousRuntimeId: current?.runtimeId,
+                          previousLabel: current?.label
                         }
                       },
                       signal: signal ? AbortSignal.any([signal, deletionSignal]) : deletionSignal

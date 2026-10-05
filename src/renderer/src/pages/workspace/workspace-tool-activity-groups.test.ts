@@ -555,3 +555,66 @@ describe('activity group elapsed time', () => {
     expect(getActivityGroupElapsedMs(activities, 9_000)).toBe(1_500)
   })
 })
+
+describe('Notebook risk review waiting presentation', () => {
+  const review = (overrides: Partial<ToolActivity> = {}): ToolActivity =>
+    createActivity({
+      id: 'app-approval:risk',
+      providerToolName: 'Open-Science',
+      status: 'in_progress',
+      promptMessageId: 'prompt',
+      createdAt: 200,
+      updatedAt: 1200,
+      rawInput: {
+        code: 'os.unlink(path)',
+        notebookCodeRisk: {
+          language: 'python',
+          runId: 'run-1',
+          risks: [{ operation: 'os.unlink', source: 'os.unlink(path)', line: 1 }]
+        }
+      },
+      ...overrides
+    })
+  const run = createActivity({
+    providerToolName: 'mcp__open-science-notebook__notebook_execute',
+    status: 'in_progress',
+    promptMessageId: 'prompt',
+    createdAt: 100,
+    updatedAt: 1400,
+    rawOutput: { status: 'running', runId: 'run-1' }
+  })
+  it('shows waiting even though the admitted Notebook Run is running', () => {
+    expect(formatActivityGroupPresentationTitle([run, review()], undefined, undefined)).toBe(
+      'Waiting for your approval'
+    )
+  })
+  it('excludes review waiting intervals and does not double count review steps', () => {
+    expect(getActivityGroupElapsedMs([run, review()], 1400, () => true)).toBe(100)
+    expect(
+      getActivityGroupElapsedMs([run, review({ status: 'completed' })], 1400, () => false)
+    ).toBe(300)
+    expect(
+      getActivityGroupElapsedMs(
+        [run, review({ status: 'completed', promptMessageId: 'different' })],
+        1400,
+        () => false
+      )
+    ).toBe(1300)
+    expect(
+      getActivityGroupElapsedMs(
+        [
+          run,
+          review({ status: 'completed' }),
+          review({
+            id: 'app-approval:second',
+            status: 'completed',
+            createdAt: 500,
+            updatedAt: 1300
+          })
+        ],
+        1400,
+        () => false
+      )
+    ).toBe(200)
+  })
+})

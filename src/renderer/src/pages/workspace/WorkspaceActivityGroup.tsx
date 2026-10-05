@@ -79,7 +79,11 @@ const ActivityGroupElapsed = ({
 }): React.JSX.Element => {
   const isExecuting = (activity: (typeof activities)[number]): boolean =>
     getToolExecutionPhase(activity, permission, notebookRunsById) === 'executing'
-  const isActive = activities.some(isExecuting)
+  const awaitingApproval = activities.some(
+    (activity) =>
+      getToolExecutionPhase(activity, permission, notebookRunsById) === 'awaiting-approval'
+  )
+  const isActive = !awaitingApproval && activities.some(isExecuting)
   const [now, setNow] = useState(() => Date.now())
 
   useEffect(() => {
@@ -89,7 +93,14 @@ const ActivityGroupElapsed = ({
     return () => clearInterval(timer)
   }, [isActive])
 
-  return <>{formatActivityGroupElapsed(getActivityGroupElapsedMs(activities, now, isExecuting))}</>
+  if (awaitingApproval) return <></>
+  return (
+    <>
+      {formatActivityGroupElapsed(
+        getActivityGroupElapsedMs(activities, now, isExecuting, notebookRunsById)
+      )}
+    </>
+  )
 }
 
 // Renders adjacent tool calls as one collapsible transcript row group.

@@ -2212,13 +2212,17 @@ describe('host-owned Notebook code-risk review receipts', () => {
           .events.filter(
             (event) => event.kind === 'tool' && event.toolCallId === request!.toolCallId
           )
-        expect(receipts).toHaveLength(1)
+        expect(receipts).toHaveLength(2)
         expect(receipts[0]).toMatchObject({
+          status: 'in_progress',
+          providerToolName: 'Open-Science'
+        })
+        expect(receipts[1]).toMatchObject({
           providerToolName: 'Open-Science',
           rawInput,
           status: next === 'cancel' ? 'in_progress' : 'completed'
         })
-        expect(receipts[0].toolDisposition).toBe(
+        expect(receipts[1].toolDisposition).toBe(
           next === 'deny' ? 'declined' : next === 'cancel' ? 'permission-closed' : undefined
         )
       }

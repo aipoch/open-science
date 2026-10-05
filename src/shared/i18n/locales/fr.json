@@ -7470,6 +7470,11 @@
     "This code may make irreversible changes.": "Ce code peut entraîner des modifications irréversibles.",
     "Execution details": "Détails d’exécution",
     "Code risk review": "Vérification des risques du code",
-    "Allowed once": "Autorisé une fois"
+    "Allowed once": "Autorisé une fois",
+    "This code could not be fully checked. Review it before execution.": "Ce code n’a pas pu être entièrement vérifié. Vérifiez-le avant de l’exécuter.",
+    "Showing {{shown}} of {{total}} findings. Review the full code below.": "{{shown}} résultats sur {{total}} sont affichés. Vérifiez le code complet ci-dessous.",
+    "Current environment": "Environnement actuel",
+    "Selected environment": "Environnement sélectionné",
+    "Switching environments clears the current kernel's variables.": "Changer d’environnement efface les variables du noyau actuel."
   }
 }

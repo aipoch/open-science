@@ -381,6 +381,82 @@ describe('PermissionApprovalControls', () => {
     }
   )
 
+  it('shows uncertainty and bounded finding count without claiming a confirmed destructive operation', async () => {
+    const host = await mountControls({
+      ...permissionRequest,
+      appOwned: true,
+      rawInput: {
+        code: 'handlers[name]()',
+        notebookCodeRisk: {
+          language: 'python',
+          riskCount: 150,
+          risks: [{ operation: 'dynamic call target', source: 'handlers[name]()', line: 1 }]
+        }
+      }
+    })
+    expect(host.textContent).toContain(
+      'This code could not be fully checked. Review it before execution.'
+    )
+    expect(host.textContent).toContain('Showing 1 of 150 findings.')
+    expect(host.textContent).not.toContain('This code may make irreversible changes.')
+  })
+  it.each([
+    ['cleanup_analysis: os.unlink', false],
+    ['dynamic_cleanup: fs.unlinkSync', false],
+    ['analysis: os.unlink', false],
+    ['cleanup: dynamic call target', true],
+    ['kernel source history exceeds analysis limit', true],
+    ['code analysis unavailable', true],
+    ['parse-error', true],
+    ['parser-unavailable', true]
+  ])(
+    'bases uncertainty copy on the finding reason rather than a function name: %s',
+    async (operation, uncertain) => {
+      const host = await mountControls({
+        ...permissionRequest,
+        appOwned: true,
+        rawInput: {
+          code: 'cleanup()',
+          notebookCodeRisk: {
+            language: 'python',
+            risks: [{ operation, source: 'cleanup()', line: 1 }]
+          }
+        }
+      })
+      expect(host.textContent).toContain(
+        uncertain
+          ? 'This code could not be fully checked. Review it before execution.'
+          : 'This code may make irreversible changes.'
+      )
+    }
+  )
+
+  it('shows selected and current environments and variable loss without exposing interpreter paths', async () => {
+    const host = await mountControls({
+      ...permissionRequest,
+      appOwned: true,
+      rawInput: {
+        notebookRuntimeSelection: {
+          language: 'python',
+          label: 'Python research',
+          runtimeId: 'research',
+          previousRuntimeId: 'base',
+          previousLabel: 'Python base',
+          interpreterPath: '/internal/python'
+        }
+      }
+    })
+    expect(host.querySelector('[data-testid="notebook-runtime-selection"]')?.textContent).toContain(
+      'Python research'
+    )
+    expect(host.textContent).toContain('Python base')
+    expect(host.textContent).toContain(
+      "Switching environments clears the current kernel's variables."
+    )
+    expect(host.textContent).not.toContain('/internal/python')
+    expect(host.querySelector('[data-testid="tool-code-block"]')).toBeNull()
+  })
+
   it.each([
     [undefined, true],
     [true, false]

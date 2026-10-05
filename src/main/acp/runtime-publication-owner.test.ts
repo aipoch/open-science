@@ -553,3 +553,63 @@ describe('AcpRuntimePublicationOwner', () => {
     expect(snapshotProjection).toHaveBeenCalledTimes(3)
   })
 })
+
+describe('host review transport and recovery witness', () => {
+  const request = (code: string, appOwned = true): AcpPermissionRequest => ({
+    requestId: 'review',
+    sessionId: 'session-1',
+    toolCallId: 'app-approval:review',
+    title: 'Review code',
+    ...(appOwned ? { appOwned: true as const } : {}),
+    rawInput: {
+      code,
+      notebookCodeRisk: {
+        language: 'python',
+        risks: [{ operation: 'os.unlink', source: 'os.unlink(path)', line: 1 }]
+      }
+    },
+    options: [
+      { optionId: 'allow', name: 'Allow once', kind: 'allow_once' },
+      { optionId: 'deny', name: 'Deny', kind: 'reject_once' }
+    ]
+  })
+  it('publishes the complete long source and pending tool witness before the approval callback', () => {
+    const code = '# context\n'.repeat(2000) + 'os.unlink(path)'
+    const events: AcpRuntimeEvent[] = []
+    let projected: AcpPermissionRequest | undefined
+    const owner = new AcpRuntimePublicationOwner({
+      snapshotOwner: new AcpRuntimeSnapshotOwner('/workspace'),
+      interactions: new AcpSessionInteractionOwner(),
+      snapshotProjection: createProjection,
+      callbacks: {
+        onEvent: (event) => events.push(event),
+        onPermissionRequest: (value) => {
+          expect(events[0]).toMatchObject({
+            kind: 'tool',
+            status: 'in_progress',
+            rawInput: { code }
+          })
+          projected = value
+        }
+      }
+    })
+    owner.publishPermissionRequest(request(code))
+    expect(events.map((event) => event.kind)).toEqual(['tool', 'permission'])
+    expect(projected?.rawInput).toMatchObject({ code })
+    expect(owner.getSnapshot().events[0].rawInput).toMatchObject({ code })
+    expect(projected?.options.map((option) => option.kind)).toEqual(['allow_once', 'reject_once'])
+  })
+  it('removes allow choices when host evidence is invalid, keeping generic tools bounded', () => {
+    const requests: AcpPermissionRequest[] = []
+    const owner = new AcpRuntimePublicationOwner({
+      snapshotOwner: new AcpRuntimeSnapshotOwner('/workspace'),
+      interactions: new AcpSessionInteractionOwner(),
+      snapshotProjection: createProjection,
+      callbacks: { onPermissionRequest: (value) => requests.push(value) }
+    })
+    owner.publishPermissionRequest(request('x'.repeat(1024 * 1024 + 1)))
+    expect(requests[0].options.map((option) => option.kind)).toEqual(['reject_once'])
+    owner.publishPermissionRequest(request('x'.repeat(10000), false))
+    expect(requests[1].rawInput).toBeUndefined()
+  })
+})

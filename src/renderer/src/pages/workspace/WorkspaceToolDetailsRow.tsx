@@ -135,6 +135,20 @@ const NotebookCodeReviewReceipt = ({
   const [revealLine, setRevealLine] = useState<{ line: number }>()
   return (
     <div data-testid="notebook-code-review-receipt" className="min-w-0 space-y-2">
+      {review.uncertain ? (
+        <p className="text-xs text-muted-foreground">
+          {t('This code could not be fully checked. Review it before execution.')}
+        </p>
+      ) : null}
+      {(review.riskCount ?? 0) > review.risks.length ? (
+        <p className="text-xs text-muted-foreground">
+          {t('Showing {{shown}} of {{total}} findings. Review the full code below.', {
+            shown: review.risks.length,
+            total: review.riskCount
+          })}
+        </p>
+      ) : null}
+
       <ul className="space-y-1 text-xs">
         {review.risks.map((risk, index) => (
           <li key={index} className="flex min-w-0 items-start gap-2">

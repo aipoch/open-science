@@ -7140,6 +7140,11 @@
     "This code may make irreversible changes.": "이 코드는 되돌릴 수 없는 변경을 일으킬 수 있습니다.",
     "Execution details": "실행 세부 정보",
     "Code risk review": "코드 위험 검토",
-    "Allowed once": "이번만 허용됨"
+    "Allowed once": "이번만 허용됨",
+    "This code could not be fully checked. Review it before execution.": "이 코드를 완전히 검사하지 못했습니다. 실행 전에 검토하세요.",
+    "Showing {{shown}} of {{total}} findings. Review the full code below.": "{{total}}개 중 {{shown}}개를 표시합니다. 아래 전체 코드를 검토하세요.",
+    "Current environment": "현재 환경",
+    "Selected environment": "선택한 환경",
+    "Switching environments clears the current kernel's variables.": "환경을 전환하면 현재 커널의 변수가 지워집니다."
   }
 }

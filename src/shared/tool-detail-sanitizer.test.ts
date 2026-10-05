@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   capToolDetailText,
   sanitizeRawToolPayload,
+  sanitizeNotebookCodeReviewPayload,
   sanitizeToolContent,
   sanitizeToolDetailText
 } from './tool-detail-sanitizer'
@@ -167,5 +168,71 @@ describe('sanitizeToolContent', () => {
     expect(result).toEqual([
       { type: 'content', content: { type: 'text', text: 'a'.repeat(16_000) } }
     ])
+  })
+})
+
+describe('bounded Notebook code review evidence', () => {
+  const payload = (
+    code: string
+  ): {
+    code: string
+    notebookCodeRisk: {
+      language: string
+      runId: string
+      cwd: string
+      risks: Array<{ operation: string; source: string; line: number }>
+    }
+  } => ({
+    code,
+    notebookCodeRisk: {
+      language: 'python',
+      runId: 'run-1',
+      cwd: '/private/internal',
+      risks: [{ operation: 'os.unlink', source: 'os.unlink(path)', line: 1 }]
+    }
+  })
+  it.each(['x'.repeat(10_000), '\u0000'.repeat(1024 * 1024)])(
+    'preserves accepted long source even when JSON escaping expands it',
+    (code) => {
+      expect(sanitizeNotebookCodeReviewPayload(payload(code))).toMatchObject({
+        code,
+        notebookCodeRisk: { riskCount: 1 }
+      })
+      expect(sanitizeRawToolPayload(payload(code), 8_000)).toBeUndefined()
+    }
+  )
+  it('bounds findings independently, preserves total and drops internal paths', () => {
+    const value = payload('os.unlink(path)')
+    value.notebookCodeRisk.risks = Array.from({ length: 500 }, (_, i) => ({
+      operation: 'os.unlink',
+      source: 'x'.repeat(2000),
+      line: i + 1
+    }))
+    const output = sanitizeNotebookCodeReviewPayload(value) as typeof value & {
+      notebookCodeRisk: { riskCount: number }
+    }
+    expect(output.notebookCodeRisk.risks).toHaveLength(128)
+    expect(output.notebookCodeRisk.riskCount).toBe(500)
+    expect(output.notebookCodeRisk.risks[0].source).toHaveLength(1024)
+    expect(output.notebookCodeRisk).not.toHaveProperty('cwd')
+    expect(sanitizeNotebookCodeReviewPayload(output)).toEqual(output)
+  })
+  it('redacts credentials and rejects malformed or oversized executable evidence', () => {
+    expect(
+      JSON.stringify(sanitizeNotebookCodeReviewPayload(payload('token=secret-value')))
+    ).not.toContain('secret-value')
+    for (const value of [
+      payload('x'.repeat(1024 * 1024 + 1)),
+      { code: 'x', notebookCodeRisk: { language: 'python', risks: [] } },
+      {
+        code: 'x',
+        notebookCodeRisk: { language: 'invalid', risks: [{ operation: 'x', source: 'x', line: 1 }] }
+      },
+      {
+        code: 'x',
+        notebookCodeRisk: { language: 'python', risks: [{ operation: 'x', source: 'x', line: 0 }] }
+      }
+    ])
+      expect(sanitizeNotebookCodeReviewPayload(value)).toBeUndefined()
   })
 })

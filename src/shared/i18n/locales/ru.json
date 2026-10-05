@@ -7609,6 +7609,11 @@
     "This code may make irreversible changes.": "Этот код может внести необратимые изменения.",
     "Execution details": "Сведения о выполнении",
     "Code risk review": "Проверка рисков кода",
-    "Allowed once": "Разрешено один раз"
+    "Allowed once": "Разрешено один раз",
+    "This code could not be fully checked. Review it before execution.": "Не удалось полностью проверить этот код. Проверьте его перед выполнением.",
+    "Showing {{shown}} of {{total}} findings. Review the full code below.": "Показано {{shown}} из {{total}} результатов. Проверьте полный код ниже.",
+    "Current environment": "Текущая среда",
+    "Selected environment": "Выбранная среда",
+    "Switching environments clears the current kernel's variables.": "При переключении среды переменные текущего ядра удаляются."
   }
 }

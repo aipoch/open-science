@@ -7142,6 +7142,11 @@
     "This code may make irreversible changes.": "這段程式碼可能造成無法復原的變更。",
     "Execution details": "執行詳情",
     "Code risk review": "程式碼風險審查",
-    "Allowed once": "已允許一次"
+    "Allowed once": "已允許一次",
+    "This code could not be fully checked. Review it before execution.": "未能完整檢查此程式碼。執行前請審查。",
+    "Showing {{shown}} of {{total}} findings. Review the full code below.": "目前顯示 {{total}} 項發現中的 {{shown}} 項。請審查下方完整程式碼。",
+    "Current environment": "目前環境",
+    "Selected environment": "所選環境",
+    "Switching environments clears the current kernel's variables.": "切換環境會清除目前核心中的變數。"
   }
 }
