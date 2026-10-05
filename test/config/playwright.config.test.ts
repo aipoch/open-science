@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { readFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { readFileSync, readdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -217,3 +217,67 @@ it('keeps CI reports and the accessibility reporter rooted at the checkout', asy
     vi.unstubAllEnvs()
   }
 })
+
+it('preserves separate CI blob directories across consecutive suites', async () => {
+  vi.stubEnv('CI', '1')
+  const root = mkdtempSync(join(tmpdir(), 'open-science-blob-config-'))
+  try {
+    vi.resetModules()
+    const configs = [
+      (await import('../../playwright.config')).default,
+      (await import('../../e2e/playwright.browser.config')).default,
+      (await import('../../e2e/playwright.accessibility.config')).default
+    ]
+    const configPath = join(root, 'playwright.config.cjs')
+    writeFileSync(
+      join(root, 'report.spec.cjs'),
+      `const { test } = require(${JSON.stringify(require.resolve('@playwright/test'))});
+       test('report fixture', () => {});`
+    )
+    for (const [index, config] of configs.entries()) {
+      const blob = (config.reporter as Array<[string, unknown?]>).find(([name]) => name === 'blob')
+      expect(blob).toBeDefined()
+      // Use the real configured blob reporter without launching Electron or a browser server.
+      writeFileSync(
+        configPath,
+        `module.exports = ${JSON.stringify({
+          testDir: root,
+          outputDir: join(root, 'results'),
+          workers: 1,
+          reporter: [blob]
+        })}`
+      )
+      const artifacts: Array<{ path: string; bytes: Buffer }> = []
+      for (const suite of ['functional', 'workspace']) {
+        const outputDir = join('blob-report', String(index), suite)
+        const run = spawnSync(
+          process.execPath,
+          [require.resolve('@playwright/test/cli'), 'test', '--config', configPath],
+          {
+            cwd: root,
+            encoding: 'utf8',
+            timeout: 20_000,
+            env: {
+              ...process.env,
+              PLAYWRIGHT_BLOB_OUTPUT_DIR: outputDir,
+              PLAYWRIGHT_BLOB_OUTPUT_FILE: undefined,
+              PLAYWRIGHT_BLOB_OUTPUT_NAME: undefined,
+              PWTEST_BLOB_DO_NOT_REMOVE: undefined
+            }
+          }
+        )
+        expect(run.status, run.stderr).toBe(0)
+        const reports = readdirSync(join(root, outputDir)).filter((file) => file.endsWith('.zip'))
+        expect(reports).toHaveLength(1)
+        const path = join(root, outputDir, reports[0])
+        artifacts.push({ path, bytes: readFileSync(path) })
+      }
+      for (const artifact of artifacts) {
+        expect(readFileSync(artifact.path)).toEqual(artifact.bytes)
+      }
+    }
+  } finally {
+    vi.unstubAllEnvs()
+    rmSync(root, { recursive: true, force: true })
+  }
+}, 90_000)
