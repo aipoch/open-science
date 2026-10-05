@@ -19,7 +19,7 @@ import { prepareImagePointAnnotations } from './image-annotation-payload'
 import { annotationValidationMessage } from './annotation-validation-message'
 import { SentAnnotationCards, type SentAnnotationCardView } from './SentAnnotationCards'
 import { replayAnnotationTarget } from '../session-discussion-annotation'
-import { SessionDiscussionBar } from '../SessionDiscussionBar'
+import { composerContextRowClassName, SessionDiscussionBar } from '../SessionDiscussionBar'
 
 // Keep the source shortcut compact while the quote carries the selected content.
 // Accept the old Research header on previously saved annotations.
@@ -210,7 +210,10 @@ const AnnotationDraftCards = ({
         aria-label={t('Annotations for Agent')}
       >
         {latest ? (
-          <div className="w-full min-w-0" data-testid="session-discussion-draft">
+          <div
+            className={`${composerContextRowClassName} w-full min-w-0`}
+            data-testid="session-discussion-draft"
+          >
             <SessionDiscussionBar
               scope={target?.scope}
               title={replaySourceTitle(latest, t) ?? ''}

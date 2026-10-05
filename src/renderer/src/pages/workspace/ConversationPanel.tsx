@@ -1,5 +1,6 @@
 import { replayAnnotationTarget } from '../../../../shared/replay-reference'
 import { SessionDiscussionSource } from './SessionDiscussionSource'
+import { composerContextRowClassName } from './SessionDiscussionBar'
 import { SessionDiscussionButton } from './SessionDiscussionButton'
 import { createSessionReplayItem } from './workspace-session-actions'
 import { forkSession, sessionForkAvailable } from '@/lib/session-fork'
@@ -2154,7 +2155,7 @@ const ConversationPanel = ({
                         {pdfContext.bindings.length > 0 ? (
                           <div
                             data-testid="pdf-context-bar"
-                            className="-mx-3 -mt-2 flex min-h-9 items-center gap-1 rounded-t-2xl border-b border-border-200 bg-bg-10 px-2 py-1"
+                            className={composerContextRowClassName}
                           >
                             {activeSession ? (
                               <ReadingContextPicker

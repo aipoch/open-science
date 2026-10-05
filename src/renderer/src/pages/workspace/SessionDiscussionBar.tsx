@@ -11,6 +11,9 @@ export type DiscussionStep = {
   stepNumber?: number
 }
 
+export const composerContextRowClassName =
+  '-mx-3 -mt-2 flex min-h-9 items-center gap-1 rounded-t-2xl border-b border-border-200 bg-bg-10 px-2 py-1'
+
 // The action and its selected Session stay separate, in both drafts and ongoing conversations.
 export const SessionDiscussionBar = ({
   title,
