@@ -569,7 +569,8 @@
       "src/main/notebook/dependency-analysis.xml.test.ts",
       "src/main/notebook/source-file-access-analysis.deferred-tasks.test.ts",
       "src/main/notebook/source-file-access-analysis.storage-modes.test.ts",
-      "src/main/literature/pdf-translation/checkpoints.test.ts"
+      "src/main/literature/pdf-translation/checkpoints.test.ts",
+      "src/main/notebook/code-risk-admission.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],

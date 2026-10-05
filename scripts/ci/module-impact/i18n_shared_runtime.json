@@ -699,7 +699,8 @@
       "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationEditions.test.tsx",
       "src/main/literature/pdf-translation/local.test.ts",
       "src/main/local-models/ipc.test.ts",
-      "src/main/literature/pdf-translation/pdf-cache.test.ts"
+      "src/main/literature/pdf-translation/pdf-cache.test.ts",
+      "src/main/notebook/code-risk-admission.test.ts"
     ]
   },
   "capabilityOverlays": [],

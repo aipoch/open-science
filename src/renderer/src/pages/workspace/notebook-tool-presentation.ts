@@ -58,6 +58,46 @@ export const notebookInput = (value: unknown): Record<string, unknown> => {
   return record(input.arguments) ?? input
 }
 
+export type NotebookCodeReview = {
+  code: string
+  language: string
+  environment?: string
+  risks: Array<{ operation: string; source: string; line: number }>
+}
+
+// Callers validate host ownership before projecting the same evidence in approvals and receipts.
+export const readNotebookCodeReview = (rawInput: unknown): NotebookCodeReview | undefined => {
+  const input = notebookInput(rawInput)
+  const risk = notebookInput(input.notebookCodeRisk)
+  if (
+    typeof input.code !== 'string' ||
+    typeof risk.language !== 'string' ||
+    !['python', 'r', 'repl', 'bash'].includes(risk.language) ||
+    !Array.isArray(risk.risks) ||
+    !risk.risks.length ||
+    !risk.risks.every(
+      (finding) =>
+        finding &&
+        typeof finding.operation === 'string' &&
+        typeof finding.source === 'string' &&
+        Number.isInteger(finding.line) &&
+        finding.line > 0
+    )
+  )
+    return undefined
+  return {
+    code: input.code,
+    language: risk.language === 'repl' ? 'javascript' : risk.language,
+    environment:
+      [risk.environment, risk.runtimeId]
+        .filter(
+          (value, index, values) => typeof value === 'string' && values.indexOf(value) === index
+        )
+        .join(' · ') || undefined,
+    risks: risk.risks
+  }
+}
+
 const statusLabel = (value: unknown, t: TranslateClause): string | undefined => {
   switch (value) {
     case 'idle':

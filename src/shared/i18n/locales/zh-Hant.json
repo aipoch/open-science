@@ -44,7 +44,9 @@
     "Export Session package": "匯出工作階段套件",
     "Import Session package": "匯入工作階段套件",
     "Wait for all Session activity and pending approvals to finish before forking.": "請等待所有工作階段活動和待處理核准結束後再建立副本。",
-    "Close window": "關閉視窗"
+    "Close window": "關閉視窗",
+    "Review potentially destructive code": "檢查可能具有破壞性的程式碼",
+    "Confirm Notebook kernel and environment": "確認 Notebook 核心與環境"
   },
   "native": {
     "Linux OS credentials require the original selected Secret Service or KWallet backend and /usr/bin/busctl. Unlock the original default keyring or wallet and restart. Do not change the password-store backend or profile to bypass this check.": "Linux 系統認證資訊需要原先選定的 Secret Service 或 KWallet 後端以及 /usr/bin/busctl。請解鎖原有的預設金鑰圈或錢包後重新啟動。請勿變更 password-store 後端或設定檔來略過此檢查。",
@@ -7132,6 +7134,14 @@
     "Add term": "新增術語",
     "The glossary is too long. Shorten terms or remove some entries.": "術語表過長，請縮短術語或刪除部分項目。",
     "Each source term must appear only once in the glossary.": "術語表中的每個原詞只能出現一次。",
-    "Enter a source term and a translation for every glossary entry.": "請為每條術語填寫原詞和譯法。"
+    "Enter a source term and a translation for every glossary entry.": "請為每條術語填寫原詞和譯法。",
+    "Approval applies only to this run.": "核准僅適用於本次執行。",
+    "This selects an environment. It does not approve future destructive code.": "這會選擇一個環境，不會授權後續具有破壞性的程式碼。",
+    "Line {{line}}": "第 {{line}} 行",
+    "Review risky code": "檢查高風險程式碼",
+    "This code may make irreversible changes.": "這段程式碼可能造成無法復原的變更。",
+    "Execution details": "執行詳情",
+    "Code risk review": "程式碼風險審查",
+    "Allowed once": "已允許一次"
   }
 }

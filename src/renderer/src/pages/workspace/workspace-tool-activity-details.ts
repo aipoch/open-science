@@ -5,6 +5,8 @@ import {
   buildNotebookToolSummary,
   isNotebookSummaryTool,
   readNotebookToolResult,
+  readNotebookCodeReview,
+  type NotebookCodeReview,
   type ToolSummary
 } from './notebook-tool-presentation'
 import type { ToolActivity } from '@/stores/session-store'
@@ -42,6 +44,7 @@ type ToolCodeSection = {
   truncated?: boolean
   // When true the section renders behind a default-collapsed toggle (e.g. notebook cell output).
   collapsible?: boolean
+  showLineNumbers?: boolean
 }
 
 type ToolDiffSection = {
@@ -65,6 +68,7 @@ type ToolDetailSection =
   ToolCodeSection | ToolDiffSection | ToolLiteratureSection | ToolSummarySection
 
 type ToolActivityDetails = {
+  codeReview?: NotebookCodeReview
   defaultExpanded?: boolean
   displayName: string
   subtitle?: string
@@ -768,15 +772,13 @@ const getNotebookCode = (
     for (const key of ['code', 'command', 'script'] as const) {
       const value = input[key]
 
-      if (typeof value === 'string') {
-        const trimmed = trimDetail(value)
-
-        if (trimmed) return trimmed
-      }
+      if (typeof value === 'string' && value.trim()) return value
     }
   }
 
-  return summary && typeof summary.script === 'string' ? trimDetail(summary.script) : undefined
+  return summary && typeof summary.script === 'string' && summary.script.trim()
+    ? summary.script
+    : undefined
 }
 
 // Reads a stream field from either the nested `text` block (notebook_execute) or the top-level
@@ -884,9 +886,15 @@ const buildNotebookDetails = (activity: ToolActivity): ToolActivityDetails | und
   const code = getNotebookCode(activity, summary)
   const sections: ToolDetailSection[] = []
   const codeLabel = language === 'bash' ? 'Command' : 'Code'
-  const codeSection = code ? createCodeSection(codeLabel, code, language) : undefined
-
-  if (codeSection) sections.push(codeSection)
+  // Preserve original whitespace so transcript line numbers match the approval and actual source.
+  if (code)
+    sections.push({
+      kind: 'code',
+      label: codeLabel,
+      language,
+      ...truncateCode(code),
+      showLineNumbers: true
+    })
 
   const output = getNotebookOutput(summary)
   const outputSection = output ? createCodeSection('Output', output) : undefined
@@ -1227,6 +1235,20 @@ const buildToolActivityDetails = (
   activity: ToolActivity,
   t: TranslateClause = identityTranslate
 ): ToolActivityDetails | undefined => {
+  // App-owned review receipts retain their original payload and correlation id in history.
+  // Provider lookalikes must keep all generic arguments visible.
+  const codeReview =
+    activity.id.startsWith('app-approval:') && activity.providerToolName === 'Open-Science'
+      ? readNotebookCodeReview(activity.rawInput)
+      : undefined
+  if (codeReview)
+    return {
+      displayName: t('Code risk review'),
+      subtitle: [...new Set(codeReview.risks.map((risk) => risk.operation))].join(' · '),
+      defaultExpanded: false,
+      codeReview,
+      sections: []
+    }
   if (isSkillActivity(activity) && !isSkillLoadActivity(activity)) return undefined
   // A load_skill call keeps the generic input/output sections but reads as "Skill · <name>"
   // instead of the raw mcp__skills__load_skill tool identifier.

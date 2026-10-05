@@ -20,6 +20,8 @@ import {
 } from '../agent-framework/app-mcp-names'
 
 type PermissionPolicyContext = {
+  // Main-only handoff to the Notebook execution owner's per-code gate. Never read from tool input.
+  notebookHostAdmission?: boolean
   permissionPrompts?: 'none'
   profile: PermissionProfileId
   projectId?: string

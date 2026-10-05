@@ -44,7 +44,9 @@
     "Export Session package": "Экспортировать пакет сеанса",
     "Import Session package": "Импортировать пакет сеанса",
     "Wait for all Session activity and pending approvals to finish before forking.": "Дождитесь завершения всех действий сессии и ожидающих подтверждений перед созданием ответвления.",
-    "Close window": "Закрыть окно"
+    "Close window": "Закрыть окно",
+    "Review potentially destructive code": "Проверить потенциально разрушительный код",
+    "Confirm Notebook kernel and environment": "Подтвердить ядро и окружение Notebook"
   },
   "native": {
     "Linux OS credentials require the original selected Secret Service or KWallet backend and /usr/bin/busctl. Unlock the original default keyring or wallet and restart. Do not change the password-store backend or profile to bypass this check.": "Для системных учётных данных Linux необходимы исходно выбранный бэкенд Secret Service или KWallet и /usr/bin/busctl. Разблокируйте исходную связку ключей или кошелёк по умолчанию и перезапустите приложение. Не меняйте бэкенд password-store или профиль для обхода этой проверки.",
@@ -7599,6 +7601,14 @@
     "Add term": "Добавить термин",
     "The glossary is too long. Shorten terms or remove some entries.": "Глоссарий слишком длинный. Сократите термины или удалите некоторые записи.",
     "Each source term must appear only once in the glossary.": "Каждый исходный термин может встречаться в глоссарии только один раз.",
-    "Enter a source term and a translation for every glossary entry.": "Введите исходный термин и перевод для каждой записи глоссария."
+    "Enter a source term and a translation for every glossary entry.": "Введите исходный термин и перевод для каждой записи глоссария.",
+    "Approval applies only to this run.": "Разрешение действует только для этого запуска.",
+    "This selects an environment. It does not approve future destructive code.": "Это выбор окружения. Он не разрешает последующее выполнение разрушительного кода.",
+    "Line {{line}}": "Строка {{line}}",
+    "Review risky code": "Проверить рискованный код",
+    "This code may make irreversible changes.": "Этот код может внести необратимые изменения.",
+    "Execution details": "Сведения о выполнении",
+    "Code risk review": "Проверка рисков кода",
+    "Allowed once": "Разрешено один раз"
   }
 }

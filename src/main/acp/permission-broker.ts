@@ -1152,6 +1152,11 @@ class AcpPermissionBroker {
         resolveMcpToolIdentity(params.toolCall.title, mcpServerNames) ??
         resolveMcpToolIdentity(extractProviderToolName(params.toolCall), mcpServerNames))
       : undefined
+    const notebookHostAdmission =
+      policyContext?.notebookHostAdmission === true &&
+      /^open[-_]science[-_]notebook\/(?:notebook_execute|repl_execute|bash_execute)$/.test(
+        trustedMcpToolIdentity(params) ?? ''
+      )
     const projectedProviderOptions = projectPermissionOptions(params, policyContext, isMcp)
     const providerPermissionOptions = projectedProviderOptions.filter(
       (option) =>
@@ -1186,7 +1191,7 @@ class AcpPermissionBroker {
         ...(option.kind.toLowerCase() === ALLOW_ONCE_OPTION_KIND ? { scope: 'once' as const } : {})
       })
     )
-    if (categoryKey) {
+    if (categoryKey && !notebookHostAdmission) {
       if (this.permissionGrantRegistry && capability && policyContext?.projectId) {
         permissionOptions.push({
           optionId: `${SESSION_ALLOW_OPTION_ID_PREFIX}${requestId}`,
@@ -1302,10 +1307,9 @@ class AcpPermissionBroker {
     // Resolve against the projected options so a stripped policy amendment can never be an automatic
     // outcome — the "amendments are never selectable" invariant must hold on the auto path too.
     const automaticRequest = { ...params, options: providerPermissionOptions }
-    const automaticOptionId = this.resolveCurrentAutomaticPermission(
-      automaticRequest,
-      policyContext
-    )
+    const automaticOptionId = notebookHostAdmission
+      ? providerAllowOnceOption.optionId
+      : this.resolveCurrentAutomaticPermission(automaticRequest, policyContext)
 
     if (automaticOptionId) {
       this.trace(diagnostic, {

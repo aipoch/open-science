@@ -34,6 +34,16 @@ try {
     foreach ($element in $_.CommandElements | Select-Object -Skip 1) { $arguments += Read-Literal $element }
     @{ name = $_.GetCommandName(); arguments = $arguments }
   })
+  if ($includeMutationEvidence) {
+    $commands += @($ast.FindAll({param($node) $node -is [System.Management.Automation.Language.InvokeMemberExpressionAst]}, $true) | ForEach-Object {
+      $member = Read-Literal $_.Member
+      $name = if ($null -eq $member[0]) { '@dynamic-member' } else { '@member:' + $member[0] }
+      @{ name = $name; arguments = @($_.Extent.Text) }
+    })
+    $commands += @($ast.FindAll({param($node) $node -is [System.Management.Automation.Language.FileRedirectionAst] -and -not $_.Append}, $true) | ForEach-Object {
+      @{ name = '@overwrite'; arguments = @($_.Extent.Text) }
+    })
+  }
   [Console]::Out.Write((ConvertTo-Json -InputObject $commands -Depth 10 -Compress))
 } catch {
   [Console]::Error.WriteLine($_.ToString())
@@ -46,7 +56,8 @@ export type ParsedPowerShellCommand = { name: string | null; arguments: (string 
 export const parsePowerShellSearchCommands = (
   source: string,
   signal?: AbortSignal,
-  version: '5.1' | '7.6' = '5.1'
+  version: '5.1' | '7.6' = '5.1',
+  includeMutationEvidence = false
 ): Promise<ParsedPowerShellCommand[]> =>
   new Promise((resolve, reject) => {
     const child = execFile(
@@ -58,7 +69,10 @@ export const parsePowerShellSearchCommands = (
         '-NoProfile',
         '-NonInteractive',
         '-EncodedCommand',
-        Buffer.from(parserScript, 'utf16le').toString('base64')
+        Buffer.from(
+          `$includeMutationEvidence = $${includeMutationEvidence ? 'true' : 'false'}\n${parserScript}`,
+          'utf16le'
+        ).toString('base64')
       ],
       { windowsHide: true, maxBuffer: 1024 * 1024, signal, encoding: 'utf8' },
       (error, stdout) => {

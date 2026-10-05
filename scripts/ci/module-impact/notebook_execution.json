@@ -207,7 +207,8 @@
     "src/main/notebook/r-connection-guard.test.ts",
     "src/main/notebook/fixtures/lineage/r-save-promises.R",
     "src/main/notebook/windows-notebook-runtime.ts",
-    "src/main/notebook/windows-notebook-runtime.test.ts"
+    "src/main/notebook/windows-notebook-runtime.test.ts",
+    "src/main/notebook/code-risk-admission.test.ts"
   ],
   "interfacePaths": [
     "src/main/notebook/configured-shell-runtime.ts",
@@ -386,7 +387,8 @@
       "src/main/notebook/wsl2-scheduling.integration.test.ts",
       "src/main/notebook/r-save-guard.test.ts",
       "src/main/notebook/r-connection-guard.test.ts",
-      "src/main/notebook/windows-notebook-runtime.test.ts"
+      "src/main/notebook/windows-notebook-runtime.test.ts",
+      "src/main/notebook/code-risk-admission.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -992,7 +994,8 @@
       "src/main/notebook/dependency-analysis.rdkit.test.ts",
       "src/main/notebook/dependency-analysis.scipy-sparse-composition.test.ts",
       "src/main/notebook/dependency-analysis.scipy-sparse.test.ts",
-      "src/main/literature/pdf-translation/checkpoints.test.ts"
+      "src/main/literature/pdf-translation/checkpoints.test.ts",
+      "src/main/notebook/code-risk-analysis.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

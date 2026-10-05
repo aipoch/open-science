@@ -44,7 +44,9 @@
     "Export Session package": "Sitzungspaket exportieren",
     "Import Session package": "Sitzungspaket importieren",
     "Wait for all Session activity and pending approvals to finish before forking.": "Warten Sie, bis alle Sitzungsaktivitäten und ausstehenden Freigaben abgeschlossen sind, bevor Sie eine Kopie erstellen.",
-    "Close window": "Fenster schließen"
+    "Close window": "Fenster schließen",
+    "Review potentially destructive code": "Potenziell destruktiven Code prüfen",
+    "Confirm Notebook kernel and environment": "Notebook-Kernel und Umgebung bestätigen"
   },
   "native": {
     "Linux OS credentials require the original selected Secret Service or KWallet backend and /usr/bin/busctl. Unlock the original default keyring or wallet and restart. Do not change the password-store backend or profile to bypass this check.": "Linux-Systemzugangsdaten benötigen das ursprünglich ausgewählte Secret-Service- oder KWallet-Backend und /usr/bin/busctl. Entsperren Sie den ursprünglichen Standardschlüsselbund oder die ursprüngliche Wallet und starten Sie neu. Ändern Sie weder das password-store-Backend noch das Profil, um diese Prüfung zu umgehen.",
@@ -7292,6 +7294,14 @@
     "Add term": "Begriff hinzufügen",
     "The glossary is too long. Shorten terms or remove some entries.": "Das Glossar ist zu lang. Kürzen Sie Begriffe oder entfernen Sie einige Einträge.",
     "Each source term must appear only once in the glossary.": "Jeder Ausgangsbegriff darf im Glossar nur einmal vorkommen.",
-    "Enter a source term and a translation for every glossary entry.": "Geben Sie für jeden Glossareintrag einen Ausgangsbegriff und eine Übersetzung ein."
+    "Enter a source term and a translation for every glossary entry.": "Geben Sie für jeden Glossareintrag einen Ausgangsbegriff und eine Übersetzung ein.",
+    "Approval applies only to this run.": "Die Freigabe gilt nur für diesen Durchlauf.",
+    "This selects an environment. It does not approve future destructive code.": "Damit wird eine Umgebung ausgewählt. Künftiger destruktiver Code wird dadurch nicht freigegeben.",
+    "Line {{line}}": "Zeile {{line}}",
+    "Review risky code": "Riskanten Code prüfen",
+    "This code may make irreversible changes.": "Dieser Code kann irreversible Änderungen vornehmen.",
+    "Execution details": "Ausführungsdetails",
+    "Code risk review": "Code-Risikoprüfung",
+    "Allowed once": "Einmal erlaubt"
   }
 }

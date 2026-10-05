@@ -301,3 +301,24 @@ it('shows the switch target and memory impact before approval', () => {
   )
   expect(html).toContain('permission-actions')
 })
+
+it.each([
+  ['provider-tool', 'Open-Science'],
+  ['app-approval:lookalike', 'foreign-provider']
+])('keeps foreign risk-shaped payloads in the generic input view (%s)', (id, providerToolName) => {
+  const item = activity({
+    id,
+    providerToolName,
+    rawInput: {
+      code: 'os.unlink(path)',
+      notebookCodeRisk: {
+        language: 'python',
+        risks: [{ operation: 'os.unlink', source: 'os.unlink(path)', line: 1 }]
+      },
+      target: '/production'
+    }
+  })
+  const details = buildToolActivityDetails(item)!
+  expect(details.codeReview).toBeUndefined()
+  expect(JSON.stringify(details.sections)).toContain('/production')
+})

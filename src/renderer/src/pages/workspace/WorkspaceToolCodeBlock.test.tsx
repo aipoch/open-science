@@ -173,6 +173,44 @@ describe('WorkspaceToolCodeBlock', () => {
     expect(vi.getTimerCount()).toBe(0)
   })
 
+  it('numbers review lines, marks risks, and reveals them without changing copied source', async () => {
+    const source = 'import\n\n  os.unlink(a_path)\n'
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceToolCodeBlock code={source} language="python" copyable highlightedLines={[3]} />
+      )
+    })
+    const block = container.querySelector('[data-testid="tool-code-block"]')!
+    expect(block.textContent).toBe(source)
+    expect(block.querySelectorAll('[data-code-line]')).toHaveLength(4)
+    expect(block.querySelectorAll('[data-highlighted="true"]')).toHaveLength(1)
+    expect(block.querySelector('[data-code-line="3"]')?.textContent).toBe('  os.unlink(a_path)\n')
+    expect(block.querySelector('[data-line="3"]')?.getAttribute('aria-hidden')).toBe('true')
+    expect(block.querySelector('span[style]')?.textContent).toBe('import')
+    await act(async () => {
+      root.render(
+        <WorkspaceToolCodeBlock
+          code={source}
+          language="python"
+          copyable
+          highlightedLines={[3]}
+          revealLine={{ line: 3 }}
+        />
+      )
+    })
+    expect(document.activeElement).toBe(block.querySelector('[data-code-line="3"]'))
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[data-testid="code-copy-button"]')!.click()
+    )
+    expect(writeText).toHaveBeenCalledWith(source)
+    await act(async () => root.render(<WorkspaceToolCodeBlock code="replacement" />))
+    expect(container.querySelector('[data-code-line]')).toBeNull()
+    expect(container.querySelector('[data-testid="tool-code-block"]')?.textContent).toBe(
+      'replacement'
+    )
+  })
+
   it('pins the copy button outside the scrollable code area', async () => {
     root = createRoot(container)
     await act(async () => {

@@ -507,7 +507,10 @@ class AcpPermissionContext {
         executionMethod === 'executeShell'
           ? routing.shellRuntimeBindingFor?.(appSessionId)
           : undefined
+      // The authenticated Notebook host reviews finalized code at dispatch. Do not ask for a
+      // language-wide grant here, or create a second approval before the host's one-shot decision.
       const response = await this.requestPermission(routedParams, {
+        notebookHostAdmission: Boolean(executionMethod),
         profile: profileState?.selectedProfile ?? DEFAULT_PERMISSION_PROFILE,
         frameworkId,
         modelRoute: aggregateSnapshot?.modelRoute,

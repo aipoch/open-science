@@ -1,4 +1,9 @@
 import '@/assets/main.css'
+import { useState } from 'react'
+import { WorkspaceToolDetailsRow } from '@/pages/workspace/WorkspaceToolDetailsRow'
+import { buildToolActivityDetails } from '@/pages/workspace/workspace-tool-activity-details'
+import { getToolExecutionPhase } from '@/pages/workspace/tool-execution-phase'
+import type { ToolActivity } from '@/stores/session-store'
 import { createRoot } from 'react-dom/client'
 import { initI18n, prepareI18nLocale } from '@/i18n'
 import { PermissionApprovalControls } from '@/pages/workspace/PermissionApprovalControls'
@@ -10,7 +15,10 @@ import type {
 } from '../../../src/shared/acp'
 
 const language = new URLSearchParams(location.search).get('lang') === 'zh-Hans' ? 'zh-Hans' : 'en'
-document.documentElement.classList.add('dark')
+document.documentElement.classList.toggle(
+  'dark',
+  !new URLSearchParams(location.search).has('light')
+)
 window.api = { platform: 'win32' } as typeof window.api
 
 const search = new URLSearchParams(location.search).has('search')
@@ -36,6 +44,31 @@ const request: AcpPermissionRequest = {
   options: [
     { optionId: 'once', name: 'Allow once', kind: 'allow_once', scope: 'once' },
     { optionId: 'session', name: 'This session', kind: 'allow_always', scope: 'session' },
+    { optionId: 'deny', name: 'Deny', kind: 'reject_once' }
+  ]
+}
+const risk = new URLSearchParams(location.search).has('risk')
+const riskPrefix = new URLSearchParams(location.search).has('long') ? '# context\n'.repeat(48) : ''
+const riskRequest: AcpPermissionRequest = {
+  requestId: 'code-risk',
+  sessionId: 'parent',
+  toolCallId: 'app-approval:code-risk',
+  title: 'Review potentially destructive code',
+  appOwned: true,
+  rawInput: {
+    code:
+      riskPrefix +
+      'import os\n\ntmp_dir = "/workspace/notebook/data"\na_path = os.path.join(tmp_dir, "a.txt")\n\n# Verify the file exists before deletion\nassert os.path.isfile(a_path)\n\nos.unlink(a_path)\nprint(os.listdir(tmp_dir))\n',
+    notebookCodeRisk: {
+      runId: 'internal-run-id',
+      language: 'python',
+      environment: 'default-python',
+      cwd: '/workspace/open-science/.worktree/ledge-permission-analysis/.dev-isolate/storage/notebooks/example-session/data',
+      risks: [{ operation: 'os.unlink', source: 'os.unlink(a_path)', line: riskPrefix ? 57 : 9 }]
+    }
+  },
+  options: [
+    { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
     { optionId: 'deny', name: 'Deny', kind: 'reject_once' }
   ]
 }
@@ -117,16 +150,68 @@ export const NetworkApproval = (): React.JSX.Element => {
     </section>
   )
 }
+const receiptState = new URLSearchParams(location.search).get('receipt')
+const RiskReceipt = (): React.JSX.Element => {
+  const [expanded, setExpanded] = useState(false)
+  const [runExpanded, setRunExpanded] = useState(true)
+  const activity: ToolActivity = {
+    id: 'app-approval:receipt',
+    kind: 'tool',
+    title: riskRequest.title,
+    providerToolName: 'Open-Science',
+    rawInput: riskRequest.rawInput,
+    status: receiptState === 'closed' ? 'in_progress' : 'completed',
+    ...(receiptState === 'declined'
+      ? { toolDisposition: 'declined' as const }
+      : receiptState === 'closed'
+        ? { toolDisposition: 'permission-closed' as const }
+        : {}),
+    eventIds: [],
+    sortIndex: 1,
+    createdAt: 1,
+    updatedAt: 1
+  }
+  return (
+    <section className="rounded-lg bg-bg-100 p-3" data-testid="risk-receipt-fixture">
+      <WorkspaceToolDetailsRow
+        activity={{
+          ...activity,
+          id: 'notebook-run',
+          providerToolName: 'mcp__open-science-notebook__notebook_execute',
+          rawInput: { language: 'python', code: (riskRequest.rawInput as { code: string }).code }
+        }}
+        details={buildToolActivityDetails({
+          ...activity,
+          id: 'notebook-run',
+          providerToolName: 'mcp__open-science-notebook__notebook_execute',
+          rawInput: { language: 'python', code: (riskRequest.rawInput as { code: string }).code }
+        })!}
+        phase="interrupted"
+        isExpanded={runExpanded}
+        onToggle={(_id, open) => setRunExpanded(open)}
+      />
+      <WorkspaceToolDetailsRow
+        activity={activity}
+        details={buildToolActivityDetails(activity)!}
+        phase={getToolExecutionPhase(activity, undefined)}
+        isExpanded={expanded}
+        onToggle={(_id, open) => setExpanded(open)}
+      />
+    </section>
+  )
+}
 void Promise.resolve(prepareI18nLocale(language)).then(() => {
   initI18n(language)
   createRoot(document.getElementById('root')!).render(
     <main className="min-h-screen bg-background p-5 text-foreground">
       <div className="mx-auto max-w-3xl">
-        {network ? (
+        {receiptState ? (
+          <RiskReceipt />
+        ) : network ? (
           <NetworkApproval />
         ) : (
           <PermissionApprovalControls
-            requests={[request]}
+            requests={[risk ? riskRequest : request]}
             onRespond={(requestId, optionId) => {
               responses.push({ requestId, optionId })
             }}

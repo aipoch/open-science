@@ -44,7 +44,9 @@
     "Export Session package": "Exporter un paquet de session",
     "Import Session package": "Importer un paquet de session",
     "Wait for all Session activity and pending approvals to finish before forking.": "Attendez la fin de toutes les activités de la session et des approbations en attente avant de dupliquer.",
-    "Close window": "Fermer la fenêtre"
+    "Close window": "Fermer la fenêtre",
+    "Review potentially destructive code": "Examiner le code potentiellement destructeur",
+    "Confirm Notebook kernel and environment": "Confirmer le noyau et l’environnement du Notebook"
   },
   "native": {
     "Linux OS credentials require the original selected Secret Service or KWallet backend and /usr/bin/busctl. Unlock the original default keyring or wallet and restart. Do not change the password-store backend or profile to bypass this check.": "Les identifiants système Linux nécessitent le backend Secret Service ou KWallet sélectionné à l’origine et /usr/bin/busctl. Déverrouillez le trousseau ou le portefeuille par défaut d’origine et redémarrez. Ne changez pas le backend password-store ni le profil pour contourner cette vérification.",
@@ -7460,6 +7462,14 @@
     "Add term": "Ajouter un terme",
     "The glossary is too long. Shorten terms or remove some entries.": "Le glossaire est trop long. Raccourcissez les termes ou supprimez certaines entrées.",
     "Each source term must appear only once in the glossary.": "Chaque terme source ne doit apparaître qu’une seule fois dans le glossaire.",
-    "Enter a source term and a translation for every glossary entry.": "Saisissez un terme source et une traduction pour chaque entrée du glossaire."
+    "Enter a source term and a translation for every glossary entry.": "Saisissez un terme source et une traduction pour chaque entrée du glossaire.",
+    "Approval applies only to this run.": "L’autorisation s’applique uniquement à cette exécution.",
+    "This selects an environment. It does not approve future destructive code.": "Cette action sélectionne un environnement. Elle n’autorise pas le code destructeur à venir.",
+    "Line {{line}}": "Ligne {{line}}",
+    "Review risky code": "Vérifier le code à risque",
+    "This code may make irreversible changes.": "Ce code peut entraîner des modifications irréversibles.",
+    "Execution details": "Détails d’exécution",
+    "Code risk review": "Vérification des risques du code",
+    "Allowed once": "Autorisé une fois"
   }
 }

@@ -44,7 +44,9 @@
     "Export Session package": "세션 패키지 내보내기",
     "Import Session package": "세션 패키지 가져오기",
     "Wait for all Session activity and pending approvals to finish before forking.": "모든 세션 활동과 대기 중인 승인이 완료된 후 복제하세요.",
-    "Close window": "창 닫기"
+    "Close window": "창 닫기",
+    "Review potentially destructive code": "잠재적으로 파괴적인 코드 검토",
+    "Confirm Notebook kernel and environment": "Notebook 커널 및 환경 확인"
   },
   "native": {
     "Linux OS credentials require the original selected Secret Service or KWallet backend and /usr/bin/busctl. Unlock the original default keyring or wallet and restart. Do not change the password-store backend or profile to bypass this check.": "Linux 시스템 자격 증명에는 원래 선택한 Secret Service 또는 KWallet 백엔드와 /usr/bin/busctl이 필요합니다. 원래 기본 키링 또는 지갑의 잠금을 해제하고 다시 시작하세요. 이 검사를 우회하기 위해 password-store 백엔드나 프로필을 변경하지 마세요.",
@@ -7130,6 +7132,14 @@
     "Add term": "용어 추가",
     "The glossary is too long. Shorten terms or remove some entries.": "용어집이 너무 깁니다. 용어를 줄이거나 일부 항목을 삭제하세요.",
     "Each source term must appear only once in the glossary.": "용어집에 같은 원문 용어를 두 번 이상 등록할 수 없습니다.",
-    "Enter a source term and a translation for every glossary entry.": "각 항목에 원문 용어와 번역을 입력하세요."
+    "Enter a source term and a translation for every glossary entry.": "각 항목에 원문 용어와 번역을 입력하세요.",
+    "Approval applies only to this run.": "승인은 이번 실행에만 적용됩니다.",
+    "This selects an environment. It does not approve future destructive code.": "환경을 선택합니다. 이후의 파괴적인 코드는 승인하지 않습니다.",
+    "Line {{line}}": "{{line}}행",
+    "Review risky code": "위험 코드 검토",
+    "This code may make irreversible changes.": "이 코드는 되돌릴 수 없는 변경을 일으킬 수 있습니다.",
+    "Execution details": "실행 세부 정보",
+    "Code risk review": "코드 위험 검토",
+    "Allowed once": "이번만 허용됨"
   }
 }

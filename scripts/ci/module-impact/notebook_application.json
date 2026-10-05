@@ -303,7 +303,9 @@
     "src/main/notebook/dependency-analysis.r-sf.test.ts",
     "src/main/notebook/dependency-analysis.r-spatial-experiment.test.ts",
     "src/main/notebook/dependency-analysis.r-variant-annotation.test.ts",
-    "src/main/notebook/notebook-path-utils.test.ts"
+    "src/main/notebook/notebook-path-utils.test.ts",
+    "src/main/notebook/code-risk-analysis.ts",
+    "src/main/notebook/code-risk-analysis.test.ts"
   ],
   "interfacePaths": [
     "src/main/notebook/analysis-version.ts",
@@ -387,7 +389,8 @@
     "src/main/notebook/dependency-analysis.rasterio.test.ts",
     "src/main/notebook/dependency-analysis.rdkit.test.ts",
     "src/main/notebook/dependency-analysis.scipy-sparse-composition.test.ts",
-    "src/main/notebook/dependency-analysis.scipy-sparse.test.ts"
+    "src/main/notebook/dependency-analysis.scipy-sparse.test.ts",
+    "src/main/notebook/code-risk-analysis.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -585,7 +588,8 @@
       "src/main/notebook/r-connection-guard.test.ts",
       "src/main/notebook/dependency-analysis.lineage-regressions.test.ts",
       "src/main/notebook/dependency-analysis.r-deseq2.test.ts",
-      "src/main/notebook/notebook-path-utils.test.ts"
+      "src/main/notebook/notebook-path-utils.test.ts",
+      "src/main/notebook/code-risk-analysis.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -1016,7 +1020,8 @@
       "src/main/notebook/dependency-analysis.rdkit.test.ts",
       "src/main/notebook/dependency-analysis.scipy-sparse-composition.test.ts",
       "src/main/notebook/dependency-analysis.scipy-sparse.test.ts",
-      "src/main/literature/pdf-translation/checkpoints.test.ts"
+      "src/main/literature/pdf-translation/checkpoints.test.ts",
+      "src/main/notebook/code-risk-admission.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

@@ -696,6 +696,24 @@ The upper-right pin toggles the current Session through the shared Session contr
   explain that the selected language kernel loses its memory while other kernels are unaffected. Artifact approvals retain
   source paths and inspectable request metadata while omitting inline content bytes. Keep existing
   Allow/Deny options, scopes, correlation, and submission behavior unchanged.
+- Host-owned Notebook code-risk approvals use one warning icon and a short review title; omit
+  the Notebook category badge, duplicate info tooltips, and repeated one-shot scope description.
+  Show the risk source and line number in a warning-tone summary, followed by the verbatim,
+  copyable code with line numbers and warning-highlighted risk lines. Risk line links focus and
+  scroll within the always-visible code block without moving the conversation. Keep the
+  environment behind an initially collapsed Execution details disclosure; omit the working-directory
+  metadata from both approvals and transcript receipts. Retain Allow once / Deny; do not offer a conversation grant.
+  Only validated host-owned payloads use this view; unrecognized inputs retain their raw preview.
+- Notebook Message code blocks share the numbered-code presentation across Python, R, REPL and
+  Bash. Preserve leading blank lines and indentation so line references match the original source;
+  output/log sections do not gain source line numbers. Risk highlighting is opt-in and uses the
+  existing warning tokens; copying always returns only the original code.
+- Code-risk review receipts have their own compact, initially collapsed activity row: review title,
+  operation, and approval outcome. Expanding shows risk evidence and numbered code without
+  approval buttons or raw transport JSON. Allowed once means the review was approved, not that
+  execution succeeded; the Notebook Run remains the source of execution status. Allow, decline and
+  cancellation use the existing tool-activity record format and dispositions. Existing records
+  with valid host payloads render directly; missing historical approvals are not reconstructed.
 
 - Outer shell: `ScrollArea className="min-w-0 flex-1"`.
 - Message scroller surface uses `bg-bg-10` with a top fade `bg-gradient-to-b from-bg-10 to-bg-10/0`.

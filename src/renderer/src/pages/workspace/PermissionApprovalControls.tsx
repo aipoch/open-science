@@ -2,7 +2,7 @@ import { ScopeDropdown, type PermissionScope } from './PermissionScopeButton'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 
 import type { TFunction } from 'i18next'
-import { ChevronDown, ChevronRight, Info } from 'lucide-react'
+import { ChevronDown, ChevronRight, Info, TriangleAlert } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -44,6 +44,7 @@ import {
 import { SpecialistDeleteDetail } from './SpecialistDeleteDetail'
 import { SpecialistSwitchDetail } from './SpecialistSwitchDetail'
 import { WorkspaceToolCodeBlock } from './WorkspaceToolCodeBlock'
+import { readNotebookCodeReview, type NotebookCodeReview } from './notebook-tool-presentation'
 import { WorkspaceLiteratureToolCard } from './WorkspaceLiteratureToolCard'
 import { SkillDocumentSheet } from './WorkspaceSkillLoadRow'
 import {
@@ -325,6 +326,71 @@ const PermissionCodeSection = ({
           <WorkspaceToolCodeBlock code={code} language={language} copyable />
         </div>
       )}
+    </div>
+  )
+}
+
+const NotebookCodeReviewDetail = ({
+  review
+}: {
+  review: NotebookCodeReview
+}): React.JSX.Element => {
+  const { t } = useTranslation()
+  const [revealLine, setRevealLine] = useState<{ line: number }>()
+  return (
+    <div data-testid="notebook-code-review" className="min-w-0 space-y-3">
+      <div className="space-y-2 rounded-md bg-status-warning-surface/60 px-3 py-2.5 text-status-warning-foreground dark:bg-status-warning-dark-surface/60 dark:text-status-warning-dark-foreground">
+        <p className="text-sm">{t('This code may make irreversible changes.')}</p>
+        <ul className="space-y-2 text-xs">
+          {review.risks.map((risk, index) => (
+            <li key={index} className="min-w-0 space-y-1">
+              <div className="flex items-baseline justify-between gap-3">
+                <code className="min-w-0 whitespace-pre-wrap break-all font-medium">
+                  {risk.source || risk.operation}
+                </code>
+                <button
+                  type="button"
+                  className="shrink-0 rounded-sm underline decoration-dotted underline-offset-4 hover:decoration-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                  onClick={() => setRevealLine({ line: risk.line })}
+                >
+                  {t('Line {{line}}', { line: risk.line })}
+                </button>
+              </div>
+              {risk.source && !risk.source.includes(risk.operation) ? (
+                <p>{risk.operation}</p>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      </div>
+      <div className="min-w-0 space-y-2">
+        <div className="flex items-center justify-between text-xs text-muted-foreground">
+          <span>{t('Code')}</span>
+          <span>{review.language}</span>
+        </div>
+        <WorkspaceToolCodeBlock
+          code={review.code}
+          language={review.language}
+          copyable
+          highlightedLines={review.risks.map((risk) => risk.line)}
+          revealLine={revealLine}
+        />
+      </div>
+      {review.environment ? (
+        <details className="text-xs text-muted-foreground">
+          <summary className="w-fit cursor-pointer rounded-sm py-1 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
+            {t('Execution details')}
+          </summary>
+          <dl className="mt-2 grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
+            {review.environment ? (
+              <>
+                <dt>{t('Environment')}</dt>
+                <dd className="break-all font-mono text-foreground">{review.environment}</dd>
+              </>
+            ) : null}
+          </dl>
+        </details>
+      ) : null}
     </div>
   )
 }
@@ -634,7 +700,8 @@ const PermissionApprovalCard = ({
 
   // Guard against a stale scope no longer offered by the current request.
   const effectiveScope = availableScopes.has(scope) ? scope : defaultScope
-  const permCode = extractPermissionCode(request)
+  const codeReview = request.appOwned ? readNotebookCodeReview(request.rawInput) : undefined
+  const permCode = codeReview ? undefined : extractPermissionCode(request)
   // A skills/load_skill approval names the skill being loaded; the section resolves the SKILL.md
   // document (managed catalog first, then the connector-aware main resolver) and falls back to the
   // raw JSON input when no source provides the name.
@@ -854,18 +921,32 @@ const PermissionApprovalCard = ({
             'sticky top-0 z-10 -mx-4 -mt-4 -mb-3 bg-card px-4 pb-3 pt-4 sm:-mx-5 sm:-mt-5 sm:px-5 sm:pt-5'
         )}
       >
-        <div className="flex min-w-0 items-center gap-1.5">
-          <span className={cn(dialogTitleClassName, 'min-w-0 truncate')}>
-            {presentation.actionTitle}
-          </span>
-          <PermissionImpactTip description={presentation.description} detail={titleDetail} />
-        </div>
-        <PermissionHeaderBadges
-          lookup={notebookLookup}
-          runtime={presentation.notebookRuntime}
-          categoryLabel={presentation.categoryLabel}
-          scopeDescription={scopeDescription}
-        />
+        {codeReview ? (
+          <div className="flex min-w-0 items-start gap-2">
+            <TriangleAlert
+              className="mt-0.5 size-5 shrink-0 text-status-warning-foreground dark:text-status-warning-dark-foreground"
+              aria-hidden="true"
+            />
+            <span className={cn(dialogTitleClassName, 'min-w-0 break-words')}>
+              {t('Review risky code')}
+            </span>
+          </div>
+        ) : (
+          <>
+            <div className="flex min-w-0 items-center gap-1.5">
+              <span className={cn(dialogTitleClassName, 'min-w-0 truncate')}>
+                {presentation.actionTitle}
+              </span>
+              <PermissionImpactTip description={presentation.description} detail={titleDetail} />
+            </div>
+            <PermissionHeaderBadges
+              lookup={notebookLookup}
+              runtime={presentation.notebookRuntime}
+              categoryLabel={presentation.categoryLabel}
+              scopeDescription={scopeDescription}
+            />
+          </>
+        )}
       </div>
 
       {['Read web pages', 'Search the web'].includes(sourcePresentation.categoryLabel) ? (
@@ -898,7 +979,9 @@ const PermissionApprovalCard = ({
       {/* Specialist switch/delete requests show a friendly detail block instead of the raw
           redacted payload; all other requests keep the activity-style code preview. Skill loads
           show the SKILL.md document itself — it is the payload being approved. */}
-      {notebookSummary || fileSummary ? (
+      {codeReview ? (
+        <NotebookCodeReviewDetail key={requestId} review={codeReview} />
+      ) : notebookSummary || fileSummary ? (
         <div key={requestId} className="space-y-2">
           <WorkspaceToolSummaryCard
             summary={(notebookSummary ?? fileSummary)!}
