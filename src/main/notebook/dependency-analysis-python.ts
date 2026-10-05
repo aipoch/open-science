@@ -2891,6 +2891,11 @@ class Analyzer extends NodeVisitor {
       .filter(Boolean)
       .join('.')
     if (canonicalName !== 'torch.load') return false
+    const importedRoot = this.importedCanonicalNames.get(root ?? '')
+    const resolvesToImportedTorch =
+      (node.func?.type === 'Attribute' && importedRoot === 'torch') ||
+      (node.func?.type === 'Name' && importedRoot === 'torch.load')
+    if (!resolvesToImportedTorch) return false
     // Safe-global registration changes the process-wide unpickling allowlist.
     // A literal weights-only call is only safe before that namespace has been
     // tainted by a prior registration or opaque mutation.
@@ -8166,6 +8171,11 @@ const analyzePythonFileAccessTree = (
       return
     }
     const canonicalName = canonicalCallName(node) ?? rawName
+    const [rawRoot] = rawName.split('.')
+    const importedTorchRoot = importedNames.get(rawRoot ?? '')
+    const resolvesToImportedTorch =
+      (node.func?.type === 'Attribute' && importedTorchRoot === 'torch') ||
+      (node.func?.type === 'Name' && importedTorchRoot === 'torch.load')
     const importedRoot = importedNames.get(rawName.split('.')[0]!)
     const pathConstructor = [
       'Path',
@@ -8460,6 +8470,12 @@ const analyzePythonFileAccessTree = (
       const keyword = (name: string): PyNode | undefined =>
         (node.keywords ?? []).find((entry) => entry.arg === name)?.value
       const pathNode = keyword('f') ?? args[0]
+      if (!resolvesToImportedTorch) {
+        unresolvedReads = true
+        unresolvedWrites = true
+        unsupportedExternalState = true
+        return
+      }
       const weightsOnly = keyword('weights_only')
       const mapLocation = keyword('map_location')
       const mmap = keyword('mmap')

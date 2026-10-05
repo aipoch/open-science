@@ -40,6 +40,32 @@ it('expands static arrow dataset source vectors', async () => {
   })
 })
 
+it('does not trust package-specific effects inside unrelated wrappers', async () => {
+  expect(
+    await analyzeNotebookSourceFileAccess(
+      'r',
+      'read_matrix <- function(path) custom::read10xCounts(path)\nresult <- read_matrix("inputs/matrix")'
+    )
+  ).toMatchObject({
+    reads: [],
+    readState: 'partial',
+    externalState: 'partial'
+  })
+})
+
+it('keeps remote arrow dataset vectors partial', async () => {
+  expect(
+    await analyzeNotebookSourceFileAccess(
+      'r',
+      'sources <- c("https://example.test/a.parquet", "https://example.test/b.parquet")\ndataset <- arrow::open_dataset(sources)'
+    )
+  ).toMatchObject({
+    reads: ['https://example.test/a.parquet', 'https://example.test/b.parquet'],
+    readState: 'partial',
+    externalState: 'partial'
+  })
+})
+
 it.each([
   'utils::write.csv',
   'utils::write.csv2',

@@ -111,6 +111,21 @@ describe('model format file access coverage', () => {
     })
   })
 
+  it('does not certify a shadowed torch.load binding', async () => {
+    await expect(
+      analyzeNotebookSourceFileAccess(
+        'python',
+        "import torch\ntorch = custom_loader\nweights = torch.load('source.pt', weights_only=True)"
+      )
+    ).resolves.toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial',
+      reads: [],
+      writes: []
+    })
+  })
+
   it('keeps weights-only loads conservative after same-cell safe-global registration', async () => {
     await expect(
       analyzeNotebookSourceFileAccess(

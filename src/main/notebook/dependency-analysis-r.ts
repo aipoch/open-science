@@ -7772,7 +7772,7 @@ const rLocalFileWrappers = (
           while (isCall(target)) target = target.args[0]
           if (isSymbol(target)) assigned.add(target.name)
         }
-        const effect = called ? R_FILE_CALL_EFFECTS.get(called) : undefined
+        const effect = called ? rFileCallEffect(called, rQualifiedCall(node)?.package) : undefined
         if (effect) {
           const qualified = rQualifiedCall(node)
           if (
@@ -7789,7 +7789,10 @@ const rLocalFileWrappers = (
       collect(body)
       const path =
         devices[0] &&
-        rFileCallArgument(devices[0], R_FILE_CALL_EFFECTS.get(rCalledName(devices[0])!)!)
+        rFileCallArgument(
+          devices[0],
+          rFileCallEffect(rCalledName(devices[0])!, rQualifiedCall(devices[0])?.package)!
+        )
       if (
         !unsupported &&
         isSymbol(path) &&
@@ -7797,7 +7800,10 @@ const rLocalFileWrappers = (
         formals.names.includes(path.name) &&
         !assigned.has(path.name) &&
         devices.every((device) => {
-          const argument = rFileCallArgument(device, R_FILE_CALL_EFFECTS.get(rCalledName(device)!)!)
+          const argument = rFileCallArgument(
+            device,
+            rFileCallEffect(rCalledName(device)!, rQualifiedCall(device)?.package)!
+          )
           return isSymbol(argument) && argument.name === path.name
         })
       )
@@ -7806,7 +7812,7 @@ const rLocalFileWrappers = (
     if (isCall(body) && body.operator === '{' && body.args.length === 1) body = body.args[0]
     const name = rCalledName(body)
     const qualified = isCall(body) ? rQualifiedCall(body) : undefined
-    const effect = name ? R_FILE_CALL_EFFECTS.get(name) : undefined
+    const effect = name ? rFileCallEffect(name, qualified?.package) : undefined
     const parameters = formals?.kind === 'formals' ? formals.names : []
     const argument = isCall(body) && effect ? rFileCallArgument(body, effect) : undefined
     const parameterIndex = isSymbol(argument) ? parameters.indexOf(argument.name) : -1
@@ -7959,7 +7965,7 @@ const analyzeRFileAccessTree = (
     const collect = (node: RExpr): void => {
       if (!isCall(node)) return
       const called = rCalledName(node) ?? ''
-      const effect = R_FILE_CALL_EFFECTS.get(called)
+      const effect = rFileCallEffect(called, rQualifiedCall(node)?.package)
       if (effect) effects.add(effect.kind)
       // A single-path wrapper summary cannot preserve mixed I/O or directory scope.
       if (called === 'createArrowFiles') effects.add('write')
@@ -8820,7 +8826,13 @@ const analyzeRFileAccessTree = (
           paths.length <= MAX_STATIC_FILE_LOOP_ITERATIONS &&
           paths.every((path): path is string => path !== undefined)
         ) {
-          for (const path of paths) if (!definitelyWritten.has(path)) reads.add(path)
+          for (const path of paths) {
+            if (!definitelyWritten.has(path)) reads.add(path)
+            if (isExternalNotebookPath(path)) {
+              unresolvedReads = true
+              unsupportedExternalState = true
+            }
+          }
           if (name === 'read10xCounts') unresolvedReads = true
           expr.args.forEach((argument) => visit(argument))
           return
