@@ -2099,10 +2099,10 @@ const projectNotebookFileDependencies = (
   for (const { run, fileAccess } of analyzedRuns) {
     const runtimeEvidenceComplete = hasCompleteRuntimeFileEvidence(run)
     if (run.status === 'completed' && fileAccess) {
+      const dynamicReadUnresolved = fileAccess.reasonCodes.includes('dynamic-path-unresolved')
       if (
-        !runtimeEvidenceComplete &&
-        fileAccess.readState !== 'complete' &&
-        fileAccess.reads.length > 0
+        (!runtimeEvidenceComplete || dynamicReadUnresolved) &&
+        fileAccess.readState !== 'complete'
       )
         unresolvedFileReadRunIds.add(run.runId)
       const dependencies: NotebookFileDependency[] = []

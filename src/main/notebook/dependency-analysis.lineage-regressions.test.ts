@@ -1099,6 +1099,25 @@ describe('file lineage identity and completeness guards', () => {
     ])
   })
 
+  it('marks dynamic-only file reads unresolved even when no path is statically recovered', () => {
+    const runWithDynamicRead = run('dynamic-read', join(tmpdir(), 'lineage-dynamic-read'))
+    const { unresolvedFileReadRunIds } = projectNotebookFileDependencies([
+      {
+        run: runWithDynamicRead,
+        facts,
+        fileAccess: {
+          readState: 'partial',
+          writeState: 'complete',
+          externalState: 'partial',
+          reads: [],
+          writes: [],
+          reasonCodes: ['dynamic-path-unresolved']
+        }
+      }
+    ] satisfies readonly AnalyzedNotebookRun[])
+    expect(unresolvedFileReadRunIds).toEqual(['dynamic-read'])
+  })
+
   it('does not use cwdAfter to resolve relative paths when cwdBefore is missing', () => {
     const rootBefore = join(tmpdir(), 'lineage-cwd-before-missing')
     const rootAfter = join(tmpdir(), 'lineage-cwd-after-only')

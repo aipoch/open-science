@@ -2127,7 +2127,9 @@ class NotebookDependencyAnalyzer {
         language,
         analysis.facts,
         extractedFileAccess,
-        extractedFileAccess?.context ?? analysisContext
+        // The extraction context contains current-cell bindings, while normalization needs the
+        // complete shadow-filtered live kernel context, including resolvedKernelNames.
+        analysisContext
       )
       const invalidatedNames = new Set([
         ...(persistedFacts.definedNames ?? []),
