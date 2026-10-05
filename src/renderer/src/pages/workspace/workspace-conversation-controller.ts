@@ -74,7 +74,13 @@ type ConversationComposer = {
   actions: Pick<WorkspaceComposerController['actions'], 'setError'>
   lifecycle: Pick<
     WorkspaceComposerController['lifecycle'],
-    'captureSend' | 'clearDraft' | 'restoreFailedSend' | 'discardSnapshot' | 'captureRevision'
+    | 'captureSend'
+    | 'preserveAdmissionContext'
+    | 'bindAdmissionContext'
+    | 'clearDraft'
+    | 'restoreFailedSend'
+    | 'discardSnapshot'
+    | 'captureRevision'
   >
 }
 
@@ -565,8 +571,10 @@ const useWorkspaceConversationController = (
             sessionId,
             onMessageAppended: (message) => {
               clearOptimisticMessage()
-              if (wasNewConversation && !sessionId && !branchInNewSession)
+              if (wasNewConversation && !sessionId && !branchInNewSession) {
+                optionsRef.current.composer.lifecycle.bindAdmissionContext(snapshot, message)
                 current.onNewSessionAppended?.(message)
+              }
             },
             onPreparationRejected: (message, rejectedSessionId, finalizedAttachments) => {
               preparationRejected = true
@@ -677,6 +685,8 @@ const useWorkspaceConversationController = (
         return
       }
 
+      if (wasNewConversation && !branchInNewSession && !retryOwner)
+        composer.lifecycle.preserveAdmissionContext(snapshot)
       if (snapshot.annotations.length === 0) composer.lifecycle.clearDraft(current.currentDraftKey)
       dispatch(branchInNewSession ? undefined : (retryOwner?.id ?? activeSession?.id))
     }

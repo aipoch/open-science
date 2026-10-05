@@ -2392,6 +2392,8 @@
     "Synthesize this literature into a concise review.": "Обобщите эту литературу в кратком обзоре.",
     "Reading": "Чтение",
     "Keep as attachments": "Оставить как вложения",
+    "Link on send": "Связать при отправке",
+    "Linking PDFs…": "Связывание PDF…",
     "{{count}} PDFs will be linked when sent_one": "При отправке будет связан {{count}} PDF",
     "{{count}} PDFs will be linked when sent_few": "При отправке будут связаны {{count}} PDF",
     "{{count}} PDFs will be linked when sent_many": "При отправке будут связаны {{count}} PDF",

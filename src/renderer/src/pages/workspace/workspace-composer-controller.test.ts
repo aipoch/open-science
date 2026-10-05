@@ -1410,19 +1410,35 @@ describe('workspace composer controller', () => {
     )!
     act(() => hook.result.current.actions.addAnnotation(discussion))
     const snapshot = hook.result.current.lifecycle.captureSend()
+    act(() => hook.result.current.lifecycle.preserveAdmissionContext(snapshot))
     expect(snapshot.annotations).toEqual([discussion])
     expect(snapshot.pendingPdfContextVersions).toEqual([
       { sourceKind: 'literature-attachment-version', sourceVersionId: 'version-1' }
     ])
 
     act(() => {
+      hook.result.current.lifecycle.clearDraft(snapshot.draftKey, snapshot.version)
       preview.clearPendingPdfContext('project', {
         kind: 'version',
         sourceKind: 'literature-attachment-version',
         sourceVersionId: 'version-1',
         previewItemId: 'literature:version-1'
       })
-      hook.selectSession({ id: 'pending-session', projectId: 'project', isPending: true })
+    })
+    expect(hook.result.current.view.annotations).toEqual([discussion])
+    expect(hook.result.current.view.readingContext.bindings).toHaveLength(1)
+    expect(hook.result.current.lifecycle.captureSend().annotations).toEqual([])
+    act(() => {
+      hook.result.current.lifecycle.bindAdmissionContext(snapshot, {
+        sessionId: 'pending-session',
+        messageId: 'first-prompt'
+      })
+      hook.selectSession({
+        id: 'pending-session',
+        projectId: 'project',
+        isPending: true,
+        messages: [{ id: 'first-prompt' }]
+      })
     })
 
     expect(hook.result.current.view.annotations).toEqual([discussion])
@@ -1436,8 +1452,29 @@ describe('workspace composer controller', () => {
 
     act(() =>
       hook.selectSession({
-        id: 'pending-session',
+        id: 'unrelated-pending',
         projectId: 'project',
+        isPending: true,
+        messages: [{ id: 'other-prompt' }]
+      })
+    )
+    expect(hook.result.current.view.annotations).toEqual([])
+    expect(hook.result.current.view.readingContext.bindings).toEqual([])
+    act(() =>
+      hook.selectSession({
+        id: 'durable-session',
+        projectId: 'project',
+        messages: [{ id: 'first-prompt' }]
+      })
+    )
+    expect(hook.result.current.view.annotations).toEqual([discussion])
+    expect(hook.result.current.view.readingContext.bindings).toHaveLength(1)
+
+    act(() =>
+      hook.selectSession({
+        id: 'durable-session',
+        projectId: 'project',
+        messages: [{ id: 'first-prompt' }],
         isPending: false,
         runtimeContext: {
           revision: 1,

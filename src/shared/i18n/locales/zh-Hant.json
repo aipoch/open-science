@@ -2397,6 +2397,8 @@
     "Synthesize this literature into a concise review.": "將這些文獻綜合成一篇精簡綜述。",
     "Reading": "閱讀",
     "Keep as attachments": "僅保留為附件",
+    "Link on send": "傳送時連結",
+    "Linking PDFs…": "正在連結 PDF…",
     "{{count}} PDFs will be linked when sent_other": "傳送後將連結 {{count}} 個 PDF",
     "Read": "讀取",
     "Linked PDFs": "已連結的 PDF",

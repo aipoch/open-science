@@ -2386,6 +2386,8 @@
     "Synthesize this literature into a concise review.": "Synthétisez cette littérature dans une synthèse concise.",
     "Reading": "Lecture",
     "Keep as attachments": "Conserver comme pièces jointes",
+    "Link on send": "Lier à l’envoi",
+    "Linking PDFs…": "Liaison des PDF…",
     "{{count}} PDFs will be linked when sent_one": "{{count}} PDF sera lié lors de l’envoi",
     "{{count}} PDFs will be linked when sent_many": "{{count}} PDF seront liés lors de l’envoi",
     "{{count}} PDFs will be linked when sent_other": "{{count}} PDF seront liés lors de l’envoi",

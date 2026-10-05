@@ -130,6 +130,7 @@ const options = (
           bindings: [],
           pendingBindingId: undefined,
           isPending: false,
+          automaticAttachments: [],
           automaticAttachmentCount: 0
         }
       },
@@ -142,6 +143,8 @@ const options = (
           annotations: [],
           attachments: []
         })),
+        preserveAdmissionContext: vi.fn(),
+        bindAdmissionContext: vi.fn(),
         captureRevision: vi.fn((revisionDoc, annotations) => ({
           draftKey: 'session-a',
           version: 1,

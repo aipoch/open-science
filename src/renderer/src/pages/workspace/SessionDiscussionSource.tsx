@@ -65,11 +65,7 @@ export const SessionDiscussionSource = ({
     }
   }
   return (
-    <div
-      data-testid="session-discussion-source"
-      className="mb-2 min-w-0"
-      aria-busy={Boolean(pending)}
-    >
+    <div data-testid="session-discussion-source" className="min-w-0" aria-busy={Boolean(pending)}>
       <div className={composerContextRowClassName}>
         <SessionDiscussionBar
           scope={binding.scope}
