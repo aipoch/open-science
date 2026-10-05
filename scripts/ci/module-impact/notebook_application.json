@@ -290,6 +290,7 @@
     "src/main/notebook/fixtures/lineage/native-array-report-handoff.json",
     "src/main/notebook/fixtures/lineage/native-model-missing-global.json",
     "src/main/notebook/fixtures/lineage/native-callback-helper-promises.json",
+    "src/main/notebook/fixtures/science/cross-language-lineage.fixture.jsonl",
     "src/main/notebook/dependency-analysis.lineage-regressions.test.ts",
     "src/main/notebook/host-session-reading.ts"
   ],

@@ -587,10 +587,10 @@ describe('Replay deterministic time projection', () => {
     expect(result.showResults).toBe(true)
     expect(result.visibleEvidence.every((ref) => ref.part === 'record')).toBe(true)
     const file = branch.steps.find((step) => step.kind === 'artifact')!
-    expect(projectReplayScene(doc, branch.id, file.startMs).visibleResourceIds).toEqual([])
-    expect(
-      projectReplayScene(doc, branch.id, file.startMs + file.durationMs * 0.6).visibleResourceIds
-    ).toEqual(['artifact-version:v1'])
+    expect(projectReplayScene(doc, branch.id, file.startMs - 1).visibleResourceIds).toEqual([])
+    expect(projectReplayScene(doc, branch.id, file.startMs).visibleResourceIds).toEqual([
+      'artifact-version:v1'
+    ])
     expect(projectReplayScene(doc, branch.id, execution.startMs).visibleResourceIds).toEqual([])
   })
 
@@ -691,12 +691,12 @@ describe('historical reviews in replay', () => {
       branch.steps.findIndex((step) => step.message?.id === 'a')
     )
     expect(
-      projectReplayScene(doc, branch.id, step.startMs).visibleEvidence.some(
+      projectReplayScene(doc, branch.id, step.startMs - 1).visibleEvidence.some(
         (ref) => ref.kind === 'review'
       )
     ).toBe(false)
     expect(
-      projectReplayScene(doc, branch.id, step.endMs).visibleEvidence.some(
+      projectReplayScene(doc, branch.id, step.startMs).visibleEvidence.some(
         (ref) => ref.kind === 'review'
       )
     ).toBe(true)

@@ -20,8 +20,11 @@ import type {
   NotebookDependencyReceiverCall,
   NotebookDependencyTypeBinding,
   NotebookDependencyTypeSummary,
+  NotebookFileDependency,
   NotebookSourceFileAccessContext,
+  NotebookSourceFileAccessAnalysis,
   NotebookSourceFileAccessContextRequest,
+  NotebookSourceFileWriteScope,
   NotebookRunDependencyFacts,
   ProjectNotebookDependenciesRequest
 } from './dependency-analysis-types'
@@ -33,9 +36,11 @@ import { managedEnvironmentIsReadOnly } from './managed-path-context'
 import { analyzeReplNotebookSource } from './dependency-analysis-repl'
 import { analyzeRFileAccesses, analyzeRNotebookSource } from './dependency-analysis-r'
 import { projectNotebookFileContext, type FileContextEntry } from './dependency-file-context'
+import { normalizeNotebookSourceFileAccess } from './source-file-access-analysis'
 import { serializedFileContext, serializedValueDescriptors } from './serialized-file-provenance'
 import {
   NotebookDependencyProjector,
+  projectNotebookFileDependencies,
   projectNotebookDependencies,
   unavailableNotebookDependencyProjection
 } from './dependency-projection'
@@ -85,6 +90,15 @@ const unknownFacts = (reason: string): NotebookRunDependencyFacts => ({
   memberWrites: []
 })
 
+const unavailableFileAccess = (): NotebookSourceFileAccessAnalysis => ({
+  readState: 'unavailable',
+  writeState: 'unavailable',
+  externalState: 'unavailable',
+  reads: [],
+  writes: [],
+  reasonCodes: ['source-analysis-unsupported-call']
+})
+
 const stringArray = (value: unknown): string[] | undefined =>
   Array.isArray(value) &&
   value.length <= MAX_NAMES_PER_RUN &&
@@ -104,6 +118,67 @@ const projectionStringArray = (value: unknown): string[] | undefined =>
   Array.isArray(value) && value.every((item) => typeof item === 'string')
     ? [...(value as string[])]
     : undefined
+
+const sourceFileAccessValue = (value: unknown): NotebookSourceFileAccessAnalysis | undefined => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const record = value as Record<string, unknown>
+  const reads = stringArray(record.reads)
+  const writes = stringArray(record.writes)
+  const reasonCodes = projectionStringArray(record.reasonCodes)
+  const writeScopes =
+    record.writeScopes === undefined
+      ? undefined
+      : Array.isArray(record.writeScopes)
+        ? record.writeScopes.flatMap((candidate) => {
+            if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return []
+            const scope = candidate as Record<string, unknown>
+            if (
+              (scope.kind !== 'directory' &&
+                scope.kind !== 'shapefile' &&
+                scope.kind !== 'geotiff' &&
+                scope.kind !== 'timestamped-log') ||
+              typeof scope.path !== 'string'
+            )
+              return []
+            return [{ kind: scope.kind, path: scope.path }]
+          })
+        : undefined
+  if (
+    (record.readState !== 'complete' &&
+      record.readState !== 'partial' &&
+      record.readState !== 'unavailable') ||
+    (record.writeState !== 'complete' &&
+      record.writeState !== 'partial' &&
+      record.writeState !== 'unavailable') ||
+    (record.externalState !== 'complete' &&
+      record.externalState !== 'partial' &&
+      record.externalState !== 'unavailable') ||
+    !reads ||
+    !writes ||
+    !reasonCodes ||
+    (record.writeScopes !== undefined &&
+      (!Array.isArray(record.writeScopes) ||
+        writeScopes === undefined ||
+        writeScopes.length !== record.writeScopes.length)) ||
+    reasonCodes.some(
+      (reason) =>
+        reason !== 'dynamic-path-unresolved' && reason !== 'source-analysis-unsupported-call'
+    )
+  ) {
+    return undefined
+  }
+  return {
+    readState: record.readState,
+    writeState: record.writeState,
+    externalState: record.externalState,
+    reads,
+    writes,
+    ...(writeScopes?.length ? { writeScopes: writeScopes as NotebookSourceFileWriteScope[] } : {}),
+    ...(reasonCodes.length
+      ? { reasonCodes: reasonCodes as NotebookSourceFileAccessAnalysis['reasonCodes'] }
+      : { reasonCodes: [] })
+  }
+}
 
 const projectionValue = (value: unknown): NotebookDependencyProjection | undefined => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
@@ -193,7 +268,51 @@ const projectionValue = (value: unknown): NotebookDependencyProjection | undefin
     if (!dependencies) return undefined
     dependenciesByRunId[runId] = dependencies
   }
-  return { stalenessByRunId, invalidatedByRunId, dependenciesByRunId }
+  const fileDependenciesByRunId: NonNullable<
+    NotebookDependencyProjection['fileDependenciesByRunId']
+  > = {}
+  if (record.fileDependenciesByRunId !== undefined) {
+    if (
+      typeof record.fileDependenciesByRunId !== 'object' ||
+      Array.isArray(record.fileDependenciesByRunId)
+    )
+      return undefined
+    const rawFileDependencies = record.fileDependenciesByRunId as Record<string, unknown>
+    for (const [runId, candidate] of Object.entries(rawFileDependencies)) {
+      if (!Array.isArray(candidate) || candidate.length > MAX_NAMES_PER_RUN) return undefined
+      const dependencies = candidate.flatMap((item) => {
+        if (!item || typeof item !== 'object' || Array.isArray(item)) return []
+        const entry = item as Record<string, unknown>
+        if (
+          typeof entry.producerRunId !== 'string' ||
+          typeof entry.path !== 'string' ||
+          entry.path.length === 0 ||
+          (entry.confidence !== 'verified' && entry.confidence !== 'advisory') ||
+          (entry.generationId !== undefined && typeof entry.generationId !== 'string') ||
+          (entry.checksum !== undefined &&
+            (typeof entry.checksum !== 'string' || !/^[a-f0-9]{64}$/u.test(entry.checksum)))
+        )
+          return []
+        return [
+          {
+            producerRunId: entry.producerRunId,
+            path: entry.path,
+            ...(entry.generationId ? { generationId: entry.generationId } : {}),
+            ...(entry.checksum ? { checksum: entry.checksum } : {}),
+            confidence: entry.confidence as NotebookFileDependency['confidence']
+          }
+        ]
+      })
+      if (dependencies.length !== candidate.length) return undefined
+      fileDependenciesByRunId[runId] = dependencies
+    }
+  }
+  return {
+    stalenessByRunId,
+    invalidatedByRunId,
+    dependenciesByRunId,
+    ...(Object.keys(fileDependenciesByRunId).length ? { fileDependenciesByRunId } : {})
+  }
 }
 
 const fileContextValue = (value: unknown): NotebookSourceFileAccessContext | undefined => {
@@ -1419,7 +1538,7 @@ const projectSourceFileAccessContext = (
 const externalInterpreterKey = (run: NotebookRunRecord): string =>
   `${run.kernelKind}\0${run.runtimeId ?? ''}`
 
-const projectionChecksumFor = ({ run, facts }: AnalyzedNotebookRun): string =>
+const projectionChecksumFor = ({ run, facts, fileAccess }: AnalyzedNotebookRun): string =>
   createHash('sha256')
     .update(
       JSON.stringify([
@@ -1431,7 +1550,15 @@ const projectionChecksumFor = ({ run, facts }: AnalyzedNotebookRun): string =>
         run.status,
         run.kernelDispatched,
         run.environmentManifest?.executionContext?.rPackages,
-        facts
+        facts,
+        fileAccess,
+        run.workingFiles.map(({ relativePath, generationId, checksum, change, createdByRunId }) => [
+          relativePath,
+          generationId,
+          checksum,
+          change,
+          createdByRunId
+        ])
       ])
     )
     .digest('hex')
@@ -1636,6 +1763,12 @@ class NotebookDependencyAnalyzer {
       Object.assign(projection.invalidatedByRunId, groupProjection.invalidatedByRunId)
       Object.assign(projection.dependenciesByRunId!, groupProjection.dependenciesByRunId)
     }
+    const { fileDependenciesByRunId, unresolvedFileReadRunIds } =
+      projectNotebookFileDependencies(analyzedRuns)
+    if (Object.keys(fileDependenciesByRunId).length)
+      projection.fileDependenciesByRunId = fileDependenciesByRunId
+    if (unresolvedFileReadRunIds.length)
+      projection.unresolvedFileReadRunIds = unresolvedFileReadRunIds
     for (const groupKey of cachedGroups.keys()) {
       if (!groups.has(groupKey)) cachedGroups.delete(groupKey)
     }
@@ -1772,7 +1905,9 @@ class NotebookDependencyAnalyzer {
       if (
         attemptedRunIds.has(run.runId) ||
         (cachedAnalysisIsReusable(sidecar.runs[run.runId], checksum) &&
-          !sidecar.runs[run.runId]?.facts.serializedValueReads?.length)
+          !sidecar.runs[run.runId]?.facts.serializedValueReads?.length &&
+          ((run.kernelKind !== 'python' && run.kernelKind !== 'r') ||
+            sidecar.runs[run.runId]?.fileAccess !== undefined))
       ) {
         continue
       }
@@ -1787,7 +1922,13 @@ class NotebookDependencyAnalyzer {
         ? await this.resolveExternalInterpreter(run, resolvedExternalInterpreters)
         : this.managedInterpreter(run)
       if (!interpreter) {
-        sidecar.runs[run.runId] = { checksum, facts: unknownFacts('parser-unavailable') }
+        sidecar.runs[run.runId] = {
+          checksum,
+          facts: unknownFacts('parser-unavailable'),
+          ...(run.kernelKind === 'python' || run.kernelKind === 'r'
+            ? { fileAccess: unavailableFileAccess() }
+            : {})
+        }
         changed = true
         continue
       }
@@ -1811,7 +1952,10 @@ class NotebookDependencyAnalyzer {
         run,
         facts:
           sidecar.runs[run.runId]?.facts ??
-          unknownFacts(run.kernelEpochId ? 'analysis-unavailable' : 'kernel-epoch-unavailable')
+          unknownFacts(run.kernelEpochId ? 'analysis-unavailable' : 'kernel-epoch-unavailable'),
+        ...(sidecar.runs[run.runId]?.fileAccess
+          ? { fileAccess: sidecar.runs[run.runId]!.fileAccess }
+          : {})
       })),
       sidecar,
       boundaryRunId === undefined,
@@ -1832,7 +1976,9 @@ class NotebookDependencyAnalyzer {
     const pending = runs.filter(
       (run) =>
         !cachedAnalysisIsReusable(sidecar.runs[run.runId], checksumFor(run)) ||
-        Boolean(sidecar.runs[run.runId]?.facts.serializedValueReads?.length)
+        Boolean(sidecar.runs[run.runId]?.facts.serializedValueReads?.length) ||
+        ((run.kernelKind === 'python' || run.kernelKind === 'r') &&
+          sidecar.runs[run.runId]?.fileAccess === undefined)
     )
     if (pending.length === 0) return false
     const language = pending[0]?.kernelKind
@@ -1976,7 +2122,15 @@ class NotebookDependencyAnalyzer {
             ]
           }
         : normalizedFacts
-      const fileAccess = analysis.fileAccess
+      const extractedFileAccess = analysis.fileAccess
+      const fileAccess = normalizeNotebookSourceFileAccess(
+        language,
+        analysis.facts,
+        extractedFileAccess,
+        // The extraction context contains current-cell bindings, while normalization needs the
+        // complete shadow-filtered live kernel context, including resolvedKernelNames.
+        analysisContext
+      )
       const invalidatedNames = new Set([
         ...(persistedFacts.definedNames ?? []),
         ...(persistedFacts.conditionallyDefinedNames ?? []),
@@ -1995,9 +2149,9 @@ class NotebookDependencyAnalyzer {
               .slice(0, 32)
           : []
       const fileContext =
-        fileAccess?.context || persistedHelperModules.length > 0
+        extractedFileAccess?.context || persistedHelperModules.length > 0
           ? {
-              ...(fileAccess?.context ?? {
+              ...(extractedFileAccess?.context ?? {
                 staticStrings: [],
                 staticCollections: [],
                 localFileWrappers: []
@@ -2013,6 +2167,7 @@ class NotebookDependencyAnalyzer {
       sidecar.runs[run.runId] = {
         checksum: checksumFor(run),
         facts: persistedFacts,
+        ...(fileAccess ? { fileAccess } : {}),
         ...(fileContext ? { fileContext: boundedFileContext(fileContext, persistedFacts) } : {})
       }
     }
@@ -2080,6 +2235,9 @@ class NotebookDependencyAnalyzer {
         const fileContext =
           record.fileContext === undefined ? undefined : fileContextValue(record.fileContext)
         if (record.fileContext !== undefined && !fileContext) return emptySidecar()
+        const fileAccess =
+          record.fileAccess === undefined ? undefined : sourceFileAccessValue(record.fileAccess)
+        if (record.fileAccess !== undefined && !fileAccess) return emptySidecar()
         const factsRecord = rawFacts as Record<string, unknown>
         const validFacts =
           factsRecord.state === 'available'
@@ -2172,6 +2330,7 @@ class NotebookDependencyAnalyzer {
         runs[runId] = {
           checksum: record.checksum,
           facts: normalizeFacts(rawFacts),
+          ...(fileAccess ? { fileAccess } : {}),
           ...(fileContext ? { fileContext } : {})
         }
       }

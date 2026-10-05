@@ -222,12 +222,24 @@ type NotebookRunDependencyFacts =
 type AnalyzedNotebookRun = {
   run: NotebookRunRecord
   facts: NotebookRunDependencyFacts
+  fileAccess?: NotebookSourceFileAccessAnalysis
+}
+
+type NotebookFileDependency = {
+  producerRunId: string
+  path: string
+  generationId?: string
+  checksum?: string
+  confidence: 'verified' | 'advisory'
 }
 
 type NotebookDependencyProjection = {
   stalenessByRunId: Record<string, NotebookRunStaleness>
   invalidatedByRunId: Record<string, NotebookInvalidatedRun[]>
   dependenciesByRunId?: Record<string, string[]>
+  fileDependenciesByRunId?: Record<string, NotebookFileDependency[]>
+  // Recomputed from run history; not stored in per-kernel sidecar snapshots.
+  unresolvedFileReadRunIds?: string[]
 }
 
 type NotebookDependencyInterpreter = { command: string; args?: string[]; condaPrefix?: string }
@@ -243,6 +255,7 @@ type NotebookDependencyAnalysisSidecar = {
     {
       checksum: string
       facts: NotebookRunDependencyFacts
+      fileAccess?: NotebookSourceFileAccessAnalysis
       fileContext?: NotebookSourceFileAccessContext
     }
   >
@@ -317,6 +330,7 @@ export type {
   NotebookDependencyInterpreter,
   NotebookDependencyMemberWrite,
   NotebookDependencyProjection,
+  NotebookFileDependency,
   NotebookDependencyReceiverCall,
   NotebookDependencyTypeBinding,
   NotebookDependencyTypeSummary,

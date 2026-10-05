@@ -1198,7 +1198,11 @@
       "src/main/acp/approved-handoff-outcome.test.ts",
       "src/main/pdf-annotations/sharing.integration.test.ts",
       "src/main/database/pdf-annotations-migration.test.ts",
-      "src/main/agent-framework/claude-shared-settings.integration.test.ts"
+      "src/main/agent-framework/claude-shared-settings.integration.test.ts",
+      "src/main/notebook/dependency-analysis.anndata.test.ts",
+      "src/main/notebook/dependency-analysis.heatmap.test.ts",
+      "src/main/notebook/dependency-analysis.pycirclize.test.ts",
+      "src/main/notebook/dependency-analysis.set-intersections.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

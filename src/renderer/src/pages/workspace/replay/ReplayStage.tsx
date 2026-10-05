@@ -630,7 +630,11 @@ const ReplayStageContent = ({
     setBrowsingConversation(false)
   }
   const followingTranscript = useFollowScrollBottom(
-    fitContainer && (wide || !materialsOpen) && !browsingConversation
+    fitContainer && (wide || !materialsOpen) && historyStart === undefined,
+    {
+      onFollowingChange: (following) => setBrowsingConversation(!following),
+      resetKey: `${focusKey}:${returnRequest}`
+    }
   )
   const transcript = fitContainer ? followingTranscript : captureTranscript
   const [rememberConversationAnchor, releaseConversationAnchor] = usePrependAnchor(
@@ -646,10 +650,6 @@ const ReplayStageContent = ({
   const transcriptStart = fitContainer
     ? (historyStart ?? Math.max(0, scene.visibleSteps.length - REPLAY_TRANSCRIPT_STEP_LIMIT))
     : Math.max(0, scene.visibleSteps.length - REPLAY_TRANSCRIPT_STEP_LIMIT)
-  useLayoutEffect(() => {
-    if (!fitContainer || !transcript.current) return
-    transcript.current.scrollTop = transcript.current.scrollHeight
-  }, [fitContainer, transcript, focusKey, returnRequest])
   const notebookIndices = useMemo(() => {
     const indices = new Map<string, number>()
     for (const branch of replayDocument.branches)
@@ -1022,16 +1022,12 @@ const ReplayStageContent = ({
               ? `relative min-h-0 min-w-0 overflow-auto border-border-200 bg-bg-000 px-4 py-3 ${(showMaterialPane && !wide) || inspecting ? 'hidden' : 'block'}`
               : 'relative space-y-3 overflow-auto border-r border-border-200 bg-bg-10 p-5'
           }
-          style={{ scrollbarWidth: fitContainer ? undefined : 'none' }}
-          onScroll={
-            fitContainer
-              ? (event) => {
-                  const viewport = event.currentTarget
-                  if (viewport.scrollTop + viewport.clientHeight < viewport.scrollHeight - 4)
-                    setBrowsingConversation(true)
-                }
-              : undefined
-          }
+          // Interactive history has its own follow and prepend anchors. Native anchoring can
+          // pull the viewport upward when older rows leave the bounded playback window.
+          style={{
+            scrollbarWidth: fitContainer ? undefined : 'none',
+            overflowAnchor: fitContainer ? 'none' : undefined
+          }}
         >
           <div className={fitContainer ? 'space-y-1' : 'space-y-3'}>
             {fitContainer && transcriptStart > 0 ? (

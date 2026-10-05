@@ -88,6 +88,29 @@ afterEach(() => {
 })
 
 describe('durable step-scoped Ask snapshots', () => {
+  it('clears an unavailable-evidence error after a successful retry without replacing the draft', async () => {
+    const saveSelectionSnapshot = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal('api', { sessionReplay: { saveSelectionSnapshot } })
+    const actions = { changeDoc: vi.fn(), addAnnotation: vi.fn(), setError: vi.fn() }
+    const draft = doc('Keep this question')
+    renderHook(() =>
+      useWorkspaceSessionDiscussion({
+        draftKey: 'target',
+        editable: true,
+        composer: { view: { doc: draft, annotations: [] }, actions }
+      })
+    )
+    act(() => useSessionReplayStore.getState().ask({ ...context, evidence: [] }, destination))
+    await waitFor(() =>
+      expect(actions.setError).toHaveBeenCalledWith('The recorded evidence is unavailable.')
+    )
+    expect(actions.addAnnotation).not.toHaveBeenCalled()
+    act(() => useSessionReplayStore.getState().ask(context, destination))
+    await waitFor(() => expect(actions.addAnnotation).toHaveBeenCalledOnce())
+    expect(actions.changeDoc).toHaveBeenCalledWith(draft)
+    expect(actions.setError).toHaveBeenLastCalledWith(null)
+  })
+
   it('delivers a pending Ask only to its matching research draft while keeping ordinary drafts untouched', async () => {
     const source = {
       sourceProjectId: 'target-project',

@@ -6,6 +6,7 @@ import {
 import { parseArtifactVersionLocator } from '../../../../../shared/artifact-provenance'
 import { parseLiteratureAttachmentVersionReference } from '../../../../../shared/literature'
 import { parseUploadVersionReference } from '../../../../../shared/uploads'
+import { replayAnnotationTarget } from '../../../../../shared/replay-reference'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import type { PdfAnnotation as SavedPdfAnnotation } from '../../../../../shared/pdf-annotations'
@@ -232,7 +233,9 @@ const createAnnotationPreviewItem = (annotation: Annotation): PreviewFileItem | 
 }
 
 const requestAnnotationReveal = (annotation: Annotation): void => {
-  if (!fileAnnotationSource(annotation)) {
+  // Replay references navigate through their captured position, including file-only steps.
+  // Their archive Session is not necessarily the uploaded file's native owner.
+  if (replayAnnotationTarget(annotation) || !fileAnnotationSource(annotation)) {
     publishAnnotationReveal(annotation)
     return
   }

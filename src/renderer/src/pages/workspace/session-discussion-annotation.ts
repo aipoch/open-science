@@ -1,6 +1,7 @@
 import type { TextAnnotation } from '../../../../shared/annotations'
 import { ANNOTATION_LIMITS } from '../../../../shared/annotations'
 import { createArtifactVersionLocator } from '../../../../shared/artifact-provenance'
+import { createUploadVersionReference } from '../../../../shared/uploads'
 import type { SessionDiscussionCapture } from './replay/replay-context'
 
 export { replayAnnotationId, replayAnnotationTarget } from '../../../../shared/replay-reference'
@@ -23,6 +24,11 @@ export const createSessionDiscussionAnnotation = (
   const artifact = context.evidence.find(
     (item) => item.kind === 'artifact-version' && item.artifactId && item.versionId
   )
+  const upload = contextId
+    ? context.evidence.find(
+        (item) => item.kind === 'upload-version' && item.fileId && item.versionId
+      )
+    : undefined
   const source: TextAnnotation['source'] | undefined = message
     ? { kind: 'agent-message', sessionId: context.sourceSessionId, messageId: message.id }
     : activity
@@ -47,14 +53,26 @@ export const createSessionDiscussionAnnotation = (
               versionId: artifact.versionId
             })
           }
-        : record && (record.kind === 'notebook-run' || record.kind === 'review')
+        : upload?.fileId && upload.versionId
           ? {
-              kind: 'session-item',
+              kind: 'project-file',
+              projectId: context.projectId,
               sessionId: context.sourceSessionId,
-              itemId: record.id,
-              itemType: record.kind
+              fileSource: 'upload',
+              sourceFileId: upload.fileId,
+              versionId: upload.versionId,
+              // The snapshot anchors the archive; its Session need not own the uploaded file.
+              // Saved replay references use Session reading, never native file attachments.
+              path: createUploadVersionReference(upload.versionId)
             }
-          : undefined
+          : record && (record.kind === 'notebook-run' || record.kind === 'review')
+            ? {
+                kind: 'session-item',
+                sessionId: context.sourceSessionId,
+                itemId: record.id,
+                itemType: record.kind
+              }
+            : undefined
   if (!source) return undefined
   return {
     id: replayAnnotationId(context, contextId),

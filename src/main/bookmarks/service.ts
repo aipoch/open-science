@@ -268,11 +268,25 @@ class BookmarkService {
 
   create(request: CreateBookmarkRequest): Promise<Bookmark> {
     return this.enqueue(request.projectId, request.sessionId, async () => {
-      const recovered = await this.options.repository.recoverCreate(request)
-      if (recovered) return recovered
-      const session = await this.loadWritableSession(request.projectId, request.sessionId)
-      await this.validateNewSource(request, session)
-      return this.options.repository.create(request)
+      let stage = 'session-recovery'
+      try {
+        const recovered = await this.options.repository.recoverCreate(request)
+        if (recovered) return recovered
+        stage = 'session-load'
+        const session = await this.loadWritableSession(request.projectId, request.sessionId)
+        stage = 'source-validation'
+        await this.validateNewSource(request, session)
+        stage = 'persist'
+        return await this.options.repository.create(request)
+      } catch (error) {
+        try {
+          // Fixed diagnostic stages only: never retain source IDs, paths, messages, or stacks.
+          log.warn('Bookmark creation failed', { stage, ...diagnosticErrorFields(error) })
+        } catch {
+          // Diagnostics cannot replace the authoritative rejection.
+        }
+        throw error
+      }
     })
   }
 

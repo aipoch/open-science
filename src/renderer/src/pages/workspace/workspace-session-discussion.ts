@@ -166,6 +166,7 @@ export const useWorkspaceSessionDiscussion = ({
             return
           }
           current.composer.actions.changeDoc(doc)
+          current.composer.actions.setError(null)
         } else {
           current.composer.actions.setError(t('The recorded evidence is unavailable.'))
           useSessionReplayStore.getState().ask(undefined)

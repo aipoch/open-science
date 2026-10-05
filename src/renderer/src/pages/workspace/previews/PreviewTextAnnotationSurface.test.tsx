@@ -13,7 +13,7 @@ import type {
 } from '../../../../../shared/annotations'
 import { createArtifactVersionLocator } from '../../../../../shared/artifact-provenance'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
-import type { Bookmark } from '../../../../../shared/bookmarks'
+import type { Bookmark, CreateBookmarkRequest } from '../../../../../shared/bookmarks'
 
 import {
   requestAnnotationReveal,
@@ -615,6 +615,66 @@ describe('PreviewTextAnnotationSurface', () => {
     expect(ranges().map((range) => range.toString())).toEqual([annotation().quote])
     await act(async () => root.render(null))
     expect(ranges()).toHaveLength(0)
+  })
+
+  it('saves a managed file bookmark from another session without changing its source', async () => {
+    const create = vi.fn(async (request: CreateBookmarkRequest): Promise<Bookmark> => ({
+      ...request,
+      version: 1,
+      createdAt: '2026-10-05T00:00:00.000Z',
+      updatedAt: '2026-10-05T00:00:00.000Z'
+    }))
+    const previewItem = item({ managedFileId: 'artifact-1', sessionId: 'other-session' })
+    await renderSurface({
+      bookmarkApi: {
+        list: vi.fn().mockResolvedValue({ items: [], total: 0 }),
+        create
+      } as unknown as Window['api']['bookmarks'],
+      previewItem
+    })
+    await selectQuote()
+    fireEvent.click(screen.getByRole('button', { name: 'Annotate' }))
+    fireEvent.click(screen.getByRole('tab', { name: 'For me' }))
+    const button = screen.getByRole('button', { name: 'Bookmark' }) as HTMLButtonElement
+    expect(button.disabled).toBe(false)
+    await act(async () => fireEvent.click(button))
+    expect(create).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        sessionId: 'session-1',
+        target: expect.objectContaining({
+          source: expect.objectContaining({
+            sessionId: 'other-session',
+            sourceFileId: 'artifact-1',
+            versionId: 'version-7'
+          })
+        })
+      })
+    )
+  })
+
+  it('adds an agent annotation from another session without changing its source', async () => {
+    const onAddAnnotation = vi.fn(() => undefined)
+    const onAnnotationError = vi.fn()
+    await renderSurface({
+      onAddAnnotation,
+      onAnnotationError,
+      bookmarkApi: {
+        list: vi.fn().mockResolvedValue({ items: [], total: 0 })
+      } as unknown as Window['api']['bookmarks'],
+      previewItem: item({ managedFileId: 'artifact-1', sessionId: 'other-session' })
+    })
+    await selectQuote()
+    await confirmAnnotation()
+    expect(onAnnotationError).not.toHaveBeenCalled()
+    expect(onAddAnnotation).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        source: expect.objectContaining({
+          sessionId: 'other-session',
+          sourceFileId: 'artifact-1',
+          versionId: 'version-7'
+        })
+      })
+    )
   })
 
   it('reveals an exact project-file bookmark and reports a missing quote', async () => {

@@ -11,15 +11,17 @@ const Harness = ({
   contentHeight,
   viewportKey = 'viewport',
   contentKey = 'content',
-  visible = true
+  visible = true,
+  options
 }: {
   enabled: boolean
   contentHeight: number
   viewportKey?: string
   contentKey?: string
   visible?: boolean
+  options?: Parameters<typeof useFollowScrollBottom>[1]
 }): React.JSX.Element => {
-  const viewportRef = useFollowScrollBottom(enabled)
+  const viewportRef = useFollowScrollBottom(enabled, options)
   if (!visible) return <></>
   return (
     <div key={viewportKey} data-testid="viewport" ref={viewportRef}>
@@ -63,6 +65,49 @@ afterEach(() => {
 })
 
 describe('useFollowScrollBottom', () => {
+  it('reports guarded transitions to the latest callback and resumes on explicit navigation', () => {
+    const resize = stubResizeObserver()
+    const previousCallback = vi.fn()
+    const currentCallback = vi.fn()
+    const mounted = render(
+      <Harness enabled contentHeight={1000} options={{ onFollowingChange: previousCallback }} />
+    )
+    const viewport = screen.getByTestId('viewport')
+    setScrollGeometry(viewport, { clientHeight: 400, scrollHeight: 1000, scrollTop: 0 })
+    resize()
+    mounted.rerender(
+      <Harness enabled contentHeight={1000} options={{ onFollowingChange: currentCallback }} />
+    )
+    setScrollGeometry(viewport, { clientHeight: 400, scrollHeight: 1400, scrollTop: 600 })
+    fireEvent.scroll(viewport)
+    expect(currentCallback).not.toHaveBeenCalled()
+    resize()
+    viewport.scrollTop = 200
+    fireEvent.scroll(viewport)
+    fireEvent.scroll(viewport)
+    expect(previousCallback).not.toHaveBeenCalled()
+    expect(currentCallback.mock.calls).toEqual([[false]])
+
+    mounted.rerender(
+      <Harness
+        enabled={false}
+        contentHeight={1400}
+        options={{ onFollowingChange: currentCallback, resetKey: 'navigate' }}
+      />
+    )
+    expect(viewport.scrollTop).toBe(200)
+    expect(currentCallback.mock.calls).toEqual([[false], [true]])
+    mounted.rerender(
+      <Harness
+        enabled
+        contentHeight={1400}
+        options={{ onFollowingChange: currentCallback, resetKey: 'navigate' }}
+      />
+    )
+    expect(viewport.scrollTop).toBe(1000)
+    expect(currentCallback.mock.calls).toEqual([[false], [true]])
+  })
+
   it('keeps one observer while streamed content updates and still follows resize notifications', () => {
     const observers: { callback: ResizeObserverCallback; disconnect: ReturnType<typeof vi.fn> }[] =
       []
@@ -167,6 +212,24 @@ describe('useFollowScrollBottom', () => {
     setScrollGeometry(viewport, { clientHeight: 400, scrollHeight: 1600, scrollTop: 500 })
     resize()
     expect(viewport.scrollTop).toBe(500)
+  })
+
+  it('recognizes a layout-clamped bottom before another resize and its delayed scroll event', () => {
+    const resize = stubResizeObserver()
+    const onFollowingChange = vi.fn()
+    render(<Harness enabled contentHeight={1000} options={{ onFollowingChange }} />)
+    const viewport = screen.getByTestId('viewport')
+    setScrollGeometry(viewport, { clientHeight: 400, scrollHeight: 1000, scrollTop: 0 })
+    resize()
+    expect(viewport.scrollTop).toBe(600)
+    // Removing the return-to-current control shortens content; the browser clamps to its end.
+    setScrollGeometry(viewport, { clientHeight: 400, scrollHeight: 900, scrollTop: 500 })
+    resize()
+    setScrollGeometry(viewport, { clientHeight: 300, scrollHeight: 900, scrollTop: 500 })
+    fireEvent.scroll(viewport)
+    expect(onFollowingChange).not.toHaveBeenCalled()
+    resize()
+    expect(viewport.scrollTop).toBe(600)
   })
 
   it('pauses after the user leaves the bottom and resumes when they return', () => {

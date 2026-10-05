@@ -1,16 +1,22 @@
+import { isAbsolute, normalize, relative, resolve } from 'node:path'
+
 import type {
   NotebookInvalidatedRun,
   NotebookRunRecord,
-  NotebookRunStaleness
+  NotebookRunStaleness,
+  NotebookWorkingFile
 } from '../../shared/notebook'
 import { notebookExecutionContextSchema } from '../../shared/notebook-execution-context'
 import type {
   AnalyzedNotebookRun,
   NotebookDependencyAlias,
   NotebookDependencyProjection,
+  NotebookFileDependency,
   NotebookDependencyTypeSummary,
-  NotebookRunDependencyFacts
+  NotebookRunDependencyFacts,
+  NotebookSourceFileWriteScope
 } from './dependency-analysis-types'
+import { matchesWriteScope } from './working-file-observer'
 import {
   PYTHON_LIBRARY_EFFECTS,
   pythonUnpackedReturnType,
@@ -93,6 +99,115 @@ const namespaceKey = (run: NotebookRunRecord): string | undefined => {
   }
   return [run.kernelKind, run.environment ?? '', run.kernelEpochId].join('\0')
 }
+
+const portablePath = (value: string): string =>
+  value
+    .replaceAll('\\', '/')
+    .replace(/^\.\//u, '')
+    .replace(/\/{2,}/gu, '/')
+
+const lineagePathCase = (value: string): string =>
+  process.platform === 'win32' ? value.toLowerCase() : value
+
+const lineageWorkingDirectory = (run: NotebookRunRecord): string | undefined =>
+  run.cwdBefore ?? run.frozenShellContext?.cwd
+
+// Historical run records may omit cwdBefore while retaining a complete runtime file-evidence
+// summary. That evidence anchors relative paths to the session's observed roots, so preserve the
+// legacy textual identity for those records. Without the anchor, keep relative paths run-local.
+const hasCompleteRuntimeFileEvidence = (run: NotebookRunRecord): boolean =>
+  run.fileEvidence?.state === 'available' &&
+  run.fileEvidence.fileReads === 'complete' &&
+  run.fileEvidence.relationCount !== 0
+
+const hasCompleteRuntimeWriterEvidence = (run: NotebookRunRecord): boolean =>
+  hasCompleteRuntimeFileEvidence(run) && run.fileEvidence?.writerAttribution === 'complete'
+
+const lineageScopePath = (run: NotebookRunRecord, value: string): string => {
+  const workingDirectory = lineageWorkingDirectory(run)
+  if (workingDirectory === undefined) return lineagePathCase(portablePath(value))
+  const resolved = isAbsolute(value) ? value : resolve(workingDirectory, value)
+  return lineagePathCase(portablePath(relative(workingDirectory, resolved)))
+}
+
+const lineageScope = (
+  run: NotebookRunRecord,
+  scope: NotebookSourceFileWriteScope
+): NotebookSourceFileWriteScope => ({
+  ...scope,
+  path: lineageScopePath(run, scope.path)
+})
+
+const matchesLineageScope = (scope: NotebookSourceFileWriteScope, candidate: string): boolean => {
+  if (scope.kind === 'directory' && scope.path === '') return candidate.length > 0
+  return matchesWriteScope(scope, candidate)
+}
+
+const lineagePathKey = (run: NotebookRunRecord, value: string): string => {
+  const portable = lineagePathCase(portablePath(value))
+  const workingDirectory = lineageWorkingDirectory(run)
+  if (isAbsolute(value)) return `absolute:${lineagePathCase(portablePath(normalize(value)))}`
+  if (workingDirectory !== undefined)
+    return `absolute:${lineagePathCase(portablePath(normalize(resolve(workingDirectory, value))))}`
+  if (hasCompleteRuntimeFileEvidence(run)) return `relative:evidence:${portable}`
+  // Without cwd/session identity, a relative spelling is local to this run. Keep
+  // same-run generation matching, but never alias it across independent runs.
+  return `relative:${run.runId}:${portable}`
+}
+
+const isUnanchoredRelativePath = (run: NotebookRunRecord, key: string): boolean =>
+  lineageWorkingDirectory(run) === undefined &&
+  !hasCompleteRuntimeFileEvidence(run) &&
+  key.startsWith(`relative:${run.runId}:`)
+
+const matchesObservedFile = (
+  run: NotebookRunRecord,
+  requestedPath: string,
+  file: NotebookWorkingFile
+): boolean => {
+  if (lineagePathKey(run, requestedPath) === lineagePathKey(run, file.path)) return true
+  return (
+    lineageWorkingDirectory(run) === undefined &&
+    hasCompleteRuntimeFileEvidence(run) &&
+    file.relativePath !== undefined &&
+    portablePath(file.relativePath) === portablePath(requestedPath)
+  )
+}
+
+const observedFileGeneration = (
+  run: NotebookRunRecord,
+  path: string
+): NotebookWorkingFile | undefined =>
+  run.workingFiles.find((file) => {
+    if (!matchesObservedFile(run, path, file)) return false
+    return (
+      file.createdByRunId === run.runId || file.change === 'created' || file.change === 'modified'
+    )
+  })
+
+const observedScopedGenerations = (
+  run: NotebookRunRecord,
+  scopes: readonly NotebookSourceFileWriteScope[]
+): NotebookWorkingFile[] =>
+  run.workingFiles.filter((file) => {
+    const candidatePaths = [
+      lineageScopePath(run, file.path),
+      ...(lineageWorkingDirectory(run) === undefined &&
+      hasCompleteRuntimeFileEvidence(run) &&
+      file.relativePath
+        ? [lineageScopePath(run, file.relativePath)]
+        : [])
+    ]
+    return (
+      candidatePaths.some(
+        (candidatePath) =>
+          candidatePath !== '..' &&
+          !candidatePath.startsWith('../') &&
+          scopes.some((scope) => matchesLineageScope(lineageScope(run, scope), candidatePath))
+      ) &&
+      (file.createdByRunId === run.runId || file.change === 'created' || file.change === 'modified')
+    )
+  })
 
 const incompleteRunFacts = (
   facts: NotebookRunDependencyFacts
@@ -1917,6 +2032,261 @@ class NotebookDependencyProjector {
   }
 }
 
+const projectNotebookFileDependencies = (
+  analyzedRuns: readonly AnalyzedNotebookRun[]
+): {
+  fileDependenciesByRunId: Record<string, NotebookFileDependency[]>
+  unresolvedFileReadRunIds: string[]
+} => {
+  const producers = new Map<string, { runId: string; generationId?: string; checksum?: string }>()
+  const producerPaths = new Map<string, NotebookWorkingFile>()
+  const ambiguousPaths = new Set<string>()
+  const unresolvedFileReadRunIds = new Set<string>()
+  const dependenciesByRunId: Record<string, NotebookFileDependency[]> = {}
+  const generationLineageKeys = (
+    run: NotebookRunRecord,
+    generation: NotebookWorkingFile
+  ): Set<string> =>
+    new Set([
+      lineagePathKey(run, generation.path),
+      ...(generation.relativePath ? [lineagePathKey(run, generation.relativePath)] : [])
+    ])
+  const aliasesForGeneration = (
+    run: NotebookRunRecord,
+    generation: NotebookWorkingFile
+  ): Set<string> => {
+    const generationKeys = generationLineageKeys(run, generation)
+    return new Set(
+      [...producerPaths].flatMap(([key, producerFile]) =>
+        [...generationLineageKeys(run, producerFile)].some((candidate) =>
+          generationKeys.has(candidate)
+        )
+          ? [key]
+          : []
+      )
+    )
+  }
+  const invalidateGenerationAliases = (
+    run: NotebookRunRecord,
+    generation: NotebookWorkingFile,
+    ambiguous: boolean
+  ): void => {
+    const keys = aliasesForGeneration(run, generation)
+    for (const key of generationLineageKeys(run, generation)) keys.add(key)
+    for (const key of keys) {
+      producers.delete(key)
+      producerPaths.delete(key)
+      if (ambiguous) ambiguousPaths.add(key)
+      else ambiguousPaths.delete(key)
+    }
+  }
+  const registerProducer = (
+    run: NotebookRunRecord,
+    sourcePath: string,
+    generation: NotebookWorkingFile
+  ): void => {
+    // A new generation supersedes every prior alias for the same artifact. Keep
+    // those aliases ambiguous until the exact identities observed in this run
+    // are registered below; scoped aliases for companion writes must not point
+    // at the older producer.
+    invalidateGenerationAliases(run, generation, true)
+    const producer = {
+      runId: run.runId,
+      ...(generation.generationId ? { generationId: generation.generationId } : {}),
+      ...(generation.checksum ? { checksum: generation.checksum } : {})
+    }
+    for (const path of [
+      sourcePath,
+      generation.path,
+      ...(lineageWorkingDirectory(run) === undefined &&
+      hasCompleteRuntimeFileEvidence(run) &&
+      generation.relativePath
+        ? [generation.relativePath]
+        : [])
+    ]) {
+      const key = lineagePathKey(run, path)
+      producers.set(key, producer)
+      producerPaths.set(key, generation)
+      ambiguousPaths.delete(key)
+    }
+  }
+  const markAmbiguous = (run: NotebookRunRecord, generation: NotebookWorkingFile): void => {
+    invalidateGenerationAliases(run, generation, true)
+  }
+  const markPathAmbiguous = (run: NotebookRunRecord, path: string): void => {
+    const key = lineagePathKey(run, path)
+    const aliases = new Set([key])
+    for (const [producerKey, producerFile] of producerPaths) {
+      if (generationLineageKeys(run, producerFile).has(key)) aliases.add(producerKey)
+    }
+    for (const alias of aliases) {
+      producers.delete(alias)
+      producerPaths.delete(alias)
+      ambiguousPaths.add(alias)
+    }
+  }
+  const scopeCandidatePath = (run: NotebookRunRecord, path: string): string => {
+    return lineageScopePath(run, path)
+  }
+  const readMatchesScope = (
+    run: NotebookRunRecord,
+    path: string,
+    scope: NotebookSourceFileWriteScope
+  ): boolean => {
+    const workingDirectory = lineageWorkingDirectory(run)
+    const resolvedPath =
+      workingDirectory !== undefined && !isAbsolute(path) ? resolve(workingDirectory, path) : path
+    const candidatePath = scopeCandidatePath(run, resolvedPath)
+    const normalizedScope = lineageScope(run, scope)
+    return (
+      candidatePath !== '..' &&
+      !candidatePath.startsWith('../') &&
+      matchesLineageScope(normalizedScope, candidatePath)
+    )
+  }
+  const markScopeAmbiguous = (
+    run: NotebookRunRecord,
+    scope: NotebookSourceFileWriteScope
+  ): void => {
+    for (const [key, producerFile] of producerPaths) {
+      const candidatePaths = [
+        scopeCandidatePath(run, producerFile.path),
+        ...(lineageWorkingDirectory(run) === undefined &&
+        hasCompleteRuntimeFileEvidence(run) &&
+        producerFile.relativePath
+          ? [scopeCandidatePath(run, producerFile.relativePath)]
+          : [])
+      ]
+      const normalizedScope = lineageScope(run, scope)
+      if (
+        !candidatePaths.some(
+          (candidatePath) =>
+            candidatePath !== '..' &&
+            !candidatePath.startsWith('../') &&
+            matchesLineageScope(normalizedScope, candidatePath)
+        )
+      )
+        continue
+      producers.delete(key)
+      producerPaths.delete(key)
+      ambiguousPaths.add(key)
+    }
+  }
+  for (const { run, fileAccess } of analyzedRuns) {
+    const runtimeEvidenceComplete = hasCompleteRuntimeFileEvidence(run)
+    const runtimeWriterEvidenceComplete = hasCompleteRuntimeWriterEvidence(run)
+    if (run.status === 'completed' && fileAccess) {
+      const dynamicReadUnresolved = fileAccess.reasonCodes.includes('dynamic-path-unresolved')
+      if (
+        (!runtimeEvidenceComplete || dynamicReadUnresolved) &&
+        fileAccess.readState !== 'complete'
+      )
+        unresolvedFileReadRunIds.add(run.runId)
+      const dependencies: NotebookFileDependency[] = []
+      const writeKeys = new Set(
+        (fileAccess.writes ?? []).map((rawPath) => lineagePathKey(run, rawPath))
+      )
+      for (const rawPath of fileAccess.reads) {
+        const path = portablePath(rawPath)
+        const key = lineagePathKey(run, rawPath)
+        const scopeRead = (fileAccess.writeScopes ?? []).some((scope) =>
+          readMatchesScope(run, rawPath, scope)
+        )
+        // Static extraction does not retain statement order. If a run both reads and
+        // writes the same path, do not attribute the read to an older producer.
+        const explicitBarrier = writeKeys.has(key) || scopeRead || ambiguousPaths.has(key)
+        const lineageBlocked = explicitBarrier || isUnanchoredRelativePath(run, key)
+        if (lineageBlocked) {
+          if (!runtimeEvidenceComplete || explicitBarrier) unresolvedFileReadRunIds.add(run.runId)
+          continue
+        }
+        if (fileAccess.readState !== 'complete') continue
+        const producer = producers.get(key)
+        if (!producer || producer.runId === run.runId) continue
+        dependencies.push({
+          producerRunId: producer.runId,
+          path,
+          ...(producer.generationId ? { generationId: producer.generationId } : {}),
+          ...(producer.checksum ? { checksum: producer.checksum } : {}),
+          confidence: (producer.checksum
+            ? 'verified'
+            : 'advisory') as NotebookFileDependency['confidence']
+        })
+      }
+      if (dependencies.length) dependenciesByRunId[run.runId] = dependencies
+    }
+    if (run.status === 'completed') {
+      const observedChanges = run.workingFiles.filter(
+        (file) =>
+          file.createdByRunId === run.runId ||
+          file.change === 'created' ||
+          file.change === 'modified'
+      )
+      const matchedGenerations = new Set<NotebookWorkingFile>()
+      if (fileAccess?.writeState === 'complete') {
+        for (const rawPath of fileAccess.writes) {
+          const path = portablePath(rawPath)
+          const generation = observedFileGeneration(run, path)
+          if (generation) {
+            registerProducer(run, path, generation)
+            matchedGenerations.add(generation)
+          }
+        }
+        for (const scope of fileAccess.writeScopes ?? []) {
+          // Runtime observation does not establish complete scope coverage. Quarantine
+          // all older companions first, then restore only generations observed now.
+          markScopeAmbiguous(run, scope)
+          const scopedGenerations = observedScopedGenerations(run, [scope])
+          for (const generation of scopedGenerations) {
+            registerProducer(run, scope.path, generation)
+            matchedGenerations.add(generation)
+          }
+        }
+        for (const generation of observedChanges) {
+          if (!matchedGenerations.has(generation)) markAmbiguous(run, generation)
+        }
+        // A complete static write list is only evidence for the paths that were
+        // observed. An unobserved declared path must poison that path, otherwise an
+        // older producer can be reused after an overwrite that was not captured.
+        for (const rawPath of fileAccess.writes) {
+          if (!runtimeWriterEvidenceComplete && !observedFileGeneration(run, rawPath))
+            markPathAmbiguous(run, rawPath)
+        }
+      } else {
+        for (const generation of observedChanges) markAmbiguous(run, generation)
+        if (!runtimeWriterEvidenceComplete) {
+          for (const rawPath of fileAccess?.writes ?? []) markPathAmbiguous(run, rawPath)
+        }
+        for (const scope of fileAccess?.writeScopes ?? []) {
+          for (const generation of observedScopedGenerations(run, [scope]))
+            markAmbiguous(run, generation)
+          markScopeAmbiguous(run, scope)
+        }
+      }
+    } else {
+      // Incomplete runs may still have modified files. Keep their evidence as an
+      // ambiguity barrier, but never register their generations as valid producers.
+      for (const generation of run.workingFiles.filter(
+        (file) =>
+          file.createdByRunId === run.runId ||
+          file.change === 'created' ||
+          file.change === 'modified'
+      ))
+        markAmbiguous(run, generation)
+      for (const rawPath of fileAccess?.writes ?? []) markPathAmbiguous(run, rawPath)
+      for (const scope of fileAccess?.writeScopes ?? []) {
+        for (const generation of observedScopedGenerations(run, [scope]))
+          markAmbiguous(run, generation)
+        markScopeAmbiguous(run, scope)
+      }
+    }
+  }
+  return {
+    fileDependenciesByRunId: dependenciesByRunId,
+    unresolvedFileReadRunIds: [...unresolvedFileReadRunIds]
+  }
+}
+
 // Projects immutable run history into current dependency freshness. Cell identity is deliberately
 // absent: every call can use a new cellId while still sharing the same persistent kernel namespace.
 const projectNotebookDependencies = (
@@ -1945,6 +2315,7 @@ const unavailableNotebookDependencyProjection = (
 
 export {
   NotebookDependencyProjector,
+  projectNotebookFileDependencies,
   projectNotebookDependencies,
   unavailableNotebookDependencyProjection
 }

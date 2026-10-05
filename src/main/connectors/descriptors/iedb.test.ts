@@ -48,6 +48,126 @@ const tcell = {
 }
 
 describe('IEDB IQ-API', () => {
+  it.each(['tcr', 'bcr'])(
+    'keeps %s receptor CDR3, epitope and reference filters distinct',
+    async (kind) => {
+      const exportField = `${kind}_export`
+      const evidence = {
+        receptor__iedb_receptor_id: 123,
+        reference__iedb_iri: 'https://www.iedb.org/reference/1023094',
+        epitope__iedb_iri: 'https://www.iedb.org/epitope/25750',
+        chain_1__cdr3_curated: 'CASSLAPGATNEKLFF',
+        chain_1__cdr3_calculated: null,
+        chain_1__curated_v_gene: 'TRBV7-9',
+        chain_1__calculated_v_gene: null
+      }
+      const row = {
+        receptor_group_id: 27233,
+        parent_source_antigen_iris: ['UNIPROT:P01012'],
+        pdb_ids: ['1vac'],
+        qualitative_measures: ['Negative'],
+        [exportField]: [evidence]
+      }
+      const { result, url, fetchImpl } = await call(
+        `search_${kind}s`,
+        {
+          receptor_group_id: 27233,
+          sequence: 'siinfekl',
+          chain1_cdr3: 'casslapgatneklff',
+          chain2_cdr3: 'cavrdsggyqkvtf',
+          epitope_id: 25750,
+          reference_id: 1023094,
+          host_taxonomy_id: 9606,
+          uniprot_accession: 'P01012',
+          mhc_allele: 'HLA-A*02:01',
+          qualitative_measure: 'Negative',
+          limit: 1
+        },
+        [row, { receptor_group_id: 27234, [exportField]: [] }]
+      )
+      expect(url.pathname).toBe(`/${kind}_search`)
+      expect(Object.fromEntries(url.searchParams)).toMatchObject({
+        receptor_group_id: 'eq.27233',
+        linear_sequences: 'cs.{"SIINFEKL"}',
+        chain1_cdr3_seq: 'eq.CASSLAPGATNEKLFF',
+        chain2_cdr3_seq: 'eq.CAVRDSGGYQKVTF',
+        structure_ids: 'cs.{"25750"}',
+        reference_ids: 'cs.{"1023094"}',
+        host_organism_iri_search: 'cs.{"NCBITaxon:9606"}',
+        parent_source_antigen_iris: 'cs.{"UNIPROT:P01012"}',
+        mhc_allele_names: 'cs.{"HLA-A*02:01"}',
+        qualitative_measures: 'cs.{"Negative"}',
+        order: 'receptor_group_id.asc',
+        limit: '2'
+      })
+      expect(url.searchParams.has('linear_sequence')).toBe(false)
+      expect(url.searchParams.get('select')).toContain(`${exportField}(*)`)
+      expect(result).toMatchObject({
+        returned: 1,
+        has_more: true,
+        next_offset: 1,
+        records: [
+          {
+            ...row,
+            cross_references: {
+              parent_uniprot_accessions: ['P01012'],
+              curated_uniprot_accessions: [],
+              pdb_ids: ['1VAC']
+            }
+          }
+        ]
+      })
+      expect(fetchImpl).toHaveBeenCalledTimes(1)
+    }
+  )
+
+  it.each(['tcr', 'bcr'])('rejects malformed %s receptor evidence', async (kind) => {
+    for (const row of [
+      { receptor_group_id: '27233', [`${kind}_export`]: [] },
+      { receptor_group_id: 27233 },
+      { receptor_group_id: 27233, [`${kind}_export`]: {} }
+    ]) {
+      await expect(call(`search_${kind}s`, { epitope_id: 25750 }, [row])).rejects.toThrow(/IEDB/)
+    }
+    const { result } = await call(`search_${kind}s`, { epitope_id: 25750 }, [])
+    expect(result).toMatchObject({ records: [], returned: 0, has_more: false, next_offset: null })
+  })
+
+  it.each(['tcr', 'bcr'])('rejects invalid records inside %s export arrays', async (kind) => {
+    for (const record of [null, 'invalid', 42, false, []]) {
+      await expect(
+        call(`search_${kind}s`, { receptor_group_id: 47 }, [
+          { receptor_group_id: 47, [`${kind}_export`]: [{}, record] }
+        ])
+      ).rejects.toThrow('IEDB returned an invalid record')
+    }
+  })
+
+  it.each(['tcr', 'bcr'])(
+    'preserves distinct %s evidence rows and nullable annotations within one group',
+    async (kind) => {
+      const records = [
+        {
+          receptor__iedb_receptor_id: 57,
+          reference__iedb_iri: 'https://www.iedb.org/reference/1023094',
+          chain_1__cdr3_curated: null,
+          chain_1__cdr3_calculated: 'IVVRSSNTGKLI'
+        },
+        {
+          receptor__iedb_receptor_id: 57,
+          reference__iedb_iri: 'https://www.iedb.org/reference/1002786',
+          chain_1__cdr3_curated: 'IVVRSSNTGKLI'
+        },
+        {}
+      ]
+      const { result } = await call(`search_${kind}s`, { receptor_group_id: 47, limit: 1 }, [
+        { receptor_group_id: 47, [`${kind}_export`]: records }
+      ])
+      expect(result).toMatchObject({ returned: 1, has_more: false, next_offset: null })
+      expect(result).toHaveProperty(['records', 0, `${kind}_export`], records)
+    }
+  )
+
   it('uses unique ordering and lookahead without inventing totals or joining unrelated evidence', async () => {
     const { result, url, fetchImpl } = await call(
       'search_epitopes',

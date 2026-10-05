@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
-import { ANNOTATION_LIMITS } from '../../../../shared/annotations'
+import {
+  ANNOTATION_LIMITS,
+  prepareAnnotationsForAgent,
+  resolveManagedProjectFileAnnotationIdentity,
+  sanitizeAnnotation
+} from '../../../../shared/annotations'
+import { parseUploadVersionReference } from '../../../../shared/uploads'
 import type { SessionDiscussionCapture } from './replay/replay-context'
 import {
   createSessionDiscussionAnnotation,
@@ -106,6 +112,69 @@ describe('fixed replay question references', () => {
     expect(annotation.quote.length).toBeLessThanOrEqual(ANNOTATION_LIMITS.quote)
     expect(annotation.quote).not.toContain('version-old')
     expect(annotation.quote).toContain('incomplete or truncated')
+  })
+
+  it('binds an archived upload to its saved replay selection without guessing its original owner', () => {
+    const uploadContext: SessionDiscussionCapture = {
+      ...context,
+      stepId: 'resource:upload-version:upload-v1',
+      stepTitle: 'observations.csv',
+      stepNumber: 3,
+      evidence: [
+        {
+          kind: 'upload-version',
+          id: 'upload-v1',
+          projectId: 'project',
+          sessionId: 'source',
+          fileId: 'original-upload-file',
+          versionId: 'upload-v1'
+        }
+      ]
+    }
+    const annotation = createSessionDiscussionAnnotation(uploadContext, 'saved-upload')!
+    expect(annotation).toMatchObject({
+      source: {
+        kind: 'project-file',
+        projectId: 'project',
+        sessionId: 'source',
+        fileSource: 'upload',
+        sourceFileId: 'original-upload-file',
+        versionId: 'upload-v1',
+        path: 'upload-version:upload-v1'
+      }
+    })
+    expect(sanitizeAnnotation(annotation)).toEqual(annotation)
+    if (annotation.source.kind !== 'project-file') throw new Error('Expected upload source')
+    expect(resolveManagedProjectFileAnnotationIdentity(annotation.source)).toEqual({
+      fileSource: 'upload',
+      fileId: 'original-upload-file',
+      versionId: 'upload-v1'
+    })
+    expect(parseUploadVersionReference(annotation.source.path)).toEqual({ versionId: 'upload-v1' })
+    expect(replayAnnotationTarget(annotation)).toEqual({
+      projectId: 'project',
+      sourceSessionId: 'source',
+      branchId: 'branch',
+      stepId: uploadContext.stepId,
+      stepOffsetMs: 142,
+      contextId: 'saved-upload'
+    })
+    const prepared = prepareAnnotationsForAgent('Explain this file', [annotation])
+    expect(prepared.promptText).toBe(
+      'Explain this file\n[Session reading](#session-replay:project:saved-upload)'
+    )
+    expect(prepared.referencedArtifacts).toBeUndefined()
+
+    // Legacy inline annotation transport would mistake the archive Session for the upload owner.
+    expect(createSessionDiscussionAnnotation(uploadContext)).toBeUndefined()
+    for (const field of ['fileId', 'versionId'] as const) {
+      expect(
+        createSessionDiscussionAnnotation(
+          { ...uploadContext, evidence: [{ ...uploadContext.evidence[0], [field]: undefined }] },
+          'saved-upload'
+        )
+      ).toBeUndefined()
+    }
   })
 
   it('keeps dense-frame excerpts readable and resolves the new saved snapshot without breaking old locators', () => {

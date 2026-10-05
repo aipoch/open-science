@@ -7,7 +7,7 @@ export function connectorDescription(
 ): string {
   if (connector.id === 'iedb') {
     return t(
-      'Immune epitopes, T/B cell and MHC assays, antigens and literature evidence from IEDB.'
+      'Immune epitopes, T/B cell and MHC assays, TCR/BCR receptors, antigens and literature evidence from IEDB.'
     )
   }
   if (connector.id === 'cellosaurus') {
@@ -84,6 +84,10 @@ export function connectorToolDescription(id: string, fallback: string, t: TFunct
       return t('Retrieve B cell experiments, measurements and literature evidence.')
     case 'iedb/search_mhc_assays':
       return t('Retrieve MHC binding and ligand elution experiments with methods and units.')
+    case 'iedb/search_tcrs':
+      return t('Search TCR receptor groups by epitope, CDR3 and experimental evidence.')
+    case 'iedb/search_bcrs':
+      return t('Search BCR/antibody receptor groups by epitope, CDR3 and experimental evidence.')
     case 'iedb/search_references':
       return t('Find IEDB references and PubMed identifiers for experimental evidence.')
     case 'cellosaurus/search_cell_lines':

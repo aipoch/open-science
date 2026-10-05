@@ -1,10 +1,18 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, normalize } from 'node:path'
 import { gzipSync } from 'node:zlib'
-import { expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import type { NotebookRunRecord } from '../../shared/notebook'
 import { NotebookDependencyAnalyzer } from './dependency-analysis'
+import type {
+  AnalyzedNotebookRun,
+  NotebookRunDependencyFacts,
+  NotebookSourceFileAccessAnalysis
+} from './dependency-analysis-types'
+import { projectNotebookFileDependencies } from './dependency-projection'
 import { analyzeRNotebookSource } from './dependency-analysis-r'
 import { NotebookKernelExecutor } from './kernel-executor'
 import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
@@ -637,3 +645,776 @@ it.skipIf(!process.env.OPEN_SCIENCE_TEST_PYTHON || !process.env.OPEN_SCIENCE_TES
   },
   60000
 )
+
+type FixtureCell = {
+  stage: number
+  language: 'r' | 'python'
+  code: string
+  reads: string[]
+  writes: string[]
+  execution?: 'exhausted'
+  failure?: string
+}
+type ScienceFixture = {
+  scenario: string
+  languages: Array<'r' | 'python'>
+  status: string
+  evidence: { realAgent: boolean; responses: number; physicalRuns: number; retries: number }
+  observedHashes: Record<string, string>
+  cells: FixtureCell[]
+  lineage: { status: 'verified' | 'withheld'; edges?: string[][]; failure?: string }
+}
+
+const fixturePath = join(__dirname, 'fixtures/science/cross-language-lineage.fixture.jsonl')
+const fixturePortable = (value: string): string => normalize(value).replaceAll('\\', '/')
+const fixtures = readFileSync(fixturePath, 'utf8')
+  .trim()
+  .split(/\r?\n/u)
+  .map((line) => JSON.parse(line) as ScienceFixture)
+
+describe('real-agent science lineage fixtures', () => {
+  it('keeps only the complete Iris lineage and the Faithful2 contract boundary', () => {
+    expect(fixtures.map(({ scenario }) => scenario)).toEqual([
+      'iris-cross-language',
+      'faithful2-cross-language-next'
+    ])
+    expect(fixtures.every(({ evidence }) => evidence.realAgent)).toBe(true)
+    for (const fixture of fixtures)
+      for (const hash of Object.values(fixture.observedHashes))
+        expect(hash).toMatch(/^[a-f0-9]{64}$/u)
+    expect(fixtures[0]?.lineage.status).toBe('verified')
+    expect(fixtures[0]?.lineage.edges).toHaveLength(7)
+    expect(fixtures[1]?.lineage.status).toBe('withheld')
+    expect(fixtures[1]?.cells.at(-1)?.execution).toBe('exhausted')
+    expect(fixtures[1]?.lineage.failure).toContain('semantic node IDs')
+  })
+
+  it.each(fixtures)('$scenario preserves multi-cell file dependencies', async (fixture) => {
+    expect(fixture.cells).toHaveLength(4)
+    expect(fixture.cells.map(({ language }) => language)).toEqual(fixture.languages)
+    for (const cell of fixture.cells) {
+      const access = await analyzeNotebookSourceFileAccess(cell.language, cell.code)
+      expect(
+        access.reads
+          .map(fixturePortable)
+          .every((path) => cell.reads.map(fixturePortable).includes(path)),
+        `${fixture.scenario} stage ${cell.stage} reads remain within the agent declaration`
+      ).toBe(true)
+      expect(
+        access.writes
+          .map(fixturePortable)
+          .every((path) => cell.writes.map(fixturePortable).includes(path)),
+        `${fixture.scenario} stage ${cell.stage} writes remain within the agent declaration`
+      ).toBe(true)
+    }
+  })
+
+  it.each(fixtures)(
+    '$scenario projects cross-language file lineage from observed generations',
+    async (fixture) => {
+      const root = await mkdtemp(join(tmpdir(), 'science-file-lineage-'))
+      const dataRoot = join(root, 'data')
+      const runs: NotebookRunRecord[] = fixture.cells.map((cell, index) => {
+        const runId = `${fixture.scenario}-${index}`
+        return {
+          runId,
+          cellId: runId,
+          script: cell.code,
+          source: 'agent',
+          kernelKind: cell.language,
+          kernelEpochId: `${cell.language}-epoch`,
+          environment: cell.language,
+          status: 'completed',
+          kernelDispatched: true,
+          startedAt: index,
+          endedAt: index + 1,
+          cwdBefore: dataRoot,
+          cwdAfter: dataRoot,
+          text: { stdout: '', stderr: '', traceback: '', plain: [] },
+          outputs: [],
+          workingFiles: cell.writes.map((relativePath) => ({
+            path: join(dataRoot, relativePath),
+            relativePath: join('data', relativePath),
+            kind: 'other' as const,
+            createdByRunId: runId,
+            change: 'created' as const,
+            checksum: createHash('sha256').update(`${runId}:${relativePath}`).digest('hex')
+          }))
+        }
+      })
+      try {
+        const facts: NotebookRunDependencyFacts = {
+          state: 'available',
+          definedNames: [],
+          usedNames: [],
+          mutatedNames: [],
+          priorUsedNames: [],
+          memberWrites: []
+        }
+        const fileAccess = (cell: FixtureCell): NotebookSourceFileAccessAnalysis => ({
+          readState: 'complete',
+          writeState: 'complete',
+          externalState: 'complete',
+          reads: cell.reads,
+          writes: cell.writes,
+          reasonCodes: []
+        })
+        const { fileDependenciesByRunId: projection } = projectNotebookFileDependencies(
+          runs.map((run, index) => ({ run, facts, fileAccess: fileAccess(fixture.cells[index]!) }))
+        )
+        const dependencies = projection
+        expect(dependencies[`${fixture.scenario}-1`]?.map(({ path }) => path).sort()).toEqual(
+          [fixture.cells[0]!.writes[0]].sort()
+        )
+        expect(dependencies[`${fixture.scenario}-2`]?.map(({ path }) => path).sort()).toEqual(
+          fixture.cells[2]!.reads.map((path) => normalize(path).replaceAll('\\', '/'))
+            .filter((path) => fixture.cells.slice(0, 2).some((cell) => cell.writes.includes(path)))
+            .sort()
+        )
+        expect(dependencies[`${fixture.scenario}-3`]?.length).toBeGreaterThanOrEqual(2)
+        expect(
+          dependencies[`${fixture.scenario}-3`]?.every(
+            ({ confidence }) => confidence === 'verified'
+          )
+        ).toBe(true)
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it('links scoped companion generations across the data-root namespace', () => {
+    const root = join(tmpdir(), 'science-scoped-lineage')
+    const dataRoot = join(root, 'data')
+    const facts: NotebookRunDependencyFacts = {
+      state: 'available',
+      definedNames: [],
+      usedNames: [],
+      mutatedNames: [],
+      priorUsedNames: [],
+      memberWrites: []
+    }
+    const producer: NotebookRunRecord = {
+      runId: 'scoped-producer',
+      cellId: 'scoped-producer',
+      script: '',
+      source: 'agent',
+      kernelKind: 'r',
+      kernelEpochId: 'r-epoch',
+      environment: 'r',
+      status: 'completed',
+      kernelDispatched: true,
+      startedAt: 0,
+      endedAt: 1,
+      cwdBefore: dataRoot,
+      workingFiles: [
+        {
+          path: join(dataRoot, 'outputs/map.dbf'),
+          relativePath: 'data/outputs/map.dbf',
+          kind: 'other',
+          createdByRunId: 'scoped-producer',
+          change: 'created',
+          checksum: 'a'.repeat(64)
+        }
+      ],
+      text: { stdout: '', stderr: '', traceback: '', plain: [] },
+      outputs: []
+    }
+    const consumer: NotebookRunRecord = {
+      ...producer,
+      runId: 'scoped-consumer',
+      cellId: 'scoped-consumer',
+      startedAt: 1,
+      endedAt: 2,
+      workingFiles: []
+    }
+    const fileAccess = {
+      readState: 'complete' as const,
+      writeState: 'complete' as const,
+      externalState: 'complete' as const,
+      reads: [],
+      writes: [],
+      writeScopes: [{ kind: 'shapefile' as const, path: './outputs/map.shp' }],
+      reasonCodes: []
+    }
+    const consumerAccess = { ...fileAccess, writeScopes: undefined, reads: ['outputs/map.dbf'] }
+    const { fileDependenciesByRunId: projection } = projectNotebookFileDependencies([
+      { run: producer, facts, fileAccess },
+      { run: consumer, facts, fileAccess: consumerAccess }
+    ] satisfies readonly AnalyzedNotebookRun[])
+    expect(projection['scoped-consumer']).toEqual([
+      expect.objectContaining({
+        producerRunId: 'scoped-producer',
+        path: 'outputs/map.dbf',
+        checksum: 'a'.repeat(64),
+        confidence: 'verified'
+      })
+    ])
+    const absoluteScopeProjection = projectNotebookFileDependencies([
+      {
+        run: producer,
+        facts,
+        fileAccess: {
+          ...fileAccess,
+          writeScopes: [{ kind: 'shapefile' as const, path: join(dataRoot, 'outputs/map.shp') }]
+        }
+      },
+      { run: consumer, facts, fileAccess: consumerAccess }
+    ] satisfies readonly AnalyzedNotebookRun[])
+    expect(absoluteScopeProjection.fileDependenciesByRunId['scoped-consumer']).toEqual([
+      expect.objectContaining({ producerRunId: 'scoped-producer', path: 'outputs/map.dbf' })
+    ])
+    const completeEvidence = {
+      schemaVersion: 1 as const,
+      state: 'available' as const,
+      fileReads: 'complete' as const,
+      relationCount: 1,
+      activityKind: 'notebook-run' as const,
+      initialViewState: 'complete' as const,
+      managedRootsFinalState: 'complete' as const,
+      scientificOutputAnalysis: 'complete' as const,
+      externalPaths: 'complete' as const,
+      writerAttribution: 'complete' as const,
+      scientificOutputCount: 0,
+      reasonCodes: []
+    }
+    const cwdlessScopedProducer: NotebookRunRecord = {
+      ...producer,
+      runId: 'cwdless-scoped-producer',
+      cellId: 'cwdless-scoped-producer',
+      cwdBefore: undefined,
+      cwdAfter: undefined,
+      fileEvidence: completeEvidence,
+      workingFiles: [
+        {
+          ...producer.workingFiles[0]!,
+          relativePath: 'outputs/map.dbf',
+          createdByRunId: 'cwdless-scoped-producer'
+        }
+      ]
+    }
+    const cwdlessScopedConsumer: NotebookRunRecord = {
+      ...consumer,
+      runId: 'cwdless-scoped-consumer',
+      cellId: 'cwdless-scoped-consumer',
+      cwdBefore: undefined,
+      cwdAfter: undefined,
+      fileEvidence: completeEvidence
+    }
+    expect(
+      projectNotebookFileDependencies([
+        {
+          run: cwdlessScopedProducer,
+          facts,
+          fileAccess: { ...fileAccess, writes: [] }
+        },
+        {
+          run: cwdlessScopedConsumer,
+          facts,
+          fileAccess: { ...consumerAccess, reads: ['outputs/map.dbf'] }
+        }
+      ]).fileDependenciesByRunId['cwdless-scoped-consumer']
+    ).toEqual([
+      expect.objectContaining({
+        producerRunId: 'cwdless-scoped-producer',
+        path: 'outputs/map.dbf',
+        confidence: 'verified'
+      })
+    ])
+    const exactCompanionOverwrite: NotebookRunRecord = {
+      ...producer,
+      runId: 'exact-companion-overwrite',
+      cellId: 'exact-companion-overwrite',
+      startedAt: 1,
+      endedAt: 2,
+      workingFiles: [
+        {
+          ...producer.workingFiles[0]!,
+          createdByRunId: 'exact-companion-overwrite',
+          change: 'modified',
+          checksum: 'd'.repeat(64)
+        }
+      ]
+    }
+    const afterExactCompanionOverwrite = projectNotebookFileDependencies([
+      { run: producer, facts, fileAccess },
+      {
+        run: exactCompanionOverwrite,
+        facts,
+        fileAccess: { ...fileAccess, writes: ['outputs/map.dbf'], writeScopes: undefined }
+      },
+      {
+        run: consumer,
+        facts,
+        fileAccess: { ...consumerAccess, reads: ['outputs/map.shp'] }
+      }
+    ])
+    expect(afterExactCompanionOverwrite.fileDependenciesByRunId['scoped-consumer']).toBeUndefined()
+    expect(afterExactCompanionOverwrite.unresolvedFileReadRunIds).toContain('scoped-consumer')
+    const scopedReadWriteRun: NotebookRunRecord = {
+      ...consumer,
+      runId: 'scoped-read-write',
+      cellId: 'scoped-read-write'
+    }
+    const scopedReadWrite = projectNotebookFileDependencies([
+      { run: producer, facts, fileAccess },
+      {
+        run: scopedReadWriteRun,
+        facts,
+        fileAccess: { ...consumerAccess, writeScopes: fileAccess.writeScopes }
+      }
+    ])
+    expect(scopedReadWrite.unresolvedFileReadRunIds).toContain('scoped-read-write')
+    expect(scopedReadWrite.fileDependenciesByRunId['scoped-read-write']).toBeUndefined()
+    const partialWriter: NotebookRunRecord = {
+      ...producer,
+      runId: 'scoped-partial-writer',
+      cellId: 'scoped-partial-writer',
+      startedAt: 1,
+      endedAt: 2,
+      workingFiles: [
+        {
+          ...producer.workingFiles[0]!,
+          createdByRunId: 'scoped-partial-writer',
+          change: 'modified',
+          checksum: 'b'.repeat(64)
+        }
+      ]
+    }
+    const { fileDependenciesByRunId: withheld } = projectNotebookFileDependencies([
+      { run: producer, facts, fileAccess },
+      {
+        run: partialWriter,
+        facts,
+        fileAccess: {
+          ...consumerAccess,
+          readState: 'partial',
+          writeState: 'partial',
+          externalState: 'partial',
+          writes: ['outputs/map.dbf'],
+          reasonCodes: ['dynamic-path-unresolved']
+        }
+      },
+      { run: consumer, facts, fileAccess: consumerAccess }
+    ] satisfies readonly AnalyzedNotebookRun[])
+    expect(withheld['scoped-consumer']).toBeUndefined()
+
+    const unobservedScopedWriter: NotebookRunRecord = {
+      ...producer,
+      runId: 'scoped-unobserved-writer',
+      cellId: 'scoped-unobserved-writer',
+      startedAt: 1,
+      endedAt: 2,
+      workingFiles: []
+    }
+    const { fileDependenciesByRunId: scopeWithheld } = projectNotebookFileDependencies([
+      { run: producer, facts, fileAccess },
+      { run: unobservedScopedWriter, facts, fileAccess },
+      { run: consumer, facts, fileAccess: consumerAccess }
+    ] satisfies readonly AnalyzedNotebookRun[])
+    expect(scopeWithheld['scoped-consumer']).toBeUndefined()
+
+    const companionProducer: NotebookRunRecord = {
+      ...producer,
+      runId: 'scoped-companion-producer',
+      cellId: 'scoped-companion-producer',
+      workingFiles: [
+        {
+          ...producer.workingFiles[0]!,
+          path: join(dataRoot, 'outputs/map.shx'),
+          relativePath: 'data/outputs/map.shx',
+          createdByRunId: 'scoped-companion-producer',
+          checksum: 'c'.repeat(64)
+        }
+      ]
+    }
+    const partialScopeWriter: NotebookRunRecord = {
+      ...producer,
+      runId: 'scoped-partial-scope-writer',
+      cellId: 'scoped-partial-scope-writer',
+      workingFiles: [producer.workingFiles[0]!]
+    }
+    const partialScopeProjection = projectNotebookFileDependencies([
+      { run: companionProducer, facts, fileAccess },
+      { run: partialScopeWriter, facts, fileAccess },
+      {
+        run: {
+          ...consumer,
+          runId: 'scoped-companion-consumer',
+          cellId: 'scoped-companion-consumer'
+        },
+        facts,
+        fileAccess: { ...consumerAccess, reads: ['outputs/map.shx'] }
+      }
+    ])
+    expect(
+      partialScopeProjection.fileDependenciesByRunId['scoped-companion-consumer']
+    ).toBeUndefined()
+  })
+})
+
+describe('file lineage identity and completeness guards', () => {
+  const facts: NotebookRunDependencyFacts = {
+    state: 'available',
+    definedNames: [],
+    usedNames: [],
+    mutatedNames: [],
+    priorUsedNames: [],
+    memberWrites: []
+  }
+  const run = (
+    runId: string,
+    cwd: string,
+    workingFiles: NotebookRunRecord['workingFiles'] = []
+  ): NotebookRunRecord => ({
+    runId,
+    cellId: runId,
+    script: '',
+    source: 'agent',
+    kernelKind: 'python',
+    kernelEpochId: 'epoch',
+    environment: 'python',
+    status: 'completed',
+    kernelDispatched: true,
+    startedAt: 0,
+    endedAt: 1,
+    cwdBefore: cwd,
+    cwdAfter: cwd,
+    workingFiles,
+    text: { stdout: '', stderr: '', traceback: '', plain: [] },
+    outputs: []
+  })
+  const access = (reads: string[], writes: string[]): NotebookSourceFileAccessAnalysis => ({
+    readState: 'complete' as const,
+    writeState: 'complete' as const,
+    externalState: 'complete' as const,
+    reads,
+    writes,
+    reasonCodes: [] as []
+  })
+
+  it('does not alias a data-prefixed read to a different root file', () => {
+    const root = join(tmpdir(), 'lineage-path-identity')
+    const producer = run('producer', root, [
+      {
+        path: join(root, 'foo.txt'),
+        relativePath: 'foo.txt',
+        kind: 'other',
+        createdByRunId: 'producer',
+        change: 'created',
+        checksum: 'a'.repeat(64)
+      }
+    ])
+    const consumer = run('consumer', root)
+    const { fileDependenciesByRunId: projection } = projectNotebookFileDependencies([
+      { run: producer, facts, fileAccess: access([], ['foo.txt']) },
+      { run: consumer, facts, fileAccess: access(['data/foo.txt'], []) }
+    ] satisfies readonly AnalyzedNotebookRun[])
+    expect(projection.consumer).toBeUndefined()
+  })
+
+  it('withholds relative matching when runs have no shared cwd evidence', () => {
+    const root = join(tmpdir(), 'lineage-unknown-cwd')
+    const producer = { ...run('producer', root, []), cwdBefore: undefined, cwdAfter: undefined }
+    const consumer = { ...run('consumer', root, []), cwdBefore: undefined, cwdAfter: undefined }
+    const { fileDependenciesByRunId: projection } = projectNotebookFileDependencies([
+      {
+        run: {
+          ...producer,
+          workingFiles: [
+            {
+              path: join(root, 'result.json'),
+              relativePath: 'result.json',
+              kind: 'other',
+              createdByRunId: 'producer',
+              change: 'created',
+              checksum: 'i'.repeat(64)
+            }
+          ]
+        },
+        facts,
+        fileAccess: access([], ['result.json'])
+      },
+      { run: consumer, facts, fileAccess: access(['result.json'], []) }
+    ] satisfies readonly AnalyzedNotebookRun[])
+    expect(projection.consumer).toBeUndefined()
+  })
+
+  it('retains legacy relative matching when complete runtime evidence anchors the session', () => {
+    const root = join(tmpdir(), 'lineage-legacy-evidence')
+    const evidence = {
+      schemaVersion: 1 as const,
+      state: 'available' as const,
+      fileReads: 'complete' as const,
+      relationCount: 1,
+      activityKind: 'notebook-run' as const,
+      initialViewState: 'complete' as const,
+      managedRootsFinalState: 'complete' as const,
+      scientificOutputAnalysis: 'complete' as const,
+      externalPaths: 'complete' as const,
+      writerAttribution: 'complete' as const,
+      scientificOutputCount: 0,
+      reasonCodes: []
+    }
+    const producer = {
+      ...run('producer', root, [
+        {
+          path: join(root, 'result.json'),
+          relativePath: 'result.json',
+          kind: 'other' as const,
+          createdByRunId: 'producer',
+          change: 'created' as const,
+          checksum: 'k'.repeat(64)
+        }
+      ]),
+      cwdBefore: undefined,
+      cwdAfter: undefined,
+      fileEvidence: evidence
+    }
+    const consumer = {
+      ...run('consumer', root),
+      cwdBefore: undefined,
+      cwdAfter: undefined,
+      fileEvidence: evidence
+    }
+    const { fileDependenciesByRunId: projection } = projectNotebookFileDependencies([
+      { run: producer, facts, fileAccess: access([], ['result.json']) },
+      { run: consumer, facts, fileAccess: access(['result.json'], []) }
+    ] satisfies readonly AnalyzedNotebookRun[])
+    expect(projection.consumer).toEqual([
+      expect.objectContaining({ producerRunId: 'producer', confidence: 'verified' })
+    ])
+  })
+
+  it('withholds unobserved writes when writer attribution is incomplete', () => {
+    const root = join(tmpdir(), 'lineage-incomplete-writer-evidence')
+    const evidence = {
+      schemaVersion: 1 as const,
+      state: 'available' as const,
+      fileReads: 'complete' as const,
+      relationCount: 1,
+      activityKind: 'notebook-run' as const,
+      initialViewState: 'complete' as const,
+      managedRootsFinalState: 'complete' as const,
+      scientificOutputAnalysis: 'complete' as const,
+      externalPaths: 'complete' as const,
+      writerAttribution: 'complete' as const,
+      scientificOutputCount: 0,
+      reasonCodes: []
+    }
+    const producer = {
+      ...run('producer', root, [
+        {
+          path: join(root, 'result.json'),
+          relativePath: 'result.json',
+          kind: 'other' as const,
+          createdByRunId: 'producer',
+          change: 'created' as const,
+          checksum: 'p'.repeat(64)
+        }
+      ]),
+      fileEvidence: evidence
+    }
+    const unobservedWriter = {
+      ...run('unobserved-writer', root),
+      fileEvidence: { ...evidence, writerAttribution: 'partial' as const }
+    }
+    const consumer = { ...run('consumer', root), fileEvidence: evidence }
+    const projection = projectNotebookFileDependencies([
+      { run: producer, facts, fileAccess: access([], ['result.json']) },
+      { run: unobservedWriter, facts, fileAccess: access([], ['result.json']) },
+      { run: consumer, facts, fileAccess: access(['result.json'], []) }
+    ])
+    expect(projection.fileDependenciesByRunId.consumer).toBeUndefined()
+    expect(projection.unresolvedFileReadRunIds).toContain('consumer')
+  })
+
+  it('marks dynamic-only file reads unresolved even when no path is statically recovered', () => {
+    const runWithDynamicRead = run('dynamic-read', join(tmpdir(), 'lineage-dynamic-read'))
+    const { unresolvedFileReadRunIds } = projectNotebookFileDependencies([
+      {
+        run: runWithDynamicRead,
+        facts,
+        fileAccess: {
+          readState: 'partial',
+          writeState: 'complete',
+          externalState: 'partial',
+          reads: [],
+          writes: [],
+          reasonCodes: ['dynamic-path-unresolved']
+        }
+      }
+    ] satisfies readonly AnalyzedNotebookRun[])
+    expect(unresolvedFileReadRunIds).toEqual(['dynamic-read'])
+  })
+
+  it('does not use cwdAfter to resolve relative paths when cwdBefore is missing', () => {
+    const rootBefore = join(tmpdir(), 'lineage-cwd-before-missing')
+    const rootAfter = join(tmpdir(), 'lineage-cwd-after-only')
+    const producer = {
+      ...run('producer', rootBefore, [
+        {
+          path: join(rootBefore, 'result.json'),
+          relativePath: 'result.json',
+          kind: 'other',
+          createdByRunId: 'producer',
+          change: 'created',
+          checksum: 'j'.repeat(64)
+        }
+      ]),
+      cwdBefore: undefined,
+      cwdAfter: rootAfter
+    }
+    const consumer = run('consumer', rootAfter)
+    const { fileDependenciesByRunId: projection } = projectNotebookFileDependencies([
+      { run: producer, facts, fileAccess: access([], ['result.json']) },
+      { run: consumer, facts, fileAccess: access(['result.json'], []) }
+    ] satisfies readonly AnalyzedNotebookRun[])
+    expect(projection.consumer).toBeUndefined()
+  })
+
+  it('matches relative and absolute spellings of the same recorded path', () => {
+    const root = join(tmpdir(), 'lineage-path-absolute')
+    const output = join(root, 'data/result.json')
+    const producer = run('producer', root, [
+      {
+        path: output,
+        relativePath: 'data/result.json',
+        kind: 'other',
+        createdByRunId: 'producer',
+        change: 'created',
+        checksum: 'b'.repeat(64)
+      }
+    ])
+    const consumer = run('consumer', root)
+    const { fileDependenciesByRunId: projection } = projectNotebookFileDependencies([
+      { run: producer, facts, fileAccess: access([], ['data/result.json']) },
+      { run: consumer, facts, fileAccess: access([output], []) }
+    ] satisfies readonly AnalyzedNotebookRun[])
+    expect(projection.consumer).toEqual([
+      expect.objectContaining({ producerRunId: 'producer', confidence: 'verified' })
+    ])
+  })
+
+  it.skipIf(process.platform !== 'win32')(
+    'matches case variants using Windows filesystem semantics',
+    () => {
+      const root = join(tmpdir(), 'lineage-path-case')
+      const producer = run('producer', root, [
+        {
+          path: join(root, 'Outputs/result.json'),
+          relativePath: 'Outputs/result.json',
+          kind: 'other',
+          createdByRunId: 'producer',
+          change: 'created',
+          checksum: 'd'.repeat(64)
+        }
+      ])
+      const consumer = run('consumer', root)
+      const { fileDependenciesByRunId: projection } = projectNotebookFileDependencies([
+        { run: producer, facts, fileAccess: access([], ['Outputs/result.json']) },
+        { run: consumer, facts, fileAccess: access(['outputs/RESULT.JSON'], []) }
+      ] satisfies readonly AnalyzedNotebookRun[])
+      expect(projection.consumer).toEqual([
+        expect.objectContaining({ producerRunId: 'producer', confidence: 'verified' })
+      ])
+    }
+  )
+
+  it('withholds a read-after-write edge when statement order is unavailable', () => {
+    const root = join(tmpdir(), 'lineage-read-after-write')
+    const output = join(root, 'result.json')
+    const producer = run('producer', root, [
+      {
+        path: output,
+        relativePath: 'result.json',
+        kind: 'other',
+        createdByRunId: 'producer',
+        change: 'created',
+        checksum: 'e'.repeat(64)
+      }
+    ])
+    const rewrite = run('rewrite', root, [
+      {
+        path: output,
+        relativePath: 'result.json',
+        kind: 'other',
+        createdByRunId: 'rewrite',
+        change: 'modified',
+        checksum: 'f'.repeat(64)
+      }
+    ])
+    const { fileDependenciesByRunId: projection } = projectNotebookFileDependencies([
+      { run: producer, facts, fileAccess: access([], ['result.json']) },
+      { run: rewrite, facts, fileAccess: access(['result.json'], ['result.json']) }
+    ] satisfies readonly AnalyzedNotebookRun[])
+    expect(projection.rewrite).toBeUndefined()
+  })
+
+  it('withholds an older producer when a complete write has no observed generation', () => {
+    const root = join(tmpdir(), 'lineage-missing-generation')
+    const output = join(root, 'result.json')
+    const producer = run('producer', root, [
+      {
+        path: output,
+        relativePath: 'result.json',
+        kind: 'other',
+        createdByRunId: 'producer',
+        change: 'created',
+        checksum: 'c'.repeat(64)
+      }
+    ])
+    const overwrite = run('overwrite', root)
+    const consumer = run('consumer', root)
+    const { fileDependenciesByRunId: projection } = projectNotebookFileDependencies([
+      { run: producer, facts, fileAccess: access([], ['result.json']) },
+      { run: overwrite, facts, fileAccess: access([], ['result.json']) },
+      { run: consumer, facts, fileAccess: access(['result.json'], []) }
+    ] satisfies readonly AnalyzedNotebookRun[])
+    expect(projection.consumer).toBeUndefined()
+  })
+
+  it('withholds an older producer after an incomplete observed overwrite', () => {
+    const root = join(tmpdir(), 'lineage-incomplete-overwrite')
+    const output = join(root, 'result.json')
+    const producer = run('producer', root, [
+      {
+        path: output,
+        relativePath: 'result.json',
+        kind: 'other',
+        createdByRunId: 'producer',
+        change: 'created',
+        checksum: 'g'.repeat(64)
+      }
+    ])
+    const interrupted: NotebookRunRecord = {
+      ...run('interrupted', root, [
+        {
+          path: output,
+          relativePath: 'result.json',
+          kind: 'other',
+          createdByRunId: 'interrupted',
+          change: 'modified',
+          checksum: 'h'.repeat(64)
+        }
+      ]),
+      status: 'failed'
+    }
+    const { fileDependenciesByRunId: projection } = projectNotebookFileDependencies([
+      { run: producer, facts, fileAccess: access([], ['result.json']) },
+      {
+        run: interrupted,
+        facts,
+        fileAccess: {
+          ...access([], ['result.json']),
+          readState: 'partial',
+          writeState: 'partial',
+          externalState: 'partial',
+          reasonCodes: ['dynamic-path-unresolved']
+        }
+      },
+      { run: run('consumer', root), facts, fileAccess: access(['result.json'], []) }
+    ] satisfies readonly AnalyzedNotebookRun[])
+    expect(projection.consumer).toBeUndefined()
+  })
+})

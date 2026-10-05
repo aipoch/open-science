@@ -6,6 +6,7 @@ import type {
 } from '../../../../../shared/replay'
 import { projectReplayScene } from '@/lib/replay'
 import { captureDiscussionStep, captureDiscussionSession } from './replay-context'
+import { createSessionDiscussionAnnotation } from '../session-discussion-annotation'
 
 const execution: ReplayStep = {
   id: 'execution',
@@ -121,6 +122,48 @@ const resources = {
   }
 }
 describe('step-scoped captured records', () => {
+  it.each(['artifact', 'review'] as const)(
+    'allows an immediate question at the start of a standalone %s record',
+    (kind) => {
+      const reference =
+        kind === 'artifact'
+          ? { ...execution.evidence[1], artifactId: 'file' }
+          : { kind: 'review' as const, id: 'review', projectId: 'p', sessionId: 's' }
+      const step: ReplayStep = {
+        ...execution,
+        kind,
+        id: `standalone-${kind}`,
+        title: kind === 'artifact' ? 'observations.csv' : 'Recorded review',
+        runs: [],
+        resourceIds: kind === 'artifact' ? ['version'] : [],
+        evidence: [reference]
+      }
+      const standalone: ReplayDocument = {
+        ...document,
+        branches: [{ ...document.branches[0], steps: [step], durationMs: 1000 }]
+      }
+      for (const position of [0, 100, 300, 750]) {
+        const scene = projectReplayScene(standalone, 'main', position)
+        const capture = captureDiscussionStep(standalone, scene)
+        expect(scene.phase).toBe('result')
+        expect(scene.showResults).toBe(true)
+        expect(capture.evidence).toEqual([{ ...reference, part: 'record' }])
+        expect(capture.stepOffsetMs).toBe(position)
+        expect(createSessionDiscussionAnnotation(capture, 'snapshot')).toBeDefined()
+        if (kind === 'artifact') {
+          expect(scene.visibleResourceIds).toEqual(['version'])
+          // An unloaded preview is a readable reference, not proof that the file is missing.
+          expect(
+            capture.records?.find((record) => record.id === 'artifact-version:version')
+          ).toMatchObject({ status: 'unavailable', title: 'observations.csv' })
+        }
+      }
+      expect(
+        createSessionDiscussionAnnotation(captureDiscussionSession(standalone)!, 'whole-source')
+      ).toBeDefined()
+    }
+  )
+
   it('keeps input-only questions free of unrevealed run results and file contents', () => {
     const context = captureDiscussionStep(
       document,

@@ -124,11 +124,16 @@ describe('ConnectorAddForm copy', () => {
       await prepareI18nLocale(locale)
       const t = i18next.getFixedT(locale, 'renderer')
       const description =
-        'Immune epitopes, T/B cell and MHC assays, antigens and literature evidence from IEDB.'
+        'Immune epitopes, T/B cell and MHC assays, TCR/BCR receptors, antigens and literature evidence from IEDB.'
       const translated = connectorDescription({ id: 'iedb', description }, t)
       expect(translated).toBe(i18next.getResource(locale, 'renderer', description))
       expect(translated).not.toBe(description)
       for (const [method, english] of [
+        ['search_tcrs', 'Search TCR receptor groups by epitope, CDR3 and experimental evidence.'],
+        [
+          'search_bcrs',
+          'Search BCR/antibody receptor groups by epitope, CDR3 and experimental evidence.'
+        ],
         ['search_epitopes', 'Search immune epitopes by sequence, host, antigen and MHC.'],
         ['search_antigens', 'Search epitope source antigens and UniProt references.'],
         [

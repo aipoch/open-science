@@ -2,7 +2,13 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { CreateBookmarkRequest } from '../../shared/bookmarks'
 import type { PersistedChatSession } from '../../shared/session-persistence'
-import { BookmarkService } from './service'
+import { BookmarkService, type PdfVersionAuthority } from './service'
+
+const { warn } = vi.hoisted(() => ({ warn: vi.fn() }))
+vi.mock('../logger', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../logger')>()),
+  createLogger: () => ({ warn })
+}))
 
 const request = (): CreateBookmarkRequest => ({
   id: 'bookmark-1',
@@ -101,6 +107,157 @@ describe('BookmarkService', () => {
     expect(repository.create).not.toHaveBeenCalled()
     expect(runWithSessionAuthority).toHaveBeenCalledOnce()
   })
+
+  it.each(['session-recovery', 'session-load', 'source-validation', 'persist'])(
+    'records %s failures without leaking source details or replacing the error',
+    async (stage) => {
+      warn.mockReset()
+      const secret = Object.assign(new Error('SECRET /private/path'), { code: 'EACCES' })
+      const repository = {
+        recoverCreate: vi.fn(async () => {
+          if (stage === 'session-recovery') throw secret
+          return undefined
+        }),
+        create: vi.fn(async () => {
+          throw secret
+        }),
+        list: vi.fn(),
+        updateNote: vi.fn(),
+        delete: vi.fn(),
+        deleteSession: vi.fn(),
+        deleteProject: vi.fn()
+      }
+      const service = new BookmarkService({
+        repository,
+        sessions: {
+          loadSessionWithDiagnostics: vi.fn(async () => {
+            if (stage === 'session-load') throw secret
+            return {
+              status: 'found' as const,
+              session: session()
+            }
+          })
+        },
+        validateProjectFile: vi.fn(async () => {
+          if (stage === 'source-validation') throw secret
+          return true
+        }),
+        runWithSessionAuthority: (_projectId, _sessionId, operation) => operation()
+      })
+
+      const input: CreateBookmarkRequest = {
+        ...request(),
+        target: {
+          kind: 'text',
+          quote: 'Saved quote',
+          source: {
+            kind: 'project-file',
+            projectId: 'project-1',
+            path: '/private/path',
+            name: 'SECRET'
+          }
+        }
+      }
+      await expect(service.create(input)).rejects.toBe(secret)
+      expect(warn).toHaveBeenCalledExactlyOnceWith('Bookmark creation failed', {
+        stage,
+        errorCategory: 'permission'
+      })
+      expect(JSON.stringify(warn.mock.calls)).not.toMatch(/SECRET|private|project|sessionId/u)
+      warn.mockImplementationOnce(() => {
+        throw new Error('Logger unavailable')
+      })
+      await expect(service.create(input)).rejects.toBe(secret)
+    }
+  )
+
+  it.each([
+    'valid',
+    'missing',
+    'file-mismatch',
+    'version-mismatch',
+    'session-mismatch',
+    'no-authority',
+    'wrong-project'
+  ])(
+    'checks managed file authority before persisting a cross-session bookmark: %s',
+    async (scenario) => {
+      warn.mockReset()
+      const input: CreateBookmarkRequest = {
+        ...request(),
+        target: {
+          kind: 'text',
+          quote: 'Saved quote',
+          source: {
+            kind: 'project-file',
+            projectId: scenario === 'wrong-project' ? 'other-project' : 'project-1',
+            path: '/managed/report.md',
+            name: 'report.md',
+            fileSource: 'artifact',
+            sourceFileId: 'file-1',
+            versionId: 'version-1',
+            sessionId: 'source-session'
+          }
+        }
+      }
+      const saved = {
+        ...input,
+        version: 1 as const,
+        createdAt: '2026-10-05T00:00:00.000Z',
+        updatedAt: '2026-10-05T00:00:00.000Z'
+      }
+      const repository = {
+        recoverCreate: vi.fn(async () => undefined),
+        create: vi.fn(async () => saved),
+        list: vi.fn(),
+        updateNote: vi.fn(),
+        delete: vi.fn()
+      }
+      const resolveVersion = vi.fn<PdfVersionAuthority['resolveVersion']>(async () =>
+        scenario === 'missing'
+          ? undefined
+          : {
+              sourceKind: 'artifact-version',
+              sourceFileId: scenario === 'file-mismatch' ? 'other-file' : 'file-1',
+              sourceVersionId: scenario === 'version-mismatch' ? 'other-version' : 'version-1',
+              sourceSessionId: scenario === 'session-mismatch' ? 'other-session' : 'source-session',
+              filename: 'report.md',
+              sizeBytes: 42,
+              checksum: 'a'.repeat(64),
+              path: '/managed/report.md'
+            }
+      )
+      const service = new BookmarkService({
+        repository,
+        sessions: {
+          loadSessionWithDiagnostics: vi.fn(async () => ({
+            status: 'found' as const,
+            session: session()
+          }))
+        },
+        pdfVersions: scenario === 'no-authority' ? undefined : { resolveVersion },
+        runWithSessionAuthority: (_projectId, _sessionId, operation) => operation()
+      })
+      if (scenario === 'valid') {
+        await expect(service.create(input)).resolves.toEqual(saved)
+        expect(resolveVersion).toHaveBeenCalledExactlyOnceWith({
+          projectId: 'project-1',
+          sourceKind: 'artifact-version',
+          sourceVersionId: 'version-1',
+          expectedSourceFileId: 'file-1'
+        })
+        expect(repository.create).toHaveBeenCalledExactlyOnceWith(input)
+        expect(warn).not.toHaveBeenCalled()
+      } else {
+        await expect(service.create(input)).rejects.toThrow('Bookmark source is not available.')
+        expect(repository.create).not.toHaveBeenCalled()
+        expect(warn).toHaveBeenCalledExactlyOnceWith('Bookmark creation failed', {
+          stage: 'source-validation',
+          errorCategory: 'error'
+        })
+      }
+    }
+  )
 
   it('edits and deletes a saved Bookmark without revalidating a vanished source', async () => {
     const saved = {

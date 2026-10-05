@@ -4,9 +4,97 @@ import { analyzeReplNotebookSource } from './dependency-analysis-repl'
 import { analyzePythonNotebookSource } from './dependency-analysis-python'
 import { analyzeRNotebookSource } from './dependency-analysis-r'
 import type {
+  NotebookSourceFileAccessExtraction,
   NotebookSourceFileAccessAnalysis,
-  NotebookSourceFileAccessContext
+  NotebookSourceFileAccessContext,
+  NotebookRunDependencyFacts
 } from './dependency-analysis-types'
+
+const normalizeNotebookSourceFileAccess = (
+  language: NotebookLanguage | 'repl',
+  dependencyFacts: NotebookRunDependencyFacts | undefined,
+  fileAccess: NotebookSourceFileAccessExtraction | undefined,
+  context?: NotebookSourceFileAccessContext
+): NotebookSourceFileAccessAnalysis => {
+  if (!fileAccess) {
+    return {
+      readState: 'unavailable',
+      writeState: 'unavailable',
+      externalState: 'unavailable',
+      reads: [],
+      writes: [],
+      reasonCodes: ['source-analysis-unsupported-call']
+    }
+  }
+
+  const activeContext = context
+  const reasonCodes: NotebookSourceFileAccessAnalysis['reasonCodes'] = []
+  const unresolvedPriorNames = new Set(dependencyFacts?.priorUsedNames ?? [])
+  if (language === 'r') unresolvedPriorNames.delete('pi')
+  for (const safeName of dependencyFacts?.safeCallNames ?? []) unresolvedPriorNames.delete(safeName)
+  for (const { name } of activeContext?.staticStrings ?? []) unresolvedPriorNames.delete(name)
+  for (const { name } of activeContext?.staticCollections ?? []) unresolvedPriorNames.delete(name)
+  for (const { name } of activeContext?.localFileWrappers ?? []) unresolvedPriorNames.delete(name)
+  for (const name of activeContext?.resolvedKernelNames ?? []) unresolvedPriorNames.delete(name)
+  const shadowedNames = new Set([
+    ...(dependencyFacts?.definedNames ?? []),
+    ...(dependencyFacts?.conditionallyDefinedNames ?? [])
+  ])
+  const replayedHelperNames = new Set(fileAccess.replayedHelperNames ?? [])
+  for (const name of fileAccess.context.pythonHelperModules?.flatMap(({ exports }) => exports) ??
+    []) {
+    if (!shadowedNames.has(name) && replayedHelperNames.has(name)) unresolvedPriorNames.delete(name)
+  }
+  const dependencyAnalysisUnavailable =
+    !dependencyFacts ||
+    (dependencyFacts.state === 'unknown' &&
+      dependencyFacts.reasons.some(
+        (reason) =>
+          reason !== 'external-state' &&
+          reason !== 'graphics-state-unavailable' &&
+          reason !== 'control-flow' &&
+          !(reason === 'function-scope' && fileAccess.localFileWrappersComplete)
+      ))
+  const unresolvedCalls =
+    dependencyFacts?.receiverCalls?.some(
+      (call) => call.kind === 'callable' && unresolvedPriorNames.has(call.receiver)
+    ) ?? false
+  if (dependencyAnalysisUnavailable || unresolvedPriorNames.size > 0) {
+    reasonCodes.push('source-analysis-unsupported-call')
+  }
+  if (fileAccess.unresolvedReads || fileAccess.unresolvedWrites) {
+    reasonCodes.push('dynamic-path-unresolved')
+  }
+  if (fileAccess.unsupportedExternalState || fileAccess.directoryStateRead) {
+    reasonCodes.push('source-analysis-unsupported-call')
+  }
+  return {
+    readState:
+      dependencyAnalysisUnavailable ||
+      unresolvedPriorNames.size > 0 ||
+      fileAccess.unresolvedReads ||
+      fileAccess.unsupportedExternalState
+        ? 'partial'
+        : 'complete',
+    writeState:
+      dependencyAnalysisUnavailable || unresolvedCalls || fileAccess.unresolvedWrites
+        ? 'partial'
+        : 'complete',
+    externalState:
+      dependencyAnalysisUnavailable ||
+      unresolvedCalls ||
+      fileAccess.unresolvedReads ||
+      fileAccess.unresolvedWrites ||
+      fileAccess.unsupportedExternalState ||
+      fileAccess.directoryStateRead
+        ? 'partial'
+        : 'complete',
+    reads: fileAccess.reads,
+    writes: fileAccess.writes,
+    ...(fileAccess.writeScopes?.length ? { writeScopes: fileAccess.writeScopes } : {}),
+    reasonCodes: [...new Set(reasonCodes)]
+  }
+}
 
 const analyzeNotebookSourceFileAccess = async (
   language: NotebookLanguage | 'repl',
@@ -81,87 +169,12 @@ const analyzeNotebookSourceFileAccess = async (
           : undefined
         return activeContext
       }))
-  if (!fileAccess) {
-    return {
-      readState: 'unavailable',
-      writeState: 'unavailable',
-      externalState: 'unavailable',
-      reads: [],
-      writes: [],
-      reasonCodes: ['source-analysis-unsupported-call']
-    }
-  }
-
-  const reasonCodes: NotebookSourceFileAccessAnalysis['reasonCodes'] = []
-  if (language === 'repl') activeContext = context
-  const unresolvedPriorNames = new Set(dependencyFacts?.priorUsedNames ?? [])
-  if (language === 'r') unresolvedPriorNames.delete('pi')
-  for (const safeName of dependencyFacts?.safeCallNames ?? []) unresolvedPriorNames.delete(safeName)
-  for (const { name } of activeContext?.staticStrings ?? []) unresolvedPriorNames.delete(name)
-  for (const { name } of activeContext?.staticCollections ?? []) unresolvedPriorNames.delete(name)
-  for (const { name } of activeContext?.localFileWrappers ?? []) unresolvedPriorNames.delete(name)
-  for (const name of activeContext?.resolvedKernelNames ?? []) unresolvedPriorNames.delete(name)
-  const shadowedNames = new Set([
-    ...(dependencyFacts?.definedNames ?? []),
-    ...(dependencyFacts?.conditionallyDefinedNames ?? [])
-  ])
-  const replayedHelperNames = new Set(fileAccess.replayedHelperNames ?? [])
-  for (const name of fileAccess.context.pythonHelperModules?.flatMap(({ exports }) => exports) ??
-    []) {
-    if (!shadowedNames.has(name) && replayedHelperNames.has(name)) unresolvedPriorNames.delete(name)
-  }
-  const dependencyAnalysisUnavailable =
-    !dependencyFacts ||
-    (dependencyFacts.state === 'unknown' &&
-      dependencyFacts.reasons.some(
-        (reason) =>
-          reason !== 'external-state' &&
-          // Known drawing calls can read uncaptured plotting parameters without
-          // hiding their explicit input/output paths or introducing extra I/O.
-          reason !== 'graphics-state-unavailable' &&
-          reason !== 'control-flow' &&
-          !(reason === 'function-scope' && fileAccess.localFileWrappersComplete)
-      ))
-  const unresolvedCalls =
-    dependencyFacts?.receiverCalls?.some(
-      (call) => call.kind === 'callable' && unresolvedPriorNames.has(call.receiver)
-    ) ?? false
-  if (dependencyAnalysisUnavailable || unresolvedPriorNames.size > 0) {
-    reasonCodes.push('source-analysis-unsupported-call')
-  }
-  if (fileAccess.unresolvedReads || fileAccess.unresolvedWrites) {
-    reasonCodes.push('dynamic-path-unresolved')
-  }
-  if (fileAccess.unsupportedExternalState || fileAccess.directoryStateRead) {
-    reasonCodes.push('source-analysis-unsupported-call')
-  }
-  return {
-    readState:
-      dependencyAnalysisUnavailable ||
-      unresolvedPriorNames.size > 0 ||
-      fileAccess.unresolvedReads ||
-      fileAccess.unsupportedExternalState
-        ? 'partial'
-        : 'complete',
-    // Unknown execution effects cannot establish an empty, complete output set.
-    writeState:
-      dependencyAnalysisUnavailable || unresolvedCalls || fileAccess.unresolvedWrites
-        ? 'partial'
-        : 'complete',
-    externalState:
-      dependencyAnalysisUnavailable ||
-      unresolvedCalls ||
-      fileAccess.unresolvedReads ||
-      fileAccess.unresolvedWrites ||
-      fileAccess.unsupportedExternalState ||
-      fileAccess.directoryStateRead
-        ? 'partial'
-        : 'complete',
-    reads: fileAccess.reads,
-    writes: fileAccess.writes,
-    ...(fileAccess.writeScopes?.length ? { writeScopes: fileAccess.writeScopes } : {}),
-    reasonCodes: [...new Set(reasonCodes)]
-  }
+  return normalizeNotebookSourceFileAccess(
+    language,
+    dependencyFacts,
+    fileAccess,
+    language === 'repl' ? context : activeContext
+  )
 }
 
-export { analyzeNotebookSourceFileAccess }
+export { analyzeNotebookSourceFileAccess, normalizeNotebookSourceFileAccess }

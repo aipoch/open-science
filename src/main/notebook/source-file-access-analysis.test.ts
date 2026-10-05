@@ -7,6 +7,21 @@ const analyzedPythonPath = (value: string): string =>
   process.platform === 'win32' ? value.replaceAll('/', '\\') : value
 
 describe('analyzeNotebookSourceFileAccess', () => {
+  it('retains persistent REPL path bindings when normalizing explicit reads', async () => {
+    await expect(
+      analyzeNotebookSourceFileAccess('repl', "const fs = require('fs'); fs.readFileSync(path)", {
+        staticStrings: [{ name: 'path', value: 'inputs/data.csv' }],
+        staticCollections: [],
+        localFileWrappers: [],
+        replContainerNames: []
+      })
+    ).resolves.toMatchObject({
+      readState: 'complete',
+      reads: ['inputs/data.csv'],
+      reasonCodes: []
+    })
+  })
+
   it.each([
     'source("outputs/helper.R")',
     'sys.source(file="outputs/helper.R", envir=new.env())',

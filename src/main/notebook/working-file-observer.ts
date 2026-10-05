@@ -2552,6 +2552,7 @@ export {
   recoverPublishedComputeJobFileEvidence,
   settleComputeJobFileEvidence,
   startWorkingFileObservation,
+  matchesWriteScope,
   toPortableNotebookRelativePath
 }
 export type { WorkingFileEvidenceLocation, WorkingFileObservation, WorkingFileObservationResult }
