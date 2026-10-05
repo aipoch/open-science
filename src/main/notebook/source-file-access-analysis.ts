@@ -27,7 +27,7 @@ const normalizeNotebookSourceFileAccess = (
     }
   }
 
-  let activeContext = context
+  const activeContext = context
   const reasonCodes: NotebookSourceFileAccessAnalysis['reasonCodes'] = []
   const unresolvedPriorNames = new Set(dependencyFacts?.priorUsedNames ?? [])
   if (language === 'r') unresolvedPriorNames.delete('pi')
