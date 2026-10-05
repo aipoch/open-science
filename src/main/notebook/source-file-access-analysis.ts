@@ -27,9 +27,8 @@ const normalizeNotebookSourceFileAccess = (
     }
   }
 
-  let activeContext = fileAccess.context
+  let activeContext = context
   const reasonCodes: NotebookSourceFileAccessAnalysis['reasonCodes'] = []
-  if (language === 'repl') activeContext = context ?? fileAccess.context
   const unresolvedPriorNames = new Set(dependencyFacts?.priorUsedNames ?? [])
   if (language === 'r') unresolvedPriorNames.delete('pi')
   for (const safeName of dependencyFacts?.safeCallNames ?? []) unresolvedPriorNames.delete(safeName)
@@ -42,7 +41,8 @@ const normalizeNotebookSourceFileAccess = (
     ...(dependencyFacts?.conditionallyDefinedNames ?? [])
   ])
   const replayedHelperNames = new Set(fileAccess.replayedHelperNames ?? [])
-  for (const name of fileAccess.context.pythonHelperModules?.flatMap(({ exports }) => exports) ?? []) {
+  for (const name of fileAccess.context.pythonHelperModules?.flatMap(({ exports }) => exports) ??
+    []) {
     if (!shadowedNames.has(name) && replayedHelperNames.has(name)) unresolvedPriorNames.delete(name)
   }
   const dependencyAnalysisUnavailable =
@@ -169,12 +169,7 @@ const analyzeNotebookSourceFileAccess = async (
           : undefined
         return activeContext
       }))
-  return normalizeNotebookSourceFileAccess(
-    language,
-    dependencyFacts,
-    fileAccess,
-    activeContext ?? fileAccess?.context
-  )
+  return normalizeNotebookSourceFileAccess(language, dependencyFacts, fileAccess, activeContext)
 }
 
 export { analyzeNotebookSourceFileAccess, normalizeNotebookSourceFileAccess }

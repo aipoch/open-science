@@ -127,10 +127,7 @@ const lineageScope = (
   path: lineageScopePath(run, scope.path)
 })
 
-const matchesLineageScope = (
-  scope: NotebookSourceFileWriteScope,
-  candidate: string
-): boolean => {
+const matchesLineageScope = (scope: NotebookSourceFileWriteScope, candidate: string): boolean => {
   if (scope.kind === 'directory' && scope.path === '') return candidate.length > 0
   return matchesWriteScope(scope, candidate)
 }
@@ -166,9 +163,7 @@ const observedScopedGenerations = (
     return (
       candidatePath !== '..' &&
       !candidatePath.startsWith('../') &&
-      scopes.some((scope) =>
-        matchesLineageScope(lineageScope(run, scope), candidatePath)
-      ) &&
+      scopes.some((scope) => matchesLineageScope(lineageScope(run, scope), candidatePath)) &&
       (file.createdByRunId === run.runId || file.change === 'created' || file.change === 'modified')
     )
   })
@@ -2046,9 +2041,7 @@ const projectNotebookFileDependencies = (
   ): boolean => {
     const workingDirectory = lineageWorkingDirectory(run)
     const resolvedPath =
-      workingDirectory !== undefined && !isAbsolute(path)
-        ? resolve(workingDirectory, path)
-        : path
+      workingDirectory !== undefined && !isAbsolute(path) ? resolve(workingDirectory, path) : path
     const candidatePath = scopeCandidatePath(run, resolvedPath)
     const normalizedScope = lineageScope(run, scope)
     return (

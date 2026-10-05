@@ -695,7 +695,9 @@ describe('real-agent science lineage fixtures', () => {
     for (const cell of fixture.cells) {
       const access = await analyzeNotebookSourceFileAccess(cell.language, cell.code)
       expect(
-        access.reads.map(fixturePortable).every((path) => cell.reads.map(fixturePortable).includes(path)),
+        access.reads
+          .map(fixturePortable)
+          .every((path) => cell.reads.map(fixturePortable).includes(path)),
         `${fixture.scenario} stage ${cell.stage} reads remain within the agent declaration`
       ).toBe(true)
       expect(
@@ -949,15 +951,20 @@ describe('real-agent science lineage fixtures', () => {
       { run: companionProducer, facts, fileAccess },
       { run: partialScopeWriter, facts, fileAccess },
       {
-        run: { ...consumer, runId: 'scoped-companion-consumer', cellId: 'scoped-companion-consumer' },
+        run: {
+          ...consumer,
+          runId: 'scoped-companion-consumer',
+          cellId: 'scoped-companion-consumer'
+        },
         facts,
         fileAccess: { ...consumerAccess, reads: ['outputs/map.shx'] }
       }
     ])
-    expect(partialScopeProjection.fileDependenciesByRunId['scoped-companion-consumer']).toBeUndefined()
+    expect(
+      partialScopeProjection.fileDependenciesByRunId['scoped-companion-consumer']
+    ).toBeUndefined()
   })
 })
-
 
 describe('file lineage identity and completeness guards', () => {
   const facts: NotebookRunDependencyFacts = {
@@ -968,7 +975,11 @@ describe('file lineage identity and completeness guards', () => {
     priorUsedNames: [],
     memberWrites: []
   }
-  const run = (runId: string, cwd: string, workingFiles: NotebookRunRecord['workingFiles'] = []): NotebookRunRecord => ({
+  const run = (
+    runId: string,
+    cwd: string,
+    workingFiles: NotebookRunRecord['workingFiles'] = []
+  ): NotebookRunRecord => ({
     runId,
     cellId: runId,
     script: '',
@@ -986,10 +997,7 @@ describe('file lineage identity and completeness guards', () => {
     text: { stdout: '', stderr: '', traceback: '', plain: [] },
     outputs: []
   })
-  const access = (
-    reads: string[],
-    writes: string[]
-  ): NotebookSourceFileAccessAnalysis => ({
+  const access = (reads: string[], writes: string[]): NotebookSourceFileAccessAnalysis => ({
     readState: 'complete' as const,
     writeState: 'complete' as const,
     externalState: 'complete' as const,
@@ -1000,14 +1008,16 @@ describe('file lineage identity and completeness guards', () => {
 
   it('does not alias a data-prefixed read to a different root file', () => {
     const root = join(tmpdir(), 'lineage-path-identity')
-    const producer = run('producer', root, [{
-      path: join(root, 'foo.txt'),
-      relativePath: 'foo.txt',
-      kind: 'other',
-      createdByRunId: 'producer',
-      change: 'created',
-      checksum: 'a'.repeat(64)
-    }])
+    const producer = run('producer', root, [
+      {
+        path: join(root, 'foo.txt'),
+        relativePath: 'foo.txt',
+        kind: 'other',
+        createdByRunId: 'producer',
+        change: 'created',
+        checksum: 'a'.repeat(64)
+      }
+    ])
     const consumer = run('consumer', root)
     const { fileDependenciesByRunId: projection } = projectNotebookFileDependencies([
       { run: producer, facts, fileAccess: access([], ['foo.txt']) },
@@ -1047,14 +1057,16 @@ describe('file lineage identity and completeness guards', () => {
     const rootBefore = join(tmpdir(), 'lineage-cwd-before-missing')
     const rootAfter = join(tmpdir(), 'lineage-cwd-after-only')
     const producer = {
-      ...run('producer', rootBefore, [{
-        path: join(rootBefore, 'result.json'),
-        relativePath: 'result.json',
-        kind: 'other',
-        createdByRunId: 'producer',
-        change: 'created',
-        checksum: 'j'.repeat(64)
-      }]),
+      ...run('producer', rootBefore, [
+        {
+          path: join(rootBefore, 'result.json'),
+          relativePath: 'result.json',
+          kind: 'other',
+          createdByRunId: 'producer',
+          change: 'created',
+          checksum: 'j'.repeat(64)
+        }
+      ]),
       cwdBefore: undefined,
       cwdAfter: rootAfter
     }
@@ -1069,14 +1081,16 @@ describe('file lineage identity and completeness guards', () => {
   it('matches relative and absolute spellings of the same recorded path', () => {
     const root = join(tmpdir(), 'lineage-path-absolute')
     const output = join(root, 'data/result.json')
-    const producer = run('producer', root, [{
-      path: output,
-      relativePath: 'data/result.json',
-      kind: 'other',
-      createdByRunId: 'producer',
-      change: 'created',
-      checksum: 'b'.repeat(64)
-    }])
+    const producer = run('producer', root, [
+      {
+        path: output,
+        relativePath: 'data/result.json',
+        kind: 'other',
+        createdByRunId: 'producer',
+        change: 'created',
+        checksum: 'b'.repeat(64)
+      }
+    ])
     const consumer = run('consumer', root)
     const { fileDependenciesByRunId: projection } = projectNotebookFileDependencies([
       { run: producer, facts, fileAccess: access([], ['data/result.json']) },
@@ -1145,14 +1159,16 @@ describe('file lineage identity and completeness guards', () => {
   it('withholds an older producer when a complete write has no observed generation', () => {
     const root = join(tmpdir(), 'lineage-missing-generation')
     const output = join(root, 'result.json')
-    const producer = run('producer', root, [{
-      path: output,
-      relativePath: 'result.json',
-      kind: 'other',
-      createdByRunId: 'producer',
-      change: 'created',
-      checksum: 'c'.repeat(64)
-    }])
+    const producer = run('producer', root, [
+      {
+        path: output,
+        relativePath: 'result.json',
+        kind: 'other',
+        createdByRunId: 'producer',
+        change: 'created',
+        checksum: 'c'.repeat(64)
+      }
+    ])
     const overwrite = run('overwrite', root)
     const consumer = run('consumer', root)
     const { fileDependenciesByRunId: projection } = projectNotebookFileDependencies([

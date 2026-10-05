@@ -280,26 +280,40 @@ describe('artifact provenance graph', () => {
       'from pathlib import Path\nvalue = Path("intermediate.csv").read_text()\nPath("result.csv").write_text(value)'
     ]
     const activities = scripts.map((script, index) =>
-      notebookActivity(`run-${index}`, index, index === 2 ? [{
-        relation: 'created',
-        relativePath: 'result.csv',
-        pathPortability: 'relative',
-        authority: 'advisory',
-        generation: generation('g-target', 'result.csv', checksum('b'))
-      }] : [], {
-        script,
-        cwdBefore: root,
-        cwdAfter: root,
-        kernelEpochId: `epoch-${index}`,
-        workingFiles: index === 0 ? [{
-          path: join(root, 'intermediate.csv'),
-          relativePath: 'intermediate.csv',
-          kind: 'other',
-          createdByRunId: 'run-0',
-          change: 'created',
-          checksum: checksum('a')
-        }] : []
-      })
+      notebookActivity(
+        `run-${index}`,
+        index,
+        index === 2
+          ? [
+              {
+                relation: 'created',
+                relativePath: 'result.csv',
+                pathPortability: 'relative',
+                authority: 'advisory',
+                generation: generation('g-target', 'result.csv', checksum('b'))
+              }
+            ]
+          : [],
+        {
+          script,
+          cwdBefore: root,
+          cwdAfter: root,
+          kernelEpochId: `epoch-${index}`,
+          workingFiles:
+            index === 0
+              ? [
+                  {
+                    path: join(root, 'intermediate.csv'),
+                    relativePath: 'intermediate.csv',
+                    kind: 'other',
+                    createdByRunId: 'run-0',
+                    change: 'created',
+                    checksum: checksum('a')
+                  }
+                ]
+              : []
+        }
+      )
     )
     try {
       const options = {
@@ -314,20 +328,34 @@ describe('artifact provenance graph', () => {
       const reloaded = await new NotebookDependencyAnalyzer(options).project(request)
       expect(reloaded.unresolvedFileReadRunIds).toEqual(['run-2'])
       const graph = sealArtifactProvenanceGraph({
-        target: target(), notebookActivities: activities, computeActivities: [],
+        target: target(),
+        notebookActivities: activities,
+        computeActivities: [],
         notebookDependencies: reloaded
       })
       expect(graph.completeness).toBe('incomplete')
       expect(graph.reasonCodes).toContain('history-truncated')
-      expect(graph.edges).not.toContainEqual(expect.objectContaining({
-        kind: 'depends-on', activityId: 'run-2', dependencyActivityId: 'run-0'
-      }))
+      expect(graph.edges).not.toContainEqual(
+        expect.objectContaining({
+          kind: 'depends-on',
+          activityId: 'run-2',
+          dependencyActivityId: 'run-0'
+        })
+      )
       const unrelated = sealArtifactProvenanceGraph({
         target: { ...target(), producerRunId: 'run-3' },
-        notebookActivities: [...activities, notebookActivity('run-3', 3, [{
-          relation: 'created', relativePath: 'result.csv', pathPortability: 'relative',
-          authority: 'advisory', generation: generation('g-target', 'result.csv', checksum('b'))
-        }])],
+        notebookActivities: [
+          ...activities,
+          notebookActivity('run-3', 3, [
+            {
+              relation: 'created',
+              relativePath: 'result.csv',
+              pathPortability: 'relative',
+              authority: 'advisory',
+              generation: generation('g-target', 'result.csv', checksum('b'))
+            }
+          ])
+        ],
         computeActivities: [],
         notebookDependencies: {
           ...reloaded,
