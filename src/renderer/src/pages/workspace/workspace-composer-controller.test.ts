@@ -1450,6 +1450,11 @@ describe('workspace composer controller', () => {
       }
     ])
 
+    act(() => hook.selectSession(undefined))
+    expect(hook.result.current.view.annotations).toEqual([])
+    expect(hook.result.current.view.readingContext.bindings).toEqual([])
+    expect(hook.result.current.view.readingContext.isPending).toBe(false)
+
     act(() =>
       hook.selectSession({
         id: 'unrelated-pending',

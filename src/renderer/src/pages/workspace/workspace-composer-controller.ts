@@ -79,7 +79,7 @@ type ComposerSessionContext = {
   id: string
   projectId: string
   isPending?: boolean
-  messages?: readonly { id: string }[]
+  messages?: readonly { id: string; pdfContext?: MessagePdfContextSnapshot }[]
   runtimeContext?: {
     revision: number
     pdfContext?: SessionPdfContext
@@ -108,6 +108,17 @@ const admissionMatchesSession = (
   session?.projectId === projection.projectId &&
   projection.messageId !== undefined &&
   (session.messages?.some((message) => message.id === projection.messageId) ?? false)
+
+// Binding publishes the prepared prompt, including its PDF snapshot. An empty snapshot is
+// authoritative too: single-page uploads remain attachments rather than Reading bindings.
+const admissionHasNoLinkedPdfs = (
+  projection: ComposerAdmissionProjection,
+  session: ComposerSessionContext | undefined
+): boolean => {
+  if (!admissionMatchesSession(projection, session) || session?.isPending !== false) return false
+  const prompt = session.messages?.find((message) => message.id === projection.messageId)
+  return Boolean(prompt && (prompt.pdfContext?.bindings.length ?? 0) === 0)
+}
 
 type ReadingMutationRuntime = {
   revision: number
@@ -1012,7 +1023,8 @@ const useWorkspaceComposerController = ({
     if (!projection || !admissionMatchesSession(projection, activeSession)) return
     const readingReady =
       (projection.readingBindings.length === 0 && projection.automaticAttachments.length === 0) ||
-      durableReadingBindings.length > 0
+      durableReadingBindings.length > 0 ||
+      admissionHasNoLinkedPdfs(projection, activeSession)
     const discussionReady =
       projection.annotations.length === 0 ||
       (activeSession?.runtimeContext?.sessionContext?.bindings.length ?? 0) > 0
@@ -1596,6 +1608,7 @@ const useWorkspaceComposerController = ({
     admissionProjection !== undefined &&
     (admissionMatchesSession(admissionProjection, activeSession) ||
       (!activeSession &&
+        admissionProjection.messageId === undefined &&
         admissionProjection.draftKey === currentDraftKey &&
         admissionProjection.projectId === (activeProjectId ?? 'default-project')))
   const visibleAnnotations =
@@ -1610,11 +1623,14 @@ const useWorkspaceComposerController = ({
       : annotations
   const visibleReadingContexts =
     admissionProjectionActive && durableReadingBindings.length === 0
-      ? admissionProjection.readingBindings
+      ? admissionHasNoLinkedPdfs(admissionProjection, activeSession)
+        ? readingContexts
+        : admissionProjection.readingBindings
       : readingContexts
 
   const automaticReadingAttachments = admissionProjectionActive
-    ? durableReadingBindings.length > 0
+    ? durableReadingBindings.length > 0 ||
+      admissionHasNoLinkedPdfs(admissionProjection, activeSession)
       ? []
       : admissionProjection.automaticAttachments
     : automaticReadingEnabled

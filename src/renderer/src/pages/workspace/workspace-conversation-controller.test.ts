@@ -1342,6 +1342,16 @@ describe('workspace conversation controller', () => {
     mounted.push(runningHook)
 
     expect(runningHook.result.current.availability.submit).toBe(false)
+
+    idleInput.composer.view.readingContext.isPending = false
+    idleHook.rerender(idleInput)
+    expect(idleHook.result.current.availability.submit).toBe(true)
+    expect(idleHook.result.current.availability.submitMode).toBe('send')
+
+    runningInput.composer.view.readingContext.isPending = false
+    runningHook.rerender(runningInput)
+    expect(runningHook.result.current.availability.submit).toBe(true)
+    expect(runningHook.result.current.availability.submitMode).toBe('queue')
   })
 
   it('queues without dispatching while the selected Specialist is not ready', () => {

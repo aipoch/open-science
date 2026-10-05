@@ -706,6 +706,8 @@ describe('WorkspacePage draft preservation', () => {
     ['automatic', true],
     ['selected', false],
     ['automatic', false],
+    ['filtered', true],
+    ['filtered', false],
     ['none', true]
   ] as const)(
     'keeps first-send context (%s Reading, Discussion: %s) across real pending-to-durable identities before a response',
@@ -754,7 +756,7 @@ describe('WorkspacePage draft preservation', () => {
             previewItemId: 'literature:version'
           })
         })
-      } else if (reading === 'automatic') {
+      } else if (reading === 'automatic' || reading === 'filtered') {
         await stageAttachment({
           id: 'pdf-upload',
           sessionId: '.pending',
@@ -793,7 +795,7 @@ describe('WorkspacePage draft preservation', () => {
           finish = resolve
         })
       })
-      const assertContext = (): void => {
+      const assertContext = (prepared = false): void => {
         expect(conversationProps.composer.view.annotations).toEqual(
           includeDiscussion ? [discussion] : []
         )
@@ -803,12 +805,17 @@ describe('WorkspacePage draft preservation', () => {
           ])
         else {
           expect(conversationProps.composer.view.readingContext.automaticAttachmentCount).toBe(
-            reading === 'automatic' ? 1 : 0
+            reading === 'automatic' || (reading === 'filtered' && !prepared) ? 1 : 0
           )
           expect(conversationProps.composer.view.readingContext.automaticAttachments).toEqual(
-            reading === 'automatic' ? [{ id: 'pdf-upload', name: 'paper.pdf' }] : []
+            reading === 'automatic' || (reading === 'filtered' && !prepared)
+              ? [{ id: 'pdf-upload', name: 'paper.pdf' }]
+              : []
           )
         }
+        expect(conversationProps.composer.view.readingContext.isPending).toBe(
+          includeDiscussion || reading === 'selected' || reading === 'automatic' || !prepared
+        )
       }
       await act(async () =>
         conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [] })
@@ -817,15 +824,55 @@ describe('WorkspacePage draft preservation', () => {
       await act(async () =>
         useSessionStore.setState((state) => ({
           sessions: state.sessions.map((row) =>
-            row.id === pending.id ? { ...row, id: 'durable-new', isPending: false } : row
+            row.id === pending.id
+              ? {
+                  ...row,
+                  id: 'durable-new',
+                  isPending: false,
+                  // Runtime preparation publishes the immutable PDF snapshot before binding.
+                  messages: row.messages.map((message) => ({
+                    ...message,
+                    ...(reading === 'selected' || reading === 'automatic'
+                      ? {
+                          pdfContext: {
+                            version: 1 as const,
+                            bindings: [
+                              {
+                                version: 1 as const,
+                                bindingId: 'binding-1',
+                                sourceKind: 'upload-version' as const,
+                                sourceSessionId: 'durable-new',
+                                sourceFileId: 'pdf-upload',
+                                sourceVersionId: 'pdf-version',
+                                name: 'paper.pdf',
+                                mimeType: 'application/pdf' as const,
+                                sizeBytes: 100,
+                                checksum: 'a'.repeat(64),
+                                linkedAt: 1
+                              }
+                            ]
+                          }
+                        }
+                      : {})
+                  }))
+                }
+              : row
           ),
           selectedSessionId: 'durable-new'
         }))
       )
-      assertContext()
+      assertContext(true)
       // Admission can finish before runtimeContext is broadcast to the renderer.
       await act(async () => finish({ sessionId: 'durable-new', messageId: 'first-prompt' }))
-      assertContext()
+      assertContext(true)
+      if (reading === 'filtered' && !includeDiscussion) {
+        await act(async () => conversationProps.composer.actions.changeDoc(textDoc('Follow up')))
+        expect(conversationProps.composer.view).toMatchObject({
+          doc: textDoc('Follow up'),
+          attachments: [],
+          annotations: []
+        })
+      }
       await openSession('sess-a')
       expect(conversationProps.composer.view.annotations).toEqual([])
       expect(conversationProps.composer.view.readingContext.bindings).toEqual([])
