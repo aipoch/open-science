@@ -247,7 +247,7 @@ it('does not synthesize a header when a detector has no model rows', async () =>
       ]
     }
   }
-  const token = (text: string, x: number) => ({
+  const token = (text: string, x: number): Fixture['tokens'][number] & { horizontal: boolean } => ({
     text,
     rect: [x, 8, x + 60, 18],
     baseline: 18,

@@ -700,7 +700,10 @@ function recoverLetteredRasterPair(page, figure, candidates, tableRects) {
     Math.abs(first[0] - second[0]) > Math.max(2, width * 0.03) ||
     second[1] - first[3] > Math.max(24, page.height * 0.06) ||
     candidates.some(
-      (other) => other !== caption && images.some((image) => intersection(other.rect, image) > 0)
+      (other) =>
+        other !== caption &&
+        other.page === caption.page &&
+        images.some((image) => intersection(other.rect, image) > 0)
     ) ||
     tableRects.some((table) => images.some((image) => intersection(table, image) > 0))
   )
