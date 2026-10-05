@@ -12,11 +12,10 @@ diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.d
 diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.js b/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.js
 --- a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.js
 +++ b/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.js
-@@ -568,6 +568,62 @@
-     }
+@@ -569,6 +569,70 @@
      extNotification(method, params) {
          return this.ctx.notify(method, params);
-+    }
+     }
 +}
 +// Claude snapshots the available tool set when a model request starts. Wait for every MCP server
 +// supplied by the ACP client before returning session/new so the first prompt cannot race startup.
@@ -72,10 +71,19 @@ diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.j
 +        if (pending.size > 0) {
 +            await delay(Math.min(MCP_STATUS_POLL_INTERVAL_MS, Math.max(0, deadline - Date.now())));
 +        }
-     }
++    }
++}
++// Optional Open-Science host denial feedback; unsupported or absent metadata retains ACP defaults.
++function permissionDenialMessage(response, fallback) {
++    const denial = response._meta?.["open-science/permission-denial"];
++    if (denial?.version === 1 && typeof denial.reason === "string" && denial.reason.trim()) {
++        return denial.reason.trim().slice(0, 2048);
++    }
++    return fallback;
  }
  export class ClaudeAcpAgent {
-@@ -1972,6 +2028,7 @@
+     sessions;
+@@ -1972,6 +2036,7 @@
                                          update: {
                                              sessionUpdate: "agent_message_chunk",
                                              content: { type: "text", text: "Compacting..." },
@@ -83,7 +91,7 @@ diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.j
                                          },
                                      });
                                  }
-@@ -1985,6 +2042,7 @@
+@@ -1985,6 +2050,7 @@
                                          update: {
                                              sessionUpdate: "agent_message_chunk",
                                              content: { type: "text", text: "\n\nCompacting completed." },
@@ -91,7 +99,7 @@ diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.j
                                          },
                                      });
                                  }
-@@ -1996,6 +2054,7 @@
+@@ -1996,6 +2062,7 @@
                                          update: {
                                              sessionUpdate: "agent_message_chunk",
                                              content: { type: "text", text: `\n\nCompacting failed${reason}` },
@@ -99,7 +107,7 @@ diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.j
                                          },
                                      });
                                  }
-@@ -2972,7 +3031,7 @@
+@@ -2972,7 +3039,7 @@
                                      cache_creation_input_tokens: usage.cache_creation_input_tokens ?? prev.cache_creation_input_tokens,
                                  };
                              }
@@ -108,7 +116,7 @@ diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.j
                              if (nextUsage !== lastAssistantTotalUsage) {
                                  lastAssistantTotalUsage = nextUsage;
                                  await sendUpdate({
-@@ -3110,7 +3169,7 @@
+@@ -3110,7 +3177,7 @@
                          // aligned with what the user's current selection is producing.
                          if (message.type === "assistant" && message.parent_tool_use_id === null) {
                              lastAssistantUsage = snapshotFromUsage(message.message.usage);
@@ -117,7 +125,7 @@ diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.j
                              lastAssistantWasUsageLimit = isSyntheticUsageLimitMessage(message.message);
                              if (message.error || lastAssistantWasUsageLimit) {
                                  lastAssistantFailureTitle = assistantMessageText(message.message);
-@@ -3718,7 +3777,16 @@
+@@ -3718,7 +3785,16 @@
          if (this.sessions[params.sessionId]) {
              await this.teardownSession(params.sessionId);
          }
@@ -135,7 +143,42 @@ diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.j
          return {};
      }
      async setSessionMode(params) {
-@@ -4995,6 +5063,7 @@
+@@ -4190,7 +4266,7 @@
+                 else {
+                     return {
+                         behavior: "deny",
+-                        message: "User rejected request to exit plan mode.",
++                        message: permissionDenialMessage(response, "User rejected request to exit plan mode."),
+                     };
+                 }
+             }
+@@ -4263,7 +4339,7 @@
+             else {
+                 return {
+                     behavior: "deny",
+-                    message: "User refused permission to run tool",
++                    message: permissionDenialMessage(response, "User refused permission to run tool"),
+                 };
+             }
+         };
+@@ -4715,6 +4791,7 @@
+         const input = new Pushable();
+         const settingsManager = new SettingsManager(params.cwd, {
+             logger: this.logger,
++            settingSources: params._meta?.claudeCode?.options?.settingSources,
+         });
+         await settingsManager.initialize();
+         const mcpServers = {};
+@@ -4761,7 +4838,7 @@
+                 };
+             }
+         }
+-        const permissionMode = resolvePermissionMode(settingsManager.getSettings().permissions?.defaultMode, this.logger);
++        const permissionMode = resolvePermissionMode(params._meta?.claudeCode?.options?.permissionMode ?? settingsManager.getSettings().permissions?.defaultMode, this.logger);
+         // Extract options from _meta if provided
+         const sessionMeta = params._meta;
+         const userProvidedOptions = sessionMeta?.claudeCode?.options;
+@@ -4995,6 +5072,7 @@
          let initializationResult;
          try {
              initializationResult = await q.initializationResult();
@@ -143,7 +186,7 @@ diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.j
          }
          catch (error) {
              if (creationOpts.resume &&
-@@ -5259,15 +5328,10 @@
+@@ -5259,15 +5337,10 @@
              session.accumulatedUsage.cachedWriteTokens,
      };
  }
@@ -163,7 +206,7 @@ diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.j
  }
  /**
   * Build the `data` payload attached to a `RequestError.internalError` when we
-@@ -5284,7 +5348,7 @@
+@@ -5284,7 +5357,7 @@
  }
  /** Project a nullable API usage object into our non-null snapshot shape.
   *  Both SDK message_start and assistant message `usage` have `number | null`
@@ -172,3 +215,63 @@ diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.j
   *  NaN. `input_tokens`/`output_tokens` are typed `number` by the SDK but
   *  synthetic or third-party-backend stream events have been observed emitting
   *  them as null/undefined — coerce those too so a malformed upstream event
+diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/settings.d.ts b/node_modules/@agentclientprotocol/claude-agent-acp/dist/settings.d.ts
+--- a/node_modules/@agentclientprotocol/claude-agent-acp/dist/settings.d.ts
++++ b/node_modules/@agentclientprotocol/claude-agent-acp/dist/settings.d.ts
+@@ -1,5 +1,6 @@
+-import { type Settings } from "@anthropic-ai/claude-agent-sdk";
++import { type Settings, type SettingSource } from "@anthropic-ai/claude-agent-sdk";
+ export interface SettingsManagerOptions {
++    settingSources?: SettingSource[];
+     onChange?: () => void;
+     logger?: {
+         log: (...args: any[]) => void;
+@@ -20,6 +21,7 @@
+     private effective;
+     private watchers;
+     private onChange?;
++    private settingSources;
+     private logger;
+     private initialized;
+     private disposed;
+diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/settings.js b/node_modules/@agentclientprotocol/claude-agent-acp/dist/settings.js
+--- a/node_modules/@agentclientprotocol/claude-agent-acp/dist/settings.js
++++ b/node_modules/@agentclientprotocol/claude-agent-acp/dist/settings.js
+@@ -39,6 +39,7 @@
+     effective = {};
+     watchers = [];
+     onChange;
++    settingSources;
+     logger;
+     initialized = false;
+     disposed = false;
+@@ -47,6 +48,7 @@
+     constructor(cwd, options) {
+         this.cwd = cwd;
+         this.onChange = options?.onChange;
++        this.settingSources = [...(options?.settingSources ?? ["user", "project", "local"])];
+         this.logger = options?.logger ?? console;
+     }
+     /**
+@@ -75,9 +77,9 @@
+      */
+     getWatchedPaths() {
+         return [
+-            path.join(CLAUDE_CONFIG_DIR, "settings.json"),
+-            path.join(this.cwd, ".claude", "settings.json"),
+-            path.join(this.cwd, ".claude", "settings.local.json"),
++            ...(this.settingSources.includes("user") ? [path.join(CLAUDE_CONFIG_DIR, "settings.json")] : []),
++            ...(this.settingSources.includes("project") ? [path.join(this.cwd, ".claude", "settings.json")] : []),
++            ...(this.settingSources.includes("local") ? [path.join(this.cwd, ".claude", "settings.local.json")] : []),
+             getManagedSettingsPath(),
+         ];
+     }
+@@ -87,7 +89,7 @@
+      */
+     async loadAllSettings() {
+         try {
+-            const resolved = await resolveSettings({ cwd: this.cwd });
++            const resolved = await resolveSettings({ cwd: this.cwd, settingSources: this.settingSources });
+             this.effective = filterEscalatingDefaultMode(resolved);
+         }
+         catch (error) {

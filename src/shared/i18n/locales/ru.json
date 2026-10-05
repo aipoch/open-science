@@ -7386,6 +7386,22 @@
     "Could not update research ownership. Close this dialog and try again.": "Не удалось изменить принадлежность к исследованию. Закройте это окно и повторите попытку.",
     "Collapse research": "Свернуть исследование",
     "Expand research": "Развернуть исследование",
-    "View original record": "Открыть исходную запись"
+    "View original record": "Открыть исходную запись",
+    "The current data location contains spaces. R environments cannot run reliably here. Use Change location to move your data to a path without spaces. You can cancel and keep the current location; your existing data will remain available.": "Текущий путь к данным содержит пробелы. Среды R не могут надёжно работать в этой папке. Используйте «Изменить расположение», чтобы переместить данные по пути без пробелов. Можно отменить перемещение и оставить текущее расположение; существующие данные останутся доступны.",
+    "What would you like to research?": "Что вы хотите исследовать?",
+    "Previous research ideas": "Предыдущие идеи исследования",
+    "Next research ideas": "Другие идеи исследования",
+    "Find literature": "Найти литературу",
+    "Create charts": "Создать графики",
+    "Explain a paper": "Разобрать статью",
+    "Design an experiment": "Спланировать эксперимент",
+    "Write code": "Написать код",
+    "Draft a report": "Подготовить отчёт",
+    "Find research papers on my topic and summarize the relevant evidence.": "Найдите научные статьи по моей теме и обобщите соответствующие доказательства.",
+    "Create clear charts from my data and explain what they show.": "Создайте понятные графики на основе моих данных и объясните результаты.",
+    "Explain this paper’s research question, methods, findings, and limitations.": "Объясните исследовательский вопрос, методы, выводы и ограничения этой статьи.",
+    "Help me design an experiment, including controls, measurements, and analysis.": "Помогите спланировать эксперимент, включая контрольные группы, измерения и анализ.",
+    "Help me write reproducible code for my analysis and explain each step.": "Помогите написать воспроизводимый код для моего анализа и объясните каждый шаг.",
+    "Help me draft a research report with methods, results, and limitations.": "Помогите подготовить исследовательский отчёт с методами, результатами и ограничениями."
   }
 }

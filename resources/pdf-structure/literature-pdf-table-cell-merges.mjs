@@ -625,6 +625,23 @@ export function resolveTableCellMerges({
     )
   }
   const numericRows = rows.flatMap((_, r) => (numericRecord(r) ? [r] : []))
+  const wideNumericBodyRecord = (slots) => {
+    if (!slots.length || new Set(slots.map((slot) => slot.row)).size !== 1) return false
+    const row = slots[0].row
+    if (headerRows.includes(row) || slots.length < 8) return false
+    const source = items
+      .filter((item) => item.horizontal && inside(union(slots), item))
+      .sort((a, b) => a.rect[0] - b.rect[0])
+    const words = source.flatMap((item) => item.text.trim().split(/\s+/u))
+    const numeric = (value) => /^[<>≤≥−+-]?\d+(?:[.,]\d+)?%?$/.test(value)
+    const first = words.findIndex((value) => numeric(value))
+    return (
+      first > 0 &&
+      words.length - first === slots.length - 1 &&
+      words.slice(0, first).some((value) => /\p{L}/u.test(value)) &&
+      words.slice(first).every(numeric)
+    )
+  }
   // A numeric category is not a section heading when every native field is
   // complete and at least three independent labelled peers prove the same lanes.
   // Keep incomplete categories on the ordinary diagnostic path.
@@ -747,6 +764,10 @@ export function resolveTableCellMerges({
       column = Math.min(...cs),
       rowSpan = Math.max(...rs) - row + 1,
       colSpan = Math.max(...cs) - column + 1
+    if (p.origin === 'model-span' && rowSpan === 1 && wideNumericBodyRecord(p.slots)) {
+      repairs.push('wide-numeric-row-span-discarded')
+      return false
+    }
     if (
       p.origin === 'model-span' &&
       p.sectionHeader &&

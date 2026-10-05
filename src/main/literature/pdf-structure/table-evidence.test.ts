@@ -441,6 +441,31 @@ it('rejects overlapping or single-row guesses without a caption', () => {
   expect(hasTableEvidence({ grid: [['A', 'B']], issues: [] })).toBe(false)
 })
 
+it('rejects a lettered contents directory with dotted page leaders', () => {
+  const fixture = readPdfFixture(
+    resolve(
+      'src/main/literature/pdf-structure/fixtures/source-grids/lettered-contents-directory.jsonl'
+    )
+  )
+  expect(hasTableEvidence(fixture.table, undefined, fixture.tokens)).toBe(false)
+  expect(
+    hasTableEvidence(fixture.table, { text: 'Table 1. Lettered results' }, fixture.tokens)
+  ).toBe(true)
+  expect(
+    hasTableEvidence(
+      {
+        ...fixture.table,
+        grid: fixture.table.grid.map(([marker, entry]: [string, string]) => [
+          marker,
+          entry.replace(/\./g, '')
+        ])
+      },
+      undefined,
+      fixture.tokens
+    )
+  ).toBe(true)
+})
+
 // SIM: a bibliography heading and one wrapped reference became four artificial rows.
 it('rejects a standalone references section split into columns', () => {
   const table = {

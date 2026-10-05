@@ -29,7 +29,19 @@ import { nativeConnectedKeyedLegend } from './literature-pdf-figure-connected-ke
 import { nativeAttachedPlotLabels } from './literature-pdf-figure-native-plot-labels.mjs'
 import {
   nativeCaptionedTextIllustration,
-  nativeLetteredRasterArray
+  nativeCaptionedVectorDiagram,
+  nativeCaptionedVectorGrid,
+  nativeCaptionedVectorHeatmap,
+  nativeCaptionedWorkflowPanel,
+  nativeCaptionedRaster,
+  nativeCaptionedFramedRaster,
+  nativeCaptionedFramedRasterTextPanel,
+  nativeCaptionedRasterArrayFragment,
+  nativeLetteredRasterArray,
+  nativeCaptionedRasterQuad,
+  nativeCaptionedRasterDualPanelGrid,
+  nativeCaptionedRasterModerateGap,
+  nativeRasterGrid
 } from './literature-pdf-figure-native-captioned-illustration.mjs'
 import {
   nativeCaptionedPlotBand,
@@ -594,29 +606,310 @@ export function associateFigures(
   closedFrames = [],
   nativeTokens = []
 ) {
-  return associateFigureFaces(page, candidates, tableRects, rules, closedFrames, nativeTokens).map(
-    (figure) => {
-      const attached = nativeAttachedPlotLabels(
+  const associated = associateFigureFaces(
+    page,
+    candidates,
+    tableRects,
+    rules,
+    closedFrames,
+    nativeTokens
+  )
+  return associated.map((figure) => {
+    // Letter-range captions (for example ``Figure 1A-B``) can own a vertically
+    // stacked raster pair even when the ordinary adjacency pass assigns only
+    // the panel nearest the caption.  The pair proof is deliberately narrow:
+    // two same-width images, one column, no competing caption or table.
+    const letteredPair = recoverLetteredRasterPair(page, figure, candidates, tableRects)
+    if (letteredPair) figure = { ...figure, ...letteredPair }
+    // A detached label immediately above a raster is figure content unless a
+    // matching distant running header proves it is page furniture.  Keep that
+    // label when the independent header witness is absent.
+    const topLabel = recoverUnmatchedTopFigureLabel(page, figure)
+    if (topLabel) figure = { ...figure, rect: topLabel }
+    // Include a closing rule that is painted immediately below a raster frame;
+    // the rule is part of the complete source extent, not article furniture.
+    const inkExpanded = expandAdjacentFigureInk(page, figure)
+    if (inkExpanded) figure = { ...figure, rect: inkExpanded }
+    // A vector plot can be mistaken for a graphical table before figure
+    // association runs. When that table shadow covers the complete plot, the
+    // ordinary table barrier hides every useful path and leaves the caption
+    // unresolved. Retry only with a narrowly proved plot-like shadow; this
+    // keeps text-only/vector illustrations on the existing no-crop contract.
+    if (!figure.rect) {
+      const adjacent = recoverIsolatedAdjacentFigure(
         page,
         figure,
         candidates,
         tableRects,
         rules,
+        closedFrames,
         nativeTokens
       )
-      // A long listing can contain hundreds of stroked glyphs. It looks like a
-      // large connected drawing to the geometry pass, but it is not a figure
-      // and must not be published as one. Require a substantial image/path
-      // plate before accepting a text-dominant result.
-      if (attached.rect && isTextDominantFigure(page, attached, candidates))
-        return { ...attached, rect: undefined, issue: 'text-dominant-graphics' }
-      if (!attached.rect && isTextDominantPage(page, candidates))
-        return { ...attached, issue: 'text-dominant-graphics' }
-      if (attached.rect) return attached
-      const recovered = recoverConservativeFigureRect(page, attached, tableRects, candidates)
-      return recovered ? { ...attached, rect: recovered, issue: undefined } : attached
+      if (adjacent?.rect) figure = adjacent
     }
+    if (!figure.rect) {
+      const recovered = recoverGraphicalTableShadowFigure(
+        page,
+        figure,
+        candidates,
+        tableRects,
+        rules,
+        closedFrames,
+        nativeTokens
+      )
+      if (recovered?.rect) figure = recovered
+    }
+    const attached = nativeAttachedPlotLabels(
+      page,
+      figure,
+      candidates,
+      tableRects,
+      rules,
+      nativeTokens
+    )
+    // A long listing can contain hundreds of stroked glyphs. It looks like a
+    // large connected drawing to the geometry pass, but it is not a figure
+    // and must not be published as one. Require a substantial image/path
+    // plate before accepting a text-dominant result.
+    if (attached.rect && isTextDominantFigure(page, attached, candidates))
+      return { ...attached, rect: undefined, issue: 'text-dominant-graphics' }
+    if (!attached.rect && isTextDominantPage(page, candidates))
+      return { ...attached, issue: 'text-dominant-graphics' }
+    if (attached.rect) return attached
+    const recovered = recoverConservativeFigureRect(page, attached, tableRects, candidates)
+    return recovered ? { ...attached, rect: recovered, issue: undefined } : attached
+  })
+}
+
+function recoverLetteredRasterPair(page, figure, candidates, tableRects) {
+  const caption = figure?.caption
+  if (!caption || !page.graphicsBounds?.length) return undefined
+  if (!/^\s*(?:Figure|Fig\.?)\s*\d+\s*[A-Z]-[A-Z]\.?(?:\s|$)/i.test(caption.lines?.[0] ?? ''))
+    return undefined
+  const images = page.graphicsBounds
+    .filter((graphic) => graphic.kind === 'image' && graphic.normalizedRect?.every(Number.isFinite))
+    .map((graphic) =>
+      graphic.normalizedRect.map((value, index) => value * (index % 2 ? page.height : page.width))
+    )
+    .filter((rect) => rect[3] < caption.rect[1] && rect[2] - rect[0] > page.width * 0.45)
+  if (images.length !== 2) return undefined
+  const [first, second] = images.slice().sort((a, b) => a[1] - b[1])
+  const width = first[2] - first[0]
+  if (
+    Math.abs(second[2] - second[0] - width) > Math.max(2, width * 0.03) ||
+    Math.abs(first[0] - second[0]) > Math.max(2, width * 0.03) ||
+    second[1] - first[3] > Math.max(24, page.height * 0.06) ||
+    candidates.some(
+      (other) =>
+        other !== caption &&
+        other.page === caption.page &&
+        images.some((image) => intersection(other.rect, image) > 0)
+    ) ||
+    tableRects.some((table) => images.some((image) => intersection(table, image) > 0))
   )
+    return undefined
+  const rect = union(images)
+  return { rect, graphicsCount: 2 }
+}
+
+function recoverUnmatchedTopFigureLabel(page, figure) {
+  const rect = figure?.rect
+  const caption = figure?.caption
+  if (!rect || !caption || rect[1] > page.height * 0.15) return undefined
+  const label = page.lines.find(
+    (line) =>
+      line !== caption &&
+      line.y < rect[1] &&
+      rect[1] - (line.y + line.height) <= Math.max(24, line.fontSize * 2) &&
+      line.x < page.width * 0.25 &&
+      line.width < page.width * 0.7 &&
+      Math.max(0, Math.min(line.x + line.width, rect[2]) - Math.max(line.x, rect[0])) >=
+        Math.min(line.width, rect[2] - rect[0]) * 0.5 &&
+      !/^\d{1,4}\s+of\s+\d+/i.test(line.text.trim()) &&
+      !/\bet al\.?\s+\d+$/i.test(line.text.trim()) &&
+      /\bet al\.?\b/i.test(line.text)
+  )
+  if (!label) return undefined
+  // An all-width `et al.:` line in the shallow top margin is a running
+  // author/journal head, even when the adjacent vector plate starts just
+  // below it. Do not let the generic top-label recovery pull that furniture
+  // back into the figure crop after the geometry pass excluded its rule.
+  if (
+    label.y < page.height * 0.08 &&
+    label.x < page.width * 0.25 &&
+    label.width > page.width * 0.45 &&
+    /\bet al\.\s*:/i.test(label.text) &&
+    !page.graphicsBounds.some(
+      (graphic) =>
+        graphic.kind === 'image' &&
+        intersection(
+          lineRect(label),
+          graphic.normalizedRect.map(
+            (value, index) => value * (index % 2 ? page.height : page.width)
+          )
+        ) > 0
+    )
+  )
+    return undefined
+  const matchingHeader = page.lines.some(
+    (line) =>
+      line !== label &&
+      line.x > page.width * 0.6 &&
+      /\d/.test(line.text) &&
+      Math.abs(line.y - label.y) < Math.max(label.height, line.fontSize) * 0.25
+  )
+  if (matchingHeader) return undefined
+  return [Math.min(rect[0], label.x), label.y, rect[2], rect[3]]
+}
+
+function expandAdjacentFigureInk(page, figure) {
+  const rect = figure?.rect
+  if (!rect || !page.graphicsBounds?.length) return undefined
+  const adjacent = page.graphicsBounds
+    .filter((graphic) => graphic.kind === 'path' && graphic.normalizedRect?.every(Number.isFinite))
+    .map((graphic) =>
+      graphic.normalizedRect.map((value, index) => value * (index % 2 ? page.height : page.width))
+    )
+    .filter((candidate) => {
+      const verticalGap = Math.max(candidate[1] - rect[3], 0)
+      const horizontalOverlap =
+        Math.max(0, Math.min(candidate[2], rect[2]) - Math.max(candidate[0], rect[0])) /
+        Math.max(1, Math.min(candidate[2] - candidate[0], rect[2] - rect[0]))
+      return (
+        verticalGap <= 8 &&
+        candidate[1] >= rect[3] - 1 &&
+        candidate[3] - candidate[1] <= 10 &&
+        horizontalOverlap >= 0.8
+      )
+    })
+  if (!adjacent.length) return undefined
+  const bounded = adjacent.map((candidate) => [
+    candidate[0],
+    candidate[1],
+    candidate[2],
+    Math.min(candidate[3], rect[3] + 5)
+  ])
+  return union([rect, ...bounded])
+}
+
+function recoverIsolatedAdjacentFigure(
+  page,
+  figure,
+  candidates,
+  tableRects,
+  rules,
+  closedFrames,
+  nativeTokens
+) {
+  const caption = figure?.caption
+  if (!caption || !page.graphicsBounds?.length) return undefined
+  // Candidate captions are document-wide. Only captions on this page can
+  // witness a competing graphic or overlap the recovered image pair.
+  const others = candidates.filter(
+    (candidate) => candidate !== caption && candidate.page === caption.page
+  )
+  if (
+    others.some(
+      (other) =>
+        other.rect[1] > caption.rect[3] &&
+        Math.max(
+          0,
+          Math.min(other.rect[2], caption.rect[2]) - Math.max(other.rect[0], caption.rect[0])
+        ) /
+          Math.max(1, Math.min(other.rect[2] - other.rect[0], caption.rect[2] - caption.rect[0])) >
+          0.35
+    )
+  )
+    return undefined
+  const images = page.graphicsBounds
+    .filter((graphic) => graphic.kind === 'image')
+    .map((graphic) => ({ graphic, rect: figureGraphicRect(page, graphic) }))
+    .filter(({ rect }) => {
+      if (!rect || area(rect) < page.width * page.height * 0.01) return false
+      const overlap =
+        Math.max(0, Math.min(rect[2], caption.rect[2]) - Math.max(rect[0], caption.rect[0])) /
+        Math.max(1, Math.min(rect[2] - rect[0], caption.rect[2] - caption.rect[0]))
+      return caption.rect[1] - rect[3] >= 0 && caption.rect[1] - rect[3] <= 24 && overlap >= 0.8
+    })
+  if (images.length !== 2) return undefined
+  const bounds = union(images.map((item) => item.rect))
+  if (
+    Math.abs(images[0].rect[3] - images[1].rect[3]) > 8 ||
+    Math.abs(images[0].rect[1] - images[1].rect[1]) > 8 ||
+    others.some((other) => intersection(other.rect, bounds) > 0) ||
+    tableRects.some((table) => intersection(table, bounds) > 0)
+  )
+    return undefined
+  const retryPage = { ...page, graphicsBounds: images.map((item) => item.graphic) }
+  const retry = associateFigureFaces(
+    retryPage,
+    [caption],
+    tableRects,
+    rules,
+    closedFrames,
+    nativeTokens
+  )[0]
+  return retry?.rect ? retry : undefined
+}
+
+function recoverGraphicalTableShadowFigure(
+  page,
+  figure,
+  candidates,
+  tableRects,
+  rules,
+  closedFrames,
+  nativeTokens
+) {
+  const caption = figure?.caption
+  if (!caption || !tableRects.length || !page.graphicsBounds?.length) return undefined
+  const captionWidth = caption.rect[2] - caption.rect[0]
+  const maxGap = Math.max(24, (caption.rect[3] - caption.rect[1]) * 4)
+  const toRect = (graphic) =>
+    graphic.normalizedRect?.map((value, index) => value * (index % 2 ? page.height : page.width))
+  const paths = page.graphicsBounds
+    .filter((graphic) => graphic.kind === 'path')
+    .map((graphic) => ({ graphic, rect: toRect(graphic) }))
+    .filter(({ rect }) => rect && area(rect) > 0)
+  if (paths.length < 20) return undefined
+  const shadow = tableRects.find((table) => {
+    const horizontal =
+      Math.max(0, Math.min(table[2], caption.rect[2]) - Math.max(table[0], caption.rect[0])) /
+      Math.max(1, Math.min(table[2] - table[0], captionWidth))
+    if (
+      horizontal < 0.5 ||
+      table[1] > caption.rect[3] + 2 ||
+      caption.rect[1] - table[3] > maxGap ||
+      table[2] - table[0] < page.width * 0.45
+    )
+      return false
+    const owned = paths.filter(({ rect }) => intersection(rect, table) / area(rect) > 0.55)
+    if (owned.length < 20) return false
+    const narrow = owned.filter(({ rect }) => rect[2] - rect[0] <= 12 && rect[3] - rect[1] <= 12)
+    const vertical = owned.find(
+      ({ rect: candidate }) =>
+        candidate[3] - candidate[1] > 60 &&
+        candidate[2] - candidate[0] < 12 &&
+        owned.filter(
+          ({ rect: other }) =>
+            other[2] - other[0] > 40 &&
+            other[3] - other[1] < 12 &&
+            intersection(candidate, other) > 0
+        ).length >= 2
+    )
+    return narrow.length >= 20 && Boolean(vertical)
+  })
+  if (!shadow) return undefined
+  const relaxedTables = tableRects.filter((table) => table !== shadow)
+  const retry = associateFigureFaces(
+    page,
+    candidates,
+    relaxedTables,
+    rules,
+    closedFrames,
+    nativeTokens
+  )
+  return retry.find((candidate) => candidate.caption === caption && candidate.rect)
 }
 
 function figureGraphicRect(page, graphic) {
@@ -865,7 +1158,24 @@ function associateFigureFaces(
         )
           return false
         const key = graphic.normalizedRect.join(',')
-        if (seen.has(key)) return false
+        if (seen.has(key)) {
+          // Preserve a repeated large frame when it is immediately above a
+          // figure caption. Some code/prompt cards paint the same border
+          // twice; the duplicate is a strict nested-frame witness for the
+          // text illustration recognizer, while repeated tiny path glyphs
+          // remain deduplicated as before.
+          const captionAttached = candidates.some((candidate) => {
+            if (candidate.page !== page.pageNumber || candidate.rect[1] < rect[3]) return false
+            const overlap =
+              Math.max(
+                0,
+                Math.min(candidate.rect[2], rect[2]) - Math.max(candidate.rect[0], rect[0])
+              ) / Math.max(1, Math.min(candidate.rect[2] - candidate.rect[0], rect[2] - rect[0]))
+            return candidate.rect[1] - rect[3] <= 24 && overlap >= 0.8
+          })
+          if (captionAttached && area(rect) >= page.width * page.height * 0.1) return true
+          return false
+        }
         seen.add(key)
         return true
       })
@@ -876,7 +1186,10 @@ function associateFigureFaces(
   const edgeTolerance = page.height / 256 + 1
   const pageCaptions = candidates.filter((c) => c.page === page.pageNumber)
   const captions = pageCaptions.filter(
-    (c) => captionKind(c.lines[0]) === 'figure' && !/\(facing page\)/i.test(c.lines.join(' '))
+    (c) =>
+      (captionKind(c.lines[0]) === 'figure' ||
+        nativeCaptionedRasterArrayFragment(page, c, pageCaptions, tableRects)) &&
+      !/\(facing page\)/i.test(c.lines.join(' '))
   )
   const legendHeading = page.lines.find((l) => /^(?:Figure )?legends$/i.test(l.text.trim()))
   if (
@@ -970,14 +1283,48 @@ function associateFigureFaces(
   if (openArray) return [openArray]
   const nativeArray = nativeFramedPanelArray(page, captions, tableRects, rules)
   if (nativeArray) {
-    const labels = nativeOwnedFigureLabels(
-      page,
-      nativeArray.caption,
-      captions,
-      tableRects,
-      nativeArray.rect
-    )
-    return [{ ...nativeArray, rect: union([nativeArray.rect, ...labels.map(lineRect)]) }]
+    // A strict image+frame match must get first ownership on stacked pages.
+    // The broad framed-panel recognizer can otherwise claim the preceding
+    // caption and return one shared crop before the per-caption association
+    // pass has a chance to separate adjacent plates.
+    const strictMatches = captions
+      .map(
+        (caption) =>
+          nativeCaptionedFramedRaster(page, caption, captions, tableRects) ??
+          nativeCaptionedFramedRasterTextPanel(page, caption, captions, tableRects) ??
+          nativeCaptionedVectorHeatmap(page, caption, captions, tableRects) ??
+          nativeCaptionedWorkflowPanel(page, caption, captions, tableRects) ??
+          nativeCaptionedVectorDiagram(page, caption, captions, tableRects) ??
+          nativeCaptionedVectorGrid(page, caption, captions, tableRects)
+      )
+      .filter(Boolean)
+    if (strictMatches.length) {
+      const strictCaptions = new Set(strictMatches.map((match) => match.caption))
+      const remainingCaptions = captions.filter((caption) => !strictCaptions.has(caption))
+      const remainingArray = nativeFramedPanelArray(page, remainingCaptions, tableRects, rules)
+      if (remainingArray) {
+        const labels = nativeOwnedFigureLabels(
+          page,
+          remainingArray.caption,
+          remainingCaptions,
+          tableRects,
+          remainingArray.rect
+        )
+        return [
+          ...strictMatches,
+          { ...remainingArray, rect: union([remainingArray.rect, ...labels.map(lineRect)]) }
+        ]
+      }
+    } else {
+      const labels = nativeOwnedFigureLabels(
+        page,
+        nativeArray.caption,
+        captions,
+        tableRects,
+        nativeArray.rect
+      )
+      return [{ ...nativeArray, rect: union([nativeArray.rect, ...labels.map(lineRect)]) }]
+    }
   }
   // Some plates include a blank caption strip in the raster's bounds. A
   // native frame and an overlaid caption establish ownership independently
@@ -2374,6 +2721,15 @@ function associateFigureFaces(
     }
   }
   return captions.map((caption, index) => {
+    const framedRaster = nativeCaptionedFramedRaster(page, caption, pageCaptions, tableRects)
+    if (framedRaster) return framedRaster
+    const framedRasterTextPanel = nativeCaptionedFramedRasterTextPanel(
+      page,
+      caption,
+      pageCaptions,
+      tableRects
+    )
+    if (framedRasterTextPanel) return framedRasterTextPanel
     const textIllustration = nativeCaptionedTextIllustration(
       page,
       caption,
@@ -2381,6 +2737,41 @@ function associateFigureFaces(
       tableRects
     )
     if (textIllustration) return textIllustration
+    const vectorHeatmap = nativeCaptionedVectorHeatmap(page, caption, pageCaptions, tableRects)
+    if (vectorHeatmap) return vectorHeatmap
+    const workflowPanel = nativeCaptionedWorkflowPanel(page, caption, pageCaptions, tableRects)
+    if (workflowPanel) return workflowPanel
+    const vectorDiagram = nativeCaptionedVectorDiagram(page, caption, pageCaptions, tableRects)
+    if (vectorDiagram) return vectorDiagram
+    const vectorGrid = nativeCaptionedVectorGrid(page, caption, pageCaptions, tableRects)
+    if (vectorGrid) return vectorGrid
+    const captionedRaster = nativeCaptionedRaster(page, caption, pageCaptions, tableRects)
+    if (captionedRaster) return captionedRaster
+    const captionedRasterModerateGap = nativeCaptionedRasterModerateGap(
+      page,
+      caption,
+      pageCaptions,
+      tableRects
+    )
+    if (captionedRasterModerateGap) return captionedRasterModerateGap
+    const captionedRasterFragment = nativeCaptionedRasterArrayFragment(
+      page,
+      caption,
+      pageCaptions,
+      tableRects
+    )
+    if (captionedRasterFragment) return captionedRasterFragment
+    const rasterQuad = nativeCaptionedRasterQuad(page, caption, pageCaptions, tableRects)
+    if (rasterQuad) return rasterQuad
+    const dualPanelGrid = nativeCaptionedRasterDualPanelGrid(
+      page,
+      caption,
+      pageCaptions,
+      tableRects
+    )
+    if (dualPanelGrid) return dualPanelGrid
+    const rasterGrid = nativeRasterGrid(page, caption, pageCaptions, tableRects)
+    if (rasterGrid) return rasterGrid
     const rasterArray = nativeLetteredRasterArray(
       page,
       caption,
@@ -2750,7 +3141,7 @@ function associateFigureFaces(
       excludeDetachedDiagramDecorations(connected, diagramFrames, page),
       (item) => item.side ?? (item.rect[1] < caption.rect[1] ? 'above' : 'below')
     )
-    const meaningful = [...directions.values()]
+    let meaningful = [...directions.values()]
       .filter((items) => {
         // Disconnected tiny marks do not form a large panel merely because
         // their union spans a paragraph. Keep axes inside a substantial plate.
@@ -2815,6 +3206,34 @@ function associateFigureFaces(
         return width >= 12 && height >= 12 && !divider
       })
       .flat()
+    // On two-column pages, a left-column caption can be horizontally adjacent
+    // to the next column's plot while that plot is owned by a later caption.
+    // Keep the left figure's above-caption component when every competing side
+    // graphic sits inside that later caption's column and above its caption.
+    // This is narrower than resolving arbitrary above/below ambiguity and
+    // preserves the conservative contract for genuinely composite figures.
+    if (meaningful.some((item) => item.side === 'right') && meaningful.some((item) => !item.side)) {
+      const sideOwners = pageCaptions.filter(
+        (other) =>
+          other !== caption &&
+          other.rect[0] >= caption.rect[2] - edgeTolerance &&
+          other.rect[1] > caption.rect[3] &&
+          other.rect[1] - caption.rect[3] < page.height * 0.35
+      )
+      const foreignSideGraphics = meaningful.filter(
+        (item) =>
+          item.side === 'right' &&
+          sideOwners.some(
+            (owner) =>
+              item.rect[0] >= owner.rect[0] - edgeTolerance &&
+              item.rect[2] <= owner.rect[2] + edgeTolerance &&
+              item.rect[3] <= owner.rect[1] + edgeTolerance
+          )
+      )
+      const sideGraphics = meaningful.filter((item) => item.side === 'right')
+      if (foreignSideGraphics.length === sideGraphics.length)
+        meaningful = meaningful.filter((item) => item.side !== 'right')
+    }
     const graphics = meaningful.map((item) => item.rect)
     const sides = new Set(meaningful.map((item) => item.side))
     if (sides.size > 1 || (sides.size === 1 && sides.has(undefined))) {

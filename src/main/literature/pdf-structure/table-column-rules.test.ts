@@ -162,6 +162,107 @@ it('does not extend a crop for an unruled or misaligned leading text band', asyn
   ).toBeUndefined()
 })
 
+it('uses only valid token heights when recovering a clipped header', async () => {
+  const { recoverClippedColumnHeader } = await import(
+    pathToFileURL(resolve('resources/pdf-structure/literature-pdf-native-header-grid.mjs')).href
+  )
+  const f = fixture('clipped-resource-header')
+  const invalid = Array.from({ length: f.tokens.length + 4 }, (_, index) => ({
+    ...f.tokens[0],
+    text: `invalid-${index}`,
+    rect: [900 + index, 900, 901 + index, 901],
+    baseline: 901,
+    height: index % 2 ? Number.NaN : 0
+  }))
+  expect(
+    recoverClippedColumnHeader(f.table, [...f.tokens, ...invalid], [[79.7, 257.03, 797, 257.03]])
+  ).toBeDefined()
+})
+
+it('recovers a borderless two-column header clipped above the detector crop', () => {
+  const raw = {
+    cropRect: [0, 20, 200, 100],
+    structure: {
+      objects: [
+        { label: 'table column', rect: [0, 0, 100, 80] },
+        { label: 'table column', rect: [100, 0, 200, 80] },
+        { label: 'table row', rect: [0, 15, 200, 28] },
+        { label: 'table row', rect: [0, 32, 200, 45] }
+      ]
+    }
+  }
+  const token = (
+    text: string,
+    x: number,
+    y: number,
+    width: number
+  ): {
+    text: string
+    rect: number[]
+    baseline: number
+    height: number
+    horizontal: boolean
+  } => ({
+    text,
+    rect: [x, y, x + width, y + 10],
+    baseline: y + 10,
+    height: 10,
+    horizontal: true
+  })
+  const result = refineTable(
+    raw,
+    [
+      token('Parameter', 10, 8, 70),
+      token('Value', 120, 8, 50),
+      token('dim', 10, 36, 40),
+      token('4096', 120, 36, 40),
+      token('heads', 10, 53, 40),
+      token('32', 120, 53, 20)
+    ],
+    [],
+    [],
+    [
+      [0, 31, 200, 31],
+      [0, 80, 200, 80]
+    ]
+  )
+  expect(result.grid.slice(0, 3)).toEqual([
+    ['Parameter', 'Value'],
+    ['dim', '4096'],
+    ['heads', '32']
+  ])
+  expect(result.unassigned).toEqual([])
+})
+
+it('does not synthesize a header when a detector has no model rows', async () => {
+  const { recoverClippedColumnHeader } = await import(
+    pathToFileURL(resolve('resources/pdf-structure/literature-pdf-native-header-grid.mjs')).href
+  )
+  const table = {
+    cropRect: [0, 20, 200, 100],
+    structure: {
+      objects: [
+        { label: 'table column', rect: [0, 0, 100, 80] },
+        { label: 'table column', rect: [100, 0, 200, 80] }
+      ]
+    }
+  }
+  const token = (text: string, x: number): Fixture['tokens'][number] & { horizontal: boolean } => ({
+    text,
+    rect: [x, 8, x + 60, 18],
+    baseline: 18,
+    height: 10,
+    horizontal: true
+  })
+  expect(
+    recoverClippedColumnHeader(
+      table,
+      [token('Parameter', 10), token('Value', 120)],
+      [[0, 31, 200, 31]]
+    )
+  ).toBeUndefined()
+})
+
 const { hasHorizontalTableRuleBetween } = await import(
   pathToFileURL(resolve('resources/pdf-structure/literature-pdf-table-rules.mjs')).href
 )

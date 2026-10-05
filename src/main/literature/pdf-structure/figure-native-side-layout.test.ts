@@ -119,6 +119,15 @@ it('finds a letter-range figure label and includes both raster panels above its 
   expect(f).toEqual(original)
 })
 
+it('ignores same-coordinate captions from another page during letter-range recovery', () => {
+  const f = fixture('letter-range-caption-below-two-raster-panels')
+  const captions = findCaptionCandidates([f.page])
+  const otherPageCaption = { ...captions[0], page: f.page.pageNumber + 1 }
+  const result = associateFigures(f.page, [captions[0], otherPageCaption], f.tables)[0]
+  expect(result.rect).toEqual([83.671875, 61.875, 590.484375, 572.34375])
+  expect(result.graphicsCount).toBe(2)
+})
+
 it.each([
   [
     'forest-plot-enclosed-by-fragmented-thin-paths',

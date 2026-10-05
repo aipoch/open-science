@@ -2,7 +2,7 @@ import { availableParallelism, cpus } from 'node:os'
 import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import WindowsTestSequencer from './scripts/ci/windows-test-sequencer'
+import WindowsTestSequencer from '../../scripts/ci/windows-test-sequencer'
 
 import vitestConfig, {
   CHANGED_SOURCE_COVERAGE_THRESHOLDS,
@@ -18,7 +18,7 @@ import vitestConfig, {
   VITEST_PORTABLE_CI_EXCLUDE_PATTERNS,
   vitestExcludePatternsFor,
   VITEST_PROCESS_TEST_GLOBS
-} from './vitest.config'
+} from '../../vitest.config'
 
 describe('Vitest discovery boundaries', () => {
   it('enables module-based sharding only in the Windows full-test profile', () => {

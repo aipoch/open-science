@@ -7247,6 +7247,22 @@
     "Could not update research ownership. Close this dialog and try again.": "No se pudo actualizar la asignación a la investigación. Cierre este cuadro de diálogo e inténtelo de nuevo.",
     "Collapse research": "Contraer investigación",
     "Expand research": "Expandir investigación",
-    "View original record": "Ver registro original"
+    "View original record": "Ver registro original",
+    "The current data location contains spaces. R environments cannot run reliably here. Use Change location to move your data to a path without spaces. You can cancel and keep the current location; your existing data will remain available.": "La ruta actual de los datos contiene espacios. Los entornos R no pueden ejecutarse de forma fiable en esta ubicación. Utilice «Cambiar ubicación» para mover los datos a una ruta sin espacios. Puede cancelar y conservar la ubicación actual; los datos existentes seguirán disponibles.",
+    "What would you like to research?": "¿Qué desea investigar?",
+    "Previous research ideas": "Ideas de investigación anteriores",
+    "Next research ideas": "Más ideas de investigación",
+    "Find literature": "Buscar bibliografía",
+    "Create charts": "Crear gráficos",
+    "Explain a paper": "Explicar un artículo",
+    "Design an experiment": "Diseñar un experimento",
+    "Write code": "Escribir código",
+    "Draft a report": "Redactar un informe",
+    "Find research papers on my topic and summarize the relevant evidence.": "Busque artículos científicos sobre mi tema y resuma la evidencia relevante.",
+    "Create clear charts from my data and explain what they show.": "Cree gráficos claros a partir de mis datos y explique los resultados.",
+    "Explain this paper’s research question, methods, findings, and limitations.": "Explique la pregunta de investigación, los métodos, los hallazgos y las limitaciones de este artículo.",
+    "Help me design an experiment, including controls, measurements, and analysis.": "Ayúdeme a diseñar un experimento con controles, mediciones y un método de análisis.",
+    "Help me write reproducible code for my analysis and explain each step.": "Ayúdeme a escribir código reproducible para mi análisis y explique cada paso.",
+    "Help me draft a research report with methods, results, and limitations.": "Ayúdeme a redactar un informe de investigación con métodos, resultados y limitaciones."
   }
 }

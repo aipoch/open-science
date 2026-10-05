@@ -134,6 +134,17 @@ Three runtime process layers and a shared module live under `src/`:
 - `src/renderer/` — React UI (pages, stores, components).
 - `src/shared/` — types and helpers shared across processes.
 
+Keep the repository root focused on discovery and default tool entry points:
+
+- Keep `README.md`, `LICENSE`, `AGENTS.md`, contribution/security policies, package metadata,
+  and automatically discovered build, lint, test and TypeScript entry points at the root.
+- Put product guides and the roadmap in `docs/`. Update relative links when moving documents;
+  keep temporary implementation reports out of the root.
+- Put configuration regression tests in `test/config/` and auxiliary browser/accessibility
+  configurations in `e2e/`. Run the existing npm commands from the repository root; when moving
+  a configuration, preserve its test, output, reporter and server working directories, and update
+  CI path classification along with callers.
+
 ## Development Workflow
 
 1. Create a branch off the default branch for your change.

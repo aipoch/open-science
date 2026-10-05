@@ -336,7 +336,7 @@ AIPOCH Open-Science 透過 GitHub、Discord、X 與 AIPOCH 網站接收錯誤回
 
 > ⭐ **Star 程式碼庫：** 如果本專案對你有幫助，歡迎在 GitHub 上 Star。Star 程式碼庫能鼓勵專案持續開發，只需片刻，卻會帶來實質影響。
 
-已交付、部分實作及規劃能力請參閱[能力地圖](../../ROADMAP.md#capability-map)。
+已交付、部分實作及規劃能力請參閱[能力地圖](../ROADMAP.md#capability-map)。
 
 ## 授權條款
 

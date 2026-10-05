@@ -6919,6 +6919,22 @@
     "Could not update research ownership. Close this dialog and try again.": "研究への所属を更新できませんでした。このダイアログを閉じて再試行してください。",
     "Collapse research": "研究を折りたたむ",
     "Expand research": "研究を展開",
-    "View original record": "元の記録を表示"
+    "View original record": "元の記録を表示",
+    "The current data location contains spaces. R environments cannot run reliably here. Use Change location to move your data to a path without spaces. You can cancel and keep the current location; your existing data will remain available.": "現在のデータ保存先のパスに空白が含まれているため、R 環境は正常に動作しない場合があります。「保存先を変更」で空白を含まないパスにデータを移動してください。キャンセルして現在の保存先を維持することもできます。既存のデータには引き続きアクセスできます。",
+    "What would you like to research?": "何を研究しますか？",
+    "Previous research ideas": "前の研究テーマ",
+    "Next research ideas": "次の研究テーマ",
+    "Find literature": "文献を探す",
+    "Create charts": "グラフを作成",
+    "Explain a paper": "論文を読み解く",
+    "Design an experiment": "実験を設計",
+    "Write code": "コードを書く",
+    "Draft a report": "報告書を作成",
+    "Find research papers on my topic and summarize the relevant evidence.": "私の研究テーマに関連する論文を探し、関連するエビデンスをまとめてください。",
+    "Create clear charts from my data and explain what they show.": "私のデータから分かりやすいグラフを作成し、結果を説明してください。",
+    "Explain this paper’s research question, methods, findings, and limitations.": "この論文の研究課題、方法、知見、限界を説明してください。",
+    "Help me design an experiment, including controls, measurements, and analysis.": "対照条件、測定項目、分析方法を含めて実験の設計を手伝ってください。",
+    "Help me write reproducible code for my analysis and explain each step.": "再現可能な分析コードの作成を手伝い、各手順を説明してください。",
+    "Help me draft a research report with methods, results, and limitations.": "方法、結果、限界を含む研究報告書の作成を手伝ってください。"
   }
 }

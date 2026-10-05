@@ -346,7 +346,7 @@ Avant d'ouvrir une issue publique, retirez des journaux et captures d'écran les
 
 > ⭐ **Ajouter une étoile au dépôt :** Si ce projet vous a été utile, une étoile sur GitHub serait grandement appréciée. Étoiler le dépôt encourage le développement continu. Cela ne prend qu'une seconde, mais cela a un impact réel sur le projet.
 
-Les capacités livrées, partielles et prévues figurent dans la [carte des capacités](../../ROADMAP.md#capability-map).
+Les capacités livrées, partielles et prévues figurent dans la [carte des capacités](../ROADMAP.md#capability-map).
 
 ## Licence
 

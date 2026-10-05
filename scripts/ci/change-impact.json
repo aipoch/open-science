@@ -79,7 +79,9 @@
         "electron-builder.yml",
         "scripts/ci/**",
         ".github/workflows/pr-gate.yml",
-        "playwright.browser.config.*",
+        "e2e/playwright.*.config.ts",
+        "e2e/vite.browser-test.config.ts",
+        "test/config/**",
         ".github/actions/source-regression/**",
         ".github/workflows/source-regression.yml"
       ],

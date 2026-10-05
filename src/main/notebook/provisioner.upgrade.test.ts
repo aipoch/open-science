@@ -51,6 +51,34 @@ const baseDeps = (root: string, over: Partial<ProvisionerDeps> = {}): Provisione
 })
 
 describe('upgradeIfNeeded', () => {
+  it('upgrades Python without modifying an old R environment at a spaced root', async () => {
+    const root = join(makeRoot(), 'Application Support', 'runtime')
+    const r = rBin(envPrefix(root, DEFAULT_R_ENV, 'darwin'), 'darwin')
+    touchBin(pythonBin(envPrefix(root, DEFAULT_PY_ENV, 'darwin'), 'darwin'))
+    touchBin(r)
+    writeReadyMarker(root, DEFAULT_ENV_VERSION - 1, 't1')
+    const languages: string[] = []
+    const verified: string[] = []
+    const original = baseDeps(root)
+    await new DefaultRuntimeProvisioner(
+      baseDeps(root, {
+        platform: 'darwin',
+        fetchBundle: async (...args) => {
+          languages.push(args[0].language)
+          return original.fetchBundle(...args)
+        },
+        verify: async (bin) => {
+          verified.push(bin)
+        }
+      })
+    ).upgradeIfNeeded(() => {})
+    expect(languages).toEqual(['python'])
+    expect(verified).not.toContain(r)
+    expect(existsSync(r)).toBe(true)
+    expect(readRReadyMarker(root)).toBeUndefined()
+    expect(readReadyMarker(root)?.defaultEnvVersion).toBe(DEFAULT_ENV_VERSION)
+  })
+
   it('maintains the package cache under the upgrade journal after fetching the offline bundle', async () => {
     const root = makeRoot()
     const cachePath = join(root, 'pkgs')

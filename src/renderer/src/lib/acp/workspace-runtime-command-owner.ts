@@ -676,6 +676,7 @@ const startPendingPrompt = (
   onPdfContextLinked?: (sessionId: string, pdfContext: MessagePdfContextSnapshot) => void,
   onSessionSizeLimit?: (sessionId: string) => void
 ): Promise<SendWorkspaceMessageResult | undefined> => {
+  let bindingSessionId: string | undefined
   return (async () => {
     let promptPreparation: WorkspacePromptPreparation | undefined
     const pending = request.pending
@@ -787,6 +788,16 @@ const startPendingPrompt = (
         )
       }
     }
+    // Main publishes the seed before preparation finishes. Keep that authority in the store,
+    // but present only its optimistic row until binding replaces the two identities atomically.
+    bindingSessionId = created.sessionId
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === pending.sessionId && session.isPending
+          ? { ...session, pendingBindingSessionId: bindingSessionId }
+          : session
+      )
+    }))
     let seedPersisted = false
     try {
       const durableSeed = await saveSessionInOrder(seed)
@@ -962,7 +973,29 @@ const startPendingPrompt = (
       return undefined
     }
     return { sessionId: created.sessionId, messageId: boundMessageId }
-  })()
+  })().finally(() => {
+    if (!bindingSessionId) return
+    // Release on every exit, including cancellation and failed preparation. An older attempt
+    // must not release a newer retry's binding or hide an orphan whose cleanup failed.
+    useSessionStore.setState((state) => {
+      if (
+        !state.sessions.some(
+          (session) =>
+            session.id === request.pending.sessionId &&
+            session.pendingBindingSessionId === bindingSessionId
+        )
+      )
+        return state
+      return {
+        sessions: state.sessions.map((session) =>
+          session.id === request.pending.sessionId &&
+          session.pendingBindingSessionId === bindingSessionId
+            ? { ...session, pendingBindingSessionId: undefined }
+            : session
+        )
+      }
+    })
+  })
 }
 
 const performSendWorkspaceMessage = async (

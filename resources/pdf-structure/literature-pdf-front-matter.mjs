@@ -17,6 +17,29 @@ const numeric = /^[-+−]?\d+(?:[.,]\d+)?(?:%|[a-z])?$/i
 const affiliation =
   /\b(?:University|Universit[ée]?|College|School|Department|Division|Institute|Laboratory|Lab|Hospital|Center|Centre|Clinic|Faculty)\b/i
 const authorLike = /^(?:\d+(?:st|nd|rd|th)?\s+)?[A-Z][\p{L}'’.-]+(?:\s+[A-Z][\p{L}'’.-]+){1,5}$/u
+const institutionLike =
+  /\b(?:University|Universit[ée]?|College|School|Department|Division|Institute|Laboratory|Lab|Hospital|Center|Centre|Clinic|Faculty|Google(?:\s+(?:Brain|Research))?|Meta(?:\s+AI)?|OpenAI|Microsoft(?:\s+Research)?|DeepMind)\b/iu
+
+const stripAuthorMarkers = (value) =>
+  textOf({ text: value })
+    .replace(/[\d,*†‡§¹²³⁴⁵⁶⁷⁸⁹⁰]+$/gu, ' ')
+    .replace(/\s+/gu, ' ')
+    .trim()
+
+// PDF text extraction commonly keeps affiliation markers (numeric or symbol
+// superscripts) attached to the final surname. Strip only those trailing
+// markers before applying the conservative name shape above.
+const isAuthorName = (value) => {
+  const normalized = stripAuthorMarkers(value)
+  return authorLike.test(normalized)
+}
+
+const authorAffiliationCellLike = (value) => {
+  const text = textOf({ text: value })
+  const match = text.match(institutionLike)
+  if (!match || match.index == null) return false
+  return isAuthorName(text.slice(0, match.index))
+}
 
 const authorListLike = (value) => {
   const text = textOf({ text: value })
@@ -24,6 +47,21 @@ const authorListLike = (value) => {
   const names =
     text.match(/(?:\d+(?:st|nd|rd|th)?\s+)?[A-Z][\p{L}'’.-]+(?:\s+[A-Z][\p{L}'’.-]+){1,5}/gu) ?? []
   return names.length >= 2
+}
+
+const compactAuthorAffiliationLike = (value) => {
+  const text = textOf({ text: value })
+  if (!text || text.split(/\s+/u).length < 3 || text.split(/\s+/u).length > 8) return false
+  const marker =
+    /\b(?:University|Universit[ée]?|College|Institute|U[A-Z][A-Za-z]+|UC|Google(?:\s+(?:Brain|Research))?|Meta(?:\s+AI)?|OpenAI|Microsoft(?:\s+Research)?|DeepMind)\b/u
+  const match = text.match(marker)
+  if (!match) return false
+  const name = text
+    .slice(0, match.index)
+    .trim()
+    .replace(/[\d,*†‡§]+$/u, '')
+    .trim()
+  return isAuthorName(name)
 }
 
 const hasAuthorListGrid = (table) => {
@@ -35,6 +73,29 @@ const hasAuthorListGrid = (table) => {
   if (rows.length < 1 || rows.length > 3 || values.length < 4 || values.length > 12) return false
   if (rows.some((row) => !Array.isArray(row) || row.length < 2 || row.length > 4)) return false
   return values.filter(authorListLike).length >= Math.max(4, Math.ceil(values.length * 0.6))
+}
+
+const hasAuthorRosterGrid = (table, source, hasAbstractHeading) => {
+  const rows = Array.isArray(table?.grid) ? table.grid : []
+  const values = rows
+    .flat()
+    .map((value) => textOf({ text: value }))
+    .filter(Boolean)
+  if (rows.length < 2 || rows.length > 12 || values.length < 4 || values.length > 72) return false
+  if (rows.some((row) => !Array.isArray(row) || row.length < 2 || row.length > 6)) return false
+  const mergedRosterCells = values.filter(authorAffiliationCellLike).length
+  const standaloneAuthors = values.filter((value) => isAuthorName(value)).length
+  const institutions = values.filter((value) => institutionLike.test(value)).length
+  const sourceInstitutions = (Array.isArray(source) ? source : []).filter((item) =>
+    institutionLike.test(textOf(item))
+  ).length
+  return (
+    mergedRosterCells >= 4 ||
+    (standaloneAuthors >= 4 && Math.max(institutions, sourceInstitutions) >= 2) ||
+    (standaloneAuthors >= 8 &&
+      Math.max(institutions, sourceInstitutions) >= 1 &&
+      hasAbstractHeading)
+  )
 }
 
 const hasNumericRecord = (table, source) => {
@@ -104,7 +165,7 @@ export function isNativeFrontMatterRegion(table, items, pageNumber, caption, rul
   if (source.length < 4) return false
   const emails = source.filter((item) => email.test(textOf(item)))
   const institutions = source.filter((item) => affiliation.test(textOf(item)))
-  const authors = source.filter((item) => authorLike.test(textOf(item)))
+  const authors = source.filter((item) => isAuthorName(item.text))
   const abstract = source.some((item) => /^abstract\s*:?\s*$/i.test(textOf(item)))
   const prose = source.filter((item) => textOf(item).split(/\s+/).length >= 12)
   if (hasNumericRecord(table, source)) return false
@@ -120,6 +181,18 @@ export function isNativeFrontMatterRegion(table, items, pageNumber, caption, rul
   // Require a small grid whose cells independently look like author lists; this
   // keeps ordinary borderless comparison tables eligible.
   if (hasAuthorListGrid(table)) return true
+  // Some first pages arrange authors in a compact multi-row grid. PDF text
+  // extraction may merge each author with the institution or emit the
+  // institution on the following line, with Unicode contribution markers
+  // (∗/†/‡) as separate tokens. Require a strong roster shape before rejecting
+  // the candidate so numeric and closed-frame tables remain eligible.
+  if (hasAuthorRosterGrid(table, source, abstract)) return true
+  const compactInstitutions = source.filter((item) =>
+    /\b(?:University|Universit[ée]?|College|Institute|U[A-Z][A-Za-z]+|UC)\b/u.test(textOf(item))
+  )
+  if (authors.length >= 4 && compactInstitutions.length >= 4 && source.length <= 24) return true
+  const compactAuthorAffiliations = source.filter((item) => compactAuthorAffiliationLike(item.text))
+  if (compactAuthorAffiliations.length >= 4 && source.length <= 16) return true
   const repeatedContacts = emails.length >= 2 && institutions.length >= 2
   const contactWithAbstract =
     emails.length >= 1 && institutions.length >= 1 && abstract && prose.length >= 1

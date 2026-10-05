@@ -672,17 +672,35 @@ export function isAdjacentTableScript(item, anchor) {
 }
 
 // Model boxes are crop-relative. Keep their page-space positions invariant
-// whenever native source evidence corrects a detector crop.
-export function rebaseTableCrop(table, cropRect) {
+// whenever native source evidence corrects a detector crop. Extending an
+// outer model row/column is opt-in because only a recovery with explicit
+// source ownership may claim the newly exposed boundary.
+export function rebaseTableCrop(table, cropRect, expandModelBounds = false) {
+  const previousCrop = table.cropRect
+  const width = cropRect[2] - cropRect[0]
+  const height = cropRect[3] - cropRect[1]
+  const objects = table.structure.objects.map((object) => ({
+    ...object,
+    rect: object.rect.map((v, i) => v + previousCrop[i % 2] - cropRect[i % 2])
+  }))
+  const columns = objects.filter((object) => object.label === 'table column')
+  const rows = objects.filter((object) => object.label === 'table row')
+  if (expandModelBounds && columns.length && cropRect[0] < previousCrop[0])
+    columns.reduce((left, object) => (object.rect[0] < left.rect[0] ? object : left)).rect[0] = 0
+  if (expandModelBounds && columns.length && cropRect[2] > previousCrop[2])
+    columns.reduce((right, object) => (object.rect[2] > right.rect[2] ? object : right)).rect[2] =
+      width
+  if (expandModelBounds && rows.length && cropRect[1] < previousCrop[1])
+    rows.reduce((top, object) => (object.rect[1] < top.rect[1] ? object : top)).rect[1] = 0
+  if (expandModelBounds && rows.length && cropRect[3] > previousCrop[3])
+    rows.reduce((bottom, object) => (object.rect[3] > bottom.rect[3] ? object : bottom)).rect[3] =
+      height
   return {
     ...table,
     cropRect,
     structure: {
       ...table.structure,
-      objects: table.structure.objects.map((object) => ({
-        ...object,
-        rect: object.rect.map((v, i) => v + table.cropRect[i % 2] - cropRect[i % 2])
-      }))
+      objects
     }
   }
 }

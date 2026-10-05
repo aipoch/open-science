@@ -4034,6 +4034,75 @@ export function recoverClippedHeading({
 // missing row, including untitled resource-table continuations.
 export function recoverClippedColumnHeader(table, items, rules, captions = []) {
   const crop = table.cropRect
+  const leadingColumns = table.structure.objects
+    .filter((o) => o.label === 'table column')
+    .map((o) => [
+      o.rect[0] + crop[0],
+      o.rect[1] + crop[1],
+      o.rect[2] + crop[0],
+      o.rect[3] + crop[1]
+    ])
+    .sort((a, b) => a[0] - b[0])
+
+  // Borderless two-column tables can lose a complete text header when the
+  // detector starts at the first body row. Require one aligned source label
+  // per model lane and a native separator before extending the crop; this
+  // keeps nearby prose from becoming a synthetic header.
+  if (leadingColumns.length >= 2 && leadingColumns.length <= 4) {
+    const heights = items
+      .map((item) => item.height)
+      .filter((value) => Number.isFinite(value) && value > 0)
+      .sort((a, b) => a - b)
+    const height = heights[Math.floor(heights.length / 2)] ?? 0
+    const modelRows = table.structure.objects.filter((o) => o.label === 'table row')
+    const firstRowTop = Math.min(...modelRows.map((o) => o.rect[1] + crop[1]))
+    const leading = items.filter(
+      (item) =>
+        item.horizontal &&
+        item.rect[1] < crop[1] &&
+        // The detector crop often clips the lower half of a header glyph, so
+        // allow the source line to extend a little into the first body band.
+        // Lane ownership and the native separator below remain the proof that
+        // this is a header rather than nearby prose.
+        item.rect[3] <= crop[1] + height * 1.2 &&
+        item.rect[3] > crop[1] - height * 2.5 &&
+        item.rect[0] >= leadingColumns[0][0] - 2 &&
+        item.rect[2] <= leadingColumns.at(-1)[2] + 2 &&
+        /\p{L}/u.test(item.text.trim())
+    )
+    const groups = leadingColumns.map((column) =>
+      leading.filter((item) => item.rect[0] >= column[0] - 2 && item.rect[2] <= column[2] + 2)
+    )
+    const baseline = leading.length ? Math.max(...leading.map((item) => item.baseline)) : 0
+    const separator = rules.find(
+      (rule) =>
+        rule[1] === rule[3] &&
+        rule[1] >= Math.max(...leading.map((item) => item.rect[3]), crop[1]) &&
+        rule[1] <= firstRowTop &&
+        rule[0] <= leadingColumns[0][0] + 2 &&
+        rule[2] >= leadingColumns.at(-1)[2] - 2
+    )
+    if (
+      height > 0 &&
+      modelRows.length > 0 &&
+      leading.length === leadingColumns.length &&
+      groups.every((group) => group.length === 1) &&
+      Math.max(...leading.map((item) => item.baseline)) -
+        Math.min(...leading.map((item) => item.baseline)) <=
+        height * 0.25 &&
+      baseline < firstRowTop - height * 0.5 &&
+      separator
+    ) {
+      const top = Math.min(...leading.map((item) => item.rect[1])) - 1
+      const bottom = separator[1]
+      return {
+        cropRect: [crop[0], top, crop[2], crop[3]],
+        rect: [leadingColumns[0][0], top, leadingColumns.at(-1)[2], bottom],
+        spans: []
+      }
+    }
+  }
+
   // An open-top header still has native vertical faces. Two sample headings
   // and a test column identify the header; common endpoints bound it without
   // inventing a horizontal stroke or extending through adjacent prose.

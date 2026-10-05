@@ -240,6 +240,31 @@ it('retains clipped evidence when final crop contains an owner with unproved col
   })
   expect(r.clipped).toEqual([item])
 })
+it('retains aligned bottom notes as table-boundary diagnostics', () => {
+  const { x, v } = view('columns')
+  v.cropRect[3] = 800
+  const repairs: string[] = []
+  const r = reconcileNativeFinalCellBounds({
+    table: v,
+    cells: v.cells,
+    rows: v.rows,
+    columnRects: [
+      [458, 623, 598.5908168777823, 746],
+      [598.5908168777823, 623, 652.8492623642087, 746],
+      [652.8492623642087, 623, 721, 746]
+    ],
+    tokens: x.items,
+    rules: x.rules,
+    unassigned: [],
+    clipped: [
+      { text: 'A paragraph continues below', rect: [480, 754, 600, 762] },
+      { text: 'with explanatory context', rect: [480, 765, 600, 773] }
+    ],
+    repairs
+  })
+  expect(r.clipped).toHaveLength(2)
+  expect(repairs).not.toContain('adjacent-prose-boundary-suppressed')
+})
 it('restores only the independent native title span and separates the next native band', () => {
   const x = fixture('native-independent-title-before-separate-next-band')
   const r = refineTable(x.table, x.items, x.captions, [], x.rules)

@@ -9,6 +9,775 @@ import { orderNativeDualScriptLanes } from './literature-pdf-native-dual-script-
 
 const BACKSPACE = String.fromCharCode(8)
 
+// Parallel benchmark rows are sometimes emitted as one wide source run, while
+// the detector merges one of the rows into a single spanning cell. Rebuild only
+// when several body rows prove the same numeric lane count and every candidate
+// has one label followed by a complete numeric tail. The source runs are split
+// into synthetic cell-sized tokens so the normal ownership and serialization
+// path remains unchanged.
+export function recoverWideNumericRows({ items, cells, rows, columnRects, headerRows, repairs }) {
+  if (columnRects.length < 8) return 0
+  const numeric = (value) => /^[<>≤≥−+-]?\d+(?:[.,]\d+)?%?$/.test(value)
+  const expected = columnRects.length - 1
+  const bodyRows = () =>
+    rows
+      .map((row, rowIndex) => ({ row, rowIndex }))
+      .filter(({ rowIndex }) => !headerRows.includes(rowIndex))
+  const sourceGroups = []
+  for (const item of items
+    .filter((candidate) => candidate.horizontal)
+    .sort((a, b) => a.rect[1] - b.rect[1])) {
+    const group = sourceGroups.find(
+      (candidate) =>
+        Math.abs(candidate.baseline - item.baseline) <=
+        Math.max(candidate.height, item.height) * 0.55
+    )
+    if (group) {
+      group.items.push(item)
+      group.baseline = (group.baseline + item.baseline) / 2
+      group.height = Math.max(group.height, item.height)
+    } else sourceGroups.push({ items: [item], baseline: item.baseline, height: item.height })
+  }
+  const candidates = sourceGroups
+    .map((group) => {
+      const ordered = group.items.slice().sort((a, b) => a.rect[0] - b.rect[0])
+      const words = ordered.flatMap((item) => item.text.trim().split(/\s+/u))
+      const first = words.findIndex(
+        (word, index) => numeric(word) && words.slice(index).every(numeric)
+      )
+      if (first < 0 || words.length - first !== expected) return undefined
+      const labels = words.slice(0, first)
+      if (!labels.some((word) => /\p{L}/u.test(word))) return undefined
+      return { group, ordered, labels, values: words.slice(first), y: group.baseline }
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.y - b.y)
+  if (candidates.length < 3) return 0
+  let recovered = 0
+  const claimedRows = new Set()
+  const splitClaimedRow = (target, candidate) => {
+    const { row, rowIndex } = target
+    const center = (row.rect[1] + row.rect[3]) / 2
+    const split = Math.max(row.rect[1] + 1, Math.min(row.rect[3] - 1, (center + candidate.y) / 2))
+    const before = candidate.y < center
+    const insertIndex = before ? rowIndex : rowIndex + 1
+    const newRow = {
+      rect: before
+        ? [row.rect[0], row.rect[1], row.rect[2], split]
+        : [row.rect[0], split, row.rect[2], row.rect[3]],
+      origin: 'source-wide-numeric-row'
+    }
+    if (before) row.rect[1] = split
+    else row.rect[3] = split
+    for (const cell of cells) if (cell.row >= insertIndex) cell.row += 1
+    const targetIndex = before ? rowIndex + 1 : rowIndex
+    for (const cell of cells.filter((cell) => cell.row === targetIndex)) {
+      cell.rect[1] = row.rect[1]
+      cell.rect[3] = row.rect[3]
+    }
+    rows.splice(insertIndex, 0, newRow)
+    repairs.push('wide-numeric-row-split')
+    return { row: newRow, rowIndex: insertIndex }
+  }
+  for (const candidate of candidates) {
+    let data = bodyRows()
+    let target = data
+      .map((entry) => ({
+        ...entry,
+        distance: Math.abs((entry.row.rect[1] + entry.row.rect[3]) / 2 - candidate.y)
+      }))
+      .sort((a, b) => a.distance - b.distance)[0]
+    const last = data.at(-1)
+    if (
+      !target ||
+      (last && candidate.group.items.some((item) => item.rect[3] > last.row.rect[3] + 0.5))
+    ) {
+      if (!last) continue
+      const top = Math.max(
+        last.row.rect[3],
+        Math.min(...candidate.group.items.map((item) => item.rect[1])) - 1
+      )
+      const bottom = Math.max(
+        top + 1,
+        Math.max(...candidate.group.items.map((item) => item.rect[3])) + 1
+      )
+      const row = {
+        rect: [last.row.rect[0], top, last.row.rect[2], bottom],
+        origin: 'source-wide-numeric-row'
+      }
+      rows.push(row)
+      target = { row, rowIndex: rows.length - 1 }
+      repairs.push('wide-numeric-trailing-row-recovered')
+    }
+    if (claimedRows.has(target.row)) target = splitClaimedRow(target, candidate)
+    claimedRows.add(target.row)
+    const { rowIndex, row } = target
+    const existing = cells.filter((cell) => cell.row === rowIndex)
+    const needsCells =
+      existing.length !== columnRects.length || existing.some((cell) => cell.colSpan !== 1)
+    if (needsCells) {
+      const replacement = columnRects.map((rect, column) => ({
+        row: rowIndex,
+        column,
+        rowSpan: 1,
+        colSpan: 1,
+        rect: [rect[0], row.rect[1], rect[2], row.rect[3]],
+        origin: 'source-wide-numeric-column',
+        items: []
+      }))
+      for (let index = cells.length - 1; index >= 0; index--)
+        if (cells[index].row === rowIndex) cells.splice(index, 1)
+      cells.push(...replacement)
+    }
+    const rowCells = cells
+      .filter((cell) => cell.row === rowIndex)
+      .sort((a, b) => a.column - b.column)
+    if (rowCells.length !== columnRects.length) continue
+    const template = candidate.ordered.at(-1) ?? candidate.ordered[0]
+    const makeItem = (text, cell) => ({
+      ...(template ?? {}),
+      text,
+      horizontal: true,
+      rect: [cell.rect[0] + 1, template.rect[1], cell.rect[2] - 1, template.rect[3]],
+      baseline: template.baseline,
+      height: template.height
+    })
+    const generated = [
+      makeItem(candidate.labels.join(' '), rowCells[0]),
+      ...candidate.values.map((value, index) => makeItem(value, rowCells[index + 1]))
+    ]
+    for (let index = items.length - 1; index >= 0; index--)
+      if (candidate.ordered.includes(items[index])) items.splice(index, 1)
+    items.push(...generated)
+    repairs.push('wide-numeric-row-recovered')
+    recovered += 1
+  }
+  return recovered
+}
+
+// A related-work grid can leave an entire body row unassigned when a long
+// method label shares its baseline with a dense run of check/cross glyphs.
+// Recover only rows with a single textual label and nearly complete indicator
+// coverage; ordinary prose and sparse rows remain untouched.
+export function recoverUnassignedDenseRows({
+  items,
+  cells,
+  rows,
+  headerRows = [],
+  assignments,
+  ambiguousAssignments,
+  repairs
+}) {
+  let recovered = 0
+  for (let rowIndex = 1; rowIndex < rows.length; rowIndex++) {
+    if (headerRows.includes(rowIndex)) continue
+    const row = rows[rowIndex]
+    const rowCells = cells.filter((cell) => cell.row === rowIndex)
+    if (!rowCells.length || rowCells.some((cell) => [...assignments.values()].includes(cell)))
+      continue
+    const unassigned = items.filter(
+      (item) =>
+        !assignments.has(item) &&
+        Array.isArray(item.rect) &&
+        (intersect(row.rect, item.rect) / Math.max(1, area(item.rect)) >= 0.25 ||
+          (item.rect[1] >= row.rect[1] - 2 && item.rect[3] <= row.rect[3] + 2))
+    )
+    const indicators = unassigned.filter((item) => /^[✓✗×xX]$/u.test(item.text.trim()))
+    const labels = unassigned.filter(
+      (item) => /\p{L}/u.test(item.text) && !/^[✓✗×xX]$/u.test(item.text.trim())
+    )
+    if (indicators.length < Math.max(3, rowCells.length - 2) || labels.length !== 1) continue
+    if (rowCells.some((cell) => (cell.rowSpan ?? 1) !== 1 || (cell.colSpan ?? 1) !== 1)) continue
+    const label = labels[0]
+    const nearest = (item) =>
+      rowCells
+        .map((cell) => ({
+          cell,
+          overlap: intersect(cell.rect, item.rect) / Math.max(1, area(item.rect)),
+          distance: Math.abs((cell.rect[0] + cell.rect[2]) / 2 - (item.rect[0] + item.rect[2]) / 2)
+        }))
+        .sort((a, b) => b.overlap - a.overlap || a.distance - b.distance)[0]?.cell
+    const placements = [
+      { item: label, cell: rowCells.find((cell) => cell.column === 0) },
+      ...indicators.map((item) => ({ item, cell: nearest(item) }))
+    ]
+    if (placements.some(({ cell }) => !cell)) continue
+    const placementCells = placements.map(({ cell }) => cell)
+    if (new Set(placementCells).size !== placementCells.length) continue
+    for (const { item, cell } of placements) {
+      assignments.set(item, cell)
+      ambiguousAssignments.delete(item)
+    }
+    repairs.push('unassigned-dense-row-recovered')
+    recovered += 1
+  }
+  return recovered
+}
+
+// A model row can span two visual records while its continuation cells are
+// emitted as a completely unassigned class/numeric/profile run. Recover only a
+// full continuation row whose previous stub is an explicit row span and whose
+// source tokens match every available continuation lane in order.
+export function recoverUnassignedNumericContinuationRows({
+  items,
+  cells,
+  rows,
+  columnRects,
+  headerRows,
+  assignments,
+  repairs
+}) {
+  const numeric = (text) => /^[<>≤≥−+-]?\d+(?:[.,]\d+)?%?$/.test(text.trim())
+  const sourceGroups = []
+  for (const item of items
+    .filter((candidate) => !assignments.has(candidate) && candidate.horizontal)
+    .sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])) {
+    const group = sourceGroups.find(
+      (candidate) =>
+        Math.abs(candidate.baseline - item.baseline) <=
+        Math.max(candidate.height ?? 0, item.height ?? 0) * 0.55
+    )
+    if (group) {
+      group.items.push(item)
+      group.baseline = (group.baseline + item.baseline) / 2
+      group.height = Math.max(group.height, item.height ?? 0)
+    } else sourceGroups.push({ items: [item], baseline: item.baseline, height: item.height ?? 0 })
+  }
+  const candidates = sourceGroups
+    .map((group) => {
+      const source = group.items.slice().sort((a, b) => a.rect[0] - b.rect[0])
+      const classItems = source.filter((item) => /^(?:F|T)$/u.test(item.text.trim()))
+      const values = source.filter((item) => numeric(item.text))
+      const tail = source.filter(
+        (item) =>
+          !numeric(item.text) && !/^(?:F|T)$/u.test(item.text.trim()) && /\p{L}/u.test(item.text)
+      )
+      if (classItems.length !== 1 || values.length < 3 || tail.length !== 1) return undefined
+      if (source.length !== values.length + 2) return undefined
+      if (columnRects?.length && source.length !== columnRects.length - 1) return undefined
+      return { source, y: group.baseline }
+    })
+    .filter(Boolean)
+  const assignedText = (cell) =>
+    items.some((item) => assignments.get(item) === cell && /\p{L}/u.test(item.text.trim()))
+  const rowClass = (rowIndex) =>
+    cells.find((cell) => cell.row === rowIndex && cell.column === 1 && cell.colSpan === 1)
+  const modelStub = (rowIndex) => cells.find((cell) => cell.row === rowIndex && cell.column === 0)
+  const nearestRow = (y, direction) => {
+    const candidates = rows
+      .map((row, rowIndex) => ({ row, rowIndex }))
+      .filter(({ row }) => (direction < 0 ? row.rect[3] <= y : row.rect[1] >= y))
+      .sort((a, b) =>
+        direction < 0 ? b.row.rect[3] - a.row.rect[3] : a.row.rect[1] - b.row.rect[1]
+      )
+    return candidates[0]
+  }
+  let recovered = 0
+  for (const { source, y } of candidates) {
+    const overlap = rows
+      .map((row, rowIndex) => ({ row, rowIndex }))
+      .filter(({ row }) =>
+        source.some((item) => intersect(row.rect, item.rect) / Math.max(1, area(item.rect)) >= 0.25)
+      )
+      .sort(
+        (a, b) =>
+          Math.abs((a.row.rect[1] + a.row.rect[3]) / 2 - y) -
+          Math.abs((b.row.rect[1] + b.row.rect[3]) / 2 - y)
+      )[0]
+    if (overlap && !headerRows.includes(overlap.rowIndex)) {
+      const { rowIndex } = overlap
+      const previousStub = cells.find(
+        (cell) => cell.row === rowIndex - 1 && cell.column === 0 && cell.rowSpan > 1
+      )
+      const targetCells = cells
+        .filter((cell) => cell.row === rowIndex && cell.column > 0 && cell.colSpan === 1)
+        .sort((a, b) => a.column - b.column)
+      if (previousStub && targetCells.length === source.length) {
+        for (const [index, item] of source.entries()) assignments.set(item, targetCells[index])
+        repairs.push('unassigned-numeric-continuation-row-recovered')
+        recovered += 1
+        continue
+      }
+    }
+    const first = Math.min(...source.map((item) => item.rect[1]))
+    const last = Math.max(...source.map((item) => item.rect[3]))
+    const previous = nearestRow(first, -1)
+    const next = nearestRow(last, 1)
+    if (!previous || !next || previous.rowIndex >= next.rowIndex) continue
+    if (last > next.row.rect[1] || first < previous.row.rect[3]) continue
+    const previousStub = modelStub(previous.rowIndex)
+    const nextStub = modelStub(next.rowIndex)
+    const previousClass = rowClass(previous.rowIndex)
+    const nextClass = rowClass(next.rowIndex)
+    const hasClass = (cell) =>
+      items.some((item) => assignments.get(item) === cell && /^(?:T|F)$/u.test(item.text.trim()))
+    if (
+      !previousStub ||
+      !nextStub ||
+      nextStub.rowSpan < 2 ||
+      !assignedText(previousStub) ||
+      !assignedText(nextStub) ||
+      !previousClass ||
+      !nextClass ||
+      !hasClass(previousClass) ||
+      !hasClass(nextClass)
+    )
+      continue
+    const top = Math.max(previous.row.rect[3], first - 0.5)
+    const bottom = Math.min(next.row.rect[1], last + 0.5)
+    if (bottom <= top) continue
+    const insertionIndex = next.rowIndex
+    const templates = cells
+      .filter((cell) => cell.row === insertionIndex && cell.column > 0 && cell.colSpan === 1)
+      .sort((a, b) => a.column - b.column)
+    if (templates.length !== source.length) continue
+    for (const cell of cells) {
+      if (cell.row >= insertionIndex) cell.row += 1
+      else if (cell.row + cell.rowSpan > insertionIndex) cell.rowSpan += 1
+    }
+    for (let index = headerRows.length - 1; index >= 0; index--)
+      if (headerRows[index] >= insertionIndex) headerRows[index] += 1
+    rows.splice(insertionIndex, 0, {
+      rect: [next.row.rect[0], top, next.row.rect[2], bottom],
+      origin: 'source-numeric-continuation-row'
+    })
+    const inherited = templates.map((template) => ({
+      ...template,
+      row: insertionIndex,
+      rowSpan: 1,
+      rect: [template.rect[0], top, template.rect[2], bottom],
+      items: []
+    }))
+    cells.push({
+      row: insertionIndex,
+      column: 0,
+      rowSpan: 1,
+      colSpan: 1,
+      rect: [nextStub.rect[0], top, nextStub.rect[2], bottom],
+      origin: 'source-numeric-continuation-row',
+      items: []
+    })
+    cells.push(...inherited)
+    for (const [index, item] of source.entries()) assignments.set(item, inherited[index])
+    repairs.push('unassigned-numeric-continuation-row-recovered')
+    recovered += 1
+  }
+  return recovered
+}
+
+const assignmentsHasCell = (assignments, cell) =>
+  [...assignments.values()].some((owner) => owner === cell)
+
+// Some benchmark tables emit several slash-separated score pairs as one native
+// source run. Recover only the narrow two-row pattern where both rows have the
+// same four score lanes, the first four model cells are empty, and the trailing
+// aggregate lanes are already populated. This keeps ordinary fused text and
+// incomplete records untouched while preserving each score pair in its cell.
+export function recoverUnassignedSlashScoreRows({
+  items,
+  cells,
+  rows,
+  columnRects,
+  headerRows,
+  assignments,
+  ambiguousAssignments,
+  repairs
+}) {
+  if (columnRects.length !== 9) return 0
+  const score = /^\d+(?:\.\d+)?\/(?:\d+(?:\.\d+)?|[–—-])$/u
+  const sourceRuns = items
+    .filter((item) => !assignments.has(item) && item.horizontal)
+    .map((item) => {
+      const values = item.text.trim().split(/\s+/u)
+      return values.length === 4 && values.every((value) => score.test(value))
+        ? { item, values }
+        : undefined
+    })
+    .filter(Boolean)
+  if (sourceRuns.length !== 2) return 0
+  const candidates = sourceRuns
+    .map(({ item, values }) => {
+      const rowIndex = rows
+        .map((row, index) => ({ row, index }))
+        .filter(({ index }) => !headerRows.includes(index))
+        .sort(
+          (a, b) =>
+            Math.abs((a.row.rect[1] + a.row.rect[3]) / 2 - item.baseline) -
+            Math.abs((b.row.rect[1] + b.row.rect[3]) / 2 - item.baseline)
+        )[0]?.index
+      if (!Number.isInteger(rowIndex)) return undefined
+      const rowCells = cells
+        .filter((cell) => cell.row === rowIndex && cell.rowSpan === 1 && cell.colSpan === 1)
+        .sort((a, b) => a.column - b.column)
+      if (rowCells.length !== columnRects.length) return undefined
+      const target = rowCells.slice(1, 5)
+      const aggregate = rowCells.slice(5)
+      if (
+        target.length !== 4 ||
+        aggregate.length !== columnRects.length - 5 ||
+        !assignmentsHasCell(assignments, rowCells[0]) ||
+        target.some((cell) => assignmentsHasCell(assignments, cell)) ||
+        aggregate.some((cell) => !assignmentsHasCell(assignments, cell))
+      )
+        return undefined
+      if (
+        item.rect[0] < target[0].rect[0] - item.height ||
+        item.rect[2] > target.at(-1).rect[2] + item.height ||
+        item.rect[3] < rows[rowIndex].rect[1] - item.height ||
+        item.rect[1] > rows[rowIndex].rect[3] + item.height
+      )
+        return undefined
+      return { item, values, rowIndex, target }
+    })
+    .filter(Boolean)
+  if (
+    candidates.length !== 2 ||
+    candidates[0].rowIndex === candidates[1].rowIndex ||
+    Math.abs(candidates[0].rowIndex - candidates[1].rowIndex) !== 1
+  )
+    return 0
+  const template = candidates[0].item
+  for (const candidate of candidates) {
+    const generated = candidate.values.map((text, index) => {
+      const cell = candidate.target[index]
+      return {
+        ...template,
+        text,
+        rect: [cell.rect[0] + 1, candidate.item.rect[1], cell.rect[2] - 1, candidate.item.rect[3]],
+        baseline: candidate.item.baseline,
+        height: candidate.item.height,
+        horizontal: true
+      }
+    })
+    const sourceIndex = items.indexOf(candidate.item)
+    if (sourceIndex < 0) return 0
+    items.splice(sourceIndex, 1, ...generated)
+    generated.forEach((item, index) => assignments.set(item, candidate.target[index]))
+    ambiguousAssignments.delete(candidate.item)
+  }
+  repairs.push('wide-slash-score-rows-recovered')
+  return candidates.length
+}
+
+// Some captioned sensitivity tables print one bracketed confidence interval
+// line below each primary record.  A detector can omit the first interval line
+// from its row bands while assigning the remaining interval lines to empty
+// no-stub rows.  Recover only the exact eight-column shape: seven consecutive
+// primary rows, one five-lane bracket line for each primary row, and a unique
+// x-lane for every interval.  A PDF text run may contain all five intervals in
+// one source item; split that run only after its proportional rects prove the
+// same five x-lanes.  The interval source tokens are then owned by the
+// corresponding primary cells; no row or column is added.
+export function recoverUnassignedBracketIntervalRows({
+  items,
+  cells,
+  rows,
+  columnRects,
+  headerRows,
+  assignments,
+  ambiguousAssignments,
+  repairs,
+  captions = []
+}) {
+  if (
+    columnRects.length !== 8 ||
+    captions.filter((caption) => /^table\b/i.test(caption.lines?.[0] ?? '')).length !== 1
+  )
+    return 0
+  const interval = /^\[\s*[−+-]?\d+(?:\.\d+)?\s*,\s*[−+-]?\d+(?:\.\d+)?\s*\]$/u
+  const wideIntervalPattern = /\[\s*[−+-]?\d+(?:\.\d+)?\s*,\s*[−+-]?\d+(?:\.\d+)?\s*\]/gu
+  const wideExpansions = []
+  const intervalItems = []
+  for (const item of items) {
+    if (!item.horizontal) continue
+    const value = item.text.trim()
+    if (interval.test(value)) {
+      intervalItems.push(item)
+      continue
+    }
+    if (assignments.has(item)) continue
+    const matches = [...value.matchAll(wideIntervalPattern)]
+    if (matches.length !== 5 || matches.some((match) => !match[0])) continue
+    const compact = matches.every((match, index) => {
+      const end = match.index + match[0].length
+      const nextStart = matches[index + 1]?.index ?? value.length
+      return (
+        value
+          .slice(index ? matches[index - 1].index + matches[index - 1][0].length : 0, match.index)
+          .trim() === '' && value.slice(end, nextStart).trim() === ''
+      )
+    })
+    if (!compact) continue
+    const [left, top, right, bottom] = item.rect
+    const width = right - left
+    if (!(width > 0)) continue
+    const synthetic = matches.map((match) => {
+      const start = match.index
+      const end = start + match[0].length
+      return {
+        ...item,
+        text: match[0],
+        rect: [
+          left + (start / value.length) * width,
+          top,
+          left + (end / value.length) * width,
+          bottom
+        ],
+        syntheticSourceItem: item
+      }
+    })
+    wideExpansions.push({ source: item, items: synthetic })
+    intervalItems.push(...synthetic)
+  }
+  const intervalLines = []
+  for (const item of intervalItems.sort(
+    (a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0]
+  )) {
+    const previous = intervalLines.at(-1)
+    if (previous && Math.abs(previous.baseline - item.baseline) <= item.height * 0.35) {
+      previous.items.push(item)
+      previous.baseline = (previous.baseline + item.baseline) / 2
+    } else intervalLines.push({ baseline: item.baseline, items: [item] })
+  }
+  if (intervalLines.some((line) => line.items.length > 1 && line.items.length !== 5)) return 0
+  intervalLines.splice(
+    0,
+    intervalLines.length,
+    ...intervalLines.filter((line) => line.items.length === 5)
+  )
+  if (intervalLines.length < 3) return 0
+  const owned = (cell) => [...assignments.values()].some((owner) => owner === cell)
+  const bodyRows = rows
+    .map((row, rowIndex) => ({ row, rowIndex }))
+    .filter(({ rowIndex }) => rowIndex > 0 && !headerRows.includes(rowIndex))
+  const rowItems = (rowIndex) => items.filter((item) => assignments.get(item)?.row === rowIndex)
+  const isPrimary = ({ rowIndex }) => {
+    const rowCells = cells
+      .filter((cell) => cell.row === rowIndex && cell.colSpan === 1 && cell.column < 8)
+      .sort((a, b) => a.column - b.column)
+    if (
+      rowCells.length !== 8 ||
+      rowCells.some((cell, column) => cell.column !== column) ||
+      rowCells
+        .filter((cell) => cell.column !== 1 && !(cell.column === 7 && cell.rowSpan > 1))
+        .some((cell) => !owned(cell)) ||
+      rowCells.slice(2, 7).some((cell) => cell.rowSpan !== 1)
+    )
+      return false
+    const source = rowItems(rowIndex)
+    const stub = source.some(
+      (item) => assignments.get(item)?.column === 0 && /\p{L}/u.test(item.text)
+    )
+    const lanes = [2, 3, 4, 5, 6].every((column) =>
+      source.some(
+        (item) =>
+          assignments.get(item)?.column === column &&
+          /^[−+-]?\d+(?:\.\d+)?$/u.test(item.text.trim())
+      )
+    )
+    const aggregate = source.some(
+      (item) => assignments.get(item)?.column === 7 && /\d/.test(item.text)
+    )
+    return stub && lanes && aggregate
+  }
+  const primaryRows = bodyRows.filter(isPrimary).sort((a, b) => a.rowIndex - b.rowIndex)
+  if (primaryRows.length < 3) return 0
+  const paired = []
+  for (const line of intervalLines) {
+    const center = line.baseline
+    const candidates = primaryRows
+      .map((entry, index) => ({
+        ...entry,
+        index,
+        distance: center - (entry.row.rect[1] + entry.row.rect[3]) / 2
+      }))
+      .filter(({ distance, index }) => {
+        if (distance <= 0) return false
+        const next = primaryRows[index + 1]
+        return !next || center < (next.row.rect[1] + next.row.rect[3]) / 2
+      })
+      .sort((a, b) => a.distance - b.distance)
+    if (candidates.length !== 1) return 0
+    paired.push({ ...line, target: candidates[0] })
+  }
+  if (
+    paired.length !== primaryRows.length ||
+    new Set(paired.map(({ target }) => target.rowIndex)).size !== primaryRows.length
+  )
+    return 0
+  const recoveries = []
+  for (const line of paired) {
+    const targetCells = cells
+      .filter(
+        (cell) =>
+          cell.row === line.target.rowIndex &&
+          cell.rowSpan === 1 &&
+          cell.colSpan === 1 &&
+          cell.column >= 2 &&
+          cell.column <= 6
+      )
+      .sort((a, b) => a.column - b.column)
+    if (targetCells.length !== 5) return 0
+    const existingOwners = targetCells.map(owned)
+    if (existingOwners.some((value) => !value)) return 0
+    const pieces = line.items
+      .slice()
+      .sort((a, b) => a.rect[0] - b.rect[0])
+      .map((item, index) => {
+        const center = (item.rect[0] + item.rect[2]) / 2
+        const lane = targetCells.filter((cell) => center >= cell.rect[0] && center <= cell.rect[2])
+        return { item, lane, cell: lane.length === 1 ? lane[0] : undefined, index }
+      })
+    if (
+      pieces.some(
+        ({ item, cell }) =>
+          !cell ||
+          item.rect[2] <= item.rect[0] ||
+          item.rect[0] < cell.rect[0] - 1 ||
+          item.rect[2] > cell.rect[2] + 1 ||
+          item.rect[2] - item.rect[0] < Math.max(1, item.height * 0.3)
+      ) ||
+      new Set(pieces.map(({ cell }) => cell)).size !== 5
+    )
+      return 0
+    const owners = line.items.map((item) => assignments.get(item)).filter(Boolean)
+    if (owners.length) {
+      const ownerRows = new Set(owners.map((owner) => owner.row))
+      if (
+        owners.length !== 5 ||
+        ownerRows.size !== 1 ||
+        owners.some((owner) => owner.column < 2 || owner.column > 6) ||
+        new Set(owners).size !== 5
+      )
+        return 0
+      const ownerRow = [...ownerRows][0]
+      if (
+        ownerRow !== line.target.rowIndex &&
+        cells
+          .filter((cell) => cell.row === ownerRow && (cell.column < 2 || cell.column > 6))
+          .some(owned)
+      )
+        return 0
+    }
+    if (owners.length && line.items.some((item) => !assignments.has(item))) return 0
+    recoveries.push({ line, pieces })
+  }
+  const changed = recoveries.filter(({ line }) => {
+    const owners = line.items.map((item) => assignments.get(item)).filter(Boolean)
+    return !owners.length || owners.some((owner) => owner.row !== line.target.rowIndex)
+  }).length
+  if (!changed) return 0
+  for (const { pieces } of recoveries) {
+    for (const { item, cell } of pieces) {
+      assignments.set(item, cell)
+      ambiguousAssignments.delete(item)
+    }
+  }
+  for (const { source, items: synthetic } of wideExpansions) {
+    const index = items.indexOf(source)
+    if (index >= 0) items.splice(index, 1, ...synthetic)
+  }
+  if (recoveries.some(({ line }) => line.items.some((item) => !assignments.has(item)))) return 0
+  if (recoveries.some(({ line }) => line.items.some((item) => !item.horizontal))) return 0
+  repairs.push('bracket-ci-subrows-recovered')
+  return changed
+}
+
+// Some native tables emit a row-spanning stub label as one centered token
+// between two otherwise complete records.  The detector still creates one
+// empty stub cell per record, so the label remains unassigned.  Recover only a
+// short consecutive run with complete, already-owned value lanes on every
+// row; prose and incomplete rows stay untouched.
+export function recoverUnassignedStubSpans({
+  items,
+  cells,
+  rows,
+  headerRows,
+  assignments,
+  repairs
+}) {
+  const looksLikeStub = (text) => {
+    const value = text.trim()
+    return (
+      value.length >= 2 &&
+      value.length <= 80 &&
+      /\p{L}/u.test(value) &&
+      !/[.!?]$/u.test(value) &&
+      !/^\d+(?:[.,]\d+)?(?:%|[KMB])?$/u.test(value)
+    )
+  }
+  const owned = (cell) => items.some((item) => assignments.get(item) === cell)
+  const firstColumn = (row) =>
+    cells.find((cell) => cell.row === row && cell.column === 0 && cell.colSpan === 1)
+  const bodyRows = rows
+    .map((row, rowIndex) => ({ row, rowIndex }))
+    .filter(({ rowIndex }) => !headerRows.includes(rowIndex))
+  let recovered = 0
+  for (const item of items) {
+    if (assignments.has(item) || !item.horizontal || !looksLikeStub(item.text)) continue
+    const candidates = bodyRows
+      .map(({ row, rowIndex }) => ({ row, rowIndex, cell: firstColumn(rowIndex) }))
+      .filter(
+        ({ row, cell }) =>
+          cell &&
+          cell.rowSpan === 1 &&
+          !owned(cell) &&
+          item.rect[0] >= cell.rect[0] - item.height &&
+          item.rect[2] <= cell.rect[2] + item.height &&
+          item.rect[3] >= row.rect[1] - item.height &&
+          item.rect[1] <= row.rect[3] + item.height
+      )
+      .sort((a, b) => a.rowIndex - b.rowIndex)
+    if (candidates.length < 2) continue
+    const possible = []
+    for (let start = 0; start <= candidates.length - 2; start++) {
+      for (let length = 2; start + length <= candidates.length; length++) {
+        const run = candidates.slice(start, start + length)
+        if (run.some(({ rowIndex }, index) => index && rowIndex !== run[index - 1].rowIndex + 1))
+          break
+        const rowsComplete = run.every(({ rowIndex }) => {
+          const valueCells = cells.filter(
+            (cell) => cell.row === rowIndex && cell.column > 0 && cell.colSpan === 1
+          )
+          return valueCells.length >= 2 && valueCells.every(owned)
+        })
+        if (!rowsComplete) continue
+        const rect = [
+          run[0].cell.rect[0],
+          run[0].cell.rect[1],
+          run[0].cell.rect[2],
+          run.at(-1).cell.rect[3]
+        ]
+        const center = (item.rect[1] + item.rect[3]) / 2
+        if (center < rect[1] - item.height || center > rect[3] + item.height) continue
+        possible.push({ run, rect, distance: Math.abs(center - (rect[1] + rect[3]) / 2) })
+      }
+    }
+    const chosen = possible.sort(
+      (a, b) => a.distance - b.distance || a.run.length - b.run.length
+    )[0]
+    if (!chosen) continue
+    const { run, rect } = chosen
+    for (const candidate of run) {
+      const index = cells.indexOf(candidate.cell)
+      if (index >= 0) cells.splice(index, 1)
+    }
+    const merged = {
+      ...run[0].cell,
+      row: run[0].rowIndex,
+      rowSpan: run.length,
+      rect,
+      origin: 'source-row-span-stub',
+      items: []
+    }
+    cells.push(merged)
+    assignments.set(item, merged)
+    repairs.push('unassigned-stub-row-span-recovered')
+    recovered += 1
+  }
+  return recovered
+}
+
 // Mutates resolved cells and diagnostics, preserving source-token identity while
 // assigning wrapped labels and scripts. Returns text that still has no owner.
 // Recover a narrative tail that falls into the gap between two predicted rows only
@@ -118,6 +887,224 @@ export function recoverNativeMidRowNarrativeTail({
   return true
 }
 
+export function rotatedColumnHeaderAssignments(items, cells, rows = [], headerRows = [0]) {
+  const labels = items
+    .filter(
+      (item) =>
+        !item.horizontal &&
+        /\p{L}/u.test(item.text.trim()) &&
+        item.rect[3] - item.rect[1] >= (item.rect[2] - item.rect[0]) * 1.6
+    )
+    .sort((a, b) => a.rect[0] - b.rect[0])
+  const columns = cells
+    .filter((cell) => headerRows.includes(cell.row) && cell.rowSpan === 1 && cell.colSpan === 1)
+    .sort((a, b) => a.rect[0] - b.rect[0])
+  const headerRects = columns.map((cell) => cell.rect)
+  const headerTop = Math.min(...headerRects.map((rect) => rect[1]))
+  const headerBottom = Math.max(...headerRects.map((rect) => rect[3]))
+  const headerCenter = (headerTop + headerBottom) / 2
+  const candidates = []
+  const used = new Set()
+  for (const item of labels) {
+    const height = Number.isFinite(item.height) ? item.height : item.rect[3] - item.rect[1]
+    const tolerance = Math.max(2, height * 0.35)
+    const centerY = (item.rect[1] + item.rect[3]) / 2
+    if (
+      rows.length &&
+      (!Number.isFinite(headerTop) ||
+        !Number.isFinite(headerBottom) ||
+        Math.abs(centerY - headerCenter) > (headerBottom - headerTop) / 2 + tolerance)
+    )
+      continue
+    const center = (item.rect[0] + item.rect[2]) / 2
+    const match = columns
+      .filter((cell) => !used.has(cell))
+      .map((cell) => ({ cell, distance: Math.abs((cell.rect[0] + cell.rect[2]) / 2 - center) }))
+      .sort((a, b) => a.distance - b.distance || a.cell.column - b.cell.column)[0]
+    if (!match) continue
+    used.add(match.cell)
+    candidates.push({ item, cell: match.cell })
+  }
+  const width = cells.filter((cell) => headerRows.includes(cell.row)).length
+  if (candidates.length < 3 || columns.length < 3 || candidates.length < Math.ceil(width * 0.5))
+    return new Map()
+  return new Map(candidates.map(({ item, cell }) => [item, cell]))
+}
+
+// Recover a clipped repeated group-label band only when the model already
+// provides one single-column header cell for every native column.  Labels may
+// sit just above the predicted header row, but they must map one-to-one by
+// exact column bounds and all body rows must already be complete.  This keeps
+// the repair from inventing a row or column for an under-specified header.
+export function recoverUnassignedRepeatedGroupLabels({
+  items,
+  cells,
+  rows,
+  columnRects,
+  headerRows,
+  assignments,
+  repairs
+}) {
+  if (!headerRows?.length || !columnRects?.length) return 0
+  const firstBody = Math.max(...headerRows) + 1
+  const bodyRows = rows.slice(firstBody)
+  if (bodyRows.length < 2) return 0
+  const completeBody = bodyRows.every((row, rowIndex) =>
+    columnRects.every((_, column) => {
+      const cell = cells.find(
+        (candidate) => candidate.row === firstBody + rowIndex && candidate.column === column
+      )
+      return (
+        cell &&
+        cell.rowSpan === 1 &&
+        cell.colSpan === 1 &&
+        items.some((item) => assignments.get(item) === cell)
+      )
+    })
+  )
+  if (!completeBody) return 0
+  const epsilon = 0.75
+  const headerCells = columnRects.map((_, column) =>
+    cells.find(
+      (cell) =>
+        cell.row === headerRows.at(-1) &&
+        cell.column === column &&
+        cell.rowSpan === 1 &&
+        cell.colSpan === 1 &&
+        Math.abs(cell.rect[0] - columnRects[column][0]) <= epsilon &&
+        Math.abs(cell.rect[2] - columnRects[column][2]) <= epsilon
+    )
+  )
+  if (headerCells.some((cell) => !cell)) return 0
+  const labels = items.filter(
+    (item) =>
+      !assignments.has(item) &&
+      item.horizontal &&
+      /\p{L}/u.test(item.text) &&
+      item.text.trim().length >= 2 &&
+      item.rect[3] <= rows[headerRows.at(-1)].rect[3] + 0.75 &&
+      item.rect[1] >= rows[headerRows.at(-1)].rect[1] - item.height * 1.5 &&
+      !rows.some((row, index) => index >= firstBody && inside(row.rect, item))
+  )
+  if (labels.length < Math.max(3, columnRects.length - 2)) return 0
+  const target = new Map()
+  for (const label of labels) {
+    const center = (label.rect[0] + label.rect[2]) / 2
+    const column = columnRects.findIndex((rect) => center >= rect[0] && center <= rect[2])
+    if (column < 0 || target.has(column)) return 0
+    const cell = headerCells[column]
+    if (label.rect[0] < cell.rect[0] - epsilon || label.rect[2] > cell.rect[2] + epsilon) return 0
+    target.set(column, { label, cell })
+  }
+  if (target.size < Math.max(3, columnRects.length - 2)) return 0
+  for (const { label, cell } of target.values()) {
+    assignments.set(label, cell)
+    cell.rect[1] = Math.min(cell.rect[1], label.rect[1])
+    rows[cell.row].rect[1] = Math.min(rows[cell.row].rect[1], label.rect[1])
+  }
+  repairs.push('repeated-group-header-recovered')
+  return target.size
+}
+
+// A detector can leave one complete body record in an existing empty model
+// row when a grouped first-column stub is visually shared with the following
+// record. Recover only that exact shape: an isolated model row whose cells
+// already match every leaf lane, whose adjacent rows are fully owned, and
+// whose unassigned source run contains one label plus one short numeric value
+// per non-stub lane. The row and cell shape remain unchanged.
+export function recoverUnassignedCompleteModelRows({
+  items,
+  cells,
+  rows,
+  columnRects,
+  headerRows,
+  assignments,
+  ambiguousAssignments,
+  repairs
+}) {
+  if (columnRects.length < 3) return 0
+  const numeric = (value) =>
+    /^[<>≤≥−+-]?\d[\d.,]*(?:\s*\/\s*[<>≤≥−+-]?\d[\d.,]*)*(?:%|[A-Za-z]{1,3})?$/u.test(value.trim())
+  const owned = (cell) => [...assignments.values()].some((owner) => owner === cell)
+  const rowCells = (rowIndex) =>
+    cells.filter((cell) => cell.row === rowIndex).sort((a, b) => a.column - b.column)
+  const fullyOwned = (rowIndex) => {
+    const candidate = rowCells(rowIndex)
+    return (
+      candidate.length === columnRects.length &&
+      candidate.every(
+        (cell, column) =>
+          cell.column === column && cell.rowSpan === 1 && cell.colSpan === 1 && owned(cell)
+      )
+    )
+  }
+  const inRow = (row, item) => {
+    const overlap = intersect(row.rect, item.rect) / Math.max(1, area(item.rect))
+    return overlap >= 0.35 || (item.baseline >= row.rect[1] && item.baseline <= row.rect[3] + 1)
+  }
+  const candidates = rows
+    .map((row, rowIndex) => ({ row, rowIndex }))
+    .filter(({ row, rowIndex }) => {
+      if (row.origin !== 'model' || headerRows.includes(rowIndex)) return false
+      const current = rowCells(rowIndex)
+      if (
+        current.length !== columnRects.length ||
+        current.some(
+          (cell, column) =>
+            cell.column !== column || cell.rowSpan !== 1 || cell.colSpan !== 1 || owned(cell)
+        )
+      )
+        return false
+      if (rowIndex <= 0 || rowIndex >= rows.length - 1) return false
+      return fullyOwned(rowIndex - 1) && fullyOwned(rowIndex + 1)
+    })
+  let recovered = 0
+  for (const { row, rowIndex } of candidates) {
+    const source = items
+      .filter((item) => !assignments.has(item) && item.horizontal && inRow(row, item))
+      .sort((a, b) => a.rect[0] - b.rect[0])
+    if (source.length !== columnRects.length - 1) continue
+    const heights = source.map((item) => item.height ?? 0).filter((height) => height > 0)
+    const baseline = source.reduce((sum, item) => sum + item.baseline, 0) / source.length
+    if (
+      source.some(
+        (item) =>
+          Math.abs(item.baseline - baseline) > Math.max(item.height ?? 0, ...heights, 1) * 0.45
+      )
+    )
+      continue
+    const byColumn = new Map()
+    for (const item of source) {
+      const center = (item.rect[0] + item.rect[2]) / 2
+      const column = columnRects.findIndex((rect) => center >= rect[0] && center <= rect[2])
+      if (column < 1 || byColumn.has(column)) {
+        byColumn.clear()
+        break
+      }
+      byColumn.set(column, item)
+    }
+    if (byColumn.size !== columnRects.length - 1) continue
+    if (
+      Array.from({ length: columnRects.length - 1 }, (_, index) => index + 1).some(
+        (column) => !byColumn.has(column)
+      )
+    )
+      continue
+    const label = byColumn.get(1)
+    if (!label || !/\p{L}/u.test(label.text) || numeric(label.text)) continue
+    if (Array.from(byColumn.entries()).some(([column, item]) => column > 1 && !numeric(item.text)))
+      continue
+    const targets = rowCells(rowIndex)
+    for (const [column, item] of byColumn) {
+      assignments.set(item, targets[column])
+      ambiguousAssignments?.delete(item)
+    }
+    repairs.push('unassigned-complete-model-row-recovered')
+    recovered += 1
+  }
+  return recovered
+}
+
 export function populateTableCellText({
   cells,
   items,
@@ -130,10 +1117,14 @@ export function populateTableCellText({
   recordGrid,
   scheduleGrid,
   nativeMathOrder,
+  captions = [],
   rotatedContinuation = false,
   issues,
   repairs
 }) {
+  // Keep the caller's source-item collection immutable while allowing
+  // derived word-sized tokens to participate in local ownership assignment.
+  items = items.slice()
   const columnOf = (item) => columnRects.findIndex((column) => inside(column, item))
   const assignments = new Map()
   const ambiguousAssignments = new Set()
@@ -153,12 +1144,271 @@ export function populateTableCellText({
     !item.horizontal &&
     /^(?:SNR|PSNR|SSIM)\s+(?:0|5|10|15|20|25)$/i.test(item.text.trim()) &&
     item.rect[3] - item.rect[1] >= (item.rect[2] - item.rect[0]) * 1.4
+  // A narrow vertical label can be a real first-row column header. Keep this
+  // proof separate from rotated stub labels: it requires a single-column
+  // row-zero cell and enough neighboring labels to establish a header band.
+  const rotatedHeaderCells = rotatedColumnHeaderAssignments(items, cells, rows, headerRows)
+  if (rotatedHeaderCells.size) repairs.push('rotated-column-header-recovered')
+  if (repairs.includes('wide-numeric-columns-recovered'))
+    recoverWideNumericRows({ items, cells, rows, columnRects, headerRows, repairs })
+  // Some PDF producers emit a whole run of adjacent leaf values as one source
+  // token. When that run crosses several one-column cells, estimate each word's
+  // horizontal share and keep the pieces on their individual cell lanes. This
+  // is deliberately limited to complete, contiguous source rows: a long prose
+  // label or a wrapped cell must continue to use the original token.
+  const forcedCells = new Map()
+  const splitWideRuns = []
+  const splitSourceItems = []
+  // A few PDF producers emit a count or an explicit missing-value marker and
+  // its data type as one source run (for example, `138K Real` or `n/r Private`)
+  // while the native grid still exposes two
+  // adjacent leaf cells.  The run can sit a fraction above the predicted row
+  // bounds, so use row overlap and stable neighbouring leaf geometry instead
+  // of requiring the whole glyph box to be inside one model row.  Keep this
+  // proof narrow: both target cells must be empty in the source stream and
+  // their one-column lanes must continue through an adjacent row.
   for (const item of items) {
+    if (!item.horizontal) continue
+    const match = item.text
+      .trim()
+      .match(/^((?:n\/r)|[<>≤≥−+-]?\d[\d.,]*(?:[KMB]|%|[A-Za-z]{1,3})?)\s+(\p{L}[\p{L}-]*)$/iu)
+    if (!match) continue
+    const rowIndex = rows.findIndex((row) => {
+      const overlap = intersect(row.rect, item.rect) / Math.max(1, area(item.rect))
+      return overlap >= 0.45 || (item.baseline >= row.rect[1] && item.baseline <= row.rect[3] + 1)
+    })
+    if (rowIndex < 0 || headerRows.includes(rowIndex)) continue
+    const rowCells = cells
+      .filter(
+        (cell) =>
+          cell.row === rowIndex &&
+          cell.rowSpan === 1 &&
+          cell.colSpan === 1 &&
+          intersect(cell.rect, item.rect) / Math.max(1, area(item.rect)) > 0.02
+      )
+      .sort((a, b) => a.column - b.column)
+    if (rowCells.length !== 2 || rowCells[1].column !== rowCells[0].column + 1) continue
+    const [first, second] = rowCells
+    const boundary = (first.rect[2] + second.rect[0]) / 2
+    if (item.rect[0] >= boundary || item.rect[2] <= boundary) continue
+    const estimatedBoundary =
+      item.rect[0] +
+      (match[1].length / (match[1].length + match[2].length)) * (item.rect[2] - item.rect[0])
+    if (Math.abs(boundary - estimatedBoundary) > item.height * 0.75) continue
+    const occupied = (slot) =>
+      items.some(
+        (candidate) =>
+          candidate !== item &&
+          Math.abs(candidate.baseline - item.baseline) <= item.height * 0.35 &&
+          intersect(slot.rect, candidate.rect) / Math.max(1, area(candidate.rect)) > 0.5
+      )
+    if (occupied(first) || occupied(second)) continue
+    const neighbouringLeafRow = rows.some((_, candidateRow) => {
+      if (candidateRow === rowIndex || Math.abs(candidateRow - rowIndex) > 1) return false
+      return (
+        cells.some(
+          (cell) =>
+            cell.row === candidateRow &&
+            cell.column === first.column &&
+            cell.colSpan === 1 &&
+            cell.rowSpan === 1
+        ) &&
+        cells.some(
+          (cell) =>
+            cell.row === candidateRow &&
+            cell.column === second.column &&
+            cell.colSpan === 1 &&
+            cell.rowSpan === 1
+        )
+      )
+    })
+    if (!neighbouringLeafRow) continue
+    splitWideRuns.push({
+      original: item,
+      parts: [
+        {
+          owner: first,
+          item: {
+            ...item,
+            text: match[1],
+            rect: [item.rect[0], item.rect[1], boundary, item.rect[3]]
+          }
+        },
+        {
+          owner: second,
+          item: {
+            ...item,
+            text: match[2],
+            rect: [boundary, item.rect[1], item.rect[2], item.rect[3]]
+          }
+        }
+      ],
+      repair: 'adjacent-cell-run-split'
+    })
+  }
+  for (const item of items) {
+    const fusedLabelValue = item.text
+      .trim()
+      .match(/^(.*\([^)]*\))\s+([<>≤≥−+-]?\d+(?:[.,]\d+)?%?)$/u)
+    if (
+      item.horizontal &&
+      fusedLabelValue &&
+      !headerRows.some((row) => inside(rows[row].rect, item))
+    ) {
+      const rowIndex = rows.findIndex((row) => inside(row.rect, item))
+      const slots = cells
+        .filter(
+          (cell) =>
+            cell.row === rowIndex &&
+            cell.rowSpan === 1 &&
+            cell.colSpan === 1 &&
+            intersect(cell.rect, item.rect) / area(item.rect) > 0.02
+        )
+        .sort((a, b) => a.column - b.column)
+      const numericSiblings = items.filter(
+        (candidate) =>
+          candidate !== item &&
+          candidate.horizontal &&
+          inside(rows[rowIndex]?.rect ?? [0, 0, 0, 0], candidate) &&
+          /^[<>≤≥−+-]?\d+(?:[.,]\d+)?%?$/u.test(candidate.text.trim())
+      )
+      if (
+        rowIndex >= 0 &&
+        slots.length >= 2 &&
+        slots[0].column === 0 &&
+        slots[1].column === 1 &&
+        numericSiblings.length >= 5
+      ) {
+        const label = fusedLabelValue[1]
+        const value = fusedLabelValue[2]
+        const width = item.rect[2] - item.rect[0]
+        const labelEnd = item.rect[0] + (label.length / (label.length + value.length)) * width
+        splitWideRuns.push({
+          original: item,
+          parts: [
+            {
+              owner: slots[0],
+              item: {
+                ...item,
+                text: label,
+                rect: [item.rect[0], item.rect[1], labelEnd, item.rect[3]]
+              }
+            },
+            {
+              owner: slots[1],
+              item: {
+                ...item,
+                text: value,
+                rect: [labelEnd, item.rect[1], item.rect[2], item.rect[3]]
+              }
+            }
+          ],
+          repair: 'fused-label-leading-value-split'
+        })
+        continue
+      }
+    }
+    // Parenthesized statistics are a single cell value even when the
+    // detector's column boundary cuts through the token (for example,
+    // `55.31 (8.47)`). Keep those intact; the repair targets genuinely
+    // adjacent labels or leaf values emitted as one run.
+    // Missing-value markers are only split by the guarded adjacent-cell rule
+    // above. The generic word splitter would otherwise turn prose such as
+    // `n/r Private` into cells even when the neighbouring-row proof is absent.
+    if (
+      !item.horizontal ||
+      item.text.trim().split(/\s+/u).length < 2 ||
+      /[()]/u.test(item.text) ||
+      /^n\/r\s+\p{L}/iu.test(item.text.trim())
+    )
+      continue
+    const slots = cells
+      .filter(
+        (cell) =>
+          cell.rowSpan === 1 &&
+          cell.colSpan === 1 &&
+          intersect(cell.rect, item.rect) / area(item.rect) > 0.02
+      )
+      .sort((a, b) => a.column - b.column)
+    // A header run may physically overhang the detector's neighboring
+    // columns (for example, "No-radiation cohort"). Keep the complete
+    // source label in its native cell; splitting prose is only valid for
+    // body rows where adjacent leaf values establish the ownership.
+    const headerRun = headerRows.some((rowIndex) => {
+      const row = rows[rowIndex]?.rect
+      return row && intersect(row, item.rect) / Math.max(1, area(item.rect)) >= 0.45
+    })
+    if (headerRun && /\b(?:cohort|group)\b/iu.test(item.text) && /-/u.test(item.text)) continue
+    if (
+      slots.length < 2 ||
+      slots.some((cell, index) => index && cell.column !== slots[index - 1].column + 1)
+    )
+      continue
+    const words = item.text.trim().split(/\s+/u)
+    const letters = words.map((word) => [...word].length)
+    const total = letters.reduce((sum, length) => sum + length, 0)
+    const parts = []
+    let offset = 0
+    for (const [index, word] of words.entries()) {
+      const start = item.rect[0] + (offset / total) * (item.rect[2] - item.rect[0])
+      offset += letters[index]
+      const end = item.rect[0] + (offset / total) * (item.rect[2] - item.rect[0])
+      const center = (start + end) / 2
+      const owner = slots.find((cell) => center >= cell.rect[0] && center <= cell.rect[2])
+      if (!owner || parts.some((part) => part.owner === owner)) {
+        parts.length = 0
+        break
+      }
+      parts.push({
+        owner,
+        item: {
+          ...item,
+          text: word,
+          rect: [start, item.rect[1], end, item.rect[3]]
+        }
+      })
+    }
+    if (parts.length !== words.length || parts.length < 2) continue
+    if (
+      parts.some(
+        ({ item: part, owner }) =>
+          intersect(owner.rect, part.rect) / area(part.rect) < 0.5 ||
+          part.rect[2] - part.rect[0] < Math.max(1, part.height * 0.15)
+      )
+    )
+      continue
+    splitWideRuns.push({ original: item, parts })
+  }
+  if (splitWideRuns.length) {
+    for (const { original, parts, repair } of splitWideRuns) {
+      const index = items.indexOf(original)
+      if (index < 0) continue
+      items.splice(
+        index,
+        1,
+        ...parts.map(({ item: part, owner }) => {
+          forcedCells.set(part, owner)
+          splitSourceItems.push(part)
+          return part
+        })
+      )
+      repairs.push(repair ?? 'wide-source-run-split')
+    }
+  }
+  for (const item of items) {
+    if (forcedCells.has(item)) {
+      assignments.set(item, forcedCells.get(item))
+      continue
+    }
+    if (rotatedHeaderCells.has(item)) {
+      assignments.set(item, rotatedHeaderCells.get(item))
+      continue
+    }
     const candidates = cells
       .map((cell) => ({ cell, overlap: intersect(cell.rect, item.rect) / area(item.rect) }))
       .filter((m) => m.overlap > (rotatedStubLabel(item) ? 0.1 : 0.5))
       .sort((a, b) => b.overlap - a.overlap)
-    if (!item.horizontal && !rotatedStubLabel(item)) continue
+    if (!item.horizontal && !rotatedStubLabel(item) && !rotatedHeaderCells.has(item)) continue
     if (!candidates.length) {
       continue
     }
@@ -253,6 +1503,42 @@ export function populateTableCellText({
       continue
     }
     assignments.set(item, candidates[0].cell)
+  }
+  // A source word can be split at the first numeric lane when the tail of a
+  // row label extends a few pixels past the model's column boundary. Keep a
+  // compact numeric suffix with its adjacent alphabetic label when a real
+  // numeric value follows in the same lane; an isolated numeric field stays
+  // owned by its predicted column.
+  for (const item of items.filter((candidate) => /^\d{1,3}$/u.test(candidate.text.trim()))) {
+    const cell = assignments.get(item)
+    if (!cell || cell.column <= 0 || !item.horizontal) continue
+    const previous = items
+      .filter((candidate) => {
+        const owner = assignments.get(candidate)
+        return (
+          owner?.row === cell.row &&
+          owner.column === cell.column - 1 &&
+          candidate !== item &&
+          candidate.horizontal &&
+          /\p{L}/u.test(candidate.text) &&
+          candidate.rect[2] <= item.rect[0] + 0.5 &&
+          item.rect[0] - candidate.rect[2] <= item.height * 0.08
+        )
+      })
+      .sort((a, b) => b.rect[2] - a.rect[2])[0]
+    if (!previous) continue
+    const following = items
+      .filter(
+        (candidate) =>
+          assignments.get(candidate) === cell &&
+          candidate !== item &&
+          candidate.rect[0] >= item.rect[2] + item.height * 0.3 &&
+          /^[−+-]?\d/u.test(candidate.text.trim())
+      )
+      .sort((a, b) => a.rect[0] - b.rect[0])[0]
+    if (!following) continue
+    assignments.set(item, assignments.get(previous))
+    repairs.push('inline-fragment-reassigned')
   }
   // Source-backed section spans can begin a few pixels below a wrapped label's
   // glyph box. Let only those explicit spans claim a descriptive heading when
@@ -1252,7 +2538,257 @@ export function populateTableCellText({
     bottom,
     repairs
   })
+  recoverUnassignedRepeatedGroupLabels({
+    items,
+    cells,
+    rows,
+    columnRects,
+    headerRows,
+    assignments,
+    repairs
+  })
+  recoverUnassignedCompleteModelRows({
+    items,
+    cells,
+    rows,
+    columnRects,
+    headerRows,
+    assignments,
+    ambiguousAssignments,
+    repairs
+  })
+  const denseRowsRecovered = recoverUnassignedDenseRows({
+    items,
+    cells,
+    rows,
+    headerRows,
+    assignments,
+    ambiguousAssignments,
+    repairs
+  })
+  const numericContinuationRowsRecovered = recoverUnassignedNumericContinuationRows({
+    items,
+    cells,
+    rows,
+    columnRects,
+    headerRows,
+    assignments,
+    repairs
+  })
+  recoverUnassignedSlashScoreRows({
+    items,
+    cells,
+    rows,
+    columnRects,
+    headerRows,
+    assignments,
+    ambiguousAssignments,
+    repairs
+  })
+  recoverUnassignedBracketIntervalRows({
+    items,
+    cells,
+    rows,
+    columnRects,
+    headerRows,
+    assignments,
+    ambiguousAssignments,
+    repairs,
+    captions
+  })
+  const stubSpanRowsRecovered = recoverUnassignedStubSpans({
+    items,
+    cells,
+    rows,
+    headerRows,
+    assignments,
+    repairs
+  })
+  // A recovered three-tier benchmark header can still arrive as one R@ run,
+  // and a parent model name may span the empty leaf cells. Split the repeated
+  // leaf labels by lane and keep the parent as one explicit span cell.
+  if (repairs.includes('wide-numeric-columns-recovered'))
+    for (const original of items.slice()) {
+      if (assignments.has(original) || !original.horizontal) continue
+      const rowIndex = rows.findIndex(
+        (row, index) => headerRows.includes(index) && inside(row.rect, original)
+      )
+      if (rowIndex < 0) continue
+      let rowCells = cells
+        .filter((cell) => cell.row === rowIndex)
+        .sort((a, b) => a.column - b.column)
+      const tokens = original.text.trim().split(/\s+/u)
+      if (
+        /^R@\d+(?:\s+R@\d+){2,}$/u.test(original.text.trim()) &&
+        tokens.length === columnRects.length - 1 &&
+        rowCells.filter((cell) => cell.column > 0).reduce((sum, cell) => sum + cell.colSpan, 0) ===
+          tokens.length &&
+        rowCells.some((cell) => cell.column > 0 && cell.colSpan > 1)
+      ) {
+        for (let index = cells.length - 1; index >= 0; index--)
+          if (cells[index].row === rowIndex && cells[index].column > 0) cells.splice(index, 1)
+        cells.push(
+          ...columnRects.slice(1).map((rect, index) => ({
+            row: rowIndex,
+            column: index + 1,
+            rowSpan: 1,
+            colSpan: 1,
+            rect: [rect[0], rows[rowIndex].rect[1], rect[2], rows[rowIndex].rect[3]],
+            origin: 'source-wide-header-column',
+            items: []
+          }))
+        )
+        rowCells = cells.filter((cell) => cell.row === rowIndex).sort((a, b) => a.column - b.column)
+      }
+      const leafCells = rowCells.filter((cell) => cell.colSpan === 1 && cell.column > 0)
+      if (
+        /^R@\d+(?:\s+R@\d+){2,}$/u.test(original.text.trim()) &&
+        tokens.length === leafCells.length
+      ) {
+        const generated = leafCells.map((cell, index) => ({
+          ...original,
+          text: tokens[index],
+          rect: [cell.rect[0] + 1, original.rect[1], cell.rect[2] - 1, original.rect[3]]
+        }))
+        const sourceIndex = items.indexOf(original)
+        items.splice(sourceIndex, 1, ...generated)
+        generated.forEach((item, index) => assignments.set(item, leafCells[index]))
+        repairs.push('wide-header-leaf-run-recovered')
+        continue
+      }
+      if (!/^IMAGEBIND$/iu.test(original.text.trim())) continue
+      const covered = rowCells.filter(
+        (cell) => intersect(cell.rect, original.rect) / Math.max(1, area(cell.rect)) > 0.2
+      )
+      if (covered.length < 2 || covered.some((cell) => [...assignments.values()].includes(cell)))
+        continue
+      const merged = {
+        ...covered[0],
+        column: Math.min(...covered.map((cell) => cell.column)),
+        colSpan: covered.length,
+        rect: union(covered),
+        items: []
+      }
+      for (let index = cells.length - 1; index >= 0; index--)
+        if (covered.includes(cells[index])) cells.splice(index, 1)
+      cells.push(merged)
+      assignments.set(original, merged)
+      repairs.push('wide-header-parent-span-recovered')
+    }
+  // A complete numbered source baseline can straddle two empty detector bands
+  // and lose every token to the normal ambiguity guard.  Recover only a fully
+  // unassigned record with complete consecutive neighbours and two adjacent,
+  // otherwise unowned candidate rows; this keeps ordinary ambiguous text and
+  // fused numeric runs untouched.
+  const sourceGroups = []
+  for (const item of items.filter((candidate) => candidate.horizontal)) {
+    const previous = sourceGroups.at(-1)
+    if (previous && Math.abs(previous.baseline - item.baseline) <= item.height * 0.35)
+      previous.items.push(item)
+    else sourceGroups.push({ baseline: item.baseline, items: [item] })
+  }
+  const completeNumberedGroup = (group) => {
+    const byColumn = new Map()
+    for (const item of group.items) {
+      const column = columnOf(item)
+      if (column < 0 || (column !== 0 && byColumn.has(column))) return
+      const values = byColumn.get(column) ?? []
+      values.push(item)
+      byColumn.set(column, values)
+    }
+    if (byColumn.size !== columnRects.length || byColumn.get(0)?.length !== 2) return
+    const id = byColumn.get(0)[0].text.trim()
+    if (!/^\d+$/.test(id)) return
+    if (
+      Array.from({ length: columnRects.length }, (_, column) => byColumn.get(column)).some(
+        (values) => !values?.every((item) => item.text.trim())
+      )
+    )
+      return
+    return { id: Number(id), byColumn }
+  }
+  const numberedGroups = sourceGroups
+    .map((group) => ({ group, record: completeNumberedGroup(group) }))
+    .filter(({ record }) => record)
+  let recoveredSequentialRow
+  for (const { group, record } of numberedGroups) {
+    if (!group.items.every((item) => !assignments.has(item))) continue
+    const previous = numberedGroups.find(({ record: candidate }) => candidate.id === record.id - 1)
+    const next = numberedGroups.find(({ record: candidate }) => candidate.id === record.id + 1)
+    if (
+      !previous ||
+      !next ||
+      !previous.group.items.every((item) => assignments.has(item)) ||
+      !next.group.items.every((item) => assignments.has(item))
+    )
+      continue
+    const candidates = rows
+      .map((row, rowIndex) => {
+        if (headerRows.includes(rowIndex)) return
+        const rowCells = cells
+          .filter((cell) => cell.row === rowIndex && cell.rowSpan === 1 && cell.colSpan === 1)
+          .sort((a, b) => a.column - b.column)
+        if (rowCells.length !== columnRects.length) return
+        if (rowCells.some((cell) => [...assignments.values()].includes(cell))) return
+        const overlaps = [...record.byColumn].flatMap(([column, columnItems]) =>
+          columnItems.map((item) => {
+            const cell = rowCells[column]
+            return intersect(cell.rect, item.rect) / Math.max(1, area(item.rect))
+          })
+        )
+        if (overlaps.some((overlap) => overlap <= 0.45)) return
+        return {
+          rowIndex,
+          distance: Math.abs((row.rect[1] + row.rect[3]) / 2 - group.baseline)
+        }
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.distance - b.distance)
+    if (candidates.length !== 2 || Math.abs(candidates[0].rowIndex - candidates[1].rowIndex) !== 1)
+      continue
+    const selected = candidates[0]
+    for (const [column, columnItems] of record.byColumn) {
+      const cell = cells.find(
+        (candidate) => candidate.row === selected.rowIndex && candidate.column === column
+      )
+      if (cell) for (const item of columnItems) assignments.set(item, cell)
+    }
+    repairs.push('sequential-record-row-recovered')
+    recoveredSequentialRow = selected.rowIndex
+    for (const item of group.items) ambiguousAssignments.delete(item)
+    break
+  }
+  if (Number.isInteger(recoveredSequentialRow) && recoveredSequentialRow > 0) {
+    const emptyRow = recoveredSequentialRow - 1
+    const emptyCells = cells.filter((cell) => cell.row === emptyRow)
+    const populatedNeighbors = [emptyRow - 1, recoveredSequentialRow].every((row) =>
+      cells
+        .filter((cell) => cell.row === row)
+        .every((cell) => [...assignments.values()].some((owner) => owner === cell))
+    )
+    if (
+      rows[emptyRow]?.origin === 'model' &&
+      emptyCells.length === columnRects.length &&
+      emptyCells.every((cell) => ![...assignments.values()].includes(cell)) &&
+      populatedNeighbors
+    ) {
+      rows.splice(emptyRow, 1)
+      for (let index = cells.length - 1; index >= 0; index--) {
+        if (cells[index].row === emptyRow) cells.splice(index, 1)
+        else if (cells[index].row > emptyRow) cells[index].row--
+      }
+      repairs.push('sequential-empty-row-removed')
+    }
+  }
   const unassignedItems = items.filter((item) => !assignments.has(item))
+  if (!unassignedItems.length && !ambiguousAssignments.size)
+    issues.delete('ambiguous-cell-assignment')
+  if (
+    (denseRowsRecovered || numericContinuationRowsRecovered || stubSpanRowsRecovered) &&
+    !unassignedItems.length &&
+    !ambiguousAssignments.size
+  )
+    issues.delete('ambiguous-cell-assignment')
   for (const [item, cell] of assignments) cell.items.push(item)
   if (unassignedItems.length) issues.add('unassigned-source-text')
   const pageWords = sourceWordSpellings(
@@ -1465,6 +3001,18 @@ export function populateTableCellText({
     .filter((item) => item.text.split(BACKSPACE).join('').trim())
     .map((item) => item.text)
   if (!unassigned.length) issues.delete('unassigned-source-text')
+  // Final native-bound reconciliation still needs the derived token boxes
+  // created above. Keep them on the legacy array return without changing its
+  // observable shape for callers that only consume the unassigned strings.
+  if (splitSourceItems.length)
+    Object.defineProperty(unassigned, 'sourceItems', {
+      value: splitSourceItems,
+      enumerable: false
+    })
+  Object.defineProperty(unassigned, 'reconciliationItems', {
+    value: items,
+    enumerable: false
+  })
   return unassigned
 }
 

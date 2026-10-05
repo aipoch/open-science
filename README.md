@@ -345,7 +345,9 @@ Before opening a public issue, remove API Keys, tokens, private file paths, unpu
 
 > ⭐ **Star the repo:** If this project has been helpful, we'd greatly appreciate a star on GitHub. Starring the repository encourages continued development. It only takes a second, but it has a meaningful impact on the project.
 
-For shipped, partial, and planned capabilities, see the [Capability Map](ROADMAP.md#capability-map).
+For remote access setup, see the [Remote control guide](docs/REMOTE_CONTROL.md).
+
+For shipped, partial, and planned capabilities, see the [Capability Map](docs/ROADMAP.md#capability-map).
 
 ## License
 

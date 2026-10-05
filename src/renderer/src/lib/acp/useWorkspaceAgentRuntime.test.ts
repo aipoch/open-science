@@ -1,3 +1,4 @@
+import { visibleProjectSessions } from '../../pages/workspace/visible-project-sessions'
 import { sanitizeRendererSaveSessionOptions } from '../../../../main/session-persistence/renderer-save-options'
 import { LiteratureDocumentReader } from '../../../../main/literature/document-reader'
 import { initI18n, prepareI18nLocale } from '../../i18n'
@@ -6325,6 +6326,132 @@ describe('workspace agent message sending', () => {
       delegationPolicyAuthorityPending: undefined
     })
     expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+  })
+
+  it.each<readonly [string, AgentFrameworkId, string]>([
+    ['Claude Code', 'claude-code', 'claude-code:anthropic'],
+    ['OpenCode', 'opencode', 'opencode:provider-1'],
+    ['Codex Responses', 'codex', 'codex:responses-provider'],
+    ['Codex Bridge', 'codex', 'codex:bridge-provider'],
+    ['CodeBuddy', 'codebuddy', 'codebuddy:provider-1']
+  ])(
+    'keeps one visible row while %s publishes a seed before pending binding',
+    async (_path, frameworkId, backendId) => {
+      const api = createSessionPolicyApi()
+      const save = api.saveSession
+      let sawSeed = false
+      api.saveSession = vi.fn(
+        async (session: PersistedChatSession, options?: SaveSessionOptions) => {
+          const authority = await save(session, options)
+          useSessionStore.getState().upsertPersistedSession(authority)
+          const sessions = useSessionStore.getState().sessions
+          const pending = sessions.find((candidate) => candidate.isPending)
+          if (pending) {
+            sawSeed = true
+            expect(pending.pendingBindingSessionId).toBe(session.id)
+            expect(sessions.some((candidate) => candidate.id === session.id)).toBe(true)
+            expect(visibleProjectSessions(sessions, 'project-1')).toEqual([pending])
+          }
+          expect(authority).not.toHaveProperty('pendingBindingSessionId')
+          return authority
+        }
+      )
+      vi.stubGlobal('window', { api: { sessions: api } })
+      const runtime = {
+        state: createSnapshot(),
+        createSession: vi.fn().mockResolvedValue({
+          sessionId: 'bound-session',
+          cwd: '/workspace/project',
+          backendId,
+          frameworkId
+        }),
+        resumeSession: vi.fn(),
+        resetSessionContext: vi.fn(),
+        sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['bound-session']))
+      }
+      const sent = await sendWorkspaceMessage(
+        runtime,
+        {
+          text: 'hello',
+          cwd: '/workspace/project',
+          projectId: 'project-1',
+          agentFrameworkId: frameworkId
+        },
+        { awaitPendingPreparation: true }
+      )
+      expect(sawSeed).toBe(true)
+      expect(sent?.sessionId).toBe('bound-session')
+      expect(visibleProjectSessions(useSessionStore.getState().sessions, 'project-1')).toHaveLength(
+        1
+      )
+      expect(useSessionStore.getState().sessions[0].pendingBindingSessionId).toBeUndefined()
+      expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+    }
+  )
+
+  it('releases a seed binding if Stop arrives during the seed save', async () => {
+    const api = createSessionPolicyApi()
+    const save = api.saveSession
+    api.saveSession = vi.fn(async (session: PersistedChatSession, options?: SaveSessionOptions) => {
+      const authority = await save(session, options)
+      useSessionStore.getState().upsertPersistedSession(authority)
+      const pending = useSessionStore.getState().sessions.find((candidate) => candidate.isPending)!
+      useSessionStore.getState().finishRun(pending.id)
+      return authority
+    })
+    vi.stubGlobal('window', { api: { sessions: api } })
+    const runtime = {
+      state: createSnapshot(),
+      createSession: vi
+        .fn()
+        .mockResolvedValue({ sessionId: 'stopped-seed', cwd: '/workspace/project' }),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn()
+    }
+    await sendWorkspaceMessage(
+      runtime,
+      {
+        text: 'hello',
+        cwd: '/workspace/project',
+        projectId: 'project-1'
+      },
+      { awaitPendingPreparation: true }
+    )
+    const sessions = useSessionStore.getState().sessions
+    expect(sessions.find((session) => session.isPending)?.pendingBindingSessionId).toBeUndefined()
+    expect(
+      visibleProjectSessions(sessions, 'project-1').some((session) => session.id === 'stopped-seed')
+    ).toBe(true)
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+  })
+
+  it('releases the pending row binding when saving its seed fails', async () => {
+    const api = createSessionPolicyApi()
+    api.saveSession = vi.fn().mockRejectedValue(new Error('Seed could not be saved'))
+    vi.stubGlobal('window', { api: { sessions: api } })
+    const runtime = {
+      state: createSnapshot(),
+      createSession: vi
+        .fn()
+        .mockResolvedValue({ sessionId: 'failed-seed', cwd: '/workspace/project' }),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn()
+    }
+    await sendWorkspaceMessage(
+      runtime,
+      {
+        text: 'hello',
+        cwd: '/workspace/project',
+        projectId: 'project-1'
+      },
+      { awaitPendingPreparation: true }
+    )
+    const pending = useSessionStore.getState().sessions.find((session) => session.isPending)!
+    expect(pending).toBeDefined()
+    expect(pending.pendingBindingSessionId).toBeUndefined()
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
   })
 
   it('forwards a setup capability when creating its new runtime Session', async () => {

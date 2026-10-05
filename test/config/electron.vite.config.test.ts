@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import config, { resolveWsl2BashPreviewBuildEnabled } from './electron.vite.config'
+import config, { resolveWsl2BashPreviewBuildEnabled } from '../../electron.vite.config'
 
 const resolve = config as (input: { command: 'serve' | 'build'; mode: string }) => {
   main?: { define?: Record<string, string> }

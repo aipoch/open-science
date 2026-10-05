@@ -27,12 +27,17 @@ export default defineConfig({
           ? [[resolve(__dirname, 'e2e/windows-shard-reporter.ts')] as [string]]
           : []),
         ['line'],
-        ['blob'],
+        ['blob', { outputDir: resolve(__dirname, 'blob-report') }],
         [
           'json',
-          { outputFile: process.env.PLAYWRIGHT_JSON_OUTPUT_NAME ?? 'test-results/e2e.json' }
+          {
+            outputFile: resolve(
+              __dirname,
+              process.env.PLAYWRIGHT_JSON_OUTPUT_NAME ?? 'test-results/e2e.json'
+            )
+          }
         ],
-        ['html', { outputFolder: 'playwright-report', open: 'never' }]
+        ['html', { outputFolder: resolve(__dirname, 'playwright-report'), open: 'never' }]
       ]
     : [['list']],
   use: {

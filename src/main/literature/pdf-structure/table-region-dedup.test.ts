@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-const { deduplicateTableRegions } = await import(
+const { deduplicateTableRegions, narrativeDuplicateTableIndices } = await import(
   pathToFileURL(resolve('resources/pdf-structure/literature-pdf-table-regions.mjs')).href
 )
 const { constrainCaptionLaneCrop } = await import(
@@ -73,4 +73,248 @@ it('keeps a right-column table inside the lane of its original caption', () => {
   const result = constrainCaptionLaneCrop(table, detectorCrop, captions)
   expect(result.cropRect).toEqual([459, 111, 766, 516])
   expect(result.structure.objects[0].rect).toEqual([38, 0, 288, 400])
+})
+
+const object = (label: string, rect: number[]): { label: string; rect: number[] } => ({
+  label,
+  rect
+})
+type SyntheticTable = {
+  id: string
+  cropRect: number[]
+  structure: { objects: { label: string; rect: number[] }[] }
+}
+const syntheticTable = (id: string, cropRect: number[], columns = 2): SyntheticTable => ({
+  id,
+  cropRect,
+  structure: {
+    objects: [
+      ...Array.from({ length: columns }, (_, index) =>
+        object('table column', [index * 100, 0, index * 100 + 100, 200])
+      ),
+      ...Array.from({ length: 3 }, (_, index) =>
+        object('table row', [0, index * 40, columns * 100, index * 40 + 25])
+      )
+    ]
+  }
+})
+const token = (
+  text: string,
+  rect: number[]
+): { text: string; rect: number[]; horizontal: boolean } => ({
+  text,
+  rect,
+  horizontal: true
+})
+
+it('drops a prose-containing detector box when a narrower right table proves ownership', () => {
+  const outer = syntheticTable('outer', [0, 0, 1000, 300], 4)
+  const inner = syntheticTable('inner', [550, 80, 990, 280], 2)
+  const items = [
+    token('As an illustration, we provide a prose paragraph beside the table.', [40, 90, 500, 105]),
+    token('Guardrails', [620, 95, 700, 110]),
+    token('MT Bench', [800, 95, 880, 110]),
+    token('No system prompt', [580, 140, 750, 155]),
+    token('6.84', [820, 140, 860, 155]),
+    token('Llama 2 system prompt', [580, 180, 760, 195]),
+    token('6.38', [820, 180, 860, 195])
+  ]
+  expect(deduplicateTableRegions([outer, inner], items)).toEqual([inner])
+})
+
+it('keeps a captioned wide detector box for later caption-aware refinement', () => {
+  const outer = syntheticTable('outer', [0, 40, 1000, 340], 4)
+  const inner = syntheticTable('inner', [550, 120, 990, 320], 2)
+  const items = [
+    token(
+      'As an illustration, we provide a prose paragraph beside the table.',
+      [40, 130, 500, 145]
+    ),
+    token('Guardrails', [620, 135, 700, 150]),
+    token('MT Bench', [800, 135, 880, 150]),
+    token('No system prompt', [580, 180, 750, 195]),
+    token('6.84', [820, 180, 860, 195]),
+    token('Llama 2 system prompt', [580, 220, 760, 235]),
+    token('6.38', [820, 220, 860, 235])
+  ]
+  const caption = { lines: ['Table 1. Evaluation results'], rect: [40, 10, 400, 25] }
+  expect(deduplicateTableRegions([outer, inner], items, [caption])).toEqual([outer, inner])
+})
+
+it('keeps a wide table whose long stub label belongs to its first column', () => {
+  const outer = syntheticTable('outer', [0, 0, 1000, 300], 4)
+  const inner = syntheticTable('inner', [550, 80, 990, 280], 2)
+  const items = [
+    token('A long explanatory label belongs to the first table column.', [40, 90, 240, 105]),
+    token('Guardrails', [620, 95, 700, 110]),
+    token('MT Bench', [800, 95, 880, 110]),
+    token('No system prompt', [580, 140, 750, 155]),
+    token('6.84', [820, 140, 860, 155]),
+    token('Llama 2 system prompt', [580, 180, 760, 195]),
+    token('6.38', [820, 180, 860, 195])
+  ]
+  expect(deduplicateTableRegions([outer, inner], items)).toHaveLength(2)
+})
+
+it('keeps independent adjacent tables without a prose-plus-grid witness', () => {
+  const left = syntheticTable('left', [0, 0, 450, 200])
+  const right = syntheticTable('right', [550, 0, 1000, 200])
+  const items = [
+    token('Header', [40, 20, 100, 35]),
+    token('12', [40, 60, 60, 75]),
+    token('Header', [600, 20, 660, 35]),
+    token('34', [600, 60, 620, 75])
+  ]
+  expect(deduplicateTableRegions([left, right], items)).toHaveLength(2)
+})
+
+it('keeps an independent adjacent grid when a wide detector has a prose cell', () => {
+  const outer = syntheticTable('outer', [0, 0, 700, 200], 4)
+  const right = syntheticTable('right', [750, 0, 1200, 200], 2)
+  const items = [
+    token('A long explanatory sentence belongs to the left table.', [40, 20, 600, 35]),
+    token('Header', [800, 20, 860, 35]),
+    token('12', [800, 60, 820, 75]),
+    token('34', [800, 100, 820, 115])
+  ]
+  expect(deduplicateTableRegions([outer, right], items)).toHaveLength(2)
+})
+
+it('drops a refined narrative duplicate beside the numeric grid', () => {
+  const outer = {
+    cropRect: [152, 752, 753, 837],
+    grid: [
+      ['We use a set of unsafe prompts for evaluating safety.', 'Guardrails', 'MT Bench'],
+      ['The model declines to answer harmful questions.', 'No system prompt', '6.84 ± 0.07']
+    ],
+    unassigned: ['As an illustration, we provide in the table the answers of']
+  }
+  const inner = {
+    cropRect: [455, 769, 759, 855],
+    grid: [
+      ['', 'Guardrails', 'MT Bench'],
+      ['', 'No system prompt', '6.84 ± 0.07'],
+      ['', 'Llama 2 system prompt', '6.38 ± 0.07']
+    ],
+    unassigned: []
+  }
+  expect(narrativeDuplicateTableIndices([outer, inner])).toEqual(new Set([0]))
+})
+
+it('keeps a captioned wide candidate even when a narrower numeric grid overlaps it', () => {
+  const outer = {
+    cropRect: [152, 752, 753, 837],
+    grid: [
+      ['Captioned narrative table', 'Guardrails', 'MT Bench'],
+      ['The model declines to answer harmful questions.', 'No system prompt', '6.84 ± 0.07']
+    ],
+    unassigned: ['As an illustration, we provide in the table the answers of']
+  }
+  const inner = {
+    cropRect: [455, 769, 759, 855],
+    grid: [
+      ['', 'Guardrails', 'MT Bench'],
+      ['', 'No system prompt', '6.84 ± 0.07'],
+      ['', 'Llama 2 system prompt', '6.38 ± 0.07']
+    ],
+    unassigned: []
+  }
+  expect(
+    narrativeDuplicateTableIndices([outer, inner], { captionedIndices: new Set([0]) })
+  ).toEqual(new Set())
+})
+
+it('keeps a wide narrative table when the overlapping numeric grid has no matching cells', () => {
+  const outer = {
+    cropRect: [152, 752, 753, 837],
+    grid: [
+      ['A long explanatory sentence belongs to this table.', 'Left metric', 'Right metric'],
+      ['A second narrative row remains in the same table.', 'Alpha', 'Beta']
+    ],
+    unassigned: ['The surrounding prose is part of the table.']
+  }
+  const inner = {
+    cropRect: [455, 769, 759, 855],
+    grid: [
+      ['', 'Other metric', 'Score'],
+      ['', 'Gamma', '1.2'],
+      ['', 'Delta', '2.4']
+    ],
+    unassigned: []
+  }
+  expect(narrativeDuplicateTableIndices([outer, inner])).toEqual(new Set())
+})
+
+it('keeps long stub labels when they are assigned table cells', () => {
+  const outer = {
+    cropRect: [152, 752, 753, 837],
+    grid: [
+      ['A long study arm label with details.', 'Guardrails', 'MT Bench'],
+      ['Another long study arm label with details.', 'No system prompt', '6.84 ± 0.07']
+    ],
+    unassigned: []
+  }
+  const inner = {
+    cropRect: [455, 769, 759, 855],
+    grid: [
+      ['', 'Guardrails', 'MT Bench'],
+      ['', 'No system prompt', '6.84 ± 0.07'],
+      ['', 'Llama 2 system prompt', '6.38 ± 0.07']
+    ],
+    unassigned: []
+  }
+  expect(narrativeDuplicateTableIndices([outer, inner])).toEqual(new Set())
+})
+
+it('drops a numeric left-column spill when the remaining rows match a clean grid', () => {
+  const outer = {
+    cropRect: [398, 250, 762, 1060],
+    grid: [
+      ['Rows', 'Finance', 'Cols', 'Rows'],
+      ['81 M', 'AR_ADJUSTMENTS_ALL', '25', '0'],
+      ['', 'AR_AGING_BUCKETS', '9', '1'],
+      ['40', 'AR_AGING_BUCKET_LINES_B', '11', '5'],
+      ['', 'AR_BATCHES_ALL', '22', '493'],
+      ['70', 'CE_BANK_ACCOUNTS', '34', '1']
+    ],
+    unassigned: ['25', '493', '34'],
+    issues: ['text-crosses-crop-boundary']
+  }
+  const inner = {
+    cropRect: [434, 254, 764, 1081],
+    grid: [
+      ['Finance', '', '79 tables'],
+      ['AR_ADJUSTMENTS_ALL', '25', '0'],
+      ['AR_AGING_BUCKETS', '9', '1'],
+      ['AR_AGING_BUCKET_LINES_B', '11', '5'],
+      ['AR_BATCHES_ALL', '22', '493'],
+      ['CE_BANK_ACCOUNTS', '34', '1']
+    ],
+    unassigned: []
+  }
+  expect(narrativeDuplicateTableIndices([outer, inner])).toEqual(new Set([0]))
+})
+
+it('keeps a real numeric stub column beside an independent grid', () => {
+  const outer = {
+    cropRect: [100, 100, 500, 400],
+    grid: [
+      ['1', 'Left', 'Value'],
+      ['2', 'A', '10'],
+      ['3', 'B', '20'],
+      ['4', 'C', '30']
+    ],
+    unassigned: []
+  }
+  const inner = {
+    cropRect: [560, 100, 900, 400],
+    grid: [
+      ['Right', 'Value'],
+      ['A', '10'],
+      ['B', '20'],
+      ['C', '30']
+    ],
+    unassigned: []
+  }
+  expect(narrativeDuplicateTableIndices([outer, inner])).toEqual(new Set())
 })

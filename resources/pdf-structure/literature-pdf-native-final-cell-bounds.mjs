@@ -14,6 +14,49 @@ const intersection = (a, b) =>
 const horizontal = (rule) => Math.abs(rule[3] - rule[1]) < 0.2
 const sameEndpoints = (a, b) => Math.abs(a[0] - b[0]) < 0.5 && Math.abs(a[2] - b[2]) < 0.5
 
+// A complete native table can sit beside ordinary body prose.  The detector
+// crop then clips the prose at the table edge even though none of its glyphs
+// belongs to a cell.  Suppress that diagnostic only when source ownership is
+// complete, every clipped glyph is separated from the source bounds by a
+// readable gutter, and the clipped run is clearly prose.  Short labels and
+// single values remain diagnostics because they may be table evidence.
+function isAdjacentProseClipping(clipped, source, cropRect) {
+  // A single trailing line may be a table note or footnote. Require a
+  // multi-line run before classifying it as neighboring body prose.
+  if (!source || clipped.length < 2) return false
+  const [left, top, right, bottom] = source.rects.reduce(
+    (bounds, rect) => [
+      Math.min(bounds[0], rect[0]),
+      Math.min(bounds[1], rect[1]),
+      Math.max(bounds[2], rect[2]),
+      Math.max(bounds[3], rect[3])
+    ],
+    [Infinity, Infinity, -Infinity, -Infinity]
+  )
+  const em = source.em
+  if (![left, top, right, bottom, em].every(Number.isFinite) || em <= 0) return false
+  const words = clipped
+    .map((item) => item.text.trim())
+    .join(' ')
+    .split(/\s+/u)
+    .filter(Boolean)
+  if (words.length < 3 || !words.some((word) => /\p{L}{2,}/u.test(word))) return false
+  if (clipped.some((item) => intersection(item.rect, [left, top, right, bottom]) > 0)) return false
+  const leftMargin = clipped.every(
+    (item) => item.rect[2] <= left - em * 0.25 && item.rect[2] > cropRect[0]
+  )
+  const bottomMargin = clipped.every(
+    (item) =>
+      item.rect[1] >= bottom + em * 0.5 &&
+      item.rect[1] < cropRect[3] &&
+      (item.rect[2] <= left - em * 0.25 || item.rect[0] >= right + em * 0.25)
+  )
+  const rightMargin = clipped.every(
+    (item) => item.rect[0] >= right + em * 0.25 && item.rect[0] < cropRect[2]
+  )
+  return leftMargin || bottomMargin || rightMargin
+}
+
 function sourceEvidence(table, tokens) {
   const rects = table.cells.flatMap((cell) => cell.sourceRects ?? [])
   if (!rects.length || table.unassigned.length || new Set(rects.map(String)).size !== rects.length)
@@ -434,5 +477,10 @@ export function reconcileNativeFinalCellBounds({
       return false
     return true
   })
-  return { cropRect: view.cropRect, clipped: finalClipped }
+  const adjacentProse = isAdjacentProseClipping(finalClipped, source, view.cropRect)
+  if (adjacentProse) repairs.push('adjacent-prose-boundary-suppressed')
+  return {
+    cropRect: view.cropRect,
+    clipped: adjacentProse ? [] : finalClipped
+  }
 }

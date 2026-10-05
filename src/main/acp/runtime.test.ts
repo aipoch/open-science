@@ -1988,7 +1988,22 @@ describe('unattended permission prompt ownership', () => {
         text: 'Run command',
         permissionPrompts: 'none'
       })
-      expect(responses).toEqual([{ outcome: { outcome: 'selected', optionId: 'reject-once' } }])
+      expect(responses).toEqual([
+        {
+          outcome: { outcome: 'selected', optionId: 'reject-once' },
+          ...(framework.id === 'claude-code'
+            ? {
+                _meta: {
+                  'open-science/permission-denial': {
+                    version: 1,
+                    reason:
+                      'Permission prompts are disabled for this execution, so the host cannot request the approval required to run this tool.'
+                  }
+                }
+              }
+            : {})
+        }
+      ])
       expect(permissionSeen).not.toHaveBeenCalled()
       expect(runtime.getState().pendingPermissions).toEqual([])
       expect(runtime.getPermissionPrompts(session.sessionId)).toBeUndefined()

@@ -65,7 +65,7 @@
     "predev": "node scripts/check-prisma-client.mjs && node scripts/dev-app-branding.cjs",
     "predev:web": "node scripts/check-prisma-client.mjs",
     "predev:headless": "node scripts/check-prisma-client.mjs",
-    "test:e2e:browser": "playwright test --config playwright.browser.config.ts"
+    "test:e2e:browser": "playwright test --config e2e/playwright.browser.config.ts"
   },
   "dependencies": {
     "@agentclientprotocol/claude-agent-acp": "^0.70.0",

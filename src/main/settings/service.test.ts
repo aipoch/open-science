@@ -8504,6 +8504,11 @@ describe('SettingsService: claude-shared login orchestration', () => {
       [
         '--settings',
         join(getAppClaudeConfigDir(storageRoot), 'settings.json'),
+        '--setting-sources',
+        '',
+        '--strict-mcp-config',
+        '--permission-mode',
+        'default',
         '--add-dir',
         expect.stringContaining(getClaudeSkillRuntimeRoot(storageRoot))
       ]
@@ -8649,6 +8654,11 @@ describe('SettingsService: claude-shared login orchestration', () => {
       [
         '--settings',
         join(getAppClaudeConfigDir(storageRoot), 'settings.json'),
+        '--setting-sources',
+        '',
+        '--strict-mcp-config',
+        '--permission-mode',
+        'default',
         '--add-dir',
         expect.stringContaining(getClaudeSkillRuntimeRoot(storageRoot))
       ]

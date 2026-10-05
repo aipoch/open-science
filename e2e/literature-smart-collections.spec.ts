@@ -375,7 +375,10 @@ test('reviews classified papers in the library table using a local fixture servi
       .getByRole('tablist', { name: 'Filter decisions' })
       .boundingBox()
     const sortBounds = await page.getByRole('combobox', { name: 'Sort references' }).boundingBox()
-    expect(Math.abs(decisionBounds!.y - sortBounds!.y)).toBeLessThan(10)
+    // The flex row centers controls of different heights, including the rail's native scrollbar.
+    const decisionCenterY = decisionBounds!.y + decisionBounds!.height / 2
+    const sortCenterY = sortBounds!.y + sortBounds!.height / 2
+    expect(Math.abs(decisionCenterY - sortCenterY)).toBeLessThan(2)
     const searchBounds = await page
       .getByRole('textbox', { name: 'Search references' })
       .boundingBox()

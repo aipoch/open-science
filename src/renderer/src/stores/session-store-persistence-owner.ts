@@ -105,6 +105,8 @@ export type ChatSession = Omit<
   activePlanProjection?: ActivePlanProjection
   planHistoryProjections?: ActivePlanProjection[]
   isPending?: boolean
+  // Renderer-only identity of the durable seed while the optimistic Session is being prepared.
+  pendingBindingSessionId?: string
   // Transient presentation hint returned from Main's durable WSL setup binding. It carries no
   // authority and is refreshed from startup summaries and create/resume responses rather than
   // persisted by renderer.
@@ -339,6 +341,7 @@ export const toPersistedSession = (
     activities,
     activityGroups,
     isPending,
+    pendingBindingSessionId,
     wslSetup,
     importedResearch,
     delegationPolicyAuthorityPending,
@@ -372,6 +375,7 @@ export const toPersistedSession = (
   } = session
 
   void isPending
+  void pendingBindingSessionId
   void wslSetup
   void importedResearch
   void delegationPolicyAuthorityPending
@@ -579,6 +583,7 @@ const withTransientSessionState = (
       sortIndex: sourceMessages.get(message.id)?.sortIndex
     })),
     isPending: source.isPending,
+    pendingBindingSessionId: source.pendingBindingSessionId,
     wslSetup: source.wslSetup,
     interrupted: source.interrupted ?? hydrated.interrupted,
     fixLoopActive: source.fixLoopActive,

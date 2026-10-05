@@ -358,6 +358,56 @@ describe('notebook run repository', () => {
     ])
   })
 
+  it('does not block startup recovery when an unrelated Notebook document is corrupt', async () => {
+    const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
+    const validProjectId = 'default-project'
+    const validSessionId = 'valid-session'
+    const validLane = createRootNotebookLane(
+      validProjectId,
+      validSessionId,
+      'root-frame-valid-session'
+    )
+    await repository.loadOrCreate({
+      projectId: validProjectId,
+      sessionId: validSessionId,
+      workspaceCwd: '/workspace',
+      lane: validLane
+    })
+    const validRun = admittedRun({
+      runId: 'background-run',
+      executionMode: 'background',
+      status: 'completed',
+      endedAt: 2
+    })
+    await repository.appendRun({
+      projectId: validProjectId,
+      sessionId: validSessionId,
+      lane: validLane,
+      run: validRun
+    })
+
+    const corruptProjectId = 'corrupt-project'
+    const corruptSessionId = 'corrupt-session'
+    const corruptDocument = await repository.loadOrCreate({
+      projectId: corruptProjectId,
+      sessionId: corruptSessionId,
+      workspaceCwd: '/workspace',
+      lane: createRootNotebookLane(corruptProjectId, corruptSessionId, 'root-frame-corrupt')
+    })
+    const corruptPath = join(corruptDocument.notebookSessionRoot, 'run.json')
+    await writeFile(corruptPath, '{ not-json', 'utf8')
+
+    await expect(repository.recoverAllRunLifecycles()).resolves.toEqual([
+      {
+        projectId: validProjectId,
+        sessionId: validSessionId,
+        run: expect.objectContaining({ runId: validRun.runId, status: 'completed' })
+      }
+    ])
+    await expect(readFile(corruptPath, 'utf8')).resolves.toBe('{ not-json')
+  })
+
   it('replays every durable terminal background Run even after its terminal fact is gone', async () => {
     const root = await createStorageRoot()
     const repository = new NotebookRunRepository(root)

@@ -84,13 +84,13 @@ jobs:
           # Browser coverage reaches the tab-motion cases near five minutes on
           # macOS; leave enough headroom for the complete suite and teardown.
           presentation_timeout=600000
-          npx playwright test --config playwright.browser.config.ts --fail-on-flaky-tests --global-timeout="$presentation_timeout"
+          npx playwright test --config e2e/playwright.browser.config.ts --fail-on-flaky-tests --global-timeout="$presentation_timeout"
           npm run test:e2e:visual -- --fail-on-flaky-tests --global-timeout="$presentation_timeout"
       - name: Test concurrent screening flights
         id: presentation_screening
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'presentation-screening' }}
         run: >-
-          npx playwright test --config playwright.browser.config.ts
+          npx playwright test --config e2e/playwright.browser.config.ts
           e2e/browser/smart-screening.spec.ts
           --grep 'flies all four committed papers per second concurrently into the same pile'
           --repeat-each=5

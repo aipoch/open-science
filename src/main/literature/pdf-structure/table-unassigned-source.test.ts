@@ -6,12 +6,183 @@ import { readPdfFixture } from './read-fixture'
 const { refineTable, hasTableEvidence } = await import(
   pathToFileURL(resolve('resources/pdf-structure/literature-pdf-table-refine.mjs')).href
 )
+const { populateTableCellText } = await import(
+  pathToFileURL(resolve('resources/pdf-structure/literature-pdf-table-cell-text.mjs')).href
+)
+const { recoverUnassignedCompleteModelRows } = await import(
+  pathToFileURL(resolve('resources/pdf-structure/literature-pdf-table-cell-text.mjs')).href
+)
 const fixture = (name: string): ReturnType<typeof JSON.parse> =>
   readPdfFixture(
     resolve('src/main/literature/pdf-structure/fixtures/source-grids', `${name}.jsonl`)
   )
 const refine = (f: ReturnType<typeof fixture>): ReturnType<typeof JSON.parse> =>
   refineTable(f.table, f.tokens, f.captions, [], f.rules)
+
+it('recovers a complete numbered record straddling duplicate empty bands', () => {
+  const token = (text: string, x: number, y: number): Record<string, unknown> => ({
+    text,
+    rect: [x, y, x + Math.max(8, text.length * 4), y + 10],
+    baseline: y + 10,
+    height: 10,
+    horizontal: true
+  })
+  const table = {
+    cropRect: [0, 0, 600, 80],
+    structure: {
+      objects: [
+        ...Array.from({ length: 6 }, (_, column) => ({
+          label: 'table column',
+          rect: [column * 100, 0, (column + 1) * 100, 80]
+        })),
+        { label: 'table column header', rect: [0, 0, 600, 20] },
+        ...[
+          [0, 0, 600, 20],
+          [0, 20, 600, 35],
+          [0, 35, 600, 48],
+          [0, 44, 600, 57],
+          [0, 55, 600, 70]
+        ].map((rect) => ({ label: 'table row', rect }))
+      ]
+    }
+  }
+  const record = (
+    id: string,
+    name: string,
+    date: string,
+    state: string,
+    longitude: string,
+    latitude: string,
+    size: string,
+    y: number
+  ): Record<string, unknown>[] => [
+    token(id, 8, y),
+    token(name, 70, y),
+    token(date, 108, y),
+    token(state, 208, y),
+    token(longitude, 308, y),
+    token(latitude, 408, y),
+    token(size, 508, y)
+  ]
+  const result = refineTable(
+    table,
+    [
+      token('ID', 8, 5),
+      token('Fire', 70, 5),
+      token('time', 108, 5),
+      token('State', 208, 5),
+      token('Longitude', 308, 5),
+      token('Latitude', 408, 5),
+      token('Size', 508, 5),
+      ...record('12', 'Addington', '19/3/2021', 'Oklahoma', '-97.917', '34.293', '15', 21),
+      ...record('13', 'Bentley', '26/3/2021', 'Lousiana', '-92.527', '31.547', '4.1', 41),
+      ...record('14', 'Candy Creek', '28/3/2021', 'Oklahoma', '-96.071', '36.563', '114.7', 56)
+    ],
+    [{ page: 1, lines: ['Table 1. Fire events'], rect: [0, -15, 150, -5] }],
+    [],
+    []
+  )
+  expect(result.grid).toContainEqual([
+    '13 Bentley',
+    '26/3/2021',
+    'Lousiana',
+    '-92.527',
+    '31.547',
+    '4.1'
+  ])
+  expect(result.unassigned).toEqual([])
+  expect(result.issues).toEqual([])
+  expect(result.repairs).toContain('duplicate-source-row-merged')
+})
+
+it('assigns a fully unassigned numbered row to the nearer duplicate band', () => {
+  const token = (text: string, x: number, y: number): Record<string, unknown> => ({
+    text,
+    rect: [x, y, x + Math.max(8, text.length * 4), y + 10],
+    baseline: y + 10,
+    height: 10,
+    horizontal: true
+  })
+  const columnRects = Array.from({ length: 6 }, (_, column) => [
+    column * 100,
+    0,
+    (column + 1) * 100,
+    80
+  ])
+  const rowRects = [
+    [0, 0, 600, 20],
+    [0, 20, 600, 35],
+    [0, 35, 600, 48],
+    [0, 44, 600, 57],
+    [0, 55, 600, 70]
+  ]
+  const rows = rowRects.map((rect, index) => ({
+    rect,
+    origin: 'model',
+    ...(index === 0 ? { header: true } : {})
+  }))
+  const cells = rowRects.flatMap((row, rowIndex) =>
+    columnRects.map((rect, column) => ({
+      row: rowIndex,
+      column,
+      rowSpan: 1,
+      colSpan: 1,
+      rect: [rect[0], row[1], rect[2], row[3]],
+      origin: 'model',
+      text: '',
+      items: [],
+      sourceRects: []
+    }))
+  )
+  const record = (
+    id: string,
+    name: string,
+    date: string,
+    state: string,
+    longitude: string,
+    latitude: string,
+    size: string,
+    y: number
+  ): Record<string, unknown>[] => [
+    token(id, 8, y),
+    token(name, 70, y),
+    token(date, 108, y),
+    token(state, 208, y),
+    token(longitude, 308, y),
+    token(latitude, 408, y),
+    token(size, 508, y)
+  ]
+  const items = [
+    ...record('12', 'Addington', '19/3/2021', 'Oklahoma', '-97.917', '34.293', '15', 21),
+    ...record('13', 'Bentley', '26/3/2021', 'Lousiana', '-92.527', '31.547', '4.1', 41),
+    ...record('14', 'Candy Creek', '28/3/2021', 'Oklahoma', '-96.071', '36.563', '114.7', 56)
+  ]
+  const issues = new Set<string>()
+  const repairs: string[] = []
+  const unassigned = populateTableCellText({
+    cells,
+    items,
+    pageItems: items,
+    rows,
+    columnRects,
+    headerRows: [0],
+    rules: [],
+    bottom: 80,
+    issues,
+    repairs
+  })
+  expect(unassigned).toEqual([])
+  expect(issues).toEqual(new Set())
+  expect(repairs).toContain('sequential-record-row-recovered')
+  expect(
+    Array.from({ length: rows.length }, (_, row) =>
+      cells
+        .filter((cell) => cell.row === row)
+        .sort((a, b) => a.column - b.column)
+        .map((cell) => cell.text)
+    )
+  ).toContainEqual(['13 Bentley', '26/3/2021', 'Lousiana', '-92.527', '31.547', '4.1'])
+})
 
 it('recovers a compact record that crosses adjacent model bands', () => {
   const token = (text: string, x: number, y: number): Record<string, unknown> => ({
@@ -64,6 +235,230 @@ it('recovers a compact record that crosses adjacent model bands', () => {
   expect(result.grid).toContainEqual(['Alopecia', '', '12 (23.0)', '4 (7.6)', '1 (1.8)'])
   expect(result.unassigned).toEqual([])
   expect(result.repairs).toContain('compact-source-record-recovered')
+})
+
+it('assigns a complete unassigned data row to an existing empty model row', () => {
+  const source = fixture('unassigned-complete-model-row').items
+  const columnRects = [
+    [0, 0, 100, 60],
+    [100, 0, 300, 60],
+    [300, 0, 400, 60],
+    [400, 0, 500, 60],
+    [500, 0, 600, 60],
+    [600, 0, 700, 60],
+    [700, 0, 800, 60],
+    [800, 0, 900, 60]
+  ]
+  const rows = [0, 20, 30, 50].map((top, rowIndex) => ({
+    rect: [0, top, 900, [20, 30, 50, 60][rowIndex]],
+    origin: 'model'
+  }))
+  const cells = rows.flatMap((row, rowIndex) =>
+    columnRects.map((rect, column) => ({
+      row: rowIndex,
+      column,
+      rowSpan: 1,
+      colSpan: 1,
+      rect: [rect[0], row.rect[1], rect[2], row.rect[3]],
+      origin: 'model',
+      text: '',
+      items: []
+    }))
+  )
+  const neighbors = columnRects.flatMap((rect, column) => [
+    {
+      text: `P${column}`,
+      rect: [rect[0] + 10, 21, Math.min(rect[2] - 10, rect[0] + 30), 29],
+      baseline: 29,
+      height: 8,
+      horizontal: true
+    },
+    {
+      text: `N${column}`,
+      rect: [rect[0] + 10, 51, Math.min(rect[2] - 10, rect[0] + 30), 59],
+      baseline: 59,
+      height: 8,
+      horizontal: true
+    }
+  ])
+  const assignments = new Map<unknown, unknown>()
+  for (const item of neighbors) {
+    const row = item.baseline < 40 ? 1 : 3
+    const column = Number(item.text.slice(1))
+    assignments.set(
+      item,
+      cells.find((cell) => cell.row === row && cell.column === column)
+    )
+  }
+  const repairs: string[] = []
+  const recovered = recoverUnassignedCompleteModelRows({
+    items: [...source, ...neighbors],
+    cells,
+    rows,
+    columnRects,
+    headerRows: [0],
+    assignments,
+    ambiguousAssignments: new Set(),
+    repairs
+  })
+  expect(recovered).toBe(1)
+  expect(repairs).toContain('unassigned-complete-model-row-recovered')
+  expect(
+    source.map(
+      (item: { text: string }) => (assignments.get(item) as { column?: number } | undefined)?.column
+    )
+  ).toEqual([1, 2, 3, 4, 5, 6, 7])
+  expect(cells.filter((cell) => cell.row === 2)).toHaveLength(8)
+})
+
+it('splits a wide model row that contains two complete source baselines', () => {
+  const token = (text: string, x: number, y: number): Record<string, unknown> => ({
+    text,
+    rect: [x, y, x + Math.max(8, text.length * 4), y + 10],
+    baseline: y + 10,
+    height: 10,
+    horizontal: true
+  })
+  const columns = Array.from({ length: 8 }, (_, column) => ({
+    label: 'table column',
+    rect: [column * 100, 0, (column + 1) * 100, 100]
+  }))
+  const wideToken = (
+    text: string,
+    left: number,
+    right: number,
+    y: number
+  ): Record<string, unknown> => ({
+    text,
+    rect: [left, y, right, y + 10],
+    baseline: y + 10,
+    height: 10,
+    horizontal: true
+  })
+  const result = refineTable(
+    {
+      cropRect: [0, 0, 800, 100],
+      structure: {
+        objects: [
+          ...columns,
+          { label: 'table column header', rect: [0, 0, 800, 20] },
+          { label: 'table row', rect: [0, 0, 800, 20] },
+          { label: 'table row', rect: [0, 20, 800, 62] },
+          { label: 'table row', rect: [0, 62, 800, 84] }
+        ]
+      }
+    },
+    [
+      token('H0', 10, 5),
+      token('H1', 110, 5),
+      wideToken('MMLU HellaSwag WinoG', 200, 500, 5),
+      ...[5, 6, 7].map((column) => token(`H${column}`, column * 100 + 10, 5)),
+      ...[
+        ['Model A', '10', '20', '30', '40', '50', '60', '70'],
+        ['Model B', '11', '21', '31', '41', '51', '61', '71']
+      ].flatMap((record, row) =>
+        record.map((text, column) => token(text, column * 100 + 10, 28 + row * 14))
+      ),
+      ...['Model C', '12', '22', '32', '42', '52', '62', '72'].map((text, column) =>
+        token(text, column * 100 + 10, 68)
+      )
+    ],
+    [{ page: 1, lines: ['Table 1. Paired benchmarks'], rect: [0, -15, 160, -5] }],
+    [],
+    []
+  )
+  expect(result.grid).toContainEqual(['Model A', '10', '20', '30', '40', '50', '60', '70'])
+  expect(result.grid).toContainEqual(['Model B', '11', '21', '31', '41', '51', '61', '71'])
+  expect(result.grid[0].slice(2, 5)).toEqual(['MMLU', 'HellaSwag', 'WinoG'])
+  expect(result.unassigned).toEqual([])
+  expect(result.repairs).toContain('stacked-wide-record-rows-recovered')
+  expect(result.repairs).toContain('wide-source-run-split')
+})
+
+it('recovers clipped labels and body rows when a compact table keeps only its header', () => {
+  const token = (text: string, x: number, y: number): Record<string, unknown> => ({
+    text,
+    rect: [x, y, x + Math.max(8, text.length * 4), y + 10],
+    baseline: y + 10,
+    height: 10,
+    horizontal: true
+  })
+  const columns = Array.from({ length: 5 }, (_, column) => ({
+    label: 'table column',
+    rect: [column * 100, 0, (column + 1) * 100, 100]
+  }))
+  const result = refineTable(
+    {
+      cropRect: [100, 100, 600, 180],
+      structure: {
+        objects: [
+          ...columns,
+          { label: 'table row', rect: [0, 0, 500, 28] },
+          { label: 'table column header', rect: [0, 0, 500, 28] }
+        ]
+      }
+    },
+    [
+      token('Physical', 210, 105),
+      token('correctness', 310, 105),
+      token('Ordering', 410, 105),
+      token('Completeness', 510, 105),
+      token('Extracted tree', 95, 130),
+      token('4.12', 210, 130),
+      token('3.78', 310, 130),
+      token('3.86', 410, 130),
+      token('Corrupted tree', 95, 145),
+      token('2.23', 210, 145),
+      token('1.80', 310, 145),
+      token('2.40', 410, 145)
+    ],
+    [{ page: 1, lines: ['Table 5. Human evaluation'], rect: [100, 80, 260, 90] }],
+    [],
+    []
+  )
+  expect(result.grid).toContainEqual(['Extracted tree', '4.12', '3.78', '3.86', ''])
+  expect(result.grid).toContainEqual(['Corrupted tree', '2.23', '1.80', '2.40', ''])
+  expect(result.unassigned).toEqual([])
+  expect(result.repairs).toContain('clipped-simple-body-rows-recovered')
+})
+
+it('does not promote adjacent prose to compact body rows', () => {
+  const token = (text: string, x: number, y: number): Record<string, unknown> => ({
+    text,
+    rect: [x, y, x + Math.max(8, text.length * 4), y + 10],
+    baseline: y + 10,
+    height: 10,
+    horizontal: true
+  })
+  const result = refineTable(
+    {
+      cropRect: [100, 100, 500, 180],
+      structure: {
+        objects: [
+          ...Array.from({ length: 4 }, (_, column) => ({
+            label: 'table column',
+            rect: [column * 100, 0, (column + 1) * 100, 100]
+          })),
+          { label: 'table row', rect: [0, 0, 400, 28] },
+          { label: 'table column header', rect: [0, 0, 400, 28] }
+        ]
+      }
+    },
+    [
+      token('Metric', 210, 105),
+      token('Value', 310, 105),
+      token('Notes', 410, 105),
+      token('A short paragraph', 95, 130),
+      token('continues beside the table', 210, 130),
+      token('Another paragraph', 95, 145),
+      token('without numeric lanes', 210, 145)
+    ],
+    [{ page: 1, lines: ['Table 2. Nearby prose'], rect: [100, 80, 260, 90] }],
+    [],
+    []
+  )
+  expect(result.repairs).not.toContain('clipped-simple-body-rows-recovered')
+  expect(result.grid).toHaveLength(1)
 })
 
 it('recovers a detached confidence-interval parent above adjacent leaf headers', () => {

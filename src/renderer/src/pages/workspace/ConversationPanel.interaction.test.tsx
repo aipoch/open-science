@@ -1409,24 +1409,76 @@ describe('ConversationPanel composer errors', () => {
 })
 
 describe('ConversationPanel research starters', () => {
-  it('fills an empty draft without submitting or overwriting existing content', () => {
+  it('prepares and appends prompts while preserving structured draft content', () => {
     const changeDoc = vi.fn()
     const submit = vi.fn()
+    const starter = (): HTMLButtonElement =>
+      Array.from(container.querySelectorAll('button')).find(
+        (button) => button.textContent === 'Analyze data'
+      )!
     renderPanel({
       composer: { actions: { changeDoc } },
       conversation: { actions: { submit: { draft: submit } } }
     })
-    const starter = (): HTMLButtonElement | undefined =>
-      Array.from(container.querySelectorAll('button')).find(
-        (button) => button.textContent === 'Start research'
-      )
-    act(() => starter()?.click())
-    expect(changeDoc).toHaveBeenCalledWith(docFromText('Analyze my data'))
+    const form = container.querySelector('[data-testid="ordinary-composer-form"]')
+    act(() => starter().click())
+    expect(changeDoc).toHaveBeenCalledWith(
+      docFromText('Analyze my data and explain the main findings.')
+    )
+    const doc = {
+      nodes: [
+        { type: 'text' as const, text: 'Existing draft' },
+        { type: 'skill' as const, id: 's1', name: 'Skill' }
+      ]
+    }
+    renderPanel({ composer: { view: { doc }, actions: { changeDoc } } })
+    expect(container.querySelector('[data-testid="ordinary-composer-form"]')).toBe(form)
+    act(() => starter().click())
+    expect(changeDoc).toHaveBeenLastCalledWith({
+      nodes: [
+        ...doc.nodes,
+        { type: 'text', text: '\n\nAnalyze my data and explain the main findings.' }
+      ]
+    })
     expect(submit).not.toHaveBeenCalled()
-    renderPanel({ composer: { view: { doc: docFromText('Existing draft') } } })
-    expect(starter()).toBeUndefined()
     renderPanel({ view: { canEditDraft: false } })
-    expect(starter()).toBeUndefined()
+    expect(starter().disabled).toBe(true)
+  })
+
+  it('keeps one editor form through first send and returns to the start only for a new conversation', () => {
+    renderPanel({})
+    const form = container.querySelector('[data-testid="ordinary-composer-form"]')
+    const placement = (): string | null | undefined =>
+      container
+        .querySelector('[data-testid="conversation-composer-dock"]')
+        ?.getAttribute('data-placement')
+    expect(placement()).toBe('start')
+    renderPanel({
+      view: { actionError: 'Cannot send' },
+      composer: { view: { doc: docFromText('Draft') } }
+    })
+    expect(placement()).toBe('start')
+    const activeSession: ChatSession = {
+      id: 'sent',
+      projectId: 'project-a',
+      title: 'First message',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [],
+      createdAt: 1,
+      updatedAt: 2
+    }
+    renderPanel({ view: { activeSession } })
+    expect(placement()).toBe('bottom')
+    expect(container.querySelector('[data-testid="ordinary-composer-form"]')).toBe(form)
+    expect(container.querySelector('[data-testid="new-conversation-start"]')).toBeNull()
+    renderPanel({
+      view: { activeSession: { ...activeSession, status: 'error', error: 'Provider unavailable' } }
+    })
+    expect(placement()).toBe('bottom')
+    renderPanel({})
+    expect(placement()).toBe('start')
+    expect(container.querySelector('[data-testid="ordinary-composer-form"]')).toBe(form)
   })
 })
 
@@ -1479,6 +1531,10 @@ const hasDropOverlay = (): boolean =>
   container.textContent?.includes('Drop files to attach') ?? false
 
 beforeEach(() => {
+  vi.stubGlobal(
+    'matchMedia',
+    vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }))
+  )
   resizeCallbacks = []
   vi.stubGlobal(
     'ResizeObserver',
@@ -1761,6 +1817,9 @@ describe('ConversationPanel composer intake', () => {
     expect(bar?.textContent).toContain('third.pdf')
     expect(bar?.querySelector('[aria-label="Choose PDFs for Reading"]')).not.toBeNull()
     expect(bar?.querySelectorAll('[aria-label^="Open PDF context "]')).toHaveLength(3)
+    expect(
+      bar?.querySelectorAll('[aria-label^="Open PDF context "] [aria-hidden="true"] svg')
+    ).toHaveLength(3)
     // The page-position line is gone: the disclosure moved to the chip's tooltip.
     expect(bar?.textContent).not.toContain('Page')
     expect(bar?.textContent).not.toContain('Open the PDF')

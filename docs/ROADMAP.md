@@ -2,7 +2,7 @@
 
 Open-Science is an open-source, local-first AI research workbench. Researchers can move from literature and data to agent-assisted computation, inspectable results, and portable research records in one workspace, while choosing compatible models and compute infrastructure.
 
-This roadmap separates **available capabilities**, **remaining gaps**, and **possible future work**. It is a capability map, not a release log or a promise of delivery dates. The baseline below was reviewed against `main` on **2026-10-02**, with package version **0.35.0**. Some changes on `main` may not yet be in an installed release; consult the [release notes](https://github.com/aipoch/open-science/releases) for version-specific availability and the [README](README.md) for setup and a product tour.
+This roadmap separates **available capabilities**, **remaining gaps**, and **possible future work**. It is a capability map, not a release log or a promise of delivery dates. The baseline below was reviewed against `main` on **2026-10-02**, with package version **0.35.0**. Some changes on `main` may not yet be in an installed release; consult the [release notes](https://github.com/aipoch/open-science/releases) for version-specific availability and the [README](../README.md) for setup and a product tour.
 
 ## Table of Contents
 
@@ -52,7 +52,7 @@ Every **Available now** entry describes an implemented capability, not a guarant
 | Permissions and local data         | Scoped grants and revocation, approved local-folder access, network controls, centralized credentials, storage relocation/recovery, proxy settings, and selectable diagnostic exports.                                           | Protection varies by execution path and platform. Automated credential rotation and institutional policy/audit controls remain future work.                      |
 | Access and distribution            | Desktop installers for macOS, Windows and Linux (x64 and ARM64); signed macOS/Windows releases, macOS notarization, updates, onboarding, interface translations, localhost web, headless CLI/Task SDK, and paired mobile access. | Browser/CLI access does not imply desktop feature parity or a hosted multi-tenant service. Catalog and platform support follow the installed release.            |
 
-Implementation and product references: [current architecture](docs/PRD.md#8-current-architecture-what-is-actually-implemented), [workspace design](docs/design.md), [security boundaries](docs/security.md), and [CLI/SDK package](packages/open-science/README.md). The following distinctions matter when assessing what is complete.
+Implementation and product references: [current architecture](PRD.md#8-current-architecture-what-is-actually-implemented), [workspace design](design.md), [security boundaries](security.md), and [CLI/SDK package](../packages/open-science/README.md). The following distinctions matter when assessing what is complete.
 
 ## Important Capability Boundaries
 
@@ -64,7 +64,7 @@ These are three different claims:
 2. **Artifact replay checks are available.** In the desktop app, an eligible version with a complete recipe, required inputs, and usable runtime can run again in an isolated environment. Byte-exact, bounded image/table, and optional scientific comparisons report what matched in that check.
 3. **Deterministic whole-session reproduction remains open.** A recorded environment inventory or exported bundle is not a complete solver lock, and external services, system libraries, hardware, random processes, and uncaptured inputs can affect reconstruction. Matching output is not proof of a sound method or conclusion.
 
-RO-Crate export makes recorded provenance exchangeable; it does not strengthen evidence that was never captured. Generated code reconstruction is an aid to investigation, not the original producer record. See the [artifact implementation](src/main/artifacts/) and the [reproducibility case guide](docs/reproducibility-cases/README.md).
+RO-Crate export makes recorded provenance exchangeable; it does not strengthen evidence that was never captured. Generated code reconstruction is an aid to investigation, not the original producer record. See the [artifact implementation](../src/main/artifacts/) and the [reproducibility case guide](reproducibility-cases/README.md).
 
 ### Packages, forks, and environments
 
@@ -72,19 +72,19 @@ RO-Crate export makes recorded provenance exchangeable; it does not strengthen e
 - **Writable fork:** continue a copied research history under new identities without changing its source, including when starting from imported history. Local forks can copy bookmarks; side chats are excluded. Omitted or unavailable file evidence cannot be recreated by forking.
 - **Environment bundle:** export an artifact version's captured environment and import it as a managed environment when the bundle is complete and compatible with the target platform. Partial or wrong-platform bundles are not restorable. This is separate from exporting an arbitrary live runtime, importing any external lock file, or overwriting an existing environment; those broader operations remain open.
 
-These are implemented transfer workflows with bounded scope, not full machine backups. See the [session package implementation](src/main/session-package/) and [environment export/import checks](src/main/artifacts/artifact-reproducibility-export.test.ts).
+These are implemented transfer workflows with bounded scope, not full machine backups. See the [session package implementation](../src/main/session-package/) and [environment export/import checks](../src/main/artifacts/artifact-reproducibility-export.test.ts).
 
 ### Reading context and persistent notes
 
 Conversation annotations send selected evidence to the agent. Private bookmarks help a researcher return to a location. Persistent PDF annotations and document notebooks retain marks, comments and notes on the document; library attachments share their notebook across references, projects, and sessions. Annotated PDF export creates a separate file and preserves the source bytes.
 
-These capabilities already exist. Future interaction work concerns broader spatial editing and context composition, rather than introducing PDF annotation support for the first time. See [PDF annotation services](src/main/pdf-annotations/) and [smart collection behavior](src/main/literature/smart-collections.test.ts).
+These capabilities already exist. Future interaction work concerns broader spatial editing and context composition, rather than introducing PDF annotation support for the first time. See [PDF annotation services](../src/main/pdf-annotations/) and [smart collection behavior](../src/main/literature/smart-collections.test.ts).
 
 ### Framework, platform, and trust boundaries
 
 Model compatibility follows the chosen framework and endpoint protocol. Scenario-specific reviewer, subagent, vision, and classification settings provide routing choices today; they are not a universal gateway. Capability classification already helps select skills and connectors, while broader research-context discovery remains a direction for improvement.
 
-Approved folder access and scoped grants exist. Notebook/compute network protection restricts outbound access to defaults and approved destinations, with platform-specific requirements; Windows protected execution requires administrator setup. Windows WSL2 Bash remains an explicit opt-in preview. None of these controls implies identical sandbox coverage for every external tool or provider. See [data, permissions, and trust](README.md#data-permissions-and-trust) and [security guidance](docs/security.md).
+Approved folder access and scoped grants exist. Notebook/compute network protection restricts outbound access to defaults and approved destinations, with platform-specific requirements; Windows protected execution requires administrator setup. Windows WSL2 Bash remains an explicit opt-in preview. None of these controls implies identical sandbox coverage for every external tool or provider. See [data, permissions, and trust](../README.md#data-permissions-and-trust) and [security guidance](security.md).
 
 ## Delivery Phases
 
@@ -92,12 +92,12 @@ The earlier sequential Phase 0–5 model no longer describes delivery: capabilit
 
 ### Deepen the workflows already available
 
-| Direction                         | Existing foundation                                                                                                     | Useful next outcome                                                                                                                                                                                                            |
-| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Real research reproducibility     | Artifact checks, portable records, and the [Reproducibility Pilot](https://github.com/aipoch/open-science/issues/2725). | Curate rerun examples across Python/R and analysis types, document failures, and turn them into focused regression tests and guidance. See the [reviewed case index](docs/reproducibility-cases/index.md) for actual evidence. |
-| Daily reliability and scale       | Durable sessions, background jobs, recovery, large-library and long-conversation handling.                              | Expand representative restart, cancellation, large-data and cross-platform journeys; make unresolved recovery and missing evidence easier to understand.                                                                       |
-| Literature-to-analysis continuity | Smart screening, document notes, citations, extracted PDF structures, and library context.                              | Improve source/evidence navigation and extraction quality, with reviewed examples showing how screening decisions and downstream analysis retain their sources.                                                                |
-| Research capability quality       | Scientific connectors, skills, specialist packages, and existing classification.                                        | Broaden tested scientific workflows and upstream contract coverage; improve selection quality and explain why a capability is useful for a task.                                                                               |
+| Direction                         | Existing foundation                                                                                                     | Useful next outcome                                                                                                                                                                                                       |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Real research reproducibility     | Artifact checks, portable records, and the [Reproducibility Pilot](https://github.com/aipoch/open-science/issues/2725). | Curate rerun examples across Python/R and analysis types, document failures, and turn them into focused regression tests and guidance. See the [reviewed case index](reproducibility-cases/index.md) for actual evidence. |
+| Daily reliability and scale       | Durable sessions, background jobs, recovery, large-library and long-conversation handling.                              | Expand representative restart, cancellation, large-data and cross-platform journeys; make unresolved recovery and missing evidence easier to understand.                                                                  |
+| Literature-to-analysis continuity | Smart screening, document notes, citations, extracted PDF structures, and library context.                              | Improve source/evidence navigation and extraction quality, with reviewed examples showing how screening decisions and downstream analysis retain their sources.                                                           |
+| Research capability quality       | Scientific connectors, skills, specialist packages, and existing classification.                                        | Broaden tested scientific workflows and upstream contract coverage; improve selection quality and explain why a capability is useful for a task.                                                                          |
 
 ### Close the remaining portability and control gaps
 
@@ -140,7 +140,7 @@ The founding horizons remain useful as direction, not completion gates or a deli
 
 ## How to Contribute to This Roadmap
 
-Choose a remaining gap or a concrete failure in an existing workflow. Open an [issue](https://github.com/aipoch/open-science/issues) with the research use case, current behavior, proposed outcome, and an example that can be checked. Use [Discussions](https://github.com/aipoch/open-science/discussions) for unsettled product or architecture questions, and follow [CONTRIBUTING.md](CONTRIBUTING.md) for implementation and validation.
+Choose a remaining gap or a concrete failure in an existing workflow. Open an [issue](https://github.com/aipoch/open-science/issues) with the research use case, current behavior, proposed outcome, and an example that can be checked. Use [Discussions](https://github.com/aipoch/open-science/discussions) for unsettled product or architecture questions, and follow [CONTRIBUTING.md](../CONTRIBUTING.md) for implementation and validation.
 
 Keep this document maintainable:
 

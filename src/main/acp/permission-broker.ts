@@ -1465,6 +1465,19 @@ class AcpPermissionBroker {
         // Notification projection failures must never change the permission decision.
       }
       return Promise.resolve({
+        // Only the patched Claude adapter consumes this extension. Keep cancellation, app-owned
+        // approvals and unsupported adapters on their existing wire contract.
+        ...(reject && !pending.appOwned && pending.policyContext.frameworkId === 'claude-code'
+          ? {
+              _meta: {
+                'open-science/permission-denial': {
+                  version: 1,
+                  reason:
+                    'Permission prompts are disabled for this execution, so the host cannot request the approval required to run this tool.'
+                }
+              }
+            }
+          : {}),
         outcome: reject
           ? { outcome: 'selected', optionId: reject.optionId }
           : { outcome: 'cancelled' }

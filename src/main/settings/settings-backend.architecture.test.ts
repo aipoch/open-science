@@ -1550,7 +1550,8 @@ describe('Settings backend ownership architecture', () => {
       'src/main/session-persistence/turn-outcome-reconciliation.test.ts',
       'src/main/session-persistence/attention-projection.test.ts',
       'src/main/acp/approved-handoff-outcome.integration.test.ts',
-      'src/main/acp/approved-handoff-outcome.test.ts'
+      'src/main/acp/approved-handoff-outcome.test.ts',
+      'src/main/agent-framework/claude-shared-settings.integration.test.ts'
     ])
     expect(
       [

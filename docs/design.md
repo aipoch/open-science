@@ -1387,3 +1387,9 @@ discard becomes available; dismissal does not cancel or roll back a write. A suc
 returns to the Skills list without a discard prompt, while a failed or conflicting write retains the
 draft. Search clears its query and highlights the destination only after navigation is accepted.
 This protection does not add cross-restart autosave, a persisted draft format or a domain enum.
+
+### New conversation start
+
+- Group the heading, research starters and composer in one bounded start surface without a separate logo. Keep it visible while editing or staging files; place package import below as a secondary action.
+- Research starters use a native horizontal rail with circular arrows over faded edges, without reserving side columns. Hide each arrow at its boundary; a keyboard-focused arrow remains visible and aria-disabled until focus leaves. Use scroll padding to reveal focused items clear of the overlays. They prepare or append an editable prompt, never submit it. Preserve references, attachments and Reading context.
+- The first user message creates the active conversation and docks the same mounted editor at the bottom. Animate its position with a 200ms transform only; reduced motion docks immediately. Existing conversations remain docked. File staging and failed validation do not change the layout.

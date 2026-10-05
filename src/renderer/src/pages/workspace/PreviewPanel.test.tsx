@@ -1758,6 +1758,7 @@ describe('PreviewPanel', () => {
     expect(panel!.querySelector('textarea')).toBe(textarea)
     await act(async () => enterFullScreen())
     const viewMain = panel!.querySelector<HTMLButtonElement>('[aria-label="View main session"]')!
+    expect(viewMain.querySelector('svg.lucide-locate-fixed[aria-hidden="true"]')).not.toBeNull()
     await act(async () => viewMain.click())
     expect(openSession).toHaveBeenCalledWith('default', 'right-parent', 'user')
     expect(usePreviewWorkbenchStore.getState().expandedToolItemId).toBeNull()

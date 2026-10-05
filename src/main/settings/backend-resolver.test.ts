@@ -882,6 +882,34 @@ describe('AgentBackendResolver configured and explicit targets', () => {
     }
   })
 
+  it.each(['resolveActiveSpawnConfig', 'resolveActiveBackend'] as const)(
+    '%s isolates shared Claude settings while preserving the login directory',
+    async (method) => {
+      const provider: StoredProvider = {
+        id: 'claude-shared',
+        type: 'claude-shared',
+        name: 'Claude'
+      }
+      const harness = makeHarness({
+        settings: makeSettings({ providers: [provider], activeProviderId: provider.id })
+      })
+
+      const config = await harness.resolver[method]()
+
+      expect(config.sessionOptions).toMatchObject({
+        settingSources: [],
+        strictMcpConfig: true,
+        permissionMode: 'default',
+        settings: {
+          disableBundledSkills: true,
+          permissions: { deny: ['Read(//storage/claude-private/**)'] }
+        }
+      })
+      const env = 'envOverrides' in config ? config.envOverrides : config.env
+      expect(env).toHaveProperty('CLAUDE_CONFIG_DIR', '/user/.claude')
+    }
+  )
+
   it.each([
     {
       providerType: 'claude-shared' as const,

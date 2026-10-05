@@ -1,0 +1,3 @@
+[[],{}]
+[["page"],{"pageNumber":1,"width":600,"height":800,"invalidGraphicsBounds":0,"lines":[{"text":"Fig.2. Examples of grayscale panels: clean (a) and noisy versions with","x":60,"y":500,"width":360,"height":10,"fontSize":9},{"text":"noise = 2 % (b), noise = 30 % (c), and noise = 60 % (d)","x":60,"y":511,"width":360,"height":10,"fontSize":9}],"graphicsBounds":[{"kind":"image","normalizedRect":[0.1,0.05,0.35,0.25]},{"kind":"image","normalizedRect":[0.55,0.05,0.8,0.25]},{"kind":"image","normalizedRect":[0.1,0.3,0.35,0.5]},{"kind":"image","normalizedRect":[0.55,0.3,0.8,0.5]}]}]
+[["caption"],{"page":1,"lines":["noise = 2 % (b), noise = 30 % (c), and noise = 60 % (d)"],"rect":[60,500,540,522]}]

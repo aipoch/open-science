@@ -201,7 +201,7 @@ describe('release and scheduled workflow topology', () => {
       'src/main/notebook/input-registry.test.ts',
       'src/main/session-package/literature.test.ts',
       'src/main/session-plan/plan-context-file.test.ts',
-      'vitest.config.test.ts',
+      'test/config/vitest.config.test.ts',
       'scripts/ci/release-workflows.test.ts',
       'scripts/windows-release-workflows.test.ts',
       'src/main/database/database-null-and-version-bounds.test.ts',

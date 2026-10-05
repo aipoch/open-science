@@ -1,9 +1,553 @@
 import { expect, it } from 'vitest'
 import { pathToFileURL } from 'node:url'
 import { resolve } from 'node:path'
-const { refineTable } = await import(
+import { readPdfFixture } from './read-fixture'
+const {
+  refineTable,
+  recoverGroupedStubSourceRow,
+  recoverClippedSideBySideCrop,
+  recoverClippedLeftLabelCrop,
+  recoverClippedRightLabelCrop,
+  recoverRuledBottomBoundaryCrop,
+  recoverWideTableBottomCrop,
+  recoverCompleteTerminalSourceRowCrop
+} = await import(
   pathToFileURL(resolve('resources/pdf-structure/literature-pdf-table-refine.mjs')).href
 )
+const { rebaseTableCrop } = await import(
+  pathToFileURL(resolve('resources/pdf-structure/literature-pdf-table-geometry.mjs')).href
+)
+const {
+  recoverUnassignedStubSpans,
+  recoverUnassignedSlashScoreRows,
+  recoverUnassignedBracketIntervalRows,
+  recoverUnassignedRepeatedGroupLabels
+} = await import(
+  pathToFileURL(resolve('resources/pdf-structure/literature-pdf-table-cell-text.mjs')).href
+)
+
+it('stops a padded crop at an explicit ruled bottom before following prose', () => {
+  const table = model(3, [0, 20, 40, 60])
+  table.cropRect = [0, 0, 300, 70]
+  const items = [
+    item('A', 10, 16),
+    item('1', 110, 16),
+    item('B', 10, 36),
+    item('2', 110, 36),
+    ...['following', 'prose', 'starts', 'after', 'the', 'table'].map((text, index) =>
+      item(text, 10 + index * 25, 60, 20)
+    )
+  ]
+  expect(recoverRuledBottomBoundaryCrop(table, items, [[0, 55, 300, 55]])).toEqual([0, 0, 300, 57])
+})
+
+it('keeps an interior rule when a column-aligned data row follows it', () => {
+  const table = model(6, [0, 20, 40, 60, 80])
+  table.cropRect = [0, 0, 600, 70]
+  const items = [
+    ...Array.from({ length: 6 }, (_, column) => item(`Value ${column}`, column * 100 + 5, 16)),
+    ...Array.from({ length: 6 }, (_, column) => item(`Result ${column}`, column * 100 + 5, 60))
+  ]
+  expect(recoverRuledBottomBoundaryCrop(table, items, [[0, 55, 600, 55]])).toBeUndefined()
+})
+
+it('extends a wide table for a complete terminal row below the detector crop', () => {
+  const fixture = readPdfFixture(
+    resolve(
+      'src/main/literature/pdf-structure/fixtures/wide-terminal-row-below-detector-crop.jsonl'
+    )
+  )
+  const crop = recoverWideTableBottomCrop(fixture.table, fixture.items, [])
+  expect(crop?.[3]).toBeGreaterThan(112)
+  expect(crop?.slice(0, 3)).toEqual([0, 0, 800])
+})
+
+it('extends a narrow table when every terminal source-text cell crosses the crop edge', () => {
+  const fixture = readPdfFixture(
+    resolve('src/main/literature/pdf-structure/fixtures/complete-terminal-source-row-crop.jsonl')
+  )
+  const crop = recoverCompleteTerminalSourceRowCrop(fixture.table, fixture.items)
+  expect(crop?.[3]).toBeGreaterThan(100)
+  expect(crop?.slice(0, 3)).toEqual([0, 0, 500])
+})
+
+it('extends a raw detector crop from a complete terminal source row', () => {
+  const fixture = readPdfFixture(
+    resolve('src/main/literature/pdf-structure/fixtures/complete-terminal-source-row-crop.jsonl')
+  )
+  const table = structuredClone(fixture.table)
+  delete table.rows
+  delete table.cells
+  const crop = recoverCompleteTerminalSourceRowCrop(table, fixture.items)
+  expect(crop?.[3]).toBeGreaterThan(96)
+  expect(crop?.slice(0, 3)).toEqual([0, 0, 500])
+})
+
+it('extends outer model rows and columns when a crop grows', () => {
+  const table = {
+    cropRect: [0, 0, 200, 100],
+    structure: {
+      objects: [
+        { label: 'table column', rect: [0, 0, 100, 100] },
+        { label: 'table column', rect: [100, 0, 200, 100] },
+        { label: 'table row', rect: [0, 0, 200, 50] },
+        { label: 'table row', rect: [0, 50, 200, 100] }
+      ]
+    }
+  }
+  const rebased = rebaseTableCrop(table, [-20, -10, 230, 130], true)
+  expect(rebased.structure.objects).toContainEqual({
+    label: 'table column',
+    rect: [0, 10, 120, 110]
+  })
+  expect(rebased.structure.objects).toContainEqual({
+    label: 'table column',
+    rect: [120, 10, 250, 110]
+  })
+  expect(rebased.structure.objects).toContainEqual({ label: 'table row', rect: [20, 0, 220, 60] })
+  expect(rebased.structure.objects).toContainEqual({ label: 'table row', rect: [20, 60, 220, 140] })
+})
+
+it('recovers a clipped repeated group header without adding rows or columns', () => {
+  const columns = [0, 100, 200].map((start) => [start, 0, start + 100, 40])
+  const header = columns.map((rect, column) => ({
+    row: 0,
+    column,
+    rowSpan: 1,
+    colSpan: 1,
+    rect: [rect[0], 10, rect[2], 20],
+    text: ''
+  }))
+  const body = [1, 2].flatMap((row) =>
+    columns.map((rect, column) => ({
+      row,
+      column,
+      rowSpan: 1,
+      colSpan: 1,
+      rect: [rect[0], 20 + row * 10, rect[2], 30 + row * 10],
+      text: ''
+    }))
+  )
+  const rows = [{ rect: [0, 10, 300, 20] }, { rect: [0, 20, 300, 30] }, { rect: [0, 30, 300, 40] }]
+  const labels = [item('Alpha', 10, 0), item('Beta', 110, 0), item('Gamma', 210, 0)]
+  const values = [1, 2].flatMap((row) =>
+    columns.map((_, column) => item(String(row + column), column * 100 + 10, 20 + row * 10))
+  )
+  const assignments = new Map(values.map((value, index) => [value, body[index]]))
+  const repairs: string[] = []
+  expect(
+    recoverUnassignedRepeatedGroupLabels({
+      items: [...labels, ...values],
+      cells: [...header, ...body],
+      rows,
+      columnRects: columns,
+      headerRows: [0],
+      assignments,
+      repairs
+    })
+  ).toBe(3)
+  expect(assignments.get(labels[0])).toBe(header[0])
+  expect(rows).toHaveLength(3)
+  expect(header).toHaveLength(3)
+  expect(repairs).toContain('repeated-group-header-recovered')
+})
+
+it('expands both sides of a clipped side-by-side terminal table', () => {
+  const table = model(3, [0, 20, 40, 60, 80, 100, 120])
+  table.cropRect = [50, 0, 250, 120]
+  const items = [
+    ...Array.from({ length: 6 }, (_, row) => [
+      item(`Model ${row}`, 20, row * 18 + 3),
+      item(String(10 + row), 110, row * 18 + 3),
+      item(`Method ${row}`, 180, row * 18 + 3),
+      item(String(20 + row), 248, row * 18 + 3)
+    ]).flat(),
+    item('Final (Ours)', 20, 111),
+    item('99.0', 110, 111),
+    item('Final (Ours)', 180, 111),
+    item('100.0', 248, 111)
+  ]
+  const crop = recoverClippedSideBySideCrop(table, items)
+  expect(crop?.[0]).toBeLessThan(50)
+  expect(crop?.[2]).toBeGreaterThan(250)
+  expect(crop?.[3]).toBeGreaterThan(120)
+})
+
+it('does not merge a neighboring numeric panel into a table crop', () => {
+  const table = model(3, [0, 20, 40, 60, 80, 100, 120])
+  table.cropRect = [50, 0, 250, 120]
+  const items = [
+    ...Array.from({ length: 6 }, (_, row) => [
+      item(`Neighboring row ${row}`, 20, row * 18 + 3),
+      item(String(20 + row), 248, row * 18 + 3)
+    ]).flat()
+  ]
+  expect(recoverClippedSideBySideCrop(table, items)).toBeUndefined()
+})
+
+it('recovers short multiline labels clipped at the left table edge', () => {
+  const table = model(3, [0, 20, 40, 60, 80, 100])
+  table.cropRect = [50, 0, 250, 100]
+  const items = [
+    ...Array.from({ length: 4 }, (_, row) => [
+      item(`Label ${row}`, 42, row * 20 + 3),
+      item(String(10 + row), 110, row * 20 + 3),
+      item(String(20 + row), 210, row * 20 + 3)
+    ]).flat()
+  ]
+  const crop = recoverClippedLeftLabelCrop(table, items)
+  expect(crop?.[0]).toBeLessThan(50)
+  expect(crop?.[2]).toBe(250)
+})
+
+it('does not expand a crop for one neighboring prose line', () => {
+  const table = model(3, [0, 20, 40, 60, 80, 100])
+  table.cropRect = [50, 0, 250, 100]
+  const items = [
+    item('Neighboring prose', 42, 3),
+    item('10', 110, 23),
+    item('20', 210, 23),
+    item('30', 110, 43),
+    item('40', 210, 43)
+  ]
+  expect(recoverClippedLeftLabelCrop(table, items)).toBeUndefined()
+})
+
+it('does not expand a crop for prose lines without owned row values', () => {
+  const table = model(3, [0, 20, 40, 60])
+  table.cropRect = [50, 0, 250, 100]
+  const items = [item('Nearby note 0', 42, 3), item('Nearby note 1', 42, 23)]
+  expect(recoverClippedLeftLabelCrop(table, items)).toBeUndefined()
+})
+
+it('expands a narrow right-edge table when several terminal glyphs cross the crop', () => {
+  const table = model(2, [0, 20, 40, 60, 80, 100, 120])
+  table.cropRect = [550, 158, 695, 439]
+  const items = [
+    item('Value', 671, 164, 29),
+    item('0.15', 675, 375, 22),
+    item('0.45', 675, 405, 22),
+    item('6', 693, 419, 7)
+  ]
+  const crop = recoverClippedRightLabelCrop(table, items)
+  expect(crop?.[0]).toBe(550)
+  expect(crop?.[2]).toBeGreaterThan(699)
+  expect(crop?.[3]).toBe(439)
+})
+
+it('recovers the anonymous clipped terminal-column fixture', () => {
+  const fixture = readPdfFixture(
+    resolve('src/main/literature/pdf-structure/fixtures/clipped-right-terminal-column.jsonl')
+  )
+  const crop = recoverClippedRightLabelCrop(fixture.table, fixture.items)
+  expect(crop?.[2]).toBeGreaterThan(699)
+})
+
+it('does not expand a right edge for an isolated neighboring line', () => {
+  const table = model(2, [0, 20, 40, 60])
+  table.cropRect = [100, 0, 200, 80]
+  expect(recoverClippedRightLabelCrop(table, [item('neighbor', 198, 20, 20)])).toBeUndefined()
+})
+
+it('expands a right edge when terminal values carry an ASCII minus sign', () => {
+  const table = { cropRect: [0, 0, 160, 50] }
+  const items = [10, 25, 40].map((y) => item('-1.2', 150, y, 20))
+  expect(recoverClippedRightLabelCrop(table, items)?.[2]).toBeGreaterThan(160)
+})
+
+it('recovers an omitted first line of a grouped multiline stub', () => {
+  const table = model(3, [0, 20, 40, 60, 80, 100, 130])
+  const items = [
+    item('Subset', 5, 4),
+    item('Query', 105, 4),
+    item('Lake', 205, 4),
+    item('WikiTables', 5, 24),
+    item('10', 105, 24),
+    item('20', 205, 24),
+    item('MMQA', 5, 44),
+    item('30', 105, 44),
+    item('40', 205, 44),
+    item('NYC', 5, 64),
+    item('Tables: 70', 105, 64),
+    item('Tables: 2638', 205, 64),
+    item('Open Data', 5, 84),
+    item('Avg. Rows: 1015.2', 105, 84),
+    item('Avg. Rows: 856.8', 205, 84),
+    item('(Hybrid)', 5, 104),
+    item('Avg. Cols: 14.8', 105, 104),
+    item('Avg. Cols: 10.8', 205, 104)
+  ]
+  expect(recoverGroupedStubSourceRow(table, items)).toBe(true)
+  expect(
+    table.structure.objects
+      .filter((object) => object.label === 'table row')
+      .some((row) => row.rect[1] >= 60 && row.rect[1] < 70)
+  ).toBe(true)
+  const refined = refineTable(table, items)
+  expect(refined.repairs).toContain('grouped-stub-row-recovered')
+  expect(refined.grid).toContainEqual(['NYC', 'Tables: 70', 'Tables: 2638'])
+})
+
+it('recovers a centered row-spanning model stub over complete value rows', () => {
+  const rows = [0, 20, 40, 60].map((top, index) => ({
+    rect: [0, top, 300, top + 20],
+    origin: 'source-text',
+    index
+  }))
+  const cells = [] as Array<{
+    row: number
+    column: number
+    rowSpan: number
+    colSpan: number
+    rect: number[]
+  }>
+  for (let row = 0; row < 4; row++)
+    for (let column = 0; column < 3; column++)
+      cells.push({
+        row,
+        column,
+        rowSpan: 1,
+        colSpan: 1,
+        rect: [column * 100, row * 20, (column + 1) * 100, row * 20 + 20]
+      })
+  const stub = item('pMF-L/32', 5, 38, 40)
+  const valueItems = [
+    item('42.9', 105, 24),
+    item('20', 205, 24),
+    item('157.7', 105, 44),
+    item('6', 205, 44)
+  ]
+  const assignments = new Map([
+    [valueItems[0], cells[4]],
+    [valueItems[1], cells[5]],
+    [valueItems[2], cells[7]],
+    [valueItems[3], cells[8]]
+  ])
+  const repairs: string[] = []
+  expect(
+    recoverUnassignedStubSpans({
+      items: [stub, ...valueItems],
+      cells,
+      rows,
+      headerRows: [0],
+      assignments,
+      repairs
+    })
+  ).toBe(1)
+  const merged = cells.find((cell) => cell.column === 0 && cell.rowSpan === 2)
+  expect(merged?.row).toBe(1)
+  expect(assignments.get(stub)).toBe(merged)
+  expect(repairs).toContain('unassigned-stub-row-span-recovered')
+})
+
+it('splits two complete slash-score runs into empty leading lanes', () => {
+  const rows = [0, 20, 40].map((top, index) => ({
+    rect: [0, top, 900, top + 20],
+    origin: index === 0 ? 'model' : 'source-text',
+    index
+  }))
+  type SlashCell = { row: number; column: number; rowSpan: number; colSpan: number; rect: number[] }
+  const cells: SlashCell[] = Array.from({ length: 3 }, (_, row) =>
+    Array.from({ length: 9 }, (_, column) => ({
+      row,
+      column,
+      rowSpan: 1,
+      colSpan: 1,
+      rect: [column * 100, row * 20, (column + 1) * 100, row * 20 + 20]
+    }))
+  ).flat()
+  const runs = [
+    item('88.8/66.3 81.1/58.4 86.4/64.9 74.8/54.0', 105, 22, 390),
+    item('88.7/65.9 81.7/58.6 86.4/64.5 75.6/54.3', 105, 42, 390)
+  ]
+  const pair = (
+    source: ReturnType<typeof item>,
+    cell: SlashCell
+  ): [ReturnType<typeof item>, SlashCell] => [source, cell]
+  const assigned: [ReturnType<typeof item>, SlashCell][] = [
+    ...[1, 2].flatMap((row) => [
+      pair(item(`Method ${row}`, 5, row * 20 + 2), cells[row * 9]),
+      ...[5, 6, 7, 8].map((column) =>
+        pair(item(String(80 + column), column * 100 + 10, row * 20 + 2), cells[row * 9 + column])
+      )
+    ])
+  ]
+  const assignments = new Map(assigned)
+  const repairs: string[] = []
+  expect(
+    recoverUnassignedSlashScoreRows({
+      items: [...runs, ...assigned.map(([source]) => source)],
+      cells,
+      rows,
+      columnRects: Array.from({ length: 9 }, (_, column) => [
+        column * 100,
+        0,
+        (column + 1) * 100,
+        60
+      ]),
+      headerRows: [0],
+      assignments,
+      ambiguousAssignments: new Set(),
+      repairs
+    })
+  ).toBe(2)
+  expect(repairs).toContain('wide-slash-score-rows-recovered')
+  expect(
+    [...assignments.values()].filter((cell) => cell.column >= 1 && cell.column <= 4)
+  ).toHaveLength(8)
+})
+
+it('merges complete bracket confidence subrows into their primary cells', () => {
+  const rows = [0, 20, 30, 45, 55, 70, 80].map((top, index) => ({
+    rect: [0, top, 800, top + (index === 0 ? 20 : 10)],
+    origin: index === 0 ? 'model' : 'source-text',
+    index
+  }))
+  const cells = rows.flatMap((row, rowIndex) => {
+    const columns = [0, 1, 2, 3, 4, 5, 6, 7].filter(
+      (column) => ![2, 4, 6].includes(rowIndex) || (column >= 2 && column <= 6)
+    )
+    return columns.map((column) => ({
+      row: rowIndex,
+      column,
+      rowSpan: 1,
+      colSpan: 1,
+      rect: [column * 100, row.rect[1], (column + 1) * 100, row.rect[3]]
+    }))
+  })
+  const items = [] as ReturnType<typeof item>[]
+  const assignments = new Map<ReturnType<typeof item>, (typeof cells)[number]>()
+  const intervalRows: ReturnType<typeof item>[][] = []
+  for (const rowIndex of [1, 3, 5]) {
+    for (const column of [0, 1, 2, 3, 4, 5, 6, 7]) {
+      const source = item(
+        column === 0 ? `Dataset ${rowIndex}` : column === 7 ? '−0.03' : '0.80',
+        column * 100 + 10,
+        rows[rowIndex].rect[1] + 1
+      )
+      items.push(source)
+      assignments.set(
+        source,
+        cells.find((cell) => cell.row === rowIndex && cell.column === column)!
+      )
+    }
+  }
+  for (const rowIndex of [2, 4, 6]) {
+    const intervalRow: ReturnType<typeof item>[] = []
+    for (const column of [2, 3, 4, 5, 6]) {
+      const source = item(
+        `[0.${column}0, 0.${column + 1}0]`,
+        column * 100 + 20,
+        rows[rowIndex].rect[1] + 1,
+        60
+      )
+      items.push(source)
+      intervalRow.push(source)
+      if (rowIndex !== 2)
+        assignments.set(
+          source,
+          cells.find((cell) => cell.row === rowIndex && cell.column === column)!
+        )
+    }
+    intervalRows.push(intervalRow)
+  }
+  const repairs: string[] = []
+  expect(
+    recoverUnassignedBracketIntervalRows({
+      items,
+      cells,
+      rows,
+      columnRects: Array.from({ length: 8 }, (_, column) => [
+        column * 100,
+        0,
+        (column + 1) * 100,
+        100
+      ]),
+      headerRows: [0],
+      assignments,
+      ambiguousAssignments: new Set(),
+      repairs,
+      captions: [{ lines: ['Table 1. Sensitivity.'] }]
+    })
+  ).toBe(3)
+  expect(repairs).toContain('bracket-ci-subrows-recovered')
+  expect(intervalRows[0].every((source) => assignments.get(source)?.row === 1)).toBe(true)
+  expect(intervalRows[1].every((source) => assignments.get(source)?.row === 3)).toBe(true)
+  expect(intervalRows[2].every((source) => assignments.get(source)?.row === 5)).toBe(true)
+})
+
+it('splits a wide bracket confidence run by its five x lanes', () => {
+  const rows = [0, 20, 30, 45, 55, 70, 80].map((top, index) => ({
+    rect: [0, top, 800, top + (index === 0 ? 20 : 10)],
+    origin: index === 0 ? 'model' : 'source-text',
+    index
+  }))
+  const cells = rows.flatMap((row, rowIndex) => {
+    const columns = [0, 1, 2, 3, 4, 5, 6, 7].filter(
+      (column) => ![2, 4, 6].includes(rowIndex) || (column >= 2 && column <= 6)
+    )
+    return columns.map((column) => ({
+      row: rowIndex,
+      column,
+      rowSpan: 1,
+      colSpan: 1,
+      rect: [column * 100, row.rect[1], (column + 1) * 100, row.rect[3]]
+    }))
+  })
+  const items = [] as ReturnType<typeof item>[]
+  const assignments = new Map<ReturnType<typeof item>, (typeof cells)[number]>()
+  for (const rowIndex of [1, 3, 5]) {
+    for (const column of [0, 1, 2, 3, 4, 5, 6, 7]) {
+      const source = item(
+        column === 0 ? `Dataset ${rowIndex}` : column === 7 ? '−0.03' : '0.80',
+        column * 100 + 10,
+        rows[rowIndex].rect[1] + 1
+      )
+      items.push(source)
+      assignments.set(
+        source,
+        cells.find((cell) => cell.row === rowIndex && cell.column === column)!
+      )
+    }
+  }
+  const wideRuns = [
+    '[0.60, 0.70] [0.61, 0.71] [0.62, 0.72] [0.63, 0.73] [0.64, 0.74]',
+    '[0.70, 0.80] [0.71, 0.81] [0.72, 0.82] [0.73, 0.83] [0.74, 0.84]',
+    '[0.80, 0.90] [0.81, 0.91] [0.82, 0.92] [0.83, 0.93] [0.84, 0.94]'
+  ]
+  const wideSources = [2, 4, 6].map((rowIndex, index) => {
+    const source = item(wideRuns[index], 200, rows[rowIndex].rect[1] + 1, 500)
+    items.push(source)
+    return source
+  })
+  const repairs: string[] = []
+  expect(
+    recoverUnassignedBracketIntervalRows({
+      items,
+      cells,
+      rows,
+      columnRects: Array.from({ length: 8 }, (_, column) => [
+        column * 100,
+        0,
+        (column + 1) * 100,
+        100
+      ]),
+      headerRows: [0],
+      assignments,
+      ambiguousAssignments: new Set(),
+      repairs,
+      captions: [{ lines: ['Table 1. Sensitivity.'] }]
+    })
+  ).toBe(3)
+  expect(repairs).toContain('bracket-ci-subrows-recovered')
+  expect(wideSources.every((source) => !items.includes(source))).toBe(true)
+  expect(
+    items
+      .filter((source) => source.text.startsWith('['))
+      .map((source) => assignments.get(source)?.row)
+  ).toEqual([1, 1, 1, 1, 1, 3, 3, 3, 3, 3, 5, 5, 5, 5, 5])
+})
+
 const { recoverThresholdSweepGrid } = await import(
   pathToFileURL(resolve('resources/pdf-structure/literature-pdf-record-grid.mjs')).href
 )
@@ -40,6 +584,27 @@ const model = (
     ]
   }
 })
+
+it('keeps a ruled numeric table with no textual header rows safe', () => {
+  const table = model(4, [0, 20, 40, 60, 80, 100, 120, 140, 160, 180, 200]),
+    items = Array.from({ length: 12 }, (_, row) =>
+      Array.from({ length: 4 }, (_, column) =>
+        item(String(column + 1), column * 100 + 5, 24 + row * 10)
+      )
+    ).flat(),
+    captions = [{ lines: ['Table 1. Numeric values'], rect: [0, -20, 160, -10] }],
+    rules = [
+      [0, 20, 400, 20],
+      [0, 22, 400, 22],
+      [0, 24, 400, 24],
+      [0, 180, 400, 180]
+    ]
+
+  const result = refineTable(table, items, captions, [], rules)
+  expect(result.grid.length).toBeGreaterThanOrEqual(10)
+  expect(result.grid[0]).toEqual(['1', '2', '3', '4'])
+})
+
 it('anchors a raised full-em footnote to its header only with an independent note', () => {
   const table = model(2, [0, 25, 50]),
     items = [

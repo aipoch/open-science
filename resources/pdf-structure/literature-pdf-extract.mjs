@@ -46,7 +46,10 @@ import {
   splitCaptionedTableRegions,
   recoverCaptionedRuledTables
 } from './literature-pdf-table-refine.mjs'
-import { deduplicateTableRegions } from './literature-pdf-table-regions.mjs'
+import {
+  deduplicateTableRegions,
+  narrativeDuplicateTableIndices
+} from './literature-pdf-table-regions.mjs'
 import {
   splitRuledComparisonSections,
   groupRuledComparisonSections
@@ -1009,8 +1012,31 @@ try {
           nativeFigureTokens
         )
       ].filter((f) => f.rect)
+      const captionedTableIndices = new Set(
+        associations.flatMap((association, index) => (association.caption ? [index] : []))
+      )
+      for (const [index, table] of refined.entries()) {
+        const crop = table?.cropRect
+        if (!crop) continue
+        const hasNearbyCaption = pageCaptions.some((caption) => {
+          if (captionKind(caption.lines?.[0]) !== 'table' || !caption.rect) return false
+          const overlap = Math.min(caption.rect[2], crop[2]) - Math.max(caption.rect[0], crop[0])
+          const width = Math.min(caption.rect[2] - caption.rect[0], crop[2] - crop[0])
+          if (overlap / Math.max(1, width) < 0.5) return false
+          const aboveGap = crop[1] - caption.rect[3]
+          return (
+            (aboveGap >= -2 && aboveGap <= 36) ||
+            (caption.rect[1] >= crop[1] && caption.rect[3] <= crop[3])
+          )
+        })
+        if (hasNearbyCaption) captionedTableIndices.add(index)
+      }
+      const narrativeDuplicates = narrativeDuplicateTableIndices(refined, {
+        captionedIndices: captionedTableIndices
+      })
       const acceptedTables = refined.map(
         (table, index) =>
+          !narrativeDuplicates.has(index) &&
           !isExternalAttachmentTableRegion(table, tokens, rules, associations[index].caption) &&
           !isNativeAuthorAffiliationRegion(
             table,
@@ -1339,6 +1365,15 @@ try {
       }
       for (const [index, candidate] of pageFigures.entries()) {
         const id = `p${pageNumber}-figure-${index + 1}`
+        const resolvedCaption = resolveFigureCaption(candidate.caption, captions, geometry.pages)
+        const serializedCaption = candidate.captionLines
+          ? {
+              ...(resolvedCaption ?? candidate.caption),
+              lines: candidate.captionLines,
+              rect: candidate.captionRect ?? candidate.caption?.rect
+            }
+          : resolvedCaption
+        const captionRect = serializedCaption?.rect ?? candidate.caption?.rect
         // Advance boxes can miss glyph ink at an edge. Match the earlier diagnostic's 2px guard,
         // bounded by the page and the caption; publish the same expanded region used by the crop.
         const rect = candidate.rect && [
@@ -1347,15 +1382,15 @@ try {
             0,
             candidate.rect[1] - 2 / scale,
             nativeProseInkTopLimit(candidate, nativeFigureTokens),
-            candidate.caption?.page === pageNumber && candidate.caption.rect[3] <= candidate.rect[1]
-              ? candidate.caption.rect[3] + 0.5
+            serializedCaption?.page === pageNumber && captionRect?.[3] <= candidate.rect[1]
+              ? captionRect[3] + 0.5
               : 0
           ),
           Math.min(pageGeometry.width, candidate.rect[2] + 2 / scale),
           Math.min(
             pageGeometry.height,
-            candidate.caption?.page === pageNumber && candidate.caption.rect[1] >= candidate.rect[3]
-              ? candidate.caption.rect[1] - 0.5
+            serializedCaption?.page === pageNumber && captionRect?.[1] >= candidate.rect[3]
+              ? captionRect[1] - 0.5
               : pageGeometry.height,
             candidate.rect[3] + 2 / scale
           )
@@ -1363,7 +1398,7 @@ try {
         figures.push({
           id,
           page: pageNumber,
-          caption: captionValue(resolveFigureCaption(candidate.caption, captions, geometry.pages)),
+          caption: captionValue(serializedCaption),
           region: rect ? normalize(rect, pageGeometry.width, pageGeometry.height) : undefined,
           thumbnail: rect ? await crop(rect, id) : undefined,
           issue: candidate.issue ?? candidate.reason,

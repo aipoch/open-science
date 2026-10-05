@@ -1668,7 +1668,26 @@
     "resources/pdf-structure/literature-pdf-wrapped-mean-se.mjs",
     "src/main/literature/pdf-structure/caption-boundary-crop.test.ts",
     "src/main/literature/pdf-structure/native-front-matter.test.ts",
-    "src/main/literature/pdf-structure/wrapped-mean-se.test.ts"
+    "src/main/literature/pdf-structure/wrapped-mean-se.test.ts",
+    "src/main/literature/pdf-structure/fixtures/clipped-right-terminal-column.jsonl",
+    "src/main/literature/pdf-structure/fixtures/complete-terminal-source-row-crop.jsonl",
+    "src/main/literature/pdf-structure/fixtures/source-grids/caption-after-stacked-framed-raster.jsonl",
+    "src/main/literature/pdf-structure/fixtures/source-grids/caption-before-stacked-framed-raster.jsonl",
+    "src/main/literature/pdf-structure/fixtures/source-grids/captioned-dual-panel-four-row-raster.jsonl",
+    "src/main/literature/pdf-structure/fixtures/source-grids/captioned-raster-moderate-gap.jsonl",
+    "src/main/literature/pdf-structure/fixtures/source-grids/captioned-raster-quad.jsonl",
+    "src/main/literature/pdf-structure/fixtures/source-grids/captioned-ui-raster-text-panel.jsonl",
+    "src/main/literature/pdf-structure/fixtures/source-grids/captioned-vector-grid.jsonl",
+    "src/main/literature/pdf-structure/fixtures/source-grids/captioned-vector-stage-diagram.jsonl",
+    "src/main/literature/pdf-structure/fixtures/source-grids/fragmented-lettered-raster-plate.jsonl",
+    "src/main/literature/pdf-structure/fixtures/source-grids/framed-vector-prompt-card.jsonl",
+    "src/main/literature/pdf-structure/fixtures/source-grids/lettered-contents-directory.jsonl",
+    "src/main/literature/pdf-structure/fixtures/source-grids/unassigned-complete-model-row.jsonl",
+    "src/main/literature/pdf-structure/fixtures/source-grids/vector-success-heatmap.jsonl",
+    "src/main/literature/pdf-structure/fixtures/source-grids/wide-raster-with-unrelated-paths.jsonl",
+    "src/main/literature/pdf-structure/fixtures/source-grids/workflow-screenshot-trajectory.jsonl",
+    "src/main/literature/pdf-structure/fixtures/wide-terminal-row-below-detector-crop.jsonl",
+    "src/main/literature/pdf-structure/table-rotated-header-bottom-crop.test.ts"
   ],
   "interfacePaths": [
     "src/main/literature/command-owner.ts",
@@ -2183,7 +2202,8 @@
       "src/main/literature/pdf-structure/table-batch06-normalization.test.ts",
       "src/main/literature/pdf-structure/caption-boundary-crop.test.ts",
       "src/main/literature/pdf-structure/native-front-matter.test.ts",
-      "src/main/literature/pdf-structure/wrapped-mean-se.test.ts"
+      "src/main/literature/pdf-structure/wrapped-mean-se.test.ts",
+      "src/main/literature/pdf-structure/table-rotated-header-bottom-crop.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

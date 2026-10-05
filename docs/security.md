@@ -175,6 +175,6 @@ Stable releases publish SHA-256 checksums and signed SLSA provenance for install
 verification workflow.
 
 Known security-hardening work is tracked in the
-[Roadmap capability map](../ROADMAP.md#capability-map). A documented boundary can still
+[Roadmap capability map](ROADMAP.md#capability-map). A documented boundary can still
 contain a vulnerability when an implemented control is bypassed or the resulting impact
 exceeds the authority the user granted.

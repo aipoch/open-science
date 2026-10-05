@@ -703,6 +703,13 @@ describe('pull request change classification', () => {
   it.each([
     'package-lock.json',
     'vitest.config.ts',
+    'test/config/vitest.config.test.ts',
+    'test/config/electron.vite.config.test.ts',
+    'test/config/playwright.config.test.ts',
+    'test/config/vite.browser-test.config.test.ts',
+    'e2e/playwright.browser.config.ts',
+    'e2e/playwright.accessibility.config.ts',
+    'e2e/vite.browser-test.config.ts',
     'scripts/ci/change-impact.json',
     '.github/workflows/pr-gate.yml'
   ])('selects the declared full plan for global gate input %s', (path) => {

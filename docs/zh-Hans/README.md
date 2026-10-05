@@ -336,7 +336,7 @@ AIPOCH Open-Science 通过 GitHub、Discord、X 和 AIPOCH 网站接收缺陷报
 
 > ⭐ **Star 仓库：** 如果本项目对你有帮助，欢迎在 GitHub 上 Star。Star 仓库可以鼓励项目持续开发，只需片刻，却会对项目产生切实影响。
 
-已交付、部分实现和计划能力见[能力地图](../../ROADMAP.md#capability-map)。
+已交付、部分实现和计划能力见[能力地图](../ROADMAP.md#capability-map)。
 
 ## 许可证
 

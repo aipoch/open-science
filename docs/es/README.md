@@ -337,7 +337,7 @@ Antes de abrir una incidencia pública, elimine de los registros y las capturas 
 
 > **Dar Star al repositorio:** Si este proyecto le ha resultado útil, agradeceríamos que le diera Star en GitHub. Ayuda a sostener el desarrollo y solo lleva un segundo.
 
-Las capacidades entregadas, parciales y previstas aparecen en el [mapa de capacidades](../../ROADMAP.md#capability-map).
+Las capacidades entregadas, parciales y previstas aparecen en el [mapa de capacidades](../ROADMAP.md#capability-map).
 
 ## Licencia
 

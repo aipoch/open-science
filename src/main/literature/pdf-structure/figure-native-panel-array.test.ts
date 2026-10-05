@@ -64,6 +64,28 @@ it('does not use a noncentered Continue marker to own distant raster panels', ()
   const f = associateFigures(page, [caption(['Figure 8. Continue'], [40, 646, 120, 655])])[0]
   expect(f.rect).toBeUndefined()
 })
+
+it('recovers two same-row raster panels when the first association leaves the caption unresolved', () => {
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    rotation: 0,
+    invalidGraphicsBounds: 0,
+    lines: [],
+    graphicsBounds: [
+      [70, 110, 300, 360],
+      [305, 110, 535, 360]
+    ].map((r) => graphic(r, 'image'))
+  }
+  const result = associateFigures(page, [
+    caption(['Figure 9. Paired plots.'], [70, 372, 535, 392])
+  ])[0]
+  expect(result.rect).toHaveLength(4)
+  result.rect.forEach((value: number, index: number) =>
+    expect(value).toBeCloseTo([70, 110, 535, 360][index])
+  )
+})
 const arrayInput = (): {
   page: {
     pageNumber: number

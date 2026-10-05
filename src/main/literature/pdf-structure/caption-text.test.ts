@@ -18,6 +18,7 @@ it('recognizes manuscript legend headings without treating past-tense references
   expect(captionKind('Legend to Fig. 2. Response over time.')).toBe('figure')
   expect(captionKind('Figure 4 illustrated the distribution of values.')).toBeUndefined()
   expect(captionKind('Figure 4 depicted the change over time.')).toBeUndefined()
+  expect(captionKind('Figure 4 aggregates results separately within each suite.')).toBe('figure')
 })
 
 it('keeps noun-phrase figure titles distinct from finite-verb references', () => {

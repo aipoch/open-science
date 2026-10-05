@@ -460,6 +460,696 @@ export function constrainCaptionLaneCrop(table, detectorCrop, captions = []) {
     : table
 }
 
+// Wide native tables can lose their last record when the detector closes at
+// the second-to-last baseline. A complete numeric source row followed by one
+// full-width native closing rule is sufficient to extend the crop. Requiring
+// many columns and rejecting prose keeps this from absorbing the next block.
+export function recoverWideTableBottomCrop(table, pageItems, rules) {
+  const crop = table?.cropRect
+  const columns = table?.structure?.objects
+    ?.filter((object) => object.label === 'table column')
+    .sort((a, b) => a.rect[0] - b.rect[0])
+  if (!crop || !columns || columns.length < 8) return
+  const widths = crop[2] - crop[0]
+  const heights = pageItems
+    .map((item) => item.height)
+    .filter((height) => Number.isFinite(height) && height > 0)
+    .sort((a, b) => a - b)
+  const height = heights[Math.floor(heights.length / 2)]
+  if (!(height > 0) || widths <= 0) return
+  const candidates = pageItems.filter(
+    (item) =>
+      item.horizontal &&
+      item.rect[0] < crop[2] + height &&
+      item.rect[2] > crop[0] - height &&
+      item.rect[1] >= crop[3] - height * 0.35 &&
+      item.rect[1] <= crop[3] + height * 4 &&
+      item.rect[3] > crop[3] - height * 0.1
+  )
+  const groups = []
+  for (const item of candidates.sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])) {
+    const group = groups.at(-1)
+    if (group && Math.abs(group[0].baseline - item.baseline) <= height * 0.3) group.push(item)
+    else groups.push([item])
+  }
+  const complete = groups
+    .map((group) => ({
+      group,
+      numeric: group.filter((item) => /\d/u.test(item.text)).length,
+      left: Math.min(...group.map((item) => item.rect[0])),
+      right: Math.max(...group.map((item) => item.rect[2])),
+      bottom: Math.max(...group.map((item) => item.rect[3]))
+    }))
+    .filter(
+      ({ group, numeric, left, right }) =>
+        numeric >= Math.max(4, Math.ceil(columns.length * 0.5)) &&
+        right - left >= widths * 0.7 &&
+        group.length >= Math.max(5, Math.ceil(columns.length * 0.6))
+    )
+  if (!complete.length) return
+  const last = complete.at(-1)
+  const closing = joinHorizontalTableRules(rules)
+    .filter(
+      (rule) =>
+        rule[1] > last.bottom &&
+        rule[1] - last.bottom <= height * 1.8 &&
+        rule[0] <= crop[0] + height &&
+        rule[2] >= crop[2] - height &&
+        rule[2] - rule[0] >= widths * 0.8
+    )
+    .sort((a, b) => a[1] - b[1])[0]
+  // Some PDFs place the closing rule after the detector crop, so the rule
+  // never reaches the source-rule list.  A complete, numeric terminal row
+  // immediately below the crop is still safe to include: require a wide
+  // table, coverage across most columns, and a short record-like line so a
+  // neighboring prose paragraph cannot expand the table.
+  if (!closing) {
+    const extension = last.bottom - crop[3]
+    const text = last.group.map((item) => item.text).join(' ')
+    const letters = (text.match(/\p{L}/gu) ?? []).length
+    if (
+      extension > 0 &&
+      extension <= height * 1.6 &&
+      last.group.length >= Math.max(6, Math.ceil(columns.length * 0.7)) &&
+      last.numeric >= Math.max(4, Math.ceil(columns.length * 0.5)) &&
+      letters <= 60
+    )
+      return [crop[0], crop[1], crop[2], last.bottom + Math.min(1.5, height * 0.2)]
+    return
+  }
+  const between = pageItems.filter(
+    (item) =>
+      item.horizontal &&
+      item.rect[1] >= crop[3] - height * 0.2 &&
+      item.rect[3] <= closing[1] + height * 0.1 &&
+      item.rect[0] < crop[2] &&
+      item.rect[2] > crop[0] &&
+      !last.group.includes(item)
+  )
+  if (
+    between.some((item) => /\p{L}{4}/u.test(item.text) && !/^[A-Za-z]+[-/]?\d*$/u.test(item.text))
+  )
+    return
+  const bottom = Math.min(closing[1] + 1.5, Math.max(crop[3], closing[1] + height * 0.35))
+  return bottom > crop[3] ? [crop[0], crop[1], crop[2], bottom] : undefined
+}
+
+// A narrow source-text table can lose only the bottom of its final row when
+// the detector closes a few pixels early.  Extend the crop only when the
+// terminal row is explicitly represented in every predicted column; this
+// preserves the grid and cell semantics while recovering the missing ink.
+export function recoverCompleteTerminalSourceRowCrop(table, pageItems) {
+  const crop = table?.cropRect
+  const rows = table?.rows
+  const cells = table?.cells
+  const columns = table?.structure?.objects?.filter((object) => object.label === 'table column')
+  if (!crop || !columns?.length) return
+  if (!Array.isArray(rows) || !Array.isArray(cells)) {
+    const width = crop[2] - crop[0]
+    const height = crop[3] - crop[1]
+    if (!(width > 0 && height > 0)) return
+    const absoluteColumns = columns.map((column) => [
+      column.rect[0] + crop[0],
+      column.rect[1] + crop[1],
+      column.rect[2] + crop[0],
+      column.rect[3] + crop[1]
+    ])
+    const heights = (pageItems ?? [])
+      .map((item) => item.height)
+      .filter((value) => Number.isFinite(value) && value > 0)
+      .sort((a, b) => a - b)
+    const lineHeight = heights[Math.floor(heights.length / 2)]
+    if (!(lineHeight > 0)) return
+    const source = (pageItems ?? []).filter(
+      (item) =>
+        item.horizontal &&
+        item.rect[1] < crop[3] + lineHeight * 1.6 &&
+        item.rect[3] > crop[3] - lineHeight * 0.4 &&
+        item.rect[0] < crop[2] &&
+        item.rect[2] > crop[0] &&
+        item.text.trim()
+    )
+    const groups = []
+    const baselineOf = (item) => (Number.isFinite(item.baseline) ? item.baseline : item.rect[3])
+    for (const item of source.sort(
+      (a, b) => baselineOf(a) - baselineOf(b) || a.rect[0] - b.rect[0]
+    )) {
+      const group = groups.at(-1)
+      if (group && Math.abs(baselineOf(group[0]) - baselineOf(item)) <= lineHeight * 0.35)
+        group.push(item)
+      else groups.push([item])
+    }
+    const terminal = groups
+      .filter((group) => group.some((item) => item.rect[3] > crop[3] + 0.5))
+      .at(-1)
+    if (!terminal || terminal.length < Math.max(5, Math.ceil(absoluteColumns.length * 0.7))) return
+    const numeric = terminal.filter((item) => /\d/.test(item.text)).length
+    if (numeric < Math.max(4, Math.ceil(absoluteColumns.length * 0.5))) return
+    if (
+      absoluteColumns.some(
+        (column) => !terminal.some((item) => item.rect[0] < column[2] && item.rect[2] > column[0])
+      )
+    )
+      return
+    const bottom = Math.max(...terminal.map((item) => item.rect[3]))
+    if (bottom - crop[3] > lineHeight * 1.4) return
+    return [crop[0], crop[1], crop[2], bottom + Math.min(1.5, lineHeight * 0.2)]
+  }
+  const lastRow = rows.at(-1)
+  const rowIndex = (table.grid?.length ?? 0) - 1
+  if (!lastRow || lastRow.origin !== 'source-text' || rowIndex < 0) return
+  if (!(lastRow.rect?.[3] > crop[3] + 0.5) || lastRow.rect[1] >= crop[3]) return
+  const terminalCells = cells.filter((cell) => cell.row === rowIndex)
+  if (
+    terminalCells.length < columns.length ||
+    terminalCells.some((cell) => !cell.sourceRects?.length)
+  )
+    return
+  const rowItems = (pageItems ?? []).filter(
+    (item) =>
+      item.horizontal &&
+      item.rect[1] < lastRow.rect[3] + 0.5 &&
+      item.rect[3] > lastRow.rect[1] - 0.5 &&
+      item.rect[0] < crop[2] &&
+      item.rect[2] > crop[0]
+  )
+  if (!rowItems.length) return
+  const coveredColumns = columns.filter((column) =>
+    rowItems.some((item) => item.rect[0] < column.rect[2] && item.rect[2] > column.rect[0])
+  )
+  if (coveredColumns.length < columns.length) return
+  const heights = rowItems
+    .map((item) => item.height)
+    .filter((height) => Number.isFinite(height) && height > 0)
+  heights.sort((a, b) => a - b)
+  const height = heights[Math.floor(heights.length / 2)]
+  if (!(height > 0) || lastRow.rect[3] - crop[3] > height * 1.4) return
+  return [crop[0], crop[1], crop[2], lastRow.rect[3] + Math.min(1.5, height * 0.2)]
+}
+
+// A detector crop can include the first line of the paragraph following a
+// ruled table.  Trim only when the final full-width horizontal rule is an
+// explicit native boundary and there is source ink for at least two complete
+// baselines above it.  The last rule is selected so an interior separator
+// cannot shorten a table; no prose heuristics are used to extend the crop.
+export function recoverRuledBottomBoundaryCrop(table, pageItems, rules) {
+  const crop = table?.cropRect
+  if (!crop || !Array.isArray(pageItems) || !Array.isArray(rules)) return
+  const width = crop[2] - crop[0]
+  if (!(width > 0)) return
+  const horizontal = joinHorizontalTableRules(rules)
+    .filter(
+      (rule) =>
+        rule[1] === rule[3] &&
+        rule[1] > crop[1] &&
+        rule[1] <= crop[3] &&
+        rule[0] <= crop[0] + 10 &&
+        rule[2] >= crop[2] - 10 &&
+        rule[2] - rule[0] >= width * 0.9
+    )
+    .sort((a, b) => b[1] - a[1])
+  if (!horizontal.length) return
+  const heights = pageItems
+    .map((item) => item.height)
+    .filter((value) => Number.isFinite(value) && value > 0)
+    .sort((a, b) => a - b)
+  const height = heights[Math.floor(heights.length / 2)]
+  if (!(height > 0)) return
+  const columnRects = (table.structure?.objects ?? [])
+    .filter((object) => object.label === 'table column' && Array.isArray(object.rect))
+    .map((object) => [
+      object.rect[0] + crop[0],
+      object.rect[1] + crop[1],
+      object.rect[2] + crop[0],
+      object.rect[3] + crop[1]
+    ])
+  for (const boundary of horizontal) {
+    if (crop[3] - boundary[1] > height * 2.2) continue
+    if (
+      pageItems.some(
+        (item) =>
+          item.horizontal &&
+          item.rect[1] < boundary[1] &&
+          item.rect[3] > crop[3] &&
+          item.rect[0] < crop[2] &&
+          item.rect[2] > crop[0]
+      )
+    )
+      continue
+    const following = pageItems.filter(
+      (item) =>
+        item.horizontal &&
+        item.rect[1] >= boundary[1] - height * 0.05 &&
+        item.rect[3] <= crop[3] + height * 0.1 &&
+        item.rect[0] >= crop[0] - height &&
+        item.rect[2] <= crop[2] + height
+    )
+    const proseLines = []
+    for (const item of following.sort((a, b) => a.baseline - b.baseline)) {
+      const line = proseLines.at(-1)
+      if (line && Math.abs(line.baseline - item.baseline) <= height * 0.4) line.items.push(item)
+      else proseLines.push({ baseline: item.baseline, items: [item] })
+    }
+    const followingProse = proseLines.some(({ items: line }) => {
+      const text = line.map((item) => item.text).join(' ')
+      const letters = (text.match(/\p{L}/gu) ?? []).length
+      return (
+        line.length >= 6 &&
+        letters >= 20 &&
+        /\p{L}{4}/u.test(text) &&
+        !/^[-+−]?\d[\d.,()%\s-]*$/u.test(text)
+      )
+    })
+    if (!followingProse) continue
+    const alignedDataRow =
+      columnRects.length >= 3 &&
+      proseLines.some(({ items: line }) => {
+        const occupied = new Set(
+          line
+            .map((item) =>
+              columnRects.findIndex(
+                (column) =>
+                  item.rect[0] >= column[0] - height * 0.25 &&
+                  item.rect[2] <= column[2] + height * 0.25
+              )
+            )
+            .filter((column) => column >= 0)
+        )
+        return occupied.size >= Math.max(3, columnRects.length - 1)
+      })
+    if (alignedDataRow) continue
+    const body = pageItems.filter(
+      (item) =>
+        item.horizontal &&
+        item.rect[0] >= crop[0] - height &&
+        item.rect[2] <= crop[2] + height &&
+        item.rect[3] <= boundary[1] + height * 0.15
+    )
+    const baselines = []
+    for (const item of body.sort((a, b) => a.baseline - b.baseline)) {
+      const prior = baselines.at(-1)
+      if (!prior || Math.abs(prior - item.baseline) > height * 0.4) baselines.push(item.baseline)
+    }
+    if (baselines.length < 2) continue
+    const bottom = boundary[1] + Math.min(2, height * 0.2)
+    if (bottom >= crop[3] - height * 0.2) return
+    return [crop[0], crop[1], crop[2], bottom]
+  }
+}
+
+// A grouped text table can emit the first line of a multi-line stub as a
+// standalone source baseline while the detector starts at the following line.
+// Recover that missing row only when the baseline contains a label plus one
+// value in every non-stub lane and a model row immediately follows it.  This
+// keeps ordinary paragraph text and isolated labels out of the table grid.
+export function recoverGroupedStubSourceRow(table, pageItems) {
+  const crop = table?.cropRect
+  const objects = table?.structure?.objects
+  if (!crop || !Array.isArray(objects) || !Array.isArray(pageItems)) return false
+  const columns = objects
+    .filter((object) => object.label === 'table column')
+    .map((object) => [
+      object.rect[0] + crop[0],
+      object.rect[1] + crop[1],
+      object.rect[2] + crop[0],
+      object.rect[3] + crop[1]
+    ])
+    .sort((a, b) => a[0] - b[0])
+  if (columns.length < 3) return false
+  const heights = pageItems
+    .map((item) => item.height)
+    .filter((height) => Number.isFinite(height) && height > 0)
+    .sort((a, b) => a - b)
+  const height = heights[Math.floor(heights.length / 2)]
+  if (!(height > 0)) return false
+  const source = pageItems.filter(
+    (item) => item.horizontal && item.rect[0] < crop[2] && item.rect[2] > crop[0]
+  )
+  const grouped = []
+  for (const item of source.sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])) {
+    const group = grouped.at(-1)
+    if (group && Math.abs(group.baseline - item.baseline) <= height * 0.3) {
+      group.items.push(item)
+      group.baseline = (group.baseline + item.baseline) / 2
+    } else grouped.push({ baseline: item.baseline, items: [item] })
+  }
+  const columnOf = (item) =>
+    columns.findIndex((column) => {
+      const center = (item.rect[0] + item.rect[2]) / 2
+      return center >= column[0] - height * 0.2 && center <= column[2] + height * 0.2
+    })
+  for (const group of grouped) {
+    if (group.items.length !== columns.length) continue
+    const label = group.items.find(
+      (item) =>
+        /\p{Lu}/u.test(item.text.trim()) &&
+        !/^Tables:\s*\d[\d,.]*$/u.test(item.text.trim()) &&
+        columnOf(item) === 0
+    )
+    const values = group.items.filter((item) => /^Tables:\s*\d[\d,.]*$/u.test(item.text.trim()))
+    if (!label || values.length !== columns.length - 1) continue
+    const lanes = new Set(values.map(columnOf))
+    if (lanes.size !== values.length || [...lanes].some((column) => column < 1)) continue
+    const nextRows = objects
+      .filter((object) => object.label === 'table row')
+      .map((object) => ({
+        top: object.rect[1] + crop[1],
+        bottom: object.rect[3] + crop[1]
+      }))
+      .filter(({ top }) => top > group.baseline - height * 0.25)
+      .sort((a, b) => a.top - b.top)
+    const next = nextRows[0]
+    if (!next || next.top - group.baseline > height * 2.2) continue
+    if (next.top <= Math.min(...group.items.map((item) => item.rect[3]))) continue
+    const previous = nextRows
+      .filter(({ bottom }) => bottom < group.baseline)
+      .sort((a, b) => b.bottom - a.bottom)[0]
+    if (previous && group.baseline - previous.bottom > height * 2.4) continue
+    const followingSource = source
+      .filter((item) => columnOf(item) === 0 && item.baseline > group.baseline + height * 0.25)
+      .sort((a, b) => a.rect[1] - b.rect[1])[0]
+    const rowTop = Math.max(
+      crop[1],
+      Math.min(...group.items.map((item) => item.rect[1])) - height * 0.2
+    )
+    const rowBottom = Math.min(
+      next.top,
+      followingSource?.rect[1] ?? next.top,
+      Math.max(...group.items.map((item) => item.rect[3])) + height * 0.2
+    )
+    if (rowBottom <= rowTop) continue
+    objects.push({
+      label: 'table row',
+      score: 1,
+      rect: [0, rowTop - crop[1], crop[2] - crop[0], rowBottom - crop[1]],
+      origin: 'source-grouped-stub-row'
+    })
+    return true
+  }
+  return false
+}
+
+// A side-by-side native table can be detected from only its right panel, while
+// the source text for the left labels and the terminal highlighted row extends
+// just beyond both crop edges. Expand only when both clipped sides contain
+// short, row-aligned runs across several existing baselines.
+export function recoverClippedSideBySideCrop(table, pageItems) {
+  const crop = table?.cropRect
+  const objects = table?.structure?.objects
+  if (!crop || !Array.isArray(objects) || !Array.isArray(pageItems)) return
+  const rows = objects
+    .filter((object) => object.label === 'table row')
+    .map((object) => [object.rect[1] + crop[1], object.rect[3] + crop[1]])
+  if (rows.length < 4) return
+  const heights = pageItems
+    .map((item) => item.height)
+    .filter((height) => Number.isFinite(height) && height > 0)
+    .sort((a, b) => a - b)
+  const height = heights[Math.floor(heights.length / 2)]
+  if (!(height > 0)) return
+  const clipped = pageItems.filter(
+    (item) =>
+      item.horizontal &&
+      item.text.trim().length > 0 &&
+      item.text.trim().length < 40 &&
+      item.rect[3] >= crop[1] - height &&
+      item.rect[1] <= crop[3] + height &&
+      (item.rect[0] < crop[0] || item.rect[2] > crop[2])
+  )
+  const left = clipped.filter((item) => item.rect[0] < crop[0] && item.rect[2] > crop[0] - 90)
+  const right = clipped.filter((item) => item.rect[2] > crop[2] && item.rect[0] < crop[2] + 90)
+  if (left.length < 4 || right.length < 4) return
+  const rowOf = (item) => {
+    const center = (item.rect[1] + item.rect[3]) / 2
+    return rows.findIndex(
+      ([top, bottom]) => center >= top - height * 0.45 && center <= bottom + height * 0.45
+    )
+  }
+  const leftRows = new Set(left.map(rowOf).filter((row) => row >= 0))
+  const rightRows = new Set(right.map(rowOf).filter((row) => row >= 0))
+  if (leftRows.size < 4 || rightRows.size < 4) return
+  const interiorRows = new Set(
+    pageItems
+      .filter(
+        (item) =>
+          item.rect[0] >= crop[0] &&
+          item.rect[2] <= crop[2] &&
+          item.rect[1] >= crop[1] &&
+          item.rect[3] <= crop[3]
+      )
+      .map(rowOf)
+      .filter((row) => row >= 0)
+  )
+  const sharedRows = [...leftRows].filter((row) => rightRows.has(row) && interiorRows.has(row))
+  if (sharedRows.length < 4) return
+  const leftLabels = left.filter(
+    (item) => /\p{L}/u.test(item.text.trim()) && !/^[-+]?\d[\d.,%]*$/u.test(item.text.trim())
+  )
+  if (leftLabels.length < Math.max(2, Math.ceil(leftRows.size / 2))) return
+  const cropRect = [
+    Math.max(0, Math.min(crop[0], ...left.map((item) => item.rect[0])) - height * 0.2),
+    Math.max(0, Math.min(crop[1], ...clipped.map((item) => item.rect[1])) - height * 0.2),
+    Math.max(crop[2], ...right.map((item) => item.rect[2])) + height * 0.2,
+    Math.max(crop[3], ...clipped.map((item) => item.rect[3])) + height * 0.2
+  ]
+  if (cropRect[0] === crop[0] && cropRect[2] === crop[2] && cropRect[3] === crop[3]) return
+  return cropRect
+}
+
+// A detector may start a table at the first visible glyph while a short
+// multiline stub label begins just outside that edge.  Expand only when at
+// least two letter runs cross the left edge and each one aligns with a
+// predicted row; a single nearby prose line must not pull a crop sideways.
+export function recoverClippedLeftLabelCrop(table, pageItems) {
+  const crop = table?.cropRect
+  const objects = table?.structure?.objects
+  if (!crop || !Array.isArray(objects) || !Array.isArray(pageItems)) return
+  const rows = objects
+    .filter((object) => object.label === 'table row')
+    .map((object) => [object.rect[1] + crop[1], object.rect[3] + crop[1]])
+  if (rows.length < 3) return
+  const heights = pageItems
+    .map((item) => item.height)
+    .filter((height) => Number.isFinite(height) && height > 0)
+    .sort((a, b) => a - b)
+  const height = heights[Math.floor(heights.length / 2)]
+  if (!(height > 0)) return
+  const rowOf = (item) => {
+    const center = (item.rect[1] + item.rect[3]) / 2
+    return rows.findIndex(
+      ([top, bottom]) => center >= top - height * 0.45 && center <= bottom + height * 0.45
+    )
+  }
+  const clipped = pageItems.filter(
+    (item) =>
+      item.horizontal &&
+      /\p{L}/u.test(item.text.trim()) &&
+      item.text.trim().length <= 40 &&
+      item.text.trim().split(/\s+/u).length <= 4 &&
+      item.rect[0] < crop[0] &&
+      item.rect[2] > crop[0] &&
+      item.rect[1] >= crop[1] - height &&
+      item.rect[3] <= crop[3] + height
+  )
+  const aligned = clipped.filter((item) => rowOf(item) >= 0)
+  const rowSet = new Set(aligned.map(rowOf))
+  if (aligned.length < 2 || rowSet.size < 2) return
+  const numericRows = new Set(
+    pageItems
+      .filter(
+        (item) =>
+          item.horizontal &&
+          item.rect[0] >= crop[0] &&
+          item.rect[2] <= crop[2] &&
+          rowOf(item) >= 0 &&
+          /^[<>≤≥−+-]?\d[\d.,%()±–—+/<>=-]*$/u.test(item.text.trim())
+      )
+      .map(rowOf)
+  )
+  // The clipped run must share rows with owned table values. Two short prose
+  // lines at the crop edge can otherwise look like a truncated stub lane.
+  if ([...rowSet].some((row) => !numericRows.has(row))) return
+  // A neighboring prose line can cross the crop edge, but it will not form
+  // a compact left-stub run across several predicted rows.
+  if (rowSet.size < Math.min(3, rows.length - 1)) return
+  const left = Math.min(...aligned.map((item) => item.rect[0]))
+  if (!(left < crop[0] - height * 0.4)) return
+  return [Math.max(0, left - height * 0.15), crop[1], crop[2], crop[3]]
+}
+
+// A narrow table at the page or column edge can retain its model grid while
+// clipping the terminal glyphs of a right-hand header/value column. Expand
+// only when several short horizontal items cross the same right edge on
+// distinct table rows; a single adjacent prose line must not pull the crop.
+export function recoverClippedRightLabelCrop(table, pageItems, rules) {
+  const crop = table?.cropRect
+  if (!crop || !Array.isArray(pageItems)) return
+  const heights = pageItems
+    .map((item) => item.height)
+    .filter((height) => Number.isFinite(height) && height > 0)
+    .sort((a, b) => a - b)
+  const height = heights[Math.floor(heights.length / 2)]
+  if (!(height > 0)) return
+  const clipped = pageItems.filter(
+    (item) =>
+      item.horizontal &&
+      typeof item.text === 'string' &&
+      item.text.trim().length > 0 &&
+      item.text.trim().length <= 24 &&
+      item.rect[2] > crop[2] + 0.1 &&
+      item.rect[0] >= crop[2] - height * 3.5 &&
+      item.rect[1] >= crop[1] - height &&
+      item.rect[3] <= crop[3] + height
+  )
+  if (clipped.length < 3) return
+  const rows = new Set(
+    clipped.map((item) => Math.round(((item.rect[1] + item.rect[3]) / 2 - crop[1]) / height))
+  )
+  if (rows.size < 3) return
+  const numericOrHeader = clipped.filter(
+    (item) =>
+      /[\p{L}\p{N}]/u.test(item.text.trim()) &&
+      (/[\p{L}]/u.test(item.text.trim()) ||
+        /^[<>≤≥−+-]?\d[\d.,%()±–—+/<>=-]*$/u.test(item.text.trim()))
+  )
+  const numeric = clipped.filter((item) =>
+    /^[<>≤≥−+-]?\d[\d.,%()±–—+/<>=-]*$/u.test(item.text.trim())
+  )
+  if (numericOrHeader.length < 2 || numeric.length < 2) return
+  const columns = (table.structure?.objects ?? [])
+    .filter((object) => object.label === 'table column')
+    .sort((a, b) => b.rect[2] - a.rect[2])
+  const terminalColumn = columns[0]
+  if (
+    terminalColumn &&
+    clipped.some(
+      (item) =>
+        item.rect[0] < crop[2] - height * 3.5 ||
+        item.rect[0] > crop[2] + height * 0.25 ||
+        item.rect[0] < crop[0] + terminalColumn.rect[0] - height * 0.5
+    )
+  )
+    return
+  const modelRows = (table.structure?.objects ?? []).filter(
+    (object) => object.label === 'table row'
+  )
+  if (modelRows.length) {
+    const matchedRows = clipped.map((item) =>
+      modelRows.findIndex(
+        (row) =>
+          item.rect[1] < crop[1] + row.rect[3] + height * 0.35 &&
+          item.rect[3] > crop[1] + row.rect[1] - height * 0.35
+      )
+    )
+    const covered = matchedRows.filter((index) => index >= 0)
+    if (
+      covered.length >= 2 &&
+      (covered.length !== clipped.length || new Set(covered).size !== covered.length)
+    )
+      return
+  }
+  const right = Math.max(...clipped.map((item) => item.rect[2])) + height * 0.2
+  if (!(right > crop[2]) || right - crop[2] > height * 1.5) return
+  // A right-edge expansion is safe only when a native horizontal stroke closes
+  // the same table below the clipped values. Without that boundary, adjacent
+  // prose or a following panel can be mistaken for a missing terminal column.
+  const lastClippedBottom = Math.max(...clipped.map((item) => item.rect[3]))
+  const closingRule =
+    Array.isArray(rules) &&
+    rules.some(
+      (rule) =>
+        rule[1] === rule[3] &&
+        rule[1] >= lastClippedBottom &&
+        rule[1] - lastClippedBottom <= height * 2 &&
+        crop[3] - rule[1] <= height * 2 &&
+        rule[0] <= crop[0] + height &&
+        rule[2] >= right - height * 0.2
+    )
+  if (rules !== undefined && !closingRule) return
+  return [crop[0], crop[1], right, crop[3]]
+}
+
+// A compact captioned table can lose every body row when the detector keeps
+// only its header band.  Recover this shape only when two or more clipped
+// labels each have the same number of numeric lanes below the header.  The
+// repeated label/value proof is deliberately stricter than the general row
+// recovery paths so prose beside a one-row table cannot become a grid.
+export function recoverClippedSimpleBodyCrop(table, pageItems, captions = []) {
+  const crop = table?.cropRect
+  const objects = table?.structure?.objects
+  if (!crop || !Array.isArray(objects) || !Array.isArray(pageItems)) return
+  const rows = objects.filter((object) => object.label === 'table row')
+  if (rows.length !== 1 || !captions.some((caption) => /^table\b/i.test(caption?.lines?.[0] ?? '')))
+    return
+  const heights = pageItems
+    .map((item) => item.height)
+    .filter((height) => Number.isFinite(height) && height > 0)
+    .sort((a, b) => a - b)
+  const height = heights[Math.floor(heights.length / 2)]
+  if (!(height > 0)) return
+  const headerBottom = rows[0].rect[3] + crop[1]
+  const numeric = (text) => /^[<>≤≥−+-]?\d[\d.,%()±–—+/<>=-]*$/u.test(text.trim())
+  const labels = pageItems.filter(
+    (item) =>
+      item.horizontal &&
+      /\p{L}/u.test(item.text.trim()) &&
+      item.text.trim().length <= 40 &&
+      item.text.trim().split(/\s+/u).length <= 4 &&
+      item.rect[0] < crop[0] &&
+      item.rect[2] > crop[0] &&
+      item.rect[1] >= headerBottom - height * 0.2 &&
+      item.rect[3] <= crop[3] + height
+  )
+  if (labels.length < 2) return
+  const groups = []
+  for (const item of pageItems
+    .filter((candidate) => candidate.horizontal && candidate.rect[1] >= headerBottom - height * 0.2)
+    .sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])) {
+    const group = groups.at(-1)
+    if (group && Math.abs(group[0].baseline - item.baseline) <= height * 0.35) group.push(item)
+    else groups.push([item])
+  }
+  const body = groups.filter((group) => {
+    const label = group.find((item) => labels.includes(item))
+    const values = group.filter(
+      (item) => item !== label && item.rect[0] >= crop[0] && item.rect[2] <= crop[2] + height
+    )
+    return (
+      label &&
+      values.length >= 2 &&
+      group.length === values.length + 1 &&
+      values.every((item) => numeric(item.text))
+    )
+  })
+  if (
+    body.length < 2 ||
+    body.length !== labels.filter((label) => body.some((group) => group.includes(label))).length
+  )
+    return
+  const laneCounts = body.map(
+    (group) => group.filter((item) => item.rect[0] >= crop[0] && numeric(item.text)).length
+  )
+  if (new Set(laneCounts).size !== 1 || laneCounts[0] < 2) return
+  const lanes = body.map((group) =>
+    group
+      .filter((item) => numeric(item.text))
+      .sort((a, b) => a.rect[0] - b.rect[0])
+      .map((item) => (item.rect[0] + item.rect[2]) / 2)
+  )
+  if (
+    lanes[0].some(
+      (_, lane) =>
+        Math.max(...lanes.map((positions) => positions[lane])) -
+          Math.min(...lanes.map((positions) => positions[lane])) >
+        height
+    )
+  )
+    return
+  const left = Math.min(...body.flatMap((group) => group.map((item) => item.rect[0])))
+  if (!(left < crop[0] - height * 0.15)) return
+  return { cropRect: [Math.max(0, left - height * 0.15), crop[1], crop[2], crop[3]], left }
+}
+
 const isSupportedRotatedStubLabel = (item) =>
   !item.horizontal &&
   /^(?:SNR|PSNR|SSIM)\s+(?:0|5|10|15|20|25)$/i.test(item.text.trim()) &&
@@ -504,6 +1194,13 @@ export function refineTable(
     table = rebaseTableCrop(table, independentTextRecords.cropRect)
   table = separateAdjacentNumericPanel(table, pageItems, rules)
   const originalCrop = table.cropRect
+  const wideBottomCrop = recoverWideTableBottomCrop(table, pageItems, rules)
+  if (wideBottomCrop) table = rebaseTableCrop(table, wideBottomCrop, true)
+  const completeTerminalSourceRowCrop = recoverCompleteTerminalSourceRowCrop(table, pageItems)
+  if (completeTerminalSourceRowCrop)
+    table = rebaseTableCrop(table, completeTerminalSourceRowCrop, true)
+  const ruledBottomBoundaryCrop = recoverRuledBottomBoundaryCrop(table, pageItems, rules)
+  if (ruledBottomBoundaryCrop) table = rebaseTableCrop(table, ruledBottomBoundaryCrop, true)
   const sourceRules = rules
   const unnumberedTitleCrop = recoverClippedUnnumberedTitleCrop(table, pageItems, sourceRules)
   if (unnumberedTitleCrop) table = rebaseTableCrop(table, unnumberedTitleCrop)
@@ -1157,9 +1854,38 @@ export function refineTable(
     recordGrid?.cropRect &&
     recordGrid.cropRect.some((v, n) => v !== table.cropRect[n])
   ) {
-    table = rebaseTableCrop(table, recordGrid.cropRect)
+    table = rebaseTableCrop(table, recordGrid.cropRect, true)
     ;[left, top, right, bottom] = table.cropRect
   }
+  const sideBySideCrop = recoverClippedSideBySideCrop(table, pageItems)
+  if (sideBySideCrop) {
+    table = rebaseTableCrop(table, sideBySideCrop, true)
+    ;[left, top, right, bottom] = table.cropRect
+  }
+  const clippedLeftLabelCrop = recoverClippedLeftLabelCrop(table, pageItems)
+  if (clippedLeftLabelCrop) {
+    table = rebaseTableCrop(table, clippedLeftLabelCrop, true)
+    ;[left, top, right, bottom] = table.cropRect
+  }
+  const clippedRightLabelCrop = recoverClippedRightLabelCrop(table, pageItems, sourceRules)
+  if (clippedRightLabelCrop) {
+    table = rebaseTableCrop(table, clippedRightLabelCrop, true)
+    ;[left, top, right, bottom] = table.cropRect
+  }
+  const clippedSimpleBody = recoverClippedSimpleBodyCrop(table, pageItems, captions)
+  if (clippedSimpleBody) {
+    table = rebaseTableCrop(table, clippedSimpleBody.cropRect, true)
+    const firstColumn = table.structure.objects
+      .filter((object) => object.label === 'table column')
+      .sort((a, b) => a.rect[0] - b.rect[0])[0]
+    if (firstColumn)
+      firstColumn.rect[0] = Math.min(
+        firstColumn.rect[0],
+        clippedSimpleBody.left - table.cropRect[0]
+      )
+    ;[left, top, right, bottom] = table.cropRect
+  }
+  const groupedStubRowRecovered = recoverGroupedStubSourceRow(table, pageItems)
   const objects = table.structure.objects.map((o) => ({
     ...o,
     rect: o.rect.map((v, i) => v + (i % 2 ? top : left))
@@ -1170,6 +1896,13 @@ export function refineTable(
       : table.recoveredGrid
         ? ['closed-numeric-grid-recovered']
         : []
+  if (wideBottomCrop) repairs.push('wide-bottom-crop-recovered')
+  if (ruledBottomBoundaryCrop) repairs.push('ruled-bottom-boundary-crop-recovered')
+  if (sideBySideCrop) repairs.push('side-by-side-crop-expanded')
+  if (clippedLeftLabelCrop) repairs.push('clipped-left-label-crop-recovered')
+  if (clippedRightLabelCrop) repairs.push('clipped-right-label-crop-recovered')
+  if (clippedSimpleBody) repairs.push('clipped-simple-body-crop-recovered')
+  if (groupedStubRowRecovered) repairs.push('grouped-stub-row-recovered')
   if (recordGrid?.repair) repairs.push(recordGrid.repair)
   if (table.cropRect !== originalCrop) repairs.push('captioned-rule-crop-recovered')
   const rows = []
@@ -1733,6 +2466,69 @@ export function refineTable(
     repairs.push('source-comparison-columns-recovered')
   }
   const cuts = columns.slice(1).map((c, i) => (columns[i].rect[2] + c.rect[0]) / 2)
+  // Some parallel benchmark tables contain a complete numeric row as one
+  // source run while the detector predicts fewer leaf columns than the
+  // repeated metric sequence. Rebuild only a small deficit from repeated
+  // numeric evidence, preserving the measured stub and crop boundaries.
+  if (!recordGrid && externalCaptions.length && columns.length >= 8) {
+    const numericToken = (value) => /^[<>≤≥−+-]?\d+(?:[.,]\d+)?%?$/.test(value)
+    const counts = items
+      .filter((item) => item.horizontal && item.rect[0] >= columns[0].rect[2] - 2)
+      .map((item) => item.text.trim().split(/\s+/u).filter(numericToken).length)
+      .filter((count) => count >= columns.length - 2)
+    const frequencies = new Map(
+      counts.map((count) => [count, counts.filter((n) => n === count).length])
+    )
+    const expected = [...frequencies.entries()].sort((a, b) => b[1] - a[1] || b[0] - a[0])[0]?.[0]
+    if (
+      expected &&
+      expected > columns.length &&
+      expected <= columns.length + 4 &&
+      frequencies.get(expected) >= 3
+    ) {
+      const stubRight = columns[0].rect[2]
+      const width = (right - stubRight) / expected
+      columns.splice(
+        0,
+        columns.length,
+        columns[0],
+        ...Array.from({ length: expected }, (_, index) => ({
+          rect: [stubRight + index * width, top, stubRight + (index + 1) * width, bottom],
+          score: 1,
+          origin: 'source-wide-numeric-column'
+        }))
+      )
+      cuts.splice(0, cuts.length, ...columns.slice(1).map((column) => column.rect[0]))
+      repairs.push('wide-numeric-columns-recovered')
+      const firstRow = rows[0]
+      const parentHeaders = items.filter(
+        (item) =>
+          item.horizontal &&
+          firstRow &&
+          item.rect[3] <= firstRow.rect[1] + 1 &&
+          /(?:CLAP\s*\/\s*CLIP|IMAGEBIND)/iu.test(item.text)
+      )
+      if (firstRow && parentHeaders.length >= 2) {
+        rows.unshift({
+          rect: [
+            left,
+            Math.min(...parentHeaders.map((item) => item.rect[1])),
+            right,
+            Math.max(...parentHeaders.map((item) => item.rect[3]))
+          ],
+          origin: 'source-native-header'
+        })
+        firstRow.origin = 'source-native-header'
+        const repeatedHeader = rows[2]
+        if (
+          repeatedHeader &&
+          items.some((item) => /R@\d+/u.test(item.text) && inside(repeatedHeader.rect, item))
+        )
+          repeatedHeader.origin = 'source-native-header'
+        repairs.push('wide-multilevel-header-recovered')
+      }
+    }
+  }
   const columnRects = columns.map((_, i) => [
     i ? cuts[i - 1] : left,
     top,
@@ -1802,6 +2598,118 @@ export function refineTable(
     )
     if (group) group.push(item)
     else groups.push([item])
+  }
+  if (clippedSimpleBody && rows.length === 1 && columns.length >= 3) {
+    const numeric = (text) => /^[<>≤≥−+-]?\d[\d.,%()±–—+/<>=-]*$/u.test(text.trim())
+    const bodyGroups = groups.filter((group) => {
+      const parts = columns.map((_, column) => group.filter((item) => columnOf(item) === column))
+      const values = parts.slice(1)
+      return (
+        parts[0].length === 1 &&
+        /\p{L}/u.test(parts[0][0].text.trim()) &&
+        values.filter((part) => part.length === 1 && numeric(part[0].text)).length >= 2 &&
+        values.every((part) => part.length === 0 || (part.length === 1 && numeric(part[0].text))) &&
+        group[0].rect[1] > rows[0].rect[3]
+      )
+    })
+    if (bodyGroups.length >= 2) {
+      rows[0].rect[3] =
+        (rows[0].rect[3] + Math.min(...bodyGroups.map((group) => group[0].rect[1]))) / 2
+      rows.push(
+        ...bodyGroups.map((group) => ({
+          rect: [
+            left,
+            Math.min(...group.map((item) => item.rect[1])),
+            right,
+            Math.max(...group.map((item) => item.rect[3]))
+          ],
+          origin: 'source-text'
+        }))
+      )
+      rows.sort((a, b) => a.rect[1] - b.rect[1])
+      repairs.push('clipped-simple-body-rows-recovered')
+    }
+  }
+  // Wide benchmark tables can place two complete records inside one broad model
+  // row. The model then serializes every value pair into one cell, even though
+  // the source has two independent baselines. Recover those physical rows before
+  // cell ownership is resolved. Require near-complete numeric lanes in every
+  // baseline and no full-width rule between them; wrapped prose and ordinary
+  // multiline cells therefore remain on their original model row.
+  if (!recordGrid && externalCaptions.length && columns.length >= 8 && rows.length >= 2) {
+    const numericValue = (text) => /^[<>≤≥−+-]?\d[\d.,%()±–—+/<>=-]*$/.test(text.trim())
+    const lane = (group) => {
+      const byColumn = new Map()
+      for (const item of group) {
+        const column = columnOf(item)
+        if (column >= 0) {
+          if (!byColumn.has(column)) byColumn.set(column, [])
+          byColumn.get(column).push(item)
+        }
+      }
+      const values = [...byColumn.entries()].filter(
+        ([column, parts]) => column > 0 && parts.length === 1 && numericValue(parts[0].text)
+      )
+      return { byColumn, values }
+    }
+    let recovered = false
+    for (let index = rows.length - 1; index >= 0; index--) {
+      const row = rows[index]
+      const candidates = groups
+        .filter((group) => group.every((item) => intersect(row.rect, item.rect) > 0))
+        .sort((a, b) => a[0].baseline - b[0].baseline)
+      if (candidates.length < 2) continue
+      const height = Math.max(...candidates.flat().map((item) => item.height))
+      if (
+        candidates.some(
+          (group, n) =>
+            !group.length ||
+            (n && group[0].baseline - candidates[n - 1].at(-1).baseline < height * 0.7) ||
+            (n && group[0].baseline - candidates[n - 1].at(-1).baseline > height * 2.5)
+        )
+      )
+        continue
+      const lanes = candidates.map(lane)
+      if (
+        lanes.some(
+          ({ byColumn, values }) =>
+            byColumn.size < columns.length - 1 ||
+            values.length < columns.length - 3 ||
+            !byColumn.get(0)?.some((item) => /\p{L}/u.test(item.text))
+        )
+      )
+        continue
+      if (
+        candidates.slice(1).some((group, n) => {
+          const top = Math.max(...candidates[n].map((item) => item.rect[3]))
+          const bottom = Math.min(...group.map((item) => item.rect[1]))
+          return rules.some(
+            (rule) =>
+              rule[1] === rule[3] &&
+              rule[1] > top &&
+              rule[1] < bottom &&
+              rule[0] <= left + height &&
+              rule[2] >= right - height
+          )
+        })
+      )
+        continue
+      const bounds = [row.rect[1]]
+      for (let n = 1; n < candidates.length; n++) {
+        const above = Math.max(...candidates[n - 1].map((item) => item.rect[3]))
+        const below = Math.min(...candidates[n].map((item) => item.rect[1]))
+        bounds.push((above + below) / 2)
+      }
+      bounds.push(row.rect[3])
+      const replacement = candidates.map((group, n) => ({
+        rect: [left, bounds[n], right, bounds[n + 1]],
+        origin: 'source-text'
+      }))
+      rows.splice(index, 1, ...replacement)
+      recovered = true
+      repairs.push('stacked-wide-record-rows-recovered')
+    }
+    if (recovered) rows.sort((a, b) => a.rect[1] - b.rect[1])
   }
   // A single ruled sample header can wrap only its cohort labels above the
   // detector row. Native band ownership keeps all four titles in one row.
@@ -4159,7 +5067,7 @@ export function refineTable(
               rect: [left, union(group)[1], right, union(group)[3]],
               origin: 'source-statistic-header'
             }))
-          : completeHeader
+          : completeHeader && firstNumeric > 0
             ? [
                 {
                   rect: [
@@ -9028,6 +9936,12 @@ export function refineTable(
       i.rect[1] >= top &&
       i.rect[3] <= bottom
   )) {
+    const wideTokens = item.text.trim().split(/\s+/u)
+    const numericWideRun =
+      wideTokens.length >= 8 &&
+      wideTokens.filter((token) => /^[<>≤≥−+-]?\d+(?:[.,]\d+)?%?$/.test(token)).length >= 8 &&
+      wideTokens.slice(1).every((token) => /^[<>≤≥−+-]?\d+(?:[.,]\d+)?%?$/.test(token))
+    if (numericWideRun && columns.length >= 8) continue
     const row = rows.findIndex(
       (candidate) =>
         item.rect[1] >= candidate.rect[1] - item.height * 0.25 &&
@@ -9246,10 +10160,28 @@ export function refineTable(
     recordGrid,
     scheduleGrid,
     nativeMathOrder,
+    captions,
     rotatedContinuation: table.readingRotation === 90 || table.readingRotation === 270,
     issues,
     repairs
   })
+  if (
+    repairs.includes('rotated-column-header-recovered') &&
+    items
+      .filter((item) => !item.horizontal)
+      .every(
+        (item) =>
+          isSupportedRotatedStubLabel(item) ||
+          cells.some(
+            (cell) =>
+              cell.row === 0 &&
+              cell.rowSpan === 1 &&
+              cell.colSpan === 1 &&
+              intersect(cell.rect, item.rect) / area(item.rect) >= 0.2
+          )
+      )
+  )
+    issues.delete('unsupported-text-orientation')
   reconcileStatisticStubStarts({ cells, baseCells, rows, rules, repairs })
   reconcileFragmentedCountHeaders({ cells, issues, repairs })
   if (nativeParentSpans && rows[1])
@@ -9331,29 +10263,114 @@ export function refineTable(
     issues,
     repairs
   })
+  const reconciledItems = unassigned.reconciliationItems ?? []
+  const boundaryWitnessItems = pageItems.filter(
+    (item) => item.rect[1] >= table.cropRect[3] - 2 && !reconciledItems.includes(item)
+  )
   const finalBounds = reconcileNativeFinalCellBounds({
     table,
     cells,
     rows,
     columnRects,
-    tokens: sourceItems,
+    tokens: unassigned.reconciliationItems?.length
+      ? [...unassigned.reconciliationItems, ...boundaryWitnessItems]
+      : unassigned.sourceItems?.length
+        ? [...sourceItems, ...unassigned.sourceItems, ...boundaryWitnessItems]
+        : [...sourceItems, ...boundaryWitnessItems],
     rules: sourceRules,
     unassigned,
     clipped,
     repairs
   })
-  if (finalBounds.cropRect !== table.cropRect) table = rebaseTableCrop(table, finalBounds.cropRect)
+  if (finalBounds.cropRect !== table.cropRect)
+    table = rebaseTableCrop(table, finalBounds.cropRect, true)
   if (clipped.length && !finalBounds.clipped.length) issues.delete('text-crosses-crop-boundary')
-  const grid = rows.map(() => columns.map(() => ''))
-  for (const cell of cells) grid[cell.row][cell.column] = cell.text
+  // A neighboring prose column can leave one or more empty detector columns
+  // in front of an otherwise complete native table. If the only text crossing
+  // the crop boundary is that prose, trim the empty prefix from the published
+  // grid and thumbnail while preserving legitimate blank cells inside the
+  // table. The source ownership and alignment checks above make this narrow.
+  let outputCells = cells
+  let outputClipped = finalBounds.clipped
+  let outputCrop = table.cropRect
+  const firstOwnedColumn = Math.min(
+    ...cells
+      .filter((cell) => cell.sourceRects?.length || cell.text.trim())
+      .map((cell) => cell.column)
+  )
+  const hasOwnedColumn = Number.isFinite(firstOwnedColumn)
+  const leadingCells = cells.filter((cell) => cell.column < firstOwnedColumn)
+  const leadingEmpty =
+    hasOwnedColumn &&
+    firstOwnedColumn > 0 &&
+    leadingCells.length > 0 &&
+    leadingCells.every(
+      (cell) =>
+        cell.column + cell.colSpan <= firstOwnedColumn &&
+        !cell.sourceRects?.length &&
+        !cell.text.trim()
+    )
+  const firstOwnedLeft =
+    firstOwnedColumn > 0
+      ? Math.min(
+          ...cells.filter((cell) => cell.column === firstOwnedColumn).map((cell) => cell.rect[0])
+        )
+      : Infinity
+  const firstModelColumn = columns
+    .filter((column) => Array.isArray(column.rect))
+    .sort((a, b) => a.rect[0] - b.rect[0])[0]
+  const firstModelColumnLeft = firstModelColumn ? firstModelColumn.rect[0] : Infinity
+  const nativeVerticalRules = sourceRules.filter(
+    (rule) =>
+      Math.abs(rule[2] - rule[0]) < 0.5 &&
+      rule[3] - rule[1] >= (table.cropRect[3] - table.cropRect[1]) * 0.45
+  )
+  const nativeLeft = nativeVerticalRules.length
+    ? Math.min(...nativeVerticalRules.map((rule) => rule[0]))
+    : Infinity
+  const leadingOutsideNativeBounds =
+    Number.isFinite(nativeLeft) &&
+    firstOwnedLeft >= nativeLeft - 1 &&
+    leadingCells.every((cell) => cell.rect[2] <= nativeLeft + 1)
+  const clippedProseOnly =
+    clipped.length > 0 &&
+    clipped.every(
+      (item) =>
+        item.text.trim().split(/\s+/u).length >= 3 &&
+        item.rect[2] <= firstOwnedLeft + 1 &&
+        item.rect[2] <= firstModelColumnLeft + 1
+    )
+  if (
+    leadingEmpty &&
+    leadingOutsideNativeBounds &&
+    clippedProseOnly &&
+    Number.isFinite(firstOwnedLeft)
+  ) {
+    outputCrop = [Math.max(table.cropRect[0], firstOwnedLeft - 1.5), ...table.cropRect.slice(1)]
+    outputCells = cells
+      .filter((cell) => cell.column >= firstOwnedColumn)
+      .map((cell) => ({ ...cell, column: cell.column - firstOwnedColumn }))
+    outputClipped = []
+    issues.delete('text-crosses-crop-boundary')
+    repairs.push('narrative-leading-column-trimmed')
+  }
+  const grid = rows.map(() =>
+    Array.from(
+      {
+        length: columns.length - (outputCells === cells || !hasOwnedColumn ? 0 : firstOwnedColumn)
+      },
+      () => ''
+    )
+  )
+  for (const cell of outputCells) grid[cell.row][cell.column] = cell.text
   return {
     id: table.id,
-    cropRect: table.cropRect,
+    cropRect: outputCrop,
     grid,
-    cells,
+    cells: outputCells,
     rows: rows.map(({ rect, origin }) => ({ rect, origin })),
     unassigned,
-    clipped: finalBounds.clipped.map((i) => ({ text: i.text, rect: i.rect })),
+    clipped: outputClipped.map((i) => ({ text: i.text, rect: i.rect })),
     excludedCaptionItems: excludedCaptionItems.map((i) => i.text),
     issues: [...issues],
     repairs,
