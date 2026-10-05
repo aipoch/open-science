@@ -730,6 +730,27 @@ function recoverUnmatchedTopFigureLabel(page, figure) {
       /\bet al\.?\b/i.test(line.text)
   )
   if (!label) return undefined
+  // An all-width `et al.:` line in the shallow top margin is a running
+  // author/journal head, even when the adjacent vector plate starts just
+  // below it. Do not let the generic top-label recovery pull that furniture
+  // back into the figure crop after the geometry pass excluded its rule.
+  if (
+    label.y < page.height * 0.08 &&
+    label.x < page.width * 0.25 &&
+    label.width > page.width * 0.45 &&
+    /\bet al\.\s*:/i.test(label.text) &&
+    !page.graphicsBounds.some(
+      (graphic) =>
+        graphic.kind === 'image' &&
+        intersection(
+          lineRect(label),
+          graphic.normalizedRect.map(
+            (value, index) => value * (index % 2 ? page.height : page.width)
+          )
+        ) > 0
+    )
+  )
+    return undefined
   const matchingHeader = page.lines.some(
     (line) =>
       line !== label &&
