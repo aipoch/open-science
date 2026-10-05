@@ -921,6 +921,36 @@ describe('real-agent science lineage fixtures', () => {
         confidence: 'verified'
       })
     ])
+    const exactCompanionOverwrite: NotebookRunRecord = {
+      ...producer,
+      runId: 'exact-companion-overwrite',
+      cellId: 'exact-companion-overwrite',
+      startedAt: 1,
+      endedAt: 2,
+      workingFiles: [
+        {
+          ...producer.workingFiles[0]!,
+          createdByRunId: 'exact-companion-overwrite',
+          change: 'modified',
+          checksum: 'd'.repeat(64)
+        }
+      ]
+    }
+    const afterExactCompanionOverwrite = projectNotebookFileDependencies([
+      { run: producer, facts, fileAccess },
+      {
+        run: exactCompanionOverwrite,
+        facts,
+        fileAccess: { ...fileAccess, writes: ['outputs/map.dbf'], writeScopes: undefined }
+      },
+      {
+        run: consumer,
+        facts,
+        fileAccess: { ...consumerAccess, reads: ['outputs/map.shp'] }
+      }
+    ])
+    expect(afterExactCompanionOverwrite.fileDependenciesByRunId['scoped-consumer']).toBeUndefined()
+    expect(afterExactCompanionOverwrite.unresolvedFileReadRunIds).toContain('scoped-consumer')
     const scopedReadWriteRun: NotebookRunRecord = {
       ...consumer,
       runId: 'scoped-read-write',
@@ -1154,6 +1184,49 @@ describe('file lineage identity and completeness guards', () => {
     expect(projection.consumer).toEqual([
       expect.objectContaining({ producerRunId: 'producer', confidence: 'verified' })
     ])
+  })
+
+  it('withholds unobserved writes when writer attribution is incomplete', () => {
+    const root = join(tmpdir(), 'lineage-incomplete-writer-evidence')
+    const evidence = {
+      schemaVersion: 1 as const,
+      state: 'available' as const,
+      fileReads: 'complete' as const,
+      relationCount: 1,
+      activityKind: 'notebook-run' as const,
+      initialViewState: 'complete' as const,
+      managedRootsFinalState: 'complete' as const,
+      scientificOutputAnalysis: 'complete' as const,
+      externalPaths: 'complete' as const,
+      writerAttribution: 'complete' as const,
+      scientificOutputCount: 0,
+      reasonCodes: []
+    }
+    const producer = {
+      ...run('producer', root, [
+        {
+          path: join(root, 'result.json'),
+          relativePath: 'result.json',
+          kind: 'other' as const,
+          createdByRunId: 'producer',
+          change: 'created' as const,
+          checksum: 'p'.repeat(64)
+        }
+      ]),
+      fileEvidence: evidence
+    }
+    const unobservedWriter = {
+      ...run('unobserved-writer', root),
+      fileEvidence: { ...evidence, writerAttribution: 'partial' as const }
+    }
+    const consumer = { ...run('consumer', root), fileEvidence: evidence }
+    const projection = projectNotebookFileDependencies([
+      { run: producer, facts, fileAccess: access([], ['result.json']) },
+      { run: unobservedWriter, facts, fileAccess: access([], ['result.json']) },
+      { run: consumer, facts, fileAccess: access(['result.json'], []) }
+    ])
+    expect(projection.fileDependenciesByRunId.consumer).toBeUndefined()
+    expect(projection.unresolvedFileReadRunIds).toContain('consumer')
   })
 
   it('marks dynamic-only file reads unresolved even when no path is statically recovered', () => {

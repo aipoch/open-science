@@ -120,6 +120,9 @@ const hasCompleteRuntimeFileEvidence = (run: NotebookRunRecord): boolean =>
   run.fileEvidence.fileReads === 'complete' &&
   run.fileEvidence.relationCount !== 0
 
+const hasCompleteRuntimeWriterEvidence = (run: NotebookRunRecord): boolean =>
+  hasCompleteRuntimeFileEvidence(run) && run.fileEvidence?.writerAttribution === 'complete'
+
 const lineageScopePath = (run: NotebookRunRecord, value: string): string => {
   const workingDirectory = lineageWorkingDirectory(run)
   if (workingDirectory === undefined) return lineagePathCase(portablePath(value))
@@ -2040,11 +2043,53 @@ const projectNotebookFileDependencies = (
   const ambiguousPaths = new Set<string>()
   const unresolvedFileReadRunIds = new Set<string>()
   const dependenciesByRunId: Record<string, NotebookFileDependency[]> = {}
+  const generationLineageKeys = (
+    run: NotebookRunRecord,
+    generation: NotebookWorkingFile
+  ): Set<string> =>
+    new Set([
+      lineagePathKey(run, generation.path),
+      ...(generation.relativePath ? [lineagePathKey(run, generation.relativePath)] : [])
+    ])
+  const aliasesForGeneration = (
+    run: NotebookRunRecord,
+    generation: NotebookWorkingFile
+  ): Set<string> => {
+    const generationKeys = generationLineageKeys(run, generation)
+    return new Set(
+      [...producerPaths].flatMap(([key, producerFile]) =>
+        [...generationLineageKeys(run, producerFile)].some((candidate) =>
+          generationKeys.has(candidate)
+        )
+          ? [key]
+          : []
+      )
+    )
+  }
+  const invalidateGenerationAliases = (
+    run: NotebookRunRecord,
+    generation: NotebookWorkingFile,
+    ambiguous: boolean
+  ): void => {
+    const keys = aliasesForGeneration(run, generation)
+    for (const key of generationLineageKeys(run, generation)) keys.add(key)
+    for (const key of keys) {
+      producers.delete(key)
+      producerPaths.delete(key)
+      if (ambiguous) ambiguousPaths.add(key)
+      else ambiguousPaths.delete(key)
+    }
+  }
   const registerProducer = (
     run: NotebookRunRecord,
     sourcePath: string,
     generation: NotebookWorkingFile
   ): void => {
+    // A new generation supersedes every prior alias for the same artifact. Keep
+    // those aliases ambiguous until the exact identities observed in this run
+    // are registered below; scoped aliases for companion writes must not point
+    // at the older producer.
+    invalidateGenerationAliases(run, generation, true)
     const producer = {
       runId: run.runId,
       ...(generation.generationId ? { generationId: generation.generationId } : {}),
@@ -2066,16 +2111,19 @@ const projectNotebookFileDependencies = (
     }
   }
   const markAmbiguous = (run: NotebookRunRecord, generation: NotebookWorkingFile): void => {
-    const key = lineagePathKey(run, generation.path)
-    producers.delete(key)
-    producerPaths.delete(key)
-    ambiguousPaths.add(key)
+    invalidateGenerationAliases(run, generation, true)
   }
   const markPathAmbiguous = (run: NotebookRunRecord, path: string): void => {
     const key = lineagePathKey(run, path)
-    producers.delete(key)
-    producerPaths.delete(key)
-    ambiguousPaths.add(key)
+    const aliases = new Set([key])
+    for (const [producerKey, producerFile] of producerPaths) {
+      if (generationLineageKeys(run, producerFile).has(key)) aliases.add(producerKey)
+    }
+    for (const alias of aliases) {
+      producers.delete(alias)
+      producerPaths.delete(alias)
+      ambiguousPaths.add(alias)
+    }
   }
   const scopeCandidatePath = (run: NotebookRunRecord, path: string): string => {
     return lineageScopePath(run, path)
@@ -2126,6 +2174,7 @@ const projectNotebookFileDependencies = (
   }
   for (const { run, fileAccess } of analyzedRuns) {
     const runtimeEvidenceComplete = hasCompleteRuntimeFileEvidence(run)
+    const runtimeWriterEvidenceComplete = hasCompleteRuntimeWriterEvidence(run)
     if (run.status === 'completed' && fileAccess) {
       const dynamicReadUnresolved = fileAccess.reasonCodes.includes('dynamic-path-unresolved')
       if (
@@ -2200,12 +2249,12 @@ const projectNotebookFileDependencies = (
         // observed. An unobserved declared path must poison that path, otherwise an
         // older producer can be reused after an overwrite that was not captured.
         for (const rawPath of fileAccess.writes) {
-          if (!runtimeEvidenceComplete && !observedFileGeneration(run, rawPath))
+          if (!runtimeWriterEvidenceComplete && !observedFileGeneration(run, rawPath))
             markPathAmbiguous(run, rawPath)
         }
       } else {
         for (const generation of observedChanges) markAmbiguous(run, generation)
-        if (!runtimeEvidenceComplete) {
+        if (!runtimeWriterEvidenceComplete) {
           for (const rawPath of fileAccess?.writes ?? []) markPathAmbiguous(run, rawPath)
         }
         for (const scope of fileAccess?.writeScopes ?? []) {
