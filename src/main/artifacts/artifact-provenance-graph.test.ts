@@ -272,6 +272,76 @@ describe('artifact provenance graph', () => {
     )
   })
 
+  it('preserves unresolved file reads through analysis restart and target closure', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'unresolved-file-lineage-'))
+    const scripts = [
+      'from pathlib import Path\nPath("intermediate.csv").write_text("old")',
+      'from pathlib import Path\nPath("intermediate.csv").write_text("new")',
+      'from pathlib import Path\nvalue = Path("intermediate.csv").read_text()\nPath("result.csv").write_text(value)'
+    ]
+    const activities = scripts.map((script, index) =>
+      notebookActivity(`run-${index}`, index, index === 2 ? [{
+        relation: 'created',
+        relativePath: 'result.csv',
+        pathPortability: 'relative',
+        authority: 'advisory',
+        generation: generation('g-target', 'result.csv', checksum('b'))
+      }] : [], {
+        script,
+        cwdBefore: root,
+        cwdAfter: root,
+        kernelEpochId: `epoch-${index}`,
+        workingFiles: index === 0 ? [{
+          path: join(root, 'intermediate.csv'),
+          relativePath: 'intermediate.csv',
+          kind: 'other',
+          createdByRunId: 'run-0',
+          change: 'created',
+          checksum: checksum('a')
+        }] : []
+      })
+    )
+    try {
+      const options = {
+        storageRoot: root,
+        repository: { readSessionRuns: async () => activities.map(({ run }) => run) }
+      }
+      const request = { projectId: 'p', sessionId: 's', throughRunId: 'run-2' }
+      const projection = await new NotebookDependencyAnalyzer(options).project(request)
+      expect(projection.stalenessByRunId['run-2']).toEqual({ state: 'clear' })
+      expect(projection.unresolvedFileReadRunIds).toEqual(['run-2'])
+      expect(projection.fileDependenciesByRunId?.['run-2']).toBeUndefined()
+      const reloaded = await new NotebookDependencyAnalyzer(options).project(request)
+      expect(reloaded.unresolvedFileReadRunIds).toEqual(['run-2'])
+      const graph = sealArtifactProvenanceGraph({
+        target: target(), notebookActivities: activities, computeActivities: [],
+        notebookDependencies: reloaded
+      })
+      expect(graph.completeness).toBe('incomplete')
+      expect(graph.reasonCodes).toContain('history-truncated')
+      expect(graph.edges).not.toContainEqual(expect.objectContaining({
+        kind: 'depends-on', activityId: 'run-2', dependencyActivityId: 'run-0'
+      }))
+      const unrelated = sealArtifactProvenanceGraph({
+        target: { ...target(), producerRunId: 'run-3' },
+        notebookActivities: [...activities, notebookActivity('run-3', 3, [{
+          relation: 'created', relativePath: 'result.csv', pathPortability: 'relative',
+          authority: 'advisory', generation: generation('g-target', 'result.csv', checksum('b'))
+        }])],
+        computeActivities: [],
+        notebookDependencies: {
+          ...reloaded,
+          stalenessByRunId: { ...reloaded.stalenessByRunId, 'run-3': { state: 'clear' } },
+          dependenciesByRunId: { ...reloaded.dependenciesByRunId, 'run-3': [] }
+        }
+      })
+      expect(unrelated.completeness).toBe('complete')
+      expect(unrelated.reasonCodes).not.toContain('history-truncated')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it.each(['proportional_venn_5sets.png', 'proportional_venn_5sets_hires.png'])(
     'reconstructs %s without discarded font probes and failed theme setup',
     async (filename) => {

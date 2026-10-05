@@ -757,7 +757,7 @@ describe('real-agent science lineage fixtures', () => {
           writes: cell.writes,
           reasonCodes: []
         })
-        const projection = projectNotebookFileDependencies(
+        const { fileDependenciesByRunId: projection } = projectNotebookFileDependencies(
           runs.map((run, index) => ({ run, facts, fileAccess: fileAccess(fixture.cells[index]!) }))
         )
         const dependencies = projection
@@ -836,7 +836,7 @@ describe('real-agent science lineage fixtures', () => {
       reasonCodes: []
     }
     const consumerAccess = { ...fileAccess, writeScopes: undefined, reads: ['outputs/map.dbf'] }
-    const projection = projectNotebookFileDependencies([
+    const { fileDependenciesByRunId: projection } = projectNotebookFileDependencies([
       { run: producer, facts, fileAccess },
       { run: consumer, facts, fileAccess: consumerAccess }
     ] satisfies readonly AnalyzedNotebookRun[])
@@ -863,7 +863,7 @@ describe('real-agent science lineage fixtures', () => {
         }
       ]
     }
-    const withheld = projectNotebookFileDependencies([
+    const { fileDependenciesByRunId: withheld } = projectNotebookFileDependencies([
       { run: producer, facts, fileAccess },
       {
         run: partialWriter,
@@ -889,7 +889,7 @@ describe('real-agent science lineage fixtures', () => {
       endedAt: 2,
       workingFiles: []
     }
-    const scopeWithheld = projectNotebookFileDependencies([
+    const { fileDependenciesByRunId: scopeWithheld } = projectNotebookFileDependencies([
       { run: producer, facts, fileAccess },
       { run: unobservedScopedWriter, facts, fileAccess },
       { run: consumer, facts, fileAccess: consumerAccess }
@@ -949,7 +949,7 @@ describe('file lineage identity and completeness guards', () => {
       checksum: 'a'.repeat(64)
     }])
     const consumer = run('consumer', root)
-    const projection = projectNotebookFileDependencies([
+    const { fileDependenciesByRunId: projection } = projectNotebookFileDependencies([
       { run: producer, facts, fileAccess: access([], ['foo.txt']) },
       { run: consumer, facts, fileAccess: access(['data/foo.txt'], []) }
     ] satisfies readonly AnalyzedNotebookRun[])
@@ -960,7 +960,7 @@ describe('file lineage identity and completeness guards', () => {
     const root = join(tmpdir(), 'lineage-unknown-cwd')
     const producer = { ...run('producer', root, []), cwdBefore: undefined, cwdAfter: undefined }
     const consumer = { ...run('consumer', root, []), cwdBefore: undefined, cwdAfter: undefined }
-    const projection = projectNotebookFileDependencies([
+    const { fileDependenciesByRunId: projection } = projectNotebookFileDependencies([
       {
         run: {
           ...producer,
@@ -995,7 +995,7 @@ describe('file lineage identity and completeness guards', () => {
       checksum: 'b'.repeat(64)
     }])
     const consumer = run('consumer', root)
-    const projection = projectNotebookFileDependencies([
+    const { fileDependenciesByRunId: projection } = projectNotebookFileDependencies([
       { run: producer, facts, fileAccess: access([], ['data/result.json']) },
       { run: consumer, facts, fileAccess: access([output], []) }
     ] satisfies readonly AnalyzedNotebookRun[])
@@ -1019,7 +1019,7 @@ describe('file lineage identity and completeness guards', () => {
         }
       ])
       const consumer = run('consumer', root)
-      const projection = projectNotebookFileDependencies([
+      const { fileDependenciesByRunId: projection } = projectNotebookFileDependencies([
         { run: producer, facts, fileAccess: access([], ['Outputs/result.json']) },
         { run: consumer, facts, fileAccess: access(['outputs/RESULT.JSON'], []) }
       ] satisfies readonly AnalyzedNotebookRun[])
@@ -1052,7 +1052,7 @@ describe('file lineage identity and completeness guards', () => {
         checksum: 'f'.repeat(64)
       }
     ])
-    const projection = projectNotebookFileDependencies([
+    const { fileDependenciesByRunId: projection } = projectNotebookFileDependencies([
       { run: producer, facts, fileAccess: access([], ['result.json']) },
       { run: rewrite, facts, fileAccess: access(['result.json'], ['result.json']) }
     ] satisfies readonly AnalyzedNotebookRun[])
@@ -1072,7 +1072,7 @@ describe('file lineage identity and completeness guards', () => {
     }])
     const overwrite = run('overwrite', root)
     const consumer = run('consumer', root)
-    const projection = projectNotebookFileDependencies([
+    const { fileDependenciesByRunId: projection } = projectNotebookFileDependencies([
       { run: producer, facts, fileAccess: access([], ['result.json']) },
       { run: overwrite, facts, fileAccess: access([], ['result.json']) },
       { run: consumer, facts, fileAccess: access(['result.json'], []) }
@@ -1106,7 +1106,7 @@ describe('file lineage identity and completeness guards', () => {
       ]),
       status: 'failed'
     }
-    const projection = projectNotebookFileDependencies([
+    const { fileDependenciesByRunId: projection } = projectNotebookFileDependencies([
       { run: producer, facts, fileAccess: access([], ['result.json']) },
       {
         run: interrupted,

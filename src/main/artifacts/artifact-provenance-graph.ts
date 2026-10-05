@@ -788,7 +788,9 @@ const sealArtifactProvenanceGraph = (
     )
   )
   const completeKernelDependencyActivityIds = new Set<string>()
-  const missingDependencyActivityIds = new Set<string>()
+  const missingDependencyActivityIds = new Set(
+    input.notebookDependencies?.unresolvedFileReadRunIds ?? []
+  )
   if (input.notebookDependencies) {
     for (const [activityId, candidate] of notebookCandidateById) {
       const dependencies = input.notebookDependencies.dependenciesByRunId?.[activityId]

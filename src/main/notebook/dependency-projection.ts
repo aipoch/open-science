@@ -1974,10 +1974,14 @@ class NotebookDependencyProjector {
 
 const projectNotebookFileDependencies = (
   analyzedRuns: readonly AnalyzedNotebookRun[]
-): Record<string, NotebookFileDependency[]> => {
+): {
+  fileDependenciesByRunId: Record<string, NotebookFileDependency[]>
+  unresolvedFileReadRunIds: string[]
+} => {
   const producers = new Map<string, { runId: string; generationId?: string; checksum?: string }>()
   const producerPaths = new Map<string, string>()
   const ambiguousPaths = new Set<string>()
+  const unresolvedFileReadRunIds = new Set<string>()
   const dependenciesByRunId: Record<string, NotebookFileDependency[]> = {}
   const registerProducer = (
     run: NotebookRunRecord,
@@ -2032,7 +2036,9 @@ const projectNotebookFileDependencies = (
     }
   }
   for (const { run, fileAccess } of analyzedRuns) {
-    if (run.status === 'completed' && fileAccess?.readState === 'complete') {
+    if (run.status === 'completed' && fileAccess) {
+      if (fileAccess.readState !== 'complete' && fileAccess.reads.length > 0)
+        unresolvedFileReadRunIds.add(run.runId)
       const dependencies: NotebookFileDependency[] = []
       const writeKeys = new Set(
         (fileAccess.writes ?? []).map((rawPath) => lineagePathKey(run, rawPath))
@@ -2042,8 +2048,11 @@ const projectNotebookFileDependencies = (
         const key = lineagePathKey(run, rawPath)
         // Static extraction does not retain statement order. If a run both reads and
         // writes the same path, do not attribute the read to an older producer.
-        if (writeKeys.has(key)) continue
-        if (ambiguousPaths.has(key)) continue
+        if (writeKeys.has(key) || ambiguousPaths.has(key) || key.startsWith('relative:')) {
+          unresolvedFileReadRunIds.add(run.runId)
+          continue
+        }
+        if (fileAccess.readState !== 'complete') continue
         const producer = producers.get(key)
         if (!producer || producer.runId === run.runId) continue
         dependencies.push({
@@ -2119,7 +2128,10 @@ const projectNotebookFileDependencies = (
       }
     }
   }
-  return dependenciesByRunId
+  return {
+    fileDependenciesByRunId: dependenciesByRunId,
+    unresolvedFileReadRunIds: [...unresolvedFileReadRunIds]
+  }
 }
 
 // Projects immutable run history into current dependency freshness. Cell identity is deliberately

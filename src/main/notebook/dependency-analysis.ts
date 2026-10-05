@@ -1763,9 +1763,12 @@ class NotebookDependencyAnalyzer {
       Object.assign(projection.invalidatedByRunId, groupProjection.invalidatedByRunId)
       Object.assign(projection.dependenciesByRunId!, groupProjection.dependenciesByRunId)
     }
-    const fileDependenciesByRunId = projectNotebookFileDependencies(analyzedRuns)
+    const { fileDependenciesByRunId, unresolvedFileReadRunIds } =
+      projectNotebookFileDependencies(analyzedRuns)
     if (Object.keys(fileDependenciesByRunId).length)
       projection.fileDependenciesByRunId = fileDependenciesByRunId
+    if (unresolvedFileReadRunIds.length)
+      projection.unresolvedFileReadRunIds = unresolvedFileReadRunIds
     for (const groupKey of cachedGroups.keys()) {
       if (!groups.has(groupKey)) cachedGroups.delete(groupKey)
     }

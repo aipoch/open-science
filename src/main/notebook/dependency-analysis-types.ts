@@ -238,6 +238,8 @@ type NotebookDependencyProjection = {
   invalidatedByRunId: Record<string, NotebookInvalidatedRun[]>
   dependenciesByRunId?: Record<string, string[]>
   fileDependenciesByRunId?: Record<string, NotebookFileDependency[]>
+  // Recomputed from run history; not stored in per-kernel sidecar snapshots.
+  unresolvedFileReadRunIds?: string[]
 }
 
 type NotebookDependencyInterpreter = { command: string; args?: string[]; condaPrefix?: string }
