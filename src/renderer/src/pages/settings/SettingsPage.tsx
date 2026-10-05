@@ -1438,8 +1438,8 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
             className={cn(
               'pointer-events-auto fixed z-50 flex overflow-hidden overscroll-contain rounded-xl border border-border bg-card text-foreground shadow-dialog outline-none data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:fill-mode-forwards motion-reduce:data-[state=closed]:animate-none motion-reduce:data-[state=open]:animate-none',
               isExpanded
-                ? 'inset-0 rounded-none md:inset-4 md:rounded-xl'
-                : 'inset-0 h-[100dvh] w-screen rounded-none md:bottom-auto md:left-1/2 md:right-auto md:top-1/2 md:h-[min(688px,calc(100vh-2rem))] md:w-[min(960px,calc(100vw-2rem))] md:-translate-x-1/2 md:-translate-y-1/2 md:rounded-xl'
+                ? 'inset-x-0 bottom-0 top-[var(--windows-titlebar-height)] rounded-none md:bottom-4 md:left-4 md:right-4 md:top-[calc(var(--windows-titlebar-height)+1rem)] md:rounded-xl'
+                : 'inset-x-0 bottom-0 top-[var(--windows-titlebar-height)] h-[calc(100dvh-var(--windows-titlebar-height))] w-screen rounded-none md:bottom-auto md:left-1/2 md:right-auto md:top-[var(--windows-content-center-y)] md:h-[min(688px,var(--windows-content-max-height))] md:w-[min(960px,calc(100vw-2rem))] md:-translate-x-1/2 md:-translate-y-1/2 md:rounded-xl'
             )}
           >
             {/* Radix requires a Title/Description for a11y; the visible panel title lives in the header. */}
@@ -1483,7 +1483,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                   aria-hidden={isMobile && !isMobileNavOpen ? true : undefined}
                   inert={isMobile && !isMobileNavOpen ? true : undefined}
                   className={cn(
-                    'fixed inset-y-0 left-0 z-[70] flex min-h-0 w-[min(86vw,320px)] shrink-0 flex-col overflow-hidden border-r border-border bg-background transition-transform duration-200 ease-out md:static md:z-auto md:w-48 md:translate-x-0',
+                    'fixed bottom-0 left-0 top-[var(--windows-titlebar-height)] z-[70] flex min-h-0 w-[min(86vw,320px)] shrink-0 flex-col overflow-hidden border-r border-border bg-background transition-transform duration-200 ease-out md:static md:z-auto md:w-48 md:translate-x-0',
                     isMobileNavOpen ? 'translate-x-0' : '-translate-x-full'
                   )}
                 >

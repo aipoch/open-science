@@ -1835,7 +1835,7 @@ describe('SettingsPage layout', () => {
     const nav = document.body.querySelector<HTMLElement>('nav[aria-label="Settings"]')
     expect(nav?.getAttribute('aria-hidden')).toBe('true')
     expect(document.body.querySelector('[data-slot="settings-surface"]')?.className).toContain(
-      'h-[100dvh]'
+      'h-[calc(100dvh-var(--windows-titlebar-height))]'
     )
 
     await act(async () => {
@@ -5179,7 +5179,8 @@ describe('SettingsPage layout', () => {
     expect(document.body.querySelector('[aria-label="Restore"]')).not.toBeNull()
     expect(document.body.querySelector('[aria-label="Maximize"]')).toBeNull()
     const dialog = document.body.querySelector<HTMLElement>('[data-slot="settings-surface"]')
-    expect(dialog?.className).toContain('inset-4')
+    expect(dialog?.className).toContain('md:top-[calc(var(--windows-titlebar-height)+1rem)]')
+    expect(dialog?.className).toContain('md:bottom-4')
     expect(dialog?.className).not.toContain('h-[80vh]')
     expect(dialog?.className).not.toContain('w-[80vw]')
   })
