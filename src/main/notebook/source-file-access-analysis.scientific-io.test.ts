@@ -280,7 +280,7 @@ adata = ${module === 'scanpy' ? 'sc' : 'ad'}.read_zarr('inputs/cells.zarr')`
 
   it.each([
     "adata.write_zarr('outputs/cells.zarr')",
-    "anndata.io.write_zarr(adata, 'outputs/cells.zarr')"
+    "anndata.io.write_zarr('outputs/cells.zarr', adata)"
   ])('captures AnnData Zarr directory output: %s', async (source) => {
     await expect(
       analyzeNotebookSourceFileAccess(

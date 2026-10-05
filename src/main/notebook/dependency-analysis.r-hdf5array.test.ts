@@ -58,6 +58,21 @@ it('matches the HDF5 path after exact named argument matching', async () => {
   ).toMatchObject({ reads: ['inputs/counts.h5'], readState: 'partial' })
 })
 
+it('preserves unqualified HDF5Array effects when the binding is not shadowed', async () => {
+  expect(
+    await analyzeNotebookSourceFileAccess(
+      'r',
+      'library(HDF5Array)\ncounts <- HDF5Array("inputs/counts.h5", "counts")\nwriteHDF5Array(counts, filepath="outputs/counts.h5", name="counts")'
+    )
+  ).toMatchObject({
+    reads: ['inputs/counts.h5', 'outputs/counts.h5'],
+    writes: ['outputs/counts.h5'],
+    readState: 'partial',
+    writeState: 'complete',
+    externalState: 'partial'
+  })
+})
+
 it('links delayed HDF5 values across generated notebook cells', async () => {
   const scripts = [
     'counts <- HDF5Array::HDF5Array("inputs/counts.h5", "counts")',

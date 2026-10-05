@@ -8454,7 +8454,11 @@ const analyzeRFileAccessTree = (
       // These contracts apply only to HDF5Array's explicit file arguments.
       // Delayed operations and the package's default dump destination remain
       // external/unknown even when the path itself is known.
-      if (qualified?.package !== 'HDF5Array') call = undefined
+      if (
+        (qualified && qualified.package !== 'HDF5Array') ||
+        (!qualified && shadowedQuotationNames.has(name))
+      )
+        call = undefined
       else unsupportedExternalState = true
     }
     if (

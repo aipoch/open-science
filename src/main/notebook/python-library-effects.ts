@@ -1915,7 +1915,7 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
       read_zarr: annDataZarrReader,
       write_zarr: {
         effect: 'read',
-        file: { kind: 'write', position: 1, keywords: ['store', 'filename'] }
+        file: { kind: 'write', position: 0, keywords: ['store', 'filename'] }
       }
     }
   },
