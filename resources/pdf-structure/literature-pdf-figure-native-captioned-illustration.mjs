@@ -1036,7 +1036,7 @@ export function nativeCaptionedRasterDualPanelGrid(page, caption, captions, tabl
 export function nativeRasterGrid(page, caption, captions, tables) {
   const font = captionFont(page, caption)
   if (!(font > 0) || !Number.isFinite(font)) return
-  const images = (page.graphicsBounds ?? [])
+  const allImages = (page.graphicsBounds ?? [])
     .filter((g) => g.kind === 'image')
     .map((g) => ({
       rect: (g.paintedNormalizedRect ?? g.normalizedRect).map(
@@ -1052,26 +1052,91 @@ export function nativeRasterGrid(page, caption, captions, tables) {
         !tables.some((table) => intersection(table, rect) > 0) &&
         !captions.some((other) => other !== caption && intersection(other.rect, rect) > 0)
     )
-  if (images.length < 8) return
-  const widths = images.map(({ rect }) => rect[2] - rect[0])
-  const heights = images.map(({ rect }) => rect[3] - rect[1])
+  if (allImages.length < 8) return
+  const widths = allImages.map(({ rect }) => rect[2] - rect[0])
+  const heights = allImages.map(({ rect }) => rect[3] - rect[1])
   const median = (values) => values.slice().sort((a, b) => a - b)[Math.floor(values.length / 2)]
   const width = median(widths)
   const height = median(heights)
-  if (
-    widths.some((value) => Math.abs(value - width) > width * 0.2) ||
-    heights.some((value) => Math.abs(value - height) > height * 0.2)
-  )
-    return
-  const rows = []
-  for (const image of images.slice().sort((a, b) => a.rect[1] - b.rect[1])) {
-    const row = rows.find(({ rect }) => Math.abs(rect[1] - image.rect[1]) <= height * 0.45)
-    if (row) {
-      row.images.push(image)
-      row.rect = union(row.images.map(({ rect }) => rect))
-    } else rows.push({ images: [image], rect: image.rect.slice() })
+  if (!(width > 0) || !(height > 0)) return
+
+  // A page can contain several raster grids with identical tile geometry.
+  // Cluster by horizontal proximity first, then split vertically at the
+  // whitespace between figure bands. This keeps a caption from claiming a
+  // neighboring grid merely because all of its tiles sit above the caption.
+  const clusterGap = Math.max(width * 1.5, font * 8)
+  const horizontalClusters = []
+  for (const image of allImages.slice().sort((a, b) => a.rect[0] - b.rect[0])) {
+    const cluster = horizontalClusters.find(
+      ({ bounds }) =>
+        image.rect[0] <= bounds[2] + clusterGap && image.rect[2] >= bounds[0] - clusterGap
+    )
+    if (cluster) {
+      cluster.images.push(image)
+      cluster.bounds = union(cluster.images.map(({ rect }) => rect))
+    } else horizontalClusters.push({ images: [image], bounds: image.rect.slice() })
   }
-  if (rows.length < 2 || rows.some((row) => row.images.length < 3)) return
+  const candidates = []
+  for (const cluster of horizontalClusters) {
+    const clusterWidths = cluster.images.map(({ rect }) => rect[2] - rect[0])
+    const clusterHeights = cluster.images.map(({ rect }) => rect[3] - rect[1])
+    const clusterWidth = median(clusterWidths)
+    const clusterHeight = median(clusterHeights)
+    if (
+      clusterWidths.some((value) => Math.abs(value - clusterWidth) > clusterWidth * 0.2) ||
+      clusterHeights.some((value) => Math.abs(value - clusterHeight) > clusterHeight * 0.2)
+    )
+      continue
+    const rows = []
+    for (const image of cluster.images.slice().sort((a, b) => a.rect[1] - b.rect[1])) {
+      const row = rows.find(({ rect }) => Math.abs(rect[1] - image.rect[1]) <= clusterHeight * 0.45)
+      if (row) {
+        row.images.push(image)
+        row.rect = union(row.images.map(({ rect }) => rect))
+      } else rows.push({ images: [image], rect: image.rect.slice() })
+    }
+    const blocks = []
+    for (const row of rows) {
+      const previous = blocks.at(-1)
+      if (
+        previous &&
+        row.rect[1] - previous.rows.at(-1).rect[3] <= Math.max(clusterHeight * 1.25, font * 6)
+      ) {
+        previous.rows.push(row)
+        previous.images.push(...row.images)
+      } else blocks.push({ rows: [row], images: row.images.slice() })
+    }
+    for (const block of blocks) {
+      if (block.rows.length < 2 || block.rows.some((row) => row.images.length < 3)) continue
+      const bounds = union(block.images.map(({ rect }) => rect))
+      const gap = caption.rect[1] - bounds[3]
+      const horizontalOverlap = Math.max(
+        0,
+        Math.min(bounds[2], caption.rect[2]) - Math.max(bounds[0], caption.rect[0])
+      )
+      const overlapRatio =
+        horizontalOverlap / Math.min(bounds[2] - bounds[0], caption.rect[2] - caption.rect[0])
+      const interveningCaption = captions.some(
+        (other) =>
+          other !== caption &&
+          other.page === caption.page &&
+          other.rect[1] >= bounds[3] - font &&
+          other.rect[3] <= caption.rect[1] + font &&
+          intersection(other.rect, bounds) > 0
+      )
+      if (
+        gap < 0 ||
+        gap > Math.max(font * 7, page.height * 0.1) ||
+        overlapRatio < 0.5 ||
+        interveningCaption
+      )
+        continue
+      candidates.push({ block, bounds, gap, overlapRatio })
+    }
+  }
+  const selected = candidates.sort((a, b) => a.gap - b.gap || b.overlapRatio - a.overlapRatio)[0]
+  if (!selected) return
+  const { images, rows } = selected.block
   const columns = rows
     .flatMap((row) => row.images)
     .map(({ rect }) => (rect[0] + rect[2]) / 2)

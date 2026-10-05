@@ -285,6 +285,33 @@ it('recovers a multi-row raster tile grid above its caption', () => {
   expect(nativeRasterGrid(page, caption, [caption], [])?.rect).toEqual([100, 90, 470, 280])
   expect(associateFigures(page, [caption], [], [], [], [])[0].rect).toEqual([100, 90, 470, 280])
 })
+it('does not merge a neighboring raster grid into the captioned grid', () => {
+  const caption = { page: 1, lines: ['Figure 13. Target plate.'], rect: [380, 350, 710, 380] }
+  const images = [10, 400].flatMap((left) =>
+    Array.from({ length: 15 }, (_, index) => {
+      const column = index % 5
+      const row = Math.floor(index / 5)
+      return {
+        kind: 'image',
+        normalizedRect: [
+          (left + column * 60) / 720,
+          (90 + row * 70) / 800,
+          (left + column * 60 + 50) / 720,
+          (140 + row * 70) / 800
+        ]
+      }
+    })
+  )
+  const page = {
+    pageNumber: 1,
+    width: 720,
+    height: 800,
+    invalidGraphicsBounds: 0,
+    lines: [{ text: caption.lines[0], x: 380, y: 350, width: 330, height: 10, fontSize: 10 }],
+    graphicsBounds: images
+  }
+  expect(nativeRasterGrid(page, caption, [caption], [])?.rect).toEqual([400, 90, 690, 280])
+})
 it('recovers a strict 2x2 raster plate beside unrelated page content', () => {
   const fixture = rasterQuad()
   expect(
