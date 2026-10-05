@@ -37,8 +37,8 @@ const step = (job: Job, name: string): Step =>
   job.steps.find((candidate) => candidate.name === name)!
 const suites = [
   ['renderer_layout', 'test:e2e:browser', 0],
-  ['e2e_functional_windows', 'test:e2e:journey', 9],
-  ['e2e_workspace_windows', 'test:e2e:workspace', 4]
+  ['e2e_functional_windows', 'test:e2e:journey', 10],
+  ['e2e_workspace_windows', 'test:e2e:workspace', 6]
 ] as const
 
 it('schedules independent complete Windows E2E and keeps the manual full entry point', () => {
@@ -240,9 +240,9 @@ it('discovers the reviewed mainline subset and retains every other case in the f
     return visit((JSON.parse(result.stdout) as JSONReport).suites).sort()
   }
   for (const [group, count] of Object.entries({
-    projects: 1,
+    projects: 3,
     conversation: 2,
-    files: 4,
+    files: 5,
     notebook: 1,
     windows: 5
   })) {
