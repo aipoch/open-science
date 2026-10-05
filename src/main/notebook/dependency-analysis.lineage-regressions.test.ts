@@ -848,6 +848,21 @@ describe('real-agent science lineage fixtures', () => {
         confidence: 'verified'
       })
     ])
+    const scopedReadWriteRun: NotebookRunRecord = {
+      ...consumer,
+      runId: 'scoped-read-write',
+      cellId: 'scoped-read-write'
+    }
+    const scopedReadWrite = projectNotebookFileDependencies([
+      { run: producer, facts, fileAccess },
+      {
+        run: scopedReadWriteRun,
+        facts,
+        fileAccess: { ...consumerAccess, writeScopes: fileAccess.writeScopes }
+      }
+    ])
+    expect(scopedReadWrite.unresolvedFileReadRunIds).toContain('scoped-read-write')
+    expect(scopedReadWrite.fileDependenciesByRunId['scoped-read-write']).toBeUndefined()
     const partialWriter: NotebookRunRecord = {
       ...producer,
       runId: 'scoped-partial-writer',
@@ -895,6 +910,37 @@ describe('real-agent science lineage fixtures', () => {
       { run: consumer, facts, fileAccess: consumerAccess }
     ] satisfies readonly AnalyzedNotebookRun[])
     expect(scopeWithheld['scoped-consumer']).toBeUndefined()
+
+    const companionProducer: NotebookRunRecord = {
+      ...producer,
+      runId: 'scoped-companion-producer',
+      cellId: 'scoped-companion-producer',
+      workingFiles: [
+        {
+          ...producer.workingFiles[0]!,
+          path: join(dataRoot, 'outputs/map.shx'),
+          relativePath: 'data/outputs/map.shx',
+          createdByRunId: 'scoped-companion-producer',
+          checksum: 'c'.repeat(64)
+        }
+      ]
+    }
+    const partialScopeWriter: NotebookRunRecord = {
+      ...producer,
+      runId: 'scoped-partial-scope-writer',
+      cellId: 'scoped-partial-scope-writer',
+      workingFiles: [producer.workingFiles[0]!]
+    }
+    const partialScopeProjection = projectNotebookFileDependencies([
+      { run: companionProducer, facts, fileAccess },
+      { run: partialScopeWriter, facts, fileAccess },
+      {
+        run: { ...consumer, runId: 'scoped-companion-consumer', cellId: 'scoped-companion-consumer' },
+        facts,
+        fileAccess: { ...consumerAccess, reads: ['outputs/map.shx'] }
+      }
+    ])
+    expect(partialScopeProjection.fileDependenciesByRunId['scoped-companion-consumer']).toBeUndefined()
   })
 })
 

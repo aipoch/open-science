@@ -2018,6 +2018,23 @@ const projectNotebookFileDependencies = (
       ? portablePath(path)
       : portablePath(relative(workingDirectory, path))
   }
+  const readMatchesScope = (
+    run: NotebookRunRecord,
+    path: string,
+    scope: NotebookSourceFileWriteScope
+  ): boolean => {
+    const workingDirectory = run.cwdBefore ?? run.cwdAfter ?? run.frozenShellContext?.cwd
+    const resolvedPath =
+      workingDirectory !== undefined && !isAbsolute(path)
+        ? resolve(workingDirectory, path)
+        : path
+    const candidatePath = scopeCandidatePath(run, resolvedPath)
+    return (
+      candidatePath !== '..' &&
+      !candidatePath.startsWith('../') &&
+      matchesWriteScope(scope, candidatePath)
+    )
+  }
   const markScopeAmbiguous = (
     run: NotebookRunRecord,
     scope: NotebookSourceFileWriteScope
@@ -2046,9 +2063,17 @@ const projectNotebookFileDependencies = (
       for (const rawPath of fileAccess.reads) {
         const path = portablePath(rawPath)
         const key = lineagePathKey(run, rawPath)
+        const scopeRead = (fileAccess.writeScopes ?? []).some((scope) =>
+          readMatchesScope(run, rawPath, scope)
+        )
         // Static extraction does not retain statement order. If a run both reads and
         // writes the same path, do not attribute the read to an older producer.
-        if (writeKeys.has(key) || ambiguousPaths.has(key) || key.startsWith('relative:')) {
+        if (
+          writeKeys.has(key) ||
+          scopeRead ||
+          ambiguousPaths.has(key) ||
+          key.startsWith('relative:')
+        ) {
           unresolvedFileReadRunIds.add(run.runId)
           continue
         }
@@ -2085,12 +2110,14 @@ const projectNotebookFileDependencies = (
           }
         }
         for (const scope of fileAccess.writeScopes ?? []) {
+          // Runtime observation does not establish complete scope coverage. Quarantine
+          // all older companions first, then restore only generations observed now.
+          markScopeAmbiguous(run, scope)
           const scopedGenerations = observedScopedGenerations(run, [scope])
           for (const generation of scopedGenerations) {
             registerProducer(run, scope.path, generation)
             matchedGenerations.add(generation)
           }
-          if (!scopedGenerations.length) markScopeAmbiguous(run, scope)
         }
         for (const generation of observedChanges) {
           if (!matchedGenerations.has(generation)) markAmbiguous(run, generation)
