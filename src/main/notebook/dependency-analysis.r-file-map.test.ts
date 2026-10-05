@@ -17,6 +17,17 @@ it.each([
 })
 
 it.each([
+  ['custom::read10xCounts("inputs/matrix")', 'inputs/matrix'],
+  ['custom::open_dataset("inputs/events")', 'inputs/events'],
+  ['custom::import_biom("inputs/table.biom")', 'inputs/table.biom'],
+  ['custom::LoadH5Seurat("inputs/object.h5seurat")', 'inputs/object.h5seurat']
+])('does not apply a package-specific file effect to %s', async (source, path) => {
+  const result = await analyzeNotebookSourceFileAccess('r', source)
+  expect(result.reads).not.toContain(path)
+  expect(result.writes).not.toContain(path)
+})
+
+it.each([
   'utils::write.csv',
   'utils::write.csv2',
   'utils::write.table',

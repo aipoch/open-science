@@ -486,6 +486,29 @@ const R_FILE_CALL_EFFECTS: ReadonlyMap<string, NotebookFileCallEffect> = new Map
 
 const R_POTENTIAL_FILE_WRITE_CALLS = new Set(['st_write', 'writeRaster'])
 
+// These effects are keyed by bare R function name for compatibility with
+// unqualified calls. Qualified calls must still prove the package that owns
+// the contract, otherwise a user-defined `custom::read10xCounts()` could be
+// mistaken for DropletUtils I/O.
+const R_FILE_CALL_PACKAGES: ReadonlyMap<string, string> = new Map([
+  ['read10xCounts', 'DropletUtils'],
+  ['open_dataset', 'arrow'],
+  ['import_biom', 'phyloseq'],
+  ['HDF5Array', 'HDF5Array'],
+  ['writeHDF5Array', 'HDF5Array'],
+  ['LoadH5Seurat', 'SeuratDisk'],
+  ['SaveH5Seurat', 'SeuratDisk']
+])
+
+const rFileCallEffect = (
+  name: string,
+  qualifiedPackage?: string
+): NotebookFileCallEffect | undefined => {
+  const expectedPackage = R_FILE_CALL_PACKAGES.get(name)
+  if (expectedPackage && qualifiedPackage && expectedPackage !== qualifiedPackage) return undefined
+  return R_FILE_CALL_EFFECTS.get(name)
+}
+
 const isPotentialRFileWriteCall = (name: string): boolean =>
   R_POTENTIAL_FILE_WRITE_CALLS.has(name) ||
   (name !== 'write' && /^(?:export|save|write)/u.test(name))
@@ -497,6 +520,7 @@ export {
   PYTHON_FILESYSTEM_OBSERVATIONS,
   PYTHON_UNSUPPORTED_EXTERNAL_STATE_NAMESPACES,
   R_FILE_CALL_EFFECTS,
+  rFileCallEffect,
   R_GRAPHICS_FILE_DEVICES,
   isPotentialRFileWriteCall
 }

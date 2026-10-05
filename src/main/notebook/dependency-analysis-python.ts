@@ -7514,11 +7514,6 @@ const analyzePythonFileAccessTree = (
   let unresolvedReads = false
   let unresolvedWrites = false
   let unsupportedExternalState = false
-  // A weights-only checkpoint can still depend on process-local registrations
-  // made through torch.serialization.add_safe_globals. Track registrations in
-  // this source so a same-cell load remains conservative; cross-cell runtime
-  // evidence continues to be required to certify that state.
-  let torchSafeGlobalsRegistered = false
   let directoryStateRead = false
   let staticLoopIterations = 0
   let conditionalDepth = 0
@@ -8259,8 +8254,9 @@ const analyzePythonFileAccessTree = (
       return
     }
     if (
-      pythonTaintedNamespaces.has('*') ||
-      pythonTaintedNamespaces.has(canonicalName.split('.')[0]!)
+      (pythonTaintedNamespaces.has('*') ||
+        pythonTaintedNamespaces.has(canonicalName.split('.')[0]!)) &&
+      canonicalName !== 'torch.load'
     ) {
       unsupportedExternalState = true
       return
@@ -8423,7 +8419,10 @@ const analyzePythonFileAccessTree = (
       canonicalName === 'torch.serialization.add_safe_globals' ||
       canonicalName === 'torch.serialization.safe_globals'
     ) {
-      torchSafeGlobalsRegistered = true
+      // The registration changes process-wide deserialization behavior. Reuse
+      // the existing namespace taint so it survives into later cells in the
+      // same kernel epoch without adding a persisted context field.
+      pythonTaintedNamespaces.add('torch')
       unresolvedReads = true
       unresolvedWrites = true
       unsupportedExternalState = true
@@ -8459,7 +8458,7 @@ const analyzePythonFileAccessTree = (
         weightsOnly.value === true &&
         safeMapLocation &&
         safeMmap &&
-        !torchSafeGlobalsRegistered &&
+        !pythonTaintedNamespaces.has('torch') &&
         !hasUnknownKeyword
       recordFileAccess('read', pathNode)
       if (!safe) {

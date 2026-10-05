@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
+import { analyzePythonNotebookSource } from './dependency-analysis-python'
 import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
 
 describe('model format file access coverage', () => {
@@ -122,6 +123,22 @@ describe('model format file access coverage', () => {
       externalState: 'partial',
       reads: ['source.pt'],
       reasonCodes: expect.arrayContaining(['source-analysis-unsupported-call'])
+    })
+  })
+
+  it('carries safe-global taint into later cells in the same Python context', async () => {
+    const registration = await analyzePythonNotebookSource(
+      'import torch\ntorch.serialization.add_safe_globals([CustomTensor])'
+    )
+    const load = await analyzePythonNotebookSource(
+      "import torch\nweights = torch.load('source.pt', weights_only=True)",
+      registration.fileAccess?.context
+    )
+
+    expect(load.fileAccess).toMatchObject({
+      reads: ['source.pt'],
+      unresolvedReads: true,
+      unsupportedExternalState: true
     })
   })
 

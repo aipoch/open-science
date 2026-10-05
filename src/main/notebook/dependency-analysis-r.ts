@@ -28,6 +28,7 @@ import {
   isPotentialRFileWriteCall,
   R_FILE_CALL_EFFECTS,
   R_GRAPHICS_FILE_DEVICES,
+  rFileCallEffect,
   type NotebookFileCallEffect
 } from './notebook-call-effects'
 import { isExternalNotebookPath } from './notebook-path-utils'
@@ -4796,7 +4797,7 @@ const analyzeRSource = (
       unknown.push('opaque-call')
     }
     // Record ownership at serialization time, not the variable's final cell value.
-    const fileEffect = op ? R_FILE_CALL_EFFECTS.get(op) : undefined
+    const fileEffect = op ? rFileCallEffect(op, qualified?.package) : undefined
     if (
       op &&
       (localFileWrappers.effects.get(op)?.kind === 'write' ||
@@ -8432,7 +8433,7 @@ const analyzeRFileAccessTree = (
     }
     let call: NotebookFileCallEffect | undefined = name
       ? qualified
-        ? R_FILE_CALL_EFFECTS.get(name)
+        ? rFileCallEffect(name, qualified.package)
         : (localWrappers.effects.get(name) ??
           (localWrappers.names.has(name)
             ? undefined
