@@ -109,9 +109,12 @@ const portablePath = (value: string): string =>
 const lineagePathCase = (value: string): string =>
   process.platform === 'win32' ? value.toLowerCase() : value
 
+const lineageWorkingDirectory = (run: NotebookRunRecord): string | undefined =>
+  run.cwdBefore ?? run.frozenShellContext?.cwd
+
 const lineagePathKey = (run: NotebookRunRecord, value: string): string => {
   const portable = lineagePathCase(portablePath(value))
-  const workingDirectory = run.cwdBefore ?? run.cwdAfter ?? run.frozenShellContext?.cwd
+  const workingDirectory = lineageWorkingDirectory(run)
   if (isAbsolute(value)) return `absolute:${lineagePathCase(portablePath(normalize(value)))}`
   if (workingDirectory !== undefined)
     return `absolute:${lineagePathCase(portablePath(normalize(resolve(workingDirectory, value))))}`
@@ -136,7 +139,7 @@ const observedScopedGenerations = (
   scopes: readonly NotebookSourceFileWriteScope[]
 ): NotebookWorkingFile[] =>
   run.workingFiles.filter((file) => {
-    const workingDirectory = run.cwdBefore ?? run.cwdAfter ?? run.frozenShellContext?.cwd
+    const workingDirectory = lineageWorkingDirectory(run)
     const candidatePath =
       workingDirectory !== undefined
         ? portablePath(relative(workingDirectory, file.path))
@@ -2013,7 +2016,7 @@ const projectNotebookFileDependencies = (
     ambiguousPaths.add(key)
   }
   const scopeCandidatePath = (run: NotebookRunRecord, path: string): string => {
-    const workingDirectory = run.cwdBefore ?? run.cwdAfter ?? run.frozenShellContext?.cwd
+    const workingDirectory = lineageWorkingDirectory(run)
     return workingDirectory === undefined
       ? portablePath(path)
       : portablePath(relative(workingDirectory, path))
@@ -2023,7 +2026,7 @@ const projectNotebookFileDependencies = (
     path: string,
     scope: NotebookSourceFileWriteScope
   ): boolean => {
-    const workingDirectory = run.cwdBefore ?? run.cwdAfter ?? run.frozenShellContext?.cwd
+    const workingDirectory = lineageWorkingDirectory(run)
     const resolvedPath =
       workingDirectory !== undefined && !isAbsolute(path)
         ? resolve(workingDirectory, path)
