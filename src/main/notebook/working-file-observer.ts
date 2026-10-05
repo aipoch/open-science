@@ -1642,13 +1642,27 @@ const companionStemMatches = (
   suffixes: readonly string[]
 ): boolean => {
   const lowerCandidate = candidate.toLocaleLowerCase('en-US')
+  const lowerStem = stem.toLocaleLowerCase('en-US')
   return suffixes.some(
-    (suffix) => lowerCandidate.endsWith(suffix) && candidate.slice(0, -suffix.length) === stem
+    (suffix) =>
+      lowerCandidate.endsWith(suffix) &&
+      candidate.slice(0, -suffix.length).toLocaleLowerCase('en-US') === lowerStem
   )
 }
 
 const matchesWriteScope = (scope: NotebookSourceFileWriteScope, candidate: string): boolean => {
-  if (scope.kind === 'directory') return candidate.startsWith(`${scope.path}/`)
+  if (scope.kind === 'directory') {
+    const normalizeDirectoryPath = (value: string): string => {
+      const portable = value
+        .replaceAll('\\', '/')
+        .replace(/\/{2,}/gu, '/')
+        .replace(/\/$/u, '')
+      return process.platform === 'win32' ? portable.toLocaleLowerCase('en-US') : portable
+    }
+    const normalizedScope = normalizeDirectoryPath(scope.path)
+    const normalizedCandidate = normalizeDirectoryPath(candidate)
+    return normalizedCandidate.startsWith(`${normalizedScope}/`)
+  }
   if (scope.kind === 'timestamped-log')
     return (
       candidate.startsWith(scope.path) &&

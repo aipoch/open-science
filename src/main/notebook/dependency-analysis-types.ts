@@ -151,7 +151,14 @@ type NotebookSourceFileAccessContext = {
 export type NotebookSerializedValue = {
   path: string
   format: 'rds' | 'qs' | 'python-pickle' | 'joblib' | 'npy'
-  valueType: 'r-value' | 'pandas.DataFrame' | 'pandas.Series' | 'numpy.ndarray'
+  valueType:
+    | 'r-value'
+    | 'pandas.DataFrame'
+    | 'pandas.Series'
+    | 'numpy.ndarray'
+    | 'sklearn.preprocessing.StandardScaler'
+    | 'sklearn.decomposition.PCA'
+    | 'sklearn.linear_model.LinearRegression'
 }
 
 type NotebookRunDependencyFacts =

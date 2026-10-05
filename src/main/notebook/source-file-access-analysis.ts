@@ -68,6 +68,16 @@ const normalizeNotebookSourceFileAccess = (
   if (fileAccess.unsupportedExternalState || fileAccess.directoryStateRead) {
     reasonCodes.push('source-analysis-unsupported-call')
   }
+  // sf and terra writers can create companion files or driver sidecars even
+  // when their destination path is literal. Keep dependency edges precise via
+  // safeCallNames, while source coverage remains conservative until runtime
+  // evidence enumerates the complete output set.
+  const conservativeRWriter =
+    language === 'r' &&
+    (dependencyFacts?.safeCallNames?.some((name) =>
+      ['sf::st_write', 'terra::writeRaster'].includes(name)
+    ) ??
+      false)
   return {
     readState:
       dependencyAnalysisUnavailable ||
@@ -77,7 +87,10 @@ const normalizeNotebookSourceFileAccess = (
         ? 'partial'
         : 'complete',
     writeState:
-      dependencyAnalysisUnavailable || unresolvedCalls || fileAccess.unresolvedWrites
+      dependencyAnalysisUnavailable ||
+      unresolvedCalls ||
+      fileAccess.unresolvedWrites ||
+      conservativeRWriter
         ? 'partial'
         : 'complete',
     externalState:
