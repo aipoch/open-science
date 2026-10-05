@@ -516,7 +516,7 @@ test('shows context compaction loading and completion inside the Session transcr
   }
 })
 
-test('previews and opens an Agent HTTPS source link in the isolated preview tab', async ({
+test('previews and opens an Agent HTTPS source link in the isolated preview tab @pr-mainline-files', async ({
   app
 }, testInfo) => {
   await app.completeOnboarding()
