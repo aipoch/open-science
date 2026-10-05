@@ -2785,7 +2785,8 @@ export function populateTableCellText({
     issues.delete('ambiguous-cell-assignment')
   if (
     (denseRowsRecovered || numericContinuationRowsRecovered || stubSpanRowsRecovered) &&
-    !unassignedItems.length
+    !unassignedItems.length &&
+    !ambiguousAssignments.size
   )
     issues.delete('ambiguous-cell-assignment')
   for (const [item, cell] of assignments) cell.items.push(item)
