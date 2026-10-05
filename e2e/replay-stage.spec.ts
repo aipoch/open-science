@@ -1533,7 +1533,7 @@ test('conversation follows uninterrupted replay and resumes after manual reading
   expect(Number(await progress.getAttribute('aria-valuenow'))).toBeGreaterThan(beforeSeek)
 })
 
-test('keeps one generated gallery through reveal phases and delayed thumbnails without horizontal overflow', async ({
+test('reveals recorded files immediately and keeps the gallery stable through delayed thumbnails without horizontal overflow', async ({
   page
 }) => {
   await page.goto(`${url}?panel=1&artifacts=1&longName=1&previewRegressions=1&delayedArtifacts=1`)
@@ -1549,11 +1549,11 @@ test('keeps one generated gallery through reveal phases and delayed thumbnails w
   await expect(transcript.getByText('GENERATED · 2', { exact: true })).toHaveCount(1)
   const cards = transcript.getByRole('button', { name: /^Preview generated file/ })
   await expect(cards.nth(0)).toBeEnabled()
-  await expect(cards.nth(1)).toBeDisabled()
+  await expect(cards.nth(1)).toBeEnabled()
   await seekPanel(10300)
   await expect(transcript.getByText('GENERATED · 2', { exact: true })).toHaveCount(1)
   await expect(cards.nth(0)).toBeEnabled()
-  await expect(cards.nth(1)).toBeDisabled()
+  await expect(cards.nth(1)).toBeEnabled()
   await seekPanel(10600)
   await expect(cards.nth(1)).toBeEnabled()
   await progress.focus()
