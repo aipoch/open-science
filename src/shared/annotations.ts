@@ -286,8 +286,6 @@ export type AnnotationValidationError =
   | 'payload-too-large'
   | 'visual-model-required'
   | 'invalid'
-  | 'version-pending'
-  | 'version-unresolved'
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)

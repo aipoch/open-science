@@ -19,10 +19,6 @@ export const annotationValidationMessage = (
       return t(
         "The selected model doesn't support images. Configure a Vision model in Settings > Model to enable image support."
       )
-    case 'version-pending':
-      return t('This file version is still being published. Try again in a moment.')
-    case 'version-unresolved':
-      return t('This file version is no longer available. Reopen the file and try again.')
     default:
       return t('This annotation could not be added.')
   }

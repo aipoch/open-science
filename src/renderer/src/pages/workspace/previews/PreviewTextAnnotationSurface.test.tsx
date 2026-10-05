@@ -13,7 +13,7 @@ import type {
 } from '../../../../../shared/annotations'
 import { createArtifactVersionLocator } from '../../../../../shared/artifact-provenance'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
-import type { Bookmark } from '../../../../../shared/bookmarks'
+import type { Bookmark, CreateBookmarkRequest } from '../../../../../shared/bookmarks'
 
 import {
   requestAnnotationReveal,
@@ -617,11 +617,13 @@ describe('PreviewTextAnnotationSurface', () => {
     expect(ranges()).toHaveLength(0)
   })
 
-  it('disables bookmarking with a reason when the preview session does not own the file', async () => {
-    const create = vi.fn()
-    // Well-formed source (managed + versioned) so the editor opens, but bound to
-    // another session: main-process validation would reject it, so the surface
-    // disables the save upfront instead of failing generically afterwards.
+  it('saves a managed file bookmark from another session without changing its source', async () => {
+    const create = vi.fn(async (request: CreateBookmarkRequest): Promise<Bookmark> => ({
+      ...request,
+      version: 1,
+      createdAt: '2026-10-05T00:00:00.000Z',
+      updatedAt: '2026-10-05T00:00:00.000Z'
+    }))
     const previewItem = item({ managedFileId: 'artifact-1', sessionId: 'other-session' })
     await renderSurface({
       bookmarkApi: {
@@ -634,15 +636,23 @@ describe('PreviewTextAnnotationSurface', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Annotate' }))
     fireEvent.click(screen.getByRole('tab', { name: 'For me' }))
     const button = screen.getByRole('button', { name: 'Bookmark' }) as HTMLButtonElement
-    expect(button.disabled).toBe(true)
-    expect(
-      screen.getByText('This file version is no longer available. Reopen the file and try again.')
-    ).not.toBeNull()
+    expect(button.disabled).toBe(false)
     await act(async () => fireEvent.click(button))
-    expect(create).not.toHaveBeenCalled()
+    expect(create).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        sessionId: 'session-1',
+        target: expect.objectContaining({
+          source: expect.objectContaining({
+            sessionId: 'other-session',
+            sourceFileId: 'artifact-1',
+            versionId: 'version-7'
+          })
+        })
+      })
+    )
   })
 
-  it('reports a session mismatch instead of building a doomed agent annotation', async () => {
+  it('adds an agent annotation from another session without changing its source', async () => {
     const onAddAnnotation = vi.fn(() => undefined)
     const onAnnotationError = vi.fn()
     await renderSurface({
@@ -655,8 +665,16 @@ describe('PreviewTextAnnotationSurface', () => {
     })
     await selectQuote()
     await confirmAnnotation()
-    expect(onAnnotationError).toHaveBeenCalledWith('version-unresolved')
-    expect(onAddAnnotation).not.toHaveBeenCalled()
+    expect(onAnnotationError).not.toHaveBeenCalled()
+    expect(onAddAnnotation).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        source: expect.objectContaining({
+          sessionId: 'other-session',
+          sourceFileId: 'artifact-1',
+          versionId: 'version-7'
+        })
+      })
+    )
   })
 
   it('reveals an exact project-file bookmark and reports a missing quote', async () => {

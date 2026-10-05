@@ -6,7 +6,6 @@ type BookmarkPort = Readonly<{
   scoped: boolean
   sessionId?: string
   available: boolean
-  unavailableReason?: 'version-pending' | 'version-unresolved'
   bookmarks: readonly Bookmark[]
   total: number
   loading: boolean

@@ -277,10 +277,7 @@ class BookmarkService {
         stage = 'source-validation'
         await this.validateNewSource(request, session)
         stage = 'persist'
-        // NOTE: assigned (not directly returned) so a rejection throws inside
-        // this try and reaches the diagnostic catch below.
-        const created = await this.options.repository.create(request)
-        return created
+        return await this.options.repository.create(request)
       } catch (error) {
         try {
           // Fixed diagnostic stages only: never retain source IDs, paths, messages, or stacks.
