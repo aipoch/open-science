@@ -33,6 +33,106 @@ np.save("bioqa_logcpm.npy", z)`
   }
 )
 
+it('tracks deterministic FASTQ paths appended to a fresh collection', async () => {
+  const source = `from pathlib import Path
+EXPECTED_BARCODES = ("A", "B", "C")
+inputs = Path("inputs")
+fastq_paths = []
+for barcode in EXPECTED_BARCODES:
+    fastq_paths.append(inputs / f"{barcode}.subset.fq")
+for path in fastq_paths:
+    with path.open() as handle:
+        handle.read()`
+
+  expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+    reads: [
+      join('inputs', 'A.subset.fq'),
+      join('inputs', 'B.subset.fq'),
+      join('inputs', 'C.subset.fq')
+    ],
+    readState: 'complete'
+  })
+})
+
+it('keeps aliases of a fresh collection in sync while appending paths', async () => {
+  const source = `from pathlib import Path
+inputs = Path("inputs")
+paths = []
+alias = paths
+for barcode in ("A", "B"):
+    alias.append(inputs / f"{barcode}.fq")
+for path in paths:
+    with path.open() as handle:
+        handle.read()`
+
+  expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+    reads: [join('inputs', 'A.fq'), join('inputs', 'B.fq')],
+    readState: 'complete'
+  })
+})
+
+it('tracks deterministic FASTQ paths concatenated onto a fresh collection', async () => {
+  const source = `from pathlib import Path
+inputs = Path("inputs")
+fastq_paths = []
+fastq_paths += [inputs / "sample-a.fastq.gz", inputs / "sample-b.fastq.gz"]
+for path in fastq_paths:
+    with path.open() as handle:
+        handle.read()`
+
+  expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+    reads: [join('inputs', 'sample-a.fastq.gz'), join('inputs', 'sample-b.fastq.gz')],
+    readState: 'complete'
+  })
+})
+
+it('does not treat conditional collection appends as deterministic inputs', async () => {
+  const source = `from pathlib import Path
+paths = []
+if include_optional:
+    paths.append(Path("optional.fq"))
+for path in paths:
+    with path.open() as handle:
+        handle.read()`
+  const result = await analyzeNotebookSourceFileAccess('python', source)
+
+  expect(result.reads).not.toContain('optional.fq')
+  expect(result.readState).not.toBe('complete')
+})
+
+it('invalidates a collection when an active loop appends through itself', async () => {
+  const source = `from pathlib import Path
+paths = []
+for barcode in ("A",):
+    paths.append(Path(f"{barcode}.fq"))
+for path in paths:
+    paths.append(path)
+for path in paths:
+    with path.open() as handle:
+        handle.read()`
+  const result = await analyzeNotebookSourceFileAccess('python', source)
+
+  expect(result.reads).not.toContain('A.fq')
+  expect(result.readState).not.toBe('complete')
+})
+
+it('bounds fresh collection growth before it can certify an oversized input set', async () => {
+  const barcodes = Array.from({ length: 128 }, (_, index) => `"B${index}"`).join(', ')
+  const source = `from pathlib import Path
+inputs = Path("inputs")
+paths = []
+for barcode in (${barcodes}):
+    paths.append(inputs / f"{barcode}.fq")
+paths.append(inputs / "overflow.fq")
+for path in paths:
+    with open(path) as handle:
+        handle.read()`
+  const result = await analyzeNotebookSourceFileAccess('python', source)
+
+  expect(result.reads).not.toContain(join('inputs', 'overflow.fq'))
+  expect(result.readState).not.toBe('complete')
+})
+
 it('keeps array conversion sharing visible for later mutations', async () => {
   const scripts = [
     'import pandas as pd\ndf=pd.DataFrame([[1,2]])\nvalues=df.to_numpy()',

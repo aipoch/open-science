@@ -129,6 +129,31 @@ it.each([
   })
 })
 
+it('captures a strict anonymous lapply reader callback across a multi-cell-style path vector', async () => {
+  expect(
+    await analyzeNotebookSourceFileAccess(
+      'r',
+      'paths <- file.path("inputs", c("ctrl.csv", "treated.csv")); tables <- lapply(paths, function(path) readr::read_csv(path))'
+    )
+  ).toMatchObject({
+    reads: ['inputs/ctrl.csv', 'inputs/treated.csv'],
+    readState: 'complete',
+    writeState: 'complete',
+    externalState: 'complete'
+  })
+})
+
+it.each([
+  'paths <- c("a.csv"); x <- lapply(paths, function(path) { readr::read_csv(path); message(path) })',
+  'paths <- c("a.csv"); x <- lapply(paths, function(path) readr::read_csv(path), col_types=custom_types)',
+  'paths <- c("a.csv"); x <- lapply(paths, function(path, extra) readr::read_csv(path))'
+])(
+  'does not certify an anonymous reader callback with extra effects or arguments: %s',
+  async (source) => {
+    expect((await analyzeNotebookSourceFileAccess('r', source)).readState).toBe('partial')
+  }
+)
+
 it.each([
   ['r', 'quarto::quarto_render("report.qmd", output_file="report.html")'],
   ['python', 'unknown_writer("result.csv")']

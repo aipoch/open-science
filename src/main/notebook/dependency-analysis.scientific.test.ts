@@ -10,7 +10,8 @@ import {
   type NotebookDependencyInterpreter
 } from './dependency-analysis'
 import { analyzePythonSources } from './dependency-analysis-python'
-import { analyzeRSources } from './dependency-analysis-r'
+import { analyzeRNotebookSource, analyzeRSources } from './dependency-analysis-r'
+import { projectNotebookDependencies } from './dependency-projection'
 
 const unusedInterpreter = (kernelKind: 'python' | 'r'): NotebookDependencyInterpreter => ({
   command: kernelKind === 'python' ? 'unused-python' : 'unused-rscript'
@@ -487,6 +488,20 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
     expect(projection?.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
   })
 
+  it('tracks an Astropy FITS HDU handoff across cells', async () => {
+    const projection = await projectScripts(
+      'python',
+      [
+        "from astropy.io import fits\nhdul = fits.open('inputs/source.fits')",
+        "hdul.writeto('outputs/result.fits', overwrite=True)"
+      ],
+      'open-science-python-astropy-fits-'
+    )
+
+    expect(projection.dependenciesByRunId?.['run-2']).toEqual(['run-1'])
+    expect(projection.stalenessByRunId['run-2']).toEqual({ state: 'clear' })
+  })
+
   it.each([
     [
       'temporary file',
@@ -604,6 +619,11 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
     ['Matplotlib image', 'import matplotlib.image as mpimg\ndata = mpimg.imread("figure.png")'],
     ['imageio', 'import imageio.v3 as iio\ndata = iio.imread("figure.tiff")'],
     ['scikit-image', 'from skimage import io\ndata = io.imread("figure.jpg")'],
+    ['tifffile', 'import tifffile\ndata = tifffile.imread("figure.tiff")'],
+    [
+      'tifffile handle',
+      'import tifffile\nwith tifffile.TiffFile("figure.tiff") as tif:\n    data = tif.asarray()'
+    ],
     ['OpenCV', 'import cv2\ndata = cv2.imread("figure.png")']
   ])('tracks a %s file reader as an ndarray producer', async (_label, setup) => {
     const projection = await projectScripts(
@@ -619,7 +639,8 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
   it.each([
     ['Dataset', 'dataset = xr.open_dataset("climate.nc")'],
     ['multi-file Dataset', 'dataset = xr.open_mfdataset("climate-*.nc")'],
-    ['DataArray', 'dataset = xr.open_dataarray("temperature.nc")']
+    ['DataArray', 'dataset = xr.open_dataarray("temperature.nc")'],
+    ['Zarr Dataset', 'dataset = xr.open_zarr("climate.zarr")']
   ])('tracks an xarray %s reader and its loaded state', async (_label, read) => {
     const projection = await projectScripts(
       'python',
@@ -633,6 +654,28 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
 
     expect(projection?.stalenessByRunId['run-2']).toMatchObject({ state: 'stale' })
     expect(projection?.stalenessByRunId['run-3']).toEqual({ state: 'clear' })
+  })
+
+  it('carries a Python Arrow Dataset handle and later table reads across cells', async () => {
+    const scripts = [
+      'import pyarrow.dataset as ds\ndataset = ds.dataset("inputs/events")',
+      'table = dataset.to_table()\nprint(table)',
+      'rows = dataset.count_rows()\nprint(rows)'
+    ]
+    const facts = await analyzePythonSources(scripts)
+    expect(facts[0]?.typeBindings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ target: 'dataset', typeName: 'pyarrow.dataset.Dataset' })
+      ])
+    )
+    expect(facts[1]?.receiverCalls).toEqual(
+      expect.arrayContaining([expect.objectContaining({ receiver: 'dataset', member: 'to_table' })])
+    )
+    expect(facts[2]?.receiverCalls).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ receiver: 'dataset', member: 'count_rows' })
+      ])
+    )
   })
 
   it.each([
@@ -790,6 +833,22 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
 
     expect(projection?.stalenessByRunId['run-2']).toMatchObject({ state: 'unknown' })
     expect(projection?.stalenessByRunId['run-4']).toEqual({ state: 'clear' })
+  })
+
+  it('tracks a Nibabel image write as a file producer across cells', async () => {
+    const projection = await projectScripts(
+      'python',
+      [
+        'import nibabel as nib\nimage = nib.load("inputs/brain.nii.gz")',
+        'image.to_filename("work/normalized-brain.nii.gz")',
+        'normalized = nib.load("work/normalized-brain.nii.gz")\nprint(normalized.shape)'
+      ],
+      'open-science-python-nibabel-file-lineage-'
+    )
+
+    expect(projection?.dependenciesByRunId?.['run-2']).toEqual(expect.arrayContaining(['run-1']))
+    expect(projection?.stalenessByRunId['run-2']).toEqual({ state: 'clear' })
+    expect(projection?.stalenessByRunId['run-3']).toEqual({ state: 'clear' })
   })
 
   it('tracks a pandas input through a grouped summary and later replacement', async () => {
@@ -2159,6 +2218,22 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
     expect(projection?.stalenessByRunId['run-5']).toEqual({ state: 'clear' })
   })
 
+  it('keeps a multi-cell PyTorch weights-only input lineage clear', async () => {
+    const projection = await projectScripts(
+      'python',
+      [
+        "import torch\nstate = torch.load('inputs/model.pt', weights_only=True)",
+        'print(state)',
+        'print("weights loaded")'
+      ],
+      'open-science-python-torch-weights-only-corpus-'
+    )
+
+    expect(projection?.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+    expect(projection?.stalenessByRunId['run-2']).toEqual({ state: 'clear' })
+    expect(projection?.stalenessByRunId['run-3']).toEqual({ state: 'clear' })
+  })
+
   it('classifies a common scikit-learn PCA transform as clear', async () => {
     const projection = await projectScripts(
       'python',
@@ -2434,6 +2509,37 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
     expect(projection?.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
     expect(projection?.stalenessByRunId['run-3']).toMatchObject({ state: 'unknown' })
     expect(projection?.stalenessByRunId['run-4']).toEqual({ state: 'clear' })
+  })
+
+  it('keeps a terra raster crop linked to its source across cells', async () => {
+    const projection = await projectScripts(
+      'r',
+      [
+        'raster <- terra::rast("inputs/elevation.tif")',
+        'extent <- terra::ext(0, 1, 0, 1)\nclipped <- terra::crop(raster, extent)',
+        'terra::writeRaster(clipped, "outputs/elevation-crop.tif", overwrite = TRUE)'
+      ],
+      'open-science-r-terra-raster-crop-corpus-'
+    )
+
+    expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+    expect(projection.dependenciesByRunId?.['run-2']).toEqual(['run-1'])
+    expect(projection.dependenciesByRunId?.['run-3']).toEqual(['run-2'])
+    expect(projection.stalenessByRunId['run-2']).toEqual({ state: 'clear' })
+    expect(projection.stalenessByRunId['run-3']).toEqual({ state: 'clear' })
+  })
+
+  it('keeps terra crop filename side effects conservative', async () => {
+    const [facts] = await analyzeRSources([
+      'raster <- terra::rast("inputs/elevation.tif")',
+      'extent <- terra::ext(0, 1, 0, 1)',
+      'cropped <- terra::crop(raster, extent, filename = "outputs/cropped.tif")'
+    ])
+
+    expect(facts).toMatchObject({
+      state: 'unknown',
+      reasons: expect.arrayContaining(['external-state'])
+    })
   })
 
   it('classifies qualified haven reads and writes as value-table I/O', async () => {
@@ -2858,6 +2964,52 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
     expect(projection?.stalenessByRunId['run-3']).toEqual({ state: 'clear' })
   })
 
+  it('tracks Bioconductor container transforms across normalization and PCA cells', async () => {
+    const projection = await projectScripts(
+      'r',
+      [
+        'library(SingleCellExperiment)\ncounts <- matrix(1:4, nrow = 2)\nsce <- SingleCellExperiment(assays = list(counts = counts))',
+        'sce <- scuttle::logNormCounts(sce, pseudo.count = 1)',
+        'sce <- scater::runPCA(sce, ncomponents = 2)'
+      ],
+      'open-science-r-single-cell-transform-corpus-'
+    )
+
+    expect(projection?.dependenciesByRunId?.['run-2']).toEqual(['run-1'])
+    expect(projection?.dependenciesByRunId?.['run-3']).toEqual(['run-2'])
+    expect(projection?.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+    expect(projection?.stalenessByRunId['run-2']).toEqual({ state: 'clear' })
+    expect(projection?.stalenessByRunId['run-3']).toEqual({ state: 'clear' })
+  })
+
+  it('marks stochastic Bioconductor reductions uncertain while preserving their call contract', async () => {
+    const { facts } = await analyzeRNotebookSource(
+      'library(SingleCellExperiment)\ncounts <- matrix(1:4, nrow = 2)\nsce <- SingleCellExperiment(assays = list(counts = counts))\nsce <- scater::runPCA(sce, ncomponents = 2)'
+    )
+
+    expect(facts.state).toBe('unknown')
+    expect(facts).toMatchObject({
+      reasons: expect.arrayContaining(['external-state'])
+    })
+    expect(facts.safeCallNames).toContain('scater::runPCA')
+  })
+
+  it('keeps dynamic Bioconductor transform options conservative', async () => {
+    const { facts } = await analyzeRNotebookSource(
+      'sce <- scuttle::logNormCounts(sce, subset.row = selected_genes)'
+    )
+
+    expect(facts.safeCallNames ?? []).not.toContain('scuttle::logNormCounts')
+    expect(facts.receiverCalls).toEqual([
+      {
+        receiver: 'sce',
+        member: 'logNormCounts',
+        kind: 'generic',
+        argumentNames: ['sce', 'selected_genes']
+      }
+    ])
+  })
+
   it('tracks nested rowData replacement on a SummarizedExperiment root', async () => {
     const projection = await projectScripts(
       'r',
@@ -2889,5 +3041,27 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
     expect(projection?.stalenessByRunId['run-2']).toMatchObject({ state: 'unknown' })
     expect(projection?.stalenessByRunId['run-3']).toMatchObject({ state: 'unknown' })
     expect(projection?.stalenessByRunId['run-4']).toEqual({ state: 'clear' })
+  })
+
+  it('links DropletUtils 10x input to a downstream assay cell', async () => {
+    const scripts = [
+      'sce <- DropletUtils::read10xCounts("inputs/filtered_feature_bc_matrix")',
+      'counts <- SummarizedExperiment::assay(sce)'
+    ]
+    const entries = await Promise.all(
+      scripts.map(async (script, index) => ({
+        run: completedRun(`run-${index + 1}`, `cell-${index + 1}`, 'r', script),
+        facts: (await analyzeRNotebookSource(script)).facts
+      }))
+    )
+    const projection = projectNotebookDependencies(entries)
+
+    expect(entries[0]?.facts.typeBindings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ target: 'sce', typeName: 'SingleCellExperiment' })
+      ])
+    )
+    expect(entries[1]?.facts.usedNames).toContain('sce')
+    expect(projection.dependenciesByRunId?.['run-2']).toContain('run-1')
   })
 })
