@@ -4,7 +4,7 @@ import type { ToolDescriptor } from '../types'
 // https://discuss.iedb.org/t/immune-epitope-database-query-api-iq-api/154
 const API = 'https://query-api.iedb.org'
 type Row = Record<string, unknown>
-type Kind = 'epitope' | 'antigen' | 'tcell' | 'bcell' | 'mhc' | 'reference'
+type Kind = 'epitope' | 'antigen' | 'tcell' | 'bcell' | 'mhc' | 'tcr' | 'bcr' | 'reference'
 const MAX_OFFSET = 1000000
 const id = { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER }
 const text = { type: 'string', minLength: 1, maxLength: 300, pattern: '\\S' }
@@ -15,12 +15,15 @@ const curie = {
 }
 const accessionPattern = '[A-Z0-9]{6}(?:[A-Z0-9]{4})?(?:-[1-9][0-9]*)?'
 const assayKinds = new Set<Kind>(['tcell', 'bcell', 'mhc'])
+const receptorKinds = new Set<Kind>(['tcr', 'bcr'])
 const keys: Record<Kind, string> = {
   epitope: 'structure_id',
   antigen: 'parent_source_antigen_iri',
   tcell: 'tcell_id',
   bcell: 'bcell_id',
   mhc: 'elution_id',
+  tcr: 'receptor_group_id',
+  bcr: 'receptor_group_id',
   reference: 'reference_id'
 }
 const aggregateFields = [
@@ -133,6 +136,19 @@ function columns(kind: Kind): string {
       'reference_iris',
       'pubmed_ids'
     )
+  } else if (receptorKinds.has(kind)) {
+    fields.push(
+      'receptor_group_iri',
+      'receptor_type',
+      'chain1_cdr3_seq',
+      'chain2_cdr3_seq',
+      'structure_ids',
+      'linear_sequences',
+      'reference_ids',
+      'reference_iris',
+      'pubmed_ids',
+      `${kind}_export(*)`
+    )
   } else if (kind === 'antigen') {
     fields.push(
       'parent_source_antigen_source_org_iri',
@@ -204,6 +220,7 @@ function crossReferences(row: Row): Row {
 
 function properties(kind: Kind): Record<string, unknown> {
   const assay = assayKinds.has(kind)
+  const receptor = receptorKinds.has(kind)
   return {
     epitope_id: {
       ...id,
@@ -249,13 +266,32 @@ function properties(kind: Kind): Record<string, unknown> {
       pattern: '^[0-9][A-Za-z0-9]{3}(?![\\s\\S])',
       description: 'Experimental PDB cross-reference, not an IEDB epitope ID.'
     },
-    ...(kind === 'epitope' || assay
+    ...(kind === 'epitope' || assay || receptor
       ? {
           sequence: {
             type: 'string',
             pattern: '^[A-Za-z]+(?![\\s\\S])',
             maxLength: 1000,
-            description: 'Exact linear peptide sequence (case normalized). Not a similarity search.'
+            description: receptor
+              ? 'Exact linear epitope sequence (case normalized), not a receptor sequence.'
+              : 'Exact linear peptide sequence (case normalized). Not a similarity search.'
+          }
+        }
+      : {}),
+    ...(receptor
+      ? {
+          receptor_group_id: { ...id, description: 'IEDB receptor group identifier.' },
+          chain1_cdr3: {
+            type: 'string',
+            pattern: '^[A-Za-z]+(?![\\s\\S])',
+            maxLength: 1000,
+            description: 'Exact receptor chain 1 CDR3 sequence (case normalized).'
+          },
+          chain2_cdr3: {
+            type: 'string',
+            pattern: '^[A-Za-z]+(?![\\s\\S])',
+            maxLength: 1000,
+            description: 'Exact receptor chain 2 CDR3 sequence (case normalized).'
           }
         }
       : {}),
@@ -283,16 +319,21 @@ const labels: Record<Kind, string> = {
   tcell: 'tcell_assays',
   bcell: 'bcell_assays',
   mhc: 'mhc_assays',
+  tcr: 'tcrs',
+  bcr: 'bcrs',
   reference: 'references'
 }
 
 function searchTool(kind: Kind): ToolDescriptor {
   const assay = assayKinds.has(kind)
+  const receptor = receptorKinds.has(kind)
   const inputProperties = properties(kind)
   const scalar = (single: string, plural: string): string => (assay ? single : plural)
   const description = assay
     ? `Search IEDB ${kind === 'tcell' ? 'T cell' : kind === 'bcell' ? 'B cell' : 'MHC binding and ligand elution'} experiments with host, source antigen, MHC and outcome filters. Includes ${kind}_export measurements, units, inequalities, methods, subject counts and publication locations. `
-    : `Search IEDB ${labels[kind]} with epitope, host, antigen source, MHC and evidence filters. Aggregated filters can match different experiments in the same record; use assay searches to enforce co-occurrence in one experiment. `
+    : receptor
+      ? `Search IEDB ${kind.toUpperCase()} receptor groups by epitope, receptor CDR3, host, antigen, MHC and literature evidence. The sequence filter matches epitope linear_sequences; chain1_cdr3 and chain2_cdr3 match receptor chain CDR3 sequences. Includes ${kind}_export records with chains, curated/calculated gene annotations and linked assays and references. Filters select receptor groups; embedded export records are not individually filtered by these criteria. Aggregated host and outcome filters can match different experiments in the same group. Receptor exports do not contain host or qualitative outcome fields. For experiment-level co-occurrence, follow the linked assay__iedb_ids and query search_tcell_assays, search_bcell_assays or search_mhc_assays with the corresponding assay_id and experimental filters. `
+      : `Search IEDB ${labels[kind]} with epitope, host, antigen source, MHC and evidence filters. Aggregated filters can match different experiments in the same record; use assay searches to enforce co-occurrence in one experiment. `
   return {
     id: `search_${labels[kind]}`,
     connector: 'iedb',
@@ -313,7 +354,7 @@ function searchTool(kind: Kind): ToolDescriptor {
         required: ['antigen_iri', 'uniprot_accession']
       }
     },
-    returns: `{source,query_url,limit,offset,returned,has_more,next_offset,records:[{...IEDB fields,${assay ? `${kind}_export:[{assay__method,assay__response_measured,assay__quantitative_measurement,assay__measurement_inequality,assay__units,...}],` : ''}cross_references:{parent_uniprot_accessions,curated_uniprot_accessions,pdb_ids}}]}. Upstream nulls and evidence values are preserved; optional fields may be absent. No exact total is requested. Follow next_offset with identical filters; order is by the unique IEDB key. Empty results mean no match for these filters. No automatic page traversal, local cache or external connector calls.`,
+    returns: `{source,query_url,limit,offset,returned,has_more,next_offset,records:[{...IEDB fields,${assay ? `${kind}_export:[{assay__method,assay__response_measured,assay__quantitative_measurement,assay__measurement_inequality,assay__units,...}],` : receptor ? `${kind}_export:[{receptor__iedb_receptor_id,reference__iedb_iri,epitope__iedb_iri,chain_1__cdr3_curated,chain_2__cdr3_curated,...}],` : ''}cross_references:{parent_uniprot_accessions,curated_uniprot_accessions,pdb_ids}}]}. Upstream nulls and evidence values are preserved; optional fields may be absent. No exact total is requested. Follow next_offset with identical filters; order is by the unique IEDB key. Empty results mean no match for these filters. No automatic page traversal, local cache or external connector calls.${receptor ? ' Pagination fields (limit, offset, returned, has_more and next_offset) describe receptor groups only, not embedded export rows. Embedded export counts and completeness are not reported; has_more=false does not establish a complete evidence export.' : ''}`,
     example: `const result = await host.mcp("iedb", "search_${labels[kind]}", {"${kind === 'reference' ? 'reference_id' : kind === 'antigen' ? 'uniprot_accession' : 'epitope_id'}": ${kind === 'reference' ? '1023094' : kind === 'antigen' ? '"P01012"' : '25750'}, "limit": 20})`,
     run: async (ctx, args) => {
       const hasFilter = Object.keys(args).some((key) => key !== 'limit' && key !== 'offset')
@@ -342,12 +383,12 @@ function searchTool(kind: Kind): ToolDescriptor {
       filter(
         'epitope_id',
         kind === 'epitope' || assay ? 'structure_id' : 'structure_ids',
-        kind === 'antigen' || kind === 'reference'
+        kind === 'antigen' || kind === 'reference' || receptor
       )
       filter(
         'reference_id',
         kind === 'reference' || assay ? 'reference_id' : 'reference_ids',
-        kind === 'epitope' || kind === 'antigen'
+        kind === 'epitope' || kind === 'antigen' || receptor
       )
       filter('host_taxonomy_id', 'host_organism_iri_search', true, (v) => `NCBITaxon:${v}`)
       filter('source_taxonomy_id', 'source_organism_iri_search', true, (v) => `NCBITaxon:${v}`)
@@ -365,7 +406,12 @@ function searchTool(kind: Kind): ToolDescriptor {
       filter('qualitative_measure', scalar('qualitative_measure', 'qualitative_measures'), !assay)
       filter('assay_iri', 'assay_iri_search', true)
       filter('pdb_id', scalar('pdb_id', 'pdb_ids'), !assay, (v) => String(v).toUpperCase())
-      filter('sequence', 'linear_sequence', false, (v) => String(v).toUpperCase())
+      filter('sequence', receptor ? 'linear_sequences' : 'linear_sequence', receptor, (v) =>
+        String(v).toUpperCase()
+      )
+      filter('receptor_group_id', keys[kind])
+      filter('chain1_cdr3', 'chain1_cdr3_seq', false, (v) => String(v).toUpperCase())
+      filter('chain2_cdr3', 'chain2_cdr3_seq', false, (v) => String(v).toUpperCase())
       filter('assay_id', keys[kind])
       filter('antigen_name', 'parent_source_antigen_names', true)
       filter('pubmed_id', 'pubmed_id')
@@ -383,6 +429,13 @@ function searchTool(kind: Kind): ToolDescriptor {
             : typeof key !== 'number' || !Number.isSafeInteger(key) || key < 1
         ) {
           throw new Error(`IEDB record is missing ${keys[kind]}`)
+        }
+        if (receptor) {
+          const evidence = row[`${kind}_export`]
+          if (!Array.isArray(evidence)) {
+            throw new Error('IEDB record is missing receptor export evidence')
+          }
+          for (const record of evidence) object(record)
         }
         if (assay && !Array.isArray(row[`${kind}_export`])) {
           throw new Error('IEDB record is missing assay export evidence')
@@ -412,5 +465,5 @@ function searchTool(kind: Kind): ToolDescriptor {
 }
 
 export const IEDB_TOOLS: ToolDescriptor[] = (
-  ['epitope', 'antigen', 'tcell', 'bcell', 'mhc', 'reference'] as const
+  ['epitope', 'antigen', 'tcell', 'bcell', 'mhc', 'tcr', 'bcr', 'reference'] as const
 ).map(searchTool)

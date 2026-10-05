@@ -14,6 +14,69 @@ import { WORKBENCH_OMICS_TOOLS } from './descriptors/omics-workbench'
 import { VARIANTS_MAVEDB_TOOLS } from './descriptors/variants-mavedb'
 
 describe('registry + catalog', () => {
+  it.each(['search_tcrs', 'search_bcrs'])(
+    'documents the %s group filters and export completeness boundary',
+    (method) => {
+      const descriptor = getDescriptor('iedb', method)!
+      expect(descriptor.description).toContain(
+        'embedded export records are not individually filtered'
+      )
+      expect(descriptor.description).toContain('do not contain host or qualitative outcome fields')
+      expect(descriptor.description).toContain('assay__iedb_ids')
+      for (const assayMethod of [
+        'search_tcell_assays',
+        'search_bcell_assays',
+        'search_mhc_assays'
+      ]) {
+        expect(descriptor.description).toContain(assayMethod)
+      }
+      expect(descriptor.returns).toContain(
+        'describe receptor groups only, not embedded export rows'
+      )
+      expect(descriptor.returns).toContain(
+        'has_more=false does not establish a complete evidence export'
+      )
+      const doc = renderSkillDoc('iedb')
+      expect(doc).toContain(descriptor.description)
+      expect(doc).toContain(descriptor.returns!)
+    }
+  )
+
+  it.each(['search_tcrs', 'search_bcrs'])(
+    'validates %s receptor identifiers and CDR3',
+    (method) => {
+      const descriptor = getDescriptor('iedb', method)!
+      expect(() =>
+        validateToolArguments(descriptor, {
+          sequence: 'SIINFEKL',
+          chain1_cdr3: 'CASSLAPGATNEKLFF',
+          chain2_cdr3: 'CAVRDSGGYQKVTF',
+          receptor_group_id: 27233,
+          epitope_id: 25750,
+          reference_id: 1023094
+        })
+      ).not.toThrow()
+      for (const args of [
+        { chain1_cdr3: '' },
+        { chain1_cdr3: 'CASS\n' },
+        { chain2_cdr3: 'CAS S' },
+        { chain2_cdr3: 'A'.repeat(1001) },
+        { receptor_group_id: 0 },
+        { receptor_group_id: '27233' },
+        { receptor_group_id: 1.5 },
+        { sequence: 'SIINFEKL\n' },
+        { assay_id: 123 },
+        { receptor_sequence: 'CASSLAPGATNEKLFF' }
+      ])
+        expect(() => validateToolArguments(descriptor, args)).toThrow(/invalid_arguments/)
+      expect(() =>
+        validateToolArguments(getDescriptor('iedb', 'search_epitopes')!, {
+          chain1_cdr3: 'CASSLAPGATNEKLFF'
+        })
+      ).toThrow(/invalid_arguments/)
+    }
+  )
+
   it('registers bounded IEDB evidence searches and documents UniProt/PDB handoffs', () => {
     expect(getConnectorTools('iedb').map((tool) => tool.id)).toEqual([
       'search_epitopes',
@@ -21,6 +84,8 @@ describe('registry + catalog', () => {
       'search_tcell_assays',
       'search_bcell_assays',
       'search_mhc_assays',
+      'search_tcrs',
+      'search_bcrs',
       'search_references'
     ])
     const epitope = getDescriptor('iedb', 'search_epitopes')!
@@ -69,7 +134,11 @@ describe('registry + catalog', () => {
       'different experiments',
       'curated antigen',
       'assay__units',
-      'elution_id'
+      'elution_id',
+      'tcr_export',
+      'bcr_export',
+      'linear_sequences',
+      'chain1_cdr3'
     ]) {
       expect(doc).toContain(phrase)
     }
@@ -81,6 +150,8 @@ describe('registry + catalog', () => {
     ['search_tcell_assays', { assay_id: 1957578 }],
     ['search_bcell_assays', { assay_id: 1854962 }],
     ['search_mhc_assays', { assay_id: 1406346 }],
+    ['search_tcrs', { chain1_cdr3: 'CASSLAPGATNEKLFF' }],
+    ['search_bcrs', { receptor_group_id: 27233 }],
     ['search_references', { pubmed_id: '22504645' }]
   ] as const)(
     'requires a biological or evidence filter in the %s input schema',
@@ -102,6 +173,8 @@ describe('registry + catalog', () => {
     'search_tcell_assays',
     'search_bcell_assays',
     'search_mhc_assays',
+    'search_tcrs',
+    'search_bcrs',
     'search_references'
   ])('validates mutually exclusive antigen filters in the %s input schema', (method) => {
     const descriptor = getDescriptor('iedb', method)!
