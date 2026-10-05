@@ -318,8 +318,11 @@ test('exports a Session package and opens the imported Session with replay', asy
   const prompt = 'Summarize the deterministic fixture.'
   await page.getByRole('textbox', { name: 'Ask anything' }).fill(prompt)
   await page.getByRole('button', { name: 'Send message' }).click()
-  await expect(page.getByText(`Deterministic reply: ${prompt}`, { exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Stop generating' })).toHaveCount(0)
+  // Session preparation on Windows is not a response-latency benchmark.
+  await expect(page.getByText(`Deterministic reply: ${prompt}`, { exact: true })).toBeVisible({
+    timeout: 60_000
+  })
+  await expect(page.getByRole('button', { name: 'Cancel run', exact: true })).toHaveCount(0)
   await page.getByRole('button', { name: `Open actions for ${prompt}` }).click()
   await page.getByRole('menuitem', { name: 'Export', exact: true }).hover()
   const exportPackage = page.getByRole('menuitem', { name: 'Export Session package', exact: true })
@@ -401,8 +404,10 @@ test('exports a Session package and opens the imported Session with replay', asy
     .fill('Continue another Session during export.')
   await page.getByRole('button', { name: 'Send message' }).click()
   // The installed fake Agent returns its configured fixed response for every Session.
-  await expect(page.getByText(`Deterministic reply: ${prompt}`, { exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Stop generating' })).toHaveCount(0)
+  await expect(page.getByText(`Deterministic reply: ${prompt}`, { exact: true })).toBeVisible({
+    timeout: 60_000
+  })
+  await expect(page.getByRole('button', { name: 'Cancel run', exact: true })).toHaveCount(0)
   await page
     .getByRole('navigation', { name: 'Sessions' })
     .getByRole('button', { name: new RegExp(`Session status:.*${prompt}`) })
