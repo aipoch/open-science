@@ -981,7 +981,7 @@ export function recoverClippedLeftLabelCrop(table, pageItems) {
 // clipping the terminal glyphs of a right-hand header/value column. Expand
 // only when several short horizontal items cross the same right edge on
 // distinct table rows; a single adjacent prose line must not pull the crop.
-export function recoverClippedRightLabelCrop(table, pageItems) {
+export function recoverClippedRightLabelCrop(table, pageItems, rules) {
   const crop = table?.cropRect
   if (!crop || !Array.isArray(pageItems)) return
   const heights = pageItems
@@ -1050,6 +1050,22 @@ export function recoverClippedRightLabelCrop(table, pageItems) {
   }
   const right = Math.max(...clipped.map((item) => item.rect[2])) + height * 0.2
   if (!(right > crop[2]) || right - crop[2] > height * 1.5) return
+  // A right-edge expansion is safe only when a native horizontal stroke closes
+  // the same table below the clipped values. Without that boundary, adjacent
+  // prose or a following panel can be mistaken for a missing terminal column.
+  const lastClippedBottom = Math.max(...clipped.map((item) => item.rect[3]))
+  const closingRule =
+    Array.isArray(rules) &&
+    rules.some(
+      (rule) =>
+        rule[1] === rule[3] &&
+        rule[1] >= lastClippedBottom &&
+        rule[1] - lastClippedBottom <= height * 2 &&
+        crop[3] - rule[1] <= height * 2 &&
+        rule[0] <= crop[0] + height &&
+        rule[2] >= right - height * 0.2
+    )
+  if (rules !== undefined && !closingRule) return
   return [crop[0], crop[1], right, crop[3]]
 }
 
@@ -1851,7 +1867,7 @@ export function refineTable(
     table = rebaseTableCrop(table, clippedLeftLabelCrop, true)
     ;[left, top, right, bottom] = table.cropRect
   }
-  const clippedRightLabelCrop = recoverClippedRightLabelCrop(table, pageItems)
+  const clippedRightLabelCrop = recoverClippedRightLabelCrop(table, pageItems, sourceRules)
   if (clippedRightLabelCrop) {
     table = rebaseTableCrop(table, clippedRightLabelCrop, true)
     ;[left, top, right, bottom] = table.cropRect
@@ -10304,6 +10320,18 @@ export function refineTable(
     .filter((column) => Array.isArray(column.rect))
     .sort((a, b) => a.rect[0] - b.rect[0])[0]
   const firstModelColumnLeft = firstModelColumn ? firstModelColumn.rect[0] : Infinity
+  const nativeVerticalRules = sourceRules.filter(
+    (rule) =>
+      Math.abs(rule[2] - rule[0]) < 0.5 &&
+      rule[3] - rule[1] >= (table.cropRect[3] - table.cropRect[1]) * 0.45
+  )
+  const nativeLeft = nativeVerticalRules.length
+    ? Math.min(...nativeVerticalRules.map((rule) => rule[0]))
+    : Infinity
+  const leadingOutsideNativeBounds =
+    Number.isFinite(nativeLeft) &&
+    firstOwnedLeft >= nativeLeft - 1 &&
+    leadingCells.every((cell) => cell.rect[2] <= nativeLeft + 1)
   const clippedProseOnly =
     clipped.length > 0 &&
     clipped.every(
@@ -10312,7 +10340,12 @@ export function refineTable(
         item.rect[2] <= firstOwnedLeft + 1 &&
         item.rect[2] <= firstModelColumnLeft + 1
     )
-  if (leadingEmpty && clippedProseOnly && Number.isFinite(firstOwnedLeft)) {
+  if (
+    leadingEmpty &&
+    leadingOutsideNativeBounds &&
+    clippedProseOnly &&
+    Number.isFinite(firstOwnedLeft)
+  ) {
     outputCrop = [Math.max(table.cropRect[0], firstOwnedLeft - 1.5), ...table.cropRect.slice(1)]
     outputCells = cells
       .filter((cell) => cell.column >= firstOwnedColumn)

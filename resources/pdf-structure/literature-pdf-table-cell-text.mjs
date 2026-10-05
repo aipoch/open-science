@@ -1330,6 +1330,15 @@ export function populateTableCellText({
           intersect(cell.rect, item.rect) / area(item.rect) > 0.02
       )
       .sort((a, b) => a.column - b.column)
+    // A header run may physically overhang the detector's neighboring
+    // columns (for example, "No-radiation cohort"). Keep the complete
+    // source label in its native cell; splitting prose is only valid for
+    // body rows where adjacent leaf values establish the ownership.
+    const headerRun = headerRows.some((rowIndex) => {
+      const row = rows[rowIndex]?.rect
+      return row && intersect(row, item.rect) / Math.max(1, area(item.rect)) >= 0.45
+    })
+    if (headerRun && /\b(?:cohort|group)\b/iu.test(item.text) && /-/u.test(item.text)) continue
     if (
       slots.length < 2 ||
       slots.some((cell, index) => index && cell.column !== slots[index - 1].column + 1)

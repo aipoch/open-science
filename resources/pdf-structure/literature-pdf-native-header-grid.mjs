@@ -4054,11 +4054,8 @@ export function recoverClippedColumnHeader(table, items, rules, captions = []) {
       .filter((value) => Number.isFinite(value) && value > 0)
       .sort((a, b) => a - b)
     const height = heights[Math.floor(heights.length / 2)] ?? 0
-    const firstRowTop = Math.min(
-      ...table.structure.objects
-        .filter((o) => o.label === 'table row')
-        .map((o) => o.rect[1] + crop[1])
-    )
+    const modelRows = table.structure.objects.filter((o) => o.label === 'table row')
+    const firstRowTop = Math.min(...modelRows.map((o) => o.rect[1] + crop[1]))
     const leading = items.filter(
       (item) =>
         item.horizontal &&
@@ -4087,6 +4084,7 @@ export function recoverClippedColumnHeader(table, items, rules, captions = []) {
     )
     if (
       height > 0 &&
+      modelRows.length > 0 &&
       leading.length === leadingColumns.length &&
       groups.every((group) => group.length === 1) &&
       Math.max(...leading.map((item) => item.baseline)) -

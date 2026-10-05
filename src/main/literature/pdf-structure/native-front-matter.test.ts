@@ -204,6 +204,20 @@ it('keeps captioned or source-proved numeric tables eligible', () => {
   )
 })
 
+it('keeps model-numbered institution rows eligible as data tables', () => {
+  const modelTable = table([
+    ['Model 3 Results University', 'Model 4 Results University'],
+    ['Model 5 Results University', 'Model 6 Results University']
+  ])
+  const items = [
+    token('Model 3 Results University', 20, 20, 180),
+    token('Model 4 Results University', 220, 20, 180),
+    token('Model 5 Results University', 20, 45, 180),
+    token('Model 6 Results University', 220, 45, 180)
+  ]
+  expect(isNativeFrontMatterRegion(modelTable, items, 1, undefined, [])).toBe(false)
+})
+
 it('keeps a closed native frame eligible and limits the gate to page one', () => {
   const items = [
     token('Ada Lovelace', 20, 20),

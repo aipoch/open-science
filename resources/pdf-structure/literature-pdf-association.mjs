@@ -615,6 +615,21 @@ export function associateFigures(
     nativeTokens
   )
   return associated.map((figure) => {
+    // Letter-range captions (for example ``Figure 1A-B``) can own a vertically
+    // stacked raster pair even when the ordinary adjacency pass assigns only
+    // the panel nearest the caption.  The pair proof is deliberately narrow:
+    // two same-width images, one column, no competing caption or table.
+    const letteredPair = recoverLetteredRasterPair(page, figure, candidates, tableRects)
+    if (letteredPair) figure = { ...figure, ...letteredPair }
+    // A detached label immediately above a raster is figure content unless a
+    // matching distant running header proves it is page furniture.  Keep that
+    // label when the independent header witness is absent.
+    const topLabel = recoverUnmatchedTopFigureLabel(page, figure)
+    if (topLabel) figure = { ...figure, rect: topLabel }
+    // Include a closing rule that is painted immediately below a raster frame;
+    // the rule is part of the complete source extent, not article furniture.
+    const inkExpanded = expandAdjacentFigureInk(page, figure)
+    if (inkExpanded) figure = { ...figure, rect: inkExpanded }
     // A vector plot can be mistaken for a graphical table before figure
     // association runs. When that table shadow covers the complete plot, the
     // ordinary table barrier hides every useful path and leaves the caption
@@ -664,6 +679,93 @@ export function associateFigures(
     const recovered = recoverConservativeFigureRect(page, attached, tableRects, candidates)
     return recovered ? { ...attached, rect: recovered, issue: undefined } : attached
   })
+}
+
+function recoverLetteredRasterPair(page, figure, candidates, tableRects) {
+  const caption = figure?.caption
+  if (!caption || !page.graphicsBounds?.length) return undefined
+  if (!/^\s*(?:Figure|Fig\.?)\s*\d+\s*[A-Z]-[A-Z]\.?(?:\s|$)/i.test(caption.lines?.[0] ?? ''))
+    return undefined
+  const images = page.graphicsBounds
+    .filter((graphic) => graphic.kind === 'image' && graphic.normalizedRect?.every(Number.isFinite))
+    .map((graphic) =>
+      graphic.normalizedRect.map((value, index) => value * (index % 2 ? page.height : page.width))
+    )
+    .filter((rect) => rect[3] < caption.rect[1] && rect[2] - rect[0] > page.width * 0.45)
+  if (images.length !== 2) return undefined
+  const [first, second] = images.slice().sort((a, b) => a[1] - b[1])
+  const width = first[2] - first[0]
+  if (
+    Math.abs(second[2] - second[0] - width) > Math.max(2, width * 0.03) ||
+    Math.abs(first[0] - second[0]) > Math.max(2, width * 0.03) ||
+    second[1] - first[3] > Math.max(24, page.height * 0.06) ||
+    candidates.some(
+      (other) => other !== caption && images.some((image) => intersection(other.rect, image) > 0)
+    ) ||
+    tableRects.some((table) => images.some((image) => intersection(table, image) > 0))
+  )
+    return undefined
+  const rect = union(images)
+  return { rect, graphicsCount: 2 }
+}
+
+function recoverUnmatchedTopFigureLabel(page, figure) {
+  const rect = figure?.rect
+  const caption = figure?.caption
+  if (!rect || !caption || rect[1] > page.height * 0.15) return undefined
+  const label = page.lines.find(
+    (line) =>
+      line !== caption &&
+      line.y < rect[1] &&
+      rect[1] - (line.y + line.height) <= Math.max(24, line.fontSize * 2) &&
+      line.x < page.width * 0.25 &&
+      line.width < page.width * 0.7 &&
+      Math.max(0, Math.min(line.x + line.width, rect[2]) - Math.max(line.x, rect[0])) >=
+        Math.min(line.width, rect[2] - rect[0]) * 0.5 &&
+      !/^\d{1,4}\s+of\s+\d+/i.test(line.text.trim()) &&
+      !/\bet al\.?\s+\d+$/i.test(line.text.trim()) &&
+      /\bet al\.?\b/i.test(line.text)
+  )
+  if (!label) return undefined
+  const matchingHeader = page.lines.some(
+    (line) =>
+      line !== label &&
+      line.x > page.width * 0.6 &&
+      /\d/.test(line.text) &&
+      Math.abs(line.y - label.y) < Math.max(label.height, line.fontSize) * 0.25
+  )
+  if (matchingHeader) return undefined
+  return [Math.min(rect[0], label.x), label.y, rect[2], rect[3]]
+}
+
+function expandAdjacentFigureInk(page, figure) {
+  const rect = figure?.rect
+  if (!rect || !page.graphicsBounds?.length) return undefined
+  const adjacent = page.graphicsBounds
+    .filter((graphic) => graphic.kind === 'path' && graphic.normalizedRect?.every(Number.isFinite))
+    .map((graphic) =>
+      graphic.normalizedRect.map((value, index) => value * (index % 2 ? page.height : page.width))
+    )
+    .filter((candidate) => {
+      const verticalGap = Math.max(candidate[1] - rect[3], 0)
+      const horizontalOverlap =
+        Math.max(0, Math.min(candidate[2], rect[2]) - Math.max(candidate[0], rect[0])) /
+        Math.max(1, Math.min(candidate[2] - candidate[0], rect[2] - rect[0]))
+      return (
+        verticalGap <= 8 &&
+        candidate[1] >= rect[3] - 1 &&
+        candidate[3] - candidate[1] <= 10 &&
+        horizontalOverlap >= 0.8
+      )
+    })
+  if (!adjacent.length) return undefined
+  const bounded = adjacent.map((candidate) => [
+    candidate[0],
+    candidate[1],
+    candidate[2],
+    Math.min(candidate[3], rect[3] + 5)
+  ])
+  return union([rect, ...bounded])
 }
 
 function recoverIsolatedAdjacentFigure(

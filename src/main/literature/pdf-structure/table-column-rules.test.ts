@@ -234,6 +234,35 @@ it('recovers a borderless two-column header clipped above the detector crop', ()
   expect(result.unassigned).toEqual([])
 })
 
+it('does not synthesize a header when a detector has no model rows', async () => {
+  const { recoverClippedColumnHeader } = await import(
+    pathToFileURL(resolve('resources/pdf-structure/literature-pdf-native-header-grid.mjs')).href
+  )
+  const table = {
+    cropRect: [0, 20, 200, 100],
+    structure: {
+      objects: [
+        { label: 'table column', rect: [0, 0, 100, 80] },
+        { label: 'table column', rect: [100, 0, 200, 80] }
+      ]
+    }
+  }
+  const token = (text: string, x: number) => ({
+    text,
+    rect: [x, 8, x + 60, 18],
+    baseline: 18,
+    height: 10,
+    horizontal: true
+  })
+  expect(
+    recoverClippedColumnHeader(
+      table,
+      [token('Parameter', 10), token('Value', 120)],
+      [[0, 31, 200, 31]]
+    )
+  ).toBeUndefined()
+})
+
 const { hasHorizontalTableRuleBetween } = await import(
   pathToFileURL(resolve('resources/pdf-structure/literature-pdf-table-rules.mjs')).href
 )

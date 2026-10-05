@@ -122,6 +122,25 @@ it('drops a prose-containing detector box when a narrower right table proves own
   expect(deduplicateTableRegions([outer, inner], items)).toEqual([inner])
 })
 
+it('keeps a captioned wide detector box for later caption-aware refinement', () => {
+  const outer = syntheticTable('outer', [0, 40, 1000, 340], 4)
+  const inner = syntheticTable('inner', [550, 120, 990, 320], 2)
+  const items = [
+    token(
+      'As an illustration, we provide a prose paragraph beside the table.',
+      [40, 130, 500, 145]
+    ),
+    token('Guardrails', [620, 135, 700, 150]),
+    token('MT Bench', [800, 135, 880, 150]),
+    token('No system prompt', [580, 180, 750, 195]),
+    token('6.84', [820, 180, 860, 195]),
+    token('Llama 2 system prompt', [580, 220, 760, 235]),
+    token('6.38', [820, 220, 860, 235])
+  ]
+  const caption = { lines: ['Table 1. Evaluation results'], rect: [40, 10, 400, 25] }
+  expect(deduplicateTableRegions([outer, inner], items, [caption])).toEqual([outer, inner])
+})
+
 it('keeps a wide table whose long stub label belongs to its first column', () => {
   const outer = syntheticTable('outer', [0, 0, 1000, 300], 4)
   const inner = syntheticTable('inner', [550, 80, 990, 280], 2)
@@ -180,6 +199,29 @@ it('drops a refined narrative duplicate beside the numeric grid', () => {
     unassigned: []
   }
   expect(narrativeDuplicateTableIndices([outer, inner])).toEqual(new Set([0]))
+})
+
+it('keeps a captioned wide candidate even when a narrower numeric grid overlaps it', () => {
+  const outer = {
+    cropRect: [152, 752, 753, 837],
+    grid: [
+      ['Captioned narrative table', 'Guardrails', 'MT Bench'],
+      ['The model declines to answer harmful questions.', 'No system prompt', '6.84 ± 0.07']
+    ],
+    unassigned: ['As an illustration, we provide in the table the answers of']
+  }
+  const inner = {
+    cropRect: [455, 769, 759, 855],
+    grid: [
+      ['', 'Guardrails', 'MT Bench'],
+      ['', 'No system prompt', '6.84 ± 0.07'],
+      ['', 'Llama 2 system prompt', '6.38 ± 0.07']
+    ],
+    unassigned: []
+  }
+  expect(
+    narrativeDuplicateTableIndices([outer, inner], { captionedIndices: new Set([0]) })
+  ).toEqual(new Set())
 })
 
 it('keeps a wide narrative table when the overlapping numeric grid has no matching cells', () => {

@@ -1012,7 +1012,28 @@ try {
           nativeFigureTokens
         )
       ].filter((f) => f.rect)
-      const narrativeDuplicates = narrativeDuplicateTableIndices(refined)
+      const captionedTableIndices = new Set(
+        associations.flatMap((association, index) => (association.caption ? [index] : []))
+      )
+      for (const [index, table] of refined.entries()) {
+        const crop = table?.cropRect
+        if (!crop) continue
+        const hasNearbyCaption = pageCaptions.some((caption) => {
+          if (captionKind(caption.lines?.[0]) !== 'table' || !caption.rect) return false
+          const overlap = Math.min(caption.rect[2], crop[2]) - Math.max(caption.rect[0], crop[0])
+          const width = Math.min(caption.rect[2] - caption.rect[0], crop[2] - crop[0])
+          if (overlap / Math.max(1, width) < 0.5) return false
+          const aboveGap = crop[1] - caption.rect[3]
+          return (
+            (aboveGap >= -2 && aboveGap <= 36) ||
+            (caption.rect[1] >= crop[1] && caption.rect[3] <= crop[3])
+          )
+        })
+        if (hasNearbyCaption) captionedTableIndices.add(index)
+      }
+      const narrativeDuplicates = narrativeDuplicateTableIndices(refined, {
+        captionedIndices: captionedTableIndices
+      })
       const acceptedTables = refined.map(
         (table, index) =>
           !narrativeDuplicates.has(index) &&

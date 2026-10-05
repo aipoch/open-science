@@ -479,6 +479,32 @@ export function nativeCaptionedRaster(page, caption, captions, tables) {
     .filter(Boolean)
   const nearby = (a, b, tolerance = Math.max(2, font * 1.5)) =>
     intersection([a[0] - tolerance, a[1] - tolerance, a[2] + tolerance, a[3] + tolerance], b) > 0
+  // A neighboring side caption normally shares the top baseline of its raster.
+  // If that caption is vertically displaced, the two plates are ambiguous;
+  // defer ownership rather than letting the upper raster claim the whole page.
+  const sideCaptionDisplaced = captions.some((other) => {
+    if (other === caption) return false
+    return (page.graphicsBounds ?? []).some((graphic) => {
+      if (graphic.kind !== 'image' || !graphic.normalizedRect?.every(Number.isFinite)) return false
+      const rect = graphic.normalizedRect.map(
+        (value, index) => value * (index % 2 ? page.height : page.width)
+      )
+      const gap = other.rect[0] - rect[2]
+      const horizontalOverlap =
+        Math.max(0, Math.min(rect[2], caption.rect[2]) - Math.max(rect[0], caption.rect[0])) /
+        Math.max(1, Math.min(rect[2] - rect[0], caption.rect[2] - caption.rect[0]))
+      return (
+        gap >= 0 &&
+        gap <= Math.max(12, font * 2) &&
+        rect[1] >= caption.rect[3] - Math.max(12, font * 2) &&
+        horizontalOverlap >= 0.25 &&
+        Math.abs(rect[1] - other.rect[1]) > Math.max(6, font * 0.9) &&
+        Math.min(rect[3], other.rect[3]) - Math.max(rect[1], other.rect[1]) >
+          Math.min(rect[3] - rect[1], other.rect[3] - other.rect[1]) * 0.35
+      )
+    })
+  })
+  if (sideCaptionDisplaced) return
   const candidates = (page.graphicsBounds ?? [])
     .filter((g) => g.kind === 'image')
     .map((g) =>

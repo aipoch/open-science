@@ -22,7 +22,7 @@ const institutionLike =
 
 const stripAuthorMarkers = (value) =>
   textOf({ text: value })
-    .replace(/[\d,*†‡§¹²³⁴⁵⁶⁷⁸⁹⁰]+/gu, ' ')
+    .replace(/[\d,*†‡§¹²³⁴⁵⁶⁷⁸⁹⁰]+$/gu, ' ')
     .replace(/\s+/gu, ' ')
     .trim()
 

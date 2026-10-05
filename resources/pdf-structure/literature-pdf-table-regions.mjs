@@ -55,12 +55,28 @@ function trimEmbeddedTableCaption(table, items, captions) {
 // only when they enclose exactly the same native tokens, including edge text.
 export function deduplicateTableRegions(tables, items, captions = []) {
   tables = tables.map((table) => trimEmbeddedTableCaption(table, items, captions))
+  const hasTableCaption = (table) => {
+    const crop = table?.cropRect
+    if (!crop) return false
+    return captions.some((caption) => {
+      if (captionKind(caption?.lines?.[0]) !== 'table' || !caption.rect) return false
+      const overlap = Math.min(caption.rect[2], crop[2]) - Math.max(caption.rect[0], crop[0])
+      const width = Math.min(caption.rect[2] - caption.rect[0], crop[2] - crop[0])
+      if (overlap / Math.max(1, width) < 0.5) return false
+      const aboveGap = crop[1] - caption.rect[3]
+      return (
+        (aboveGap >= -2 && aboveGap <= 36) ||
+        (caption.rect[1] >= crop[1] && caption.rect[3] <= crop[3])
+      )
+    })
+  }
   // A detector may cover a prose column together with a real table in the
   // neighboring column. Keep the narrower, source-backed grid when the wider
   // box contributes a complete narrative line outside that grid; ordinary
   // adjacent tables do not satisfy the prose-plus-numeric proof.
   const duplicateNarrativeTables = new Set()
   for (const outer of tables) {
+    if (hasTableCaption(outer)) continue
     for (const inner of tables) {
       if (outer === inner) continue
       const a = outer.cropRect,
@@ -190,7 +206,7 @@ export function deduplicateTableRegions(tables, items, captions = []) {
 // use their actual prose/numeric content rather than raw detector geometry.
 // Return indices to keep the caller's table identity and caption association
 // stable while dropping only the proven narrative duplicate.
-export function narrativeDuplicateTableIndices(tables) {
+export function narrativeDuplicateTableIndices(tables, { captionedIndices = new Set() } = {}) {
   const duplicate = new Set()
   const normalizeCell = (value) =>
     String(value ?? '')
@@ -241,6 +257,7 @@ export function narrativeDuplicateTableIndices(tables) {
     return { compared, matchedRows, matchedCells }
   }
   for (let outerIndex = 0; outerIndex < tables.length; outerIndex++) {
+    if (captionedIndices.has(outerIndex)) continue
     const outer = tables[outerIndex]
     const a = outer?.cropRect
     if (!a) continue
