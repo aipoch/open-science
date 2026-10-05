@@ -2891,6 +2891,10 @@ class Analyzer extends NodeVisitor {
       .filter(Boolean)
       .join('.')
     if (canonicalName !== 'torch.load') return false
+    // Safe-global registration changes the process-wide unpickling allowlist.
+    // A literal weights-only call is only safe before that namespace has been
+    // tainted by a prior registration or opaque mutation.
+    if (this.taintedNamespaces.has('*') || this.taintedNamespaces.has('torch')) return false
     const args = Array.isArray(node.args) ? node.args : []
     const keyword = (name: string): PyNode | undefined =>
       (node.keywords ?? []).find((entry) => entry.arg === name)?.value
@@ -5887,6 +5891,13 @@ class Analyzer extends NodeVisitor {
       const canonicalCallName = [this.importedCanonicalNames.get(root ?? '') ?? root, ...members]
         .filter(Boolean)
         .join('.')
+      if (
+        canonicalCallName === 'torch.serialization.add_safe_globals' ||
+        canonicalCallName === 'torch.serialization.safe_globals'
+      ) {
+        this.taintedNamespaces.add('torch')
+        this.unknown.add('external-state')
+      }
       if (canonicalCallName === 'sqlite3.connect') {
         const args = Array.isArray(node.args) ? node.args : []
         const targetNode =

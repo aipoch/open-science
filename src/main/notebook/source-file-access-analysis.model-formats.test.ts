@@ -126,6 +126,14 @@ describe('model format file access coverage', () => {
     })
   })
 
+  it('keeps dependency facts conservative after safe-global registration', async () => {
+    const { facts } = await analyzePythonNotebookSource(
+      "import torch\ntorch.serialization.add_safe_globals([CustomTensor])\nweights = torch.load('source.pt', weights_only=True)"
+    )
+    expect(facts.state).toBe('unknown')
+    if (facts.state === 'unknown') expect(facts.reasons).toContain('external-state')
+  })
+
   it('carries safe-global taint into later cells in the same Python context', async () => {
     const registration = await analyzePythonNotebookSource(
       'import torch\ntorch.serialization.add_safe_globals([CustomTensor])'

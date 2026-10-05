@@ -27,6 +27,19 @@ it.each([
   expect(result.writes).not.toContain(path)
 })
 
+it('expands static arrow dataset source vectors', async () => {
+  expect(
+    await analyzeNotebookSourceFileAccess(
+      'r',
+      'sources <- c("inputs/train.parquet", "inputs/test.parquet")\ndataset <- arrow::open_dataset(sources)'
+    )
+  ).toMatchObject({
+    reads: ['inputs/test.parquet', 'inputs/train.parquet'],
+    readState: 'complete',
+    externalState: 'complete'
+  })
+})
+
 it.each([
   'utils::write.csv',
   'utils::write.csv2',

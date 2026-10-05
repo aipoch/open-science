@@ -290,7 +290,10 @@ const R_FILE_CALL_EFFECTS: ReadonlyMap<string, NotebookFileCallEffect> = new Map
   // arrow::open_dataset accepts a file or directory (and a static vector of
   // sources). Keep the source identity so directory-backed Dataset handles
   // can participate in cross-cell lineage.
-  ['open_dataset', { kind: 'read', position: 0, keywords: ['sources', 'source'] }],
+  [
+    'open_dataset',
+    { kind: 'read', position: 0, keywords: ['sources', 'source'], inputForm: 'paths' }
+  ],
   // phyloseq::import_biom loads a BIOM community table into a phyloseq
   // container. Keep the input path explicit so microbiome notebooks expose
   // file lineage before any taxonomic transforms.
