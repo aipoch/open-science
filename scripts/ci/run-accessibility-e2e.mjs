@@ -86,7 +86,7 @@ export function runAccessibilityE2e(environment = process.env) {
     [
       resolve('node_modules/playwright/cli.js'),
       'test',
-      '--config=playwright.accessibility.config.ts',
+      '--config=e2e/playwright.accessibility.config.ts',
       'e2e/accessibility.spec.ts',
       '--fail-on-flaky-tests'
     ],

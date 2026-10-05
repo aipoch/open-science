@@ -203,7 +203,7 @@ describe('trusted supplemental selection', () => {
     'e2e/fixtures/electron-app.ts',
     'e2e/new-unknown.spec.ts',
     'package.json',
-    'playwright.browser.config.ts',
+    'e2e/playwright.browser.config.ts',
     '.github/actions/source-regression/action.yml',
     '.github/workflows/source-regression.yml'
   ])('keeps full fallback for unknown ownership or global input: %s', (path) => {

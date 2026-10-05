@@ -337,7 +337,7 @@ Entfernen Sie vor dem Erstellen eines öffentlichen Issues API-Schlüssel, Token
 
 > ⭐ **Repository mit einem Stern markieren:** Wenn Ihnen das Projekt hilft, freuen wir uns über einen Stern auf GitHub. Damit unterstützen Sie die weitere Entwicklung.
 
-Gelieferte, teilweise umgesetzte und geplante Funktionen finden Sie in der [Capability Map](../../ROADMAP.md#capability-map).
+Gelieferte, teilweise umgesetzte und geplante Funktionen finden Sie in der [Capability Map](../ROADMAP.md#capability-map).
 
 ## Lizenz
 

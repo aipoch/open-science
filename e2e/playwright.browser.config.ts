@@ -1,7 +1,7 @@
 import { defineConfig } from '@playwright/test'
 import { mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
-import base from './playwright.config'
+import base from '../playwright.config'
 
 // Config is loaded in each worker; separate files preserve logs across workers and retries.
 const netlogDirectory = resolve('test-results/browser-diagnostics')
@@ -12,9 +12,9 @@ if (captureNetlog) mkdirSync(netlogDirectory, { recursive: true })
 // Replace Electron's Windows project list; defineConfig(base, override) merges projects by name.
 export default defineConfig({
   ...base,
-  testDir: './e2e/browser',
+  testDir: './browser',
   testIgnore: [],
-  outputDir: 'test-results/browser',
+  outputDir: '../test-results/browser',
   projects: [{ name: 'chromium', use: { browserName: 'chromium' } }],
   fullyParallel: true,
   workers: 2,
@@ -28,9 +28,10 @@ export default defineConfig({
       : undefined
   },
   webServer: {
+    cwd: resolve(__dirname, '..'),
     // Bundled fixtures avoid hundreds of dev-module requests and React-refresh startup failures.
     command:
-      'node --max-old-space-size=4096 node_modules/vite/bin/vite.js build --config vite.browser-test.config.ts && node node_modules/vite/bin/vite.js preview --config vite.browser-test.config.ts',
+      'node --max-old-space-size=4096 node_modules/vite/bin/vite.js build --config e2e/vite.browser-test.config.ts && node node_modules/vite/bin/vite.js preview --config e2e/vite.browser-test.config.ts',
     url: 'http://127.0.0.1:4178',
     reuseExistingServer: false,
     timeout: 120_000

@@ -336,7 +336,7 @@ AIPOCH Open-Science는 GitHub, Discord, X 및 AIPOCH 웹사이트를 통해 버�
 
 > ⭐ **저장소에 Star:** 이 프로젝트가 도움이 되었다면 GitHub에서 Star를 남겨 주세요. Star는 지속적인 개발에 힘이 됩니다. 몇 초면 충분하지만 프로젝트에는 큰 의미가 있습니다.
 
-제공 중인 기능, 부분 구현 및 계획은 [기능 지도](../../ROADMAP.md#capability-map)를 확인하세요.
+제공 중인 기능, 부분 구현 및 계획은 [기능 지도](../ROADMAP.md#capability-map)를 확인하세요.
 
 ## 라이선스
 

@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process'
 import { readFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 
 import type { PlaywrightTestConfig } from '@playwright/test'
 import type { JSONReport } from '@playwright/test/reporter'
@@ -18,8 +18,8 @@ const loadConfig = async (
   try {
     vi.resetModules()
     return browser
-      ? (await import('./playwright.browser.config')).default
-      : (await import('./playwright.config')).default
+      ? (await import('../../e2e/playwright.browser.config')).default
+      : (await import('../../playwright.config')).default
   } finally {
     Object.defineProperty(process, 'platform', { value: original })
   }
@@ -151,10 +151,69 @@ it.each(['win32', 'darwin', 'linux'] as const)(
     Object.defineProperty(process, 'platform', { value: platform })
     try {
       vi.resetModules()
-      const config = (await import('./playwright.browser.config')).default
+      const config = (await import('../../e2e/playwright.browser.config')).default
       expect(config.projects).toEqual([{ name: 'chromium', use: { browserName: 'chromium' } }])
     } finally {
       Object.defineProperty(process, 'platform', { value: original })
     }
   }
 )
+
+it.each([
+  ['playwright.config.ts', 'e2e', 'test-results/electron'],
+  ['e2e/playwright.browser.config.ts', 'e2e/browser', 'test-results/browser'],
+  ['e2e/playwright.accessibility.config.ts', 'e2e', 'test-results/electron']
+])(
+  'preserves resolved collection and artifact paths through %s',
+  (config, testDir, outputDir) => {
+    const run = spawnSync(
+      process.execPath,
+      [
+        require.resolve('@playwright/test/cli'),
+        'test',
+        '--config',
+        config,
+        '--list',
+        '--reporter=json'
+      ],
+      { encoding: 'utf8', timeout: 20_000 }
+    )
+    expect(run.status, run.stderr).toBe(0)
+    const report = JSON.parse(run.stdout) as JSONReport
+    expect(report.errors).toEqual([])
+    expect(report.suites.length).toBeGreaterThan(0)
+    for (const project of report.config.projects) {
+      expect(project.testDir).toBe(resolve(testDir))
+      expect(project.outputDir).toBe(resolve(outputDir))
+    }
+    if (config.includes('browser')) {
+      expect(report.config.webServer).toMatchObject({ cwd: process.cwd() })
+    }
+  },
+  30_000
+)
+
+it('keeps CI reports and the accessibility reporter rooted at the checkout', async () => {
+  vi.stubEnv('CI', '1')
+  vi.stubEnv('PLAYWRIGHT_JSON_OUTPUT_NAME', 'test-results/custom.json')
+  try {
+    vi.resetModules()
+    const configs = [
+      (await import('../../playwright.config')).default,
+      (await import('../../e2e/playwright.browser.config')).default,
+      (await import('../../e2e/playwright.accessibility.config')).default
+    ]
+    for (const config of configs) {
+      expect(config.reporter).toEqual(
+        expect.arrayContaining([
+          ['blob', { outputDir: resolve('blob-report') }],
+          ['json', { outputFile: resolve('test-results/custom.json') }],
+          ['html', { outputFolder: resolve('playwright-report'), open: 'never' }]
+        ])
+      )
+    }
+    expect(configs[2].reporter).toContainEqual([resolve('e2e/accessibility-reporter.ts')])
+  } finally {
+    vi.unstubAllEnvs()
+  }
+})

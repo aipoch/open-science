@@ -1,6 +1,6 @@
 # Open-Science — Product Requirements Document
 
-> Status: living document, describes the current product and its requirements. For available capabilities, remaining gaps, and uncommitted future directions, see [`ROADMAP.md`](../ROADMAP.md). For the visual/interaction spec, see [`design.md`](design.md).
+> Status: living document, describes the current product and its requirements. For available capabilities, remaining gaps, and uncommitted future directions, see [`ROADMAP.md`](ROADMAP.md). For the visual/interaction spec, see [`design.md`](design.md).
 
 ## 1. Summary
 
@@ -25,7 +25,7 @@ This shows up as four structural pains:
 - Make every artifact the agent produces **traceable back to the code, data, and environment** that generated it.
 - Keep the system **model-agnostic and self-hostable** by design, so no single vendor's pricing, billing region, or infrastructure choices gate access to it.
 - Keep a **desktop-first experience** while exposing the same local backend through the existing localhost Web UI, headless CLI, and Task SDK, with paired mobile browser access and explicit capability boundaries between surfaces.
-- Be honest about maturity: this PRD documents what exists, what's partially built, and what's aspirational — see the [Roadmap](../ROADMAP.md) for current capabilities, limits, and proposed work tracks.
+- Be honest about maturity: this PRD documents what exists, what's partially built, and what's aspirational — see the [Roadmap](ROADMAP.md) for current capabilities, limits, and proposed work tracks.
 
 ## 4. Non-Goals
 
@@ -310,7 +310,7 @@ Key implemented capabilities, mapped to the codebase:
 - **Artifacts and provenance.** An in-process MCP server (`open-science-artifacts`) exposes a `write_artifact_file` tool the agent calls with either inline content or a local file path. Each save creates an immutable, session-scoped artifact version with available producer code, execution history, input references, environment inventory, message context, and reviewer evidence.
 - **File preview.** Responsive multi-tab renderers cover CSV, FASTA, HTML, PDF, images including TIFF, JSON, Markdown, plain text, Office documents, molecular structures/reactions, and read-only Notebook history, with inline and full-screen preview surfaces.
 - **Literature and reading evidence.** The literature library supports reference/PDF imports, collections, tags, notes, duplicate merging, citation export, and open-access full-text lookup. Smart collections screen references against inclusion/exclusion criteria with optional PDF evidence and explicit manual overrides. PDF structure extraction exposes figures, tables, and algorithms; persistent document annotations and notebooks support separate annotated-PDF and notes exports without replacing source bytes.
-- **Research exchange.** `.science` packages transfer selected conversation branches, file versions, Notebook records, verification evidence, environment locks, and optional literature PDFs. Imports create read-only history without executing code or restoring credentials; side chats and private bookmarks are excluded. Writable session forks preserve the source and use new identities, can copy local bookmarks, and exclude side chats. Artifact provenance supports lightweight and complete RO-Crate 1.1 exports, and research packages embed RO-Crate metadata. See the [roadmap boundaries](../ROADMAP.md#important-capability-boundaries).
+- **Research exchange.** `.science` packages transfer selected conversation branches, file versions, Notebook records, verification evidence, environment locks, and optional literature PDFs. Imports create read-only history without executing code or restoring credentials; side chats and private bookmarks are excluded. Writable session forks preserve the source and use new identities, can copy local bookmarks, and exclude side chats. Artifact provenance supports lightweight and complete RO-Crate 1.1 exports, and research packages embed RO-Crate metadata. See the [roadmap boundaries](ROADMAP.md#important-capability-boundaries).
 - **Watch and discuss imported research.** The right-hand Research replay presents saved conversations, tool interactions, Notebook runs and exact file versions on a seekable timeline. Reconstructed presentation and missing evidence are identified. A question creates a separate writable discussion and can retain a fixed reference to the visible scene. Playback, local drafts and discussion relationships survive reopening without modifying the source package. Watching does not call a model or run archived code. The independent scene and explicit rendering clock prepare for future video export; MP4 encoding and runtime restoration are outside this release.
 - **Reusable capabilities.** File-based skills and specialist profiles support local management, portable packages, conversational customization, and signed marketplace discovery. Built-in scientific connectors and custom MCP servers expose permissioned tools, with per-agent resource controls and classification-assisted skill/connector selection. User-facing skill version pinning and explicit cross-machine fork lineage remain future directions.
 - **Permissions.** An `AcpPermissionBroker` intercepts tool-call permission requests from the agent runtime, resolves matching app-owned remembered grants, and surfaces unmatched requests to the renderer for explicit approval before the call proceeds. Task callers can opt into per-Run `permissionPrompts: none`: existing grants and automatic policy still apply, but unresolved approvals and questions are denied without publishing a human wait. The policy follows delegated work and continuations of the same originating prompt, is not saved as a Session preference, and rejects Plan generation requiring human approval. Durable allow grants can be scoped globally, by project, or by session, then filtered, revoked individually or by family, and restored through Undo. Settings credentials use OS-backed secure storage by default; explicit Linux headless file mode and subscription-authentication storage have separate boundaries described in the [security model](security.md#local-data-and-credentials).
@@ -345,7 +345,7 @@ In the desktop app, an eligible artifact version with a complete sealed recipe, 
 
 Generic live-environment export, arbitrary external lock-file import, and deterministic whole-session replay remain separate future capabilities. RO-Crate and research-package exports exchange captured records, not uncaptured machine state. Product and reviewer claims must distinguish retained evidence, an observed replay outcome, and scientific validity; matching output does not establish a sound method or conclusion.
 
-See the [Capability Map in `ROADMAP.md`](../ROADMAP.md#capability-map) for implemented foundations and their limits, and the [proposed delivery tracks](../ROADMAP.md#delivery-phases) for extensions such as backend-independent model routing, stronger reproduction, cloud-GPU submission, and broader capability sharing. These directions do not assign release dates or replace design review.
+See the [Capability Map in `ROADMAP.md`](ROADMAP.md#capability-map) for implemented foundations and their limits, and the [proposed delivery tracks](ROADMAP.md#delivery-phases) for extensions such as backend-independent model routing, stronger reproduction, cloud-GPU submission, and broader capability sharing. These directions do not assign release dates or replace design review.
 
 ## 9. Distribution & Packaging
 
@@ -374,4 +374,4 @@ These are tracked as open design questions in [Discussions](https://github.com/a
 
 ---
 
-_This PRD reflects the current codebase and product direction, and is updated as scope and implementation evolve. See [`ROADMAP.md`](../ROADMAP.md) for available capabilities, proposed delivery tracks, and the long-range vision._
+_This PRD reflects the current codebase and product direction, and is updated as scope and implementation evolve. See [`ROADMAP.md`](ROADMAP.md) for available capabilities, proposed delivery tracks, and the long-range vision._

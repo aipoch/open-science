@@ -38,7 +38,7 @@ it('builds newly added browser fixture pages without falling back to the default
         join(dirname(require.resolve('vite/package.json')), 'bin/vite.js'),
         'build',
         '--config',
-        resolve('vite.browser-test.config.ts')
+        resolve('e2e/vite.browser-test.config.ts')
       ],
       { cwd: root, encoding: 'utf8', timeout: 20_000 }
     )

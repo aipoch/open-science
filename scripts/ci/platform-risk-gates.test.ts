@@ -167,7 +167,7 @@ it('retains all deferred Mac suites in the nightly job and fails on missing exec
   for (const command of [
     'test:e2e:journey',
     'test:e2e:workspace',
-    'playwright.browser.config.ts',
+    'e2e/playwright.browser.config.ts',
     'test:e2e:visual',
     'test:e2e:accessibility:signal'
   ]) {

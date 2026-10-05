@@ -63,8 +63,8 @@ const runFixture = (
 describe('CI focused test guard', () => {
   for (const config of [
     'playwright.config.ts',
-    'playwright.browser.config.ts',
-    'playwright.accessibility.config.ts'
+    'e2e/playwright.browser.config.ts',
+    'e2e/playwright.accessibility.config.ts'
   ]) {
     it.each(['test.only', 'test.describe.only'])(
       'rejects %s through ' + config,
@@ -99,7 +99,7 @@ describe('accessibility runner stability', () => {
     (failure) => {
       const scans = ACCESSIBILITY_SURFACES.map((surface) => ({ surface, violations: [] }))
       const { exit, report, summary } = runFixture(
-        'playwright.accessibility.config.ts',
+        'e2e/playwright.accessibility.config.ts',
         `
       for (let i = 0; i < 11; i++) test('surface ' + i, async ({}, info) => {
         if (i === 0 && info.retry === 0) {
