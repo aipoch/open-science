@@ -1053,6 +1053,52 @@ describe('file lineage identity and completeness guards', () => {
     expect(projection.consumer).toBeUndefined()
   })
 
+  it('retains legacy relative matching when complete runtime evidence anchors the session', () => {
+    const root = join(tmpdir(), 'lineage-legacy-evidence')
+    const evidence = {
+      schemaVersion: 1 as const,
+      state: 'available' as const,
+      fileReads: 'complete' as const,
+      relationCount: 1,
+      activityKind: 'notebook-run' as const,
+      initialViewState: 'complete' as const,
+      managedRootsFinalState: 'complete' as const,
+      scientificOutputAnalysis: 'complete' as const,
+      externalPaths: 'complete' as const,
+      writerAttribution: 'complete' as const,
+      scientificOutputCount: 0,
+      reasonCodes: []
+    }
+    const producer = {
+      ...run('producer', root, [
+        {
+          path: join(root, 'result.json'),
+          relativePath: 'result.json',
+          kind: 'other' as const,
+          createdByRunId: 'producer',
+          change: 'created' as const,
+          checksum: 'k'.repeat(64)
+        }
+      ]),
+      cwdBefore: undefined,
+      cwdAfter: undefined,
+      fileEvidence: evidence
+    }
+    const consumer = {
+      ...run('consumer', root),
+      cwdBefore: undefined,
+      cwdAfter: undefined,
+      fileEvidence: evidence
+    }
+    const { fileDependenciesByRunId: projection } = projectNotebookFileDependencies([
+      { run: producer, facts, fileAccess: access([], ['result.json']) },
+      { run: consumer, facts, fileAccess: access(['result.json'], []) }
+    ] satisfies readonly AnalyzedNotebookRun[])
+    expect(projection.consumer).toEqual([
+      expect.objectContaining({ producerRunId: 'producer', confidence: 'verified' })
+    ])
+  })
+
   it('does not use cwdAfter to resolve relative paths when cwdBefore is missing', () => {
     const rootBefore = join(tmpdir(), 'lineage-cwd-before-missing')
     const rootAfter = join(tmpdir(), 'lineage-cwd-after-only')

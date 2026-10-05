@@ -112,6 +112,14 @@ const lineagePathCase = (value: string): string =>
 const lineageWorkingDirectory = (run: NotebookRunRecord): string | undefined =>
   run.cwdBefore ?? run.frozenShellContext?.cwd
 
+// Historical run records may omit cwdBefore while retaining a complete runtime file-evidence
+// summary. That evidence anchors relative paths to the session's observed roots, so preserve the
+// legacy textual identity for those records. Without the anchor, keep relative paths run-local.
+const hasCompleteRuntimeFileEvidence = (run: NotebookRunRecord): boolean =>
+  run.fileEvidence?.state === 'available' &&
+  run.fileEvidence.fileReads === 'complete' &&
+  run.fileEvidence.relationCount !== 0
+
 const lineageScopePath = (run: NotebookRunRecord, value: string): string => {
   const workingDirectory = lineageWorkingDirectory(run)
   if (workingDirectory === undefined) return lineagePathCase(portablePath(value))
@@ -138,9 +146,29 @@ const lineagePathKey = (run: NotebookRunRecord, value: string): string => {
   if (isAbsolute(value)) return `absolute:${lineagePathCase(portablePath(normalize(value)))}`
   if (workingDirectory !== undefined)
     return `absolute:${lineagePathCase(portablePath(normalize(resolve(workingDirectory, value))))}`
+  if (hasCompleteRuntimeFileEvidence(run)) return `relative:evidence:${portable}`
   // Without cwd/session identity, a relative spelling is local to this run. Keep
   // same-run generation matching, but never alias it across independent runs.
   return `relative:${run.runId}:${portable}`
+}
+
+const isUnanchoredRelativePath = (run: NotebookRunRecord, key: string): boolean =>
+  lineageWorkingDirectory(run) === undefined &&
+  !hasCompleteRuntimeFileEvidence(run) &&
+  key.startsWith(`relative:${run.runId}:`)
+
+const matchesObservedFile = (
+  run: NotebookRunRecord,
+  requestedPath: string,
+  file: NotebookWorkingFile
+): boolean => {
+  if (lineagePathKey(run, requestedPath) === lineagePathKey(run, file.path)) return true
+  return (
+    lineageWorkingDirectory(run) === undefined &&
+    hasCompleteRuntimeFileEvidence(run) &&
+    file.relativePath !== undefined &&
+    portablePath(file.relativePath) === portablePath(requestedPath)
+  )
 }
 
 const observedFileGeneration = (
@@ -148,7 +176,7 @@ const observedFileGeneration = (
   path: string
 ): NotebookWorkingFile | undefined =>
   run.workingFiles.find((file) => {
-    if (lineagePathKey(run, path) !== lineagePathKey(run, file.path)) return false
+    if (!matchesObservedFile(run, path, file)) return false
     return (
       file.createdByRunId === run.runId || file.change === 'created' || file.change === 'modified'
     )
@@ -2069,8 +2097,13 @@ const projectNotebookFileDependencies = (
     }
   }
   for (const { run, fileAccess } of analyzedRuns) {
+    const runtimeEvidenceComplete = hasCompleteRuntimeFileEvidence(run)
     if (run.status === 'completed' && fileAccess) {
-      if (fileAccess.readState !== 'complete' && fileAccess.reads.length > 0)
+      if (
+        !runtimeEvidenceComplete &&
+        fileAccess.readState !== 'complete' &&
+        fileAccess.reads.length > 0
+      )
         unresolvedFileReadRunIds.add(run.runId)
       const dependencies: NotebookFileDependency[] = []
       const writeKeys = new Set(
@@ -2084,13 +2117,10 @@ const projectNotebookFileDependencies = (
         )
         // Static extraction does not retain statement order. If a run both reads and
         // writes the same path, do not attribute the read to an older producer.
-        if (
-          writeKeys.has(key) ||
-          scopeRead ||
-          ambiguousPaths.has(key) ||
-          key.startsWith('relative:')
-        ) {
-          unresolvedFileReadRunIds.add(run.runId)
+        const explicitBarrier = writeKeys.has(key) || scopeRead || ambiguousPaths.has(key)
+        const lineageBlocked = explicitBarrier || isUnanchoredRelativePath(run, key)
+        if (lineageBlocked) {
+          if (!runtimeEvidenceComplete || explicitBarrier) unresolvedFileReadRunIds.add(run.runId)
           continue
         }
         if (fileAccess.readState !== 'complete') continue
@@ -2142,11 +2172,14 @@ const projectNotebookFileDependencies = (
         // observed. An unobserved declared path must poison that path, otherwise an
         // older producer can be reused after an overwrite that was not captured.
         for (const rawPath of fileAccess.writes) {
-          if (!observedFileGeneration(run, rawPath)) markPathAmbiguous(run, rawPath)
+          if (!runtimeEvidenceComplete && !observedFileGeneration(run, rawPath))
+            markPathAmbiguous(run, rawPath)
         }
       } else {
         for (const generation of observedChanges) markAmbiguous(run, generation)
-        for (const rawPath of fileAccess?.writes ?? []) markPathAmbiguous(run, rawPath)
+        if (!runtimeEvidenceComplete) {
+          for (const rawPath of fileAccess?.writes ?? []) markPathAmbiguous(run, rawPath)
+        }
         for (const scope of fileAccess?.writeScopes ?? []) {
           for (const generation of observedScopedGenerations(run, [scope]))
             markAmbiguous(run, generation)
