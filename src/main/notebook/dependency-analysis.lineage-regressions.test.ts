@@ -864,6 +864,63 @@ describe('real-agent science lineage fixtures', () => {
     expect(absoluteScopeProjection.fileDependenciesByRunId['scoped-consumer']).toEqual([
       expect.objectContaining({ producerRunId: 'scoped-producer', path: 'outputs/map.dbf' })
     ])
+    const completeEvidence = {
+      schemaVersion: 1 as const,
+      state: 'available' as const,
+      fileReads: 'complete' as const,
+      relationCount: 1,
+      activityKind: 'notebook-run' as const,
+      initialViewState: 'complete' as const,
+      managedRootsFinalState: 'complete' as const,
+      scientificOutputAnalysis: 'complete' as const,
+      externalPaths: 'complete' as const,
+      writerAttribution: 'complete' as const,
+      scientificOutputCount: 0,
+      reasonCodes: []
+    }
+    const cwdlessScopedProducer: NotebookRunRecord = {
+      ...producer,
+      runId: 'cwdless-scoped-producer',
+      cellId: 'cwdless-scoped-producer',
+      cwdBefore: undefined,
+      cwdAfter: undefined,
+      fileEvidence: completeEvidence,
+      workingFiles: [
+        {
+          ...producer.workingFiles[0]!,
+          relativePath: 'outputs/map.dbf',
+          createdByRunId: 'cwdless-scoped-producer'
+        }
+      ]
+    }
+    const cwdlessScopedConsumer: NotebookRunRecord = {
+      ...consumer,
+      runId: 'cwdless-scoped-consumer',
+      cellId: 'cwdless-scoped-consumer',
+      cwdBefore: undefined,
+      cwdAfter: undefined,
+      fileEvidence: completeEvidence
+    }
+    expect(
+      projectNotebookFileDependencies([
+        {
+          run: cwdlessScopedProducer,
+          facts,
+          fileAccess: { ...fileAccess, writes: [] }
+        },
+        {
+          run: cwdlessScopedConsumer,
+          facts,
+          fileAccess: { ...consumerAccess, reads: ['outputs/map.dbf'] }
+        }
+      ]).fileDependenciesByRunId['cwdless-scoped-consumer']
+    ).toEqual([
+      expect.objectContaining({
+        producerRunId: 'cwdless-scoped-producer',
+        path: 'outputs/map.dbf',
+        confidence: 'verified'
+      })
+    ])
     const scopedReadWriteRun: NotebookRunRecord = {
       ...consumer,
       runId: 'scoped-read-write',

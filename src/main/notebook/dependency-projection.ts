@@ -187,11 +187,21 @@ const observedScopedGenerations = (
   scopes: readonly NotebookSourceFileWriteScope[]
 ): NotebookWorkingFile[] =>
   run.workingFiles.filter((file) => {
-    const candidatePath = lineageScopePath(run, file.path)
+    const candidatePaths = [
+      lineageScopePath(run, file.path),
+      ...(lineageWorkingDirectory(run) === undefined &&
+      hasCompleteRuntimeFileEvidence(run) &&
+      file.relativePath
+        ? [lineageScopePath(run, file.relativePath)]
+        : [])
+    ]
     return (
-      candidatePath !== '..' &&
-      !candidatePath.startsWith('../') &&
-      scopes.some((scope) => matchesLineageScope(lineageScope(run, scope), candidatePath)) &&
+      candidatePaths.some(
+        (candidatePath) =>
+          candidatePath !== '..' &&
+          !candidatePath.startsWith('../') &&
+          scopes.some((scope) => matchesLineageScope(lineageScope(run, scope), candidatePath))
+      ) &&
       (file.createdByRunId === run.runId || file.change === 'created' || file.change === 'modified')
     )
   })
@@ -2026,7 +2036,7 @@ const projectNotebookFileDependencies = (
   unresolvedFileReadRunIds: string[]
 } => {
   const producers = new Map<string, { runId: string; generationId?: string; checksum?: string }>()
-  const producerPaths = new Map<string, string>()
+  const producerPaths = new Map<string, NotebookWorkingFile>()
   const ambiguousPaths = new Set<string>()
   const unresolvedFileReadRunIds = new Set<string>()
   const dependenciesByRunId: Record<string, NotebookFileDependency[]> = {}
@@ -2040,10 +2050,18 @@ const projectNotebookFileDependencies = (
       ...(generation.generationId ? { generationId: generation.generationId } : {}),
       ...(generation.checksum ? { checksum: generation.checksum } : {})
     }
-    for (const path of [sourcePath, generation.path]) {
+    for (const path of [
+      sourcePath,
+      generation.path,
+      ...(lineageWorkingDirectory(run) === undefined &&
+      hasCompleteRuntimeFileEvidence(run) &&
+      generation.relativePath
+        ? [generation.relativePath]
+        : [])
+    ]) {
       const key = lineagePathKey(run, path)
       producers.set(key, producer)
-      producerPaths.set(key, generation.path)
+      producerPaths.set(key, generation)
       ambiguousPaths.delete(key)
     }
   }
@@ -2082,13 +2100,23 @@ const projectNotebookFileDependencies = (
     run: NotebookRunRecord,
     scope: NotebookSourceFileWriteScope
   ): void => {
-    for (const [key, producerPath] of producerPaths) {
-      const candidatePath = scopeCandidatePath(run, producerPath)
+    for (const [key, producerFile] of producerPaths) {
+      const candidatePaths = [
+        scopeCandidatePath(run, producerFile.path),
+        ...(lineageWorkingDirectory(run) === undefined &&
+        hasCompleteRuntimeFileEvidence(run) &&
+        producerFile.relativePath
+          ? [scopeCandidatePath(run, producerFile.relativePath)]
+          : [])
+      ]
       const normalizedScope = lineageScope(run, scope)
       if (
-        candidatePath === '..' ||
-        candidatePath.startsWith('../') ||
-        !matchesLineageScope(normalizedScope, candidatePath)
+        !candidatePaths.some(
+          (candidatePath) =>
+            candidatePath !== '..' &&
+            !candidatePath.startsWith('../') &&
+            matchesLineageScope(normalizedScope, candidatePath)
+        )
       )
         continue
       producers.delete(key)
