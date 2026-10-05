@@ -404,7 +404,7 @@ const SideChatPanel = ({
         </div>
         <div
           data-testid="side-chat-composer"
-          className="relative z-20 flex shrink-0 flex-col gap-2 border-t border-border-200 bg-bg-000 px-4 py-3"
+          className="relative z-20 mx-4 mb-2 flex shrink-0 flex-col gap-2 rounded-2xl border border-border-200 bg-bg-000 px-3 py-2"
         >
           <SideChatAnnotationDrop
             chatId={view.id ?? view.sideSessionId ?? ''}
@@ -450,7 +450,7 @@ const SideChatPanel = ({
               value={view.draft}
               placeholder={t('Follow up…')}
               aria-label={t('Side chat follow up')}
-              className="max-h-28 min-h-8 flex-1 resize-none rounded-none border-0 bg-transparent px-0 py-1 text-[15px] leading-6 text-text-000 shadow-none placeholder:text-text-300 focus-visible:border-transparent"
+              className="max-h-[200px] min-h-[36px] flex-1 resize-none rounded-none border-0 bg-transparent px-0 py-1.5 text-[15px] leading-relaxed text-text-000 shadow-none outline-none placeholder:text-text-300 focus-visible:border-transparent focus-visible:outline-none focus-visible:ring-0 md:text-[15px] dark:bg-transparent"
               onChange={(event) => onDraftChange(event.target.value)}
               onKeyDown={handleKeyDown}
             />

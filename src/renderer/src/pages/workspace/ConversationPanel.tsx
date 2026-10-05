@@ -2221,7 +2221,7 @@ const ConversationPanel = ({
                                           <button
                                             type="button"
                                             className={cn(
-                                              'min-w-0 flex-1 rounded-l-lg px-2 py-1 text-left hover:bg-bg-300 hover:text-text-000 active:translate-y-px focus-visible:keyboard-focus focus-visible:-outline-offset-2 motion-reduce:active:translate-y-0',
+                                              'flex min-w-0 flex-1 items-center gap-1.5 rounded-l-lg px-2 py-1 text-left hover:bg-bg-300 hover:text-text-000 active:translate-y-px focus-visible:keyboard-focus focus-visible:-outline-offset-2 motion-reduce:active:translate-y-0',
                                               composerInteractiveTransitionClassName
                                             )}
                                             aria-label={t('Open PDF context {{name}}', {
@@ -2229,6 +2229,11 @@ const ConversationPanel = ({
                                             })}
                                             onClick={() => openReadingContext(binding.bindingId)}
                                           >
+                                            <FileTypeIcon
+                                              name={binding.name}
+                                              mimeType="application/pdf"
+                                              className="size-4 rounded-none border-0 bg-transparent p-0"
+                                            />
                                             <ExtensionPreservingFileName
                                               name={binding.name}
                                               className="min-w-0 text-[12px] font-medium leading-4"

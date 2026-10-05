@@ -1817,6 +1817,9 @@ describe('ConversationPanel composer intake', () => {
     expect(bar?.textContent).toContain('third.pdf')
     expect(bar?.querySelector('[aria-label="Choose PDFs for Reading"]')).not.toBeNull()
     expect(bar?.querySelectorAll('[aria-label^="Open PDF context "]')).toHaveLength(3)
+    expect(
+      bar?.querySelectorAll('[aria-label^="Open PDF context "] [aria-hidden="true"] svg')
+    ).toHaveLength(3)
     // The page-position line is gone: the disclosure moved to the chip's tooltip.
     expect(bar?.textContent).not.toContain('Page')
     expect(bar?.textContent).not.toContain('Open the PDF')

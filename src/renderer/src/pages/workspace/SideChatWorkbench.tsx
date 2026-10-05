@@ -1,4 +1,4 @@
-import { ChevronDown, Maximize2, MessageSquare, Minimize2 } from 'lucide-react'
+import { ChevronDown, Maximize2, LocateFixed, Minimize2 } from 'lucide-react'
 import { useId } from 'react'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -81,7 +81,7 @@ export function SideChatWorkbenchContent({
                   }
                 }}
               >
-                <MessageSquare className="size-4" aria-hidden="true" />
+                <LocateFixed className="size-4" aria-hidden="true" />
               </Button>
             </TooltipTrigger>
             <TooltipContent side="bottom" align="end">
