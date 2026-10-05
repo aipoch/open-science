@@ -267,9 +267,7 @@ describe('notebook MCP server config', () => {
       '~/.open-science/notebooks/default-project/<sessionId>/'
     )
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('workingFiles')
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain(
-      'The notebook runtime does not classify files for you'
-    )
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('classify files yourself')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('not an execution verdict')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain(
       '`stale` means a tracked dependency changed after that run'
@@ -387,7 +385,7 @@ describe('notebook MCP server config', () => {
   it('allows explicit network approval before a connection while preserving scoped grants', () => {
     const tool = NOTEBOOK_RPC_TOOLS.find((candidate) => candidate.name === 'request_network_access')
 
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('A failed connection is not required')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('no failed connection required')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('call `request_network_access`')
     expect(tool?.description).toContain(
       'before connecting or after OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED'
@@ -2678,6 +2676,20 @@ describe('manage_environments tool', () => {
 })
 
 describe('compactNotebookExecutionResult', () => {
+  it.each(['granted', 'denied'])('preserves transient folder access state: %s', (status) => {
+    const folderAccess = {
+      status,
+      path: 'C:\\Users\\ewen\\.config\\helixlife',
+      ...(status === 'granted' ? { retryRequired: true } : {})
+    }
+    const compact = compactNotebookExecutionResult({
+      status: 'failed',
+      kernelKind: 'bash',
+      folderAccess
+    }) as Record<string, unknown>
+    expect(compact.folderAccess).toEqual(folderAccess)
+  })
+
   it.each([false, true, undefined])(
     'preserves dispatch evidence without inferring legacy state: %s',
     (kernelDispatched) => {

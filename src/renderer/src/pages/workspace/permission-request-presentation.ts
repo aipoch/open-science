@@ -35,6 +35,10 @@ type NotebookNetworkApproval = Readonly<{
   reason?: string
 }>
 
+type NotebookFolderAccess = Readonly<{
+  path: string
+}>
+
 const getRequestInput = (request: AcpPermissionRequest): RequestInput | undefined => {
   const raw = request.rawInput
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
@@ -44,6 +48,16 @@ const getRequestInput = (request: AcpPermissionRequest): RequestInput | undefine
   return nested && typeof nested === 'object' && !Array.isArray(nested)
     ? (nested as RequestInput)
     : record
+}
+
+const getNotebookFolderAccess = (
+  request: AcpPermissionRequest
+): NotebookFolderAccess | undefined => {
+  if (request.appOwned !== true) return undefined
+  const payload = getRequestInput(request)?.notebookFolderAccess
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return undefined
+  const path = (payload as Record<string, unknown>).path
+  return typeof path === 'string' && path.trim() ? { path } : undefined
 }
 
 const getCode = (input: RequestInput | undefined): string | undefined => {
@@ -372,6 +386,16 @@ const isNetworkTool = (request: AcpPermissionRequest): boolean => {
 }
 
 const describePermissionRequest = (request: AcpPermissionRequest): PermissionPresentation => {
+  const folderAccess = getNotebookFolderAccess(request)
+  if (folderAccess) {
+    return {
+      actionTitle: 'Grant folder access',
+      categoryLabel: 'File access',
+      description:
+        'File access failed. System permissions or Notebook protection may be responsible.',
+      hideToolIdentity: true
+    }
+  }
   const networkApproval = getNotebookNetworkApproval(request)
   if (networkApproval) {
     return {
@@ -550,6 +574,7 @@ const describePermissionRequest = (request: AcpPermissionRequest): PermissionPre
 
 export {
   describePermissionRequest,
+  getNotebookFolderAccess,
   getLiteratureLibraryRequestAction,
   getNotebookNetworkApproval,
   isArtifactWriteRequest,
@@ -559,4 +584,9 @@ export {
   isSpecialistDeleteRequest,
   isSpecialistSwitchRequest
 }
-export type { NotebookNetworkApproval, NotebookRuntime, PermissionPresentation }
+export type {
+  NotebookFolderAccess,
+  NotebookNetworkApproval,
+  NotebookRuntime,
+  PermissionPresentation
+}

@@ -103,7 +103,7 @@ const artifactCapabilityBinding = {
 afterEach(async () => {
   initializeDataRootWriteAvailability(false)
   if (storageRoot) {
-    await rm(storageRoot, { recursive: true, force: true })
+    await rm(storageRoot, { recursive: true, force: true, maxRetries: 3 })
     storageRoot = undefined
   }
 })
@@ -1606,6 +1606,206 @@ describe('notebook local RPC server', () => {
       await server.close()
     }
   })
+
+  it('parks a sandbox folder denial until the user grants access and constrains the retry', async () => {
+    const blockedPath = join(tmpdir(), 'helixlife', 'user-access-token.txt')
+    const blockedDiagnostic =
+      `<sandbox_violations>\nOPEN_SCIENCE_FILESYSTEM_ACCESS_BLOCKED: ${blockedPath} ` +
+      'Filesystem access failed; native permissions.\n</sandbox_violations>'
+    const executeShell = vi
+      .fn()
+      .mockResolvedValueOnce({ stderr: blockedDiagnostic, stdout: '', exitCode: 1 })
+      .mockResolvedValueOnce({ stderr: '', stdout: 'ok', exitCode: 0 })
+    let releasePermission!: (granted: boolean) => void
+    const permission = new Promise<boolean>((resolve) => {
+      releasePermission = resolve
+    })
+    const requestFolderAccess = vi.fn(async () => permission)
+    const server = new NotebookLocalRpcServer({ executeShell } as never, {
+      transport: 'tcp',
+      requestFolderAccess
+    })
+    const connection = await server.issueSessionConnection(
+      'session-1',
+      'project-1',
+      'root-frame-session-1'
+    )
+    const call = async (
+      command: string,
+      method = 'executeShell',
+      context: Record<string, unknown> = {}
+    ): Promise<Response> =>
+      fetchLocalRpc(
+        connection,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${connection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            method,
+            params: {
+              sessionId: 'session-1',
+              projectId: 'project-1',
+              workspaceCwd: tmpdir(),
+              ...(method === 'executeShell' ? { command } : {}),
+              ...context
+            }
+          })
+        },
+        'Notebook folder access gate test'
+      )
+
+    try {
+      const pending = call('xt login')
+      await vi.waitFor(() =>
+        expect(requestFolderAccess).toHaveBeenCalledWith(
+          expect.objectContaining({
+            sessionId: 'session-1',
+            projectId: 'project-1',
+            path: blockedPath
+          })
+        )
+      )
+      const waiting = await call('xt login --no-open')
+      expect(waiting.status).toBe(409)
+      await expect(waiting.json()).resolves.toMatchObject({
+        error: expect.stringContaining('approval is pending')
+      })
+      expect(executeShell).toHaveBeenCalledTimes(1)
+      for (const method of [
+        'restart',
+        'switchRuntime',
+        'bindRuntime',
+        'managePackages',
+        'runCell',
+        'beginCodeCell'
+      ]) {
+        expect((await call('', method)).status, method).toBe(409)
+      }
+      releasePermission(true)
+      const granted = await pending
+      expect(granted.status).toBe(200)
+      await expect(granted.json()).resolves.toMatchObject({
+        result: { folderAccess: { status: 'granted', path: blockedPath, retryRequired: true } }
+      })
+
+      for (const method of [
+        'restart',
+        'switchRuntime',
+        'bindRuntime',
+        'managePackages',
+        'runCell',
+        'beginCodeCell'
+      ]) {
+        expect((await call('', method)).status, method).toBe(409)
+      }
+      expect(
+        (await call('xt login', 'executeShell', { workspaceCwd: join(tmpdir(), 'elsewhere') }))
+          .status
+      ).toBe(409)
+      expect(
+        (
+          await call('xt login', 'executeShell', {
+            shellRuntime: { kind: 'powershell', version: '5.1' }
+          })
+        ).status
+      ).toBe(409)
+
+      const changed = await call('xt login --no-open')
+      expect(changed.status).toBe(409)
+      await expect(changed.json()).resolves.toMatchObject({
+        error: expect.stringContaining('exact previous')
+      })
+
+      const retried = await call('xt login')
+      expect(retried.status).toBe(200)
+      await expect(retried.json()).resolves.toMatchObject({ result: { stdout: 'ok', exitCode: 0 } })
+      expect(executeShell).toHaveBeenCalledTimes(2)
+    } finally {
+      connection.release?.()
+      await server.close()
+    }
+  })
+
+  it.each(['grant', 'deny', 'cancel'] as const)(
+    'keeps overlapping folder approvals gated when the second decision is %s',
+    async (decision) => {
+      const blockedPath = join(tmpdir(), 'helixlife', 'user-access-token.txt')
+      const blocked = {
+        stderr: `<sandbox_violations>\nOPEN_SCIENCE_FILESYSTEM_ACCESS_BLOCKED: ${blockedPath} Filesystem access failed; native permissions.\n</sandbox_violations>`,
+        stdout: '',
+        exitCode: 1
+      }
+      const executions: Array<(result: unknown) => void> = []
+      const decisions: Array<{
+        resolve: (granted: boolean) => void
+        reject: (error: Error) => void
+      }> = []
+      const executeShell = vi.fn(() => new Promise((resolve) => executions.push(resolve)))
+      const server = new NotebookLocalRpcServer({ executeShell } as never, {
+        transport: 'tcp',
+        requestFolderAccess: () =>
+          new Promise<boolean>((resolve, reject) => decisions.push({ resolve, reject }))
+      })
+      const connection = await server.issueSessionConnection(
+        'session-1',
+        'project-1',
+        'root-frame-session-1'
+      )
+      const call = (command: string): Promise<Response> =>
+        fetchLocalRpc(
+          connection,
+          {
+            method: 'POST',
+            headers: {
+              authorization: `Bearer ${connection.token}`,
+              'content-type': 'application/json'
+            },
+            body: JSON.stringify({
+              method: 'executeShell',
+              params: {
+                sessionId: 'session-1',
+                projectId: 'project-1',
+                workspaceCwd: tmpdir(),
+                command
+              }
+            })
+          },
+          'Concurrent folder approvals'
+        )
+      try {
+        const first = call('xt login')
+        await vi.waitFor(() => expect(executions).toHaveLength(1))
+        const second = call('other login')
+        await vi.waitFor(() => expect(executions).toHaveLength(2))
+        executions[0](blocked)
+        await vi.waitFor(() => expect(decisions).toHaveLength(1))
+        executions[1](blocked)
+        await vi.waitFor(() => expect(decisions).toHaveLength(2))
+        decisions[0].resolve(true)
+        expect((await first).status).toBe(200)
+        expect((await call('xt login')).status).toBe(409)
+        expect(executeShell).toHaveBeenCalledTimes(2)
+        if (decision === 'cancel') decisions[1].reject(new Error('Approval cancelled'))
+        else decisions[1].resolve(decision === 'grant')
+        expect((await second).status).toBe(decision === 'cancel' ? 500 : 200)
+        executeShell.mockResolvedValue({ stdout: 'ok', stderr: '', exitCode: 0 })
+        expect((await call('unrelated')).status).toBe(409)
+        expect((await call('xt login')).status).toBe(200)
+        if (decision === 'grant') {
+          expect((await call('unrelated')).status).toBe(409)
+          expect((await call('other login')).status).toBe(200)
+        }
+        expect((await call('unrelated')).status).toBe(200)
+      } finally {
+        decisions.forEach(({ resolve }) => resolve(false))
+        connection.release?.()
+        await server.close()
+      }
+    }
+  )
 
   it('injects only a fresh unambiguous app-owned execution authorization', async () => {
     const server = new NotebookLocalRpcServer({

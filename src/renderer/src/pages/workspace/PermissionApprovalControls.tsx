@@ -25,6 +25,7 @@ import { cn } from '@/lib/utils'
 import { resolveNotebookLanguage, resolveNotebookRunToolName } from './notebook-tool-names'
 import {
   describePermissionRequest,
+  getNotebookFolderAccess,
   getLiteratureLibraryRequestAction,
   getNotebookNetworkApproval,
   isArtifactWriteRequest,
@@ -36,6 +37,7 @@ import {
   type PermissionPresentation,
   type NotebookRuntime
 } from './permission-request-presentation'
+import { GrantFolderAccessDialog } from './GrantFolderAccessDialog'
 import {
   PermissionScopeConfirmationDialog,
   type BroadPermissionScope,
@@ -609,6 +611,7 @@ const PermissionApprovalCard = ({
     undefined
   )
   const [submittingRequestId, setSubmittingRequestId] = useState<string | undefined>(undefined)
+  const [folderAccessDialogOpen, setFolderAccessDialogOpen] = useState(false)
   const submittingRequestIdRef = useRef<string | undefined>(undefined)
   const scopeTriggerRef = useRef<HTMLButtonElement>(null)
   const allowPrimaryRef = useRef<HTMLButtonElement>(null)
@@ -635,6 +638,7 @@ const PermissionApprovalCard = ({
   // Guard against a stale scope no longer offered by the current request.
   const effectiveScope = availableScopes.has(scope) ? scope : defaultScope
   const permCode = extractPermissionCode(request)
+  const folderAccess = getNotebookFolderAccess(request)
   // A skills/load_skill approval names the skill being loaded; the section resolves the SKILL.md
   // document (managed catalog first, then the connector-aware main resolver) and falls back to the
   // raw JSON input when no source provides the name.
@@ -752,6 +756,11 @@ const PermissionApprovalCard = ({
       releaseSubmission,
       releaseSubmission
     )
+  }
+
+  const beginFolderAccessGrant = (): void => {
+    if (!folderAccess || !allowOptionId || isSubmitting) return
+    setFolderAccessDialogOpen(true)
   }
 
   // Any option the Allow (either scope) / Deny controls can't reach — a non-canonical protocol
@@ -898,7 +907,12 @@ const PermissionApprovalCard = ({
       {/* Specialist switch/delete requests show a friendly detail block instead of the raw
           redacted payload; all other requests keep the activity-style code preview. Skill loads
           show the SKILL.md document itself — it is the payload being approved. */}
-      {notebookSummary || fileSummary ? (
+      {folderAccess ? (
+        <div className="space-y-2">
+          <p className="text-xs text-muted-foreground">{t('Grant folder access')}</p>
+          <p className="break-all font-mono text-xs text-muted-foreground">{folderAccess.path}</p>
+        </div>
+      ) : notebookSummary || fileSummary ? (
         <div key={requestId} className="space-y-2">
           <WorkspaceToolSummaryCard
             summary={(notebookSummary ?? fileSummary)!}
@@ -987,10 +1001,13 @@ const PermissionApprovalCard = ({
                   disabled={disabled || !allowOptionId || isSubmitting}
                   onClick={() => {
                     if (!allowOptionId) return
-                    respondOnce(allowOptionId)
+                    if (folderAccess) beginFolderAccessGrant()
+                    else respondOnce(allowOptionId)
                   }}
                 >
-                  {isDeleteRequest ? (
+                  {folderAccess ? (
+                    <span className="font-semibold">{t('Grant folder access')}</span>
+                  ) : isDeleteRequest ? (
                     <span className="font-semibold">{t('Delete')}</span>
                   ) : (
                     <span className="font-semibold">{allowLabel[effectiveScope]}</span>
@@ -1068,6 +1085,17 @@ const PermissionApprovalCard = ({
         onCancel={closeScopeConfirmation}
         onConfirm={confirmBroadScope}
       />
+      {folderAccess ? (
+        <GrantFolderAccessDialog
+          open={folderAccessDialogOpen}
+          onOpenChange={setFolderAccessDialogOpen}
+          initialPath={folderAccess.path}
+          onGranted={() => {
+            setFolderAccessDialogOpen(false)
+            respondOnce(allowOptionId)
+          }}
+        />
+      ) : null}
     </div>
   )
 }

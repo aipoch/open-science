@@ -80,7 +80,9 @@ const rawPermissionPaths = (text: string): string[] => {
 
 // A diagnostic is a navigation suggestion, never proof of a sandbox denial or authority to grant.
 // Prefer the runtime annotation, but recover a quoted absolute path from a raw permission error
-// when a platform launcher could not attach the structured annotation.
+// when a platform launcher could not attach the structured annotation. Shell tools may redirect
+// native stderr into stdout, so raw fallback must inspect both streams while structured annotations
+// remain trusted only on stderr.
 export const notebookFolderAccessPath = (
   run: NotebookRunRecord,
   platform: string
@@ -92,10 +94,11 @@ export const notebookFolderAccessPath = (
     return undefined
   if (run.shellRuntime?.kind === 'wsl2-bash') return undefined
   const diagnostics = [
+    run.text.stdout,
     run.text.stderr,
     run.text.traceback,
     ...run.outputs.flatMap((output) =>
-      output.type === 'stream' && output.name === 'stderr'
+      output.type === 'stream' && (output.name === 'stdout' || output.name === 'stderr')
         ? [output.text]
         : output.type === 'error'
           ? [output.message ?? '', output.traceback ?? '']

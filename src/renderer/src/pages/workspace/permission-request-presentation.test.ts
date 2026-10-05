@@ -42,6 +42,28 @@ describe('describePermissionRequest', () => {
     })
   })
 
+  it('renders a structured Notebook folder access approval as a file permission', () => {
+    expect(
+      describePermissionRequest(
+        request({
+          appOwned: true,
+          providerToolName: 'Open-Science',
+          rawInput: {
+            notebookFolderAccess: {
+              path: 'C:\\Users\\ewen\\.config\\helixlife\\user-access-token.txt'
+            }
+          }
+        })
+      )
+    ).toMatchObject({
+      actionTitle: 'Grant folder access',
+      categoryLabel: 'File access',
+      description:
+        'File access failed. System permissions or Notebook protection may be responsible.',
+      hideToolIdentity: true
+    })
+  })
+
   it('renders the app-owned Specialist switch approval on the standard permission card', () => {
     expect(
       describePermissionRequest(

@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ErrorNotice } from '@/components/error-notice'
 import type { NotebookRunRecord } from '../../../../shared/notebook'
-import { useNotebookNetworkStatus } from '../settings/use-notebook-network-status'
 import { GrantFolderAccessDialog } from './GrantFolderAccessDialog'
 import { notebookFolderAccessPath } from './notebook-folder-access'
 
@@ -10,8 +9,6 @@ const FolderAccessAction = ({ path }: { path: string }): React.JSX.Element | nul
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const [granted, setGranted] = useState(false)
-  const status = useNotebookNetworkStatus()
-  if (status.kind !== 'ready') return null
   return (
     <div className="mt-2" data-testid="notebook-folder-access-notice">
       <ErrorNotice
