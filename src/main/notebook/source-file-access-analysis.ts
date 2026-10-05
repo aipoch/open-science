@@ -169,7 +169,12 @@ const analyzeNotebookSourceFileAccess = async (
           : undefined
         return activeContext
       }))
-  return normalizeNotebookSourceFileAccess(language, dependencyFacts, fileAccess, activeContext)
+  return normalizeNotebookSourceFileAccess(
+    language,
+    dependencyFacts,
+    fileAccess,
+    language === 'repl' ? context : activeContext
+  )
 }
 
 export { analyzeNotebookSourceFileAccess, normalizeNotebookSourceFileAccess }
