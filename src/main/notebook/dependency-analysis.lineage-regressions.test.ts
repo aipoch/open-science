@@ -832,7 +832,7 @@ describe('real-agent science lineage fixtures', () => {
       externalState: 'complete' as const,
       reads: [],
       writes: [],
-      writeScopes: [{ kind: 'shapefile' as const, path: 'outputs/map.shp' }],
+      writeScopes: [{ kind: 'shapefile' as const, path: './outputs/map.shp' }],
       reasonCodes: []
     }
     const consumerAccess = { ...fileAccess, writeScopes: undefined, reads: ['outputs/map.dbf'] }
@@ -847,6 +847,20 @@ describe('real-agent science lineage fixtures', () => {
         checksum: 'a'.repeat(64),
         confidence: 'verified'
       })
+    ])
+    const absoluteScopeProjection = projectNotebookFileDependencies([
+      {
+        run: producer,
+        facts,
+        fileAccess: {
+          ...fileAccess,
+          writeScopes: [{ kind: 'shapefile' as const, path: join(dataRoot, 'outputs/map.shp') }]
+        }
+      },
+      { run: consumer, facts, fileAccess: consumerAccess }
+    ] satisfies readonly AnalyzedNotebookRun[])
+    expect(absoluteScopeProjection.fileDependenciesByRunId['scoped-consumer']).toEqual([
+      expect.objectContaining({ producerRunId: 'scoped-producer', path: 'outputs/map.dbf' })
     ])
     const scopedReadWriteRun: NotebookRunRecord = {
       ...consumer,

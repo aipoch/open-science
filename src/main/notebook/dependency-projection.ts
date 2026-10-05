@@ -112,6 +112,29 @@ const lineagePathCase = (value: string): string =>
 const lineageWorkingDirectory = (run: NotebookRunRecord): string | undefined =>
   run.cwdBefore ?? run.frozenShellContext?.cwd
 
+const lineageScopePath = (run: NotebookRunRecord, value: string): string => {
+  const workingDirectory = lineageWorkingDirectory(run)
+  if (workingDirectory === undefined) return lineagePathCase(portablePath(value))
+  const resolved = isAbsolute(value) ? value : resolve(workingDirectory, value)
+  return lineagePathCase(portablePath(relative(workingDirectory, resolved)))
+}
+
+const lineageScope = (
+  run: NotebookRunRecord,
+  scope: NotebookSourceFileWriteScope
+): NotebookSourceFileWriteScope => ({
+  ...scope,
+  path: lineageScopePath(run, scope.path)
+})
+
+const matchesLineageScope = (
+  scope: NotebookSourceFileWriteScope,
+  candidate: string
+): boolean => {
+  if (scope.kind === 'directory' && scope.path === '') return candidate.length > 0
+  return matchesWriteScope(scope, candidate)
+}
+
 const lineagePathKey = (run: NotebookRunRecord, value: string): string => {
   const portable = lineagePathCase(portablePath(value))
   const workingDirectory = lineageWorkingDirectory(run)
@@ -139,15 +162,13 @@ const observedScopedGenerations = (
   scopes: readonly NotebookSourceFileWriteScope[]
 ): NotebookWorkingFile[] =>
   run.workingFiles.filter((file) => {
-    const workingDirectory = lineageWorkingDirectory(run)
-    const candidatePath =
-      workingDirectory !== undefined
-        ? portablePath(relative(workingDirectory, file.path))
-        : portablePath(file.relativePath)
+    const candidatePath = lineageScopePath(run, file.path)
     return (
       candidatePath !== '..' &&
       !candidatePath.startsWith('../') &&
-      scopes.some((scope) => matchesWriteScope(scope, candidatePath)) &&
+      scopes.some((scope) =>
+        matchesLineageScope(lineageScope(run, scope), candidatePath)
+      ) &&
       (file.createdByRunId === run.runId || file.change === 'created' || file.change === 'modified')
     )
   })
@@ -2016,10 +2037,7 @@ const projectNotebookFileDependencies = (
     ambiguousPaths.add(key)
   }
   const scopeCandidatePath = (run: NotebookRunRecord, path: string): string => {
-    const workingDirectory = lineageWorkingDirectory(run)
-    return workingDirectory === undefined
-      ? portablePath(path)
-      : portablePath(relative(workingDirectory, path))
+    return lineageScopePath(run, path)
   }
   const readMatchesScope = (
     run: NotebookRunRecord,
@@ -2032,10 +2050,11 @@ const projectNotebookFileDependencies = (
         ? resolve(workingDirectory, path)
         : path
     const candidatePath = scopeCandidatePath(run, resolvedPath)
+    const normalizedScope = lineageScope(run, scope)
     return (
       candidatePath !== '..' &&
       !candidatePath.startsWith('../') &&
-      matchesWriteScope(scope, candidatePath)
+      matchesLineageScope(normalizedScope, candidatePath)
     )
   }
   const markScopeAmbiguous = (
@@ -2044,10 +2063,11 @@ const projectNotebookFileDependencies = (
   ): void => {
     for (const [key, producerPath] of producerPaths) {
       const candidatePath = scopeCandidatePath(run, producerPath)
+      const normalizedScope = lineageScope(run, scope)
       if (
         candidatePath === '..' ||
         candidatePath.startsWith('../') ||
-        !matchesWriteScope(scope, candidatePath)
+        !matchesLineageScope(normalizedScope, candidatePath)
       )
         continue
       producers.delete(key)
