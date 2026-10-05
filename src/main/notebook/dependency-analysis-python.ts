@@ -7426,6 +7426,11 @@ const analyzePythonFileAccessTree = (
   // persisted/context collections.  Keep this marker narrow so an append to a
   // cross-cell value still invalidates conservatively as before.
   const freshSequenceCollections = new Set<string>()
+  // AnnData property updates are in-memory transformations. They invalidate
+  // the static object value, but do not replace the package namespace with an
+  // opaque external-state implementation. Preserve known AnnData file-method
+  // effects so later write_h5ad calls remain attributable.
+  const inMemoryMutationTypes = new Set(['anndata.AnnData'])
   const activeStaticLoops: Array<{ names: Set<string>; invalidated: boolean }> = []
   const invalidateStaticValue = (name: string | undefined, taintIdentity = true): void => {
     if (!name) return
@@ -7450,7 +7455,12 @@ const analyzePythonFileAccessTree = (
         if (loop.names.has(affected)) loop.invalidated = true
       }
       const identity = importedNames.get(affected) ?? scientificObjectTypes.get(affected)
-      if (identity && identity !== 'python.container' && taintIdentity) {
+      if (
+        identity &&
+        identity !== 'python.container' &&
+        taintIdentity &&
+        !inMemoryMutationTypes.has(identity)
+      ) {
         pythonTaintedNamespaces.add(identity.split('.')[0]!)
         unsupportedExternalState = true
       }
