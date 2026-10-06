@@ -188,6 +188,7 @@
         "src/main/notebook/dependency-analysis-python.ts",
         "src/main/notebook/dependency-analysis-repl.ts",
         "src/main/notebook/dependency-projection.ts",
+        "src/main/notebook/working-file-observer.ts",
         "src/main/notebook/conditional-restore-script.ts",
         "src/main/notebook/environment-discovery.ts",
         "src/main/notebook/environment-lock.ts",

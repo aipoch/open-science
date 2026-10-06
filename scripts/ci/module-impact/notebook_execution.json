@@ -394,6 +394,7 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/notebook/dependency-analysis.r-deseq2.test.ts",
       "src/main/notebook/notebook-path-utils.test.ts",
       "src/main/notebook/powershell-search-parser.windows.test.ts",
       "src/main/storage/wsl-npm-migration.integration.test.ts",
