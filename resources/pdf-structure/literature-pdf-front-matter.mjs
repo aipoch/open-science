@@ -193,6 +193,13 @@ export function isNativeFrontMatterRegion(table, items, pageNumber, caption, rul
   if (authors.length >= 4 && compactInstitutions.length >= 4 && source.length <= 24) return true
   const compactAuthorAffiliations = source.filter((item) => compactAuthorAffiliationLike(item.text))
   if (compactAuthorAffiliations.length >= 4 && source.length <= 16) return true
+  // Some corporate author blocks use an organization name that is not in the
+  // affiliation vocabulary above (for example, a product company or lab
+  // name).  A first-page crop with four or more independent author names and
+  // matching email lines is still unambiguous front matter even when those
+  // organization lines are opaque.  Keep the threshold high and bounded to
+  // the compact detector band so a real contact/data table remains eligible.
+  if (emails.length >= 4 && authors.length >= 4 && source.length <= 48) return true
   const repeatedContacts = emails.length >= 2 && institutions.length >= 2
   const contactWithAbstract =
     emails.length >= 1 && institutions.length >= 1 && abstract && prose.length >= 1

@@ -1689,6 +1689,33 @@ it('rejects a bare table number emitted after a paragraph reference', () => {
   expect(findCaptionCandidates([page])).toEqual([])
 })
 
+it('rejects supplementary and table labels split after a reference preposition', () => {
+  const line = (text: string, y: number, x = 108): object => ({
+    text,
+    x,
+    y,
+    width: text.length * 5,
+    height: 10,
+    fontSize: 10
+  })
+  expect(
+    findCaptionCandidates([
+      {
+        pageNumber: 1,
+        lines: [line('the decoding framework is illustrated in', 680, 215), line('Figure S2.', 691)]
+      }
+    ])
+  ).toEqual([])
+  expect(
+    findCaptionCandidates([
+      {
+        pageNumber: 1,
+        lines: [line('the rates are summarized in', 680, 72), line('Table 4.', 691, 72)]
+      }
+    ])
+  ).toEqual([])
+})
+
 it('retains double-spaced manuscript legends only below a legends heading', () => {
   const line = (text: string, y: number): object => ({
     text,

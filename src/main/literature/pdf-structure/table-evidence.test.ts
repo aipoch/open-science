@@ -10,6 +10,7 @@ const { hasTableEvidence } = await import(moduleUrl)
 
 it('rejects an article-history and keyword sidebar crossing into an abstract without requiring a DOI', () => {
   const table = {
+    cropRect: [0, 0, 500, 220],
     grid: [
       [
         'Received 2 January 2015 Accepted 5 March 2015 Available online xxxx',
@@ -105,6 +106,57 @@ it('rejects incomplete glossary grids, unnumbered references and corresponding-a
     ]
   }
   expect(hasTableEvidence(abstract, undefined, [{ text: 'K E Y W O R D S' }])).toBe(false)
+})
+
+it('rejects captionless bibliography keys and boxed algorithm steps', () => {
+  const bibliography = {
+    grid: [
+      ['References', 'Author list'],
+      ...Array.from({ length: 8 }, (_, index) => [
+        `[Ref${index + 1}]`,
+        `Author et al. ${2020 + index}; reference title and journal details arXiv:${index}2345`
+      ])
+    ],
+    unassigned: [],
+    issues: []
+  }
+  expect(hasTableEvidence(bibliography)).toBe(false)
+  expect(hasTableEvidence(bibliography, { text: 'Table 1. Reference dataset' })).toBe(true)
+
+  const algorithm = {
+    grid: [
+      ['Algorithm 1', 'Procedure'],
+      ['1:', 'Initialize the state'],
+      ['2:', 'Update the estimate'],
+      ['3:', 'Return the result'],
+      ['4:', 'Stop']
+    ],
+    issues: []
+  }
+  expect(hasTableEvidence(algorithm)).toBe(false)
+  expect(hasTableEvidence(algorithm, { text: 'Table 2. Measured steps' })).toBe(true)
+})
+
+it('rejects a short captionless bibliography tail with dense citation keys', () => {
+  const bibliography = {
+    grid: [
+      ['[A1]', 'Nguyen et al. 2020. A reference title and journal details. arXiv:2001.00001'],
+      [
+        '[A2]',
+        'Patel et al. 2021. Another reference title and journal details. doi:10.1000/example'
+      ],
+      [
+        '[A3]',
+        'Garcia et al. 2022. A further reference title with publication details. https://doi.org/10.1000/next'
+      ],
+      ['[A4]', 'Lee et al. 2023. The final reference title and journal details. arXiv:2301.00004'],
+      ['[A5]', 'Kim et al. 2024. A wrapped reference title and journal details. doi:10.1000/final']
+    ],
+    unassigned: [],
+    issues: []
+  }
+  expect(hasTableEvidence(bibliography)).toBe(false)
+  expect(hasTableEvidence(bibliography, { text: 'Table 1. Reference dataset' })).toBe(true)
 })
 
 it('rejects parallel abbreviation lists and fragmented affiliation directories', () => {
@@ -251,6 +303,97 @@ it('rejects a keyword sidebar beside an abstract without rejecting prose tables'
       [heading]
     )
   ).toBe(true)
+})
+
+it('rejects an uncaptioned syntax-highlighted code listing mistaken for a table', () => {
+  const table = {
+    cropRect: [0, 0, 500, 160],
+    grid: [
+      ['', ''],
+      ['def preprocess ( X_train ) :', ''],
+      ['return X_train', ''],
+      ['def engineer ( X_train ) :', ''],
+      ['return X_train', '']
+    ],
+    unassigned: [
+      'import numpy as np',
+      'def sample ( X_train , max_rows ) :',
+      'return [ np . arange ( len ( X_train ) ) ]',
+      'def postprocess ( pred ) :',
+      'return pred'
+    ],
+    issues: ['span-conflicts-with-source-columns', 'unassigned-source-text']
+  }
+  const items = [
+    'def preprocess ( X_train ) :',
+    'return X_train',
+    'def engineer ( X_train ) :',
+    'return X_train',
+    'def sample ( X_train , max_rows ) :',
+    'return [ np . arange ( len ( X_train ) ) ]',
+    'def postprocess ( pred ) :',
+    'return pred'
+  ].map((text, index) => ({
+    text,
+    rect: [20, index * 18, 480, index * 18 + 10],
+    horizontal: true
+  }))
+  expect(hasTableEvidence(table, undefined, items)).toBe(false)
+  expect(hasTableEvidence(table, { text: 'Table 1. Pseudocode listing.' }, items)).toBe(true)
+})
+
+it('rejects an uncaptioned numbered algorithm listing mistaken for a table', () => {
+  const table = {
+    cropRect: [0, 0, 500, 220],
+    grid: [
+      ['1:', 'Input: model set M, task set K'],
+      ['2:', 'Initialize: P ~ U(-0.01, 0.01)'],
+      ['3:', 'for n = 1, 2, ..., N do'],
+      ['4:', 'if r = 0 then'],
+      ['5:', 'continue'],
+      ['6:', 'end if'],
+      ['7:', 'Output: optimized patch P*']
+    ],
+    unassigned: [],
+    issues: ['text-crosses-crop-boundary']
+  }
+  const items = table.grid.flatMap((row, rowIndex) =>
+    row.map((text, column) => ({
+      text,
+      rect: [20 + column * 180, rowIndex * 20, 180 + column * 180, rowIndex * 20 + 12],
+      horizontal: true
+    }))
+  )
+  expect(hasTableEvidence(table, undefined, items)).toBe(false)
+  expect(hasTableEvidence(table, { text: 'Table 2: Algorithm details.' }, items)).toBe(true)
+})
+
+it('rejects an uncaptioned boxed procedure without an Algorithm heading', () => {
+  const table = {
+    cropRect: [0, 0, 500, 220],
+    grid: [
+      ['3', 'plan ← π.PLAN(c) ▷ sub-goals from the phases', ''],
+      [
+        '5 6',
+        'while g not satisfied and steps remain do if π needs more detail on g then',
+        '▷ re-enter'
+      ],
+      ['7', 'n ← NODE(g, D)', ''],
+      ['8', 'if VIEWS(n) < B then', ''],
+      ['9', 'for sub-goal g in plan do', '']
+    ],
+    unassigned: [],
+    issues: ['text-crosses-crop-boundary']
+  }
+  const items = table.grid.flatMap((row, rowIndex) =>
+    row.map((text, column) => ({
+      text,
+      rect: [20 + column * 160, rowIndex * 18, 160 + column * 160, rowIndex * 18 + 10],
+      horizontal: true
+    }))
+  )
+  expect(hasTableEvidence(table, undefined, items)).toBe(false)
+  expect(hasTableEvidence(table, { text: 'Table 3. Procedure details.' }, items)).toBe(true)
 })
 
 it('rejects two-column prose cut into artificial rows without discarding labelled text tables', () => {
@@ -463,6 +606,29 @@ it('rejects a lettered contents directory with dotted page leaders', () => {
       undefined,
       fixture.tokens
     )
+  ).toBe(true)
+})
+
+it('rejects a hierarchical contents directory with dotted leaders and page numbers', () => {
+  const table = {
+    grid: [
+      ['A', 'Overview ........................ 1'],
+      ['A.1', 'Data sources ..................... 2'],
+      ['A.2', 'Evaluation protocol .............. 4'],
+      ['B', 'Results .......................... 8'],
+      ['B.1', 'Ablations ....................... 10'],
+      ['C.1', 'Limitations ..................... 14']
+    ],
+    issues: ['unassigned-source-text'],
+    unassigned: ['Contents']
+  }
+  const tokens = [{ text: 'Contents', horizontal: true, height: 12, rect: [260, 80, 320, 92] }]
+  expect(hasTableEvidence(table, undefined, tokens)).toBe(false)
+  expect(hasTableEvidence(table, { lines: ['Table 1. Hierarchical results'] }, tokens)).toBe(true)
+  expect(
+    hasTableEvidence({ ...table, cropRect: [40, 90, 540, 240] }, undefined, tokens, [
+      [40, 120, 540, 120]
+    ])
   ).toBe(true)
 })
 

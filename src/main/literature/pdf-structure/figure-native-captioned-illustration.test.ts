@@ -12,10 +12,16 @@ const {
   nativeCaptionedWorkflowPanel,
   nativeCaptionedVectorDiagram,
   nativeCaptionedVectorGrid,
+  nativeCaptionedVectorTableGrid,
+  nativeCaptionedVectorBarChart,
   nativeCaptionedFramedRaster,
   nativeCaptionedFramedRasterTextPanel,
   nativeCaptionedRasterArrayFragment,
   nativeCaptionedRasterQuad,
+  nativeCaptionedRasterHorizontalArray,
+  nativeCaptionedRasterSideBySide,
+  nativeCaptionedRasterCompositeGrid,
+  nativeCaptionedRasterFullWidth,
   nativeCaptionedRasterDualPanelGrid,
   nativeCaptionedRasterModerateGap,
   nativeCaptionedTextIllustration,
@@ -92,6 +98,10 @@ const rasterModerateGap = (): ReturnType<typeof JSON.parse> =>
       'src/main/literature/pdf-structure/fixtures/source-grids/captioned-raster-moderate-gap.jsonl'
     )
   )
+const stackedVectorPlates = (): ReturnType<typeof JSON.parse> =>
+  readPdfFixture(
+    resolve('src/main/literature/pdf-structure/fixtures/source-grids/stacked-vector-plates.jsonl')
+  )
 
 it.each([
   ['caption before', framedBefore, [60, 140, 540, 300]],
@@ -119,6 +129,51 @@ it('recovers a framed raster-plus-text response panel at the outer frame', () =>
   expect(associateFigures(fixture.page, [fixture.caption], [], [], [], [])[0].rect).toEqual([
     60, 120, 540, 600
   ])
+})
+
+it('keeps a composite outer frame when an inset raster has its own border', () => {
+  const caption = {
+    page: 1,
+    lines: ['Figure 12. Composite workflow panel.', 'The complete workflow is shown above.'],
+    rect: [60, 480, 540, 520]
+  }
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    invalidGraphicsBounds: 0,
+    lines: [
+      { text: 'Prompt', x: 90, y: 130, width: 100, height: 12, fontSize: 10 },
+      { text: 'Input and output', x: 90, y: 220, width: 160, height: 12, fontSize: 10 },
+      { text: 'Model response', x: 90, y: 260, width: 160, height: 12, fontSize: 10 },
+      {
+        text: 'Figure 12. Composite workflow panel.',
+        x: 60,
+        y: 480,
+        width: 480,
+        height: 12,
+        fontSize: 10
+      },
+      {
+        text: 'The complete workflow is shown above.',
+        x: 60,
+        y: 496,
+        width: 420,
+        height: 12,
+        fontSize: 10
+      }
+    ],
+    graphicsBounds: [
+      { kind: 'path', normalizedRect: [60 / 600, 100 / 800, 540 / 600, 470 / 800] },
+      { kind: 'image', normalizedRect: [90 / 600, 300 / 800, 300 / 600, 466 / 800] },
+      { kind: 'path', normalizedRect: [90 / 600, 300 / 800, 300 / 600, 466 / 800] }
+    ]
+  }
+  expect(nativeCaptionedFramedRaster(page, caption, [caption], [])).toBeUndefined()
+  expect(nativeCaptionedFramedRasterTextPanel(page, caption, [caption], [])?.rect).toEqual([
+    60, 100, 540, 470
+  ])
+  expect(associateFigures(page, [caption], [], [], [], [])[0].rect).toEqual([60, 100, 540, 470])
 })
 
 it('recovers a pure vector prompt card when an inset frame proves its ownership', () => {
@@ -169,6 +224,50 @@ it('rejects a narrow vector grid claimed by a competing caption', () => {
   expect(
     nativeCaptionedVectorGrid(fixture.page, fixture.caption, [fixture.caption, competing], [])
   ).toBeUndefined()
+})
+
+it('recovers a compact vector table diagram without an outer frame', () => {
+  const caption = {
+    page: 1,
+    lines: ['Figure 8: Sample table diagram.'],
+    rect: [60, 220, 540, 235]
+  }
+  const toNormalized = (rect: number[]): number[] =>
+    rect.map((value, index) => value / (index % 2 ? 800 : 600))
+  const paths = [
+    [180, 110, 420, 116],
+    [180, 140, 420, 146],
+    [180, 170, 420, 176],
+    [180, 200, 420, 206],
+    ...[180, 240, 300, 360, 420].flatMap((x) => [
+      [x, 110, x + 6, 146],
+      [x, 140, x + 6, 176],
+      [x, 170, x + 6, 206]
+    ])
+  ]
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    invalidGraphicsBounds: 0,
+    lines: [
+      { text: caption.lines[0], x: 60, y: 220, width: 280, height: 10, fontSize: 9 },
+      { text: '(1, 1) (1, 2)', x: 190, y: 118, width: 100, height: 10, fontSize: 9 },
+      { text: '(2, 1) (2, 2)', x: 190, y: 148, width: 100, height: 10, fontSize: 9 },
+      { text: '(3, 1) (3, 2)', x: 190, y: 178, width: 100, height: 10, fontSize: 9 }
+    ],
+    graphicsBounds: paths.map((rect) => ({ kind: 'path', normalizedRect: toNormalized(rect) }))
+  }
+  const vectorRect = nativeCaptionedVectorTableGrid(page, caption, [caption], [])?.rect
+  expect(vectorRect?.[0]).toBeCloseTo(180)
+  expect(vectorRect?.[1]).toBeCloseTo(110)
+  expect(vectorRect?.[2]).toBeCloseTo(426)
+  expect(vectorRect?.[3]).toBeCloseTo(206)
+  const associatedVectorRect = associateFigures(page, [caption], [], [], [], [])[0].rect
+  expect(associatedVectorRect?.[0]).toBeCloseTo(180)
+  expect(associatedVectorRect?.[1]).toBeCloseTo(110)
+  expect(associatedVectorRect?.[2]).toBeCloseTo(426)
+  expect(associatedVectorRect?.[3]).toBeCloseTo(206)
 })
 
 it('recovers a dense native-vector success-rate heatmap under its caption', () => {
@@ -332,6 +431,301 @@ it('rejects the 2x2 raster plate when a table overlaps its image bounds', () => 
     )
   ).toBeUndefined()
 })
+
+const horizontalRasterArray = (): ReturnType<typeof JSON.parse> => {
+  const caption = {
+    page: 1,
+    lines: ['Figure 11. Four panel comparison.'],
+    rect: [50, 280, 550, 295]
+  }
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    invalidGraphicsBounds: 0,
+    lines: [
+      {
+        text: '(a) Original (b) Groundtruth (c) BERT (d) LayoutLM',
+        x: 70,
+        y: 257,
+        width: 460,
+        height: 8,
+        fontSize: 8
+      },
+      { text: caption.lines[0], x: 50, y: 280, width: 500, height: 10, fontSize: 10 }
+    ],
+    graphicsBounds: [
+      { kind: 'image', normalizedRect: [60 / 600, 100 / 800, 170 / 600, 260 / 800] },
+      { kind: 'image', normalizedRect: [180 / 600, 100 / 800, 290 / 600, 260 / 800] },
+      { kind: 'image', normalizedRect: [300 / 600, 100 / 800, 410 / 600, 260 / 800] },
+      { kind: 'image', normalizedRect: [420 / 600, 100 / 800, 530 / 600, 260 / 800] }
+    ]
+  }
+  return { page, caption }
+}
+
+it('recovers every panel in a captioned horizontal raster strip', () => {
+  const fixture = horizontalRasterArray()
+  expect(
+    nativeCaptionedRasterHorizontalArray(fixture.page, fixture.caption, [fixture.caption], [])?.rect
+  ).toEqual([60, 100, 530, 260])
+  expect(associateFigures(fixture.page, [fixture.caption], [], [], [], [])[0].rect).toEqual([
+    60, 100, 530, 260
+  ])
+})
+
+it('rejects a horizontal raster strip with a missing panel', () => {
+  const fixture = horizontalRasterArray()
+  fixture.page.graphicsBounds.pop()
+  expect(
+    nativeCaptionedRasterHorizontalArray(fixture.page, fixture.caption, [fixture.caption], [])
+  ).toBeUndefined()
+})
+
+it('recovers a five-panel raster strip without requiring a four-panel legend', () => {
+  const caption = {
+    page: 1,
+    lines: ['Figure 14: Sample misannotated tables.'],
+    rect: [50, 230, 550, 245]
+  }
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    invalidGraphicsBounds: 0,
+    lines: [{ text: caption.lines[0], x: 50, y: 230, width: 500, height: 10, fontSize: 9 }],
+    graphicsBounds: Array.from({ length: 5 }, (_, index) => ({
+      kind: 'image',
+      normalizedRect: [(60 + index * 105) / 600, 90 / 800, (145 + index * 105) / 600, 195 / 800]
+    }))
+  }
+  expect(nativeCaptionedRasterHorizontalArray(page, caption, [caption], [])?.rect).toEqual([
+    60, 90, 565, 195
+  ])
+  expect(associateFigures(page, [caption], [], [], [], [])[0].rect).toEqual([60, 90, 565, 195])
+})
+
+it('recovers a seven-panel raster strip below a preceding figure', () => {
+  const upperCaption = {
+      page: 1,
+      lines: ['Figure 13. Upper raster plate.'],
+      rect: [50, 230, 550, 245]
+    },
+    caption = {
+      page: 1,
+      lines: ['Figure 14. Visualizations at different time steps.'],
+      rect: [50, 390, 550, 415]
+    },
+    page = {
+      pageNumber: 1,
+      width: 600,
+      height: 800,
+      invalidGraphicsBounds: 0,
+      lines: [
+        { text: upperCaption.lines[0], x: 50, y: 230, width: 500, height: 10, fontSize: 9 },
+        { text: caption.lines[0], x: 50, y: 390, width: 500, height: 10, fontSize: 9 }
+      ],
+      graphicsBounds: [
+        ...Array.from({ length: 7 }, (_, index) => ({
+          kind: 'image',
+          normalizedRect: [(60 + index * 74) / 600, 80 / 800, (125 + index * 74) / 600, 155 / 800]
+        })),
+        ...Array.from({ length: 7 }, (_, index) => ({
+          kind: 'image',
+          normalizedRect: [(60 + index * 74) / 600, 300 / 800, (125 + index * 74) / 600, 375 / 800]
+        }))
+      ]
+    }
+  const result = nativeCaptionedRasterHorizontalArray(page, caption, [upperCaption, caption], [])
+  expect(result?.rect).toEqual([60, 300, 569, 375])
+  expect(result?.graphicsCount).toBe(7)
+  expect(associateFigures(page, [upperCaption, caption], [], [], [], [])).toContainEqual(
+    expect.objectContaining({ caption, rect: [60, 300, 569, 375] })
+  )
+})
+
+it('recovers a strictly aligned two-panel raster plate', () => {
+  const caption = {
+    page: 1,
+    lines: ['Figure 15: Side-by-side comparison.'],
+    rect: [50, 520, 550, 550]
+  }
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    invalidGraphicsBounds: 0,
+    lines: [{ text: caption.lines[0], x: 50, y: 520, width: 500, height: 10, fontSize: 10 }],
+    graphicsBounds: [
+      { kind: 'image', normalizedRect: [90 / 600, 180 / 800, 285 / 600, 440 / 800] },
+      { kind: 'image', normalizedRect: [310 / 600, 182 / 800, 505 / 600, 442 / 800] }
+    ]
+  }
+  expect(nativeCaptionedRasterSideBySide(page, caption, [caption], [])?.rect).toEqual([
+    90, 180, 505, 442
+  ])
+  expect(associateFigures(page, [caption], [], [], [], [])[0]).toMatchObject({
+    rect: [90, 180, 505, 442],
+    reason: 'native-raster-side-by-side'
+  })
+})
+
+it('rejects a side-by-side plate when a third image shares the caption band', () => {
+  const caption = {
+    page: 1,
+    lines: ['Figure 16: Side-by-side comparison.'],
+    rect: [50, 520, 550, 550]
+  }
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    invalidGraphicsBounds: 0,
+    lines: [{ text: caption.lines[0], x: 50, y: 520, width: 500, height: 10, fontSize: 10 }],
+    graphicsBounds: [
+      { kind: 'image', normalizedRect: [90 / 600, 180 / 800, 285 / 600, 440 / 800] },
+      { kind: 'image', normalizedRect: [310 / 600, 182 / 800, 505 / 600, 442 / 800] },
+      { kind: 'image', normalizedRect: [20 / 600, 180 / 800, 180 / 600, 420 / 800] }
+    ]
+  }
+  expect(nativeCaptionedRasterSideBySide(page, caption, [caption], [])).toBeUndefined()
+})
+
+it('separates a lower raster grid after an intervening figure caption', () => {
+  const upperCaption = {
+      page: 1,
+      lines: ['Figure 20. Upper plate.'],
+      rect: [50, 225, 550, 245]
+    },
+    lowerCaption = {
+      page: 1,
+      lines: ['Figure 21. Lower plate.'],
+      rect: [50, 445, 550, 465]
+    },
+    page = {
+      pageNumber: 1,
+      width: 600,
+      height: 800,
+      invalidGraphicsBounds: 0,
+      lines: [
+        { text: upperCaption.lines[0], x: 50, y: 225, width: 500, height: 10, fontSize: 9 },
+        { text: lowerCaption.lines[0], x: 50, y: 445, width: 500, height: 10, fontSize: 9 }
+      ],
+      graphicsBounds: Array.from({ length: 12 }, (_, index) => {
+        const plate = index < 6 ? 0 : 1
+        const local = index % 6
+        const row = Math.floor(local / 3)
+        const column = local % 3
+        return {
+          kind: 'image',
+          normalizedRect: [
+            (80 + column * 135) / 600,
+            (80 + plate * 220 + row * 70) / 800,
+            (190 + column * 135) / 600,
+            (135 + plate * 220 + row * 70) / 800
+          ]
+        }
+      })
+    },
+    match = associateFigures(page, [upperCaption, lowerCaption], [], [], [], []).find(
+      (candidate: { caption: unknown }) => candidate.caption === lowerCaption
+    )
+
+  expect(match?.rect?.[0]).toBeCloseTo(80)
+  expect(match?.rect?.[1]).toBeCloseTo(300)
+  expect(match?.rect?.[2]).toBeCloseTo(460)
+  expect(match?.rect?.[3]).toBeCloseTo(425)
+})
+
+it('prioritizes a complete horizontal strip over a later single-panel figure', () => {
+  const fixture = horizontalRasterArray()
+  const lowerCaption = {
+    page: 1,
+    lines: ['Figure 12. Physical execution.'],
+    rect: [50, 510, 320, 525]
+  }
+  fixture.page.lines.push({
+    text: lowerCaption.lines[0],
+    x: 50,
+    y: 510,
+    width: 270,
+    height: 10,
+    fontSize: 9
+  })
+  fixture.page.graphicsBounds.push(
+    { kind: 'image', normalizedRect: [60 / 600, 300 / 800, 300 / 600, 500 / 800] },
+    { kind: 'path', normalizedRect: [60 / 600, 300 / 800, 300 / 600, 500 / 800] }
+  )
+  const matches = associateFigures(fixture.page, [fixture.caption, lowerCaption], [], [], [], [])
+  expect(
+    matches.find((match: { caption: unknown }) => match.caption === fixture.caption)?.rect
+  ).toEqual([60, 100, 530, 260])
+})
+
+it('recovers a multi-row raster composite without dropping its upper panels', () => {
+  const caption = {
+    page: 1,
+    lines: ['Figure 15. Composite dataset overview.'],
+    rect: [50, 690, 550, 710]
+  }
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    invalidGraphicsBounds: 0,
+    lines: [{ text: caption.lines[0], x: 50, y: 690, width: 500, height: 10, fontSize: 9 }],
+    graphicsBounds: [
+      { kind: 'image', normalizedRect: [90 / 600, 120 / 800, 250 / 600, 250 / 800] },
+      { kind: 'image', normalizedRect: [270 / 600, 120 / 800, 430 / 600, 250 / 800] },
+      { kind: 'image', normalizedRect: [90 / 600, 280 / 800, 230 / 600, 410 / 800] },
+      { kind: 'image', normalizedRect: [245 / 600, 280 / 800, 385 / 600, 410 / 800] },
+      { kind: 'image', normalizedRect: [90 / 600, 435 / 800, 430 / 600, 650 / 800] }
+    ]
+  }
+  expect(nativeCaptionedRasterCompositeGrid(page, caption, [caption], [])?.rect).toEqual([
+    90, 120, 430, 650
+  ])
+  expect(associateFigures(page, [caption], [], [], [], [])[0].rect).toEqual([90, 120, 430, 650])
+})
+
+it('recovers a two-row three-column raster composite', () => {
+  const caption = {
+    page: 1,
+    lines: ['Figure 16. Three-column comparison.'],
+    rect: [50, 510, 550, 530]
+  }
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    invalidGraphicsBounds: 0,
+    lines: [{ text: caption.lines[0], x: 50, y: 510, width: 500, height: 10, fontSize: 9 }],
+    graphicsBounds: Array.from({ length: 6 }, (_, index) => {
+      const row = Math.floor(index / 3)
+      const column = index % 3
+      return {
+        kind: 'image',
+        normalizedRect: [
+          (80 + column * 145) / 600,
+          (170 + row * 180) / 800,
+          (210 + column * 145) / 600,
+          (320 + row * 180) / 800
+        ]
+      }
+    })
+  }
+  const rasterRect = nativeCaptionedRasterCompositeGrid(page, caption, [caption], [])?.rect
+  expect(rasterRect?.[0]).toBeCloseTo(80)
+  expect(rasterRect?.[1]).toBeCloseTo(170)
+  expect(rasterRect?.[2]).toBeCloseTo(500)
+  expect(rasterRect?.[3]).toBeCloseTo(500)
+  const associatedRasterRect = associateFigures(page, [caption], [], [], [], [])[0].rect
+  expect(associatedRasterRect?.[0]).toBeCloseTo(80)
+  expect(associatedRasterRect?.[1]).toBeCloseTo(170)
+  expect(associatedRasterRect?.[2]).toBeCloseTo(500)
+  expect(associatedRasterRect?.[3]).toBeCloseTo(500)
+})
+
 it('recovers a unique narrow-column raster with a moderate caption gap', () => {
   const fixture = rasterModerateGap()
   const match = nativeCaptionedRasterModerateGap(
@@ -413,6 +807,15 @@ it('keeps a left-column vector figure when a right-column plot has its own capti
   const [figure] = associateFigures(page, [left, right], [], [], [], [])
   expect(figure.rect).toEqual([80, 60, 250, expect.closeTo(205)])
 })
+it('separates stacked vector plates at the upper caption boundary', () => {
+  const fixture = stackedVectorPlates()
+  const matches = associateFigures(fixture.page, fixture.captions, [], [], [], [])
+  expect(matches).toHaveLength(2)
+  expect(matches[0].rect?.[1]).toBeCloseTo(136.1, 0)
+  expect(matches[0].rect?.[3]).toBeCloseTo(272.3, 0)
+  expect(matches[1].rect?.[1]).toBeCloseTo(464.1, 0)
+  expect(matches[1].rect?.[3]).toBeCloseTo(600.2, 0)
+})
 it('recovers a single chart tightly attached to a narrow-column caption', () => {
   const caption = {
     page: 1,
@@ -442,6 +845,255 @@ it('recovers a wide raster chart when unrelated paths are elsewhere on the page'
   expect(nativeCaptionedRaster(fixture.page, fixture.caption, [fixture.caption], [])?.rect).toEqual(
     [expect.closeTo(70), expect.closeTo(80), expect.closeTo(530), expect.closeTo(205)]
   )
+})
+it('recovers a full-width raster above a lower competing region', () => {
+  const caption = {
+    page: 1,
+    lines: ['Figure 15. Time-frequency representation.'],
+    rect: [50, 300, 550, 315]
+  }
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    invalidGraphicsBounds: 0,
+    lines: [{ text: caption.lines[0], x: 50, y: 300, width: 500, height: 10, fontSize: 10 }],
+    graphicsBounds: [
+      { kind: 'image', normalizedRect: [60 / 600, 80 / 800, 540 / 600, 292 / 800] },
+      { kind: 'image', normalizedRect: [60 / 600, 350 / 800, 270 / 600, 500 / 800] },
+      { kind: 'path', normalizedRect: [330 / 600, 350 / 800, 540 / 600, 500 / 800] }
+    ]
+  }
+  expect(nativeCaptionedRasterFullWidth(page, caption, [caption], [])?.rect).toEqual([
+    60, 80, 540, 292
+  ])
+  expect(associateFigures(page, [caption], [], [], [], [])[0]).toMatchObject({
+    rect: [60, 80, 540, 292],
+    reason: 'native-raster-full-width'
+  })
+})
+
+const upperRasterPanelPage = (): ReturnType<typeof JSON.parse> => {
+  const caption = {
+    page: 1,
+    lines: ['Figure 1. Composite response panels.'],
+    rect: [50, 268, 550, 282]
+  }
+  const upper = {
+    kind: 'image',
+    imageHash: 'anonymous-upper-panel',
+    normalizedRect: [60 / 600, 20 / 800, 220 / 600, 55 / 800]
+  }
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    invalidGraphicsBounds: 0,
+    lines: [{ text: caption.lines[0], x: 50, y: 268, width: 500, height: 10, fontSize: 10 }],
+    graphicsBounds: [
+      { kind: 'image', normalizedRect: [60 / 600, 60 / 800, 540 / 600, 260 / 800] },
+      upper
+    ]
+  }
+  return { page, caption, upper }
+}
+
+it.each([
+  ['full-width', nativeCaptionedRasterFullWidth],
+  ['ordinary', nativeCaptionedRaster]
+] as const)('preserves a connected upper panel in the %s raster matcher', (_name, match) => {
+  const { page, caption } = upperRasterPanelPage()
+  expect(match(page, caption, [caption], [])).toMatchObject({
+    rect: [60, 20, 540, 260],
+    graphicsCount: 2
+  })
+})
+
+it.each([
+  ['full-width', nativeCaptionedRasterFullWidth],
+  ['ordinary', nativeCaptionedRaster]
+] as const)('excludes independent upper images in the %s raster matcher', (_name, match) => {
+  for (const barrier of [
+    'detached',
+    'misaligned',
+    'prose',
+    'table',
+    'caption',
+    'margin',
+    'ambiguous'
+  ]) {
+    const { page, caption, upper } = upperRasterPanelPage()
+    const tables = barrier === 'table' ? [[60, 55, 220, 60]] : []
+    const captions =
+      barrier === 'caption'
+        ? [caption, { page: 1, lines: ['Figure 2. Independent panel.'], rect: [60, 55, 220, 60] }]
+        : [caption]
+    const source = {
+      ...page,
+      ...(barrier === 'margin' ? { marginRuleBounds: [[0.1, 0.07, 0.9, 0.071]] } : {}),
+      lines:
+        barrier === 'prose'
+          ? [
+              ...page.lines,
+              {
+                text: 'Independent running header',
+                x: 60,
+                y: 55,
+                width: 160,
+                height: 5,
+                fontSize: 5
+              }
+            ]
+          : page.lines,
+      graphicsBounds: [
+        page.graphicsBounds[0],
+        {
+          ...upper,
+          normalizedRect:
+            barrier === 'detached'
+              ? [30 / 600, 8 / 800, 120 / 600, 30 / 800]
+              : barrier === 'misaligned'
+                ? [90 / 600, 20 / 800, 250 / 600, 55 / 800]
+                : upper.normalizedRect
+        },
+        ...(barrier === 'ambiguous'
+          ? [
+              {
+                ...upper,
+                imageHash: 'another-upper-panel',
+                normalizedRect: [380 / 600, 20 / 800, 540 / 600, 55 / 800]
+              }
+            ]
+          : [])
+      ]
+    }
+    expect(match(source, caption, captions, tables), barrier).toMatchObject({
+      rect: [60, 60, 540, 260],
+      graphicsCount: 1
+    })
+  }
+})
+
+it('uses painted bounds when proving an upper raster panel', () => {
+  const { page, caption, upper } = upperRasterPanelPage()
+  const source = {
+    ...page,
+    graphicsBounds: [
+      page.graphicsBounds[0],
+      {
+        ...upper,
+        normalizedRect: [0, 0, 0.9, 55 / 800],
+        paintedNormalizedRect: upper.normalizedRect
+      }
+    ]
+  }
+  expect(nativeCaptionedRasterFullWidth(source, caption, [caption], [])?.rect).toEqual([
+    60, 20, 540, 260
+  ])
+})
+
+it.each([
+  ['full-width', nativeCaptionedRasterFullWidth],
+  ['ordinary', nativeCaptionedRaster]
+] as const)('keeps a substantial leading inset in the %s raster matcher', (_name, match) => {
+  const { page, caption, upper } = upperRasterPanelPage()
+  const source = {
+    ...page,
+    graphicsBounds: [
+      page.graphicsBounds[0],
+      {
+        ...upper,
+        normalizedRect: [35 / 600, 5 / 800, 175 / 600, 35 / 800]
+      }
+    ]
+  }
+  expect(match(source, caption, [caption], [])).toMatchObject({
+    rect: [35, 5, 540, 260],
+    graphicsCount: 2
+  })
+  for (const barrier of ['too small', 'insufficient containment', 'large gap', 'body text']) {
+    const blocked = {
+      ...source,
+      lines:
+        barrier === 'body text'
+          ? [
+              ...page.lines,
+              { text: 'Independent header', x: 60, y: 40, width: 115, height: 10, fontSize: 10 }
+            ]
+          : page.lines,
+      graphicsBounds: [
+        page.graphicsBounds[0],
+        {
+          ...upper,
+          normalizedRect:
+            barrier === 'too small'
+              ? [35 / 600, 5 / 800, 145 / 600, 35 / 800]
+              : barrier === 'insufficient containment'
+                ? [30 / 600, 5 / 800, 145 / 600, 35 / 800]
+                : barrier === 'large gap'
+                  ? [35 / 600, 0, 175 / 600, 28 / 800]
+                  : source.graphicsBounds[1].normalizedRect
+        }
+      ]
+    }
+    expect(match(blocked, caption, [caption], []), barrier).toMatchObject({
+      rect: [60, 60, 540, 260],
+      graphicsCount: 1
+    })
+  }
+})
+
+it('recovers a narrow vector bar chart with an unpunctuated figure label', () => {
+  const caption = {
+    page: 1,
+    lines: ['Figure 3 Expert-relative performance.'],
+    rect: [330, 305, 545, 320]
+  }
+  const bars = Array.from({ length: 10 }, (_, index) => ({
+    kind: 'path',
+    normalizedRect: [
+      (380 + index * 14) / 600,
+      (150 + (index % 4) * 15) / 800,
+      (390 + index * 14) / 600,
+      280 / 800
+    ]
+  }))
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    invalidGraphicsBounds: 0,
+    lines: [
+      { text: caption.lines[0], x: 330, y: 305, width: 215, height: 10, fontSize: 10 },
+      ...['0', '50', '100', '150'].map((text, index) => ({
+        text,
+        x: 355,
+        y: 270 - index * 35,
+        width: 18,
+        height: 10,
+        fontSize: 10
+      })),
+      ...['Model A', 'Model B', 'Model C'].map((text, index) => ({
+        text,
+        x: 390 + index * 45,
+        y: 285,
+        width: 35,
+        height: 10,
+        fontSize: 10
+      }))
+    ],
+    graphicsBounds: [
+      { kind: 'path', normalizedRect: [330 / 600, 100 / 800, 540 / 600, 280 / 800] },
+      ...bars
+    ]
+  }
+  expect(nativeCaptionedVectorBarChart(page, caption, [caption], [])?.rect).toEqual([
+    330, 100, 540, 295
+  ])
+  expect(associateFigures(page, [caption], [], [], [], [])[0]).toMatchObject({
+    reason: 'native-vector-bar-chart',
+    graphicsCount: 11
+  })
 })
 it('keeps raster recovery deferred when a path touches the image', () => {
   const fixture = wideRasterWithUnrelatedPaths()
@@ -526,6 +1178,33 @@ it('recovers a text figure whose frame is drawn as four aligned segments', () =>
       { kind: 'path', normalizedRect: [60 / 600, 270 / 800, 540 / 600, 280 / 800] },
       { kind: 'path', normalizedRect: [60 / 600, 80 / 800, 70 / 600, 280 / 800] },
       { kind: 'path', normalizedRect: [530 / 600, 80 / 800, 540 / 600, 280 / 800] }
+    ]
+  }
+  expect(nativeCaptionedTextIllustration(page, caption, [caption], [])?.rect).toEqual([
+    60, 80, 540, 280
+  ])
+})
+it('recovers a text-only figure bounded by two aligned horizontal rules', () => {
+  const caption = { page: 1, lines: ['Figure 11: Prompt template.'], rect: [50, 295, 550, 325] }
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    invalidGraphicsBounds: 0,
+    lines: [
+      ...Array.from({ length: 5 }, (_, index) => ({
+        text: `Prompt instruction line ${index} contains enough monospaced text to prove the bounded figure body.`,
+        x: 80,
+        y: 100 + index * 30,
+        width: 420,
+        height: 10,
+        fontSize: 10
+      })),
+      { text: caption.lines[0], x: 50, y: 295, width: 500, height: 10, fontSize: 10 }
+    ],
+    graphicsBounds: [
+      { kind: 'path', normalizedRect: [60 / 600, 80 / 800, 540 / 600, 90 / 800] },
+      { kind: 'path', normalizedRect: [60 / 600, 270 / 800, 540 / 600, 280 / 800] }
     ]
   }
   expect(nativeCaptionedTextIllustration(page, caption, [caption], [])?.rect).toEqual([

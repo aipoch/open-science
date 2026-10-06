@@ -12,6 +12,12 @@ const { populateTableCellText } = await import(
 const { recoverUnassignedCompleteModelRows } = await import(
   pathToFileURL(resolve('resources/pdf-structure/literature-pdf-table-cell-text.mjs')).href
 )
+const { recoverUnassignedCompleteSourceRows } = await import(
+  pathToFileURL(resolve('resources/pdf-structure/literature-pdf-table-cell-text.mjs')).href
+)
+const { recoverUnassignedInsertedParameterRows } = await import(
+  pathToFileURL(resolve('resources/pdf-structure/literature-pdf-table-cell-text.mjs')).href
+)
 const fixture = (name: string): ReturnType<typeof JSON.parse> =>
   readPdfFixture(
     resolve('src/main/literature/pdf-structure/fixtures/source-grids', `${name}.jsonl`)
@@ -95,94 +101,104 @@ it('recovers a complete numbered record straddling duplicate empty bands', () =>
   expect(result.repairs).toContain('duplicate-source-row-merged')
 })
 
-it('assigns a fully unassigned numbered row to the nearer duplicate band', () => {
-  const token = (text: string, x: number, y: number): Record<string, unknown> => ({
-    text,
-    rect: [x, y, x + Math.max(8, text.length * 4), y + 10],
-    baseline: y + 10,
-    height: 10,
-    horizontal: true
-  })
-  const columnRects = Array.from({ length: 6 }, (_, column) => [
-    column * 100,
-    0,
-    (column + 1) * 100,
-    80
-  ])
-  const rowRects = [
-    [0, 0, 600, 20],
-    [0, 20, 600, 35],
-    [0, 35, 600, 48],
-    [0, 44, 600, 57],
-    [0, 55, 600, 70]
-  ]
-  const rows = rowRects.map((rect, index) => ({
-    rect,
-    origin: 'model',
-    ...(index === 0 ? { header: true } : {})
-  }))
-  const cells = rowRects.flatMap((row, rowIndex) =>
-    columnRects.map((rect, column) => ({
-      row: rowIndex,
-      column,
-      rowSpan: 1,
-      colSpan: 1,
-      rect: [rect[0], row[1], rect[2], row[3]],
+it.each(['visual', 'shuffled'])(
+  'assigns a fully unassigned numbered row with %s source order',
+  (order) => {
+    const token = (text: string, x: number, y: number): Record<string, unknown> => ({
+      text,
+      rect: [x, y, x + Math.max(8, text.length * 4), y + 10],
+      baseline: y + 10,
+      height: 10,
+      horizontal: true
+    })
+    const columnRects = Array.from({ length: 6 }, (_, column) => [
+      column * 100,
+      0,
+      (column + 1) * 100,
+      80
+    ])
+    const rowRects = [
+      [0, 0, 600, 20],
+      [0, 20, 600, 35],
+      [0, 35, 600, 48],
+      [0, 44, 600, 57],
+      [0, 55, 600, 70]
+    ]
+    const rows = rowRects.map((rect, index) => ({
+      rect,
       origin: 'model',
-      text: '',
-      items: [],
-      sourceRects: []
+      ...(index === 0 ? { header: true } : {})
     }))
-  )
-  const record = (
-    id: string,
-    name: string,
-    date: string,
-    state: string,
-    longitude: string,
-    latitude: string,
-    size: string,
-    y: number
-  ): Record<string, unknown>[] => [
-    token(id, 8, y),
-    token(name, 70, y),
-    token(date, 108, y),
-    token(state, 208, y),
-    token(longitude, 308, y),
-    token(latitude, 408, y),
-    token(size, 508, y)
-  ]
-  const items = [
-    ...record('12', 'Addington', '19/3/2021', 'Oklahoma', '-97.917', '34.293', '15', 21),
-    ...record('13', 'Bentley', '26/3/2021', 'Lousiana', '-92.527', '31.547', '4.1', 41),
-    ...record('14', 'Candy Creek', '28/3/2021', 'Oklahoma', '-96.071', '36.563', '114.7', 56)
-  ]
-  const issues = new Set<string>()
-  const repairs: string[] = []
-  const unassigned = populateTableCellText({
-    cells,
-    items,
-    pageItems: items,
-    rows,
-    columnRects,
-    headerRows: [0],
-    rules: [],
-    bottom: 80,
-    issues,
-    repairs
-  })
-  expect(unassigned).toEqual([])
-  expect(issues).toEqual(new Set())
-  expect(repairs).toContain('sequential-record-row-recovered')
-  expect(
-    Array.from({ length: rows.length }, (_, row) =>
-      cells
-        .filter((cell) => cell.row === row)
-        .sort((a, b) => a.column - b.column)
-        .map((cell) => cell.text)
+    const cells = rowRects.flatMap((row, rowIndex) =>
+      columnRects.map((rect, column) => ({
+        row: rowIndex,
+        column,
+        rowSpan: 1,
+        colSpan: 1,
+        rect: [rect[0], row[1], rect[2], row[3]],
+        origin: 'model',
+        text: '',
+        items: [],
+        sourceRects: []
+      }))
     )
-  ).toContainEqual(['13 Bentley', '26/3/2021', 'Lousiana', '-92.527', '31.547', '4.1'])
-})
+    const record = (
+      id: string,
+      name: string,
+      date: string,
+      state: string,
+      longitude: string,
+      latitude: string,
+      size: string,
+      y: number
+    ): Record<string, unknown>[] => [
+      token(id, 8, y),
+      token(name, 70, y),
+      token(date, 108, y),
+      token(state, 208, y),
+      token(longitude, 308, y),
+      token(latitude, 408, y),
+      token(size, 508, y)
+    ]
+    const sourceItems = [
+      ...record('12', 'Addington', '19/3/2021', 'Oklahoma', '-97.917', '34.293', '15', 21),
+      ...record('13', 'Bentley', '26/3/2021', 'Lousiana', '-92.527', '31.547', '4.1', 41),
+      ...record('14', 'Candy Creek', '28/3/2021', 'Oklahoma', '-96.071', '36.563', '114.7', 56)
+    ]
+    const items =
+      order === 'shuffled'
+        ? sourceItems
+            .filter((_, index) => index % 2)
+            .reverse()
+            .concat(sourceItems.filter((_, index) => !(index % 2)))
+        : sourceItems
+    const issues = new Set<string>()
+    const repairs: string[] = []
+    const unassigned = populateTableCellText({
+      cells,
+      items,
+      pageItems: items,
+      rows,
+      columnRects,
+      headerRows: [0],
+      rules: [],
+      bottom: 80,
+      issues,
+      repairs
+    })
+    expect(unassigned).toEqual([])
+    expect(issues).toEqual(new Set())
+    expect(repairs).toContain('sequential-record-row-recovered')
+    expect(
+      Array.from({ length: rows.length }, (_, row) =>
+        cells
+          .filter((cell) => cell.row === row)
+          .sort((a, b) => a.column - b.column)
+          .map((cell) => cell.text)
+      )
+    ).toContainEqual(['13 Bentley', '26/3/2021', 'Lousiana', '-92.527', '31.547', '4.1'])
+  }
+)
 
 it('recovers a compact record that crosses adjacent model bands', () => {
   const token = (text: string, x: number, y: number): Record<string, unknown> => ({
@@ -253,7 +269,15 @@ it('assigns a complete unassigned data row to an existing empty model row', () =
     rect: [0, top, 900, [20, 30, 50, 60][rowIndex]],
     origin: 'model'
   }))
-  const cells = rows.flatMap((row, rowIndex) =>
+  const cells: Array<{
+    row: number
+    column: number
+    rowSpan: number
+    colSpan: number
+    rect: number[]
+    origin: string
+    items: unknown[]
+  }> = rows.flatMap((row, rowIndex) =>
     columnRects.map((rect, column) => ({
       row: rowIndex,
       column,
@@ -309,6 +333,148 @@ it('assigns a complete unassigned data row to an existing empty model row', () =
     )
   ).toEqual([1, 2, 3, 4, 5, 6, 7])
   expect(cells.filter((cell) => cell.row === 2)).toHaveLength(8)
+})
+
+it('fills an empty row from one complete baseline with a fragmented terminal lane', () => {
+  const token = (text: string, x: number, y: number): Record<string, unknown> => ({
+    text,
+    rect: [x, y, x + Math.max(8, text.length * 4), y + 10],
+    baseline: y + 10,
+    height: 10,
+    horizontal: true
+  })
+  const columnRects = [0, 100, 200, 300].map((left) => [left, 0, left + 100, 80])
+  const rows = [0, 20, 35, 50].map((top, row) => ({
+    rect: [0, top, 400, [20, 35, 50, 65][row]],
+    origin: 'model'
+  }))
+  const cells = rows.flatMap((row, rowIndex) =>
+    columnRects.map((rect, column) => ({
+      row: rowIndex,
+      column,
+      rowSpan: 1,
+      colSpan: 1,
+      rect: [rect[0], row.rect[1], rect[2], row.rect[3]],
+      origin: 'model',
+      text: '',
+      items: [],
+      sourceRects: []
+    }))
+  )
+  const previous = columnRects.map((rect, column) => token(`P${column}`, rect[0] + 8, 21))
+  const next = columnRects.map((rect, column) => token(`N${column}`, rect[0] + 8, 51))
+  const source = [
+    token('Model', 8, 36),
+    token('12', 108, 36),
+    token('0.8', 208, 36),
+    token('Host-z=', 308, 36),
+    token('0.12', 344, 36)
+  ]
+  const assignments = new Map<unknown, unknown>()
+  previous.forEach((item, column) =>
+    assignments.set(
+      item,
+      cells.find((cell) => cell.row === 1 && cell.column === column)
+    )
+  )
+  next.forEach((item, column) =>
+    assignments.set(
+      item,
+      cells.find((cell) => cell.row === 3 && cell.column === column)
+    )
+  )
+  const repairs: string[] = []
+  const recovered = recoverUnassignedCompleteSourceRows({
+    items: [...previous, ...source, ...next],
+    cells,
+    rows,
+    columnRects,
+    headerRows: [0],
+    assignments,
+    ambiguousAssignments: new Set(),
+    repairs
+  })
+  expect(recovered).toBe(1)
+  expect(repairs).toContain('unassigned-complete-source-row-recovered')
+  expect(
+    source.map((item) => (assignments.get(item) as { row?: number; column?: number })?.column)
+  ).toEqual([0, 1, 2, 3, 3])
+  expect(source.every((item) => (assignments.get(item) as { row?: number })?.row === 2)).toBe(true)
+})
+
+it('inserts a strictly witnessed three-column parameter row between complete rows', () => {
+  const token = (text: string, x: number, y: number): Record<string, unknown> => ({
+    text,
+    rect: [x, y, x + Math.max(8, text.length * 3), y + 10],
+    baseline: y + 10,
+    height: 10,
+    horizontal: true
+  })
+  const columnRects = [0, 100, 200].map((left) => [left, 0, left + 100, 80])
+  const rows = [
+    { rect: [0, 0, 300, 18], origin: 'model' },
+    { rect: [0, 20, 300, 32], origin: 'model' },
+    { rect: [0, 42, 300, 54], origin: 'model' }
+  ]
+  const cells = rows.flatMap((row, rowIndex) =>
+    columnRects.map((rect, column) => ({
+      row: rowIndex,
+      column,
+      rowSpan: 1,
+      colSpan: 1,
+      rect: [rect[0], row.rect[1], rect[2], row.rect[3]],
+      origin: 'model',
+      items: []
+    }))
+  )
+  const header = [token('Parameter', 8, 4), token('Value', 108, 4), token('Description', 208, 4)]
+  const previous = [
+    token('alpha_rate', 8, 21),
+    token('0.2', 108, 21),
+    token('Learning rate', 208, 21)
+  ]
+  const missing = [
+    token('target_update_interval', 8, 33),
+    token('1', 108, 33),
+    token('Frequency of target updates', 208, 33)
+  ]
+  const next = [
+    token('target_entropy', 8, 45),
+    token('auto', 108, 45),
+    token('Target entropy', 208, 45)
+  ]
+  const assignments = new Map<unknown, unknown>()
+  previous.forEach((item, column) =>
+    assignments.set(
+      item,
+      cells.find((cell) => cell.row === 1 && cell.column === column)
+    )
+  )
+  next.forEach((item, column) =>
+    assignments.set(
+      item,
+      cells.find((cell) => cell.row === 2 && cell.column === column)
+    )
+  )
+  const repairs: string[] = []
+  const recovered = recoverUnassignedInsertedParameterRows({
+    items: [...header, ...previous, ...missing, ...next],
+    cells,
+    rows,
+    columnRects,
+    headerRows: [0],
+    assignments,
+    ambiguousAssignments: new Set(),
+    repairs,
+    captions: [{ lines: ['Table 1: Parameters'] }]
+  })
+  expect(recovered).toBe(1)
+  expect(rows).toHaveLength(4)
+  expect(cells.filter((cell) => cell.row === 2)).toHaveLength(3)
+  expect(
+    [...assignments.values()].filter((cell) => (cell as { row?: number } | undefined)?.row === 2)
+  ).toHaveLength(3)
+  expect(repairs).toContain('unassigned-parameter-row-inserted')
 })
 
 it('splits a wide model row that contains two complete source baselines', () => {

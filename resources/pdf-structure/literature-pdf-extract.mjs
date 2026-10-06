@@ -27,6 +27,7 @@ import {
   resolveFigureCaption,
   findAlgorithmCandidates,
   associateAdjacentFigure,
+  associatePreviousPageRasterFigure,
   associateTableCaptions,
   associateGraphicalAbstract
 } from './literature-pdf-association.mjs'
@@ -43,6 +44,7 @@ import {
   hasTableEvidence,
   refineTable,
   recoverRuledTable,
+  seedNativeClosedRecordTable,
   splitCaptionedTableRegions,
   recoverCaptionedRuledTables
 } from './literature-pdf-table-refine.mjs'
@@ -54,7 +56,15 @@ import {
   splitRuledComparisonSections,
   groupRuledComparisonSections
 } from './literature-pdf-ruled-narrative-grid.mjs'
-import { isFigureRiskTable } from './literature-pdf-table-evidence.mjs'
+import {
+  isFigureRiskTable,
+  isFigureOwnedPartialTable,
+  proveCaptionedNativeDefinitionFrame,
+  proveCaptionedNativeClosedTableFrame,
+  findCaptionedNativeClosedTableFrames,
+  isRecognizedAlgorithmOwnedTable,
+  isNativeClosedFrameOwnedByTable
+} from './literature-pdf-table-evidence.mjs'
 import { recoverNativeMixedSectionParts } from './literature-pdf-native-mixed-section-parts.mjs'
 import { proveNativeCaptionRaisedGlyphOwnership } from './literature-pdf-native-caption-raised-glyphs.mjs'
 import { recoverNativeCaptionOverlayAccentLines } from './literature-pdf-native-caption-overlay-accents.mjs'
@@ -103,6 +113,7 @@ import {
   recoverNativeScientificLeafRecordGrid
 } from './literature-pdf-native-scientific-leaf-gutters.mjs'
 import { recoverNativeMeanDeviationRecords } from './literature-pdf-native-mean-deviation-records.mjs'
+import { findCaptionedNativePartialRuleTable } from './literature-pdf-native-header-grid.mjs'
 import { isNativeFrontMatterRegion } from './literature-pdf-front-matter.mjs'
 import {
   isUprightText,
@@ -340,8 +351,8 @@ try {
       pageInference.tables = pageInference.tables.filter(
         (raw) =>
           !pageAlgorithms.some(({ rect }) => {
-            const centerX = (raw.cropRect[0] + raw.cropRect[2]) / 3
-            const centerY = (raw.cropRect[1] + raw.cropRect[3]) / 3
+            const centerX = (raw.cropRect[0] + raw.cropRect[2]) / 2
+            const centerY = (raw.cropRect[1] + raw.cropRect[3]) / 2
             return (
               centerX >= rect[0] && centerX <= rect[2] && centerY >= rect[1] && centerY <= rect[3]
             )
@@ -369,6 +380,7 @@ try {
         operators,
         { viewport: nativeViewport, rules: collectTableRules(operators, nativeViewport) }
       )
+      const measuredRuns = nativeWhitespaceGaps(content, operators, viewport)
       let tokens = excludeRemovedMarginTokens(
         nativeTextTokens(content, viewport, pageGeometry.renderRotation),
         originalPages.get(pageNumber),
@@ -549,15 +561,100 @@ try {
       pageInference.tables = pageInference.tables.flatMap((table) =>
         splitCaptionedTableRegions(table, pageCaptions, rules)
       )
-      pageInference.tables.push(
-        ...recoverCaptionedRuledTables(
-          tokens,
-          rules,
-          pageCaptions,
-          pageNumber,
-          pageInference.tables
-        )
+      const recoveredCaptionedTables = recoverCaptionedRuledTables(
+        tokens,
+        rules,
+        pageCaptions,
+        pageNumber,
+        pageInference.tables,
+        measuredRuns
       )
+      pageInference.tables.push(...recoveredCaptionedTables)
+      for (const table of recoveredCaptionedTables) {
+        if (!table.caption) continue
+        // `pageCaptions` uses the source viewport (scale 1.5), while the
+        // serialized caption contract is scale-1. Recoveries carry the
+        // internal caption for geometry; map back to the canonical object
+        // before it reaches the continuation association and output.
+        const canonical = captions.find(
+          (caption) =>
+            caption.page === pageNumber &&
+            caption.lines?.join('\n') === table.caption.lines?.join('\n')
+        )
+        continuationCaptions.set(table.id, canonical ?? table.caption)
+      }
+      const nativeClosedFrames = pageCaptions
+        .flatMap((caption) => findCaptionedNativeClosedTableFrames(caption, tokens, rules))
+        .filter(
+          (frame, index, frames) =>
+            frames.findIndex((other) =>
+              frame.cropRect.every((v, axis) => Math.abs(v - other.cropRect[axis]) < 0.05)
+            ) === index
+        )
+      const coversClosedFrame = (rect, frame) => {
+        const overlap =
+          Math.max(0, Math.min(rect[2], frame[2]) - Math.max(rect[0], frame[0])) *
+          Math.max(0, Math.min(rect[3], frame[3]) - Math.max(rect[1], frame[1]))
+        return overlap >= (frame[2] - frame[0]) * (frame[3] - frame[1]) * 0.98
+      }
+      // An explicit caption, one native header divider and a continuous stub
+      // fence can prove a compact scalar inventory that the detector missed.
+      // Seed only that complete source plan; an open rectangle alone is never
+      // sufficient table evidence, and existing covered candidates keep priority.
+      const partialRuleTables = pageCaptions
+        .map((caption) => findCaptionedNativePartialRuleTable(caption, tokens, rules, measuredRuns))
+        .filter(Boolean)
+      for (const [index, plan] of partialRuleTables.entries()) {
+        if (pageInference.tables.some((table) => coversClosedFrame(table.cropRect, plan.cropRect)))
+          continue
+        const crop = plan.cropRect,
+          seed = {
+            id: `p${pageNumber}-native-partial-rule-table-${index + 1}`,
+            pageNumber,
+            cropRect: crop,
+            structure: {
+              objects: [
+                ...plan.columns.map((column) => ({
+                  label: 'table column',
+                  rect: [column[0] - crop[0], 0, column[2] - crop[0], crop[3] - crop[1]]
+                })),
+                ...plan.groups.map((group) => ({
+                  label: 'table row',
+                  rect: [
+                    0,
+                    Math.min(...group.map((i) => i.rect[1])) - crop[1],
+                    crop[2] - crop[0],
+                    Math.max(...group.map((i) => i.rect[3])) - crop[1]
+                  ]
+                }))
+              ]
+            }
+          }
+        pageInference.tables.push(seed)
+        continuationCaptions.set(
+          seed.id,
+          captions.find(
+            (caption) => caption.page === pageNumber && caption.lines === plan.caption.lines
+          )
+        )
+      }
+      for (const [index, frame] of nativeClosedFrames.entries()) {
+        if (pageInference.tables.some((table) => coversClosedFrame(table.cropRect, frame.cropRect)))
+          continue
+        const seed = seedNativeClosedRecordTable(frame, tokens, rules, pageNumber)
+        if (!seed) continue
+        seed.id += `-${index + 1}`
+        pageInference.tables.push(seed)
+        // An independently proved panel may have no unique caption. Retain
+        // that literal absence through the existing association override.
+        continuationCaptions.set(
+          seed.id,
+          frame.caption &&
+            captions.find(
+              (caption) => caption.page === pageNumber && caption.lines === frame.caption.lines
+            )
+        )
+      }
       const meanDeviationRecords = recoverNativeMeanDeviationRecords(
         pageInference.tables,
         tokens,
@@ -768,7 +865,6 @@ try {
         splitRuledComparisonSections(table, tokens, pageCaptions, rules)
       )
       pageInference.tables = deduplicateTableRegions(pageInference.tables, tokens, pageCaptions)
-      const measuredRuns = nativeWhitespaceGaps(content, operators, viewport)
       const adjacentNativeContexts = new Map()
       const pairedTextContexts = new Map()
       for (const raw of pageInference.tables) {
@@ -923,6 +1019,73 @@ try {
         )
         return enclosed ? { ...owned, caption: enclosed } : owned
       })
+      // A stacked page can place the next caption inside the previous
+      // detector crop. When every visible table has its own consecutive
+      // caption, stable vertical order is stronger evidence than nearest
+      // distance and repairs that one-page ordering ambiguity.
+      const stackedCaptions = captions
+        .filter(
+          (caption) => caption.page === pageNumber && captionKind(caption.lines?.[0]) === 'table'
+        )
+        .sort((a, b) => a.rect[1] - b.rect[1])
+      const stackedTables = contentRects
+        .map((rect, index) => ({ rect, index }))
+        .sort((a, b) => a.rect[1] - b.rect[1])
+      const stackedNumbers = stackedCaptions.map((caption) =>
+        Number.parseInt(/^Table\s+(\d+)/i.exec(caption.lines?.[0] ?? '')?.[1] ?? '', 10)
+      )
+      const consecutiveStack = stackedNumbers.every(
+        (number, index) =>
+          Number.isFinite(number) && (!index || number === stackedNumbers[index - 1] + 1)
+      )
+      const captionNearStackTable = (caption, rect) => {
+        const height = Math.max(1, rect[3] - rect[1])
+        const captionHeight = Math.max(1, caption.rect[3] - caption.rect[1])
+        const above = rect[1] - caption.rect[3]
+        const below = caption.rect[1] - rect[3]
+        return (
+          (above >= -captionHeight * 0.25 && above <= Math.max(48, height * 0.35)) ||
+          (below >= -captionHeight * 0.25 && below <= Math.max(48, height * 0.35))
+        )
+      }
+      const stackColumnAligned = stackedTables.every(({ rect }, index) => {
+        if (!index) return true
+        const previous = stackedTables[index - 1].rect
+        const overlap = Math.min(previous[2], rect[2]) - Math.max(previous[0], rect[0])
+        const width = Math.min(previous[2] - previous[0], rect[2] - rect[0])
+        const verticalGap = rect[1] - previous[3]
+        const centerDelta = Math.abs((previous[0] + previous[2]) / 2 - (rect[0] + rect[2]) / 2)
+        return (
+          overlap >= width * 0.5 &&
+          centerDelta <= Math.max(24, width * 0.2) &&
+          verticalGap >= -8 &&
+          verticalGap <= Math.max(160, width * 0.5)
+        )
+      })
+      const uniqueStackCaptionOwners = stackedCaptions.every((caption) => {
+        const owners = stackedTables.filter(({ rect }) => {
+          const overlap = Math.min(caption.rect[2], rect[2]) - Math.max(caption.rect[0], rect[0])
+          const width = Math.min(caption.rect[2] - caption.rect[0], rect[2] - rect[0])
+          return overlap >= width * 0.5 && captionNearStackTable(caption, rect)
+        })
+        return owners.length === 1
+      })
+      if (
+        stackedCaptions.length === stackedTables.length &&
+        stackedCaptions.length >= 2 &&
+        consecutiveStack &&
+        stackColumnAligned &&
+        uniqueStackCaptionOwners &&
+        stackedTables.every(({ rect }, index) => {
+          const caption = stackedCaptions[index].rect
+          return (
+            Math.min(caption[2], rect[2]) - Math.max(caption[0], rect[0]) >=
+            Math.min(caption[2] - caption[0], rect[2] - rect[0]) * 0.5
+          )
+        })
+      )
+        for (const [index, { index: tableIndex }] of stackedTables.entries())
+          associations[tableIndex].caption = stackedCaptions[index]
       // A lower stacked table can begin immediately after its descriptive
       // caption while a neighboring detector box still owns the preceding
       // table. Recover only a unique, tight above-table caption; this avoids
@@ -1012,6 +1175,52 @@ try {
           nativeFigureTokens
         )
       ].filter((f) => f.rect)
+      // A side-by-side detector can attach a caption to a narrow crop that
+      // contains only the first body row and a numeric stub from its neighbor.
+      // Prefer the overlapping complete grid as the caption owner. This is a
+      // geometry/content transfer only; it does not alter the table schema or
+      // create a second record.
+      for (let outerIndex = 0; outerIndex < refined.length; outerIndex++) {
+        const outerAssociation = associations[outerIndex]
+        const outer = refined[outerIndex]
+        if (!outerAssociation?.caption || !outer?.cropRect) continue
+        if (!(outer.issues ?? []).includes('text-crosses-crop-boundary')) continue
+        if ((outer.unassigned?.length ?? 0) < 3) continue
+        const outerRows = outer.grid?.length ?? 0
+        const outerColumns = Math.max(0, ...(outer.grid ?? []).map((row) => row.length))
+        for (let innerIndex = 0; innerIndex < refined.length; innerIndex++) {
+          if (innerIndex === outerIndex || associations[innerIndex]?.caption) continue
+          const inner = refined[innerIndex]
+          if (!inner?.cropRect || (inner.unassigned?.length ?? 0) > 0) continue
+          const innerRows = inner.grid?.length ?? 0
+          const innerColumns = Math.max(0, ...(inner.grid ?? []).map((row) => row.length))
+          if (innerRows < Math.max(3, outerRows + 1) || innerColumns !== outerColumns - 1) continue
+          const horizontal =
+            Math.max(
+              0,
+              Math.min(outer.cropRect[2], inner.cropRect[2]) -
+                Math.max(outer.cropRect[0], inner.cropRect[0])
+            ) /
+            Math.max(
+              1,
+              Math.min(outer.cropRect[2] - outer.cropRect[0], inner.cropRect[2] - inner.cropRect[0])
+            )
+          const vertical =
+            Math.max(
+              0,
+              Math.min(outer.cropRect[3], inner.cropRect[3]) -
+                Math.max(outer.cropRect[1], inner.cropRect[1])
+            ) /
+            Math.max(
+              1,
+              Math.min(outer.cropRect[3] - outer.cropRect[1], inner.cropRect[3] - inner.cropRect[1])
+            )
+          if (horizontal < 0.5 || vertical < 0.8) continue
+          associations[innerIndex] = { caption: outerAssociation.caption }
+          associations[outerIndex] = { reason: 'caption-forwarded-to-complete-overlap' }
+          break
+        }
+      }
       const captionedTableIndices = new Set(
         associations.flatMap((association, index) => (association.caption ? [index] : []))
       )
@@ -1032,11 +1241,61 @@ try {
         if (hasNearbyCaption) captionedTableIndices.add(index)
       }
       const narrativeDuplicates = narrativeDuplicateTableIndices(refined, {
-        captionedIndices: captionedTableIndices
+        captionedIndices: captionedTableIndices,
+        rules
       })
+      const nativeEvidenceGraphics = pageGeometry.graphicsBounds.map((graphic) => ({
+        kind: graphic.kind,
+        rect: graphic.normalizedRect.map(
+          (value, axis) => value * (axis % 2 ? pageGeometry.height : pageGeometry.width) * 1.5
+        )
+      }))
+      const hasSourceTableEvidence = (table, index) =>
+        nativeDefinitionTails.has(table.id) ||
+        hasTableEvidence(table, associations[index].caption, tokens, rules, nativeEvidenceGraphics)
+      // A fully framed native notation table can have an unreliable formula
+      // grid. Keep its proved image using the existing graphical-table result
+      // instead of publishing guessed mathematical cell assignments.
+      const nativeNotationFrames = pageInference.tables.flatMap((raw, index) => {
+        const matches = pageCaptions.flatMap((caption) => {
+          const proof =
+            proveCaptionedNativeDefinitionFrame(raw, caption, tokens, rules) ??
+            proveCaptionedNativeClosedTableFrame(raw, caption, tokens, rules)
+          return proof &&
+            [
+              'native-notation-visual',
+              'native-closed-table-visual',
+              'native-boxed-table-visual'
+            ].includes(proof.kind)
+            ? [
+                {
+                  index,
+                  rect: [
+                    Math.max(0, (proof.cropRect[0] - 2) / 1.5),
+                    Math.max(0, (proof.cropRect[1] - 2) / 1.5),
+                    Math.min(pageGeometry.width, (proof.cropRect[2] + 2) / 1.5),
+                    Math.min(pageGeometry.height, (proof.cropRect[3] + 2) / 1.5)
+                  ],
+                  caption: {
+                    ...caption,
+                    rect: caption.rect.map((v) => v / 1.5)
+                  }
+                }
+              ]
+            : []
+        })
+        return matches.length === 1 && !hasSourceTableEvidence(refined[index], index) ? matches : []
+      })
+      const nativeNotationIndices = new Set(nativeNotationFrames.map((f) => f.index))
       const acceptedTables = refined.map(
         (table, index) =>
+          !nativeNotationIndices.has(index) &&
           !narrativeDuplicates.has(index) &&
+          // A recognized, explicitly numbered procedure already owns its
+          // native source. A detector grid cannot publish those instructions
+          // a second time as table cells merely because they align in rows.
+          !isRecognizedAlgorithmOwnedTable(table, associations[index].caption, pageAlgorithms) &&
+          !isFigureOwnedPartialTable(table, captionedFigureRegions) &&
           !isExternalAttachmentTableRegion(table, tokens, rules, associations[index].caption) &&
           !isNativeAuthorAffiliationRegion(
             table,
@@ -1093,20 +1352,7 @@ try {
                 r[3] <= f.rect[3] + 12
               )
             })) &&
-          (nativeDefinitionTails.has(table.id) ||
-            hasTableEvidence(
-              table,
-              associations[index].caption,
-              tokens,
-              rules,
-              pageGeometry.graphicsBounds.map((graphic) => ({
-                kind: graphic.kind,
-                rect: graphic.normalizedRect.map(
-                  (value, axis) =>
-                    value * (axis % 2 ? pageGeometry.height : pageGeometry.width) * 1.5
-                )
-              }))
-            ))
+          hasSourceTableEvidence(table, index)
       )
       const recognizedTableRects = refined
         .filter((_, index) => acceptedTables[index])
@@ -1119,6 +1365,45 @@ try {
           .filter((t) => !t.grid.flat().some((s) => s.trim()))
           .map((t) => t.cropRect.map((v) => v / 1.5))
       )
+      for (const frame of nativeNotationFrames) {
+        const sameCaption = (caption) =>
+          caption?.page === frame.caption.page &&
+          caption?.lines?.[0] === frame.caption.lines[0] &&
+          Math.abs(caption.rect[1] - frame.caption.rect[1]) < 0.1
+        for (let index = graphicalTables.length - 1; index >= 0; index--)
+          if (sameCaption(graphicalTables[index].caption)) graphicalTables.splice(index, 1)
+        if (!graphicalTables.some((table) => sameCaption(table.caption)))
+          graphicalTables.push({ rect: frame.rect, caption: frame.caption })
+      }
+      // Complete source fences preserve omitted native visuals even when
+      // no reliable cell grid exists. Already emitted grids and images keep
+      // ownership; captionless boxed parts gain no inferred parent relation.
+      for (const frame of nativeClosedFrames) {
+        if (
+          refined.some(
+            (table, index) => acceptedTables[index] && isNativeClosedFrameOwnedByTable(table, frame)
+          ) ||
+          [...recognizedTableRects, ...graphicalTables.map((table) => table.rect)].some((rect) =>
+            coversClosedFrame(
+              rect.map((v) => v * 1.5),
+              frame.cropRect
+            )
+          )
+        )
+          continue
+        graphicalTables.push({
+          rect: [
+            Math.max(0, (frame.cropRect[0] - 2) / 1.5),
+            Math.max(0, (frame.cropRect[1] - 2) / 1.5),
+            Math.min(pageGeometry.width, (frame.cropRect[2] + 2) / 1.5),
+            Math.min(pageGeometry.height, (frame.cropRect[3] + 2) / 1.5)
+          ],
+          caption: frame.caption && {
+            ...frame.caption,
+            rect: frame.caption.rect.map((v) => v / 1.5)
+          }
+        })
+      }
       // A noisy caption can produce both a graphical-table fallback and a
       // detector fragment for the same source region. Keep the source-backed
       // candidate when their captions agree and their regions materially
@@ -1231,6 +1516,22 @@ try {
               rules.map((r) => r.map((v) => v / 1.5)),
               closedFrames
             )
+      if (!legendPage)
+        pageFigures.push(
+          ...associatePreviousPageRasterFigure(
+            pageGeometry,
+            geometry.pages,
+            captions,
+            [
+              ...recognizedTableRects,
+              ...notes.flatMap((items, index) =>
+                acceptedTables[index] ? items.map((n) => n.rect) : []
+              ),
+              ...pageAlgorithms.map((a) => a.rect)
+            ],
+            pageFigures
+          )
+        )
       if (!pageFigures.length && !recognizedTableRects.length && !legendPage)
         pageFigures = await recoverScannedFigures(page, pageGeometry)
       if (legendPage) pageFigures = []
