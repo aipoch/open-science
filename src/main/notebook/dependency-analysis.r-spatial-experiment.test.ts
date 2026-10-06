@@ -72,3 +72,17 @@ it('recognizes SpatialExperiment transforms and marks stochastic reductions unce
     expect.arrayContaining(['scuttle::logNormCounts', 'scater::runPCA'])
   )
 })
+
+it('does not trust a SpatialExperiment constructor from another namespace', async () => {
+  const { facts } = await analyzeRNotebookSource(
+    'spe <- custom::SpatialExperiment(assays = list(counts = matrix(1:4, nrow = 2)))'
+  )
+
+  expect(facts.typeBindings ?? []).not.toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ target: 'spe', typeName: 'SpatialExperiment' })
+    ])
+  )
+  expect(facts.state).toBe('unknown')
+  expect(facts.state === 'unknown' ? facts.reasons : []).toContain('opaque-call')
+})

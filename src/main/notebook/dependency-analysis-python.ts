@@ -8490,6 +8490,7 @@ const analyzePythonFileAccessTree = (
         safeMapLocation &&
         safeMmap &&
         !pythonTaintedNamespaces.has('torch') &&
+        !pythonTaintedNamespaces.has('*') &&
         !hasUnknownKeyword
       recordFileAccess('read', pathNode)
       if (!safe) {

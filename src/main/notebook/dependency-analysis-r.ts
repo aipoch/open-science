@@ -1599,6 +1599,13 @@ const analyzeRSource = (
   const tibbleConstructors = new Set(tibbleConstructorCalls)
   const dataTableConstructors = new Set(dataTableConstructorCalls)
   const biocConstructors = new Set(biocConstructorCalls)
+  const biocConstructorPackages = new Map([
+    ['ExpressionSet', 'Biobase'],
+    ['MultiAssayExperiment', 'MultiAssayExperiment'],
+    ['SingleCellExperiment', 'SingleCellExperiment'],
+    ['SummarizedExperiment', 'SummarizedExperiment'],
+    ['SpatialExperiment', 'SpatialExperiment']
+  ])
   const phyloseqConstructors = new Set(phyloseqConstructorCalls)
   const modelMask = new Set(modelDataMaskCalls)
   const pureSafe = new Set(pureSafeCalls)
@@ -4007,7 +4014,12 @@ const analyzeRSource = (
       return 'openxlsx.Workbook'
     }
     if (name && (dataTableConstructors.has(name) || name === 'copy')) return 'data.table'
-    if (name && biocConstructors.has(name)) return name
+    if (name && biocConstructors.has(name)) {
+      const owner = biocConstructorPackages.get(name)
+      const unshadowed =
+        !defined.includes(name) && !localNames.includes(name) && !shadowedCallbackCalls.has(name)
+      if (owner && (qualified ? qualified.package === owner : unshadowed)) return name
+    }
     if (qualified?.package === 'phyloseq' && phyloseqConstructors.has(qualified.name)) {
       return 'phyloseq'
     }
@@ -4067,6 +4079,15 @@ const analyzeRSource = (
   const deSeq2CallIsSafe = (expr: Extract<RExpr, { kind: 'call' }>): boolean => {
     const qualified = qualifiedCall(expr)
     const name = qualified?.package === 'DESeq2' ? qualified.name : calledName(expr)
+    if (
+      (qualified && qualified.package !== 'DESeq2') ||
+      (!qualified &&
+        (!name ||
+          defined.includes(name) ||
+          localNames.includes(name) ||
+          shadowedCallbackCalls.has(name)))
+    )
+      return false
     if (
       !name ||
       ![

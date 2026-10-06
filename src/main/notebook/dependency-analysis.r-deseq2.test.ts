@@ -69,3 +69,15 @@ it('rejects effectful calls embedded in DESeq2 formulas', async () => {
   expect(facts.state).toBe('unknown')
   expect(facts.state === 'unknown' ? facts.reasons : []).toContain('opaque-call')
 })
+
+it('does not trust a DESeq2 constructor from another namespace', async () => {
+  const { facts } = await analyzeRNotebookSource(
+    'dds <- custom::DESeqDataSetFromMatrix(countData = counts, colData = metadata, design = ~ condition)'
+  )
+
+  expect(facts.typeBindings ?? []).not.toEqual(
+    expect.arrayContaining([expect.objectContaining({ target: 'dds', typeName: 'DESeqDataSet' })])
+  )
+  expect(facts.state).toBe('unknown')
+  expect(facts.state === 'unknown' ? facts.reasons : []).toContain('opaque-call')
+})

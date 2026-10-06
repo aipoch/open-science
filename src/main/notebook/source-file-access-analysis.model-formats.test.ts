@@ -187,6 +187,27 @@ describe('model format file access coverage', () => {
     if (facts.state === 'unknown') expect(facts.reasons).toContain('external-state')
   })
 
+  it('keeps weights-only loads conservative after global namespace taint', async () => {
+    await expect(
+      analyzeNotebookSourceFileAccess(
+        'python',
+        "import torch\nweights = torch.load('source.pt', weights_only=True)",
+        {
+          staticStrings: [],
+          staticCollections: [],
+          localFileWrappers: [],
+          pythonTaintedNamespaces: ['*']
+        }
+      )
+    ).resolves.toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial',
+      reads: ['source.pt'],
+      reasonCodes: expect.arrayContaining(['source-analysis-unsupported-call'])
+    })
+  })
+
   it('carries safe-global taint into later cells in the same Python context', async () => {
     const registration = await analyzePythonNotebookSource(
       'import torch\ntorch.serialization.add_safe_globals([CustomTensor])'
