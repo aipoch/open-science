@@ -285,7 +285,7 @@ describe('independent source regression', () => {
         )
         expect(result.status).toBe(['true', 'false'].includes(selection) ? 0 : 1)
         if (selection === 'true') {
-          expect(result.stdout).toContain('--global-timeout=2400000')
+          expect(result.stdout).toContain('--global-timeout=3000000')
           expect(result.stdout).not.toContain('--grep-invert')
         }
         if (selection === 'false') {
@@ -306,7 +306,7 @@ describe('independent source regression', () => {
           required: true,
           type: 'choice',
           default: 'full',
-          options: ['full', 'workspace-images', 'presentation-screening']
+          options: ['full', 'presentation', 'workspace-images', 'presentation-screening']
         }
       }
     })
@@ -336,7 +336,7 @@ describe('independent source regression', () => {
           'npm run test:e2e:regressions -- --fail-on-flaky-tests --global-timeout="$regression_timeout" --output=test-results/regressions_macos'
         )
         expect(command.run).toContain('regression_timeout=1200000')
-        expect(command.run).toContain('true) regression_timeout=2400000')
+        expect(command.run).toContain('true) regression_timeout=3000000')
       } else {
         expect(command.run).toContain(
           'npm run test:e2e:delegation -- --fail-on-flaky-tests --global-timeout=1200000 --output=test-results/delegation_macos'
@@ -383,6 +383,75 @@ describe('independent source regression', () => {
       expect(steps.find((step) => step.name === name)?.if).toContain("inputs.mode == 'full'")
     }
   })
+
+  it.skipIf(process.platform === 'win32')(
+    'collects visual evidence after a browser failure and blocks either failure',
+    () => {
+      const command = scheduled.jobs.regression.steps.find(
+        ({ name }) => name === 'Run complete Mac browser and visual coverage'
+      )!
+      for (const browser of [0, 1]) {
+        for (const visual of [0, 1]) {
+          const result = spawnSync(
+            'bash',
+            [
+              '-e',
+              '-c',
+              `npx() { echo "browser $*"; return ${browser}; }\nnpm() { echo "visual $*"; return ${visual}; }\n${command.run}`
+            ],
+            { encoding: 'utf8' }
+          )
+          expect(result.stdout).toContain('browser playwright test')
+          expect(result.stdout).toContain('--global-timeout=900000')
+          expect(result.stdout).toContain('visual run test:e2e:visual')
+          expect(result.stdout).toContain('--global-timeout=600000')
+          expect(result.status).toBe(browser || visual)
+        }
+      }
+    }
+  )
+
+  it.skipIf(process.platform === 'win32')(
+    'keeps the presentation dry-run focused and blocking',
+    () => {
+      const steps = scheduled.jobs.regression.steps
+      for (const name of [
+        'Install headless Chromium',
+        'Run complete Mac browser and visual coverage',
+        'Run complete Mac accessibility checks'
+      ]) {
+        expect(steps.find((step) => step.name === name)?.if).toContain(
+          "inputs.mode == 'presentation'"
+        )
+      }
+      for (const name of [
+        'Run complete Mac functional journeys',
+        'Run complete Mac workspace journeys',
+        'Run supplemental regressions',
+        'Run supplemental delegation'
+      ]) {
+        expect(steps.find((step) => step.name === name)?.if).not.toContain(
+          "inputs.mode == 'presentation'"
+        )
+      }
+      const gate = steps.find(({ name }) => name === 'Enforce presentation dry-run')!
+      expect(gate.if).toContain("inputs.mode == 'presentation'")
+      expect(gate.env).toEqual({
+        PRESENTATION: '${{ steps.presentation.outcome }}',
+        ACCESSIBILITY: '${{ steps.accessibility.outcome }}'
+      })
+      for (const presentation of ['success', 'failure', 'cancelled', 'skipped', '']) {
+        for (const accessibility of ['success', 'failure', 'cancelled', 'skipped', '']) {
+          const result = spawnSync('bash', ['-e', '-c', gate.run!], {
+            env: { ...process.env, PRESENTATION: presentation, ACCESSIBILITY: accessibility }
+          })
+          expect(result.status).toBe(
+            presentation === 'success' && accessibility === 'success' ? 0 : 1
+          )
+        }
+      }
+    }
+  )
 
   it('keeps the screening flight dry-run focused and blocking', () => {
     const steps = scheduled.jobs.regression.steps

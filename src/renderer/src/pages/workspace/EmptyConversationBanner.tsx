@@ -83,7 +83,7 @@ const SessionPackageEntryRow = ({
       data-testid="session-package-entry"
       className={
         compact
-          ? 'pointer-events-auto mx-auto mt-4 flex w-fit max-w-full items-center gap-1.5 text-text-300'
+          ? 'pointer-events-auto mx-auto mt-4 flex w-fit max-w-full items-center gap-1.5 text-text-100'
           : 'pointer-events-auto mt-2.5 flex w-[420px] max-w-full items-center gap-3 rounded-[10px] border-[1.5px] border-dashed border-bg-400 bg-transparent px-4 py-3 text-left transition-colors hover:border-text-300 hover:bg-bg-200/50'
       }
     >
@@ -364,7 +364,7 @@ const NewConversationStart = ({
       <h2 className="text-2xl font-medium tracking-tight text-text-000">
         {t('What would you like to research?')}
       </h2>
-      <p className="mt-2 text-sm text-text-300">
+      <p className="mt-2 text-sm text-text-100">
         {t('Attach data or papers, then describe what you want to find out.')}
       </p>
       <div className="relative mt-6 min-w-0">
