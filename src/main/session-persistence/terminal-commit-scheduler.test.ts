@@ -275,11 +275,9 @@ it.each([false, true])(
     const h = await harness()
     vi.useFakeTimers()
     let storageUnavailable = true
-    let signalRetrySave: (() => void) | undefined
     const save = h.repository.saveSession.bind(h.repository)
     vi.spyOn(h.repository, 'saveSession').mockImplementation(async (...args) => {
       if (storageUnavailable) {
-        signalRetrySave?.()
         throw new Error('Temporary write failure')
       }
       return save(...args)
@@ -304,17 +302,8 @@ it.each([false, true])(
         ]
       })
     if (persistentFailure) {
-      const retrySave = deferred()
-      signalRetrySave = retrySave.resolve
-      const rejected = prepare().then(
-        () => 'unexpected admission',
-        (error: unknown) => error
-      )
-      await retrySave.promise
-      await vi.advanceTimersByTimeAsync(TERMINAL_ADMISSION_WAIT_BUDGET_MS)
-      expect(await Promise.race([rejected, Promise.resolve('unsettled')])).toMatchObject({
-        message: 'Temporary write failure'
-      })
+      // Real repository I/O must settle before advancing the fake terminal deadline.
+      await expect(prepare()).rejects.toMatchObject({ message: 'Temporary write failure' })
       const unchanged = await h.read()
       if (unchanged.status !== 'found') throw new Error('Expected retained authority')
       expect(unchanged.session.activeRun).toEqual(authority.session.activeRun)
