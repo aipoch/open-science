@@ -1,17 +1,17 @@
 ## ✨ Highlights
 
-- **Requesty provider.** Requesty joins the official provider picker with a curated model catalog. (#3114)
 - **Connector reach.** GWAS summary statistics discovery joins the human genetics connector, InterProScan gains sequence submission, and the IEDB connector adds receptor evidence searches. (#3278, #3280, #3304)
 - **A better start.** The new-conversation screen unifies research starters with the composer, and the session header gains a common-actions menu. (#3297, #3267)
+- **Requesty provider.** Requesty joins the official provider picker with a curated model catalog. (#3114)
 
 ## 🚀 New Features
 
-- Requesty provider in the official provider picker, with curated model catalog and built-in connection validation. (#3114)
 - GWAS summary statistics discovery in the human genetics connector: locate complete summary-statistics files, metadata, and reference genome information for a study. (#3278)
 - InterProScan connector gains bounded sequence submission, completing the submit → status → results workflow without manual job creation. (#3280)
 - IEDB connector gains TCR and BCR receptor evidence searches alongside epitope and assay search. (#3304)
 - New conversation start experience: research starters stay one click away while drafting, with a compact package import option. (#3297)
 - Session header menu groups common actions: edit and pin the session, start a side chat or fork, export the conversation, session package, or diagnostics, and archive. (#3267)
+- Requesty provider in the official provider picker, with curated model catalog and built-in connection validation. (#3114)
 
 ## 🔧 Improvements
 

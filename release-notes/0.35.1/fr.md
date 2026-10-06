@@ -1,17 +1,17 @@
 ## ✨ Points forts
 
-- **Fournisseur Requesty.** Requesty rejoint le sélecteur de fournisseurs officiel avec un catalogue de modèles sélectionné. (#3114)
 - **Extension des connecteurs.** La découverte des statistiques récapitulatives GWAS rejoint le connecteur de génétique humaine, InterProScan gagne la soumission de séquences, et le connecteur IEDB ajoute les recherches de preuves de récepteurs. (#3278, #3280, #3304)
 - **Un meilleur départ.** L'écran de nouvelle conversation unifie les démarreurs de recherche avec le compositeur, et l'en-tête de session gagne un menu d'actions courantes. (#3297, #3267)
+- **Fournisseur Requesty.** Requesty rejoint le sélecteur de fournisseurs officiel avec un catalogue de modèles sélectionné. (#3114)
 
 ## 🚀 Nouveautés
 
-- Fournisseur Requesty dans le sélecteur de fournisseurs officiel, avec catalogue de modèles sélectionné et validation de connexion intégrée. (#3114)
 - Découverte des statistiques récapitulatives GWAS dans le connecteur de génétique humaine : localisez les fichiers complets de statistiques récapitulatives, les métadonnées et les informations sur le génome de référence d'une étude. (#3278)
 - Le connecteur InterProScan gagne la soumission de séquences bornée, complétant le flux soumission → statut → résultats sans création manuelle de tâche. (#3280)
 - Le connecteur IEDB gagne les recherches de preuves de récepteurs TCR et BCR aux côtés de la recherche d'épitopes et de tests. (#3304)
 - Nouvelle expérience de démarrage de conversation : les démarreurs de recherche restent à un clic pendant la rédaction, avec une option compacte d'importation de paquet. (#3297)
 - Le menu de l'en-tête de session regroupe les actions courantes : modifier et épingler la session, démarrer une discussion latérale ou un embranchement, exporter la conversation, le paquet de session ou les diagnostics, et archiver. (#3267)
+- Fournisseur Requesty dans le sélecteur de fournisseurs officiel, avec catalogue de modèles sélectionné et validation de connexion intégrée. (#3114)
 
 ## 🔧 Améliorations
 

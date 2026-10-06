@@ -1,17 +1,17 @@
 ## ✨ Highlights
 
-- **Requesty-Anbieter.** Requesty ist jetzt im offiziellen Anbieter-Auswahlmenü mit kuratiertem Modellkatalog verfügbar. (#3114)
 - **Konnektor-Erweiterung.** Die GWAS-Summary-Statistics-Discovery ergänzt den Humangenetik-Konnektor, InterProScan erhält die Sequenzeinreichung, und der IEDB-Konnektor fügt Rezeptor-Evidenzsuchen hinzu. (#3278, #3280, #3304)
 - **Ein besserer Start.** Die Oberfläche für neue Unterhaltungen vereint Recherche-Starters mit dem Eingabefeld, und die Sitzungskopfzeile erhält ein Menü häufiger Aktionen. (#3297, #3267)
+- **Requesty-Anbieter.** Requesty ist jetzt im offiziellen Anbieter-Auswahlmenü mit kuratiertem Modellkatalog verfügbar. (#3114)
 
 ## 🚀 Neue Funktionen
 
-- Requesty-Anbieter im offiziellen Anbieter-Auswahlmenü, mit kuratiertem Modellkatalog und integrierter Verbindungsprüfung. (#3114)
-- GWAS-Summary-Statistics-Discovery im Humangenetik-Konnektor: vollständige Summary-Statistics-Dateien, Metadaten und Referenzgenominformationen einer Studie finden. (#3278)
-- Der InterProScan-Konnektor erhält begrenzte Sequenzeinreichung und vervollständigt den Workflow Einreichen → Status → Ergebnisse ohne manuelle Job-Erstellung. (#3280)
+- GWAS-Summary-Statistics-Discovery im Humangenetik-Konnektor: vollständige Summary-Statistics-Dateien, Metadaten und Referenzgenom-Informationen zu einer Studie finden. (#3278)
+- Der InterProScan-Konnektor erhält eine begrenzte Sequenzeinreichung und vervollständigt den Workflow Einreichung → Status → Ergebnisse ohne manuelle Job-Erstellung. (#3280)
 - Der IEDB-Konnektor ergänzt TCR- und BCR-Rezeptor-Evidenzsuchen neben Epitop- und Assay-Suche. (#3304)
 - Überarbeitete Startoberfläche für neue Unterhaltungen: Recherche-Starters bleiben beim Entwurf einen Klick entfernt, mit kompakter Option zum Paketimport. (#3297)
 - Das Menü der Sitzungskopfzeile bündelt häufige Aktionen: Sitzung bearbeiten und anheften, Seitenchat starten oder Verzweigung erstellen, Unterhaltung, Sitzungspaket oder Diagnosen exportieren sowie archivieren. (#3267)
+- Requesty-Anbieter im offiziellen Anbieter-Auswahlmenü, mit kuratiertem Modellkatalog und integrierter Verbindungsprüfung. (#3114)
 
 ## 🔧 Verbesserungen
 
