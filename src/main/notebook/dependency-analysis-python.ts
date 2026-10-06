@@ -3389,8 +3389,25 @@ class Analyzer extends NodeVisitor {
     // materialized as a NumPy array, while an unsliced lookup remains a
     // resource-backed Dataset handle whose later methods must stay tracked.
     if (owner === 'h5py.File') return 'h5py.Dataset'
-    if (owner === 'h5py.Dataset')
-      return node.slice?.type === 'Slice' ? 'numpy.ndarray' : 'python.scalar'
+    if (owner === 'h5py.Dataset') {
+      // h5py returns an ndarray for slices, ellipsis, and any multidimensional
+      // selection. Only a proven scalar index should remain scalar; treating a
+      // tuple of slices as a scalar loses the array handoff to later cells.
+      const selector = node.slice
+      const scalarIndex = (index: PyNode | null | undefined): boolean =>
+        Boolean(
+          index &&
+          ((index.type === 'Constant' && index.constKind === 'int') ||
+            (index.type === 'Name' && this.libraryTypeName(index) === 'python.scalar'))
+        )
+      if (!selector || selector.type === 'Slice' || selector.type === 'Ellipsis')
+        return 'numpy.ndarray'
+      if (selector.type === 'Tuple')
+        return selector.elts?.every((index) => scalarIndex(index))
+          ? 'python.scalar'
+          : 'numpy.ndarray'
+      return scalarIndex(selector) ? 'python.scalar' : 'numpy.ndarray'
+    }
     if (
       owner === 'pandas.DataFrame' &&
       ((node.slice?.type === 'Constant' && node.slice.constKind === 'str') ||

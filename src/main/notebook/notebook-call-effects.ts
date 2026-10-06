@@ -462,7 +462,7 @@ const R_FILE_CALL_EFFECTS: ReadonlyMap<string, NotebookFileCallEffect> = new Map
   // SeuratDisk serializes a Seurat object as one HDF5-backed file. Keep these
   // contracts explicit so a multi-cell Seurat workflow exposes the handoff
   // between LoadH5Seurat and SaveH5Seurat in file lineage.
-  ['LoadH5Seurat', { kind: 'read', position: 0, keywords: ['file'] }],
+  ['LoadH5Seurat', { kind: 'read', position: 0, keywords: ['filename', 'file'] }],
   ['SaveH5Seurat', { kind: 'write', position: 1, keywords: ['filename'] }],
   ...[
     'read_csv',

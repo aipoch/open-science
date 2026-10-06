@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { NotebookRunRecord } from '../../shared/notebook'
 import { NotebookDependencyAnalyzer } from './dependency-analysis'
+import { analyzePythonSources } from './dependency-analysis-python'
 import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
 
 const temporaryRoots: string[] = []
@@ -57,7 +58,7 @@ describe('Python HDF5 dependency corpus', () => {
       [
         'import h5py',
         'source = h5py.File("inputs/counts.h5", "r")',
-        'matrix = source["counts"][:]',
+        'matrix = source["counts"][:, :]',
         'sample_ids = source["sample_ids"][:]',
         'source.close()',
         'print(matrix.shape, sample_ids.shape)'
@@ -94,5 +95,23 @@ describe('Python HDF5 dependency corpus', () => {
     expect(projection?.dependenciesByRunId?.['run-2']).toEqual(['run-1'])
     expect(projection?.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
     expect(projection?.stalenessByRunId['run-2']).toEqual({ state: 'clear' })
+  })
+
+  it('classifies multidimensional h5py selections as arrays across cells', async () => {
+    const [first, second] = await analyzePythonSources([
+      [
+        'import h5py',
+        'source = h5py.File("inputs/counts.h5", "r")',
+        'matrix = source["counts"][:, :]',
+        'matrix'
+      ].join('\n'),
+      'normalized = matrix / 2\nprint(normalized.shape)'
+    ])
+    expect(first?.typeBindings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ target: 'matrix', typeName: 'numpy.ndarray' })
+      ])
+    )
+    expect(second?.usedNames ?? []).toContain('matrix')
   })
 })

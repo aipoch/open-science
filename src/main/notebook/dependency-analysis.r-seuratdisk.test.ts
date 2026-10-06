@@ -38,6 +38,18 @@ it('keeps dynamic SeuratDisk paths partial', async () => {
   })
 })
 
+it('captures the named filename argument for SeuratDisk inputs', async () => {
+  const access = await analyzeNotebookSourceFileAccess(
+    'r',
+    'object <- SeuratDisk::LoadH5Seurat(filename = "inputs/pbmc.h5seurat")'
+  )
+  expect(access).toMatchObject({
+    readState: 'complete',
+    externalState: 'complete',
+    reads: ['inputs/pbmc.h5seurat']
+  })
+})
+
 it('links SeuratDisk serialization across cells', async () => {
   const root = await mkdtemp(join(tmpdir(), 'seuratdisk-lineage-'))
   const runs: NotebookRunRecord[] = [
