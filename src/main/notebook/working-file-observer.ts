@@ -1641,12 +1641,14 @@ const companionStemMatches = (
   stem: string,
   suffixes: readonly string[]
 ): boolean => {
-  const lowerCandidate = candidate.toLocaleLowerCase('en-US')
-  const lowerStem = stem.toLocaleLowerCase('en-US')
+  const normalizeCase = (value: string): string =>
+    process.platform === 'win32' ? value.toLocaleLowerCase('en-US') : value
+  const normalizedCandidate = normalizeCase(candidate)
+  const normalizedStem = normalizeCase(stem)
   return suffixes.some(
     (suffix) =>
-      lowerCandidate.endsWith(suffix) &&
-      candidate.slice(0, -suffix.length).toLocaleLowerCase('en-US') === lowerStem
+      normalizedCandidate.endsWith(suffix) &&
+      normalizeCase(candidate.slice(0, -suffix.length)) === normalizedStem
   )
 }
 

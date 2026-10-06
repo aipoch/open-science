@@ -164,6 +164,21 @@ describe('model format file access coverage', () => {
     })
   })
 
+  it('keeps weights-only loads conservative after deserializer registration', async () => {
+    await expect(
+      analyzeNotebookSourceFileAccess(
+        'python',
+        "import torch\ntorch.serialization.register_package(1, tagger, deserializer)\nweights = torch.load('source.pt', weights_only=True)"
+      )
+    ).resolves.toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial',
+      reads: ['source.pt'],
+      reasonCodes: expect.arrayContaining(['source-analysis-unsupported-call'])
+    })
+  })
+
   it('keeps dependency facts conservative after safe-global registration', async () => {
     const { facts } = await analyzePythonNotebookSource(
       "import torch\ntorch.serialization.add_safe_globals([CustomTensor])\nweights = torch.load('source.pt', weights_only=True)"
@@ -175,6 +190,22 @@ describe('model format file access coverage', () => {
   it('carries safe-global taint into later cells in the same Python context', async () => {
     const registration = await analyzePythonNotebookSource(
       'import torch\ntorch.serialization.add_safe_globals([CustomTensor])'
+    )
+    const load = await analyzePythonNotebookSource(
+      "import torch\nweights = torch.load('source.pt', weights_only=True)",
+      registration.fileAccess?.context
+    )
+
+    expect(load.fileAccess).toMatchObject({
+      reads: ['source.pt'],
+      unresolvedReads: true,
+      unsupportedExternalState: true
+    })
+  })
+
+  it('carries deserializer-hook taint into later cells in the same Python context', async () => {
+    const registration = await analyzePythonNotebookSource(
+      'import torch\ntorch.serialization.register_package(1, tagger, deserializer)'
     )
     const load = await analyzePythonNotebookSource(
       "import torch\nweights = torch.load('source.pt', weights_only=True)",

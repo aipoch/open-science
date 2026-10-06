@@ -86,10 +86,16 @@ afterEach(async () => {
 describe('working-file evidence', () => {
   it('matches scientific companions without changing the basename case', () => {
     expect(
-      matchesWriteScope({ kind: 'shapefile', path: 'Outputs/Map.shp' }, 'outputs/map.dbf')
+      matchesWriteScope({ kind: 'shapefile', path: 'Outputs/Map.shp' }, 'Outputs/Map.dbf')
     ).toBe(true)
-    expect(matchesWriteScope({ kind: 'geotiff', path: 'Outputs/Map.tif' }, 'outputs/map.tfw')).toBe(
+    expect(
+      matchesWriteScope({ kind: 'shapefile', path: 'Outputs/Map.shp' }, 'outputs/map.dbf')
+    ).toBe(process.platform === 'win32')
+    expect(matchesWriteScope({ kind: 'geotiff', path: 'Outputs/Map.tif' }, 'Outputs/Map.tfw')).toBe(
       true
+    )
+    expect(matchesWriteScope({ kind: 'geotiff', path: 'Outputs/Map.tif' }, 'outputs/map.tfw')).toBe(
+      process.platform === 'win32'
     )
   })
 

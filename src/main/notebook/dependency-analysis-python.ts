@@ -5919,7 +5919,8 @@ class Analyzer extends NodeVisitor {
         .join('.')
       if (
         canonicalCallName === 'torch.serialization.add_safe_globals' ||
-        canonicalCallName === 'torch.serialization.safe_globals'
+        canonicalCallName === 'torch.serialization.safe_globals' ||
+        canonicalCallName === 'torch.serialization.register_package'
       ) {
         this.taintedNamespaces.add('torch')
         this.unknown.add('external-state')
@@ -8469,7 +8470,8 @@ const analyzePythonFileAccessTree = (
     }
     if (
       canonicalName === 'torch.serialization.add_safe_globals' ||
-      canonicalName === 'torch.serialization.safe_globals'
+      canonicalName === 'torch.serialization.safe_globals' ||
+      canonicalName === 'torch.serialization.register_package'
     ) {
       // The registration changes process-wide deserialization behavior. Reuse
       // the existing namespace taint so it survives into later cells in the
