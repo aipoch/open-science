@@ -6,4 +6,4 @@
  * predicate shared so Python and R use the same conservative boundary.
  */
 export const isExternalNotebookPath = (value: string): boolean =>
-  /^(?:[a-z][a-z\d+.-]*:\/\/|\/vsi[^/]+\/[a-z][a-z\d+.-]*:\/\/)/iu.test(value)
+  /^(?:[a-z][a-z\d+.-]*:\/\/|\/vsi[a-z\d_-]+\/)/iu.test(value)

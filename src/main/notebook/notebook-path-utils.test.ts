@@ -10,8 +10,14 @@ describe('isExternalNotebookPath', () => {
     }
   )
 
-  it('recognizes VSI-wrapped remote paths as external', () => {
-    expect(isExternalNotebookPath('/vsicurl/https://example.org/dem.tif')).toBe(true)
+  it.each([
+    '/vsicurl/https://example.org/dem.tif',
+    '/vsis3/bucket/object.tif',
+    '/vsigs/bucket/object.tif',
+    '/vsiaz/container/object.tif',
+    '/vsimem/object.tif'
+  ])('recognizes GDAL VSI path %s as external', (path) => {
+    expect(isExternalNotebookPath(path)).toBe(true)
   })
 
   it.each(['inputs/data.csv', './outputs/result.parquet', 'C:\\data\\matrix.h5'])(

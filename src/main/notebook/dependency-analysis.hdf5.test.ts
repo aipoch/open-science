@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { NotebookRunRecord } from '../../shared/notebook'
 import { NotebookDependencyAnalyzer } from './dependency-analysis'
 import { analyzePythonSources } from './dependency-analysis-python'
+import { pythonLibraryMethodEffect } from './python-library-effects'
 import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
 
 const temporaryRoots: string[] = []
@@ -113,5 +114,32 @@ describe('Python HDF5 dependency corpus', () => {
       ])
     )
     expect(second?.usedNames ?? []).toContain('matrix')
+  })
+
+  it('models h5py read_direct as a read with destination uncertainty', async () => {
+    const [facts] = await analyzePythonSources([
+      [
+        'import h5py',
+        'import numpy as np',
+        'source = h5py.File("inputs/counts.h5", "r")',
+        'dataset = source["counts"]',
+        'buffer = np.empty((2, 2))',
+        'dataset.read_direct(buffer)'
+      ].join('\n')
+    ])
+    expect(facts?.receiverCalls).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          receiver: 'dataset',
+          member: 'read_direct',
+          positionalArgumentNames: [['buffer']]
+        })
+      ])
+    )
+    expect(facts?.mutatedNames ?? []).not.toContain('dataset')
+    expect(pythonLibraryMethodEffect('h5py.Dataset', 'read_direct')).toMatchObject({
+      effect: 'read',
+      possiblyMutatesFirstArgument: true
+    })
   })
 })

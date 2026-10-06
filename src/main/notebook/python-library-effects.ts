@@ -407,7 +407,7 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
     methods: {
       astype: { effect: 'read', returnType: 'h5py.Dataset' },
       resize: { effect: 'mutate' },
-      read_direct: { effect: 'mutate' },
+      read_direct: { effect: 'read', possiblyMutatesFirstArgument: true },
       write_direct: { effect: 'mutate' }
     }
   },
