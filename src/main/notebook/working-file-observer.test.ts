@@ -1297,7 +1297,7 @@ describe('working-file evidence', () => {
       fileReads: 'partial',
       externalPaths: 'partial',
       writerAttribution: 'complete',
-      reasonCodes: expect.arrayContaining(['absolute-path-not-frozen'])
+      reasonCodes: expect.arrayContaining(['external-paths-not-observed'])
     })
   })
 
