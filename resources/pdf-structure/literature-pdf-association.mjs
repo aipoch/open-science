@@ -1527,7 +1527,10 @@ function associateFigureFaces(
   const pageCaptions = candidates.filter((c) => c.page === page.pageNumber)
   const captions = pageCaptions.filter(
     (c) =>
-      (captionKind(c.lines.join(' ')) === 'figure' ||
+      // Candidate grouping has already accepted the native title line. A
+      // descriptive continuation may contain a finite verb without turning
+      // that independently accepted title into an inline prose reference.
+      (captionKind(c.lines[0]) === 'figure' ||
         nativeCaptionedRasterArrayFragment(page, c, pageCaptions, tableRects)) &&
       !/\(facing page\)/i.test(c.lines.join(' '))
   )

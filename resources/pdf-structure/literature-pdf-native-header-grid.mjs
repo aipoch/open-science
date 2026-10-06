@@ -132,10 +132,19 @@ export function proveNativeFullyRuledLiteralGrid(table, items, captions, rules) 
   }
   // Distinct leaves cannot become a joined header merely because an interior
   // fence is missing. Allow contiguous glyph fragments and wrapped words.
-  for (const cell of cells[0]) {
-    const bands = groupSourceRowsWithScripts(cell, h, 0.2)
-    if (!bands || bands.some((g) => nativeHorizontalFields(g, h * 0.65).length !== 1)) return
-  }
+  const headerBands = cells[0].map((cell) =>
+    groupSourceRowsWithScripts(
+      cell.toSorted((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0]),
+      h,
+      0.2
+    )
+  )
+  if (
+    headerBands.some(
+      (bands) => !bands || bands.some((g) => nativeHorizontalFields(g, h * 0.65).length !== 1)
+    )
+  )
+    return
   const rowRects = faces.slice(1).map((y, r) => [cuts[0], faces[r], cuts.at(-1), y]),
     headerCells = cells[0].map((g, column) => ({
       row: 0,
@@ -143,19 +152,22 @@ export function proveNativeFullyRuledLiteralGrid(table, items, captions, rules) 
       rowSpan: 1,
       colSpan: 1,
       rect: [cuts[column], faces[0], cuts[column + 1], faces[1]],
-      text: g
-        .toSorted((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])
-        .reduce(
-          (text, i, n, ordered) =>
-            text +
-            (n &&
-            (Math.abs(i.baseline - ordered[n - 1].baseline) > h * 0.2 ||
-              i.rect[0] - ordered[n - 1].rect[2] > h * 0.14)
-              ? ' '
-              : '') +
-            i.text.trim(),
-          ''
-        ),
+      // The existing native row proof owns attached scripts on their base
+      // baseline. Read within each proved row horizontally, so a raised glyph
+      // cannot precede its base merely because it has the earlier baseline.
+      text: headerBands[column]
+        .map((band) =>
+          band
+            .toSorted((a, b) => a.rect[0] - b.rect[0])
+            .reduce(
+              (text, i, n, ordered) =>
+                text +
+                (n && i.rect[0] - ordered[n - 1].rect[2] > h * 0.14 ? ' ' : '') +
+                i.text.trim(),
+              ''
+            )
+        )
+        .join(' '),
       sourceTokens: g,
       sourceRects: g.map((i) => i.rect),
       origin: 'source-fully-ruled-header'

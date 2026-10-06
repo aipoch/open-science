@@ -5,6 +5,9 @@ import { readPdfFixture } from './read-fixture'
 const { proveNativeFullyRuledLiteralGrid, findCaptionedNativePartialRuleTable } = await import(
   pathToFileURL(resolve('resources/pdf-structure/literature-pdf-native-header-grid.mjs')).href
 )
+const { refineTable } = await import(
+  pathToFileURL(resolve('resources/pdf-structure/literature-pdf-table-refine.mjs')).href
+)
 it('recovers a complete captioned numeric inventory with only a divider and continuous native stub fence', () => {
   const f = readPdfFixture(
       resolve(
@@ -97,6 +100,80 @@ it('joins contiguous native header glyph fragments without inventing word spaces
   expect(plan.headerCells[0].text).toBe('AB')
   expect(plan.headerCells[0].sourceTokens).toHaveLength(2)
 })
+it.each(['superscript', 'subscript', 'normal'])(
+  'preserves plain and rich %s header order through wide literal record reconstruction',
+  (position) => {
+    const f = fixture()
+    f.cuts = Array.from({ length: 22 }, (_, n) => n * 30)
+    f.rules = [
+      ...f.cuts.map((x: number) => [x, 20, x, 102]),
+      ...f.faces.map((y: number) => [0, y, 630, y])
+    ]
+    f.captions[0].rect = [0, 0, 630, 15]
+    f.table = {
+      id: 'anonymous-literal-matrix',
+      cropRect: [-2, 18, 632, 104],
+      structure: {
+        objects: [
+          ...f.cuts.slice(1).map((x: number, c: number) => ({
+            label: 'table column',
+            rect: [f.cuts[c] + 2, 0, x + 2, 86]
+          })),
+          ...f.faces.slice(1).map((y: number, r: number) => ({
+            label: 'table row',
+            rect: [0, f.faces[r] - 18, 634, y - 18]
+          })),
+          { label: 'table column header', rect: [0, 2, 634, 28] }
+        ]
+      }
+    }
+    const base = { text: 'm', rect: [4, 32, 10, 41], baseline: 41, height: 9, horizontal: true }
+    f.items = f.cuts.slice(1).map((_: number, c: number) => ({
+      ...base,
+      text: c ? `H${c}` : 'm',
+      rect: [f.cuts[c] + 4, 32, f.cuts[c] + (c ? 13 : 10), 41]
+    }))
+    const baseline = position === 'superscript' ? 37 : position === 'subscript' ? 44 : 41,
+      height = position === 'normal' ? 9 : 5
+    f.items.push({
+      ...base,
+      text: '2',
+      rect: [10, baseline - height, 14, baseline],
+      baseline,
+      height
+    })
+    for (let r = 1; r < f.faces.length - 1; r++) {
+      const y = f.faces[r] + 10,
+        x = f.cuts[1 + (r % 4)] + 4
+      f.items.push(
+        { ...base, text: `[${r}]`, rect: [4, y - 9, 13, y], baseline: y },
+        { ...base, text: '✓', rect: [x, y - 9, x + 9, y], baseline: y }
+      )
+    }
+    const before = structuredClone(f),
+      result = refineTable(f.table, f.items, f.captions, [], f.rules),
+      header = result.cells.find((c: { row: number; column: number }) => !c.row && !c.column)
+    expect(result.repairs).toContain('native-fully-ruled-literal-faces-proved')
+    expect(header.text).toBe('m2')
+    expect(result.grid[0][0]).toBe('m2')
+    if (position === 'normal') expect(header.textRuns).toBeUndefined()
+    else
+      expect(header.textRuns).toEqual([
+        { text: 'm', position: 'normal' },
+        { text: '2', position }
+      ])
+    expect(f).toEqual(before)
+    const reversed = refineTable(f.table, [...f.items].reverse(), f.captions, [], f.rules)
+    expect(reversed.grid).toEqual(result.grid)
+    const reversedHeader = reversed.cells.find(
+      (c: { row: number; column: number }) => !c.row && !c.column
+    )
+    expect(reversedHeader.text).toBe(header.text)
+    expect(reversedHeader.textRuns).toEqual(header.textRuns)
+    expect(reversedHeader.sourceRects).toHaveLength(header.sourceRects.length)
+    expect(reversedHeader.sourceRects).toEqual(expect.arrayContaining(header.sourceRects))
+  }
+)
 it.each(['independent body baselines', 'interleaved body ink'])(
   'preserves existing record semantics when a physical face has %s',
   (variant) => {
@@ -121,6 +198,36 @@ it.each(['independent body baselines', 'interleaved body ink'])(
     expect(f).toEqual(before)
   }
 )
+it.each(['ambiguous script row', 'rotated header'])(
+  'does not serialize a literal header with %s evidence',
+  (variant) => {
+    const f = fixture(),
+      first = f.items[0]
+    if (variant === 'rotated header') first.horizontal = false
+    else {
+      first.rect[2] = 10
+      f.items.push(
+        { ...first, text: 'Other', rect: [4, 24, 10, 33], baseline: 33 },
+        { ...first, text: '2', rect: [10, 32, 14, 37], baseline: 37, height: 5 }
+      )
+    }
+    const before = structuredClone(f)
+    expect(proveNativeFullyRuledLiteralGrid(f.table, f.items, f.captions, f.rules)).toBeUndefined()
+    expect(f).toEqual(before)
+  }
+)
+it('keeps proved wrapped header words in physical row order', () => {
+  const f = fixture(),
+    first = f.items[0]
+  first.text = 'Second'
+  f.items.push({ ...first, text: 'First', rect: [4, 20, 13, 29], baseline: 29 })
+  const plan = proveNativeFullyRuledLiteralGrid(f.table, f.items, f.captions, f.rules)
+  expect(plan.headerCells[0].text).toBe('First Second')
+  expect(
+    proveNativeFullyRuledLiteralGrid(f.table, [...f.items].reverse(), f.captions, f.rules)
+      .headerCells[0].text
+  ).toBe('First Second')
+})
 it.each(['missing interior edge', 'partial edge', 'crossed gutter', 'no caption', 'missing leaf'])(
   'refuses to infer a literal matrix from %s',
   (variant) => {

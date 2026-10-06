@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest'
 import { pathToFileURL } from 'node:url'
 import { resolve } from 'node:path'
+import { spawnSync } from 'node:child_process'
 import { readPdfFixture } from './read-fixture'
 
 type CaptionLine = {
@@ -20,6 +21,55 @@ const {
   findCaptionCandidates
 } = await import(
   pathToFileURL(resolve('resources/pdf-structure/literature-pdf-caption-group.mjs')).href
+)
+
+it.each([
+  'Table 77-81 82.2 86.3',
+  'Table 77 - S81 82.2 86.3',
+  'Tab. A2–B4 10% (20/30)',
+  'Figure 2 10.5, 20.3',
+  'Fig. 2 +10:20%',
+  'Table 82.9 82.2 86.3',
+  'Table 1 -2 ',
+  'Table 1 %\t%\t%\n'
+])('rejects a numeric data continuation without a descriptive title: %s', (text) => {
+  expect(captionKind(text)).toBeUndefined()
+})
+
+it.each([
+  ['Table 77-81: Measured values.', 'table'],
+  ['Table 82.9: Measured values.', 'table'],
+  ['Table 2 10% improvement by condition.', 'table'],
+  ['Figure 2: 10.5, 20.3', 'figure'],
+  ['Figure 2 % agreement by condition.', 'figure']
+])('retains a descriptive caption next to numeric row syntax: %s', (text, kind) => {
+  expect(captionKind(text)).toBe(kind)
+})
+
+it.each(['table\t0\t', 'table\t0.0\t'])(
+  'classifies long percent and numeric lists within a bounded child process: %s',
+  (prefix) => {
+    const moduleUrl = pathToFileURL(
+      resolve('resources/pdf-structure/literature-pdf-caption-group.mjs')
+    ).href
+    const source = `
+      import assert from 'node:assert/strict';
+      import { captionKind } from ${JSON.stringify(moduleUrl)};
+      const prefix = ${JSON.stringify(prefix)};
+      for (const values of ['%'.repeat(25000), '12.5%\t'.repeat(5000)]) {
+        assert.equal(captionKind(prefix + values), undefined);
+        assert.equal(captionKind(prefix + values + 'x'), 'table');
+      }
+    `
+    const run = spawnSync(process.execPath, ['--input-type=module', '-e', source], {
+      timeout: 4000,
+      encoding: 'utf8',
+      windowsHide: true
+    })
+    expect(run.error, run.stderr).toBeUndefined()
+    expect(run.status, run.stderr).toBe(0)
+  },
+  10000
 )
 
 it('recognizes manuscript legend headings without treating past-tense references as captions', () => {

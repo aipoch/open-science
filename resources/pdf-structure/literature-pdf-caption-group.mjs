@@ -621,17 +621,22 @@ export function captionKind(text) {
   // OCR/table-row extraction can put a data row behind a label-like token
   // (for example, "Table 77-81 82.2 ...").  A continuation made entirely of
   // numeric values and separators is data, not a descriptive caption.
-  if (
-    /^(?:Table|Tab\.?|Figure|Fig\.?)\s+[A-Z]?\d+(?:\s*[-–—]\s*[A-Z]?\d+)?\s+(?:[\d.,:%()+/–—-]+\s*)+$/i.test(
-      text ?? ''
-    )
-  )
-    return undefined
+  // Parse the label separately so a nonnumeric suffix cannot make the engine
+  // repartition one long run of values into exponentially many token groups.
+  const numericRowTail = /^\s+[\d.,:%()+/–—-][\d.,:%()+/–—\s-]*$/
+  const integerRowLabel = /^(?:Table|Tab\.?|Figure|Fig\.?)\s+[A-Z]?\d+/i.exec(text)
+  if (integerRowLabel) {
+    const tail = text.slice(integerRowLabel[0].length)
+    if (numericRowTail.test(tail)) return undefined
+    const ordinalRange = /^\s*[-–—]\s*[A-Z]?\d+/i.exec(tail)
+    if (ordinalRange && numericRowTail.test(tail.slice(ordinalRange[0].length))) return undefined
+  }
   // Decimal-looking table labels followed only by numeric values are common
   // extracted data rows (for example, "Table 82.9 82.2 86.3 ..."), not
   // descriptive captions. Handle the decimal label before the general row
   // guard, whose first ordinal intentionally accepts only integers.
-  if (/^(?:Table|Tab\.?)\s+[A-Z]?\d+\.\d+\s+(?:[\d.,:%()+/–—-]+\s*)+$/i.test(text ?? ''))
+  const decimalRowLabel = /^(?:Table|Tab\.?)\s+[A-Z]?\d+\.\d+/i.exec(text)
+  if (decimalRowLabel && numericRowTail.test(text.slice(decimalRowLabel[0].length)))
     return undefined
   // Some references repeat the kind only once and use a bare second ordinal
   // ("Table 3 and 4, where ...").  Require a prose continuation after a

@@ -245,3 +245,29 @@ it('keeps the literal source script attached to its proved comparison record', (
   expect(cell.row).toBe(9)
   expect(cell.column).toBe(0)
 })
+
+it.each(['wrapped-scalar-stub-records', 'wrapped-comparison-source-records'])(
+  'requires a literal numeric sign for complete scalar peers in %s',
+  (kind) => {
+    for (const prefix of ['A', '=', ':', '×']) {
+      const input = fixture(kind)
+      for (const item of input.items)
+        if (/^\d+(?:\.\d+)?$/.test(item.text)) item.text = prefix + item.text
+      const before = structuredClone(input)
+      expect(run(input).repairs).not.toContain('native-wrapped-stub-scalar-records-recovered')
+      expect(input).toEqual(before)
+    }
+  }
+)
+
+it.each(['wrapped-scalar-stub-records', 'wrapped-comparison-source-records'])(
+  'retains printed positive and negative scalar peers in %s',
+  (kind) => {
+    for (const prefix of ['+', '-', '−']) {
+      const input = fixture(kind)
+      for (const item of input.items)
+        if (/^\d+(?:\.\d+)?$/.test(item.text)) item.text = prefix + item.text
+      expect(run(input).repairs).toContain('native-wrapped-stub-scalar-records-recovered')
+    }
+  }
+)

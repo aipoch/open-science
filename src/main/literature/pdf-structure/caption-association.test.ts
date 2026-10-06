@@ -13,6 +13,61 @@ const { associateFigures, associateTableCaptions } = await import(
   pathToFileURL(resolve('resources/pdf-structure/literature-pdf-association.mjs')).href
 )
 
+const multilineFigureCaption = (title: string): ReturnType<typeof JSON.parse> => ({
+  pageNumber: 1,
+  width: 600,
+  height: 800,
+  invalidGraphicsBounds: 0,
+  lines: [title, 'demonstrate the response across the measured conditions.'].map((text, n) => ({
+    text,
+    x: 50,
+    y: 250 + n * 14,
+    width: 300,
+    height: 10,
+    fontSize: 10
+  })),
+  graphicsBounds: [{ kind: 'image', normalizedRect: [50 / 600, 50 / 800, 350 / 600, 235 / 800] }]
+})
+
+it.each(['Figure 1b. Results', 'Fig. 1b. Results'])(
+  'associates the complete native multiline caption after its first line is accepted: %s',
+  (title) => {
+    const page = multilineFigureCaption(title),
+      before = structuredClone(page),
+      captions = findCaptionCandidates([page])
+    expect(captions).toHaveLength(1)
+    expect(captions[0].lines).toEqual(page.lines.map((line: { text: string }) => line.text))
+    const figures = associateFigures(page, captions)
+    expect(figures).toHaveLength(1)
+    expect(figures[0].caption).toEqual(captions[0])
+    expect(figures[0].rect).toEqual([50, 50, 350, 235])
+    expect(page).toEqual(before)
+  }
+)
+
+it.each(['Figure 1b. Results demonstrate a measured effect.', 'Fig. 1b. Results show the effect.'])(
+  'retains first-line prose rejection during figure association: %s',
+  (title) => {
+    const page = multilineFigureCaption(title)
+    expect(findCaptionCandidates([page])).toEqual([])
+    expect(
+      associateFigures(page, [
+        { page: 1, lines: [title, page.lines[1].text], rect: [50, 250, 350, 274] }
+      ])
+    ).toEqual([])
+  }
+)
+
+it('retains the complete multiline facing-page exclusion after accepting the figure title', () => {
+  const page = multilineFigureCaption('Figure 1b. Results'),
+    caption = {
+      page: 1,
+      lines: [page.lines[0].text, `${page.lines[1].text} (facing page)`],
+      rect: [50, 250, 350, 274]
+    }
+  expect(associateFigures(page, [caption])).toEqual([])
+})
+
 const repeatedTableNumber = (): ReturnType<typeof JSON.parse> =>
   readPdfFixture(
     'src/main/literature/pdf-structure/fixtures/source-grids/repeated-number-above-described-table.jsonl'

@@ -12997,7 +12997,7 @@ function recoverNativeWrappedStubScalarRecords(table, items, captions, rules) {
   if (
     cuts.length === 3 &&
     starts.some(
-      (g) => !/^[+-−]?\d+(?:\.\d+)?$/u.test(nativeRecordText(g.filter((i) => lane(i) === 1)))
+      (g) => !/^[+−-]?\d+(?:\.\d+)?$/u.test(nativeRecordText(g.filter((i) => lane(i) === 1)))
     )
   )
     return
@@ -13006,7 +13006,7 @@ function recoverNativeWrappedStubScalarRecords(table, items, captions, rules) {
     (starts.length < 8 ||
       starts.filter((g) =>
         [1, 2].every((c) =>
-          /^[+-−]?\d+(?:\.\d+)?$/u.test(nativeRecordText(g.filter((i) => lane(i) === c)))
+          /^[+−-]?\d+(?:\.\d+)?$/u.test(nativeRecordText(g.filter((i) => lane(i) === c)))
         )
       ).length < 2)
   )
