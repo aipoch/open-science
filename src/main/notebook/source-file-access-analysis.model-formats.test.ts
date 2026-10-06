@@ -126,6 +126,29 @@ describe('model format file access coverage', () => {
     })
   })
 
+  it('keeps weights-only loads conservative after a torch loader replacement', async () => {
+    await expect(
+      analyzeNotebookSourceFileAccess(
+        'python',
+        "import torch\nsetattr(torch, 'load', custom_loader)\nweights = torch.load('source.pt', weights_only=True)"
+      )
+    ).resolves.toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial',
+      reads: ['source.pt'],
+      reasonCodes: expect.arrayContaining(['source-analysis-unsupported-call'])
+    })
+  })
+
+  it('keeps dependency facts conservative after a torch loader replacement', async () => {
+    const { facts } = await analyzePythonNotebookSource(
+      "import torch\nsetattr(torch, 'load', custom_loader)\nweights = torch.load('source.pt', weights_only=True)"
+    )
+    expect(facts.state).toBe('unknown')
+    if (facts.state === 'unknown') expect(facts.reasons).toContain('external-state')
+  })
+
   it('keeps weights-only loads conservative after same-cell safe-global registration', async () => {
     await expect(
       analyzeNotebookSourceFileAccess(

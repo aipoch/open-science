@@ -322,6 +322,17 @@ adata = ${module === 'scanpy' ? 'sc' : 'ad'}.read_zarr('inputs/cells.zarr')`
   })
 
   it.each([
+    "import pyarrow.dataset as ds\ndataset = ds.dataset('inputs/events', filesystem=filesystem)",
+    "import pyarrow.dataset as ds\ndataset = ds.dataset('inputs/events', filesystem=remote_fs)"
+  ])('does not attribute Arrow Dataset sources to custom filesystems: %s', async (source) => {
+    await expect(analyzeNotebookSourceFileAccess('python', source)).resolves.toMatchObject({
+      readState: 'partial',
+      reads: [],
+      reasonCodes: expect.arrayContaining(['dynamic-path-unresolved'])
+    })
+  })
+
+  it.each([
     ["fits.open('source.fits', mode='update')", ['source.fits'], ['source.fits']],
     ["fits.open('source.fits', mode='append')", ['source.fits'], ['source.fits']]
   ])(

@@ -2896,6 +2896,10 @@ class Analyzer extends NodeVisitor {
       (node.func?.type === 'Attribute' && importedRoot === 'torch') ||
       (node.func?.type === 'Name' && importedRoot === 'torch.load')
     if (!resolvesToImportedTorch) return false
+    // A member replacement (including setattr/delattr) can replace the loader
+    // or alter torch's deserialization behavior. Treat the imported root as
+    // tainted until the kernel epoch resets, just like safe-global registration.
+    if (this.memberWrites.some((write) => write.receiver === 'torch')) return false
     // Safe-global registration changes the process-wide unpickling allowlist.
     // A literal weights-only call is only safe before that namespace has been
     // tainted by a prior registration or opaque mutation.
@@ -8869,8 +8873,15 @@ const analyzePythonFileAccessTree = (
         (node.keywords ?? []).find((keyword) => ['source', 'path'].includes(keyword.arg ?? ''))
           ?.value ?? args[0]
       const path = resolveStaticString(source, bindings)
-      if (path && !isExternalNotebookPath(path)) recordFileAccess('read', source)
+      const filesystem = (node.keywords ?? []).find(
+        (keyword) => keyword.arg === 'filesystem'
+      )?.value
+      const filesystemIsDefault =
+        !filesystem || (filesystem.type === 'Constant' && filesystem.constKind === 'none')
+      if (path && !isExternalNotebookPath(path) && filesystemIsDefault)
+        recordFileAccess('read', source)
       unresolvedReads = true
+      directoryStateRead = true
       unsupportedExternalState = true
       return
     }
@@ -8904,24 +8915,6 @@ const analyzePythonFileAccessTree = (
           (node.keywords ?? []).find((entry) => entry.arg === parameter)?.value ?? args[0]
         const path = resolveStaticString(fileArgument, bindings)
         if (path && !isExternalNotebookPath(path)) recordFileAccess('read', fileArgument)
-      } else if (canonicalName === 'pyarrow.dataset.dataset') {
-        const args = Array.isArray(node.args) ? node.args : []
-        const sourceNode =
-          (node.keywords ?? []).find((entry) => entry.arg === 'source')?.value ?? args[0]
-        const filesystemNode = (node.keywords ?? []).find(
-          (entry) => entry.arg === 'filesystem'
-        )?.value
-        const source = resolveStaticString(sourceNode, bindings)
-        const filesystemIsDefault =
-          !filesystemNode ||
-          (filesystemNode.type === 'Constant' && filesystemNode.constKind === 'none')
-        if (source && !isExternalNotebookPath(source) && filesystemIsDefault)
-          recordFileAccess('read', sourceNode)
-        else unresolvedReads = true
-        // A Dataset may expand a directory or partitioned source into files
-        // selected at runtime. Keep the root as evidence, but do not certify
-        // complete coverage without runtime enumeration.
-        directoryStateRead = true
       }
       unresolvedReads = true
       unsupportedExternalState = true
