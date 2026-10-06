@@ -191,7 +191,7 @@ describe('Windows updater certification', () => {
       } finally {
         controller.abort()
         await Promise.allSettled([observer.exit, processExit])
-        await rm(root, { recursive: true, force: true })
+        await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
       }
     },
     60_000

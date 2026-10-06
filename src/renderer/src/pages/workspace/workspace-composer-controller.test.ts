@@ -1484,6 +1484,162 @@ describe('workspace composer controller', () => {
     expect(usePreviewWorkbenchStore.getState().pendingPdfContextByProject.project).toBeDefined()
   })
 
+  it('keeps first-send Discussion and Reading context visible while a pending Session settles', () => {
+    const preview = usePreviewWorkbenchStore.getState()
+    preview.activateProject('project')
+    preview.upsertItem({
+      id: 'literature:version-1',
+      projectId: 'project',
+      sessionId: 'literature-library',
+      type: 'file',
+      source: 'literature',
+      title: 'paper.pdf',
+      name: 'paper.pdf',
+      format: 'pdf',
+      path: 'literature-attachment-version:version-1',
+      mimeType: 'application/pdf',
+      size: 100
+    })
+    preview.setPendingPdfContext('project', {
+      kind: 'version',
+      sourceKind: 'literature-attachment-version',
+      sourceVersionId: 'version-1',
+      previewItemId: 'literature:version-1'
+    })
+    const hook = renderController(uploads(), undefined, [], null)
+    mounted.push(hook)
+    const discussion = createSessionDiscussionAnnotation(
+      {
+        projectId: 'project',
+        sourceSessionId: 'source-session',
+        sourceTitle: 'Study',
+        fingerprint: 'fingerprint',
+        branchId: 'main',
+        stepId: 'step-1',
+        stepNumber: 1,
+        stepOffsetMs: 0,
+        excerpt: '',
+        evidence: [
+          { kind: 'message', id: 'step-1', projectId: 'project', sessionId: 'source-session' }
+        ]
+      },
+      'selection-1'
+    )!
+    act(() => hook.result.current.actions.addAnnotation(discussion))
+    const snapshot = hook.result.current.lifecycle.captureSend()
+    act(() => hook.result.current.lifecycle.preserveAdmissionContext(snapshot))
+    expect(snapshot.annotations).toEqual([discussion])
+    expect(snapshot.pendingPdfContextVersions).toEqual([
+      { sourceKind: 'literature-attachment-version', sourceVersionId: 'version-1' }
+    ])
+
+    act(() => {
+      hook.result.current.lifecycle.clearDraft(snapshot.draftKey, snapshot.version)
+      preview.clearPendingPdfContext('project', {
+        kind: 'version',
+        sourceKind: 'literature-attachment-version',
+        sourceVersionId: 'version-1',
+        previewItemId: 'literature:version-1'
+      })
+    })
+    expect(hook.result.current.view.annotations).toEqual([discussion])
+    expect(hook.result.current.view.readingContext.bindings).toHaveLength(1)
+    expect(hook.result.current.lifecycle.captureSend().annotations).toEqual([])
+    act(() => {
+      hook.result.current.lifecycle.bindAdmissionContext(snapshot, {
+        sessionId: 'pending-session',
+        messageId: 'first-prompt'
+      })
+      hook.selectSession({
+        id: 'pending-session',
+        projectId: 'project',
+        isPending: true,
+        messages: [{ id: 'first-prompt' }]
+      })
+    })
+
+    expect(hook.result.current.view.annotations).toEqual([discussion])
+    expect(hook.result.current.view.readingContext.bindings).toEqual([
+      {
+        bindingId: 'version:literature-attachment-version:version-1',
+        name: 'paper.pdf',
+        draftSelection: true
+      }
+    ])
+
+    act(() => hook.selectSession(undefined))
+    expect(hook.result.current.view.annotations).toEqual([])
+    expect(hook.result.current.view.readingContext.bindings).toEqual([])
+    expect(hook.result.current.view.readingContext.isPending).toBe(false)
+
+    act(() =>
+      hook.selectSession({
+        id: 'unrelated-pending',
+        projectId: 'project',
+        isPending: true,
+        messages: [{ id: 'other-prompt' }]
+      })
+    )
+    expect(hook.result.current.view.annotations).toEqual([])
+    expect(hook.result.current.view.readingContext.bindings).toEqual([])
+    act(() =>
+      hook.selectSession({
+        id: 'durable-session',
+        projectId: 'project',
+        messages: [{ id: 'first-prompt' }]
+      })
+    )
+    expect(hook.result.current.view.annotations).toEqual([discussion])
+    expect(hook.result.current.view.readingContext.bindings).toHaveLength(1)
+
+    act(() =>
+      hook.selectSession({
+        id: 'durable-session',
+        projectId: 'project',
+        messages: [{ id: 'first-prompt' }],
+        isPending: false,
+        runtimeContext: {
+          revision: 1,
+          pdfContext: {
+            version: 1,
+            bindings: [
+              {
+                version: 1,
+                bindingId: 'binding-1',
+                sourceKind: 'literature-attachment-version',
+                sourceFileId: 'literature-file',
+                sourceVersionId: 'version-1',
+                name: 'paper.pdf',
+                mimeType: 'application/pdf',
+                sizeBytes: 100,
+                checksum: 'a'.repeat(64),
+                linkedAt: 1
+              }
+            ]
+          },
+          sessionContext: {
+            version: 1,
+            bindings: [
+              {
+                projectId: 'project',
+                sessionId: 'source-session',
+                contextId: 'latest',
+                title: 'Study',
+                branchId: 'main',
+                promptMessageId: 'prompt',
+                positions: [{ contextId: 'latest', branchId: 'main', stepTitle: 'Step' }]
+              }
+            ]
+          }
+        }
+      })
+    )
+    expect(hook.result.current.view.annotations).toEqual([])
+    expect(hook.result.current.view.readingContext.bindings).toMatchObject([
+      { bindingId: 'binding-1', name: 'paper.pdf' }
+    ])
+  })
+
   it('does not expose a staged attachment until its local writer is claimed', async () => {
     const claimed = deferred<void>()
     const uploadApi = uploads(

@@ -720,11 +720,11 @@ fit = CoxPHFitter().fit(cohort, "duration", "event")
 fit.save("outputs/remote-model.json")`
     )
   ).toMatchObject({
-    reads: ['https://data.example.test/cohort.csv'],
+    reads: [],
     writes: ['outputs/remote-model.json'],
-    readState: 'complete',
+    readState: 'partial',
     writeState: 'complete',
-    externalState: 'complete'
+    externalState: 'partial'
   })
 })
 

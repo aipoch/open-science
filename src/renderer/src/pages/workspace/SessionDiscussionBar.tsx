@@ -11,6 +11,9 @@ export type DiscussionStep = {
   stepNumber?: number
 }
 
+export const composerContextRowClassName =
+  'flex min-h-9 items-center gap-1 border-b border-border-200 bg-bg-10 px-2'
+
 // The action and its selected Session stay separate, in both drafts and ongoing conversations.
 export const SessionDiscussionBar = ({
   title,
@@ -62,7 +65,7 @@ export const SessionDiscussionBar = ({
               <Button
                 variant="ghost"
                 size="sm"
-                className="h-7 shrink-0 gap-1 px-1.5 text-xs font-medium"
+                className="h-7 shrink-0 gap-1 px-1.5 text-xs font-medium disabled:opacity-100"
                 disabled={disabled}
               >
                 <MessageSquare className="size-4 text-primary" aria-hidden="true" />
@@ -106,7 +109,7 @@ export const SessionDiscussionBar = ({
         </PopoverContent>
       </Popover>
       <span
-        className="inline-flex min-w-0 max-w-72 items-center rounded-md border border-border-200 bg-bg-10"
+        className="inline-flex min-w-0 max-w-56 items-center rounded-lg bg-bg-200"
         data-session-discussion-source="true"
       >
         <Tooltip>
@@ -114,7 +117,7 @@ export const SessionDiscussionBar = ({
             <Button
               variant="ghost"
               size="sm"
-              className="h-7 min-w-0 shrink gap-1.5 px-2 text-xs"
+              className="h-6 min-w-0 shrink gap-1.5 px-2 text-xs font-medium text-text-300 disabled:opacity-100"
               disabled={disabled}
               onClick={() => onReveal(latest.id)}
             >
@@ -144,7 +147,7 @@ export const SessionDiscussionBar = ({
             <Button
               variant="ghost"
               size="icon-xs"
-              className="shrink-0"
+              className="shrink-0 disabled:opacity-100"
               disabled={disabled}
               aria-label={removeLabel}
               onClick={onRemove}

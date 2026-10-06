@@ -181,7 +181,14 @@ export const serializedValueDescriptors = (
       ((entry.format === 'npy' && entry.valueType === 'numpy.ndarray') ||
         (['rds', 'qs'].includes(entry.format) && entry.valueType === 'r-value') ||
         (['python-pickle', 'joblib'].includes(entry.format) &&
-          ['pandas.DataFrame', 'pandas.Series', 'numpy.ndarray'].includes(entry.valueType)))
+          [
+            'pandas.DataFrame',
+            'pandas.Series',
+            'numpy.ndarray',
+            'sklearn.preprocessing.StandardScaler',
+            'sklearn.decomposition.PCA',
+            'sklearn.linear_model.LinearRegression'
+          ].includes(entry.valueType)))
   )
     ? value
     : undefined

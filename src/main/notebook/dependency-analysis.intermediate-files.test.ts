@@ -81,6 +81,19 @@ const cases: Case[] = [
     reader:
       'import numpy as np\nfrom joblib import load\nd=load("middle.bin")\nnp.savetxt("out.csv",d*2)',
     value: { path: 'middle.bin', format: 'joblib', valueType: 'numpy.ndarray' }
+  },
+  {
+    name: 'joblib fitted linear estimator',
+    language: 'python',
+    writer:
+      'import joblib\nfrom sklearn.linear_model import LinearRegression\nmodel=LinearRegression()\nmodel.fit([[0],[1],[2]],[0,1,2])\njoblib.dump(model,"middle.bin")',
+    reader:
+      'import joblib\nimport numpy as np\nmodel=joblib.load("middle.bin")\npredictions=model.predict([[3]])\nnp.savetxt("out.csv",predictions)',
+    value: {
+      path: 'middle.bin',
+      format: 'joblib',
+      valueType: 'sklearn.linear_model.LinearRegression'
+    }
   }
 ]
 

@@ -2312,6 +2312,8 @@
     "Synthesize this literature into a concise review.": "この文献を簡潔なレビューにまとめてください。",
     "Reading": "閲覧",
     "Keep as attachments": "添付ファイルのままにする",
+    "Link on send": "送信時にリンク",
+    "Linking PDFs…": "PDF をリンク中…",
     "{{count}} PDFs will be linked when sent_other": "送信時に PDF {{count}} 件をリンクします",
     "Read": "読む",
     "Linked PDFs": "リンク済み PDF",

@@ -450,7 +450,7 @@ describe('AnnotationCards image projection', () => {
       )
     )
 
-    const section = container.querySelector('section')
+    const section = container.querySelector('[data-testid="annotation-draft-list"]')
     expect(section?.className).toContain('flex-wrap')
     const chips = container.querySelectorAll('[data-annotation-draft-chip]')
     expect(chips).toHaveLength(2)
@@ -473,7 +473,7 @@ describe('AnnotationCards image projection', () => {
       )
     )
 
-    const section = container.querySelector('section')
+    const section = container.querySelector('[data-testid="annotation-draft-list"]')
     const chip = container.querySelector<HTMLElement>('[data-annotation-draft-chip]')
     const edit = container.querySelector<HTMLButtonElement>('[aria-label="Edit annotation note"]')
     await act(async () => edit?.click())

@@ -1,5 +1,6 @@
 import { replayAnnotationTarget } from '../../../../shared/replay-reference'
 import { SessionDiscussionSource } from './SessionDiscussionSource'
+import { composerContextRowClassName } from './SessionDiscussionBar'
 import { SessionDiscussionButton } from './SessionDiscussionButton'
 import { ResearchWorkspaceHeader } from './ResearchWorkspaceHeader'
 import { useResearchWorkspaceStore } from '@/stores/research-workspace-store'
@@ -758,6 +759,18 @@ const ConversationPanel = ({
   const setElicitationDraftAnswers = useSessionStore((state) => state.setElicitationDraftAnswers)
   // Research drafts keep their source-specific welcome and discussion prompts.
   const isNewConversation = !activeSession && !optimisticMessage && !research && !discussionTitle
+  useEffect(() => {
+    if (!isNewConversation) return
+    // The start surface has no transcript scroller to own the native find handshake.
+    const stopShow = window.api?.window?.onShowWindowFind?.(() => {
+      window.api?.window?.announceWindowFindContentReady?.()
+    })
+    const stopReady = window.api?.window?.announceWindowFindReady?.()
+    return () => {
+      stopShow?.()
+      stopReady?.()
+    }
+  }, [isNewConversation])
   const composerFormRef = useRef<HTMLFormElement>(null)
   const startComposerTopRef = useRef<number | null>(null)
   useLayoutEffect(() => {
@@ -2199,192 +2212,266 @@ const ConversationPanel = ({
                             aria-hidden="true"
                           />
                         ) : null}
-                        {activeSession &&
-                        !annotations.some((annotation) => replayAnnotationTarget(annotation)) ? (
-                          <SessionDiscussionSource
-                            key={activeSession.id}
-                            projectId={activeSession.projectId}
-                            sessionId={activeSession.id}
-                            context={activeSession.runtimeContext}
-                          />
-                        ) : null}
-                        {pdfContext.bindings.length > 0 ? (
+                        {annotations.some((annotation) => replayAnnotationTarget(annotation)) ||
+                        activeSession?.runtimeContext?.sessionContext?.bindings.length ||
+                        pdfContext.bindings.length > 0 ||
+                        pdfContext.automaticAttachmentCount > 0 ? (
                           <div
-                            data-testid="pdf-context-bar"
-                            className="-mx-3 -mt-2 flex min-h-9 items-center gap-1 rounded-t-2xl border-b border-border-200 bg-bg-10 px-2 py-1"
+                            className="-mx-3 -mt-2 overflow-hidden rounded-t-2xl"
+                            data-testid="composer-context-header"
                           >
-                            {activeSession ? (
-                              <ReadingContextPicker
+                            <AnnotationDraftCards
+                              annotations={annotations.filter((annotation) =>
+                                replayAnnotationTarget(annotation)
+                              )}
+                              disabled={!canEditDraft || pdfContext.isPending}
+                              onReveal={requestAnnotationReveal}
+                              onUpdateNote={onUpdateAnnotationNote}
+                              onRemove={onRemoveAnnotation}
+                            />
+                            {activeSession &&
+                            !annotations.some((annotation) =>
+                              replayAnnotationTarget(annotation)
+                            ) ? (
+                              <SessionDiscussionSource
+                                key={activeSession.id}
                                 projectId={activeSession.projectId}
-                                linkedSources={pdfContext.bindings.flatMap((binding) =>
-                                  'sourceKind' in binding
-                                    ? [
-                                        {
-                                          sourceKind: binding.sourceKind,
-                                          sourceFileId: binding.sourceFileId,
-                                          sourceVersionId: binding.sourceVersionId
-                                        }
-                                      ]
-                                    : []
-                                )}
-                                atLimit={pdfContext.bindings.length >= MAX_SESSION_PDF_CONTEXTS}
-                                onSelect={linkReadingContext}
+                                sessionId={activeSession.id}
+                                context={activeSession.runtimeContext}
+                              />
+                            ) : null}
+                            {pdfContext.bindings.length > 0 ? (
+                              <div
+                                data-testid="pdf-context-bar"
+                                className={composerContextRowClassName}
                               >
-                                <button
-                                  type="button"
-                                  disabled={pdfContext.isPending}
-                                  aria-label={t('Choose PDFs for Reading')}
-                                  className={cn(
-                                    'flex h-7 shrink-0 items-center gap-1 rounded-lg px-1.5 text-[12px] font-medium leading-4 text-text-000 hover:bg-bg-200 active:translate-y-px focus-visible:keyboard-focus motion-reduce:active:translate-y-0',
-                                    composerInteractiveTransitionClassName
-                                  )}
-                                >
+                                {activeSession ? (
+                                  <ReadingContextPicker
+                                    projectId={activeSession.projectId}
+                                    linkedSources={pdfContext.bindings.flatMap((binding) =>
+                                      'sourceKind' in binding
+                                        ? [
+                                            {
+                                              sourceKind: binding.sourceKind,
+                                              sourceFileId: binding.sourceFileId,
+                                              sourceVersionId: binding.sourceVersionId
+                                            }
+                                          ]
+                                        : []
+                                    )}
+                                    atLimit={pdfContext.bindings.length >= MAX_SESSION_PDF_CONTEXTS}
+                                    onSelect={linkReadingContext}
+                                  >
+                                    <button
+                                      type="button"
+                                      disabled={pdfContext.isPending}
+                                      aria-label={t('Choose PDFs for Reading')}
+                                      className={cn(
+                                        'flex h-7 shrink-0 items-center gap-1 rounded-lg px-1.5 text-[12px] font-medium leading-4 text-text-000 hover:bg-bg-200 active:translate-y-px focus-visible:keyboard-focus motion-reduce:active:translate-y-0',
+                                        composerInteractiveTransitionClassName
+                                      )}
+                                    >
+                                      <BookOpen
+                                        className="size-4 shrink-0 text-primary"
+                                        strokeWidth={2}
+                                        aria-hidden="true"
+                                      />
+                                      {t('Reading')}
+                                      <ChevronDown
+                                        className="size-3 shrink-0 text-text-300"
+                                        strokeWidth={2}
+                                        aria-hidden="true"
+                                      />
+                                    </button>
+                                  </ReadingContextPicker>
+                                ) : (
+                                  <div className="flex h-7 shrink-0 items-center gap-1 px-1.5">
+                                    <BookOpen
+                                      className="size-4 shrink-0 text-primary"
+                                      strokeWidth={2}
+                                      aria-hidden="true"
+                                    />
+                                    <span className="shrink-0 text-[12px] font-medium leading-4 text-text-000">
+                                      {t('Reading')}
+                                    </span>
+                                  </div>
+                                )}
+                                <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
+                                  <TooltipProvider>
+                                    {pdfContext.bindings.map((binding) => {
+                                      const pending =
+                                        pdfContext.pendingBindingId === binding.bindingId
+                                      return (
+                                        <span
+                                          key={binding.bindingId}
+                                          className="flex min-w-0 max-w-56 shrink items-center rounded-lg bg-bg-200 text-text-100"
+                                        >
+                                          <Tooltip>
+                                            <TooltipTrigger asChild>
+                                              <button
+                                                type="button"
+                                                className={cn(
+                                                  'flex min-w-0 flex-1 items-center gap-1.5 rounded-l-lg px-2 py-1 text-left hover:bg-bg-300 hover:text-text-000 active:translate-y-px focus-visible:keyboard-focus focus-visible:-outline-offset-2 motion-reduce:active:translate-y-0',
+                                                  composerInteractiveTransitionClassName
+                                                )}
+                                                aria-label={t('Open PDF context {{name}}', {
+                                                  name: binding.name
+                                                })}
+                                                onClick={() =>
+                                                  openReadingContext(binding.bindingId)
+                                                }
+                                              >
+                                                <FileTypeIcon
+                                                  name={binding.name}
+                                                  mimeType="application/pdf"
+                                                  className="size-4 rounded-none border-0 bg-transparent p-0"
+                                                />
+                                                <ExtensionPreservingFileName
+                                                  name={binding.name}
+                                                  className="min-w-0 text-[12px] font-medium leading-4"
+                                                />
+                                              </button>
+                                            </TooltipTrigger>
+                                            <TooltipContent side="top">
+                                              {t(
+                                                'Linked to this conversation. The Agent reads only the pages needed for your question.'
+                                              )}
+                                            </TooltipContent>
+                                          </Tooltip>
+                                          <Tooltip>
+                                            <TooltipTrigger asChild>
+                                              <button
+                                                type="button"
+                                                className={cn(
+                                                  attachmentRemoveButtonClassName,
+                                                  'focus-visible:-outline-offset-2'
+                                                )}
+                                                disabled={pending || pdfContext.isPending}
+                                                aria-label={t('Remove PDF context {{name}}', {
+                                                  name: binding.name
+                                                })}
+                                                onClick={() =>
+                                                  unlinkReadingContext(binding.bindingId)
+                                                }
+                                              >
+                                                {pending ? (
+                                                  <Loader2
+                                                    className="size-3.5 animate-spin"
+                                                    strokeWidth={2}
+                                                    aria-hidden="true"
+                                                  />
+                                                ) : (
+                                                  <X
+                                                    className="size-3.5"
+                                                    strokeWidth={2.2}
+                                                    aria-hidden="true"
+                                                  />
+                                                )}
+                                              </button>
+                                            </TooltipTrigger>
+                                            <TooltipContent side="top">
+                                              {t('Remove PDF context {{name}}', {
+                                                name: binding.name
+                                              })}
+                                            </TooltipContent>
+                                          </Tooltip>
+                                        </span>
+                                      )
+                                    })}
+                                  </TooltipProvider>
+                                </div>
+                              </div>
+                            ) : null}
+                            {pdfContext.automaticAttachmentCount > 0 ? (
+                              <div
+                                data-testid="automatic-reading-suggestion"
+                                className={composerContextRowClassName}
+                              >
+                                <div className="flex h-7 shrink-0 items-center gap-1 px-1.5">
                                   <BookOpen
                                     className="size-4 shrink-0 text-primary"
                                     strokeWidth={2}
                                     aria-hidden="true"
                                   />
-                                  {t('Reading')}
-                                  <ChevronDown
-                                    className="size-3 shrink-0 text-text-300"
-                                    strokeWidth={2}
-                                    aria-hidden="true"
-                                  />
-                                </button>
-                              </ReadingContextPicker>
-                            ) : (
-                              <>
-                                <BookOpen
-                                  className="size-4 shrink-0 text-primary"
-                                  strokeWidth={2}
-                                  aria-hidden="true"
-                                />
-                                <span className="shrink-0 text-[12px] font-medium leading-4 text-text-000">
-                                  {t('Reading')}
-                                </span>
-                              </>
-                            )}
-                            <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
-                              <TooltipProvider>
-                                {pdfContext.bindings.map((binding) => {
-                                  const pending = pdfContext.pendingBindingId === binding.bindingId
-                                  return (
-                                    <span
-                                      key={binding.bindingId}
-                                      className="flex min-w-0 max-w-56 shrink items-center rounded-lg bg-bg-200 text-text-100"
-                                    >
-                                      <Tooltip>
+                                  <span className="text-[12px] font-medium leading-4 text-text-000">
+                                    {t('Reading')}
+                                  </span>
+                                </div>
+                                <TooltipProvider>
+                                  <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
+                                    {pdfContext.automaticAttachments.map((attachment) => (
+                                      <Tooltip key={attachment.id}>
                                         <TooltipTrigger asChild>
-                                          <button
-                                            type="button"
-                                            className={cn(
-                                              'flex min-w-0 flex-1 items-center gap-1.5 rounded-l-lg px-2 py-1 text-left hover:bg-bg-300 hover:text-text-000 active:translate-y-px focus-visible:keyboard-focus focus-visible:-outline-offset-2 motion-reduce:active:translate-y-0',
-                                              composerInteractiveTransitionClassName
-                                            )}
-                                            aria-label={t('Open PDF context {{name}}', {
-                                              name: binding.name
-                                            })}
-                                            onClick={() => openReadingContext(binding.bindingId)}
+                                          <span
+                                            tabIndex={0}
+                                            className="flex min-w-0 max-w-56 shrink-0 items-center gap-1.5 rounded-lg bg-bg-200 px-2 py-1 text-text-300 focus-visible:keyboard-focus"
                                           >
                                             <FileTypeIcon
-                                              name={binding.name}
+                                              name={attachment.name}
                                               mimeType="application/pdf"
                                               className="size-4 rounded-none border-0 bg-transparent p-0"
                                             />
                                             <ExtensionPreservingFileName
-                                              name={binding.name}
+                                              name={attachment.name}
                                               className="min-w-0 text-[12px] font-medium leading-4"
                                             />
-                                          </button>
+                                          </span>
                                         </TooltipTrigger>
                                         <TooltipContent side="top">
-                                          {t(
-                                            'Linked to this conversation. The Agent reads only the pages needed for your question.'
-                                          )}
+                                          {attachment.name}
+                                          <p>
+                                            {pdfContext.isPending
+                                              ? t('Linking PDFs…')
+                                              : t('{{count}} PDFs will be linked when sent', {
+                                                  count: pdfContext.automaticAttachmentCount,
+                                                  defaultValue_one:
+                                                    '{{count}} PDF will be linked when sent'
+                                                })}
+                                          </p>
                                         </TooltipContent>
                                       </Tooltip>
-                                      <Tooltip>
-                                        <TooltipTrigger asChild>
-                                          <button
-                                            type="button"
-                                            className={cn(
-                                              attachmentRemoveButtonClassName,
-                                              'focus-visible:-outline-offset-2'
-                                            )}
-                                            disabled={pending || pdfContext.isPending}
-                                            aria-label={t('Remove PDF context {{name}}', {
-                                              name: binding.name
-                                            })}
-                                            onClick={() => unlinkReadingContext(binding.bindingId)}
-                                          >
-                                            {pending ? (
-                                              <Loader2
-                                                className="size-3.5 animate-spin"
-                                                strokeWidth={2}
-                                                aria-hidden="true"
-                                              />
-                                            ) : (
-                                              <X
-                                                className="size-3.5"
-                                                strokeWidth={2.2}
-                                                aria-hidden="true"
-                                              />
-                                            )}
-                                          </button>
-                                        </TooltipTrigger>
-                                        <TooltipContent side="top">
-                                          {t('Remove PDF context {{name}}', { name: binding.name })}
-                                        </TooltipContent>
-                                      </Tooltip>
-                                    </span>
-                                  )
-                                })}
-                              </TooltipProvider>
-                            </div>
-                          </div>
-                        ) : null}
-                        {pdfContext.automaticAttachmentCount > 0 ? (
-                          <div
-                            data-testid="automatic-reading-suggestion"
-                            className={cn(
-                              '-mx-3 flex min-h-9 items-center gap-2 border-b border-border-200 bg-primary/[0.05] px-2 py-1',
-                              pdfContext.bindings.length === 0 && '-mt-2 rounded-t-2xl'
-                            )}
-                          >
-                            <BookOpen
-                              className="size-4 shrink-0 text-primary"
-                              strokeWidth={2}
-                              aria-hidden="true"
-                            />
-                            <span className="shrink-0 text-[12px] font-medium leading-4 text-text-000">
-                              {t('Reading')}
-                            </span>
-                            <span className="min-w-0 flex-1 truncate text-[12px] leading-4 text-text-300">
-                              {t('{{count}} PDFs will be linked when sent', {
-                                count: pdfContext.automaticAttachmentCount,
-                                defaultValue_one: '{{count}} PDF will be linked when sent'
-                              })}
-                            </span>
-                            <TooltipProvider>
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <button
-                                    type="button"
-                                    aria-label={t('Keep as attachments')}
-                                    onClick={dismissAutomaticReading}
-                                    className={cn(
-                                      'relative flex size-7 shrink-0 items-center justify-center rounded-lg text-text-300 before:absolute before:-inset-2 hover:bg-bg-200 hover:text-text-000 active:translate-y-px focus-visible:keyboard-focus motion-reduce:active:translate-y-0',
-                                      composerInteractiveTransitionClassName
-                                    )}
-                                  >
-                                    <X className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
-                                  </button>
-                                </TooltipTrigger>
-                                <TooltipContent side="top">
-                                  {t('Keep as attachments')}
-                                </TooltipContent>
-                              </Tooltip>
-                            </TooltipProvider>
+                                    ))}
+                                  </div>
+                                </TooltipProvider>
+                                <span
+                                  role="status"
+                                  className="flex shrink-0 items-center gap-1.5 px-1 text-[11px] leading-4 text-text-300"
+                                >
+                                  {pdfContext.isPending ? (
+                                    <Loader2
+                                      className="size-3 animate-spin motion-reduce:animate-none"
+                                      aria-hidden="true"
+                                    />
+                                  ) : null}
+                                  {pdfContext.isPending ? t('Linking PDFs…') : t('Link on send')}
+                                </span>
+                                <TooltipProvider>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <button
+                                        type="button"
+                                        aria-label={t('Keep as attachments')}
+                                        disabled={pdfContext.isPending}
+                                        onClick={dismissAutomaticReading}
+                                        className={cn(
+                                          'relative flex size-7 shrink-0 items-center justify-center rounded-lg text-text-300 before:absolute before:-inset-2 hover:bg-bg-200 hover:text-text-000 active:translate-y-px focus-visible:keyboard-focus motion-reduce:active:translate-y-0',
+                                          composerInteractiveTransitionClassName
+                                        )}
+                                      >
+                                        <X
+                                          className="size-3.5"
+                                          strokeWidth={2.2}
+                                          aria-hidden="true"
+                                        />
+                                      </button>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="top">
+                                      {t('Keep as attachments')}
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                              </div>
+                            ) : null}
                           </div>
                         ) : null}
                         <ComposerMessageQueueContent
@@ -2453,7 +2540,9 @@ const ConversationPanel = ({
                           onRemove={onRemoveAnnotation}
                         >
                           <AnnotationDraftCards
-                            annotations={annotations}
+                            annotations={annotations.filter(
+                              (annotation) => !replayAnnotationTarget(annotation)
+                            )}
                             disabled={!canEditDraft}
                             onReveal={requestAnnotationReveal}
                             onUpdateNote={(id, note) => {

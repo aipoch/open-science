@@ -516,7 +516,7 @@ test('shows context compaction loading and completion inside the Session transcr
   }
 })
 
-test('previews and opens an Agent HTTPS source link in the isolated preview tab', async ({
+test('previews and opens an Agent HTTPS source link in the isolated preview tab @pr-mainline-files', async ({
   app
 }, testInfo) => {
   await app.completeOnboarding()
@@ -853,14 +853,37 @@ test('previews and opens an Agent HTTPS source link in the isolated preview tab'
   await app.setMainWindowZoomFactor(1.25)
   await expect(sourceFrame).toBeVisible()
   const rightClickTarget = nativePage.getByRole('heading', { name: 'Fixture source' })
-  const sourceBounds = (await sourceFrame.boundingBox())!
-  const headingBounds = (await rightClickTarget.boundingBox())!
+  // Capture the real guest click: resize/zoom can invalidate bounds read before input dispatch.
+  await rightClickTarget.evaluate((element) => {
+    element.addEventListener(
+      'contextmenu',
+      (event) => {
+        const pointer = event as MouseEvent
+        element.setAttribute(
+          'data-e2e-context-pointer',
+          JSON.stringify({ x: pointer.clientX, y: pointer.clientY })
+        )
+      },
+      { once: true }
+    )
+  })
   await rightClickTarget.click({ button: 'right', position: { x: 8, y: 10 } })
   const sourceMenu = page.getByRole('menu')
   await expect(sourceMenu.getByText('Copy link', { exact: true })).toBeVisible()
-  const menuBounds = (await sourceMenu.boundingBox())!
-  expect(Math.abs(menuBounds.x - (sourceBounds.x + headingBounds.x + 8))).toBeLessThan(5)
-  expect(Math.abs(menuBounds.y - (sourceBounds.y + headingBounds.y + 10))).toBeLessThan(5)
+  const sourceBounds = (await sourceFrame.boundingBox())!
+  const clickPointer = JSON.parse(
+    (await rightClickTarget.getAttribute('data-e2e-context-pointer'))!
+  )
+  await expect
+    .poll(async () => {
+      const sourceBounds = (await sourceFrame.boundingBox())!
+      const menuBounds = (await sourceMenu.boundingBox())!
+      return Math.max(
+        Math.abs(menuBounds.x - (sourceBounds.x + clickPointer.x)),
+        Math.abs(menuBounds.y - (sourceBounds.y + clickPointer.y))
+      )
+    })
+    .toBeLessThan(5)
   await page.screenshot({ path: testInfo.outputPath('source-context-menu-zoom.png') })
   await page.keyboard.press('Escape')
   await expect(sourceMenu).toHaveCount(0)

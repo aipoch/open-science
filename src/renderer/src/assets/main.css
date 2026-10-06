@@ -13,6 +13,10 @@
    variables reserve the actual system caption controls, including DPI and interface zoom. */
 html[data-windows-titlebar] {
   --windows-titlebar-height: 36px;
+  --windows-content-center-y: calc(
+    var(--windows-titlebar-height) + (100vh - var(--windows-titlebar-height)) / 2
+  );
+  --windows-content-max-height: calc(100svh - var(--windows-titlebar-height) - 2rem);
 }
 
 html[data-windows-titlebar='fullscreen'] {
@@ -362,6 +366,11 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
 :root {
   color-scheme: light;
   --radius: 0.5rem;
+  /* Portaled surfaces are positioned against the browser viewport rather than the content
+     wrapper. Keep a zero-height default so the same geometry works on non-Windows surfaces. */
+  --windows-titlebar-height: 0px;
+  --windows-content-center-y: 50vh;
+  --windows-content-max-height: calc(100svh - 2rem);
   /* Light-theme elevation (referenced by the shadow-* utilities via @theme inline). */
   --shadow-card-value: 0 0 0 1px rgb(10 10 10 / 0.06), 0 4px 24px rgb(10 10 10 / 0.04);
   --shadow-card-opaque-value: 0 0 0 1px rgb(10 10 10 / 0.08), 0 8px 28px rgb(10 10 10 / 0.1);

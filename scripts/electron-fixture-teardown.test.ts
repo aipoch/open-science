@@ -327,7 +327,9 @@ it.each(
     const assertion = succeeds
       ? expect(operation).resolves.toBeUndefined()
       : expect(operation).rejects.toThrow('crash simulation did not reap')
-    await vi.waitFor(() => expect(boundary.processTable).toHaveBeenCalled())
+    // Startup creates real files before the mocked process query; allow hosted Windows I/O
+    // to finish while keeping the simulated process-exit deadline at ten seconds.
+    await vi.waitFor(() => expect(boundary.processTable).toHaveBeenCalled(), { timeout: 10_000 })
     await vi.advanceTimersByTimeAsync(10_000)
     await assertion
     expect(boundary.launch).toHaveBeenCalledTimes(succeeds ? 2 : 1)
@@ -358,7 +360,9 @@ it.each([true, false])(
       },
       { status: 'passed', expectedStatus: 'passed', attach }
     )
-    await vi.waitFor(() => expect(boundary.processTable).toHaveBeenCalled())
+    // Startup creates real files before the mocked process query; allow hosted Windows I/O
+    // to finish while keeping the simulated process-exit deadline at ten seconds.
+    await vi.waitFor(() => expect(boundary.processTable).toHaveBeenCalled(), { timeout: 10_000 })
     expect(boundary.launch).toHaveBeenCalledOnce()
     await vi.advanceTimersByTimeAsync(500)
     expect(boundary.launch).toHaveBeenCalledOnce()

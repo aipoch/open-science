@@ -3,7 +3,7 @@ import { useSessionStore } from '@/stores/session-store'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ErrorNotice } from '@/components/error-notice'
-import { SessionDiscussionBar } from './SessionDiscussionBar'
+import { composerContextRowClassName, SessionDiscussionBar } from './SessionDiscussionBar'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import { createSessionReplayItem } from './workspace-session-actions'
 import { requestReplaySeek } from './replay/replay-context'
@@ -65,47 +65,47 @@ export const SessionDiscussionSource = ({
     }
   }
   return (
-    <div
-      data-testid="session-discussion-source"
-      className="mb-2 min-w-0 space-y-2 border-b border-border-200 pb-2"
-      aria-busy={Boolean(pending)}
-    >
-      <SessionDiscussionBar
-        scope={binding.scope}
-        title={binding.title}
-        steps={sessionReadingPositions(binding).map((position) => ({
-          id: position.contextId,
-          title: position.stepTitle ?? binding.title,
-          branchIndex: position.branchIndex,
-          stepNumber: position.stepNumber
-        }))}
-        disabled={Boolean(pending)}
-        pending={Boolean(pending)}
-        onReveal={(contextId) => void act({ sourceSessionId: binding.sessionId, contextId })}
-        onRemove={() => void act({ sourceSessionId: binding.sessionId })}
-        removeLabel={t('Unlink Session')}
-        removeHint={t('Stop future reading. Sent messages are kept.')}
-      />
+    <div data-testid="session-discussion-source" className="min-w-0" aria-busy={Boolean(pending)}>
+      <div className={composerContextRowClassName}>
+        <SessionDiscussionBar
+          scope={binding.scope}
+          title={binding.title}
+          steps={sessionReadingPositions(binding).map((position) => ({
+            id: position.contextId,
+            title: position.stepTitle ?? binding.title,
+            branchIndex: position.branchIndex,
+            stepNumber: position.stepNumber
+          }))}
+          disabled={Boolean(pending)}
+          pending={Boolean(pending)}
+          onReveal={(contextId) => void act({ sourceSessionId: binding.sessionId, contextId })}
+          onRemove={() => void act({ sourceSessionId: binding.sessionId })}
+          removeLabel={t('Unlink Session')}
+          removeHint={t('Stop future reading. Sent messages are kept.')}
+        />
+      </div>
       {pending ? (
         <span role="status" className="sr-only">
           {t('Loading…')}
         </span>
       ) : null}
       {error ? (
-        <ErrorNotice
-          inline
-          tone="amber"
-          description={
-            error.contextId
-              ? t('Could not open this source. Retry or unlink the Session.')
-              : t('Could not unlink the Session. Please retry.')
-          }
-          primaryButton={{
-            label: t('Retry'),
-            disabled: Boolean(pending),
-            onClick: () => void act(error)
-          }}
-        />
+        <div className="mt-2 border-b border-border-200 pb-2">
+          <ErrorNotice
+            inline
+            tone="amber"
+            description={
+              error.contextId
+                ? t('Could not open this source. Retry or unlink the Session.')
+                : t('Could not unlink the Session. Please retry.')
+            }
+            primaryButton={{
+              label: t('Retry'),
+              disabled: Boolean(pending),
+              onClick: () => void act(error)
+            }}
+          />
+        </div>
       ) : null}
     </div>
   )

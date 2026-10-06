@@ -17,6 +17,56 @@ it.each([
 })
 
 it.each([
+  ['custom::read10xCounts("inputs/matrix")', 'inputs/matrix'],
+  ['custom::open_dataset("inputs/events")', 'inputs/events'],
+  ['custom::import_biom("inputs/table.biom")', 'inputs/table.biom'],
+  ['custom::LoadH5Seurat("inputs/object.h5seurat")', 'inputs/object.h5seurat']
+])('does not apply a package-specific file effect to %s', async (source, path) => {
+  const result = await analyzeNotebookSourceFileAccess('r', source)
+  expect(result.reads).not.toContain(path)
+  expect(result.writes).not.toContain(path)
+})
+
+it('expands static arrow dataset source vectors', async () => {
+  expect(
+    await analyzeNotebookSourceFileAccess(
+      'r',
+      'sources <- c("inputs/train.parquet", "inputs/test.parquet")\ndataset <- arrow::open_dataset(sources)'
+    )
+  ).toMatchObject({
+    reads: ['inputs/test.parquet', 'inputs/train.parquet'],
+    readState: 'complete',
+    externalState: 'complete'
+  })
+})
+
+it('does not trust package-specific effects inside unrelated wrappers', async () => {
+  expect(
+    await analyzeNotebookSourceFileAccess(
+      'r',
+      'read_matrix <- function(path) custom::read10xCounts(path)\nresult <- read_matrix("inputs/matrix")'
+    )
+  ).toMatchObject({
+    reads: [],
+    readState: 'partial',
+    externalState: 'partial'
+  })
+})
+
+it('keeps remote arrow dataset vectors partial', async () => {
+  expect(
+    await analyzeNotebookSourceFileAccess(
+      'r',
+      'sources <- c("https://example.test/a.parquet", "https://example.test/b.parquet")\ndataset <- arrow::open_dataset(sources)'
+    )
+  ).toMatchObject({
+    reads: ['https://example.test/a.parquet', 'https://example.test/b.parquet'],
+    readState: 'partial',
+    externalState: 'partial'
+  })
+})
+
+it.each([
   'utils::write.csv',
   'utils::write.csv2',
   'utils::write.table',
@@ -128,6 +178,31 @@ it.each([
     externalState: 'complete'
   })
 })
+
+it('captures a strict anonymous lapply reader callback across a multi-cell-style path vector', async () => {
+  expect(
+    await analyzeNotebookSourceFileAccess(
+      'r',
+      'paths <- file.path("inputs", c("ctrl.csv", "treated.csv")); tables <- lapply(paths, function(path) readr::read_csv(path))'
+    )
+  ).toMatchObject({
+    reads: ['inputs/ctrl.csv', 'inputs/treated.csv'],
+    readState: 'complete',
+    writeState: 'complete',
+    externalState: 'complete'
+  })
+})
+
+it.each([
+  'paths <- c("a.csv"); x <- lapply(paths, function(path) { readr::read_csv(path); message(path) })',
+  'paths <- c("a.csv"); x <- lapply(paths, function(path) readr::read_csv(path), col_types=custom_types)',
+  'paths <- c("a.csv"); x <- lapply(paths, function(path, extra) readr::read_csv(path))'
+])(
+  'does not certify an anonymous reader callback with extra effects or arguments: %s',
+  async (source) => {
+    expect((await analyzeNotebookSourceFileAccess('r', source)).readState).toBe('partial')
+  }
+)
 
 it.each([
   ['r', 'quarto::quarto_render("report.qmd", output_file="report.html")'],

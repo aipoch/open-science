@@ -28,8 +28,10 @@ import {
   isPotentialRFileWriteCall,
   R_FILE_CALL_EFFECTS,
   R_GRAPHICS_FILE_DEVICES,
+  rFileCallEffect,
   type NotebookFileCallEffect
 } from './notebook-call-effects'
+import { isExternalNotebookPath } from './notebook-path-utils'
 import type {
   NotebookSerializedValue,
   NotebookDependencyAlias,
@@ -1203,6 +1205,7 @@ const analyzeRSource = (
   const yamlOutputCalls = ['write_yaml']
   const vroomValueReadCalls = ['vroom', 'vroom_fwf', 'vroom_lines']
   const sfValueReadCalls = ['st_read']
+  const sfTransformCalls = ['st_transform']
   const matrixValueReadCalls = ['readMM']
   const seuratValueReadCalls = ['ReadMtx']
   const matrixOutputCalls = ['writeMM']
@@ -1222,6 +1225,7 @@ const analyzeRSource = (
   const magickReferenceReadCalls = ['image_read']
   const magickOutputCalls = ['image_write']
   const arrowReferenceReadCalls = [
+    'open_dataset',
     'read_csv_arrow',
     'read_delim_arrow',
     'read_feather',
@@ -1258,12 +1262,20 @@ const analyzeRSource = (
   const openxlsxOutputCalls = ['saveWorkbook', 'write.xlsx']
   const raggOutputCalls = ['agg_jpeg', 'agg_png', 'agg_tiff']
   const svgliteOutputCalls = ['svglite']
-  const hdf5ArrayOutputCalls = ['saveHDF5SummarizedExperiment']
+  const hdf5ArrayOutputCalls = ['saveHDF5SummarizedExperiment', 'writeHDF5Array']
+  // Unary DelayedArray operations build a lazy expression over their input
+  // without changing the backing file. Keep this list deliberately narrow;
+  // unknown package methods may realize data or dispatch arbitrary code.
+  const delayedArrayPureCalls = ['log1p']
   const openxlsx2ReferenceReadCalls = ['read_xlsx', 'wb_load']
   const openxlsx2OutputCalls = ['wb_save', 'write_xlsx']
   const qsReferenceReadCalls = ['qread']
   const qsOutputCalls = ['qsave']
   const terraReferenceReadCalls = ['rast', 'vect']
+  // Keep the raster transform contract deliberately small. These calls return
+  // new SpatRaster values while reading their input objects; unknown terra
+  // methods remain opaque so reference-bearing state is not guessed away.
+  const terraSafeCalls = ['ext', 'crop', 'writeRaster']
   const rioReferenceReadCalls = ['import']
   const rioOutputCalls = ['export']
   const writexlOutputCalls = ['write_xlsx']
@@ -1288,7 +1300,57 @@ const analyzeRSource = (
     'setorderv'
   ]
   const dataTableOutputCalls = ['fwrite']
-  const biocConstructorCalls = ['ExpressionSet', 'SingleCellExperiment', 'SummarizedExperiment']
+  const biocConstructorCalls = [
+    'ExpressionSet',
+    'MultiAssayExperiment',
+    'SingleCellExperiment',
+    'SummarizedExperiment',
+    'SpatialExperiment'
+  ]
+  // DESeq2 keeps a count matrix and sample design in an S4 dataset.  These
+  // entry points are common across multi-cell bulk RNA-seq notebooks, but are
+  // intentionally kept separate from generic Bioconductor accessors because
+  // their result types and option contracts differ.
+  const deSeq2ConstructorCalls = ['DESeqDataSetFromMatrix']
+  const deSeq2DataSetTransforms = [
+    'DESeq',
+    'estimateSizeFactors',
+    'estimateDispersions',
+    'nbinomWaldTest',
+    'nbinomLRT',
+    'replaceOutliers'
+  ]
+  const deSeq2TransformCalls = ['rlog', 'vst', 'varianceStabilizingTransformation']
+  const deSeq2ValueCalls = ['results', 'counts']
+  // phyloseq is a common microbiome/amplicon-analysis container. Keep its
+  // contract narrow: only static, value-preserving transforms are certified;
+  // callback-driven operations remain conservative.
+  const phyloseqConstructorCalls = ['phyloseq']
+  const variantAnnotationReferenceCalls = ['readVcf']
+  const phyloseqValueCalls = [
+    'otu_table',
+    'tax_table',
+    'sample_data',
+    'phy_tree',
+    'refseq',
+    'sample_sums'
+  ]
+  // These Bioconductor transforms return the same S4 container while adding
+  // assays, QC columns, or reduced dimensions. Keep the contract narrow: the
+  // first argument must be a known SingleCellExperiment/SummarizedExperiment
+  // binding and every optional argument must be a literal. This lets a
+  // notebook hand off a normalized object across cells without treating an
+  // arbitrary package call as a pure value transform.
+  const biocContainerTransforms = new Map<string, Set<string>>([
+    ['scuttle', new Set(['logNormCounts', 'addPerCellQC', 'addPerFeatureQC'])],
+    ['scater', new Set(['runPCA', 'runTSNE', 'runUMAP', 'runMDS'])],
+    ['DelayedArray', new Set(delayedArrayPureCalls)],
+    ['phyloseq', new Set(['tax_glom', 'prune_taxa'])]
+  ])
+  // scater's dimensionality-reduction methods can use randomized/approximate
+  // algorithms. Preserve the object lineage, but keep reproducibility status
+  // uncertain until a notebook captures its seed/algorithm configuration.
+  const biocStochasticTransforms = new Set(['runPCA', 'runTSNE', 'runUMAP', 'runMDS'])
   const biocValueAccessors = [
     'altExp',
     'altExps',
@@ -1307,7 +1369,14 @@ const analyzeRSource = (
     'rowData',
     'rowRanges',
     'rowSubset',
-    'sizeFactors'
+    'sizeFactors',
+    // SpatialExperiment stores coordinates and image metadata as first-class
+    // S4 accessors. Keep these in the same narrow accessor contract as assay
+    // and reduced-dimension reads so cross-cell spatial workflows retain the
+    // object lineage without trusting arbitrary S4 dispatch.
+    'spatialCoords',
+    'spatialCoordsNames',
+    'imgData'
   ]
   const biocUnknownAccessors = ['experimentData', 'metadata']
   const outputSafeCalls = [
@@ -1453,6 +1522,7 @@ const analyzeRSource = (
     'flowCore',
     'tximport',
     'Seurat',
+    'SeuratDisk',
     'GEOquery',
     'arrow',
     'Biobase',
@@ -1460,6 +1530,9 @@ const analyzeRSource = (
     'rtracklayer',
     'Cairo',
     'data.table',
+    'DropletUtils',
+    'DelayedArray',
+    'DESeq2',
     'dplyr',
     'fst',
     'ggplot2',
@@ -1470,6 +1543,7 @@ const analyzeRSource = (
     'htmlwidgets',
     'jsonlite',
     'Matrix',
+    'MultiAssayExperiment',
     'magick',
     'magrittr',
     'ncdf4',
@@ -1485,11 +1559,14 @@ const analyzeRSource = (
     'rio',
     'R.matlab',
     'sf',
+    'VariantAnnotation',
     'SingleCellExperiment',
+    'SpatialExperiment',
     'SummarizedExperiment',
     'svglite',
     'targets',
     'terra',
+    'phyloseq',
     'tibble',
     'tidyr',
     'tidyselect',
@@ -1522,6 +1599,14 @@ const analyzeRSource = (
   const tibbleConstructors = new Set(tibbleConstructorCalls)
   const dataTableConstructors = new Set(dataTableConstructorCalls)
   const biocConstructors = new Set(biocConstructorCalls)
+  const biocConstructorPackages = new Map([
+    ['ExpressionSet', 'Biobase'],
+    ['MultiAssayExperiment', 'MultiAssayExperiment'],
+    ['SingleCellExperiment', 'SingleCellExperiment'],
+    ['SummarizedExperiment', 'SummarizedExperiment'],
+    ['SpatialExperiment', 'SpatialExperiment']
+  ])
+  const phyloseqConstructors = new Set(phyloseqConstructorCalls)
   const modelMask = new Set(modelDataMaskCalls)
   const pureSafe = new Set(pureSafeCalls)
   const outputSafe = new Set(outputSafeCalls)
@@ -2430,7 +2515,10 @@ const analyzeRSource = (
     (pkg === 'qs' && qsReferenceReadCalls.includes(name)) ||
     (pkg === 'readr' && readrReferenceReadCalls.includes(name)) ||
     (pkg === 'rio' && rioReferenceReadCalls.includes(name)) ||
-    (pkg === 'terra' && terraReferenceReadCalls.includes(name))
+    (pkg === 'terra' && terraReferenceReadCalls.includes(name)) ||
+    (pkg === 'HDF5Array' && name === 'HDF5Array') ||
+    (pkg === 'SeuratDisk' && name === 'LoadH5Seurat') ||
+    (pkg === 'VariantAnnotation' && variantAnnotationReferenceCalls.includes(name))
   const knownQualifiedCall = (pkg: string, name: string): boolean =>
     (pkg === 'base' && name === 'options') ||
     (pkg === 'VennDiagram' && ['get.venn.partitions', 'venn.diagram'].includes(name)) ||
@@ -2441,7 +2529,12 @@ const analyzeRSource = (
     R_UNCAPTURED_EXTERNAL_CALLS.get(name) === pkg ||
     R_PLOT_LAYER_PACKAGES.get(name) === pkg ||
     (pkg === 'dplyr' &&
-      (['case_when', 'pull', 'desc'].includes(name) || tableJoinCalls.has(name))) ||
+      (['case_when', 'pull', 'desc', 'collect'].includes(name) || tableJoinCalls.has(name))) ||
+    (pkg === 'DelayedArray' && delayedArrayPureCalls.includes(name)) ||
+    (pkg === 'phyloseq' &&
+      [...phyloseqConstructorCalls, ...phyloseqValueCalls, 'import_biom'].includes(name)) ||
+    (pkg === 'VariantAnnotation' && variantAnnotationReferenceCalls.includes(name)) ||
+    (pkg === 'sf' && ['st_read', 'st_write', ...sfTransformCalls].includes(name)) ||
     (pkg === 'ggplot2' &&
       ['annotate', 'theme_set', 'theme_get', 'theme_update', 'theme_replace'].includes(name)) ||
     (pkg === 'stats' && ['t.test', 'p.adjust', 'na.omit', 'na.exclude'].includes(name)) ||
@@ -2468,6 +2561,17 @@ const analyzeRSource = (
     (pkg === 'flowCore' && ['read.FCS', 'read.flowSet', 'write.FCS'].includes(name)) ||
     (pkg === 'tximport' && name === 'tximport') ||
     (pkg === 'Seurat' && ['Read10X', 'Read10X_h5', 'Load10X_Spatial'].includes(name)) ||
+    (pkg === 'DropletUtils' && name === 'read10xCounts') ||
+    (pkg === 'DESeq2' &&
+      [
+        ...deSeq2ConstructorCalls,
+        ...deSeq2DataSetTransforms,
+        ...deSeq2TransformCalls,
+        ...deSeq2ValueCalls
+      ].includes(name)) ||
+    (pkg === 'SeuratDisk' && ['LoadH5Seurat', 'SaveH5Seurat'].includes(name)) ||
+    (biocContainerTransforms.get(pkg)?.has(name) ?? false) ||
+    (pkg === 'terra' && terraSafeCalls.includes(name)) ||
     (pkg === 'GEOquery' && name === 'getGEO') ||
     (pkg === 'base' &&
       (pureSafe.has(name) ||
@@ -2481,10 +2585,18 @@ const analyzeRSource = (
     qualifiedValueFileRead(pkg, name) ||
     qualifiedReferenceFileRead(pkg, name) ||
     (pkg === 'arrow' && arrowOutputCalls.includes(name)) ||
+    (pkg === 'dplyr' && name === 'collect') ||
     (pkg === 'Cairo' && cairoOutputCalls.includes(name)) ||
     (pkg === 'Biostrings' &&
       (biostringsReferenceReadCalls.includes(name) || biostringsOutputCalls.includes(name))) ||
-    (['Biobase', 'SingleCellExperiment', 'SummarizedExperiment'].includes(pkg) &&
+    ([
+      'Biobase',
+      'MultiAssayExperiment',
+      'SingleCellExperiment',
+      'SpatialExperiment',
+      'SummarizedExperiment',
+      'VariantAnnotation'
+    ].includes(pkg) &&
       (biocConstructors.has(name) || biocValue.has(name) || biocUnknown.has(name))) ||
     (pkg === 'data.table' &&
       (dataTableConstructors.has(name) ||
@@ -3857,7 +3969,34 @@ const analyzeRSource = (
       ]
     }
   }
-  const constructorType = (expr: RExpr | null | undefined): string | null => {
+  const biocTransformType = (
+    expr: Extract<RExpr, { kind: 'call' }>,
+    sourceType?: string
+  ): string | null => {
+    const qualified = qualifiedCall(expr)
+    if (!qualified || !biocContainerTransforms.get(qualified.package)?.has(qualified.name))
+      return null
+    const input = expr.args[0]
+    if (!isSymbol(input)) return null
+    const knownType =
+      sourceType ?? typeBindings.find((binding) => binding.target === input.name)?.typeName
+    if (
+      knownType !== 'SingleCellExperiment' &&
+      knownType !== 'SummarizedExperiment' &&
+      knownType !== 'SpatialExperiment' &&
+      knownType !== 'HDF5Array' &&
+      knownType !== 'DelayedArray' &&
+      knownType !== 'phyloseq'
+    )
+      return null
+    // Additional parameters can affect the result through arbitrary callbacks,
+    // delayed operations, or dynamic assay selection. Only certify literal
+    // options; callers with data-dependent arguments stay in the opaque path.
+    if (expr.args.slice(1).some((arg) => !['atomic', 'character', 'null'].includes(arg.kind)))
+      return null
+    return knownType
+  }
+  const constructorType = (expr: RExpr | null | undefined, sourceType?: string): string | null => {
     if (!isCall(expr)) return null
     if (dataTableQuery(expr)) return 'data.table'
     const qualified = qualifiedCall(expr)
@@ -3875,11 +4014,120 @@ const analyzeRSource = (
       return 'openxlsx.Workbook'
     }
     if (name && (dataTableConstructors.has(name) || name === 'copy')) return 'data.table'
-    if (name && biocConstructors.has(name)) return name
+    if (name && biocConstructors.has(name)) {
+      const owner = biocConstructorPackages.get(name)
+      const unshadowed =
+        !defined.includes(name) && !localNames.includes(name) && !shadowedCallbackCalls.has(name)
+      if (owner && (qualified ? qualified.package === owner : unshadowed)) return name
+    }
+    if (qualified?.package === 'phyloseq' && phyloseqConstructors.has(qualified.name)) {
+      return 'phyloseq'
+    }
+    if (qualified?.package === 'phyloseq' && qualified.name === 'import_biom') {
+      const filename = expr.args[0]
+      return rStaticString(filename, staticStrings, staticCollections) !== undefined
+        ? 'phyloseq'
+        : null
+    }
+    if (qualified?.package === 'VariantAnnotation' && qualified.name === 'readVcf') {
+      const filename = expr.args[0]
+      return rStaticString(filename, staticStrings, staticCollections) !== undefined ? 'VCF' : null
+    }
+    if (qualified?.package === 'DropletUtils' && qualified.name === 'read10xCounts') {
+      return 'SingleCellExperiment'
+    }
+    if (name && deSeq2ConstructorCalls.includes(name) && deSeq2CallIsSafe(expr))
+      return 'DESeqDataSet'
+    if (
+      qualified?.package === 'DESeq2' &&
+      deSeq2DataSetTransforms.includes(qualified.name) &&
+      sourceType === 'DESeqDataSet'
+    )
+      return 'DESeqDataSet'
+    if (
+      qualified?.package === 'DESeq2' &&
+      deSeq2TransformCalls.includes(qualified.name) &&
+      sourceType === 'DESeqDataSet'
+    )
+      return 'DESeqTransform'
+    if (qualified?.package === 'HDF5Array' && qualified.name === 'HDF5Array') return 'HDF5Array'
+    if (qualified?.package === 'sf' && qualified.name === 'st_read') {
+      const dsnIndex = expr.names.indexOf('dsn')
+      const dsn = expr.args[dsnIndex >= 0 ? dsnIndex : 0]
+      return rStaticString(dsn, staticStrings, staticCollections) !== undefined ? 'sf' : null
+    }
+    if (
+      qualified?.package === 'sf' &&
+      sfTransformCalls.includes(qualified.name) &&
+      sourceType === 'sf'
+    )
+      return 'sf'
+    if (qualified?.package === 'arrow' && qualified.name === 'open_dataset') return 'arrow.Dataset'
+    if (
+      (qualified?.package === 'arrow' || qualified?.package === 'dplyr') &&
+      qualified.name === 'collect' &&
+      sourceType === 'arrow.Dataset'
+    )
+      return 'arrow.Table'
+    const transformed = biocTransformType(expr, sourceType)
+    if (transformed) return transformed
     if (name === 'new' && isCharacter(expr.args[0])) return expr.args[0].value
     if (!callOperator(expr) && isCall(expr.callee) && memberName(expr.callee) === 'new')
       return rootName(expr.callee)
     return null
+  }
+  const deSeq2CallIsSafe = (expr: Extract<RExpr, { kind: 'call' }>): boolean => {
+    const qualified = qualifiedCall(expr)
+    const name = qualified?.package === 'DESeq2' ? qualified.name : calledName(expr)
+    if (
+      (qualified && qualified.package !== 'DESeq2') ||
+      (!qualified &&
+        (!name ||
+          defined.includes(name) ||
+          localNames.includes(name) ||
+          shadowedCallbackCalls.has(name)))
+    )
+      return false
+    if (
+      !name ||
+      ![
+        ...deSeq2ConstructorCalls,
+        ...deSeq2DataSetTransforms,
+        ...deSeq2TransformCalls,
+        ...deSeq2ValueCalls
+      ].includes(name)
+    )
+      return false
+    const allowed = new Set(
+      name === 'DESeqDataSetFromMatrix'
+        ? ['countData', 'colData', 'design', 'tidy', 'ignoreRank']
+        : name === 'results'
+          ? ['object', 'contrast', 'name', 'cooksCutoff', 'independentFiltering', 'alpha']
+          : name === 'counts'
+            ? ['object', 'normalized', 'replaced', 'normalizedData']
+            : ['object', 'blind', 'fitType', 'betaPrior', 'useT', 'minmu', 'quiet', 'parallel']
+    )
+    if (expr.names.some((label) => label !== undefined && label !== null && !allowed.has(label)))
+      return false
+    const safeFormulaTerm = (value: RExpr): boolean => {
+      if (['atomic', 'character', 'null'].includes(value.kind) || isSymbol(value)) return true
+      if (!isCall(value)) return false
+      const op = callOperator(value)
+      return Boolean(op && pureCallbackOps.has(op) && value.args.every(safeFormulaTerm))
+    }
+    const safeValue = (value: RExpr, formula = false): boolean => {
+      if (['atomic', 'character', 'null'].includes(value.kind) || isSymbol(value)) return true
+      if (!isCall(value)) return false
+      const op = callOperator(value)
+      if (op === '~') return formula && value.args.every(safeFormulaTerm)
+      return Boolean(op && pureSafe.has(op) && value.args.every((arg) => safeValue(arg)))
+    }
+    return expr.args.every((arg, index) => {
+      const label = expr.names[index]
+      if (label === 'design' || (name === 'DESeqDataSetFromMatrix' && index === 2))
+        return isCall(arg) && callOperator(arg) === '~' && safeValue(arg, true)
+      return safeValue(arg)
+    })
   }
   const addDataTableSummary = (): void => {
     if (!typeSummaries.some((summary) => summary.name === 'data.table')) {
@@ -3907,9 +4155,25 @@ const analyzeRSource = (
             'rowSubset',
             'sizeFactors'
           ]
-        : name === 'ExpressionSet'
-          ? ['exprs', 'fData', 'featureData', 'pData']
-          : common
+        : name === 'SpatialExperiment'
+          ? [
+              ...common,
+              'altExp',
+              'altExps',
+              'colLabels',
+              'logcounts',
+              'normcounts',
+              'reducedDim',
+              'reducedDims',
+              'rowSubset',
+              'sizeFactors',
+              'spatialCoords',
+              'spatialCoordsNames',
+              'imgData'
+            ]
+          : name === 'ExpressionSet'
+            ? ['exprs', 'fData', 'featureData', 'pData']
+            : common
     const extra = name === 'ExpressionSet' ? 'experimentData' : 'metadata'
     const fieldSummaries = [...fields, extra].map((field) => ({
       name: field,
@@ -3929,8 +4193,73 @@ const analyzeRSource = (
       }))
     })
   }
+  const addDeSeq2Summary = (name: 'DESeqDataSet' | 'DESeqTransform'): void => {
+    if (typeSummaries.some((summary) => summary.name === name)) return
+    const fields =
+      name === 'DESeqDataSet'
+        ? ['assays', 'colData', 'rowData', 'design', 'sizeFactors', 'dispersions']
+        : ['assays', 'colData', 'rowData', 'assayData']
+    typeSummaries.push({
+      name,
+      kind: 'r-s4',
+      fields: fields.map((field) => ({ name: field, relationship: 'unknown' as const })),
+      methods: []
+    })
+  }
   const addDataFrameSummary = (): void => {
     typeSummaries.push({ name: 'data.frame', kind: 'r-s4', fields: [], methods: [] })
+  }
+  const addArrowSummary = (name: 'arrow.Dataset' | 'arrow.Table'): void => {
+    if (typeSummaries.some((summary) => summary.name === name)) return
+    typeSummaries.push({ name, kind: 'r-r6', fields: [], methods: [] })
+  }
+  const addDelayedArraySummary = (name: 'HDF5Array' | 'DelayedArray'): void => {
+    if (typeSummaries.some((summary) => summary.name === name)) return
+    typeSummaries.push({ name, kind: 'r-s4', fields: [], methods: [] })
+  }
+  const addPhyloseqSummary = (): void => {
+    if (typeSummaries.some((summary) => summary.name === 'phyloseq')) return
+    const fields = ['otu_table', 'tax_table', 'sample_data', 'phy_tree', 'refseq']
+    typeSummaries.push({
+      name: 'phyloseq',
+      kind: 'r-s4',
+      fields: fields.map((field) => ({ name: field, relationship: 'unknown' as const })),
+      methods: fields.map((field) => ({
+        name: field,
+        effect: 'read',
+        usedNames: [],
+        safeCallNames: [],
+        unknownScope: 'receiver'
+      }))
+    })
+  }
+  const addVariantSummary = (): void => {
+    if (typeSummaries.some((summary) => summary.name === 'VCF')) return
+    const fields = ['rowRanges', 'colData', 'assays', 'info', 'geno']
+    typeSummaries.push({
+      name: 'VCF',
+      kind: 'r-s4',
+      fields: fields.map((field) => ({ name: field, relationship: 'unknown' as const })),
+      methods: fields.map((field) => ({
+        name: field,
+        effect: 'read',
+        usedNames: [],
+        safeCallNames: [],
+        unknownScope: 'receiver'
+      }))
+    })
+  }
+  const addSfSummary = (): void => {
+    if (typeSummaries.some((summary) => summary.name === 'sf')) return
+    typeSummaries.push({
+      name: 'sf',
+      kind: 'r-s4',
+      fields: [
+        { name: 'geometry', relationship: 'unknown' },
+        { name: 'crs', relationship: 'unknown' }
+      ],
+      methods: []
+    })
   }
   const dataTableUpdate = (expr: RExpr): { update: RExpr } | null => {
     if (callOperator(expr) !== '[' || !isCall(expr) || expr.args.length < 3) return null
@@ -4495,7 +4824,7 @@ const analyzeRSource = (
       unknown.push('opaque-call')
     }
     // Record ownership at serialization time, not the variable's final cell value.
-    const fileEffect = op ? R_FILE_CALL_EFFECTS.get(op) : undefined
+    const fileEffect = op ? rFileCallEffect(op, qualified?.package) : undefined
     if (
       op &&
       (localFileWrappers.effects.get(op)?.kind === 'write' ||
@@ -4537,6 +4866,147 @@ const analyzeRSource = (
           staticCollections
         ) ?? '<dynamic>'
       )
+    if (qualified?.package === 'terra' && terraSafeCalls.includes(op ?? '') && dependencyName) {
+      // `ext()` is a value constructor and `crop()` is a deterministic raster
+      // transform. Walk their arguments for object/file dependencies, while
+      // keeping a shadowed or malformed call conservative.
+      used.push(dependencyName)
+      if (!defined.includes(dependencyName)) priorUsed.push(dependencyName)
+      const namedArguments = (allowed: readonly string[]): boolean =>
+        expr.names.every((name) => !name || allowed.includes(name))
+      const safe = (() => {
+        if (!contractAvailable(op!, qualified.package, 'terra')) return false
+        if (op === 'ext') {
+          return (
+            expr.args.length === 4 &&
+            namedArguments(['xmin', 'xmax', 'ymin', 'ymax']) &&
+            expr.args.every(
+              (arg) =>
+                arg.kind === 'atomic' &&
+                typeof arg.number === 'number' &&
+                Number.isFinite(arg.number)
+            )
+          )
+        }
+        if (op === 'crop') {
+          const source = expr.args[0]
+          const extent = expr.args[1]
+          const snap = expr.args[2]
+          return (
+            expr.args.length >= 2 &&
+            expr.args.length <= 3 &&
+            namedArguments(['x', 'y', 'snap']) &&
+            isSymbol(source) &&
+            Boolean(extent) &&
+            (!snap ||
+              (expr.names[2] === 'snap' &&
+                snap.kind === 'character' &&
+                ['near', 'in', 'out'].includes(snap.value)))
+          )
+        }
+        const source = expr.args[0]
+        const filename = expr.args[1]
+        const overwrite = expr.args[2]
+        return (
+          expr.args.length >= 2 &&
+          expr.args.length <= 3 &&
+          namedArguments(['x', 'filename', 'overwrite']) &&
+          isSymbol(source) &&
+          Boolean(filename) &&
+          rStaticString(filename, staticStrings, staticCollections) !== undefined &&
+          (!overwrite ||
+            (expr.names[2] === 'overwrite' &&
+              overwrite.kind === 'atomic' &&
+              typeof overwrite.logical === 'boolean'))
+        )
+      })()
+      if (safe) safeCallNames.push(dependencyName)
+      else unknown.push('opaque-call')
+      for (const arg of expr.args) walk(arg, false)
+      return
+    }
+    if (
+      qualified?.package === 'DESeq2' &&
+      dependencyName &&
+      [
+        ...deSeq2ConstructorCalls,
+        ...deSeq2DataSetTransforms,
+        ...deSeq2TransformCalls,
+        ...deSeq2ValueCalls
+      ].includes(op ?? '')
+    ) {
+      used.push(dependencyName)
+      if (!defined.includes(dependencyName)) priorUsed.push(dependencyName)
+      if (deSeq2CallIsSafe(expr)) safeCallNames.push(dependencyName)
+      else unknown.push('opaque-call')
+      // Formula terms describe columns in colData rather than notebook
+      // bindings. Keep ordinary data arguments visible, while avoiding a
+      // false dependency on symbols such as `condition` in `~condition`.
+      expr.args.forEach((arg, index) => {
+        if (expr.names[index] === 'design' || (op === 'DESeqDataSetFromMatrix' && index === 2)) {
+          if (!isCall(arg) || callOperator(arg) !== '~') walk(arg, false)
+        } else walk(arg, false)
+      })
+      return
+    }
+    if (
+      qualified?.package === 'sf' &&
+      (sfTransformCalls.includes(op ?? '') || op === 'st_write') &&
+      dependencyName
+    ) {
+      // sf transformations preserve feature-object lineage. Keep CRS and
+      // writer arguments visible while leaving unknown geometry callbacks to
+      // the conservative file analyzer.
+      used.push(dependencyName)
+      if (!defined.includes(dependencyName)) priorUsed.push(dependencyName)
+      const destinationIndex = expr.names.indexOf('dsn')
+      const destination =
+        op === 'st_write' ? expr.args[destinationIndex >= 0 ? destinationIndex : 1] : undefined
+      if (op !== 'st_write' || rStaticString(destination, staticStrings, staticCollections))
+        safeCallNames.push(dependencyName)
+      else unknown.push('opaque-call')
+      for (const arg of expr.args) walk(arg, false)
+      return
+    }
+    if (qualified?.package === 'HDF5Array' && op === 'HDF5Array' && dependencyName) {
+      // HDF5Array keeps a lazy external backing store. Record the package
+      // call and its file argument, but preserve the external-state marker so
+      // downstream consumers do not treat the delayed handle as fully in-memory.
+      used.push(dependencyName)
+      if (!defined.includes(dependencyName)) priorUsed.push(dependencyName)
+      safeCallNames.push(dependencyName)
+      unknown.push('external-state')
+      for (const arg of expr.args) walk(arg, false)
+      return
+    }
+    if (
+      qualified?.package === 'SeuratDisk' &&
+      ['LoadH5Seurat', 'SaveH5Seurat'].includes(op ?? '') &&
+      dependencyName
+    ) {
+      // H5Seurat files are explicit lineage edges, while the loaded Seurat
+      // object may retain external/reference state just like readRDS(). Keep
+      // that uncertainty visible without downgrading the static file path.
+      used.push(dependencyName)
+      if (!defined.includes(dependencyName)) priorUsed.push(dependencyName)
+      safeCallNames.push(dependencyName)
+      if (op === 'LoadH5Seurat') unknown.push('external-state')
+      for (const arg of expr.args) walk(arg, false)
+      return
+    }
+    if (qualified?.package === 'dplyr' && op === 'collect' && dependencyName) {
+      used.push(dependencyName)
+      if (!defined.includes(dependencyName)) priorUsed.push(dependencyName)
+      // dplyr::collect() is safe only for the one-argument materialization
+      // form. Additional options can dispatch callbacks or alter filesystem
+      // behavior, so leave those calls conservative.
+      const safe =
+        op === 'collect' && expr.args.length === 1 && (!expr.names[0] || expr.names[0] === 'x')
+      if (safe) safeCallNames.push(dependencyName)
+      else unknown.push('opaque-call')
+      expr.args.forEach((argument) => walk(argument, false))
+      return
+    }
     if (readOnlyRuntimeQuery(expr)) {
       used.push(dependencyName!)
       if (!defined.includes(dependencyName!)) priorUsed.push(dependencyName!)
@@ -5039,6 +5509,12 @@ const analyzeRSource = (
           const staticString = rStaticString(value, staticStrings, staticCollections)
           const staticCollection = rStaticStringCollection(value, staticStrings, staticCollections)
           const inputHandleAlias = isSymbol(value) && localInputHandleNames.has(value.name)
+          // Capture the source container before prepareAssignment removes a
+          // same-name binding (e.g. `sce <- scuttle::logNormCounts(sce)`).
+          const sourceType =
+            value && isCall(value)
+              ? typeBindings.find((binding) => binding.target === rootName(value.args[0]))?.typeName
+              : undefined
           defined.push(name)
           prepareAssignment(name)
           if (controlDepth === 0 && independentTheme) themeIndependentPlots.add(name)
@@ -5102,12 +5578,21 @@ const analyzeRSource = (
             typeBindings.push({ target: name, typeName: summary.name, argumentNames: [] })
             functionDefinition = true
           }
-          constructed = value ? constructorType(value) : null
+          constructed = value ? constructorType(value, sourceType) : null
           if (r6Summary) typeSummaries.push(r6Summary)
           else if (constructed) {
             if (constructed === 'data.table') addDataTableSummary()
             else if (constructed === 'openxlsx.Workbook') addOpenxlsxWorkbookSummary()
             else if (biocConstructors.has(constructed)) addBiocSummary(constructed)
+            else if (constructed === 'arrow.Dataset' || constructed === 'arrow.Table')
+              addArrowSummary(constructed)
+            else if (constructed === 'HDF5Array' || constructed === 'DelayedArray')
+              addDelayedArraySummary(constructed)
+            else if (constructed === 'DESeqDataSet' || constructed === 'DESeqTransform')
+              addDeSeq2Summary(constructed)
+            else if (constructed === 'phyloseq') addPhyloseqSummary()
+            else if (constructed === 'VCF') addVariantSummary()
+            else if (constructed === 'sf') addSfSummary()
             const constructorRoots = unique(
               (isCall(value) ? value.args : [])
                 .map(rootName)
@@ -5204,16 +5689,54 @@ const analyzeRSource = (
         const valueDependency = valueQualified
           ? `${valueQualified.package}::${valueQualified.name}`
           : valueName
+        const valueContractAvailable = valueName
+          ? contractAvailable(valueName, valueQualified?.package, valueQualified?.package ?? '')
+          : false
+        const biocTransform =
+          valueQualified &&
+          biocContainerTransforms.get(valueQualified.package)?.has(valueQualified.name)
         if (
           valueName &&
           (dataTableConstructors.has(valueName) ||
             valueName === 'copy' ||
-            biocConstructors.has(valueName)) &&
-          valueDependency
+            biocConstructors.has(valueName) ||
+            phyloseqConstructors.has(valueName) ||
+            (valueQualified?.package === 'phyloseq' && valueName === 'import_biom') ||
+            (valueQualified?.package === 'VariantAnnotation' && valueName === 'readVcf') ||
+            (valueQualified?.package === 'DropletUtils' && valueName === 'read10xCounts') ||
+            (valueQualified?.package === 'HDF5Array' && valueName === 'HDF5Array') ||
+            (valueQualified?.package === 'DESeq2' &&
+              [
+                ...deSeq2ConstructorCalls,
+                ...deSeq2DataSetTransforms,
+                ...deSeq2TransformCalls,
+                ...deSeq2ValueCalls
+              ].includes(valueName)) ||
+            (valueQualified?.package === 'sf' &&
+              ['st_read', ...sfTransformCalls].includes(valueName)) ||
+            Boolean(biocTransform)) &&
+          valueDependency &&
+          valueContractAvailable
         ) {
           used.push(valueDependency)
           if (!defined.includes(valueDependency)) priorUsed.push(valueDependency)
-          safeCallNames.push(valueDependency)
+          const sfReadArgument =
+            valueQualified?.package === 'sf' && valueName === 'st_read' && isCall(value)
+              ? value.args[value.names.indexOf('dsn') >= 0 ? value.names.indexOf('dsn') : 0]
+              : undefined
+          if (
+            sfReadArgument !== undefined &&
+            rStaticString(sfReadArgument, staticStrings, staticCollections) === undefined
+          )
+            unknown.push('opaque-call')
+          else if (valueQualified?.package !== 'DESeq2' || deSeq2CallIsSafe(value))
+            safeCallNames.push(valueDependency)
+          else unknown.push('opaque-call')
+          if (
+            valueQualified?.package === 'scater' &&
+            biocStochasticTransforms.has(valueQualified.name)
+          )
+            unknown.push('external-state')
           if (valueName === 'fread') unknown.push('external-state')
         }
         if (dataTableQuery(value)) walkDataTableQuery(value)
@@ -5222,7 +5745,15 @@ const analyzeRSource = (
             const constructorRoot = rootName(value.callee)
             if (constructorRoot) used.push(constructorRoot)
           }
-          for (const arg of value.args) if (!isCharacter(arg)) walk(arg, false)
+          for (const [index, arg] of value.args.entries()) {
+            const isDesignFormula =
+              valueQualified?.package === 'DESeq2' &&
+              (value.names[index] === 'design' ||
+                (valueName === 'DESeqDataSetFromMatrix' && index === 2)) &&
+              isCall(arg) &&
+              callOperator(arg) === '~'
+            if (!isCharacter(arg) && !isDesignFormula) walk(arg, false)
+          }
         }
       }
       if (used.length > usedBefore) {
@@ -6938,6 +7469,56 @@ const rStaticLoopValues = (
   return rStaticStringCollection(expr, bindings, collections)?.values.slice()
 }
 
+// A small, deliberately strict contract for the anonymous callbacks commonly
+// emitted by scientific notebooks (for example,
+// `lapply(files, function(path) readr::read_csv(path))`).  Do not inline
+// arbitrary closures: their lexical state, defaults, and side effects are not
+// represented by the file-map contract.  The callback must have exactly one
+// required argument and a single direct, known reader call that consumes it as
+// the file argument.
+const rInlineFileReaderCallback = (
+  callback: RExpr | undefined
+): { body: Extract<RExpr, { kind: 'call' }>; parameter: string } | undefined => {
+  if (!isCall(callback) || callback.operator !== 'function') return undefined
+  const formals = callback.args[0]
+  const body = callback.args[1]
+  if (
+    !formals ||
+    formals.kind !== 'formals' ||
+    formals.names.length !== 1 ||
+    formals.values[0] !== null ||
+    !body
+  )
+    return undefined
+  const direct =
+    isCall(body) && body.operator === '{' && body.args.length === 1 ? body.args[0] : body
+  if (!isCall(direct)) return undefined
+  const name = rCalledName(direct)
+  const qualified = rQualifiedCall(direct)
+  const expected = name ? R_FILE_MAP_READERS.get(name) : undefined
+  if (
+    !name ||
+    !expected ||
+    (qualified ? qualified.package !== expected : direct.staticBuiltinShadowed) ||
+    !R_FILE_CALL_EFFECTS.has(name)
+  )
+    return undefined
+  const argument = rFileCallArgument(direct, R_FILE_CALL_EFFECTS.get(name)!)
+  return isSymbol(argument) && argument.name === formals.names[0]
+    ? { body: direct, parameter: formals.names[0] }
+    : undefined
+}
+
+const rSubstituteInlineFileReader = (expr: RExpr, parameter: string, value: string): RExpr => {
+  if (isSymbol(expr)) return expr.name === parameter ? { kind: 'character', value } : expr
+  if (!isCall(expr)) return expr
+  return {
+    ...expr,
+    callee: rSubstituteInlineFileReader(expr.callee, parameter, value),
+    args: expr.args.map((argument) => rSubstituteInlineFileReader(argument, parameter, value))
+  }
+}
+
 // Expand bounded file callbacks once for both dependency and file traversal.
 // Preserve argument evaluation and callable identity; never execute user code.
 const R_BOUNDED_FILE_ITERATORS = new Set(['map', 'map2', 'walk', 'walk2', 'lapply'])
@@ -6970,6 +7551,7 @@ const rBoundedFileMap = (
   const callbackIndex = indexOf(parameters[parameters.length - 1])
   const callback = expr.args[callbackIndex]
   if (!callback || inputs.some((index) => index < 0)) return undefined
+  const inlineReader = rInlineFileReaderCallback(callback)
   const invocation: Extract<RExpr, { kind: 'call' }> = {
     kind: 'call',
     operator: null,
@@ -6981,7 +7563,12 @@ const rBoundedFileMap = (
   const callablePackage = rQualifiedCall(invocation)?.package
   const writer = callable ? R_FILE_MAP_WRITERS.get(callable) : undefined
   const expected = writer?.package ?? (callable ? R_FILE_MAP_READERS.get(callable) : undefined)
-  if (!expected || (callablePackage ? callablePackage !== expected : shadowed.has(callable!)))
+  if (
+    (!expected && !inlineReader) ||
+    (expected && (callablePackage ? callablePackage !== expected : shadowed.has(callable!))) ||
+    (inlineReader &&
+      expr.args.some((_arg, index) => !inputs.includes(index) && index !== callbackIndex))
+  )
     return undefined
   const elements = (input: RExpr): RExpr[] | undefined => {
     const scalar = rStaticString(input, bindings, collections)
@@ -7004,6 +7591,7 @@ const rBoundedFileMap = (
   const first = elements(expr.args[inputs[0]])
   const second = paired ? elements(expr.args[inputs[1]]) : undefined
   if (!first || (paired && !second)) return undefined
+  if (inlineReader && first.some((value) => value.kind !== 'character')) return undefined
   if (second && first.length !== second.length && first.length !== 1 && second.length !== 1)
     return undefined
   const length = second ? (first.length === 1 ? second.length : first.length) : first.length
@@ -7026,6 +7614,12 @@ const rBoundedFileMap = (
       ...inputs.map(() => null),
       ...extra.map((item) => item.name)
     ]
+    if (inlineReader) {
+      const path = first[first.length === 1 ? 0 : i]
+      if (!path || path.kind !== 'character') return undefined
+      calls.push(rSubstituteInlineFileReader(inlineReader.body, inlineReader.parameter, path.value))
+      continue
+    }
     if (writer) {
       // Name the data and path slots after R's exact matching, so e.g.
       // walk(paths, writeLines, text="ok") binds the iterated value to con.
@@ -7131,6 +7725,9 @@ const rWriterDisposition = (
   name: string,
   bindings: ReadonlyMap<string, string>
 ): 'replace' | 'update' | 'unknown' => {
+  // Writing one dataset updates an HDF5 container rather than replacing it.
+  // Keep the existing file as a read dependency when the destination exists.
+  if (name === 'writeHDF5Array') return 'update'
   const option = notebookWriteOption('r', name)
   if (!option) return 'replace'
   const namedIndex = rOptionArgumentIndex(expr.names, option.keyword)
@@ -7202,7 +7799,7 @@ const rLocalFileWrappers = (
           while (isCall(target)) target = target.args[0]
           if (isSymbol(target)) assigned.add(target.name)
         }
-        const effect = called ? R_FILE_CALL_EFFECTS.get(called) : undefined
+        const effect = called ? rFileCallEffect(called, rQualifiedCall(node)?.package) : undefined
         if (effect) {
           const qualified = rQualifiedCall(node)
           if (
@@ -7219,7 +7816,10 @@ const rLocalFileWrappers = (
       collect(body)
       const path =
         devices[0] &&
-        rFileCallArgument(devices[0], R_FILE_CALL_EFFECTS.get(rCalledName(devices[0])!)!)
+        rFileCallArgument(
+          devices[0],
+          rFileCallEffect(rCalledName(devices[0])!, rQualifiedCall(devices[0])?.package)!
+        )
       if (
         !unsupported &&
         isSymbol(path) &&
@@ -7227,7 +7827,10 @@ const rLocalFileWrappers = (
         formals.names.includes(path.name) &&
         !assigned.has(path.name) &&
         devices.every((device) => {
-          const argument = rFileCallArgument(device, R_FILE_CALL_EFFECTS.get(rCalledName(device)!)!)
+          const argument = rFileCallArgument(
+            device,
+            rFileCallEffect(rCalledName(device)!, rQualifiedCall(device)?.package)!
+          )
           return isSymbol(argument) && argument.name === path.name
         })
       )
@@ -7236,7 +7839,7 @@ const rLocalFileWrappers = (
     if (isCall(body) && body.operator === '{' && body.args.length === 1) body = body.args[0]
     const name = rCalledName(body)
     const qualified = isCall(body) ? rQualifiedCall(body) : undefined
-    const effect = name ? R_FILE_CALL_EFFECTS.get(name) : undefined
+    const effect = name ? rFileCallEffect(name, qualified?.package) : undefined
     const parameters = formals?.kind === 'formals' ? formals.names : []
     const argument = isCall(body) && effect ? rFileCallArgument(body, effect) : undefined
     const parameterIndex = isSymbol(argument) ? parameters.indexOf(argument.name) : -1
@@ -7389,7 +7992,7 @@ const analyzeRFileAccessTree = (
     const collect = (node: RExpr): void => {
       if (!isCall(node)) return
       const called = rCalledName(node) ?? ''
-      const effect = R_FILE_CALL_EFFECTS.get(called)
+      const effect = rFileCallEffect(called, rQualifiedCall(node)?.package)
       if (effect) effects.add(effect.kind)
       // A single-path wrapper summary cannot preserve mixed I/O or directory scope.
       if (called === 'createArrowFiles') effects.add('write')
@@ -7863,7 +8466,7 @@ const analyzeRFileAccessTree = (
     }
     let call: NotebookFileCallEffect | undefined = name
       ? qualified
-        ? R_FILE_CALL_EFFECTS.get(name)
+        ? rFileCallEffect(name, qualified.package)
         : (localWrappers.effects.get(name) ??
           (localWrappers.names.has(name)
             ? undefined
@@ -7874,6 +8477,17 @@ const analyzeRFileAccessTree = (
       if (unresolvedLocalEffects.get(name)?.has('write')) unresolvedWrites = true
     }
     let fileArgumentOverride: { value: RExpr | undefined } | undefined
+    if (name === 'HDF5Array' || name === 'writeHDF5Array') {
+      // These contracts apply only to HDF5Array's explicit file arguments.
+      // Delayed operations and the package's default dump destination remain
+      // external/unknown even when the path itself is known.
+      if (
+        (qualified && qualified.package !== 'HDF5Array') ||
+        (!qualified && shadowedQuotationNames.has(name))
+      )
+        call = undefined
+      else unsupportedExternalState = true
+    }
     if (
       name === 'write' &&
       ((qualified && qualified.package !== 'base') ||
@@ -8243,7 +8857,14 @@ const analyzeRFileAccessTree = (
           paths.length <= MAX_STATIC_FILE_LOOP_ITERATIONS &&
           paths.every((path): path is string => path !== undefined)
         ) {
-          for (const path of paths) if (!definitelyWritten.has(path)) reads.add(path)
+          for (const path of paths) {
+            if (!definitelyWritten.has(path)) reads.add(path)
+            if (isExternalNotebookPath(path)) {
+              unresolvedReads = true
+              unsupportedExternalState = true
+            }
+          }
+          if (name === 'read10xCounts') unresolvedReads = true
           expr.args.forEach((argument) => visit(argument))
           return
         }
@@ -8251,6 +8872,18 @@ const analyzeRFileAccessTree = (
       const path = inMemoryRead
         ? undefined
         : (fileConnectionPath(argument) ?? rStaticString(argument, bindings, collections))
+      if (path && isExternalNotebookPath(path)) {
+        if (call.kind === 'read') {
+          reads.add(path)
+          unresolvedReads = true
+        } else {
+          writes.add(path)
+          unresolvedWrites = true
+        }
+        unsupportedExternalState = true
+        expr.args.forEach((argument) => visit(argument))
+        return
+      }
       if (
         name === 'write' &&
         call === R_FILE_CALL_EFFECTS.get('write') &&
@@ -8266,6 +8899,25 @@ const analyzeRFileAccessTree = (
       // These readers expand a directory into companion files at runtime. Keep
       // the proven root path but do not claim complete input coverage.
       if (call.kind === 'read' && (name === 'Read10X' || name === 'Load10X_Spatial') && path) {
+        unresolvedReads = true
+      }
+      // DropletUtils::read10xCounts accepts a 10x Matrix directory. The
+      // declared root is useful lineage evidence, but the package discovers
+      // matrix.mtx, barcodes.tsv and features.tsv (or HDF5 companions) at
+      // runtime, so static source analysis cannot claim complete coverage.
+      if (call.kind === 'read' && name === 'read10xCounts' && path) {
+        unresolvedReads = true
+      }
+      // An Arrow Dataset may expand a directory into partition files and can
+      // discover schema/metadata at runtime. Preserve the literal source root
+      // as input evidence, but do not claim complete coverage without a
+      // runtime directory manifest.
+      if (
+        call.kind === 'read' &&
+        qualified?.package === 'arrow' &&
+        name === 'open_dataset' &&
+        path
+      ) {
         unresolvedReads = true
       }
       // Project creation and saving can read ArrowFiles referenced by the object.
@@ -8369,8 +9021,38 @@ const analyzeRFileAccessTree = (
               writeScopes.set(`${target}\0${path}`, { kind: target, path })
             }
           }
-        } else if (!definitelyWritten.has(path)) {
-          reads.add(path)
+        } else {
+          if (
+            qualified?.package === 'sf' &&
+            qualified.name === 'st_read' &&
+            path.toLocaleLowerCase('en-US').endsWith('.shp')
+          ) {
+            // Shapefiles are a companion set (.dbf/.shx/.prj, and sometimes
+            // additional sidecars). Keep the .shp path as evidence, but do not
+            // certify complete input coverage without runtime enumeration.
+            unresolvedReads = true
+          }
+          if (
+            qualified?.package === 'terra' &&
+            qualified.name === 'vect' &&
+            path.toLocaleLowerCase('en-US').endsWith('.shp')
+          ) {
+            // terra::vect() delegates shapefiles to GDAL, which reads the
+            // companion .dbf/.shx/.prj files (and optional sidecars). Keep
+            // the .shp path as evidence without claiming complete coverage.
+            unresolvedReads = true
+          }
+          if (
+            qualified?.package === 'terra' &&
+            qualified.name === 'rast' &&
+            /\.(?:vrt|xml)$/iu.test(path)
+          ) {
+            // GDAL VRT/XML rasters can reference source rasters outside the
+            // declared file. The container path is useful evidence, but its
+            // transitive inputs require runtime enumeration.
+            unresolvedReads = true
+          }
+          if (!definitelyWritten.has(path)) reads.add(path)
         }
       }
     }

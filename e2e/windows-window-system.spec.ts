@@ -210,7 +210,9 @@ test.describe('Windows window system', () => {
     await expect(page.getByRole('region', { name: 'Projects' })).toBeVisible()
   })
 
-  test('opens the whole-window find overlay with Ctrl+F in a workspace', async ({ app }) => {
+  test('opens the whole-window find overlay with Ctrl+F in a workspace @pr-mainline-windows', async ({
+    app
+  }) => {
     const page = await app.completeOnboarding()
     await page.getByRole('button', { name: 'New project' }).click()
     const projectDialog = page.getByRole('dialog', { name: 'New project' })

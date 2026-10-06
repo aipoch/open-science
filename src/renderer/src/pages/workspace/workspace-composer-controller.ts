@@ -78,6 +78,8 @@ type ComposerHistoryNavigation = {
 type ComposerSessionContext = {
   id: string
   projectId: string
+  isPending?: boolean
+  messages?: readonly { id: string; pdfContext?: MessagePdfContextSnapshot }[]
   runtimeContext?: {
     revision: number
     pdfContext?: SessionPdfContext
@@ -87,6 +89,36 @@ type ComposerSessionContext = {
 
 type ComposerReadingContextBinding =
   SessionPdfBinding | { bindingId: string; name: string; draftSelection: true }
+
+type ComposerAdmissionProjection = {
+  draftKey: string
+  projectId: string
+  version: number
+  messageId?: string
+  annotations: Annotation[]
+  readingBindings: ComposerReadingContextBinding[]
+  automaticAttachments: { id: string; name: string }[]
+}
+
+// Session binding replaces the pending ID; the submitted prompt stays on the active branch.
+const admissionMatchesSession = (
+  projection: ComposerAdmissionProjection,
+  session: ComposerSessionContext | undefined
+): boolean =>
+  session?.projectId === projection.projectId &&
+  projection.messageId !== undefined &&
+  (session.messages?.some((message) => message.id === projection.messageId) ?? false)
+
+// Binding publishes the prepared prompt, including its PDF snapshot. An empty snapshot is
+// authoritative too: single-page uploads remain attachments rather than Reading bindings.
+const admissionHasNoLinkedPdfs = (
+  projection: ComposerAdmissionProjection,
+  session: ComposerSessionContext | undefined
+): boolean => {
+  if (!admissionMatchesSession(projection, session) || session?.isPending !== false) return false
+  const prompt = session.messages?.find((message) => message.id === projection.messageId)
+  return Boolean(prompt && (prompt.pdfContext?.bindings.length ?? 0) === 0)
+}
 
 type ReadingMutationRuntime = {
   revision: number
@@ -172,6 +204,7 @@ type WorkspaceComposerController = {
       pendingBindingId: string | undefined
       isPending: boolean
       automaticAttachmentCount: number
+      automaticAttachments: { id: string; name: string }[]
     }
   }
   actions: {
@@ -203,6 +236,11 @@ type WorkspaceComposerController = {
   }
   lifecycle: {
     captureSend: (includeReadingContext?: boolean) => ComposerSendSnapshot
+    preserveAdmissionContext: (snapshot: ComposerSendSnapshot) => void
+    bindAdmissionContext: (
+      snapshot: ComposerSendSnapshot,
+      message: { sessionId: string; messageId: string }
+    ) => void
     captureRevision: (doc: ComposerDoc, annotations: Annotation[]) => ComposerSendSnapshot
     clearDraft: (draftKey: string, expectedVersion?: number) => boolean
     restoreFailedSend: (
@@ -327,6 +365,21 @@ const useWorkspaceComposerController = ({
   const automaticReadingEnabledRef = useRef(initialDraft.automaticReadingEnabled)
   const historyRef = useRef<Record<string, ComposerHistoryNavigation>>({})
   const caretRequestKeyRef = useRef(0)
+  const [admissionProjection, setAdmissionProjection] = useState<
+    ComposerAdmissionProjection | undefined
+  >(undefined)
+  const admissionProjectionRef = useRef<ComposerAdmissionProjection | undefined>(undefined)
+  const clearAdmissionProjection = useCallback((): void => {
+    admissionProjectionRef.current = undefined
+    setAdmissionProjection(undefined)
+  }, [])
+  const setAdmissionProjectionState = useCallback(
+    (projection: ComposerAdmissionProjection): void => {
+      admissionProjectionRef.current = projection
+      setAdmissionProjection(projection)
+    },
+    []
+  )
   const durableReadingContext = activeSession?.runtimeContext?.pdfContext
   const durableReadingBindings = useMemo(
     () => durableReadingContext?.bindings ?? [],
@@ -553,14 +606,17 @@ const useWorkspaceComposerController = ({
       }),
     [attachments, pendingReadingSelections, previewItems]
   )
-  const readingContexts: ComposerReadingContextBinding[] =
-    durableReadingBindings.length > 0
-      ? [...durableReadingBindings]
-      : pendingReadingItems.map(({ selection, name }) => ({
-          bindingId: pendingPdfContextBindingId(selection),
-          name,
-          draftSelection: true
-        }))
+  const readingContexts = useMemo<ComposerReadingContextBinding[]>(
+    () =>
+      durableReadingBindings.length > 0
+        ? [...durableReadingBindings]
+        : pendingReadingItems.map(({ selection, name }) => ({
+            bindingId: pendingPdfContextBindingId(selection),
+            name,
+            draftSelection: true
+          })),
+    [durableReadingBindings, pendingReadingItems]
+  )
   const activePreviewItemId = usePreviewWorkbenchStore((state) => state.activeItemId)
   const activeReadingBinding =
     durableReadingBindings.find(
@@ -947,6 +1003,7 @@ const useWorkspaceComposerController = ({
     activeDraftKeyRef.current = currentDraftKey
     delete draftsRef.current[currentDraftKey]
   }, [
+    activeSession,
     activeProjectId,
     annotations,
     attachments,
@@ -963,6 +1020,19 @@ const useWorkspaceComposerController = ({
     transfers,
     retryMessage
   ])
+
+  useLayoutEffect(() => {
+    const projection = admissionProjectionRef.current
+    if (!projection || !admissionMatchesSession(projection, activeSession)) return
+    const readingReady =
+      (projection.readingBindings.length === 0 && projection.automaticAttachments.length === 0) ||
+      durableReadingBindings.length > 0 ||
+      admissionHasNoLinkedPdfs(projection, activeSession)
+    const discussionReady =
+      projection.annotations.length === 0 ||
+      (activeSession?.runtimeContext?.sessionContext?.bindings.length ?? 0) > 0
+    if (readingReady && discussionReady) clearAdmissionProjection()
+  }, [activeSession, clearAdmissionProjection, durableReadingBindings.length])
 
   // Save the outgoing draft and activate the target before applying its prefill.
   useLayoutEffect(() => {
@@ -1227,7 +1297,7 @@ const useWorkspaceComposerController = ({
           return true
         })
         .slice(0, Math.max(0, MAX_SESSION_PDF_CONTEXTS - includedDurableBindings.length))
-      return {
+      const snapshot = {
         retrySessionOwner: retrySessionOwnerRef.current,
         setupSessionToken: setupSessionTokenRef.current,
         ...(researchMembership ? { researchMembership: { ...researchMembership } } : {}),
@@ -1272,6 +1342,7 @@ const useWorkspaceComposerController = ({
         ...(pendingPdfContextAttachmentIds.length > 0 ? { pendingPdfContextAttachmentIds } : {}),
         ...(pendingPdfContextVersions.length > 0 ? { pendingPdfContextVersions } : {})
       }
+      return snapshot
     },
     [
       attachments,
@@ -1288,6 +1359,41 @@ const useWorkspaceComposerController = ({
       stagedReadingContexts,
       versionsRef
     ]
+  )
+  const preserveAdmissionContext = useCallback(
+    (snapshot: ComposerSendSnapshot): void => {
+      const discussionAnnotations = snapshot.annotations.filter(replayAnnotationTarget)
+      const automaticAttachments = automaticReadingEnabledRef.current
+        ? automaticStagedReadingContexts.map((attachment) => ({
+            id: attachment.id,
+            name: attachment.originalName || attachment.name
+          }))
+        : []
+      if (
+        discussionAnnotations.length === 0 &&
+        readingContexts.length === 0 &&
+        automaticAttachments.length === 0
+      )
+        return
+      setAdmissionProjectionState({
+        draftKey: snapshot.draftKey,
+        projectId: projectIdRef.current,
+        version: snapshot.version,
+        annotations: discussionAnnotations,
+        readingBindings: [...readingContexts],
+        automaticAttachments
+      })
+    },
+    [automaticStagedReadingContexts, readingContexts, setAdmissionProjectionState]
+  )
+  const bindAdmissionContext = useCallback(
+    (snapshot: ComposerSendSnapshot, message: { sessionId: string; messageId: string }): void => {
+      const projection = admissionProjectionRef.current
+      if (projection?.draftKey !== snapshot.draftKey || projection.version !== snapshot.version)
+        return
+      setAdmissionProjectionState({ ...projection, messageId: message.messageId })
+    },
+    [setAdmissionProjectionState]
   )
   const clearDraft = useCallback(
     (draftKey: string, expectedVersion?: number): boolean => {
@@ -1351,6 +1457,9 @@ const useWorkspaceComposerController = ({
       boundDraftKey?: string,
       reportConflict = false
     ): boolean => {
+      const projection = admissionProjectionRef.current
+      if (projection?.draftKey === snapshot.draftKey && projection.version === snapshot.version)
+        clearAdmissionProjection()
       const draftKey = boundDraftKey ?? snapshot.draftKey
       if (deletedDraftKeysRef.current.has(draftKey)) {
         if (!preserveOnConflict)
@@ -1431,6 +1540,7 @@ const useWorkspaceComposerController = ({
     },
     [
       captureDraftAttachments,
+      clearAdmissionProjection,
       reportNewerDraftKept,
       draftsRef,
       versionsRef,
@@ -1491,11 +1601,47 @@ const useWorkspaceComposerController = ({
     [captureUndo, clearHistory, clearPastedTextUndo, markChanged, setActiveAnnotations]
   )
 
+  const admissionProjectionActive =
+    admissionProjection !== undefined &&
+    (admissionMatchesSession(admissionProjection, activeSession) ||
+      (!activeSession &&
+        admissionProjection.messageId === undefined &&
+        admissionProjection.draftKey === currentDraftKey &&
+        admissionProjection.projectId === (activeProjectId ?? 'default-project')))
+  const visibleAnnotations =
+    admissionProjectionActive &&
+    (activeSession?.runtimeContext?.sessionContext?.bindings.length ?? 0) === 0
+      ? [
+          ...annotations,
+          ...admissionProjection.annotations.filter(
+            (annotation) => !annotations.some((current) => current.id === annotation.id)
+          )
+        ]
+      : annotations
+  const visibleReadingContexts =
+    admissionProjectionActive && durableReadingBindings.length === 0
+      ? admissionHasNoLinkedPdfs(admissionProjection, activeSession)
+        ? readingContexts
+        : admissionProjection.readingBindings
+      : readingContexts
+
+  const automaticReadingAttachments = admissionProjectionActive
+    ? durableReadingBindings.length > 0 ||
+      admissionHasNoLinkedPdfs(admissionProjection, activeSession)
+      ? []
+      : admissionProjection.automaticAttachments
+    : automaticReadingEnabled
+      ? automaticStagedReadingContexts.map((attachment) => ({
+          id: attachment.id,
+          name: attachment.originalName || attachment.name
+        }))
+      : []
+
   return {
     view: {
       queuedEdit,
       doc,
-      annotations,
+      annotations: visibleAnnotations,
       attachments,
       transfers,
       error,
@@ -1508,12 +1654,11 @@ const useWorkspaceComposerController = ({
       // The live reading position stays out of the view: the chip no longer displays it, and
       // captureSend snapshots it straight from the store.
       readingContext: {
-        bindings: readingContexts,
+        bindings: visibleReadingContexts,
         pendingBindingId: pdfContextPendingBindingId,
-        isPending: isPdfContextPending,
-        automaticAttachmentCount: automaticReadingEnabled
-          ? automaticStagedReadingContexts.length
-          : 0
+        isPending: isPdfContextPending || admissionProjectionActive,
+        automaticAttachmentCount: automaticReadingAttachments.length,
+        automaticAttachments: automaticReadingAttachments
       }
     },
     actions: {
@@ -1579,6 +1724,8 @@ const useWorkspaceComposerController = ({
     },
     lifecycle: {
       captureSend,
+      preserveAdmissionContext,
+      bindAdmissionContext,
       captureRevision,
       clearDraft,
       restoreFailedSend,

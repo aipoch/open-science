@@ -155,6 +155,29 @@ const lineagePathKey = (run: NotebookRunRecord, value: string): string => {
   return `relative:${run.runId}:${portable}`
 }
 
+// Resolve a path against the run that observed it.  Scope invalidation can
+// compare files from a different cwd than the run declaring the scope, so a
+// relative path must never be interpreted through the current consumer cwd.
+const absoluteLineagePath = (run: NotebookRunRecord, value: string): string | undefined => {
+  const workingDirectory = lineageWorkingDirectory(run)
+  if (!isAbsolute(value) && workingDirectory === undefined) return undefined
+  return lineagePathCase(
+    portablePath(isAbsolute(value) ? normalize(value) : resolve(workingDirectory!, value))
+  )
+}
+
+const matchesAbsoluteLineageScope = (
+  scopeRun: NotebookRunRecord,
+  scope: NotebookSourceFileWriteScope,
+  candidateRun: NotebookRunRecord,
+  candidatePath: string
+): boolean | undefined => {
+  const scopePath = absoluteLineagePath(scopeRun, scope.path)
+  const candidate = absoluteLineagePath(candidateRun, candidatePath)
+  if (scopePath === undefined || candidate === undefined) return undefined
+  return matchesWriteScope({ ...scope, path: scopePath }, candidate)
+}
+
 const isUnanchoredRelativePath = (run: NotebookRunRecord, key: string): boolean =>
   lineageWorkingDirectory(run) === undefined &&
   !hasCompleteRuntimeFileEvidence(run) &&
@@ -170,7 +193,8 @@ const matchesObservedFile = (
     lineageWorkingDirectory(run) === undefined &&
     hasCompleteRuntimeFileEvidence(run) &&
     file.relativePath !== undefined &&
-    portablePath(file.relativePath) === portablePath(requestedPath)
+    lineagePathCase(portablePath(file.relativePath)) ===
+      lineagePathCase(portablePath(requestedPath))
   )
 }
 
@@ -199,11 +223,15 @@ const observedScopedGenerations = (
         : [])
     ]
     return (
-      candidatePaths.some(
-        (candidatePath) =>
-          candidatePath !== '..' &&
-          !candidatePath.startsWith('../') &&
-          scopes.some((scope) => matchesLineageScope(lineageScope(run, scope), candidatePath))
+      scopes.some(
+        (scope) =>
+          matchesAbsoluteLineageScope(run, scope, run, file.path) ??
+          candidatePaths.some(
+            (candidatePath) =>
+              candidatePath !== '..' &&
+              !candidatePath.startsWith('../') &&
+              matchesLineageScope(lineageScope(run, scope), candidatePath)
+          )
       ) &&
       (file.createdByRunId === run.runId || file.change === 'created' || file.change === 'modified')
     )
@@ -2043,6 +2071,7 @@ const projectNotebookFileDependencies = (
   const ambiguousPaths = new Set<string>()
   const unresolvedFileReadRunIds = new Set<string>()
   const dependenciesByRunId: Record<string, NotebookFileDependency[]> = {}
+  const runsById = new Map(analyzedRuns.map(({ run }) => [run.runId, run]))
   const generationLineageKeys = (
     run: NotebookRunRecord,
     generation: NotebookWorkingFile
@@ -2133,6 +2162,8 @@ const projectNotebookFileDependencies = (
     path: string,
     scope: NotebookSourceFileWriteScope
   ): boolean => {
+    const absoluteMatch = matchesAbsoluteLineageScope(run, scope, run, path)
+    if (absoluteMatch !== undefined) return absoluteMatch
     const workingDirectory = lineageWorkingDirectory(run)
     const resolvedPath =
       workingDirectory !== undefined && !isAbsolute(path) ? resolve(workingDirectory, path) : path
@@ -2149,6 +2180,11 @@ const projectNotebookFileDependencies = (
     scope: NotebookSourceFileWriteScope
   ): void => {
     for (const [key, producerFile] of producerPaths) {
+      const producerRunId = producers.get(key)?.runId
+      const producerRun = producerRunId ? runsById.get(producerRunId) : undefined
+      const absoluteMatch = producerRun
+        ? matchesAbsoluteLineageScope(run, scope, producerRun, producerFile.path)
+        : undefined
       const candidatePaths = [
         scopeCandidatePath(run, producerFile.path),
         ...(lineageWorkingDirectory(run) === undefined &&
@@ -2158,15 +2194,15 @@ const projectNotebookFileDependencies = (
           : [])
       ]
       const normalizedScope = lineageScope(run, scope)
-      if (
-        !candidatePaths.some(
+      const scopeMatch =
+        absoluteMatch ??
+        candidatePaths.some(
           (candidatePath) =>
             candidatePath !== '..' &&
             !candidatePath.startsWith('../') &&
             matchesLineageScope(normalizedScope, candidatePath)
         )
-      )
-        continue
+      if (!scopeMatch) continue
       producers.delete(key)
       producerPaths.delete(key)
       ambiguousPaths.add(key)
@@ -2251,6 +2287,32 @@ const projectNotebookFileDependencies = (
         for (const rawPath of fileAccess.writes) {
           if (!runtimeWriterEvidenceComplete && !observedFileGeneration(run, rawPath))
             markPathAmbiguous(run, rawPath)
+        }
+      } else if (runtimeWriterEvidenceComplete) {
+        // A conservative static writer (for example an sf/terra companion
+        // format) may still have a complete runtime receipt. In that case the
+        // observed generations are authoritative for the paths that actually
+        // changed, while any declared but unobserved path remains ambiguous.
+        // This preserves useful output lineage without certifying the writer's
+        // unobserved sidecar set.
+        const matchedGenerations = new Set<NotebookWorkingFile>()
+        for (const rawPath of fileAccess?.writes ?? []) {
+          const generation = observedFileGeneration(run, rawPath)
+          if (generation) {
+            registerProducer(run, rawPath, generation)
+            matchedGenerations.add(generation)
+          } else markPathAmbiguous(run, rawPath)
+        }
+        for (const generation of observedChanges) {
+          if (!matchedGenerations.has(generation)) markAmbiguous(run, generation)
+        }
+        for (const scope of fileAccess?.writeScopes ?? []) {
+          markScopeAmbiguous(run, scope)
+          const scopedGenerations = observedScopedGenerations(run, [scope])
+          for (const generation of scopedGenerations) {
+            registerProducer(run, scope.path, generation)
+            matchedGenerations.add(generation)
+          }
         }
       } else {
         for (const generation of observedChanges) markAmbiguous(run, generation)

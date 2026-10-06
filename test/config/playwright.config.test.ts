@@ -183,8 +183,8 @@ it.each([
     expect(report.errors).toEqual([])
     expect(report.suites.length).toBeGreaterThan(0)
     for (const project of report.config.projects) {
-      expect(project.testDir).toBe(resolve(testDir))
-      expect(project.outputDir).toBe(resolve(outputDir))
+      expect(resolve(project.testDir)).toBe(resolve(testDir))
+      expect(resolve(project.outputDir)).toBe(resolve(outputDir))
     }
     if (config.includes('browser')) {
       expect(report.config.webServer).toMatchObject({ cwd: process.cwd() })

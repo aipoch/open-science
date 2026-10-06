@@ -17,6 +17,7 @@ vi.mock('@/lib/session-fork', () => ({
 }))
 
 import { ConversationPanel } from './ConversationPanel'
+import { createSessionDiscussionAnnotation } from './session-discussion-annotation'
 import { SessionPromptPreparationOwner } from '../../../../main/session-persistence/prompt-preparation-owner'
 import { recordRestartTurnOutcome } from '../../../../main/session-persistence/turn-outcome-authority'
 import {
@@ -669,6 +670,7 @@ const createPanelDefaults = (): PanelProps => ({
         bindings: [],
         pendingBindingId: undefined,
         isPending: false,
+        automaticAttachments: [],
         automaticAttachmentCount: 0
       }
     },
@@ -1482,6 +1484,92 @@ describe('ConversationPanel research starters', () => {
   })
 })
 
+describe('ConversationPanel whole-window find', () => {
+  it('owns the find handshake only while the new conversation start is mounted', () => {
+    const listeners = new Set<() => void>()
+    const stopReady = vi.fn()
+    const announceWindowFindReady = vi.fn(() => stopReady)
+    const announceWindowFindContentReady = vi.fn()
+    const removeListener = vi.fn()
+    const onShowWindowFind = vi.fn((listener: () => void) => {
+      listeners.add(listener)
+      return () => {
+        removeListener()
+        listeners.delete(listener)
+      }
+    })
+    window.api.window = {
+      announceWindowFindReady,
+      announceWindowFindContentReady,
+      onShowWindowFind
+    } as unknown as Window['api']['window']
+
+    renderPanel()
+    expect(onShowWindowFind).toHaveBeenCalledTimes(1)
+    expect(announceWindowFindReady).toHaveBeenCalledTimes(1)
+    expect(onShowWindowFind.mock.invocationCallOrder[0]).toBeLessThan(
+      announceWindowFindReady.mock.invocationCallOrder[0]
+    )
+    expect(announceWindowFindContentReady).not.toHaveBeenCalled()
+    for (let attempt = 0; attempt < 2; attempt++) {
+      listeners.forEach((listener) => listener())
+    }
+    expect(announceWindowFindContentReady).toHaveBeenCalledTimes(2)
+    renderPanel({ composer: { view: { doc: docFromText('Find my draft') } } })
+    expect(onShowWindowFind).toHaveBeenCalledTimes(1)
+
+    const activeSession: ChatSession = {
+      id: 'find-session',
+      projectId: 'project-a',
+      title: 'Find conversation',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    // Loaded transcripts own their handshake; lazy content must not be acknowledged early.
+    renderPanel({ view: { activeSession: { ...activeSession, contentLoaded: false } } })
+    expect(listeners.size).toBe(0)
+    expect(removeListener).toHaveBeenCalledTimes(1)
+    expect(stopReady).toHaveBeenCalledTimes(1)
+    expect(removeListener.mock.invocationCallOrder[0]).toBeLessThan(
+      stopReady.mock.invocationCallOrder[0]
+    )
+    renderPanel({ view: { activeSession } })
+    expect(announceWindowFindReady).toHaveBeenCalledTimes(1)
+    expect(announceWindowFindContentReady).toHaveBeenCalledTimes(2)
+
+    renderPanel()
+    expect(listeners.size).toBe(1)
+    expect(announceWindowFindReady).toHaveBeenCalledTimes(2)
+    renderPanel({
+      conversation: {
+        optimisticMessage: {
+          id: 'pending-first-message',
+          role: 'user',
+          content: 'First prompt',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      }
+    })
+    expect(listeners.size).toBe(0)
+    expect(stopReady).toHaveBeenCalledTimes(2)
+    expect(announceWindowFindReady).toHaveBeenCalledTimes(2)
+
+    renderPanel()
+    expect(listeners.size).toBe(1)
+    expect(announceWindowFindReady).toHaveBeenCalledTimes(3)
+    act(() => root.render(null))
+    expect(listeners.size).toBe(0)
+    expect(removeListener).toHaveBeenCalledTimes(3)
+    expect(stopReady).toHaveBeenCalledTimes(3)
+  })
+})
+
 describe('ConversationPanel session loading presentation', () => {
   it('replaces the transcript with a skeleton until lazy Session content is hydrated', () => {
     const loadingSession: ChatSession = {
@@ -1672,7 +1760,10 @@ describe('ConversationPanel composer intake', () => {
               size: 42
             }
           ],
-          readingContext: { automaticAttachmentCount: 1 }
+          readingContext: {
+            automaticAttachmentCount: 1,
+            automaticAttachments: [{ id: 'upload-1', name: 'paper.pdf' }]
+          }
         },
         actions: { dismissAutomaticReading }
       }
@@ -1682,6 +1773,8 @@ describe('ConversationPanel composer intake', () => {
     expect(suggestion?.textContent).toContain('Reading')
     expect(suggestion?.querySelector('svg.lucide-book-open[aria-hidden="true"]')).not.toBeNull()
     expect(suggestion?.textContent).toContain('1 PDF will be linked when sent')
+    expect(suggestion?.textContent).toContain('paper.pdf')
+    expect(suggestion?.querySelector('[role="status"]')?.textContent).toBe('Link on send')
     expect(container.textContent).toContain('paper.pdf')
 
     act(() =>
@@ -1689,6 +1782,29 @@ describe('ConversationPanel composer intake', () => {
     )
     expect(dismissAutomaticReading).toHaveBeenCalledOnce()
     expect(container.textContent).toContain('paper.pdf')
+  })
+
+  it('keeps the automatic PDF name and a linking status after submitted attachments leave the draft', () => {
+    renderPanel({
+      composer: {
+        view: {
+          attachments: [],
+          readingContext: {
+            automaticAttachmentCount: 1,
+            automaticAttachments: [{ id: 'upload', name: 'paper.pdf' }],
+            isPending: true
+          }
+        }
+      }
+    })
+    const suggestion = container.querySelector('[data-testid="automatic-reading-suggestion"]')!
+    expect(suggestion.textContent).toContain('paper.pdf')
+    expect(suggestion.querySelector('[role="status"]')?.textContent).toBe('Linking PDFs…')
+    expect(suggestion.querySelector('[role="status"] .lucide-loader-circle')).not.toBeNull()
+    expect(
+      suggestion.querySelector<HTMLButtonElement>('[aria-label="Keep as attachments"]')?.disabled
+    ).toBe(true)
+    expect(suggestion.textContent).not.toContain('will be linked when sent')
   })
 
   it('shows automatic Reading follow-ups alongside linked PDF context', () => {
@@ -1724,6 +1840,7 @@ describe('ConversationPanel composer intake', () => {
                 linkedAt: 1
               }
             ],
+            automaticAttachments: [{ id: 'upload-2', name: 'second.pdf' }],
             automaticAttachmentCount: 1
           }
         },
@@ -1738,6 +1855,46 @@ describe('ConversationPanel composer intake', () => {
       suggestion?.querySelector<HTMLButtonElement>('[aria-label="Keep as attachments"]')?.click()
     )
     expect(dismissAutomaticReading).toHaveBeenCalledOnce()
+  })
+
+  it('places Discussion and Reading in one header outside the scrolling annotation list', () => {
+    const discussion = createSessionDiscussionAnnotation({
+      projectId: 'project',
+      sourceSessionId: 'source',
+      sourceTitle: 'Study',
+      fingerprint: 'fp',
+      branchId: 'main',
+      stepId: 'step',
+      stepOffsetMs: 0,
+      excerpt: '',
+      evidence: [{ kind: 'message', id: 'step', projectId: 'project', sessionId: 'source' }]
+    })!
+    renderPanel({
+      composer: {
+        view: {
+          annotations: [
+            discussion,
+            {
+              id: 'ordinary',
+              kind: 'text',
+              target: 'agent',
+              quote: 'An ordinary annotation',
+              source: { kind: 'agent-message', sessionId: 'source', messageId: 'step' }
+            }
+          ],
+          readingContext: {
+            bindings: [{ bindingId: 'paper', name: 'paper.pdf', draftSelection: true }]
+          }
+        }
+      }
+    })
+    const header = container.querySelector('[data-testid="composer-context-header"]')!
+    expect(header.querySelector('[data-testid="session-discussion-draft"]')).not.toBeNull()
+    expect(header.querySelector('[data-testid="pdf-context-bar"]')).not.toBeNull()
+    const list = container.querySelector('[data-testid="annotation-draft-list"]')!
+    expect(list.textContent).toContain('An ordinary annotation')
+    expect(header.contains(list)).toBe(false)
+    expect(header.textContent).not.toContain('An ordinary annotation')
   })
 
   it('shows linked PDF context as a single-line chip that opens its preview', () => {
@@ -1809,7 +1966,9 @@ describe('ConversationPanel composer intake', () => {
     })
 
     const bar = container.querySelector('[data-testid="pdf-context-bar"]')
-    expect(bar?.className.split(/\s+/)).toContain('rounded-t-2xl')
+    expect(
+      bar?.closest('[data-testid="composer-context-header"]')?.className.split(/\s+/)
+    ).toContain('rounded-t-2xl')
     expect(bar?.textContent).toContain('Reading')
     expect(bar?.querySelector('svg.lucide-book-open[aria-hidden="true"]')).not.toBeNull()
     expect(bar?.textContent).toContain('paper.pdf')

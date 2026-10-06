@@ -241,9 +241,9 @@ test('links a multi-page PDF upload as Reading context in a new project @pr-main
     mimeType: 'application/pdf',
     buffer: createTwoPagePdf()
   })
-  await expect(page.getByTestId('automatic-reading-suggestion')).toContainText(
-    '1 PDF will be linked when sent'
-  )
+  const readingSuggestion = page.getByTestId('automatic-reading-suggestion')
+  await expect(readingSuggestion).toContainText('paper.pdf')
+  await expect(readingSuggestion.getByRole('status')).toHaveText('Link on send')
 
   await expect(page.getByTestId('new-conversation-start')).toBeVisible()
   await captureChinese('pdf-staged-new-conversation.png')

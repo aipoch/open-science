@@ -22,6 +22,7 @@ import {
   withParsedNotebookSource,
   type Node
 } from './dependency-analysis-parser'
+import { isExternalNotebookPath } from './notebook-path-utils'
 import type {
   NotebookSerializedValue,
   NotebookDependencyAlias,
@@ -1425,6 +1426,14 @@ const convertExpr = (node: Node, ctx: PyCtx = 'Load'): PyNode => {
         py(
           'AugAssign',
           {
+            // Keep the operator so downstream file analysis can distinguish a
+            // safe sequence concatenation (``+=``) from opaque in-place
+            // operations.  The tree-sitter token is commonly ``+=`` but a
+            // grammar field may expose ``+``; normalize both forms.
+            op:
+              arithmeticOperators[
+                (fieldChild(node, 'operator')?.text ?? node.child(1)?.text ?? '').replace(/=$/u, '')
+              ] ?? '',
             target: fieldChild(node, 'left')
               ? convertPattern(fieldChild(node, 'left')!, 'Store')
               : py('Name', { id: '', ctx: 'Store' }, []),
@@ -2853,7 +2862,18 @@ const summarizeLambda = (
 }
 
 const serializationSite = (node: PyNode): string => `${node.lineno}:${node.col_offset}`
-const PYTHON_SERIALIZED_TYPES = new Set(['pandas.DataFrame', 'pandas.Series', 'numpy.ndarray'])
+// Joblib can persist fitted scikit-learn estimators alongside the tabular and
+// array values already understood by the lineage analyzer.  Keep this list
+// explicit: unknown estimator classes (and custom transformers) must remain
+// conservative instead of making arbitrary pickle payloads look safe.
+const PYTHON_SERIALIZED_TYPES = new Set([
+  'pandas.DataFrame',
+  'pandas.Series',
+  'numpy.ndarray',
+  'sklearn.preprocessing.StandardScaler',
+  'sklearn.decomposition.PCA',
+  'sklearn.linear_model.LinearRegression'
+])
 
 class Analyzer extends NodeVisitor {
   serializedValueWrites = new Map<string, NotebookSerializedValue>()
@@ -2862,6 +2882,49 @@ class Analyzer extends NodeVisitor {
   serializedPathBindings = new Map<string, string>()
   serializedConnections = new Map<string, string>()
   acceptedSerializedReads = new Map<string, string>()
+
+  safeTorchWeightsOnlyLoad(node: PyNode): boolean {
+    const rawName = pythonDottedName(node.func)
+    if (!rawName) return false
+    const [root, ...members] = rawName.split('.')
+    const canonicalName = [this.importedCanonicalNames.get(root ?? '') ?? root, ...members]
+      .filter(Boolean)
+      .join('.')
+    if (canonicalName !== 'torch.load') return false
+    const importedRoot = this.importedCanonicalNames.get(root ?? '')
+    const resolvesToImportedTorch =
+      (node.func?.type === 'Attribute' && importedRoot === 'torch') ||
+      (node.func?.type === 'Name' && importedRoot === 'torch.load')
+    if (!resolvesToImportedTorch) return false
+    // A member replacement (including setattr/delattr) can replace the loader
+    // or alter torch's deserialization behavior. Treat the imported root as
+    // tainted until the kernel epoch resets, just like safe-global registration.
+    if (this.memberWrites.some((write) => write.receiver === 'torch')) return false
+    // Safe-global registration changes the process-wide unpickling allowlist.
+    // A literal weights-only call is only safe before that namespace has been
+    // tainted by a prior registration or opaque mutation.
+    if (this.taintedNamespaces.has('*') || this.taintedNamespaces.has('torch')) return false
+    const args = Array.isArray(node.args) ? node.args : []
+    const keyword = (name: string): PyNode | undefined =>
+      (node.keywords ?? []).find((entry) => entry.arg === name)?.value
+    const weightsOnly = keyword('weights_only')
+    const mapLocation = keyword('map_location')
+    const mmap = keyword('mmap')
+    return (
+      args.length <= 1 &&
+      weightsOnly?.type === 'Constant' &&
+      weightsOnly.value === true &&
+      (!mapLocation ||
+        (mapLocation.type === 'Constant' &&
+          (mapLocation.constKind === 'str' || mapLocation.constKind === 'none'))) &&
+      (!mmap || (mmap.type === 'Constant' && mmap.constKind === 'bool')) &&
+      !(node.keywords ?? []).some(
+        (entry) =>
+          entry.arg === null ||
+          !['f', 'weights_only', 'map_location', 'mmap'].includes(entry.arg ?? '')
+      )
+    )
+  }
 
   serializationPath(node: PyNode | undefined): string | undefined {
     const raw =
@@ -3326,6 +3389,29 @@ class Analyzer extends NodeVisitor {
       return 'numpy.ndarray'
     if (owner === 'python.strings')
       return node.slice?.type === 'Slice' ? 'python.strings' : 'python.string'
+    // h5py exposes datasets through file-handle indexing. A dataset slice is
+    // materialized as a NumPy array, while an unsliced lookup remains a
+    // resource-backed Dataset handle whose later methods must stay tracked.
+    if (owner === 'h5py.File') return 'h5py.Dataset'
+    if (owner === 'h5py.Dataset') {
+      // h5py returns an ndarray for slices, ellipsis, and any multidimensional
+      // selection. Only a proven scalar index should remain scalar; treating a
+      // tuple of slices as a scalar loses the array handoff to later cells.
+      const selector = node.slice
+      const scalarIndex = (index: PyNode | null | undefined): boolean =>
+        Boolean(
+          index &&
+          ((index.type === 'Constant' && index.constKind === 'int') ||
+            (index.type === 'Name' && this.libraryTypeName(index) === 'python.scalar'))
+        )
+      if (!selector || selector.type === 'Slice' || selector.type === 'Ellipsis')
+        return 'numpy.ndarray'
+      if (selector.type === 'Tuple')
+        return selector.elts?.every((index) => scalarIndex(index))
+          ? 'python.scalar'
+          : 'numpy.ndarray'
+      return scalarIndex(selector) ? 'python.scalar' : 'numpy.ndarray'
+    }
     if (
       owner === 'pandas.DataFrame' &&
       ((node.slice?.type === 'Constant' && node.slice.constKind === 'str') ||
@@ -5831,6 +5917,14 @@ class Analyzer extends NodeVisitor {
       const canonicalCallName = [this.importedCanonicalNames.get(root ?? '') ?? root, ...members]
         .filter(Boolean)
         .join('.')
+      if (
+        canonicalCallName === 'torch.serialization.add_safe_globals' ||
+        canonicalCallName === 'torch.serialization.safe_globals' ||
+        canonicalCallName === 'torch.serialization.register_package'
+      ) {
+        this.taintedNamespaces.add('torch')
+        this.unknown.add('external-state')
+      }
       if (canonicalCallName === 'sqlite3.connect') {
         const args = Array.isArray(node.args) ? node.args : []
         const targetNode =
@@ -5857,7 +5951,8 @@ class Analyzer extends NodeVisitor {
       if (
         !this.acceptedSerializedReads.has(serializationSite(node)) &&
         !knownPathMethod &&
-        pythonHasUnsupportedExternalState(canonicalCallName, node)
+        pythonHasUnsupportedExternalState(canonicalCallName, node) &&
+        !this.safeTorchWeightsOnlyLoad(node)
       ) {
         this.unknown.add('external-state')
         if (
@@ -6017,7 +6112,7 @@ class Analyzer extends NodeVisitor {
     ) {
       this.unknown.add('external-state')
     }
-    if (libraryEffect?.unsafeNamespace) {
+    if (libraryEffect?.unsafeNamespace && !this.safeTorchWeightsOnlyLoad(node)) {
       this.unknown.add('opaque-call')
       this.unknown.add('dynamic-namespace')
     }
@@ -7365,6 +7460,15 @@ const analyzePythonFileAccessTree = (
   const partialMappingKeys = new Map<string, readonly string[]>()
   const partialCollectionRows = new Map<string, Array<Array<string | undefined>>>()
   const possibleAliases = [...(context?.staticCollectionAliases ?? [])]
+  // Collections created in this source can be tracked more precisely than
+  // persisted/context collections.  Keep this marker narrow so an append to a
+  // cross-cell value still invalidates conservatively as before.
+  const freshSequenceCollections = new Set<string>()
+  // AnnData property updates are in-memory transformations. They invalidate
+  // the static object value, but do not replace the package namespace with an
+  // opaque external-state implementation. Preserve known AnnData file-method
+  // effects so later write_h5ad calls remain attributable.
+  const inMemoryMutationTypes = new Set(['anndata.AnnData'])
   const activeStaticLoops: Array<{ names: Set<string>; invalidated: boolean }> = []
   const invalidateStaticValue = (name: string | undefined, taintIdentity = true): void => {
     if (!name) return
@@ -7384,11 +7488,17 @@ const analyzePythonFileAccessTree = (
       }
     }
     for (const affected of affectedNames) {
+      freshSequenceCollections.delete(affected)
       for (const loop of activeStaticLoops) {
         if (loop.names.has(affected)) loop.invalidated = true
       }
       const identity = importedNames.get(affected) ?? scientificObjectTypes.get(affected)
-      if (identity && identity !== 'python.container' && taintIdentity) {
+      if (
+        identity &&
+        identity !== 'python.container' &&
+        taintIdentity &&
+        !inMemoryMutationTypes.has(identity)
+      ) {
         pythonTaintedNamespaces.add(identity.split('.')[0]!)
         unsupportedExternalState = true
       }
@@ -7628,6 +7738,12 @@ const analyzePythonFileAccessTree = (
       else unresolvedWrites = true
       return
     }
+    if (isExternalNotebookPath(path)) {
+      if (kind === 'read') unresolvedReads = true
+      else unresolvedWrites = true
+      unsupportedExternalState = true
+      return
+    }
     if (pythonPathHasCollectionPattern(path)) {
       if (kind === 'read') unresolvedReads = true
       else unresolvedWrites = true
@@ -7663,6 +7779,12 @@ const analyzePythonFileAccessTree = (
       if (writable) unresolvedWrites = true
       return
     }
+    if (isExternalNotebookPath(path)) {
+      if (readable) unresolvedReads = true
+      if (writable) unresolvedWrites = true
+      unsupportedExternalState = true
+      return
+    }
     if (readable && !definitelyWritten.has(path)) reads.add(path)
     if (writable) {
       writes.add(path)
@@ -7679,7 +7801,7 @@ const analyzePythonFileAccessTree = (
       value === '-' ||
       value?.startsWith('/dev/') ||
       value?.includes('##idx##') ||
-      (value && /^[a-z][a-z\d+.-]*:\/\//iu.test(value))
+      (value && isExternalNotebookPath(value))
     ) {
       if (kind === 'read') unresolvedReads = true
       else unresolvedWrites = true
@@ -7811,6 +7933,7 @@ const analyzePythonFileAccessTree = (
     const shadowedStaticCallsSnapshot = new Set(shadowedStaticCalls)
     const shadowedHelperNamesSnapshot = new Set(shadowedHelperNames)
     const pythonTaintedNamespacesSnapshot = new Set(pythonTaintedNamespaces)
+    const freshSequenceCollectionsSnapshot = new Set(freshSequenceCollections)
     const restore = (): void => {
       bindings.clear()
       for (const [key, value] of bindingsSnapshot) bindings.set(key, value)
@@ -7839,6 +7962,8 @@ const analyzePythonFileAccessTree = (
       for (const value of shadowedHelperNamesSnapshot) shadowedHelperNames.add(value)
       pythonTaintedNamespaces.clear()
       for (const value of pythonTaintedNamespacesSnapshot) pythonTaintedNamespaces.add(value)
+      freshSequenceCollections.clear()
+      for (const value of freshSequenceCollectionsSnapshot) freshSequenceCollections.add(value)
     }
     if (!preserveCallerScope) {
       bindings.clear()
@@ -7852,6 +7977,7 @@ const analyzePythonFileAccessTree = (
       scientificObjectTypes.clear()
       shadowedStaticCalls.clear()
       shadowedHelperNames.clear()
+      freshSequenceCollections.clear()
     }
     const markOpaqueImportTimeEffect = (): void => {
       unresolvedReads = true
@@ -8038,6 +8164,11 @@ const analyzePythonFileAccessTree = (
       return
     }
     const canonicalName = canonicalCallName(node) ?? rawName
+    const [rawRoot] = rawName.split('.')
+    const importedTorchRoot = importedNames.get(rawRoot ?? '')
+    const resolvesToImportedTorch =
+      (node.func?.type === 'Attribute' && importedTorchRoot === 'torch') ||
+      (node.func?.type === 'Name' && importedTorchRoot === 'torch.load')
     const importedRoot = importedNames.get(rawName.split('.')[0]!)
     const pathConstructor = [
       'Path',
@@ -8147,8 +8278,9 @@ const analyzePythonFileAccessTree = (
       return
     }
     if (
-      pythonTaintedNamespaces.has('*') ||
-      pythonTaintedNamespaces.has(canonicalName.split('.')[0]!)
+      (pythonTaintedNamespaces.has('*') ||
+        pythonTaintedNamespaces.has(canonicalName.split('.')[0]!)) &&
+      canonicalName !== 'torch.load'
     ) {
       unsupportedExternalState = true
       return
@@ -8307,6 +8439,67 @@ const analyzePythonFileAccessTree = (
         unsupportedExternalState = true
       }
     }
+    if (
+      canonicalName === 'torch.serialization.add_safe_globals' ||
+      canonicalName === 'torch.serialization.safe_globals' ||
+      canonicalName === 'torch.serialization.register_package'
+    ) {
+      // The registration changes process-wide deserialization behavior. Reuse
+      // the existing namespace taint so it survives into later cells in the
+      // same kernel epoch without adding a persisted context field.
+      pythonTaintedNamespaces.add('torch')
+      unresolvedReads = true
+      unresolvedWrites = true
+      unsupportedExternalState = true
+      return
+    }
+    if (canonicalName === 'torch.load') {
+      // PyTorch's default loader historically executes pickle payloads.  A
+      // weights-only load is the explicit safe mode used by current model
+      // notebooks: it reconstructs tensors and primitive containers without
+      // importing arbitrary classes.  Only certify the narrow, literal form;
+      // map_location callbacks, custom pickle modules, and **kwargs can still
+      // execute user code or touch additional resources.
+      const args = Array.isArray(node.args) ? node.args : []
+      const keyword = (name: string): PyNode | undefined =>
+        (node.keywords ?? []).find((entry) => entry.arg === name)?.value
+      const pathNode = keyword('f') ?? args[0]
+      if (!resolvesToImportedTorch) {
+        unresolvedReads = true
+        unresolvedWrites = true
+        unsupportedExternalState = true
+        return
+      }
+      const weightsOnly = keyword('weights_only')
+      const mapLocation = keyword('map_location')
+      const mmap = keyword('mmap')
+      const safeMapLocation =
+        !mapLocation ||
+        (mapLocation.type === 'Constant' &&
+          (mapLocation.constKind === 'str' || mapLocation.constKind === 'none'))
+      const safeMmap = !mmap || (mmap.type === 'Constant' && mmap.constKind === 'bool')
+      const hasUnknownKeyword = (node.keywords ?? []).some(
+        (entry) =>
+          entry.arg === null ||
+          !['f', 'weights_only', 'map_location', 'mmap'].includes(entry.arg ?? '')
+      )
+      const safe =
+        args.length <= 1 &&
+        weightsOnly?.type === 'Constant' &&
+        weightsOnly.value === true &&
+        safeMapLocation &&
+        safeMmap &&
+        !pythonTaintedNamespaces.has('torch') &&
+        !pythonTaintedNamespaces.has('*') &&
+        !hasUnknownKeyword
+      recordFileAccess('read', pathNode)
+      if (!safe) {
+        unresolvedReads = true
+        unresolvedWrites = true
+        unsupportedExternalState = true
+      }
+      return
+    }
     if (libraryMethodEffect?.externalState) unsupportedExternalState = true
     if (
       !acceptedSerializedReads.has(serializationSite(node)) &&
@@ -8364,7 +8557,7 @@ const analyzePythonFileAccessTree = (
         !path ||
         path.includes('\\') ||
         pythonPathHasCollectionPattern(path) ||
-        /^[a-z][a-z\d+.-]*:\/\//iu.test(path)
+        isExternalNotebookPath(path)
       ) {
         unresolvedWrites = true
       } else {
@@ -8495,7 +8688,7 @@ const analyzePythonFileAccessTree = (
         !customFilesystem &&
         path &&
         !pythonPathHasCollectionPattern(path) &&
-        !/^[a-z][a-z\d+.-]*:\/\//iu.test(path)
+        !isExternalNotebookPath(path)
       ) {
         writes.add(path)
         writeScopes.set(`directory\0${path}`, { kind: 'directory', path })
@@ -8558,6 +8751,21 @@ const analyzePythonFileAccessTree = (
       // also supply these callbacks, depending on the installed Pyteomics version.
       unsupportedExternalState = true
     }
+    if (canonicalName === 'mne.io.read_raw_fif' || canonicalName === 'mne.io.Raw.save') {
+      const args = Array.isArray(node.args) ? node.args : []
+      const pathNode =
+        (node.keywords ?? []).find((keyword) => ['fname', 'filename'].includes(keyword.arg ?? ''))
+          ?.value ?? args[0]
+      recordFileAccess(canonicalName === 'mne.io.read_raw_fif' ? 'read' : 'write', pathNode)
+      // FIF recordings may transparently span companion split files on read,
+      // and Raw.save may create numbered parts once the 2 GiB boundary is
+      // crossed. Preserve the literal path as evidence, but require runtime
+      // file evidence before declaring complete coverage.
+      if (canonicalName === 'mne.io.read_raw_fif') unresolvedReads = true
+      else unresolvedWrites = true
+      unsupportedExternalState = true
+      return
+    }
     if (['scanpy.read_h5ad', 'anndata.read_h5ad', 'anndata.io.read_h5ad'].includes(canonicalName)) {
       const args = Array.isArray(node.args) ? node.args : []
       const pathNode =
@@ -8583,6 +8791,24 @@ const analyzePythonFileAccessTree = (
       return
     }
 
+    if (['scanpy.read_zarr', 'anndata.read_zarr', 'anndata.io.read_zarr'].includes(canonicalName)) {
+      const args = Array.isArray(node.args) ? node.args : []
+      const storeNode =
+        (node.keywords ?? []).find((keyword) => ['store', 'filename'].includes(keyword.arg ?? ''))
+          ?.value ?? args[0]
+      const store = resolveStaticString(storeNode, bindings)
+      // AnnData Zarr stores are directory-backed collections. Preserve a local
+      // root as useful lineage evidence while keeping coverage partial because
+      // metadata/chunks and custom store implementations are not enumerable
+      // from static source alone.
+      if (store && !isExternalNotebookPath(store)) recordFileAccess('read', storeNode)
+      else unresolvedReads = true
+      directoryStateRead = true
+      unresolvedReads = true
+      unsupportedExternalState = true
+      return
+    }
+
     if (canonicalName === 'pyarrow.parquet.read_table') {
       const args = Array.isArray(node.args) ? node.args : []
       const keywords = node.keywords ?? []
@@ -8596,7 +8822,7 @@ const analyzePythonFileAccessTree = (
             !keyword.arg || (keyword.arg === 'filesystem' && keyword.value.constKind !== 'none')
         ) &&
         path &&
-        !/^[a-z][a-z\d+.-]*:\/\//iu.test(path)
+        !isExternalNotebookPath(path)
       ) {
         recordFileAccess('read', source)
       }
@@ -8611,6 +8837,28 @@ const analyzePythonFileAccessTree = (
       unsupportedExternalState = true
       return
     }
+    if (canonicalName === 'pyarrow.dataset.dataset') {
+      // Arrow datasets can be backed by a directory tree (for example a
+      // partitioned Parquet dataset). Preserve a static local root as lineage
+      // evidence, while keeping the result partial because discovery may
+      // consult sidecars, filesystem metadata, or a remote filesystem.
+      const args = Array.isArray(node.args) ? node.args : []
+      const source =
+        (node.keywords ?? []).find((keyword) => ['source', 'path'].includes(keyword.arg ?? ''))
+          ?.value ?? args[0]
+      const path = resolveStaticString(source, bindings)
+      const filesystem = (node.keywords ?? []).find(
+        (keyword) => keyword.arg === 'filesystem'
+      )?.value
+      const filesystemIsDefault =
+        !filesystem || (filesystem.type === 'Constant' && filesystem.constKind === 'none')
+      if (path && !isExternalNotebookPath(path) && filesystemIsDefault)
+        recordFileAccess('read', source)
+      unresolvedReads = true
+      directoryStateRead = true
+      unsupportedExternalState = true
+      return
+    }
     if (
       [
         'scanpy.read_10x_mtx',
@@ -8618,7 +8866,6 @@ const analyzePythonFileAccessTree = (
         'dask.dataframe.read_parquet',
         'dask.dataframe.read_csv',
         'scanpy.read_visium',
-        'pyarrow.dataset.dataset',
         'fsspec.open',
         'fsspec.open_files',
         'fsspec.get_mapper'
@@ -8641,7 +8888,7 @@ const analyzePythonFileAccessTree = (
         const fileArgument =
           (node.keywords ?? []).find((entry) => entry.arg === parameter)?.value ?? args[0]
         const path = resolveStaticString(fileArgument, bindings)
-        if (path && !/^[a-z][a-z\d+.-]*:\/\//iu.test(path)) recordFileAccess('read', fileArgument)
+        if (path && !isExternalNotebookPath(path)) recordFileAccess('read', fileArgument)
       }
       unresolvedReads = true
       unsupportedExternalState = true
@@ -8769,6 +9016,28 @@ const analyzePythonFileAccessTree = (
           ['f', 'file', 'filepath', 'fname', 'model_file'].includes(keyword.arg ?? '')
         )?.value ?? args[moduleSave ? 1 : 0]
       const path = resolveStaticString(pathNode, bindings)
+      const kerasDirectoryModel =
+        /^(?:keras|tensorflow\.keras)(?:\.|$)/u.test(canonicalName) &&
+        path !== undefined &&
+        !pythonPathLooksLikeFile(path)
+      if (kerasDirectoryModel) {
+        // Keras SavedModel exports are directory trees (assets, variables and
+        // protobuf metadata), so the extensionless target is still valuable
+        // lineage evidence even though static analysis cannot enumerate every
+        // generated member. Keep the result partial and require runtime
+        // evidence before certifying the directory contents.
+        const kind = member === 'load_model' ? 'read' : 'write'
+        recordFileAccess(kind, pathNode)
+        if (kind === 'read') {
+          directoryStateRead = true
+          unresolvedReads = true
+        } else {
+          writeScopes.set(`directory\0${path}`, { kind: 'directory', path })
+          unresolvedWrites = true
+        }
+        unsupportedExternalState = true
+        return
+      }
       if (!path || !pythonPathLooksLikeFile(path)) {
         if (member === 'load_model') unresolvedReads = true
         else unresolvedWrites = true
@@ -8784,6 +9053,37 @@ const analyzePythonFileAccessTree = (
         'read',
         (node.keywords ?? []).find((keyword) => keyword.arg === 'fp')?.value ?? args[0]
       )
+      return
+    }
+
+    if (canonicalName === 'astropy.io.fits.open') {
+      const args = Array.isArray(node.args) ? node.args : []
+      const keyword = (name: string): PyNode | undefined =>
+        (node.keywords ?? []).find((entry) => entry.arg === name)?.value
+      const pathNode = keyword('name') ?? keyword('file') ?? keyword('filename') ?? args[0]
+      const path = resolveStaticString(pathNode, bindings)
+      const modeNode = keyword('mode') ?? args[1]
+      const mode = modeNode ? resolveStaticString(modeNode, bindings) : 'readonly'
+      const useFsspecNode = keyword('use_fsspec')
+      const useFsspec = useFsspecNode ? staticBoolean(useFsspecNode) : false
+      const localPath = path !== undefined && !isExternalNotebookPath(path)
+      const safeReadonly =
+        localPath &&
+        (mode === 'readonly' || mode === 'denywrite') &&
+        useFsspec === false &&
+        !(node.keywords ?? []).some((entry) => entry.arg === null)
+      if (localPath) recordFileAccess('read', pathNode)
+      else unresolvedReads = true
+      if (!safeReadonly) {
+        // update/append/ostream and remote or fsspec-backed stores may write or
+        // resolve additional resources. Preserve the known path, but never
+        // certify the call as a complete read-only input.
+        if (localPath && mode !== 'readonly' && mode !== 'denywrite')
+          recordFileAccess('write', pathNode)
+        unresolvedReads = true
+        unresolvedWrites = true
+        unsupportedExternalState = true
+      }
       return
     }
 
@@ -8970,6 +9270,23 @@ const analyzePythonFileAccessTree = (
         if (conditionalDepth === 0) definitelyWritten.add(path)
         writeScopes.set(`directory\0${path}`, { kind: 'directory', path })
       }
+      return
+    }
+
+    if (canonicalName === 'xarray.open_zarr') {
+      // Xarray Zarr stores are directory datasets containing metadata and chunk
+      // objects. Keep a local store root as lineage evidence, but do not claim
+      // complete input coverage from the single call. Remote stores and
+      // mapping-like objects cannot be represented as a workspace path.
+      const args = Array.isArray(node.args) ? node.args : []
+      const storeNode =
+        (node.keywords ?? []).find((keyword) => keyword.arg === 'store')?.value ?? args[0]
+      const store = resolveStaticString(storeNode, bindings)
+      if (store && !isExternalNotebookPath(store)) recordFileAccess('read', storeNode)
+      else unresolvedReads = true
+      directoryStateRead = true
+      unresolvedReads = true
+      unsupportedExternalState = true
       return
     }
 
@@ -9176,6 +9493,12 @@ const analyzePythonFileAccessTree = (
       return
     }
     const effect = call
+    if (
+      effect.kind === 'write' &&
+      ['anndata.AnnData.write_zarr', 'anndata.io.write_zarr'].includes(canonicalName)
+    ) {
+      writeScopeKind = 'directory'
+    }
     if (writeScopeKind === undefined && effect.kind === 'write' && member === 'to_parquet') {
       const keywords = node.keywords ?? []
       const partitionCols = keywords.find((keyword) => keyword.arg === 'partition_cols')?.value
@@ -9190,12 +9513,35 @@ const analyzePythonFileAccessTree = (
       }
     }
     const recordPath = (path: string): void => {
+      if (isExternalNotebookPath(path)) {
+        if (effect.kind === 'read') unresolvedReads = true
+        else unresolvedWrites = true
+        unsupportedExternalState = true
+        return
+      }
       if (
         effect.singleFileSuffixes &&
         !effect.singleFileSuffixes.some((suffix) => path.toLowerCase().endsWith(suffix))
       ) {
         if (effect.kind === 'read') unresolvedReads = true
         else unresolvedWrites = true
+      }
+      const splitFifOutput =
+        effect.kind === 'write' &&
+        member === 'save' &&
+        path.toLocaleLowerCase('en-US').endsWith('.fif')
+      const nibabelPairOutput =
+        effect.kind === 'write' && member === 'to_filename' && /\.(?:img|hdr)$/iu.test(path)
+      if (splitFifOutput) {
+        unresolvedWrites = true
+        unsupportedExternalState = true
+      }
+      if (nibabelPairOutput) {
+        // Analyze/NIfTI pair images write sibling .img/.hdr files. Keep the
+        // requested path as evidence, but require runtime enumeration before
+        // certifying complete output coverage.
+        unresolvedWrites = true
+        unsupportedExternalState = true
       }
       if (pythonPathHasCollectionPattern(path)) {
         if (effect.kind === 'read') unresolvedReads = true
@@ -9386,21 +9732,172 @@ const analyzePythonFileAccessTree = (
         target?.type === 'Subscript' &&
         isPyNode(target.value) &&
         scientificObjectType(target.value) === 'pandas.DataFrame'
-      invalidateStaticValue(rootName(target), !configurationMapping && !dataframeColumn)
+
+      // ``paths += ["sample-a.fastq", "sample-b.fastq"]`` is a common
+      // notebook idiom for assembling a deterministic batch after a setup
+      // cell. Treat it like append/extend on a fresh collection, while
+      // retaining the same conservative guards as the method form. An
+      // augmented assignment can invoke user-defined ``__iadd__`` methods,
+      // so only literal static sequences with a known collection identity are
+      // eligible.
+      const augmentedCollection =
+        node.type === 'AugAssign' && node.op === 'Add' && target?.type === 'Name' && target.id
+          ? collections.get(target.id)
+          : undefined
+      const augmentedReceiver = target?.type === 'Name' ? target.id : undefined
+      const augmentedIsFresh =
+        augmentedReceiver !== undefined &&
+        augmentedCollection?.kind === 'sequence' &&
+        [...freshSequenceCollections].some((name) => collections.get(name) === augmentedCollection)
+      const canTrackAugmentedSequence =
+        node.type === 'AugAssign' &&
+        node.op === 'Add' &&
+        augmentedReceiver !== undefined &&
+        augmentedCollection?.kind === 'sequence' &&
+        augmentedIsFresh &&
+        conditionalDepth === 0 &&
+        helperScopeDepth === 0 &&
+        !activeStaticLoops.some((loop) => loop.names.has(augmentedReceiver)) &&
+        !possibleAliases.some(
+          ({ source, target: aliasTarget }) =>
+            source === augmentedReceiver || aliasTarget === augmentedReceiver
+        )
+      if (canTrackAugmentedSequence) {
+        const values = pythonStaticStringCollection(
+          isPyNode(node.value) ? node.value : undefined,
+          bindings,
+          collections,
+          {
+            collections,
+            importedNames,
+            shadowedNames: shadowedStaticCalls,
+            managedEnvironment:
+              !pythonTaintedNamespaces.has('os') && !pythonTaintedNamespaces.has('*')
+                ? context?.managedEnvironment
+                : undefined
+          }
+        )
+        if (
+          values?.kind === 'sequence' &&
+          augmentedCollection.values.length + values.values.length <=
+            MAX_STATIC_FILE_LOOP_ITERATIONS
+        ) {
+          const updatedCollection: PythonStaticFileCollection = {
+            kind: 'sequence',
+            values: [...augmentedCollection.values, ...values.values]
+          }
+          for (const [name, collection] of collections) {
+            if (collection === augmentedCollection) {
+              collections.set(name, updatedCollection)
+              freshSequenceCollections.add(name)
+            }
+          }
+        } else {
+          invalidateStaticValue(augmentedReceiver)
+        }
+      } else {
+        const invalidate =
+          node.type !== 'AugAssign' ||
+          !augmentedIsFresh ||
+          node.op !== 'Add' ||
+          augmentedReceiver === undefined
+        if (invalidate)
+          invalidateStaticValue(rootName(target), !configurationMapping && !dataframeColumn)
+        else invalidateStaticValue(augmentedReceiver)
+      }
     }
     if (node.type === 'Call' && MUTATING_METHODS.has(memberName(node.func) ?? '')) {
       const canonical = canonicalCallName(node)
       const member = memberName(node.func) ?? ''
-      const owner = canonical?.slice(0, -(member.length + 1)) ?? ''
-      const effect = pythonLibraryMethodEffect(owner, member)
-      const instanceMutation =
-        PYTHON_LIBRARY_EFFECTS[owner]?.kind === 'type' &&
-        effect?.effect === 'mutate' &&
-        !effect.unsafeNamespace
-      invalidateStaticValue(
-        rootName(node.func),
-        !instanceMutation && effect?.plottingState !== 'write'
-      )
+      // Only a direct name receiver has a collection identity we can update. A
+      // nested receiver (for example `batches[0].append(...)`) may mutate an
+      // element of an unknown container, so keep the existing conservative
+      // invalidation for it.
+      const receiver =
+        node.func?.type === 'Attribute' &&
+        isPyNode(node.func.value) &&
+        node.func.value.type === 'Name' &&
+        node.func.value.id
+          ? node.func.value.id
+          : undefined
+      const receiverCollection = receiver ? collections.get(receiver) : undefined
+      const args = Array.isArray(node.args) ? node.args : []
+      const receiverIsFresh =
+        receiver !== undefined &&
+        receiverCollection?.kind === 'sequence' &&
+        [...freshSequenceCollections].some((name) => collections.get(name) === receiverCollection)
+      const canTrackFreshSequence =
+        receiverIsFresh &&
+        receiver !== undefined &&
+        receiverCollection?.kind === 'sequence' &&
+        conditionalDepth === 0 &&
+        helperScopeDepth === 0 &&
+        !activeStaticLoops.some((loop) => loop.names.has(receiver)) &&
+        !possibleAliases.some(({ source, target }) => source === receiver || target === receiver)
+      if (
+        canTrackFreshSequence &&
+        (member === 'append' || member === 'extend') &&
+        args.length === 1 &&
+        !(node.keywords ?? []).length
+      ) {
+        const argument = args[0]
+        const values =
+          member === 'append'
+            ? (() => {
+                const value = resolveStaticString(argument, bindings)
+                return value === undefined ? undefined : [value]
+              })()
+            : (() => {
+                const collection = pythonStaticStringCollection(argument, bindings, collections, {
+                  collections,
+                  importedNames,
+                  shadowedNames: shadowedStaticCalls,
+                  managedEnvironment:
+                    !pythonTaintedNamespaces.has('os') && !pythonTaintedNamespaces.has('*')
+                      ? context?.managedEnvironment
+                      : undefined
+                })
+                return collection?.kind === 'sequence' ? [...collection.values] : undefined
+              })()
+        if (
+          values !== undefined &&
+          receiverCollection?.kind === 'sequence' &&
+          receiverCollection.values.length + values.length <= MAX_STATIC_FILE_LOOP_ITERATIONS
+        ) {
+          const updatedCollection: PythonStaticFileCollection = {
+            kind: 'sequence',
+            values: [...receiverCollection.values, ...values]
+          }
+          for (const [name, collection] of collections) {
+            if (collection === receiverCollection) {
+              collections.set(name, updatedCollection)
+              freshSequenceCollections.add(name)
+            }
+          }
+        } else {
+          invalidateStaticValue(rootName(node.func))
+        }
+      } else {
+        if (receiverIsFresh && helperScopeDepth > 0) {
+          // Helper replay restores caller collections after returning. A
+          // mutation observed inside the helper therefore cannot be reflected
+          // in the caller's static collection; keep the file effects unknown
+          // instead of certifying the pre-call snapshot.
+          unresolvedReads = true
+          unresolvedWrites = true
+          unsupportedExternalState = true
+        }
+        const owner = canonical?.slice(0, -(member.length + 1)) ?? ''
+        const effect = pythonLibraryMethodEffect(owner, member)
+        const instanceMutation =
+          PYTHON_LIBRARY_EFFECTS[owner]?.kind === 'type' &&
+          effect?.effect === 'mutate' &&
+          !effect.unsafeNamespace
+        invalidateStaticValue(
+          rootName(node.func),
+          !instanceMutation && effect?.plottingState !== 'write'
+        )
+      }
     }
     if (node.type === 'For') {
       if (node.iter) visit(node.iter)
@@ -9743,6 +10240,10 @@ const analyzePythonFileAccessTree = (
           archiveAlias
         } = resolvedValues.get(valueNode)!
         if (target.type !== 'Name' || !target.id) continue
+        const inheritedFreshSequence =
+          collection?.kind === 'sequence' &&
+          [...freshSequenceCollections].some((name) => collections.get(name) === collection)
+        freshSequenceCollections.delete(target.id)
         if (isHelperName(target.id)) shadowedHelperNames.add(target.id)
         if (conditionalDepth > 0) {
           if (
@@ -9804,6 +10305,13 @@ const analyzePythonFileAccessTree = (
           inMemoryInputs.delete(target.id)
           fileConnections.delete(target.id)
           scientificObjectTypes.delete(target.id)
+          if (
+            collection.kind === 'sequence' &&
+            ((valueNode?.type === 'List' && collection.values.length === 0) ||
+              inheritedFreshSequence)
+          ) {
+            freshSequenceCollections.add(target.id)
+          }
         } else if (inMemoryInput) {
           bindings.delete(target.id)
           collections.delete(target.id)

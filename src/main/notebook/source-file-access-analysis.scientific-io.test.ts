@@ -3,6 +3,45 @@ import { describe, expect, it } from 'vitest'
 import type { NotebookLanguage } from '../../shared/notebook'
 import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
 
+describe('scientific reader review regressions', () => {
+  it.each([
+    "from scipy import sparse\nsparse.load_npz('https://example.org/data.npz')",
+    "from rdkit import Chem\nChem.MolFromMolFile('/vsis3/bucket/data.mol')",
+    "from astropy.io import fits\nfits.getdata('https://example.org/data.fits')",
+    "from scipy import sparse\nsparse.save_npz('s3://bucket/data.npz', matrix)"
+  ])('does not certify external scientific paths: %s', async (source) => {
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      externalState: 'partial',
+      reads: [],
+      writes: []
+    })
+  })
+
+  it.each([
+    "import mne\nmne.io.read_raw_fif('input.fif')",
+    "from mne.io import read_raw_fif\nread_raw_fif('input.fif')",
+    "import mne.io as io\nio.read_raw_fif('input.fif')"
+  ])('retains split FIF uncertainty: %s', async (source) => {
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      readState: 'partial',
+      reads: ['input.fif'],
+      externalState: 'partial'
+    })
+  })
+
+  it.each(['use_fsspec=True', 'use_fsspec=backend', '**options'])(
+    'keeps FITS backend access partial: %s',
+    async (options) => {
+      expect(
+        await analyzeNotebookSourceFileAccess(
+          'python',
+          `from astropy.io import fits\nhdul = fits.open('input.fits', ${options})`
+        )
+      ).toMatchObject({ readState: 'partial', externalState: 'partial' })
+    }
+  )
+})
+
 type ScientificIoCase = {
   name: string
   language: NotebookLanguage
@@ -80,6 +119,30 @@ const cases: ScientificIoCase[] = [
     source: "from PIL import Image\nimage = Image.open('source.png')\nimage.save('result.png')",
     reads: ['source.png'],
     writes: ['result.png']
+  },
+  {
+    name: 'Python tifffile image pipeline',
+    language: 'python',
+    source:
+      "import tifffile\nimage = tifffile.imread('source.tiff')\ntifffile.imwrite('result.tiff', image)",
+    reads: ['source.tiff'],
+    writes: ['result.tiff']
+  },
+  {
+    name: 'Python imageio keyword pipeline',
+    language: 'python',
+    source:
+      "import imageio.v3 as iio\nimage = iio.imread(uri='source.tiff')\niio.imwrite(uri='result.tiff', image=image)",
+    reads: ['source.tiff'],
+    writes: ['result.tiff']
+  },
+  {
+    name: 'Python scikit-image keyword pipeline',
+    language: 'python',
+    source:
+      "from skimage import io\nimage = io.imread(fname='source.tiff')\nio.imsave(fname='result.tiff', arr=image)",
+    reads: ['source.tiff'],
+    writes: ['result.tiff']
   },
   {
     name: 'Python PyArrow parquet output',
@@ -213,6 +276,133 @@ describe('scientific file access coverage', () => {
       readState: 'partial',
       writes: [],
       reasonCodes: ['dynamic-path-unresolved']
+    })
+  })
+
+  it('keeps an xarray Zarr directory input conservative while retaining its root', async () => {
+    await expect(
+      analyzeNotebookSourceFileAccess(
+        'python',
+        "import xarray as xr\ndataset = xr.open_zarr('store.zarr')"
+      )
+    ).resolves.toMatchObject({
+      readState: 'partial',
+      reads: ['store.zarr'],
+      writes: [],
+      reasonCodes: expect.arrayContaining([
+        'dynamic-path-unresolved',
+        'source-analysis-unsupported-call'
+      ])
+    })
+  })
+
+  it.each(['anndata', 'anndata.io', 'scanpy'])(
+    'retains a %s AnnData Zarr directory input while keeping coverage partial',
+    async (module) => {
+      await expect(
+        analyzeNotebookSourceFileAccess(
+          'python',
+          `import ${module === 'scanpy' ? 'scanpy as sc' : `${module} as ad`}
+adata = ${module === 'scanpy' ? 'sc' : 'ad'}.read_zarr('inputs/cells.zarr')`
+        )
+      ).resolves.toMatchObject({
+        readState: 'partial',
+        reads: ['inputs/cells.zarr'],
+        writes: [],
+        reasonCodes: expect.arrayContaining([
+          'dynamic-path-unresolved',
+          'source-analysis-unsupported-call'
+        ])
+      })
+    }
+  )
+
+  it.each([
+    "adata.write_zarr('outputs/cells.zarr')",
+    "anndata.io.write_zarr('outputs/cells.zarr', adata)"
+  ])('captures AnnData Zarr directory output: %s', async (source) => {
+    await expect(
+      analyzeNotebookSourceFileAccess(
+        'python',
+        `import anndata\nadata = anndata.read_h5ad('inputs/cells.h5ad')\n${source}`
+      )
+    ).resolves.toMatchObject({
+      writes: ['outputs/cells.zarr'],
+      writeScopes: [{ kind: 'directory', path: 'outputs/cells.zarr' }]
+    })
+  })
+
+  it('downgrades xarray coverage when a lazy dataset method is unmodeled', async () => {
+    await expect(
+      analyzeNotebookSourceFileAccess(
+        'python',
+        "import xarray as xr\ndataset = xr.open_dataset('climate.nc')\ndataset.persist()"
+      )
+    ).resolves.toMatchObject({
+      readState: 'partial',
+      reads: ['climate.nc'],
+      reasonCodes: expect.arrayContaining(['source-analysis-unsupported-call'])
+    })
+  })
+
+  it.each([
+    "import pyarrow.dataset as ds\ndataset = ds.dataset('inputs/events')",
+    "from pyarrow.dataset import dataset as open_dataset\ndataset = open_dataset('inputs/events')"
+  ])('retains a Python Arrow Dataset directory root conservatively: %s', async (source) => {
+    await expect(analyzeNotebookSourceFileAccess('python', source)).resolves.toMatchObject({
+      readState: 'partial',
+      reads: ['inputs/events'],
+      writes: [],
+      reasonCodes: expect.arrayContaining([
+        'dynamic-path-unresolved',
+        'source-analysis-unsupported-call'
+      ])
+    })
+  })
+
+  it.each([
+    "import pyarrow.dataset as ds\ndataset = ds.dataset('inputs/events', filesystem=filesystem)",
+    "import pyarrow.dataset as ds\ndataset = ds.dataset('inputs/events', filesystem=remote_fs)"
+  ])('does not attribute Arrow Dataset sources to custom filesystems: %s', async (source) => {
+    await expect(analyzeNotebookSourceFileAccess('python', source)).resolves.toMatchObject({
+      readState: 'partial',
+      reads: [],
+      reasonCodes: expect.arrayContaining(['dynamic-path-unresolved'])
+    })
+  })
+
+  it.each([
+    ["fits.open('source.fits', mode='update')", ['source.fits'], ['source.fits']],
+    ["fits.open('source.fits', mode='append')", ['source.fits'], ['source.fits']]
+  ])(
+    'captures Astropy FITS read/write modes conservatively: %s',
+    async (expression, reads, writes) => {
+      await expect(
+        analyzeNotebookSourceFileAccess(
+          'python',
+          `from astropy.io import fits\nhdul = ${expression}`
+        )
+      ).resolves.toMatchObject({
+        readState: 'partial',
+        writeState: 'partial',
+        reads,
+        writes,
+        reasonCodes: expect.arrayContaining(['source-analysis-unsupported-call'])
+      })
+    }
+  )
+
+  it('keeps remote Astropy FITS sources conservative', async () => {
+    await expect(
+      analyzeNotebookSourceFileAccess(
+        'python',
+        "from astropy.io import fits\nhdul = fits.open('https://example.test/source.fits', use_fsspec=True)"
+      )
+    ).resolves.toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial',
+      reasonCodes: expect.arrayContaining(['source-analysis-unsupported-call'])
     })
   })
 })

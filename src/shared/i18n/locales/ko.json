@@ -2322,6 +2322,8 @@
     "Synthesize this literature into a concise review.": "이 문헌을 간결한 문헌 검토로 종합해 주세요.",
     "Reading": "읽기",
     "Keep as attachments": "첨부 파일로만 유지",
+    "Link on send": "전송 시 연결",
+    "Linking PDFs…": "PDF 연결 중…",
     "{{count}} PDFs will be linked when sent_other": "전송하면 PDF {{count}}개가 연결됩니다",
     "Read": "읽기",
     "Linked PDFs": "연결된 PDF",

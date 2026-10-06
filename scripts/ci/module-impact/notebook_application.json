@@ -292,7 +292,18 @@
     "src/main/notebook/fixtures/lineage/native-callback-helper-promises.json",
     "src/main/notebook/fixtures/science/cross-language-lineage.fixture.jsonl",
     "src/main/notebook/dependency-analysis.lineage-regressions.test.ts",
-    "src/main/notebook/host-session-reading.ts"
+    "src/main/notebook/host-session-reading.ts",
+    "src/main/notebook/notebook-path-utils.ts",
+    "src/main/notebook/dependency-analysis.r-arrow-dataset.test.ts",
+    "src/main/notebook/dependency-analysis.r-deseq2.test.ts",
+    "src/main/notebook/dependency-analysis.r-hdf5array.test.ts",
+    "src/main/notebook/dependency-analysis.r-multi-assay-experiment.test.ts",
+    "src/main/notebook/dependency-analysis.r-phyloseq.test.ts",
+    "src/main/notebook/dependency-analysis.r-seuratdisk.test.ts",
+    "src/main/notebook/dependency-analysis.r-sf.test.ts",
+    "src/main/notebook/dependency-analysis.r-spatial-experiment.test.ts",
+    "src/main/notebook/dependency-analysis.r-variant-annotation.test.ts",
+    "src/main/notebook/notebook-path-utils.test.ts"
   ],
   "interfacePaths": [
     "src/main/notebook/analysis-version.ts",
@@ -360,7 +371,23 @@
     "src/main/notebook/working-file-observer.ts",
     "src/main/notebook/shell-npm-environment.ts",
     "src/main/notebook/scientific-replay.test-support.ts",
-    "src/main/notebook/host-session-reading.ts"
+    "src/main/notebook/host-session-reading.ts",
+    "src/main/notebook/dependency-analysis.dicom.test.ts",
+    "src/main/notebook/dependency-analysis.hdf5.test.ts",
+    "src/main/notebook/dependency-analysis.mne.test.ts",
+    "src/main/notebook/dependency-analysis.netcdf.test.ts",
+    "src/main/notebook/dependency-analysis.r-arrow-dataset.test.ts",
+    "src/main/notebook/dependency-analysis.r-hdf5array.test.ts",
+    "src/main/notebook/dependency-analysis.r-multi-assay-experiment.test.ts",
+    "src/main/notebook/dependency-analysis.r-phyloseq.test.ts",
+    "src/main/notebook/dependency-analysis.r-seuratdisk.test.ts",
+    "src/main/notebook/dependency-analysis.r-sf.test.ts",
+    "src/main/notebook/dependency-analysis.r-spatial-experiment.test.ts",
+    "src/main/notebook/dependency-analysis.r-variant-annotation.test.ts",
+    "src/main/notebook/dependency-analysis.rasterio.test.ts",
+    "src/main/notebook/dependency-analysis.rdkit.test.ts",
+    "src/main/notebook/dependency-analysis.scipy-sparse-composition.test.ts",
+    "src/main/notebook/dependency-analysis.scipy-sparse.test.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -556,7 +583,9 @@
       "src/main/notebook/real-notebook-lineage.integration.test.ts",
       "src/main/notebook/real-parquet-lineage.integration.test.ts",
       "src/main/notebook/r-connection-guard.test.ts",
-      "src/main/notebook/dependency-analysis.lineage-regressions.test.ts"
+      "src/main/notebook/dependency-analysis.lineage-regressions.test.ts",
+      "src/main/notebook/dependency-analysis.r-deseq2.test.ts",
+      "src/main/notebook/notebook-path-utils.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -970,7 +999,23 @@
       "src/main/session-persistence/terminal-commit-scheduler.test.ts",
       "src/main/session-persistence/attention-projection.test.ts",
       "src/main/acp/approved-handoff-outcome.integration.test.ts",
-      "src/main/acp/approved-handoff-outcome.test.ts"
+      "src/main/acp/approved-handoff-outcome.test.ts",
+      "src/main/notebook/dependency-analysis.dicom.test.ts",
+      "src/main/notebook/dependency-analysis.hdf5.test.ts",
+      "src/main/notebook/dependency-analysis.mne.test.ts",
+      "src/main/notebook/dependency-analysis.netcdf.test.ts",
+      "src/main/notebook/dependency-analysis.r-arrow-dataset.test.ts",
+      "src/main/notebook/dependency-analysis.r-hdf5array.test.ts",
+      "src/main/notebook/dependency-analysis.r-multi-assay-experiment.test.ts",
+      "src/main/notebook/dependency-analysis.r-phyloseq.test.ts",
+      "src/main/notebook/dependency-analysis.r-seuratdisk.test.ts",
+      "src/main/notebook/dependency-analysis.r-sf.test.ts",
+      "src/main/notebook/dependency-analysis.r-spatial-experiment.test.ts",
+      "src/main/notebook/dependency-analysis.r-variant-annotation.test.ts",
+      "src/main/notebook/dependency-analysis.rasterio.test.ts",
+      "src/main/notebook/dependency-analysis.rdkit.test.ts",
+      "src/main/notebook/dependency-analysis.scipy-sparse-composition.test.ts",
+      "src/main/notebook/dependency-analysis.scipy-sparse.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

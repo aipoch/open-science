@@ -4159,6 +4159,8 @@
     "Synthesize this literature into a concise review.": "Fasse diese Literatur in einem prägnanten Review zusammen.",
     "Reading": "Lesen",
     "Keep as attachments": "Als Anhänge beibehalten",
+    "Link on send": "Beim Senden verknüpfen",
+    "Linking PDFs…": "PDFs werden verknüpft…",
     "{{count}} PDFs will be linked when sent_one": "Beim Senden wird {{count}} PDF verknüpft",
     "{{count}} PDFs will be linked when sent_other": "Beim Senden werden {{count}} PDFs verknüpft",
     "Read": "Lesen",

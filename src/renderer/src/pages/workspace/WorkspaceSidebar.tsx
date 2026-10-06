@@ -926,7 +926,7 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
       data-mobile-open={isMobileOpen ? 'true' : 'false'}
       className={cn(
         mobileMode
-          ? 'fixed inset-y-0 left-0 z-[70] flex h-[100dvh] w-[min(86vw,320px)] min-w-0 shrink-0 flex-col bg-bg-10 transition-transform duration-200 ease-out'
+          ? 'fixed bottom-0 left-0 top-[var(--windows-titlebar-height,0px)] z-[70] flex w-[min(86vw,320px)] min-w-0 shrink-0 flex-col bg-bg-10 transition-transform duration-200 ease-out'
           : 'z-10 flex h-full w-full min-w-0 flex-col overflow-hidden',
         mobileMode && (isMobileOpen ? 'translate-x-0' : '-translate-x-full')
       )}

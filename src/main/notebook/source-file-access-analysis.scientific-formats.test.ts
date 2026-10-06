@@ -71,6 +71,22 @@ const cases: ScientificFormatCase[] = [
     writes: ['result.ecsv']
   },
   {
+    name: 'Python Astropy FITS',
+    language: 'python',
+    source:
+      "from astropy.io import fits\nhdul = fits.open('source.fits')\nhdul.writeto('result.fits', overwrite=True)",
+    reads: ['source.fits'],
+    writes: ['result.fits']
+  },
+  {
+    name: 'Python Nibabel image',
+    language: 'python',
+    source:
+      "import nibabel as nib\nimage = nib.load('source.nii.gz')\nimage.to_filename('result.nii.gz')",
+    reads: ['source.nii.gz'],
+    writes: ['result.nii.gz']
+  },
+  {
     name: 'Python BioPython FASTA',
     language: 'python',
     source:
@@ -168,6 +184,19 @@ describe('scientific format file access coverage', () => {
       reasonCodes: []
     })
   })
+
+  it('keeps Nibabel Analyze pair output partial until sibling files are observed', async () => {
+    await expect(
+      analyzeNotebookSourceFileAccess(
+        'python',
+        "import nibabel as nib\nimage = nib.load('source.img')\nimage.to_filename('result.img')"
+      )
+    ).resolves.toMatchObject({
+      writes: ['result.img'],
+      writeState: 'partial',
+      reasonCodes: expect.arrayContaining(['dynamic-path-unresolved'])
+    })
+  })
 })
 
 describe('single-cell file contracts', () => {
@@ -250,6 +279,33 @@ describe('single-cell file contracts', () => {
       })
     }
   })
+
+  it.each([
+    `from astropy.io import fits\nhdul = fits.open('cells.fits', mode='update')`,
+    `from astropy.io import fits\nhdul = fits.open('cells.fits', use_fsspec=True)`,
+    `from astropy.io import fits\nhdul = fits.open('https://example.invalid/cells.fits')`
+  ])('keeps non-readonly or remote FITS opens partial: %s', async (source) => {
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      readState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it('does not invent a local root for dynamic or remote 10x inputs', async () => {
+    expect(
+      await analyzeNotebookSourceFileAccess('r', 'DropletUtils::read10xCounts(input_dir)')
+    ).toMatchObject({ reads: [], readState: 'partial', externalState: 'partial' })
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'DropletUtils::read10xCounts("https://example.test/matrix")'
+      )
+    ).toMatchObject({
+      reads: ['https://example.test/matrix'],
+      readState: 'partial',
+      externalState: 'partial'
+    })
+  })
 })
 
 it('retains a positional writable backing input across a subsequent read', async () => {
@@ -326,6 +382,22 @@ saveRDS(replacement, "inputs/annotation.rds")`
     ).toMatchObject({
       reads: ['inputs/annotation.rds'],
       writes: ['inputs/annotation.rds'],
+      externalState: 'partial'
+    })
+  })
+})
+
+describe('DropletUtils single-cell matrix inputs', () => {
+  it.each([
+    ['DropletUtils::read10xCounts("inputs/sample-filtered")', ['inputs/sample-filtered']],
+    [
+      'library(DropletUtils)\ncounts <- read10xCounts(samples = c("inputs/a", "inputs/b"))',
+      ['inputs/a', 'inputs/b']
+    ]
+  ])('retains 10x matrix roots while flagging discovered sidecars: %s', async (source, roots) => {
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: expect.arrayContaining(roots),
+      readState: 'partial',
       externalState: 'partial'
     })
   })
