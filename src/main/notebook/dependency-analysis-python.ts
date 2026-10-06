@@ -7792,35 +7792,6 @@ const analyzePythonFileAccessTree = (
     }
   }
 
-  const recordAstropyFitsOpen = (
-    pathNode: PyNode | null | undefined,
-    modeNode: PyNode | null | undefined
-  ): void => {
-    const path = resolveStaticString(pathNode, bindings)
-    const mode = modeNode ? resolveStaticString(modeNode, bindings) : 'readonly'
-    if (!path || !mode) {
-      unresolvedReads = true
-      unresolvedWrites = true
-      return
-    }
-    if (isExternalNotebookPath(path)) {
-      unresolvedReads = true
-      unresolvedWrites = true
-      unsupportedExternalState = true
-      return
-    }
-    if (['readonly', 'denywrite'].includes(mode)) recordFileAccess('read', pathNode)
-    else if (['update', 'append'].includes(mode)) {
-      recordFileAccess('read', pathNode)
-      recordFileAccess('write', pathNode)
-    } else if (mode === 'ostream') recordFileAccess('write', pathNode)
-    else {
-      unresolvedReads = true
-      unresolvedWrites = true
-      unsupportedExternalState = true
-    }
-  }
-
   const recordHtsFileAccess = (
     kind: NotebookFileCallEffect['kind'],
     node: PyNode | undefined
@@ -9426,16 +9397,6 @@ const analyzePythonFileAccessTree = (
       } else unresolvedReads = true
       return
     }
-    if (canonicalName === 'astropy.io.fits.open') {
-      const args = Array.isArray(node.args) ? node.args : []
-      const pathNode =
-        (node.keywords ?? []).find((keyword) => ['name', 'file'].includes(keyword.arg ?? ''))
-          ?.value ?? args[0]
-      const modeNode =
-        (node.keywords ?? []).find((keyword) => keyword.arg === 'mode')?.value ?? args[1]
-      recordAstropyFitsOpen(pathNode, modeNode)
-      return
-    }
     let call: NotebookFileCallEffect | undefined = localWrappers.effects.get(rawName)
     if (!call && localWrappers.fileLikeNames.has(rawName) && !localFileHelperNames.has(rawName)) {
       // A local function with more than one statement is deliberately not summarized as a
@@ -9551,6 +9512,12 @@ const analyzePythonFileAccessTree = (
       }
     }
     const recordPath = (path: string): void => {
+      if (isExternalNotebookPath(path)) {
+        if (effect.kind === 'read') unresolvedReads = true
+        else unresolvedWrites = true
+        unsupportedExternalState = true
+        return
+      }
       if (
         effect.singleFileSuffixes &&
         !effect.singleFileSuffixes.some((suffix) => path.toLowerCase().endsWith(suffix))

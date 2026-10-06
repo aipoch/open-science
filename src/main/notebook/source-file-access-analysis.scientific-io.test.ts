@@ -3,6 +3,45 @@ import { describe, expect, it } from 'vitest'
 import type { NotebookLanguage } from '../../shared/notebook'
 import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
 
+describe('scientific reader review regressions', () => {
+  it.each([
+    "from scipy import sparse\nsparse.load_npz('https://example.org/data.npz')",
+    "from rdkit import Chem\nChem.MolFromMolFile('/vsis3/bucket/data.mol')",
+    "from astropy.io import fits\nfits.getdata('https://example.org/data.fits')",
+    "from scipy import sparse\nsparse.save_npz('s3://bucket/data.npz', matrix)"
+  ])('does not certify external scientific paths: %s', async (source) => {
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      externalState: 'partial',
+      reads: [],
+      writes: []
+    })
+  })
+
+  it.each([
+    "import mne\nmne.io.read_raw_fif('input.fif')",
+    "from mne.io import read_raw_fif\nread_raw_fif('input.fif')",
+    "import mne.io as io\nio.read_raw_fif('input.fif')"
+  ])('retains split FIF uncertainty: %s', async (source) => {
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      readState: 'partial',
+      reads: ['input.fif'],
+      externalState: 'partial'
+    })
+  })
+
+  it.each(['use_fsspec=True', 'use_fsspec=backend', '**options'])(
+    'keeps FITS backend access partial: %s',
+    async (options) => {
+      expect(
+        await analyzeNotebookSourceFileAccess(
+          'python',
+          `from astropy.io import fits\nhdul = fits.open('input.fits', ${options})`
+        )
+      ).toMatchObject({ readState: 'partial', externalState: 'partial' })
+    }
+  )
+})
+
 type ScientificIoCase = {
   name: string
   language: NotebookLanguage
