@@ -724,6 +724,18 @@ const ConversationPanel = ({
   const setElicitationEditDraft = useSessionStore((state) => state.setElicitationEditDraft)
   const setElicitationDraftAnswers = useSessionStore((state) => state.setElicitationDraftAnswers)
   const isNewConversation = !activeSession && !optimisticMessage
+  useEffect(() => {
+    if (!isNewConversation) return
+    // The start surface has no transcript scroller to own the native find handshake.
+    const stopShow = window.api?.window?.onShowWindowFind?.(() => {
+      window.api?.window?.announceWindowFindContentReady?.()
+    })
+    const stopReady = window.api?.window?.announceWindowFindReady?.()
+    return () => {
+      stopShow?.()
+      stopReady?.()
+    }
+  }, [isNewConversation])
   const composerFormRef = useRef<HTMLFormElement>(null)
   const startComposerTopRef = useRef<number | null>(null)
   useLayoutEffect(() => {

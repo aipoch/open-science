@@ -1484,6 +1484,92 @@ describe('ConversationPanel research starters', () => {
   })
 })
 
+describe('ConversationPanel whole-window find', () => {
+  it('owns the find handshake only while the new conversation start is mounted', () => {
+    const listeners = new Set<() => void>()
+    const stopReady = vi.fn()
+    const announceWindowFindReady = vi.fn(() => stopReady)
+    const announceWindowFindContentReady = vi.fn()
+    const removeListener = vi.fn()
+    const onShowWindowFind = vi.fn((listener: () => void) => {
+      listeners.add(listener)
+      return () => {
+        removeListener()
+        listeners.delete(listener)
+      }
+    })
+    window.api.window = {
+      announceWindowFindReady,
+      announceWindowFindContentReady,
+      onShowWindowFind
+    } as unknown as Window['api']['window']
+
+    renderPanel()
+    expect(onShowWindowFind).toHaveBeenCalledTimes(1)
+    expect(announceWindowFindReady).toHaveBeenCalledTimes(1)
+    expect(onShowWindowFind.mock.invocationCallOrder[0]).toBeLessThan(
+      announceWindowFindReady.mock.invocationCallOrder[0]
+    )
+    expect(announceWindowFindContentReady).not.toHaveBeenCalled()
+    for (let attempt = 0; attempt < 2; attempt++) {
+      listeners.forEach((listener) => listener())
+    }
+    expect(announceWindowFindContentReady).toHaveBeenCalledTimes(2)
+    renderPanel({ composer: { view: { doc: docFromText('Find my draft') } } })
+    expect(onShowWindowFind).toHaveBeenCalledTimes(1)
+
+    const activeSession: ChatSession = {
+      id: 'find-session',
+      projectId: 'project-a',
+      title: 'Find conversation',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    // Loaded transcripts own their handshake; lazy content must not be acknowledged early.
+    renderPanel({ view: { activeSession: { ...activeSession, contentLoaded: false } } })
+    expect(listeners.size).toBe(0)
+    expect(removeListener).toHaveBeenCalledTimes(1)
+    expect(stopReady).toHaveBeenCalledTimes(1)
+    expect(removeListener.mock.invocationCallOrder[0]).toBeLessThan(
+      stopReady.mock.invocationCallOrder[0]
+    )
+    renderPanel({ view: { activeSession } })
+    expect(announceWindowFindReady).toHaveBeenCalledTimes(1)
+    expect(announceWindowFindContentReady).toHaveBeenCalledTimes(2)
+
+    renderPanel()
+    expect(listeners.size).toBe(1)
+    expect(announceWindowFindReady).toHaveBeenCalledTimes(2)
+    renderPanel({
+      conversation: {
+        optimisticMessage: {
+          id: 'pending-first-message',
+          role: 'user',
+          content: 'First prompt',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      }
+    })
+    expect(listeners.size).toBe(0)
+    expect(stopReady).toHaveBeenCalledTimes(2)
+    expect(announceWindowFindReady).toHaveBeenCalledTimes(2)
+
+    renderPanel()
+    expect(listeners.size).toBe(1)
+    expect(announceWindowFindReady).toHaveBeenCalledTimes(3)
+    act(() => root.render(null))
+    expect(listeners.size).toBe(0)
+    expect(removeListener).toHaveBeenCalledTimes(3)
+    expect(stopReady).toHaveBeenCalledTimes(3)
+  })
+})
+
 describe('ConversationPanel session loading presentation', () => {
   it('replaces the transcript with a skeleton until lazy Session content is hydrated', () => {
     const loadingSession: ChatSession = {
