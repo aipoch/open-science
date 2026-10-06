@@ -4660,5 +4660,7 @@ it.each(['upload', 'artifact'] as const)(
       await Promise.all([exporter.close(), importer.close()])
     }
   },
-  60_000
+  // This opt-in/forward/fork/receipt journey performs several real validation-database imports.
+  // Match the other multi-import tests' hosted Windows I/O budget without relaxing other tests.
+  process.platform === 'win32' ? 120_000 : 60_000
 )
