@@ -4088,11 +4088,17 @@ const analyzeRSource = (
     )
     if (expr.names.some((label) => label !== undefined && label !== null && !allowed.has(label)))
       return false
+    const safeFormulaTerm = (value: RExpr): boolean => {
+      if (['atomic', 'character', 'null'].includes(value.kind) || isSymbol(value)) return true
+      if (!isCall(value)) return false
+      const op = callOperator(value)
+      return Boolean(op && pureCallbackOps.has(op) && value.args.every(safeFormulaTerm))
+    }
     const safeValue = (value: RExpr, formula = false): boolean => {
       if (['atomic', 'character', 'null'].includes(value.kind) || isSymbol(value)) return true
       if (!isCall(value)) return false
       const op = callOperator(value)
-      if (op === '~') return formula || value.args.every((arg) => isSymbol(arg) || isCall(arg))
+      if (op === '~') return formula && value.args.every(safeFormulaTerm)
       return Boolean(op && pureSafe.has(op) && value.args.every((arg) => safeValue(arg)))
     }
     return expr.args.every((arg, index) => {

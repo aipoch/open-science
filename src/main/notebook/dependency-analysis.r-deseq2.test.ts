@@ -57,3 +57,15 @@ it('keeps dynamic DESeq2 designs conservative', async () => {
   expect(facts.state).toBe('unknown')
   expect(facts.state === 'unknown' ? facts.reasons : []).toContain('opaque-call')
 })
+
+it('rejects effectful calls embedded in DESeq2 formulas', async () => {
+  const { facts } = await analyzeRNotebookSource(
+    'dds <- DESeq2::DESeqDataSetFromMatrix(countData = counts, colData = metadata, design = ~ condition + system("touch outputs/marker"))'
+  )
+
+  expect(facts.typeBindings ?? []).not.toEqual(
+    expect.arrayContaining([expect.objectContaining({ target: 'dds', typeName: 'DESeqDataSet' })])
+  )
+  expect(facts.state).toBe('unknown')
+  expect(facts.state === 'unknown' ? facts.reasons : []).toContain('opaque-call')
+})
