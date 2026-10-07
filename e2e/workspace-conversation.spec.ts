@@ -1394,6 +1394,9 @@ test.describe('New conversation transition', () => {
     await expect.poll(() => rail.evaluate((node) => node.scrollLeft)).toBeGreaterThan(0)
     await expect(page.getByRole('button', { name: 'Previous research ideas' })).toBeVisible()
     await capture('05-scenario-rail-scrolled.png')
+    // Reset the pointer scenario: Next may already be hidden at the scroll boundary.
+    await page.getByRole('button', { name: 'Previous research ideas' }).click()
+    await expect(page.getByRole('button', { name: 'Previous research ideas' })).toBeHidden()
     // A keyboard-activated arrow remains focusable at the boundary until the user leaves it.
     await page.keyboard.press('Tab')
     const nextIdeas = page.getByRole('button', { name: 'Next research ideas' })
