@@ -1,3 +1,4 @@
+import { createDatabaseAtReleasedManifest } from '../../../test/fixtures/application-database'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -14,7 +15,7 @@ afterEach(async () => {
 it('backfills collection revisions without changing existing values or hierarchy', async () => {
   root = await mkdtemp(join(tmpdir(), 'collection-revision-'))
   client = createProjectDbClient(root)
-  await migrateApplicationDatabase(client)
+  await createDatabaseAtReleasedManifest(client)
   await client.literatureCollection.create({
     data: { id: 'parent', name: 'Parent', nameKey: 'parent', description: 'Saved description' }
   })
@@ -40,7 +41,8 @@ it('backfills collection revisions without changing existing values or hierarchy
       '0045_literature_smart_pause_run',
       '0046_journal_attributes',
       '0047_session_replay',
-      '0048_pdf_annotation_sharing'
+      '0048_pdf_annotation_sharing',
+      '0049_pascalcase_table_names'
     ]
   })
   expect(await client.$queryRawUnsafe(sql)).toEqual(before)

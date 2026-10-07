@@ -1,3 +1,4 @@
+import { createDatabaseAtReleasedManifest } from '../../../test/fixtures/application-database'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -21,7 +22,7 @@ describe('Compute Job operation migration', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-job-operation-upgrade-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
-    await migrateApplicationDatabase(client)
+    await createDatabaseAtReleasedManifest(client)
     await client.$executeRawUnsafe(`DROP TABLE "ComputeJobOperation"`)
     await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "executionMode"')
     await client.$executeRawUnsafe('ALTER TABLE "ComputeHost" DROP COLUMN "executionMode"')
@@ -46,7 +47,10 @@ describe('Compute Job operation migration', () => {
       client.$queryRawUnsafe<Array<{ id: string }>>(
         `SELECT "id" FROM "_open_science_migrations" ORDER BY "id" DESC LIMIT 2`
       )
-    ).resolves.toEqual([{ id: '0048_pdf_annotation_sharing' }, { id: '0047_session_replay' }])
+    ).resolves.toEqual([
+      { id: '0049_pascalcase_table_names' },
+      { id: '0048_pdf_annotation_sharing' }
+    ])
   })
 
   it('adds a constrained operation sidecar without rebuilding historical ComputeJob rows', async () => {

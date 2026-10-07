@@ -1,3 +1,4 @@
+import { createDatabaseAtReleasedManifest } from '../../../test/fixtures/application-database'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -19,7 +20,7 @@ describe('Project archive revision', () => {
   it('upgrades active and archived Projects without changing timestamps or relationships', async () => {
     root = await mkdtemp(join(tmpdir(), 'archive-migration-'))
     client = createProjectDbClient(root)
-    await migrateApplicationDatabase(client)
+    await createDatabaseAtReleasedManifest(client)
     const repository = new ProjectRepository(async () => client!)
     const active = await repository.create({ name: 'Active' })
     const archived = await repository.create({ name: 'Archived' })
@@ -58,7 +59,8 @@ describe('Project archive revision', () => {
         '0045_literature_smart_pause_run',
         '0046_journal_attributes',
         '0047_session_replay',
-        '0048_pdf_annotation_sharing'
+        '0048_pdf_annotation_sharing',
+        '0049_pascalcase_table_names'
       ]
     })
     expect(

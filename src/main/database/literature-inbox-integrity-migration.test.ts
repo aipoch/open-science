@@ -1,3 +1,4 @@
+import { createDatabaseAtReleasedManifest } from '../../../test/fixtures/application-database'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -8,7 +9,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { createProjectDbClient } from '../projects/prisma-client'
 import { LiteratureCatalog } from '../literature/catalog'
 import { literatureCandidateInputSchema } from '../../shared/literature'
-import { migrateApplicationDatabase } from './migration-service'
+import { MIGRATION_MANIFEST, migrateApplicationDatabase } from './migration-service'
 
 describe('Literature inbox integrity migration', () => {
   let root: string | undefined
@@ -23,7 +24,10 @@ describe('Literature inbox integrity migration', () => {
     async (schema) => {
       root = await mkdtemp(join(tmpdir(), 'literature-inbox-upgrade-'))
       client = createProjectDbClient(root)
-      await migrateApplicationDatabase(client)
+      await createDatabaseAtReleasedManifest(
+        client,
+        MIGRATION_MANIFEST.filter(({ id }) => id < '0041_bookmarks')
+      )
       const catalog = new LiteratureCatalog(async () => client!)
       const input = literatureCandidateInputSchema.parse({
         item: {

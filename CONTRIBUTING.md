@@ -242,6 +242,19 @@ schema module is generated; do not edit it or add feature DDL to startup code.
    migration or extend the frozen `0001` legacy repair list.
 4. Run `npm run db:schema:check` and the migration tests before committing.
 
+Application table names use singular PascalCase and default to the Prisma model name. Avoid
+`@@map` unless an intentional external database contract requires a different physical name.
+Changes to physical table names must also update raw SQL, SQLite CHECK contracts, generated schema,
+and current-schema tests. Keep old names in immutable migration snapshots and historical fixtures.
+
+Fresh databases follow the application migration chain to the current schema. Existing released
+databases upgrade through a new immutable migration with a backup, preserving records, primary keys,
+and relationships. A physical rename does not imply a new business state or package format.
+Disposable development databases with hand-edited schemas or erased migration ledgers should be
+recreated through normal application initialization; do not add permanent compatibility scripts,
+alias views, or dual-write paths for them. Never automatically reset a user's database. Downgrading
+an upgraded database requires its pre-upgrade backup; older applications reject newer ledger entries.
+
 Prisma CLI is a development and CI tool only. Packaged applications execute the checked-in
 migration manifest and do not ship the Prisma migrate engine.
 

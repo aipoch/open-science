@@ -1,3 +1,5 @@
+import { literatureContentBlobBackfillStatements } from './migrations/0030-literature-foundation'
+import { createDatabaseAtReleasedManifest } from '../../../test/fixtures/application-database'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -9,7 +11,10 @@ import { createProjectDbClient } from '../projects/prisma-client'
 import { MIGRATION_MANIFEST, migrateApplicationDatabase } from './migration-service'
 
 const createDatabaseBeforeLiteratureFoundation = async (client: PrismaClient): Promise<void> => {
-  await migrateApplicationDatabase(client)
+  await createDatabaseAtReleasedManifest(
+    client,
+    MIGRATION_MANIFEST.filter(({ id }) => id < '0041_bookmarks')
+  )
   for (const table of [
     'ArtifactLiteratureManifest',
     'ProjectLiterature',
@@ -52,7 +57,7 @@ describe('Content blob migration', () => {
   it('adopts the current literature suffix without restoring global identifier uniqueness', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-literature-suffix-adoption-'))
     client = createProjectDbClient(storageRoot)
-    await migrateApplicationDatabase(client)
+    await createDatabaseAtReleasedManifest(client)
     for (const id of ['first', 'second']) {
       await client.$executeRawUnsafe(
         `INSERT INTO "LiteratureItem" ("id", "itemType", "title", "updatedAt")
@@ -91,7 +96,8 @@ describe('Content blob migration', () => {
         '0045_literature_smart_pause_run',
         '0046_journal_attributes',
         '0047_session_replay',
-        '0048_pdf_annotation_sharing'
+        '0048_pdf_annotation_sharing',
+        '0049_pascalcase_table_names'
       ]
     })
     await expect(
@@ -109,7 +115,10 @@ describe('Content blob migration', () => {
       if (schema === 'released') {
         await createDatabaseBeforeLiteratureFoundation(client)
       } else {
-        await migrateApplicationDatabase(client)
+        await createDatabaseAtReleasedManifest(
+          client,
+          MIGRATION_MANIFEST.filter(({ id }) => id < '0041_bookmarks')
+        )
         await client.$executeRawUnsafe('DROP TABLE IF EXISTS "LiteratureMetadataCommitReceipt"')
         await client.$executeRawUnsafe(
           schema === 'pre-ledger'
@@ -184,10 +193,11 @@ describe('Content blob migration', () => {
                 '0045_literature_smart_pause_run',
                 '0046_journal_attributes',
                 '0047_session_replay',
-                '0048_pdf_annotation_sharing'
+                '0048_pdf_annotation_sharing',
+                '0049_pascalcase_table_names'
               ],
         from: schema === 'pre-ledger' ? null : '0029_compute_host_execution_mode',
-        to: '0048_pdf_annotation_sharing'
+        to: '0049_pascalcase_table_names'
       })
 
       await expect(
@@ -257,12 +267,10 @@ describe('Content blob migration', () => {
         artifacts: await client!.$queryRawUnsafe('SELECT * FROM "ArtifactVersion" ORDER BY "id"')
       })
       const before = await readContent()
-      // The fixture rewinds the ledger after changing data; discard its earlier recovery snapshot.
-      await rm(`${databasePath}.before-0030_literature_foundation.backup`, { force: true })
-      await client.$executeRawUnsafe('DROP TABLE IF EXISTS "LiteratureMetadataCommitReceipt"')
-      await client.$executeRawUnsafe(
-        `DELETE FROM "_open_science_migrations" WHERE "id" >= '0030_literature_foundation'`
-      )
+      // Exercise the immutable backfill against custom storage identities without forging
+      // an older ledger over the newly renamed schema.
+      for (const statement of literatureContentBlobBackfillStatements)
+        await client.$executeRawUnsafe(statement)
       await migrateApplicationDatabase(client)
       expect(await readContent()).toEqual(before)
       await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })

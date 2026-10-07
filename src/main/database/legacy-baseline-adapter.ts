@@ -1041,19 +1041,18 @@ const verifyCurrentRuntimeSchema = (
 
 const verifyCurrentRuntimeSchemaTables = (
   client: PrismaClient,
-  tableNames: readonly string[]
+  tableNames: readonly string[],
+  statements?: readonly string[]
 ): Promise<void> => {
   const selectedTables = new Set(tableNames)
+  const tables = statements ? createTargetTables(statements) : CURRENT_TARGET_TABLES
+  const indexes = statements ? createTargetIndexes(statements) : CURRENT_TARGET_INDEXES
   return verifyRuntimeSchemaTarget(
     client,
     {
       tableNames,
-      tables: new Map(
-        [...CURRENT_TARGET_TABLES].filter(([tableName]) => selectedTables.has(tableName))
-      ),
-      indexes: new Map(
-        [...CURRENT_TARGET_INDEXES].filter(([, index]) => selectedTables.has(index.tableName))
-      )
+      tables: new Map([...tables].filter(([tableName]) => selectedTables.has(tableName))),
+      indexes: new Map([...indexes].filter(([, index]) => selectedTables.has(index.tableName)))
     },
     false
   )
@@ -1067,8 +1066,12 @@ const applyRuntimeSchemaBaseline = async (
     prepared.verificationTarget === 'current'
       ? CURRENT_RUNTIME_SCHEMA_TABLE_DDLS
       : RUNTIME_SCHEMA_TABLE_DDLS
+  // The baseline only creates its own tables. Later migrations create their immutable
+  // versions; pre-creating the latest names would collide with a subsequent table rename.
+  const baselineTables = new Set<string>(RUNTIME_SCHEMA_TABLES)
   for (const ddl of tableDdls) {
-    await migrationSqlExecutor.execute(client, ddl)
+    const tableName = parseTargetTable(ddl)?.[0]
+    if (tableName && baselineTables.has(tableName)) await migrationSqlExecutor.execute(client, ddl)
   }
 
   await addColumnIfMissing(client, 'Project', 'archivedAt', PROJECT_ADD_ARCHIVED_AT_DDL)
@@ -1119,7 +1122,13 @@ const applyRuntimeSchemaBaseline = async (
   await applySqliteCheckConstraints(
     client,
     prepared.pendingCheckConstraints,
-    prepared.verificationTarget === 'current' ? CURRENT_RUNTIME_SCHEMA_INDEX_DDLS : []
+    prepared.verificationTarget === 'current'
+      ? CURRENT_RUNTIME_SCHEMA_INDEX_DDLS.filter((ddl) =>
+          [...createTargetIndexes([ddl]).values()].some(({ tableName }) =>
+            baselineTables.has(tableName)
+          )
+        )
+      : []
   )
   for (const ddl of RUNTIME_SCHEMA_INDEX_DDLS) {
     await migrationSqlExecutor.execute(client, ddl)

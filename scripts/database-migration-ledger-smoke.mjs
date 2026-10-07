@@ -196,6 +196,10 @@ const EXPECTED_MIGRATION_LEDGER = [
   {
     id: '0048_pdf_annotation_sharing',
     checksum: '4d346933fd6779e0e7b15e1c51bb97043690230b40d29fb2d7c9dacc19f25e52'
+  },
+  {
+    id: '0049_pascalcase_table_names',
+    checksum: 'ed46c378adfcd3e7f0f0d434797a4e775121fa6fce021a4c89b19f2c383b91ad'
   }
 ]
 const LEGACY_PROJECT_ID = 'package-smoke-legacy-project'

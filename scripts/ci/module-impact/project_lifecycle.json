@@ -255,7 +255,8 @@
       "src/main/literature/journal-attributes.test.ts",
       "src/main/session-replay/service.test.ts",
       "src/main/acp/approved-handoff-outcome.integration.test.ts",
-      "src/main/pdf-annotations/sharing.integration.test.ts"
+      "src/main/pdf-annotations/sharing.integration.test.ts",
+      "src/main/database/pascalcase-table-names-migration.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],

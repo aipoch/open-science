@@ -1,3 +1,4 @@
+import { createDatabaseAtReleasedManifest } from '../../../test/fixtures/application-database'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -14,7 +15,7 @@ it('upgrades historical permissions without inferring descriptions or changing a
   const root = await mkdtemp(join(tmpdir(), 'permission-summary-migration-'))
   const client = createProjectDbClient(root)
   try {
-    await migrateApplicationDatabase(client)
+    await createDatabaseAtReleasedManifest(client)
     const registry = await createPermissionGrantRegistry({ getClient: async () => client })
     const capability = capabilityFromLegacyCategory(
       commandPrefixPermissionCategory(['git', 'status'])!
@@ -48,7 +49,8 @@ it('upgrades historical permissions without inferring descriptions or changing a
         '0045_literature_smart_pause_run',
         '0046_journal_attributes',
         '0047_session_replay',
-        '0048_pdf_annotation_sharing'
+        '0048_pdf_annotation_sharing',
+        '0049_pascalcase_table_names'
       ]
     })
     const after = await client.$queryRawUnsafe<Array<Record<string, unknown>>>(
