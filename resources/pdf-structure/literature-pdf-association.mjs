@@ -1525,15 +1525,28 @@ function associateFigureFaces(
   // extra source pixel when a border sits immediately above its caption.
   const edgeTolerance = page.height / 256 + 1
   const pageCaptions = candidates.filter((c) => c.page === page.pageNumber)
-  const captions = pageCaptions.filter(
-    (c) =>
-      // Candidate grouping has already accepted the native title line. A
-      // descriptive continuation may contain a finite verb without turning
-      // that independently accepted title into an inline prose reference.
-      (captionKind(c.lines[0]) === 'figure' ||
+  const captions = pageCaptions.filter((c) => {
+    // Candidate grouping has already accepted the native title line. A
+    // descriptive continuation may contain a finite verb without turning
+    // that independently accepted title into an inline prose reference.
+    let kind = captionKind(c.lines[0])
+    // A tight label-only first line needs its immediate descriptive title.
+    // Keep this fallback exclusive to printed ordinals; later caption prose
+    // cannot reclassify either a rejected reference or an accepted title.
+    if (
+      kind === undefined &&
+      c.lines[1]?.trim() &&
+      /^(?:(?:Supplementary|Supplemental)\s+)?(?:Fig\.?|Figure)\s+(?:[A-Z]{0,3}\d+(?:\.\d+)*|[A-Z]\.\d+(?:\.\d+)*|[IVXLCDM]+)[.:]\s*$/i.test(
+        c.lines[0]
+      )
+    )
+      kind = captionKind(`${c.lines[0]} ${c.lines[1]}`)
+    return (
+      (kind === 'figure' ||
         nativeCaptionedRasterArrayFragment(page, c, pageCaptions, tableRects)) &&
       !/\(facing page\)/i.test(c.lines.join(' '))
-  )
+    )
+  })
   const legendHeading = page.lines.find((l) => /^(?:Figure )?legends$/i.test(l.text.trim()))
   if (
     legendHeading &&

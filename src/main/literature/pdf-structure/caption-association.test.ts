@@ -68,6 +68,56 @@ it('retains the complete multiline facing-page exclusion after accepting the fig
   expect(associateFigures(page, [caption])).toEqual([])
 })
 
+const splitFigureHeading = (): ReturnType<typeof JSON.parse> =>
+  readPdfFixture('src/main/literature/pdf-structure/fixtures/branching-flowchart.jsonl')
+
+it('associates an independently grouped native figure label with its immediate title', () => {
+  const f = splitFigureHeading(),
+    before = structuredClone(f),
+    captions = findCaptionCandidates([f.page])
+  expect(captions).toEqual(f.captions)
+  expect(captions[0].lines).toEqual(['Figure 1.', 'CONSORT diagram.'])
+  const figures = associateFigures(f.page, captions, f.tables)
+  expect(figures).toHaveLength(1)
+  expect(figures[0].caption).toEqual(captions[0])
+  expect(figures[0].rect).toEqual([80.192125, 95.10697265625001, 441.0566875, 475.53486328125])
+  expect(figures[0].graphicsCount).toBe(17)
+  expect(f).toEqual(before)
+})
+
+it.each(['Figure 1.', 'Fig. 1.', 'Fig 1:', 'Figure S1.', 'Figure SM1.'])(
+  'classifies only the immediate title of a split numbered figure label: %s',
+  (label) => {
+    const f = splitFigureHeading()
+    f.captions[0].lines = [label, 'CONSORT diagram.', 'Results demonstrate the measured response.']
+    expect(captionKind(label)).toBeUndefined()
+    const figures = associateFigures(f.page, f.captions, f.tables)
+    expect(figures).toHaveLength(1)
+    expect(figures[0].caption).toEqual(f.captions[0])
+    expect(figures[0].rect).toBeDefined()
+  }
+)
+
+it.each([
+  ['Figure 1.'],
+  ['Figure 1.', ''],
+  ['Figure 1.', '   '],
+  ['Figure 1.', '', 'CONSORT diagram.'],
+  ['Figure 1.', 'As shown in the figure, the response is stable.'],
+  ['Figure 1.', 'In our study, the baseline is unchanged.'],
+  ['Fig. 1.', 'Thus, the result is larger.'],
+  ['Figure 1.', 'CONSORT diagram. (facing page)'],
+  ['Figure.', 'CONSORT diagram.'],
+  ['Figure Title.', 'CONSORT diagram.'],
+  ['Figure 1 shows a measured response.', 'CONSORT diagram.'],
+  ['Figure IV.', 'CONSORT diagram.'],
+  ['Fig. IV.', 'CONSORT diagram.']
+])('refuses unsupported or prose split-heading evidence: %s', (...lines) => {
+  const f = splitFigureHeading()
+  f.captions[0].lines = lines
+  expect(associateFigures(f.page, f.captions, f.tables)).toEqual([])
+})
+
 const repeatedTableNumber = (): ReturnType<typeof JSON.parse> =>
   readPdfFixture(
     'src/main/literature/pdf-structure/fixtures/source-grids/repeated-number-above-described-table.jsonl'
