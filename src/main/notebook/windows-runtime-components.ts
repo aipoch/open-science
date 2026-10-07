@@ -103,6 +103,7 @@ export const verifyWindowsRuntimeComponent = async (
 ): Promise<void> => {
   assertWindowsRuntimeComponentRelease(release)
   const pending = new Set(Object.keys(release.files))
+  const files: { file: string; path: string }[] = []
   const visit = async (directory: string, relative: string): Promise<void> => {
     signal?.throwIfAborted()
     const directoryStat = await lstat(directory)
@@ -115,18 +116,40 @@ export const verifyWindowsRuntimeComponent = async (
       if (entry.isDirectory()) await visit(file, path)
       else {
         signal?.throwIfAborted()
-        if (
-          !entry.isFile() ||
-          !pending.delete(path) ||
-          (await sha256(file)) !== release.files[path]
-        ) {
+        if (!entry.isFile() || !pending.delete(path)) {
           throw new Error(`Windows runtime component integrity check failed: ${path}`)
         }
+        files.push({ file, path })
       }
     }
   }
   await visit(root, '')
   if (pending.size) throw new Error('Windows runtime component is incomplete.')
+  // Cold opens (including antivirus inspection) dominate thousands of small runtime files.
+  // Bound concurrent streams instead of serializing every open; still hash every file on each
+  // verification. Drain in-flight reads on failure before callers may clean up the directory.
+  let next = 0
+  let failed = false
+  const results = await Promise.allSettled(
+    Array.from({ length: Math.min(8, files.length) }, async () => {
+      try {
+        while (!failed) {
+          signal?.throwIfAborted()
+          const entry = files[next++]
+          if (!entry) return
+          if ((await sha256(entry.file)) !== release.files[entry.path]) {
+            throw new Error(`Windows runtime component integrity check failed: ${entry.path}`)
+          }
+        }
+      } catch (error) {
+        failed = true
+        throw error
+      }
+    })
+  )
+  const failure = results.find((result) => result.status === 'rejected')
+  if (failure?.status === 'rejected') throw failure.reason
+  signal?.throwIfAborted()
 }
 
 export class WindowsRuntimeComponentStore {

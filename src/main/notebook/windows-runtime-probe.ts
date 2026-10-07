@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, win32 } from 'node:path'
 import { promisify } from 'node:util'
 import type { NotebookProcessSandbox, NotebookSandboxedSpawn } from './process-sandbox'
 import { buildNotebookKernelEnvironment } from './process-environment'
@@ -42,12 +42,12 @@ export const probeWindowsRuntimeComponent = async (
   const code = node
     ? `const assert = require('node:assert/strict');
        const fs = require('node:fs');
-       const cp = require('node:child_process');
+       const path = require('node:path');
+       if (process.versions.node !== '${selection.release.version}') throw new Error('Version mismatch');
        assert.throws(() => fs.readFileSync(process.env.OPEN_SCIENCE_PROBE_PRIVATE));
        fs.writeFileSync('probe.txt', 'ok');
-       const child = cp.spawnSync(process.execPath, ['-e', 'process.stdout.write("PIPE_OK")'], {encoding:'utf8',timeout:5000});
-       assert.equal(child.status, 0); assert.equal(child.stdout, 'PIPE_OK');
-       import('node:path').then(() => console.log('RUNTIME_PROBE_OK'));`
+       if (path.join('probe', 'ok') !== 'probe\\\\ok') throw new Error('Path module unavailable');
+       console.log('RUNTIME_PROBE_OK');`
     : `$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';
        if ($PSVersionTable.PSVersion.ToString() -ne '${selection.release.version}') { throw 'Version mismatch' }
        if (!(Get-Location).Path) { throw 'FileSystem provider unavailable' }
@@ -58,6 +58,12 @@ export const probeWindowsRuntimeComponent = async (
        if (!$blocked) { throw 'Private file was readable' }
        Write-Output 'RUNTIME_PROBE_OK'`
   const env = buildNotebookKernelEnvironment('win32')
+  // The fixed self-check invokes no user tools. Inheriting a developer's PATH would make the
+  // native launcher traverse and grant unrelated tool trees before it even starts the probe.
+  const windowsRoot = env.SystemRoot ?? env.WINDIR ?? 'C:\\Windows'
+  env.PATH = [dirname(selection.executable), win32.join(windowsRoot, 'System32'), windowsRoot].join(
+    win32.delimiter
+  )
   // A clean AppContainer (including over-the-shoulder setup under another administrator) may
   // have no profile Temp folder. Match normal execution by supplying an already granted folder.
   env.TEMP = cwd
