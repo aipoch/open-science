@@ -70,6 +70,10 @@ type Fixture = {
   packages: SpecialistPackageService
   root: string
   service: SpecialistService
+  marketplace: {
+    list: ReturnType<typeof vi.fn>
+    getRelease: ReturnType<typeof vi.fn>
+  }
   onProfilesChanged: ReturnType<typeof vi.fn>
 }
 const fixture = async (beforeCatalog: () => Promise<void> = async () => {}): Promise<Fixture> => {
@@ -93,7 +97,19 @@ const fixture = async (beforeCatalog: () => Promise<void> = async () => {}): Pro
     }
   })
   const onProfilesChanged = vi.fn()
-  const owner = createSpecialistApplicationOwner({ service, packages, uploads, onProfilesChanged })
+  const marketplace = {
+    list: vi.fn(async () => ({ sources: [], specialists: [], failures: [] })),
+    getRelease: vi.fn(async () => {
+      throw new Error('Marketplace release detail is not preconfigured.')
+    })
+  }
+  const owner = createSpecialistApplicationOwner({
+    service,
+    packages,
+    uploads,
+    marketplace,
+    onProfilesChanged
+  })
   const router = createApplicationCommandRouter()
   registerSpecialistApplicationCommands(router.registrar, owner)
   cleanup.push(() => router.dispose())
@@ -137,10 +153,47 @@ const fixture = async (beforeCatalog: () => Promise<void> = async () => {}): Pro
     await uploads.appendTransfer(uploader.invocation([{ transferId, offset: 0, chunk: bytes }]))
     return { transferId }
   }
-  return { first, second, third, upload, uploads, packages, root, service, onProfilesChanged }
+  return {
+    first,
+    second,
+    third,
+    upload,
+    uploads,
+    packages,
+    root,
+    service,
+    marketplace,
+    onProfilesChanged
+  }
 }
 
 describe('Specialist Remote Web application commands', () => {
+  it('serves Marketplace browsing through the public commands and validates the list request', async () => {
+    const { first, marketplace } = await fixture()
+    const snapshot = { sources: [], specialists: [], failures: [] }
+    marketplace.list.mockResolvedValue(snapshot)
+    expect(await first.invoke('specialist:marketplace-list')).toEqual(snapshot)
+    expect(marketplace.list).toHaveBeenLastCalledWith(undefined)
+    await first.invoke('specialist:marketplace-list', { forceRefresh: true })
+    expect(marketplace.list).toHaveBeenLastCalledWith({ forceRefresh: true })
+    await expect(
+      first.invoke('specialist:marketplace-list', { forceRefresh: 'yes' })
+    ).rejects.toThrow('Marketplace list does not accept renderer data.')
+    await expect(first.invoke('specialist:marketplace-list', {})).rejects.toThrow(
+      'Marketplace list does not accept renderer data.'
+    )
+    expect(marketplace.list).toHaveBeenCalledTimes(2)
+  })
+
+  it('routes Marketplace release detail through the public command', async () => {
+    const { first, marketplace } = await fixture()
+    const release = { specialistId: 'web-research' }
+    marketplace.getRelease.mockResolvedValue(release)
+    const request = { sourceId: 'official', specialistId: 'web-research', version: '1.0.0' }
+    expect(await first.invoke('specialist:marketplace-release-get', request)).toEqual(release)
+    expect(marketplace.getRelease).toHaveBeenCalledWith(request)
+  })
+
   it.each(['abort', 'disconnect', 'expiry'] as const)(
     'releases an idle upload slot on %s',
     async (action) => {

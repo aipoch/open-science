@@ -33,7 +33,7 @@ export const useMarketplaceStore = create<MarketplaceStore>((set) => ({
   integrityFailed: false,
 
   refresh: async (options) => {
-    // Guard: specialist.listMarketplace is Electron-only and unavailable in the web gateway.
+    // Defensive: keep the view inert if a host surface omits this capability.
     if (typeof window.api?.specialist?.listMarketplace !== 'function') {
       latestRefreshRequest += 1
       set({ isRefreshing: false, lastRefreshFailed: true, integrityFailed: false })

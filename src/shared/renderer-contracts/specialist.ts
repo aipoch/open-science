@@ -110,7 +110,7 @@ export const contracts = {
   >()('specialist', ['specialist:get-handoff-events', ELECTRON]),
   'specialist.getMarketplaceRelease': callable<
     (request: GetMarketplaceReleaseRequest) => Promise<MarketplaceSpecialistRelease>
-  >()('specialist', ['specialist:marketplace-release-get', ELECTRON]),
+  >()('specialist', ['specialist:marketplace-release-get', WEB]),
   'specialist.inspectGitHubMarketplaceSource': callable<
     (request: InspectGitHubMarketplaceSourceRequest) => Promise<MarketplaceSourceCandidate>
   >()('specialist', ['specialist:marketplace-source-inspect-github', ELECTRON]),
@@ -126,7 +126,7 @@ export const contracts = {
   ]),
   'specialist.listMarketplace': callable<
     (request?: ListMarketplaceRequest) => Promise<MarketplaceSnapshot>
-  >()('specialist', ['specialist:marketplace-list', ELECTRON]),
+  >()('specialist', ['specialist:marketplace-list', WEB]),
   'specialist.onCatalogChanged': callable<(listener: () => void) => RemoveListener>()(
     'specialist',
     ['specialist:catalog-changed', EVENT]

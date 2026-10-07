@@ -195,8 +195,10 @@ describe('renderer surface compatibility matrix', () => {
       'specialist.abortPackageUpload',
       'specialist.beginPackageUpload',
       'specialist.cancelPackage',
+      'specialist.getMarketplaceRelease',
       'specialist.installPackage',
       'specialist.list',
+      'specialist.listMarketplace',
       'specialist.previewPackageUpload',
       'specialist.setEnabled',
       'specialist.update'

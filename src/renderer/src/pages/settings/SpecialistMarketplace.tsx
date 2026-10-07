@@ -188,6 +188,12 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
   // before any effect has fired. Once a snapshot exists the content renders immediately whatever
   // the refresh state, and a failed first load flips this to false so the error renders instead.
   const loading = snapshot === undefined && !lastRefreshFailed
+  // Remote Web exposes Marketplace browsing (list + release detail) but not the write actions yet;
+  // keep those controls disabled instead of failing at call time (#3328).
+  const canManageSources =
+    typeof window.api.specialist?.inspectGitHubMarketplaceSource === 'function'
+  const canInstallSpecialist =
+    typeof window.api.specialist?.prepareMarketplaceInstall === 'function'
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<MarketplaceFilter>('all')
   const [repositoryUrl, setRepositoryUrl] = useState('')
@@ -592,7 +598,7 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
               <Button
                 type="button"
                 onClick={() => void inspectSource()}
-                disabled={sourceBusy || !repositoryUrl.trim()}
+                disabled={sourceBusy || !repositoryUrl.trim() || !canManageSources}
                 aria-busy={Boolean(sourceBusy)}
               >
                 <span key={String(sourceBusy)} className="button-feedback">
@@ -628,7 +634,11 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
                   </div>
                 </div>
                 <div className="mt-3 flex justify-end">
-                  <Button type="button" onClick={() => void addSource()} disabled={sourceBusy}>
+                  <Button
+                    type="button"
+                    onClick={() => void addSource()}
+                    disabled={sourceBusy || !canManageSources}
+                  >
                     {t('Trust and add source')}
                   </Button>
                 </div>
@@ -681,6 +691,7 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
                         label={t('Remove {{name}}', { name: source.name })}
                         icon={Trash2}
                         danger
+                        disabled={!canManageSources}
                         onClick={() => {
                           setSourceError(undefined)
                           setSourcePendingRemoval(source)
@@ -874,6 +885,7 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
                   disabled={
                     installBusy ||
                     marketplacePreviewBlocked ||
+                    !canInstallSpecialist ||
                     (marketplaceSkillConflicts.length > 0 && !marketplaceConflictsResolved)
                   }
                   onClick={() => {
