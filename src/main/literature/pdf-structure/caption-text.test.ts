@@ -260,6 +260,23 @@ it.each(['4', 'S4', 'D4'])(
   }
 )
 
+it.each(['Supplementary', 'Supplemental'])(
+  'filters existing figure-reference prose with the complete %s prefix',
+  (prefix) => {
+    for (const text of [
+      `${prefix} Figure 4: we show the measured response.`,
+      `${prefix} Fig. S4, we compare the measured response.`,
+      `${prefix} Figure 4 we present the measured response.`,
+      `${prefix} Figure 4 and 5 we compare the two settings.`,
+      `${prefix} Fig. 3 and Appendix Tab. 7 we compare the two settings.`
+    ])
+      expect(captionKind(text)).toBeUndefined()
+    expect(captionKind(`${prefix} Figure 4: Measurements across settings.`)).toBe('figure')
+    expect(captionKind(`${prefix} Fig. S4. Our evaluation setup.`)).toBe('figure')
+    expect(captionKind(`${prefix} Figure 4 and 5: Comparison across settings.`)).toBe('figure')
+  }
+)
+
 it('keeps a noun title beginning with a similar word eligible', () => {
   expect(captionKind('Table 5. To-scale measurements across sessions.')).toBe('table')
   expect(captionKind('Table 6. Comparison with our baseline.')).toBe('table')
