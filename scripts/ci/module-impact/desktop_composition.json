@@ -847,6 +847,7 @@
       "src/main/notebook/shell-search-scope.test.ts",
       "src/main/notebook/skill-loading-guidance.test.ts",
       "src/main/notebook/source-file-access-analysis.deferred-tasks.test.ts",
+      "src/main/notebook/source-file-access-analysis.storage-modes.test.ts",
       "src/main/notebook/windows-external-r.integration.test.ts",
       "src/main/notebook/windows-first-r-access.integration.test.ts",
       "src/main/notebook/windows-micromamba-runner.test.ts",
