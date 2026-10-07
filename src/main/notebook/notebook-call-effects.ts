@@ -24,7 +24,10 @@ const PYTHON_FILE_CALL_EFFECTS: ReadonlyMap<string, NotebookFileCallEffect> = ne
   ),
   ['scipy.io.loadmat', { kind: 'read', position: 0, keywords: ['file_name'] }],
   ['scipy.sparse.load_npz', { kind: 'read', position: 0, keywords: ['file'] }],
-  ['scipy.sparse.save_npz', { kind: 'write', position: 0, keywords: ['file'] }],
+  [
+    'scipy.sparse.save_npz',
+    { kind: 'write', position: 0, keywords: ['file'], appendedSuffix: '.npz' }
+  ],
   // MNE Raw FIF files are a common neurophysiology handoff.  Keep the reader
   // contract limited to its explicit filename; dynamic paths remain partial.
   ['mne.io.read_raw_fif', { kind: 'read', position: 0, keywords: ['fname', 'filename'] }],
@@ -273,6 +276,11 @@ const R_FILE_CALL_EFFECTS: ReadonlyMap<string, NotebookFileCallEffect> = new Map
   ['ArchRProject', { kind: 'write', position: 1, keywords: ['outputDirectory'] }],
   ['tximport', { kind: 'read', position: 0, keywords: ['files'], inputForm: 'paths' }],
   ['readMSData', { kind: 'read', position: 0, keywords: ['files'], inputForm: 'paths' }],
+  [
+    'read10xVisium',
+    { kind: 'read', position: 0, keywords: ['samples', 'sample'], inputForm: 'paths' }
+  ],
+  ['writeVcf', { kind: 'write', position: 1, keywords: ['filename'] }],
   ['createArrowFiles', { kind: 'read', position: 0, keywords: ['inputFiles'], inputForm: 'paths' }],
   ['Spectra', { kind: 'read', position: 0, keywords: ['object'], inputForm: 'paths' }],
   // DropletUtils reads the 10x Matrix directory (or a collection of sample
@@ -419,6 +427,7 @@ const R_FILE_CALL_EFFECTS: ReadonlyMap<string, NotebookFileCallEffect> = new Map
     (name) => [name, { kind: 'write', position: 0, keywords: ['filename'] }] as const
   ),
   ['capture.output', { kind: 'write', position: -1, keywords: ['file'], pathOptional: true }],
+  ['cat', { kind: 'write', position: -1, keywords: ['file'], pathOptional: true }],
   ['dput', { kind: 'write', position: 1, keywords: ['file'], pathOptional: true }],
   ['h5write', { kind: 'write', position: 1, keywords: ['file'] }],
   ['image_write', { kind: 'write', position: 1, keywords: ['path'] }],
@@ -494,7 +503,10 @@ const R_POTENTIAL_FILE_WRITE_CALLS = new Set(['st_write', 'writeRaster'])
 // the contract, otherwise a user-defined `custom::read10xCounts()` could be
 // mistaken for DropletUtils I/O.
 const R_FILE_CALL_PACKAGES: ReadonlyMap<string, string> = new Map([
+  ['cat', 'base'],
   ['read10xCounts', 'DropletUtils'],
+  ['read10xVisium', 'SpatialExperiment'],
+  ['writeVcf', 'VariantAnnotation'],
   ['open_dataset', 'arrow'],
   ['import_biom', 'phyloseq'],
   ['HDF5Array', 'HDF5Array'],

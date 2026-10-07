@@ -679,6 +679,110 @@ class NotebookDependencyProjector {
         : fallback
     }
 
+    // Function metadata does not replace its compiled body or bindings. Only
+    // behavior slots and unknown member writes invalidate a plain function summary.
+    const pythonFunctionBehaviorMembers = new Set([
+      '__code__',
+      '__defaults__',
+      '__kwdefaults__',
+      '__globals__',
+      '__builtins__',
+      '__closure__'
+    ])
+    const pythonFunctionMemberMayChangeBehavior = (member: string | undefined): boolean =>
+      member === undefined || member === '*' || pythonFunctionBehaviorMembers.has(member)
+    const pythonFunctionHasBehaviorShadow = (members: ReadonlySet<string> | undefined): boolean =>
+      members ? [...members].some(pythonFunctionMemberMayChangeBehavior) : false
+
+    // A definite pending binding to a summary emitted in this run denotes a
+    // new function object, which cannot inherit the old name's reference shadow.
+    const pythonFunctionHasFreshBinding = (
+      receiver: string,
+      summary: NotebookDependencyTypeSummary
+    ): boolean =>
+      pendingTypeBindings.get(receiver) === summary &&
+      (facts.typeSummaries ?? []).includes(summary) &&
+      !conditionallyDefinedNames.has(receiver)
+
+    // Traverse only current plain function identities inside an
+    // already opaque callback. These names are potential captures, not calls.
+    const currentPythonFunctionSummary = (
+      name: string
+    ): NotebookDependencyTypeSummary | undefined => {
+      if (run.kernelKind !== 'python' || incompleteRun) return undefined
+      const aliasNames = [name]
+      const visitedNames = new Set<string>()
+      for (let cursor = 0; cursor < aliasNames.length; cursor++) {
+        const current = aliasNames[cursor]
+        if (visitedNames.has(current)) return undefined
+        visitedNames.add(current)
+        const definedInThisRun = (facts.definedNames ?? []).includes(current)
+        const hasCurrentBinding =
+          definedInThisRun &&
+          (pendingTypeBindings.has(current) || completeSummaryNames.has(current))
+        if (
+          conditionallyDefinedNames.has(current) ||
+          (uncertainBindings.has(current) && !hasCurrentBinding)
+        )
+          return undefined
+        const summary = callableSummary(current)
+        if (summary) {
+          // Plain functions and real classes share kind 'python-class'; the
+          // reviewed python-function: identity is the required narrower seam.
+          if (!summary.name.startsWith('python-function:')) return undefined
+          const token = referenceTokens.get(current)
+          if (
+            (!pythonFunctionHasFreshBinding(current, summary) &&
+              token &&
+              pythonFunctionHasBehaviorShadow(shadowedMembers.get(token))) ||
+            pythonFunctionHasBehaviorShadow(shadowedTypeMembers.get(summary)) ||
+            (facts.memberWrites ?? []).some(
+              (write) =>
+                receiversMayAlias(write.receiver, current) &&
+                pythonFunctionMemberMayChangeBehavior(write.member)
+            )
+          )
+            return undefined
+          return summary
+        }
+        // Only a definite current direct alias can bridge a missing pending
+        // binding. A possible alias cannot recover an old pre-rebind identity.
+        const aliases = (facts.aliases ?? []).filter(
+          (alias) =>
+            alias.target === current &&
+            alias.kind === 'reference' &&
+            alias.access === undefined &&
+            alias.member === undefined
+        )
+        if (aliases.length !== 1) return undefined
+        aliasNames.push(aliases[0].source)
+      }
+      return undefined
+    }
+    const opaquePythonFunctionCaptures = (
+      rootName: string,
+      rootSummary: NotebookDependencyTypeSummary
+    ): string[] => {
+      const currentRoot = currentPythonFunctionSummary(rootName)
+      if (!currentRoot || currentRoot !== rootSummary) return []
+      const names: string[] = []
+      const worklist = [currentRoot]
+      const visitedSummaries = new Set(worklist)
+      // An explicit worklist bounds traversal by summary identities and avoids
+      // recursive JavaScript call-stack growth for deep helper chains.
+      for (let cursor = 0; cursor < worklist.length; cursor++) {
+        const method = worklist[cursor].methods.find((candidate) => candidate.name === '__call__')
+        for (const name of method?.usedNames ?? []) {
+          names.push(name)
+          const helper = currentPythonFunctionSummary(name)
+          if (!helper || visitedSummaries.has(helper)) continue
+          visitedSummaries.add(helper)
+          worklist.push(helper)
+        }
+      }
+      return names
+    }
+
     const ownedPropertyEffect = (
       alias: NotebookDependencyAlias,
       sourceType: NotebookDependencyTypeSummary | undefined
@@ -1079,8 +1183,10 @@ class NotebookDependencyProjector {
           libraryEffect?.callbackAllKeywords === true ||
           libraryEffect?.callbackKeywords?.includes(keyword.name)
       )
-      const hasDynamicCallback = callbackArguments.some((keyword) =>
-        (keyword.callableReferences ?? []).some((reference) => {
+      // Visit every contracted callback before aggregating uncertainty: a
+      // dynamic callback must not hide the known captures of later callbacks.
+      const callbackUncertainties = callbackArguments.map((keyword) =>
+        (keyword.callableReferences ?? []).map((reference) => {
           if (
             reference.container &&
             !libraryEffect?.callbackContainerKeywords?.includes(keyword.name)
@@ -1093,10 +1199,22 @@ class NotebookDependencyProjector {
           ) {
             return false
           }
-          const summary =
-            pendingTypeBindings.get(reference.root) ??
-            objectTypes.get(reference.root) ??
-            typeSummaries.get(reference.root)
+          // A pending conditional body or an uncertain prior binding does not
+          // identify the callback currently supplied to the library.
+          const definedInThisRun = (facts.definedNames ?? []).includes(reference.root)
+          const hasCurrentBinding =
+            definedInThisRun &&
+            (pendingTypeBindings.has(reference.root) || completeSummaryNames.has(reference.root))
+          if (
+            conditionallyDefinedNames.has(reference.root) ||
+            (uncertainBindings.has(reference.root) && !hasCurrentBinding)
+          )
+            return true
+          const namedTypeSummary =
+            !definedInThisRun || completeSummaryNames.has(reference.root)
+              ? typeSummaries.get(reference.root)
+              : undefined
+          const summary = callableSummary(reference.root) ?? namedTypeSummary
           if (!summary) {
             return reference.member !== undefined || libraryEffect?.callbackAllKeywords !== true
           }
@@ -1111,21 +1229,34 @@ class NotebookDependencyProjector {
             ].includes(summary.name)
           )
             return false
-          if (reference.member) {
+          // Plain function objects can change behavior through __code__,
+          // defaults, or an unknown member write, including through aliases.
+          const plainFunction = summary.name.startsWith('python-function:')
+          if (reference.member || plainFunction) {
             const writtenInThisRun = (facts.memberWrites ?? []).some(
               (write) =>
                 receiversMayAlias(write.receiver, reference.root) &&
-                (write.member === undefined || write.member === reference.member)
+                (plainFunction
+                  ? pythonFunctionMemberMayChangeBehavior(write.member) ||
+                    write.member === reference.member
+                  : write.member === undefined || write.member === reference.member)
             )
             if (writtenInThisRun) return true
             const token = referenceTokens.get(reference.root)
-            const shadow = token ? shadowedMembers.get(token) : undefined
+            const shadow =
+              token && !(plainFunction && pythonFunctionHasFreshBinding(reference.root, summary))
+                ? shadowedMembers.get(token)
+                : undefined
             const typeShadow = shadowedTypeMembers.get(summary)
             if (
-              shadow?.has('*') ||
-              shadow?.has(reference.member) ||
-              typeShadow?.has('*') ||
-              typeShadow?.has(reference.member)
+              (plainFunction
+                ? pythonFunctionHasBehaviorShadow(shadow) ||
+                  (reference.member && shadow?.has(reference.member))
+                : shadow?.has('*') || shadow?.has(reference.member!)) ||
+              (plainFunction
+                ? pythonFunctionHasBehaviorShadow(typeShadow) ||
+                  (reference.member && typeShadow?.has(reference.member))
+                : typeShadow?.has('*') || typeShadow?.has(reference.member!))
             ) {
               return true
             }
@@ -1133,13 +1264,22 @@ class NotebookDependencyProjector {
           const callback = summary.methods.find(
             (candidate) => candidate.name === (reference.member ?? '__call__')
           )
-          if (callback?.effect !== 'read') return true
-          typeAwareUsedNames.push(...(callback.usedNames ?? []))
+          // An opaque callback can still have known captures. Preserve their
+          // invalidation evidence without certifying the callback's effects.
+          typeAwareUsedNames.push(...(callback?.usedNames ?? []))
+          if (callback?.effect !== 'read') {
+            if (!reference.member) {
+              typeAwareUsedNames.push(...opaquePythonFunctionCaptures(reference.root, summary))
+            }
+            return true
+          }
           typeAwareSafeCallNames.push(...(callback.safeCallNames ?? []))
           return callback.safeCallNames?.some(nameIsShadowed) ?? false
         })
       )
-      if (hasDynamicCallback) typeAwareReasons.push('opaque-call')
+      if (callbackUncertainties.some((references) => references.some(Boolean))) {
+        typeAwareReasons.push('opaque-call')
+      }
       if (libraryEffect?.mutatesReceiverUnlessKeywordFalse) {
         const option = call.keywordArguments?.find(
           (keyword) => keyword.name === libraryEffect.mutatesReceiverUnlessKeywordFalse
