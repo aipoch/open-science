@@ -246,6 +246,20 @@ it('keeps next-batch table titles eligible beside the prose guards', () => {
   expect(captionKind('Table D4. This is shown in the appendix.')).toBeUndefined()
 })
 
+it.each(['4', 'S4', 'D4'])(
+  'applies existing subject-reference guards before accepting table label %s',
+  (ordinal) => {
+    expect(captionKind(`Table ${ordinal}. ASTER exhibits a larger value.`)).toBeUndefined()
+    expect(captionKind(`Tab. ${ordinal}. ASTER exhibits a larger value.`)).toBeUndefined()
+    expect(captionKind(`Table ${ordinal}. Utility threshold γ.`)).toBe('table')
+    expect(captionKind(`Table ${ordinal}: utility threshold.`)).toBe('table')
+    expect(captionKind(`Table ${ordinal}. The table summarizes the results.`)).toBe('table')
+    expect(captionKind(`Table ${ordinal}. To compare model performance across datasets.`)).toBe(
+      'table'
+    )
+  }
+)
+
 it('keeps a noun title beginning with a similar word eligible', () => {
   expect(captionKind('Table 5. To-scale measurements across sessions.')).toBe('table')
   expect(captionKind('Table 6. Comparison with our baseline.')).toBe('table')

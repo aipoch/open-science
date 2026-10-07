@@ -355,15 +355,9 @@ export function captionKind(text) {
       ))
   )
     return undefined
-  if (
-    compactTableAppendix &&
-    /^[.:]\s+[\p{L}]/u.test(compactTableAppendix[2]) &&
-    compactTableAppendix[2].trim().length > 2 &&
-    !/^[.:]\s+(?:It|This|These|Those)\s+(?:should|is|are|was|were|has|have|had|contains?|includes?)\b/i.test(
-      compactTableAppendix[2]
-    )
-  )
-    return 'table'
+  // The final numbered-label matcher already accepts compact appendix
+  // ordinals. Let them pass through the same remaining prose guards as
+  // ordinary numbered captions before assigning ownership.
   // A closing parenthesis ends an inline cross-reference, not a caption.
   if (
     /^(?:(?:Supplementary|Supplemental)\s+)?(?:Fig\.?|Figure|Table)\s+[A-Z]?\d+(?:\s+[A-Z](?:\s*(?:[+,&/–-]|and)\s*[A-Z])*)?(?:\s+and\s+(?:(?:Supplementary|Supplemental)\s+)?(?:Fig\.?|Figure|Table)\s+[A-Z]?\d+)?\)\./i.test(
