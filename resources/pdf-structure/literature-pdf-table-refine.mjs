@@ -11200,22 +11200,43 @@ export function refineTable(
       })
       const targetRows = new Set(candidates.map(({ row }) => row))
       if (candidates.length === pairedRuns.length && targetRows.size === pairedRuns.length) {
+        let recovered = 0
         for (const { item, row } of candidates) {
           const values = item.text.trim().split(/\s+/u)
+          const parts = splitNativeMeasuredFields(item, observedRuns, item.height)
+          if (
+            !parts ||
+            parts.length !== 2 ||
+            parts.some(
+              (part, offset) =>
+                part.text !== values[offset] ||
+                !Array.isArray(part.rect) ||
+                part.rect.length !== 4 ||
+                !part.rect.every(Number.isFinite) ||
+                part.rect[2] <= part.rect[0] ||
+                part.rect[3] <= part.rect[1] ||
+                part.rect[0] < columnRects[9 + offset][0] ||
+                part.rect[2] > columnRects[9 + offset][2]
+            )
+          ) {
+            continue
+          }
           for (let offset = 0; offset < 2; offset++) {
             const cell = cells.find(
               (candidate) => candidate.row === row && candidate.column === 9 + offset
             )
-            if (!cell) continue
-            cell.text = values[offset]
-            cell.sourceRects = [item.rect]
-            cell.sourceTokens = [item]
+            cell.text = parts[offset].text
+            cell.sourceRects = [parts[offset].rect]
+            cell.sourceTokens = [parts[offset]]
           }
           const index = unassigned.indexOf(item.text)
           if (index >= 0) unassigned.splice(index, 1)
+          recovered++
         }
-        if (!unassigned.length) issues.delete('unassigned-source-text')
-        repairs.push('user-study-paired-percentages-recovered')
+        if (recovered) {
+          if (!unassigned.length) issues.delete('unassigned-source-text')
+          repairs.push('user-study-paired-percentages-recovered')
+        }
       }
     }
   }
