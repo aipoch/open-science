@@ -16,7 +16,7 @@ const workflows = [
     name: 'microbial abundance and diversity',
     consumed: ['community'],
     states: [
-      ['partial', 'partial', 'partial'],
+      ['partial', 'complete', 'complete'],
       ['partial', 'complete', 'complete'],
       ['partial', 'complete', 'complete']
     ],
@@ -180,10 +180,12 @@ it.each(workflows)('tracks input, output and cell dependencies: $name', async (w
     if (workflow.name === 'clinical cohort harmonization and stratified summary')
       expect(projection.dependenciesByRunId?.['1']).toContain('0')
     else {
-      // Opaque package calls and unmodeled values currently prevent a reliable graph.
+      // The lazy phyloseq callback and opaque package calls retain their distinct barriers.
       expect(projection.stalenessByRunId['1']?.state).toBe('unknown')
       expect(projection.stalenessByRunId['1']).toMatchObject({
-        reasons: expect.arrayContaining(['opaque-call'])
+        reasons: expect.arrayContaining([
+          workflow.name === 'microbial abundance and diversity' ? 'function-scope' : 'opaque-call'
+        ])
       })
     }
     const analyze = workflow.language === 'r' ? analyzeRNotebookSource : analyzePythonNotebookSource

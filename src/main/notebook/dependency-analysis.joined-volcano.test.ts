@@ -220,8 +220,13 @@ it('keeps Python exploration and the failed image preview outside the R dependen
       sessionId: 's',
       completedRun: runs.at(-1)!
     })
-    expect(result.stalenessByRunId['12'], JSON.stringify(result)).toEqual({ state: 'clear' })
-    expect(result.dependenciesByRunId?.['12']).not.toContain('8')
+    expect(result.stalenessByRunId['12'], JSON.stringify(result)).toEqual({
+      state: 'unknown',
+      reasons: ['opaque-call']
+    })
+    expect(result.stalenessByRunId['0']).toEqual({ state: 'clear' })
+    expect(result.stalenessByRunId['8']).toBeUndefined()
+    expect(result.dependenciesByRunId?.['12']).toBeUndefined()
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -265,10 +270,11 @@ it.each(cells.filter((c) => c.language === 'r' && c.status === 'completed'))(
         kernelEpochId: 'epoch'
       })
       const { facts } = await analyzeRNotebookSource(script, context)
+      const unprovenDispatch = ['3', '6', '12'].includes(runId)
       expect(
         facts.state === 'unknown' ? facts.reasons.filter((r) => r !== 'external-state') : [],
         JSON.stringify(facts)
-      ).toEqual([])
+      ).toEqual(unprovenDispatch ? ['opaque-call'] : [])
       const access = await analyzeNotebookSourceFileAccess('r', script, context)
       expect(
         access,
@@ -280,17 +286,30 @@ it.each(cells.filter((c) => c.language === 'r' && c.status === 'completed'))(
           facts
         })
       ).toMatchObject({
-        readState: 'complete',
-        writeState: 'complete',
-        externalState: 'complete'
+        readState: unprovenDispatch || runId === '4' ? 'partial' : 'complete',
+        writeState: unprovenDispatch ? 'partial' : 'complete',
+        externalState: unprovenDispatch ? 'partial' : 'complete'
       })
+      expect(access.reads).toEqual(
+        runId === '2'
+          ? [
+              'inputs/differential-results-333333333333.xlsx',
+              'inputs/expression-matrix-444444444444.csv'
+            ]
+          : []
+      )
+      expect(access.writes).toEqual(
+        ['6', '12'].includes(runId)
+          ? ['diagonal_volcano.pdf', 'diagonal_volcano.png', 'diagonal_volcano_data.csv']
+          : []
+      )
     } finally {
       await rm(root, { recursive: true, force: true })
     }
   }
 )
 
-it('reconstructs the producer through CSV preparation and joined test cells', async () => {
+it('retains the prepared inputs without certifying the joined plot dependency chain', async () => {
   const root = await mkdtemp(join(tmpdir(), 'joined-volcano-'))
   const runs = runsFor()
   try {
@@ -304,18 +323,12 @@ it('reconstructs the producer through CSV preparation and joined test cells', as
       completedRun: runs.at(-1)!
     })
     expect(projection.stalenessByRunId['12'], JSON.stringify(projection)).toEqual({
-      state: 'clear'
+      state: 'unknown',
+      reasons: ['opaque-call']
     })
-    const upstream = new Set<string>()
-    const pending = ['12']
-    while (pending.length) {
-      for (const dependency of projection.dependenciesByRunId?.[pending.pop()!] ?? []) {
-        if (upstream.has(dependency)) continue
-        upstream.add(dependency)
-        pending.push(dependency)
-      }
-    }
-    expect([...upstream].sort()).toEqual(['2', '4', '5', '6'])
+    expect(projection.dependenciesByRunId?.['12']).toBeUndefined()
+    expect(projection.stalenessByRunId['2']).toEqual({ state: 'clear' })
+    expect(projection.dependenciesByRunId?.['2']).toEqual([])
   } finally {
     await rm(root, { recursive: true, force: true })
   }

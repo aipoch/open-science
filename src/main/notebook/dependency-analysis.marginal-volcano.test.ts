@@ -63,7 +63,7 @@ it.each(runsFor())('captures marginal volcano cell $runId and its prior values',
   }
 })
 
-it('reconstructs both input stages for the marginal plot', async () => {
+it('retains marginal input paths without certifying conditional preparation dependencies', async () => {
   const root = await mkdtemp(join(tmpdir(), 'marginal-projection-'))
   try {
     const runs = runsFor()
@@ -76,17 +76,20 @@ it('reconstructs both input stages for the marginal plot', async () => {
       sessionId: 's',
       completedRun: runs.at(-1)!
     })
-    expect(projection.stalenessByRunId['11'], JSON.stringify(projection)).toEqual({
-      state: 'clear'
-    })
-    expect(projection.dependenciesByRunId?.['11']).toContain('10')
-    expect(projection.dependenciesByRunId?.['10']).toContain('9')
+    for (const runId of ['9', '10', '11']) {
+      expect(projection.stalenessByRunId[runId], JSON.stringify(projection)).toEqual({
+        state: 'unknown',
+        reasons: ['control-flow']
+      })
+      expect(projection.dependenciesByRunId?.[runId]).toBeUndefined()
+    }
+    expect(projection.unresolvedFileReadRunIds).toEqual(['9', '10'])
   } finally {
     await rm(root, { recursive: true, force: true })
   }
 })
 
-it('recovers after the failed header assignment is superseded by successful preparation', async () => {
+it('excludes failed header assignment while retaining uncertainty in both preparation epochs', async () => {
   const root = await mkdtemp(join(tmpdir(), 'marginal-failure-'))
   const failed: NotebookRunRecord = {
     ...runsFor()[0],
@@ -108,10 +111,11 @@ it('recovers after the failed header assignment is superseded by successful prep
       sessionId: 's',
       completedRun: runs.at(-1)!
     })
-    expect(before.stalenessByRunId['11']).toEqual({ state: 'clear' })
-    expect(before.dependenciesByRunId?.['9']).not.toContain('8')
-    expect(before.dependenciesByRunId?.['10']).not.toContain('8')
-    expect(before.dependenciesByRunId?.['11']).not.toContain('8')
+    expect(before.stalenessByRunId['11']).toEqual({ state: 'unknown', reasons: ['control-flow'] })
+    expect(before.stalenessByRunId['8']).toBeUndefined()
+    for (const runId of ['9', '10', '11']) {
+      expect(before.dependenciesByRunId?.[runId]).toBeUndefined()
+    }
     runs.push(
       ...runsFor().map((run) => ({
         ...run,
@@ -127,7 +131,11 @@ it('recovers after the failed header assignment is superseded by successful prep
       sessionId: 's',
       completedRun: runs.at(-1)!
     })
-    expect(after.stalenessByRunId['retry-11'], JSON.stringify(after)).toEqual({ state: 'clear' })
+    expect(after.stalenessByRunId['retry-11'], JSON.stringify(after)).toEqual({
+      state: 'unknown',
+      reasons: ['control-flow']
+    })
+    expect(after.dependenciesByRunId?.['retry-11']).toBeUndefined()
   } finally {
     await rm(root, { recursive: true, force: true })
   }

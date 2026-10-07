@@ -80,7 +80,7 @@ describe('SciPy sparse multi-cell lineage', { timeout: 60_000 }, () => {
     const scripts = [
       'from scipy.sparse import load_npz\nmatrix = load_npz("inputs/counts.npz")',
       'normalized = matrix.astype("float32")\nnormalized = normalized.multiply(scale)',
-      'from scipy.sparse import save_npz\nsave_npz("outputs/normalized.npz", normalized)',
+      'from scipy.sparse import save_npz\nsave_npz("outputs/normalized", normalized)',
       'reloaded = load_npz("outputs/normalized.npz")\nprint(reloaded.shape)'
     ]
     let projection: Awaited<ReturnType<NotebookDependencyAnalyzer['project']>> | undefined

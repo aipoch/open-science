@@ -156,6 +156,36 @@ image = ReadImage(["inputs/001.dcm", "inputs/002.dcm"])`
     })
   })
 
+  it('retains a SimpleITK DICOM series directory as partial input', async () => {
+    await expect(
+      analyzeNotebookSourceFileAccess(
+        'python',
+        `import SimpleITK as sitk
+files = sitk.ImageSeriesReader.GetGDCMSeriesFileNames("inputs/dicom-series")
+reader = sitk.ImageSeriesReader()
+reader.SetFileNames(files)
+image = reader.Execute()`
+      )
+    ).resolves.toMatchObject({
+      reads: ['inputs/dicom-series'],
+      writes: [],
+      readState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it.each(['"https://example.org/dicom"', 'select_directory()'])(
+    'does not invent a local DICOM series directory for %s',
+    async (directory) => {
+      await expect(
+        analyzeNotebookSourceFileAccess(
+          'python',
+          `import SimpleITK as sitk\nfiles = sitk.ImageSeriesReader.GetGDCMSeriesFileNames(${directory})`
+        )
+      ).resolves.toMatchObject({ reads: [], readState: 'partial', externalState: 'partial' })
+    }
+  )
+
   it('captures both local MR summary-statistic tables', async () => {
     expect(
       await analyzeNotebookSourceFileAccess(

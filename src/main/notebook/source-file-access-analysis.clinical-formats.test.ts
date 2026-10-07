@@ -4,6 +4,117 @@ import { describe, expect, it } from 'vitest'
 import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
 import { analyzeRNotebookSource } from './dependency-analysis-r'
 
+describe('R validation assertions', () => {
+  const input = 'obs <- read.csv("inputs/measurements.csv")'
+  const output = 'write.csv(obs, "outputs/validated.csv", row.names = FALSE)'
+
+  it.each([
+    'stopifnot(nrow(obs) == 35)',
+    'base::stopifnot(nrow(obs) == 35)',
+    'stopifnot("expected 35 rows" = nrow(obs) == 35)',
+    'stopifnot(exprs = { nrow(obs) == 35; all(obs$value > 0) })',
+    'base::stopifnot(exprs = { nrow(obs) == 35 }, local = TRUE)'
+  ])('preserves complete literal I/O around direct assertions: %s', async (assertion) => {
+    const source = `${input}\n${assertion}\n${output}`
+    const { facts } = await analyzeRNotebookSource(source)
+    expect(facts.state === 'unknown' ? facts.reasons : []).not.toContain('opaque-call')
+    expect(facts.safeCallNames).toContain(
+      assertion.startsWith('base::') ? 'base::stopifnot' : 'stopifnot'
+    )
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      readState: 'complete',
+      writeState: 'complete',
+      externalState: 'complete',
+      reads: ['inputs/measurements.csv'],
+      writes: ['outputs/validated.csv']
+    })
+  })
+
+  it.each([
+    'stopifnot(exprs = { nrow(obs) == 35 }, local = external_environment)',
+    'stopifnot(exprs = { nrow(obs) == 35 }, local = FALSE)',
+    'stopifnot(nrow(obs) == 35, envir = unknown_environment())',
+    'stopifnot(exprs = quoted_expressions)',
+    'stopifnot(exprs = quote({ write.csv(obs, "outputs/hidden.csv"); TRUE }))',
+    'stopifnot(exprObject = quoted_expressions)',
+    'stopifnot(nrow(obs) == 35, domain = "messages")',
+    'stopifnot(unknown_check(obs))',
+    'stopifnot <- replacement\nstopifnot(nrow(obs) == 35)',
+    'custom::stopifnot(nrow(obs) == 35)'
+  ])('keeps dynamic, effectful and shadowed assertions uncertain: %s', async (assertion) => {
+    const source = `${input}\n${assertion}\n${output}`
+    const { facts } = await analyzeRNotebookSource(source)
+    expect(facts.state).toBe('unknown')
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it('retains nested I/O without certifying an unknown assertion call', async () => {
+    const source = `${input}\nstopifnot({ write.csv(obs, "outputs/check.csv"); unknown_check(obs) })\n${output}`
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      writeState: 'partial',
+      writes: ['outputs/check.csv', 'outputs/validated.csv']
+    })
+  })
+
+  it('does not publish later assertion assignments as unconditional static paths', async () => {
+    const source = `${input}\nstopifnot(nrow(obs) == 35, { checkpoint <- "outputs/intermediate.csv"; TRUE })`
+    const { facts, fileAccess } = await analyzeRNotebookSource(source)
+    expect(facts.conditionallyDefinedNames).toContain('checkpoint')
+    expect(fileAccess?.context.staticStrings ?? []).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: 'checkpoint' })])
+    )
+  })
+
+  it('retains mutations inside directly evaluated assertions', async () => {
+    const source = `${input}\nstopifnot({ obs$value <- obs$value * 2; TRUE })\n${output}`
+    const { facts } = await analyzeRNotebookSource(source)
+    expect(facts.mutatedNames).toContain('obs')
+    expect(facts.memberWrites).toContainEqual({ receiver: 'obs', member: 'value' })
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: ['inputs/measurements.csv'],
+      writes: ['outputs/validated.csv']
+    })
+  })
+
+  it('honors a prior-cell assertion shadow while retaining explicit base identity', async () => {
+    const context = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      resolvedKernelNames: ['stopifnot']
+    }
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        `${input}\nstopifnot(nrow(obs) == 35)\n${output}`,
+        context
+      )
+    ).toMatchObject({ readState: 'partial', writeState: 'partial', externalState: 'partial' })
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        `${input}\nbase::stopifnot(nrow(obs) == 35)\n${output}`,
+        context
+      )
+    ).toMatchObject({ readState: 'complete', writeState: 'complete', externalState: 'complete' })
+  })
+
+  it('preserves I/O discovery for a local file wrapper named stopifnot', async () => {
+    const source =
+      'stopifnot <- function(path) read.csv(path)\nobs <- stopifnot("inputs/measurements.csv")'
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: ['inputs/measurements.csv'],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+})
+
 describe('clinical statistical file readers', () => {
   it.each([
     'ArchR::saveArchRProject(project, "outputs/project")',
@@ -705,7 +816,10 @@ saveRDS(integrated, "outputs/integrated-spatial.rds")`
     reads: ['inputs/control', 'inputs/treated'],
     writes: ['outputs/integrated-spatial.png', 'outputs/integrated-spatial.rds'],
     readState: 'partial',
-    writeState: 'partial'
+    // Known Seurat transforms retain the concrete PNG/RDS output evidence;
+    // discovered spatial companions still make input and external state partial.
+    writeState: 'complete',
+    externalState: 'partial'
   })
 })
 
@@ -746,7 +860,7 @@ saveRDS(dds, "outputs/deseq2-object.rds")`
     reads: ['inputs/gene-counts.csv', 'inputs/sample-sheet.csv'],
     writes: ['outputs/deseq2-object.rds', 'outputs/deseq2-results.csv', 'outputs/rlog-matrix.tsv'],
     readState: 'partial',
-    writeState: 'partial'
+    writeState: 'complete'
   })
 })
 
