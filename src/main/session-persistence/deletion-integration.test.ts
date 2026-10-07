@@ -220,7 +220,7 @@ describe('managed-file deletion integration', () => {
     const repository = new SessionRepository(storageRoot, undefined, projection)
     await repository.ensureSessionProjection(() => sessions.loadAll())
     await client.$executeRawUnsafe(`CREATE TRIGGER reject_bookmark_cleanup
-      BEFORE DELETE ON bookmarks BEGIN SELECT RAISE(ABORT, 'cleanup blocked'); END`)
+      BEFORE DELETE ON "Bookmark" BEGIN SELECT RAISE(ABORT, 'cleanup blocked'); END`)
 
     await expect(repository.deleteSession(PROJECT_ID, SESSION_ID)).rejects.toBeInstanceOf(
       SessionDeletionCommittedError
