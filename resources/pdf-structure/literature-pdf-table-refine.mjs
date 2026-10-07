@@ -10508,13 +10508,53 @@ export function refineTable(
       const group = candidate.items.slice().sort((a, b) => a.rect[0] - b.rect[0])
       const top = Math.min(...group.map((item) => item.rect[1]))
       const bottom = Math.max(...group.map((item) => item.rect[3]))
-      const insertion = rows.findIndex((row) => row.rect[1] > top)
+      const matchingSource = (token) =>
+        group.find(
+          (item) =>
+            item.text === token.text &&
+            item.rect.every((value, index) => value === token.rect[index])
+        )
+      const owners = cells.filter((cell) => cell.sourceTokens.some(matchingSource))
+      const ownedSources = new Set(owners.flatMap((cell) => cell.sourceTokens.map(matchingSource)))
+      const ownerRows = [...new Set(owners.map((cell) => cell.row))]
+      const ownerRow = ownerRows.length === 1 ? ownerRows[0] : -1
+      const rowCells = cells.filter((cell) => cell.row === ownerRow)
+      const reusable =
+        ownerRow >= 0 &&
+        !headerRows.includes(ownerRow) &&
+        rowCells.length === 7 &&
+        new Set(rowCells.map((cell) => cell.column)).size === 7 &&
+        rowCells.every(
+          (cell) =>
+            cell.rowSpan === 1 &&
+            cell.colSpan === 1 &&
+            cell.column >= 0 &&
+            cell.column < 7 &&
+            cell.sourceRects.length === cell.sourceTokens.length &&
+            (cell.sourceTokens.length > 0 || !cell.text.trim()) &&
+            cell.sourceTokens.every((token) => {
+              const item = matchingSource(token)
+              return item && columnOf(item) === cell.column
+            })
+        )
+      const insertion = reusable
+        ? ownerRow
+        : owners.length === 0
+          ? rows.findIndex((row) => row.rect[1] > top)
+          : -1
       if (insertion >= 0) {
-        for (const cell of cells) if (cell.row >= insertion) cell.row += 1
-        rows.splice(insertion, 0, {
+        const recoveredRow = {
           rect: [left, top, right, bottom],
           origin: 'source-significance-row'
-        })
+        }
+        if (reusable) {
+          for (let index = cells.length - 1; index >= 0; index--)
+            if (cells[index].row === insertion) cells.splice(index, 1)
+          rows[insertion] = recoveredRow
+        } else {
+          for (const cell of cells) if (cell.row >= insertion) cell.row += 1
+          rows.splice(insertion, 0, recoveredRow)
+        }
         for (let column = 0; column < 7; column++) {
           const lane = group.filter((item) => columnOf(item) === column)
           cells.push({
@@ -10529,14 +10569,11 @@ export function refineTable(
           })
         }
         for (const item of group) {
+          if (ownedSources.has(item)) continue
           const index = unassigned.indexOf(item.text)
           if (index >= 0) unassigned.splice(index, 1)
         }
-        // The remaining continuation is a second source block printed below
-        // the same ruled table; once the complete P-column record is proven,
-        // it is intentionally excluded from this table's ownership.
-        unassigned.length = 0
-        issues.delete('unassigned-source-text')
+        if (!unassigned.length) issues.delete('unassigned-source-text')
         repairs.push('source-significance-row-recovered')
       }
     }
