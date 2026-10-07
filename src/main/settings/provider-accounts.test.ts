@@ -45,6 +45,56 @@ const deferred = <T>(): {
 
 describe('ProviderAccountsModule', () => {
   it.each(['opencode', 'codebuddy'] as const)(
+    'saves and activates API Route using the versioned chat endpoint for %s',
+    async (frameworkId) => {
+      await repository.setAgentFramework(frameworkId)
+      const model = 'gpt-6.1-sol'
+      const fetchMock = vi.fn<typeof fetch>(async () =>
+        Response.json({ choices: [{ message: { role: 'assistant', content: 'pong' } }] })
+      )
+      vi.stubGlobal('fetch', fetchMock)
+      try {
+        const result = await module.saveValidatedProvider({
+          id: 'api-route',
+          type: 'official',
+          vendorId: 'api-route',
+          name: 'API Route',
+          model,
+          key: 'synthetic-key'
+        })
+        expect(result).toMatchObject({
+          providerId: 'api-route',
+          validation: { ok: true, category: 'ok', status: 200 }
+        })
+        await module.setActiveProvider('api-route', model)
+        expect(await module.validateProvider({ providerId: 'api-route' })).toMatchObject({
+          ok: true,
+          category: 'ok',
+          status: 200
+        })
+        for (const [url, init] of fetchMock.mock.calls) {
+          expect(url).toBe('https://global.api-route.com/v1/chat/completions')
+          expect(init?.headers).toMatchObject({ authorization: 'Bearer synthetic-key' })
+          expect(JSON.parse(String(init?.body))).toMatchObject({ model, stream: false })
+        }
+        const stored = (await new SettingsRepository(dir).getSettings()).providers[0]
+        expect(stored.vendorId).toBe('api-route')
+        expect(stored.lastValidatedTarget).toEqual({ model, endpoint: 'openai' })
+        const framework = getAgentFramework(frameworkId)
+        expect(
+          buildConfiguredModelCatalog({
+            providers: [module.toProviderView(stored)],
+            frameworkId,
+            frameworkEndpoints: framework.supportedApiTypes
+          }).find((entry) => entry.model === model)
+        ).toMatchObject({ selectable: true })
+      } finally {
+        vi.unstubAllGlobals()
+      }
+    }
+  )
+
+  it.each(['opencode', 'codebuddy'] as const)(
     'saves and revalidates Requesty GPT models with the minimum Chat probe budget for %s',
     async (frameworkId) => {
       await repository.setAgentFramework(frameworkId)

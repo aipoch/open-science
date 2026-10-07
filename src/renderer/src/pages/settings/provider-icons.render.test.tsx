@@ -4,6 +4,14 @@ import { describe, expect, it } from 'vitest'
 import { AgentFrameworkIcon, ProviderKindIcon, TypeSafeIcon } from './provider-icons'
 
 describe('ProviderKindIcon', () => {
+  it('renders the bundled API Route ginkgo logo', () => {
+    const html = renderToStaticMarkup(<ProviderKindIcon kindKey="official:api-route" />)
+
+    expect(html).toContain('<img')
+    expect(html).toContain('api-route.png')
+    expect(html).not.toContain('text-muted-foreground')
+  })
+
   it('renders the bundled Apodex provider logo', () => {
     const html = renderToStaticMarkup(<ProviderKindIcon kindKey="official:apodex" />)
 

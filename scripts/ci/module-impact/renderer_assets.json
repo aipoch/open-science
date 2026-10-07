@@ -9,6 +9,7 @@
     "src/renderer/src/assets/main.css",
     "src/renderer/src/assets/pdf-text-layer.test.ts",
     "src/renderer/src/assets/provider-icons/anthropic.svg",
+    "src/renderer/src/assets/provider-icons/api-route.png",
     "src/renderer/src/assets/provider-icons/apodex.svg",
     "src/renderer/src/assets/provider-icons/bailian.svg",
     "src/renderer/src/assets/provider-icons/claude.svg",

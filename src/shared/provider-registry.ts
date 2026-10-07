@@ -40,6 +40,7 @@ export type OfficialVendorId =
   | 'opencode'
   | 'openrouter'
   | 'requesty'
+  | 'api-route'
 
 // A selectable endpoint for vendors that publish more than one host — e.g. a Global vs. China region
 // (MiniMax) or a separate overseas/domestic console (GLM's Z.AI vs. BigModel). Each carries its own
@@ -1727,6 +1728,24 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
         'xai/grok-4.6'
       ]
     }
+  },
+  {
+    id: 'api-route',
+    label: 'API Route',
+    apiEndpoints: ['openai'],
+    baseUrl: 'https://global.api-route.com',
+    openaiBaseUrl: 'https://global.api-route.com/v1',
+    apiKeyUrl: 'https://www.api-route.com/api-keys',
+    reasoningEffort: 'unsupported',
+    // Endpoint/authentication: https://github.com/DennyHo0917/api-route/blob/main/API.md.
+    // Exact chat ids verified against the authenticated /v1/models catalog on 2026-10-07.
+    // The catalog includes media models and omits context/capability metadata, so keep this curated.
+    // 8k is a conservative client budget, not a claim about the upstream model's maximum context.
+    models: [
+      { id: 'gpt-6.1-sol', contextWindow: 8_192 },
+      { id: 'claude-fable-5-1', contextWindow: 8_192 },
+      { id: 'gpt-5.5', contextWindow: 8_192 }
+    ]
   }
 ]
 

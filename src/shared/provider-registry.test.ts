@@ -24,6 +24,28 @@ import {
 } from './provider-registry'
 
 describe('provider registry', () => {
+  it('offers API Route through Chat Completions with exact gateway model ids', () => {
+    expect(isOfficialVendorId('api-route')).toBe(true)
+    expect(resolveVendorApiEndpoints('api-route')).toEqual(['openai'])
+    expect(resolveVendorBaseUrl('api-route')).toBe('https://global.api-route.com')
+    expect(resolveVendorOpenAiBaseUrl('api-route')).toBe('https://global.api-route.com/v1')
+    expect(resolveVendorApiKeyUrl('api-route')).toBe('https://www.api-route.com/api-keys')
+    expect(defaultVendorModel('api-route')).toBe('gpt-6.1-sol')
+    expect(getOfficialVendorModelIds('api-route')).toEqual([
+      'gpt-6.1-sol',
+      'claude-fable-5-1',
+      'gpt-5.5'
+    ])
+    // Do not import mixed media ids or advertise unverified route capabilities.
+    expect(resolveVendorModelsUrl('api-route')).toBeUndefined()
+    for (const model of getOfficialVendorModelIds('api-route')) {
+      expect(resolveModelContextWindow('api-route', model)).toBe(8_192)
+      expect(resolveVendorModelApiEndpoints('api-route', model)).toEqual(['openai'])
+      expect(isVendorModelMultimodal('api-route', model)).toBe(false)
+      expect(resolveVendorModelReasoningEffort('api-route', model).supported).toBe(false)
+    }
+  })
+
   it('offers GPT-6.1 Sol with its published capabilities and preserves the default', () => {
     expect(getOfficialVendorModelIds('openai')).toContain('gpt-6.1-sol')
     expect(defaultVendorModel('openai')).toBe('gpt-5.6-sol')
