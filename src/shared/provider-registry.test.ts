@@ -24,6 +24,43 @@ import {
 } from './provider-registry'
 
 describe('provider registry', () => {
+  it('excludes context suffix aliases from every bundled official catalog', () => {
+    for (const vendor of OFFICIAL_VENDORS) {
+      for (const model of vendor.models) {
+        expect(model.id, vendor.id).not.toMatch(/\[1m\]$/i)
+      }
+    }
+  })
+
+  it.each(['anthropic', 'deepseek', 'minimax'] as const)(
+    'excludes context suffix aliases from the refreshed %s catalog without rewriting the cache',
+    (vendorId) => {
+      const fetched = ['live-model', 'live-model[1m]', 'other-model[1M]']
+      const models = getOfficialVendorModelIds(vendorId, undefined, fetched)
+      expect(models).toContain('live-model')
+      expect(models.some((model) => /\[1m\]$/i.test(model))).toBe(false)
+      expect(fetched).toEqual(['live-model', 'live-model[1m]', 'other-model[1M]'])
+    }
+  )
+
+  it.each(['anthropic', 'deepseek', 'minimax'] as const)(
+    'falls back to the bundled %s catalog when discovery contains only suffix aliases',
+    (vendorId) => {
+      expect(getOfficialVendorModelIds(vendorId, undefined, ['removed[1m]'])).toEqual(
+        getOfficialVendorModelIds(vendorId)
+      )
+    }
+  )
+
+  it.each([
+    ['anthropic', 'claude-opus-4-8'],
+    ['deepseek', 'deepseek-v4-pro'],
+    ['minimax', 'MiniMax-M3']
+  ] as const)('retains the 1M context window on %s/%s', (vendorId, model) => {
+    expect(getOfficialVendorModelIds(vendorId)).toContain(model)
+    expect(resolveModelContextWindow(vendorId, model)).toBe(1_000_000)
+  })
+
   it('offers GPT-6.1 Sol with its published capabilities and preserves the default', () => {
     expect(getOfficialVendorModelIds('openai')).toContain('gpt-6.1-sol')
     expect(defaultVendorModel('openai')).toBe('gpt-5.6-sol')
@@ -414,7 +451,6 @@ describe('provider registry', () => {
     const fetched = ['deepseek-flash', 'deepseek-v4-pro', 'future-model']
     expect(getOfficialVendorModelIds('deepseek', undefined, fetched)).toEqual([
       ...fetched,
-      'deepseek-v4-pro[1m]',
       'deepseek-v4-flash',
       'deepseek-v4-flash-vision-exp'
     ])
@@ -443,7 +479,6 @@ describe('provider registry', () => {
       getOfficialVendor('deepseek')?.models.map(({ id, contextWindow }) => ({ id, contextWindow }))
     ).toEqual([
       { id: 'deepseek-v4-pro', contextWindow: 1_000_000 },
-      { id: 'deepseek-v4-pro[1m]', contextWindow: 1_000_000 },
       { id: 'deepseek-flash', contextWindow: 1_000_000 },
       { id: 'deepseek-v4-flash', contextWindow: 1_000_000 },
       { id: 'deepseek-v4-flash-vision-exp', contextWindow: 1_000_000 }
@@ -1299,7 +1334,6 @@ describe('provider registry', () => {
       expect(isVendorModelMultimodal('anthropic', 'claude-opus-4-8')).toBe(true)
       expect(isVendorModelMultimodal('anthropic', 'claude-sonnet-5')).toBe(true)
       expect(isVendorModelMultimodal('anthropic', 'claude-haiku-4-5-20251001')).toBe(true)
-      expect(isVendorModelMultimodal('anthropic', 'claude-opus-4-8[1m]')).toBe(true)
       expect(isVendorModelMultimodal('anthropic', 'claude-opus-5-5')).toBe(true)
     })
 
@@ -1360,7 +1394,7 @@ describe('provider registry', () => {
 
     it('returns true only for MiniMax M3 models', () => {
       expect(isVendorModelMultimodal('minimax', 'MiniMax-M3')).toBe(true)
-      expect(isVendorModelMultimodal('minimax', 'MiniMax-M3[1m]')).toBe(true)
+      expect(isVendorModelMultimodal('minimax', 'MiniMax-M3[1m]')).toBe(false)
       expect(isVendorModelMultimodal('minimax', 'MiniMax-M2.7')).toBe(false)
       expect(isVendorModelMultimodal('minimax', 'MiniMax-M2.5')).toBe(false)
     })
@@ -1453,7 +1487,7 @@ describe('provider registry', () => {
 
     it('returns true for every bundled DeepSeek V4 model', () => {
       expect(isVendorModelResponsesSupported('deepseek', 'deepseek-v4-pro')).toBe(true)
-      expect(isVendorModelResponsesSupported('deepseek', 'deepseek-v4-pro[1m]')).toBe(true)
+      expect(isVendorModelResponsesSupported('deepseek', 'deepseek-v4-pro[1m]')).toBe(false)
       expect(isVendorModelResponsesSupported('deepseek', 'deepseek-v4-flash')).toBe(true)
       expect(isVendorModelResponsesSupported('deepseek', 'deepseek-v4-flash-vision-exp')).toBe(true)
       expect(resolveVendorModelApiEndpoints('deepseek', 'deepseek-v4-pro')).toEqual([
@@ -1489,11 +1523,11 @@ describe('provider registry', () => {
       }
     })
 
-    it('keeps 1m bundled variants explicit and recognizes the suffix for unknown live models', () => {
-      expect(resolveModelContextWindow('anthropic', 'claude-opus-4-8[1m]')).toBe(1_000_000)
-      expect(resolveModelContextWindow('deepseek', 'deepseek-v4-pro[1m]')).toBe(1_000_000)
-      expect(resolveModelContextWindow('minimax', 'MiniMax-M3[1m]')).toBe(1_000_000)
-      expect(resolveModelContextWindow('anthropic', 'future-claude[1m]')).toBe(1_000_000)
+    it('does not infer context limits from removed or unknown suffix aliases', () => {
+      expect(resolveModelContextWindow('anthropic', 'claude-opus-4-8[1m]')).toBe(200_000)
+      expect(resolveModelContextWindow('deepseek', 'deepseek-v4-pro[1m]')).toBe(200_000)
+      expect(resolveModelContextWindow('minimax', 'MiniMax-M3[1m]')).toBe(200_000)
+      expect(resolveModelContextWindow('anthropic', 'future-claude[1m]')).toBe(200_000)
     })
 
     it('resolves shipped models with vendor-published per-model limits', () => {
