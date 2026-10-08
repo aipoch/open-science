@@ -187,20 +187,98 @@ export const PDC_TOOLS: ToolDescriptor[] = [
     connector: 'pdc',
     id: 'pdc_list_biospecimens',
     description:
-      'Map PDC study aliquots to samples and cases, preserving submitter IDs, pool flags and external references for CPTAC multi-omics research. Each row is an aliquot association, not a unique patient. ' +
+      "Map PDC study aliquots to samples and cases, preserving submitter IDs, pool flags and external references for CPTAC multi-omics research. Each row is an aliquot association, not a unique patient. Use pagination_mode: upstream to traverse beyond the local mode's 1000-association upstream cap; upstream offsets and limits count cases. " +
       versionNote,
     input: {
       type: 'object',
       additionalProperties: false,
-      properties: { ...studyProperties, ...paginationProperties },
+      properties: {
+        ...studyProperties,
+        ...paginationProperties,
+        pagination_mode: { type: 'string', enum: ['local', 'upstream'], default: 'local' }
+      },
       oneOf: studyRequired
     },
     returns:
-      '{ biospecimens: [{ aliquot_id, sample_id, case_id, aliquot_submitter_id, sample_submitter_id, case_submitter_id, aliquot_status, sample_status, case_status, project_name, sample_type, disease_type, primary_site, pool, taxon, externalReferences }], study_selector, total, available, upstream_limit_reached, offset, limit, returned, next_offset, truncated, pagination_mode: "local", usage }. Fetches study associations within an 8 MiB response budget, sorts by aliquot/sample/case IDs and pages locally. biospecimenPerStudy has a known 1000-record upstream limit and exposes no server pagination. available counts the associations actually received, not unique patients. Below the upstream limit, total equals available. At or above the limit, total is null, upstream_limit_reached and truncated are true on every page because completeness is unknown, even if the study happens to have exactly 1000 associations. next_offset pages only the received records; null means no further local page, not that the study is complete. Each call refetches upstream data; pinning study_id fixes the version, not a cross-call snapshot. A GDC external reference is separate from the PDC case_id; preserve its resource and identifier. No clinical treatment or outcome data is returned.',
+      '{ biospecimens: [{ aliquot_id, sample_id, case_id, aliquot_submitter_id, sample_submitter_id, case_submitter_id, aliquot_status, sample_status, case_status, project_name, sample_type, disease_type, primary_site, pool, taxon, externalReferences }], study_selector, total, available, upstream_limit_reached, offset, limit, returned, next_offset, truncated, pagination_mode, usage }. ' +
+      'Default pagination_mode: local preserves association-row pagination: fetch biospecimenPerStudy within an 8 MiB response budget, sort by aliquot/sample/case IDs and page locally. available counts all received associations. Below the 1000-record upstream cap, total equals available. At or above the cap, total is null, upstream_limit_reached and truncated are true on every page because completeness is unknown, even for exactly 1000 associations. next_offset pages only the received records; null does not establish study completeness. ' +
+      'With pagination_mode: upstream, fetch one paginatedCasesSamplesAliquots case page plus one lookahead case and flatten only the selected cases. Additional fields: { pagination_unit: "case", case_total, returned_cases, has_more, unavailable_fields }. offset, limit and next_offset count cases, while returned and available count associations in this page and can exceed limit. total is null because the association total is unknown; case_total is the upstream case count. sample_id and case_id come from parent nodes. case_status, project_name and taxon are null and listed in unavailable_fields because this endpoint does not supply them. No automatic full-study aggregation or data cache is introduced. ' +
+      'Each call refetches upstream data; upstream does not guarantee stable ordering or a cross-page snapshot. Pinning study_id fixes the version, not a snapshot or duplicate-free enumeration. A GDC external reference is separate from the PDC case_id; preserve its resource and identifier. No clinical treatment or outcome data is returned.',
     example:
-      'const result = await host.mcp("pdc", "pdc_list_biospecimens", {"pdc_study_id":"PDC000127", "limit":5})',
+      'const result = await host.mcp("pdc", "pdc_list_biospecimens", {"pdc_study_id":"PDC000127", "pagination_mode":"upstream", "limit":5})',
     maxResponseBytes: 8 * 1024 * 1024,
     run: async (ctx, args) => {
+      if (args.pagination_mode === 'upstream') {
+        const { offset, limit } = paging(args)
+        const data = await query(
+          ctx,
+          `query(${selectorDeclaration}, $offset: Int!, $limit: Int!) {
+            paginatedCasesSamplesAliquots(${selectorArguments}, offset: $offset, limit: $limit) {
+              total casesSamplesAliquots {
+                case_id case_submitter_id disease_type primary_site
+                externalReferences { external_reference_id reference_resource_shortname
+                  reference_resource_name reference_entity_location }
+                samples { sample_id sample_submitter_id sample_type status
+                  aliquots { aliquot_id aliquot_submitter_id status pool } }
+              }
+            }
+          }`,
+          { ...selector(args), offset, limit: limit + 1 }
+        )
+        const result = object(data.paginatedCasesSamplesAliquots)
+        if (
+          typeof result.total !== 'number' ||
+          !Number.isSafeInteger(result.total) ||
+          result.total < 0
+        )
+          throw new Error('Invalid PDC response: expected a case total')
+        const cases = rows(result.casesSamplesAliquots, ['case_id'])
+        if (cases.length > limit + 1)
+          throw new Error('Invalid PDC response: upstream ignored biospecimen case limit')
+        const selected = cases.slice(0, limit)
+        const biospecimens = selected.flatMap((c) =>
+          rows(c.samples, ['sample_id']).flatMap((sample) =>
+            rows(sample.aliquots, ['aliquot_id']).map((aliquot) => ({
+              aliquot_id: aliquot.aliquot_id,
+              sample_id: sample.sample_id,
+              case_id: c.case_id,
+              aliquot_submitter_id: aliquot.aliquot_submitter_id,
+              sample_submitter_id: sample.sample_submitter_id,
+              case_submitter_id: c.case_submitter_id,
+              aliquot_status: aliquot.status,
+              sample_status: sample.status,
+              case_status: null,
+              project_name: null,
+              sample_type: sample.sample_type,
+              disease_type: c.disease_type,
+              primary_site: c.primary_site,
+              pool: aliquot.pool,
+              taxon: null,
+              externalReferences: c.externalReferences
+            }))
+          )
+        )
+        const more = cases.length > limit
+        return {
+          biospecimens,
+          study_selector: selector(args),
+          total: null,
+          available: biospecimens.length,
+          upstream_limit_reached: false,
+          offset,
+          limit,
+          returned: biospecimens.length,
+          next_offset: more && offset + limit <= MAX_OFFSET ? offset + limit : null,
+          truncated: more && offset + limit > MAX_OFFSET,
+          pagination_mode: 'upstream',
+          pagination_unit: 'case',
+          case_total: result.total,
+          returned_cases: selected.length,
+          has_more: more,
+          unavailable_fields: ['case_status', 'project_name', 'taxon'],
+          usage
+        }
+      }
       const data = await query(
         ctx,
         `query(${selectorDeclaration}) { biospecimenPerStudy(${selectorArguments}) { ${biospecimenFields} } }`,

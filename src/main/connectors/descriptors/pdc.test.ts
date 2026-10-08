@@ -22,6 +22,47 @@ const file = {
   file_location: 'studies/127/reports/peptides.tsv',
   md5sum: '89def588cfaf10a31addb09e49bdef16'
 }
+const upstreamCase = (
+  id: string,
+  aliquots = 1
+): {
+  case_id: string
+  case_submitter_id: string
+  disease_type: string
+  primary_site: string
+  externalReferences: Record<string, string>[]
+  samples: {
+    sample_id: string
+    sample_submitter_id: string
+    sample_type: string
+    status: string
+    aliquots: Record<string, unknown>[]
+  }[]
+} => ({
+  case_id: `case-${id}`,
+  case_submitter_id: `case-submitter-${id}`,
+  disease_type: 'Clear Cell Renal Cell Carcinoma',
+  primary_site: 'Kidney',
+  externalReferences: [
+    { reference_resource_shortname: 'GDC', external_reference_id: `gdc-case-${id}` }
+  ],
+  samples: [
+    {
+      sample_id: `sample-${id}`,
+      sample_submitter_id: `sample-submitter-${id}`,
+      sample_type: 'Primary Tumor',
+      status: 'Qualified',
+      aliquots: Array.from({ length: aliquots }, (_, i) => ({
+        aliquot_id: `aliquot-${id}-${i}`,
+        aliquot_submitter_id: `aliquot-submitter-${id}-${i}`,
+        sample_id: null,
+        case_id: null,
+        status: 'Qualified',
+        pool: 'Yes'
+      }))
+    }
+  ]
+})
 function setup(...responses: unknown[]): {
   fetchImpl: ReturnType<typeof vi.fn<typeof fetch>>
   call: (id: string, args: Record<string, unknown>) => Promise<unknown>
@@ -56,6 +97,9 @@ describe('PDC input contracts', () => {
     ['pdc_get_study', { pdc_study_id: 'PDC000127\n' }],
     ['pdc_get_study', { study_id: 'not-a-uuid' }],
     ['pdc_list_biospecimens', { ...selector, acceptDUA: true }],
+    ['pdc_list_biospecimens', { ...selector, pagination_mode: 'automatic' }],
+    ['pdc_list_biospecimens', { ...selector, pagination_mode: 'upstream', limit: 101 }],
+    ['pdc_list_files', { ...selector, pagination_mode: 'upstream' }],
     ['pdc_list_files', { ...selector, limit: '10' }],
     ['pdc_list_files', { ...selector, data_category: '' }]
   ])('rejects invalid %s input before HTTP', (id, args) => {
@@ -228,6 +272,211 @@ describe('PDC discovery', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1)
     expect(JSON.parse(String(fetchImpl.mock.calls[0][1]?.body)).variables).toEqual(selector)
     if (offset === 900) expect(out).toHaveProperty('biospecimens.99.aliquot_id', 'a0999')
+  })
+
+  it('preserves explicit local biospecimen pagination', async () => {
+    const record = { aliquot_id: 'a', sample_id: 's', case_id: 'c', taxon: 'Homo sapiens' }
+    const { call, fetchImpl } = setup({ data: { biospecimenPerStudy: [record] } })
+    await expect(
+      call('pdc_list_biospecimens', { ...selector, pagination_mode: 'local' })
+    ).resolves.toMatchObject({ biospecimens: [record], total: 1, pagination_mode: 'local' })
+    expect(JSON.parse(String(fetchImpl.mock.calls[0][1]?.body)).variables).toEqual(selector)
+  })
+
+  it('pages upstream by cases beyond offset 1000 and reconstructs association IDs', async () => {
+    const c = upstreamCase('selected', 2)
+    c.samples.push(upstreamCase('another-sample').samples[0])
+    const { call, fetchImpl } = setup({
+      data: {
+        paginatedCasesSamplesAliquots: {
+          total: 2000,
+          casesSamplesAliquots: [c, upstreamCase('lookahead')]
+        }
+      }
+    })
+    const out = await call('pdc_list_biospecimens', {
+      study_id: studyId,
+      pagination_mode: 'upstream',
+      offset: 1001,
+      limit: 1
+    })
+    expect(out).toMatchObject({
+      total: null,
+      available: 3,
+      returned: 3,
+      case_total: 2000,
+      returned_cases: 1,
+      offset: 1001,
+      limit: 1,
+      next_offset: 1002,
+      has_more: true,
+      upstream_limit_reached: false,
+      truncated: false,
+      pagination_mode: 'upstream',
+      pagination_unit: 'case',
+      unavailable_fields: ['case_status', 'project_name', 'taxon'],
+      biospecimens: [
+        {
+          aliquot_id: 'aliquot-selected-0',
+          sample_id: 'sample-selected',
+          case_id: c.case_id,
+          aliquot_submitter_id: 'aliquot-submitter-selected-0',
+          sample_submitter_id: 'sample-submitter-selected',
+          case_submitter_id: c.case_submitter_id,
+          sample_status: 'Qualified',
+          aliquot_status: 'Qualified',
+          pool: 'Yes',
+          case_status: null,
+          project_name: null,
+          taxon: null,
+          externalReferences: c.externalReferences
+        },
+        { aliquot_id: 'aliquot-selected-1', case_id: c.case_id },
+        {
+          aliquot_id: 'aliquot-another-sample-0',
+          sample_id: 'sample-another-sample',
+          case_id: c.case_id
+        }
+      ]
+    })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    const body = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body))
+    expect(body.query).toContain('paginatedCasesSamplesAliquots')
+    expect(body.variables).toEqual({ study_id: studyId, offset: 1001, limit: 2 })
+  })
+
+  it('does not truncate more than 1000 associations within a selected case', async () => {
+    const { call } = setup({
+      data: {
+        paginatedCasesSamplesAliquots: {
+          total: 1,
+          casesSamplesAliquots: [upstreamCase('large', 1001)]
+        }
+      }
+    })
+    const out = await call('pdc_list_biospecimens', {
+      ...selector,
+      pagination_mode: 'upstream',
+      limit: 1
+    })
+    expect(out).toMatchObject({
+      returned: 1001,
+      available: 1001,
+      returned_cases: 1,
+      case_total: 1,
+      total: null,
+      has_more: false,
+      next_offset: null,
+      truncated: false
+    })
+    expect(out).toHaveProperty('biospecimens.1000.aliquot_id', 'aliquot-large-1000')
+  })
+
+  it.each([
+    { total: 0, offset: 0, cases: [] },
+    { total: 124, offset: 124, cases: [] },
+    { total: 124, offset: 120, cases: [upstreamCase('last')] }
+  ])(
+    'ends upstream case pagination without inventing association totals: %j',
+    async ({ total, offset, cases }) => {
+      const { call } = setup({
+        data: { paginatedCasesSamplesAliquots: { total, casesSamplesAliquots: cases } }
+      })
+      await expect(
+        call('pdc_list_biospecimens', {
+          ...selector,
+          pagination_mode: 'upstream',
+          offset,
+          limit: 10
+        })
+      ).resolves.toMatchObject({
+        total: null,
+        case_total: total,
+        returned_cases: cases.length,
+        has_more: false,
+        next_offset: null,
+        truncated: false
+      })
+    }
+  )
+
+  it('advances case pagination even when the selected case has no associations', async () => {
+    const c = { ...upstreamCase('empty'), samples: [] }
+    const { call } = setup({
+      data: {
+        paginatedCasesSamplesAliquots: { total: 2, casesSamplesAliquots: [c, upstreamCase('next')] }
+      }
+    })
+    await expect(
+      call('pdc_list_biospecimens', { ...selector, pagination_mode: 'upstream', limit: 1 })
+    ).resolves.toMatchObject({
+      biospecimens: [],
+      returned: 0,
+      returned_cases: 1,
+      has_more: true,
+      next_offset: 1
+    })
+  })
+
+  it('marks the upstream case offset ceiling without returning an invalid continuation', async () => {
+    const { call } = setup({
+      data: {
+        paginatedCasesSamplesAliquots: {
+          total: 1_000_002,
+          casesSamplesAliquots: [upstreamCase('last'), upstreamCase('next')]
+        }
+      }
+    })
+    await expect(
+      call('pdc_list_biospecimens', {
+        ...selector,
+        pagination_mode: 'upstream',
+        offset: 1_000_000,
+        limit: 1
+      })
+    ).resolves.toMatchObject({ has_more: true, next_offset: null, truncated: true })
+  })
+
+  it.each([
+    { total: null, casesSamplesAliquots: [] },
+    { total: '2', casesSamplesAliquots: [] },
+    { total: -1, casesSamplesAliquots: [] },
+    { total: 1.5, casesSamplesAliquots: [] },
+    { total: 1, casesSamplesAliquots: null },
+    { total: 1, casesSamplesAliquots: [{}] },
+    { total: 1, casesSamplesAliquots: [{ case_id: 'c', samples: null }] },
+    { total: 1, casesSamplesAliquots: [{ case_id: 'c', samples: [{}] }] },
+    {
+      total: 1,
+      casesSamplesAliquots: [{ case_id: 'c', samples: [{ sample_id: 's', aliquots: null }] }]
+    },
+    {
+      total: 1,
+      casesSamplesAliquots: [{ case_id: 'c', samples: [{ sample_id: 's', aliquots: [{}] }] }]
+    },
+    { total: 3, casesSamplesAliquots: [upstreamCase('a'), upstreamCase('b'), upstreamCase('c')] }
+  ])(
+    'rejects malformed upstream associations without falling back to capped data: %j',
+    async (payload) => {
+      const { call, fetchImpl } = setup({ data: { paginatedCasesSamplesAliquots: payload } })
+      await expect(
+        call('pdc_list_biospecimens', { ...selector, pagination_mode: 'upstream', limit: 1 })
+      ).rejects.toThrow('Invalid PDC response')
+      expect(fetchImpl).toHaveBeenCalledTimes(1)
+    }
+  )
+
+  it('rejects partial GraphQL data in upstream case mode without a local fallback', async () => {
+    const { call, fetchImpl } = setup({
+      errors: [{ message: 'Nested aliquot resolver failed' }],
+      data: {
+        paginatedCasesSamplesAliquots: { total: 1, casesSamplesAliquots: [upstreamCase('partial')] }
+      }
+    })
+    await expect(
+      call('pdc_list_biospecimens', { ...selector, pagination_mode: 'upstream' })
+    ).rejects.toThrow('PDC GraphQL error: Nested aliquot resolver failed')
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
   })
 
   it('keeps catalog totals exact at 1000 studies', async () => {
