@@ -51,7 +51,7 @@ AIPOCH Open-Science 支援機器學習、統計學、生命科學、化學、材
 
 已完成的研究會話也可以匯出為可攜式 `.science` 研究套件，用於審閱、交接與封存，並攜帶所選的對話分支、檔案版本、Notebook 記錄與驗證證據。
 
-> 💡 **[AIPOCH Open-Science v0.35.1 已發佈](https://github.com/aipoch/open-science/releases/latest)** _（最後更新於 2026 年 10 月）_。 AIPOCH Open-Science v0.35.1 連接器目錄新增 GWAS 彙總統計探索、InterProScan 序列提交與 IEDB 受體證據檢索；全新的工作階段開始畫面，工作階段標頭新增常用操作選單；並推出 Requesty 供應商。修復內容涵蓋工作階段切換時編輯器內容保留、匯入工作階段僅供檢視、重播追蹤以及 PDF/筆記本/工作區可靠性問題。詳情請查看[最新發行說明](https://github.com/aipoch/open-science/releases/latest)。
+> 💡 **[AIPOCH Open-Science v0.36.0 已發佈](https://github.com/aipoch/open-science/releases/latest)** _（最後更新於 2026 年 10 月）_。 AIPOCH Open-Science v0.36.0 新增可逐次審查風險的 Notebook 執行、支援原文/譯文/對照閱讀模式的可續傳共享 PDF 全文翻譯；科學資料連接器再擴容——新增面向癌症蛋白質組學研究的 PDC 連接器，基因組連接器支援按人群查詢連鎖不平衡，並新增 Claude Haiku 5.5 模型支援。修復內容涵蓋保留科學 PDF 原生排版、清理官方模型目錄、空工作階段中回復尋找功能，以及檔案提及、Remote Web 市場瀏覽與編輯器標籤樣式等可靠性問題。詳情請查看[最新發行說明](https://github.com/aipoch/open-science/releases/latest)。
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 首屏橫幅：Science, Open to All——開源、模型無關、可自行託管的科學 AI 研究工作台" src="../images/readme/open-science-banner.png" />
