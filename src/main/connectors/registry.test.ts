@@ -14,6 +14,55 @@ import { WORKBENCH_OMICS_TOOLS } from './descriptors/omics-workbench'
 import { VARIANTS_MAVEDB_TOOLS } from './descriptors/variants-mavedb'
 
 describe('registry + catalog', () => {
+  it('registers ChEMBL assay lookup and validates activity pagination', () => {
+    const assay = getDescriptor('chembl', 'get_assay')!
+    const activity = getDescriptor('chembl', 'get_bioactivity')!
+    expect(getConnectorTools('chembl')).toContain(assay)
+    expect(() => validateToolArguments(assay, { assay_chembl_id: 'CHEMBL1217643' })).not.toThrow()
+    for (const args of [
+      {},
+      { assay_chembl_id: '' },
+      { assay_chembl_id: 1 },
+      { assay_chembl_id: '../assay' }
+    ]) {
+      expect(() => validateToolArguments(assay, args)).toThrow(/invalid_arguments/)
+    }
+    expect(() => validateToolArguments(activity, {})).not.toThrow()
+    expect(() =>
+      validateToolArguments(activity, {
+        assay_chembl_id: 'CHEMBL1217643',
+        molecule_chembl_id: 'CHEMBL25',
+        target_chembl_id: 'CHEMBL240',
+        offset: 1000,
+        limit: 1000
+      })
+    ).not.toThrow()
+    for (const args of [
+      { offset: -1 },
+      { offset: 1.5 },
+      { offset: '1000' },
+      { offset: Infinity },
+      { offset: Number.MAX_SAFE_INTEGER + 1 },
+      { limit: 1001 },
+      { assay_chembl_id: '' }
+    ]) {
+      expect(() => validateToolArguments(activity, args)).toThrow(/invalid_arguments/)
+    }
+    const doc = renderSkillDoc('chembl')
+    for (const phrase of [
+      '### get_assay',
+      'assay_chembl_id',
+      'confidence_score',
+      'next_offset',
+      'same filters',
+      'page-local',
+      'not measurement quality',
+      'the fallback is not a verified total',
+      'inconsistent pagination metadata throws'
+    ]) {
+      expect(doc).toContain(phrase)
+    }
+  })
   it.each(['search_tcrs', 'search_bcrs'])(
     'documents the %s group filters and export completeness boundary',
     (method) => {

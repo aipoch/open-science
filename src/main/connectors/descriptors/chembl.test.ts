@@ -23,13 +23,14 @@ const run = async (
 
 const B = 'https://www.ebi.ac.uk/chembl/api/data'
 
-// ── the six tools exist with the exact upstream ids ──────────────────────────
+// ── the ChEMBL tools are exposed ──────────────────────────
 describe('chembl / registry', () => {
-  it('exposes exactly the six upstream tools', () => {
+  it('exposes the existing tools and assay lookup', () => {
     expect(CHEMBL_TOOLS.map((t) => t.id).sort()).toEqual([
       'compound_search',
       'drug_search',
       'get_admet',
+      'get_assay',
       'get_bioactivity',
       'get_mechanism',
       'target_search'
@@ -307,8 +308,243 @@ describe('chembl / get_admet', () => {
   })
 })
 
+describe('chembl / get_assay', () => {
+  it('retrieves experimental context and target-assignment confidence in one request', async () => {
+    const assay = {
+      assay_chembl_id: 'CHEMBL1217643',
+      description: 'Inhibition of human hERG',
+      assay_type: 'B',
+      assay_type_description: 'Binding',
+      assay_category: 'Confirmatory',
+      assay_test_type: 'In vitro',
+      bao_format: 'BAO_0000219',
+      bao_label: 'cell-based format',
+      assay_organism: 'Homo sapiens',
+      assay_tax_id: 9606,
+      assay_strain: null,
+      assay_cell_type: 'HEK293',
+      cell_chembl_id: 'CHEMBL3307715',
+      assay_tissue: null,
+      tissue_chembl_id: null,
+      assay_subcellular_fraction: null,
+      target_chembl_id: 'CHEMBL240',
+      confidence_score: '9',
+      confidence_description: 'Direct single protein target assigned',
+      relationship_type: 'D',
+      relationship_description: 'Direct protein target assigned',
+      assay_parameters: [{ type: 'TEMPERATURE', value: '25', units: 'C' }],
+      assay_classifications: [{ assay_class_id: 1, l1: 'Ion channel' }],
+      variant_sequence: { accession: 'Q12809', mutation: 'G628S' },
+      document_chembl_id: 'CHEMBL1212834',
+      src_id: 1,
+      src_assay_id: null
+    }
+    const { out, urls } = await run('get_assay', { assay_chembl_id: 'CHEMBL1217643' }, [
+      okJson({ assays: [assay], page_meta: { total_count: 1, next: null } })
+    ])
+    expect(urls).toEqual([`${B}/assay.json?assay_chembl_id=CHEMBL1217643&limit=1&offset=0`])
+    expect(out).toEqual({ found: true, assay: { ...assay, confidence_score: 9 } })
+  })
+
+  it('preserves zero confidence and normalizes absent context', async () => {
+    const { out } = await run('get_assay', { assay_chembl_id: 'CHEMBL1' }, [
+      okJson({ assays: [{ assay_chembl_id: 'CHEMBL1', confidence_score: 0 }] })
+    ])
+    expect(out).toMatchObject({
+      found: true,
+      assay: {
+        assay_cell_type: null,
+        assay_organism: null,
+        target_chembl_id: null,
+        confidence_score: 0,
+        confidence_description: null,
+        assay_parameters: [],
+        assay_classifications: []
+      }
+    })
+  })
+
+  it('returns found:false only for an empty successful lookup', async () => {
+    const { out } = await run('get_assay', { assay_chembl_id: 'CHEMBL999999999' }, [
+      okJson({ assays: [], page_meta: { total_count: 0, next: null } })
+    ])
+    expect(out).toEqual({
+      found: false,
+      assay: null,
+      message: 'No assay found for CHEMBL999999999'
+    })
+    await expect(
+      run('get_assay', { assay_chembl_id: 'CHEMBL1217643' }, [
+        { ok: false, status: 400, text: async () => 'Bad request' } as Response
+      ])
+    ).rejects.toThrow('HTTP 400')
+  })
+
+  it.each([
+    null,
+    {},
+    { assays: null },
+    { assays: {} },
+    { assays: [null] },
+    { assays: ['CHEMBL1'] },
+    { assays: [{}] },
+    { assays: [{ assay_chembl_id: 'CHEMBL2' }] },
+    { assays: [{ assay_chembl_id: 'CHEMBL1' }, { assay_chembl_id: 'CHEMBL1' }] }
+  ])('rejects malformed or mismatched assay responses: %j', async (response) => {
+    await expect(
+      run('get_assay', { assay_chembl_id: 'CHEMBL1' }, [okJson(response)])
+    ).rejects.toThrow('Invalid ChEMBL assay response')
+  })
+
+  it('requires an assay id before fetching', async () => {
+    await expect(run('get_assay', {}, [])).rejects.toThrow('missing required arg: assay_chembl_id')
+  })
+})
+
 // ── get_bioactivity ──────────────────────────────────────────────────────────
 describe('chembl / get_bioactivity', () => {
+  it('continues beyond 1,000 records with combined filters and an actual-count cursor', async () => {
+    const args = {
+      molecule_chembl_id: 'CHEMBL25',
+      target_chembl_id: 'CHEMBL240',
+      assay_chembl_id: 'CHEMBL1217643',
+      activity_type: 'Ki',
+      min_pchembl: 0,
+      min_value: 0,
+      max_value: 100,
+      unit: 'nM',
+      limit: 1000,
+      offset: 1000
+    }
+    const { out, urls } = await run('get_bioactivity', args, [
+      okJson({
+        activities: [{ activity_id: 1001 }, { activity_id: 1002 }],
+        page_meta: { total_count: 1003, next: '/chembl/api/data/activity.json?offset=1002' }
+      })
+    ])
+    expect(urls).toEqual([
+      `${B}/activity.json?molecule_chembl_id=CHEMBL25&target_chembl_id=CHEMBL240&assay_chembl_id=CHEMBL1217643&standard_type=Ki&pchembl_value__gte=0&standard_value__gte=0&standard_value__lte=100&standard_units=nM&limit=1000&offset=1000&order_by=activity_id`
+    ])
+    expect(out).toMatchObject({
+      count: 2,
+      total: 1003,
+      truncated: true,
+      limit: 1000,
+      offset: 1000,
+      has_more: true,
+      next_offset: 1002
+    })
+    const { out: last, urls: lastUrls } = await run(
+      'get_bioactivity',
+      { ...args, offset: (out as Record<string, unknown>).next_offset },
+      [
+        okJson({
+          activities: [{ activity_id: 1003 }],
+          page_meta: { total_count: 1003, next: null }
+        })
+      ]
+    )
+    expect(lastUrls).toEqual([urls[0].replace('offset=1000', 'offset=1002')])
+    expect(last).toMatchObject({
+      count: 1,
+      total: 1003,
+      truncated: true,
+      offset: 1002,
+      has_more: false,
+      next_offset: null
+    })
+  })
+
+  it.each([0, 1000])('terminates an empty page at offset %s', async (offset) => {
+    const { out, urls } = await run('get_bioactivity', { assay_chembl_id: 'CHEMBL1', offset }, [
+      okJson({ activities: [], page_meta: { total_count: 0, next: null } })
+    ])
+    expect(urls).toEqual([
+      `${B}/activity.json?assay_chembl_id=CHEMBL1&limit=20&offset=${offset}&order_by=activity_id`
+    ])
+    expect(out).toMatchObject({
+      count: 0,
+      total: 0,
+      offset,
+      limit: 20,
+      has_more: false,
+      next_offset: null
+    })
+  })
+
+  it.each([
+    { activities: [{ activity_id: 1 }], next: '/next', hasMore: true, nextOffset: 101 },
+    { activities: [{ activity_id: 1 }], next: null, hasMore: false, nextOffset: null },
+    { activities: [], next: null, hasMore: false, nextOffset: null }
+  ])(
+    'uses explicit continuation when total is absent, preserving the legacy count fallback',
+    async ({ activities, next, hasMore, nextOffset }) => {
+      const { out, urls } = await run('get_bioactivity', { offset: 100 }, [
+        okJson({ activities, page_meta: { next } })
+      ])
+      expect(urls).toHaveLength(1)
+      expect(out).toMatchObject({
+        total: activities.length,
+        has_more: hasMore,
+        next_offset: nextOffset
+      })
+    }
+  )
+
+  it.each([
+    null,
+    {},
+    { activities: null },
+    { activities: [null], page_meta: { total_count: 1 } },
+    { activities: [{ activity_id: 1 }] },
+    { activities: [], page_meta: { total_count: '2000' } },
+    { activities: [], page_meta: { total_count: -1 } },
+    { activities: [], page_meta: { total_count: 1.5 } },
+    { activities: [], page_meta: { total_count: 2000, next: false } },
+    { activities: [], page_meta: { next: '' } },
+    { activities: [], page_meta: { next: '/next' } },
+    { activities: [], page_meta: { total_count: 2000, next: '/next' } },
+    { activities: [], page_meta: { total_count: 2000 } },
+    { activities: [{ activity_id: 1001 }], page_meta: { total_count: 2000, next: null } },
+    { activities: [{ activity_id: 1001 }], page_meta: { total_count: 1001, next: '/next' } },
+    { activities: [{ activity_id: 1001 }], page_meta: { total_count: 1000 } }
+  ])('rejects absent or contradictory paging evidence: %j', async (response) => {
+    await expect(run('get_bioactivity', { offset: 1000 }, [okJson(response)])).rejects.toThrow(
+      'Invalid ChEMBL activity response'
+    )
+  })
+
+  it.each([
+    { activities: [{ activity_id: 1001 }], total: 1002, hasMore: true, nextOffset: 1001 },
+    { activities: [{ activity_id: 1001 }], total: 1001, hasMore: false, nextOffset: null },
+    { activities: [], total: 900, hasMore: false, nextOffset: null }
+  ])(
+    'uses a valid total when next is absent',
+    async ({ activities, total, hasMore, nextOffset }) => {
+      const { out } = await run('get_bioactivity', { offset: 1000 }, [
+        okJson({ activities, page_meta: { total_count: total } })
+      ])
+      expect(out).toMatchObject({ total, has_more: hasMore, next_offset: nextOffset })
+    }
+  )
+
+  it.each([-1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, '10'])(
+    'rejects invalid offset %s before fetching',
+    async (offset) => {
+      await expect(run('get_bioactivity', { offset }, [])).rejects.toThrow(
+        'offset must be a non-negative safe integer'
+      )
+    }
+  )
+
+  it('retains default paging and limit clamping for direct callers', async () => {
+    const { out, urls } = await run('get_bioactivity', { limit: 1001 }, [
+      okJson({ activities: [], page_meta: { total_count: 0, next: null } })
+    ])
+    expect(urls).toEqual([`${B}/activity.json?limit=1000&offset=0&order_by=activity_id`])
+    expect(out).toMatchObject({ offset: 0, limit: 1000, has_more: false, next_offset: null })
+  })
+
   it('single page ordered by activity_id, shaped records, most-potent summary', async () => {
     const { out, urls } = await run(
       'get_bioactivity',
@@ -332,7 +568,7 @@ describe('chembl / get_bioactivity', () => {
               ligand_efficiency: { le: '0.4' }
             }
           ],
-          page_meta: { total_count: 42, next: null }
+          page_meta: { total_count: 42, next: '/chembl/api/data/activity.json?offset=1' }
         })
       ]
     )

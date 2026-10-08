@@ -416,16 +416,49 @@ function activitySummary(activities: Rec[]): string {
   return 'Most potent activities: ' + parts.join('; ')
 }
 
-// { count, total, activities, summary, truncated }.
-function bioactivityResponse(raw: Rec[], total: number | null): Rec {
-  const activities = raw.map(activityRecord)
-  const t = total == null ? activities.length : total
+// Keep the legacy result-set truncation flag; has_more/next_offset describe forward paging.
+function bioactivityResponse(raw: unknown, offset: number, limit: number): Rec {
+  const page = raw as Rec | null
+  if (
+    !page ||
+    !Array.isArray(page.activities) ||
+    !page.activities.every((item) => item && typeof item === 'object' && !Array.isArray(item))
+  ) {
+    throw new Error('Invalid ChEMBL activity response: expected an activities array of records.')
+  }
+  const meta = (page.page_meta ?? {}) as Rec
+  const total = meta.total_count ?? null
+  const next = meta.next
+  const hasNext = typeof next === 'string' && next.trim().length > 0
+  if (
+    (total !== null && (typeof total !== 'number' || !Number.isSafeInteger(total) || total < 0)) ||
+    (next !== undefined && next !== null && !hasNext) ||
+    (total === null && next === undefined)
+  ) {
+    throw new Error('Invalid ChEMBL activity response: missing or invalid pagination metadata.')
+  }
+  const activities = page.activities.map(activityRecord)
+  const end = offset + activities.length
+  const hasMore = total === null ? hasNext : end < total
+  if (
+    (activities.length === 0 && (hasMore || hasNext)) ||
+    (activities.length > 0 && total !== null && end > total) ||
+    (total !== null && next !== undefined && hasNext !== hasMore) ||
+    (hasMore && !Number.isSafeInteger(end))
+  ) {
+    throw new Error('Invalid ChEMBL activity response: inconsistent pagination metadata.')
+  }
+  const t = total ?? activities.length
   return {
     count: activities.length,
     total: t,
     activities,
     summary: activitySummary(activities),
-    truncated: activities.length < t
+    truncated: activities.length < t,
+    offset,
+    limit,
+    has_more: hasMore,
+    next_offset: hasMore ? end : null
   }
 }
 
@@ -848,10 +881,88 @@ export const CHEMBL_TOOLS: ToolDescriptor[] = [
     }
   },
   {
+    id: 'get_assay',
+    connector: 'chembl',
+    description:
+      'Retrieve one ChEMBL assay by assay_chembl_id from a bioactivity record. Returns experimental description, assay type and format, organism, cell/tissue context, assay parameters, assigned target and target-assignment confidence. Confidence describes target assignment, not measurement quality; compare assay conditions before combining IC50/Ki values. Use get_bioactivity with the same assay_chembl_id to retrieve its measurements.',
+    input: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        assay_chembl_id: {
+          type: 'string',
+          minLength: 1,
+          pattern: '^CHEMBL[0-9]+$',
+          description: "ChEMBL assay id, e.g. 'CHEMBL1217643'."
+        }
+      },
+      required: ['assay_chembl_id']
+    },
+    required: ['assay_chembl_id'],
+    returns:
+      '`{ found: bool, assay: { assay_chembl_id, description, assay_type, assay_type_description, assay_category, assay_test_type, bao_format, bao_label, assay_organism, assay_tax_id, assay_strain, assay_cell_type, cell_chembl_id, assay_tissue, tissue_chembl_id, assay_subcellular_fraction, target_chembl_id, confidence_score, confidence_description, relationship_type, relationship_description, assay_parameters, assay_classifications, variant_sequence, document_chembl_id, src_id, src_assay_id } | null, message? }`. Missing scalar fields are null and missing lists are empty. Unknown IDs return found:false only for a valid empty assay list; request failures and malformed or mismatched responses throw.',
+    example:
+      'const result = await host.mcp("chembl", "get_assay", {"assay_chembl_id": "CHEMBL1217643"})',
+    run: async (ctx, a) => {
+      const assayId = String(a.assay_chembl_id)
+      const raw = await ctx.fetchJson(
+        buildUrl('/assay.json', { assay_chembl_id: assayId, limit: 1, offset: 0 })
+      )
+      const items = (raw as Rec | null)?.assays
+      if (!Array.isArray(items) || items.length > 1) {
+        throw new Error('Invalid ChEMBL assay response: expected at most one assay record.')
+      }
+      if (items.length === 0) {
+        return { found: false, assay: null, message: `No assay found for ${assayId}` }
+      }
+      const assay = items[0] as Rec | null
+      if (
+        !assay ||
+        typeof assay !== 'object' ||
+        Array.isArray(assay) ||
+        assay.assay_chembl_id !== assayId
+      ) {
+        throw new Error('Invalid ChEMBL assay response: record does not match assay_chembl_id.')
+      }
+      return {
+        found: true,
+        assay: {
+          assay_chembl_id: nz(assay.assay_chembl_id),
+          description: nz(assay.description),
+          assay_type: nz(assay.assay_type),
+          assay_type_description: nz(assay.assay_type_description),
+          assay_category: nz(assay.assay_category),
+          assay_test_type: nz(assay.assay_test_type),
+          bao_format: nz(assay.bao_format),
+          bao_label: nz(assay.bao_label),
+          assay_organism: nz(assay.assay_organism),
+          assay_tax_id: nz(assay.assay_tax_id),
+          assay_strain: nz(assay.assay_strain),
+          assay_cell_type: nz(assay.assay_cell_type),
+          cell_chembl_id: nz(assay.cell_chembl_id),
+          assay_tissue: nz(assay.assay_tissue),
+          tissue_chembl_id: nz(assay.tissue_chembl_id),
+          assay_subcellular_fraction: nz(assay.assay_subcellular_fraction),
+          target_chembl_id: nz(assay.target_chembl_id),
+          confidence_score: num(assay.confidence_score),
+          confidence_description: nz(assay.confidence_description),
+          relationship_type: nz(assay.relationship_type),
+          relationship_description: nz(assay.relationship_description),
+          assay_parameters: assay.assay_parameters ?? [],
+          assay_classifications: assay.assay_classifications ?? [],
+          variant_sequence: nz(assay.variant_sequence),
+          document_chembl_id: nz(assay.document_chembl_id),
+          src_id: nz(assay.src_id),
+          src_assay_id: nz(assay.src_assay_id)
+        }
+      }
+    }
+  },
+  {
     id: 'get_bioactivity',
     connector: 'chembl',
     description:
-      'Retrieve ChEMBL bioactivity measurements (IC50, Ki, Kd, EC50, ...) for compound-target interactions. Filter by molecule_chembl_id and/or target_chembl_id, activity_type (standard_type), a pChEMBL floor (min_pchembl), a standard_value range (min_value/max_value), and unit (standard_units). Returns one page ordered by activity_id with a most-potent summary.',
+      'Retrieve ChEMBL bioactivity measurements (IC50, Ki, Kd, EC50, ...) for compound-target interactions. Filter by molecule_chembl_id, target_chembl_id, and/or assay_chembl_id, activity_type (standard_type), a pChEMBL floor (min_pchembl), a standard_value range (min_value/max_value), and unit (standard_units). Returns one page ordered by activity_id with a page-local most-potent summary. Pass next_offset as offset with the same filters to continue beyond 1,000 records; stop when has_more is false. Use get_assay to inspect experimental context before comparing measurements.',
     input: {
       type: 'object',
       additionalProperties: false,
@@ -860,6 +971,12 @@ export const CHEMBL_TOOLS: ToolDescriptor[] = [
         target_chembl_id: {
           type: 'string',
           description: "ChEMBL target id, e.g. 'CHEMBL240' (hERG)."
+        },
+        assay_chembl_id: {
+          type: 'string',
+          minLength: 1,
+          pattern: '^CHEMBL[0-9]+$',
+          description: 'Filter measurements by ChEMBL assay id; may be combined with other filters.'
         },
         activity_type: {
           type: 'string',
@@ -879,28 +996,39 @@ export const CHEMBL_TOOLS: ToolDescriptor[] = [
           enum: ['nM', 'uM', 'mM', 'pM', 'M'],
           description: 'standard_units filter.'
         },
-        limit: { type: 'integer', minimum: 1, maximum: 1000, default: 20 }
+        limit: { type: 'integer', minimum: 1, maximum: 1000, default: 20 },
+        offset: {
+          type: 'integer',
+          minimum: 0,
+          maximum: Number.MAX_SAFE_INTEGER,
+          default: 0,
+          description: 'Zero-based result offset. Use next_offset from the previous page.'
+        }
       }
     },
     returns:
-      '`{ count, total (verified upstream total_count), truncated, summary, activities: [ { activity_id, molecule_chembl_id, target_chembl_id, target_pref_name, standard_type, standard_relation, standard_value, standard_units, pchembl_value, assay_chembl_id, assay_type, ligand_efficiency, document_chembl_id, ... 45 keys } ] }`.',
+      '`{ count, total (upstream total_count, or current-page count when total_count is absent; the fallback is not a verified total), truncated (this page contains fewer records than total, including on later pages), offset, limit, has_more, next_offset (null at the end), summary (this page only), activities: [ { activity_id, molecule_chembl_id, target_chembl_id, target_pref_name, standard_type, standard_relation, standard_value, standard_units, pchembl_value, assay_chembl_id, assay_type, ligand_efficiency, document_chembl_id, ... 45 keys } ] }`. Missing continuation evidence or inconsistent pagination metadata throws rather than reporting completion.',
     example:
       'const result = await host.mcp("chembl", "get_bioactivity", {"molecule_chembl_id": "CHEMBL25", "activity_type": "IC50", "limit": 10})',
     run: async (ctx, a) => {
       const limit = clampLimit(a.limit)
+      const offset = a.offset ?? 0
+      if (typeof offset !== 'number' || !Number.isSafeInteger(offset) || offset < 0) {
+        throw new Error('offset must be a non-negative safe integer.')
+      }
       const params: Rec = {}
       if (a.molecule_chembl_id) params.molecule_chembl_id = a.molecule_chembl_id
       if (a.target_chembl_id) params.target_chembl_id = a.target_chembl_id
+      if (a.assay_chembl_id) params.assay_chembl_id = a.assay_chembl_id
       if (a.activity_type) params.standard_type = a.activity_type
       if (a.min_pchembl != null) params.pchembl_value__gte = a.min_pchembl
       if (a.min_value != null) params.standard_value__gte = a.min_value
       if (a.max_value != null) params.standard_value__lte = a.max_value
       if (a.unit) params.standard_units = a.unit
       const raw = await ctx.fetchJson(
-        buildUrl('/activity.json', { ...params, limit, offset: 0, order_by: 'activity_id' })
+        buildUrl('/activity.json', { ...params, limit, offset, order_by: 'activity_id' })
       )
-      const { items, total } = pageItems(raw, 'activities')
-      return bioactivityResponse(items, total)
+      return bioactivityResponse(raw, offset, limit)
     }
   },
   {
