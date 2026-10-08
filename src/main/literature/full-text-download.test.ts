@@ -10,6 +10,7 @@ describe('full-text download boundary', () => {
       'https://127.0.0.1/paper.pdf',
       'https://[::1]/paper.pdf',
       'https://user:secret@journal.example/paper.pdf',
+      'https://user:secret@europepmc.org/articles/PMC2830465?pdf=render',
       'https://journal.example:8080/paper.pdf'
     ]) {
       await expect(downloadFullText(url, 100)).rejects.toThrow()
