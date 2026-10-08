@@ -135,6 +135,11 @@
     "More items": "Plus de sessions"
   },
   "renderer": {
+    "Cancer proteomics studies, sample and aliquot mappings, and file discovery from PDC.": "Études de protéomique du cancer, correspondances des échantillons et aliquotes, et recherche de fichiers dans PDC.",
+    "Search PDC studies and versions by name or identifier.": "Rechercher des études et versions PDC par nom ou identifiant.",
+    "Retrieve PDC study metadata and available versions.": "Récupérer les métadonnées et les versions disponibles des études PDC.",
+    "Map PDC aliquots to samples, cases and external references.": "Associer les aliquotes PDC aux échantillons, aux cas et aux références externes.",
+    "Discover PDC study files and quantitative reports without downloading files.": "Rechercher des fichiers d’études et des rapports quantitatifs PDC sans télécharger de fichiers.",
     "List GWAS summary statistics files, YAML metadata, reference genomes and standard column definitions by GCST accession.": "Lister les fichiers de statistiques récapitulatives GWAS, les métadonnées YAML, les génomes de référence et les définitions standard des colonnes à partir d’un identifiant GCST.",
     "PDF analysis options": "Options d’analyse du PDF",
     "Retrieve GEO series metadata, samples and supplementary-file links.": "Récupérer les métadonnées, les échantillons et les liens vers les fichiers supplémentaires d’une série GEO.",

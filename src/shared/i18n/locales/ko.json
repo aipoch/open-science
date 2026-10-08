@@ -133,6 +133,11 @@
     "More items": "더 많은 세션"
   },
   "renderer": {
+    "Cancer proteomics studies, sample and aliquot mappings, and file discovery from PDC.": "PDC 암 단백질체 연구, 검체 및 분주 검체 매핑과 파일 검색.",
+    "Search PDC studies and versions by name or identifier.": "이름 또는 식별자로 PDC 연구와 버전 검색.",
+    "Retrieve PDC study metadata and available versions.": "PDC 연구 메타데이터와 사용 가능한 버전 조회.",
+    "Map PDC aliquots to samples, cases and external references.": "PDC 분주 검체를 검체, 사례 및 외부 참조에 매핑.",
+    "Discover PDC study files and quantitative reports without downloading files.": "파일을 다운로드하지 않고 PDC 연구 파일 및 정량 보고서 검색.",
     "List GWAS summary statistics files, YAML metadata, reference genomes and standard column definitions by GCST accession.": "GCST 등록 번호로 GWAS 요약 통계 파일, YAML 메타데이터, 참조 유전체 및 표준 열 정의를 조회합니다.",
     "PDF analysis options": "PDF 분석 옵션",
     "Retrieve GEO series metadata, samples and supplementary-file links.": "GEO 시리즈의 메타데이터, 샘플 및 보충 파일 링크를 가져옵니다.",

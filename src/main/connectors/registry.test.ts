@@ -77,6 +77,40 @@ describe('registry + catalog', () => {
     }
   )
 
+  it('registers PDC discovery with version and data-use guidance', () => {
+    expect(getConnectorTools('pdc').map((tool) => tool.id)).toEqual([
+      'pdc_search_studies',
+      'pdc_get_study',
+      'pdc_list_biospecimens',
+      'pdc_list_files'
+    ])
+    const meta = CONNECTOR_CATALOG.find((item) => item.id === 'pdc')!
+    expect(meta.requiresNcbi).toBe(false)
+    expect(meta.termsUrl).toBe('https://pdc.cancer.gov/pdc/data-use-guidelines')
+    expect(meta.aliases).toContain('Proteomic Data Commons')
+    const doc = renderSkillDoc('pdc')
+    for (const phrase of [
+      'pdc_search_studies',
+      'pdc_get_study',
+      'pdc_list_biospecimens',
+      'pdc_list_files',
+      'latest version',
+      'local',
+      'Protein Assembly',
+      'data use'
+    ])
+      expect(doc).toContain(phrase)
+    expect(() =>
+      validateToolArguments(getDescriptor('pdc', 'pdc_list_files')!, {
+        pdc_study_id: 'PDC000127',
+        limit: 10
+      })
+    ).not.toThrow()
+    expect(() => validateToolArguments(getDescriptor('pdc', 'pdc_get_study')!, {})).toThrow(
+      /invalid_arguments/
+    )
+  })
+
   it('registers bounded IEDB evidence searches and documents UniProt/PDB handoffs', () => {
     expect(getConnectorTools('iedb').map((tool) => tool.id)).toEqual([
       'search_epitopes',

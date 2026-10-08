@@ -20,6 +20,19 @@ export type ConnectorMeta = {
 // Static connector metadata for the settings UI (tool lists come from the registry).
 export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   {
+    id: 'pdc',
+    displayName: 'PDC',
+    aliases: ['Proteomic Data Commons', 'CPTAC proteomics'],
+    description:
+      'Cancer proteomics studies, sample and aliquot mappings, and file discovery from PDC.',
+    useWhen:
+      'Use for NCI Proteomic Data Commons (PDC) cancer proteomics and CPTAC study discovery: search study names and versions, inspect assay metadata, map aliquots to samples and cases, and discover quantitative reports and supplementary files. Pin study UUIDs for reproducibility; PDC study accessions select the latest version. Preserve named external references when linking to GDC or TCIA; PDC case UUIDs are not GDC case UUIDs. Public read-only GraphQL requires no credentials for these metadata queries. Follow PDC data use guidelines, cite PDC and the primary study publication, and acknowledge CPTAC. This connector does not accept agreements, download files, or retrieve clinical outcomes or quantitative matrices.',
+    sources: ['PDC'],
+    termsUrl: 'https://pdc.cancer.gov/pdc/data-use-guidelines',
+    requiresNcbi: false,
+    group: 'directory'
+  },
+  {
     id: 'iedb',
     displayName: 'IEDB',
     aliases: ['Immune Epitope Database', 'immune epitopes', 'immunology assays', 'TCR', 'BCR'],

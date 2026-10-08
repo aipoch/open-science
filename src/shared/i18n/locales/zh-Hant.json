@@ -133,6 +133,11 @@
     "More items": "更多會話"
   },
   "renderer": {
+    "Cancer proteomics studies, sample and aliquot mappings, and file discovery from PDC.": "PDC 癌症蛋白質體研究、樣本和等分試樣對應及檔案探索。",
+    "Search PDC studies and versions by name or identifier.": "依名稱或識別碼搜尋 PDC 研究及版本。",
+    "Retrieve PDC study metadata and available versions.": "取得 PDC 研究中繼資料和可用版本。",
+    "Map PDC aliquots to samples, cases and external references.": "將 PDC 等分試樣對應至樣本、病例和外部參照。",
+    "Discover PDC study files and quantitative reports without downloading files.": "探索 PDC 研究檔案和定量報告，不下載檔案。",
     "List GWAS summary statistics files, YAML metadata, reference genomes and standard column definitions by GCST accession.": "依 GCST 編號列出 GWAS 彙總統計檔案、YAML 中繼資料、參考基因組和標準欄位定義。",
     "PDF analysis options": "PDF 分析選項",
     "Retrieve GEO series metadata, samples and supplementary-file links.": "取得 GEO 系列的中繼資料、樣本與補充檔案連結。",

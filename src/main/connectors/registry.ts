@@ -17,6 +17,7 @@ import { EXPRESSION_TOOLS } from './descriptors/expression'
 import { GENES_TOOLS } from './descriptors/genes'
 import { GENOMES_TOOLS } from './descriptors/genomes'
 import { GDC_TOOLS } from './descriptors/gdc'
+import { PDC_TOOLS } from './descriptors/pdc'
 import { HUMAN_GENETICS_TOOLS } from './descriptors/human-genetics'
 import { HMMER_TOOLS } from './descriptors/hmmer'
 import { IEDB_TOOLS } from './descriptors/iedb'
@@ -55,6 +56,7 @@ const ALL_TOOLS: ToolDescriptor[] = [
   ...GENES_TOOLS,
   ...GENOMES_TOOLS,
   ...GDC_TOOLS,
+  ...PDC_TOOLS,
   ...HUMAN_GENETICS_TOOLS,
   ...HMMER_TOOLS,
   ...IEDB_TOOLS,
