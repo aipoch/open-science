@@ -9159,6 +9159,10 @@ const analyzePythonFileAccessTree = (
                 )
             } else recordModeFileAccess(pathNode, modeNode, mode ?? 'rb')
           }
+        } else if (canonicalName === 'fsspec.open' || canonicalName === 'fsspec.open_files') {
+          // Unknown options or filesystem identity also prevent proving that
+          // no output will be materialized when the deferred handle is used.
+          unresolvedWrites = true
         }
       }
       unresolvedReads = true

@@ -156,7 +156,7 @@ it('keeps Seurat integration anchors and marker tables distinct from the object'
   expect(projection.dependenciesByRunId?.['run-4']).toContain('run-3')
 })
 
-it('bridges a phyloseq object into a DESeq2 model across R cells', async () => {
+it('retains phyloseq conversion reads without certifying an unproved cross-cell input', async () => {
   const scripts = [
     'counts <- matrix(c(1, 2, 3, 4), nrow = 2)\nps <- phyloseq::phyloseq(phyloseq::otu_table(counts, taxa_are_rows = TRUE))',
     'dds <- phyloseq::phyloseq_to_deseq2(ps, ~ treatment + batch)',
@@ -168,8 +168,27 @@ it('bridges a phyloseq object into a DESeq2 model across R cells', async () => {
   expect(entry.facts.typeBindings).toEqual(
     expect.arrayContaining([expect.objectContaining({ target: 'dds', typeName: 'DESeqDataSet' })])
   )
-  expect(projection.dependenciesByRunId?.['run-2']).toContain('run-1')
-  expect(projection.dependenciesByRunId?.['run-3']).toContain('run-2')
+  const consumer = await analyzeRNotebookSource(scripts[1])
+  expect(consumer.facts.usedNames).toContain('ps')
+  expect(projection.dependenciesByRunId?.['run-2']).toBeUndefined()
+  expect(projection.stalenessByRunId['run-2']).toMatchObject({ state: 'unknown' })
+})
+
+it('requires a phyloseq input before certifying DESeq2 conversion', async () => {
+  for (const setup of ['', 'ps <- Seurat::CreateSeuratObject(counts)']) {
+    const { facts } = await analyzeRNotebookSource(
+      `${setup}\ndds <- phyloseq::phyloseq_to_deseq2(ps, ~ treatment + batch)`
+    )
+    expect(facts.typeBindings?.find((binding) => binding.target === 'dds')).toBeUndefined()
+    expect(facts.safeCallNames ?? []).not.toContain('phyloseq::phyloseq_to_deseq2')
+  }
+  const { facts } = await analyzeRNotebookSource(
+    'ps <- phyloseq::phyloseq(phyloseq::otu_table(counts, taxa_are_rows = TRUE))\nps <- phyloseq::phyloseq_to_deseq2(ps, ~ treatment + batch)'
+  )
+  expect(facts.typeBindings).toContainEqual(
+    expect.objectContaining({ target: 'ps', typeName: 'DESeqDataSet' })
+  )
+  expect(facts.safeCallNames).toContain('phyloseq::phyloseq_to_deseq2')
 })
 
 it('keeps DESeq2 result and count outputs typed across R cells', async () => {
@@ -819,6 +838,25 @@ it.each([
   expect(projection.dependenciesByRunId?.['run-2']).toContain('run-1')
   if (mutates) expect(projection.dependenciesByRunId?.['run-3']).toContain('run-2')
   else expect(projection.dependenciesByRunId?.['run-3']).not.toContain('run-2')
+})
+
+it.each([
+  ['MSnbase::filterMsLevel(input, msLevel = 1L)', 'xcms.XCMSnExp'],
+  ['xcms::findChromPeaks(input, param = parameters)', 'xcms.XCMSnExp'],
+  ['xcms::featureValues(input, value = "into")', 'data.frame']
+])('requires a proved mass-spectrometry input for %s', async (call, expectedType) => {
+  for (const setup of ['', 'input <- Seurat::CreateSeuratObject(counts)']) {
+    const { facts } = await analyzeRNotebookSource(`${setup}\nresult <- ${call}`)
+    expect(facts.typeBindings?.find((binding) => binding.target === 'result')).toBeUndefined()
+    expect(facts.safeCallNames ?? []).not.toContain(call.split('(')[0])
+  }
+  const { facts } = await analyzeRNotebookSource(
+    `raw <- MSnbase::readMSData(files = "input.mzML", mode = "onDisk")\ninput <- xcms::findChromPeaks(raw, param = parameters)\nresult <- ${call}`
+  )
+  expect(facts.typeBindings).toContainEqual(
+    expect.objectContaining({ target: 'result', typeName: expectedType })
+  )
+  expect(facts.safeCallNames).toContain(call.split('(')[0])
 })
 
 it('propagates an MSnbase/xcms proteomics object across R cells', async () => {

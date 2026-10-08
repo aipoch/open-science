@@ -87,6 +87,40 @@ describe('scientific reader review regressions', () => {
     })
   })
 
+  it.each([
+    "fsspec.open('outputs/result.csv', 'wt', **options)",
+    "fsspec.open('outputs/result.csv', 'wt', filesystem=custom_fs)",
+    "fsspec.open('outputs/result.csv', 'wt', protocol='s3')",
+    "fsspec.open('outputs/result.csv', 'wt', custom_option=True)",
+    "fsspec.open('outputs/result.csv', mode=selected_mode, fs=custom_fs)",
+    "fsspec.open_files(['outputs/a.csv'], 'wb', storage_options=options)",
+    "fsspec.open('inputs/result.csv', 'rb', **options)"
+  ])('keeps unproved fsspec outputs partial: %s', async (call) => {
+    expect(
+      await analyzeNotebookSourceFileAccess('python', `import fsspec\nhandle = ${call}`)
+    ).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial',
+      writes: []
+    })
+  })
+
+  it.each([
+    "fsspec.open('inputs/result.csv')",
+    "fsspec.open('inputs/result.csv', 'rt')",
+    "fsspec.open_files(['inputs/result.csv'], mode='rb')"
+  ])('keeps proved read-only fsspec calls free of possible writes: %s', async (call) => {
+    expect(
+      await analyzeNotebookSourceFileAccess('python', `import fsspec\nhandle = ${call}`)
+    ).toMatchObject({
+      readState: 'partial',
+      writeState: 'complete',
+      writes: [],
+      reads: ['inputs/result.csv']
+    })
+  })
+
   it('tracks Visium directory input and VCF output paths', async () => {
     const result = await analyzeNotebookSourceFileAccess(
       'r',

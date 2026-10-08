@@ -4410,24 +4410,16 @@ const analyzeRSource = (
     if (
       packageName === 'MSnbase' &&
       msnbaseContainerTransforms.has(name) &&
-      (sourceType === undefined ||
-        sourceType === 'MSnbase.MSnExp' ||
-        sourceType === 'xcms.XCMSnExp')
+      (sourceType === 'MSnbase.MSnExp' || sourceType === 'xcms.XCMSnExp')
     )
-      return sourceType ?? 'MSnbase.MSnExp'
+      return sourceType
     if (
       packageName === 'xcms' &&
       xcmsContainerTransforms.has(name) &&
-      (sourceType === undefined ||
-        sourceType === 'MSnbase.MSnExp' ||
-        sourceType === 'xcms.XCMSnExp')
+      (sourceType === 'MSnbase.MSnExp' || sourceType === 'xcms.XCMSnExp')
     )
       return 'xcms.XCMSnExp'
-    if (
-      packageName === 'xcms' &&
-      xcmsValueTransforms.has(name) &&
-      (sourceType === undefined || sourceType === 'xcms.XCMSnExp')
-    )
+    if (packageName === 'xcms' && xcmsValueTransforms.has(name) && sourceType === 'xcms.XCMSnExp')
       return 'data.frame'
     return null
   }
@@ -4447,9 +4439,17 @@ const analyzeRSource = (
     if (seuratValueTransforms.has(qualified.name) && sourceType === 'Seurat') return 'data.frame'
     return null
   }
-  const phyloseqToDESeq2IsSafe = (expr: Extract<RExpr, { kind: 'call' }>): boolean => {
+  const phyloseqToDESeq2IsSafe = (
+    expr: Extract<RExpr, { kind: 'call' }>,
+    sourceType: string | undefined
+  ): boolean => {
     const qualified = resolvedQualifiedCall(expr)
-    if (qualified?.package !== 'phyloseq' || qualified.name !== phyloseqToDESeq2Call) return false
+    if (
+      qualified?.package !== 'phyloseq' ||
+      qualified.name !== phyloseqToDESeq2Call ||
+      sourceType !== 'phyloseq'
+    )
+      return false
     const formulaIndex = expr.names.findIndex((name) => name === 'design')
     const formula = expr.args[formulaIndex >= 0 ? formulaIndex : 1]
     if (!formula || !isCall(formula) || callOperator(formula) !== '~') return false
@@ -4492,7 +4492,7 @@ const analyzeRSource = (
       const transformed = seuratTransformType(expr, sourceType)
       if (transformed) return transformed
     }
-    if (phyloseqToDESeq2IsSafe(expr)) return 'DESeqDataSet'
+    if (phyloseqToDESeq2IsSafe(expr, sourceType)) return 'DESeqDataSet'
     if (
       qualified?.package === 'DESeq2' &&
       deSeq2CallIsSafe(expr) &&
@@ -6360,7 +6360,11 @@ const analyzeRSource = (
           valueQualified?.package === 'Seurat' && seuratAnchorTransforms.has(valueQualified.name)
         const seuratValueTransform =
           valueQualified?.package === 'Seurat' && seuratValueTransforms.has(valueQualified.name)
-        const phyloseqToDESeq2Transform = phyloseqToDESeq2IsSafe(value)
+        // Construction already proved the input before the assignment rebound it.
+        const phyloseqToDESeq2Transform =
+          constructed === 'DESeqDataSet' &&
+          valueQualified?.package === 'phyloseq' &&
+          valueName === phyloseqToDESeq2Call
         const massSpecTransform =
           (valueQualified?.package === 'MSnbase' &&
             (valueQualified.name === 'readMSData' ||
