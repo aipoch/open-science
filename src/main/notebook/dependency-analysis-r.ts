@@ -4347,7 +4347,16 @@ const analyzeRSource = (
     const qualified = qualifiedCall(expr)
     if (qualified) return qualified
     const name = calledName(expr)
-    if (!name) return undefined
+    // Package attachment cannot override an existing unqualified binding.
+    // Keep the same shadow barriers as ordinary call analysis before inferring
+    // a qualifier that would otherwise bypass those checks downstream.
+    if (
+      !name ||
+      expr.staticBuiltinShadowed ||
+      functions.has(name) ||
+      !contractAvailable(name, undefined, '')
+    )
+      return undefined
     const providers = [...rPackageLoads].filter((pkg) => knownQualifiedCall(pkg, name))
     return providers.length === 1 ? { package: providers[0]!, name } : undefined
   }

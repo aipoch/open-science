@@ -25,6 +25,13 @@ const unusedInterpreter = (kernelKind: 'python' | 'r'): NotebookDependencyInterp
 
 const temporaryRoots: string[] = []
 
+// Insert only at the outer function body; nested bodies must stay unchanged.
+const prependFunctionBody = (source: string, statements: string): string => {
+  const opening = source.indexOf('{')
+  if (opening < 0) throw new Error('Expected a function body in the regression source')
+  return source.slice(0, opening + 1) + '\n' + statements + source.slice(opening + 1)
+}
+
 afterEach(async () => {
   await Promise.all(temporaryRoots.splice(0).map((path) => rm(path, { recursive: true })))
 })
@@ -280,6 +287,48 @@ it('resolves unqualified Seurat transforms after the package is loaded', async (
   expect(projection.dependenciesByRunId?.['run-4']).toContain('run-3')
 })
 
+describe('loaded scientific package call identities', () => {
+  it.each([
+    ['Seurat', 'NormalizeData', 'Seurat::CreateSeuratObject(counts)', 'Seurat'],
+    [
+      'MultiAssayExperiment',
+      'sampleMap',
+      'MultiAssayExperiment::MultiAssayExperiment()',
+      'S4Vectors.DataFrame'
+    ]
+  ])('preserves binding barriers for loaded %s::%s', async (pkg, name, constructor, type) => {
+    const shadow = `${name} <- function(x) readLines("secret.txt")`
+    const producer = await analyzeRNotebookSource(shadow)
+    expect(producer.fileAccess).toBeDefined()
+    const context = projectNotebookFileContext('r', [
+      { facts: producer.facts, fileContext: producer.fileAccess!.context }
+    ])
+    for (const binding of ['local', 'incoming', 'dynamic']) {
+      for (const qualified of [false, true]) {
+        const call = qualified ? `${pkg}::${name}` : name
+        const source = [
+          `library(${pkg})`,
+          `obj <- ${constructor}`,
+          ...(binding === 'incoming' ? [] : [binding === 'local' ? shadow : 'source("setup.R")']),
+          `result <- ${call}(obj)`
+        ].join('\n')
+        const { facts } = await analyzeRNotebookSource(
+          source,
+          binding === 'incoming' ? context : undefined
+        )
+        const resultType = facts.typeBindings?.find((binding) => binding.target === 'result')
+        if (qualified) {
+          expect(resultType?.typeName).toBe(type)
+          expect(facts.safeCallNames).toContain(`${pkg}::${name}`)
+        } else {
+          expect(resultType).toBeUndefined()
+          expect(facts.safeCallNames ?? []).not.toContain(`${pkg}::${name}`)
+        }
+      }
+    }
+  })
+})
+
 it.each([
   ['Pipeline', 'from sklearn.pipeline import Pipeline\nmodel = Pipeline(steps)'],
   [
@@ -348,6 +397,58 @@ it.each([
       expect.objectContaining({ target: 'fit', typeName: 'scipy.optimize.OptimizeResult' })
     ])
   )
+})
+
+it.each([
+  ['callback', 19],
+  ['workers', 20],
+  ['loss', 9]
+] as const)('retains captures of a positional least_squares %s', async (_, position) => {
+  const args = [
+    'residuals',
+    'p0',
+    '"2-point"',
+    '(-1, 1)',
+    '"trf"',
+    '1e-8',
+    '1e-8',
+    '1e-8',
+    '1.0',
+    '"linear"',
+    '1.0',
+    'None',
+    'None',
+    '{}',
+    'None',
+    'None',
+    '0',
+    '()',
+    'None',
+    'None',
+    'None'
+  ]
+  args[position] = 'observer'
+  const projection = await projectScripts(
+    'python',
+    [
+      'from scipy.optimize import least_squares\np0 = [0.]\ncallback_gain = 1.0',
+      'def residuals(p):\n    return p\ndef observer(value):\n    return callback_gain',
+      `fit = least_squares(${args.join(', ')})`,
+      'callback_gain = 2.0'
+    ],
+    'notebook-positional-optimizer-'
+  )
+  expect(projection.invalidatedByRunId['run-4']).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        runId: 'run-3',
+        state: 'unknown',
+        names: expect.arrayContaining(['callback_gain'])
+      })
+    ])
+  )
+  expect(projection.stalenessByRunId['run-3'].state).toBe('unknown')
+  expect(projection.dependenciesByRunId?.['run-3']).toBeUndefined()
 })
 
 it.each([
@@ -3868,9 +3969,9 @@ describe('R opaque scientific closure captures', () => {
   )
 
   it('retains a true outer read before a later local assignment', async () => {
-    const altered = helper.replace(
-      '{',
-      '{\n  previous_gain <- calibration_gain\n  calibration_gain <- 1.0'
+    const altered = prependFunctionBody(
+      helper,
+      '  previous_gain <- calibration_gain\n  calibration_gain <- 1.0'
     )
     const { method } = await summarizeHelper([setup, altered].join('\n'))
     expect(method.usedNames).toContain('calibration_gain')
@@ -3889,7 +3990,7 @@ describe('R opaque scientific closure captures', () => {
   it('excludes formal parameters and genuine local bindings from outer captures', async () => {
     for (const [altered, excluded] of [
       [helper.replace('conc, Vm, K', 'conc, Vm, K, calibration_gain=1.0'), 'calibration_gain'],
-      [helper.replace('{', '{\n  calibration_gain <- 1.0'), 'calibration_gain'],
+      [prependFunctionBody(helper, '  calibration_gain <- 1.0'), 'calibration_gain'],
       [helper, 'scale_val']
     ]) {
       const projection = await projectScripts(
@@ -3916,8 +4017,8 @@ describe('R opaque scientific closure captures', () => {
             ]
           : scope === 'local'
             ? [
-                helper.replace('{', '{\n  as.numeric <- function(x) 1'),
-                helper.replace('{', '{\n  `+` <- function(e1,e2) 1')
+                prependFunctionBody(helper, '  as.numeric <- function(x) 1'),
+                prependFunctionBody(helper, '  `+` <- function(e1,e2) 1')
               ]
             : [
                 'readLines <- function(...) "1.0"\n' + helper,
@@ -3944,7 +4045,10 @@ describe('R opaque scientific closure captures', () => {
       'nonconstant default promise',
       helper.replace('conc, Vm, K', 'conc, Vm, K, calibration_gain=outer_gain')
     ],
-    ['nonlocal assignment', helper.replace('{', '{\n  calibration_gain <<- calibration_gain + 1')],
+    [
+      'nonlocal assignment',
+      prependFunctionBody(helper, '  calibration_gain <<- calibration_gain + 1')
+    ],
     [
       'dynamic lookup',
       helper.replace('calibration_gain * scale_val', 'get("calibration_gain") * scale_val')
@@ -4203,7 +4307,7 @@ describe('R uniroot opaque capture-only callbacks', () => {
     async (name) => {
       for (const altered of [
         callback.replace('function(theta)', `function(theta, ${name})`),
-        callback.replace('{', `{\n${name} <- function(...) 0`)
+        prependFunctionBody(callback, `${name} <- function(...) 0`)
       ]) {
         expectNoCaptures(
           (await analyzeRNotebookSource(`${altered}\nstats::uniroot(score_callback,c(-1,1))`)).facts

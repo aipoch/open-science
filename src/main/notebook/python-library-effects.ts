@@ -1247,7 +1247,7 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
         externalState: true,
         returnType: 'scipy.optimize.OptimizeResult',
         callbackKeywords: ['fun', 'jac', 'loss', 'callback', 'workers'],
-        callbackPositionalKeywords: { 0: 'fun', 2: 'jac', 9: 'loss' }
+        callbackPositionalKeywords: { 0: 'fun', 2: 'jac', 9: 'loss', 19: 'callback', 20: 'workers' }
       }
     }
   },
