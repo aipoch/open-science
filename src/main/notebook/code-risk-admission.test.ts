@@ -221,6 +221,198 @@ describe('host-owned one-shot execution admission', () => {
     }
   })
 
+  it.skipIf(process.platform === 'win32').each(['cp', 'mv'])(
+    'gates real %s overwrite and source removal per execution',
+    async (command) => {
+      const { service, shell, request } = await harness()
+      const source = join(request.workspaceCwd, 'source.txt')
+      const target = join(request.workspaceCwd, 'target.txt')
+      await writeFile(source, 'new content')
+      await writeFile(target, 'keep content')
+      shell.mockImplementation(
+        (execution) =>
+          new Promise<{ stdout: string; stderr: string; exitCode: number }>((resolve, reject) => {
+            execFile(
+              '/bin/sh',
+              ['-c', execution.command],
+              {
+                cwd: request.workspaceCwd,
+                timeout: 5000
+              },
+              (error, stdout, stderr) => {
+                if (error && typeof error.code !== 'number') reject(error)
+                else
+                  resolve({
+                    stdout,
+                    stderr,
+                    exitCode: typeof error?.code === 'number' ? error.code : 0
+                  })
+              }
+            )
+          })
+      )
+      const approve = vi.fn(async () => false)
+      service.setExecutionApproval(approve)
+      await service.executeShell({ ...request, command: 'cp -n source.txt target.txt' })
+      await service.executeShell({ ...request, command: 'cp -n source.txt fresh.txt' })
+      expect(approve).not.toHaveBeenCalled()
+      expect(await readFile(target, 'utf8')).toBe('keep content')
+      expect(await readFile(join(request.workspaceCwd, 'fresh.txt'), 'utf8')).toBe('new content')
+      const input = { ...request, command: `${command} -f source.txt target.txt` }
+      await expect(service.executeShell(input)).rejects.toThrow('one-time approval')
+      expect(shell).toHaveBeenCalledTimes(2)
+      expect(await readFile(source, 'utf8')).toBe('new content')
+      expect(await readFile(target, 'utf8')).toBe('keep content')
+      approve.mockResolvedValueOnce(true)
+      await service.executeShell(input)
+      expect(shell).toHaveBeenCalledTimes(3)
+      expect(await readFile(target, 'utf8')).toBe('new content')
+      if (command === 'mv') await expect(readFile(source)).rejects.toMatchObject({ code: 'ENOENT' })
+      else expect(await readFile(source, 'utf8')).toBe('new content')
+      await writeFile(source, 'second run')
+      await expect(service.executeShell(input)).rejects.toThrow('one-time approval')
+      expect(approve).toHaveBeenCalledTimes(3)
+      expect(shell).toHaveBeenCalledTimes(3)
+      expect(await readFile(source, 'utf8')).toBe('second run')
+      expect(await readFile(target, 'utf8')).toBe('new content')
+    }
+  )
+
+  it.skipIf(!process.env.OPEN_SCIENCE_RISK_PYTHON)(
+    'gates real Python overwrite while allowing new files and append',
+    async () => {
+      const { service, execute, request } = await harness()
+      execute.mockImplementation(async (execution) => {
+        const { stdout, stderr } = await promisify(execFile)(
+          process.env.OPEN_SCIENCE_RISK_PYTHON!,
+          ['-c', execution.code],
+          { cwd: execution.cwd, timeout: 5000 }
+        )
+        return {
+          status: 'completed',
+          stdout,
+          stderr,
+          traceback: '',
+          cwdAfter: execution.cwd,
+          outputs: [],
+          kernelDispatched: true
+        }
+      })
+      const approve = vi.fn(async () => false)
+      service.setExecutionApproval(approve)
+      const code = 'open("write-target.txt", "w").write("new")'
+      await service.execute({ ...request, code })
+      const target = join(execute.mock.calls[0][0].cwd, 'write-target.txt')
+      await service.execute({
+        ...request,
+        code: 'open("write-target.txt", "a").write(" appended")'
+      })
+      await service.execute({ ...request, code: 'print(open("write-target.txt").read())' })
+      expect(approve).not.toHaveBeenCalled()
+      expect(await readFile(target, 'utf8')).toBe('new appended')
+      await expect(service.execute({ ...request, code })).rejects.toThrow('one-time approval')
+      expect(await readFile(target, 'utf8')).toBe('new appended')
+      approve.mockResolvedValueOnce(true)
+      await service.execute({ ...request, code })
+      expect(await readFile(target, 'utf8')).toBe('new')
+      await expect(service.execute({ ...request, code })).rejects.toThrow('one-time approval')
+      expect(approve).toHaveBeenCalledTimes(3)
+      expect(execute).toHaveBeenCalledTimes(4)
+    }
+  )
+
+  it
+    .skipIf(!process.env.OPEN_SCIENCE_RISK_PYTHON)
+    .each([
+      'chdir',
+      'copy-file',
+      'copy-directory',
+      'copy2-file',
+      'copy2-directory',
+      'handle-write',
+      'handle-truncate'
+    ])('gates real Python bounded overwrite form=%s once', async (form) => {
+    const { service, execute, request } = await harness()
+    execute.mockImplementation(async (execution) => {
+      const { stdout, stderr } = await promisify(execFile)(
+        process.env.OPEN_SCIENCE_RISK_PYTHON!,
+        ['-c', execution.code],
+        { cwd: execution.cwd, timeout: 5000 }
+      )
+      return {
+        status: 'completed',
+        stdout,
+        stderr,
+        traceback: '',
+        cwdAfter: execution.cwd,
+        outputs: [],
+        kernelDispatched: true
+      }
+    })
+    const approve = vi.fn(async () => false)
+    service.setExecutionApproval(approve)
+    const executeCode = (code: string): ReturnType<typeof service.execute> =>
+      service.execute({ ...request, code })
+    await executeCode('pass')
+    const cwd = execute.mock.calls[0][0].cwd
+    let target = join(cwd, 'target.txt')
+    let code: string
+    let expected = 'new'
+    let before = 'keep'
+    let promptFreeExecutions = 1
+    if (form === 'chdir') {
+      await mkdir(join(cwd, 'data'))
+      target = join(cwd, 'data', 'target.txt')
+      // Restore cwd after writing so every attempt starts outside the target directory.
+      code = 'import os\nos.chdir("data")\nopen("target.txt","w").write("new")\nos.chdir("..")'
+      await writeFile(target, before)
+      await expect(readFile(join(cwd, 'target.txt'))).rejects.toMatchObject({
+        code: 'ENOENT'
+      })
+    } else if (form.startsWith('copy')) {
+      const method = form.startsWith('copy2') ? 'copy2' : 'copy'
+      const directory = form.endsWith('directory')
+      await writeFile(join(cwd, 'source.txt'), 'new')
+      if (directory) {
+        await mkdir(join(cwd, 'data'))
+        target = join(cwd, 'data', 'source.txt')
+      }
+      code = `import shutil\nshutil.${method}("source.txt",${JSON.stringify(directory ? 'data' : 'target.txt')})`
+      // An existing destination directory does not make its missing child an overwrite.
+      await executeCode(code)
+      promptFreeExecutions++
+      expect(approve).not.toHaveBeenCalled()
+      expect(await readFile(target, 'utf8')).toBe('new')
+      await writeFile(target, before)
+    } else {
+      await writeFile(target, before)
+      await executeCode('with open("target.txt","r+") as handle:\n    print(handle.read())')
+      await executeCode('with open("target.txt","a") as handle:\n    handle.write(" appended")')
+      await executeCode('with open("exclusive.txt","x") as handle:\n    handle.write("new")')
+      promptFreeExecutions += 3
+      before = 'keep appended'
+      expect(approve).not.toHaveBeenCalled()
+      expect(await readFile(target, 'utf8')).toBe(before)
+      expect(await readFile(join(cwd, 'exclusive.txt'), 'utf8')).toBe('new')
+      code =
+        form === 'handle-write'
+          ? 'open("target.txt","r+").write("new")'
+          : 'with open("target.txt","r+") as handle:\n    handle.truncate(0)'
+      expected = form === 'handle-write' ? 'newp appended' : ''
+    }
+    await expect(executeCode(code)).rejects.toThrow('one-time approval')
+    expect(execute).toHaveBeenCalledTimes(promptFreeExecutions)
+    expect(await readFile(target, 'utf8')).toBe(before)
+    approve.mockResolvedValueOnce(true)
+    await executeCode(code)
+    expect(await readFile(target, 'utf8')).toBe(expected)
+    await writeFile(target, 'next run')
+    await expect(executeCode(code)).rejects.toThrow('one-time approval')
+    expect(await readFile(target, 'utf8')).toBe('next run')
+    expect(approve).toHaveBeenCalledTimes(3)
+    expect(execute).toHaveBeenCalledTimes(promptFreeExecutions + 1)
+  })
+
   it('keeps long kernel history prompt-free and reviews every deletion separately', async () => {
     const { service, execute, request } = await harness()
     const approve = vi.fn(async () => false)
@@ -3958,7 +4150,7 @@ subprocess.run(${argv},shell=(${flag}),check=True)`
   )
   it
     .skipIf(!process.env.OPEN_SCIENCE_RISK_PYTHON || process.platform === 'win32')
-    .each([0, 1, 2, 3, 4, 5])(
+    .each([0, 1, 2, 3, 4, 5, 6])(
     'gates real persistent Python incomplete cell form=%s once',
     async (form) => {
       const { service, execute, request } = await harness()
@@ -3999,7 +4191,8 @@ for line in sys.stdin:
         'erase=f"{1:invalid}"',
         'erase=os.unlink\n1/0\nerase=None',
         'raise RuntimeError("failed")\nerase=os.listdir',
-        'import time\ntime.sleep(5)\nerase=os.listdir'
+        'import time\ntime.sleep(5)\nerase=os.listdir',
+        'erase=os.unlink\nimport time\ntime.sleep(5)\nerase=os.listdir'
       ][form]
       let interrupt: ReturnType<typeof setTimeout> | undefined
       execute.mockImplementation(async (execution) => {
@@ -4025,12 +4218,16 @@ for line in sys.stdin:
             }
           })
           worker.stdin.write(JSON.stringify(execution.code) + '\n')
-          if (form === 5 && execution.code === failure)
+          if (form >= 5 && execution.code === failure)
             interrupt = setTimeout(() => worker.kill('SIGINT'), 500)
         })
         return {
           ...reply,
-          status: reply.traceback.includes('KeyboardInterrupt') ? 'timeout' : reply.status,
+          status: reply.traceback.includes('KeyboardInterrupt')
+            ? form === 6
+              ? 'cancelled'
+              : 'timeout'
+            : reply.status,
           cwdAfter: execution.cwd,
           outputs: [],
           kernelDispatched: true
@@ -4041,11 +4238,11 @@ for line in sys.stdin:
         service.setExecutionApproval(approve)
         await service.execute({
           ...request,
-          code: 'import os\nerase=' + (form === 3 ? 'os.listdir' : 'os.unlink')
+          code: 'import os\nerase=' + (form === 3 || form === 6 ? 'os.listdir' : 'os.unlink')
         })
         const failed = await service.execute({ ...request, code: failure })
         if (interrupt) clearTimeout(interrupt)
-        expect(failed.status).toBe(form === 5 ? 'timeout' : 'failed')
+        expect(failed.status).toBe(form === 6 ? 'cancelled' : form === 5 ? 'timeout' : 'failed')
         expect(execute).toHaveBeenCalledTimes(2)
         expect(approve).not.toHaveBeenCalled()
         expect(await readFile(target, 'utf8')).toBe('test')
@@ -6928,6 +7125,41 @@ print(reader("."))`)
     expect(approve).toHaveBeenCalledTimes(1)
     expect(execute).toHaveBeenCalledTimes(3)
   })
+
+  it.each([
+    ['python', 'import os\nerase = os.unlink'],
+    ['r', 'erase <- unlink'],
+    ['repl', 'const erase = require("fs").unlinkSync']
+  ] as const)(
+    'replays only dispatched cancelled %s bindings for later risk review',
+    async (language, code) => {
+      for (const kernelDispatched of [false, true]) {
+        const { service, execute, request } = await harness()
+        const approve = vi.fn(async () => false)
+        service.setExecutionApproval(approve)
+        execute.mockImplementationOnce(async (execution) => ({
+          status: 'cancelled',
+          stdout: '',
+          stderr: '',
+          traceback: '',
+          cwdAfter: execution.cwd,
+          outputs: [],
+          kernelDispatched
+        }))
+        const invoke = (source: string): Promise<unknown> =>
+          language === 'repl'
+            ? service.executeControl({ ...request, code: source })
+            : service.execute({ ...request, language, code: source })
+        await invoke(code)
+        expect(approve).not.toHaveBeenCalled()
+        if (kernelDispatched && language !== 'repl')
+          await expect(invoke('erase("sentinel.txt")')).rejects.toThrow('one-time approval')
+        else await invoke('erase("sentinel.txt")')
+        expect(approve).toHaveBeenCalledTimes(kernelDispatched ? 1 : 0)
+        expect(execute).toHaveBeenCalledTimes(kernelDispatched ? 1 : 2)
+      }
+    }
+  )
 
   it('reviews a stored dynamic callable on every invocation without reusing the prior approval', async () => {
     const { service, execute, request } = await harness()

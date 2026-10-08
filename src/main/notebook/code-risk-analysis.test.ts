@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import * as childProcess from 'node:child_process'
+import { mkdir, mkdtemp, writeFile, readFile, rm, symlink } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import * as parser from './dependency-analysis-parser'
 import * as powerShellParser from './powershell-search-parser'
 import { analyzeNotebookCodeRisk, analyzePowerShellCodeRisk } from './code-risk-analysis'
@@ -8,6 +11,467 @@ import type { NotebookSourceFileAccessContext } from './dependency-analysis-type
 vi.mock('node:child_process', { spy: true })
 
 describe('Notebook execution code risk', () => {
+  describe('existing file writes', () => {
+    const context = (workingDirectory: string): NotebookSourceFileAccessContext => ({
+      workingDirectory,
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: []
+    })
+    it.each([
+      ['python', 'open("target.txt", "w").write("new")'],
+      ['python', 'open(file="target.txt", mode="wb").write(b"new")'],
+      ['python', 'from builtins import open as output; output("target.txt", "w+")'],
+      ['python', 'import io; io.open("target.txt", "wt")'],
+      ['python', 'from pathlib import Path; Path("target.txt").write_text("new")'],
+      ['python', 'from pathlib import Path; Path("target.txt").write_bytes(b"new")'],
+      ['python', 'from pathlib import Path; Path("target.txt").open("w")'],
+      ['python', 'import shutil; shutil.copyfile("source.txt", "target.txt")'],
+      ['repl', 'require("fs").writeFileSync("target.txt", "new")'],
+      ['repl', 'require("node:fs/promises").writeFile("target.txt", "new")'],
+      ['repl', 'const {writeFileSync: output} = require("fs"); output("target.txt", "new")'],
+      ['repl', 'require("fs").writeFileSync("target.txt", "new", {flag:"r+"})'],
+      ['repl', 'require("fs").appendFileSync("target.txt", "new", {flag:"w"})'],
+      ['repl', 'require("fs").createWriteStream("target.txt")'],
+      ['repl', 'require("fs").openSync("target.txt", "w")'],
+      ['repl', 'require("fs").copyFileSync("source.txt", "target.txt")'],
+      ['r', 'writeLines("new", "target.txt")'],
+      ['r', 'base::writeLines(con="target.txt", text="new")'],
+      ['r', 'writeBin(as.raw(1), "target.txt")'],
+      ['r', 'cat("new", file="target.txt")'],
+      ['r', 'file("target.txt", open="w")']
+    ] as const)('checks current filesystem for %s: %s', async (language, source) => {
+      const root = await mkdtemp(join(tmpdir(), 'risk-writes-'))
+      try {
+        expect(await analyzeNotebookCodeRisk(language, source, context(root))).toEqual([])
+        await writeFile(join(root, 'target.txt'), 'keep')
+        const risks = await analyzeNotebookCodeRisk(language, source, context(root))
+        expect(risks).toEqual([
+          expect.objectContaining({ operation: expect.stringContaining('existing-file overwrite') })
+        ])
+        expect(Object.keys(risks[0]).sort()).toEqual(['line', 'operation', 'source'])
+        expect(await readFile(join(root, 'target.txt'), 'utf8')).toBe('keep')
+        await rm(join(root, 'target.txt'))
+        expect(await analyzeNotebookCodeRisk(language, source, context(root))).toEqual([])
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    })
+    it.each([
+      ['python', 'open("target.txt").read()'],
+      ['python', 'open("target.txt", "a").write("new")'],
+      ['python', 'open("target.txt", "a+").write("new")'],
+      ['python', 'open("target.txt", "x").write("new")'],
+      ['python', 'open("target.txt", "r+").read()'],
+      ['python', 'from pathlib import Path; Path("target.txt").open("a")'],
+      ['python', 'def output():\n    open("target.txt", "w").write("new")'],
+      ['python', 'def open(*args):\n    return None\nopen("target.txt", "w")'],
+      ['repl', 'require("fs").readFileSync("target.txt")'],
+      ['repl', 'require("fs").writeFileSync("target.txt", "new", {flag:"a"})'],
+      ['repl', 'require("fs").writeFileSync("target.txt", "new", {flag:"wx"})'],
+      ['repl', 'require("fs").appendFileSync("target.txt", "new")'],
+      ['repl', 'require("fs").createWriteStream("target.txt", {flags:"a"})'],
+      ['repl', 'require("fs").openSync("target.txt", "r+")'],
+      ['repl', 'require("fs").copyFileSync("source.txt", "target.txt", 1)'],
+      [
+        'repl',
+        'const fs = require("fs"); fs.copyFileSync("source.txt", "target.txt", fs.constants.COPYFILE_EXCL)'
+      ],
+      ['r', 'cat("new", file="target.txt", append=TRUE)'],
+      ['r', 'file("target.txt", open="a")'],
+      ['r', 'readLines("target.txt")'],
+      ['r', 'cat("data", "target.txt")'],
+      ['r', 'file.copy("source.txt", "target.txt")']
+    ] as const)('keeps non-overwriting %s operations prompt-free: %s', async (language, source) => {
+      const root = await mkdtemp(join(tmpdir(), 'risk-writes-'))
+      try {
+        await writeFile(join(root, 'target.txt'), 'keep')
+        expect(await analyzeNotebookCodeRisk(language, source, context(root))).toEqual([])
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    })
+    it.each([
+      ['python', 'import os; os.chdir("data"); open("target.txt", "w").write("new")'],
+      ['python', 'from os import chdir as cd; cd(path="data"); open("target.txt", "w")'],
+      [
+        'python',
+        'import os\ndef output():\n    os.chdir("data")\n    open("target.txt", "w")\noutput()'
+      ],
+      ['python', 'import os\ndef enter():\n    os.chdir("data")\nenter()\nopen("target.txt", "w")'],
+      ['python', 'import os\nif condition:\n    os.chdir("data")\nopen("target.txt", "w")'],
+      [
+        'python',
+        'import os; os.chdir("data"); os.chdir(".."); os.chdir("data"); open("target.txt", "w")'
+      ],
+      ['repl', 'process.chdir("data"); require("fs").writeFileSync("target.txt", "new")'],
+      [
+        'repl',
+        'function output() {process.chdir("data"); require("fs").writeFileSync("target.txt", "new")} output()'
+      ],
+      [
+        'repl',
+        'if (condition) process.chdir("data"); require("fs").writeFileSync("target.txt", "new")'
+      ],
+      ['r', 'setwd("data"); writeLines("new", "target.txt")'],
+      ['r', 'cd <- base::setwd; cd(dir="data"); writeLines("new", "target.txt")'],
+      ['r', 'output <- function() {setwd("data"); writeLines("new", "target.txt")}; output()'],
+      ['r', 'if (condition) setwd("data"); writeLines("new", "target.txt")']
+    ] as const)('tracks same-cell cwd for %s: %s', async (language, source) => {
+      const root = await mkdtemp(join(tmpdir(), 'risk-cwd-'))
+      try {
+        await mkdir(join(root, 'data'))
+        expect(await analyzeNotebookCodeRisk(language, source, context(root))).toEqual([])
+        await writeFile(join(root, 'data', 'target.txt'), 'keep')
+        const risks = await analyzeNotebookCodeRisk(language, source, context(root))
+        expect(risks.some((risk) => risk.operation.includes('existing-file overwrite'))).toBe(true)
+        expect(JSON.stringify(risks)).not.toMatch(/overwriteCwd|overwritePath|copyBasename/)
+        expect(await readFile(join(root, 'data', 'target.txt'), 'utf8')).toBe('keep')
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    })
+    it.each([
+      ['python', 'import os; os.chdir("data"); open("target.txt", "w")'],
+      ['repl', 'process.chdir("data"); require("fs").writeFileSync("target.txt", "new")'],
+      ['r', 'setwd("data"); writeLines("new", "target.txt")']
+    ] as const)(
+      'does not mistake the old cwd target for a new %s output',
+      async (language, source) => {
+        const root = await mkdtemp(join(tmpdir(), 'risk-cwd-new-'))
+        try {
+          await mkdir(join(root, 'data'))
+          await writeFile(join(root, 'target.txt'), 'keep')
+          expect(await analyzeNotebookCodeRisk(language, source, context(root))).toEqual([])
+        } finally {
+          await rm(root, { recursive: true, force: true })
+        }
+      }
+    )
+    it('resets cwd after history replay and composes deferred function cwd at invocation', async () => {
+      const root = await mkdtemp(join(tmpdir(), 'risk-cwd-replay-'))
+      try {
+        await mkdir(join(root, 'data'))
+        const definition =
+          'import os\ndef output():\n    os.chdir("data")\n    open("target.txt", "w")'
+        for (let repeat = 0; repeat < 2; repeat++) {
+          expect(
+            await analyzeNotebookCodeRisk('python', 'output()', context(root), [definition])
+          ).toEqual([])
+          await writeFile(join(root, 'data', 'target.txt'), 'keep')
+          expect(
+            await analyzeNotebookCodeRisk('python', 'output()', context(root), [definition])
+          ).not.toEqual([])
+          expect(
+            await analyzeNotebookCodeRisk(
+              'python',
+              'open("target.txt", "w")',
+              context(join(root, 'data')),
+              ['import os; os.chdir("data")']
+            )
+          ).not.toEqual([])
+          await rm(join(root, 'data', 'target.txt'))
+        }
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    })
+    it.each(['copy', 'copy2'])(
+      'checks the actual shutil.%s destination inside a directory',
+      async (method) => {
+        const root = await mkdtemp(join(tmpdir(), 'risk-copy-'))
+        try {
+          await mkdir(join(root, 'data'))
+          await writeFile(join(root, 'source.txt'), 'source')
+          const source = `import shutil; shutil.${method}(src="source.txt", dst="data")`
+          expect(await analyzeNotebookCodeRisk('python', source, context(root))).toEqual([])
+          await writeFile(join(root, 'data', 'source.txt'), 'keep')
+          const risks = await analyzeNotebookCodeRisk('python', source, context(root))
+          expect(risks).toHaveLength(1)
+          expect(JSON.stringify(risks)).not.toMatch(/overwriteCwd|overwritePath|copyBasename/)
+        } finally {
+          await rm(root, { recursive: true, force: true })
+        }
+      }
+    )
+    it.each([
+      'open("target.txt", "r+").write("new")',
+      'open("target.txt", "r+b").writelines([b"new"])',
+      'with open("target.txt", "r+") as f:\n    f.truncate(0)',
+      'import io; f=io.open("target.txt", "r+"); saved=f.write; saved("new")',
+      'from pathlib import Path; f=Path("target.txt").open("r+"); f.truncate(0)',
+      'with open("target.txt", "a+") as f:\n    f.truncate(0)',
+      'import os; f=open("target.txt", "r+"); os.chdir("data"); f.write("new")'
+    ])('reviews native file-handle mutation: %s', async (source) => {
+      const risks = await analyzeNotebookCodeRisk('python', source)
+      expect(risks.some((risk) => risk.operation.startsWith('file.'))).toBe(true)
+    })
+    it.each([
+      'with open("target.txt", "r+") as f:\n    print(f.read())',
+      'with open("target.txt", "a+") as f:\n    f.write("new")',
+      'with open("target.txt", "x") as f:\n    f.write("new")',
+      'frame.truncate(before=1, after=3)',
+      'f = frame; f.truncate(before=1)',
+      'with open("target.txt", "r+") as f:\n    f = frame\n    f.truncate(before=1)',
+      'open("target.txt").truncate(0)',
+      'with open("new.txt", "x") as f:\n    f.write("new")\n    f.truncate(0)',
+      'import io\nwith open("target.txt", "r+") as handle:\n    print(handle.read())\nwith io.StringIO() as handle:\n    handle.write("new")',
+      'with open("target.txt", "r+") as f:\n    pass\nwith some_context() as f:\n    f.truncate(before=1)'
+    ])('keeps native reads, append and scientific members prompt-free: %s', async (source) => {
+      expect(await analyzeNotebookCodeRisk('python', source)).toEqual([])
+    })
+    it.each(['w', 'x'])(
+      'retains deferred mutations of captured %s handles across replay',
+      async (mode) => {
+        const definition = `handle=open("target.txt", "${mode}")\nhandle.write("keep")\ndef erase():\n    handle.truncate(0)`
+        expect(await analyzeNotebookCodeRisk('python', `${definition}\nerase()`)).toEqual([])
+        for (let repeat = 0; repeat < 2; repeat++) {
+          expect(
+            await analyzeNotebookCodeRisk('python', 'erase()', undefined, [definition])
+          ).toHaveLength(1)
+          expect(
+            await analyzeNotebookCodeRisk('python', 'wrapper()', undefined, [
+              definition,
+              'def wrapper():\n    erase()'
+            ])
+          ).toHaveLength(1)
+        }
+        const local = `def create():\n    handle=open("target.txt", "${mode}")\n    handle.write("new")\n    handle.truncate(0)`
+        expect(await analyzeNotebookCodeRisk('python', 'create()', undefined, [local])).toEqual([])
+      }
+    )
+    it.each(['r+', 'w', 'x'])(
+      'reviews retained %s handles while keeping append handles inert',
+      async (mode) => {
+        for (let repeat = 0; repeat < 2; repeat++) {
+          expect(
+            await analyzeNotebookCodeRisk('python', 'saved("new")', undefined, [
+              `f=open("target.txt", "${mode}"); saved=f.write`
+            ])
+          ).toHaveLength(1)
+          expect(
+            await analyzeNotebookCodeRisk('python', 'f.write("new")', undefined, [
+              'f=open("target.txt", "a+")'
+            ])
+          ).toEqual([])
+        }
+      }
+    )
+    it.each(['link/..', 'link", "..'])(
+      'resolves physical cwd before symlink parents: %s',
+      async (route) => {
+        const root = await mkdtemp(join(tmpdir(), 'risk-cwd-symlink-'))
+        try {
+          const workspace = join(root, 'workspace')
+          const outside = join(root, 'outside')
+          await mkdir(workspace)
+          await mkdir(join(outside, 'inside'), { recursive: true })
+          await symlink(
+            join(outside, 'inside'),
+            join(workspace, 'link'),
+            process.platform === 'win32' ? 'junction' : 'dir'
+          )
+          await writeFile(join(outside, 'target.txt'), 'keep')
+          const changes =
+            route === 'link/..' ? 'os.chdir("link/..")' : 'os.chdir("link"); os.chdir("..")'
+          expect(
+            await analyzeNotebookCodeRisk(
+              'python',
+              `import os; ${changes}; open("target.txt", "w")`,
+              context(workspace)
+            )
+          ).toHaveLength(1)
+          expect(await readFile(join(outside, 'target.txt'), 'utf8')).toBe('keep')
+        } finally {
+          await rm(root, { recursive: true, force: true })
+        }
+      }
+    )
+    it('resets uncertain cwd at an absolute change and keeps new output prompt-free', async () => {
+      const root = await mkdtemp(join(tmpdir(), 'risk-cwd-absolute-'))
+      try {
+        const source = `import os; os.chdir(dynamic_directory); os.chdir(${JSON.stringify(root)}); open("target.txt", "w")`
+        expect(await analyzeNotebookCodeRisk('python', source, context(root))).toEqual([])
+        await writeFile(join(root, 'target.txt'), 'keep')
+        expect(await analyzeNotebookCodeRisk('python', source, context(root))).toHaveLength(1)
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    })
+    it('retains native handle mode across cached history without using the new cwd', async () => {
+      const history = ['f = open("target.txt", "r+")']
+      for (let repeat = 0; repeat < 2; repeat++) {
+        expect(await analyzeNotebookCodeRisk('python', 'f.read()', undefined, history)).toEqual([])
+        expect(
+          await analyzeNotebookCodeRisk('python', 'f.write("new")', undefined, history)
+        ).toHaveLength(1)
+      }
+    })
+    it('rechecks deferred function effects after cached history and cwd changes', async () => {
+      const root = await mkdtemp(join(tmpdir(), 'risk-writes-'))
+      try {
+        const definition = 'def output():\n    open("target.txt", "w").write("new")'
+        expect(
+          await analyzeNotebookCodeRisk('python', 'output()', context(root), [definition])
+        ).toEqual([])
+        await writeFile(join(root, 'target.txt'), 'keep')
+        const risks = await analyzeNotebookCodeRisk('python', 'output()', context(root), [
+          definition
+        ])
+        expect(risks).toEqual([
+          { operation: 'output: open existing-file overwrite', source: 'output()', line: 1 }
+        ])
+        expect(
+          await analyzeNotebookCodeRisk('python', 'output()', context(join(root, 'absent')), [
+            definition
+          ])
+        ).toEqual([])
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    })
+    it.each([
+      ['python', 'import os; os.truncate("target.txt", 0)'],
+      ['python', 'import os; os.rename("source.txt", "target.txt")'],
+      ['python', 'import shutil; shutil.move("source.txt", "target.txt")'],
+      ['repl', 'require("fs").truncateSync("target.txt", 0)'],
+      ['repl', 'require("fs").renameSync("source.txt", "target.txt")'],
+      ['r', 'file.rename("source.txt", "target.txt")']
+    ] as const)('reviews explicit %s mutations: %s', async (language, source) => {
+      expect(await analyzeNotebookCodeRisk(language, source)).not.toEqual([])
+    })
+  })
+  describe('PowerShell existing file writes', () => {
+    it.each([
+      ['Set-Content', ['-Path', 'target.txt', '-Value', 'new'], true],
+      ['sc', ['target.txt', 'new'], true],
+      ['Out-File', ['-FilePath', 'target.txt'], true],
+      ['of', ['target.txt'], true],
+      ['Out-File', ['target.txt', '-Append'], false],
+      ['Out-File', ['target.txt', '-NoClobber'], false],
+      ['Out-File', ['target.txt', '-Append', 'False'], true],
+      ['Out-File', ['target.txt', '-NoClobber', 'False'], true],
+      ['Add-Content', ['target.txt', 'new'], false],
+      ['Set-Content', ['-Path', null, '-Value', 'target.txt'], false],
+      ['@file:WriteAllText', ['target.txt', 'new'], true],
+      ['@file:WriteAllBytes', ['target.txt', null], true],
+      ['@file:CreateText', ['target.txt'], true],
+      ['@file:AppendAllText', ['target.txt', 'new'], false],
+      ['@file:Copy', ['source.txt', 'target.txt', 'True'], true],
+      ['@file:Copy', ['source.txt', 'target.txt'], false],
+      ['@member:WriteAllText', ['custom.WriteAllText()'], false]
+    ] as const)('distinguishes %s %j writes', async (name, args, overwrite) => {
+      const root = await mkdtemp(join(tmpdir(), 'risk-ps-writes-'))
+      const spy = vi
+        .spyOn(powerShellParser, 'parsePowerShellSearchCommands')
+        .mockResolvedValue([{ name, arguments: [...args], source: 'literal write', line: 3 }])
+      try {
+        expect(await analyzePowerShellCodeRisk('literal write', undefined, '5.1', root)).toEqual([])
+        await writeFile(join(root, 'target.txt'), 'keep')
+        const risks = await analyzePowerShellCodeRisk('literal write', undefined, '5.1', root)
+        expect(risks.length).toBe(overwrite ? 1 : 0)
+        if (overwrite) expect(risks[0]).toMatchObject({ source: 'literal write', line: 3 })
+        expect(await readFile(join(root, 'target.txt'), 'utf8')).toBe('keep')
+      } finally {
+        spy.mockRestore()
+        await rm(root, { recursive: true, force: true })
+      }
+    })
+    it.skipIf(process.platform !== 'win32')(
+      'parses native write modes without executing them',
+      async () => {
+        const root = await mkdtemp(join(tmpdir(), 'risk-ps-writes-'))
+        try {
+          await writeFile(join(root, 'target.txt'), 'keep')
+          for (const source of [
+            'Set-Content -LiteralPath "target.txt" -Value "new"',
+            '"new" | Out-File "target.txt"',
+            '"new" | Out-File "target.txt" -Append:$false',
+            '[System.IO.File]::WriteAllText("target.txt", "new")',
+            '[IO.File]::WriteAllBytes("target.txt", [byte[]](1,2))'
+          ])
+            expect(await analyzePowerShellCodeRisk(source, undefined, '5.1', root)).not.toEqual([])
+          for (const source of [
+            'Set-Content "fresh.txt" "new"',
+            'Add-Content "target.txt" "new"',
+            '"new" | Out-File "target.txt" -Append',
+            '"new" | Out-File "target.txt" -NoClobber',
+            '[IO.File]::AppendAllText("target.txt", "new")'
+          ])
+            expect(await analyzePowerShellCodeRisk(source, undefined, '5.1', root)).toEqual([])
+          expect(await readFile(join(root, 'target.txt'), 'utf8')).toBe('keep')
+        } finally {
+          await rm(root, { recursive: true, force: true })
+        }
+      }
+    )
+  })
+  describe('copy and move commands', () => {
+    it.each([
+      'cp --help',
+      'mv --version',
+      'cp -n source target',
+      'cp -Rn source target',
+      'cp --no-clobber --recursive source target',
+      'cp -n -- "$source" "$target"',
+      'env LC_ALL=C cp -n source target',
+      'command cp -n source target'
+    ])('keeps protected copies and queries prompt-free: %s', async (source) => {
+      expect(await analyzeNotebookCodeRisk('bash', source)).toEqual([])
+    })
+    it.each([
+      'cp source target',
+      'cp -f source target',
+      'cp -r source target',
+      'cp -n -f source target',
+      'cp -n --remove-destination source target',
+      'cp source target -n',
+      'cp -n "$options" source target',
+      'cp -n $source target',
+      'cp --no-clobber -p source target',
+      'cp -n -- source "$(rm target)"',
+      'env LC_ALL=C cp -f source target',
+      'mv source target',
+      'mv -f source target',
+      'mv -n source target',
+      'mv -- "$source" "$target"',
+      'command mv source target'
+    ])('reviews overwrite, source removal and unresolved options: %s', async (source) => {
+      expect(await analyzeNotebookCodeRisk('bash', source)).not.toEqual([])
+    })
+    it.each(['python', 'r', 'repl'] as const)(
+      'reviews %s process copies and moves',
+      async (language) => {
+        for (const command of ['cp', 'mv']) {
+          const source =
+            language === 'python'
+              ? `import subprocess; subprocess.run(["${command}", "-f", "source", "target"])`
+              : language === 'r'
+                ? `system2("${command}", c("-f", "source", "target"))`
+                : `require("node:child_process").execFileSync("${command}", ["-f", "source", "target"])`
+          expect(await analyzeNotebookCodeRisk(language, source)).not.toEqual([])
+        }
+      }
+    )
+    it.each(['Copy-Item', 'cp', 'Move-Item', 'mv'])(
+      'reviews PowerShell %s without POSIX option assumptions',
+      async (name) => {
+        const spy = vi.spyOn(powerShellParser, 'parsePowerShellSearchCommands').mockResolvedValue([
+          {
+            name,
+            arguments: ['-n', 'source', 'target'],
+            source: `${name} -n source target`,
+            line: 1
+          }
+        ])
+        try {
+          expect(await analyzePowerShellCodeRisk(`${name} -n source target`)).not.toEqual([])
+        } finally {
+          spy.mockRestore()
+        }
+      }
+    )
+  })
   describe('bounded history replay evidence', () => {
     it.each([
       ['python', '#', 'print("hello")', 'import os\nerase=os.unlink', 'erase("target.txt")'],

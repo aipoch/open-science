@@ -435,7 +435,8 @@ export const normalizeActivityAfterRestore = (
   const closesOpenNotebookActivity =
     closesOpenActivity &&
     (isPersistedNotebookRunActivity(activity) ||
-      (activity.id.startsWith('app-approval:') &&
+      (activity.appOwned === true &&
+        activity.id.startsWith('app-approval:') &&
         activity.providerToolName === 'Open-Science' &&
         typeof activity.rawInput === 'object' &&
         activity.rawInput !== null &&

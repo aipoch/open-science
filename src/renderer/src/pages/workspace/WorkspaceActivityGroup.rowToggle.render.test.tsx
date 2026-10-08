@@ -150,6 +150,7 @@ describe('WorkspaceActivityGroup row toggling', () => {
     const review: ToolActivity = {
       ...run,
       id: 'app-approval:risk',
+      appOwned: true,
       title: 'Review risky code',
       providerToolName: 'Open-Science',
       createdAt: 200,

@@ -1,6 +1,7 @@
 import { setImmediate as yieldAnalysis } from 'node:timers/promises'
 import { createHash } from 'node:crypto'
-import { win32 } from 'node:path'
+import { basename, isAbsolute, resolve, win32 } from 'node:path'
+import { realpath, stat } from 'node:fs/promises'
 import {
   fieldChild,
   fieldChildren,
@@ -20,10 +21,17 @@ export type NotebookCodeRisk = Readonly<{
 type Language = 'python' | 'r' | 'repl' | 'bash'
 type Bindings = Map<string, string>
 
-type FunctionEvidence = { name: string; effects: NotebookCodeRisk[]; members: Bindings }
+// Deferred paths are analysis-only: filesystem verdicts must never enter replay snapshots.
+type RiskEvidence = NotebookCodeRisk & {
+  overwritePath?: string
+  overwriteCwd?: string
+  copyBasename?: string | null
+  freshHandle?: boolean
+}
+type FunctionEvidence = { name: string; effects: RiskEvidence[]; members: Bindings }
 type ReplaySnapshot = {
   bindings: [string, string][]
-  functions: [string, { name: string; effects: NotebookCodeRisk[]; members: [string, string][] }][]
+  functions: [string, { name: string; effects: RiskEvidence[]; members: [string, string][] }][]
   objectRevision: number
 }
 
@@ -64,9 +72,126 @@ const joinedBindings = (...states: Bindings[]): Bindings => {
     [...names].map((name) => [name, mergeTargets(states.map((state) => state.get(name) ?? name))])
   )
 }
-const uniqueRisks = (risks: NotebookCodeRisk[]): NotebookCodeRisk[] => [
+const uniqueRisks = (risks: RiskEvidence[]): RiskEvidence[] => [
   ...new Map(risks.map((risk) => [JSON.stringify(risk), risk])).values()
 ]
+
+// Cwd expressions contain source path steps relative to the invocation, never host cwd or stat
+// results. Keeping them in Bindings gives branches and incomplete cells the same bounded joins.
+const CWD_BINDING = '@execution-cwd'
+const FILE_SCOPE_BINDING = '@file-scope'
+const INITIAL_CWD = '@cwd:[]'
+const cwdSteps = (target: string | undefined): string[] | undefined =>
+  target?.startsWith('@cwd:') ? JSON.parse(target.slice(5)) : undefined
+const appendCwd = (base: string | undefined, steps: readonly string[] | undefined): string => {
+  if (!steps) return '<dynamic>'
+  const absolute = steps.findLastIndex((step) => isAbsolute(step))
+  if (absolute >= 0) return `@cwd:${JSON.stringify(steps.slice(absolute))}`
+  const before = cwdSteps(base)
+  return before && before.length + steps.length <= 64
+    ? `@cwd:${JSON.stringify([...before, ...steps])}`
+    : '<dynamic>'
+}
+const composeCwd = (base: string | undefined, change: string | undefined): string =>
+  mergeTargets(
+    possibleTargets(base ?? INITIAL_CWD).flatMap((origin) =>
+      possibleTargets(change ?? INITIAL_CWD).map((target) => appendCwd(origin, cwdSteps(target)))
+    )
+  )
+
+async function resolveOverwriteRisks(
+  evidence: RiskEvidence[],
+  cwd?: string,
+  signal?: AbortSignal
+): Promise<NotebookCodeRisk[]> {
+  const results: NotebookCodeRisk[] = []
+  const existing = new Map<string, { exists: boolean; directory: boolean }>()
+  const directories = new Map<string, string | undefined>()
+  const physicalDirectory = async (path: string): Promise<string | undefined> => {
+    signal?.throwIfAborted()
+    if (directories.has(path)) return directories.get(path)
+    if (directories.size >= 256) throw new Error('Notebook cwd analysis exceeds path limit')
+    let physical: string | undefined
+    try {
+      physical = await realpath(path)
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      // A directory created earlier in this cell is absent during preflight. Existing symlinks
+      // have already been resolved step by step; retain only a lexical candidate for new paths.
+      if (code === 'ENOENT' || code === 'ENOTDIR') physical = resolve(path)
+    }
+    directories.set(path, physical)
+    return physical
+  }
+  const inspect = async (path: string): Promise<{ exists: boolean; directory: boolean }> => {
+    signal?.throwIfAborted()
+    const cached = existing.get(path)
+    if (cached) return cached
+    if (existing.size >= 256) throw new Error('Notebook write analysis exceeds path limit')
+    let value: { exists: boolean; directory: boolean }
+    try {
+      const info = await stat(path)
+      value = { exists: true, directory: info.isDirectory() }
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      value = { exists: code !== 'ENOENT' && code !== 'ENOTDIR', directory: false }
+    }
+    existing.set(path, value)
+    return value
+  }
+  for (const { overwritePath, overwriteCwd, copyBasename, freshHandle, ...risk } of evidence) {
+    signal?.throwIfAborted()
+    if (freshHandle) continue
+    if (overwritePath !== undefined) {
+      let overwrites = false
+      for (const origin of possibleTargets(overwriteCwd ?? INITIAL_CWD)) {
+        const steps = isAbsolute(overwritePath) ? [] : cwdSteps(origin)
+        // A visible cwd-changing call with unresolved input invalidates relative-path exemptions.
+        if (!steps) {
+          overwrites = true
+          break
+        }
+        if (!cwd && ![...steps, overwritePath].some(isAbsolute)) continue
+        let directory = cwd
+        for (const step of steps) {
+          if (isAbsolute(step)) directory = await physicalDirectory(step)
+          else if (directory !== undefined)
+            directory = await physicalDirectory(`${directory}/${step}`)
+        }
+        if (!isAbsolute(overwritePath) && directory === undefined) {
+          overwrites = true
+          break
+        }
+        // Do not normalize '..' before the filesystem follows intermediate symlinks.
+        let path = isAbsolute(overwritePath) ? overwritePath : `${directory}/${overwritePath}`
+        let info = await inspect(path)
+        if (info.directory && copyBasename !== undefined) {
+          if (copyBasename === null) {
+            overwrites = true
+            break
+          }
+          path = `${path}/${copyBasename}`
+          info = await inspect(path)
+        }
+        if (info.exists) {
+          overwrites = true
+          break
+        }
+      }
+      if (!overwrites) continue
+    }
+    results.push(risk)
+  }
+  signal?.throwIfAborted()
+  return uniqueRisks(results)
+}
+type PythonFileHandle = { mode: string; prior?: boolean; scope: string }
+const pythonFileHandle = (
+  target: string
+): { handle: PythonFileHandle; member: string } | undefined => {
+  const match = /^@python-file:(.+);(\.[a-zA-Z_]+)?$/.exec(target)
+  return match ? { handle: JSON.parse(match[1]), member: match[2] ?? '' } : undefined
+}
 const pythonPartialTarget = (target: string): string | undefined =>
   target.startsWith('@python-partial:') && target.endsWith(';')
     ? target.slice('@python-partial:'.length, -1)
@@ -182,56 +307,233 @@ const containsLoopBreak = (node: Node | null, root = true): boolean => {
 export async function analyzePowerShellCodeRisk(
   source: string,
   signal?: AbortSignal,
-  version: '5.1' | '7.6' = '5.1'
+  version: '5.1' | '7.6' = '5.1',
+  cwd?: string
 ): Promise<NotebookCodeRisk[]> {
   try {
     const commands = await parsePowerShellSearchCommands(source, signal, version, true)
-    return commands.flatMap(({ name, arguments: args, source: commandSource, line }) => {
-      const command = name?.split('\\').at(-1)?.toLowerCase()
-      const risky =
-        !command ||
-        [
-          'remove-item',
-          'ri',
-          'rm',
-          'rmdir',
-          'del',
-          'erase',
-          'clear-content',
-          'format-volume',
-          'invoke-expression',
-          'iex',
-          'start-process',
-          'powershell',
-          'pwsh',
-          'cmd',
-          '@overwrite',
-          '@dynamic-member'
-        ].includes(command) ||
-        /^@member:(?:delete|deletefile|deletedirectory|invoke|start)$/i.test(command) ||
-        (!command.startsWith('@') &&
-          commandRisk(
-            command,
-            args.map((arg) => arg ?? undefined)
-          ))
-      return risky
-        ? [
-            {
-              operation: name ?? 'dynamic PowerShell command',
-              source: commandSource ?? args.filter((arg) => arg !== null).join(' '),
-              line: line ?? 1
-            }
-          ]
-        : []
-    })
+    const evidence: RiskEvidence[] = commands.flatMap(
+      ({ name, arguments: args, source: commandSource, line }) => {
+        const command = name?.split('\\').at(-1)?.toLowerCase()
+        const overwritePath = powerShellOverwriteTarget(command ?? '', args)
+        const risky =
+          !command ||
+          [
+            'remove-item',
+            'ri',
+            'rm',
+            'rmdir',
+            'del',
+            'erase',
+            'copy-item',
+            'copy',
+            'cpi',
+            'cp',
+            'move-item',
+            'move',
+            'mi',
+            'mv',
+            'rename-item',
+            'ren',
+            'rni',
+            'clear-content',
+            'format-volume',
+            'invoke-expression',
+            'iex',
+            'start-process',
+            'powershell',
+            'pwsh',
+            'cmd',
+            '@overwrite',
+            '@dynamic-member'
+          ].includes(command) ||
+          /^@member:(?:delete|deletefile|deletedirectory|invoke|start)$/i.test(command) ||
+          /^@file:(?:delete|move|replace)$/.test(command) ||
+          (!command.startsWith('@') &&
+            commandRisk(
+              command,
+              args.map((arg) => arg ?? undefined)
+            ))
+        return risky || overwritePath !== undefined
+          ? [
+              {
+                operation:
+                  overwritePath !== undefined
+                    ? `${name} existing-file overwrite`
+                    : (name ?? 'dynamic PowerShell command'),
+                source: commandSource ?? args.filter((arg) => arg !== null).join(' '),
+                line: line ?? 1,
+                ...(!risky && overwritePath !== undefined ? { overwritePath } : {})
+              }
+            ]
+          : []
+      }
+    )
+    return await resolveOverwriteRisks(evidence, cwd, signal)
   } catch {
     signal?.throwIfAborted()
     return [{ operation: 'PowerShell analysis unavailable', source, line: 1 }]
   }
 }
+
+const powerShellOverwriteTarget = (
+  command: string,
+  args: (string | null)[]
+): string | undefined => {
+  if (/^@file:(?:writealltext|writealllines|writeallbytes|create|createtext)$/.test(command))
+    return args[0] ?? undefined
+  if (command === '@file:copy')
+    return args[2]?.toLowerCase() === 'true' ? (args[1] ?? undefined) : undefined
+  if (!['set-content', 'sc', 'out-file', 'of', 'tee-object', 'tee'].includes(command))
+    return undefined
+  const output = !['set-content', 'sc'].includes(command)
+  let path: string | undefined
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index]
+    if (arg === null) continue
+    const parameter = arg.toLowerCase()
+    if (output && ['-append', '-noclobber'].includes(parameter)) {
+      const next = args[index + 1]?.toLowerCase()
+      if (next !== 'false' && next !== null) return undefined
+      index++
+    } else if (['-path', '-literalpath', '-filepath'].includes(parameter)) {
+      path = args[++index] ?? undefined
+    } else if (arg.startsWith('-')) {
+      // Known value parameters consume one argument; switches do not. Unsupported binding
+      // remains unresolved instead of mistaking an option value for the destination.
+      if (
+        [
+          '-encoding',
+          '-value',
+          '-inputobject',
+          '-width',
+          '-filter',
+          '-include',
+          '-exclude',
+          '-credential',
+          '-erroraction',
+          '-warningaction'
+        ].includes(parameter)
+      )
+        index++
+      else if (!['-force', '-nonewline', '-verbose', '-debug'].includes(parameter)) return undefined
+    } else if (index === 0) path = arg
+  }
+  return path
+}
 const pythonDeletion =
   /^(?:os\.(?:remove|unlink|rmdir|removedirs)|shutil\.rmtree|pathlib\.(?:Path|PosixPath|WindowsPath)\.(?:unlink|rmdir))$/
 const jsDeletion = /^(?:node:)?fs(?:\.promises)?\.(?:rm|unlink|rmdir)(?:Sync)?$/
+const explicitFileMutation = (language: Language, target: string): boolean =>
+  language === 'python'
+    ? /^(?:os\.(?:truncate|ftruncate|rename|renames|replace)|pathlib\.(?:Path|PosixPath|WindowsPath)\.(?:rename|replace)|shutil\.move)$/.test(
+        target
+      )
+    : language === 'repl'
+      ? /^(?:node:)?fs(?:\.promises)?\.(?:truncate|ftruncate|rename)(?:Sync)?$/.test(target)
+      : language === 'r' && /^(?:base::)?(?:file\.rename|truncate)$/.test(target)
+
+// Only concrete targets and known write modes become candidates. Unknown scientific calls and
+// dynamic output paths are not blanket review triggers. Argument effects are visited separately.
+const overwriteTarget = (
+  language: Language,
+  target: string,
+  args: Node[],
+  functionNode: Node | null | undefined,
+  bindings: Bindings
+): string | undefined => {
+  if (language === 'python') {
+    const positional = pythonPositional(args)
+    const argument = (name: string, position: number): Node | null | undefined =>
+      pythonKeyword(args, name, bindings) ?? positional[position]
+    const pathMethod =
+      /^pathlib\.(?:Path|PosixPath|WindowsPath)\.(open|write_text|write_bytes)$/.exec(target)
+    const receiver = pathMethod ? fieldChild(functionNode, 'object') : undefined
+    if (pathMethod && !receiver) return undefined
+    const path = receiver ?? argument('file', 0)
+    if (/^(?:(?:builtins|io)\.)?open$/.test(target) || pathMethod?.[1] === 'open') {
+      const mode = processString(argument('mode', receiver ? 0 : 1)) ?? 'r'
+      return /^w[bt]?\+?$|^w\+[bt]?$/.test(mode)
+        ? pythonProcessText(pythonProcessValue(path, bindings), bindings)
+        : undefined
+    }
+    if (pathMethod) return pythonProcessText(pythonProcessValue(path, bindings), bindings)
+    if (/^shutil\.(?:copyfile|copy2?)$/.test(target))
+      return pythonProcessText(pythonProcessValue(argument('dst', 1), bindings), bindings)
+  }
+  if (language === 'repl') {
+    if (!/^(?:node:)?fs(?:\.promises)?\./.test(target)) return undefined
+    const method = target.split('.').at(-1)!.replace(/Sync$/, '')
+    if (method === 'copyFile') {
+      // COPYFILE_EXCL (1) prevents destination replacement.
+      if (
+        (args[2]?.type === 'number' && Number(args[2].text) & 1) ||
+        /^(?:node:)?fs\.constants\.COPYFILE_EXCL$/.test(identity(args[2] ?? null, bindings) ?? '')
+      )
+        return undefined
+      return processString(args[1])
+    }
+    if (!['writeFile', 'appendFile', 'open', 'createWriteStream'].includes(method)) return undefined
+    let flag: string | undefined = method === 'appendFile' ? 'a' : method === 'open' ? 'r' : 'w'
+    if (method === 'open') flag = args[1] ? processString(args[1]) : flag
+    else {
+      const options = unparenthesized(args[method === 'createWriteStream' ? 1 : 2])
+      if (options?.type === 'object') {
+        for (const entry of options.namedChildren) {
+          if (entry.type === 'comment') continue
+          if (entry.type !== 'pair') {
+            flag = undefined
+            continue
+          }
+          const key = fieldChild(entry, 'key')
+          const name =
+            key?.type === 'computed_property_name' ? processString(key.namedChild(0)) : literal(key)
+          if (name === (method === 'createWriteStream' ? 'flags' : 'flag'))
+            flag = processString(fieldChild(entry, 'value'))
+          else if (name === undefined) flag = undefined
+        }
+      } else if (
+        options &&
+        !['string', 'null', 'arrow_function', 'function_expression'].includes(options.type)
+      )
+        flag = undefined
+    }
+    // Opening r+ alone does not mutate data; writeFile/streams with r+ do.
+    return flag &&
+      (['w', 'w+'].includes(flag) || (method !== 'open' && ['r+', 'rs+', 'sr+'].includes(flag)))
+      ? processString(args[0])
+      : undefined
+  }
+  if (language === 'r') {
+    const name = target.replace(/^base::/, '')
+    const formals =
+      name === 'writeLines'
+        ? ['text', 'con', 'sep', 'useBytes']
+        : name === 'writeBin'
+          ? ['object', 'con', 'size', 'endian', 'useBytes']
+          : name === 'cat'
+            ? ['...', 'file', 'sep', 'fill', 'labels', 'append']
+            : name === 'file'
+              ? ['description', 'open']
+              : undefined
+    if (!formals) return undefined
+    // cat's parameters after ... require exact names and never consume positional data.
+    const matched =
+      name === 'cat'
+        ? new Map(
+            args.flatMap((arg) => {
+              const key = literal(fieldChild(arg, 'name'))
+              return key && ['file', 'append'].includes(key) ? [[key, arg] as const] : []
+            })
+          )
+        : rArguments(args, formals)
+    const value = (key: string): Node | null => fieldChild(matched.get(key), 'value')
+    if (name === 'cat' && value('append') && value('append')?.text !== 'FALSE') return undefined
+    if (name === 'file' && !/^w[b+]*$/.test(processString(value('open')) ?? '')) return undefined
+    return processString(value(name === 'cat' ? 'file' : name === 'file' ? 'description' : 'con'))
+  }
+  return undefined
+}
 const processCall =
   /^(?:os\.(?:system|popen|(?:exec|spawn)[lv]p?e?|posix_spawnp?)|pty\.spawn|runpy\.run_(?:path|module)|subprocess\.(?:run|call|Popen|check_call|check_output|getoutput|getstatusoutput)|(?:node:)?child_process\.(?:exec|execSync|execFile|execFileSync|spawn|spawnSync|fork)|(?:base::)?system2?)$/
 const jsVmExecution =
@@ -736,6 +1038,16 @@ const identity = (
             )
           )
     }
+    if (node.tree.rootNode.type === 'module' && !partial) {
+      const pathOpen = /^pathlib\.(?:Path|PosixPath|WindowsPath)\.open$/.test(callee ?? '')
+      if (/^(?:(?:builtins|io)\.)?open$/.test(callee ?? '') || pathOpen) {
+        const modeNode =
+          pythonKeyword(args, 'mode', bindings) ?? pythonPositional(args)[pathOpen ? 0 : 1]
+        const mode = modeNode ? processString(modeNode) : 'r'
+        if (mode && /^[rwax][bt]?\+?$|^[rwax]\+[bt]?$/.test(mode))
+          return `@python-file:${JSON.stringify({ mode, scope: bindings.get(FILE_SCOPE_BINDING) ?? 'root' })};`
+      }
+    }
     const attribute = pythonAttributeLookup(node, bindings, callee, args, values)
     if (attribute) {
       if (!attribute.fallback || attribute.present) return attribute.member
@@ -1147,6 +1459,17 @@ const recordBinding = (
             : imported.split('.')[0]
       )
     }
+  }
+  if (language === 'python' && node.type === 'as_pattern' && node.parent?.type === 'with_item') {
+    const value = identity(node.namedChild(0), bindings)
+    const alias = fieldChild(node, 'alias')
+    if (alias)
+      bindings.set(
+        alias.text,
+        possibleTargets(value).every((target) => target?.startsWith('@python-file:'))
+          ? value!
+          : '<dynamic>'
+      )
   }
   const assigned = assignment(node)
   if (assigned) {
@@ -4072,6 +4395,27 @@ const commandRisk = (
     }
     return mode === 'x' && !stdout ? 'tar extraction file overwrite' : undefined
   }
+  if (name === 'mv') return 'mv source removal or destination overwrite'
+  if (name === 'cp') {
+    const risk = 'cp destination overwrite or unresolved options'
+    let noClobber = false
+    let operands = false
+    for (let index = 0; index < args.length; index++) {
+      const arg = args[index]
+      // After --, expansions are paths; before it they can introduce overriding options.
+      if (arg === undefined || patterns[index]) return risk
+      if (arg === '--') return noClobber ? undefined : risk
+      if (arg.startsWith('-') && arg !== '-') {
+        // Require protection before the first operand on both BSD and GNU parsers.
+        if (operands) return risk
+        if (arg === '--no-clobber') noClobber = true
+        else if (['--recursive', '--verbose'].includes(arg)) continue
+        else if (/^-[nRrv]+$/.test(arg)) noClobber ||= arg.includes('n')
+        else return risk
+      } else operands = true
+    }
+    return noClobber ? undefined : risk
+  }
   if (['rm', 'unlink', 'rmdir', 'shred', 'truncate', 'mkfs'].includes(name)) return name
   if (name === 'find') {
     for (let index = 0; index < args.length; index++) {
@@ -4605,8 +4949,26 @@ export async function analyzeNotebookCodeRisk(
       throw new Error('Notebook risk replay state exceeds analysis limit')
     return serialized
   }
-  const analyze = (root: Node, incomplete = false): NotebookCodeRisk[] => {
-    const risks: NotebookCodeRisk[] = []
+  const analyze = (root: Node, incomplete = false): RiskEvidence[] => {
+    bindings.set(CWD_BINDING, INITIAL_CWD)
+    bindings.set(FILE_SCOPE_BINDING, 'root')
+    // Captured fresh handles become existing-file evidence on later Runs, including summaries
+    // restored from the source cache. Handles opened inside the invoked function remain fresh.
+    for (const fn of functions.values()) for (const effect of fn.effects) delete effect.freshHandle
+    for (const [name, value] of bindings) {
+      bindings.set(
+        name,
+        mergeTargets(
+          possibleTargets(value).map((target) => {
+            const file = target ? pythonFileHandle(target) : undefined
+            return file
+              ? `@python-file:${JSON.stringify({ ...file.handle, prior: true })};${file.member}`
+              : target
+          })
+        )
+      )
+    }
+    const risks: RiskEvidence[] = []
     const declarations = new Map<number, string>()
     const methodOwners = new Map<number, string>()
     const evaluatedNodeKeys = new Set<string>()
@@ -4683,7 +5045,7 @@ export async function analyzeNotebookCodeRisk(
         }
       }
     }
-    const visit = (node: Node, output: NotebookCodeRisk[]): void => {
+    const visit = (node: Node, output: RiskEvidence[]): void => {
       spendWork()
       // String contents are leaves; interpolations may contain real calls (Python f-strings,
       // JavaScript templates and Bash substitutions), so traverse their syntax rather than text.
@@ -4852,7 +5214,7 @@ export async function analyzeNotebookCodeRisk(
         const body = fieldChild(node, 'body')
         const increment = fieldChild(node, 'increment')
         const alternative = fieldChild(node, 'alternative')
-        const loopRisks: NotebookCodeRisk[] = []
+        const loopRisks: RiskEvidence[] = []
         let sequence = iterable
         while (sequence?.type === 'parenthesized_expression')
           sequence = sequence.namedChildren.find((child) => child.type !== 'comment') ?? null
@@ -4992,7 +5354,7 @@ export async function analyzeNotebookCodeRisk(
         const prefix = new Map(bindings)
         exceptionPrefixes.push(prefix)
         const body = fieldChild(node, 'body')
-        const tryRisks: NotebookCodeRisk[] = []
+        const tryRisks: RiskEvidence[] = []
         if (body) visit(body, tryRisks)
         exceptionPrefixes.pop()
         const alternative = node.namedChildren.find((child) => child.type === 'else_clause')
@@ -5083,9 +5445,22 @@ export async function analyzeNotebookCodeRisk(
         capturePrefixes()
         return
       }
-      const add = (operation: string): void => {
+      const add = (
+        operation: string,
+        overwritePath?: string,
+        overwriteCwd = bindings.get(CWD_BINDING),
+        copyBasename?: string | null,
+        freshHandle?: boolean
+      ): void => {
         spendWork()
-        output.push({ operation, source: node.text, line: node.startPosition.row + 1 })
+        output.push({
+          operation,
+          source: node.text,
+          line: node.startPosition.row + 1,
+          ...(overwritePath !== undefined ? { overwritePath, overwriteCwd } : {}),
+          ...(copyBasename !== undefined ? { copyBasename } : {}),
+          ...(freshHandle ? { freshHandle } : {})
+        })
       }
       if (language === 'repl' && node.type === 'object') {
         const entries = node.namedChildren.filter((child) => child.type !== 'comment')
@@ -5190,11 +5565,13 @@ export async function analyzeNotebookCodeRisk(
             ? declaredName.text
             : undefined)
         if (name) {
-          const effects: NotebookCodeRisk[] = []
+          const effects: RiskEvidence[] = []
           const parameters = fieldChild(functionNode, 'parameters')
           // Python evaluates defaults when defining the function; R/JS evaluate them on a call.
           if (language === 'python' && parameters) visit(parameters, output)
           const saved = new Map(bindings)
+          bindings.set(CWD_BINDING, INITIAL_CWD)
+          bindings.set(FILE_SCOPE_BINDING, `@scope:${functionNode.id}`)
           const savedPrefixes = exceptionPrefixes.splice(0)
           if (language !== 'python' && parameters) visit(parameters, effects)
           // Bash attaches these redirects to the definition, but performs them on each call.
@@ -5645,6 +6022,101 @@ export async function analyzeNotebookCodeRisk(
               )
                 add('modified path protocol')
             }
+            const changesCwd =
+              (language === 'python' && target === 'os.chdir') ||
+              (language === 'repl' &&
+                /^(?:(?:globalThis|global)\.)?process\.chdir$/.test(target)) ||
+              (language === 'r' && /^(?:base::)?setwd$/.test(target))
+            if (changesCwd) {
+              const argument =
+                language === 'python'
+                  ? (pythonKeyword(args, 'path', bindings) ?? pythonPositional(args)[0])
+                  : language === 'r'
+                    ? fieldChild(rArguments(args, ['dir']).get('dir'), 'value')
+                    : args[0]
+              const path =
+                target === callee &&
+                !invocation.uncertainArgs &&
+                !('partial' in invocation && invocation.partial)
+                  ? language === 'python'
+                    ? pythonProcessText(pythonProcessValue(argument, bindings), bindings)
+                    : processString(argument)
+                  : undefined
+              const before = bindings.get(CWD_BINDING)
+              const next = mergeTargets(
+                possibleTargets(before).map((origin) =>
+                  appendCwd(origin, path === undefined ? undefined : [path])
+                )
+              )
+              bindings.set(
+                CWD_BINDING,
+                invocations.length > 1 ? mergeTargets([before, next]) : next
+              )
+              noteModuleWrite(CWD_BINDING)
+              capturePrefixes()
+            }
+            if (language === 'python') {
+              const file = pythonFileHandle(target)
+              if (file && /^(?:\.write|\.writelines|\.truncate)$/.test(file.member)) {
+                const { mode, prior } = file.handle
+                const writable = /[wax+]/.test(mode)
+                const mutates = file.member === '.truncate' || !mode.startsWith('a')
+                // This cell's w open is reviewed at creation; x creates a new file exclusively.
+                // A retained handle can contain data from earlier Runs even if originally w/x.
+                if (writable && mutates) {
+                  const fresh = !prior && /^[wx]/.test(mode)
+                  const captured =
+                    functionModuleWrites.length > 0 &&
+                    file.handle.scope !== bindings.get(FILE_SCOPE_BINDING)
+                  if (!fresh || captured)
+                    add(
+                      `file${file.member} existing-file overwrite`,
+                      undefined,
+                      undefined,
+                      undefined,
+                      fresh
+                    )
+                }
+              }
+            }
+            if (explicitFileMutation(language, target)) add(target)
+            if (
+              target === callee &&
+              !invocation.uncertainArgs &&
+              !('partial' in invocation && invocation.partial)
+            ) {
+              const path = overwriteTarget(
+                language,
+                target,
+                args,
+                'functionNode' in invocation
+                  ? (invocation.functionNode as Node | undefined)
+                  : fieldChild(node, 'function'),
+                bindings
+              )
+              if (path !== undefined) {
+                const sourcePath =
+                  language === 'python' && /^shutil\.copy2?$/.test(target)
+                    ? pythonProcessText(
+                        pythonProcessValue(
+                          pythonKeyword(args, 'src', bindings) ?? pythonPositional(args)[0],
+                          bindings
+                        ),
+                        bindings
+                      )
+                    : undefined
+                add(
+                  `${target} existing-file overwrite`,
+                  path,
+                  bindings.get(CWD_BINDING),
+                  language === 'python' && /^shutil\.copy2?$/.test(target)
+                    ? sourcePath === undefined
+                      ? null
+                      : basename(sourcePath)
+                    : undefined
+                )
+              }
+            }
             if (
               (language === 'python' && pythonDeletion.test(target)) ||
               (language === 'repl' && jsDeletion.test(target)) ||
@@ -5712,11 +6184,24 @@ export async function analyzeNotebookCodeRisk(
               add(`${target} dynamic execution`)
             const fn = functions.get(target)
             if (fn) {
-              for (const effect of fn.effects) add(`${fn.name}: ${effect.operation}`)
+              for (const effect of fn.effects)
+                add(
+                  `${fn.name}: ${effect.operation}`,
+                  effect.overwritePath,
+                  composeCwd(bindings.get(CWD_BINDING), effect.overwriteCwd),
+                  effect.copyBasename,
+                  effect.freshHandle
+                )
               // A summarized body may branch, return or fail before writing. Preserve both
               // the old member and its possible replacement; never invent a completed write.
               for (const [member, value] of fn.members) {
-                bindings.set(member, mergeTargets([bindings.get(member) ?? member, value]))
+                bindings.set(
+                  member,
+                  mergeTargets([
+                    bindings.get(member) ?? member,
+                    member === CWD_BINDING ? composeCwd(bindings.get(member), value) : value
+                  ])
+                )
                 noteModuleWrite(member)
               }
               if (fn.members.size) capturePrefixes()
@@ -5846,6 +6331,8 @@ export async function analyzeNotebookCodeRisk(
             invocations.some((invocation) => {
               const { callee } = invocation
               return (
+                /^(?:(?:builtins|io)\.)?open$/.test(callee ?? '') ||
+                /^pathlib\.(?:Path|PosixPath|WindowsPath)\.open$/.test(callee ?? '') ||
                 callee === 'functools.partial' ||
                 callee === 'operator.attrgetter' ||
                 callee === 'operator.itemgetter' ||
@@ -5907,7 +6394,7 @@ export async function analyzeNotebookCodeRisk(
     const parseSource = async (
       script: string,
       incomplete = false
-    ): ReturnType<typeof withParsedNotebookSource<NotebookCodeRisk[]>> => {
+    ): ReturnType<typeof withParsedNotebookSource<RiskEvidence[]>> => {
       remainingWork = 100_000
       if (language !== 'bash' && process.platform !== 'win32') {
         // Earlier data strings must not consume the current cell's literal probe allowance.
@@ -6023,7 +6510,7 @@ export async function analyzeNotebookCodeRisk(
     const parsed = await parseSource(source)
     if (parsed.state !== 'ok') return [{ operation: parsed.reason, source, line: 1 }]
     rememberReplaySnapshot(replayKey(historyKey, source, false), snapshot())
-    return parsed.value
+    return await resolveOverwriteRisks(parsed.value, context?.workingDirectory, signal)
   } catch {
     signal?.throwIfAborted()
     return [{ operation: 'code analysis unavailable', source, line: 1 }]

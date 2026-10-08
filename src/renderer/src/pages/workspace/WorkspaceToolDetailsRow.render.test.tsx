@@ -79,6 +79,7 @@ describe('WorkspaceToolDetailsRow', () => {
       const source = 'import os\n\nos.unlink(path)\n'
       const original = createActivity({
         id: 'app-approval:receipt',
+        appOwned: true,
         providerToolName: 'Open-Science',
         title: 'Review potentially destructive code',
         status,

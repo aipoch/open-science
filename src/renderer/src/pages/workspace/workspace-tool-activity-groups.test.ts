@@ -560,6 +560,7 @@ describe('Notebook risk review waiting presentation', () => {
   const review = (overrides: Partial<ToolActivity> = {}): ToolActivity =>
     createActivity({
       id: 'app-approval:risk',
+      appOwned: true,
       providerToolName: 'Open-Science',
       status: 'in_progress',
       promptMessageId: 'prompt',
@@ -604,9 +605,28 @@ describe('Notebook risk review waiting presentation', () => {
     }
   )
 
+  it.each(['in_progress', 'completed', 'failed'] as const)(
+    'keeps unmarked legacy and lookalike reviews visible as ordinary %s tools',
+    (status) => {
+      const legacy = review({ appOwned: undefined, status })
+      const activities = [run, legacy]
+      expect(getRenderableActivityEntries(activities)).toEqual([
+        { activity: run, activityIndex: 0 },
+        { activity: legacy, activityIndex: 1 }
+      ])
+      expect(formatStepCount(activities)).toBe(
+        status === 'failed' ? '2 steps · 1 failed' : '2 steps'
+      )
+      expect(formatActivityGroupPresentationTitle(activities, undefined, undefined)).not.toBe(
+        'Waiting for your approval'
+      )
+    }
+  )
+
   it('keeps environment selection and switching visible when hiding code-risk reviews', () => {
     const selection = createActivity({
       id: 'app-approval:environment',
+      appOwned: true,
       providerToolName: 'Open-Science',
       rawInput: {
         notebookRuntimeSelection: {
@@ -648,6 +668,7 @@ describe('Notebook risk review waiting presentation', () => {
           review({ status: 'completed' }),
           review({
             id: 'app-approval:second',
+            appOwned: true,
             status: 'completed',
             createdAt: 500,
             updatedAt: 1300

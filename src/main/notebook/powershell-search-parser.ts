@@ -11,6 +11,7 @@ Import-Module "$PSHOME\Modules\Microsoft.PowerShell.Utility\Microsoft.PowerShell
 function Read-Literal($node) {
   if ($node -is [System.Management.Automation.Language.StringConstantExpressionAst]) { return ,@($node.Value) }
   if ($node -is [System.Management.Automation.Language.ConstantExpressionAst]) { return ,@([string]$node.Value) }
+  if ($includeMutationEvidence -and $node -is [System.Management.Automation.Language.VariableExpressionAst] -and $node.VariablePath.UserPath -in @('true', 'false')) { return ,@($node.VariablePath.UserPath) }
   if ($node -is [System.Management.Automation.Language.ExpandableStringExpressionAst] -and $node.NestedExpressions.Count -eq 0) { return ,@($node.Value) }
   if ($node -is [System.Management.Automation.Language.CommandParameterAst]) {
     $values = @('-' + $node.ParameterName)
@@ -43,7 +44,13 @@ try {
     $commands += @($ast.FindAll({param($node) $node -is [System.Management.Automation.Language.InvokeMemberExpressionAst]}, $true) | ForEach-Object {
       $member = Read-Literal $_.Member
       $name = if ($null -eq $member[0]) { '@dynamic-member' } else { '@member:' + $member[0] }
-      @{ name = $name; arguments = @($_.Extent.Text); source = $_.Extent.Text; line = $_.Extent.StartLineNumber }
+      $arguments = @($_.Extent.Text)
+      if ($_.Static -and $_.Expression -is [System.Management.Automation.Language.TypeExpressionAst] -and $_.Expression.TypeName.FullName -match '^(System\.)?IO\.File$' -and $member[0] -match '^(WriteAllText|WriteAllLines|WriteAllBytes|AppendAllText|AppendAllLines|Create|CreateText|Copy|Move|Replace)$') {
+        if ($null -ne $member[0]) { $name = '@file:' + $member[0] }
+        $arguments = @()
+        foreach ($argument in $_.Arguments) { $arguments += Read-Literal $argument }
+      }
+      @{ name = $name; arguments = $arguments; source = $_.Extent.Text; line = $_.Extent.StartLineNumber }
     })
     $commands += @($ast.FindAll({param($node) $node -is [System.Management.Automation.Language.FileRedirectionAst] -and -not $_.Append}, $true) | ForEach-Object {
       @{ name = '@overwrite'; arguments = @($_.Extent.Text); source = $_.Extent.Text; line = $_.Extent.StartLineNumber }

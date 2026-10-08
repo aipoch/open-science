@@ -78,7 +78,9 @@ class AcpRuntimeSnapshotOwner {
     let text = event.text
     const title = typeof event.title === 'string' ? sanitizeToolDetailText(event.title) : undefined
     const rawInput =
-      event.toolCallId?.startsWith('app-approval:') && event.providerToolName === 'Open-Science'
+      event.appOwned === true &&
+      event.toolCallId?.startsWith('app-approval:') &&
+      event.providerToolName === 'Open-Science'
         ? (sanitizeNotebookCodeReviewPayload(event.rawInput) ??
           sanitizeRawToolPayload(event.rawInput, MAX_RUNTIME_RAW_PAYLOAD_CHARS))
         : sanitizeRawToolPayload(event.rawInput, MAX_RUNTIME_RAW_PAYLOAD_CHARS)

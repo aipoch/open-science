@@ -25,6 +25,7 @@ const isNotebookExecutionActivity = (activity: ToolActivity): boolean =>
   isNotebookExecuteToolName(activity.providerToolName) || isNotebookExecuteToolName(activity.title)
 
 const isNotebookCodeReviewActivity = (activity: ToolActivity): boolean =>
+  activity.appOwned === true &&
   activity.id.startsWith('app-approval:') &&
   activity.providerToolName === 'Open-Science' &&
   readNotebookCodeReview(activity.rawInput) !== undefined

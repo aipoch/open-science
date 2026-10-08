@@ -1242,7 +1242,9 @@ const buildToolActivityDetails = (
   // App-owned review receipts retain their original payload and correlation id in history.
   // Provider lookalikes must keep all generic arguments visible.
   const codeReview =
-    activity.id.startsWith('app-approval:') && activity.providerToolName === 'Open-Science'
+    activity.appOwned === true &&
+    activity.id.startsWith('app-approval:') &&
+    activity.providerToolName === 'Open-Science'
       ? readNotebookCodeReview(activity.rawInput)
       : undefined
   if (codeReview)

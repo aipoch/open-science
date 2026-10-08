@@ -469,7 +469,8 @@ class NotebookRuntimeService {
           previous.runId !== run.runId &&
           previous.kernelEpochId === run.kernelEpochId &&
           (previous.kernelDispatched === true || previous.status === 'completed') &&
-          ['completed', 'failed', 'timeout'].includes(previous.status)
+          // A soft cancellation can preserve assignments in the live kernel, like a timeout.
+          ['completed', 'failed', 'timeout', 'cancelled'].includes(previous.status)
       )
       .map((previous) => ({
         script: previous.script,
@@ -477,11 +478,22 @@ class NotebookRuntimeService {
       }))
     const risks: NotebookCodeRisk[] =
       run.shellRuntime?.kind === 'powershell'
-        ? await analyzePowerShellCodeRisk(run.script, signal, run.shellRuntime.version)
+        ? await analyzePowerShellCodeRisk(
+            run.script,
+            signal,
+            run.shellRuntime.version,
+            run.cwdBefore
+          )
         : await analyzeNotebookCodeRisk(
             run.kernelKind,
             run.script,
-            context,
+            {
+              staticStrings: [],
+              staticCollections: [],
+              localFileWrappers: [],
+              ...context,
+              workingDirectory: run.cwdBefore
+            },
             previousSources,
             signal
           )

@@ -255,6 +255,7 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
         promptMessageId: context?.promptMessageId,
         title: request.title,
         providerToolName: request.providerToolName ?? request.mcpIdentity,
+        appOwned: request.appOwned,
         rawInput: request.rawInput,
         ...(state === 'rejected' && unattended
           ? {

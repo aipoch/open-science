@@ -1113,6 +1113,10 @@ class AcpPermissionBroker {
     params: RequestPermissionRequest,
     policyContext?: PermissionPolicyContext
   ): Promise<RequestPermissionResponse> {
+    // Provider permission requests cannot address host-owned approval activities.
+    if (params.toolCall.toolCallId.startsWith('app-approval:')) {
+      return Promise.resolve({ outcome: { outcome: 'cancelled' } })
+    }
     const cancellationGeneration = this.cancellationGeneration
     const requestId = randomUUID()
     const mcpServerNames = policyContext?.mcpServerNames ?? []

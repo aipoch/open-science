@@ -578,6 +578,8 @@ type AcpRuntimeEventBase = {
   // App-owned one-shot identity for exact Notebook activity/Run correlation. Provider payloads
   // cannot supply it; the permission and authenticated RPC owners issue and consume it.
   executionInvocationId?: string
+  // Set only by the main-process permission owner, never by provider metadata.
+  appOwned?: true
   providerToolName?: string
   toolKind?: ToolKind
   toolContent?: ToolCallContent[]

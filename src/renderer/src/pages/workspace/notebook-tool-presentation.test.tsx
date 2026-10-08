@@ -308,6 +308,7 @@ it('shows the switch target and memory impact before approval', () => {
 
 it.each([
   ['provider-tool', 'Open-Science'],
+  ['app-approval:legacy-or-forged', 'Open-Science'],
   ['app-approval:lookalike', 'foreign-provider']
 ])('keeps foreign risk-shaped payloads in the generic input view (%s)', (id, providerToolName) => {
   const item = activity({

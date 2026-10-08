@@ -70,6 +70,8 @@ export type ToolActivity = {
   status: ToolActivityStatus
   toolDisposition?: 'declined' | 'permission-closed'
   executionInvocationId?: string
+  // Set only by the main-process permission owner, never by provider metadata.
+  appOwned?: true
   eventIds: string[]
   sortIndex: number
   providerToolName?: string

@@ -124,7 +124,9 @@ export const sanitizeToolActivity = (activity: unknown): PersistedToolActivity |
   const toolContent = sanitizeToolContent(activity.toolContent)
   const toolLocations = sanitizeToolLocations(activity.toolLocations)
   const rawInput =
-    id.startsWith('app-approval:') && providerToolName === 'Open-Science'
+    activity.appOwned === true &&
+    id.startsWith('app-approval:') &&
+    providerToolName === 'Open-Science'
       ? (sanitizeNotebookCodeReviewPayload(activity.rawInput) ??
         sanitizeRawToolPayload(activity.rawInput, MAX_PERSISTED_RAW_CHARS))
       : sanitizeRawToolPayload(activity.rawInput, MAX_PERSISTED_RAW_CHARS)
@@ -135,6 +137,7 @@ export const sanitizeToolActivity = (activity: unknown): PersistedToolActivity |
   const toolDisposition = asToolActivityDisposition(activity.toolDisposition)
   const executionInvocationId = asString(activity.executionInvocationId)
 
+  if (activity.appOwned === true) sanitized.appOwned = true
   if (providerToolName) sanitized.providerToolName = providerToolName
   if (activityGroupId) sanitized.activityGroupId = activityGroupId
   if (promptMessageId) sanitized.promptMessageId = promptMessageId

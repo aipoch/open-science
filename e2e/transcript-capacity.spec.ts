@@ -277,7 +277,7 @@ for (const { count, contextLines } of [
     const longSource =
       '# Research context and reproducible calculations\n'.repeat(contextLines) +
       'import os\nos.unlink("temporary.txt")'
-    let reviews = 0
+    let expectedReviewCount = 0
     for (let i = 0; i < count; i++) {
       const reviewed = i % 25 === 0 || i >= count - 3
       const code = reviewed
@@ -319,10 +319,11 @@ for (const { count, contextLines } of [
       }
       activities.push(base)
       if (reviewed) {
-        reviews++
+        expectedReviewCount++
         activities.push({
           ...base,
           id: `app-approval:capacity-${i}`,
+          appOwned: true,
           providerToolName: 'Open-Science',
           title: 'Review potentially destructive code',
           sortIndex: i * 2 + 1,
@@ -369,7 +370,7 @@ for (const { count, contextLines } of [
     session.activities = activities
     const metrics: Record<string, unknown> = {
       count,
-      reviews,
+      reviews: expectedReviewCount,
       longSourceCharacters: longSource.length,
       uniqueRunSourceBytes: runs.reduce((sum, run) => sum + Buffer.byteLength(run.script), 0),
       measurement:
@@ -438,7 +439,7 @@ for (const { count, contextLines } of [
         },
         { projectId, id, cwd, count }
       )
-      expect((metrics.ipc as { reviewCount: number }).reviewCount).toBe(reviews)
+      expect((metrics.ipc as { reviewCount: number }).reviewCount).toBe(expectedReviewCount)
       const branchMetrics = []
       for (const branchId of [alternateBranch, primaryBranch, alternateBranch, primaryBranch]) {
         const started = performance.now()
@@ -490,17 +491,19 @@ for (const { count, contextLines } of [
       const integrity = await page.evaluate(
         async ({ projectId, id, expectedCode }) => {
           const loaded = await window.api.sessions.loadOne({ projectId, sessionId: id })
-          const reviews = loaded!.conversationGraph!.activities.filter((item) =>
+          const restoredReviews = loaded!.conversationGraph!.activities.filter((item) =>
             item.id.startsWith('app-approval:')
           )
           return {
             branches: loaded!.conversationGraph!.branches.length,
-            exactSource: (reviews.at(-1)!.rawInput as { code: string }).code === expectedCode
+            hostOwned: restoredReviews.every((item) => item.appOwned === true),
+            exactSource:
+              (restoredReviews.at(-1)!.rawInput as { code: string }).code === expectedCode
           }
         },
         { projectId, id, expectedCode: runs.at(-1)!.script }
       )
-      expect(integrity).toEqual({ branches: 2, exactSource: true })
+      expect(integrity).toEqual({ branches: 2, hostOwned: true, exactSource: true })
       await app.markResourceProfilePhase('restored-view')
       await captureHeap('restored-view')
       await app.captureResourceTimings('capacity:')
@@ -534,7 +537,9 @@ for (const { count, contextLines } of [
         uniqueReviewSourceBytes,
         redundantReviewSourceBytes: allReviewSourceBytes - uniqueReviewSourceBytes
       }
-      expect(uniqueReviewSources.size).toBe(reviews)
+      // Each seeded review has a unique "# Run i" prefix; repeated durable projections
+      // add source copies, never new unique sources.
+      expect(uniqueReviewSources.size).toBe(expectedReviewCount)
     } finally {
       const profile = await app.finishResourceProfile()
       await testInfo.attach('notebook-capacity-profile', {

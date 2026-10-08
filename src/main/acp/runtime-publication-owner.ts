@@ -132,6 +132,12 @@ class AcpRuntimePublicationOwner {
   }
 
   pushEvent(event: RuntimeEventInput, onAppended?: () => void): void {
+    // Reserve host approval identities before any snapshot, durable projection or IPC subscriber
+    // can merge a provider update into an app-owned receipt. Provider normalization never sets appOwned.
+    if (event.kind === 'tool' && event.toolCallId?.startsWith('app-approval:') && !event.appOwned) {
+      log.warn('Ignored provider tool event using a reserved app approval identity')
+      return
+    }
     const interaction = event.sessionId
       ? this.options.interactions.current(event.sessionId)
       : undefined
@@ -207,6 +213,7 @@ class AcpRuntimePublicationOwner {
         toolCallId: request.toolCallId,
         title: request.title,
         providerToolName: 'Open-Science',
+        appOwned: true,
         rawInput: request.rawInput,
         status: 'in_progress'
       })

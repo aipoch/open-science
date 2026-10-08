@@ -1813,7 +1813,8 @@ describe('Session persistence coordinator architecture', () => {
       'src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx',
       'src/renderer/src/lib/acp/workspace-prompt-rollback-failure.test.ts',
       'src/main/literature/pdf-translation/checkpoints.test.ts',
-      'src/main/literature/pdf-translation/usage.test.ts'
+      'src/main/literature/pdf-translation/usage.test.ts',
+      'src/main/notebook/code-risk-admission.test.ts'
     ])
     expect(sessionPersistence.capabilityOverlays).toEqual([
       'windows_sensitive',
