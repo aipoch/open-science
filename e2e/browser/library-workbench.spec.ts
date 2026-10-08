@@ -220,14 +220,15 @@ for (const dark of [false, true]) {
     await expect(
       page.getByRole('button', { name: 'Add to chat', exact: true }).first()
     ).toBeDisabled()
-    await page.getByRole('checkbox').check()
+    const selectAll = page.getByRole('checkbox', { name: 'Select all references' })
+    await selectAll.check()
     await expect(page.getByText('Selected: 1', { exact: true })).toBeVisible()
     await page.getByRole('button', { name: 'Add to chat', exact: true }).first().click()
     await expect(page.getByRole('status').filter({ hasText: 'session-0:' })).toBeVisible()
     await page.getByRole('button', { name: 'Done' }).click()
     await expect(page.getByRole('checkbox')).toHaveCount(0)
     await page.getByRole('button', { name: 'Batch actions' }).click()
-    await expect(page.getByRole('checkbox')).not.toBeChecked()
+    await expect(selectAll).not.toBeChecked()
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   })
 }
@@ -253,8 +254,12 @@ for (const width of [320, 375, 414, 768]) {
       await page.keyboard.press('Enter')
       await expect(page.getByRole('link', { name: 'PMID: 39377163' })).toBeVisible()
       await page.getByRole('button', { name: '批量操作', exact: true }).click()
-      await page.getByRole('checkbox').first().check()
+      await page.getByRole('list', { name: '收件箱' }).getByRole('checkbox').first().check()
       await expect(page.getByText('已选：1', { exact: true })).toBeVisible()
+      const selectAll = page.getByRole('checkbox', { name: '选择所有文献' })
+      await expect(selectAll).toBeChecked({ indeterminate: true })
+      await selectAll.check()
+      await expect(page.getByText('已选：4', { exact: true })).toBeVisible()
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
         true
       )

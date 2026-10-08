@@ -1,7 +1,9 @@
 import type { ToolActivity } from '@/stores/session-store'
 import type { NotebookRunRecord } from '../../../../shared/notebook'
-import { useEffect, useLayoutEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { TriangleAlert } from 'lucide-react'
+import type { NotebookCodeReview } from './notebook-tool-presentation'
 
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
 import {
@@ -47,6 +49,7 @@ const sectionLabelClassName = 'text-[11px] font-medium uppercase tracking-wide t
 const TRANSLATABLE_TOOL_DETAIL_COPY = new Set([
   'Agent SDK',
   'Code',
+  'Code risk review',
   'Command',
   'Content',
   'Error',
@@ -83,7 +86,13 @@ const renderCodeBody = (
     'activity' | 'annotationPort' | 'annotationItemType'
   >
 ): React.JSX.Element => {
-  const body = <WorkspaceToolCodeBlock code={section.text} language={section.language} />
+  const body = (
+    <WorkspaceToolCodeBlock
+      code={section.text}
+      language={section.language}
+      showLineNumbers={section.showLineNumbers}
+    />
+  )
   const sectionId = section.label.trim().toLowerCase()
   const annotatableBody = annotationContext.annotationPort ? (
     <TextAnnotationSurface
@@ -113,6 +122,76 @@ const renderCodeBody = (
         <div className="text-[11px] text-text-300">{t('Output truncated')}</div>
       ) : null}
     </>
+  )
+}
+
+// Transcript receipts are compact inspection surfaces, separate from actionable approval cards.
+const NotebookCodeReviewReceipt = ({
+  review
+}: {
+  review: NotebookCodeReview
+}): React.JSX.Element => {
+  const { t } = useTranslation()
+  const [revealLine, setRevealLine] = useState<{ line: number }>()
+  return (
+    <div data-testid="notebook-code-review-receipt" className="min-w-0 space-y-2">
+      {review.uncertain ? (
+        <p className="text-xs text-muted-foreground">
+          {t('This code could not be fully checked. Review it before execution.')}
+        </p>
+      ) : null}
+      {(review.riskCount ?? 0) > review.risks.length ? (
+        <p className="text-xs text-muted-foreground">
+          {t('Showing {{shown}} of {{total}} findings. Review the full code below.', {
+            shown: review.risks.length,
+            total: review.riskCount
+          })}
+        </p>
+      ) : null}
+
+      <ul className="space-y-1 text-xs">
+        {review.risks.map((risk, index) => (
+          <li key={index} className="flex min-w-0 items-start gap-2">
+            <TriangleAlert
+              className="size-3.5 shrink-0 text-status-warning-foreground dark:text-status-warning-dark-foreground"
+              aria-hidden="true"
+            />
+            <code className="min-w-0 flex-1 whitespace-pre-wrap break-all">
+              {risk.source || risk.operation}
+            </code>
+            <button
+              type="button"
+              className="shrink-0 rounded-sm text-muted-foreground underline decoration-dotted underline-offset-4 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+              onClick={() => setRevealLine({ line: risk.line })}
+            >
+              {t('Line {{line}}', { line: risk.line })}
+            </button>
+          </li>
+        ))}
+      </ul>
+      <WorkspaceToolCodeBlock
+        code={review.code}
+        language={review.language}
+        copyable
+        highlightedLines={review.risks.map((risk) => risk.line)}
+        revealLine={revealLine}
+      />
+      {review.environment ? (
+        <details className="text-xs text-muted-foreground">
+          <summary className="w-fit cursor-pointer rounded-sm py-1 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
+            {t('Execution details')}
+          </summary>
+          <dl className="mt-1 grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
+            {review.environment ? (
+              <>
+                <dt>{t('Environment')}</dt>
+                <dd className="break-all font-mono">{review.environment}</dd>
+              </>
+            ) : null}
+          </dl>
+        </details>
+      ) : null}
+    </div>
   )
 }
 
@@ -155,6 +234,17 @@ const WorkspaceToolDetailsRow = ({
       : undefined
   const translateKnownCopy = (value: string): string =>
     TRANSLATABLE_TOOL_DETAIL_COPY.has(value) ? t(value) : value
+  const reviewStatus = details.codeReview
+    ? activity.toolDisposition === 'declined' || phase === 'declined'
+      ? t('declined by you')
+      : activity.toolDisposition === 'permission-closed' || phase === 'closed'
+        ? t('request ended')
+        : activity.status === 'completed'
+          ? t('Allowed once')
+          : activity.status === 'failed'
+            ? t('Failed')
+            : t('waiting for your approval')
+    : undefined
   const annotationContext = {
     activity,
     annotationPort,
@@ -257,7 +347,8 @@ const WorkspaceToolDetailsRow = ({
           )
         }
         metaLabel={
-          phase === 'prepared'
+          reviewStatus ??
+          (phase === 'prepared'
             ? t('code shown')
             : phase === 'awaiting-approval'
               ? t('waiting for your approval')
@@ -265,7 +356,7 @@ const WorkspaceToolDetailsRow = ({
                 ? t('declined by you')
                 : phase === 'closed'
                   ? t('request ended')
-                  : (notebookRunMeta ?? details.metaLabel)
+                  : (notebookRunMeta ?? details.metaLabel))
         }
         isExpanded={isExpanded}
         panelClassName="mx-1 mb-1.5 space-y-2.5 md:ml-[30px]"
@@ -273,7 +364,11 @@ const WorkspaceToolDetailsRow = ({
         buttonRef={setRowElement}
         onToggle={onToggle}
       >
-        {details.sections.map(renderSection)}
+        {details.codeReview ? (
+          <NotebookCodeReviewReceipt key={activity.id} review={details.codeReview} />
+        ) : (
+          details.sections.map(renderSection)
+        )}
       </WorkspaceToolActivityRowButton>
       {allowFolderAccess && notebookRun ? <NotebookFolderAccessNotice run={notebookRun} /> : null}
       {notebookRun ? <NotebookToolFigureOutputs run={notebookRun} /> : null}

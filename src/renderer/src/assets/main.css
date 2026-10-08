@@ -156,6 +156,70 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   transform: rotate(270deg) translateX(-100%);
 }
 
+/* PDF.js owns link geometry, including crop boxes and quads. Only links are mounted here;
+   the app's annotation tools keep ownership of editing, forms and evidence overlays. */
+.pdf-native-links {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: clip;
+  pointer-events: none;
+  transform-origin: 0 0;
+}
+
+:is(.pdf-native-links, .pdf-native-links section)[data-main-rotation='90'] {
+  transform: rotate(90deg) translateY(-100%);
+}
+
+:is(.pdf-native-links, .pdf-native-links section)[data-main-rotation='180'] {
+  transform: rotate(180deg) translate(-100%, -100%);
+}
+
+:is(.pdf-native-links, .pdf-native-links section)[data-main-rotation='270'] {
+  transform: rotate(270deg) translateX(-100%);
+}
+
+.pdf-native-links[data-main-rotation='90'] .norotate {
+  transform: rotate(270deg) translateX(-100%);
+}
+
+.pdf-native-links[data-main-rotation='180'] .norotate {
+  transform: rotate(180deg) translate(-100%, -100%);
+}
+
+.pdf-native-links[data-main-rotation='270'] .norotate {
+  transform: rotate(90deg) translateY(-100%);
+}
+
+.pdf-native-links section {
+  position: absolute;
+  box-sizing: border-box;
+  transform-origin: 0 0;
+  pointer-events: auto;
+  user-select: none;
+}
+
+.pdf-native-links a {
+  position: absolute;
+  inset: 0;
+  cursor: pointer;
+}
+
+.pdf-native-links a:hover,
+.pdf-native-links a:focus-visible {
+  background: color-mix(in oklab, var(--primary) 14%, transparent);
+  outline: 2px solid var(--ring);
+}
+
+.pdf-native-links a:active {
+  background: color-mix(in oklab, var(--primary) 24%, transparent);
+}
+
+[data-pdf-native-links][inert] .pdf-native-links section,
+[data-pdf-cursor-mode]:has(.pdf-text-layer:active) .pdf-native-links section {
+  pointer-events: none;
+}
+
 .pdf-text-layer :is(span, br) {
   position: absolute;
   color: transparent;
@@ -583,6 +647,38 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
 }
 
 @layer components {
+  @keyframes pdf-translation-content-expand {
+    from {
+      height: 0;
+    }
+    to {
+      height: var(--radix-collapsible-content-height);
+    }
+  }
+
+  @keyframes pdf-translation-content-collapse {
+    from {
+      height: var(--radix-collapsible-content-height);
+    }
+    to {
+      height: 0;
+    }
+  }
+
+  .pdf-translation-collapsible-content[data-state='open'] {
+    animation: pdf-translation-content-expand 180ms ease-out;
+  }
+
+  .pdf-translation-collapsible-content[data-state='closed'] {
+    animation: pdf-translation-content-collapse 150ms ease-in;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .pdf-translation-collapsible-content {
+      animation: none;
+    }
+  }
+
   @keyframes package-setup-nudge {
     0%,
     60%,

@@ -376,6 +376,80 @@ describe('registry + catalog', () => {
       /invalid tool arguments.*cids.*array/i
     )
   })
+  it('validates Ensembl LD inputs and publishes the same contracts in the generated skill', () => {
+    const population = '1000GENOMES:phase_3:KHV'
+    const pairArgs = {
+      variant_id1: 'rs6792369',
+      variant_id2: 'rs1042779',
+      population_name: population
+    }
+    const proxyArgs = { variant_id: 'rs1042779', population_name: population }
+    const pairwise = getDescriptor('genomes', 'ensembl_ld_pairwise')!
+    const proxies = getDescriptor('genomes', 'ensembl_ld_proxies')!
+    expect(() => validateToolArguments(pairwise, pairArgs)).not.toThrow()
+    expect(() => validateToolArguments(proxies, proxyArgs)).not.toThrow()
+    for (const [descriptor, args] of [
+      [pairwise, pairArgs],
+      [proxies, proxyArgs]
+    ] as const) {
+      for (const invalid of [
+        { ...args, population_name: undefined },
+        { ...args, population_name: '' },
+        { ...args, population_name: '  ' },
+        { ...args, population_name: null },
+        { ...args, population_name: 1 },
+        { ...args, species: '' },
+        { ...args, species: '  ' },
+        { ...args, species: null },
+        { ...args, assembly: 'GRCh37' }
+      ]) {
+        expect(() => validateToolArguments(descriptor, invalid)).toThrow(/invalid_arguments/)
+      }
+      const doc = renderSkillDoc('genomes')
+      expect(doc).toContain(`### ${descriptor.id}`)
+      expect(doc).toContain(descriptor.description)
+      expect(doc).toContain(descriptor.returns!)
+      expect(descriptor.description).toContain('High LD does not establish causality')
+      expect(descriptor.description).toContain('caller must supply the full population name')
+      expect(descriptor.description).not.toContain('/info/variation/populations')
+    }
+    for (const field of ['variant_id1', 'variant_id2'] as const) {
+      for (const value of [undefined, '', '  ', 123]) {
+        expect(() => validateToolArguments(pairwise, { ...pairArgs, [field]: value })).toThrow(
+          /invalid_arguments/
+        )
+      }
+    }
+    for (const invalid of [
+      { variant_id: undefined },
+      { variant_id: '' },
+      { variant_id: '  ' },
+      { min_r2: -0.1 },
+      { min_r2: 1.1 },
+      { min_r2: '0.8' },
+      { min_d_prime: -0.1 },
+      { min_d_prime: 1.1 },
+      { min_d_prime: null },
+      { window_size: 0 },
+      { window_size: 501 },
+      { window_size: 1.5 },
+      { max_records: 0 },
+      { max_records: 1001 },
+      { max_records: 1.5 }
+    ]) {
+      expect(() => validateToolArguments(proxies, { ...proxyArgs, ...invalid })).toThrow(
+        /invalid_arguments/
+      )
+    }
+    for (const bounds of [
+      { min_r2: 0, min_d_prime: 0, window_size: 1, max_records: 1 },
+      { min_r2: 1, min_d_prime: 1, window_size: 500, max_records: 1000 }
+    ]) {
+      expect(() => validateToolArguments(proxies, { ...proxyArgs, ...bounds })).not.toThrow()
+    }
+    expect(proxies.description).toContain('total width')
+    expect(proxies.description).toContain('does not limit upstream computation or download size')
+  })
   it.each(['ncbi_get_assembly_info', 'ncbi_get_sequence_aliases'])(
     'requires a versioned assembly accession for genomes/%s',
     (method) => {

@@ -9,7 +9,8 @@ import { asString, isRecord, asNumber, asStringArray } from './primitives'
 import {
   sanitizeToolDetailText,
   sanitizeToolContent,
-  sanitizeRawToolPayload
+  sanitizeRawToolPayload,
+  sanitizeNotebookCodeReviewPayload
 } from '../tool-detail-sanitizer'
 import { sanitizeElicitationProjection } from '../elicitation'
 import { sanitizeActivityGroupTitle } from '../activity-groups'
@@ -122,7 +123,13 @@ export const sanitizeToolActivity = (activity: unknown): PersistedToolActivity |
   const toolKind = asString(activity.toolKind)
   const toolContent = sanitizeToolContent(activity.toolContent)
   const toolLocations = sanitizeToolLocations(activity.toolLocations)
-  const rawInput = sanitizeRawToolPayload(activity.rawInput, MAX_PERSISTED_RAW_CHARS)
+  const rawInput =
+    activity.appOwned === true &&
+    id.startsWith('app-approval:') &&
+    providerToolName === 'Open-Science'
+      ? (sanitizeNotebookCodeReviewPayload(activity.rawInput) ??
+        sanitizeRawToolPayload(activity.rawInput, MAX_PERSISTED_RAW_CHARS))
+      : sanitizeRawToolPayload(activity.rawInput, MAX_PERSISTED_RAW_CHARS)
   const rawOutput = sanitizeRawToolPayload(activity.rawOutput, MAX_PERSISTED_RAW_CHARS)
   const terminalOutput = asCappedString(activity.terminalOutput)
   const terminalExitCode = asNumber(activity.terminalExitCode)
@@ -130,6 +137,7 @@ export const sanitizeToolActivity = (activity: unknown): PersistedToolActivity |
   const toolDisposition = asToolActivityDisposition(activity.toolDisposition)
   const executionInvocationId = asString(activity.executionInvocationId)
 
+  if (activity.appOwned === true) sanitized.appOwned = true
   if (providerToolName) sanitized.providerToolName = providerToolName
   if (activityGroupId) sanitized.activityGroupId = activityGroupId
   if (promptMessageId) sanitized.promptMessageId = promptMessageId

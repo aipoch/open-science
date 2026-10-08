@@ -43,6 +43,7 @@ it.each([false, true])(
     ])
     expect(result.unassigned).toEqual([])
     expect(result.issues).toContain('span-conflicts-with-source-rows')
+    expect(result.reviewCandidate).toBe(false)
     expect(result.issues).not.toContain('conflicting-spanning-cells')
   }
 )
@@ -67,6 +68,7 @@ it('retains a valid vertical merge after rejecting an alternative that combines 
     ['', '', '']
   ])
   expect(result.issues).toContain('span-conflicts-with-source-columns')
+  expect(result.reviewCandidate).toBe(false)
   expect(result.unassigned).toEqual([])
 })
 
@@ -84,6 +86,7 @@ it('keeps genuinely ambiguous overlapping merges unresolved regardless of predic
       )
     ).toBe(true)
     expect(result.issues).toContain('conflicting-spanning-cells')
+    expect(result.reviewCandidate).toBe(false)
   }
 })
 

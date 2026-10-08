@@ -696,6 +696,32 @@ The upper-right pin toggles the current Session through the shared Session contr
   explain that the selected language kernel loses its memory while other kernels are unaffected. Artifact approvals retain
   source paths and inspectable request metadata while omitting inline content bytes. Keep existing
   Allow/Deny options, scopes, correlation, and submission behavior unchanged.
+- Environment selection and switching belong to the runtime-management flow, independently of
+  code-risk review. `notebookRuntimeSelection` carries the confirmation context; `previousRuntimeId`
+  and `previousLabel` describe the previous binding, not risk evidence. The existing binding and
+  Run records remain the source of runtime identity. Sharing the approval channel does not make
+  environment selection a code risk or authorize later risky code. Hiding code-risk receipts must
+  not hide runtime-management activities or remove their history.
+- Host-owned Notebook code-risk approvals use one warning icon and a short review title; omit
+  the Notebook category badge, duplicate info tooltips, and repeated one-shot scope description.
+  Show the risk source and line number in a warning-tone summary, followed by the verbatim,
+  copyable code with line numbers and warning-highlighted risk lines. Risk line links focus and
+  scroll within the always-visible code block without moving the conversation. Keep the
+  environment in a compact badge at the upper right of the approval header; omit its bottom
+  Execution details disclosure and working-directory metadata from both approvals and transcript receipts. Retain Allow once / Deny; do not offer a conversation grant.
+  Only validated host-owned payloads use this view; unrecognized inputs retain their raw preview.
+- Notebook Message code blocks share the numbered-code presentation across Python, R, REPL and
+  Shell. PowerShell runs and reviews use the recorded shell runtime for their language label and
+  syntax highlighting; a `bash` kernel kind alone does not imply Bash syntax. Historical records
+  without runtime evidence retain Bash display rather than guessing from command text.
+  Preserve leading blank lines and indentation so line references match the original source;
+  output/log sections do not gain source line numbers. Risk highlighting is opt-in and uses the
+  existing warning tokens; copying always returns only the original code.
+- Code-risk review records are hidden from Message activity rows and visible step counts. The
+  Notebook Run remains the source of execution status. Keep review records in the existing
+  history format for approval evidence and timing; waiting time must still be excluded from Run
+  elapsed time. Execution-time approval cards remain visible and interactive. Review-only groups
+  render no empty transcript surface, and no historical records need migration.
 
 - Outer shell: `ScrollArea className="min-w-0 flex-1"`.
 - Message scroller surface uses `bg-bg-10` with a top fade `bg-gradient-to-b from-bg-10 to-bg-10/0`.

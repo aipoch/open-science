@@ -1,0 +1,2 @@
+{"name":"separate variables with native upper and paired scripts","runs":[{"base":"Z","upper":"A"},{"base":", Z","upper":"B","lower":"j"}],"translation":"矩阵 Z A 与 Z Bj 均为待学习的投影参数，分别作用于输出和查询。"}
+{"name":"several punctuation-prefixed native stacks","runs":[{"base":"Z","upper":"A","lower":"j"},{"base":", Z","upper":"B","lower":"j"},{"base":", Z","upper":"C","lower":"j"}],"translation":"矩阵 Z Aj、Z Bj 与 Z Cj 均为待学习的投影参数，分别作用于输出、查询和键。"}

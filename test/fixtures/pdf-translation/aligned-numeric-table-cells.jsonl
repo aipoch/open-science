@@ -1,0 +1,4 @@
+{"name":"native-lines-cross-numeric-table-columns","rows":3,"columnDrift":0,"table":true,"boldLastValue":false}
+{"name":"bold-result-fragment-stays-in-its-cell","rows":3,"columnDrift":0,"table":true,"boldLastValue":true}
+{"name":"isolated-numeric-sentence-is-not-table","rows":1,"columnDrift":0,"table":false,"boldLastValue":false}
+{"name":"unaligned-numeric-list-is-not-table","rows":3,"columnDrift":14,"table":false,"boldLastValue":false}

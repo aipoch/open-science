@@ -6,8 +6,9 @@ import { pathToFileURL } from 'node:url'
 import sharp from 'sharp'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { PdfStructureCache } from './cache'
+import { checkPdfStructureDecodingBudget } from '../../../shared/pdf-structure'
 import { readWorkerResult } from './worker-result'
-import type { PdfStructureIdentity } from './result'
+import { parsePdfStructureResult, type PdfStructureIdentity } from './result'
 
 const identity: PdfStructureIdentity = {
   extractionId: '00000000-0000-4000-8000-000000000001',
@@ -20,7 +21,7 @@ const png = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADElEQVQImWP4//8/AAX+Av5Y8msOAAAAAElFTkSuQmCC',
   'base64'
 )
-const { inspectScratch } = await import(
+const { inspectScratch, serializeWorkerResult } = await import(
   pathToFileURL(resolve('resources/pdf-structure/scratch.mjs')).href
 )
 const raw = (): Record<string, unknown> => ({
@@ -42,6 +43,26 @@ const raw = (): Record<string, unknown> => ({
   navigation: { entries: [] }
 })
 let root: string
+const rawTableFixture = {
+  id: 'p1-figure-1',
+  page: 1,
+  region: [0.1, 0.1, 0.8, 0.9],
+  thumbnail: 'thumbnails/p1-figure-1.png',
+  sourceViewport: { width: 600, height: 800 },
+  grid: [['=', '10']],
+  cells: ['=', '10'].map((text, column) => ({
+    row: 0,
+    column,
+    rowSpan: 1,
+    colSpan: 1,
+    text,
+    sourceRects: [[60 + column * 100, 100, 80 + column * 100, 120]],
+    sourceItems: [{ pageNumber: 1, index: column + 3, text: column ? '10' : '¼' }]
+  })),
+  unassigned: [],
+  issues: []
+}
+const rawTable = (): typeof rawTableFixture => structuredClone(rawTableFixture)
 const save = async (value: unknown): Promise<void> => {
   await writeFile(join(root, 'structure.json'), JSON.stringify(value))
 }
@@ -55,6 +76,124 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true })
 })
 describe('worker result boundary', () => {
+  it('keeps repaired display text separate from exact raw origins on a rotated page', async () => {
+    const table = rawTable()
+    await save({
+      ...raw(),
+      figures: [],
+      tables: [table],
+      pages: [{ page: 1, width: 600, height: 800, rotation: 90 }]
+    })
+    const result = await readWorkerResult(root, identity, new Map())
+    expect(result.elements[0].table!.cells[0]).toMatchObject({
+      text: '=',
+      sourceItems: [{ pageNumber: 1, index: 3, text: '¼' }]
+    })
+    // The same strict contract protects IPC/cache reads independently of the worker schema.
+    const cell = result.elements[0].table!.cells[0]
+    for (const origins of [
+      [],
+      [{ pageNumber: 1, index: -1, text: 'x' }],
+      [{ pageNumber: 1, index: 1.5, text: 'x' }],
+      [{ pageNumber: 1, index: Number.MAX_SAFE_INTEGER + 1, text: 'x' }],
+      [{ pageNumber: 1, index: 3, text: ' ' }],
+      [{ pageNumber: 2, index: 3, text: '¼' }],
+      [{ pageNumber: 1, index: 4, text: '¼' }], // Conflicts with the second cell.
+      [
+        { pageNumber: 1, index: 3, text: '¼' },
+        { pageNumber: 1, index: 3, text: '¼' }
+      ],
+      [
+        { pageNumber: 1, index: 5, text: 'x' },
+        { pageNumber: 1, index: 3, text: '¼' }
+      ]
+    ]) {
+      cell.sourceItems = origins
+      expect(() => parsePdfStructureResult(result, identity)).toThrow()
+      table.cells[0].sourceItems = origins
+      await save({ ...raw(), figures: [], tables: [table] })
+      await expect(readWorkerResult(root, identity, new Map())).rejects.toThrow()
+    }
+    delete cell.sourceItems
+    delete result.elements[0].table!.cells[1].sourceItems
+    expect(parsePdfStructureResult(result, identity)).toEqual(result)
+  })
+
+  it.each(['nodes', 'text', 'converted-nodes'])(
+    'omits origins for the entire job when optional metadata exceeds the %s budget',
+    async (budget) => {
+      const table = rawTable()
+      table.cells[0].sourceItems = Array.from(
+        { length: budget === 'text' ? 12 : budget === 'nodes' ? 8192 : 6000 },
+        (_, index) => ({
+          pageNumber: 1,
+          index: index + 10,
+          text: budget === 'text' ? 'x'.repeat(190000) : 'x'
+        })
+      )
+      if (budget === 'converted-nodes')
+        table.cells[0].sourceRects = Array.from({ length: 1500 }, () => [60, 100, 80, 120])
+      const value = { ...raw(), figures: [], tables: [table] }
+      if (budget === 'converted-nodes')
+        expect(() =>
+          checkPdfStructureDecodingBudget(JSON.parse(JSON.stringify(value)))
+        ).not.toThrow()
+      await save(value)
+      const images = new Map<string, Uint8Array>()
+      const result = await readWorkerResult(root, identity, images)
+      expect(result.elements[0].table!.cells.map((cell) => cell.text)).toEqual(['=', '10'])
+      expect(result.elements[0].table!.cells.every((cell) => cell.sourceItems === undefined)).toBe(
+        true
+      )
+      const cache = new PdfStructureCache({ dataRoot: () => join(root, 'cache') })
+      await mkdir(join(root, 'cache'))
+      await cache.publish(result, images, new AbortController().signal)
+      await expect(cache.read(identity)).resolves.toEqual(result)
+      // Omitting optional metadata must not relax the original content budgets.
+      table.cells[1].text = 'x'.repeat(262145)
+      await save(value)
+      await expect(readWorkerResult(root, identity, new Map())).rejects.toThrow('budget')
+    }
+  )
+
+  it('omits all origins before writing an oversized UTF-8 manifest', async () => {
+    const table = rawTable()
+    Object.assign(table.cells[0], { sourceTokens: [{ text: 'temporary token geometry' }] })
+    const value = { ...raw(), figures: [], tables: [table] }
+    const small = serializeWorkerResult(value)
+    expect(small).toContain('sourceItems')
+    expect(small).not.toContain('sourceTokens')
+    table.cells[0].sourceItems = Array.from({ length: 16 }, (_, index) => ({
+      pageNumber: 1,
+      index: index + 10,
+      text: '中'.repeat(200000)
+    }))
+    const text = serializeWorkerResult(value)
+    expect(Buffer.byteLength(text)).toBeLessThan(8 * 1024 ** 2)
+    expect(text).not.toContain('sourceItems')
+    expect(text).not.toContain('sourceTokens')
+    await writeFile(join(root, 'structure.json'), text)
+    expect(
+      (await readWorkerResult(root, identity, new Map())).elements[0].table!.cells[0].text
+    ).toBe('=')
+  })
+
+  it('rejects source items on another processed page even when that page exists', async () => {
+    const table = rawTable()
+    table.cells[0].sourceItems[0].pageNumber = 2
+    const bothPages = { ...identity, requestedPages: [1, 2] }
+    await save({
+      ...raw(),
+      pageCount: 2,
+      requestedPages: [1, 2],
+      processedPages: [1, 2],
+      pages: [1, 2].map((page) => ({ page, width: 600, height: 800, rotation: 0 })),
+      figures: [],
+      tables: [table]
+    })
+    await expect(readWorkerResult(root, bothPages, new Map())).rejects.toThrow('cell page')
+  })
+
   it.each([false, true])(
     'normalizes auxiliary-page notes independently and caches their provenance (grouped: %s)',
     async (grouped) => {
@@ -69,6 +208,7 @@ describe('worker result boundary', () => {
             rowSpan: 1,
             colSpan: 1,
             text: 'Value',
+            sourceItems: [{ pageNumber: 1, index: 9, text: 'Exact raw value' }],
             sourceRects: [[90, 120, 450, 600]]
           }
         ],
@@ -107,6 +247,8 @@ describe('worker result boundary', () => {
       const images = new Map<string, Uint8Array>()
       const result = await readWorkerResult(root, identity, images)
       const element = result.elements[0]
+      const cells = (grouped ? element.tableParts![0].table : element.table!).cells
+      expect(cells[0].sourceItems).toEqual(data.cells[0].sourceItems)
       const expected = [
         { text: notes[0].text, regions: [{ page: 2, x: 0.1, y: 0.1, width: 0.8, height: 0.1 }] }
       ]

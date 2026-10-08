@@ -11,6 +11,7 @@ import {
 } from '../../shared/acp'
 import {
   sanitizeRawToolPayload,
+  sanitizeNotebookCodeReviewPayload,
   sanitizeToolContent,
   sanitizeToolDetailText
 } from '../../shared/tool-detail-sanitizer'
@@ -76,7 +77,13 @@ class AcpRuntimeSnapshotOwner {
     let raw = event.raw
     let text = event.text
     const title = typeof event.title === 'string' ? sanitizeToolDetailText(event.title) : undefined
-    const rawInput = sanitizeRawToolPayload(event.rawInput, MAX_RUNTIME_RAW_PAYLOAD_CHARS)
+    const rawInput =
+      event.appOwned === true &&
+      event.toolCallId?.startsWith('app-approval:') &&
+      event.providerToolName === 'Open-Science'
+        ? (sanitizeNotebookCodeReviewPayload(event.rawInput) ??
+          sanitizeRawToolPayload(event.rawInput, MAX_RUNTIME_RAW_PAYLOAD_CHARS))
+        : sanitizeRawToolPayload(event.rawInput, MAX_RUNTIME_RAW_PAYLOAD_CHARS)
     const rawOutput = sanitizeRawToolPayload(event.rawOutput, MAX_RUNTIME_RAW_PAYLOAD_CHARS)
     const toolContent = sanitizeToolContent(event.toolContent) as
       AcpRuntimeEvent['toolContent'] | undefined

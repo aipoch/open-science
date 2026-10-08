@@ -24,7 +24,8 @@ import {
 import {
   isManagedSkillPermission,
   isNativeWebFetchPermission,
-  isNativeWebSearchPermission
+  isNativeWebSearchPermission,
+  withTrustedMcpToolIdentity
 } from './permission-policy'
 
 const NOTEBOOK_SERVERS = ['open-science-notebook']
@@ -82,6 +83,39 @@ const observe = (
 }
 
 describe('ACP permission context', () => {
+  it.each(['claude-code', 'opencode', 'codex', 'codebuddy'] as const)(
+    'defers verified Notebook execution to host admission without a language grant for %s',
+    async (frameworkId) => {
+      const emit = vi.fn()
+      const context = new AcpPermissionContext({
+        emitPermissionRequest: emit,
+        routing: permissionRouting({
+          capturePrompt: () => ({ sequence: 1, isCancellationAccepted: () => false }),
+          currentInteractionSequence: () => 1,
+          sessionSnapshot: () => ({
+            cwd: '/workspace',
+            frameworkId,
+            permissionProfile: { selectedProfile: 'ask' }
+          })
+        })
+      })
+      try {
+        for (const tool of ['notebook_execute', 'repl_execute', 'bash_execute']) {
+          const request = withTrustedMcpToolIdentity(
+            permissionRequest('s', tool, { rawInput: { code: 'os.unlink("x")', command: 'rm x' } }),
+            `open-science-notebook/${tool}`
+          )
+          vi.spyOn(context, 'restoreToolCall').mockResolvedValue(request)
+          expect(await context.handleProviderRequest(request)).toEqual({
+            outcome: { outcome: 'selected', optionId: 'allow-once' }
+          })
+        }
+        expect(emit).not.toHaveBeenCalled()
+      } finally {
+        context.dispose()
+      }
+    }
+  )
   it('does not log routine permission requests through the ACP context', async () => {
     const root = await mkdtemp(join(tmpdir(), 'permission-context-log-'))
     initLogger({ logDir: root, mirrorToConsole: false })

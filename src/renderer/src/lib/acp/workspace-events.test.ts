@@ -839,6 +839,30 @@ describe('workspace runtime events', () => {
     ])
   })
 
+  it('keeps host review provenance through the workspace event adapter', async () => {
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'review-start',
+        kind: 'tool',
+        toolCallId: 'app-approval:review',
+        appOwned: true,
+        status: 'in_progress'
+      })
+    )
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'review-end',
+        kind: 'tool',
+        toolCallId: 'app-approval:review',
+        status: 'completed'
+      })
+    )
+    expect(useSessionStore.getState().sessions[0].activities?.[0]).toMatchObject({
+      appOwned: true,
+      status: 'completed'
+    })
+  })
+
   it('projects Notebook authorization and declined permission metadata', async () => {
     await applyWorkspaceRuntimeEvent(
       createEvent({

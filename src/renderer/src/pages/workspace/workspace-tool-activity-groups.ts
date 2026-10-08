@@ -2,12 +2,23 @@ import type { PersistedActivityGroup } from '../../../../shared/session-persiste
 import type { ToolActivity } from '@/stores/session-store'
 
 import { isActivityActive, type ConversationItem } from './workspace-conversation-items'
-import { isEditActivity, isSkillActivity } from './workspace-tool-activity-details'
+import {
+  isEditActivity,
+  isSkillActivity,
+  getNotebookRunIdFromActivity
+} from './workspace-tool-activity-details'
 import { hasWebSearchContentEvidence } from './workspace-web-search-details'
-import { getToolExecutionPhase, isNotebookExecutionActivity } from './tool-execution-phase'
+import {
+  getCorrelatedNotebookRun,
+  getToolExecutionPhase,
+  isNotebookExecutionActivity,
+  isNotebookCodeReviewActivity,
+  isPendingNotebookCodeReview
+} from './tool-execution-phase'
 import type { SessionPermissionRuntimeContext } from '../../../../shared/session-persistence'
 import type { NotebookRunRecord } from '../../../../shared/notebook'
 import type { TFunction } from 'i18next'
+import { notebookInput } from './notebook-tool-presentation'
 import { i18next } from '@/i18n'
 
 type ConversationActivityGroupItem = {
@@ -284,6 +295,7 @@ const formatActivityGroupTitle = (
 
   let hasEarlierToolSearchWrapper = false
   activities.forEach((activity, activityIndex) => {
+    if (isNotebookCodeReviewActivity(activity)) return
     const category = categorizeActivity(
       activity,
       activities,
@@ -319,6 +331,7 @@ const formatActivityGroupPresentationTitle = (
   notebookRunsById?: ReadonlyMap<string, NotebookRunRecord>,
   t: TFunction = i18next.t.bind(i18next)
 ): string => {
+  if (activities.some(isPendingNotebookCodeReview)) return t('Waiting for your approval')
   const activityPhases = activities.map((activity) => ({
     isNotebook: isNotebookExecutionActivity(activity),
     phase: getToolExecutionPhase(activity, permission, notebookRunsById)
@@ -345,13 +358,17 @@ const formatActivityGroupPresentationTitle = (
   return formatActivityGroupTitle(activities, declaredTitle, t)
 }
 
-// Removes ToolSearch wrapper rows from rendering once concrete search rows are available.
+// Hides internal review receipts and ToolSearch wrappers superseded by concrete search rows.
 const getRenderableActivityEntries = (activities: ToolActivity[]): RenderableActivityEntry[] => {
   const hasSearchActivities = countSearchActivities(activities) > 0
 
   return activities
     .map((activity, activityIndex) => ({ activity, activityIndex }))
-    .filter(({ activity }) => !(hasSearchActivities && isToolSearchWrapperActivity(activity)))
+    .filter(
+      ({ activity }) =>
+        !isNotebookCodeReviewActivity(activity) &&
+        !(hasSearchActivities && isToolSearchWrapperActivity(activity))
+    )
 }
 
 // Formats the group header's total visible-step count, flagging any failed steps.
@@ -377,13 +394,39 @@ const formatStepCount = (
 const getActivityGroupElapsedMs = (
   activities: ToolActivity[],
   now: number,
-  isActive: (activity: ToolActivity) => boolean = isActivityActive
-): number =>
-  activities.reduce(
-    (total, activity) =>
-      total + Math.max(0, (isActive(activity) ? now : activity.updatedAt) - activity.createdAt),
-    0
-  )
+  isActive: (activity: ToolActivity) => boolean = isActivityActive,
+  notebookRunsById?: ReadonlyMap<string, NotebookRunRecord>
+): number => {
+  const reviews = activities.filter(isNotebookCodeReviewActivity)
+  return activities.reduce((total, activity) => {
+    if (isNotebookCodeReviewActivity(activity)) return total
+    const end = isActive(activity) ? now : activity.updatedAt
+    const intervals = isNotebookExecutionActivity(activity)
+      ? reviews
+          .filter((review) => {
+            if (review.promptMessageId !== activity.promptMessageId) return false
+            const runId =
+              getCorrelatedNotebookRun(activity, notebookRunsById)?.runId ??
+              getNotebookRunIdFromActivity(activity)
+            const reviewRunId = notebookInput(notebookInput(review.rawInput).notebookCodeRisk).runId
+            return typeof reviewRunId === 'string' && reviewRunId === runId
+          })
+          .map((review) => [
+            Math.max(activity.createdAt, review.createdAt),
+            Math.min(end, isPendingNotebookCodeReview(review) ? now : review.updatedAt)
+          ])
+          .filter(([start, end]) => end > start)
+          .sort((a, b) => a[0] - b[0])
+      : []
+    let waiting = 0,
+      coveredEnd = activity.createdAt
+    for (const [start, stop] of intervals) {
+      waiting += Math.max(0, stop - Math.max(start, coveredEnd))
+      coveredEnd = Math.max(coveredEnd, stop)
+    }
+    return total + Math.max(0, end - activity.createdAt - waiting)
+  }, 0)
+}
 
 // Keeps short work precise, then switches to compact clock units as the elapsed span grows.
 const formatActivityGroupElapsed = (elapsedMs: number): string => {

@@ -1138,7 +1138,8 @@ describe('Compute service architecture', () => {
       'src/renderer/src/lib/acp/workspace-runtime-session-memory.test.ts',
       'src/main/session-persistence/attention-projection.test.ts',
       'src/main/acp/approved-handoff-outcome.integration.test.ts',
-      'src/main/acp/approved-handoff-outcome.test.ts'
+      'src/main/acp/approved-handoff-outcome.test.ts',
+      'src/main/literature/pdf-translation/checkpoints.test.ts'
     ])
   })
 

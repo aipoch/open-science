@@ -3,7 +3,7 @@ import { join, dirname } from 'node:path'
 import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
 
-test('drops a native package into the current Project without adding an attachment @pr-mainline-files', async ({
+test('drops a native package into the current Project without adding an attachment', async ({
   app
 }, testInfo) => {
   await app.completeOnboarding()
@@ -109,7 +109,7 @@ test('drops a native package into the current Project without adding an attachme
   await page.screenshot({ path: testInfo.outputPath('project-package-drop-original-record.png') })
 })
 
-test('attaches native files across the conversation and excludes both sidebars @pr-mainline-files', async ({
+test('attaches native files across the conversation and excludes both sidebars', async ({
   app
 }, testInfo) => {
   await app.completeOnboarding()

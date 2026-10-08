@@ -30,6 +30,249 @@ const run = (
     retries: 0
   }).call(tool(id), args, {})
 
+describe('Ensembl LD', () => {
+  const population = '1000GENOMES:phase_3:KHV'
+  const pairArgs = {
+    variant_id1: 'rs6792369',
+    variant_id2: 'rs1042779',
+    population_name: population
+  }
+  const proxyArgs = { variant_id: 'rs1042779', population_name: population }
+  const pair = {
+    variation1: 'rs6792369',
+    variation2: 'rs1042779',
+    population_name: population,
+    r2: '0.951626',
+    d_prime: '0.975513'
+  }
+  const proxy = {
+    variation: 'rs678',
+    population_name: population,
+    r2: '0.975789',
+    d_prime: '1.000000',
+    chr: '3',
+    start: 52786965,
+    end: 52786965,
+    strand: 1,
+    consequence_type: 'missense_variant',
+    clinical_significance: ['benign']
+  }
+
+  it('queries the selected population and retains reference provenance with numeric statistics', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonRes([pair]))
+    const result = await run('ensembl_ld_pairwise', pairArgs, fetchImpl)
+    const url =
+      'https://rest.ensembl.org/ld/homo_sapiens/pairwise/rs6792369/rs1042779?population_name=1000GENOMES%3Aphase_3%3AKHV'
+    expect(String(fetchImpl.mock.calls[0][0])).toBe(url)
+    expect(result).toEqual({
+      ...pairArgs,
+      species: 'homo_sapiens',
+      reference_data: {
+        provider: 'Ensembl REST',
+        population_name: population,
+        reference_panel: '1000 Genomes Project Phase 3',
+        assembly_name: null,
+        ensembl_release: null,
+        request_url: url,
+        retrieved_at: expect.stringMatching(/^\d{4}-\d\d-\d\dT/),
+        note: expect.stringContaining('does not report assembly or Ensembl release')
+      },
+      interpretation: expect.stringContaining('High LD does not establish causality'),
+      n_pairs: 1,
+      pairs: [{ ...pair, r2: 0.951626, d_prime: 0.975513 }]
+    })
+  })
+
+  it('encodes path/query segments and does not invent a panel for an unfamiliar population', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonRes([]))
+    const result = await run(
+      'ensembl_ld_pairwise',
+      {
+        variant_id1: 'rs1/other',
+        variant_id2: 'rs2?x=1',
+        population_name: 'panel & cohort',
+        species: 'species/name'
+      },
+      fetchImpl
+    )
+    expect(String(fetchImpl.mock.calls[0][0])).toBe(
+      'https://rest.ensembl.org/ld/species%2Fname/pairwise/rs1%2Fother/rs2%3Fx%3D1?population_name=panel%20%26%20cohort'
+    )
+    expect(result).toMatchObject({ n_pairs: 0, reference_data: { reference_panel: null } })
+  })
+
+  it('uses bounded defaults and the singular proxy variation field with upstream attributes', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonRes([proxy]))
+    const result = await run('ensembl_ld_proxies', proxyArgs, fetchImpl)
+    expect(String(fetchImpl.mock.calls[0][0])).toBe(
+      'https://rest.ensembl.org/ld/homo_sapiens/rs1042779/1000GENOMES%3Aphase_3%3AKHV?r2=0.8&d_prime=0&window_size=500&attribs=1'
+    )
+    expect(result).toMatchObject({
+      ...proxyArgs,
+      species: 'homo_sapiens',
+      min_r2: 0.8,
+      min_d_prime: 0,
+      window_size: 500,
+      n_proxies: 1,
+      returned: 1,
+      truncated: false,
+      proxies: [{ ...proxy, r2: 0.975789, d_prime: 1 }],
+      reference_data: {
+        population_name: population,
+        reference_panel: '1000 Genomes Project Phase 3'
+      },
+      interpretation: expect.stringContaining('High LD does not establish causality')
+    })
+  })
+
+  it('filters inclusively, removes self hits and sorts before applying the output cap', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      jsonRes([
+        { ...proxy, variation: 'rs_low', r2: 0.89 },
+        { ...proxy, variation: 'rs_boundary', r2: 0.9, d_prime: 0.95 },
+        { ...proxy, variation: 'rs_b', r2: 1 },
+        { ...proxy, variation: 'rs_low_d', r2: 1, d_prime: 0.94 },
+        { ...proxy, variation: 'rs_a', r2: 1 },
+        { ...proxy, variation: proxyArgs.variant_id, r2: 1 },
+        { ...proxy, variation: 'rs_c', r2: 1, d_prime: 0.99 }
+      ])
+    )
+    const result = await run(
+      'ensembl_ld_proxies',
+      { ...proxyArgs, min_r2: 0.9, min_d_prime: 0.95, window_size: 25, max_records: 3 },
+      fetchImpl
+    )
+    expect(String(fetchImpl.mock.calls[0][0])).toContain('r2=0.9&d_prime=0.95&window_size=25')
+    expect(result).toMatchObject({
+      n_proxies: 4,
+      returned: 3,
+      truncated: true,
+      proxies: [{ variation: 'rs_a' }, { variation: 'rs_b' }, { variation: 'rs_c' }]
+    })
+  })
+
+  it('accepts zero thresholds and retains genuine zero statistics', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonRes([{ ...proxy, r2: '0', d_prime: 0 }]))
+    expect(
+      await run(
+        'ensembl_ld_proxies',
+        { ...proxyArgs, min_r2: 0, min_d_prime: 0, window_size: 1 },
+        fetchImpl
+      )
+    ).toMatchObject({ n_proxies: 1, proxies: [{ r2: 0, d_prime: 0 }] })
+  })
+
+  for (const [id, args] of [
+    ['ensembl_ld_pairwise', pairArgs],
+    ['ensembl_ld_proxies', proxyArgs]
+  ] as const) {
+    it(`${id}: preserves empty results with their population and interpretation`, async () => {
+      const fetchImpl = vi.fn().mockResolvedValue(jsonRes([]))
+      const result = await run(id, args, fetchImpl)
+      expect(result).toMatchObject({
+        population_name: population,
+        interpretation: expect.stringContaining('An empty result does not establish zero LD'),
+        ...(id === 'ensembl_ld_pairwise'
+          ? { n_pairs: 0, pairs: [] }
+          : { n_proxies: 0, returned: 0, truncated: false, proxies: [] })
+      })
+    })
+
+    it.each([400, 404, 429, 500])(
+      `${id}: propagates HTTP %s instead of returning empty data`,
+      async (status) => {
+        await expect(run(id, args, vi.fn().mockResolvedValue(errRes(status)))).rejects.toThrow(
+          `HTTP ${status}`
+        )
+      }
+    )
+
+    it.each([undefined, null, '', '  ', 123])(
+      `${id}: rejects invalid population %s before fetching`,
+      async (value) => {
+        const fetchImpl = vi.fn()
+        await expect(run(id, { ...args, population_name: value }, fetchImpl)).rejects.toThrow(
+          /population_name/
+        )
+        expect(fetchImpl).not.toHaveBeenCalled()
+      }
+    )
+
+    it.each([
+      null,
+      {},
+      { error: 'No LD data' },
+      [null],
+      [{ ...pair, population_name: 'other' }],
+      [{ r2: 1, d_prime: 1 }]
+    ])(`${id}: rejects malformed or wrong-population responses: %j`, async (body) => {
+      await expect(run(id, args, vi.fn().mockResolvedValue(jsonRes(body)))).rejects.toThrow(
+        /Ensembl LD/
+      )
+    })
+
+    it.each([null, '', ' ', 'bad', 'NaN', Infinity, -0.1, 1.1, true])(
+      `${id}: rejects invalid statistics %s`,
+      async (value) => {
+        for (const field of ['r2', 'd_prime']) {
+          const body = [{ ...(id === 'ensembl_ld_pairwise' ? pair : proxy), [field]: value }]
+          await expect(run(id, args, vi.fn().mockResolvedValue(jsonRes(body)))).rejects.toThrow(
+            /Ensembl LD/
+          )
+        }
+      }
+    )
+
+    it(`${id}: rejects missing upstream variant identities`, async () => {
+      await expect(
+        run(
+          id,
+          args,
+          vi.fn().mockResolvedValue(jsonRes([{ population_name: population, r2: 1, d_prime: 1 }]))
+        )
+      ).rejects.toThrow(/Ensembl LD variation/)
+    })
+  }
+
+  it.each([
+    { min_r2: -0.1 },
+    { min_r2: 1.1 },
+    { min_r2: '0.8' },
+    { min_r2: null },
+    { min_d_prime: -1 },
+    { min_d_prime: 1.1 },
+    { min_d_prime: NaN },
+    { window_size: 0 },
+    { window_size: 501 },
+    { window_size: 1.5 },
+    { window_size: null },
+    { max_records: 0 },
+    { max_records: 1001 },
+    { max_records: 1.5 },
+    { variant_id: '' },
+    { variant_id: {} },
+    { species: '' },
+    { species: null }
+  ])('rejects invalid proxy arguments before fetching: %j', async (invalid) => {
+    const fetchImpl = vi.fn()
+    await expect(
+      run('ensembl_ld_proxies', { ...proxyArgs, ...invalid }, fetchImpl)
+    ).rejects.toThrow()
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it.each([{ variant_id1: '' }, { variant_id2: '  ' }, { species: false }])(
+    'rejects invalid pair arguments before fetching: %j',
+    async (invalid) => {
+      const fetchImpl = vi.fn()
+      await expect(
+        run('ensembl_ld_pairwise', { ...pairArgs, ...invalid }, fetchImpl)
+      ).rejects.toThrow()
+      expect(fetchImpl).not.toHaveBeenCalled()
+    }
+  )
+})
+
 describe('ensembl_lookup', () => {
   it.each([undefined, 'auto'])(
     'keeps ID-first symbol fallback when query_type is %s',

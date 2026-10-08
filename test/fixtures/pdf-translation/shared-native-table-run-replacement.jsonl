@@ -1,0 +1,15 @@
+{"name": "shared-table-label-run-keeps-numeric-cell-positions", "cells": ["Method", "11", "22"], "translations": ["方法", null, null], "gap": 8}
+{"name": "shared-table-subheaders-translate-independently", "cells": ["(train)", "(valid)"], "translations": ["（训练）", "（验证）"], "gap": 8}
+{"name": "thin-table-rule-and-cjk-operator-whitespace-fit", "cells": ["enc. + dec."], "translations": ["编码器 + 解码器。"], "gap": 8, "width": 61.3, "rule": true}
+{"name": "cropped-word-inside-shared-table-run-stays-rejected", "cells": ["Method", "11", "22"], "translations": ["方法", null, null], "gap": 8, "crop": 12}
+{"name": "proven-prose-suffix-shares-object-with-formula", "cells": ["= 64.", "The row starts here."], "translations": [null, "正文从这里开始。"], "gap": 1, "sourceItems": true}
+{"name": "proven-prose-does-not-authorize-cropped-word", "cells": ["= 64.", "The row starts here."], "translations": [null, "正文从这里开始。"], "gap": 1, "sourceItems": true, "crop": 12}
+{"name": "word-items-prove-scaled-shared-prose-suffix", "cells": ["= 64.", "The row starts here."], "translations": [null, "正文从这里开始。"], "gap": 1, "sourceItems": true, "splitItems": true, "scale": 0.98}
+{"name": "word-items-do-not-authorize-cropped-scaled-prose", "cells": ["= 64.", "The row starts here."], "translations": [null, "正文从这里开始。"], "gap": 1, "sourceItems": true, "splitItems": true, "scale": 0.98, "crop": 12}
+{"name": "complete-single-word-label-in-tight-shared-run", "cells": ["Layer/Modification", "11", "22"], "translations": ["层/修改", null, null], "gap": 1, "sourceItems": true, "width": 80.84}
+{"name": "repeated-single-word-label-owned-by-native-glyph-position", "cells": ["Million", "Million"], "translations": [null, "百万"], "gap": 1, "sourceItems": true, "width": 36}
+{"name": "tight-shared-label-does-not-authorize-cropped-word", "cells": ["Layer/Modification", "Million", "Million"], "translations": ["层/修改", null, null], "gap": 1, "sourceItems": true, "crop": 12, "width": 80.84}
+{"name": "native-fi-ligature-in-tight-shared-label", "cells": ["Modification", "11", "22"], "translations": ["修改", null, null], "gap": 1, "sourceItems": true, "width": 52, "ligature": true}
+{"name": "native-fi-ligature-does-not-authorize-cropped-word", "cells": ["Modification", "11", "22"], "translations": ["修改", null, null], "gap": 1, "sourceItems": true, "width": 52, "crop": 12, "ligature": true}
+{"name":"shared-table-header-with-typographic-year-apostrophe","cells":["Method","Dataset’17","Dataset’18"],"translations":["方法",null,null],"gap":8,"sourceItems":true}
+{"name":"typographic-apostrophe-does-not-authorize-cropped-header","cells":["Method","Dataset’17","Dataset’18"],"translations":["方法",null,null],"gap":8,"sourceItems":true,"crop":12}

@@ -1,0 +1,3 @@
+{"name": "acronym-led-statement-title", "language": "Chinese", "source": "ABC Variants Improve Transformer", "text": "ABC 变体改进 Transformer", "accepted": true}
+{"name": "statement-title-must-not-remain-english", "language": "Chinese", "source": "ABC Variants Improve Transformer", "text": "ABC Variants Improve Transformer", "accepted": false, "corrected": "ABC 变体改进 Transformer"}
+{"name": "ordinary-statement-title-without-acronym", "language": "Chinese", "source": "Regularization Improves Generalization", "text": "正则化改善泛化", "accepted": true}

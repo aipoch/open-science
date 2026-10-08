@@ -1,0 +1,3 @@
+{"name":"pending-save-blocks-duplicate-inference-and-becomes-cached","action":"save","status":"completed","saved":true}
+{"name":"failed-save-is-not-reported-as-completed","action":"fail","status":"failed","saved":false}
+{"name":"shutdown-waits-for-pending-save-to-settle","action":"shutdown","status":"interrupted","saved":false}

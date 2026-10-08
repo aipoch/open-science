@@ -1,0 +1,3 @@
+{"name":"top-origin sum blocks a prose jump over its same-row continuation","operator":"∑","operatorX":120,"blocked":true}
+{"name":"top-origin integral blocks a prose jump over its same-row continuation","operator":"∫","operatorX":120,"blocked":true}
+{"name":"operator in another column does not split ordinary wrapped prose","operator":"∑","operatorX":460,"blocked":false}

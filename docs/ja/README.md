@@ -51,7 +51,7 @@ AIPOCH Open-Science は、機械学習、統計学、生命科学、化学、材
 
 完了した研究セッションは、選択した会話分岐、ファイルバージョン、Notebook 記録、検証証拠を含む持ち運び可能な `.science` パッケージとして、レビュー、引き継ぎ、アーカイブのためにエクスポートできます。
 
-> 💡 **[AIPOCH Open-Science v0.35.1 をリリースしました](https://github.com/aipoch/open-science/releases/latest)** _(2026年10月更新)_。 AIPOCH Open-Science v0.35.1 では、コネクターカタログへの GWAS サマリー統計の検出・InterProScan シーケンス送信・IEDB 受容体エビデンス検索、セッションヘッダーに共通アクションメニューを備えた新しい会話開始画面、Requesty プロバイダー、セッション切り替え時のコンポーザーコンテキスト保持・インポート済みセッションの読み取り専用化・リプレイ追跡・PDF/ノートブック/ワークスペースの信頼性向上などの修正が導入されました。詳細は[最新のリリースノート](https://github.com/aipoch/open-science/releases/latest)をご覧ください。
+> 💡 **[AIPOCH Open-Science v0.36.0 をリリースしました](https://github.com/aipoch/open-science/releases/latest)** _(2026年10月更新)_。 AIPOCH Open-Science v0.36.0 では、実行ごとにリスクをレビューできる Notebook 実行、原文・訳文・対照表示の読書モードを備えた再開可能な共有 PDF 翻訳、がんタンパク質組学の PDC コネクター、集団特異的な連鎖不平衡クエリを備えた Genomes コネクター、Claude Haiku 5.5 のサポートが追加されました。修正には、科学 PDF のネイティブレイアウト保持、公式モデルカタログの整理、空の会話での検索復元、ファイルメンション・Remote Web マーケットプレイス・コンポーザーチップの信頼性向上などが含まれます。詳細は[最新のリリースノート](https://github.com/aipoch/open-science/releases/latest)をご覧ください。
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science のヒーローバナー：Science, Open to All — オープンソース、モデル非依存、セルフホスト対応の科学 AI 研究ワークベンチ" src="../images/readme/open-science-banner.png" />

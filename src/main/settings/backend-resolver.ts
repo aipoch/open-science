@@ -13,7 +13,7 @@ import {
   CODEX_BRIDGE_UNSUPPORTED_MESSAGE,
   NO_ACTIVE_PROVIDER_MESSAGE
 } from '../../shared/run-error-classification'
-import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
+import type { ReasoningEffortProfile, ResolvedReasoningEffort } from '../../shared/reasoning-effort'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import {
   getAgentFramework,
@@ -39,6 +39,7 @@ import {
 } from './provider-accounts'
 import { ensureCodexAuthHome, resolveEffectiveCodexSubscriptionTransport } from './codex-auth'
 import type { StoredSettings } from './types'
+import type { ResolvedProvider } from './provider-env'
 import type { ClaudeRuntimeModelConfig } from './claude-config-provision'
 import {
   BackendSelectionOwner,
@@ -231,6 +232,33 @@ export class AgentBackendResolver {
     context: AgentBackendResolutionContext = {}
   ): Promise<ResolvedAgentBackend> {
     return this.resolveBackendSelection(await this.selection.resolveExplicitTarget(target), context)
+  }
+
+  // Direct, tool-less features need the same admitted provider/model as an Agent session, but do
+  // not need a framework process. Resolve the provider through the existing runtime projection so
+  // credentials and vendor endpoints are still derived in one main-process-only seam.
+  async resolveExplicitDirectProvider(target: ExplicitAgentBackendTarget): Promise<{
+    providerId: string
+    provider: ResolvedProvider
+    reasoningEffortProfile: ReasoningEffortProfile
+  }> {
+    const selection = await this.selection.resolveExplicitTarget(target)
+    const stored = selection.settings.providers.find(({ id }) => id === selection.providerId)
+    if (!stored) throw new Error(NO_ACTIVE_PROVIDER_MESSAGE)
+    const runtime = this.providers.resolveRuntimeTarget(
+      stored,
+      selection.modelSelection,
+      getAgentFramework('opencode')
+    )
+    return {
+      providerId: selection.providerId,
+      provider: runtime.provider,
+      // Direct calls have no framework to negotiate an unknown gateway's capabilities.
+      reasoningEffortProfile:
+        stored.type === 'custom' && stored.reasoningEffortPreset === undefined
+          ? { supported: false }
+          : runtime.reasoningEffortProfile
+    }
   }
 
   async resolveAdmittedTarget(

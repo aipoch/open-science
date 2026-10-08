@@ -2337,6 +2337,82 @@ describe('PreviewFileSurface managed text versions', () => {
     expect(container.querySelector('textarea')).toBeNull()
   })
 
+  it('guards a running PDF translation, retains progress on dismissal, and cancels only on confirmation', async () => {
+    const surfaceRef = createRef<{ requestLeave: (action: () => boolean | void) => boolean }>()
+    const scope = 'dialog:project-1:translation'
+    const cancel = vi.fn()
+    const close = vi.fn()
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface ref={surfaceRef} item={item} onClose={close} leaveGuardScope={scope} />
+      )
+    })
+    const report = previewContentSpy.mock.lastCall![0].onPdfTranslationChange
+    const confirmation = (): HTMLElement | null =>
+      document.body.querySelector('[data-testid="stop-pdf-translation-confirmation"]')
+    await act(async () => report({ done: 3, total: 16, cancel }))
+    for (const dismiss of ['button', 'escape', 'outside']) {
+      await act(async () => {
+        expect(surfaceRef.current!.requestLeave(close)).toBe(false)
+      })
+      expect(confirmation()?.textContent).toContain('3 / 16')
+      if (dismiss === 'button') {
+        await click(confirmation()!.querySelector('button'))
+      } else if (dismiss === 'escape') {
+        await act(async () => {
+          confirmation()!.dispatchEvent(
+            new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
+          )
+        })
+      } else {
+        await act(async () => {
+          confirmation()!.previousElementSibling!.dispatchEvent(
+            new Event('pointerdown', { bubbles: true })
+          )
+        })
+      }
+      expect(confirmation()).toBeNull()
+      expect(cancel).not.toHaveBeenCalled()
+      expect(close).not.toHaveBeenCalled()
+    }
+    await act(async () => {
+      surfaceRef.current!.requestLeave(() => previewLeaveGuards.request(scope, close))
+    })
+    await act(async () => report({ done: 4, total: 16, cancel }))
+    expect(confirmation()?.textContent).toContain('4 / 16')
+    await click(confirmation()!.querySelectorAll('button')[1])
+    expect(cancel).toHaveBeenCalledTimes(1)
+    expect(close).toHaveBeenCalledTimes(1)
+    expect(confirmation()).toBeNull()
+  })
+
+  it('dismisses an obsolete translation warning on completion and allows closing directly', async () => {
+    const surfaceRef = createRef<{ requestLeave: (action: () => boolean | void) => boolean }>()
+    const cancel = vi.fn()
+    const close = vi.fn()
+    await act(async () =>
+      root.render(<PreviewFileSurface ref={surfaceRef} item={item} onClose={close} />)
+    )
+    const report = previewContentSpy.mock.lastCall![0].onPdfTranslationChange
+    await act(async () => report({ done: 15, total: 16, cancel }))
+    await act(async () => {
+      surfaceRef.current!.requestLeave(close)
+    })
+    expect(
+      document.body.querySelector('[data-testid="stop-pdf-translation-confirmation"]')
+    ).not.toBeNull()
+    await act(async () => report(undefined))
+    expect(
+      document.body.querySelector('[data-testid="stop-pdf-translation-confirmation"]')
+    ).toBeNull()
+    expect(close).not.toHaveBeenCalled()
+    expect(cancel).not.toHaveBeenCalled()
+    await act(async () => {
+      expect(surfaceRef.current!.requestLeave(close)).toBe(true)
+    })
+    expect(close).toHaveBeenCalledTimes(1)
+  })
+
   it('runs an approved deferred workbench mutation without a second confirmation', async () => {
     const store = usePreviewWorkbenchStore.getState()
     store.activateProject('project-1')

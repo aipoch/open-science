@@ -230,6 +230,37 @@ it('recovers two small captioned grids including a narrow count column and summa
   expect(recoverCaptionedRuledTables(items, rules, captions, 7, recovered)).toEqual([])
 })
 
+it('rejects a caption-clipped numeric grid and preserves the complete ruled fallback', () => {
+  const xs = [0, 100, 200, 300, 400]
+  const ys = Array.from({ length: 9 }, (_, i) => 25 + i * 25)
+  const rules = [
+    ...ys.flatMap((y) => xs.slice(1).map((x, i) => [xs[i], y, x, y])),
+    ...xs.flatMap((x) => ys.slice(1).map((y, i) => [x, ys[i], x, y]))
+  ]
+  const grid = [
+    ['Characteristic', 'Arm A', 'Arm B', 'P'],
+    ...Array.from({ length: 7 }, (_, i) => [`Record ${i + 1}`, '30', '31', '0.7'])
+  ]
+  const items = grid.flatMap((row, r) => row.map((text, c) => token(text, xs[c] + 5, ys[r] + 5)))
+  const caption = { page: 2, lines: ['Table 1. Outcomes'], rect: [8, 0, 350, 10] }
+  expect(recoverCaptionedRuledTables(items, rules, [caption], 2)).toEqual([])
+  const complete = recoverRuledTable(items, rules, 2)
+  expect(complete).toBeDefined()
+  expect(refineTable(complete, items, [caption], [], rules).grid).toEqual(grid)
+
+  // Rules outside the table and one repeated decorative separator do not prove a missing column.
+  const aligned = { ...caption, rect: [0, 0, 350, 10] }
+  const unrelated = [
+    [-20, 240, 420, 240],
+    [-20, 260, 420, 260],
+    [-20, 50, 0, 50],
+    [-20, 50, 0, 50]
+  ]
+  const accepted = recoverCaptionedRuledTables(items, [...rules, ...unrelated], [aligned], 2)
+  expect(accepted).toHaveLength(1)
+  expect(refineTable(accepted[0], items, [aligned], [], rules).grid).toEqual(grid)
+})
+
 it('recovers a treatment record between a section row and an empty prediction', () => {
   const x = readPdfFixture(
     resolve(

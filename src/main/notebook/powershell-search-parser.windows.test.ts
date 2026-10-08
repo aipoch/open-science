@@ -1,8 +1,20 @@
 import { describe, expect, it } from 'vitest'
 import { parsePowerShellSearchCommands } from './powershell-search-parser'
 import { assertShellSearchScope } from './shell-search-scope'
+import { analyzePowerShellCodeRisk } from './code-risk-analysis'
 
 describe.skipIf(process.platform !== 'win32')('Windows PowerShell search preflight', () => {
+  it('locates multiline mutation evidence without executing submitted code', async () => {
+    const source =
+      'Write-Output "Remove-Item is data"\r\n\r\nRemove-Item target.txt\r\n[System.IO.File]::Delete("target.txt")\r\nWrite-Output hello > target.txt'
+    expect(await analyzePowerShellCodeRisk(source)).toEqual(
+      expect.arrayContaining([
+        { operation: 'Remove-Item', source: 'Remove-Item target.txt', line: 3 },
+        { operation: '@member:Delete', source: '[System.IO.File]::Delete("target.txt")', line: 4 },
+        { operation: '@overwrite', source: '> target.txt', line: 5 }
+      ])
+    )
+  })
   it('parses literals, arrays, aliases, and unresolved variables without executing substitutions', async () => {
     expect(
       await parsePowerShellSearchCommands(

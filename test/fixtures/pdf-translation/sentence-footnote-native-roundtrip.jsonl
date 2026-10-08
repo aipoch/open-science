@@ -1,0 +1,4 @@
+{"name":"figure-number-before-raised-footnote","body":"Inspect the measured results in Table 6.","marker":"3","translation":"查看表6中的测量结果。3","fitted":true}
+{"name":"decimal-before-raised-footnote","body":"Its smoothing factor is set to 0.1.","marker":"5","translation":"其平滑系数设为0.1。5","fitted":true}
+{"name":"changed-footnote-stays-original","body":"Its smoothing factor is set to 0.1.","marker":"5","translation":"其平滑系数设为0.1。8","fitted":false}
+{"name":"changed-reference-stays-original","body":"Inspect the measured results in Table 6.","marker":"3","translation":"查看表8中的测量结果。3","fitted":false}

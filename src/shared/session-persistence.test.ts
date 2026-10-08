@@ -3993,6 +3993,75 @@ describe('normalizeSessionFile with activities', () => {
     expect(activities?.[0]).not.toHaveProperty('executionInvocationId')
   })
 
+  it('restores an unmarked legacy review as an ordinary tool record', () => {
+    const activity = getRestoredActivities(
+      createSessionWithActivity({
+        id: 'app-approval:legacy',
+        kind: 'tool',
+        title: 'Review code',
+        providerToolName: 'Open-Science',
+        status: 'in_progress',
+        sortIndex: 1,
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 2,
+        rawInput: {
+          code: 'os.unlink(path)',
+          notebookCodeRisk: {
+            language: 'python',
+            risks: [{ operation: 'os.unlink', source: 'os.unlink(path)', line: 1 }]
+          }
+        }
+      })
+    )?.[0]
+    expect(activity).toMatchObject({ status: 'failed' })
+    expect(activity).not.toHaveProperty('appOwned')
+    expect(activity).not.toHaveProperty('toolDisposition')
+  })
+
+  it.each(['python', 'powershell'])(
+    'restores a pending %s review as closed with complete source and dialect',
+    (dialect) => {
+      const operation = dialect === 'powershell' ? 'Remove-Item' : 'os.unlink'
+      const source = dialect === 'powershell' ? 'Remove-Item ./temporary.txt' : 'os.unlink(path)'
+      const code = '# context\n'.repeat(2000) + source
+      const activities = getRestoredActivities(
+        createSessionWithActivity({
+          id: 'app-approval:risk',
+          appOwned: true,
+          kind: 'tool',
+          title: 'Review code',
+          providerToolName: 'Open-Science',
+          status: 'in_progress',
+          sortIndex: 1,
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 2,
+          rawInput: {
+            code,
+            notebookCodeRisk: {
+              language: dialect === 'powershell' ? 'bash' : 'python',
+              ...(dialect === 'powershell' ? { shellRuntime: { kind: 'powershell' } } : {}),
+              risks: [{ operation, source, line: 2001 }]
+            }
+          }
+        })
+      )
+      expect(activities?.[0]).toMatchObject({
+        status: 'in_progress',
+        toolDisposition: 'permission-closed',
+        appOwned: true,
+        rawInput: {
+          code,
+          notebookCodeRisk: {
+            language: dialect === 'powershell' ? 'bash' : 'python',
+            ...(dialect === 'powershell' ? { shellRuntime: { kind: 'powershell' } } : {})
+          }
+        }
+      })
+    }
+  )
+
   it('keeps terminal Notebook Run correlation for historical projection', () => {
     const activities = getRestoredActivities(
       createSessionWithActivity({

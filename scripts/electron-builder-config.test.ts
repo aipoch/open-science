@@ -1,4 +1,5 @@
 import { readFileSync, statSync } from 'node:fs'
+import type { Stats } from 'node:fs'
 import { join } from 'node:path'
 
 import { FileMatcher } from 'app-builder-lib/out/fileMatcher'
@@ -29,6 +30,94 @@ describe('macOS native privacy purpose descriptions', () => {
     }
 
     expect(config.mac?.extendInfo?.[key]).toEqual(expect.stringMatching(/\S/))
+  })
+})
+
+describe('electron-builder local evidence exclusion', () => {
+  it('declares the native PDF worker imports as production dependencies', () => {
+    const manifest = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8'))
+    for (const dependency of [
+      'fontkit',
+      '@embedpdf/pdfium',
+      'pdf-lib',
+      '@huggingface/transformers'
+    ])
+      expect(manifest.dependencies[dependency]).toEqual(expect.stringMatching(/\S/))
+  })
+
+  it('excludes local papers and traces while preserving application and translation resources', () => {
+    const config = load(readFileSync(join(process.cwd(), 'electron-builder.yml'), 'utf8')) as {
+      files: string[]
+      asarUnpack: string[]
+    }
+    // Match the builder's default inclusion for an exclusion-only files list.
+    const filter = new FileMatcher(process.cwd(), process.cwd(), (value) => value, [
+      '**/*',
+      ...config.files
+    ]).createFilter()
+    for (const directory of [
+      'docs/internal',
+      'docs/superpowers',
+      'test-results',
+      'playwright-report',
+      'blob-report',
+      'coverage',
+      'local',
+      '.dev-isolate',
+      '.hallmark',
+      '.scratch',
+      '.superpowers',
+      '.worktree/other-checkout'
+    ]) {
+      // Exclude the directory itself so the packager never traverses private evidence.
+      expect(filter(join(process.cwd(), directory), { isDirectory: () => true } as Stats)).toBe(
+        false
+      )
+      for (const file of ['paper.pdf', 'nested/model.onnx', 'trace.zip', 'screenshot.png'])
+        expect(
+          filter(join(process.cwd(), directory, file), { isDirectory: () => false } as Stats)
+        ).toBe(false)
+    }
+    for (const file of [
+      'out/main/index.js',
+      'out/renderer/index.html',
+      'resources/pdf-translation/worker.mjs',
+      'resources/pdf-translation-local/worker.mjs',
+      'node_modules/@huggingface/transformers/dist/transformers.node.mjs',
+      'node_modules/onnxruntime-web/dist/ort.wasm.bundle.min.mjs',
+      'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs',
+      'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm',
+      'resources/pdf-translation/NotoSansSC-Regular.otf',
+      'resources/pdf-translation/OFL.txt',
+      'resources/notebook/python_loop.py',
+      'node_modules/fontkit/dist/main.cjs',
+      'node_modules/@embedpdf/pdfium/dist/index.js',
+      'node_modules/pdf-lib/cjs/index.js',
+      'docs/design.md',
+      'package.json',
+      'LICENSE'
+    ])
+      expect(filter(join(process.cwd(), file), { isDirectory: () => false } as Stats)).toBe(true)
+    const unpack = new FileMatcher(
+      process.cwd(),
+      process.cwd(),
+      (value) => value,
+      config.asarUnpack
+    ).createFilter()
+    for (const file of [
+      'resources/pdf-translation/worker.mjs',
+      'resources/pdf-translation-local/worker.mjs',
+      'node_modules/@huggingface/transformers/dist/transformers.node.mjs',
+      'node_modules/onnxruntime-web/dist/ort.wasm.bundle.min.mjs',
+      'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs',
+      'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm',
+      'resources/pdf-translation/NotoSansSC-Regular.otf',
+      'resources/pdf-translation/OFL.txt',
+      'node_modules/@embedpdf/pdfium/dist/pdfium.wasm',
+      'node_modules/fontkit/dist/main.cjs',
+      'node_modules/pdf-lib/cjs/index.js'
+    ])
+      expect(unpack(join(process.cwd(), file), { isDirectory: () => false } as Stats)).toBe(true)
   })
 })
 

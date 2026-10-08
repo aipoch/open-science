@@ -238,7 +238,13 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
       const frameworkId = sessionRegistry
         .lookup(request.sessionId)
         ?.aggregate.snapshot().frameworkId
-      if (state === 'resolved' && frameworkId !== 'codebuddy') return
+      const codeRiskReview =
+        request.appOwned === true &&
+        request.rawInput !== null &&
+        typeof request.rawInput === 'object' &&
+        'notebookCodeRisk' in request.rawInput
+      // The host is the only publisher for these approvals; providers cannot emit their receipt.
+      if (state === 'resolved' && frameworkId !== 'codebuddy' && !codeRiskReview) return
       const interaction = base.sessionInteractions.current(request.sessionId)
       const unattended = interaction?.kind === 'prompt' && interaction.permissionPrompts === 'none'
       publication.pushEvent({
@@ -249,6 +255,7 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
         promptMessageId: context?.promptMessageId,
         title: request.title,
         providerToolName: request.providerToolName ?? request.mcpIdentity,
+        appOwned: request.appOwned,
         rawInput: request.rawInput,
         ...(state === 'rejected' && unattended
           ? {
@@ -259,7 +266,9 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
           state === 'rejected'
             ? 'completed'
             : state === 'resolved'
-              ? (request.status ?? 'in_progress')
+              ? codeRiskReview
+                ? 'completed'
+                : (request.status ?? 'in_progress')
               : 'in_progress',
         ...(state === 'resolved'
           ? {}

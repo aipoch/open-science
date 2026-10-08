@@ -1,0 +1,3 @@
+{"name":"spaced-python-keywords-preserve-listing-and-docstring","header":"d e f S c a l e ( x ) :","body":["\" \" \" Scale a value. \" \" \"","value = x * 2","r e t u r n value"],"preserved":true}
+{"name":"multiline-function-signature-preserves-entire-listing","header":"def Scale(","body":["x, factor):","\"\"\" Scale a value. \"\"\"","return x * factor"],"preserved":true}
+{"name":"definition-like-prose-needs-code-body-evidence","header":"def Scale(x):","body":["A definition alone does not prove a full listing."],"preserved":false}

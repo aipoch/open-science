@@ -211,7 +211,7 @@ const wslSetupOpenTerminalSchema = {
 const INSPECT_PACKAGES_DOC = [
   "Read installed/missing/version metadata from the session's bound app-managed Python/R runtime without importing or changing packages.",
   'Use for requested version checks, not as a mandatory preflight after a clear missing-package error. Use notebook_execute to test actual importability.',
-  'There is no per-call environment. A missing default is prepared by notebook_execute; an external runtime must also be inspected through notebook_execute so execution receives approval.'
+  'No per-call environment. Inspect an external runtime through notebook_execute for code-risk review; it also prepares missing defaults. Bind first when multiple runtimes are enabled.'
 ].join('\n')
 
 const MANAGE_PACKAGES_DOC = [

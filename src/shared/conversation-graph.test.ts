@@ -1194,3 +1194,50 @@ describe('conversation graph', () => {
     expect(visibleAgain.activeFrameId).toBe(hidden.rootFrameId)
   })
 })
+
+it.each([[1, 3, 3, 8], [5, 1, 3], []])(
+  'preserves active prompt attribution for timestamps %j',
+  (...times: number[]) => {
+    const messages = times.map((time, i) => message(`prompt-${i}`, 'user', `question ${i}`, time))
+    const graph = createLinearConversationGraph({
+      sessionId: 'attribution',
+      messages,
+      createdAt: 0,
+      updatedAt: 10
+    })
+    const queries = [-1, 1, 2, 3, 6, 10, Number.NaN]
+    const activities = queries.map((createdAt, i) => ({
+      id: `time-${i}`,
+      kind: 'tool' as const,
+      title: 'Notebook run',
+      status: 'completed' as const,
+      sortIndex: i,
+      eventIds: [],
+      createdAt,
+      updatedAt: 10
+    }))
+    const result = synchronizeActiveConversationActivities(
+      graph,
+      activities,
+      queries.map((createdAt, i) => ({
+        id: `group-${i}`,
+        title: 'Notebook run',
+        sortIndex: i,
+        activityIds: [],
+        createdAt,
+        updatedAt: 10
+      }))
+    )
+    queries.forEach((time, i) => {
+      const expected =
+        messages.filter((message) => message.createdAt <= time).at(-1) ?? messages.at(-1)
+      expect(result.activities.find(({ id }) => id === `time-${i}`)?.promptMessageId).toBe(
+        expected?.id
+      )
+      expect(result.activityGroups.find(({ id }) => id === `group-${i}`)?.promptMessageId).toBe(
+        expected?.id
+      )
+    })
+    expect(graph.activities).toEqual([])
+  }
+)

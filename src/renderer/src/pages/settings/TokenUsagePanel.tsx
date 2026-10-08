@@ -535,11 +535,20 @@ function TokenUsagePanel({
                 </div>
               </dl>
             )}
+            {summary.translationTokens !== undefined ? (
+              <dl
+                data-slot="translation-usage"
+                className="mt-4 flex gap-2 text-xs text-muted-foreground"
+              >
+                <dt>{t('Literature translation tokens')}</dt>
+                <dd className="tabular-nums text-foreground">
+                  {formatNumber(summary.translationTokens)}
+                </dd>
+              </dl>
+            ) : null}
             {summary.incompleteRequests ? (
               <p role="status" className="mt-3 text-xs text-status-warning-foreground">
-                {t(
-                  'Some classification requests have no reported token usage. Totals may be incomplete.'
-                )}
+                {t('Some model requests have no reported token usage. Totals may be incomplete.')}
               </p>
             ) : null}
 

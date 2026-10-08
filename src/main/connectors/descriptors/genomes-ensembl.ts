@@ -64,6 +64,69 @@ const impactRank = (impact: unknown): number => IMPACT_RANK[String(impact ?? '')
 
 type Dict = Record<string, unknown>
 
+const LD_INTERPRETATION =
+  'LD is specific to the selected population and reference panel. High LD does not establish causality or identify a causal variant. An empty result does not establish zero LD.'
+
+function ldString(value: unknown, name: string): string {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new Error(`${name} must be a non-empty string`)
+  }
+  return value.trim()
+}
+
+function ldNumber(value: unknown, name: string, min: number, max: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max) {
+    throw new Error(`${name} must be a number between ${min} and ${max}`)
+  }
+  return value
+}
+
+function ldInteger(value: unknown, name: string, max: number): number {
+  const n = ldNumber(value, name, 1, max)
+  if (!Number.isInteger(n)) throw new Error(`${name} must be an integer`)
+  return n
+}
+
+// Ensembl serializes these statistics as decimal strings. Never coerce null/blank to zero.
+function ldStatistic(value: unknown, name: string): number {
+  const n = typeof value === 'string' && value.trim() ? Number(value) : value
+  return ldNumber(n, `Ensembl LD ${name}`, 0, 1)
+}
+
+function ldRows(raw: unknown, population: string): Dict[] {
+  if (!Array.isArray(raw)) throw new Error('Ensembl LD returned a non-array response')
+  return raw.map((row: unknown) => {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) {
+      throw new Error('Ensembl LD returned an invalid row')
+    }
+    const r = row as Dict
+    if (r.population_name !== population) {
+      throw new Error('Ensembl LD returned a missing or mismatched population_name')
+    }
+    return {
+      ...r,
+      r2: ldStatistic(r.r2, 'r2'),
+      d_prime: ldStatistic(r.d_prime, 'd_prime')
+    }
+  })
+}
+
+function ldReference(population: string, requestUrl: string): Dict {
+  return {
+    provider: 'Ensembl REST',
+    population_name: population,
+    // Only label a known panel; arbitrary population names do not prove a dataset/version.
+    reference_panel: population.startsWith('1000GENOMES:phase_3:')
+      ? '1000 Genomes Project Phase 3'
+      : null,
+    assembly_name: null,
+    ensembl_release: null,
+    request_url: requestUrl,
+    retrieved_at: new Date().toISOString(),
+    note: 'The LD endpoint does not report assembly or Ensembl release. A null reference_panel means the panel could not be identified from the population name.'
+  }
+}
+
 // GET VEP reads the reference on the region strand, but submits it as strand=1.
 // Always request the forward strand. Existing callers supply forward alleles;
 // interpreting an allele on the region strand requires an explicit opt-in.
@@ -254,6 +317,132 @@ function leanHomology(h: Dict): Dict {
 const featureId = (f: Dict): string => String(f.id ?? f.gene_id ?? f.ID ?? '')
 
 export const GENOMES_ENSEMBL_TOOLS: ToolDescriptor[] = [
+  {
+    id: 'ensembl_ld_pairwise',
+    connector: 'genomes',
+    description:
+      'Query linkage disequilibrium (r² and D′) between two variant IDs, such as GWAS Catalog rsIDs, in an explicitly selected population. The caller must supply the full population name in population_name (e.g. 1000GENOMES:phase_3:KHV); this tool does not discover populations or infer ancestry. species defaults to homo_sapiens. Returns upstream variant identities and numeric r2/d_prime without significance or causality inference. High LD does not establish causality. Empty results mean no LD data returned, not zero LD; invalid IDs/populations and service failures remain errors. Reference metadata includes the population, known panel, query URL and retrieval time; assembly/release are null because the LD endpoint does not report them.',
+    input: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        variant_id1: { type: 'string', minLength: 1, pattern: '\\S' },
+        variant_id2: { type: 'string', minLength: 1, pattern: '\\S' },
+        population_name: { type: 'string', minLength: 1, pattern: '\\S' },
+        species: { type: 'string', minLength: 1, pattern: '\\S', default: DEFAULT_SPECIES }
+      },
+      required: ['variant_id1', 'variant_id2', 'population_name']
+    },
+    required: ['variant_id1', 'variant_id2', 'population_name'],
+    returns:
+      '{variant_id1, variant_id2, species, population_name, reference_data, interpretation, n_pairs, pairs:[{variation1, variation2, population_name, r2, d_prime}]} — r2/d_prime are numbers; n_pairs=0 means unavailable, not zero LD.',
+    example:
+      'const result = await host.mcp("genomes", "ensembl_ld_pairwise", {"variant_id1": "rs6792369", "variant_id2": "rs1042779", "population_name": "1000GENOMES:phase_3:KHV"})',
+    run: async (ctx, a) => {
+      const id1 = ldString(a.variant_id1, 'variant_id1')
+      const id2 = ldString(a.variant_id2, 'variant_id2')
+      const population = ldString(a.population_name, 'population_name')
+      const species = ldString(a.species === undefined ? DEFAULT_SPECIES : a.species, 'species')
+      const url = `${ENSEMBL}/ld/${encodeURIComponent(species)}/pairwise/${encodeURIComponent(id1)}/${encodeURIComponent(id2)}?population_name=${encodeURIComponent(population)}`
+      const pairs = ldRows(await ctx.fetchJson(url), population).map((r) => ({
+        variation1: ldString(r.variation1, 'Ensembl LD variation1'),
+        variation2: ldString(r.variation2, 'Ensembl LD variation2'),
+        population_name: population,
+        r2: r.r2,
+        d_prime: r.d_prime
+      }))
+      return {
+        variant_id1: id1,
+        variant_id2: id2,
+        species,
+        population_name: population,
+        reference_data: ldReference(population, url),
+        interpretation: LD_INTERPRETATION,
+        n_pairs: pairs.length,
+        pairs
+      }
+    }
+  },
+  {
+    id: 'ensembl_ld_proxies',
+    connector: 'genomes',
+    description:
+      'Find nearby variants in LD with a variant ID (e.g. a GWAS rsID) in a required population_name such as 1000GENOMES:phase_3:KHV. species defaults to homo_sapiens. min_r2 defaults to 0.8; min_d_prime defaults to 0; both are inclusive thresholds in [0,1]. window_size is the total width of the centered Ensembl window in kb (integer 1–500, default 500, approximately 250 kb on each side at the default); max_records caps output (integer 1–1000, default 100) and does not limit upstream computation or download size. Results are sorted by r2 descending, then d_prime descending and variant ID, before capping. Coordinates/annotations are upstream attributes. Report the population and reference_data with results. High LD does not establish causality or functional equivalence. Empty results mean no qualifying data returned, not zero LD. Errors remain errors; assembly/release are not reported by this endpoint and remain null. The caller must supply the full population name; this tool does not discover populations or infer ancestry.',
+    input: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        variant_id: { type: 'string', minLength: 1, pattern: '\\S' },
+        population_name: { type: 'string', minLength: 1, pattern: '\\S' },
+        species: { type: 'string', minLength: 1, pattern: '\\S', default: DEFAULT_SPECIES },
+        min_r2: { type: 'number', minimum: 0, maximum: 1, default: 0.8 },
+        min_d_prime: { type: 'number', minimum: 0, maximum: 1, default: 0 },
+        window_size: { type: 'integer', minimum: 1, maximum: 500, default: 500 },
+        max_records: { type: 'integer', minimum: 1, maximum: 1000, default: 100 }
+      },
+      required: ['variant_id', 'population_name']
+    },
+    required: ['variant_id', 'population_name'],
+    returns:
+      '{variant_id, species, population_name, min_r2, min_d_prime, window_size, reference_data, interpretation, n_proxies, returned, truncated, proxies:[{variation, population_name, r2, d_prime, chr, start, end, strand, consequence_type, clinical_significance}]} — n_proxies counts qualifying non-self rows before the output cap, not all variants in the window; coordinates are 1-based inclusive.',
+    example:
+      'const result = await host.mcp("genomes", "ensembl_ld_proxies", {"variant_id": "rs1042779", "population_name": "1000GENOMES:phase_3:KHV", "min_r2": 0.8, "window_size": 500, "max_records": 100})',
+    run: async (ctx, a) => {
+      const id = ldString(a.variant_id, 'variant_id')
+      const population = ldString(a.population_name, 'population_name')
+      const species = ldString(a.species === undefined ? DEFAULT_SPECIES : a.species, 'species')
+      const minR2 = ldNumber(a.min_r2 === undefined ? 0.8 : a.min_r2, 'min_r2', 0, 1)
+      const minDPrime = ldNumber(
+        a.min_d_prime === undefined ? 0 : a.min_d_prime,
+        'min_d_prime',
+        0,
+        1
+      )
+      const windowSize = ldInteger(
+        a.window_size === undefined ? 500 : a.window_size,
+        'window_size',
+        500
+      )
+      const maxRecords = ldInteger(
+        a.max_records === undefined ? 100 : a.max_records,
+        'max_records',
+        1000
+      )
+      const url = `${ENSEMBL}/ld/${encodeURIComponent(species)}/${encodeURIComponent(id)}/${encodeURIComponent(population)}?r2=${minR2}&d_prime=${minDPrime}&window_size=${windowSize}&attribs=1`
+      const rows = ldRows(await ctx.fetchJson(url), population)
+        .map((r) => ({
+          variation: ldString(r.variation, 'Ensembl LD variation'),
+          population_name: population,
+          r2: r.r2 as number,
+          d_prime: r.d_prime as number,
+          chr: r.chr ?? null,
+          start: r.start ?? null,
+          end: r.end ?? null,
+          strand: r.strand ?? null,
+          consequence_type: r.consequence_type ?? null,
+          clinical_significance: r.clinical_significance ?? null
+        }))
+        .filter((r) => r.variation !== id && r.r2 >= minR2 && r.d_prime >= minDPrime)
+        .sort(
+          (a, b) => b.r2 - a.r2 || b.d_prime - a.d_prime || a.variation.localeCompare(b.variation)
+        )
+      const proxies = rows.slice(0, maxRecords)
+      return {
+        variant_id: id,
+        species,
+        population_name: population,
+        min_r2: minR2,
+        min_d_prime: minDPrime,
+        window_size: windowSize,
+        reference_data: ldReference(population, url),
+        interpretation: LD_INTERPRETATION,
+        n_proxies: rows.length,
+        returned: proxies.length,
+        truncated: rows.length > proxies.length,
+        proxies
+      }
+    }
+  },
   {
     id: 'ensembl_lookup',
     connector: 'genomes',

@@ -259,7 +259,7 @@ test('switches projects from the Workspace project menu and expands remaining pr
   await expect(menu.locator('[data-project-id]')).toHaveCount(5)
 })
 
-test('closes mobile navigation when switching projects @pr-mainline-projects', async ({ app }) => {
+test('closes mobile navigation when switching projects', async ({ app }) => {
   await app.completeOnboarding()
   let page = await app.configureFakeAgent()
 

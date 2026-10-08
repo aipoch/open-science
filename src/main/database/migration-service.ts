@@ -1,10 +1,11 @@
-import { sessionResearchMembershipMigration } from './migrations/0050-session-research-membership'
+import { sessionResearchMembershipMigration } from './migrations/0051-session-research-membership'
 import { pascalcaseTableNamesMigration } from './migrations/0049-pascalcase-table-names'
 import { pdfAnnotationSharingMigration } from './migrations/0048-pdf-annotation-sharing'
 import { journalAttributesMigration } from './migrations/0046-journal-attributes'
 import { sessionReplayMigration } from './migrations/0047-session-replay'
 import { literatureSmartCollectionsMigration } from './migrations/0044-literature-smart-collections'
 import { literatureSmartPauseRunMigration } from './migrations/0045-literature-smart-pause-run'
+import { literatureTranslationMigration } from './migrations/0050-literature-translation'
 import { classificationUsageMigration } from './migrations/0042-classification-usage'
 import { literatureCollectionRevisionMigration } from './migrations/0040-literature-collection-revision'
 import { bookmarksMigration } from './migrations/0041-bookmarks'
@@ -927,6 +928,17 @@ const MIGRATION_MANIFEST = [
     backupRetention: 'retain'
   },
   {
+    ...literatureTranslationMigration,
+    checksum: checksumMigrationPayload(
+      literatureTranslationMigration.id,
+      literatureTranslationMigration.statements,
+      literatureTranslationMigration.verifiers,
+      literatureTranslationMigration.operations
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
     ...sessionResearchMembershipMigration,
     checksum: checksumMigrationPayload(
       sessionResearchMembershipMigration.id,
@@ -1338,6 +1350,7 @@ const currentApplicationSchemaExtensions = {
 
 const verifyCurrentApplicationSchema = async (client: PrismaClient): Promise<void> => {
   await verifyCurrentRuntimeSchema(client, currentApplicationSchemaExtensions)
+  await runMigrationVerifiers(client, literatureTranslationMigration.verifiers)
   // The generated schema enforces the latest checks; frozen auxiliary verifiers also accept
   // the exact stronger expressions from the immutable suffix.
   await runMigrationVerifiers(

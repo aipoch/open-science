@@ -4171,6 +4171,20 @@ export function populateTableCellText({
       .flat()
       .map(({ text, rect, baseline, height }) => ({ text, rect, baseline, height }))
     cell.sourceRects = cell.items.map((i) => i.rect)
+    if (cell.items.length && cell.items.every((item) => item.sourceItem)) {
+      const origins = new Map()
+      for (const { sourceItem } of cell.items)
+        origins.set(`${sourceItem.pageNumber}:${sourceItem.index}`, sourceItem)
+      if (
+        cell.items.every(
+          ({ sourceItem }) =>
+            origins.get(`${sourceItem.pageNumber}:${sourceItem.index}`).text === sourceItem.text
+        )
+      )
+        cell.sourceItems = [...origins.values()]
+          .sort((a, b) => a.pageNumber - b.pageNumber || a.index - b.index)
+          .map((item) => ({ ...item }))
+    }
     delete cell.items
   }
   // Ownership comes from the source-token assignments above. An overlapping

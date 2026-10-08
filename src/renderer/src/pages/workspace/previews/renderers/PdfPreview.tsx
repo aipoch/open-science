@@ -1,5 +1,14 @@
+import { PdfTranslationExport } from './PdfTranslationExport'
+import { usePdfTranslationCheckpoint } from './use-pdf-translation-checkpoint'
+import { restorePdfTranslationJob } from './use-pdf-translation-job'
+import { isPdfTranslationLanguageSupported } from '../../../../../../shared/pdf-translation-languages'
+import {
+  usePdfTranslationDocument,
+  type PdfTranslationArtifact
+} from './use-pdf-translation-document'
 import { useNativePdfVisibility } from '../../pdf-annotations/use-native-pdf-visibility'
 import { PdfSearchTextCache } from './pdf-search-text-cache'
+import { renderPdfNativeLinks, type PdfLinkDestination } from './pdf-native-links'
 import { usePdfExport } from '../../pdf-annotations/use-pdf-export'
 import { PdfAnnotationsProvider } from '../../pdf-annotations/PdfAnnotationsProvider'
 import type {
@@ -9,12 +18,20 @@ import type {
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 import {
   FileText,
+  SlidersHorizontal,
   Images,
   NotebookPen,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   ChevronUp,
   Hand,
   LoaderCircle,
+  RefreshCw,
+  Languages,
+  ListOrdered,
+  Columns2,
+  Check,
   MousePointer2,
   PanelLeft,
   PanelRight,
@@ -30,7 +47,8 @@ import {
   ZoomIn,
   ZoomOut
 } from 'lucide-react'
-import { Tabs } from 'radix-ui'
+import { Tabs, Collapsible } from 'radix-ui'
+import { PdfTranslationEditions } from './PdfTranslationEditions'
 import type { TextLayerBuilder as PdfTextLayerBuilder } from 'pdfjs-dist/web/pdf_viewer.mjs'
 import {
   memo,
@@ -46,13 +64,20 @@ import { useTranslation } from 'react-i18next'
 
 import { TagSelection } from '../../../settings/ResourceTagControls'
 import { Button } from '@/components/ui/button'
+import { ErrorNotice } from '@/components/error-notice'
 import {
   DropdownMenu,
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem
 } from '@/components/ui/dropdown-menu'
-import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import {
+  Popover,
+  PopoverAnchor,
+  PopoverClose,
+  PopoverContent,
+  PopoverTrigger
+} from '@/components/ui/popover'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -71,6 +96,10 @@ import {
   type PdfAnnotation
 } from '../../../../../../shared/annotations'
 import { parseLiteratureAttachmentVersionReference } from '../../../../../../shared/literature'
+import {
+  sanitizePdfDocumentSource,
+  type PdfDocumentSource
+} from '../../../../../../shared/pdf-bookmarks'
 import { joinPdfTextItems } from '../../../../../../shared/pdf-text'
 
 import { PreviewErrorCard, PreviewLoadingContent } from '../PreviewFallback'
@@ -131,10 +160,44 @@ import {
   type PdfSearchPageMatches
 } from './pdf-search-matches'
 
+import {
+  createPdfTranslationBinder,
+  isCurrentTranslation,
+  isPdfTranslationResultExtension,
+  type PdfRendition,
+  type PdfTranslation,
+  type PdfTranslationResults,
+  type PdfTranslationSource,
+  type PdfTranslationUnit
+} from './pdf-translation'
+import { PdfTranslationActionHint } from './PdfTranslationActionHint'
+import { PdfTranslationControls } from './PdfTranslationControls'
+import { PdfTranslationPreparation } from './PdfTranslationPreparation'
+import {
+  PdfTranslationHighlight,
+  PdfTranslationMarkers,
+  PdfTranslationSidebar
+} from './PdfTranslationView'
+import { usePdfTranslationJob, type PdfTranslationExecutor } from './use-pdf-translation-job'
+import { usePdfTranslationPreparation } from './use-pdf-translation-preparation'
+import { usePdfTranslationAgent } from './use-pdf-translation-agent'
+
 type PdfDocument = Awaited<ReturnType<typeof createManagedPdfLoadingTask>['promise']>
+export type PdfTranslationDocumentContext = Readonly<{
+  document: Pick<PdfDocument, 'numPages' | 'fingerprints' | 'getPage'>
+  resourceRequestKey: string
+  sourceIdentity?: Readonly<{ sourceChecksum: string; sourceSizeBytes: number }>
+  signal: AbortSignal
+}>
 type PdfOutlineNode = Awaited<ReturnType<PdfDocument['getOutline']>>[number]
 type DocumentState =
-  | { requestKey: string; status: 'ready'; document: PdfDocument; size: number }
+  | {
+      requestKey: string
+      status: 'ready'
+      document: PdfDocument
+      size: number
+      sourceIdentity?: PdfTranslationDocumentContext['sourceIdentity']
+    }
   | { requestKey: string; status: 'error'; error: unknown }
 type PdfCursorMode = 'select' | 'hand' | 'area' | 'area-annotation' | 'text-annotation'
 type PdfRegionIntent = 'agent' | 'annotation'
@@ -152,6 +215,11 @@ type PdfViewportAnchor = Readonly<{
   viewportX: number
   viewportY: number
 }>
+type PdfReadingLocation = Readonly<{
+  anchor: PdfViewportAnchor
+  zoom: number
+  rendition: PdfRendition
+}>
 type HighlightConstructor = new (...ranges: Range[]) => unknown
 type HighlightRegistry = Readonly<{
   set: (name: string, highlight: unknown) => void
@@ -166,8 +234,8 @@ const ZOOM_BUTTON_STEP = 0.25
 const READING_POSITION_UPDATE_MS = 100
 const OUTLINE_DEFAULT_WIDTH = 240
 const SIDEBAR_MIN_READER_WIDTH = 1120
-const NOTES_SIDEBAR_MIN_WIDTH = 300
-const NOTES_SIDEBAR_MAX_WIDTH = 420
+const RIGHT_SIDEBAR_MIN_WIDTH = 300
+const RIGHT_SIDEBAR_MAX_WIDTH = 420
 // Wheel zoom is proportional to accumulated deltaY so one trackpad/pinch gesture (many small
 // events) maps to a controlled amount rather than a full step per event. ~100px notch ≈ 0.25.
 const ZOOM_WHEEL_SENSITIVITY = 0.0025
@@ -195,6 +263,23 @@ const clampZoom = (zoom: number): number => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM
 const pageAtViewportTop = (scroll: HTMLElement, viewport: DOMRect): HTMLElement | undefined => {
   const pages = Array.from(scroll.querySelectorAll<HTMLElement>('[data-page-number]'))
   return pages.find((page) => page.getBoundingClientRect().bottom > viewport.top)
+}
+
+const readViewportAnchor = (scroll: HTMLElement | null): PdfViewportAnchor | undefined => {
+  if (!scroll) return undefined
+  const viewport = scroll.getBoundingClientRect()
+  const page = pageAtViewportTop(scroll, viewport)
+  const bounds = page?.getBoundingClientRect()
+  if (!page || !bounds || bounds.width <= 0 || bounds.height <= 0) return undefined
+  const anchorLeft = Math.max(viewport.left, bounds.left)
+  const anchorTop = Math.max(viewport.top, bounds.top)
+  return {
+    pageNumber: Number(page.dataset.pageNumber) || 1,
+    x: (anchorLeft - bounds.left) / bounds.width,
+    y: (anchorTop - bounds.top) / bounds.height,
+    viewportX: anchorLeft - viewport.left,
+    viewportY: anchorTop - viewport.top
+  }
 }
 
 const pageAtViewportMidpoint = (
@@ -294,7 +379,8 @@ const textRangesForQuery = (root: HTMLElement, query: string): Range[] => {
 const updatePdfSearchHighlights = (
   scroll: HTMLElement | null,
   query: string,
-  selected?: PdfSearchMatch
+  selected?: PdfSearchMatch,
+  translated = false
 ): Range | undefined => {
   const registry = (globalThis as unknown as { CSS?: { highlights?: HighlightRegistry } }).CSS
     ?.highlights
@@ -305,7 +391,9 @@ const updatePdfSearchHighlights = (
   const allRanges: Range[] = []
   let selectedRange: Range | undefined
   for (const page of scroll.querySelectorAll<HTMLElement>('[data-page-number]')) {
-    const layer = page.querySelector<HTMLElement>('[data-pdf-text-layer]')
+    const layer = Array.from(page.querySelectorAll<HTMLElement>('[data-pdf-text-layer]')).find(
+      (element) => Boolean(element.closest('[data-pdf-translated-page]')) === translated
+    )
     if (!layer) continue
     const pageRanges = textRangesForQuery(layer, query)
     allRanges.push(...pageRanges)
@@ -533,7 +621,7 @@ const PdfInteractionControls = ({
   ]
 
   return (
-    <TooltipProvider skipDelayDuration={300}>
+    <TooltipProvider delayDuration={200} skipDelayDuration={300}>
       <div
         data-pdf-controls="interaction"
         role="group"
@@ -544,7 +632,12 @@ const PdfInteractionControls = ({
           {navigationAvailable ? (
             <>
               <Tooltip>
-                <TooltipTrigger asChild>
+                <TooltipTrigger
+                  asChild
+                  onFocus={(event) => {
+                    if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                  }}
+                >
                   <Button
                     type="button"
                     variant={navigationOpen ? 'secondary' : 'ghost'}
@@ -912,7 +1005,9 @@ const PdfSearchControls = ({
   total,
   onQueryChange,
   onFindAgain,
-  onClose
+  onClose,
+  translated,
+  onScopeChange
 }: {
   query: string
   current: number
@@ -920,11 +1015,25 @@ const PdfSearchControls = ({
   onQueryChange: (query: string) => void
   onFindAgain: (previous: boolean) => void
   onClose: () => void
+  translated?: boolean
+  onScopeChange?: (translated: boolean) => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
   return (
-    <TooltipProvider skipDelayDuration={300}>
+    <TooltipProvider delayDuration={250} skipDelayDuration={300}>
       <div className="absolute top-3 right-3 z-40 flex h-8 items-center gap-0.5 rounded-md border border-border-300/50 bg-bg-000/95 p-0.5 shadow-sm backdrop-blur">
+        {onScopeChange ? (
+          <Button
+            size="sm"
+            variant="ghost"
+            aria-label={t('Search in {{scope}}', {
+              scope: translated ? t('Translation') : t('Original')
+            })}
+            onClick={() => onScopeChange(!translated)}
+          >
+            {translated ? t('Translation') : t('Original')}
+          </Button>
+        ) : null}
         <Search className="ml-1 size-3.5 shrink-0 text-text-300" aria-hidden="true" />
         <Input
           autoFocus
@@ -1001,14 +1110,20 @@ const PdfSearchControls = ({
 
 // Bottom-right overlay is deliberately view-only: interaction modes live at the top-left.
 const PdfZoomControls = ({
+  children,
   zoom,
   currentPage,
   pageCount,
   onNavigate,
   onZoomIn,
   onZoomOut,
-  onReset
+  onReset,
+  canGoBack,
+  canGoForward,
+  onGoBack,
+  onGoForward
 }: {
+  children?: React.ReactNode
   zoom: number
   currentPage: number
   pageCount: number
@@ -1016,12 +1131,32 @@ const PdfZoomControls = ({
   onZoomIn: () => void
   onZoomOut: () => void
   onReset: () => void
+  canGoBack: boolean
+  canGoForward: boolean
+  onGoBack: () => void
+  onGoForward: () => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const [editingPage, setEditingPage] = useState(false)
   const [pageDraft, setPageDraft] = useState(String(currentPage))
   const pageLabel = t('Page {{current}} of {{total}}', { current: currentPage, total: pageCount })
   const actions = [
+    ...(canGoBack || canGoForward
+      ? [
+          {
+            label: t('Previous reading position'),
+            icon: ChevronLeft,
+            onClick: onGoBack,
+            disabled: !canGoBack
+          },
+          {
+            label: t('Next reading position'),
+            icon: ChevronRight,
+            onClick: onGoForward,
+            disabled: !canGoForward
+          }
+        ]
+      : []),
     { label: t('Zoom in'), icon: ZoomIn, onClick: onZoomIn, disabled: zoom >= MAX_ZOOM },
     { label: t('Zoom out'), icon: ZoomOut, onClick: onZoomOut, disabled: zoom <= MIN_ZOOM },
     { label: t('Reset zoom'), icon: Shrink, onClick: onReset, disabled: zoom === 1 }
@@ -1035,12 +1170,12 @@ const PdfZoomControls = ({
   }
 
   return (
-    <TooltipProvider skipDelayDuration={300}>
+    <TooltipProvider delayDuration={200} skipDelayDuration={300}>
       <div
         data-pdf-controls="view"
         role="group"
         aria-label={t('PDF view controls')}
-        className="absolute right-3 bottom-3 z-10 flex min-h-9 items-center gap-1 rounded-lg border border-border-300/50 bg-bg-000/90 p-1 shadow-sm backdrop-blur"
+        className="absolute right-3 bottom-3 z-10 flex min-h-9 max-w-[calc(100%-1.5rem)] flex-wrap items-center justify-end gap-1 rounded-lg border border-border-300/50 bg-bg-000/90 p-1 shadow-sm backdrop-blur"
       >
         <div
           data-pdf-page-control
@@ -1099,6 +1234,7 @@ const PdfZoomControls = ({
         <span className="inline-flex h-7 min-w-[3ch] items-center justify-center px-1 text-center text-[11px] tabular-nums text-text-200">
           {Math.round(zoom * 100)}%
         </span>
+        {children}
         {actions.map(({ label, icon: Icon, onClick, disabled }) => (
           <Tooltip key={label}>
             <TooltipTrigger asChild>
@@ -1779,6 +1915,8 @@ const PdfEvidenceLayer = ({
 }
 
 // Owns one lazy page canvas and releases its decoded bitmap outside the overscan window.
+const ignoreTranslatedEvidence = (): void => {}
+
 const PdfPageCanvas = memo(function PdfPageCanvas({
   document,
   nativeAnnotationRevision,
@@ -1786,6 +1924,7 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
   pageWidth,
   outlineAspectRatio,
   registerDisposer,
+  preservePaintOnRefresh = false,
   annotationProps,
   pdfEvidenceSource,
   pdfBookmarkSource,
@@ -1795,9 +1934,14 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
   onSelectEvidence,
   onSelectBookmark,
   onTextLayerRendered,
+  onPageReady,
+  onNavigate,
+  linksEnabled,
   regionSelectionIntent,
   quickTextMark,
-  onRegionSelected
+  onRegionSelected,
+  geometry,
+  pageMarker = true
 }: {
   document: PdfDocument
   nativeAnnotationRevision: number
@@ -1805,6 +1949,7 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
   pageWidth: number
   outlineAspectRatio?: number
   registerDisposer: (dispose: () => void) => () => void
+  preservePaintOnRefresh?: boolean
   annotationProps?: PreviewFileRendererProps
   pdfEvidenceSource?: PdfAnnotation['source']
   pdfBookmarkSource?: PdfAnnotationSource
@@ -1814,15 +1959,23 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
   onSelectEvidence: (id: string) => void
   onSelectBookmark?: (id?: string) => void
   onTextLayerRendered?: () => void
+  onPageReady: () => void
+  onNavigate: (destination: PdfLinkDestination) => void
+  linksEnabled: boolean
   regionSelectionIntent?: PdfRegionIntent
   quickTextMark?: PdfTextMarkStyle
   onRegionSelected: () => void
+  geometry?: Readonly<{ width: number; height: number }>
+  pageMarker?: boolean
 }): React.JSX.Element {
   const { t } = useTranslation()
   const [setNearViewportRef, isNearViewport] = useNearViewport<HTMLDivElement>()
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const [hasPaint, setHasPaint] = useState(false)
   const textLayerHostRef = useRef<HTMLDivElement | null>(null)
   const textLayerRef = useRef<PdfTextLayerBuilder | undefined>(undefined)
+  const linkLayerHostRef = useRef<HTMLDivElement | null>(null)
+  const linkLayerId = useId()
   const pageRef = useRef<Awaited<ReturnType<PdfDocument['getPage']>> | undefined>(undefined)
   const renderTaskRef = useRef<
     ReturnType<Awaited<ReturnType<PdfDocument['getPage']>>['render']> | undefined
@@ -1842,6 +1995,8 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
     queueMicrotask(() => {
       if (!canceled) setStatus('loading')
     })
+    // React clears the ref when removing an offscreen canvas, before passive cleanup runs.
+    const ownedCanvas = canvasRef.current
     let disposed = false
     // Clear canvas backing storage on exit; removing the DOM node alone may retain its bitmap.
     const dispose = (): void => {
@@ -1854,10 +2009,10 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
       textLayerRef.current = undefined
       pageRef.current?.cleanup()
       pageRef.current = undefined
-      const canvas = canvasRef.current
-      if (canvas) {
-        canvas.width = 0
-        canvas.height = 0
+      if (ownedCanvas && !preservePaintOnRefresh) {
+        setHasPaint(false)
+        ownedCanvas.width = 0
+        ownedCanvas.height = 0
       }
     }
     const unregisterDisposer = registerDisposer(dispose)
@@ -1884,7 +2039,24 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
       unregisterDisposer()
       dispose()
     }
-  }, [document, isNearViewport, pageNumber, registerDisposer])
+  }, [document, isNearViewport, pageNumber, registerDisposer, preservePaintOnRefresh])
+
+  // A translated PDF refresh may release its old page proxies before replacement
+  // rasterization finishes. Retain only the bitmap, and release it on viewport exit/unmount.
+  useEffect(() => {
+    const canvas = canvasRef.current
+    return () => {
+      setHasPaint(false)
+      if (canvas) {
+        canvas.width = 0
+        canvas.height = 0
+      }
+    }
+  }, [isNearViewport])
+
+  useLayoutEffect(() => {
+    if (status === 'ready') onPageReady()
+  }, [status, onPageReady])
 
   // Rasterize the live page at the target width; re-runs on width change without reacquiring it.
   // Tied to isNearViewport so a scroll-out flips this effect's canceled flag and stops a rerender.
@@ -1925,23 +2097,41 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
       )
       const scale = Math.min(desiredScale, limitScale)
       const viewport = page.getViewport({ scale })
-      const context = canvas.getContext('2d')
+      const paintCanvas = preservePaintOnRefresh
+        ? canvas.ownerDocument.createElement('canvas')
+        : canvas
+      const context = paintCanvas.getContext('2d')
       if (!context) throw new Error('Canvas 2D context unavailable.')
 
       // Match the actual PDF page geometry so landscape and non-standard pages are not stretched.
       setAspectRatio(viewport.width / viewport.height)
-      canvas.width = viewport.width
-      canvas.height = viewport.height
+      paintCanvas.width = viewport.width
+      paintCanvas.height = viewport.height
       const renderTask = page.render({
-        canvas,
+        canvas: paintCanvas,
         canvasContext: context,
         viewport,
         annotationMode: pdfjsLib.AnnotationMode.ENABLE_STORAGE
       })
       renderTaskRef.current = renderTask
-      await renderTask.promise
-      if (renderTaskRef.current === renderTask) renderTaskRef.current = undefined
-      if (!canceled) setStatus('ready')
+      try {
+        await renderTask.promise
+        if (renderTaskRef.current === renderTask) renderTaskRef.current = undefined
+        if (!canceled && pageRef.current === page) {
+          if (paintCanvas !== canvas) {
+            canvas.width = paintCanvas.width
+            canvas.height = paintCanvas.height
+            canvas.getContext('2d')!.drawImage(paintCanvas, 0, 0)
+          }
+          setHasPaint(true)
+          setStatus('ready')
+        }
+      } finally {
+        if (paintCanvas !== canvas) {
+          paintCanvas.width = 0
+          paintCanvas.height = 0
+        }
+      }
     }
 
     void draw().catch((error: unknown) => {
@@ -1955,7 +2145,14 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
       canceled = true
       renderTaskRef.current?.cancel()
     }
-  }, [isNearViewport, pageEpoch, pageNumber, pageWidth, nativeAnnotationRevision])
+  }, [
+    isNearViewport,
+    pageEpoch,
+    pageNumber,
+    pageWidth,
+    nativeAnnotationRevision,
+    preservePaintOnRefresh
+  ])
 
   useEffect(() => {
     const page = pageRef.current
@@ -2009,11 +2206,50 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
     }
   }, [isNearViewport, onTextLayerRendered, pageEpoch, pageNumber, pageWidth])
 
+  useEffect(() => {
+    const page = pageRef.current
+    const host = linkLayerHostRef.current
+    if (!isNearViewport || !page || !host) return
+    const controller = new AbortController()
+    const dispose = (): void => {
+      controller.abort()
+      host.replaceChildren()
+    }
+    const unregister = registerDisposer(dispose)
+    const base = page.getViewport({ scale: 1 })
+    void renderPdfNativeLinks({
+      host,
+      page,
+      document,
+      viewport: page.getViewport({ scale: pageWidth > 0 ? pageWidth / base.width : 1 }),
+      signal: controller.signal,
+      onNavigate,
+      label: t('Open link')
+    }).catch((error: unknown) => {
+      if (!controller.signal.aborted) console.error('Failed to render PDF links', error)
+    })
+    return () => {
+      unregister()
+      dispose()
+    }
+  }, [
+    document,
+    isNearViewport,
+    pageEpoch,
+    pageWidth,
+    nativeAnnotationRevision,
+    onNavigate,
+    registerDisposer,
+    t
+  ])
+
+  const displayedAspectRatio = geometry ? geometry.width / geometry.height : aspectRatio
   const displayedStatus = isNearViewport ? status : 'idle'
 
   const pageContent = (
     <>
-      {displayedStatus === 'loading' || (displayedStatus === 'idle' && isNearViewport) ? (
+      {!hasPaint &&
+      (displayedStatus === 'loading' || (displayedStatus === 'idle' && isNearViewport)) ? (
         <div className="absolute inset-0">
           <PreviewLoadingContent compact />
         </div>
@@ -2031,7 +2267,14 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
             height={0}
             className="pointer-events-none block size-full object-contain"
           />
-          <div ref={textLayerHostRef} className="absolute inset-0" />
+          {<div ref={textLayerHostRef} className="absolute inset-0" />}
+          <div
+            ref={linkLayerHostRef}
+            id={linkLayerId}
+            className="pointer-events-none absolute inset-0 z-[2]"
+            data-pdf-native-links
+            inert={!linksEnabled}
+          />
         </>
       ) : null}
     </>
@@ -2048,11 +2291,12 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
       )}
       style={
         pageWidth > 0
-          ? { aspectRatio: outlineAspectRatio ?? aspectRatio, width: pageWidth }
-          : { aspectRatio: outlineAspectRatio ?? aspectRatio }
+          ? { aspectRatio: outlineAspectRatio ?? displayedAspectRatio, width: pageWidth }
+          : { aspectRatio: outlineAspectRatio ?? displayedAspectRatio }
       }
-      data-page-number={pageNumber}
+      data-page-number={pageMarker ? pageNumber : undefined}
       data-pdf-page-rotation={pageRotation}
+      data-pdf-page-ready={status === 'ready'}
     >
       {annotationProps && isNearViewport ? (
         <PreviewTextAnnotationSurface
@@ -2109,6 +2353,7 @@ export const PdfPreviewContent = ({
   size,
   mtimeMs,
   onReadingPositionChange,
+  onPdfTranslationChange,
   annotationProps,
   pdfEvidenceSource,
   pdfBookmarkSource,
@@ -2117,7 +2362,13 @@ export const PdfPreviewContent = ({
   pdfRevealSource,
   nativeImportProgress,
   onCancelNativeImport,
-  presentation = 'reader'
+  presentation = 'reader',
+  translationSource: suppliedTranslationSource,
+  translation: suppliedTranslation,
+  translationExecutor,
+  translationDocumentSource,
+  translationArtifact,
+  onTranslationDocument
 }: {
   path: string
   name: string
@@ -2129,6 +2380,7 @@ export const PdfPreviewContent = ({
   mimeType?: string
   size?: number
   mtimeMs?: number
+  onPdfTranslationChange?: PreviewFileRendererProps['onPdfTranslationChange']
   onReadingPositionChange?: PreviewFileRendererProps['onPdfReadingPositionChange']
   annotationProps?: PreviewFileRendererProps
   pdfEvidenceSource?: PdfAnnotation['source']
@@ -2139,6 +2391,12 @@ export const PdfPreviewContent = ({
   nativeImportProgress?: PdfNativeAnnotationImportProgress
   onCancelNativeImport?: () => void
   presentation?: PreviewFileRendererProps['presentation']
+  translationSource?: PdfTranslationSource
+  translation?: PdfTranslationResults
+  translationArtifact?: PdfTranslationArtifact
+  translationExecutor?: PdfTranslationExecutor
+  translationDocumentSource?: PdfDocumentSource
+  onTranslationDocument?: (context: PdfTranslationDocumentContext) => void | Promise<void>
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const pdfAnnotations = usePdfAnnotations()
@@ -2167,6 +2425,19 @@ export const PdfPreviewContent = ({
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const panGestureRef = useRef<PdfPanGesture | undefined>(undefined)
   const viewportAnchorRef = useRef<PdfViewportAnchor | undefined>(undefined)
+  const pendingLinkRef = useRef<
+    { destination: PdfLinkDestination; translated: boolean } | undefined
+  >(undefined)
+  const [readingHistory, setReadingHistory] = useState<{
+    key: string
+    back: PdfReadingLocation[]
+    forward: PdfReadingLocation[]
+  }>({ key: resourceRequestKey, back: [], forward: [] })
+  if (readingHistory.key !== resourceRequestKey)
+    setReadingHistory({ key: resourceRequestKey, back: [], forward: [] })
+  useLayoutEffect(() => {
+    pendingLinkRef.current = undefined
+  }, [resourceRequestKey])
   const [documentState, setDocumentState] = useState<DocumentState | null>(null)
   const [zoom, setZoom] = useState(1)
   const [cursorMode, setCursorMode] = useState<PdfCursorMode>('select')
@@ -2175,13 +2446,36 @@ export const PdfPreviewContent = ({
     color: 'yellow'
   })
   const [panning, setPanning] = useState(false)
+  const [rendition, setRendition] = useState<PdfRendition>('original')
+  const [translationSetupKey, setTranslationSetupKey] = useState<string>()
+  const translationSetupOpen = translationSetupKey === resourceRequestKey
+  const [translationOpen, setTranslationOpen] = useState(false)
+  const [suppressedRecoveryKey, setSuppressedRecoveryKey] = useState<string>()
+  const translationToggleRef = useRef<HTMLButtonElement>(null)
+  const translationCloseRef = useRef<HTMLButtonElement>(null)
+  const translationPanelId = useId()
+  const readerActionRef = useRef<number | undefined>(undefined)
+  const [translationQuery, setTranslationQuery] = useState('')
+  const [translationSearchOpen, setTranslationSearchOpen] = useState(false)
+  const [selectedTranslation, setSelectedTranslation] = useState<string>()
+  const [translationReviewOpen, setTranslationReviewOpen] = useState(false)
+  const [showParagraphMarkers, setShowParagraphMarkers] = useState(false)
+  const [focusedTranslation, setFocusedTranslation] = useState(false)
+  const [verifiedTranslation, setVerifiedTranslation] = useState<{
+    input: PdfTranslationResults
+    source: PdfTranslationSource
+    value: PdfTranslation
+    document: PdfDocument
+    status: ReturnType<typeof usePdfTranslationJob>['state']['status']
+    language?: string
+  }>()
   const [readingMode, setReadingMode] = useState<'original' | 'figures' | 'notes'>('original')
   const [figuresVisited, setFiguresVisited] = useState(false)
   const [figuresBusy, setFiguresBusy] = useState(false)
   const [outlineOpen, setOutlineOpen] = useState(false)
   const [outlineWidth, setOutlineWidth] = useState(OUTLINE_DEFAULT_WIDTH)
   const [notesOpen, setNotesOpen] = useState(false)
-  const [notesWidth, setNotesWidth] = useState(320)
+  const [sidebarWidth, setSidebarWidth] = useState(320)
   const [readerWidth, setReaderWidth] = useState(0)
   const readerRef = useRef<HTMLDivElement>(null)
   const notebookPanelId = useId()
@@ -2192,17 +2486,22 @@ export const PdfPreviewContent = ({
   >(undefined)
   const hasNotes = Boolean(attachmentVersionId || pdfBookmarkSource)
   const hasReadingTabs = Boolean(figuresSource || pdfBookmarkSource) && presentation !== 'search'
-  const showNotesSidebar = presentation !== 'search' && notesOpen && readingMode === 'original'
-  const floatingNotes = showNotesSidebar && readerWidth < SIDEBAR_MIN_READER_WIDTH
-  const maxNotesWidth = Math.min(
-    NOTES_SIDEBAR_MAX_WIDTH,
-    Math.max(NOTES_SIDEBAR_MIN_WIDTH, readerWidth - 752)
+  const showNotesSidebar =
+    presentation !== 'search' && notesOpen && !translationOpen && readingMode === 'original'
+  const showTranslationSidebar = translationOpen && readingMode === 'original'
+  const translationDocked = readerWidth >= 1000
+  const showNavigationSidebar = outlineOpen && (!showTranslationSidebar || translationDocked)
+  const maxSidebarWidth = Math.min(
+    RIGHT_SIDEBAR_MAX_WIDTH,
+    Math.max(RIGHT_SIDEBAR_MIN_WIDTH, readerWidth - 752)
   )
+  const effectiveSidebarWidth = Math.min(sidebarWidth, maxSidebarWidth)
+  const resizeSidebar = (width: number): void =>
+    setSidebarWidth(Math.max(RIGHT_SIDEBAR_MIN_WIDTH, Math.min(maxSidebarWidth, width)))
+  const floatingNotes = showNotesSidebar && readerWidth < SIDEBAR_MIN_READER_WIDTH
   const effectiveNotesWidth = floatingNotes
     ? Math.max(0, Math.min(320, readerWidth - 16))
-    : Math.min(notesWidth, maxNotesWidth)
-  const resizeNotes = (width: number): void =>
-    setNotesWidth(Math.max(NOTES_SIDEBAR_MIN_WIDTH, Math.min(maxNotesWidth, width)))
+    : effectiveSidebarWidth
   const [currentPage, setCurrentPage] = useState(1)
   const currentPageRef = useRef(1)
   const [outlinePosition, setOutlinePosition] = useState({ pageNumber: 1, top: 0 })
@@ -2216,6 +2515,7 @@ export const PdfPreviewContent = ({
   const [selectedEvidenceId, setSelectedEvidenceId] = useState<string>()
   const [selectedBookmarkId, setSelectedBookmarkId] = useState<string>()
   const [searchOpen, setSearchOpen] = useState(false)
+  const [searchTranslated, setSearchTranslated] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<readonly PdfSearchPageMatches[]>([])
   const [searchResultCount, setSearchResultCount] = useState(0)
@@ -2239,6 +2539,14 @@ export const PdfPreviewContent = ({
   const [zoomedKey, setZoomedKey] = useState(requestKey)
   if (zoomedKey !== requestKey) {
     setZoomedKey(requestKey)
+    setRendition('original')
+    setTranslationOpen(false)
+    setTranslationQuery('')
+    setTranslationSearchOpen(false)
+    setTranslationReviewOpen(false)
+    setSelectedTranslation(undefined)
+    setShowParagraphMarkers(false)
+    setFocusedTranslation(false)
     setZoom(1)
     setCursorMode('select')
     setPanning(false)
@@ -2248,7 +2556,7 @@ export const PdfPreviewContent = ({
     setOutlineOpen(false)
     setOutlineWidth(OUTLINE_DEFAULT_WIDTH)
     setNotesOpen(false)
-    setNotesWidth(320)
+    setSidebarWidth(320)
     setCurrentPage(1)
     setOutlinePosition({ pageNumber: 1, top: 0 })
     setSelectedOutline(undefined)
@@ -2260,6 +2568,12 @@ export const PdfPreviewContent = ({
     setSearchResultCount(0)
     setSelectedSearchIndex(0)
   }
+  useLayoutEffect(
+    () => () => {
+      if (readerActionRef.current !== undefined) cancelAnimationFrame(readerActionRef.current)
+    },
+    [resourceRequestKey]
+  )
   useLayoutEffect(() => {
     viewportAnchorRef.current = undefined
     currentPageRef.current = 1
@@ -2293,21 +2607,7 @@ export const PdfPreviewContent = ({
     setCursorMode('select')
 
   const captureViewportAnchor = useCallback((): void => {
-    const scroll = scrollRef.current
-    if (!scroll) return
-    const viewport = scroll.getBoundingClientRect()
-    const page = pageAtViewportTop(scroll, viewport)
-    const bounds = page?.getBoundingClientRect()
-    if (!page || !bounds || bounds.width <= 0 || bounds.height <= 0) return
-    const anchorLeft = Math.max(viewport.left, bounds.left)
-    const anchorTop = Math.max(viewport.top, bounds.top)
-    viewportAnchorRef.current = {
-      pageNumber: Number(page.dataset.pageNumber) || 1,
-      x: (anchorLeft - bounds.left) / bounds.width,
-      y: (anchorTop - bounds.top) / bounds.height,
-      viewportX: anchorLeft - viewport.left,
-      viewportY: anchorTop - viewport.top
-    }
+    viewportAnchorRef.current = readViewportAnchor(scrollRef.current)
   }, [])
 
   useEffect(() => {
@@ -2325,6 +2625,7 @@ export const PdfPreviewContent = ({
 
   const updateZoom = useCallback(
     (resolve: (current: number) => number): void => {
+      pendingLinkRef.current = undefined
       captureViewportAnchor()
       setZoom((current) => {
         const next = resolve(current)
@@ -2375,7 +2676,7 @@ export const PdfPreviewContent = ({
   useLayoutEffect(() => {
     const element = measureRef.current
     if (!element) return
-    let measuredFitWidth = 0
+    let measuredRawWidth = 0
 
     const measure = (): void => {
       const measuredReaderWidth = readerRef.current?.clientWidth ?? 0
@@ -2383,10 +2684,10 @@ export const PdfPreviewContent = ({
       const raw = element.clientWidth
       if (raw <= 0) return
       const width = Math.min(raw, FIT_PAGE_WIDTH)
-      if (measuredFitWidth > 0 && width !== measuredFitWidth && !viewportAnchorRef.current) {
+      if (measuredRawWidth > 0 && raw !== measuredRawWidth && !viewportAnchorRef.current) {
         captureViewportAnchor()
       }
-      measuredFitWidth = width
+      measuredRawWidth = raw
       setFitWidth((current) => (width === current ? current : width))
       setViewportWidth((current) => (raw === current ? current : raw))
     }
@@ -2443,6 +2744,16 @@ export const PdfPreviewContent = ({
           })
         )
         resourceId = resource.id
+        const sourceIdentity =
+          typeof resource.sourceChecksum === 'string' &&
+          /^[a-f0-9]{64}$/.test(resource.sourceChecksum) &&
+          Number.isSafeInteger(resource.size) &&
+          resource.size > 0
+            ? Object.freeze({
+                sourceChecksum: resource.sourceChecksum,
+                sourceSizeBytes: resource.size
+              })
+            : undefined
         if (canceled) {
           await dispose()
           return
@@ -2459,7 +2770,8 @@ export const PdfPreviewContent = ({
           requestKey: resourceRequestKey,
           status: 'ready',
           document,
-          size: resource.size
+          size: resource.size,
+          sourceIdentity
         })
       } catch (error: unknown) {
         // Closing or switching a preview can reject the PDF.js task while cleanup destroys it.
@@ -2490,6 +2802,8 @@ export const PdfPreviewContent = ({
     documentState?.requestKey === resourceRequestKey ? documentState : null
   const hasError = currentDocumentState?.status === 'error'
   const document = currentDocumentState?.status === 'ready' ? currentDocumentState.document : null
+  const sourceIdentity =
+    currentDocumentState?.status === 'ready' ? currentDocumentState.sourceIdentity : undefined
   const nativeAnnotationRevision = useNativePdfVisibility(
     document,
     pdfBookmarkSource,
@@ -2506,17 +2820,281 @@ export const PdfPreviewContent = ({
     size: currentDocumentState?.status === 'ready' ? currentDocumentState.size : undefined
   })
   const pageCount = document?.numPages ?? 0
+  const effectiveTranslationExecutor =
+    translationDocumentSource &&
+    translationDocumentSource.checksum !== sourceIdentity?.sourceChecksum
+      ? undefined
+      : translationExecutor
+  const preparationAvailable =
+    Boolean(attachmentVersionId || effectiveTranslationExecutor) &&
+    presentation !== 'search' &&
+    !suppliedTranslationSource &&
+    !suppliedTranslation &&
+    !onTranslationDocument
+  const recovery = usePdfTranslationCheckpoint(
+    attachmentVersionId ?? translationDocumentSource,
+    presentation !== 'search' &&
+      !suppliedTranslationSource &&
+      !suppliedTranslation &&
+      !onTranslationDocument
+  )
+  const recoverySuppressed = suppressedRecoveryKey === resourceRequestKey
+  const recoveryCheckpoint = recoverySuppressed ? undefined : recovery.checkpoint
+  const recoveryLoading = recovery.selecting || (!recoverySuppressed && recovery.loading)
+  const recoveryError = recoverySuppressed ? false : recovery.error
+  const preparation = usePdfTranslationPreparation(
+    preparationAvailable ? document : null,
+    resourceRequestKey,
+    attachmentVersionId,
+    sourceIdentity,
+    recovery.checkpoint
+  )
+  const jobSource =
+    document && presentation !== 'search'
+      ? preparation.state.status === 'ready'
+        ? preparation.state.extraction.source
+        : suppliedTranslationSource?.resourceRequestKey === resourceRequestKey &&
+            suppliedTranslationSource.fingerprint === document.fingerprints[0]
+          ? suppliedTranslationSource
+          : undefined
+      : undefined
+  const translationWorkflowAvailable =
+    preparationAvailable || Boolean(jobSource && effectiveTranslationExecutor)
+  const prepareFullText = preparation.start
+  useEffect(() => {
+    if (recoveryCheckpoint && preparation.state.status === 'idle') prepareFullText()
+  }, [prepareFullText, preparation.state.status, recoveryCheckpoint])
+  const translationJob = usePdfTranslationJob(
+    jobSource,
+    effectiveTranslationExecutor,
+    recoveryCheckpoint
+  )
+  const {
+    status: translationStatus,
+    done: translatedCount,
+    total: translationTotal
+  } = translationJob.state
+  const cancelTranslation = translationJob.cancel
+  const savedTranslationKey = translationJob.state.results?.checkpoint?.key
+  const refreshEditions = recovery.refreshEditions
+  useEffect(() => {
+    if (translationStatus !== 'idle') refreshEditions()
+  }, [translationStatus, savedTranslationKey, refreshEditions])
+  useLayoutEffect(() => {
+    onPdfTranslationChange?.(
+      translationStatus === 'running'
+        ? { done: translatedCount, total: translationTotal, cancel: cancelTranslation }
+        : undefined
+    )
+  }, [
+    onPdfTranslationChange,
+    translationStatus,
+    translatedCount,
+    translationTotal,
+    cancelTranslation
+  ])
+  useLayoutEffect(
+    () => () => onPdfTranslationChange?.(undefined),
+    [onPdfTranslationChange, resourceRequestKey]
+  )
+  const recoveryMismatch = useMemo(
+    () =>
+      Boolean(
+        recoveryCheckpoint && jobSource && !restorePdfTranslationJob(jobSource, recoveryCheckpoint)
+      ),
+    [recoveryCheckpoint, jobSource]
+  )
+
+  const translationSource = translationJob.state.results?.source ?? suppliedTranslationSource
+  const translation = translationJob.state.results ?? suppliedTranslation
+  useLayoutEffect(() => {
+    if (!document || !onTranslationDocument || presentation === 'search') return
+    const controller = new AbortController()
+    void Promise.resolve()
+      .then(() => {
+        if (!controller.signal.aborted)
+          return onTranslationDocument({
+            document,
+            resourceRequestKey,
+            sourceIdentity,
+            signal: controller.signal
+          })
+      })
+      .catch((error) => {
+        if (!controller.signal.aborted) console.error('PDF translation extraction failed', error)
+      })
+    return () => controller.abort()
+  }, [document, resourceRequestKey, sourceIdentity, presentation, onTranslationDocument])
+  const bindTranslation = useMemo(() => createPdfTranslationBinder(), [])
+  // Edition snapshots may have different blocks. Keep the last verified edition
+  // intact while the replacement is checked, only within this exact reader/PDF.
+  const switchingEdition = Boolean(
+    recoveryCheckpoint &&
+    translation?.checkpoint?.key === recoveryCheckpoint.key &&
+    verifiedTranslation?.input.checkpoint &&
+    verifiedTranslation.input.checkpoint.key !== recoveryCheckpoint.key &&
+    verifiedTranslation.document === document &&
+    verifiedTranslation.source.resourceRequestKey === resourceRequestKey
+  )
+  const currentTranslation = useMemo(() => {
+    if (
+      presentation === 'search' ||
+      !translation ||
+      translationSource?.resourceRequestKey !== resourceRequestKey ||
+      verifiedTranslation?.document !== document
+    )
+      return undefined
+    if (switchingEdition) return verifiedTranslation.value
+    if (verifiedTranslation.source !== translationSource) return undefined
+    if (verifiedTranslation.input === translation) return verifiedTranslation.value
+    return isPdfTranslationResultExtension(verifiedTranslation.input, translation, true)
+      ? verifiedTranslation.value
+      : undefined
+  }, [
+    document,
+    presentation,
+    resourceRequestKey,
+    translation,
+    translationSource,
+    verifiedTranslation,
+    switchingEdition
+  ])
+  const setupTranslationStatus = switchingEdition ? verifiedTranslation!.status : translationStatus
+  const restoringTranslation = Boolean(
+    recoveryCheckpoint &&
+    !currentTranslation &&
+    !recoveryError &&
+    !recoveryMismatch &&
+    preparation.state.status !== 'error' &&
+    preparation.state.status !== 'cancelled'
+  )
+  const translationLanguage = translationJob.state.options?.language ?? recoveryCheckpoint?.language
+  const savedTranslationLanguage = switchingEdition
+    ? verifiedTranslation?.language
+    : translationLanguage
+  const supportsTranslatedPdf =
+    savedTranslationLanguage === undefined ||
+    isPdfTranslationLanguageSupported(savedTranslationLanguage)
+  const languagePdfReason = supportsTranslatedPdf
+    ? undefined
+    : t(
+        'PDF generation is unavailable for this language. Saved text translations remain available.'
+      )
+  const translatedDocument = usePdfTranslationDocument(
+    document,
+    // Keep the last verified snapshot readable while newly completed paragraphs are checked.
+    currentTranslation && (supportsTranslatedPdf || translationArtifact)
+      ? verifiedTranslation?.input
+      : undefined,
+    translationArtifact,
+    resourceRequestKey,
+    captureViewportAnchor
+  )
+  const pairedDocument = translatedDocument.ready
+  const preparingFirstTranslationPdf =
+    !pairedDocument && (restoringTranslation || translatedDocument.state.status === 'loading')
+  const pdfRenditionUnavailableReason =
+    languagePdfReason ??
+    (translatedDocument.state.status === 'error'
+      ? t('The translated PDF could not be prepared. Read the translated text in the sidebar.')
+      : preparingFirstTranslationPdf
+        ? t('Preparing translated PDF…')
+        : t('Available when the translated PDF is ready.'))
+  const translationPanelLoading =
+    preparingFirstTranslationPdf &&
+    translationJob.state.status !== 'running' &&
+    !currentTranslation?.units.length
+  const translationComplete = useMemo(
+    () =>
+      Boolean(
+        currentTranslation &&
+        translationSource &&
+        currentTranslation.units.length ===
+          translationSource.units.filter((unit) => !unit.sourceOnly).length
+      ),
+    [currentTranslation, translationSource]
+  )
+  const searchDocument = searchTranslated && pairedDocument ? pairedDocument.document : document
+  const [searchedDocument, setSearchedDocument] = useState(searchDocument)
+  if (searchedDocument !== searchDocument) {
+    setSearchedDocument(searchDocument)
+    setSearchResults([])
+    setSearchResultCount(0)
+    setSelectedSearchIndex(0)
+  }
+  useEffect(() => {
+    searchTextCacheRef.current.clear()
+    pendingSearchRevealRef.current = undefined
+  }, [searchDocument])
+  const canRetryPdfGeneration =
+    supportsTranslatedPdf &&
+    translatedDocument.state.status === 'error' &&
+    !translatedDocument.state.retryUnchanged &&
+    ['busy', 'timeout', 'worker-failed', 'validation-failed'].includes(
+      translatedDocument.state.failure.code
+    )
+  const effectiveRendition = currentTranslation && pairedDocument ? rendition : 'original'
+  const selectedTranslationUnit = showTranslationSidebar
+    ? currentTranslation?.units.find((unit) => unit.id === selectedTranslation)
+    : undefined
+  const comparing = effectiveRendition === 'compare'
+  const fittedWidth =
+    pairedDocument && comparing
+      ? Math.min(FIT_PAGE_WIDTH, Math.max(240, (viewportWidth - 16) / 2))
+      : fitWidth
+  const pageWidth = fittedWidth > 0 ? Math.round(fittedWidth * zoom) : 0
+  const rowWidth = pairedDocument && comparing ? pageWidth * 2 + 16 : pageWidth
+  useEffect(() => {
+    if (!translationSource || !translation || !document || presentation === 'search') return
+    const controller = new AbortController()
+    void bindTranslation(
+      translationSource,
+      translation,
+      document,
+      resourceRequestKey,
+      controller.signal
+    )
+      .then((value) => {
+        if (!controller.signal.aborted)
+          setVerifiedTranslation(
+            value
+              ? {
+                  input: translation,
+                  source: translationSource,
+                  value,
+                  document,
+                  status: translationStatus,
+                  language: translationLanguage
+                }
+              : undefined
+          )
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setVerifiedTranslation(undefined)
+      })
+    return () => controller.abort()
+  }, [
+    translationSource,
+    translation,
+    document,
+    resourceRequestKey,
+    presentation,
+    bindTranslation,
+    translationStatus,
+    translationLanguage
+  ])
   const outlineItems =
     outlineState?.requestKey === requestKey ? outlineState.items : EMPTY_OUTLINE_ITEMS
   const showNavigation = Boolean(
-    document && outlineOpen && (pageCount > 1 || outlineItems.length > 0 || attachmentVersionId)
+    document &&
+    showNavigationSidebar &&
+    (pageCount > 1 || outlineItems.length > 0 || attachmentVersionId)
   )
   const floatingNavigation =
     showNavigation &&
     readingMode === 'original' &&
     readerWidth > 0 &&
     readerWidth < SIDEBAR_MIN_READER_WIDTH
-  const pageWidth = fitWidth > 0 ? Math.round(fitWidth * zoom) : 0
   const outlineAspectRatios = useMemo(() => {
     const ratios = new Map<number, number>()
     const visit = (items: readonly PdfOutlineItem[]): void => {
@@ -2532,6 +3110,7 @@ export const PdfPreviewContent = ({
   const scrollToPage = useCallback((pageNumber: number): void => {
     outlineClickRef.current = undefined
     setSelectedOutline(undefined)
+    pendingLinkRef.current = undefined
     scrollRef.current
       ?.querySelector<HTMLElement>(`[data-page-number="${pageNumber}"]`)
       ?.scrollIntoView({ block: 'start', behavior: 'auto' })
@@ -2541,19 +3120,19 @@ export const PdfPreviewContent = ({
   const revealSearchMatch = useCallback(
     (match: PdfSearchMatch): void => {
       const scroll = scrollRef.current
-      if (!scroll || !document) return
-      const range = updatePdfSearchHighlights(scroll, searchQuery, match)
+      if (!scroll || !searchDocument) return
+      const range = updatePdfSearchHighlights(scroll, searchQuery, match, searchTranslated)
       pendingSearchRevealRef.current = undefined
       if (revealPdfSearchRange(scroll, range)) return
       pendingSearchRevealRef.current = {
-        document,
+        document: searchDocument,
         requestKey: resourceRequestKey,
         query: searchQuery,
         match
       }
       scrollToPage(match.pageNumber)
     },
-    [document, resourceRequestKey, searchQuery, scrollToPage]
+    [searchDocument, searchTranslated, resourceRequestKey, searchQuery, scrollToPage]
   )
   const navigateToPage = (pageNumber: number, item?: PdfOutlineItem): void => {
     scrollToPage(pageNumber)
@@ -2578,6 +3157,52 @@ export const PdfPreviewContent = ({
     }
     outlineClickRef.current = { top: scroll.scrollTop, left: scroll.scrollLeft }
     setSelectedOutline({ requestKey: resourceRequestKey, id: item.id })
+  }
+  const navigateToLink = useCallback(
+    (destination: PdfLinkDestination, translated: boolean): void => {
+      const anchor = readViewportAnchor(scrollRef.current)
+      if (anchor)
+        setReadingHistory((history) => ({
+          key: resourceRequestKey,
+          back: [...history.back, { anchor, zoom, rendition }].slice(-50),
+          forward: []
+        }))
+      scrollToPage(destination.pageNumber)
+      pendingLinkRef.current = { destination, translated }
+      scrollRef.current?.focus({ preventScroll: true })
+    },
+    [resourceRequestKey, zoom, rendition, scrollToPage]
+  )
+  const navigateOriginalLink = useCallback(
+    (destination: PdfLinkDestination): void => {
+      navigateToLink(destination, false)
+    },
+    [navigateToLink]
+  )
+  const navigateTranslatedLink = useCallback(
+    (destination: PdfLinkDestination): void => {
+      navigateToLink(destination, true)
+    },
+    [navigateToLink]
+  )
+  const travelReadingHistory = (direction: 'back' | 'forward'): void => {
+    const target = readingHistory[direction].at(-1)
+    const anchor = readViewportAnchor(scrollRef.current)
+    if (!target || !anchor) return
+    const opposite = direction === 'back' ? 'forward' : 'back'
+    pendingLinkRef.current = undefined
+    viewportAnchorRef.current = target.anchor
+    setZoom(target.zoom)
+    setRendition(target.rendition)
+    setFocusedTranslation(target.rendition === 'translated')
+    currentPageRef.current = target.anchor.pageNumber
+    setCurrentPage(target.anchor.pageNumber)
+    setReadingHistory({
+      ...readingHistory,
+      [direction]: readingHistory[direction].slice(0, -1),
+      [opposite]: [...readingHistory[opposite], { anchor, zoom, rendition }].slice(-50)
+    })
+    scrollRef.current?.focus({ preventScroll: true })
   }
   useEffect(
     () =>
@@ -2628,7 +3253,7 @@ export const PdfPreviewContent = ({
     [document, path, projectId, scrollToPage]
   )
   useEffect(() => {
-    if (!document || !searchQuery.trim()) {
+    if (!searchDocument || !searchQuery.trim()) {
       updatePdfSearchHighlights(scrollRef.current, '', undefined)
       return
     }
@@ -2640,12 +3265,12 @@ export const PdfPreviewContent = ({
         let matchCount = 0
         let publishedMatchCount = 0
         let revealedFirstMatch = false
-        for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
+        for (let pageNumber = 1; pageNumber <= searchDocument.numPages; pageNumber += 1) {
           if (canceled) return
           let text: string
           try {
             text = await searchTextCacheRef.current.get(pageNumber, async () => {
-              const page = await document.getPage(pageNumber)
+              const page = await searchDocument.getPage(pageNumber)
               try {
                 const content = await page.getTextContent()
                 return joinPdfTextItems(content.items.map((item) => ('str' in item ? item : {})))
@@ -2687,16 +3312,16 @@ export const PdfPreviewContent = ({
       clearTimeout(timer)
       pendingSearchRevealRef.current = undefined
     }
-  }, [document, searchQuery, revealSearchMatch])
+  }, [searchDocument, searchQuery, revealSearchMatch])
 
   useEffect(() => {
     const scroll = scrollRef.current
     const selected = resolvePdfSearchMatch(searchResults, selectedSearchIndex)
-    const range = updatePdfSearchHighlights(scroll, searchQuery, selected)
+    const range = updatePdfSearchHighlights(scroll, searchQuery, selected, searchTranslated)
     const pending = pendingSearchRevealRef.current
     if (!pending) return
     if (
-      pending.document !== document ||
+      pending.document !== searchDocument ||
       pending.requestKey !== resourceRequestKey ||
       pending.query !== searchQuery ||
       pending.match.pageNumber !== selected?.pageNumber ||
@@ -2707,7 +3332,8 @@ export const PdfPreviewContent = ({
     }
     if (scroll && revealPdfSearchRange(scroll, range)) pendingSearchRevealRef.current = undefined
   }, [
-    document,
+    searchDocument,
+    searchTranslated,
     resourceRequestKey,
     searchQuery,
     searchResults,
@@ -2726,7 +3352,34 @@ export const PdfPreviewContent = ({
     const bounds = page.getBoundingClientRect()
     scroll.scrollLeft += bounds.left + anchor.x * bounds.width - viewport.left - anchor.viewportX
     scroll.scrollTop += bounds.top + anchor.y * bounds.height - viewport.top - anchor.viewportY
-  }, [document, fitWidth, zoom])
+  }, [document, fitWidth, zoom, effectiveRendition, pairedDocument, rowWidth, readingHistory])
+
+  useLayoutEffect(() => {
+    const pending = pendingLinkRef.current
+    const scroll = scrollRef.current
+    if (!pending || !scroll) return
+    const row = scroll.querySelector<HTMLElement>(
+      `[data-page-number="${pending.destination.pageNumber}"]`
+    )
+    const page = row?.matches('[data-pdf-page-rotation]')
+      ? row
+      : row?.querySelector<HTMLElement>(
+          pending.translated
+            ? '[data-pdf-translated-page] [data-pdf-page-rotation]'
+            : '[data-pdf-page-rotation]'
+        )
+    if (!page || page.dataset.pdfPageReady !== 'true') return
+    const bounds = page.getBoundingClientRect()
+    const viewport = scroll.getBoundingClientRect()
+    if (!bounds.width || !bounds.height) return
+    pendingLinkRef.current = undefined
+    scroll.scrollLeft += bounds.left + pending.destination.x * bounds.width - viewport.left
+    scroll.scrollTop +=
+      bounds.top +
+      pending.destination.y * bounds.height -
+      viewport.top -
+      Math.min(72, viewport.height / 4)
+  }, [readingHistory, textLayerEpoch, currentPage, zoom, effectiveRendition])
 
   useEffect(() => {
     if (!document) return
@@ -2879,6 +3532,134 @@ export const PdfPreviewContent = ({
     updatePdfSearchHighlights(scrollRef.current, '', undefined)
     scrollRef.current?.focus()
   }
+  const scheduleReaderAction = useCallback((action: () => void): void => {
+    if (readerActionRef.current !== undefined) cancelAnimationFrame(readerActionRef.current)
+    readerActionRef.current = requestAnimationFrame(() => {
+      readerActionRef.current = undefined
+      action()
+    })
+  }, [])
+  const changeRendition = (next: PdfRendition): void => {
+    pendingLinkRef.current = undefined
+    captureViewportAnchor()
+    if (next !== 'original' && !pairedDocument) return
+    setRendition(next)
+    setFocusedTranslation(next === 'translated')
+    if (next === 'translated') changeCursorMode('select')
+    closeSearch()
+  }
+  const refreshTranslationPdf = (unitId?: string): void => {
+    if (!supportsTranslatedPdf || translatedDocument.state.status === 'loading') return
+    if (effectiveRendition === 'original') changeRendition('translated')
+    scrollRef.current?.focus({ preventScroll: true })
+    translatedDocument.refresh(unitId)
+  }
+  const toggleNavigation = (): void => {
+    captureViewportAnchor()
+    setOutlineOpen(!showNavigationSidebar)
+    if (!translationDocked) setTranslationOpen(false)
+  }
+  const closeTranslationSidebar = (): void => {
+    if (readerActionRef.current !== undefined) {
+      cancelAnimationFrame(readerActionRef.current)
+      readerActionRef.current = undefined
+    }
+    captureViewportAnchor()
+    setTranslationOpen(false)
+    setTranslationSearchOpen(false)
+    setFocusedTranslation(false)
+    translationToggleRef.current?.focus({ preventScroll: true })
+  }
+  const changeRenditionFromSidebar = (next: PdfRendition): void => {
+    if (next !== 'compare') {
+      setTranslationOpen(true)
+      setNotesOpen(false)
+    }
+    changeRendition(next)
+  }
+  const openTranslationSidebar = (): void => {
+    captureViewportAnchor()
+    setTranslationOpen(true)
+    setTranslationSearchOpen(false)
+    setNotesOpen(false)
+  }
+  const openTranslationSearch = (): void => {
+    if (searchOpen) closeSearch()
+    captureViewportAnchor()
+    setTranslationOpen(true)
+    setTranslationSearchOpen(true)
+    setNotesOpen(false)
+    scheduleReaderAction(() => {
+      const panel = globalThis.document.getElementById(translationPanelId)
+      if (panel?.getAttribute('aria-hidden') === 'false') {
+        const target =
+          panel.querySelector<HTMLElement>('[data-translation-search]') ??
+          Array.from(
+            panel.querySelectorAll<HTMLInputElement>(
+              '[data-pdf-translation-controls] input:not(:disabled)'
+            )
+          ).find((input) => !input.closest('[data-state="closed"]')) ??
+          panel.querySelector<HTMLElement>('[data-pdf-translation-controls] button') ??
+          panel.querySelector<HTMLElement>('button')
+        target?.focus({ preventScroll: true })
+      }
+    })
+  }
+  const openDocumentSearch = (): void => {
+    if (
+      !pairedDocument &&
+      currentTranslation &&
+      (effectiveRendition === 'translated' || focusedTranslation)
+    ) {
+      openTranslationSearch()
+      return
+    }
+    setSearchTranslated(
+      Boolean(pairedDocument && (effectiveRendition === 'translated' || focusedTranslation))
+    )
+    setSearchOpen(true)
+  }
+  const selectTranslation = useCallback(
+    (unit: PdfTranslationUnit, fragmentIndex: number): void => {
+      setSelectedTranslation(unit.id)
+      if (
+        !isCurrentTranslation(unit) ||
+        !unit.translation.toLocaleLowerCase().includes(translationQuery.trim().toLocaleLowerCase())
+      )
+        setTranslationQuery('')
+      captureViewportAnchor()
+      setNotesOpen(false)
+      setTranslationOpen(true)
+      scheduleReaderAction(() => {
+        scrollToPage(unit.fragments[fragmentIndex].pageNumber)
+        const anchor = Array.from(
+          scrollRef.current?.querySelectorAll<HTMLElement>('[data-translation-highlight]') ?? []
+        ).find(
+          (element) =>
+            element.dataset.translationSource === unit.id &&
+            element.dataset.translationFragment === String(fragmentIndex) &&
+            Boolean(element.closest('[data-pdf-translated-page]')) ===
+              (effectiveRendition === 'translated' ||
+                (effectiveRendition === 'compare' && focusedTranslation))
+        )
+        anchor?.scrollIntoView({ block: 'center' })
+        const sidebar = scrollRef.current
+          ?.closest('[data-pdf-preview-root]')
+          ?.querySelector('[data-pdf-translation-sidebar]')
+        if (!sidebar?.contains(globalThis.document.activeElement))
+          scrollRef.current?.focus({ preventScroll: true })
+      })
+    },
+    [
+      captureViewportAnchor,
+      scheduleReaderAction,
+      scrollToPage,
+      translationQuery,
+      effectiveRendition,
+      focusedTranslation
+    ]
+  )
+  const collapseTranslation = useCallback(() => setSelectedTranslation(undefined), [])
   const focusPdfView = useCallback((): void => {
     const view = scrollRef.current
     view?.focus({ preventScroll: true })
@@ -2919,6 +3700,374 @@ export const PdfPreviewContent = ({
     )
   }
 
+  const translationControls = (
+    <PdfTranslationControls
+      executor={effectiveTranslationExecutor}
+      state={translationJob.state}
+      ready={Boolean(jobSource) && !recoveryLoading && !recoveryError && !switchingEdition}
+      hasTranslatableText={Boolean(jobSource?.units.some((unit) => !unit.sourceOnly))}
+      onStart={(options) =>
+        translationJob.start({
+          ...options,
+          ...(attachmentVersionId ? { attachmentVersionId } : {}),
+          ...(translationDocumentSource ? { documentSource: translationDocumentSource } : {})
+        })
+      }
+      onCancel={translationJob.cancel}
+      onSkip={effectiveTranslationExecutor?.skip ? translationJob.skipUnit : undefined}
+      onNewTranslation={(options) => {
+        setSuppressedRecoveryKey(resourceRequestKey)
+        translationJob.restart({
+          ...options,
+          ...(attachmentVersionId ? { attachmentVersionId } : {}),
+          ...(translationDocumentSource ? { documentSource: translationDocumentSource } : {})
+        })
+        setTranslationQuery('')
+        setSelectedTranslation(undefined)
+        setShowParagraphMarkers(false)
+        changeRendition('original')
+        openTranslationSidebar()
+      }}
+    />
+  )
+  const pdfRefreshControl =
+    supportsTranslatedPdf &&
+    pairedDocument &&
+    (translatedDocument.updateAvailable || translatedDocument.state.status === 'loading') ? (
+      <TooltipProvider delayDuration={100}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="relative size-8 shrink-0"
+              aria-label={t('Update PDF preview')}
+              aria-busy={translatedDocument.state.status === 'loading'}
+              aria-disabled={translatedDocument.state.status === 'loading'}
+              onClick={() => refreshTranslationPdf()}
+            >
+              <RefreshCw
+                aria-hidden="true"
+                className={cn(
+                  'size-4',
+                  translatedDocument.state.status === 'loading' &&
+                    'animate-spin motion-reduce:animate-none'
+                )}
+              />
+              {translatedDocument.state.status !== 'loading' ? (
+                <span
+                  aria-hidden="true"
+                  className="absolute right-1 top-1 size-1.5 rounded-full bg-primary"
+                />
+              ) : null}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent className="z-[120] max-w-64">
+            {translatedDocument.state.status === 'loading'
+              ? translatedDocument.state.phase === 'validating'
+                ? t('Checking translated PDF…')
+                : t('Preparing translated PDF…')
+              : t('New translations are available. Update the PDF when you are ready.')}
+          </TooltipContent>
+        </Tooltip>
+        <span role="status" className="sr-only">
+          {translatedDocument.state.status === 'loading'
+            ? t('Preparing translated PDF…')
+            : t('New translations are available. Update the PDF when you are ready.')}
+        </span>
+      </TooltipProvider>
+    ) : null
+  const pdfGenerationNotice = languagePdfReason ? (
+    <p role="status" className="px-5 py-3 text-xs text-muted-foreground">
+      {languagePdfReason}
+    </p>
+  ) : translatedDocument.state.status === 'error' ? (
+    <ErrorNotice
+      inline
+      role="alert"
+      className="m-4"
+      title={t('Could not prepare translated PDF')}
+      diagnosticsLabel={t('Details')}
+      errorCode={[
+        `[pdf-generation:${translatedDocument.state.failure.code}]`,
+        translatedDocument.state.details,
+        translatedDocument.state.unitId ? `unit=${translatedDocument.state.unitId}` : undefined
+      ]
+        .filter(Boolean)
+        .join('\n')}
+      secondaryButton={
+        translatedDocument.state.failure.pageNumber
+          ? {
+              label: t('Locate issue'),
+              onClick: () => {
+                if (translatedDocument.state.status !== 'error') return
+                const { failure, unitId } = translatedDocument.state
+                const unit = currentTranslation?.units.find((item) => item.id === unitId)
+                changeRendition('original')
+                setTranslationOpen(true)
+                setNotesOpen(false)
+                setSelectedTranslation(unit?.id)
+                setTranslationQuery('')
+                scheduleReaderAction(() => {
+                  scrollToPage(failure.pageNumber!)
+                  const anchor = Array.from(
+                    scrollRef.current?.querySelectorAll<HTMLElement>(
+                      '[data-translation-highlight]'
+                    ) ?? []
+                  ).find(
+                    (element) =>
+                      element.dataset.translationSource === unit?.id &&
+                      !element.closest('[data-pdf-translated-page]') &&
+                      unit?.fragments[Number(element.dataset.translationFragment)]?.pageNumber ===
+                        failure.pageNumber
+                  )
+                  anchor?.scrollIntoView({ block: 'center' })
+                  scrollRef.current?.focus({ preventScroll: true })
+                })
+              }
+            }
+          : undefined
+      }
+      description={
+        {
+          'unsupported-layout': t(
+            'This layout could not be preserved safely. The text translation is still available.'
+          ),
+          annotations: t(
+            'This PDF contains links or annotations that cannot yet be preserved safely.'
+          ),
+          'multi-region': t(
+            'A paragraph spans multiple regions. PDF placement is not yet supported.'
+          ),
+          font: t('The translated text needs unsupported glyphs or text shaping.'),
+          overflow: t('The translated text does not fit its original region.'),
+          'source-mismatch': t('The source text could not be matched safely to PDF objects.'),
+          busy: t('PDF generation is busy. Retry after another document finishes.'),
+          timeout: t('PDF generation timed out. You can retry using the existing translations.'),
+          'invalid-input': t(
+            'This document exceeds PDF generation limits or has invalid source data.'
+          ),
+          'worker-failed': t(
+            'PDF generation stopped unexpectedly. You can retry using the existing translations.'
+          ),
+          'validation-failed': t(
+            'The generated PDF did not pass verification. The text translation is still available.'
+          )
+        }[translatedDocument.state.failure.code]
+      }
+      content={
+        <div className="space-y-2 text-xs text-muted-foreground">
+          {translatedDocument.state.failure.pageNumber ? (
+            <p>
+              {t('Page {{page}}', {
+                page: translatedDocument.state.failure.pageNumber
+              })}
+            </p>
+          ) : null}
+          <p>
+            {translatedDocument.state.retryUnchanged
+              ? t('Rebuilding encountered the same issue. Your translations are still available.')
+              : canRetryPdfGeneration
+                ? t('Text translations are kept. Retrying PDF generation does not call the model.')
+                : t('Text translations remain available.')}
+          </p>
+        </div>
+      }
+      primaryButton={
+        canRetryPdfGeneration
+          ? {
+              label: t('Retry PDF generation'),
+              onClick: () => {
+                translationCloseRef.current?.focus({ preventScroll: true })
+                translatedDocument.retry()
+              }
+            }
+          : undefined
+      }
+    />
+  ) : null
+  const translationEntryLabel =
+    translationJob.state.status === 'running'
+      ? `${t('Translating…')} ${translationJob.state.done}/${translationJob.state.total}`
+      : currentTranslation
+        ? t('View translation')
+        : t('Full-text translation')
+  const translationEntry = (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger
+          asChild
+          onFocus={(event) => {
+            if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+          }}
+        >
+          <Button
+            ref={translationToggleRef}
+            size="icon-sm"
+            variant={showTranslationSidebar ? 'secondary' : 'ghost'}
+            className="relative size-7 shrink-0"
+            aria-label={translationEntryLabel}
+            aria-busy={translatedDocument.state.status === 'loading'}
+            aria-expanded={showTranslationSidebar}
+            aria-controls={translationPanelId}
+            onClick={() => {
+              if (showTranslationSidebar) closeTranslationSidebar()
+              else openTranslationSidebar()
+            }}
+          >
+            {translationJob.state.status === 'running' ||
+            translatedDocument.state.status === 'loading' ? (
+              <LoaderCircle
+                className="size-4 animate-spin motion-reduce:animate-none"
+                aria-hidden="true"
+              />
+            ) : (
+              <Languages className="size-4" aria-hidden="true" />
+            )}
+            {translatedDocument.state.status === 'error' ? (
+              <span
+                aria-hidden="true"
+                className="absolute right-0.5 top-0.5 size-1.5 rounded-full bg-status-warning-foreground"
+              />
+            ) : null}
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>
+          {translatedDocument.state.status === 'loading'
+            ? translatedDocument.state.phase === 'validating'
+              ? t('Checking translated PDF…')
+              : t('Preparing translated PDF…')
+            : translatedDocument.state.status === 'error'
+              ? t('Could not prepare translated PDF')
+              : translationEntryLabel}
+        </TooltipContent>
+      </Tooltip>
+      {translatedDocument.state.status === 'loading' && !showTranslationSidebar ? (
+        <span role="status" className="sr-only">
+          {t('Preparing translated PDF…')}
+        </span>
+      ) : null}
+    </TooltipProvider>
+  )
+  const RenditionIcon =
+    effectiveRendition === 'compare'
+      ? Columns2
+      : effectiveRendition === 'translated'
+        ? Languages
+        : FileText
+  const translationRenditionControl =
+    currentTranslation && readingMode === 'original' ? (
+      <Popover>
+        <PdfTranslationActionHint
+          reason={preparingFirstTranslationPdf ? pdfRenditionUnavailableReason : undefined}
+        >
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger
+                asChild
+                onFocus={(event) => {
+                  if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                }}
+              >
+                <PopoverTrigger asChild>
+                  <Button
+                    size="icon-sm"
+                    variant="ghost"
+                    aria-label={t('Reading view')}
+                    aria-busy={preparingFirstTranslationPdf}
+                    disabled={preparingFirstTranslationPdf}
+                  >
+                    {preparingFirstTranslationPdf ? (
+                      <LoaderCircle
+                        className="size-4 animate-spin motion-reduce:animate-none"
+                        aria-hidden="true"
+                      />
+                    ) : (
+                      <RenditionIcon className="size-4" aria-hidden="true" />
+                    )}
+                  </Button>
+                </PopoverTrigger>
+              </TooltipTrigger>
+              <TooltipContent className="z-[120]">
+                {preparingFirstTranslationPdf ? t('Preparing translated PDF…') : t('Reading view')}
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        </PdfTranslationActionHint>
+        <PopoverContent
+          side="top"
+          align="end"
+          className="z-[120] grid w-max min-w-44 max-w-[calc(100vw-1rem)] border border-border bg-popover p-2 text-popover-foreground shadow-menu"
+          onEscapeKeyDown={(event) => event.stopPropagation()}
+        >
+          <p className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
+            {t('Reading view')}
+          </p>
+          <div role="group" aria-label={t('PDF rendition')} className="grid gap-1">
+            {(['original', 'translated', 'compare'] as const).map((value) => {
+              const Icon =
+                value === 'original' ? FileText : value === 'translated' ? Languages : Columns2
+              return (
+                <PdfTranslationActionHint
+                  key={value}
+                  reason={
+                    value !== 'original' && !pairedDocument
+                      ? pdfRenditionUnavailableReason
+                      : undefined
+                  }
+                  className="[&>button]:w-full"
+                >
+                  <PopoverClose asChild>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="justify-start gap-2 whitespace-nowrap text-left"
+                      aria-pressed={effectiveRendition === value}
+                      disabled={value !== 'original' && !pairedDocument}
+                      onClick={() => changeRendition(value)}
+                    >
+                      <Icon className="size-4" aria-hidden="true" />
+                      {value === 'original'
+                        ? t('Original')
+                        : value === 'translated'
+                          ? t('Translation')
+                          : t('Compare')}
+                      <Check
+                        className={cn(
+                          'ml-auto size-4',
+                          effectiveRendition !== value && 'invisible'
+                        )}
+                        aria-hidden="true"
+                      />
+                    </Button>
+                  </PopoverClose>
+                </PdfTranslationActionHint>
+              )
+            })}
+          </div>
+          {comparing ? (
+            <div className="mt-2 grid border-t border-border pt-2">
+              <Button
+                size="sm"
+                variant="ghost"
+                className="justify-start gap-2 whitespace-nowrap text-left"
+                aria-pressed={showParagraphMarkers}
+                onClick={() => setShowParagraphMarkers((shown) => !shown)}
+              >
+                <ListOrdered className="size-4" aria-hidden="true" />
+                {t('Paragraph markers')}
+                <Check
+                  className={cn('ml-auto size-4', !showParagraphMarkers && 'invisible')}
+                  aria-hidden="true"
+                />
+              </Button>
+            </div>
+          ) : null}
+        </PopoverContent>
+      </Popover>
+    ) : null
+
   const effectiveSelectedEvidenceId = annotationProps?.activeAnnotations?.some(
     (annotation) => annotation.id === selectedEvidenceId
   )
@@ -2930,6 +4079,7 @@ export const PdfPreviewContent = ({
       value={readingMode}
       onValueChange={(value) => {
         setReadingMode(value === 'figures' ? 'figures' : value === 'notes' ? 'notes' : 'original')
+        if (value !== 'original') setRendition('original')
         if (value === 'figures') setFiguresVisited(true)
       }}
       asChild
@@ -3008,9 +4158,11 @@ export const PdfPreviewContent = ({
           if (primaryModifier && event.key.toLowerCase() === 'f') {
             event.preventDefault()
             event.stopPropagation()
-            setSearchOpen(true)
+            openDocumentSearch()
             return
           }
+          if (currentTranslation && (effectiveRendition === 'translated' || focusedTranslation))
+            return
           if (
             !primaryModifier &&
             !event.altKey &&
@@ -3160,120 +4312,148 @@ export const PdfPreviewContent = ({
         ) : null}
         {hasReadingTabs ? (
           <TooltipProvider>
-            <Tabs.List
-              aria-label={t('PDF reading mode')}
-              className="relative flex h-8 min-w-0 shrink-0 justify-center gap-2 border-b border-border bg-bg-000 px-10"
-            >
-              {document &&
-              readingMode === 'original' &&
-              (pageCount > 1 || outlineItems.length > 0 || attachmentVersionId) ? (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      type="button"
-                      variant={outlineOpen ? 'secondary' : 'ghost'}
-                      size="icon-sm"
-                      className="absolute left-2 top-0.5 size-7"
-                      aria-label={outlineOpen ? t('Hide navigation') : t('Show navigation')}
-                      aria-controls="pdf-navigation-sidebar"
-                      aria-expanded={outlineOpen}
-                      onClick={() => setOutlineOpen((open) => !open)}
+            <div className="flex min-w-0 shrink-0 items-center border-b border-border bg-bg-000">
+              <Tabs.List
+                aria-label={t('PDF reading mode')}
+                className={cn(
+                  'relative flex h-8 min-w-0 flex-1 justify-center gap-2 px-10',
+                  (currentTranslation || translationWorkflowAvailable) && 'pr-18'
+                )}
+              >
+                {document &&
+                readingMode === 'original' &&
+                (pageCount > 1 || outlineItems.length > 0 || attachmentVersionId) ? (
+                  <Tooltip>
+                    <TooltipTrigger
+                      asChild
+                      onFocus={(event) => {
+                        if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                      }}
                     >
-                      <PanelLeft className="size-4" aria-hidden="true" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    {outlineOpen ? t('Hide navigation') : t('Show navigation')}
-                  </TooltipContent>
-                </Tooltip>
-              ) : null}
-              <Tooltip>
-                <Tabs.Trigger
-                  value="original"
-                  className="flex h-full min-w-0 items-center gap-1.5 whitespace-nowrap border-b-2 border-transparent px-1 text-xs text-muted-foreground data-[state=active]:border-primary data-[state=active]:font-semibold data-[state=active]:text-primary focus-visible:outline-ring"
-                  asChild
-                >
-                  <TooltipTrigger>
-                    <FileText className="size-3.5 shrink-0" aria-hidden="true" />
-                    <span className="truncate">{t('Original PDF')}</span>
-                  </TooltipTrigger>
-                </Tabs.Trigger>
-                <PdfToolbarTooltip plain side="bottom" label={t('Original PDF')} />
-              </Tooltip>
-              {figuresSource ? (
+                      <Button
+                        type="button"
+                        variant={showNavigationSidebar ? 'secondary' : 'ghost'}
+                        size="icon-sm"
+                        className="absolute left-2 top-0.5 size-7"
+                        aria-label={
+                          showNavigationSidebar ? t('Hide navigation') : t('Show navigation')
+                        }
+                        aria-controls="pdf-navigation-sidebar"
+                        aria-expanded={showNavigationSidebar}
+                        onClick={toggleNavigation}
+                      >
+                        <PanelLeft className="size-4" aria-hidden="true" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      {showNavigationSidebar ? t('Hide navigation') : t('Show navigation')}
+                    </TooltipContent>
+                  </Tooltip>
+                ) : null}
                 <Tooltip>
                   <Tabs.Trigger
-                    value="figures"
+                    value="original"
                     className="flex h-full min-w-0 items-center gap-1.5 whitespace-nowrap border-b-2 border-transparent px-1 text-xs text-muted-foreground data-[state=active]:border-primary data-[state=active]:font-semibold data-[state=active]:text-primary focus-visible:outline-ring"
                     asChild
                   >
                     <TooltipTrigger>
-                      <Images className="size-3.5 shrink-0" aria-hidden="true" />
-                      <span className="truncate">{t('Figures & Tables')}</span>
-                      {figuresBusy ? (
-                        <span
-                          className="shrink-0"
-                          role="status"
-                          aria-label={t('Analyzing PDF…')}
-                          title={t('Analyzing PDF…')}
-                        >
-                          <LoaderCircle
-                            className="size-3.5 animate-spin text-primary motion-reduce:animate-none"
-                            aria-hidden="true"
-                          />
-                        </span>
-                      ) : null}
+                      <FileText className="size-3.5 shrink-0" aria-hidden="true" />
+                      <span className="truncate">{t('Original PDF')}</span>
                     </TooltipTrigger>
                   </Tabs.Trigger>
-                  <PdfToolbarTooltip plain side="bottom" label={t('Figures & Tables')} />
+                  <PdfToolbarTooltip plain side="bottom" label={t('Original PDF')} />
                 </Tooltip>
-              ) : null}
-              {hasNotes ? (
-                <Tooltip>
-                  <Tabs.Trigger
-                    value="notes"
-                    ref={notesTabRef}
-                    aria-controls={notebookPanelId}
-                    className="flex h-full min-w-0 items-center gap-1.5 whitespace-nowrap border-b-2 border-transparent px-1 text-xs text-muted-foreground data-[state=active]:border-primary data-[state=active]:font-semibold data-[state=active]:text-primary focus-visible:outline-ring"
-                    asChild
-                  >
-                    <TooltipTrigger>
-                      <NotebookPen className="size-3.5 shrink-0" aria-hidden="true" />
-                      <span className="truncate">{t('Notes & Annotations')}</span>
-                    </TooltipTrigger>
-                  </Tabs.Trigger>
-                  <PdfToolbarTooltip plain side="bottom" label={t('Notes & Annotations')} />
-                </Tooltip>
-              ) : null}
-              {hasNotes && readingMode === 'original' ? (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      type="button"
-                      variant={showNotesSidebar ? 'secondary' : 'ghost'}
-                      size="icon-sm"
-                      className="absolute right-2 top-0.5 size-7"
-                      aria-label={
-                        showNotesSidebar ? t('Hide notes sidebar') : t('Show notes sidebar')
-                      }
-                      ref={notesToggleRef}
-                      aria-expanded={showNotesSidebar}
+                {figuresSource ? (
+                  <Tooltip>
+                    <Tabs.Trigger
+                      value="figures"
+                      className="flex h-full min-w-0 items-center gap-1.5 whitespace-nowrap border-b-2 border-transparent px-1 text-xs text-muted-foreground data-[state=active]:border-primary data-[state=active]:font-semibold data-[state=active]:text-primary focus-visible:outline-ring"
+                      asChild
+                    >
+                      <TooltipTrigger>
+                        <Images className="size-3.5 shrink-0" aria-hidden="true" />
+                        <span className="truncate">{t('Figures & Tables')}</span>
+                        {figuresBusy ? (
+                          <span
+                            className="shrink-0"
+                            role="status"
+                            aria-label={t('Analyzing PDF…')}
+                            title={t('Analyzing PDF…')}
+                          >
+                            <LoaderCircle
+                              className="size-3.5 animate-spin text-primary motion-reduce:animate-none"
+                              aria-hidden="true"
+                            />
+                          </span>
+                        ) : null}
+                      </TooltipTrigger>
+                    </Tabs.Trigger>
+                    <PdfToolbarTooltip plain side="bottom" label={t('Figures & Tables')} />
+                  </Tooltip>
+                ) : null}
+                {hasNotes ? (
+                  <Tooltip>
+                    <Tabs.Trigger
+                      value="notes"
+                      ref={notesTabRef}
                       aria-controls={notebookPanelId}
-                      onClick={() => setNotesOpen((open) => !open)}
+                      className="flex h-full min-w-0 items-center gap-1.5 whitespace-nowrap border-b-2 border-transparent px-1 text-xs text-muted-foreground data-[state=active]:border-primary data-[state=active]:font-semibold data-[state=active]:text-primary focus-visible:outline-ring"
+                      asChild
                     >
-                      <PanelRight className="size-4" aria-hidden="true" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    {showNotesSidebar ? t('Hide notes sidebar') : t('Show notes sidebar')}
-                  </TooltipContent>
-                </Tooltip>
-              ) : null}
-            </Tabs.List>
+                      <TooltipTrigger>
+                        <NotebookPen className="size-3.5 shrink-0" aria-hidden="true" />
+                        <span className="truncate">{t('Notes & Annotations')}</span>
+                      </TooltipTrigger>
+                    </Tabs.Trigger>
+                    <PdfToolbarTooltip plain side="bottom" label={t('Notes & Annotations')} />
+                  </Tooltip>
+                ) : null}
+                {(currentTranslation || translationWorkflowAvailable) &&
+                readingMode === 'original' ? (
+                  <div className="absolute right-10 top-0.5">{translationEntry}</div>
+                ) : null}
+                {hasNotes && readingMode === 'original' ? (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant={showNotesSidebar ? 'secondary' : 'ghost'}
+                        size="icon-sm"
+                        className="absolute right-2 top-0.5 size-7 aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+                        aria-label={
+                          showNotesSidebar ? t('Hide notes sidebar') : t('Show notes sidebar')
+                        }
+                        ref={notesToggleRef}
+                        aria-expanded={showNotesSidebar}
+                        aria-controls={notebookPanelId}
+                        onClick={() => {
+                          captureViewportAnchor()
+                          setTranslationOpen(false)
+                          setNotesOpen((open) => !open)
+                        }}
+                      >
+                        <PanelRight className="size-4" aria-hidden="true" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      {showNotesSidebar ? t('Hide notes sidebar') : t('Show notes sidebar')}
+                    </TooltipContent>
+                  </Tooltip>
+                ) : null}
+              </Tabs.List>
+            </div>
           </TooltipProvider>
         ) : null}
-        <div ref={readerRef} className="relative min-h-0 flex-1">
-          <Tabs.Content value="original" tabIndex={-1} forceMount asChild>
+        {!hasReadingTabs &&
+        (currentTranslation || translationWorkflowAvailable) &&
+        readingMode === 'original' ? (
+          <div className="flex min-w-0 shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border bg-background px-3 py-2">
+            {translationEntry}
+            {presentation === 'search' ? translationRenditionControl : null}
+          </div>
+        ) : null}
+        <div ref={readerRef} className="@container/pdf-reader relative min-h-0 flex-1">
+          <Tabs.Content value="original" forceMount asChild>
             <div
               className={cn(
                 presentation === 'search' ? 'flex' : 'absolute inset-0 flex',
@@ -3282,13 +4462,18 @@ export const PdfPreviewContent = ({
               inert={readingMode !== 'original'}
               aria-hidden={readingMode !== 'original'}
               data-pdf-original-view
+              tabIndex={-1}
               style={
-                showNotesSidebar && !floatingNotes ? { right: effectiveNotesWidth } : undefined
+                (showTranslationSidebar && translationDocked) ||
+                (showNotesSidebar && !floatingNotes)
+                  ? { right: effectiveSidebarWidth }
+                  : undefined
               }
             >
               {document && showNavigation ? (
                 <PdfOutlineSidebar
                   key={requestKey}
+                  overlay
                   document={document}
                   items={outlineItems}
                   pageCount={pageCount}
@@ -3325,9 +4510,33 @@ export const PdfPreviewContent = ({
                 <div
                   ref={scrollRef}
                   data-pdf-cursor-mode={cursorMode}
+                  onWheelCapture={() => {
+                    pendingLinkRef.current = undefined
+                  }}
+                  onPointerDownCapture={() => {
+                    pendingLinkRef.current = undefined
+                  }}
+                  onKeyDownCapture={(event) => {
+                    if (
+                      [
+                        'ArrowUp',
+                        'ArrowDown',
+                        'ArrowLeft',
+                        'ArrowRight',
+                        'PageUp',
+                        'PageDown',
+                        'Home',
+                        'End',
+                        ' '
+                      ].includes(event.key)
+                    )
+                      pendingLinkRef.current = undefined
+                  }}
                   className={cn(
                     'outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50',
-                    presentation === 'search' ? 'w-full' : 'size-full overflow-auto p-4',
+                    presentation === 'search'
+                      ? 'w-full'
+                      : 'size-full min-h-0 min-w-0 overflow-auto p-4',
                     cursorMode === 'hand' &&
                       `touch-none select-none [&_*]:cursor-inherit [&_*]:select-none ${panning ? 'cursor-grabbing' : 'cursor-grab'}`
                   )}
@@ -3388,51 +4597,140 @@ export const PdfPreviewContent = ({
                       className={cn(
                         'flex min-w-full flex-col',
                         presentation === 'search' ? 'gap-[17px]' : 'gap-3',
-                        viewportWidth > 0 && pageWidth > viewportWidth
+                        viewportWidth > 0 && rowWidth > viewportWidth
                           ? 'items-start'
                           : 'items-center'
                       )}
                     >
                       {Array.from({ length: pageCount }, (_, index) => (
-                        // Each page mounts its canvas only inside the viewport overscan window.
-                        <PdfPageCanvas
-                          nativeAnnotationRevision={nativeAnnotationRevision}
+                        <div
                           key={index + 1}
-                          document={document}
-                          pageNumber={index + 1}
-                          pageWidth={pageWidth}
-                          outlineAspectRatio={outlineAspectRatios.get(index + 1)}
-                          registerDisposer={registerPageDisposer}
-                          annotationProps={annotationProps}
-                          pdfEvidenceSource={pdfEvidenceSource}
-                          pdfBookmarkSource={pdfBookmarkSource}
-                          pdfRevealSource={pdfRevealSource}
-                          selectedEvidenceId={effectiveSelectedEvidenceId}
-                          selectedBookmarkId={selectedBookmarkId}
-                          onSelectEvidence={selectEvidence}
-                          onSelectBookmark={selectBookmark}
-                          onTextLayerRendered={handleTextLayerRendered}
-                          quickTextMark={
-                            cursorMode === 'text-annotation' ? textMarkStyle : undefined
-                          }
-                          regionSelectionIntent={
-                            cursorMode === 'area'
-                              ? 'agent'
-                              : cursorMode === 'area-annotation'
-                                ? 'annotation'
-                                : undefined
-                          }
-                          onRegionSelected={finishRegionSelection}
-                        />
+                          data-page-number={index + 1}
+                          className="grid shrink-0 items-start gap-4"
+                          style={{
+                            gridTemplateColumns:
+                              pairedDocument && comparing
+                                ? 'repeat(2, minmax(0, 1fr))'
+                                : 'minmax(0, 1fr)',
+                            width: rowWidth > 0 ? rowWidth : '100%'
+                          }}
+                        >
+                          {effectiveRendition !== 'translated' ? (
+                            <div
+                              onFocusCapture={() => setFocusedTranslation(false)}
+                              onPointerDownCapture={() => setFocusedTranslation(false)}
+                            >
+                              <div className="relative">
+                                <PdfPageCanvas
+                                  onPageReady={handleTextLayerRendered}
+                                  onNavigate={navigateOriginalLink}
+                                  linksEnabled={cursorMode === 'select'}
+                                  nativeAnnotationRevision={nativeAnnotationRevision}
+                                  document={document}
+                                  outlineAspectRatio={outlineAspectRatios.get(index + 1)}
+                                  pageNumber={index + 1}
+                                  pageWidth={pageWidth}
+                                  geometry={pairedDocument?.pages[index]}
+                                  pageMarker={false}
+                                  registerDisposer={registerPageDisposer}
+                                  annotationProps={annotationProps}
+                                  pdfEvidenceSource={pdfEvidenceSource}
+                                  pdfBookmarkSource={pdfBookmarkSource}
+                                  pdfRevealSource={pdfRevealSource}
+                                  selectedEvidenceId={effectiveSelectedEvidenceId}
+                                  selectedBookmarkId={selectedBookmarkId}
+                                  onSelectEvidence={selectEvidence}
+                                  onSelectBookmark={selectBookmark}
+                                  onTextLayerRendered={handleTextLayerRendered}
+                                  quickTextMark={
+                                    cursorMode === 'text-annotation' ? textMarkStyle : undefined
+                                  }
+                                  regionSelectionIntent={
+                                    cursorMode === 'area'
+                                      ? 'agent'
+                                      : cursorMode === 'area-annotation'
+                                        ? 'annotation'
+                                        : undefined
+                                  }
+                                  onRegionSelected={finishRegionSelection}
+                                />
+                                {currentTranslation && comparing && showParagraphMarkers ? (
+                                  <PdfTranslationMarkers
+                                    units={currentTranslation.units}
+                                    pageNumber={index + 1}
+                                    selectedId={selectedTranslation}
+                                    onSelect={selectTranslation}
+                                  />
+                                ) : null}
+                                <PdfTranslationHighlight
+                                  unit={selectedTranslationUnit}
+                                  pageNumber={index + 1}
+                                />
+                              </div>
+                            </div>
+                          ) : null}
+                          {effectiveRendition === 'translated' || (comparing && pairedDocument) ? (
+                            <div
+                              data-pdf-translated-page
+                              data-preview-context-menu-passthrough={
+                                pairedDocument ? true : undefined
+                              }
+                              onFocusCapture={() => setFocusedTranslation(true)}
+                              onPointerDownCapture={() => setFocusedTranslation(true)}
+                            >
+                              {pairedDocument ? (
+                                <div className="relative">
+                                  <PdfPageCanvas
+                                    onPageReady={handleTextLayerRendered}
+                                    onNavigate={navigateTranslatedLink}
+                                    onTextLayerRendered={handleTextLayerRendered}
+                                    linksEnabled={cursorMode === 'select'}
+                                    document={pairedDocument.document}
+                                    preservePaintOnRefresh
+                                    nativeAnnotationRevision={0}
+                                    pageNumber={index + 1}
+                                    pageWidth={pageWidth}
+                                    pageMarker={false}
+                                    geometry={pairedDocument.pages[index]}
+                                    registerDisposer={translatedDocument.registerDisposer}
+                                    onSelectEvidence={ignoreTranslatedEvidence}
+                                    onRegionSelected={ignoreTranslatedEvidence}
+                                  />
+                                  <PdfTranslationHighlight
+                                    unit={selectedTranslationUnit}
+                                    pageNumber={index + 1}
+                                  />
+                                  {showTranslationSidebar && translationReviewOpen ? (
+                                    <PdfTranslationMarkers
+                                      firstFragmentPerPage
+                                      units={currentTranslation?.units ?? []}
+                                      visibleUnitIds={pairedDocument.retainedUnitIds}
+                                      pageNumber={index + 1}
+                                      selectedId={selectedTranslation}
+                                      onSelect={selectTranslation}
+                                    />
+                                  ) : null}
+                                </div>
+                              ) : null}
+                            </div>
+                          ) : null}
+                        </div>
                       ))}
                     </div>
                   ) : null}
                 </div>
                 {document && presentation !== 'search' ? (
-                  <>
+                  <div
+                    className={cn(
+                      'pointer-events-none absolute inset-0 [&>*]:pointer-events-auto',
+                      comparing &&
+                        !pairedDocument &&
+                        'bottom-1/2 @min-[720px]/pdf-reader:bottom-0 @min-[720px]/pdf-reader:right-1/2'
+                    )}
+                  >
                     <PdfInteractionControls
                       mode={cursorMode}
-                      canSelectArea={canSelectArea}
+                      canSelectArea={canSelectArea && effectiveRendition !== 'translated'}
                       areaAgentUnavailableReason={
                         annotationProps?.onAddAnnotation
                           ? t(
@@ -3447,18 +4745,21 @@ export const PdfPreviewContent = ({
                             ? t('Loading annotations…')
                             : t('PDF annotations are unavailable for this source.')
                       }
-                      canAnnotateArea={canAnnotateArea}
-                      canAnnotateText={canAnnotateText}
+                      canAnnotateArea={canAnnotateArea && effectiveRendition !== 'translated'}
+                      canAnnotateText={canAnnotateText && effectiveRendition !== 'translated'}
                       textMarkStyle={textMarkStyle}
                       onTextMarkStyleChange={setTextMarkStyle}
                       navigationAvailable={
                         !hasReadingTabs &&
                         (pageCount > 1 || outlineItems.length > 0 || Boolean(attachmentVersionId))
                       }
-                      navigationOpen={outlineOpen}
+                      navigationOpen={showNavigationSidebar}
                       searchOpen={searchOpen}
-                      onNavigationToggle={() => setOutlineOpen((open) => !open)}
-                      onSearchToggle={() => (searchOpen ? closeSearch() : setSearchOpen(true))}
+                      onNavigationToggle={toggleNavigation}
+                      onSearchToggle={() => {
+                        if (searchOpen) closeSearch()
+                        else openDocumentSearch()
+                      }}
                       onModeChange={changeCursorMode}
                     >
                       {pdfBookmarkSource ? (
@@ -3470,6 +4771,17 @@ export const PdfPreviewContent = ({
                     </PdfInteractionControls>
                     {searchOpen ? (
                       <PdfSearchControls
+                        translated={searchTranslated}
+                        onScopeChange={
+                          pairedDocument
+                            ? (translated) => {
+                                setSearchQuery('')
+                                setSearchTranslated(translated)
+                                if (effectiveRendition !== 'compare')
+                                  setRendition(translated ? 'translated' : 'original')
+                              }
+                            : undefined
+                        }
                         query={searchQuery}
                         current={searchResultCount > 0 ? selectedSearchIndex + 1 : 0}
                         total={searchResultCount}
@@ -3484,6 +4796,10 @@ export const PdfPreviewContent = ({
                       />
                     ) : null}
                     <PdfZoomControls
+                      canGoBack={readingHistory.back.length > 0}
+                      canGoForward={readingHistory.forward.length > 0}
+                      onGoBack={() => travelReadingHistory('back')}
+                      onGoForward={() => travelReadingHistory('forward')}
                       zoom={zoom}
                       currentPage={currentPage}
                       pageCount={pageCount}
@@ -3491,8 +4807,11 @@ export const PdfPreviewContent = ({
                       onZoomIn={() => zoomBy(ZOOM_BUTTON_STEP)}
                       onZoomOut={() => zoomBy(-ZOOM_BUTTON_STEP)}
                       onReset={() => updateZoom(() => 1)}
-                    />
-                  </>
+                    >
+                      {translationRenditionControl}
+                      {!showTranslationSidebar ? pdfRefreshControl : null}
+                    </PdfZoomControls>
+                  </div>
                 ) : null}
               </div>
             </div>
@@ -3507,6 +4826,7 @@ export const PdfPreviewContent = ({
                 inert={readingMode !== 'figures'}
                 aria-hidden={readingMode !== 'figures'}
                 data-pdf-figures-view
+                tabIndex={-1}
               >
                 <PdfFiguresView
                   key={requestKey}
@@ -3522,10 +4842,332 @@ export const PdfPreviewContent = ({
               </div>
             </Tabs.Content>
           ) : null}
+          {currentTranslation || translationWorkflowAvailable ? (
+            <aside
+              key={resourceRequestKey}
+              id={translationPanelId}
+              aria-label={t('Translation sidebar')}
+              aria-busy={translationPanelLoading}
+              aria-hidden={!showTranslationSidebar}
+              inert={!showTranslationSidebar}
+              data-state={showTranslationSidebar ? 'open' : 'closed'}
+              data-pdf-translation-sidebar
+              style={{ width: effectiveSidebarWidth }}
+              data-preview-escape-boundary={showTranslationSidebar ? '' : undefined}
+              className={cn(
+                'absolute inset-y-0 right-0 z-50 flex max-w-full flex-col border-l border-border bg-background transition-[opacity,transform] duration-180 ease-out motion-reduce:transition-none',
+                !translationDocked && 'shadow-lg',
+                !showTranslationSidebar && 'invisible pointer-events-none translate-x-2 opacity-0'
+              )}
+              onFocusCapture={() => setFocusedTranslation(true)}
+              onPointerDownCapture={() => setFocusedTranslation(true)}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape' && !event.nativeEvent.isComposing) {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  closeTranslationSidebar()
+                }
+              }}
+            >
+              <div className="flex h-11 shrink-0 items-center justify-between gap-2 border-b border-border px-4">
+                <h2 className="min-w-0 truncate text-sm font-medium">
+                  {t('Full-text translation')}
+                </h2>
+                <Button
+                  ref={translationCloseRef}
+                  size="icon-sm"
+                  variant="ghost"
+                  aria-label={t('Close translation')}
+                  onClick={closeTranslationSidebar}
+                >
+                  <X className="size-4" aria-hidden="true" />
+                </Button>
+              </div>
+              {translationPanelLoading ? (
+                <div
+                  role="status"
+                  className="flex min-h-48 flex-1 flex-col items-center justify-center gap-3 px-6 py-10 text-sm text-muted-foreground"
+                >
+                  <LoaderCircle
+                    aria-hidden="true"
+                    className="size-5 animate-spin motion-reduce:animate-none"
+                  />
+                  <span>
+                    {translatedDocument.state.status === 'loading' &&
+                    translatedDocument.state.phase === 'validating'
+                      ? t('Checking translated PDF…')
+                      : t('Preparing translated PDF…')}
+                  </span>
+                </div>
+              ) : null}
+              <div
+                className={cn(
+                  'flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain',
+                  translationPanelLoading && 'hidden'
+                )}
+                aria-hidden={translationPanelLoading}
+                inert={translationPanelLoading}
+                aria-busy={recovery.selecting || switchingEdition}
+              >
+                {recoveryError || recoveryMismatch ? (
+                  <ErrorNotice
+                    inline
+                    role="alert"
+                    className="m-4"
+                    title={t('Could not restore saved translation')}
+                    description={t(
+                      'Reopen this PDF to retry. Saved text must match the current source before it can be restored.'
+                    )}
+                    primaryButton={
+                      recoveryError
+                        ? {
+                            label: t('Retry'),
+                            onClick: recovery.retry
+                          }
+                        : undefined
+                    }
+                  />
+                ) : null}
+                <Collapsible.Root
+                  open={
+                    !currentTranslation ||
+                    setupTranslationStatus === 'running' ||
+                    setupTranslationStatus === 'cancelled' ||
+                    setupTranslationStatus === 'error' ||
+                    preparation.state.status === 'running' ||
+                    translationSetupOpen
+                  }
+                  onOpenChange={(open) =>
+                    setTranslationSetupKey(open ? resourceRequestKey : undefined)
+                  }
+                >
+                  {currentTranslation &&
+                  setupTranslationStatus !== 'running' &&
+                  setupTranslationStatus !== 'cancelled' &&
+                  setupTranslationStatus !== 'error' &&
+                  preparation.state.status !== 'running' ? (
+                    <div className="px-4 py-2">
+                      <Collapsible.Trigger asChild>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="group h-8 w-full justify-between rounded-lg px-3 text-xs font-medium shadow-none"
+                        >
+                          <span className="flex min-w-0 items-center gap-2">
+                            <SlidersHorizontal className="size-3.5 shrink-0" aria-hidden="true" />
+                            <span className="truncate">{t('Translation settings')}</span>
+                          </span>
+                          <ChevronDown
+                            className="size-3.5 shrink-0 transition-transform group-data-[state=open]:rotate-180"
+                            aria-hidden="true"
+                          />
+                        </Button>
+                      </Collapsible.Trigger>
+                    </div>
+                  ) : null}
+                  <Collapsible.Content className="space-y-3" inert={switchingEdition}>
+                    {preparationAvailable ? (
+                      <PdfTranslationPreparation
+                        state={preparation.state}
+                        showReadyStatus={!currentTranslation}
+                        pageCount={pageCount}
+                        onStart={preparation.start}
+                        onCancel={preparation.cancel}
+                        compact={restoringTranslation}
+                        onNavigate={(page) => {
+                          navigateToPage(page)
+                          scrollRef.current?.focus({ preventScroll: true })
+                        }}
+                      />
+                    ) : null}
+                    {!restoringTranslation && (translationExecutor || !currentTranslation)
+                      ? translationControls
+                      : null}
+                  </Collapsible.Content>
+                </Collapsible.Root>
+                {!restoringTranslation &&
+                (recovery.editions.length > 0 || recovery.editionError) ? (
+                  <div className="px-4 pt-2">
+                    <PdfTranslationEditions
+                      editions={recovery.editions}
+                      selectedKey={savedTranslationKey ?? recoveryCheckpoint?.key}
+                      error={recovery.editionError}
+                      loading={recovery.selecting || switchingEdition}
+                      disabledReason={
+                        translationStatus === 'running'
+                          ? t('Wait for the current translation to finish or cancel it.')
+                          : preparation.state.status === 'running'
+                            ? t('Wait for text preparation to finish or cancel it.')
+                            : recovery.selecting || recovery.loading || switchingEdition
+                              ? t('Loading…')
+                              : undefined
+                      }
+                      onRetry={recovery.refreshEditions}
+                      onSelect={(id) => {
+                        if (
+                          translationStatus === 'running' ||
+                          preparation.state.status === 'running' ||
+                          recovery.selecting
+                        )
+                          return
+                        void recovery.selectEdition(id).then((selected) => {
+                          if (!selected) return
+                          setSuppressedRecoveryKey(undefined)
+                          setTranslationQuery('')
+                          setSelectedTranslation(undefined)
+                          setShowParagraphMarkers(false)
+                          changeRendition('original')
+                        })
+                      }}
+                      onDelete={async (id) => {
+                        const removed = recovery.editions.find((edition) => edition.id === id)
+                        const active =
+                          removed?.key === (savedTranslationKey ?? recoveryCheckpoint?.key)
+                        const deleted = await recovery.deleteEdition(id)
+                        if (deleted && active) {
+                          translationJob.reset()
+                          setSuppressedRecoveryKey(undefined)
+                          setTranslationQuery('')
+                          setSelectedTranslation(undefined)
+                          setShowParagraphMarkers(false)
+                          changeRendition('original')
+                        }
+                        return deleted
+                      }}
+                    />
+                  </div>
+                ) : null}
+                {!restoringTranslation && currentTranslation ? (
+                  <TooltipProvider delayDuration={100} skipDelayDuration={300}>
+                    <div
+                      className="flex items-center gap-1 px-4 py-3"
+                      data-pdf-translation-view-actions
+                    >
+                      <div
+                        role="group"
+                        aria-label={t('PDF rendition')}
+                        className="grid min-w-0 flex-1 grid-cols-3 gap-1 rounded-lg bg-muted/50 p-1"
+                      >
+                        {(
+                          [
+                            {
+                              value: 'original',
+                              label: t('Original'),
+                              icon: FileText,
+                              name: t('Original PDF')
+                            },
+                            {
+                              value: 'translated',
+                              label: t('Translation'),
+                              icon: Languages,
+                              name: t('View translated PDF')
+                            },
+                            {
+                              value: 'compare',
+                              label: t('Compare'),
+                              icon: Columns2,
+                              name: t('Compare PDFs')
+                            }
+                          ] as const
+                        ).map(({ value, label, icon: Icon, name }) => {
+                          const unavailable = value !== 'original' && !pairedDocument
+                          const button = (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant={effectiveRendition === value ? 'default' : 'ghost'}
+                              className="h-8 w-full min-w-0 gap-0.5 rounded-md px-1 text-[11px]"
+                              aria-label={name}
+                              aria-pressed={effectiveRendition === value}
+                              disabled={unavailable}
+                              onClick={() => changeRenditionFromSidebar(value)}
+                            >
+                              <Icon className="size-3.5 shrink-0" aria-hidden="true" />
+                              <span className="truncate">{label}</span>
+                            </Button>
+                          )
+                          return (
+                            <PdfTranslationActionHint
+                              key={value}
+                              reason={unavailable ? pdfRenditionUnavailableReason : undefined}
+                              className="w-full"
+                            >
+                              {button}
+                            </PdfTranslationActionHint>
+                          )
+                        })}
+                      </div>
+                      {pdfRefreshControl}
+                    </div>
+                  </TooltipProvider>
+                ) : null}
+                {!restoringTranslation &&
+                pairedDocument &&
+                translationComplete &&
+                translatedDocument.isCurrent ? (
+                  <PdfTranslationExport
+                    key={resourceRequestKey}
+                    document={pairedDocument.document}
+                    path={path}
+                    versionId={selectedVersionId}
+                    name={name}
+                    hasRetainedOriginalText={
+                      pairedDocument.originalUnitCount > 0 ||
+                      Boolean(translation?.failedUnitIds?.length)
+                    }
+                    showExportButton={false}
+                  />
+                ) : null}
+                {!restoringTranslation && showTranslationSidebar ? pdfGenerationNotice : null}
+                {!restoringTranslation && currentTranslation ? (
+                  <PdfTranslationSidebar
+                    translation={currentTranslation}
+                    retainedUnitIds={pairedDocument?.retainedUnitIds}
+                    unfilledUnitIds={
+                      !supportsTranslatedPdf && !pairedDocument
+                        ? currentTranslation.units.map((unit) => unit.id)
+                        : translatedDocument.unfilledUnitIds
+                    }
+                    layoutFailures={translatedDocument.layoutFailures}
+                    unchangedLayoutUnitIds={translatedDocument.unchangedLayoutUnitIds}
+                    onRetryLayout={supportsTranslatedPdf ? refreshTranslationPdf : undefined}
+                    layoutBusy={translatedDocument.state.status === 'loading' || switchingEdition}
+                    layoutPending={
+                      preparingFirstTranslationPdf ||
+                      (supportsTranslatedPdf &&
+                        !pairedDocument &&
+                        translatedDocument.state.status === 'idle')
+                    }
+                    onRetryUnit={
+                      supportsTranslatedPdf && translationExecutor && translationJob.state.options
+                        ? translationJob.retryUnit
+                        : undefined
+                    }
+                    retryingUnitId={
+                      translationJob.state.status === 'running'
+                        ? translationJob.state.retryUnitId
+                        : undefined
+                    }
+                    retryDisabled={translationJob.state.status === 'running' || switchingEdition}
+                    query={translationQuery}
+                    onQueryChange={setTranslationQuery}
+                    selectedId={selectedTranslation}
+                    collapsed={
+                      translatedDocument.state.status !== 'error' || Boolean(pairedDocument)
+                    }
+                    onReviewOpenChange={setTranslationReviewOpen}
+                    onSelect={selectTranslation}
+                    onCollapse={collapseTranslation}
+                    searchOpen={translationSearchOpen}
+                    onSearchOpenChange={setTranslationSearchOpen}
+                  />
+                ) : null}
+              </div>
+            </aside>
+          ) : null}
           {(attachmentVersionId || pdfBookmarkSource) && presentation !== 'search' ? (
             <Tabs.Content
               value="notes"
-              tabIndex={-1}
               forceMount
               asChild
               role={showNotesSidebar ? 'complementary' : 'tabpanel'}
@@ -3543,6 +5185,7 @@ export const PdfPreviewContent = ({
                 aria-hidden={readingMode !== 'notes' && !showNotesSidebar}
                 aria-label={showNotesSidebar ? t('Notes & Annotations') : undefined}
                 data-pdf-notebook-view
+                tabIndex={-1}
                 data-pdf-notes-sidebar={showNotesSidebar || undefined}
               >
                 <PdfNotebookView
@@ -3570,15 +5213,15 @@ export const PdfPreviewContent = ({
                     role="separator"
                     aria-label={t('Resize notes sidebar')}
                     aria-orientation="vertical"
-                    aria-valuemin={NOTES_SIDEBAR_MIN_WIDTH}
-                    aria-valuemax={maxNotesWidth}
-                    aria-valuenow={effectiveNotesWidth}
+                    aria-valuemin={RIGHT_SIDEBAR_MIN_WIDTH}
+                    aria-valuemax={maxSidebarWidth}
+                    aria-valuenow={effectiveSidebarWidth}
                     className="group absolute inset-y-0 -left-1 z-20 w-2 cursor-col-resize touch-none select-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     onKeyDown={(event) => {
                       if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
                       event.preventDefault()
                       event.stopPropagation()
-                      resizeNotes(effectiveNotesWidth + (event.key === 'ArrowLeft' ? 16 : -16))
+                      resizeSidebar(effectiveSidebarWidth + (event.key === 'ArrowLeft' ? 16 : -16))
                     }}
                     onPointerDown={(event) => {
                       if (event.button !== 0 || !event.isPrimary) return
@@ -3586,13 +5229,13 @@ export const PdfPreviewContent = ({
                       notesResizeRef.current = {
                         pointerId: event.pointerId,
                         startX: event.clientX,
-                        startWidth: effectiveNotesWidth
+                        startWidth: effectiveSidebarWidth
                       }
                     }}
                     onPointerMove={(event) => {
                       const gesture = notesResizeRef.current
                       if (gesture?.pointerId === event.pointerId)
-                        resizeNotes(gesture.startWidth + gesture.startX - event.clientX)
+                        resizeSidebar(gesture.startWidth + gesture.startX - event.clientX)
                     }}
                     onPointerUp={(event) => {
                       if (notesResizeRef.current?.pointerId !== event.pointerId) return
@@ -3625,6 +5268,7 @@ const PdfPreviewRendererContent = (
   const target = resolvePdfContextTarget(props.item)
   const libraryAnnotations = usePdfAnnotations()
   const isLibrary = target?.sourceKind === 'literature-attachment-version'
+  const agentTranslationExecutor = usePdfTranslationAgent()
   const ownerSession = useSessionStore((state) => {
     const session = state.sessions.find(
       (candidate) =>
@@ -3658,11 +5302,20 @@ const PdfPreviewRendererContent = (
       : undefined
   const [draftSource, setDraftSource] = useState<{
     key: string
-    source: PdfAnnotation['source']
+    source: PdfDocumentSource & Readonly<{ projectId: string }>
   }>()
   const sourceKind = target?.sourceKind
   const sourceFileId = target?.sourceFileId
   const sourceVersionId = target?.sourceVersionId
+  const managedSourceKey =
+    !isLibrary &&
+    (isDraftReadingSource || agentTranslationExecutor) &&
+    sourceKind &&
+    sourceFileId &&
+    sourceVersionId &&
+    props.item.projectId
+      ? JSON.stringify([props.item.projectId, sourceKind, sourceFileId, sourceVersionId])
+      : undefined
   const {
     id: draftItemId,
     projectId: draftItemProjectId,
@@ -3721,7 +5374,13 @@ const PdfPreviewRendererContent = (
     ]
   )
   useEffect(() => {
-    if (!draftSourceKey || isLibrary || !sourceFileId || !sourceVersionId) return
+    if (
+      !managedSourceKey ||
+      !sourceFileId ||
+      !sourceVersionId ||
+      !window.api.managedFileVersions?.inspect
+    )
+      return
     let active = true
     const item = draftSourceItem
     void window.api.managedFileVersions
@@ -3739,6 +5398,9 @@ const PdfPreviewRendererContent = (
         }
         const version = result.value.selectedVersion
         if (
+          result.value.projectId !== item.projectId ||
+          result.value.fileId !== sourceFileId ||
+          result.value.source !== (sourceKind === 'artifact-version' ? 'artifact' : 'upload') ||
           !version ||
           version.id !== sourceVersionId ||
           version.fileId !== sourceFileId ||
@@ -3752,10 +5414,11 @@ const PdfPreviewRendererContent = (
           sessionId: result.value.sessionId
         })
         setDraftSource({
-          key: draftSourceKey,
+          key: managedSourceKey,
           source: {
             kind: version.source === 'artifact' ? 'artifact-version' : 'upload-version',
             projectId: item.projectId!,
+            sourceFileId: version.fileId,
             sessionId: result.value.sessionId,
             versionId: version.id,
             name: resolved.name,
@@ -3771,7 +5434,7 @@ const PdfPreviewRendererContent = (
     return () => {
       active = false
     }
-  }, [draftSourceKey, draftSourceItem, isLibrary, sourceFileId, sourceVersionId, sourceKind])
+  }, [managedSourceKey, draftSourceItem, sourceFileId, sourceVersionId, sourceKind])
   const binding = useSessionStore((state) => {
     const session = state.sessions.find(
       (candidate) =>
@@ -3792,7 +5455,7 @@ const PdfPreviewRendererContent = (
     libraryAnnotations.source.kind === sourceKind &&
     libraryAnnotations.source.versionId === sourceVersionId
       ? { ...libraryAnnotations.source, projectId: props.item.projectId! }
-      : draftSourceKey && draftSource?.key === draftSourceKey
+      : draftSourceKey && draftSource && draftSource.key === managedSourceKey
         ? draftSource.source
         : undefined
   const candidateSource: PdfAnnotation['source'] | undefined =
@@ -3903,6 +5566,18 @@ const PdfPreviewRendererContent = (
       ? Boolean(libraryAnnotations.loadError)
       : (currentPdfBookmarkResolution?.unavailable ??
         Boolean(target && props.item.projectId && ownerSessionId && !pdfBookmarkResolutionKey))
+  const resolvedTranslationSource =
+    draftSource && draftSource.key === managedSourceKey ? draftSource.source : undefined
+  const translationDocumentSource =
+    !isLibrary &&
+    resolvedTranslationSource &&
+    sanitizePdfDocumentSource(resolvedTranslationSource) &&
+    resolvedTranslationSource.projectId === props.item.projectId &&
+    resolvedTranslationSource.kind === target?.sourceKind &&
+    resolvedTranslationSource.sourceFileId === target?.sourceFileId &&
+    resolvedTranslationSource.versionId === target?.sourceVersionId
+      ? resolvedTranslationSource
+      : undefined
   const [nativeImportProgress, setNativeImportProgress] =
     useState<PdfNativeAnnotationImportProgress>()
   const nativeSourceKind = pdfBookmarkSource?.kind
@@ -3995,6 +5670,7 @@ const PdfPreviewRendererContent = (
       size={props.item.size}
       mtimeMs={props.item.mtimeMs}
       onReadingPositionChange={props.onPdfReadingPositionChange}
+      onPdfTranslationChange={props.onPdfTranslationChange}
       annotationProps={props}
       pdfEvidenceSource={pdfEvidenceSource}
       structureSource={props.structureSource}
@@ -4008,6 +5684,10 @@ const PdfPreviewRendererContent = (
           ? nativeImportProgress
           : undefined
       }
+      translationExecutor={
+        isLibrary || translationDocumentSource ? agentTranslationExecutor : undefined
+      }
+      translationDocumentSource={translationDocumentSource}
       onCancelNativeImport={
         nativeImportProgress && ['parsing', 'saving'].includes(nativeImportProgress.phase)
           ? () => {

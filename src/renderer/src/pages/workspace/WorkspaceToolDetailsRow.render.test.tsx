@@ -68,6 +68,105 @@ describe('WorkspaceToolDetailsRow', () => {
     vi.clearAllMocks()
   })
 
+  it.each([
+    ['declined', 'completed', 'declined', 'declined by you'],
+    ['closed', 'in_progress', 'permission-closed', 'request ended'],
+    ['completed', 'completed', undefined, 'Allowed once'],
+    ['awaiting-approval', 'pending', undefined, 'waiting for your approval']
+  ] as const)(
+    'renders a separate read-only %s code-review receipt from restored activity data',
+    async (phase, status, toolDisposition, label) => {
+      const source = 'import os\n\nos.unlink(path)\n'
+      const original = createActivity({
+        id: 'app-approval:receipt',
+        appOwned: true,
+        providerToolName: 'Open-Science',
+        title: 'Review potentially destructive code',
+        status,
+        toolDisposition,
+        rawInput: {
+          code: source,
+          notebookCodeRisk: {
+            runId: 'internal-run-id',
+            language: 'python',
+            environment: 'default-python',
+            cwd: '/workspace/data',
+            risks: [{ operation: 'os.unlink', source: 'os.unlink(path)', line: 3 }]
+          }
+        }
+      })
+      const activity: ToolActivity = JSON.parse(JSON.stringify(original))
+      const details = buildToolActivityDetails(activity)!
+      expect(details.defaultExpanded).toBe(false)
+      root = createRoot(container)
+      await act(async () =>
+        root.render(
+          <WorkspaceToolDetailsRow
+            activity={activity}
+            details={details}
+            phase={phase}
+            isExpanded
+            onToggle={() => undefined}
+          />
+        )
+      )
+      const header = container.querySelector('[data-testid="tool-chip"]')!
+      expect(header.textContent).toContain('Code risk review')
+      expect(header.textContent).toContain(label)
+      expect(header.textContent).toContain('os.unlink')
+      const receipt = container.querySelector('[data-testid="notebook-code-review-receipt"]')!
+      expect(
+        receipt.querySelector('[data-highlighted="true"]')?.getAttribute('data-code-line')
+      ).toBe('3')
+      expect(receipt.querySelector('[data-testid="tool-code-block"]')?.textContent).toBe(source)
+      expect(receipt.querySelector('details')?.open).toBe(false)
+      expect(container.textContent).not.toContain('notebookCodeRisk')
+      expect(container.textContent).not.toContain('internal-run-id')
+      expect(container.textContent).not.toContain('/workspace/data')
+      expect(container.textContent).not.toContain('Allow once')
+      expect(container.querySelector('[data-testid="permission-header"]')).toBeNull()
+    }
+  )
+
+  it.each([
+    ['notebook_execute', 'python', 'python'],
+    ['notebook_execute', 'r', 'r'],
+    ['repl_execute', 'repl', 'javascript'],
+    ['bash_execute', 'bash', 'bash']
+  ])(
+    'numbers %s / %s source lines without marking ordinary code as risky',
+    async (tool, language, syntax) => {
+      const source = '\n  first_line\n\nlast_line\n'
+      const activity = createActivity({
+        providerToolName: `mcp__open-science-notebook__${tool}`,
+        rawInput: { language, code: source },
+        rawOutput: { stdout: 'output\n', status: 'completed' }
+      })
+      const details = buildToolActivityDetails(activity)!
+      root = createRoot(container)
+      await act(async () =>
+        root.render(
+          <WorkspaceToolDetailsRow
+            activity={activity}
+            details={details}
+            isExpanded
+            onToggle={() => undefined}
+          />
+        )
+      )
+      const block = container.querySelector('[data-testid="tool-code-block"]')!
+      expect(block.getAttribute('data-language')).toBe(syntax)
+      expect(block.textContent).toBe(source)
+      expect(block.querySelectorAll('[data-code-line]')).toHaveLength(5)
+      expect(block.querySelector('[data-code-line="2"]')?.textContent).toBe('  first_line\n')
+      expect(block.querySelector('[data-highlighted="true"]')).toBeNull()
+      const output = details.sections.find(
+        (section) => section.kind === 'code' && section.label === 'Output'
+      )
+      expect(output).not.toHaveProperty('showLineNumbers', true)
+    }
+  )
+
   it('does not double-count the legacy plain projection of stdout and stderr', () => {
     root = createRoot(container)
     const run = createNotebookRun({

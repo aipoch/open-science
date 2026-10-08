@@ -24,7 +24,7 @@ test.describe('Windows window system', () => {
     await expect(app.page.locator('html')).toHaveAttribute('lang', 'en')
   })
 
-  test('keeps the Windows application menu beside native caption controls at interface zoom @pr-mainline-windows', async ({
+  test('keeps the Windows application menu beside native caption controls at interface zoom', async ({
     app
   }, testInfo) => {
     const page = await app.completeOnboarding()
@@ -89,9 +89,7 @@ test.describe('Windows window system', () => {
     })
   })
 
-  test('hides titlebar chrome in native fullscreen and restores it on exit @pr-mainline-windows', async ({
-    app
-  }) => {
+  test('hides titlebar chrome in native fullscreen and restores it on exit', async ({ app }) => {
     const page = await app.completeOnboarding()
     const titlebar = page.getByTestId('windows-titlebar')
     await expect(titlebar).toBeVisible()
@@ -113,7 +111,7 @@ test.describe('Windows window system', () => {
     await expect(titlebar.getByRole('menuitem', { name: 'File' })).toBeFocused()
   })
 
-  test('uses interface scale steps for Windows plus aliases and reset shortcuts @pr-mainline-windows', async ({
+  test('uses interface scale steps for Windows plus aliases and reset shortcuts', async ({
     app
   }, testInfo) => {
     const page = await app.completeOnboarding()
@@ -144,7 +142,7 @@ test.describe('Windows window system', () => {
     await expect.poll(pixelRatio).toBeCloseTo(baseline, 4)
   })
 
-  test('anchors native titlebar popups below their buttons after moving and zooming the window @pr-mainline-windows', async ({
+  test('anchors native titlebar popups below their buttons after moving and zooming the window', async ({
     app
   }) => {
     const page = await app.completeOnboarding()
@@ -210,9 +208,7 @@ test.describe('Windows window system', () => {
     await expect(page.getByRole('region', { name: 'Projects' })).toBeVisible()
   })
 
-  test('opens the whole-window find overlay with Ctrl+F in a workspace @pr-mainline-windows', async ({
-    app
-  }) => {
+  test('opens the whole-window find overlay with Ctrl+F in a workspace', async ({ app }) => {
     const page = await app.completeOnboarding()
     await page.getByRole('button', { name: 'New project' }).click()
     const projectDialog = page.getByRole('dialog', { name: 'New project' })

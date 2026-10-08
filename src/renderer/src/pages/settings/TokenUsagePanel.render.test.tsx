@@ -629,6 +629,13 @@ it('shows classification consumption and incomplete reporting without any conver
             cacheTokens: 0,
             source: 'literature-classification',
             usageIncomplete: true
+          },
+          {
+            timestamp: now,
+            inputTokens: 30,
+            cacheTokens: 7,
+            outputTokens: 5,
+            source: 'literature-translation'
           }
         ]
       })
@@ -638,7 +645,10 @@ it('shows classification consumption and incomplete reporting without any conver
   expect(container.querySelector('[data-slot="classification-usage"]')?.textContent).toContain(
     'Literature classification tokens23'
   )
+  expect(container.querySelector('[data-slot="translation-usage"]')?.textContent).toContain(
+    'Literature translation tokens42'
+  )
   expect(container.textContent).toContain(
-    'Some classification requests have no reported token usage. Totals may be incomplete.'
+    'Some model requests have no reported token usage. Totals may be incomplete.'
   )
 })

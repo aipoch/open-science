@@ -5,7 +5,7 @@ import { expect, it } from 'vitest'
 import { createProjectDbClient } from '../projects/prisma-client'
 import { migrateApplicationDatabase } from './migration-service'
 
-it('adds nullable research projections without changing existing Session identities or archive state', async () => {
+it('adds nullable research projections without changing existing Session or PDF translation records', async () => {
   const root = await mkdtemp(join(tmpdir(), 'research-membership-migration-'))
   const client = createProjectDbClient(root)
   try {
@@ -26,15 +26,35 @@ it('adds nullable research projections without changing existing Session identit
       }
     })
     const before = await client.session.findUnique({ where: { id: 's' } })
+    await client.pdfDocument.create({
+      data: { id: 'document', checksum: 'a'.repeat(64), sizeBytes: 10n }
+    })
+    const translation = await client.pdfTranslation.create({
+      data: {
+        id: 'translation',
+        pdfDocumentId: 'document',
+        checksum: 'a'.repeat(64),
+        sizeBytes: 10n,
+        revision: 1,
+        payloadJson: '{}'
+      }
+    })
     await client.$executeRawUnsafe('ALTER TABLE "Session" DROP COLUMN "researchMembershipJson"')
     await client.$executeRawUnsafe('ALTER TABLE "Session" DROP COLUMN "importedResearchId"')
     await client.$executeRawUnsafe(
-      "DELETE FROM _open_science_migrations WHERE id = '0050_session_research_membership'"
+      "DELETE FROM _open_science_migrations WHERE id = '0051_session_research_membership'"
     )
     await expect(
       migrateApplicationDatabase(client, { databasePath: join(root, 'open-science.db') })
-    ).resolves.toMatchObject({ applied: ['0050_session_research_membership'] })
+    ).resolves.toMatchObject({
+      from: '0050_literature_translation',
+      to: '0051_session_research_membership',
+      applied: ['0051_session_research_membership']
+    })
     expect(await client.session.findUnique({ where: { id: 's' } })).toEqual(before)
+    expect(await client.pdfTranslation.findUnique({ where: { id: 'translation' } })).toEqual(
+      translation
+    )
     expect(await client.$queryRawUnsafe('PRAGMA foreign_key_check')).toEqual([])
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
   } finally {

@@ -1,0 +1,4 @@
+{"name": "cross-column-word-hyphen-keeps-repeated-citation-occurrences", "join": "", "valid": true}
+{"name": "cross-column-word-hyphen-cannot-hide-an-added-letter", "join": "Z", "valid": false}
+{"name": "cross-column-word-hyphen-cannot-hide-an-added-number", "join": "2", "valid": false}
+{"name": "cross-column-word-hyphen-cannot-hide-a-mathematical-minus", "join": "\u2212", "valid": false}

@@ -583,6 +583,7 @@ export const applyRuntimeSessionEvents = (
       if (!wasTerminal && status) activity.status = status
       activity.toolDisposition = event.toolDisposition ?? activity.toolDisposition
       activity.executionInvocationId = event.executionInvocationId ?? activity.executionInvocationId
+      activity.appOwned = event.appOwned ?? activity.appOwned
       activity.providerToolName =
         event.kind === 'compaction'
           ? ACP_CONTEXT_COMPACTION_ACTIVITY_TOOL_NAME

@@ -116,9 +116,8 @@ import { recoverNativeMeanDeviationRecords } from './literature-pdf-native-mean-
 import { findCaptionedNativePartialRuleTable } from './literature-pdf-native-header-grid.mjs'
 import { isNativeFrontMatterRegion } from './literature-pdf-front-matter.mjs'
 import {
-  isUprightText,
   originalRect,
-  rotatedTextRect,
+  tableTextToken,
   restoreCaptionCoordinates
 } from './literature-pdf-orientation.mjs'
 import { readFigureSequence, rasterPlateRect } from './literature-pdf-figure-sequence.mjs'
@@ -137,6 +136,7 @@ import {
   recoverEnclosedTableDescriptionCaption,
   isExternalAttachmentTableRegion
 } from './literature-pdf-native-table-candidates.mjs'
+import { serializeWorkerResult } from './scratch.mjs'
 
 const [pdfArgument, assetArgument, runtimeArgument, pageArgument, outputArgument] =
   process.argv.slice(2)
@@ -225,21 +225,10 @@ const normalize = (rect, width, height) => rect.map((v, i) => v / (i % 2 ? heigh
 const nativeTextTokens = (content, viewport, rotation, includeFontMetrics = false) =>
   content.items
     .filter((i) => 'str' in i && i.str.trim())
-    .map((i) => {
-      const [x, baseline] = viewport.convertToViewportPoint(i.transform[4], i.transform[5])
-      const horizontal = isUprightText(i, rotation)
-      return {
-        text: i.str,
-        ...(includeFontMetrics ? { fontDescent: content.styles[i.fontName]?.descent } : {}),
-        inlineSymbol: i.inlineSymbol === true,
-        baseline,
-        height: i.height * 1.5,
-        rect: horizontal
-          ? [x, baseline - i.height * 1.5, x + i.width * 1.5, baseline]
-          : rotatedTextRect(i, viewport),
-        horizontal
-      }
-    })
+    .map((item) => ({
+      ...tableTextToken(item, viewport, rotation),
+      ...(includeFontMetrics ? { fontDescent: content.styles[item.fontName]?.descent } : {})
+    }))
 const pageWords = new Map(
   geometry.pages.map((page) => [
     page.pageNumber,
@@ -361,7 +350,13 @@ try {
       const viewport = page.getViewport({ scale: 1.5, rotation: pageGeometry.renderRotation })
       const nativeViewport = page.getViewport({ scale: 1, rotation: pageGeometry.renderRotation })
       const operators = await page.getOperatorList()
-      const sourceContent = await page.getTextContent()
+      const originalContent = await page.getTextContent()
+      const sourceContent = {
+        ...originalContent,
+        items: originalContent.items.map((item, index) =>
+          'str' in item ? { ...item, sourceItem: { pageNumber, index, text: item.str } } : item
+        )
+      }
       // Figure labels retain original native glyph items. Symbol repair can
       // replace or suppress an item while reconstructing table/formula text;
       // its original measured label bounds still belong to the rendered figure.
@@ -1933,17 +1928,7 @@ try {
     algorithms,
     tables
   }
-  await writeFile(
-    join(output, 'structure.pending.json'),
-    JSON.stringify(
-      result,
-      // Token geometry is needed while assembling cells, but duplicates their
-      // sourceRects and text in the final transport. Keep it out of the bounded
-      // main-process payload, particularly for PDFs with one token per glyph.
-      (key, value) => (key === 'sourceTokens' ? undefined : value),
-      2
-    ) + '\n'
-  )
+  await writeFile(join(output, 'structure.pending.json'), serializeWorkerResult(result))
   await rename(join(output, 'structure.pending.json'), join(output, 'structure.json'))
   console.log(
     JSON.stringify({

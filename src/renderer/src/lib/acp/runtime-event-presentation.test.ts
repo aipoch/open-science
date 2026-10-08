@@ -175,3 +175,34 @@ describe('runtime event presentation reducer', () => {
     expect(session.awaitingFirstAgentOutput).toBe(true)
   })
 })
+
+it('retains main-owned receipt provenance across incremental updates', () => {
+  const store = createSessionStore()
+  const context = createRuntimePresentationContext()
+  store.getState().appendUserMessage({ sessionId: 'session-1', content: 'Review the code' })
+  applyRuntimePresentationEvent(
+    event({
+      id: 'review-start',
+      kind: 'tool',
+      toolCallId: 'app-approval:review',
+      appOwned: true,
+      status: 'in_progress'
+    }),
+    store,
+    context
+  )
+  applyRuntimePresentationEvent(
+    event({
+      id: 'review-end',
+      kind: 'tool',
+      toolCallId: 'app-approval:review',
+      status: 'completed'
+    }),
+    store,
+    context
+  )
+  expect(store.getState().sessions[0].activities?.[0]).toMatchObject({
+    appOwned: true,
+    status: 'completed'
+  })
+})

@@ -15830,6 +15830,7 @@ describe('v4 runtime bindings & agent tools', () => {
     // A blocking executor: execute() stays pending until terminate() rejects it (a killed kernel).
     let rejectRun: ((error: unknown) => void) | undefined
     let executionCount = 0
+    const executionStarted = createDeferred<void>()
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
@@ -15853,6 +15854,7 @@ describe('v4 runtime bindings & agent tools', () => {
           if (executionCount > 1) return Promise.reject(new Error('ordinary kernel failure'))
           return new Promise<NotebookExecutionResult>((_resolve, reject) => {
             rejectRun = reject
+            executionStarted.resolve()
           })
         },
         shutdown: async () => ({ reaped: true }),
@@ -15875,7 +15877,12 @@ describe('v4 runtime bindings & agent tools', () => {
       language: 'python'
     })
     // Wait until the cell is genuinely in flight (the executor was invoked).
-    await vi.waitFor(() => expect(rejectRun).toBeDefined())
+    await Promise.race([
+      executionStarted.promise,
+      runPromise.then(() => {
+        throw new Error('run settled before executor admission')
+      })
+    ])
 
     // Force-stop: abort the running cell now. The killed run is recorded 'cancelled', not 'failed'.
     await service.revokeRuntime('python', userPyA.envId, { force: true })

@@ -603,9 +603,20 @@ it('opts into batch actions, clears selection on exit, and resets selection acro
   expect(
     (screen.getByRole('button', { name: 'Clear selection' }) as HTMLButtonElement).disabled
   ).toBe(true)
+  const selectAll = screen.getByRole('checkbox', {
+    name: 'Select all references'
+  }) as HTMLInputElement
+  expect(selectAll.checked).toBe(false)
+  expect(selectAll.indeterminate).toBe(false)
   fireEvent.click(screen.getByRole('checkbox', { name: 'Select First' }))
-  fireEvent.click(screen.getByRole('checkbox', { name: 'Select Second' }))
+  expect(selectAll.indeterminate).toBe(true)
+  fireEvent.click(selectAll)
   expect(screen.getByText('Selected: 2')).toBeTruthy()
+  expect(selectAll.checked).toBe(true)
+  expect(selectAll.indeterminate).toBe(false)
+  fireEvent.click(selectAll)
+  expect(screen.getByText('Selected: 0')).toBeTruthy()
+  fireEvent.click(selectAll)
   fireEvent.click(screen.getAllByRole('button', { name: 'Add to chat' })[0])
   expect(add).toHaveBeenCalledWith(
     [
@@ -614,6 +625,10 @@ it('opts into batch actions, clears selection on exit, and resets selection acro
     ],
     null
   )
+  fireEvent.click(screen.getByRole('button', { name: 'Clear selection' }))
+  expect(selectAll.checked).toBe(false)
+  expect(selectAll.indeterminate).toBe(false)
+  fireEvent.click(selectAll)
   fireEvent.click(screen.getByRole('button', { name: 'Done' }))
   expect(screen.queryByRole('checkbox')).toBeNull()
   expect(screen.queryByText('Selected: 2')).toBeNull()
@@ -646,8 +661,8 @@ it.each(['scope', 'page', 'collection'] as const)(
     )
     await settle()
     fireEvent.click(screen.getByRole('button', { name: 'Batch actions' }))
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Select First' }))
-    expect(screen.getByText('Selected: 1')).toBeTruthy()
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select all references' }))
+    expect(screen.getByText('Selected: 20')).toBeTruthy()
     if (change === 'collection') {
       rerender(
         <LibraryPreview
@@ -662,7 +677,7 @@ it.each(['scope', 'page', 'collection'] as const)(
       )
     }
     await settle()
-    expect(screen.queryByText('Selected: 1')).toBeNull()
+    expect(screen.queryByText('Selected: 20')).toBeNull()
     if (change === 'collection') {
       expect(screen.queryByRole('checkbox')).toBeNull()
       fireEvent.click(screen.getByRole('button', { name: 'Batch actions' }))

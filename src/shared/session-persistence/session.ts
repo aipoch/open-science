@@ -352,7 +352,7 @@ export type SessionUsageProjection = Readonly<{
   runsAt: number[]
   usageEvents: Array<
     Readonly<{
-      source?: 'classification' | 'literature-classification'
+      source?: 'classification' | 'literature-classification' | 'literature-translation'
       scenario?: string
       usageIncomplete?: boolean
       timestamp: number

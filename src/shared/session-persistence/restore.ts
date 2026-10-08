@@ -432,7 +432,15 @@ export const normalizeActivityAfterRestore = (
     // omits the graph-owned prompt identity from its flat presentation.
     activity !== permissionAuthority?.activity &&
     activity !== permissionAuthority?.flatActivity
-  const closesOpenNotebookActivity = closesOpenActivity && isPersistedNotebookRunActivity(activity)
+  const closesOpenNotebookActivity =
+    closesOpenActivity &&
+    (isPersistedNotebookRunActivity(activity) ||
+      (activity.appOwned === true &&
+        activity.id.startsWith('app-approval:') &&
+        activity.providerToolName === 'Open-Science' &&
+        typeof activity.rawInput === 'object' &&
+        activity.rawInput !== null &&
+        'notebookCodeRisk' in activity.rawInput))
   const normalized: PersistedToolActivity = {
     ...activity,
     ...(closesOpenActivity

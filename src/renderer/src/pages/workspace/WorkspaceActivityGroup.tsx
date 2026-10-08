@@ -34,7 +34,11 @@ import type {
   ConversationActivityGroupItem
 } from './workspace-tool-activity-groups'
 import { formatWebSearchDetails } from './workspace-web-search-details'
-import { getCorrelatedNotebookRun, getToolExecutionPhase } from './tool-execution-phase'
+import {
+  getCorrelatedNotebookRun,
+  getToolExecutionPhase,
+  isNotebookCodeReviewActivity
+} from './tool-execution-phase'
 import type { SessionPermissionRuntimeContext } from '../../../../shared/session-persistence'
 import { isNotebookManagePackagesToolName } from './notebook-tool-names'
 import type { AnnotationPort } from './annotations/annotation-port'
@@ -79,7 +83,11 @@ const ActivityGroupElapsed = ({
 }): React.JSX.Element => {
   const isExecuting = (activity: (typeof activities)[number]): boolean =>
     getToolExecutionPhase(activity, permission, notebookRunsById) === 'executing'
-  const isActive = activities.some(isExecuting)
+  const awaitingApproval = activities.some(
+    (activity) =>
+      getToolExecutionPhase(activity, permission, notebookRunsById) === 'awaiting-approval'
+  )
+  const isActive = !awaitingApproval && activities.some(isExecuting)
   const [now, setNow] = useState(() => Date.now())
 
   useEffect(() => {
@@ -89,7 +97,14 @@ const ActivityGroupElapsed = ({
     return () => clearInterval(timer)
   }, [isActive])
 
-  return <>{formatActivityGroupElapsed(getActivityGroupElapsedMs(activities, now, isExecuting))}</>
+  if (awaitingApproval) return <></>
+  return (
+    <>
+      {formatActivityGroupElapsed(
+        getActivityGroupElapsedMs(activities, now, isExecuting, notebookRunsById)
+      )}
+    </>
+  )
 }
 
 // Renders adjacent tool calls as one collapsible transcript row group.
@@ -108,11 +123,11 @@ const WorkspaceActivityGroup = ({
   permission,
   annotationPort,
   revealRequest
-}: WorkspaceActivityGroupProps): React.JSX.Element => {
+}: WorkspaceActivityGroupProps): React.JSX.Element | null => {
   const { t } = useTranslation()
   const { scrollToMessage } = useMessageScroller()
   const groupElementRef = useRef<HTMLDivElement>(null)
-  // ToolSearch wrapper rows are hidden when concrete search rows are present.
+  // Review receipts stay in history for approval state and timing, but do not render as steps.
   const renderableActivityEntries = getRenderableActivityEntries(group.activities)
   const visibleActivities = renderableActivityEntries.map(({ activity }) => activity)
 
@@ -132,6 +147,8 @@ const WorkspaceActivityGroup = ({
     if (viewport && previousScrollTop !== undefined) viewport.scrollTop = previousScrollTop
     onToggleRow(activityId, nextExpanded)
   }
+
+  if (visibleActivities.length === 0) return null
 
   return (
     <MessageScrollerItem key={group.id} messageId={group.id} className="min-w-0">
@@ -154,7 +171,10 @@ const WorkspaceActivityGroup = ({
             <>
               {formatStepCount(visibleActivities, permission, notebookRunsById, t)} ·{' '}
               <ActivityGroupElapsed
-                activities={visibleActivities}
+                activities={[
+                  ...visibleActivities,
+                  ...group.activities.filter(isNotebookCodeReviewActivity)
+                ]}
                 permission={permission}
                 notebookRunsById={notebookRunsById}
               />

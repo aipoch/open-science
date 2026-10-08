@@ -1,0 +1,5 @@
+{"name":"keeps collective author and year","source":"However, Han et al., 2016a reported the same result.","translation":"然而，Han 等人，2016a 报告了相同结果。","missing":[]}
+{"name":"rejects a citation that keeps only the year","source":"The method was validated (Han et al., 2016a).","translation":"该方法已得到验证（2016a）。","missing":["Han et al., 2016a"]}
+{"name":"rejects a dropped inline author marker","source":"However, Han et al. developed the method (Han et al., 2016a).","translation":"然而，该方法已开发完成（Han 等人，2016a）。","missing":["Han et al."]}
+{"name":"keeps repeated citations independently","source":"Han et al., 2016a compared with Han et al., 2016a.","translation":"Han 等人，2016a 与 Han 等人，2016a 进行了比较。","missing":[]}
+{"name":"ignores ordinary prose without collective citations","source":"The method was validated.","translation":"该方法已得到验证。","missing":[]}

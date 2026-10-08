@@ -254,7 +254,8 @@ export const createApplicationModules = async (
     ...sessionFoundation,
     ...managedFiles,
     ...sessionAuthority,
-    modules
+    modules,
+    settingsService: settingsBootstrap.settingsService
   })
   const projectLifecycle = composeProjectLifecycle({
     applicationEvents,

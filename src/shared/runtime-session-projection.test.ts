@@ -230,10 +230,26 @@ describe('runtime Session projection', () => {
       messageBranchId: branch.id
     }
     const projected = applyRuntimeSessionEvents(session, offBranchScope, [
-      event('message', { id: 'off-1', timestamp: 4, role: 'assistant', text: 'hidden' })
+      event('message', { id: 'off-1', timestamp: 4, role: 'assistant', text: 'hidden' }),
+      event('tool', {
+        id: 'off-review',
+        timestamp: 5,
+        toolCallId: 'app-approval:off-branch',
+        appOwned: true,
+        status: 'completed'
+      })
     ])
     expect(projected.conversationGraph!.frames[0].activeBranchId).toBe(originalBranchId)
     expect(projected.messages.some(({ content }) => content === 'hidden')).toBe(false)
+    expect(projected.activities?.some(({ id }) => id === 'app-approval:off-branch')).not.toBe(true)
+    projected.conversationGraph = activateConversationBranch(
+      projected.conversationGraph!,
+      branch.id
+    )
+    const switched = applyRuntimeSessionEvents(projected, offBranchScope, [])
+    expect(switched.activities?.find(({ id }) => id === 'app-approval:off-branch')).toMatchObject({
+      appOwned: true
+    })
     expect(projected.conversationGraph!.messages.some(({ content }) => content === 'hidden')).toBe(
       true
     )
@@ -682,5 +698,32 @@ describe('Main terminal Turn Outcome attribution', () => {
         errorReportable: false
       })
     }
+  })
+})
+
+it('retains host provenance in both durable activity projections', () => {
+  const { session, scope } = fixture()
+  const result = applyRuntimeSessionEvents(session, scope, [
+    event('tool', {
+      id: 'review-start',
+      timestamp: 2,
+      toolCallId: 'app-approval:review',
+      appOwned: true,
+      providerToolName: 'Open-Science',
+      title: 'Review code',
+      status: 'in_progress'
+    }),
+    event('tool', {
+      id: 'review-end',
+      timestamp: 3,
+      toolCallId: 'app-approval:review',
+      appOwned: true,
+      status: 'completed'
+    })
+  ])
+  expect(result.activities?.[0]).toMatchObject({ appOwned: true, status: 'completed' })
+  expect(result.conversationGraph?.activities[0]).toMatchObject({
+    appOwned: true,
+    messageBranchId: scope.messageBranchId
   })
 })

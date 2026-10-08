@@ -1,0 +1,6 @@
+{"name":"native-padded-hitbox-inside-admission","generated":false,"bottom":696.6,"rejected":false}
+{"name":"native-padded-hitbox-fits-original-envelope","generated":false,"bottom":694,"rejected":false}
+{"name":"generated-padded-hitbox-inside-admission","generated":true,"bottom":696.6,"rejected":false}
+{"name":"generated-padded-hitbox-fits-original-envelope","generated":true,"bottom":694,"rejected":false}
+{"name":"native-tall-hitbox-reserves-next-row-spacing","generated":false,"bottom":690,"rejected":false,"wrap":true}
+{"name":"generated-tall-hitbox-reserves-next-row-spacing","generated":true,"bottom":690,"rejected":false,"wrap":true}

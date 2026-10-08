@@ -82,6 +82,10 @@ export function connectorToolDescription(id: string, fallback: string, t: TFunct
     case 'pdc/pdc_list_files':
       return t('Discover PDC study files and quantitative reports without downloading files.')
 
+    case 'genomes/ensembl_ld_pairwise':
+      return t('Query linkage disequilibrium between two variants in a specified population.')
+    case 'genomes/ensembl_ld_proxies':
+      return t('Find nearby variants in high linkage disequilibrium in a specified population.')
     case 'human-genetics/gwas_get_summary_statistics':
       return t(
         'List GWAS summary statistics files, YAML metadata, reference genomes and standard column definitions by GCST accession.'

@@ -4,7 +4,11 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import type { ToolActivity } from '@/stores/session-store'
 import type { AcpPermissionRequest } from '../../../../shared/acp'
 import { buildToolActivityDetails } from './workspace-tool-activity-details'
-import { buildNotebookToolSummary, readNotebookToolResult } from './notebook-tool-presentation'
+import {
+  buildNotebookToolSummary,
+  readNotebookToolResult,
+  readNotebookCodeReview
+} from './notebook-tool-presentation'
 import { WorkspaceToolDetailsRow } from './WorkspaceToolDetailsRow'
 import { PermissionApprovalControls } from './PermissionApprovalControls'
 import { WorkspaceToolSummaryCard } from './WorkspaceToolSummaryCard'
@@ -301,3 +305,41 @@ it('shows the switch target and memory impact before approval', () => {
   )
   expect(html).toContain('permission-actions')
 })
+
+it.each([
+  ['provider-tool', 'Open-Science'],
+  ['app-approval:legacy-or-forged', 'Open-Science'],
+  ['app-approval:lookalike', 'foreign-provider']
+])('keeps foreign risk-shaped payloads in the generic input view (%s)', (id, providerToolName) => {
+  const item = activity({
+    id,
+    providerToolName,
+    rawInput: {
+      code: 'os.unlink(path)',
+      notebookCodeRisk: {
+        language: 'python',
+        risks: [{ operation: 'os.unlink', source: 'os.unlink(path)', line: 1 }]
+      },
+      target: '/production'
+    }
+  })
+  const details = buildToolActivityDetails(item)!
+  expect(details.codeReview).toBeUndefined()
+  expect(JSON.stringify(details.sections)).toContain('/production')
+})
+
+it.each([undefined, { kind: 'powershell' }])(
+  'reads persisted Shell review dialect (%j)',
+  (shellRuntime) => {
+    expect(
+      readNotebookCodeReview({
+        code: 'Remove-Item ./temporary.txt',
+        notebookCodeRisk: {
+          language: 'bash',
+          shellRuntime,
+          risks: [{ operation: 'Remove-Item', source: 'Remove-Item ./temporary.txt', line: 1 }]
+        }
+      })?.language
+    ).toBe(shellRuntime ? 'powershell' : 'bash')
+  }
+)

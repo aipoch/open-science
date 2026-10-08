@@ -1,0 +1,8 @@
+{"name":"same-source-script-baseline-proves-reflowed-region-owner","change":"none","accepted":true}
+{"name":"changed-script-baseline-cannot-claim-neighbor-region","change":"changed-baseline","accepted":false}
+{"name":"changed-script-size-cannot-claim-neighbor-region","change":"changed-size","accepted":false}
+{"name":"changed-script-label-cannot-claim-neighbor-region","change":"changed-label","accepted":false}
+{"name":"duplicate-script-cannot-claim-unique-source-owner","change":"duplicate","accepted":false}
+{"name":"ordinary-baseline-word-cannot-use-script-ownership","change":"baseline-source","accepted":false}
+{"name":"shallow-native-subscript-keeps-unique-row-owner","change":"shallow-subscript","accepted":true}
+{"name": "minor-native-script-fit-keeps-proven-baseline-and-owner", "change": "minor-fit", "accepted": true}

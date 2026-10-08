@@ -261,8 +261,8 @@ type NotebookLocalRpcCapability = {
     signal?: AbortSignal
   ): Promise<ManageEnvironmentsResult>
   listRuntimes(request: NotebookSessionRequest): Promise<unknown>
-  bindRuntime(request: NotebookRuntimeBindingRequest): Promise<unknown>
-  switchRuntime(request: NotebookRuntimeBindingRequest): Promise<unknown>
+  bindRuntime(request: NotebookRuntimeBindingRequest, signal?: AbortSignal): Promise<unknown>
+  switchRuntime(request: NotebookRuntimeBindingRequest, signal?: AbortSignal): Promise<unknown>
 }
 
 const NOTEBOOK_LOCAL_RPC_METHODS = [
@@ -414,11 +414,11 @@ const resolveNotebookLocalRpcHandler = (
       return (request) =>
         capability.listRuntimes(parseNotebookLocalRpcRequest('listRuntimes', request))
     case 'bindRuntime':
-      return (request) =>
-        capability.bindRuntime(parseNotebookLocalRpcRequest('bindRuntime', request))
+      return (request, signal) =>
+        capability.bindRuntime(parseNotebookLocalRpcRequest('bindRuntime', request), signal)
     case 'switchRuntime':
-      return (request) =>
-        capability.switchRuntime(parseNotebookLocalRpcRequest('switchRuntime', request))
+      return (request, signal) =>
+        capability.switchRuntime(parseNotebookLocalRpcRequest('switchRuntime', request), signal)
   }
 }
 

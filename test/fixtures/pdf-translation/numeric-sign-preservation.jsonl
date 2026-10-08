@@ -1,0 +1,12 @@
+{"name": "negative-confidence-limit-loses-sign", "source": "The change was −23.94 (95% CI −31.20 to −16.68).", "translation": "变化为 23.94（95% CI −31.20 至 −16.68）。", "rejected": true}
+{"name": "positive-measurement-gains-negative-sign", "source": "The change was 23.94.", "translation": "变化为 −23.94。", "rejected": true}
+{"name": "negative-limits-keep-ascii-signs", "source": "The change was −23.94 (95% CI −31.20 to −16.68).", "translation": "变化为 -23.94（95% CI -31.20 至 -16.68）。", "rejected": false}
+{"name": "repeated-magnitude-preserves-negative-occurrences", "source": "The limits were −1.25 and 1.25.", "translation": "界限为 1.25 和 1.25。", "rejected": true}
+{"name": "decimal-comma-and-negative-word", "source": "The change was −0,25.", "translation": "变化为负0.25。", "rejected": false}
+{"name": "fullwidth-minus-and-omitted-leading-zero", "source": "The change was −0.25.", "translation": "变化为－.25。", "rejected": false}
+{"name": "citation-range-is-not-a-negative-value", "source": "See pages 2-4 and references 8 – 10.", "translation": "参见第2至4页及参考文献8至10。", "rejected": false}
+{"name": "hyphenated-model-id-is-not-a-negative-value", "source": "Models A-2 and B-4 were used.", "translation": "使用了模型 A-2 和 B-4。", "rejected": false}
+{"name": "compact-subtraction-is-not-a-unary-sign", "source": "The result is x−2.", "translation": "结果为 x − 2。", "rejected": false}
+{"name": "negative-exponent-cannot-lose-sign", "source": "The value was 3.2 × 10⁻⁵.", "translation": "值为3.2 × 10^5。", "rejected": true}
+{"name": "negative-unit-scaling-is-outside-sign-only-check", "source": "The deficit was −42 million.", "translation": "缺口为 −4200万。", "rejected": false}
+{"name": "list-hyphen-is-not-a-negative-quantity", "source": "- 2 participants completed the test.", "translation": "• 2名参与者完成了测试。", "rejected": false}

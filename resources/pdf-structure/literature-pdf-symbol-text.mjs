@@ -563,6 +563,8 @@ export function splitPdfNumericRuns(content, operators, context) {
         return {
           ...item,
           str: text,
+          // These fragments no longer own the complete original PDF text item.
+          sourceItem: undefined,
           width: (b.end - a.start) * scale,
           transform: [
             ...item.transform.slice(0, 4),
@@ -1959,7 +1961,7 @@ export function removeBackgroundNumericPadding(content, operators) {
       const chars = streams.get(item.fontName)
       if (!chars || !('str' in item)) return true
       const start = offsets.get(item.fontName) ?? 0
-      offsets.set(item.fontName, start + item.str.replace(/\s/gu, '').length)
+      offsets.set(item.fontName, start + [...item.str.replace(/\s/gu, '')].length)
       const before = content.items.slice(0, index).findLast((i) => i.str?.trim())
       const after = content.items.slice(index + 1).find((i) => i.str?.trim())
       // Publishers also pad decimal p-values with a background-coloured less-than

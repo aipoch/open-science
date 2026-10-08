@@ -253,6 +253,8 @@ export type PersistedToolActivity = {
   status: PersistedToolActivityStatus
   toolDisposition?: PersistedToolActivityDisposition
   executionInvocationId?: string
+  // Set only by the main-process permission owner, never by provider metadata.
+  appOwned?: true
   sortIndex: number
   eventIds: string[]
   providerToolName?: string

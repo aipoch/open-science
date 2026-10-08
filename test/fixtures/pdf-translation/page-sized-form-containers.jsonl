@@ -1,0 +1,4 @@
+{"name":"scaled-page-container-with-cropped-graphic","scale":0.8,"group":"none","eligible":true}
+{"name":"matching-nonisolated-page-transparency-group","scale":0.8,"group":"matching","eligible":true}
+{"name":"isolated-transparency-container-is-not-flattened","scale":0.8,"group":"isolated","eligible":false}
+{"name":"small-figure-form-is-not-a-page-container","scale":0.3,"group":"none","eligible":false}

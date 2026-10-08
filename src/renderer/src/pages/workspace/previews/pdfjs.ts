@@ -1,6 +1,49 @@
-import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs'
-import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
+import * as core from 'pdfjs-dist/legacy/build/pdf.mjs'
+import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.mjs?url'
 import cancellationSource from './pdf-worker-cancellation.js?raw'
+
+// Ship Adobe character maps with both renderers. Some embedded CJK fonts have
+// no ToUnicode map; without these resources PDF.js silently omits their text.
+const characterMaps = import.meta.glob<string>(
+  '../../../../../../node_modules/pdfjs-dist/cmaps/*.bcmap',
+  { eager: true, query: '?url', import: 'default' }
+)
+const characterMapUrls = new Map(
+  Object.entries(characterMaps).map(([path, url]) => [
+    path
+      .split('/')
+      .at(-1)!
+      .replace(/\.bcmap$/, ''),
+    url
+  ])
+)
+class BundledCMapReaderFactory {
+  async fetch({
+    name
+  }: {
+    name: string
+  }): Promise<{ cMapData: Uint8Array; isCompressed: boolean }> {
+    const url = characterMapUrls.get(name)
+    if (!url) throw new Error('Unknown PDF character map.')
+    const response = await fetch(url)
+    if (!response.ok) throw new Error('Could not load PDF character map.')
+    return { cMapData: new Uint8Array(await response.arrayBuffer()), isCompressed: true }
+  }
+}
+const getDocument: typeof core.getDocument = (source) => {
+  const options =
+    typeof source === 'string' || source instanceof URL
+      ? { url: source }
+      : source instanceof ArrayBuffer || ArrayBuffer.isView(source)
+        ? { data: source }
+        : source
+  return core.getDocument({
+    CMapReaderFactory: BundledCMapReaderFactory,
+    useWorkerFetch: false,
+    ...options
+  })
+}
+const pdfjsLib = { ...core, getDocument }
 
 // pdf_viewer.mjs expects the core library on this global. Its import is deferred by PdfPreview
 // until after this module has initialized, which also keeps test collection from evaluating the

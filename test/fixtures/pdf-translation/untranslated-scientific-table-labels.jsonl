@@ -1,0 +1,50 @@
+{"language": "Chinese", "name": "capitalized-attention-label-is-not-a-proper-name", "source": "Attention", "text": "attention", "accepted": false, "corrected": "注意力"}
+{"language": "Chinese", "name": "hyphenated-attention-variant-is-not-an-identifier", "source": "multi-query local", "text": "multi-query local", "accepted": false, "corrected": "局部多查询"}
+{"language": "Chinese", "name": "numbered-beam-width-label-preserves-values", "source": "beam 2 / 6", "text": "beam 2 / 6", "accepted": false, "corrected": "束宽 2 / 6"}
+{"language": "Chinese", "name": "title-case-category-label-can-be-translated", "source": "Attention Type", "text": "注意力类型", "accepted": true}
+{"language": "Chinese", "name": "multi-head-label-can-be-translated", "source": "multi-head", "text": "多头", "accepted": true}
+{"language": "Chinese", "name": "scientific-metric-acronym-stays-unchanged", "source": "BLEU", "text": "BLEU", "accepted": true}
+{"language": "Chinese", "name": "scientific-function-label-stays-unchanged", "source": "ln(PPL)", "text": "ln(PPL)", "accepted": true}
+{"language": "Chinese", "name": "code-identifier-is-not-a-category-label", "source": "query_id", "text": "query_id", "accepted": true}
+{"language": "Chinese", "name": "unknown-project-name-stays-unchanged", "source": "Example Query", "text": "Example Query", "accepted": true}
+{"name": "english-target-category-label-stays-unchanged", "source": "multi-head", "text": "multi-head", "accepted": true, "language": "English"}
+{"language": "Chinese", "name": "query-label-must-not-become-neighboring-head-label", "source": "multi-query local", "text": "多头局部", "accepted": false, "changedMeaning": true, "corrected": "多查询局部"}
+{"language": "Chinese", "name": "head-label-must-not-become-query-label", "source": "multi-head", "text": "多查询", "accepted": false, "changedMeaning": true, "corrected": "多头"}
+{"language": "Chinese", "name": "prose-comparing-both-methods-is-not-a-mislabeled-category", "source": "Multi-query attention shares values across heads.", "text": "多查询注意力在多头之间共享值。", "accepted": true}
+{"language": "Chinese", "name": "bilingual-query-label-remains-valid", "source": "multi-query local", "text": "局部多查询（multi-query local）", "accepted": true, "expectedText": "局部多查询"}
+{"name": "partially-copied-beam-search-label-needs-translation", "language": "Chinese", "source": "Beam-6 Search", "text": "Beam-6 搜索", "accepted": false, "corrected": "束宽6搜索"}
+{"name": "number-attached-stage-label-is-not-a-proper-name", "language": "Chinese", "source": "Stage5", "text": "Stage5", "accepted": false, "corrected": "阶段5"}
+{"name": "partially-translated-numbered-stage-label-is-rejected", "language": "Chinese", "source": "Stage5", "text": "Stage5阶段", "accepted": false, "corrected": "阶段5"}
+{"name": "numbered-stage-bilingual-parenthesis-is-valid", "language": "Chinese", "source": "Stage5", "text": "阶段5（Stage5）", "accepted": true}
+{"language": "Chinese", "name": "capitalized-gradient-heading-is-not-a-person", "source": "EXPLODING GRADIENTS", "text": "梯度爆炸", "accepted": true}
+{"language": "Chinese", "name": "gradient-heading-must-not-stay-in-english", "source": "VANISHING GRADIENTS", "text": "VANISHING GRADIENTS", "accepted": false, "corrected": "梯度消失"}
+{"name": "scientific-header-with-metric-acronym-can-translate", "language": "Chinese", "source": "Normalization BLEU", "text": "归一化 BLEU", "accepted": true}
+{"name": "scientific-header-must-translate-only-ordinary-word", "language": "Chinese", "source": "Normalization BLEU", "text": "Normalization BLEU", "accepted": false, "corrected": "归一化 BLEU"}
+{"name": "batch-index-axis-label-is-not-a-person", "language": "Chinese", "source": "Batch Index", "text": "批次索引", "accepted": true}
+{"name": "batch-index-axis-label-must-translate", "language": "Chinese", "source": "Batch Index", "text": "Batch Index", "accepted": false, "corrected": "批次索引"}
+{"name": "generic-model-column-must-not-remain-english", "language": "Chinese", "source": "Model", "text": "Model", "accepted": false, "corrected": "模型"}
+{"name": "model-column-qualifier-keeps-native-network-identifier", "language": "Chinese", "source": "Model NimbusNet", "text": "模型 NimbusNet", "accepted": true}
+{"name": "model-network-identifier-remains-literal", "language": "Chinese", "source": "ModelNet", "text": "ModelNet", "accepted": true}
+{"name": "clinical-response-yes-is-a-label", "language": "Chinese", "source": "Yes", "text": "是", "accepted": true}
+{"name": "clinical-response-no-is-a-label", "language": "Chinese", "source": "No", "text": "否", "accepted": true}
+{"name": "clinical-response-unclear-is-a-label", "language": "Chinese", "source": "Unclear", "text": "不明确", "accepted": true}
+{"name": "clinical-high-risk-is-a-label", "language": "Chinese", "source": "High risk", "text": "高风险", "accepted": true}
+{"name": "clinical-low-risk-is-a-label", "language": "Chinese", "source": "Low Risk", "text": "低风险", "accepted": true}
+{"name": "clinical-unclear-risk-is-a-label", "language": "Chinese", "source": "Unclear risk", "text": "风险不明确", "accepted": true}
+{"name": "clinical-response-copy-is-not-translation", "language": "Chinese", "source": "Yes", "text": "Yes", "accepted": false, "corrected": "是"}
+{"name": "clinical-negative-copy-is-not-translation", "language": "Chinese", "source": "No", "text": "No", "accepted": false, "corrected": "否"}
+{"name": "clinical-unclear-copy-is-not-translation", "language": "Chinese", "source": "Unclear", "text": "Unclear", "accepted": false, "corrected": "不明确"}
+{"name": "treatment-list-translated", "language": "Chinese", "source": "Acupuncture Massage Mindfulness", "text": "针灸 按摩 正念", "accepted": true}
+{"name": "stacked-treatment-list-translated", "language": "Chinese", "source": "Acupuncture\nMassage\nMindfulness", "text": "针灸 按摩 正念", "accepted": true}
+{"name": "single-acupuncture-treatment-translated", "language": "Chinese", "source": "Acupuncture", "text": "针灸", "accepted": true}
+{"name": "single-massage-treatment-translated", "language": "Chinese", "source": "Massage", "text": "按摩", "accepted": true}
+{"name": "single-mindfulness-treatment-translated", "language": "Chinese", "source": "Mindfulness", "text": "正念", "accepted": true}
+{"name": "single-yoga-treatment-translated", "language": "Chinese", "source": "Yoga", "text": "瑜伽", "accepted": true}
+{"name": "single-reflexology-treatment-translated", "language": "Chinese", "source": "Reflexology", "text": "足部反射疗法", "accepted": true}
+{"name": "treatment-list-copy-is-not-translation", "language": "Chinese", "source": "Acupuncture Massage Mindfulness", "text": "Acupuncture Massage Mindfulness", "accepted": false, "corrected": "针灸 按摩 正念"}
+{"name": "treatment-list-english-tail-is-not-translation", "language": "Chinese", "source": "Acupuncture Massage Mindfulness", "text": "针灸 Massage Mindfulness", "accepted": false, "corrected": "针灸 按摩 正念"}
+{"name": "treatment-institution-identity-unchanged", "language": "Chinese", "source": "Mindfulness Institute", "text": "Mindfulness Institute", "accepted": true}
+{"name": "treatment-research-identity-unchanged", "language": "Chinese", "source": "Acupuncture Massage Research", "text": "Acupuncture Massage Research", "accepted": true}
+{"name": "treatment-network-identity-unchanged", "language": "Chinese", "source": "YogaNet", "text": "YogaNet", "accepted": true}
+{"language": "Chinese", "name": "complete-unit-type-header-is-not-a-proper-name", "source": "Unit Type", "text": "单元类型", "accepted": true}
+{"language": "Chinese", "name": "unit-type-header-must-not-copy-english", "source": "Unit Type", "text": "Unit Type", "accepted": false, "corrected": "单元类型"}

@@ -808,6 +808,8 @@ describe('Literature PDF attachment reliability', () => {
       mimeType: 'application/pdf'
     }
     const resource = await resources.acquire(17, input)
+    expect(resource.sourceChecksum).toBe(version.checksum)
+    expect(resource.size).toBe(original.length)
     const protocol = await resources.resolveProtocolResource(resource.id)
     try {
       expect(

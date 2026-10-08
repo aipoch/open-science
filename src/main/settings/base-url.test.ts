@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 
 import {
   anthropicMessagesBase,
+  anthropicMessagesUrl,
+  openAiResponsesUrl,
   normalizeAnthropicBaseUrl,
   openAiChatCompletionsUrl,
   openAiCompletionsBase
@@ -130,5 +132,28 @@ describe('openAiCompletionsBase / openAiChatCompletionsUrl', () => {
   it('returns undefined when neither base is set', () => {
     expect(openAiCompletionsBase({})).toBeUndefined()
     expect(openAiChatCompletionsUrl({})).toBeUndefined()
+  })
+})
+
+describe('complete tool-less API URLs', () => {
+  it.each(['', '/v1', '/v1/', '/v1/responses', '/v1/responses/'])(
+    'normalizes a Responses custom root with %s',
+    (suffix) => {
+      expect(openAiResponsesUrl({ baseUrl: `https://host/proxy${suffix}?tenant=a` })).toBe(
+        'https://host/proxy/v1/responses?tenant=a'
+      )
+    }
+  )
+  it('preserves exact versioned official bases and rejects missing Responses targets', () => {
+    expect(openAiResponsesUrl({ openaiBaseUrl: 'https://host/api/v3?tenant=a' })).toBe(
+      'https://host/api/v3/responses?tenant=a'
+    )
+    expect(openAiResponsesUrl({})).toBeUndefined()
+    expect(openAiResponsesUrl({ baseUrl: 'not a URL' })).toBeUndefined()
+  })
+  it.each(['', '/v1', '/v1/messages/'])('preserves Messages queries with %s', (suffix) => {
+    expect(anthropicMessagesUrl(`https://host/proxy${suffix}?tenant=a`)).toBe(
+      'https://host/proxy/v1/messages?tenant=a'
+    )
   })
 })

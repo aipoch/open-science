@@ -5,10 +5,16 @@ import { resolve } from 'node:path'
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { readPdfFixture } from './read-fixture'
 
-const { readingRotation, isUprightText, originalRect, rotatedTextRect, restoreCaptionCoordinates } =
-  await import(
-    pathToFileURL(resolve('resources/pdf-structure/literature-pdf-orientation.mjs')).href
-  )
+const {
+  readingRotation,
+  isUprightText,
+  originalRect,
+  rotatedTextRect,
+  restoreCaptionCoordinates,
+  tableTextToken
+} = await import(
+  pathToFileURL(resolve('resources/pdf-structure/literature-pdf-orientation.mjs')).href
+)
 
 it.each([
   [0, 0],
@@ -387,19 +393,21 @@ it.each([90, 270])(
     ).toBe(rotation)
   }
 )
-it.each([
-  [0, 90],
-  [0, 270],
-  [270, 0],
-  [90, 0],
-  [180, 0]
-])(
-  'keeps source rectangles in original PDF coordinates with native %s and reading %s degrees',
-  async (nativeRotation, rotation) => {
+it.each(
+  [0, 90, 180, 270].flatMap((nativeRotation) =>
+    [0, 90, 180, 270].flatMap((rotation) =>
+      [1, 2].flatMap((userUnit) =>
+        [0.75, 1.5].map((scale) => [nativeRotation, rotation, userUnit, scale])
+      )
+    )
+  )
+)(
+  'keeps cropped source bounds with native %s, reading %s degrees, UserUnit %s and scale %s',
+  async (nativeRotation, rotation, userUnit, scale) => {
     const objects = [
       '<< /Type /Catalog /Pages 2 0 R >>',
       '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
-      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Rotate ${nativeRotation} /Resources << >> >>`
+      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /CropBox [20 30 580 770] /UserUnit ${userUnit} /Rotate ${nativeRotation} /Resources << >> >>`
     ]
     let pdf = '%PDF-1.4\n'
     const offsets = objects.map((object, i) => {
@@ -412,8 +420,8 @@ it.each([
     const task = getDocument({ data: new Uint8Array(Buffer.from(pdf)), verbosity: 0 })
     try {
       const page = await (await task.promise).getPage(1)
-      const upright = page.getViewport({ scale: 1.5, rotation }),
-        original = page.getViewport({ scale: 1.5 })
+      const upright = page.getViewport({ scale, rotation }),
+        original = page.getViewport({ scale })
       const pdfRect = [40, 60, 120, 190]
       const sorted = (r: number[]): number[] => [
         Math.min(r[0], r[2]),
@@ -434,6 +442,40 @@ it.each([
       expected.forEach((v, i) =>
         expect(normalized[i]).toBeCloseTo(v / (i % 2 ? original.height : original.width), 12)
       )
+      for (const angle of [rotation, (rotation + 90) % 360]) {
+        const radians = (angle * Math.PI) / 180,
+          ux = Math.cos(radians),
+          uy = Math.sin(radians)
+        const sourceItem = { pageNumber: 1, index: 7, text: 'µ' }
+        const item = {
+          str: 'µ',
+          dir: 'ltr',
+          width: 40,
+          height: 10,
+          inlineSymbol: true,
+          sourceItem,
+          transform: [10 * ux, 10 * uy, -10 * uy, 10 * ux, 200, 300]
+        }
+        const token = tableTextToken(item, upright, rotation)
+        const corners = [
+          [200, 300],
+          [200 + 40 * ux, 300 + 40 * uy],
+          [200 - 10 * uy, 300 + 10 * ux],
+          [200 + 40 * ux - 10 * uy, 300 + 40 * uy + 10 * ux]
+        ].map(([x, y]) => original.convertToViewportPoint(x, y))
+        const expectedToken = [
+          Math.min(...corners.map((p) => p[0])),
+          Math.min(...corners.map((p) => p[1])),
+          Math.max(...corners.map((p) => p[0])),
+          Math.max(...corners.map((p) => p[1]))
+        ]
+        const restored = originalRect(token.rect, upright.width, upright.height, delta)
+        expectedToken.forEach((v, i) => expect(restored[i]).toBeCloseTo(v, 10))
+        expect(token.height).toBeCloseTo(10 * userUnit * scale, 10)
+        expect(token.horizontal).toBe(angle === rotation)
+        expect(token.sourceItem).toBe(sourceItem)
+        expect(token.inlineSymbol).toBe(true)
+      }
     } finally {
       await task.destroy()
     }

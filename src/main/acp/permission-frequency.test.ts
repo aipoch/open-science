@@ -207,7 +207,7 @@ it.each([
 
 // Reconstruct the reported provider boundary, not an exact ACP capture: the attachment contains
 // Notebook code and normalized audit identities but does not contain the original ACP envelopes.
-it('offers and reuses a conversation grant for OpenCode REPL calls under Auto', async () => {
+it('hands OpenCode REPL calls to host admission without conversation grants under Auto', async () => {
   const root = await mkdtemp(join(tmpdir(), 'permission-frequency-'))
   const client = createProjectDbClient(root)
   let context: AcpPermissionContext | undefined
@@ -266,21 +266,6 @@ it('offers and reuses a conversation grant for OpenCode REPL calls under Auto', 
     const first = request('repl_execute', 'repl-1', {
       code: 'const caps = await host.capabilities(); caps;'
     })
-    await vi.waitFor(() => expect(emit).toHaveBeenCalledOnce())
-    const pending = context.getPendingRequests()[0]
-    expect(pending.options.map((option) => option.scope).filter(Boolean)).toEqual([
-      'once',
-      'session',
-      'project',
-      'global'
-    ])
-    await context.respondToPermission(
-      {
-        requestId: pending.requestId,
-        optionId: pending.options.find((option) => option.scope === 'session')!.optionId
-      },
-      HUMAN_PERMISSION_ACTION_ORIGIN
-    )
     await expect(first).resolves.toEqual({ outcome: { outcome: 'selected', optionId: 'once' } })
     await expect(
       request('repl_execute', 'repl-2', { code: "const h = await host.help('delegate'); h;" })
@@ -290,7 +275,7 @@ it('offers and reuses a conversation grant for OpenCode REPL calls under Auto', 
     await expect(request('notebook_state', 'state-1', {})).resolves.toEqual({
       outcome: { outcome: 'selected', optionId: 'once' }
     })
-    expect(emit).toHaveBeenCalledOnce()
+    expect(emit).not.toHaveBeenCalled()
   } finally {
     context?.dispose()
     await client.$disconnect()

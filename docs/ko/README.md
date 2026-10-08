@@ -51,7 +51,7 @@ AIPOCH Open-Science는 머신러닝, 통계학, 생명과학, 화학, 재료과�
 
 완료된 연구 세션은 선택한 대화 분기, 파일 버전, Notebook 기록 및 검증 증거를 포함하는 이동 가능한 `.science` 패키지로 내보내 검토, 인계 및 보관에 사용할 수도 있습니다.
 
-> 💡 **[AIPOCH Open-Science v0.35.1 출시](https://github.com/aipoch/open-science/releases/latest)** _(2026년 10월 업데이트)_. AIPOCH Open-Science v0.35.1은 커넥터 카탈로그에 GWAS 요약 통계 탐색·InterProScan 시퀀스 제출·IEDB 수용체 증거 검색을 더하고, 세션 헤더에 공통 작업 메뉴를 갖춘 새 대화 시작 화면을 제공하며, Requesty 공급자를 추가합니다. 버그 수정은 세션 전환 시 작성기 컨텍스트를 유지하고, 가져온 세션을 읽기 전용으로 유지하며, 리플레이 추적을 개선하고, PDF·노트북·워크스페이스 안정성을 높입니다. 자세한 내용은 [최신 릴리스 노트](https://github.com/aipoch/open-science/releases/latest)를 참조하세요.
+> 💡 **[AIPOCH Open-Science v0.36.0 출시](https://github.com/aipoch/open-science/releases/latest)** _(2026년 10월 업데이트)_. AIPOCH Open-Science v0.36.0은 실행할 때마다 위험을 검토할 수 있는 Notebook 실행, 원문·번역문·대조 보기 모드를 갖춘 이어서 재개할 수 있는 공유 PDF 번역, 암 단백질체학 연구용 PDC 커넥터, 집단별 연결불균형 쿼리를 추가한 Genomes 커넥터, Claude Haiku 5.5 지원을 추가합니다. 버그 수정은 과학 PDF의 기본 레이아웃 유지, 공식 모델 카탈로그 정리, 빈 대화에서 검색 복원, 파일 멘션·Remote Web 마켓플레이스·작성기 칩 안정성 강화를 포함합니다. 자세한 내용은 [최신 릴리스 노트](https://github.com/aipoch/open-science/releases/latest)를 참조하세요.
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 히어로 배너: Science, Open to All — 오픈 소스, 모델 독립적, 자체 호스팅 가능한 과학 AI 연구 워크벤치" src="../images/readme/open-science-banner.png" />

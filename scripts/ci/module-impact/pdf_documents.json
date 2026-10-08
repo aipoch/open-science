@@ -322,7 +322,15 @@
       "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts",
       "src/shared/renderer-surface-inventory.test.ts",
       "src/shared/renderer-surface-matrix.test.ts",
-      "src/main/database/pdf-annotations-migration.test.ts"
+      "src/main/database/pdf-annotations-migration.test.ts",
+      "src/main/literature/pdf-translation/index.test.ts",
+      "src/main/literature/pdf-translation/checkpoints.test.ts",
+      "src/main/literature/pdf-translation/diagnostics.test.ts",
+      "src/main/literature/pdf-translation/ipc.test.ts",
+      "src/main/literature/pdf-translation/reader-ownership.test.ts",
+      "src/main/literature/pdf-translation/usage.test.ts",
+      "src/main/database/workspace-pdf-translation-migration.test.ts",
+      "src/main/literature/pdf-translation/pdf-cache.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions"],

@@ -1,0 +1,6 @@
+{"name": "compressed-horizontal-prose-remains-translatable", "scaleX": 0.983, "scaleY": 1}
+{"name": "expanded-horizontal-prose-remains-translatable", "scaleX": 1.02, "scaleY": 1}
+{"name": "independent-vertical-font-scale-remains-translatable", "scaleX": 1, "scaleY": 1.15}
+{"name": "synthetic-right-oblique-prose-is-translatable", "scaleX": 0.986, "scaleY": 0.986, "shear": 0.167}
+{"name": "synthetic-left-oblique-prose-is-translatable", "scaleX": 1, "scaleY": 1, "shear": -0.167}
+{"name": "excessive-glyph-shear-is-rejected", "scaleX": 1, "scaleY": 1, "shear": 0.5, "valid": false}

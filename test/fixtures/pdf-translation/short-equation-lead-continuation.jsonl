@@ -1,0 +1,4 @@
+{"name":"one-word wrapped equation lead stays with its paragraph","equationX":140,"intervening":false,"joined":true}
+{"name":"isolated short label without a following equation stays separate","equationX":null,"intervening":false,"joined":false}
+{"name":"equation in a different column does not prove a prose continuation","equationX":420,"intervening":false,"joined":false}
+{"name":"native equation between prose and short tail still blocks joining","equationX":140,"intervening":true,"joined":false}

@@ -13,6 +13,24 @@ const request = (overrides: Partial<AcpPermissionRequest>): AcpPermissionRequest
 })
 
 describe('describePermissionRequest', () => {
+  it('distinguishes one-run code review from runtime selection only for app-owned requests', () => {
+    expect(
+      describePermissionRequest(
+        request({ appOwned: true, rawInput: { notebookCodeRisk: { risks: [] } } })
+      )
+    ).toMatchObject({
+      actionTitle: 'Review potentially destructive code',
+      description: 'Approval applies only to this run.'
+    })
+    expect(
+      describePermissionRequest(
+        request({ appOwned: true, rawInput: { notebookRuntimeSelection: { language: 'python' } } })
+      )
+    ).toMatchObject({ actionTitle: 'Confirm Notebook kernel and environment' })
+    expect(
+      describePermissionRequest(request({ rawInput: { notebookCodeRisk: {} } }))
+    ).toHaveProperty('actionTitle', 'Allow tool access?')
+  })
   it('uses the Notebook network card only for a main-owned approval', () => {
     const rawInput = {
       notebookNetworkApproval: { hostname: 'data.example.org', port: 443, runtime: 'python' }

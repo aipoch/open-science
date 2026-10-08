@@ -1,0 +1,25 @@
+{"name": "repeated-year-links-follow-source-order", "sourceNumbers": ["2041", "2039", "2041"], "targetNumbers": ["2041", "2039", "2041"], "change": "none", "accepted": true}
+{"name": "section-number-and-table-number-are-distinct", "sourceNumbers": ["3.1", "1"], "targetNumbers": ["3.1", "1"], "change": "none", "accepted": true}
+{"name": "distinct-year-link-labels-cannot-swap", "sourceNumbers": ["2041", "2039", "2041"], "targetNumbers": ["2041", "2041", "2039"], "change": "none", "accepted": false}
+{"name": "missing-year-hit-area-fails-proof", "sourceNumbers": ["2041", "2039", "2041"], "targetNumbers": ["2041", "2039", "2041"], "change": "missing", "accepted": false}
+{"name": "overlapping-source-year-hit-areas-fail-proof", "sourceNumbers": ["2041", "2039", "2041"], "targetNumbers": ["2041", "2039", "2041"], "change": "overlap", "accepted": false}
+{"name": "year-destination-change-is-rejected", "sourceNumbers": ["2041", "2039", "2041"], "targetNumbers": ["2041", "2039", "2041"], "change": "action", "accepted": false}
+{"name": "repeated-panel-links-follow-source-order", "sourceNumbers": ["3(b)", "3(a)", "3(b)"], "targetNumbers": ["3(b)", "3(a)", "3(b)"], "change": "none", "accepted": true}
+{"name": "repeated-panel-fullwidth-delimiters-preserve-identity", "sourceNumbers": ["3(b)", "3(a)", "3(b)"], "targetNumbers": ["3（b）", "3（a）", "3（b）"], "change": "none", "accepted": true}
+{"name": "distinct-panel-labels-cannot-swap", "sourceNumbers": ["3(b)", "3(a)", "3(b)"], "targetNumbers": ["3(b)", "3(b)", "3(a)"], "change": "none", "accepted": false}
+{"name": "missing-panel-hit-area-fails-proof", "sourceNumbers": ["3(b)", "3(a)", "3(b)"], "targetNumbers": ["3(b)", "3(a)", "3(b)"], "change": "missing", "accepted": false}
+{"name": "panel-destination-change-is-rejected", "sourceNumbers": ["3(b)", "3(a)", "3(b)"], "targetNumbers": ["3(b)", "3(a)", "3(b)"], "change": "action", "accepted": false}
+{"name": "unique-table-link-keeps-extra-unlinked-reference", "sourceNumbers": ["Table 2"], "targetNumbers": ["表2", "表2"], "change": "none", "accepted": true}
+{"name": "unique-table-number-hit-area-keeps-extra-unlinked-reference", "sourceNumbers": ["Table 2"], "targetNumbers": ["2", "表2"], "change": "none", "accepted": true}
+{"name": "unique-table-link-rejects-changed-reference", "sourceNumbers": ["Table 2"], "targetNumbers": ["表3", "表2"], "change": "none", "accepted": false}
+{"name": "unique-table-link-rejects-changed-destination", "sourceNumbers": ["Table 2"], "targetNumbers": ["表2", "表2"], "change": "action", "accepted": false}
+{"name": "unlinked-list-marker-between-year-links-none", "sourceNumbers": ["2041", "2041"], "targetNumbers": ["2041", "2041"], "change": "none", "unlinkedList": true, "accepted": true}
+{"name": "unlinked-list-marker-between-year-links-missing", "sourceNumbers": ["2041", "2041"], "targetNumbers": ["2041", "2041"], "change": "missing", "unlinkedList": true, "accepted": false}
+{"name": "unlinked-list-marker-between-year-links-action", "sourceNumbers": ["2041", "2041"], "targetNumbers": ["2041", "2041"], "change": "action", "unlinkedList": true, "accepted": false}
+{"name": "unlinked-thousands-count-between-year-links-none", "sourceNumbers": ["2041", "2041"], "targetNumbers": ["2041", "2041"], "change": "none", "unlinkedText": ", training 10,000-layer systems ", "accepted": true}
+{"name": "unlinked-thousands-count-between-year-links-missing", "sourceNumbers": ["2041", "2041"], "targetNumbers": ["2041", "2041"], "change": "missing", "unlinkedText": ", training 10,000-layer systems ", "accepted": false}
+{"name": "unlinked-thousands-count-between-year-links-action", "sourceNumbers": ["2041", "2041"], "targetNumbers": ["2041", "2041"], "change": "action", "unlinkedText": ", training 10,000-layer systems ", "accepted": false}
+{"name": "adjacent-equation-glyph-crossing-year-hit-area-none", "sourceNumbers": ["2041", "2041"], "targetNumbers": ["2041", "2041"], "change": "none", "overlappingGlyph": true, "accepted": true}
+{"name": "adjacent-equation-glyph-crossing-year-hit-area-missing", "sourceNumbers": ["2041", "2041"], "targetNumbers": ["2041", "2041"], "change": "missing", "overlappingGlyph": true, "accepted": false}
+{"name": "conjoined-list-marker-before-figure-link-none", "sourceNumbers": ["4"], "targetNumbers": ["4"], "sourcePrefix": "Parameters; and (4) remove branches. See Figure ", "change": "none", "accepted": true}
+{"name": "conjoined-list-marker-before-figure-link-action", "sourceNumbers": ["4"], "targetNumbers": ["4"], "sourcePrefix": "Parameters; and (4) remove branches. See Figure ", "change": "action", "accepted": false}

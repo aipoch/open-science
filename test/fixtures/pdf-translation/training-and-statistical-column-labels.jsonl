@@ -1,0 +1,17 @@
+{"name": "training-step-counter", "source": "Training Steps", "text": "训练步数", "accepted": true, "language": "Chinese"}
+{"name": "statistical-column-heading", "source": "Standard Deviation", "text": "标准差", "accepted": true, "language": "Chinese"}
+{"name": "average-score-heading", "source": "Average Score", "text": "平均分数", "accepted": true, "language": "Chinese"}
+{"name": "training-step-counter-must-not-remain-english", "source": "Training Steps", "text": "Training Steps", "accepted": false, "language": "Chinese", "corrected": "训练步数"}
+{"name": "metric-acronym-does-not-protect-mean-suffix", "source": "QOL-X, mean (SD)", "text": "QOL-X, mean (SD)", "accepted": false, "corrected": "QOL-X，均值（SD）", "language": "Chinese"}
+{"name": "metric-acronym-does-not-protect-median-suffix", "source": "ABC, median (IQR)", "text": "ABC, median (IQR)", "accepted": false, "corrected": "ABC，中位数（IQR）", "language": "Chinese"}
+{"name": "statistic-acronyms-remain-valid-with-translated-qualifier", "source": "QOL-X, mean (SD)", "text": "QOL-X，均值（SD）", "accepted": true, "language": "Chinese"}
+{"name": "bilingual-statistic-label-remains-valid", "source": "ABC, mean (SE)", "text": "ABC，均值（mean (SE)）", "accepted": true, "language": "Chinese"}
+{"name": "bare-metric-acronym-is-not-statistical-prose", "source": "QOL-X", "text": "QOL-X", "accepted": true, "language": "Chinese"}
+{"name": "statistical-formula-is-not-a-heading", "source": "mean(x)", "text": "mean(x)", "accepted": true, "language": "Chinese"}
+{"name": "statistical-qualifier-before-a-unit-must-translate", "source": "ABC, mean (SD), mm", "text": "ABC, mean (SD), mm", "accepted": false, "corrected": "ABC，均值（SD），mm", "language": "Chinese"}
+{"name": "caption-retrieval-is-a-task-label", "source": "Caption Retrieval", "text": "描述检索", "accepted": true, "language": "Chinese"}
+{"name": "caption-retrieval-must-not-remain-english", "source": "Caption Retrieval", "text": "Caption Retrieval", "corrected": "描述检索", "accepted": false, "language": "Chinese"}
+{"name": "image-retrieval-is-a-task-label", "source": "Image Retrieval", "text": "图像检索", "accepted": true, "language": "Chinese"}
+{"name": "image-retrieval-must-not-remain-english", "source": "Image Retrieval", "text": "Image Retrieval", "corrected": "图像检索", "accepted": false, "language": "Chinese"}
+{"name": "test-error-is-metric-prose", "source": "Test Error", "text": "测试误差", "accepted": true, "language": "Chinese"}
+{"name": "validation-error-rate-is-metric-prose", "source": "Validation Error Rate", "text": "验证错误率", "accepted": true, "language": "Chinese"}

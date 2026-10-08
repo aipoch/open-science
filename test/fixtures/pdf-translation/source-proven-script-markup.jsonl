@@ -1,0 +1,72 @@
+{"name": "cached-variable-subscript-restores-admitted-identifier", "source": "rateq = 32", "translation": "rate<sub>q</sub> = 32", "expected": "rateq = 32", "owner": true}
+{"name": "cached-spaced-variable-restores-exact-source-spelling", "source": "f rate = 4", "translation": "f<sub>rate</sub> = 4", "expected": "f rate = 4", "owner": true}
+{"name": "literal-source-html-remains-literal", "source": "The code is rate<sub>q</sub>.", "translation": "代码为rate<sub>q</sub>。", "expected": "代码为rate<sub>q</sub>。"}
+{"name": "unknown-subscript-identifier-is-not-guessed", "source": "rateq = 32", "translation": "rate<sub>z</sub> = 32", "expected": "rate<sub>z</sub> = 32"}
+{"name": "longer-source-identifier-does-not-authorize-prefix", "source": "rateq2 = 32", "translation": "rate<sub>q</sub> = 32", "expected": "rate<sub>q</sub> = 32"}
+{"name": "plain-count-cannot-become-subscript-digits", "source": "12 samples", "translation": "1<sub>2</sub>个样本", "expected": "1<sub>2</sub>个样本"}
+{"name": "explicit-exponent-keeps-caret-meaning", "source": "10^6 samples", "translation": "10<sup>6</sup>个样本", "expected": "10^6个样本"}
+{"name": "raised-exponent-keeps-source-meaning", "source": "10⁶ samples", "translation": "10<sup>6</sup>个样本", "expected": "10⁶个样本"}
+{"name": "flat-digits-do-not-prove-exponent", "source": "106 samples", "translation": "10<sup>6</sup>个样本", "expected": "10<sup>6</sup>个样本"}
+{"name": "raised-longer-exponent-is-not-prefix-evidence", "source": "10⁶⁷ samples", "translation": "10<sup>6</sup>个样本", "expected": "10<sup>6</sup>个样本"}
+{"name": "ordinary-html-tags-are-not-stripped", "source": "rateq changes", "translation": "<b>rateq</b>变化", "expected": "<b>rateq</b>变化"}
+{"name": "malformed-nested-script-is-not-interpreted", "source": "rateq changes", "translation": "rate<sub><sub>q</sub></sub>变化", "expected": "rate<sub><sub>q</sub></sub>变化"}
+{"name": "braced-greek-parameter-pair-restores-complete-source-identifier", "source": "Use BNγ,β(x).", "translation": "采用BN_{γ,β}(x)。", "expected": "采用BNγ,β(x)。"}
+{"name": "braced-greek-parameter-pair-rejects-swapped-parameters", "source": "Use BNγ,β(x).", "translation": "采用BN_{β,γ}(x)。", "expected": "采用BN_{β,γ}(x)。"}
+{"name": "braced-subscript-keeps-literal-source-markup", "source": "Use BN_{γ,β}(x) with BNγ,β(x).", "translation": "采用BN_{γ,β}(x)。", "expected": "采用BN_{γ,β}(x)。"}
+{"name": "braced-subscript-rejects-longer-source-identifier", "source": "Use rateq2.", "translation": "采用rate_{q}。", "expected": "采用rate_{q}。"}
+{"name": "braced-subscript-rejects-larger-source-prefix", "source": "Use Xrateq.", "translation": "采用rate_{q}。", "expected": "采用rate_{q}。"}
+{"name": "braced-subscript-preserves-exponent", "source": "Use rateq.", "translation": "采用rate^{q}。", "expected": "采用rate^{q}。"}
+{"name": "braced-subscript-does-not-interpret-nesting", "source": "Use rateq.", "translation": "采用rate_{{q}}。", "expected": "采用rate_{{q}}。"}
+{"name": "braced-subscript-restores-named-identifier", "source": "Use rateq.", "translation": "采用rate_{q}。", "expected": "采用rateq。"}
+{"name": "braced-subscript-cannot-absorb-prose-comma", "source": "Use rateq, then stop.", "translation": "采用rate_{q,}再停止。", "expected": "采用rate_{q,}再停止。"}
+{"name": "explicit-negative-power-preserves-source-value", "source": "Rate 10⁻³", "translation": "学习率10⁻³。", "expected": "学习率10^(-3)。"}
+{"name": "explicit-negative-power-keeps-multiple-values", "source": "Rates 10⁻³ and 10⁻⁴", "translation": "采用10⁻³和10⁻⁴。", "expected": "采用10^(-3)和10^(-4)。"}
+{"name": "negative-power-with-changed-base-not-inferred", "source": "Rate 10⁻³", "translation": "采用20⁻³。", "expected": "采用20⁻³。"}
+{"name": "negative-power-with-changed-exponent-not-inferred", "source": "Rate 10⁻³", "translation": "采用10⁻⁴。", "expected": "采用10⁻⁴。"}
+{"name": "negative-power-extra-target-is-ambiguous", "source": "Rate 10⁻³", "translation": "10⁻³和10⁻³", "expected": "10⁻³和10⁻³"}
+{"name": "negative-power-display-idempotent", "source": "Rate 10⁻³", "translation": "采用10^(-3)。", "expected": "采用10^(-3)。"}
+{"name": "ordinary-flat-negative-text-not-inferred", "source": "Rate 10−3", "translation": "采用10⁻³。", "expected": "采用10⁻³。"}
+{"name": "source-proven-comparison-removes-model-tex-wrapper", "source": "For all N ≥ 3.", "translation": "对所有 \\(N \\geq 3\\) 成立。", "expected": "对所有 N ≥ 3 成立。", "owner": true}
+{"name": "changed-tex-comparison-is-not-normalized", "source": "For all N ≥ 3.", "translation": "对所有 \\(N \\leq 3\\) 成立。", "expected": "对所有 \\(N \\leq 3\\) 成立。", "owner": true, "rejected": true}
+{"name": "source-tex-example-remains-literal", "source": "Write \\(N \\geq 3\\).", "translation": "写作 \\(N \\geq 3\\)。", "expected": "写作 \\(N \\geq 3\\)。", "owner": true}
+{"name": "bare-index-restores-source-variable", "source": "gt remains stable.", "translation": "g_t 保持稳定。", "expected": "gt 保持稳定。", "owner": true}
+{"name": "bare-accented-index-keeps-source-spacing", "source": "Use m̂ t and ∆t.", "translation": "使用 m̂_t 和 ∆_t。", "expected": "使用 m̂ t 和 ∆t。", "owner": true}
+{"name": "changed-bare-index-is-not-guessed", "source": "Use gt.", "translation": "使用 g_s。", "expected": "使用 g_s。"}
+{"name": "unbraced-multiple-digits-are-not-one-index", "source": "Use g12.", "translation": "使用 g_12。", "expected": "使用 g_12。"}
+{"name": "literal-source-bare-index-is-preserved", "source": "The code is g_t.", "translation": "代码为 g_t。", "expected": "代码为 g_t。"}
+{"name": "ambiguous-source-index-spacing-is-preserved", "source": "Compare gt and g t.", "translation": "比较 g_t。", "expected": "比较 g_t。"}
+{"name": "longer-source-variable-cannot-prove-bare-index", "source": "Use gt2.", "translation": "使用 g_t。", "expected": "使用 g_t。"}
+{"name": "filename-is-not-subscript-markup", "source": "Use gt.", "translation": "文件 g_t.csv。", "expected": "文件 g_t.csv。"}
+{"name": "inline-code-is-not-subscript-markup", "source": "Use gt.", "translation": "代码 `g_t`。", "expected": "代码 `g_t`。"}
+{"name": "accented-index-spacing-restores-source-spelling", "source": "Use v̂t and m̂ t.", "translation": "使用 v̂ t 和 m̂t。", "expected": "使用 v̂t 和 m̂ t。", "owner": true}
+{"name": "accented-word-suffix-is-not-an-index", "source": "Use v̂test.", "translation": "使用 v̂ test。", "expected": "使用 v̂ test。"}
+{"name": "tex-greek-subscript-restores-source-scalar", "source": "Choose β2.", "translation": "选择 $\\beta_2$。", "expected": "选择 β2。", "owner": true}
+{"name": "tex-greek-subscript-rejects-changed-scalar", "source": "Choose β2.", "translation": "选择 $\\beta_1$。", "expected": "选择 $\\beta_1$。", "rejected": true, "owner": true}
+{"name": "tex-greek-source-markup-remains-literal", "source": "Write $\\beta_2$.", "translation": "写作 $\\beta_2$。", "expected": "写作 $\\beta_2$。"}
+{"name": "unicode-subscript-restores-admitted-index-without-flattening-power", "source": "The square g2t uses gt and gt.", "translation": "平方 g²ₜ 使用 gₜ 与 gₜ。", "expected": "平方 g²t 使用 gt 与 gt。"}
+{"name": "unicode-subscript-with-changed-identifier-stays-visible", "source": "The value gt is retained.", "translation": "保留 gₙ。", "expected": "保留 gₙ。"}
+{"name": "literal-unicode-subscript-source-is-not-rewritten", "source": "The value gₜ is retained.", "translation": "保留 gₜ。", "expected": "保留 gₜ。"}
+{"name": "unicode-subscript-on-accented-variable-restores-source-index", "source": "The estimates m̂ t and v̂t remain stable.", "translation": "估计 m̂ₜ 和 v̂ₜ 保持稳定。", "expected": "估计 m̂ t 和 v̂t 保持稳定。"}
+{"name": "real-space-restyling-restores-source-dimension", "source": "For x in Rd, f maps Rd to R; the vector lies in Rt.", "translation": "对 ℝᵈ 中的 x，f 从 ℝᵈ 映射到 ℝ；向量位于 ℝ^t。", "expected": "对 Rd 中的 x，f 从 Rd 映射到 R；向量位于 R^t。"}
+{"name": "real-space-restyling-does-not-invent-source-dimension", "source": "For x in Rd.", "translation": "对 ℝⁿ 中的 x。", "expected": "对 ℝⁿ 中的 x。"}
+{"name": "model-added-tex-decoration-restores-exact-source-identifiers", "source": "Induct on T and define g1:t,i from g1:t.", "translation": "对 $T$ 归纳，并由 g_{1:t} 定义 g_{1:t,i}。", "expected": "对 T 归纳，并由 g1:t 定义 g1:t,i。"}
+{"name": "changed-or-literal-tex-identifiers-remain-visible", "source": "The value g1:t and literal $T$ are retained.", "translation": "保留 g_{1:n} 与 $T$。", "expected": "保留 g_{1:n} 与 $T$。"}
+{"name": "tex-norm-bound-restores-exact-admitted-expression", "source": "and bounded hz, ‖hz‖2 ≤ C,", "translation": "且 $hz$ 有界，$\\|hz\\|_2 \\le C$，", "expected": "且 hz 有界，‖hz‖2 ≤ C，"}
+{"name": "changed-norm-index-is-not-repaired", "source": "The bound ‖hz‖2 ≤ C applies.", "translation": "界 $\\|hz\\|_3 \\le C$ 成立。", "expected": "界 $\\|hz\\|_3 \\le C$ 成立。", "rejected": true, "owner": true}
+{"name": "bare-norm-index-restores-source-spelling", "source": "The norm ‖hz‖2 is bounded.", "translation": "范数 ‖hz‖_2 有界。", "expected": "范数 ‖hz‖2 有界。"}
+{"name": "starred-optimum-restores-exact-source-with-unmatched-delimiter", "source": "where ψ∗", "translation": "其中 ψ^*$", "expected": "其中 ψ∗", "owner": true}
+{"name": "starred-optimum-removes-braced-tex-wrapper", "source": "where ψ∗", "translation": "其中 $ψ^{*}$", "expected": "其中 ψ∗", "owner": true}
+{"name": "starred-optimum-never-repairs-another-variable", "source": "where ψ∗", "translation": "其中 $φ^{*}$", "expected": "其中 $φ^{*}$"}
+{"name": "literal-starred-tex-remains-unchanged", "source": "where $ψ^{*}$", "translation": "其中 $ψ^{*}$", "expected": "其中 $ψ^{*}$"}
+{"name": "arrow-subscript-restores-source-composition-index", "source": "We use gi→j for composition.", "translation": "我们用 g_{i→j} 表示复合。", "expected": "我们用 gi→j 表示复合。", "owner": true}
+{"name": "changed-arrow-subscript-is-not-normalized", "source": "We use gi→j for composition.", "translation": "我们用 g_{j→i} 表示复合。", "expected": "我们用 g_{j→i} 表示复合。"}
+{"name": "phonetic-subscript-restores-source-proven-identifier", "source": "Scale each factor ai.", "translation": "缩放每个因子 aᵢ。", "expected": "缩放每个因子 ai。", "owner": true}
+{"name": "phonetic-subscript-never-repairs-a-different-index", "source": "Scale each factor ak.", "translation": "缩放每个因子 aᵢ。", "expected": "缩放每个因子 aᵢ。"}
+{"name": "literal-phonetic-subscript-in-source-remains-unchanged", "source": "The factor aᵢ remains fixed.", "translation": "因子 aᵢ 保持固定。", "expected": "因子 aᵢ 保持固定。"}
+{"name": "model-emphasis-around-unchanged-formula-restores-native-source", "source": "E[maxj∈[n] zj] − log(n)", "translation": "**E[maxj∈[n] zj] − log(n)**", "expected": "E[maxj∈[n] zj] − log(n)", "owner": true}
+{"name": "emphasis-around-changed-formula-does-not-borrow-source", "source": "E[maxj∈[n] zj] − log(n)", "translation": "**E[maxj∈[n] zj] + log(n)**", "expected": "**E[maxj∈[n] zj] + log(n)**"}
+{"name": "literal-source-emphasis-remains-literal", "source": "**x**", "translation": "**x**", "expected": "**x**"}
+{"name": "acronym-component-keeps-original-identifier", "source": "Use NETGate for training.", "translation": "训练采用 NET-Gate。", "expected": "训练采用 NETGate。", "owner": true}
+{"name": "distinct-hyphenated-name-is-not-merged", "source": "Compare NETGate and NET-Gate.", "translation": "比较 NETGate 和 NET-Gate。", "expected": "比较 NETGate 和 NET-Gate。", "owner": true}
+{"name": "unbraced-multiple-letter-index-restores-extracted-spacing", "source": "Set dq q = 2048.", "translation": "设 d_qq = 2048。", "expected": "设 dq q = 2048。", "owner": true}
+{"name": "unbraced-multiple-letter-index-rejects-changed-suffix", "source": "Set dq q = 2048.", "translation": "设 d_qr = 2048。", "expected": "设 d_qr = 2048。"}

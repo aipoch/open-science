@@ -6,7 +6,8 @@
     "src/main/local-models/download.ts",
     "src/main/local-models/ipc.ts",
     "src/main/local-models/owner.test.ts",
-    "src/main/local-models/owner.ts"
+    "src/main/local-models/owner.ts",
+    "src/main/local-models/ipc.test.ts"
   ],
   "interfacePaths": [
     "src/main/local-models/catalog.ts",
@@ -328,7 +329,16 @@
       "src/main/session-persistence/turn-outcome-reconciliation.test.ts",
       "src/main/session-persistence/attention-projection.test.ts",
       "src/main/acp/approved-handoff-outcome.integration.test.ts",
-      "src/main/acp/approved-handoff-outcome.test.ts"
+      "src/main/acp/approved-handoff-outcome.test.ts",
+      "src/main/literature/pdf-translation/ipc.test.ts",
+      "src/main/literature/pdf-translation/index.test.ts",
+      "src/main/literature/pdf-translation/checkpoints.test.ts",
+      "src/main/literature/pdf-translation/usage.test.ts",
+      "src/main/literature/pdf-translation/diagnostics.test.ts",
+      "src/main/literature/pdf-translation/reader-ownership.test.ts",
+      "src/main/literature/pdf-translation/local.test.ts",
+      "src/main/local-models/ipc.test.ts",
+      "src/main/literature/pdf-translation/pdf-cache.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

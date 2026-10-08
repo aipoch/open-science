@@ -90,7 +90,9 @@ const issues = (element: Element): string[] =>
   )
 const hasCells = (element: Element): boolean =>
   tables(element).some(({ table }) => table.cells.length > 0)
-const projectionCell = (cell: Table['cells'][number]): Omit<Table['cells'][number], 'regions'> => ({
+const projectionCell = (
+  cell: Table['cells'][number]
+): Omit<Table['cells'][number], 'regions' | 'sourceItems'> => ({
   row: cell.row,
   column: cell.column,
   rowSpan: cell.rowSpan,

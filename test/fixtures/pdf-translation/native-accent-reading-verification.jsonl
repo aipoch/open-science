@@ -1,0 +1,14 @@
+{"name": "native hat moved with its base", "change": "unchanged", "accepted": true}
+{"name": "zero-width native hat with PDF.js whitespace", "change": "space-mark", "accepted": true}
+{"name": "hat attached to the wrong variable", "change": "wrong-base", "accepted": false}
+{"name": "hat moved without its base", "change": "moved-mark", "accepted": false}
+{"name": "native base width changed", "change": "width", "accepted": false}
+{"name": "native base scaled", "change": "scaled", "accepted": false}
+{"name": "native hat missing", "change": "missing-mark", "accepted": false}
+{"name": "native hat duplicated", "change": "duplicate-mark", "accepted": false}
+{"name": "ambiguous native base", "change": "duplicate-base", "accepted": false}
+{"name": "source hat absent", "change": "missing-source-mark", "accepted": false}
+{"name": "wide-variable-hat-keeps-native-inset", "change": "wide-base", "accepted": true}
+{"name":"native-macron-keeps-base-relative-offset","change":"macron","accepted":true}
+{"name":"native-macron-detached-from-base-is-rejected","change":"macron-detached","accepted":false}
+{"name":"raised-native-hat-keeps-relative-offset","change":"raised-hat","accepted":true}

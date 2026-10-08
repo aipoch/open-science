@@ -294,7 +294,7 @@ test('explains disabled revision navigation while a turn is running', async ({ a
   await page.screenshot({ path: testInfo.outputPath('revision-navigation-idle.png') })
 })
 
-test('edits and navigates message revisions that persist after relaunch @pr-mainline-conversation', async ({
+test('edits and navigates message revisions that persist after relaunch', async ({
   app
 }, testInfo) => {
   await app.completeOnboarding()
@@ -516,7 +516,7 @@ test('shows context compaction loading and completion inside the Session transcr
   }
 })
 
-test('previews and opens an Agent HTTPS source link in the isolated preview tab @pr-mainline-files', async ({
+test('previews and opens an Agent HTTPS source link in the isolated preview tab', async ({
   app
 }, testInfo) => {
   await app.completeOnboarding()

@@ -1,0 +1,11 @@
+{"name": "native-tilde-retains-publisher-font", "translation": "数值 x ∼ y 是稳定的。", "valid": true}
+{"name": "unmatched-new-symbol-is-rejected", "translation": "数值 x ∼ y 是稳定的。🧪", "valid": false}
+{"name": "duplicated-native-symbol-is-rejected", "translation": "数值 x ∼ y ∼ z 是稳定的。", "valid": false}
+{"name": "combined-relation-and-identifier-retain-native-object", "nativeText": "∼Ν", "translation": "数值 x ∼Ν y 是稳定的。", "valid": true}
+{"name": "changed-combined-identifier-is-rejected", "nativeText": "∼Ν", "translation": "数值 x ∼Μ y 是稳定的。", "valid": false}
+{"name": "duplicated-combined-identifier-is-rejected", "nativeText": "∼Ν", "translation": "数值 x ∼Ν y ∼Ν 是稳定的。", "valid": false}
+{"name": "repeated-native-relation-signs-retain-exact-count", "repeated": true, "translation": "数值 x ∼ y 与 z ∼ y 是稳定的。", "valid": true}
+{"name": "extended-combined-identifier-is-rejected", "nativeText": "∼Ν", "translation": "数值 x ∼Νx y 是稳定的。", "valid": false}
+{"name": "range-sign-remains-after-approximation-becomes-prose", "repeated": true, "numericRange": true, "translation": "数值 x 约 25%，11%∼34% 是稳定的。", "valid": true}
+{"name": "changed-range-does-not-reuse-unproven-sign", "repeated": true, "numericRange": true, "translation": "数值 x 约 25%，12%∼34% 是稳定的。", "valid": false}
+{"name": "duplicated-range-does-not-reuse-one-glyph", "repeated": true, "numericRange": true, "translation": "数值 x 约 25%，11%∼34%，11%∼34% 是稳定的。", "valid": false}

@@ -1,0 +1,9 @@
+{"name":"large-centered-title-stays-one-translation-unit","top":80,"secondFont":"title","expectedJoined":true}
+{"name":"centered-caption-in-body-is-not-a-paper-title","top":340,"secondFont":"title","expectedJoined":false}
+{"name":"different-title-font-does-not-join-author-line","top":80,"secondFont":"author","expectedJoined":false}
+{"name":"asymmetric-page-margins-still-join-aligned-title-lines","top":80,"secondFont":"title","expectedJoined":true,"horizontalOffset":-18}
+{"name": "left-aligned-title-short-tail", "top": 80, "secondFont": "title", "expectedJoined": true, "leftAligned": true}
+{"name": "left-aligned-title-author-font", "top": 80, "secondFont": "author", "expectedJoined": false, "leftAligned": true}
+{"name": "left-aligned-title-intervening-content", "top": 80, "secondFont": "title", "expectedJoined": false, "leftAligned": true, "intervening": true}
+{"name": "left-aligned-title-large-gap", "top": 80, "secondFont": "title", "expectedJoined": false, "leftAligned": true, "gap": 42}
+{"name": "left-aligned-body-label", "top": 340, "secondFont": "title", "expectedJoined": false, "leftAligned": true}

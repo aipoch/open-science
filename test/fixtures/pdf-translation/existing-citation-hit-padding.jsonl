@@ -1,0 +1,5 @@
+{"name": "existing-vertical-hit-padding-kept", "accepted": true}
+{"name": "vertical-hit-padding-increases", "dy": -1, "accepted": false}
+{"name": "horizontal-hit-padding-outside-owner", "outsideX": true, "accepted": false}
+{"name": "moved-padding-newly-covers-foreign-text", "foreign": true, "accepted": false}
+{"name": "oversized-link-action-changed", "changedAction": true, "accepted": false}

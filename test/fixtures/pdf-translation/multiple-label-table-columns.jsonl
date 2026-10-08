@@ -1,0 +1,6 @@
+{"name": "multiple-label-columns-keep-row-cells-independent", "scores": 2, "drift": 0, "longLabel": false, "table": true}
+{"name": "single-score-does-not-prove-multiple-label-columns", "scores": 1, "drift": 0, "longLabel": false, "table": false}
+{"name": "misaligned-score-columns-do-not-establish-cells", "scores": 2, "drift": 18, "longLabel": false, "table": false}
+{"name": "long-prose-beside-numbers-is-not-a-table-row", "scores": 2, "drift": 0, "longLabel": true, "table": false}
+{"name": "wrapped-table-rows-and-tall-headers-keep-cells-separated", "scores": 2, "drift": 0, "longLabel": false, "table": true, "rowGap": 30, "header": true}
+{"name": "distant-multiple-label-rows-do-not-establish-cells", "scores": 2, "drift": 0, "longLabel": false, "table": false, "rowGap": 40}

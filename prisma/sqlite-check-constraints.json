@@ -914,6 +914,26 @@
       "tableName": "LiteratureSmartCollection",
       "name": "LiteratureSmartCollection_pause_check",
       "expression": "\"automaticPauseReason\" IS NULL OR \"automaticPauseReason\" IN ('run-limit', 'daily-limit', 'storage-error', 'interrupted')"
+    },
+    {
+      "tableName": "PdfTranslationUsage",
+      "name": "PdfTranslationUsage_values_check",
+      "expression": "length(trim(\"eventId\")) > 0 AND length(trim(\"runId\")) > 0 AND \"sourceIndex\" >= 0 AND length(trim(\"providerId\")) > 0 AND length(trim(\"frameworkId\")) > 0 AND length(trim(\"model\")) > 0 AND \"status\" IN ('started', 'completed', 'failed', 'interrupted') AND ((\"inputTokens\" IS NULL AND \"cacheTokens\" IS NULL AND \"outputTokens\" IS NULL AND \"cachedReadTokens\" IS NULL AND \"cachedWriteTokens\" IS NULL AND \"usageIncomplete\" = true) OR (\"inputTokens\" IS NOT NULL AND \"cacheTokens\" IS NOT NULL AND \"outputTokens\" IS NOT NULL AND \"inputTokens\" >= 0 AND \"cacheTokens\" >= 0 AND \"outputTokens\" >= 0 AND \"usageIncomplete\" = false AND ((\"cachedReadTokens\" IS NULL AND \"cachedWriteTokens\" IS NULL) OR (\"cachedReadTokens\" IS NOT NULL AND \"cachedWriteTokens\" IS NOT NULL AND \"cachedReadTokens\" >= 0 AND \"cachedWriteTokens\" >= 0 AND \"cachedReadTokens\" + \"cachedWriteTokens\" = \"cacheTokens\"))))"
+    },
+    {
+      "tableName": "PdfTranslation",
+      "name": "PdfTranslation_identity_check",
+      "expression": "length(trim(\"id\")) > 0 AND length(\"checksum\") = 64 AND \"checksum\" NOT GLOB '*[^0-9a-f]*' AND \"sizeBytes\" >= 0 AND \"revision\" > 0"
+    },
+    {
+      "tableName": "PdfTranslation",
+      "name": "PdfTranslation_payload_check",
+      "expression": "json_valid(\"payloadJson\") AND json_type(\"payloadJson\") = 'object' AND length(\"payloadJson\") <= 8388608"
+    },
+    {
+      "tableName": "PdfTranslationBlock",
+      "name": "PdfTranslationBlock_values_check",
+      "expression": "\"sourceIndex\" >= -1 AND \"sourceIndex\" < 10000 AND \"revision\" > 0 AND ((\"sourceIndex\" = -1 AND \"translation\" IS NULL) OR (\"sourceIndex\" >= 0 AND (\"translation\" IS NULL OR (length(trim(\"translation\")) > 0 AND length(\"translation\") <= 100000))))"
     }
   ],
   "indexes": [

@@ -201,6 +201,14 @@ export async function composeNotebookBridge({
       ? { projectId: summary.projectId }
       : undefined
   }
+  notebookService.setExecutionApproval(async (request) => {
+    const runtime = runtimeRef.current
+    if (!runtime) throw new Error('ACP runtime is not initialized.')
+    // Full remains the user's explicit bypass mode. Auto still reviews destructive code once.
+    if (runtime.getState().permissionProfiles[request.sessionId]?.selectedProfile === 'full')
+      return true
+    return runtime.requestAppApproval(request)
+  })
   const notebookRpcServer = await modules.add(
     new NotebookLocalRpcServer(notebookLocalRpc, {
       // The Notebook REPL runs in a process sandbox whose only TCP egress is the approval gateway.

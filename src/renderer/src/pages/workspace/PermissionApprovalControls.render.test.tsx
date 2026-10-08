@@ -328,6 +328,167 @@ describe('PermissionApprovalControls', () => {
     return host
   }
 
+  it.each([
+    ['python', 'python'],
+    ['r', 'r'],
+    ['repl', 'javascript'],
+    ['bash', 'bash']
+  ])(
+    'renders host-owned %s risk evidence with verbatim code and only one-shot controls',
+    async (language, displayedLanguage) => {
+      const code = 'import os\n\n  os.unlink(a_path)\n'
+      const host = await mountControls({
+        requestId: 'risk-1',
+        sessionId: 'session-1',
+        toolCallId: 'app-approval:risk-1',
+        title: 'Review potentially destructive code',
+        appOwned: true,
+        rawInput: {
+          code,
+          notebookCodeRisk: {
+            runId: 'internal-run-id',
+            language,
+            environment: 'default-python',
+            cwd: '/workspace/risk-test',
+            risks: [{ operation: 'os.unlink', source: 'os.unlink(a_path)', line: 3 }]
+          }
+        },
+        options: [
+          { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+          { optionId: 'deny', name: 'Deny', kind: 'reject_once' }
+        ]
+      })
+      const review = host.querySelector('[data-testid="notebook-code-review"]')
+      expect(review?.textContent).toContain('This code may make irreversible changes.')
+      expect(host.querySelector('[data-testid="permission-header"]')?.textContent).toBe(
+        'Review risky codedefault-python'
+      )
+      expect(host.querySelector('[data-testid="permission-impact-info"]')).toBeNull()
+      expect(host.querySelector('[data-testid="permission-category-badge"]')).toBeNull()
+      expect(review?.querySelector('details')).toBeNull()
+      expect(review?.textContent).toContain('os.unlink')
+      expect(review?.textContent).toContain('Line 3')
+      expect(review?.textContent).not.toContain('/workspace/risk-test')
+      expect(
+        host.querySelector('[data-testid="permission-header"] [data-testid="permission-env-badge"]')
+          ?.textContent
+      ).toBe('default-python')
+      expect(review?.textContent).not.toContain('notebookCodeRisk')
+      expect(review?.textContent).not.toContain('internal-run-id')
+      const block = review?.querySelector('[data-testid="tool-code-block"]')
+      expect(block?.getAttribute('data-language')).toBe(displayedLanguage)
+      expect(block?.textContent).toBe(code)
+      expect(host.querySelector('[data-testid="scope-chevron"]')).toBeNull()
+      expect(host.textContent).toContain('Allow once')
+      expect(host.textContent).toContain('Deny')
+    }
+  )
+
+  it('shows uncertainty and bounded finding count without claiming a confirmed destructive operation', async () => {
+    const host = await mountControls({
+      ...permissionRequest,
+      appOwned: true,
+      rawInput: {
+        code: 'handlers[name]()',
+        notebookCodeRisk: {
+          language: 'python',
+          riskCount: 150,
+          risks: [{ operation: 'dynamic call target', source: 'handlers[name]()', line: 1 }]
+        }
+      }
+    })
+    expect(host.textContent).toContain(
+      'This code could not be fully checked. Review it before execution.'
+    )
+    expect(host.textContent).toContain('Showing 1 of 150 findings.')
+    expect(host.textContent).not.toContain('This code may make irreversible changes.')
+  })
+  it.each([
+    ['cleanup_analysis: os.unlink', false],
+    ['dynamic_cleanup: fs.unlinkSync', false],
+    ['analysis: os.unlink', false],
+    ['cleanup: dynamic call target', true],
+    ['kernel source history exceeds analysis limit', true],
+    ['code analysis unavailable', true],
+    ['parse-error', true],
+    ['parser-unavailable', true]
+  ])(
+    'bases uncertainty copy on the finding reason rather than a function name: %s',
+    async (operation, uncertain) => {
+      const host = await mountControls({
+        ...permissionRequest,
+        appOwned: true,
+        rawInput: {
+          code: 'cleanup()',
+          notebookCodeRisk: {
+            language: 'python',
+            risks: [{ operation, source: 'cleanup()', line: 1 }]
+          }
+        }
+      })
+      expect(host.textContent).toContain(
+        uncertain
+          ? 'This code could not be fully checked. Review it before execution.'
+          : 'This code may make irreversible changes.'
+      )
+    }
+  )
+
+  it('shows selected and current environments and variable loss without exposing interpreter paths', async () => {
+    const host = await mountControls({
+      ...permissionRequest,
+      appOwned: true,
+      rawInput: {
+        notebookRuntimeSelection: {
+          language: 'python',
+          label: 'Python research',
+          runtimeId: 'research',
+          previousRuntimeId: 'base',
+          previousLabel: 'Python base',
+          interpreterPath: '/internal/python'
+        }
+      }
+    })
+    expect(host.querySelector('[data-testid="notebook-runtime-selection"]')?.textContent).toContain(
+      'Python research'
+    )
+    expect(host.textContent).toContain('Python base')
+    expect(host.textContent).toContain(
+      "Switching environments clears the current kernel's variables."
+    )
+    expect(host.textContent).not.toContain('/internal/python')
+    expect(host.querySelector('[data-testid="tool-code-block"]')).toBeNull()
+  })
+
+  it.each([
+    [undefined, true],
+    [true, false]
+  ] as const)(
+    'keeps foreign or malformed risk payloads reviewable (appOwned=%s)',
+    async (appOwned, valid) => {
+      const host = await mountControls({
+        ...permissionRequest,
+        appOwned,
+        rawInput: {
+          code: 'print(1)',
+          notebookCodeRisk: {
+            language: 'python',
+            risks: [
+              valid
+                ? { operation: 'os.unlink', source: 'os.unlink(a_path)', line: 3 }
+                : { operation: 'unknown' }
+            ]
+          },
+          target: '/production'
+        }
+      })
+      expect(host.querySelector('[data-testid="notebook-code-review"]')).toBeNull()
+      const block = host.querySelector('[data-testid="tool-code-block"]')
+      expect(block?.getAttribute('data-language')).toBe('json')
+      expect(block?.textContent).toContain('/production')
+    }
+  )
+
   it('renders Notebook domain requests as a conversation approval without exposing raw payload JSON', () => {
     const html = renderToStaticMarkup(
       <PermissionApprovalControls requests={[networkApprovalRequest]} onRespond={() => undefined} />

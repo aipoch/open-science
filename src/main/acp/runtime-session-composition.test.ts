@@ -155,3 +155,42 @@ describe('ACP Runtime session composition', () => {
     })
   })
 })
+
+it.each(['allow-once', 'reject-once'])(
+  'keeps host provenance on the pending and %s review receipt',
+  async (optionId) => {
+    const options = {
+      appVersion: 'test',
+      defaultCwd: '/workspace',
+      callbacks: { onEvent: vi.fn() }
+    }
+    const owners = composeAcpRuntimeSessionOwners(options, composeAcpRuntimeBaseOwners(options))
+    const decision = owners.permissionContext.requestAppPermission({
+      sessionId: 'session-review',
+      title: 'Review code',
+      rawInput: {
+        code: 'os.unlink(path)',
+        notebookCodeRisk: {
+          language: 'python',
+          risks: [{ operation: 'os.unlink', source: 'os.unlink(path)', line: 1 }]
+        }
+      },
+      options: [
+        { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+        { optionId: 'reject-once', name: 'Deny', kind: 'reject_once' }
+      ]
+    })
+    const request = owners.publication.getSnapshot().pendingPermissions[0]
+    await owners.permissionContext.respondToPermission(
+      { requestId: request.requestId, optionId },
+      HUMAN_PERMISSION_ACTION_ORIGIN
+    )
+    await expect(decision).resolves.toBe(optionId)
+    const events = owners.publication.getSnapshot().events.filter((event) => event.kind === 'tool')
+    expect(events).toHaveLength(2)
+    expect(
+      events.every((event) => event.appOwned === true && event.toolCallId === request.toolCallId)
+    ).toBe(true)
+    expect(events[1].status).toBe('completed')
+  }
+)

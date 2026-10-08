@@ -13,6 +13,7 @@ import { PDF_TABLE_MODEL_REVISIONS, type LocalModelRevision } from './catalog'
 import { downloadLocalModelAsset } from './download'
 
 type Dependencies = {
+  namespace?: 'pdf-tables' | 'pdf-translation'
   dataRoot?: () => string
   acquireWriter?: () => () => void
   revisions?: readonly LocalModelRevision[]
@@ -27,13 +28,14 @@ const bytes = (revision: LocalModelRevision): number =>
 
 // One owner per application process. No renderer-provided paths, URLs or revisions are accepted.
 export const createLocalModelOwner = (dependencies: Dependencies = {}): LocalModelOwner => {
+  const namespace = dependencies.namespace ?? 'pdf-tables'
   const revisions = dependencies.revisions ?? PDF_TABLE_MODEL_REVISIONS
   const recommended = revisions[0]
   if (!recommended) throw new Error('A local model revision is required.')
   for (const revision of revisions) {
     if (!/^[a-z0-9][a-z0-9-]*$/.test(revision.revision)) throw new Error('Invalid model revision.')
     for (const asset of revision.assets) {
-      if (!/^[a-z0-9][a-z0-9.-]*\.(?:onnx|mjs|wasm|txt)$/.test(asset.file))
+      if (!/^[a-z0-9][a-z0-9._-]*\.(?:onnx|mjs|wasm|txt|json)$/.test(asset.file))
         throw new Error('Invalid model asset.')
     }
   }
@@ -61,7 +63,7 @@ export const createLocalModelOwner = (dependencies: Dependencies = {}): LocalMod
   const directory = async (parts: string[], create = false): Promise<string | undefined> => {
     let path = root()
     if (create) await mkdir(path, { recursive: true })
-    for (const part of ['models', 'pdf-tables', ...parts]) {
+    for (const part of ['models', namespace, ...parts]) {
       path = join(path, part)
       if (create)
         await mkdir(path).catch((error: NodeJS.ErrnoException) => {
@@ -229,7 +231,7 @@ export const createLocalModelOwner = (dependencies: Dependencies = {}): LocalMod
         revision: installed.revision,
         assets: installed.assets.map((asset) => ({
           file: asset.file,
-          path: join(root(), 'models', 'pdf-tables', 'revisions', installed.revision, asset.file),
+          path: join(root(), 'models', namespace, 'revisions', installed.revision, asset.file),
           size: asset.size,
           sha256: asset.sha256
         })),

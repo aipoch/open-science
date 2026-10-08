@@ -174,7 +174,7 @@ class NotebookPackageOperations {
       throw new Error(
         'EXTERNAL_RUNTIME_INSPECTION_REQUIRES_EXECUTION: inspect_packages cannot run a bound ' +
           'external interpreter under package-metadata permission. Use notebook_execute in this ' +
-          'runtime to query package metadata so interpreter execution receives notebook approval.'
+          'runtime to query package metadata so the actual code passes Notebook risk review.'
       )
     }
     if (
@@ -217,7 +217,7 @@ class NotebookPackageOperations {
         `DEFAULT_RUNTIME_NOT_READY: the app-managed ${request.language} runtime is not prepared, and ` +
           'inspect_packages cannot create it under read-only package-metadata permission. Use ' +
           `notebook_execute with language "${request.language}" to prepare the runtime under notebook ` +
-          'execution approval, then retry inspect_packages.'
+          'runtime selection and code review, then retry inspect_packages.'
       )
     }
 
