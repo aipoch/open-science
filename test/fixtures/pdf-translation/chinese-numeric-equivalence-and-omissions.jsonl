@@ -1,0 +1,59 @@
+{"name": "missing-journal-page", "source": "Scientific journal 67", "text": "主要结局", "accepted": false}
+{"name": "chinese-counts-and-unit", "source": "1 arm, 2 points, 2 cm", "text": "一只手臂，两个点，2 cm", "accepted": true}
+{"name": "implicit-single-arm-with-digits", "source": "1 arm, 2 points, 2 cm", "text": "任一手臂上2个相邻点增加2 cm", "accepted": true}
+{"name": "implicit-single-limb-with-digits", "source": "1 arm, 2 points, 2 cm", "text": "任一上肢上2个相邻点增加2 cm", "accepted": true}
+{"name": "missing-measurement-value", "source": "1 arm, 2 points, 2 cm", "text": "任一手臂上2个相邻点增加cm", "accepted": false}
+{"name": "two-arms-not-one", "source": "2 arms", "text": "任一手臂", "accepted": false}
+{"name": "chinese-count-two", "source": "2 diagonal patterns", "text": "两种对角模式", "accepted": true}
+{"name": "missing-reference-after-count", "source": "2 diagonal patterns, reference 2.", "text": "两种对角模式", "accepted": false}
+{"name": "chinese-count-ranges", "source": "1 to 3 sets of 5 to 10 repetitions", "text": "一至三组，每组五至十次", "accepted": true}
+{"name": "changed-range-endpoint", "source": "1 to 3 sets of 5 to 10 repetitions", "text": "一至三组，每组五至九次", "accepted": false}
+{"name": "count-is-not-a-reference", "source": "1 arm, reference 1", "text": "任一手臂", "accepted": false}
+{"name": "missing-unit-value", "source": "1 arm, 2 points, 2 cm", "text": "一只手臂，两个点，cm", "accepted": false}
+{"name": "missing-point-count", "source": "1 arm, 2 points, 2 cm", "text": "一只手臂，点，2 cm", "accepted": false}
+{"name": "changed-point-count", "source": "1 arm, 2 points, 2 cm", "text": "一只手臂，三个点，2 cm", "accepted": false}
+{"name": "unrelated-chinese-text", "source": "1 arm", "text": "一般情况下一致", "accepted": false}
+{"name": "reference-is-not-a-count", "source": "2 points, reference 2.", "text": "两个点，两组", "accepted": false}
+{"name": "duplicate-counts-collapsed", "source": "Group A: 2; group B: 2", "text": "两组：2", "accepted": false}
+{"name": "leading-zero-is-not-one", "source": "01 label", "text": "一个标签", "accepted": false}
+{"name": "chinese-multi-digit-counts", "source": "12 patients; 105 visits", "text": "十二名患者，一百零五次访问", "accepted": true}
+{"name": "ambiguous-chinese-hundreds", "source": "120 visits", "text": "一百二次访问", "accepted": false}
+{"name": "chinese-thousands-and-zero", "source": "1002 patients; 0 visits", "text": "一千零二名患者，零次访问", "accepted": true}
+{"name": "chinese-tens-and-hundreds", "source": "20 patients, 200 visits", "text": "二十名患者，两百次访问", "accepted": true}
+{"name": "decimal-point-removed-with-count", "source": "P = 0.05; 2 patients", "text": "两名患者，P = 005", "accepted": false}
+{"name": "date-reordered-with-copyright", "source": "Version 1.0 July 2012. Copyright 2006.", "text": "版本1.0，2012年7月。版权2006年。", "accepted": true}
+{"name": "copyright-year-missing", "source": "Version 1.0 July 2012. Copyright 2006.", "text": "版本1.0，2012年7月。", "accepted": false}
+{"name": "interval-separator-changed", "source": "CI 27.53 to 16.84", "text": "区间27.53,16.84", "accepted": true}
+{"name": "localized-thousands-and-decimal", "source": "1,234,567.89 units", "text": "1.234.567,89 单位", "accepted": true}
+{"name": "table-count-omitted", "source": "21 Moderate", "text": "中等", "accepted": false}
+{"name": "table-count-preserved", "source": "21 Moderate", "text": "21 中等", "accepted": true}
+{"name": "repeated-group-count-collapsed", "source": "Group A: 7; group B: 7", "text": "A组和B组：7", "accepted": false}
+{"name": "localized-decimal-and-fullwidth-count", "source": "P = 0.05; n = 12", "text": "P = 0,05；n = １２", "accepted": true}
+{"name": "thousands-separator-removed", "source": "1,000 participants", "text": "1000 名参与者", "accepted": true}
+{"name": "narrow-space-thousands", "source": "1,000 participants", "text": "1 000 participants", "accepted": true}
+{"name": "nonbreaking-space-thousands", "source": "1,234,567.89 units", "text": "1 234 567,89 unités", "accepted": true}
+{"name": "calendar-date-reordered", "source": "1 September 2023", "text": "2023年9月1日", "accepted": true}
+{"name": "citation-list-localized", "source": "References 1,2,4", "text": "参考文献1、2、4", "accepted": true}
+{"name": "citation-list-truncated", "source": "References 1,2,4", "text": "参考文献1、2", "accepted": false}
+{"name": "decimal-point-removed", "source": "P = 0.05", "text": "P = 005", "accepted": false}
+{"name": "small-dose-decimal-localized", "source": "Dose: 0.005 mg", "text": "剂量：0,005 mg", "accepted": true}
+{"name": "small-dose-decimal-removed", "source": "Dose: 0.005 mg", "text": "剂量：0005 mg", "accepted": false}
+{"name": "decimal-is-not-thousands", "source": "Dose: 1.234 mg", "text": "剂量：1234 mg", "accepted": false}
+{"name": "localized-confidence-interval", "source": "CI: 1.25–2.50; n=20", "text": "区间：1,25–2,50；n=20", "accepted": true}
+{"name": "million-to-chinese-ten-thousands", "source": "The corpus contains 42 million records.", "text": "语料包含4200万条记录。", "accepted": true}
+{"name": "billion-to-chinese-hundred-millions", "source": "The corpus contains 1.5 billion records.", "text": "语料包含15亿条记录。", "accepted": true}
+{"name": "thousand-to-chinese-ten-thousands", "source": "There are 250 thousand records.", "text": "共有25万条记录。", "accepted": true}
+{"name": "decimal-scaled-count-to-plain-digits", "source": "The sample contains 1.25 million entries.", "text": "样本包含1250000条记录。", "accepted": true}
+{"name": "traditional-chinese-large-count", "source": "The corpus contains 42 million records.", "text": "語料包含4200萬條記錄。", "accepted": true}
+{"name": "wrong-chinese-count-multiplier-is-rejected", "source": "The corpus contains 42 million records.", "text": "语料包含42万条记录。", "accepted": false}
+{"name": "dropped-million-unit-is-rejected", "source": "The corpus contains 42 million records.", "text": "语料包含42条记录。", "accepted": false}
+{"name": "changed-chinese-large-count-is-rejected", "source": "The corpus contains 42 million records.", "text": "语料包含4100万条记录。", "accepted": false}
+{"name": "repeated-large-counts-cannot-be-merged", "source": "There are 42 million records and 42 million labels.", "text": "共有4200万条记录和标签。", "accepted": false}
+{"name": "repeated-large-counts-are-retained", "source": "There are 42 million records and 42 million labels.", "text": "共有4200万条记录和4200万个标签。", "accepted": true}
+{"name": "scientific-count-to-chinese-magnitude", "source": "We ran 4 × 10⁵ trials.", "text": "我们进行了40万次试验。", "accepted": true}
+{"name": "scientific-count-to-caret-notation", "source": "We ran 4 · 10⁵ trials.", "text": "我们进行了4 × 10^5次试验。", "accepted": true}
+{"name": "scientific-count-wrong-exponent", "source": "We ran 4 × 10⁵ trials.", "text": "我们进行了4 × 10^4次试验。", "accepted": false}
+{"name": "scientific-count-missing-coefficient", "source": "We ran 4 × 10⁵ trials.", "text": "我们进行了10万次试验。", "accepted": false}
+{"name": "flattened-digits-do-not-imply-exponent", "source": "We ran 4 × 105 trials.", "text": "我们进行了40万次试验。", "accepted": false}
+{"name": "scientific-count-repeated-occurrence", "source": "We ran 4 × 10⁵ trials and 4 × 10⁵ checks.", "text": "我们进行了40万次试验。", "accepted": false}
+{"name": "scientific-count-normalizes-font-unsupported-raised-digits", "source": "We ran 4 × 10⁵ trials.", "text": "我们进行了4 × 10⁵次试验。", "expectedText": "我们进行了4 × 10^5次试验。", "accepted": true}

@@ -1,5 +1,16 @@
-import { usePdfExportAction } from './pdf-annotations/pdf-export-context'
-import { Check, CircleAlert, Download, FileText, FilePenLine, LoaderCircle } from 'lucide-react'
+import {
+  usePdfExportAction,
+  usePdfTranslationExportAction
+} from './pdf-annotations/pdf-export-context'
+import {
+  Check,
+  CircleAlert,
+  Download,
+  FileText,
+  FilePenLine,
+  Languages,
+  LoaderCircle
+} from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -54,9 +65,15 @@ const ManagedFileDownloadButtonState = ({
   const { t } = useTranslation()
   const { status, sizeLimitError } = download
   const registeredExport = usePdfExportAction()
+  const registeredTranslationExport = usePdfTranslationExportAction()
   const pdfExport =
     registeredExport?.path === path && registeredExport.versionId === versionId
       ? registeredExport
+      : undefined
+  const translatedPdfExport =
+    registeredTranslationExport?.path === path &&
+    registeredTranslationExport.versionId === versionId
+      ? registeredTranslationExport
       : undefined
 
   const hasExplicitManagedVersion =
@@ -75,7 +92,7 @@ const ManagedFileDownloadButtonState = ({
     versionId !== latestVersionId &&
     versionId !== undefined
   const idleLabel =
-    isHistoricalVersion || pdfExport
+    isHistoricalVersion || pdfExport || translatedPdfExport
       ? t('Download options for {{name}}', { name: suggestedName })
       : t('Download {{name}}', { name: suggestedName })
   const label = sizeLimitError
@@ -113,7 +130,9 @@ const ManagedFileDownloadButtonState = ({
           : t('Download')
   const isPrimary = appearance === 'primary'
   const canOpenVersionMenu =
-    (isHistoricalVersion || Boolean(pdfExport)) && !effectiveDisabled && status !== 'saving'
+    (isHistoricalVersion || Boolean(pdfExport) || Boolean(translatedPdfExport)) &&
+    !effectiveDisabled &&
+    status !== 'saving'
   const actionButton = (
     <Button
       type="button"
@@ -135,7 +154,11 @@ const ManagedFileDownloadButtonState = ({
       )}
       aria-label={label}
       disabled={effectiveDisabled || status === 'saving'}
-      onClick={isHistoricalVersion || pdfExport ? undefined : () => void download.execute(null)}
+      onClick={
+        isHistoricalVersion || pdfExport || translatedPdfExport
+          ? undefined
+          : () => void download.execute(null)
+      }
       aria-busy={Boolean(status === 'saving')}
     >
       <span key={String(status)} className="button-feedback">
@@ -226,6 +249,56 @@ const ManagedFileDownloadButtonState = ({
                       <TooltipContent side="left" className="z-[120]">
                         {pdfExport.unavailableReason ??
                           t('Available after annotations are loaded and saved.')}
+                      </TooltipContent>
+                    ) : null}
+                  </Tooltip>
+                </>
+              ) : null}
+              {translatedPdfExport ? (
+                <>
+                  {isHistoricalVersion || pdfExport ? <DropdownMenuSeparator /> : null}
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <DropdownMenuItem
+                        aria-disabled={
+                          translatedPdfExport.saving ||
+                          (translatedPdfExport.disabled && !translatedPdfExport.busy)
+                        }
+                        className={cn(
+                          'gap-2.5',
+                          (translatedPdfExport.saving ||
+                            (translatedPdfExport.disabled && !translatedPdfExport.busy)) &&
+                            'cursor-not-allowed opacity-50'
+                        )}
+                        onSelect={(event) => {
+                          if (
+                            translatedPdfExport.saving ||
+                            (translatedPdfExport.disabled && !translatedPdfExport.busy)
+                          )
+                            event.preventDefault()
+                          else if (translatedPdfExport.busy) translatedPdfExport.cancel()
+                          else void translatedPdfExport.execute()
+                        }}
+                      >
+                        {translatedPdfExport.busy ? (
+                          <LoaderCircle
+                            className="size-4 shrink-0 animate-spin motion-reduce:animate-none"
+                            aria-hidden="true"
+                          />
+                        ) : (
+                          <Languages className="size-4 shrink-0" aria-hidden="true" />
+                        )}
+                        {translatedPdfExport.saving
+                          ? t('Saving...')
+                          : translatedPdfExport.busy
+                            ? t('Cancel PDF export')
+                            : translatedPdfExport.label}
+                      </DropdownMenuItem>
+                    </TooltipTrigger>
+                    {translatedPdfExport.disabled && !translatedPdfExport.busy ? (
+                      <TooltipContent side="left" className="z-[120]">
+                        {translatedPdfExport.unavailableReason ??
+                          t('Available when the translated PDF is ready.')}
                       </TooltipContent>
                     ) : null}
                   </Tooltip>

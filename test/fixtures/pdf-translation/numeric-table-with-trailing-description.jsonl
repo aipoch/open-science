@@ -1,0 +1,3 @@
+{"name":"numeric-majority-table-keeps-trailing-description-separate","values":["24×24×48","3","96"],"drift":0,"table":true}
+{"name":"two-interior-values-do-not-establish-a-table","values":["24×24×48","96"],"drift":0,"table":false}
+{"name":"unaligned-interior-values-do-not-establish-a-table","values":["24×24×48","3","96"],"drift":24,"table":false}

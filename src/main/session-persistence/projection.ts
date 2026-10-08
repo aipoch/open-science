@@ -940,33 +940,50 @@ export class SessionProjectionRepository {
 
   async usage(): Promise<SessionUsageProjection> {
     const client = await this.client()
-    const [projects, sessions, usage, auxiliaryUsage, runs, artifacts, classificationUsage] =
-      await client.$transaction([
-        client.project.findMany({ select: { createdAt: true } }),
-        client.session.findMany({
-          where: { deletedAtMs: null },
-          select: { id: true, createdAtMs: true }
-        }),
-        client.sessionTurnUsage.findMany({ where: { session: { deletedAtMs: null } } }),
-        client.sessionAuxiliaryTurnUsage.findMany(),
-        client.sessionRun.findMany({
-          where: { session: { deletedAtMs: null } },
-          select: { createdAtMs: true }
-        }),
-        client.sessionArtifactRef.findMany({
-          where: { session: { deletedAtMs: null } },
-          select: { artifactId: true, artifactCreatedAtMs: true }
-        }),
-        client.classificationUsage.findMany({
-          select: {
-            scenario: true,
-            occurredAt: true,
-            inputTokens: true,
-            outputTokens: true,
-            usageIncomplete: true
-          }
-        })
-      ])
+    const [
+      projects,
+      sessions,
+      usage,
+      auxiliaryUsage,
+      runs,
+      artifacts,
+      classificationUsage,
+      translationUsage
+    ] = await client.$transaction([
+      client.project.findMany({ select: { createdAt: true } }),
+      client.session.findMany({
+        where: { deletedAtMs: null },
+        select: { id: true, createdAtMs: true }
+      }),
+      client.sessionTurnUsage.findMany({ where: { session: { deletedAtMs: null } } }),
+      client.sessionAuxiliaryTurnUsage.findMany(),
+      client.sessionRun.findMany({
+        where: { session: { deletedAtMs: null } },
+        select: { createdAtMs: true }
+      }),
+      client.sessionArtifactRef.findMany({
+        where: { session: { deletedAtMs: null } },
+        select: { artifactId: true, artifactCreatedAtMs: true }
+      }),
+      client.classificationUsage.findMany({
+        select: {
+          scenario: true,
+          occurredAt: true,
+          inputTokens: true,
+          outputTokens: true,
+          usageIncomplete: true
+        }
+      }),
+      client.pdfTranslationUsage.findMany({
+        select: {
+          occurredAt: true,
+          inputTokens: true,
+          cacheTokens: true,
+          outputTokens: true,
+          usageIncomplete: true
+        }
+      })
+    ])
     const liveSessionIds = new Set(sessions.map(({ id }) => id))
     const artifactCreatedAt = new Map<string, number | undefined>()
     for (const artifact of artifacts) {
@@ -1006,6 +1023,14 @@ export class SessionProjectionRepository {
               ]
             : []
         ),
+        ...translationUsage.map((event) => ({
+          source: 'literature-translation' as const,
+          timestamp: event.occurredAt.getTime(),
+          inputTokens: Number(event.inputTokens ?? 0n),
+          cacheTokens: Number(event.cacheTokens ?? 0n),
+          outputTokens: Number(event.outputTokens ?? 0n),
+          usageIncomplete: event.usageIncomplete
+        })),
         ...classificationUsage.map((event) => ({
           source: event.scenario.startsWith('literature-')
             ? ('literature-classification' as const)

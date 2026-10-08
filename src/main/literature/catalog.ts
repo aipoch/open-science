@@ -1822,7 +1822,9 @@ class LiteratureCatalog {
           },
           select: { id: true }
         })
-        if (existing) return finish({ attachmentId: attachment.id, versionId: existing.id })
+        if (existing) {
+          return finish({ attachmentId: attachment.id, versionId: existing.id })
+        }
         const latest = await transaction.literatureAttachmentVersion.findFirst({
           where: { attachmentId: attachment.id },
           orderBy: { versionNumber: 'desc' },

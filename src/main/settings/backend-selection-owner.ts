@@ -6,18 +6,11 @@ import {
 } from '../../shared/reasoning-effort'
 import { DEFAULT_AGENT_FRAMEWORK_ID, type AgentFrameworkId } from '../agent-framework'
 import type { StoredSettings } from './types'
+import type { ExplicitAgentBackendTarget } from './backend-target'
 import type { ProviderAccountsModule, RuntimeProviderModelSelection } from './provider-accounts'
 
 type AgentBackendSelection = Readonly<{
   frameworkId: AgentFrameworkId
-}>
-
-type ExplicitAgentBackendTarget = Readonly<{
-  frameworkId: AgentFrameworkId
-  providerId: string
-  model: Readonly<{ kind: 'required'; id: string }> | Readonly<{ kind: 'provider-default' }>
-  reasoningEffort: ReasoningEffort
-  resolvedReasoningEffort?: ResolvedReasoningEffort
 }>
 
 type BackendSelectionResolution = Readonly<{

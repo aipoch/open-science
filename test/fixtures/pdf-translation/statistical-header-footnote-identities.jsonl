@@ -1,0 +1,6 @@
+{"name": "dropped-linked-statistical-footnote", "source": "Mean Difference (90% CI)c", "translation": "平均差值（90% 置信区间）", "missing": ["c"]}
+{"name": "kept-linked-statistical-footnote", "source": "Mean Difference (90% CI)c", "translation": "平均差值（90% 置信区间）c", "missing": []}
+{"name": "changed-linked-statistical-footnote", "source": "Mean Difference (90% CI)c", "translation": "平均差值（90% 置信区间）b", "missing": ["c"]}
+{"name": "preserved-footnote-list", "source": "Median (SD)a,b", "translation": "中位数（标准差）a，b", "missing": []}
+{"name": "formula-suffix-is-not-inferred-footnote", "source": "f(CI)b", "translation": "f(CI)b", "missing": []}
+{"name": "ordinary-word-ending-is-not-footnote", "source": "Mean slab", "translation": "平均板层", "missing": []}

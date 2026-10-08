@@ -659,7 +659,9 @@
       "src/main/session-persistence/turn-outcome-reconciliation.test.ts",
       "src/main/session-persistence/attention-projection.test.ts",
       "src/main/acp/approved-handoff-outcome.integration.test.ts",
-      "src/main/acp/approved-handoff-outcome.test.ts"
+      "src/main/acp/approved-handoff-outcome.test.ts",
+      "src/main/literature/pdf-translation/checkpoints.test.ts",
+      "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationExport.test.tsx"
     ]
   },
   "capabilityOverlays": ["e2e_regressions"],

@@ -1,0 +1,17 @@
+{"name": "number-free-fragment-does-not-inherit-neighbor-count", "source": "AdaGrad corresponds to a limiting version of Adam.", "translation": "AdaGrad 对应 Adam 的 β1 = 0 极限版本。", "rejected": true}
+{"name": "number-free-prose-without-added-count-is-valid", "source": "AdaGrad corresponds to a limiting version of Adam.", "translation": "AdaGrad 对应 Adam 的极限版本。", "rejected": false}
+{"name": "formula-free-name-keeps-literal-digit", "source": "Model name Ada2 remains unchanged.", "translation": "模型名称 Ada2 保持不变。", "rejected": false}
+{"name": "split-definition-must-not-copy-earlier-caption-digits", "source": "Response at 3 weeks. P < .001. ABC = assessment score; XYZ", "translation": "3 周时的响应。P < .001。ABC = 评估得分；XYZ = 001", "rejected": true}
+{"name": "split-definition-keeps-unfinished-acronym", "source": "Response at 3 weeks. P < .001. ABC = assessment score; XYZ", "translation": "3 周时的响应。P < .001。ABC = 评估得分；XYZ", "rejected": false}
+{"name": "complete-numeric-definition-retains-value", "source": "Response at 3 weeks. XYZ = 001", "translation": "3 周时的响应。XYZ = 001", "rejected": false}
+{"name": "identifier-digit-is-not-a-leading-multiplier", "source": "Conv dw / s2", "translation": "2 × 深度可分离卷积 / 步长为 2", "rejected": true}
+{"name": "identifier-stride-can-be-spelled-out", "source": "Conv dw / s2", "translation": "深度卷积 / 步长 2", "rejected": false}
+{"name": "explicit-multiplier-keeps-its-quantity", "source": "2 × Conv dw / s2", "translation": "2 × 深度卷积 / 步长 2", "rejected": false}
+{"name": "spoken-multiplier-may-use-a-digit", "source": "Twice Conv dw / s2", "translation": "2 × 深度卷积 / 步长 2", "rejected": false}
+{"name": "complete-kernel-dimensions-are-not-invented-multipliers", "source": "conv1x1", "translation": "1×1卷积", "rejected": false}
+{"name": "ordered-unequal-kernel-dimensions-remain-valid", "source": "Conv2x3", "translation": "2 × 3 卷积", "rejected": false}
+{"name": "changed-kernel-dimension-is-rejected", "source": "conv1x1", "translation": "1×2卷积", "rejected": true, "feedbackReason": "missing-numeric-literals"}
+{"name": "reordered-kernel-dimensions-are-not-a-label-expansion", "source": "conv2x3", "translation": "3×2卷积", "rejected": true}
+{"name": "kernel-label-does-not-supply-an-extra-count", "source": "conv1x1", "translation": "1×1卷积，使用1组", "rejected": true}
+{"name": "containing-identifier-is-not-a-complete-kernel", "source": "Layerconv1x1", "translation": "1×1卷积", "rejected": true}
+{"name": "kernel-like-stride-is-not-a-spatial-dimension", "source": "conv1s1", "translation": "1×1卷积", "rejected": true}

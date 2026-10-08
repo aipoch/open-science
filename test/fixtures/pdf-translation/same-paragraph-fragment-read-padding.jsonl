@@ -1,0 +1,4 @@
+{"name": "shared-read-padding-counts-one-paragraph-glyph-once", "change": "none", "accepted": true}
+{"name": "another-paragraph-cannot-share-boundary-glyph", "change": "foreign-owner", "accepted": false}
+{"name": "missing-boundary-glyph-is-rejected", "change": "missing", "accepted": false}
+{"name": "duplicated-boundary-glyph-is-rejected", "change": "duplicate", "accepted": false}

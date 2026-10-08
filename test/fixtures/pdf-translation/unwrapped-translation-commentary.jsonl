@@ -1,0 +1,18 @@
+{"name": "unwrapped-self-correction-and-duplicate-answer", "source": "The R2 penalty was reduced by a factor of 7.", "output": "R2 惩罚降低了 7 倍。\n\nWait, I need to recheck. The source says reduced by a factor of 7.\n\nThe requiredNumericLiterals array includes 2 and 7.\n\nR2 惩罚降低了 7 倍。", "accepted": false}
+{"name": "unwrapped-recheck-after-correct-translation", "source": "Growth increased.", "output": "生长增加。\n\nLet me recheck the source and translation.", "accepted": false}
+{"name": "unwrapped-answer-planning", "source": "Growth increased.", "output": "The final translation should be concise.\n\n生长增加。", "accepted": false}
+{"name": "plain-complete-scientific-answer", "source": "The R2 penalty was reduced by a factor of 7.", "output": "R2 惩罚降低了 7 倍。", "accepted": true}
+{"name": "literal-protocol-identifier-in-source", "source": "The requiredNumericLiterals field contains 7.", "output": "requiredNumericLiterals 字段包含 7。", "accepted": true}
+{"name": "literal-self-correction-example-in-source", "source": "The transcript reads:\nLet me recheck the source and translation.", "output": "记录写道：\nLet me recheck the source and translation.", "accepted": true}
+{"name": "unwrapped-chinese-translator-note", "source": "The limit is taken.", "output": "取极限。\n\n（译者注：原文公式跨段显示。）", "accepted": false}
+{"name": "literal-translator-note-in-source", "source": "The label reads: （译者注：原文公式跨段显示。）", "output": "标签为：（译者注：原文公式跨段显示。）", "accepted": true}
+{"name": "unwrapped-english-translator-note", "source": "The limit is taken.", "output": "取极限。\n\n(Translator's note: the source equation spans a page.)", "accepted": false}
+{"name": "provider-turn-sentinel-is-not-translation", "source": "Growth increased.", "output": "生长增加。]<]minimax[>[\nUser: 需要重新检查翻译。", "accepted": false}
+{"name": "added-user-turn-is-not-translation", "source": "Growth increased.", "output": "生长增加。\nUser: 需要重新检查翻译。", "accepted": false}
+{"name": "added-assistant-turn-is-not-translation", "source": "The input is processed.", "output": "输入得到处理。\nAssistant: Let me translate the next part.", "accepted": false}
+{"name": "literal-provider-sentinel-already-in-source", "source": "]<]minimax[>[", "output": "]<]minimax[>[", "accepted": true}
+{"name": "literal-user-label-already-in-source", "source": "User: Input", "output": "User: 输入", "accepted": true}
+{"name": "model-closing-source-tag-is-not-translated-content", "source": "Tamoxifen", "output": "他莫昔芬</source>", "accepted": false}
+{"name": "model-opening-translation-tag-is-not-translated-content", "source": "Growth increased.", "output": "<translation>生长增加。", "accepted": false}
+{"name": "literal-source-tag-example-is-preserved", "source": "The code ends with </source>.", "output": "代码以 </source> 结尾。", "accepted": true}
+{"name": "scientific-comparison-signs-are-not-protocol-tags", "source": "Values satisfy 0 < x and x > 1.", "output": "数值满足 0 < x 和 x > 1。", "accepted": true}

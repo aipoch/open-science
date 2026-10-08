@@ -1650,6 +1650,36 @@ if (process.argv.includes('--version')) {
         const handoffReply = await permissionHandoffTask(context, prompt)
         if (handoffReply) {
           reply = handoffReply
+        } else if (prompt.includes('WORKSPACE_TRANSLATION_PDF_BASE64:')) {
+          const content = prompt.match(/WORKSPACE_TRANSLATION_PDF_BASE64:([A-Za-z0-9+/=]+)/u)?.[1]
+          if (!content) throw new Error('Missing workspace translation PDF fixture.')
+          const stored = await withMcpClient(
+            context.params.sessionId,
+            'open-science-artifacts',
+            async (client) =>
+              toolResult(
+                'write_artifact_file',
+                await client.callTool({
+                  name: 'write_artifact_file',
+                  arguments: {
+                    filename: 'workspace-paired.pdf',
+                    mimeType: 'application/pdf',
+                    content,
+                    encoding: 'base64'
+                  }
+                })
+              )
+          )
+          if (!stored.artifact?.version_id)
+            throw new Error('Workspace PDF Version was not finalized.')
+          reply = 'Workspace translation PDF created.'
+        } else if (prompt.includes('PAIR_PDF_ACCEPTANCE')) {
+          // Controlled inference only; PDF generation, IPC and reader remain production code.
+          await new Promise((resolve) => setTimeout(resolve, 1500))
+          reply =
+            (prompt.includes('PAIR_PDF_INLINE_LINK') ? 'Methods: ' : '') +
+            '测量受控实验室培养物中的细胞生长。' +
+            (prompt.includes('PAIR_PDF_INLINE_LINK') ? '[1][2]' : '')
         } else if (prompt.includes('Verify interaction follow-up.')) {
           reply = 'Interaction follow-up completed.'
         } else if (prompt.includes('Request restart verification permission.')) {

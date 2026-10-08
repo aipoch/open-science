@@ -1,5 +1,5 @@
 // Ordered fragments keep the public registration order when capabilities interleave.
-import type { LocalModelSnapshot } from '../local-models'
+import type { LocalModelCapability, LocalModelSnapshot } from '../local-models'
 
 import type { NotebookLanguage } from '../notebook'
 
@@ -87,20 +87,16 @@ export const runtimeDescribeUsageContracts = {
 } as const
 
 export const localModelsGetSnapshotContracts = {
-  'localModels.getSnapshot': callable<() => Promise<LocalModelSnapshot>>()('local-models', [
-    'local-models:get-snapshot',
-    LOCAL
-  ]),
-  'localModels.install': callable<() => Promise<LocalModelSnapshot>>()('local-models', [
-    'local-models:install',
-    LOCAL
-  ]),
-  'localModels.cancel': callable<() => Promise<LocalModelSnapshot>>()('local-models', [
-    'local-models:cancel',
-    LOCAL
-  ]),
-  'localModels.remove': callable<() => Promise<LocalModelSnapshot>>()('local-models', [
-    'local-models:remove',
-    LOCAL
-  ])
+  'localModels.getSnapshot': callable<
+    (capability?: LocalModelCapability) => Promise<LocalModelSnapshot>
+  >()('local-models', ['local-models:get-snapshot', LOCAL]),
+  'localModels.install': callable<
+    (capability?: LocalModelCapability) => Promise<LocalModelSnapshot>
+  >()('local-models', ['local-models:install', LOCAL]),
+  'localModels.cancel': callable<
+    (capability?: LocalModelCapability) => Promise<LocalModelSnapshot>
+  >()('local-models', ['local-models:cancel', LOCAL]),
+  'localModels.remove': callable<
+    (capability?: LocalModelCapability) => Promise<LocalModelSnapshot>
+  >()('local-models', ['local-models:remove', LOCAL])
 } as const

@@ -1,0 +1,9 @@
+{"name":"overloaded-provider-preserves-status","status":529,"kind":"unavailable"}
+{"name":"service-unavailable-preserves-status","status":503,"kind":"unavailable"}
+{"name":"rate-limit-is-not-billing-failure","status":429,"kind":"rate-limit"}
+{"name":"quota-exhaustion-with-rate-limit-status","status":429,"providerCode":"insufficient_quota","kind":"quota"}
+{"name":"invalid-api-key","status":401,"kind":"authentication"}
+{"name":"account-permission-denied","status":403,"kind":"permission"}
+{"name":"billing-required","status":402,"kind":"quota"}
+{"name":"unsupported-request","status":400,"kind":"request"}
+{"name":"missing-model-or-endpoint","status":404,"kind":"request"}

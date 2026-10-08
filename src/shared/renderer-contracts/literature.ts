@@ -1,4 +1,20 @@
 import type { PdfAddToLiteratureRequest } from '../pdf-annotations'
+import type {
+  PdfTranslationCheckpoint,
+  PdfTranslationCheckpointRequest,
+  PdfTranslationEdition,
+  PdfTranslationSelectEditionRequest,
+  PdfTranslationPdfRequest,
+  PdfTranslationPdfResult,
+  PdfTranslationSaveSnapshotRequest,
+  PdfTranslationRecordLayoutRequest,
+  PdfTranslationBeginRequest,
+  PdfTranslationBeginResult,
+  PdfTranslationRunRequest,
+  PdfTranslationRunResult,
+  PdfTranslationOperationRequest
+} from '../pdf-translation'
+
 import type { JournalRequest, JournalResult } from '../journal-attributes'
 
 import type {
@@ -37,6 +53,7 @@ import type {
 
 import {
   callable,
+  ELECTRON,
   WEB,
   RUNTIME_VALIDATED,
   type AcpListener,
@@ -48,6 +65,48 @@ export const contracts = {
   'literature.journals': callable<(request: JournalRequest) => Promise<JournalResult>>()(
     'literature',
     ['literature:journals', WEB, undefined, undefined, RUNTIME_VALIDATED]
+  ),
+  'pdfTranslation.generatePdf': callable<
+    (request: PdfTranslationPdfRequest) => Promise<Uint8Array | PdfTranslationPdfResult | null>
+  >()('literature', ['pdf-translation:generate-pdf', ELECTRON], { optionalRoot: true }),
+  'pdfTranslation.cancelPdf': callable<(id: string) => Promise<void>>()(
+    'literature',
+    ['pdf-translation:cancel-pdf', ELECTRON],
+    { optionalRoot: true }
+  ),
+  'pdfTranslation.saveSnapshot': callable<
+    (request: PdfTranslationSaveSnapshotRequest) => Promise<void>
+  >()('literature', ['pdf-translation:save-snapshot', ELECTRON], { optionalRoot: true }),
+  'pdfTranslation.recordLayout': callable<
+    (request: PdfTranslationRecordLayoutRequest) => Promise<void>
+  >()('literature', ['pdf-translation:record-layout', ELECTRON], { optionalRoot: true }),
+  'pdfTranslation.readCheckpoint': callable<
+    (source: PdfTranslationCheckpointRequest) => Promise<PdfTranslationCheckpoint | null>
+  >()('literature', ['pdf-translation:read-checkpoint', ELECTRON], { optionalRoot: true }),
+  'pdfTranslation.listEditions': callable<
+    (source: PdfTranslationCheckpointRequest) => Promise<PdfTranslationEdition[]>
+  >()('literature', ['pdf-translation:list-editions', ELECTRON], { optionalRoot: true }),
+  'pdfTranslation.selectEdition': callable<
+    (request: PdfTranslationSelectEditionRequest) => Promise<PdfTranslationCheckpoint>
+  >()('literature', ['pdf-translation:select-edition', ELECTRON], { optionalRoot: true }),
+  'pdfTranslation.deleteEdition': callable<
+    (request: PdfTranslationSelectEditionRequest) => Promise<void>
+  >()('literature', ['pdf-translation:delete-edition', ELECTRON], { optionalRoot: true }),
+  'pdfTranslation.begin': callable<
+    (request: PdfTranslationBeginRequest) => Promise<PdfTranslationBeginResult>
+  >()('literature', ['pdf-translation:begin', ELECTRON], { optionalRoot: true }),
+  'pdfTranslation.translate': callable<
+    (request: PdfTranslationRunRequest) => Promise<PdfTranslationRunResult>
+  >()('literature', ['pdf-translation:translate', ELECTRON], { optionalRoot: true }),
+  'pdfTranslation.skip': callable<(request: PdfTranslationRunRequest) => Promise<void>>()(
+    'literature',
+    ['pdf-translation:skip', ELECTRON],
+    { optionalRoot: true }
+  ),
+  'pdfTranslation.close': callable<(request: PdfTranslationOperationRequest) => Promise<void>>()(
+    'literature',
+    ['pdf-translation:close', ELECTRON],
+    { optionalRoot: true }
   ),
   'literature.formatReferences': callable<
     (request: LiteratureFormatReferencesRequest) => Promise<LiteratureFormatReferencesResult>

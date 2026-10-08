@@ -9,6 +9,20 @@ const names = {
   thumbnails: /^(?:p\d+-(?:figure|algorithm|graphical-table)-\d+|page-\d+-table-\d+)\.png$/
 }
 
+// Keep optional cell origins only when they fit the existing manifest byte limit.
+// Decoder node/text limits are checked again by main before cache publication.
+export function serializeWorkerResult(result) {
+  const serialize = (omitOrigins) =>
+    JSON.stringify(
+      result,
+      (key, value) =>
+        key === 'sourceTokens' || (omitOrigins && key === 'sourceItems') ? undefined : value,
+      2
+    ) + '\n'
+  const text = serialize(false)
+  return Buffer.byteLength(text) <= 8 * 1024 ** 2 ? text : serialize(true)
+}
+
 // Only paths produced by this extractor are owned. Unexpected entries remain a cleanup barrier.
 export async function inspectScratch(root, remove = false) {
   let bytes = 0

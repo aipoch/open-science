@@ -1,0 +1,8 @@
+{"name": "proven raised transpose accepts literal caret", "source": "JT", "translation": "J^T", "markers": [{"sourceOffset": 1, "label": "T", "scale": 0.7, "rise": 3, "sourceIndices": [2]}], "expected": [2]}
+{"name": "proven product transpose accepts literal caret", "source": "JJT", "translation": "JJ^T", "markers": [{"sourceOffset": 2, "label": "T", "scale": 0.7, "rise": 3, "sourceIndices": [2]}], "expected": [2]}
+{"name": "ordinary baseline T cannot become transpose", "source": "JT", "translation": "J^T", "markers": [{"sourceOffset": 1, "label": "T", "scale": 1, "rise": 0, "sourceIndices": [2]}], "expected": []}
+{"name": "lowered T is not transpose", "source": "JT", "translation": "J^T", "markers": [{"sourceOffset": 1, "label": "T", "scale": 0.7, "rise": -3, "sourceIndices": [2]}], "expected": []}
+{"name": "missing matrix prefix rejects transpose", "source": "T", "translation": "J^T", "markers": [{"sourceOffset": 0, "label": "T", "scale": 0.7, "rise": 3, "sourceIndices": [2]}], "expected": []}
+{"name": "wrong matrix identifier rejects transpose", "source": "JT", "translation": "H^T", "markers": [{"sourceOffset": 1, "label": "T", "scale": 0.7, "rise": 3, "sourceIndices": [2]}], "expected": []}
+{"name": "extra target transpose occurrence rejects identity", "source": "JT", "translation": "J^T + J^T", "markers": [{"sourceOffset": 1, "label": "T", "scale": 0.7, "rise": 3, "sourceIndices": [2]}], "expected": []}
+{"name": "missing target transpose occurrence rejects identity", "source": "JT + JT", "translation": "J^T", "markers": [{"sourceOffset": 1, "label": "T", "scale": 0.7, "rise": 3, "sourceIndices": [2]}], "expected": []}

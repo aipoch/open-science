@@ -140,6 +140,7 @@
     "src/main/acp/replay-reference-prompt.ts",
     "src/main/acp/response-session-admission.ts",
     "src/main/acp/restricted-inference-runner.test.ts",
+    "src/main/acp/restricted-inference-contract.ts",
     "src/main/acp/restricted-inference-runner.ts",
     "src/main/acp/restricted-runtime-profile.ts",
     "src/main/acp/reviewer-session-owner.ts",
@@ -247,6 +248,7 @@
     "src/main/acp/prompt-error.ts",
     "src/main/acp/provider-turn-adapter.ts",
     "src/main/acp/replay-reference-prompt.ts",
+    "src/main/acp/restricted-inference-contract.ts",
     "src/main/acp/restricted-inference-runner.ts",
     "src/main/acp/restricted-runtime-profile.ts",
     "src/main/acp/runtime-activity.ts",
@@ -800,7 +802,14 @@
       "src/main/session-persistence/reconciliation-renderer-parity.test.ts",
       "src/main/session-persistence/turn-outcome-reconciliation.test.ts",
       "src/main/session-persistence/attention-projection.test.ts",
-      "src/main/agent-framework/claude-shared-settings.integration.test.ts"
+      "src/main/agent-framework/claude-shared-settings.integration.test.ts",
+      "src/main/literature/pdf-translation/checkpoints.test.ts",
+      "src/main/literature/pdf-translation/diagnostics.test.ts",
+      "src/main/literature/pdf-translation/index.test.ts",
+      "src/main/literature/pdf-translation/ipc.test.ts",
+      "src/main/literature/pdf-translation/reader-ownership.test.ts",
+      "src/main/literature/pdf-translation/usage.test.ts",
+      "src/main/literature/pdf-translation/pdf-cache.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],

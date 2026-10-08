@@ -2226,3 +2226,58 @@ describe('AgentBackendResolver bridge cleanup', () => {
     }
   )
 })
+
+describe('direct provider resolution', () => {
+  it.each(['claude-code', 'opencode', 'codex', 'codebuddy'] as const)(
+    'resolves the pinned provider without starting the %s framework or a bridge',
+    async (frameworkId) => {
+      const harness = makeHarness()
+      const result = await harness.resolver.resolveExplicitDirectProvider({
+        frameworkId,
+        providerId: 'provider-a',
+        model: { kind: 'required', id: 'model-a' },
+        reasoningEffort: 'default'
+      })
+      expect(result).toMatchObject({ providerId: 'provider-a', provider: { model: 'model-a' } })
+      expect(harness.createResponsesBridge).not.toHaveBeenCalled()
+      expect(harness.createAnthropicProviderBridge).not.toHaveBeenCalled()
+      expect(harness.createOpenAiProviderBridge).not.toHaveBeenCalled()
+      expect(harness.createNativeResponsesProxy).not.toHaveBeenCalled()
+      expect(harness.runtime.resolveClaudeExecutable).not.toHaveBeenCalled()
+      expect(harness.runtime.resolveCodexExecutable).not.toHaveBeenCalled()
+      expect(harness.runtime.resolveOpencodeExecutable).not.toHaveBeenCalled()
+      expect(harness.runtime.resolveCodeBuddyExecutable).not.toHaveBeenCalled()
+    }
+  )
+})
+
+it.each([undefined, 'unsupported', 'none-high'] as const)(
+  'direct providers retain explicit thinking capabilities without guessing an unconfigured gateway (%s)',
+  async (reasoningEffortPreset) => {
+    const provider: StoredProvider = {
+      id: 'provider-a',
+      type: 'custom',
+      name: 'Gateway',
+      model: 'model-a',
+      baseUrl: 'https://api.example',
+      apiEndpoints: ['openai'],
+      reasoningEffortPreset
+    }
+    const profile =
+      reasoningEffortPreset === 'none-high'
+        ? { supported: true as const, slots: ['none', 'high', 'high', 'high', 'high'] as const }
+        : { supported: false as const }
+    const harness = makeHarness({
+      settings: makeSettings({ providers: [provider] }),
+      targetOverride: () => ({ reasoningEffortProfile: profile })
+    })
+    const result = await harness.resolver.resolveExplicitDirectProvider({
+      frameworkId: 'claude-code',
+      providerId: 'provider-a',
+      model: { kind: 'required', id: 'model-a' },
+      reasoningEffort: 'high'
+    })
+    expect(result.reasoningEffortProfile).toEqual(profile)
+    expectRuntimeNotStarted(harness.runtime)
+  }
+)

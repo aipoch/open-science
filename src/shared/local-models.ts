@@ -1,3 +1,5 @@
+export type LocalModelCapability = 'pdf-tables' | 'pdf-translation'
+
 import type { DownloadProgress } from './download-progress'
 
 export type LocalModelAvailability = 'notInstalled' | 'installing' | 'ready' | 'error'
@@ -31,3 +33,10 @@ export const localModelDownloadProgress = (snapshot: LocalModelSnapshot): Downlo
 export const LOCAL_MODEL_NOT_INSTALLED = 'Local model is not installed.'
 export const PDF_MODEL_CHANGED =
   'PDF_MODEL_CHANGED: The active model changed while parsing was queued. Retry with the current revision.'
+
+export type LocalModelApi = Readonly<{
+  getSnapshot(capability?: LocalModelCapability): Promise<LocalModelSnapshot>
+  install(capability?: LocalModelCapability): Promise<LocalModelSnapshot>
+  cancel(capability?: LocalModelCapability): Promise<LocalModelSnapshot>
+  remove(capability?: LocalModelCapability): Promise<LocalModelSnapshot>
+}>

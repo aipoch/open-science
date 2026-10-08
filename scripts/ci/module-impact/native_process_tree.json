@@ -570,7 +570,15 @@
       "src/main/session-persistence/attention-projection.test.ts",
       "src/main/acp/approved-handoff-outcome.integration.test.ts",
       "src/main/acp/approved-handoff-outcome.test.ts",
-      "src/main/agent-framework/claude-shared-settings.integration.test.ts"
+      "src/main/agent-framework/claude-shared-settings.integration.test.ts",
+      "src/main/literature/pdf-translation/index.test.ts",
+      "src/main/literature/pdf-translation/ipc.test.ts",
+      "src/main/literature/pdf-translation/checkpoints.test.ts",
+      "src/main/literature/pdf-translation/usage.test.ts",
+      "src/main/literature/pdf-translation/diagnostics.test.ts",
+      "src/main/literature/pdf-translation/reader-ownership.test.ts",
+      "src/main/literature/pdf-translation/local.test.ts",
+      "src/main/literature/pdf-translation/pdf-cache.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

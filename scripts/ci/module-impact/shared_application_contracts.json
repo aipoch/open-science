@@ -158,7 +158,40 @@
     "src/shared/renderer-contracts/storage.ts",
     "src/shared/renderer-contracts/system.ts",
     "src/shared/renderer-contracts/update.ts",
-    "src/shared/renderer-contracts/window.ts"
+    "src/shared/renderer-contracts/window.ts",
+    "src/shared/pdf-translation.ts",
+    "src/shared/pdf-translation-languages.ts",
+    "src/shared/pdf-translation-languages.test.ts",
+    "test/fixtures/pdf-translation/unrequested-latex-math-output.jsonl",
+    "test/fixtures/pdf-translation/marked-author-byline-identity.jsonl",
+    "test/fixtures/pdf-translation/untranslated-scientific-table-labels.jsonl",
+    "test/fixtures/pdf-translation/scientific-axis-label-identities.jsonl",
+    "test/fixtures/pdf-translation/footnote-marker-caption-confusion.jsonl",
+    "test/fixtures/pdf-translation/checkpoint-layout-change-and-sparse-recovery.jsonl",
+    "test/fixtures/pdf-translation/source-proven-script-markup.jsonl",
+    "test/fixtures/pdf-translation/cited-original-name-display.jsonl",
+    "test/fixtures/pdf-translation/redundant-bilingual-scientific-labels.jsonl",
+    "test/fixtures/pdf-translation/source-proven-numeric-citation-markers.jsonl",
+    "src/shared/pdf-translation-recovery.ts",
+    "src/shared/pdf-translation-recovery.test.ts",
+    "test/fixtures/pdf-translation/unwrapped-translation-commentary.jsonl",
+    "test/fixtures/pdf-translation/neighbor-formula-leakage.jsonl",
+    "test/fixtures/pdf-translation/clinical-section-headings-not-proper-names.jsonl",
+    "test/fixtures/pdf-translation/accented-names-not-inline-math.jsonl",
+    "test/fixtures/pdf-translation/source-proven-supplementary-appendix-label.jsonl",
+    "test/fixtures/pdf-translation/numeric-sign-preservation.jsonl",
+    "test/fixtures/pdf-translation/scientific-statement-title-not-proper-name.jsonl",
+    "test/fixtures/pdf-translation/training-and-statistical-column-labels.jsonl",
+    "src/shared/provider-text-generation-failure.ts",
+    "src/shared/provider-text-generation-failure.test.ts",
+    "src/shared/pdf-translation.test.ts",
+    "src/shared/pdf-translation-batching.ts",
+    "src/shared/pdf-translation-batching.test.ts",
+    "src/shared/pdf-translation-numeric-units.ts",
+    "src/shared/pdf-translation-numeric-units.test.ts",
+    "src/shared/pdf-translation-snapshot.ts",
+    "src/shared/pdf-translation-models.ts",
+    "src/shared/pdf-translation-models.test.ts"
   ],
   "interfacePaths": [
     "src/shared/interface-scale.ts",
@@ -250,7 +283,11 @@
     "src/shared/runtime-writer.ts",
     "src/shared/pdf-annotations.ts",
     "src/shared/literature-smart-collections.ts",
-    "src/shared/journal-attributes.ts"
+    "src/shared/journal-attributes.ts",
+    "src/shared/provider-text-generation-failure.ts",
+    "src/shared/pdf-translation-snapshot.ts",
+    "src/shared/pdf-translation-languages.ts",
+    "src/shared/pdf-translation-models.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -295,7 +332,14 @@
       "src/shared/web-rpc-contract.test.ts",
       "src/shared/window-controls.test.ts",
       "src/shared/pdf-annotations.test.ts",
-      "src/shared/renderer-contracts/definition.test.ts"
+      "src/shared/renderer-contracts/definition.test.ts",
+      "src/shared/pdf-translation-recovery.test.ts",
+      "src/shared/provider-text-generation-failure.test.ts",
+      "src/shared/pdf-translation.test.ts",
+      "src/shared/pdf-translation-batching.test.ts",
+      "src/shared/pdf-translation-numeric-units.test.ts",
+      "src/shared/pdf-translation-languages.test.ts",
+      "src/shared/pdf-translation-models.test.ts"
     ],
     "contract": [],
     "consumer": [
@@ -306,7 +350,10 @@
       "src/main/literature/journal-attributes.test.ts",
       "src/renderer/src/pages/literature/journals/journal-import-file.test.ts",
       "src/renderer/src/pages/literature/JournalAttributes.render.test.tsx",
-      "src/main/windows-titlebar.test.ts"
+      "src/main/windows-titlebar.test.ts",
+      "src/main/literature/pdf-translation/index.test.ts",
+      "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationControls.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/PdfPreview.test.tsx"
     ]
   },
   "capabilityOverlays": [],

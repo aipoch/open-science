@@ -1,0 +1,14 @@
+{"name":"unicode-square-matches-original-raised-digit","sourceRise":3,"targetRise":3,"digit":"2","accepted":true}
+{"name":"baseline-source-is-not-an-exponent","sourceRise":0,"targetRise":3,"digit":"2","accepted":false}
+{"name":"flattened-target-is-not-an-exponent","sourceRise":3,"targetRise":0,"digit":"2","accepted":false}
+{"name":"changed-exponent-digit-is-rejected","sourceRise":3,"targetRise":3,"digit":"3","accepted":false}
+{"name":"native-ink-base-adjustment-preserves-raised-power","sourceRise":3,"targetRise":3.1,"digit":"2","accepted":true}
+{"name":"power-rise-outside-native-ink-budget-is-rejected","sourceRise":3,"targetRise":3.6,"digit":"2","accepted":false}
+{"name": "unicode-power-repair-does-not-change-another-paragraph", "sourceRise": 3, "targetRise": 3, "digit": "2", "accepted": true, "neighbor": true}
+{"name": "indexed-variable-native-power-remains-valid", "base": "Q7", "sourceRise": 3, "targetRise": 3, "digit": "2", "accepted": true}
+{"name": "indexed-variable-power-must-stay-raised", "base": "Q7", "sourceRise": 3, "targetRise": 0, "digit": "2", "accepted": false}
+{"name": "indexed-variable-power-must-keep-its-base", "base": "Q7", "targetBase": "Q8", "sourceRise": 3, "targetRise": 3, "digit": "2", "accepted": false}
+{"name":"power-of-ten-matches-native-raised-digit","base":"10","sourceDigit":"6","sourceRise":3,"targetRise":3,"digit":"6","accepted":true}
+{"name":"power-of-ten-rejects-flattened-target","base":"10","sourceDigit":"6","sourceRise":3,"targetRise":0,"digit":"6","accepted":false}
+{"name":"power-of-ten-rejects-changed-base","base":"10","targetBase":"20","sourceDigit":"6","sourceRise":3,"targetRise":3,"digit":"6","accepted":false}
+{"name":"power-of-ten-rejects-changed-exponent","base":"10","sourceDigit":"6","sourceRise":3,"targetRise":3,"digit":"7","accepted":false}

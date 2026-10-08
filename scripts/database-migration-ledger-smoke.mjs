@@ -200,6 +200,10 @@ const EXPECTED_MIGRATION_LEDGER = [
   {
     id: '0049_pascalcase_table_names',
     checksum: 'ed46c378adfcd3e7f0f0d434797a4e775121fa6fce021a4c89b19f2c383b91ad'
+  },
+  {
+    id: '0050_literature_translation',
+    checksum: 'ae3a17741c698765b69e4d651dffea6b46e3e06d5e7e6dce92aefa96a1d6337f'
   }
 ]
 const LEGACY_PROJECT_ID = 'package-smoke-legacy-project'

@@ -19,6 +19,32 @@ export const pdfTextRunsSchema = z
   .max(2048)
 const id = z.string().regex(/^[a-z0-9-]{1,80}$/)
 const pageNumber = z.number().int().positive()
+// Exact PDF.js strings and original getTextContent().items indexes, before repair/filtering.
+// Optional evidence only: absence never makes a cell eligible for translation.
+export const pdfTableSourceItemsSchema = z
+  .array(
+    z
+      .object({
+        pageNumber,
+        index: z.number().int().nonnegative().safe(),
+        text: z.string().refine((text) => text.trim().length > 0)
+      })
+      .strict()
+  )
+  .min(1)
+  .max(8192)
+  .refine(
+    (items) =>
+      items.every((item, index) => {
+        const previous = items[index - 1]
+        return (
+          !previous ||
+          item.pageNumber > previous.pageNumber ||
+          (item.pageNumber === previous.pageNumber && item.index > previous.index)
+        )
+      }),
+    'Table source items must be sorted and unique.'
+  )
 const issue = z.object({ code: z.string().min(1), detail: z.string() }).strict()
 const region = z
   .object({
@@ -38,6 +64,7 @@ const cell = z
     columnSpan: z.number().int().positive(),
     text: z.string(),
     textRuns: pdfTextRunsSchema.optional(),
+    sourceItems: pdfTableSourceItemsSchema.optional(),
     regions: z.array(region)
   })
   .strict()
@@ -272,6 +299,7 @@ export const parsePdfStructureResult = (
     throw new Error('PDF thumbnail inventory does not match its elements.')
   }
   const processed = new Set(result.processedPages)
+  const sourceTexts = new Map<string, string>()
   for (const element of result.elements) {
     const tables =
       element.tableParts?.map((part) => part.table) ?? (element.table ? [element.table] : [])
@@ -282,6 +310,19 @@ export const parsePdfStructureResult = (
     ]
     if (regions.some(({ page }) => !processed.has(page)))
       throw new Error('PDF element refers to an unprocessed page.')
+    for (const cell of tables.flatMap((table) => table.cells)) {
+      for (const item of cell.sourceItems ?? []) {
+        if (
+          !processed.has(item.pageNumber) ||
+          !cell.regions.some((r) => r.page === item.pageNumber)
+        )
+          throw new Error('PDF table source item does not belong to its cell page.')
+        const key = `${item.pageNumber}:${item.index}`
+        if (sourceTexts.has(key) && sourceTexts.get(key) !== item.text)
+          throw new Error('PDF table source item has conflicting original text.')
+        sourceTexts.set(key, item.text)
+      }
+    }
     const noteRegions = [
       ...tables.flatMap((table) => table.notes?.flatMap(({ regions }) => regions) ?? []),
       ...(element.tableNotes?.flatMap(({ regions }) => regions) ?? [])

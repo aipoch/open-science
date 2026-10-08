@@ -367,7 +367,7 @@ export function composeCommandDependencies({
       withDataRootWrite
     },
     host: {
-      localModels: documentReading.localModelOwner,
+      localModels: documentReading.localModels,
       pdfStructure: documentReading.pdfStructureReader,
       cli: cliCommandOwner,
       github: githubCommandOwner,

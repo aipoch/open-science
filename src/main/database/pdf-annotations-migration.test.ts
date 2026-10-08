@@ -43,7 +43,8 @@ it('upgrades an existing database without copying or changing Bookmarks', async 
         '0046_journal_attributes',
         '0047_session_replay',
         '0048_pdf_annotation_sharing',
-        '0049_pascalcase_table_names'
+        '0049_pascalcase_table_names',
+        '0050_literature_translation'
       ]
     })
     expect(await client.$queryRaw`SELECT * FROM "Bookmark"`).toEqual(before)
@@ -170,7 +171,11 @@ it.each(['upload-version', 'artifact-version'] as const)(
       await client.$executeRaw`INSERT INTO pdf_annotation_imports (id, projectId, sessionId, sourceKind, sourceFileId, versionId, checksum, resultJson) VALUES ('deleted-native', 'legacy-p', 'legacy-session', ${kind}, 'deleted-file', 'deleted-v', ${'a'.repeat(64)}, ${receipt})`
       await client.$executeRawUnsafe('PRAGMA foreign_keys = ON')
       expect(await migrateApplicationDatabase(client)).toMatchObject({
-        applied: ['0048_pdf_annotation_sharing', '0049_pascalcase_table_names']
+        applied: [
+          '0048_pdf_annotation_sharing',
+          '0049_pascalcase_table_names',
+          '0050_literature_translation'
+        ]
       })
       const rows = await client.pdfAnnotation.findMany({ orderBy: { id: 'asc' } })
       expect(rows.map((row) => row.note)).toEqual(['Keep my edit', 'Keep my edit'])

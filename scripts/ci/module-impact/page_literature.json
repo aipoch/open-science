@@ -426,7 +426,9 @@
       "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.interaction.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/PdfNotebookView.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/PdfPreview.test.tsx",
-      "src/renderer/src/pages/workspace/pdf-annotations/PdfDocumentDialogs.test.tsx"
+      "src/renderer/src/pages/workspace/pdf-annotations/PdfDocumentDialogs.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationControls.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationEditions.test.tsx"
     ]
   },
   "capabilityOverlays": [],

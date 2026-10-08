@@ -91,7 +91,10 @@
     "src/main/database/migrations/0048-pdf-annotation-sharing.ts",
     "src/main/database/migrations/0049-pascalcase-table-names.ts",
     "src/main/database/pascalcase-table-names-migration.test.ts",
-    "test/fixtures/application-database.ts"
+    "test/fixtures/application-database.ts",
+    "src/main/database/migrations/0050-literature-translation.ts",
+    "src/main/database/literature-translation-migration.test.ts",
+    "src/main/database/workspace-pdf-translation-migration.test.ts"
   ],
   "interfacePaths": [
     "src/main/database/database-startup-ipc.ts",
@@ -137,7 +140,9 @@
       "src/main/database/classification-usage.test.ts",
       "src/main/database/pdf-annotations-migration.test.ts",
       "src/main/database/literature-smart-collections-migration.test.ts",
-      "src/main/database/pascalcase-table-names-migration.test.ts"
+      "src/main/database/pascalcase-table-names-migration.test.ts",
+      "src/main/database/literature-translation-migration.test.ts",
+      "src/main/database/workspace-pdf-translation-migration.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -500,7 +505,9 @@
       "src/main/session-persistence/attention-projection.test.ts",
       "src/main/acp/approved-handoff-outcome.integration.test.ts",
       "src/main/acp/approved-handoff-outcome.test.ts",
-      "src/main/pdf-annotations/sharing.integration.test.ts"
+      "src/main/pdf-annotations/sharing.integration.test.ts",
+      "src/main/literature/pdf-translation/checkpoints.test.ts",
+      "src/main/literature/pdf-translation/usage.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

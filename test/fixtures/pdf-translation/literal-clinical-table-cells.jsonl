@@ -1,0 +1,6 @@
+{"name": "standalone-clinical-timepoint", "source": "A0", "text": "A0", "inference": false}
+{"name": "standalone-followup-timepoint", "source": "T12", "text": "T12", "inference": false}
+{"name": "timepoint-with-prose-still-translates", "source": "A1 follow-up assessment", "text": "A1 随访评估", "inference": true}
+{"name": "p-value-with-footnote-marker", "source": "<.001c", "text": "<.001c", "inference": false}
+{"name": "decimal-with-footnote-marker", "source": ".083d", "text": ".083d", "inference": false}
+{"name": "numeric-cell-with-prose-still-translates", "source": ".083 at follow-up", "text": "随访时为 .083", "inference": true}

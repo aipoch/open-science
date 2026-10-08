@@ -687,7 +687,19 @@
       "src/main/acp/approved-handoff-outcome.test.ts",
       "src/renderer/src/lib/acp/workspace-prompt-rollback-failure.test.ts",
       "src/renderer/src/lib/acp/workspace-runtime-overflow-recovery-failures.test.ts",
-      "src/renderer/src/pages/workspace/SessionHeaderMenu.test.tsx"
+      "src/renderer/src/pages/workspace/SessionHeaderMenu.test.tsx",
+      "src/main/literature/pdf-translation/ipc.test.ts",
+      "src/main/literature/pdf-translation/index.test.ts",
+      "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationControls.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/PdfPreview.test.tsx",
+      "src/main/literature/pdf-translation/checkpoints.test.ts",
+      "src/main/literature/pdf-translation/usage.test.ts",
+      "src/main/literature/pdf-translation/diagnostics.test.ts",
+      "src/main/literature/pdf-translation/reader-ownership.test.ts",
+      "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationEditions.test.tsx",
+      "src/main/literature/pdf-translation/local.test.ts",
+      "src/main/local-models/ipc.test.ts",
+      "src/main/literature/pdf-translation/pdf-cache.test.ts"
     ]
   },
   "capabilityOverlays": [],

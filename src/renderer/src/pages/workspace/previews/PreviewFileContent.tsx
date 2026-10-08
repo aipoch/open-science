@@ -21,7 +21,8 @@ export const PreviewFileContent = ({
   onUndoAnnotation,
   onRedoAnnotation,
   onAnnotationError,
-  onPdfReadingPositionChange
+  onPdfReadingPositionChange,
+  onPdfTranslationChange
 }: PreviewFileRendererProps & {
   downloadVersionContext?: PreviewDownloadVersionContext
   onRetry?: () => Promise<void>
@@ -40,7 +41,8 @@ export const PreviewFileContent = ({
     onUndoAnnotation,
     onRedoAnnotation,
     onAnnotationError,
-    onPdfReadingPositionChange
+    onPdfReadingPositionChange,
+    onPdfTranslationChange
   })
 
   return (

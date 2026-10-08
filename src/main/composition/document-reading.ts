@@ -1,3 +1,14 @@
+import { createPdfTranslationLocalRuntime } from '../literature/pdf-translation/local'
+import { PDF_TRANSLATION_MODEL_REVISIONS } from '../local-models/catalog'
+import { PdfTranslationCheckpoints } from '../literature/pdf-translation/checkpoints'
+import { PdfTranslationOwner } from '../literature/pdf-translation/index'
+import { capturePdfTranslationApiTarget } from '../literature/pdf-translation/api-target'
+import { capturePdfTranslationAgentTarget } from '../literature/pdf-translation/agent-target'
+import { ProviderTextGenerationService } from '../settings/provider-text-generation'
+import { PdfTranslationUsageRecorder } from '../literature/pdf-translation/usage'
+import { registerPdfTranslationIpc } from '../literature/pdf-translation/ipc'
+import { RestrictedInferenceRunner } from '../acp/restricted-inference-runner'
+import type { SettingsService } from '../settings/service'
 import { app } from 'electron'
 import { realpath } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -16,7 +27,7 @@ import { createPdfStructureOwner } from '../literature/pdf-structure/owner'
 import { PdfStructureReader } from '../literature/pdf-structure/reader'
 import { PdfStructureSourceAuthority } from '../literature/pdf-structure/source'
 import { SessionPdfSourceResolver } from '../literature/session-pdf-source-resolver'
-import { registerLocalModelIpcHandlers } from '../local-models/ipc'
+import { createLocalModelApi, registerLocalModelIpcHandlers } from '../local-models/ipc'
 import { createLocalModelOwner } from '../local-models/owner'
 import { createLogger, errorLogFields } from '../logger'
 import { PdfAnnotationRepository } from '../pdf-annotations/repository'
@@ -39,7 +50,8 @@ export async function composeDocumentReading({
   sessionPdfSourceResolver,
   bookmarkRepository,
   sessionPersistenceCoordinator,
-  modules
+  modules,
+  settingsService
 }: {
   declareElectronAdapter: (name: string, install: () => void | (() => void)) => void
   applicationEvents: ApplicationEvents
@@ -60,6 +72,7 @@ export async function composeDocumentReading({
     | 'readSessionRuntimeContext'
     | 'runSessionMutation'
   >
+  settingsService: SettingsService
   modules: ApplicationModuleBuilder
 }): Promise<{
   bookmarkService: BookmarkService
@@ -69,6 +82,7 @@ export async function composeDocumentReading({
   sessionPdfContextOwner: SessionPdfContextOwner
   literatureContextLog: ReturnType<typeof createLogger>
   localModelOwner: ReturnType<typeof createLocalModelOwner>
+  localModels: ReturnType<typeof createLocalModelApi>
   pdfStructureReader: PdfStructureReader
   pdfElementReader: PdfElementAgentReader
   literatureDocumentReader: LiteratureDocumentReader
@@ -160,7 +174,17 @@ export async function composeDocumentReading({
       await owner.close()
     }
   }))
-  declareElectronAdapter('local-models', () => registerLocalModelIpcHandlers(localModelOwner))
+  const localTranslationModels = createLocalModelOwner({
+    namespace: 'pdf-translation',
+    revisions: PDF_TRANSLATION_MODEL_REVISIONS
+  })
+  await modules.add({ localTranslationModels }, ({ localTranslationModels: owner }) => ({
+    name: 'local-translation-models',
+    capability: undefined,
+    dispose: () => owner.close()
+  }))
+  const localModels = createLocalModelApi(localModelOwner, localTranslationModels)
+  declareElectronAdapter('local-models', () => registerLocalModelIpcHandlers(localModels))
   const pdfStructureSources = new PdfStructureSourceAuthority({
     literature: literatureAttachmentAuthority,
     sources: sessionPdfSourceResolver,
@@ -195,6 +219,41 @@ export async function composeDocumentReading({
     sources: sessionPdfSourceResolver,
     sessions: sessionPersistenceCoordinator
   })
+  const pdfTranslationOwner = await modules.add({}, () => {
+    const owner = new PdfTranslationOwner({
+      usage: new PdfTranslationUsageRecorder(() => getProjectDbClient(resolveConfigRoot())),
+      checkpoints: new PdfTranslationCheckpoints({
+        getClient: () => getProjectDbClient(resolveConfigRoot()),
+        authority: literatureAttachmentAuthority,
+        resolveDocumentSource: (source) => sessionPdfSourceResolver.resolveDocumentSource(source)
+      }),
+      captureTarget: (model) => capturePdfTranslationAgentTarget(settingsService, model),
+      captureApiTarget: (model) => capturePdfTranslationApiTarget(settingsService, model),
+      apiRunner: new ProviderTextGenerationService(),
+      localRunner: createPdfTranslationLocalRuntime(
+        join(
+          app.getAppPath().replace(/app\.asar$/, 'app.asar.unpacked'),
+          'resources',
+          'pdf-translation-local'
+        ),
+        localTranslationModels
+      ),
+      runner: new RestrictedInferenceRunner({
+        appVersion: app.getVersion(),
+        configRoot: resolveConfigRoot(),
+        profileNamespace: 'pdf-translation',
+        resolveTarget: (target, context) =>
+          settingsService.resolveExplicitAgentBackend(target, context)
+      })
+    })
+    return {
+      name: 'pdf-translation',
+      capability: owner,
+      start: () => owner.sweepStaleProfiles(),
+      dispose: () => owner.shutdown()
+    }
+  })
+  declareElectronAdapter('pdf-translation', () => registerPdfTranslationIpc(pdfTranslationOwner))
   return {
     bookmarkService,
     pdfAnnotationTagEvents,
@@ -203,6 +262,7 @@ export async function composeDocumentReading({
     sessionPdfContextOwner,
     literatureContextLog,
     localModelOwner,
+    localModels,
     pdfStructureReader,
     pdfElementReader,
     literatureDocumentReader

@@ -1,0 +1,4 @@
+{"name":"neighbor-hit-area-touches-prose-without-its-glyphs","headingY":730,"accepted":true}
+{"name":"neighbor-glyphs-in-box-padding-leave-body-ink-clear","headingY":715,"accepted":true}
+{"name":"overlapping-neighbor-glyphs-still-rejected","headingY":705,"accepted":false}
+{"name":"lower-link-only-grazes-upper-body-ink-edge","headingY":678,"linkBottom":676,"linkTop":697.625,"accepted":true}

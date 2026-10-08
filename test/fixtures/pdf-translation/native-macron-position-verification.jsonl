@@ -1,0 +1,9 @@
+{"name":"raised-macron","items":[{"str":"¯","transform":[10,0,0,10,102.25,102.5],"width":5},{"str":"G","transform":[10,0,0,10,100,100],"width":6.4}],"expected":"G¯"}
+{"name":"baseline-macron","items":[{"str":"¯","transform":[10,0,0,10,102.25,100],"width":5},{"str":"G","transform":[10,0,0,10,100,100],"width":6.4}],"expected":"¯G"}
+{"name":"detached-macron","items":[{"str":"¯","transform":[10,0,0,10,111,102.5],"width":5},{"str":"G","transform":[10,0,0,10,100,100],"width":6.4}],"expected":"¯G"}
+{"name":"ambiguous-macron","items":[{"str":"¯","transform":[10,0,0,10,102.25,102.5],"width":5},{"str":"G","transform":[10,0,0,10,100,100],"width":6.4},{"str":"G","transform":[10,0,0,10,100,100],"width":6.4}],"expected":"¯GG"}
+{"name":"wrong-scale-macron","items":[{"str":"¯","transform":[10,0,0,10,102.25,102.5],"width":5},{"str":"G","transform":[11,0,0,11,100,100],"width":6.4}],"expected":"¯G"}
+{"name":"wide-prose-macron","items":[{"str":"¯","transform":[10,0,0,10,102.25,102.5],"width":8},{"str":"G","transform":[10,0,0,10,100,100],"width":6.4}],"expected":"¯G"}
+{"name":"missing-base","items":[{"str":"¯","transform":[10,0,0,10,102.25,102.5],"width":5}],"expected":"¯"}
+{"name":"multi-letter-base","items":[{"str":"¯","transform":[10,0,0,10,102.25,102.5],"width":5},{"str":"GG","transform":[10,0,0,10,100,100],"width":6.4}],"expected":"¯GG"}
+{"name":"embedded-prose-mark","items":[{"str":"text¯","transform":[10,0,0,10,102.25,102.5],"width":5},{"str":"G","transform":[10,0,0,10,100,100],"width":6.4}],"expected":"text¯G"}

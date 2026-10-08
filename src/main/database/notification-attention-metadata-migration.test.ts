@@ -108,10 +108,11 @@ describe('notification attention metadata migration', () => {
         '0046_journal_attributes',
         '0047_session_replay',
         '0048_pdf_annotation_sharing',
-        '0049_pascalcase_table_names'
+        '0049_pascalcase_table_names',
+        '0050_literature_translation'
       ],
       from: '0006_database_domain_constraints',
-      to: '0049_pascalcase_table_names'
+      to: '0050_literature_translation'
     })
     await expect(
       access(`${databasePath}.before-0007_notification_attention_metadata.backup`)

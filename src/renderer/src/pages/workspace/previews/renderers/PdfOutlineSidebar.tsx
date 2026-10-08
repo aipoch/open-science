@@ -433,6 +433,7 @@ export const PdfOutlineSidebar = ({
   onNavigate
 }: {
   document: PdfThumbnailDocument
+  overlay?: boolean
   items: readonly PdfOutlineItem[]
   pageCount: number
   pageLabels?: readonly string[] | null
@@ -450,7 +451,8 @@ export const PdfOutlineSidebar = ({
   const resizeGestureRef = useRef<ResizeGesture | undefined>(undefined)
   const resizeTo = (nextWidth: number): void => onWidthChange(clampWidth(nextWidth))
 
-  const effectiveMode: PdfNavigationMode = items.length > 0 ? mode : 'pages'
+  const effectiveMode: PdfNavigationMode =
+    mode === 'outline' && items.length > 0 ? 'outline' : 'pages'
 
   return (
     <TooltipProvider skipDelayDuration={300}>
@@ -463,7 +465,7 @@ export const PdfOutlineSidebar = ({
         style={{ width }}
         aria-label={t('PDF navigation')}
       >
-        <div className="grid h-10 shrink-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)_1.75rem] gap-1 border-b border-border-200 p-1">
+        <div className="grid min-h-10 shrink-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)_1.75rem] gap-1 border-b border-border-200 p-1">
           <Tooltip>
             <TooltipTrigger asChild>
               <button

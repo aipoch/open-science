@@ -1,0 +1,32 @@
+diff --git a/node_modules/pdfjs-dist/build/pdf.worker.mjs b/node_modules/pdfjs-dist/build/pdf.worker.mjs
+index b911637..3b8677b 100644
+--- a/node_modules/pdfjs-dist/build/pdf.worker.mjs
++++ b/node_modules/pdfjs-dist/build/pdf.worker.mjs
+@@ -34656,6 +34656,11 @@ class PartialEvaluator {
+                 xObjStateManager.transform(matrix);
+               }
+               const localResources = dict.get("Resources");
++              // Resource names are local to a Form. Inherited fonts still apply
++              // until Tf, but the same name/size may select a different font.
++              if (localResources instanceof Dict && localResources !== resources) {
++                currentState.fontName = null;
++              }
+               enqueueChunk();
+               const sinkWrapper = {
+                 enqueueInvoked: false,
+diff --git a/node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs b/node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs
+index b7416c4..6fe811e 100644
+--- a/node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs
++++ b/node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs
+@@ -40650,6 +40650,11 @@ class PartialEvaluator {
+                 xObjStateManager.transform(matrix);
+               }
+               const localResources = dict.get("Resources");
++              // Resource names are local to a Form. Inherited fonts still apply
++              // until Tf, but the same name/size may select a different font.
++              if (localResources instanceof Dict && localResources !== resources) {
++                currentState.fontName = null;
++              }
+               enqueueChunk();
+               const sinkWrapper = {
+                 enqueueInvoked: false,

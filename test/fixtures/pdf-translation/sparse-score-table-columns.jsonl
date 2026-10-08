@@ -1,0 +1,3 @@
+{"name":"blank-middle-cells-preserve-independent-score-rows","drift":0,"rowGap":12,"table":true}
+{"name":"misaligned-final-scores-do-not-prove-sparse-table","drift":18,"rowGap":12,"table":false}
+{"name":"distant-score-lines-do-not-prove-sparse-table","drift":0,"rowGap":40,"table":false}

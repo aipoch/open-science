@@ -1,0 +1,5 @@
+{"name":"split-accented-author-with-only-middle-run-contained","change":"none","accepted":true}
+{"name":"split-author-rejects-foreign-contained-prose","change":"foreign","accepted":false}
+{"name":"split-author-rejects-ambiguous-repeated-name","change":"repeated","accepted":false}
+{"name":"split-author-rejects-changed-citation-name","change":"name","accepted":false}
+{"name":"split-author-rejects-changed-link-action","change":"action","accepted":false}

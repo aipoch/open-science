@@ -108,6 +108,25 @@ const hasRepeatedMeasurementRows = (items, rotation) => {
   )
 }
 
+// PDF.js includes UserUnit in the viewport transform, but not in text-item dimensions.
+// Keep the entire token in viewport coordinates, including font size and upright bounds.
+export const tableTextToken = (item, viewport, rotation) => {
+  const [x, baseline] = viewport.convertToViewportPoint(item.transform[4], item.transform[5])
+  const scale = Math.hypot(viewport.transform[0], viewport.transform[1])
+  const horizontal = isUprightText(item, rotation)
+  return {
+    text: item.str,
+    sourceItem: item.sourceItem,
+    inlineSymbol: item.inlineSymbol === true,
+    baseline,
+    height: item.height * scale,
+    rect: horizontal
+      ? [x, baseline - item.height * scale, x + item.width * scale, baseline]
+      : rotatedTextRect(item, viewport),
+    horizontal
+  }
+}
+
 // Whole-page sideways tables use rotated text even when /Rotate is zero.
 // Require a strong majority or an explicit sideways table caption, so isolated
 // chart axes cannot rotate a normal page. A short continued table can share a

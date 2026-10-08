@@ -90,7 +90,8 @@ it.each([
       f.font.differences[glyph.originalCharCode] = name
     }
   }
-  const content = { items: [{ str: '\u0015 40.3; \u0014 60', fontName: 'native' }] }
+  const sourceItem = { pageNumber: 3, index: 19, text: '\u0015 40.3; \u0014 60' }
+  const content = { items: [{ str: sourceItem.text, fontName: 'native', sourceItem }] }
   const operators = {
     fnArray: [OPS.setFont, OPS.showText],
     argsArray: [['native', 10], [f.glyphs]]
@@ -105,6 +106,7 @@ it.each([
     ['native', 'shifted-slots'].includes(variant) ? '≥ 40.3; ≤ 60' : content.items[0].str
   )
   expect({ f, content, operators }).toEqual(original)
+  expect(result.items[0].sourceItem).toEqual(sourceItem)
 })
 
 it.each([
@@ -537,6 +539,13 @@ it('discards off-crop form text while keeping visible text and outer captions', 
   const result = await repairPdfSymbolText({}, content, operators)
   expect(result.items.map((i: { str: string }) => i.str)).toEqual(['visible', 'caption'])
   expect(content.items).toHaveLength(3)
+  const symbols = ['𝛽', '𝛼', '𝜇']
+  const unicode = { items: content.items.map((item, i) => ({ ...item, str: symbols[i] })) }
+  const unicodeOps = structuredClone(operators)
+  for (const [i, at] of [2, 3, 5].entries()) unicodeOps.argsArray[at] = text(symbols[i])
+  expect(
+    (await repairPdfSymbolText({}, unicode, unicodeOps)).items.map((i: { str: string }) => i.str)
+  ).toEqual(['𝛼', '𝜇'])
 })
 
 it('recovers legacy math symbols using the font and original glyph code', async () => {
@@ -803,6 +812,7 @@ it('splits fraction-valued runs using unequal TJ advances and text spacing', () 
   }
   const item = {
     str: parts.join(' '),
+    sourceItem: { pageNumber: 1, index: 7, text: parts.join(' ') },
     fontName: 'f',
     dir: 'ltr',
     transform: [10, 0, 0, 10, 100, 500],
@@ -812,6 +822,17 @@ it('splits fraction-valued runs using unequal TJ advances and text spacing', () 
   }
   const result = splitPdfNumericRuns({ items: [item] }, ops).items
   expect(result.map((i: { str: string }) => i.str)).toEqual(parts)
+  expect(result.every((i: { sourceItem?: unknown }) => i.sourceItem === undefined)).toBe(true)
+  const prefix = { ...item, str: '𝛼', width: 5 }
+  const prefixedOps = {
+    fnArray: [ops.fnArray[0], OPS.showText, ...ops.fnArray.slice(1)],
+    argsArray: [ops.argsArray[0], [glyphs('𝛼')], ...ops.argsArray.slice(1)]
+  }
+  expect(
+    splitPdfNumericRuns({ items: [prefix, item] }, prefixedOps).items.map(
+      (i: { str: string }) => i.str
+    )
+  ).toEqual(['𝛼', ...parts])
   expect(result.map((i: { hasEOL: boolean }) => i.hasEOL)).toEqual([false, false, true])
   for (const [i, x] of [100, 145.9, 200.8].entries()) {
     expect(result[i].transform[4]).toBeCloseTo(x, 6)
@@ -1140,6 +1161,15 @@ it('removes background-coloured decimal padding but retains visible comparisons'
     expect(result.items.map((i: { str: string }) => i.str)).toEqual(
       colour === '#000000' ? ['<', '0.15', '0'] : ['0.15']
     )
+    const prefixedOps = {
+      fnArray: [ops.fnArray[0], OPS.showText, ...ops.fnArray.slice(1)],
+      argsArray: [ops.argsArray[0], [glyphs('𝛼')], ...ops.argsArray.slice(1)]
+    }
+    expect(
+      removeBackgroundNumericPadding({ items: [item('𝛼', 0, 5), ...items] }, prefixedOps).items.map(
+        (i: { str: string }) => i.str
+      )
+    ).toEqual(colour === '#000000' ? ['𝛼', '<', '0.15', '0'] : ['𝛼', '0.15'])
     const detached = {
       items: items.map((i) => ({
         ...i,
@@ -1226,14 +1256,15 @@ it.each([
 
 it.each([
   ['1515) ED arm (n', ['1515)', 'ED arm (n']],
-  ['Median age, years (range) 50 (23', ['Median age, years (range)', '50 (23']]
+  ['Median age, years (range) 50 (23', ['Median age, years (range)', '50 (23']],
+  ['𝛼 (range) 50 (23', ['𝛼 (range)', '50 (23']]
 ])('splits a joined table run by verified glyph advances: %s', (str, expected) => {
   const glyphs = [...str].map((unicode) => ({ unicode, width: 500, isSpace: unicode === ' ' }))
   const item = {
     str,
     fontName: 'f',
     dir: 'ltr',
-    width: str.length * 5,
+    width: [...str].length * 5,
     height: 10,
     transform: [10, 0, 0, 10, 100, 500],
     hasEOL: true
@@ -1257,7 +1288,7 @@ it.each([
   }
   const result = splitPdfNumericRuns({ items: [item, other] }, ops).items
   expect(result.slice(0, 2).map((i: { str: string }) => i.str)).toEqual(expected)
-  expect(result[1].transform[4]).toBe(100 + (expected[0].length + 1) * 5)
+  expect(result[1].transform[4]).toBe(100 + ([...expected[0]].length + 1) * 5)
   expect(result.at(-1)).toEqual(other)
   const invalid = { ...item, width: item.width + 2 }
   expect(splitPdfNumericRuns({ items: [invalid, other] }, ops).items).toEqual([invalid, other])

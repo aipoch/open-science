@@ -1,0 +1,4 @@
+{"name":"argmin-lower-limit-stays-with-inline-operator","operator":"arg min","offset":6.5,"size":7,"attached":true}
+{"name":"full-size-next-line-letter-is-not-an-operator-limit","operator":"arg min","offset":6.5,"size":10,"attached":false}
+{"name":"ordinary-word-does-not-capture-lower-line","operator":"sample","offset":6.5,"size":7,"attached":false}
+{"name":"distant-letter-is-not-an-operator-limit","operator":"arg min","offset":16,"size":7,"attached":false}

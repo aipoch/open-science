@@ -1,0 +1,4 @@
+{"name": "raised-power-counts-establish-aligned-numeric-columns", "value": "2.4 · 10⁶", "drift": 0, "table": true}
+{"name": "raised-negative-powers-stay-numeric-in-aligned-table", "value": "2.4 × 10⁻³", "drift": 0, "table": true}
+{"name": "baseline-digits-do-not-prove-a-scientific-exponent", "value": "2.4 · 106", "drift": 0, "table": false}
+{"name": "drifting-scientific-counts-do-not-establish-table", "value": "2.4 · 10⁶", "drift": 24, "table": false}

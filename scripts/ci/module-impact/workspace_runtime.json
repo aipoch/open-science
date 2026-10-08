@@ -256,7 +256,10 @@
       "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.interaction.test.tsx",
       "src/renderer/src/pages/workspace/replay/ReplayToolRecord.test.tsx",
       "src/renderer/src/pages/workspace/replay/ReplayPanel.test.tsx",
-      "src/renderer/src/pages/workspace/SessionReplayEvidence.test.tsx"
+      "src/renderer/src/pages/workspace/SessionReplayEvidence.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/PdfPreview.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationControls.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationEditions.test.tsx"
     ]
   },
   "capabilityOverlays": ["renderer_state"],

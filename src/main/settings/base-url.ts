@@ -67,6 +67,33 @@ const openAiCompletionsBase = (provider: OpenAiProviderBase): string | undefined
   return appendPath(stripRedundantOpenAiSuffix(provider.baseUrl), '/v1')
 }
 
+// Complete URLs preserve gateway query parameters while appending to the pathname.
+const anthropicMessagesUrl = (baseUrl: string): string => {
+  try {
+    const url = new URL(baseUrl.trim())
+    url.pathname = `${normalizeAnthropicBaseUrl(url.pathname)}/v1/messages`
+    return url.toString()
+  } catch {
+    return appendPath(anthropicMessagesBase(baseUrl), '/messages')
+  }
+}
+
+const openAiResponsesUrl = (provider: OpenAiProviderBase): string | undefined => {
+  const raw = provider.openaiBaseUrl || provider.baseUrl
+  if (!raw?.trim()) return undefined
+  try {
+    const url = new URL(raw.trim())
+    url.pathname = url.pathname.replace(/\/+$/, '').replace(/\/responses$/i, '')
+    // Official bases carry their exact version; custom roots follow the same /v1 contract as Chat.
+    const base = openAiCompletionsBase(
+      provider.openaiBaseUrl ? { openaiBaseUrl: url.toString() } : { baseUrl: url.toString() }
+    )!
+    return appendPath(base, '/responses')
+  } catch {
+    return undefined
+  }
+}
+
 // The full OpenAI `/chat/completions` endpoint URL for an OpenAI-compatible provider.
 const openAiChatCompletionsUrl = (provider: OpenAiProviderBase): string | undefined => {
   const base = openAiCompletionsBase(provider)
@@ -75,6 +102,8 @@ const openAiChatCompletionsUrl = (provider: OpenAiProviderBase): string | undefi
 
 export {
   anthropicMessagesBase,
+  anthropicMessagesUrl,
+  openAiResponsesUrl,
   normalizeAnthropicBaseUrl,
   appendChatCompletions,
   openAiCompletionsBase,

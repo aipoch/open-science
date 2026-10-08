@@ -1,0 +1,7 @@
+{"name": "mean-and-deviation-keep-table-rows", "value": "18.2 (4.7)", "table": true}
+{"name": "confidence-interval-keeps-table-rows", "value": "-1.2 (-2.4 to 0.6)c", "table": true}
+{"name": "marked-p-value-keeps-table-rows", "value": "<.001c", "table": true}
+{"name": "unbalanced-parenthesis-does-not-prove-table", "value": "18.2 (4.7", "table": false}
+{"name": "statistical-prose-does-not-prove-table", "value": "18.2 participants", "table": false}
+{"name":"spaced-plus-minus-preserves-measured-cell","value":"18.2 ± 4.7","table":true}
+{"name":"symbolic-plus-minus-does-not-establish-measured-cell","value":"18.2 ± x","table":false}

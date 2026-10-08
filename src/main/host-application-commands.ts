@@ -7,8 +7,11 @@ import type {
 } from '../shared/pdf-structure'
 import type { PdfStructureReader } from './literature/pdf-structure/reader'
 import type { ArtifactPreviewResult, ReadArtifactPreviewRequest } from '../shared/artifacts'
-import type { LocalModelSnapshot } from '../shared/local-models'
-import type { LocalModelOwner } from './local-models/owner'
+import type {
+  LocalModelApi,
+  LocalModelCapability,
+  LocalModelSnapshot
+} from '../shared/local-models'
 import type { CliLauncherStatus } from '../shared/cli'
 import type {
   GrantLocalRootRequest,
@@ -380,18 +383,24 @@ const pdfStructureCommands = {
 const localModelCommands = Object.freeze({
   getSnapshot: defineApplicationCommand<
     'local-models:get-snapshot',
-    readonly [],
+    readonly [capability?: LocalModelCapability],
     LocalModelSnapshot
   >('local-models:get-snapshot'),
-  install: defineApplicationCommand<'local-models:install', readonly [], LocalModelSnapshot>(
-    'local-models:install'
-  ),
-  cancel: defineApplicationCommand<'local-models:cancel', readonly [], LocalModelSnapshot>(
-    'local-models:cancel'
-  ),
-  remove: defineApplicationCommand<'local-models:remove', readonly [], LocalModelSnapshot>(
-    'local-models:remove'
-  )
+  install: defineApplicationCommand<
+    'local-models:install',
+    readonly [capability?: LocalModelCapability],
+    LocalModelSnapshot
+  >('local-models:install'),
+  cancel: defineApplicationCommand<
+    'local-models:cancel',
+    readonly [capability?: LocalModelCapability],
+    LocalModelSnapshot
+  >('local-models:cancel'),
+  remove: defineApplicationCommand<
+    'local-models:remove',
+    readonly [capability?: LocalModelCapability],
+    LocalModelSnapshot
+  >('local-models:remove')
 })
 
 const hostApplicationCommands = Object.freeze({
@@ -427,7 +436,7 @@ type HostApplicationCommandDependencies = Readonly<{
     PdfStructureReader,
     'parse' | 'cancel' | 'readThumbnail' | 'clearCache' | 'readCached'
   >
-  localModels: Pick<LocalModelOwner, 'getSnapshot' | 'install' | 'cancel' | 'remove'>
+  localModels: LocalModelApi
   cli: CliCommandOwner
   github: GithubCommandOwner
   localFs: Pick<
@@ -729,18 +738,22 @@ const registerHostApplicationCommands = (
       'update:get-status': () => dependencies.update.getStatus()
     })
     scope.registerGroup(hostApplicationCommandGroups[9], {
-      'local-models:get-snapshot': ({ callerContext }) =>
+      'local-models:get-snapshot': ({ callerContext, args }) =>
         localCommand(callerContext, 'local-models:get-snapshot', () =>
-          dependencies.localModels.getSnapshot()
+          dependencies.localModels.getSnapshot(args[0])
         ),
-      'local-models:install': ({ callerContext }) =>
+      'local-models:install': ({ callerContext, args }) =>
         localCommand(callerContext, 'local-models:install', () =>
-          dependencies.localModels.install()
+          dependencies.localModels.install(args[0])
         ),
-      'local-models:cancel': ({ callerContext }) =>
-        localCommand(callerContext, 'local-models:cancel', () => dependencies.localModels.cancel()),
-      'local-models:remove': ({ callerContext }) =>
-        localCommand(callerContext, 'local-models:remove', () => dependencies.localModels.remove())
+      'local-models:cancel': ({ callerContext, args }) =>
+        localCommand(callerContext, 'local-models:cancel', () =>
+          dependencies.localModels.cancel(args[0])
+        ),
+      'local-models:remove': ({ callerContext, args }) =>
+        localCommand(callerContext, 'local-models:remove', () =>
+          dependencies.localModels.remove(args[0])
+        )
     })
     scope.registerGroup(hostApplicationCommandGroups[10], {
       'pdf-structure:read-cached': ({ callerContext, callerLease, args: [request] }) =>

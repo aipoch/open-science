@@ -767,6 +767,7 @@ describe('TB-01 remote preview admission', () => {
     const resolvePath = vi.fn(async (_source, request) => localFs.resolveFilePath(request))
     const trustedLease = {
       path,
+      checksum: 'a'.repeat(64),
       size: content.length,
       versionToken: 1,
       snapshot: { dev: 1n, ino: 1n, size: BigInt(content.length), mtimeNs: 1n },
@@ -813,6 +814,7 @@ describe('TB-01 remote preview admission', () => {
         expect(resolvePath, 'reject before filesystem resolution').not.toHaveBeenCalled()
       } else {
         resource = await acquired
+        expect(resource.sourceChecksum).toBe(source === 'local' ? undefined : trustedLease.checksum)
         const range = (await dispatcher.invoke('preview-resources:read-range', {
           ...caller,
           args: [{ resourceId: resource.id, begin: 0, end: content.length }]

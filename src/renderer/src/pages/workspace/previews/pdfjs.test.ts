@@ -1,7 +1,10 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import { readFile } from 'node:fs/promises'
+import { resolve } from 'node:path'
+import { PDFDocument, PDFString } from 'pdf-lib'
 
 // PDF.js uses its worker implementation in-process when Vitest runs without a browser Worker.
-import 'pdfjs-dist/legacy/build/pdf.worker.min.mjs'
+import 'pdfjs-dist/legacy/build/pdf.worker.mjs'
 import { pdfjsLib } from './pdfjs'
 
 const createMinimalPdf = (): Uint8Array => {
@@ -27,6 +30,72 @@ const createMinimalPdf = (): Uint8Array => {
 }
 
 describe('pdfjs runtime', () => {
+  it('extracts Japanese from a predefined CMap without an embedded ToUnicode map', async () => {
+    const pdf = await PDFDocument.create(),
+      page = pdf.addPage([200, 200]),
+      descendant = pdf.context.register(
+        pdf.context.obj({
+          Type: 'Font',
+          Subtype: 'CIDFontType0',
+          BaseFont: 'HeiseiMin-W3',
+          FontDescriptor: {
+            Type: 'FontDescriptor',
+            FontName: 'HeiseiMin-W3',
+            Flags: 6,
+            FontBBox: [-1000, -120, 1000, 880],
+            ItalicAngle: 0,
+            Ascent: 880,
+            Descent: -120,
+            CapHeight: 880,
+            StemV: 80
+          },
+          CIDSystemInfo: {
+            Registry: PDFString.of('Adobe'),
+            Ordering: PDFString.of('Japan1'),
+            Supplement: 6
+          }
+        })
+      ),
+      font = pdf.context.register(
+        pdf.context.obj({
+          Type: 'Font',
+          Subtype: 'Type0',
+          BaseFont: 'HeiseiMin-W3',
+          Encoding: 'UniJIS-UTF16-H',
+          DescendantFonts: [descendant]
+        })
+      )
+    page.node.set(pdf.context.obj('Resources'), pdf.context.obj({ Font: { CJK: font } }))
+    page.node.set(
+      pdf.context.obj('Contents'),
+      pdf.context.register(
+        pdf.context.flateStream('BT /CJK 12 Tf 20 150 Td <30533093306B3061306F4E16754C> Tj ET')
+      )
+    )
+    const requested: string[] = []
+    vi.stubGlobal('fetch', async (url: string) => {
+      const name = url.split('/').at(-1)!.split('?')[0]
+      requested.push(name)
+      return new Response(await readFile(resolve('node_modules/pdfjs-dist/cmaps', name)))
+    })
+    const task = pdfjsLib.getDocument({ data: await pdf.save() })
+    try {
+      const document = await task.promise,
+        text = await (await document.getPage(1)).getTextContent()
+      expect(
+        text.items
+          .filter((item) => 'str' in item)
+          .map((item) => item.str)
+          .join('')
+      ).toBe('こんにちは世界')
+      expect(requested).toContain('UniJIS-UTF16-H.bcmap')
+      expect(requested).toContain('Adobe-Japan1-UCS2.bcmap')
+    } finally {
+      await task.destroy()
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('loads a real PDF and builds its page render operators', async () => {
     const loadingTask = pdfjsLib.getDocument({ data: createMinimalPdf() })
     const document = await loadingTask.promise

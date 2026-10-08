@@ -1,4 +1,7 @@
 import type { SessionPdfSourceKind } from '../../shared/session-persistence'
+import { createArtifactVersionLocator } from '../../shared/artifact-provenance'
+import { createUploadVersionReference } from '../../shared/uploads'
+import { sanitizePdfDocumentSource, type PdfDocumentSource } from '../../shared/pdf-bookmarks'
 import type {
   ImmutableInputAuthority,
   ImmutableInputContentLease
@@ -53,6 +56,58 @@ const resolvedLiteratureVersion = (
 
 class SessionPdfSourceResolver {
   constructor(private readonly options: SessionPdfSourceResolverOptions) {}
+
+  async resolveDocumentSource(value: PdfDocumentSource): Promise<PdfDocumentSource | undefined> {
+    const source = sanitizePdfDocumentSource(value)
+    if (!source?.projectId || source.kind === 'literature-attachment-version') return undefined
+    const resolved = await this.resolveVersion({
+      projectId: source.projectId,
+      sourceKind: source.kind,
+      sourceVersionId: source.versionId,
+      expectedSourceFileId: source.sourceFileId
+    })
+    if (
+      !resolved ||
+      resolved.sourceKind !== source.kind ||
+      resolved.sourceFileId !== source.sourceFileId ||
+      resolved.sourceVersionId !== source.versionId ||
+      resolved.checksum !== source.checksum ||
+      (source.sessionId !== undefined && resolved.sourceSessionId !== source.sessionId) ||
+      !Number.isSafeInteger(resolved.sizeBytes) ||
+      resolved.sizeBytes <= 0 ||
+      !(
+        resolved.contentType?.split(';', 1)[0]?.trim().toLowerCase() === 'application/pdf' ||
+        resolved.filename.toLowerCase().endsWith('.pdf')
+      ) ||
+      !resolved.openContent
+    )
+      return undefined
+    const lease = await resolved.openContent()
+    try {
+      await lease.verifyUnchanged()
+    } finally {
+      await lease.close()
+    }
+    // Reuse the immutable version authority; a renderer path never grants byte access.
+    return {
+      ...source,
+      sessionId: resolved.sourceSessionId,
+      name: resolved.filename,
+      path:
+        source.kind === 'artifact-version'
+          ? createArtifactVersionLocator({
+              projectId: source.projectId,
+              appSessionId: resolved.sourceSessionId,
+              artifactId: source.sourceFileId,
+              versionId: source.versionId
+            })
+          : createUploadVersionReference(source.versionId, {
+              projectId: source.projectId,
+              sessionId: resolved.sourceSessionId,
+              fileId: source.sourceFileId
+            })
+    }
+  }
 
   async resolveVersion(request: {
     projectId: string

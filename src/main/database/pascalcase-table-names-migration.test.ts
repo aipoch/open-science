@@ -77,7 +77,7 @@ it('initializes only canonical table names and reopens without another migration
   client = createProjectDbClient(root)
   expect(await migrateApplicationDatabase(client)).toMatchObject({
     applied: [],
-    to: '0049_pascalcase_table_names'
+    to: '0050_literature_translation'
   })
   await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
 })
@@ -98,7 +98,7 @@ it('preserves every value, ID, relationship, receipt and unrelated trigger acros
         backups.push(backup.path)
       }
     })
-  ).toMatchObject({ applied: ['0049_pascalcase_table_names'] })
+  ).toMatchObject({ applied: ['0049_pascalcase_table_names', '0050_literature_translation'] })
   for (const [index, [, table]] of names.entries())
     expect(await client.$queryRawUnsafe(`SELECT * FROM "${table}" ORDER BY id`)).toEqual(
       before[index]
@@ -158,7 +158,7 @@ it('rolls back names, records and the ledger on failure and restores FK enforcem
   ).toEqual([])
   expect(await client.$queryRawUnsafe('PRAGMA foreign_key_check')).toEqual([])
   expect(await migrateApplicationDatabase(client)).toMatchObject({
-    applied: ['0049_pascalcase_table_names']
+    applied: ['0049_pascalcase_table_names', '0050_literature_translation']
   })
 })
 
@@ -175,7 +175,7 @@ it('refuses mixed names without rewriting existing rows or recording success', a
 })
 
 it('keeps the released ledger identities immutable', () => {
-  expect(MIGRATION_MANIFEST.at(-2)).toMatchObject({
+  expect(MIGRATION_MANIFEST.find(({ id }) => id === '0048_pdf_annotation_sharing')).toMatchObject({
     id: '0048_pdf_annotation_sharing',
     checksum: '4d346933fd6779e0e7b15e1c51bb97043690230b40d29fb2d7c9dacc19f25e52'
   })

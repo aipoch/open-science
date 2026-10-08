@@ -1,0 +1,2 @@
+{"name":"changed-second-reference-keeps-original","label":"1, 2","translation":"这项合成研究的结果已经得到验证[1, 3]。","expected":"original"}
+{"name":"duplicate-citation-group-is-ambiguous","label":"1, 2","translation":"这项合成研究[1, 2]的结果已经得到验证[1, 2]。","expected":"original"}

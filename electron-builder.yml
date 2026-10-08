@@ -19,7 +19,10 @@ files:
   - '!**/{.worktree,.worktrees,.codegraph,.agents}{,/**/*}'
   # Runtime source builds, diagnostic traces and internal plans are local-only artifacts.
   - '!tmp{,/**/*}'
-  - '!docs/internal{,/**/*}'
+  # electron-builder does not apply .gitignore: local papers, model spikes, screenshots and
+  # traces must never enter an installer built from a developer checkout.
+  - '!docs/{internal,superpowers}{,/**/*}'
+  - '!{test-results,playwright-report,blob-report,coverage,local,.dev-isolate,.hallmark,.scratch,.superpowers}{,/**/*}'
   - '!src/*'
   - '!electron.vite.config.{js,ts,mjs,cjs}'
   - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
@@ -53,6 +56,9 @@ files:
   - '!node_modules/pdfjs-dist/image_decoders{,/**/*}'
   - '!node_modules/pdfjs-dist/types{,/**/*}'
   - '!node_modules/pdfjs-dist/**/*.map'
+  # Local translation selects offline WASM CPU ONNX; retain WASM binaries, omit source maps.
+  - '!node_modules/@huggingface/transformers/**/*.map'
+  - '!node_modules/onnxruntime-{node,common,web}/**/*.map'
   # Micromamba is copied from this staging tree to the resources root by the platform-specific
   # extraResources entries below. Keep the staging copies out of app.asar and avoid shipping a
   # second, unused copy under app.asar.unpacked/resources/bin.
@@ -60,6 +66,24 @@ files:
 asarUnpack:
   - resources/**
   - '!resources/bin{,/**/*}'
+  # The translation worker runs outside asar and resolves its WASM/font dependencies there.
+  - node_modules/@embedpdf/pdfium/**
+  - node_modules/fontkit/**
+  - node_modules/@pdf-lib/upng/**
+  - node_modules/@pdf-lib/standard-fonts/**
+  - node_modules/pako/**
+  - node_modules/unicode-trie/**
+  - node_modules/unicode-properties/**
+  - node_modules/tiny-inflate/**
+  - node_modules/restructure/**
+  - node_modules/fast-deep-equal/**
+  - node_modules/dfa/**
+  - node_modules/clone/**
+  - node_modules/base64-js/**
+  - node_modules/brotli/**
+  - node_modules/tslib/**
+  - node_modules/@swc/helpers/**
+  - node_modules/pdf-lib/**
   - node_modules/@aipoch/credential-identity-probe-native/build/Release/credential_*
   - node_modules/@aipoch/process-tree-native/build/Release/*.node
   - node_modules/@aipoch/safe-file-publisher-native/build/Release/*.node
@@ -69,6 +93,11 @@ asarUnpack:
   - node_modules/detect-libc/**
   - node_modules/semver/**
   - node_modules/sharp/**
+  # Offline translation needs physical WASM assets; Transformers also imports native ONNX bindings.
+  - node_modules/@huggingface/**
+  - node_modules/onnxruntime-node/**
+  - node_modules/onnxruntime-common/**
+  - node_modules/onnxruntime-web/**
   - node_modules/@img/**
   # The ACP agent runs as a spawned child process, so its entry must live outside the asar.
   - node_modules/@agentclientprotocol/claude-agent-acp/**

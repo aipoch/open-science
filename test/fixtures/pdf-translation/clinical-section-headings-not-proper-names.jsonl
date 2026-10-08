@@ -1,0 +1,127 @@
+{"name": "clinical-assessment-heading", "language": "Chinese", "source": "Physical Therapy Assessment", "text": "物理治疗评估", "accepted": true}
+{"name": "clinical-group-heading-keeps-acronym", "language": "Chinese", "source": "XYZ Physical Therapy Group", "text": "XYZ 物理治疗组", "accepted": true}
+{"name": "comparison-heading", "language": "Chinese", "source": "Comparison With Other Studies", "text": "与其他研究比较", "accepted": true}
+{"name": "future-directions-heading", "language": "Chinese", "source": "Future Research Directions", "text": "未来研究方向", "accepted": true}
+{"name": "author-contribution-heading", "language": "Chinese", "source": "Author Contributions", "text": "作者贡献", "accepted": true}
+{"name": "ethics-approval-heading", "language": "Chinese", "source": "Ethics Approval", "text": "伦理审批", "accepted": true}
+{"name": "trial-registration-heading", "language": "Chinese", "source": "Clinical Trial Registration", "text": "临床试验注册", "accepted": true}
+{"name": "clinical-heading-must-not-stay-english", "language": "Chinese", "source": "Physical Therapy Assessment", "text": "Physical Therapy Assessment", "accepted": false, "corrected": "物理治疗评估"}
+{"name": "clinical-heading-must-not-retain-english-category", "language": "Chinese", "source": "Clinical Trial Registration", "text": "Clinical Trial 注册", "accepted": false, "corrected": "临床试验注册"}
+{"name": "strengths-and-limitations-heading-echo", "language": "Chinese", "source": "Strengths and Limitations", "text": "Strengths and Limitations", "accepted": false, "corrected": "优势与局限性"}
+{"name": "strengths-and-limitations-heading-translated", "language": "Chinese", "source": "Strengths and Limitations", "text": "优势与局限性", "accepted": true}
+{"name": "unknown-titled-name-remains-protected", "language": "Chinese", "source": "Example and Sample Institute", "text": "Example and Sample Institute", "accepted": true}
+{"language": "Chinese", "name": "original-article-category-is-translatable", "source": "Original Article", "text": "原创研究", "accepted": true}
+{"language": "Chinese", "name": "review-article-category-is-translatable", "source": "Review Article", "text": "综述文章", "accepted": true}
+{"language": "Chinese", "name": "case-report-category-is-translatable", "source": "Case Report", "text": "病例报告", "accepted": true}
+{"language": "Chinese", "name": "article-category-must-not-remain-english", "source": "Original Article", "text": "Original Article", "accepted": false, "corrected": "原创研究"}
+{"language": "Chinese", "name": "all-grade-table-summary-is-translatable", "source": "All Grade", "text": "所有级别", "accepted": true}
+{"language": "Chinese", "name": "total-cycles-table-summary-is-translatable", "source": "Total Cycles", "text": "总周期数", "accepted": true}
+{"language": "Chinese", "name": "clinical-table-summary-must-not-remain-english", "source": "All Grade", "text": "All Grade", "accepted": false, "corrected": "所有级别"}
+{"name": "open-access-publication-label-is-translatable", "language": "Chinese", "source": "Open Access", "text": "开放获取", "accepted": true}
+{"name": "uppercase-open-access-label-is-translatable", "language": "Chinese", "source": "OPEN ACCESS", "text": "开放获取", "accepted": true}
+{"name": "hyphenated-open-access-label-is-translatable", "language": "French", "source": "Open-Access", "text": "Accès ouvert", "accepted": true}
+{"name": "open-access-label-must-not-remain-english", "language": "Chinese", "source": "Open Access", "text": "Open Access", "accepted": false, "corrected": "开放获取"}
+{"name": "name-containing-open-access-remains-eligible", "language": "Chinese", "source": "Open Access Institute", "text": "Open Access Institute", "accepted": true}
+{"name": "object-detection-label-is-translatable", "language": "Chinese", "source": "Object Detection", "text": "目标检测", "accepted": true}
+{"name": "object-detection-label-must-not-remain-english", "language": "Chinese", "source": "Object Detection", "text": "Object Detection", "accepted": false, "corrected": "目标检测"}
+{"name": "finegrain-classification-label-is-translatable", "language": "Chinese", "source": "Finegrain Classification", "text": "细粒度分类", "accepted": true}
+{"name": "finegrain-classification-label-must-not-remain-english", "language": "Chinese", "source": "Finegrain Classification", "text": "Finegrain Classification", "accepted": false, "corrected": "细粒度分类"}
+{"name": "fine-grained-classification-label-is-translatable", "language": "Chinese", "source": "Fine-Grained Classification", "text": "细粒度分类", "accepted": true}
+{"name": "fine-grained-classification-label-must-not-remain-english", "language": "Chinese", "source": "Fine-Grained Classification", "text": "Fine-Grained Classification", "accepted": false, "corrected": "细粒度分类"}
+{"name": "landmark-recognition-label-is-translatable", "language": "Chinese", "source": "Landmark Recognition", "text": "地标识别", "accepted": true}
+{"name": "landmark-recognition-label-must-not-remain-english", "language": "Chinese", "source": "Landmark Recognition", "text": "Landmark Recognition", "accepted": false, "corrected": "地标识别"}
+{"name": "filter-shape-label-is-translatable", "language": "Chinese", "source": "Filter Shape", "text": "滤波器形状", "accepted": true}
+{"name": "filter-shape-label-must-not-remain-english", "language": "Chinese", "source": "Filter Shape", "text": "Filter Shape", "accepted": false, "corrected": "滤波器形状"}
+{"name": "input-size-label-is-translatable", "language": "Chinese", "source": "Input Size", "text": "输入大小", "accepted": true}
+{"name": "input-size-label-must-not-remain-english", "language": "Chinese", "source": "Input Size", "text": "Input Size", "accepted": false, "corrected": "输入大小"}
+{"name": "fully-connected-label-is-translatable", "language": "Chinese", "source": "Fully Connected", "text": "全连接", "accepted": true}
+{"name": "fully-connected-label-must-not-remain-english", "language": "Chinese", "source": "Fully Connected", "text": "Fully Connected", "accepted": false, "corrected": "全连接"}
+{"name": "multiply-adds-label-is-translatable", "language": "Chinese", "source": "Mult-Adds", "text": "乘加运算", "accepted": true}
+{"name": "multiply-adds-label-must-not-remain-english", "language": "Chinese", "source": "Mult-Adds", "text": "Mult-Adds", "accepted": false, "corrected": "乘加运算"}
+{"name": "train-test-columns-label-is-translatable", "language": "Chinese", "source": "Train Test", "text": "训练 测试", "accepted": true}
+{"name": "train-test-columns-label-must-not-remain-english", "language": "Chinese", "source": "Train Test", "text": "Train Test", "accepted": false, "corrected": "训练 测试"}
+{"name": "model-qualifier-label-is-translatable", "language": "Chinese", "source": "Conv NimbusNet", "text": "卷积 NimbusNet", "accepted": true}
+{"name": "model-qualifier-label-must-not-remain-english", "language": "Chinese", "source": "Conv NimbusNet", "text": "Conv NimbusNet", "accepted": false, "corrected": "卷积 NimbusNet"}
+{"name": "model-depth-qualifier-label-is-translatable", "language": "Chinese", "source": "Shallow NimbusNet", "text": "浅层 NimbusNet", "accepted": true}
+{"name": "model-depth-qualifier-label-must-not-remain-english", "language": "Chinese", "source": "Shallow NimbusNet", "text": "Shallow NimbusNet", "accepted": false, "corrected": "浅层 NimbusNet"}
+{"name": "technical-words-inside-unknown-name-remain-protected", "language": "Chinese", "source": "Object Detection Institute", "text": "Object Detection Institute", "accepted": true}
+{"name": "distinct-unknown-name-remains-protected", "language": "Chinese", "source": "Filter Shape Foundation", "text": "Filter Shape Foundation", "accepted": true}
+{"name": "depthwise-separable-conv-translated", "source": "Depthwise Separable Conv", "text": "深度可分离卷积", "language": "Chinese", "accepted": true}
+{"name": "depthwise-separable-conv-copied", "source": "Depthwise Separable Conv", "text": "Depthwise Separable Conv", "language": "Chinese", "accepted": false, "corrected": "深度可分离卷积"}
+{"name": "depthwise-convolution-translated", "source": "Depthwise Convolution", "text": "逐通道卷积", "language": "Chinese", "accepted": true}
+{"name": "depthwise-convolution-copied", "source": "Depthwise Convolution", "text": "Depthwise Convolution", "language": "Chinese", "accepted": false, "corrected": "逐通道卷积"}
+{"name": "pointwise-convolution-translated", "source": "Pointwise Convolution", "text": "逐点卷积", "language": "Chinese", "accepted": true}
+{"name": "pointwise-convolution-copied", "source": "Pointwise Convolution", "text": "Pointwise Convolution", "language": "Chinese", "accepted": false, "corrected": "逐点卷积"}
+{"name": "question-answer-pair-translated", "language": "Chinese", "source": "Question Answer Pair", "text": "问答对", "accepted": true}
+{"name": "question-answer-pair-must-not-stay-english", "language": "Chinese", "source": "Question Answer Pair", "text": "Question Answer Pair", "accepted": false, "corrected": "问答对"}
+{"name": "hyphenated-question-answer-pair-translated", "language": "Chinese", "source": "Question-Answer Pair", "text": "问答对", "accepted": true}
+{"name": "hyphenated-question-answer-pair-must-not-stay-english", "language": "Chinese", "source": "Question-Answer Pair", "text": "Question-Answer Pair", "accepted": false, "corrected": "问答对"}
+{"name": "question-answering-translated", "language": "Chinese", "source": "Question Answering", "text": "问答", "accepted": true}
+{"name": "question-answering-must-not-stay-english", "language": "Chinese", "source": "Question Answering", "text": "Question Answering", "accepted": false, "corrected": "问答"}
+{"name": "fine-tuning-translated", "language": "Chinese", "source": "Fine-Tuning", "text": "微调", "accepted": true}
+{"name": "fine-tuning-must-not-stay-english", "language": "Chinese", "source": "Fine-Tuning", "text": "Fine-Tuning", "accepted": false, "corrected": "微调"}
+{"name": "spaced-fine-tuning-translated", "language": "Chinese", "source": "Fine Tuning", "text": "微调", "accepted": true}
+{"name": "spaced-fine-tuning-must-not-stay-english", "language": "Chinese", "source": "Fine Tuning", "text": "Fine Tuning", "accepted": false, "corrected": "微调"}
+{"name": "language-understanding-translated", "language": "Chinese", "source": "Language Understanding", "text": "语言理解", "accepted": true}
+{"name": "language-understanding-must-not-stay-english", "language": "Chinese", "source": "Language Understanding", "text": "Language Understanding", "accepted": false, "corrected": "语言理解"}
+{"name": "segment-embeddings-translated", "language": "Chinese", "source": "Segment Embeddings", "text": "片段嵌入", "accepted": true}
+{"name": "segment-embeddings-must-not-stay-english", "language": "Chinese", "source": "Segment Embeddings", "text": "Segment Embeddings", "accepted": false, "corrected": "片段嵌入"}
+{"name": "position-embeddings-translated", "language": "Chinese", "source": "Position Embeddings", "text": "位置嵌入", "accepted": true}
+{"name": "position-embeddings-must-not-stay-english", "language": "Chinese", "source": "Position Embeddings", "text": "Position Embeddings", "accepted": false, "corrected": "位置嵌入"}
+{"name": "token-embeddings-translated", "language": "Chinese", "source": "Token Embeddings", "text": "词元嵌入", "accepted": true}
+{"name": "token-embeddings-must-not-stay-english", "language": "Chinese", "source": "Token Embeddings", "text": "Token Embeddings", "accepted": false, "corrected": "词元嵌入"}
+{"name": "question-answer-institute-keeps-identity", "language": "Chinese", "source": "Question Answer Institute", "text": "Question Answer Institute", "accepted": true}
+{"name": "fine-tuning-foundation-keeps-identity", "language": "Chinese", "source": "Fine Tuning Foundation", "text": "Fine Tuning Foundation", "accepted": true}
+{"name": "segment-embeddings-institute-keeps-identity", "language": "Chinese", "source": "Segment Embeddings Institute", "text": "Segment Embeddings Institute", "accepted": true}
+{"name": "dev-test-translated", "language": "Chinese", "source": "Dev Test", "text": "开发 测试", "accepted": true}
+{"name": "dev-test-must-not-stay-english", "language": "Chinese", "source": "Dev Test", "text": "Dev Test", "accepted": false, "corrected": "开发 测试"}
+{"name": "dev-set-translated", "language": "Chinese", "source": "Dev Set", "text": "开发集", "accepted": true}
+{"name": "dev-set-must-not-stay-english", "language": "Chinese", "source": "Dev Set", "text": "Dev Set", "accepted": false, "corrected": "开发集"}
+{"name": "development-set-translated", "language": "Chinese", "source": "Development Set", "text": "开发集", "accepted": true}
+{"name": "development-set-must-not-stay-english", "language": "Chinese", "source": "Development Set", "text": "Development Set", "accepted": false, "corrected": "开发集"}
+{"name": "dev-set-accuracy-translated", "language": "Chinese", "source": "Dev Set Accuracy", "text": "开发集准确率", "accepted": true}
+{"name": "dev-set-accuracy-must-not-stay-english", "language": "Chinese", "source": "Dev Set Accuracy", "text": "Dev Set Accuracy", "accepted": false, "corrected": "开发集准确率"}
+{"name": "single-sentence-translated", "language": "Chinese", "source": "Single Sentence", "text": "单句", "accepted": true}
+{"name": "single-sentence-must-not-stay-english", "language": "Chinese", "source": "Single Sentence", "text": "Single Sentence", "accepted": false, "corrected": "单句"}
+{"name": "additional-ablation-studies-translated", "language": "Chinese", "source": "Additional Ablation Studies", "text": "补充消融研究", "accepted": true}
+{"name": "additional-ablation-studies-must-not-stay-english", "language": "Chinese", "source": "Additional Ablation Studies", "text": "Additional Ablation Studies", "accepted": false, "corrected": "补充消融研究"}
+{"name": "masking-rates-translated", "language": "Chinese", "source": "Masking Rates", "text": "掩码比例", "accepted": true}
+{"name": "masking-rates-must-not-stay-english", "language": "Chinese", "source": "Masking Rates", "text": "Masking Rates", "accepted": false, "corrected": "掩码比例"}
+{"name": "dev-set-results-translated", "language": "Chinese", "source": "Dev Set Results", "text": "开发集结果", "accepted": true}
+{"name": "dev-set-results-must-not-stay-english", "language": "Chinese", "source": "Dev Set Results", "text": "Dev Set Results", "accepted": false, "corrected": "开发集结果"}
+{"name": "no-nsp-ablation-translated", "language": "Chinese", "source": "No NSP", "text": "无 NSP", "accepted": true}
+{"name": "no-nsp-ablation-must-not-stay-english", "language": "Chinese", "source": "No NSP", "text": "No NSP", "accepted": false, "corrected": "无 NSP"}
+{"name": "no-nsp-institute-keeps-identity", "language": "Chinese", "source": "No NSP Institute", "text": "No NSP Institute", "accepted": true}
+{"name": "physical-symptoms-table-heading-translated", "language": "Chinese", "source": "Physical Symptoms", "text": "身体症状", "accepted": true}
+{"name": "physical-symptoms-heading-must-not-stay-english", "language": "Chinese", "source": "Physical Symptoms", "text": "Physical Symptoms", "accepted": false, "corrected": "身体症状"}
+{"name": "physical-symptoms-institute-keeps-identity", "language": "Chinese", "source": "Physical Symptoms Institute", "text": "Physical Symptoms Institute", "accepted": true}
+{"name": "diagram-context-qualifier-is-prose", "source": "Limited Context", "text": "有限上下文", "language": "Chinese", "accepted": true}
+{"name": "diagram-context-qualifier-must-be-translated", "source": "Limited Context", "text": "Limited Context", "language": "Chinese", "accepted": false, "corrected": "有限上下文"}
+{"name": "containing-context-organization-keeps-identity", "source": "Limited Context Institute", "text": "Limited Context Institute", "language": "Chinese", "accepted": true}
+{"name":"intraoperative-heart-rate-label-is-prose","source":"Intraoperative HR","text":"术中 HR","language":"Chinese","accepted":true}
+{"name":"intraoperative-heart-rate-qualifier-must-be-translated","source":"Intraoperative HR","text":"Intraoperative HR","language":"Chinese","accepted":false,"corrected":"术中 HR"}
+{"name":"containing-heart-rate-organization-keeps-identity","source":"Intraoperative HR Institute","text":"Intraoperative HR Institute","language":"Chinese","accepted":true}
+{"name": "intraoperative-heart-rate-must-retain-metric-acronym", "source": "Intraoperative HR", "text": "术中 BP", "language": "Chinese", "accepted": false, "corrected": "术中 HR", "changedMeaning": true}
+{"name":"round13-ordinary-label-0","source":"Token Classification","text":"词元分类","language":"Chinese","accepted":true}
+{"name":"round13-copied-ordinary-label-0","source":"Token Classification","text":"Token Classification","language":"Chinese","accepted":false,"corrected":"词元分类"}
+{"name":"round13-ordinary-label-1","source":"Warmup Steps","text":"预热步数","language":"Chinese","accepted":true}
+{"name":"round13-copied-ordinary-label-1","source":"Warmup Steps","text":"Warmup Steps","language":"Chinese","accepted":false,"corrected":"预热步数"}
+{"name":"round13-ordinary-label-2","source":"Learning Rates","text":"学习率","language":"Chinese","accepted":true}
+{"name":"round13-copied-ordinary-label-2","source":"Learning Rates","text":"Learning Rates","language":"Chinese","accepted":false,"corrected":"学习率"}
+{"name":"round13-ordinary-label-3","source":"Weight Decay","text":"权重衰减","language":"Chinese","accepted":true}
+{"name":"round13-copied-ordinary-label-3","source":"Weight Decay","text":"Weight Decay","language":"Chinese","accepted":false,"corrected":"权重衰减"}
+{"name":"round13-ordinary-label-4","source":"Learning Rate Decay","text":"学习率衰减","language":"Chinese","accepted":true}
+{"name":"round13-copied-ordinary-label-4","source":"Learning Rate Decay","text":"Learning Rate Decay","language":"Chinese","accepted":false,"corrected":"学习率衰减"}
+{"name":"round13-ordinary-label-5","source":"Gradient Clipping","text":"梯度裁剪","language":"Chinese","accepted":true}
+{"name":"round13-copied-ordinary-label-5","source":"Gradient Clipping","text":"Gradient Clipping","language":"Chinese","accepted":false,"corrected":"梯度裁剪"}
+{"name":"round13-ordinary-label-6","source":"Training Time","text":"训练时间","language":"Chinese","accepted":true}
+{"name":"round13-copied-ordinary-label-6","source":"Training Time","text":"Training Time","language":"Chinese","accepted":false,"corrected":"训练时间"}
+{"name":"round13-ordinary-label-7","source":"Transformer Layer","text":"Transformer 层","language":"Chinese","accepted":true}
+{"name":"round13-copied-ordinary-label-7","source":"Transformer Layer","text":"Transformer Layer","language":"Chinese","accepted":false,"corrected":"Transformer 层"}
+{"name":"round13-ordinary-label-8","source":"ReSeARCH ARTICLe","text":"研究论文","language":"Chinese","accepted":true}
+{"name":"round13-copied-ordinary-label-8","source":"ReSeARCH ARTICLe","text":"ReSeARCH ARTICLe","language":"Chinese","accepted":false,"corrected":"研究论文"}
+{"name":"round13-containing-name-token-classification-institute","source":"Token Classification Institute","text":"Token Classification Institute","language":"Chinese","accepted":true}
+{"name":"round13-containing-name-warmup-steps-foundation","source":"Warmup Steps Foundation","text":"Warmup Steps Foundation","language":"Chinese","accepted":true}
+{"name":"round13-containing-name-weight-decay-institute","source":"Weight Decay Institute","text":"Weight Decay Institute","language":"Chinese","accepted":true}
+{"name":"round13-containing-name-transformer-layer-institute","source":"Transformer Layer Institute","text":"Transformer Layer Institute","language":"Chinese","accepted":true}
+{"name":"round13-containing-name-research-labs","source":"ReSeARCH Labs","text":"ReSeARCH Labs","language":"Chinese","accepted":true}

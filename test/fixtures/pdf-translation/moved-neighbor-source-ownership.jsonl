@@ -1,0 +1,5 @@
+{"name": "retained body excludes translated neighbor original glyph", "change": "moved-neighbor", "accepted": true}
+{"name": "retained body excludes unchanged uniquely owned neighbor", "change": "unchanged-neighbor", "accepted": true}
+{"name": "retained body cannot silently change", "change": "changed-body", "accepted": false}
+{"name": "retained body cannot disappear", "change": "missing-body", "accepted": false}
+{"name":"unchanged-native-transform-crosses-decimal-rounding-boundary","change":"rounded-neighbor","accepted":true}

@@ -54,6 +54,7 @@ const settingsPaths = {
   providerRuntimeProjection: resolve(settingsRoot, 'provider-runtime-projection.ts'),
   backendResolver: resolve(settingsRoot, 'backend-resolver.ts'),
   backendSelection: resolve(settingsRoot, 'backend-selection-owner.ts'),
+  backendTarget: resolve(settingsRoot, 'backend-target.ts'),
   backendRoutePlanner: resolve(settingsRoot, 'backend-route-planner.ts'),
   providerTransportOwner: resolve(settingsRoot, 'provider-transport-owner.ts'),
   responsesBridge: resolve(settingsRoot, 'responses-bridge.ts'),
@@ -453,6 +454,7 @@ describe('Settings backend ownership architecture', () => {
       'resolveActiveReasoningEffort',
       'resolveActiveSpawnConfig',
       'resolveAdmittedTarget',
+      'resolveExplicitDirectProvider',
       'resolveExplicitTarget',
       'resolveSelection'
     ])
@@ -495,7 +497,7 @@ describe('Settings backend ownership architecture', () => {
         previewCustomServerTemplateImport previewGitHubSkill previewSkillArchive previewSkillZip
         createWslSupportHandoff probeWslSetup provisionedConnectorSkillNames publishHostSkill refreshProviderModels registeredHelperCatalog rememberCodexAutoHttpsFallback removeCustomServer removeDeviceCredential removeGitHubToken removeNotebookNetwork
         removeManualInterpreter resolveActiveModelChangeTarget resolveActiveReasoningEffort restoreLocalShellRuntimePreference reviewNotebookPrivateDestination
-        resolveAdmittedSubagentBackend resolveAgentBackend resolveDeviceOAuthCredential resolveExplicitAgentBackend resolveSkillDocument resolveSubagentExecutionModel saveCustomServerOAuthState saveGitHubToken saveValidatedProvider
+        resolveAdmittedSubagentBackend resolveAgentBackend resolveDeviceOAuthCredential resolveExplicitAgentBackend resolveExplicitDirectProvider resolveSkillDocument resolveSubagentExecutionModel saveCustomServerOAuthState saveGitHubToken saveValidatedProvider
         scanRepoSkills selectWslProfile setActiveProvider setAgentEnvironmentCreationEnabled setAgentFramework setAgentRouting setAppIconVariant setClosePreference switchLocalShellToPowerShell
         setComputeBookmarks setConnectorAutoAllow setConnectorEnabled
         setConversationSkillImportEnabled setCustomServerAuthenticator setCustomServerEnabled
@@ -575,7 +577,6 @@ describe('Settings backend ownership architecture', () => {
     expect(importersOf(settingsPaths.backendResolver)).toEqual([
       'src/main/acp/artifact-code-reconstruction-runner.ts',
       'src/main/acp/image-input-compatibility-owner.ts',
-      'src/main/acp/restricted-inference-runner.ts',
       'src/main/artifacts/code-reconstruction.ts',
       'src/main/notebook/host-model-service.ts',
       'src/main/reviewer/model-runtime-owner.ts',
@@ -609,6 +610,7 @@ describe('Settings backend ownership architecture', () => {
       'src/main/composition/agent-runtime.ts',
       'src/main/composition/connectors.ts',
       'src/main/composition/delegation.ts',
+      'src/main/composition/document-reading.ts',
       'src/main/composition/handoff.ts',
       'src/main/composition/managed-files.ts',
       'src/main/composition/notebook-bridge.ts',
@@ -776,9 +778,13 @@ describe('Settings backend ownership architecture', () => {
       'type',
       'vendorId'
     ])
-    expect(typePropertyNames(settingsPaths.backendSelection, 'ExplicitAgentBackendTarget')).toEqual(
-      ['frameworkId', 'model', 'providerId', 'reasoningEffort', 'resolvedReasoningEffort']
-    )
+    expect(typePropertyNames(settingsPaths.backendTarget, 'ExplicitAgentBackendTarget')).toEqual([
+      'frameworkId',
+      'model',
+      'providerId',
+      'reasoningEffort',
+      'resolvedReasoningEffort'
+    ])
   })
 
   it('locks one production Settings document owner and the narrow Compute legacy port', () => {
@@ -911,7 +917,9 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/validate.test.ts',
       'src/main/settings/validate.ts',
       'src/main/settings/xai-oauth.test.ts',
-      'src/main/settings/xai-provider-account-owner.test.ts'
+      'src/main/settings/xai-provider-account-owner.test.ts',
+      'src/main/settings/provider-text-generation.ts',
+      'src/main/settings/provider-text-generation.test.ts'
     ])
     expect(manifest.modules.settings_provider_accounts.interfacePaths).toEqual([
       'src/main/settings/provider-accounts.ts',
@@ -925,7 +933,8 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/provider-env.ts',
       'src/main/settings/provider-resource-limits.ts',
       'src/main/settings/provider-runtime-projection.ts',
-      'src/main/settings/validate.ts'
+      'src/main/settings/validate.ts',
+      'src/main/settings/provider-text-generation.ts'
     ])
     expect(manifest.modules.settings_backend_resolution.ownerPaths).toEqual([
       'src/main/settings/backend-resolver.ts',
@@ -977,7 +986,8 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/responses-response-adapter.test.ts',
       'src/main/settings/system-proxy.test.ts',
       'src/main/settings/xai-oauth-provider-bridge.test.ts',
-      'src/main/settings/xai-protocol.test.ts'
+      'src/main/settings/xai-protocol.test.ts',
+      'src/main/settings/backend-target.ts'
     ])
     expect(manifest.modules.settings_backend_resolution.interfacePaths).toEqual([
       'src/main/settings/backend-resolver.ts',
@@ -996,7 +1006,8 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/responses-response-adapter.ts',
       'src/main/settings/system-proxy.ts',
       'src/main/settings/xai-oauth-provider-bridge.ts',
-      'src/main/settings/xai-protocol.ts'
+      'src/main/settings/xai-protocol.ts',
+      'src/main/settings/backend-target.ts'
     ])
     expect(manifest.modules.settings_service_facade.ownerPaths).toEqual([
       'src/main/settings/service.ts',
@@ -1551,7 +1562,16 @@ describe('Settings backend ownership architecture', () => {
       'src/main/session-persistence/attention-projection.test.ts',
       'src/main/acp/approved-handoff-outcome.integration.test.ts',
       'src/main/acp/approved-handoff-outcome.test.ts',
-      'src/main/agent-framework/claude-shared-settings.integration.test.ts'
+      'src/main/agent-framework/claude-shared-settings.integration.test.ts',
+      'src/main/literature/pdf-translation/checkpoints.test.ts',
+      'src/main/literature/pdf-translation/index.test.ts',
+      'src/main/literature/pdf-translation/diagnostics.test.ts',
+      'src/main/literature/pdf-translation/ipc.test.ts',
+      'src/main/literature/pdf-translation/reader-ownership.test.ts',
+      'src/main/literature/pdf-translation/usage.test.ts',
+      'src/main/literature/pdf-translation/pdf-cache.test.ts',
+      'src/main/literature/pdf-translation/api-target.test.ts',
+      'src/main/literature/pdf-translation/agent-target.test.ts'
     ])
     expect(
       [

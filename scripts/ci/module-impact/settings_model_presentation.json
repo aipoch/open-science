@@ -258,7 +258,10 @@
       "src/renderer/web/renderer-argument-shape-characterization.test.ts",
       "src/renderer/src/pages/literature/detail/LiteratureFullTextLookup.render.test.tsx",
       "src/renderer/src/pages/literature/collections/SmartCollectionPanel.test.tsx",
-      "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.interaction.test.tsx"
+      "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.interaction.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationControls.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/PdfPreview.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationEditions.test.tsx"
     ]
   },
   "capabilityOverlays": [],

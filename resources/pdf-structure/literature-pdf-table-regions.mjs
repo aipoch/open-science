@@ -2,6 +2,7 @@
 import { captionKind } from './literature-pdf-caption-group.mjs'
 import { area, intersection as intersect } from './literature-pdf-page-geometry.mjs'
 import { inside, rebaseTableCrop } from './literature-pdf-table-geometry.mjs'
+import { clusterTableRulePositions } from './literature-pdf-table-rules.mjs'
 
 // A detector can start a lower table above its title when an upper table ends
 // close to the next caption.  Keep the lower region bounded by its explicit
@@ -899,6 +900,21 @@ export function recoverCaptionedRuledTables(items, rules, captions, pageNumber, 
             ruled.structure.objects.filter((object) => object.label === 'table row').length))
         ? openRule
         : ruled
+    if (recovered) {
+      // An indented caption can clip the stub column's border from `bounded`.
+      // Check the original separators before accepting the remaining numeric grid.
+      const [left, top, right] = recovered.cropRect
+      const boundaries = recovered.structure.objects
+        .filter((o) => o.label === 'table row')
+        .flatMap((o) => [o.rect[1] + top, o.rect[3] + top])
+      const overhangs = rules.filter(
+        (r) =>
+          r[1] === r[3] &&
+          boundaries.some((y) => Math.abs(r[1] - y) <= 1) &&
+          ((r[0] < left - 2 && r[2] >= left - 2) || (r[2] > right + 2 && r[0] <= right + 2))
+      )
+      if (clusterTableRulePositions(overhangs.map((r) => r[1])).length >= 2) continue
+    }
     if (
       !recovered ||
       [...existing, ...tables].some(

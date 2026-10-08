@@ -49,7 +49,8 @@
     "src/main/settings/responses-response-adapter.test.ts",
     "src/main/settings/system-proxy.test.ts",
     "src/main/settings/xai-oauth-provider-bridge.test.ts",
-    "src/main/settings/xai-protocol.test.ts"
+    "src/main/settings/xai-protocol.test.ts",
+    "src/main/settings/backend-target.ts"
   ],
   "interfacePaths": [
     "src/main/settings/backend-resolver.ts",
@@ -68,7 +69,8 @@
     "src/main/settings/responses-response-adapter.ts",
     "src/main/settings/system-proxy.ts",
     "src/main/settings/xai-oauth-provider-bridge.ts",
-    "src/main/settings/xai-protocol.ts"
+    "src/main/settings/xai-protocol.ts",
+    "src/main/settings/backend-target.ts"
   ],
   "consumerModules": ["settings_service_facade", "reviewer_orchestrator", "artifact_provenance"],
   "testFiles": {
@@ -560,7 +562,16 @@
       "src/main/session-persistence/attention-projection.test.ts",
       "src/main/acp/approved-handoff-outcome.integration.test.ts",
       "src/main/acp/approved-handoff-outcome.test.ts",
-      "src/main/agent-framework/claude-shared-settings.integration.test.ts"
+      "src/main/agent-framework/claude-shared-settings.integration.test.ts",
+      "src/main/literature/pdf-translation/checkpoints.test.ts",
+      "src/main/literature/pdf-translation/index.test.ts",
+      "src/main/literature/pdf-translation/diagnostics.test.ts",
+      "src/main/literature/pdf-translation/ipc.test.ts",
+      "src/main/literature/pdf-translation/reader-ownership.test.ts",
+      "src/main/literature/pdf-translation/usage.test.ts",
+      "src/main/literature/pdf-translation/pdf-cache.test.ts",
+      "src/main/literature/pdf-translation/api-target.test.ts",
+      "src/main/literature/pdf-translation/agent-target.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],

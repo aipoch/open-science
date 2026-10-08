@@ -1,0 +1,4 @@
+{"name": "retain-embedded-figure-and-translate-neighbor", "preserve": true}
+{"name": "strict-figure-overlap-is-rejected", "preserve": false}
+{"name":"clipped-form-ink-outside-bbox-does-not-block-prose","preserve":true,"clipped":true}
+{"name": "borrowed-bottom-whitespace-stops-before-figure-paint", "preserve": true, "borrowed": true}

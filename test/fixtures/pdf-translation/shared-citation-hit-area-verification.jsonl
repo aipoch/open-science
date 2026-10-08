@@ -1,0 +1,6 @@
+{"name":"two-hit-areas-follow-one-unchanged-citation-run","change":"none","accepted":true}
+{"name":"second-hit-area-moves-without-its-glyphs","change":"second-link-offset","accepted":false}
+{"name":"citation-hit-area-resized-after-generation","change":"width","accepted":false}
+{"name":"citation-number-changed-after-generation","change":"text","accepted":false}
+{"name":"citation-action-swapped-after-generation","change":"action","accepted":false}
+{"name":"source-text-combined-with-prose-and-touching-target","change":"combined","accepted":true}

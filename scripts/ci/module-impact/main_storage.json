@@ -763,7 +763,16 @@
       "src/main/notebook/dependency-analysis.anndata.test.ts",
       "src/main/notebook/dependency-analysis.heatmap.test.ts",
       "src/main/notebook/dependency-analysis.pycirclize.test.ts",
-      "src/main/notebook/dependency-analysis.set-intersections.test.ts"
+      "src/main/notebook/dependency-analysis.set-intersections.test.ts",
+      "src/main/literature/pdf-translation/index.test.ts",
+      "src/main/literature/pdf-translation/ipc.test.ts",
+      "src/main/literature/pdf-translation/checkpoints.test.ts",
+      "src/main/literature/pdf-translation/usage.test.ts",
+      "src/main/literature/pdf-translation/diagnostics.test.ts",
+      "src/main/literature/pdf-translation/reader-ownership.test.ts",
+      "src/main/literature/pdf-translation/local.test.ts",
+      "src/main/local-models/ipc.test.ts",
+      "src/main/literature/pdf-translation/pdf-cache.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

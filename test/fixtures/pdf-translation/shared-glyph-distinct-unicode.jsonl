@@ -1,0 +1,5 @@
+{"name": "bullet-before-middle-dot", "translations": ["• 首项", "数学乘积 a · b"]}
+{"name": "middle-dot-before-bullet", "translations": ["数学乘积 a · b", "• 首项"]}
+{"name": "same-line-bullet-and-multiplication-dot", "translations": ["• 比较 a · b 与 c · d。", "• 后续说明"]}
+{"name": "same-line-reversed-glyph-aliases", "translations": ["乘积 a · b；• 首项；再次 a · b。", "• 后续说明"]}
+{"name":"greek-compatibility-variant-keeps-distinct-unicode","translations":["• 比较 ϵ 与 ε。","乘积 a · b，ε 和 ϵ 均保留。"]}

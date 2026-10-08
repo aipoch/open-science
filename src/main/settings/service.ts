@@ -1928,6 +1928,12 @@ class SettingsService {
     return this.backendResolver.resolveExplicitTarget(target, context)
   }
 
+  async resolveExplicitDirectProvider(
+    target: ExplicitAgentBackendTarget
+  ): ReturnType<AgentBackendResolver['resolveExplicitDirectProvider']> {
+    return this.backendResolver.resolveExplicitDirectProvider(target)
+  }
+
   async resolveAdmittedSubagentBackend(
     ...args: Parameters<ScenarioModelOwner['subagent']['resolveAdmittedBackend']>
   ): ReturnType<ScenarioModelOwner['subagent']['resolveAdmittedBackend']> {

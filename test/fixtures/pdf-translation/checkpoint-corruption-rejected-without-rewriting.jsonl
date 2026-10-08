@@ -1,0 +1,6 @@
+{"name": "payload-revision-disagrees-with-row", "corruption": "revision"}
+{"name": "payload-checksum-disagrees-with-source", "corruption": "checksum"}
+{"name": "payload-belongs-to-another-attachment", "corruption": "attachment"}
+{"name": "duplicate-sparse-source-indices", "corruption": "duplicate-indices"}
+{"name": "truncated-checkpoint-json", "corruption": "truncated-json"}
+{"name": "checkpoint-exceeds-storage-size-limit", "corruption": "oversized"}

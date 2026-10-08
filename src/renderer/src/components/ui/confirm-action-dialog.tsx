@@ -22,6 +22,7 @@ type ConfirmActionDialogProps = {
   loadingLabel?: string
   loading?: boolean
   destructive?: boolean
+  dismissOnOutside?: boolean
   testId?: string
   onCancel: () => void
   onConfirm: () => void
@@ -37,6 +38,7 @@ const ConfirmActionDialog = ({
   loadingLabel,
   loading = false,
   destructive = false,
+  dismissOnOutside = false,
   testId,
   onCancel,
   onConfirm,
@@ -49,12 +51,18 @@ const ConfirmActionDialog = ({
     }}
   >
     <AlertDialog.Portal>
-      <AlertDialog.Overlay className={`${dialogOverlayClassName} z-[70]`} />
+      <AlertDialog.Overlay
+        className={`${dialogOverlayClassName} z-[70]`}
+        onPointerDown={(event) => {
+          if (dismissOnOutside && !loading && event.target === event.currentTarget) onCancel()
+        }}
+      />
       <AlertDialog.Content
         className={dialogPanelClassName(
           'z-[70] flex w-[min(420px,calc(100vw-2rem))] flex-col overflow-hidden p-0'
         )}
         data-testid={testId}
+        data-preview-escape-boundary
         onCloseAutoFocus={onCloseAutoFocus}
         onEscapeKeyDown={(event) => {
           if (loading || event.isComposing) event.preventDefault()

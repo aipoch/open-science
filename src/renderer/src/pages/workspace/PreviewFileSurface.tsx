@@ -89,7 +89,7 @@ import {
 } from './preview-file-item'
 import { PreviewFileContent } from './previews/PreviewFileContent'
 import type { PreviewDownloadVersionContext } from './previews/preview-runtime-context'
-import type { PreviewInteractionPort } from './previews/preview-types'
+import type { ActivePdfTranslation, PreviewInteractionPort } from './previews/preview-types'
 import { ArtifactProvenancePanel } from './ArtifactProvenancePanel'
 import { ManagedVersionDiffError } from './ManagedVersionDiffError'
 import { PreviewProvenanceSplit } from './PreviewProvenanceSplit'
@@ -803,6 +803,12 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
     const [saving, setSaving] = useState(false)
     const [editError, setEditError] = useState<string>()
     const [conflictHead, setConflictHead] = useState<ManagedFileVersionDescriptor>()
+    const [activePdfTranslation, setActivePdfTranslation] = useState<ActivePdfTranslation>()
+    const [pendingTranslationLeave, setPendingTranslationLeave] = useState<() => boolean | void>()
+    const reportPdfTranslation = useCallback((translation: ActivePdfTranslation | undefined) => {
+      setActivePdfTranslation(translation)
+      if (!translation) setPendingTranslationLeave(undefined)
+    }, [])
     const [pendingLeaveAction, setPendingLeaveAction] = useState<() => boolean | void>()
     const saveGenerationRef = useRef(0)
     const pendingSaveRef = useRef<ManagedFileVersionSaveTextEditRequest | undefined>(undefined)
@@ -1146,11 +1152,15 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
 
     const guardLeave = useCallback(
       (action: () => boolean | void): boolean => {
+        if (activePdfTranslation) {
+          setPendingTranslationLeave((current) => current ?? action)
+          return false
+        }
         if (!isDirty) return true
         setPendingLeaveAction((current) => current ?? action)
         return false
       },
-      [isDirty]
+      [isDirty, activePdfTranslation]
     )
     const requestLeave = useCallback(
       (action: () => boolean | void): boolean => guardLeave(action) && action() !== false,
@@ -1923,6 +1933,7 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
                           onAnnotationError={onAnnotationError}
                           onRetry={retryManagedPreview}
                           onPdfReadingPositionChange={reportPdfReadingPosition}
+                          onPdfTranslationChange={reportPdfTranslation}
                         />
                       ) : null
                     ) : managedWorkflow.diffResult ? (
@@ -1957,6 +1968,7 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
                       onAnnotationError={onAnnotationError}
                       onRetry={retryManagedPreview}
                       onPdfReadingPositionChange={reportPdfReadingPosition}
+                      onPdfTranslationChange={reportPdfTranslation}
                     />
                   ) : null}
                 </div>
@@ -1982,6 +1994,25 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
             </div>
           </ActionMenuTarget>
         </PreviewActionMenuAdapterProvider>
+        <ConfirmActionDialog
+          open={pendingTranslationLeave !== undefined}
+          title={t('Stop translation and close preview?')}
+          description={t(
+            'Translation will stop when you close this preview. Completed paragraphs ({{done}} / {{total}}) are saved. You can resume when you reopen it.',
+            { done: activePdfTranslation?.done ?? 0, total: activePdfTranslation?.total ?? 0 }
+          )}
+          cancelLabel={t('Continue translating')}
+          confirmLabel={t('Stop and close')}
+          dismissOnOutside
+          testId="stop-pdf-translation-confirmation"
+          onCancel={() => setPendingTranslationLeave(undefined)}
+          onConfirm={() => {
+            const action = pendingTranslationLeave
+            setPendingTranslationLeave(undefined)
+            activePdfTranslation?.cancel()
+            if (action) previewLeaveGuards.runApproved(leaveGuardScope, action)
+          }}
+        />
         <ConfirmActionDialog
           open={pendingLeaveAction !== undefined}
           title={t('Discard unsaved changes?')}

@@ -991,7 +991,8 @@
       "src/main/notebook/dependency-analysis.rasterio.test.ts",
       "src/main/notebook/dependency-analysis.rdkit.test.ts",
       "src/main/notebook/dependency-analysis.scipy-sparse-composition.test.ts",
-      "src/main/notebook/dependency-analysis.scipy-sparse.test.ts"
+      "src/main/notebook/dependency-analysis.scipy-sparse.test.ts",
+      "src/main/literature/pdf-translation/checkpoints.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

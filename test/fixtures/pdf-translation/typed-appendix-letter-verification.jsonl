@@ -1,0 +1,6 @@
+{"name": "appendix letter beside acronym", "source": "See appendix A and CIFAR.", "prefix": "\u89c1\u9644\u5f55", "label": "A", "changedAction": false, "accepted": true}
+{"name": "untyped source letter stays ambiguous", "source": "See A and CIFAR.", "prefix": "\u89c1\u9644\u5f55", "label": "A", "changedAction": false, "accepted": false}
+{"name": "untyped target letter stays ambiguous", "source": "See appendix A and CIFAR.", "prefix": "\u89c1", "label": "A", "changedAction": false, "accepted": false}
+{"name": "duplicate appendix identity rejected", "source": "See appendix A and appendix A in CIFAR.", "prefix": "\u89c1\u9644\u5f55", "label": "A", "changedAction": false, "accepted": false}
+{"name": "changed appendix letter rejected", "source": "See appendix A and CIFAR.", "prefix": "\u89c1\u9644\u5f55", "label": "B", "changedAction": false, "accepted": false}
+{"name": "changed appendix action rejected", "source": "See appendix A and CIFAR.", "prefix": "\u89c1\u9644\u5f55", "label": "A", "changedAction": true, "accepted": false}

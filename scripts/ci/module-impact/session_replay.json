@@ -339,7 +339,10 @@
       "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.interaction.test.tsx",
       "src/renderer/src/lib/acp/workspace-prompt-admission.test.ts",
       "src/renderer/src/lib/acp/workspace-prompt-rollback-failure.test.ts",
-      "src/renderer/src/lib/acp/workspace-runtime-overflow-recovery-failures.test.ts"
+      "src/renderer/src/lib/acp/workspace-runtime-overflow-recovery-failures.test.ts",
+      "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationControls.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/PdfPreview.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationEditions.test.tsx"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "windows_sensitive"],

@@ -152,7 +152,8 @@ describe('application database (integration)', () => {
         '0046_journal_attributes',
         '0047_session_replay',
         '0048_pdf_annotation_sharing',
-        '0049_pascalcase_table_names'
+        '0049_pascalcase_table_names',
+        '0050_literature_translation'
       ]
     })
 
@@ -1176,7 +1177,8 @@ describe('application database (integration)', () => {
         '0046_journal_attributes',
         '0047_session_replay',
         '0048_pdf_annotation_sharing',
-        '0049_pascalcase_table_names'
+        '0049_pascalcase_table_names',
+        '0050_literature_translation'
       ]
     })
 

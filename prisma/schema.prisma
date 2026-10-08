@@ -72,6 +72,7 @@ model PdfDocument {
   sizeBytes           BigInt
   content             ContentBlob[]
   annotationDocuments PdfAnnotationDocument[]
+  translations        PdfTranslation[]
 
   @@unique([checksum, sizeBytes])
 }
@@ -659,7 +660,7 @@ model LiteratureAttachment {
 }
 
 model LiteratureAttachmentVersion {
-  id             String               @id @default(cuid())
+  id             String                 @id @default(cuid())
   attachmentId   String
   contentBlobId  String
   versionNumber  Int
@@ -669,9 +670,9 @@ model LiteratureAttachmentVersion {
   provenanceJson String?
   checksum       String
   pageCount      Int?
-  createdAt      DateTime             @default(now())
-  attachment     LiteratureAttachment @relation(fields: [attachmentId], references: [id], onDelete: Cascade)
-  contentBlob    ContentBlob          @relation(fields: [contentBlobId], references: [id], onDelete: Restrict)
+  createdAt      DateTime               @default(now())
+  attachment     LiteratureAttachment   @relation(fields: [attachmentId], references: [id], onDelete: Cascade)
+  contentBlob    ContentBlob            @relation(fields: [contentBlobId], references: [id], onDelete: Restrict)
 
   @@unique([attachmentId, versionNumber])
   @@unique([attachmentId, checksum])
@@ -1521,4 +1522,55 @@ model JournalItemBinding {
   journal Journal @relation(fields: [journalId], references: [id], onDelete: Cascade)
 
   @@index([journalId])
+}
+
+// Provider attempts remain accountable independently of the document or its saved translation.
+model PdfTranslationUsage {
+  eventId             String   @id
+  runId               String
+  attachmentVersionId String?
+  sourceIndex         Int
+  providerId          String
+  frameworkId         String
+  model               String
+  occurredAt          DateTime
+  completedAt         DateTime?
+  status              String
+  inputTokens         BigInt?
+  cacheTokens         BigInt?
+  cachedReadTokens    BigInt?
+  cachedWriteTokens   BigInt?
+  outputTokens        BigInt?
+  usageIncomplete     Boolean  @default(true)
+
+  @@index([occurredAt])
+  @@index([runId])
+  @@index([attachmentVersionId])
+}
+
+// A translation owns its immutable layout and ordered block deltas independently of its entry point.
+model PdfTranslation {
+  id                 String @id
+  pdfDocumentId      String
+  pdfDocument        PdfDocument @relation(fields: [pdfDocumentId], references: [id], onDelete: Cascade)
+  checksum           String
+  sizeBytes          BigInt
+  revision           Int
+  layoutSnapshotJson String?
+  payloadJson        String
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  blocks             PdfTranslationBlock[]
+
+  @@index([pdfDocumentId, createdAt, id])
+}
+
+model PdfTranslationBlock {
+  translationId String
+  sourceIndex   Int
+  revision      Int
+  translation   String?
+  checkpoint    PdfTranslation @relation(fields: [translationId], references: [id], onDelete: Cascade)
+
+  @@id([translationId, sourceIndex])
 }

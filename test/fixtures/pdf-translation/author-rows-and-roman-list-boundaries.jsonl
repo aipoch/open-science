@@ -1,0 +1,3 @@
+{"name": "three-column-author-affiliation-contact-rows", "kind": "authors", "authors": ["Alex Reed∗", "Morgan N. Stone†", "Taylor Brook‡"], "affiliations": ["Lab A", "Research Group", "Example University"], "contacts": ["a@example.invalid", "b@example.invalid", "c@example.invalid"]}
+{"name": "roman-items-keep-lowercase-prose-and-hanging-continuations", "kind": "roman", "markers": ["(i)", "(ii)"]}
+{"name": "parenthesized-math-variable-is-not-a-list-marker", "kind": "formula", "markers": ["(x)"]}

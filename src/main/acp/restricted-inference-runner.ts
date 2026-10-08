@@ -1,17 +1,17 @@
-import type { PromptResponse } from '@agentclientprotocol/sdk'
+import {
+  extractRestrictedInferenceUsage,
+  RestrictedInferenceError,
+  type RestrictedInferenceResult,
+  type RestrictedInferenceRunInput,
+  type RestrictedInferenceClient
+} from './restricted-inference-contract'
 import { mkdir, mkdtemp, readdir, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { isCodexSubscriptionProviderId } from '../../shared/settings'
-import {
-  sanitizeAcpTurnTokenUsage,
-  type AcpMessageImage,
-  type AcpRuntimeEvent,
-  type AcpTurnTokenUsage
-} from '../../shared/acp'
-import type { AgentFrameworkId } from '../../shared/settings'
+import { type AcpRuntimeEvent, type AcpTurnTokenUsage } from '../../shared/acp'
 import type { ResolvedAgentBackend } from '../agent-framework'
-import type { ExplicitAgentBackendTarget } from '../settings/backend-resolver'
+import type { ExplicitAgentBackendTarget } from '../settings/backend-target'
 import { composeAcpRuntimeBaseOwners } from './runtime-base-composition'
 import { composeAcpRuntimeSessionOwners } from './runtime-session-composition'
 import { AcpRuntime, type AcpRuntimeOptions } from './runtime'
@@ -20,44 +20,6 @@ import { prepareRestrictedBackend } from './restricted-runtime-profile'
 const STALE_PROFILE_AGE_MS = 24 * 60 * 60 * 1000
 const DEFAULT_OUTPUT_LIMIT_BYTES = 256 * 1024
 const PROVIDER_DEFAULT_MODEL = 'provider-default'
-
-type RestrictedInferenceErrorCode =
-  'cancelled' | 'output-limit' | 'shutting-down' | 'tool-violation' | 'transport-unavailable'
-
-class RestrictedInferenceError extends Error {
-  constructor(
-    readonly code: RestrictedInferenceErrorCode,
-    message: string,
-    readonly usage?: AcpTurnTokenUsage
-  ) {
-    super(message)
-  }
-}
-
-const extractRestrictedInferenceUsage = (error: unknown): AcpTurnTokenUsage | undefined => {
-  if (error instanceof RestrictedInferenceError) return error.usage
-  if (!(error instanceof Error)) return undefined
-  return sanitizeAcpTurnTokenUsage(Object.getOwnPropertyDescriptor(error, 'usage')?.value)
-}
-
-type RestrictedInferenceResult = Readonly<{
-  text: string
-  frameworkId: AgentFrameworkId
-  model: string
-  stopReason: PromptResponse['stopReason']
-  usage?: AcpTurnTokenUsage
-}>
-
-type RestrictedInferenceRunInput = Readonly<{
-  prompt: string
-  images?: readonly AcpMessageImage[]
-  target: ExplicitAgentBackendTarget
-  systemPrompt: string
-  agentName: string
-  description: string
-  signal?: AbortSignal
-  outputLimitBytes?: number
-}>
 
 type RestrictedInferenceRuntime = Pick<
   AcpRuntime,
@@ -116,7 +78,7 @@ const createRuntime = (options: AcpRuntimeOptions): RestrictedInferenceRuntime =
   return new AcpRuntime(options, base, composeAcpRuntimeSessionOwners(options, base))
 }
 
-class RestrictedInferenceRunner {
+class RestrictedInferenceRunner implements RestrictedInferenceClient {
   private readonly root: string
   private readonly now: () => number
   private readonly runtimeFactory: NonNullable<RestrictedInferenceRunnerOptions['createRuntime']>

@@ -388,9 +388,10 @@ describe('D02/D04 persisted database boundaries', () => {
           '0046_journal_attributes',
           '0047_session_replay',
           '0048_pdf_annotation_sharing',
-          '0049_pascalcase_table_names'
+          '0049_pascalcase_table_names',
+          '0050_literature_translation'
         ],
-        to: '0049_pascalcase_table_names'
+        to: '0050_literature_translation'
       })
       // Literature adds contentBlobId to version rows while preserving their original fields.
       expect(await Promise.all(tables.map(readRows))).toMatchObject(before)

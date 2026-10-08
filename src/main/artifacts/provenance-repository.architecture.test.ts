@@ -977,7 +977,8 @@ describe('Artifact Provenance repository architecture', () => {
       'src/renderer/src/lib/acp/workspace-runtime-session-memory.test.ts',
       'src/renderer/src/lib/compute/useJobAnalysisEffect.render.test.tsx',
       'src/main/acp/approved-handoff-outcome.integration.test.ts',
-      'src/main/acp/approved-handoff-outcome.test.ts'
+      'src/main/acp/approved-handoff-outcome.test.ts',
+      'src/main/literature/pdf-translation/checkpoints.test.ts'
     ])
     expect(module.capabilityOverlays).toEqual([
       'windows_sensitive',

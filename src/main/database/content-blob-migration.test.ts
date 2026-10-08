@@ -97,7 +97,8 @@ describe('Content blob migration', () => {
         '0046_journal_attributes',
         '0047_session_replay',
         '0048_pdf_annotation_sharing',
-        '0049_pascalcase_table_names'
+        '0049_pascalcase_table_names',
+        '0050_literature_translation'
       ]
     })
     await expect(
@@ -194,10 +195,11 @@ describe('Content blob migration', () => {
                 '0046_journal_attributes',
                 '0047_session_replay',
                 '0048_pdf_annotation_sharing',
-                '0049_pascalcase_table_names'
+                '0049_pascalcase_table_names',
+                '0050_literature_translation'
               ],
         from: schema === 'pre-ledger' ? null : '0029_compute_host_execution_mode',
-        to: '0049_pascalcase_table_names'
+        to: '0050_literature_translation'
       })
 
       await expect(
