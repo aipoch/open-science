@@ -302,6 +302,7 @@ export function LibraryInboxPreview({
     batchMode && checked.key === selectionKey
       ? entries.filter(({ id }) => checked.ids.includes(id))
       : []
+  const allSelected = entries.length > 0 && selectedEntries.length === entries.length
   const acceptSelected = async (): Promise<void> => {
     if (writing.current || disabled || !selectedEntries.length) return
     writing.current = true
@@ -337,6 +338,25 @@ export function LibraryInboxPreview({
       </div>
       {batchMode && (
         <div className="mx-4 my-2 flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted/40 p-2">
+          <label className="flex cursor-pointer items-center gap-2 text-xs">
+            <input
+              ref={(input) => {
+                if (input) input.indeterminate = selectedEntries.length > 0 && !allSelected
+              }}
+              type="checkbox"
+              className="size-3.5 shrink-0 accent-primary"
+              aria-label={t('Select all references')}
+              checked={allSelected}
+              disabled={disabled || entries.length === 0}
+              onChange={() =>
+                setChecked({
+                  key: selectionKey,
+                  ids: allSelected ? [] : entries.map(({ id }) => id)
+                })
+              }
+            />
+            {t('Select all')}
+          </label>
           <span className="mr-auto text-xs">
             {t('Selected: {{selected}}', { selected: selectedEntries.length })}
           </span>

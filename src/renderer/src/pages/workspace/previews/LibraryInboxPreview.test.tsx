@@ -297,7 +297,7 @@ it('uses the shared batch icon to select only explicit candidates and accept in 
   expect(screen.queryByRole('checkbox')).toBeNull()
   expect(screen.queryByText(/Accepting will link to/)).toBeNull()
   await click('Batch actions')
-  expect(screen.getAllByRole('checkbox')).toHaveLength(3)
+  expect(screen.getAllByRole('checkbox')).toHaveLength(4)
   expect((screen.getByRole('button', { name: 'Accept' }) as HTMLButtonElement).disabled).toBe(true)
   fireEvent.click(screen.getByRole('checkbox', { name: 'Select Paper a' }))
   fireEvent.click(screen.getByRole('checkbox', { name: 'Select Paper c' }))
@@ -308,7 +308,7 @@ it('uses the shared batch icon to select only explicit candidates and accept in 
     candidateIds: ['a', 'c'],
     state: 'accepted'
   })
-  expect(screen.getAllByRole('checkbox')).toHaveLength(1)
+  expect(screen.getAllByRole('checkbox')).toHaveLength(2)
   expect(screen.getByRole('checkbox', { name: 'Select Paper b' })).toBeTruthy()
   expect(screen.getByText('Selected: 0')).toBeTruthy()
   await click('Done')
@@ -322,7 +322,7 @@ it('clears batch selection across search, pagination and mode changes and prunes
   await settle()
   await click('Batch actions')
   const selectFirst = (): void => {
-    fireEvent.click(screen.getAllByRole('checkbox')[0])
+    fireEvent.click(within(screen.getByRole('list', { name: 'Inbox' })).getAllByRole('checkbox')[0])
   }
   selectFirst()
   await click('Next page')
@@ -350,6 +350,64 @@ it('clears batch selection across search, pagination and mode changes and prunes
   expect(screen.getByText('Selected: 0')).toBeTruthy()
 })
 
+it('selects only the current Inbox page and reflects partial, full and cleared selection', async () => {
+  rows = Array.from({ length: 21 }, (_, i) => candidate(String(i)))
+  render(<LibraryPreview isActive scopeRequest={{ section: 'inbox' }} />)
+  await settle()
+  await click('Batch actions')
+  const selectAll = (): HTMLInputElement =>
+    screen.getByRole('checkbox', { name: 'Select all references' }) as HTMLInputElement
+  expect(selectAll().checked).toBe(false)
+  expect(selectAll().indeterminate).toBe(false)
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Select Paper 0' }))
+  expect(selectAll().indeterminate).toBe(true)
+  fireEvent.click(selectAll())
+  expect(screen.getByText('Selected: 20')).toBeTruthy()
+  expect(selectAll().checked).toBe(true)
+  expect(selectAll().indeterminate).toBe(false)
+  fireEvent.click(selectAll())
+  expect(screen.getByText('Selected: 0')).toBeTruthy()
+  fireEvent.click(selectAll())
+  await click('Clear selection')
+  expect(selectAll().checked).toBe(false)
+  fireEvent.click(selectAll())
+  await click('Next page')
+  expect(screen.getByText('Selected: 0')).toBeTruthy()
+  expect(selectAll().checked).toBe(false)
+  fireEvent.click(selectAll())
+  expect(screen.getByText('Selected: 1')).toBeTruthy()
+  await click('Accept')
+  expect(transact).toHaveBeenCalledExactlyOnceWith({
+    kind: 'settle-candidates',
+    candidateIds: ['20'],
+    state: 'accepted'
+  })
+  expect(rows.filter(({ state }) => state === 'pending')).toHaveLength(20)
+})
+
+it.each(['empty', 'failed'] as const)(
+  'disables Inbox select all while loading and %s',
+  async (state) => {
+    rows = []
+    if (state === 'failed') search.mockRejectedValueOnce(new Error('Offline'))
+    render(
+      <LibraryInboxPreview
+        query=""
+        batchMode
+        onClearSearch={vi.fn()}
+        openLiterature={openLibrary}
+      />
+    )
+    const selectAll = (): HTMLInputElement =>
+      screen.getByRole('checkbox', { name: 'Select all references' }) as HTMLInputElement
+    expect(selectAll().disabled).toBe(true)
+    await settle()
+    expect(selectAll().disabled).toBe(true)
+    expect(selectAll().checked).toBe(false)
+    expect(selectAll().indeterminate).toBe(false)
+  }
+)
+
 it('guards batch submission and reconciles a lost response without replaying on read retry', async () => {
   rows = [candidate('a'), candidate('b')]
   let finish!: () => void
@@ -366,7 +424,7 @@ it('guards batch submission and reconciles a lost response without replaying on 
   render(<LibraryPreview isActive scopeRequest={{ section: 'inbox' }} />)
   await settle()
   await click('Batch actions')
-  screen.getAllByRole('checkbox').forEach((checkbox) => fireEvent.click(checkbox))
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Select all references' }))
   const accept = screen.getByRole('button', { name: 'Accept' })
   fireEvent.click(accept)
   fireEvent.click(accept)
