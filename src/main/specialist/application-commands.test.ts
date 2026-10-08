@@ -74,6 +74,7 @@ type Fixture = {
     list: ReturnType<typeof vi.fn>
     getRelease: ReturnType<typeof vi.fn>
   }
+  requestSwitch: ReturnType<typeof vi.fn>
   onProfilesChanged: ReturnType<typeof vi.fn>
 }
 const fixture = async (beforeCatalog: () => Promise<void> = async () => {}): Promise<Fixture> => {
@@ -103,11 +104,13 @@ const fixture = async (beforeCatalog: () => Promise<void> = async () => {}): Pro
       throw new Error('Marketplace release detail is not preconfigured.')
     })
   }
+  const requestSwitch = vi.fn(async () => ({ status: 'applied' as const, contextReset: false }))
   const owner = createSpecialistApplicationOwner({
     service,
     packages,
     uploads,
     marketplace,
+    sessionReconfiguration: { requestSwitch },
     onProfilesChanged
   })
   const router = createApplicationCommandRouter()
@@ -163,6 +166,7 @@ const fixture = async (beforeCatalog: () => Promise<void> = async () => {}): Pro
     root,
     service,
     marketplace,
+    requestSwitch,
     onProfilesChanged
   }
 }
@@ -230,6 +234,30 @@ describe('Specialist Remote Web application commands', () => {
     const request = { sourceId: 'official', specialistId: 'web-research', version: '1.0.0' }
     expect(await first.invoke('specialist:marketplace-release-get', request)).toEqual(release)
     expect(marketplace.getRelease).toHaveBeenCalledWith(request)
+  })
+
+  it('switches a session Specialist through the public command with Electron IPC parity validation', async () => {
+    const { first, requestSwitch } = await fixture()
+    requestSwitch.mockResolvedValue({ status: 'applied', contextReset: false })
+    expect(
+      await first.invoke('specialist:set-session-specialist', {
+        sessionId: 'session-1',
+        specialistId: 'reviewer'
+      })
+    ).toEqual({ status: 'applied', contextReset: false })
+    expect(requestSwitch).toHaveBeenLastCalledWith('session-1', 'reviewer')
+    await first.invoke('specialist:set-session-specialist', { sessionId: 'session-1' })
+    expect(requestSwitch).toHaveBeenLastCalledWith('session-1', undefined)
+    await expect(
+      first.invoke('specialist:set-session-specialist', { specialistId: 'reviewer' })
+    ).rejects.toThrow('SET_SESSION_SPECIALIST: sessionId must be a string.')
+    await expect(
+      first.invoke('specialist:set-session-specialist', {
+        sessionId: 'session-1',
+        specialistId: 42
+      })
+    ).rejects.toThrow('SET_SESSION_SPECIALIST: specialistId must be a string or undefined.')
+    expect(requestSwitch).toHaveBeenCalledTimes(2)
   })
 
   it.each(['abort', 'disconnect', 'expiry'] as const)(

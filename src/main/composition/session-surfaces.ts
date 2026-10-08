@@ -230,6 +230,7 @@ export async function composeSessionSurfaces({
     packages: specialistPackageService,
     uploads: uploadCommandOwner,
     marketplace: marketplaceService,
+    sessionReconfiguration: sessionSpecialistReconfiguration,
     onProfilesChanged: () => void runtime.requestSkillsReload()
   })
   specialistService.subscribe(() =>

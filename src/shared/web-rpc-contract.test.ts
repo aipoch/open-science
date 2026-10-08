@@ -57,6 +57,7 @@ describe('Web RPC contract', () => {
       'specialist.listMarketplace',
       'specialist.previewPackageUpload',
       'specialist.setEnabled',
+      'specialist.setSessionSpecialist',
       'specialist.update'
     ])
     expect(eventPaths.filter((path) => path.startsWith('specialist.'))).toEqual([
