@@ -10,6 +10,8 @@ const EXPECTED_IDS = [
   'clustalo_submit',
   'clustalo_status',
   'clustalo_results',
+  'ensembl_ld_pairwise',
+  'ensembl_ld_proxies',
   'ensembl_lookup',
   'ensembl_xrefs',
   'ensembl_vep_variant',

@@ -138,6 +138,8 @@
     "Retrieve PDC study metadata and available versions.": "取得 PDC 研究中繼資料和可用版本。",
     "Map PDC aliquots to samples, cases and external references.": "將 PDC 等分試樣對應至樣本、病例和外部參照。",
     "Discover PDC study files and quantitative reports without downloading files.": "探索 PDC 研究檔案和定量報告，不下載檔案。",
+    "Query linkage disequilibrium between two variants in a specified population.": "查詢指定族群中兩個變異之間的連鎖不平衡。",
+    "Find nearby variants in high linkage disequilibrium in a specified population.": "尋找指定族群中具有高連鎖不平衡的鄰近變異。",
     "List GWAS summary statistics files, YAML metadata, reference genomes and standard column definitions by GCST accession.": "依 GCST 編號列出 GWAS 彙總統計檔案、YAML 中繼資料、參考基因組和標準欄位定義。",
     "PDF analysis options": "PDF 分析選項",
     "Retrieve GEO series metadata, samples and supplementary-file links.": "取得 GEO 系列的中繼資料、樣本與補充檔案連結。",

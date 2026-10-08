@@ -140,6 +140,8 @@
     "Retrieve PDC study metadata and available versions.": "Récupérer les métadonnées et les versions disponibles des études PDC.",
     "Map PDC aliquots to samples, cases and external references.": "Associer les aliquotes PDC aux échantillons, aux cas et aux références externes.",
     "Discover PDC study files and quantitative reports without downloading files.": "Rechercher des fichiers d’études et des rapports quantitatifs PDC sans télécharger de fichiers.",
+    "Query linkage disequilibrium between two variants in a specified population.": "Consulter le déséquilibre de liaison entre deux variants dans une population donnée.",
+    "Find nearby variants in high linkage disequilibrium in a specified population.": "Rechercher des variants proches présentant un fort déséquilibre de liaison dans une population donnée.",
     "List GWAS summary statistics files, YAML metadata, reference genomes and standard column definitions by GCST accession.": "Lister les fichiers de statistiques récapitulatives GWAS, les métadonnées YAML, les génomes de référence et les définitions standard des colonnes à partir d’un identifiant GCST.",
     "PDF analysis options": "Options d’analyse du PDF",
     "Retrieve GEO series metadata, samples and supplementary-file links.": "Récupérer les métadonnées, les échantillons et les liens vers les fichiers supplémentaires d’une série GEO.",

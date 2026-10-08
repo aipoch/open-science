@@ -141,6 +141,8 @@
     "Retrieve PDC study metadata and available versions.": "Получение метаданных исследований PDC и доступных версий.",
     "Map PDC aliquots to samples, cases and external references.": "Сопоставление аликвот PDC с образцами, случаями и внешними ссылками.",
     "Discover PDC study files and quantitative reports without downloading files.": "Поиск файлов исследований и количественных отчётов PDC без скачивания файлов.",
+    "Query linkage disequilibrium between two variants in a specified population.": "Запросить неравновесие по сцеплению между двумя вариантами в указанной популяции.",
+    "Find nearby variants in high linkage disequilibrium in a specified population.": "Найти близлежащие варианты с высоким неравновесием по сцеплению в указанной популяции.",
     "List GWAS summary statistics files, YAML metadata, reference genomes and standard column definitions by GCST accession.": "Получить список файлов сводной статистики GWAS, метаданные YAML, референсные геномы и стандартные определения столбцов по идентификатору GCST.",
     "PDF analysis options": "Параметры анализа PDF",
     "Retrieve GEO series metadata, samples and supplementary-file links.": "Получить метаданные серии GEO, образцы и ссылки на дополнительные файлы.",

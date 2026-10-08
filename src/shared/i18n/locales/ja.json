@@ -138,6 +138,8 @@
     "Retrieve PDC study metadata and available versions.": "PDC 研究のメタデータと利用可能なバージョンを取得。",
     "Map PDC aliquots to samples, cases and external references.": "PDC の分注試料をサンプル、症例、外部参照に対応付け。",
     "Discover PDC study files and quantitative reports without downloading files.": "ファイルをダウンロードせずに PDC の研究ファイルと定量レポートを検索。",
+    "Query linkage disequilibrium between two variants in a specified population.": "指定した集団における2つのバリアント間の連鎖不平衡を照会します。",
+    "Find nearby variants in high linkage disequilibrium in a specified population.": "指定した集団で強い連鎖不平衡を示す近傍バリアントを検索します。",
     "List GWAS summary statistics files, YAML metadata, reference genomes and standard column definitions by GCST accession.": "GCST アクセッション番号で GWAS 要約統計量ファイル、YAML メタデータ、参照ゲノム、標準の列定義を一覧表示します。",
     "PDF analysis options": "PDF 解析オプション",
     "Retrieve GEO series metadata, samples and supplementary-file links.": "GEO シリーズのメタデータ、サンプル、補足ファイルへのリンクを取得。",
