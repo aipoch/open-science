@@ -823,6 +823,59 @@ describe('ask_user_question tool', () => {
 describe('notebook_execute tool', () => {
   const tool = NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === 'notebook_execute')
 
+  it('rejects omitted arguments before execution and accepts a corrected code object', async () => {
+    const server = createNotebookMcpServer({
+      endpoint: 'http://127.0.0.1:4567',
+      token: 'test-token',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace'
+    })
+    const client = new ModelContextProtocolClient({ name: 'argument-repro', version: '1.0.0' })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    const fetchRpc = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(
+        new Response(JSON.stringify({ result: { status: 'success', stdout: '42' } }))
+      )
+    try {
+      await server.connect(serverTransport)
+      await client.connect(clientTransport)
+      const catalog = await client.listTools()
+      expect(
+        catalog.tools.find(({ name }) => name === 'notebook_execute')?.inputSchema
+      ).toMatchObject({
+        type: 'object',
+        properties: { code: { type: 'string' } },
+        required: ['code']
+      })
+
+      const rejected = await client.callTool({ name: 'notebook_execute' })
+      expect(rejected).toMatchObject({
+        isError: true,
+        content: [
+          { type: 'text', text: expect.stringContaining('expected object, received undefined') }
+        ]
+      })
+      expect(fetchRpc).not.toHaveBeenCalled()
+
+      const corrected = await client.callTool({
+        name: 'notebook_execute',
+        arguments: { code: 'print(42)' }
+      })
+      expect(corrected.isError).not.toBe(true)
+      expect(fetchRpc).toHaveBeenCalledTimes(1)
+      expect(JSON.parse(String(fetchRpc.mock.calls[0]?.[1]?.body))).toMatchObject({
+        method: 'execute',
+        params: { code: 'print(42)' }
+      })
+    } finally {
+      fetchRpc.mockRestore()
+      await client.close()
+      await server.close()
+    }
+  })
+
   it('accepts an explicit background mode and documents its durable receipt lifecycle', () => {
     const schema = z.object(tool?.inputSchema ?? {})
 

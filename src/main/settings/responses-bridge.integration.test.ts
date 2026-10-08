@@ -45,9 +45,10 @@ const spawnAdapter = (cwd: string, env: NodeJS.ProcessEnv): ChildProcessWithoutN
   )
 }
 
-it.runIf(runLiveContract)(
-  'restores a flat native Responses call before the real Codex MCP router dispatches it',
-  async () => {
+// The incomplete-item cases are synthetic protocol probes, not captured MiniMax traffic.
+it.runIf(runLiveContract).each(['complete-item', 'arguments-done', 'arguments-delta'] as const)(
+  'restores a flat native Responses call before the real Codex MCP router dispatches it (%s)',
+  async (argumentSource) => {
     const tempRoot = await mkdtemp(join(tmpdir(), 'open-science-codex-native-responses-'))
     const workspace = join(tempRoot, 'workspace')
     const mcpEntry = join(tempRoot, 'echo-mcp.mjs')
@@ -55,18 +56,12 @@ it.runIf(runLiveContract)(
     await writeFile(
       mcpEntry,
       [
-        "import { createInterface } from 'node:readline'",
-        "const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n')",
-        "createInterface({ input: process.stdin }).on('line', (line) => {",
-        '  const message = JSON.parse(line)',
-        "  if (message.method === 'initialize') {",
-        "    send({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'probe-server', version: '1.0.0' } } })",
-        "  } else if (message.method === 'tools/list') {",
-        "    send({ jsonrpc: '2.0', id: message.id, result: { tools: [{ name: 'echo', description: 'Echo a value.', inputSchema: { type: 'object', properties: { value: { type: 'string' } }, required: ['value'], additionalProperties: false } }] } })",
-        "  } else if (message.method === 'tools/call') {",
-        "    send({ jsonrpc: '2.0', id: message.id, result: { content: [{ type: 'text', text: 'echo:' + message.params.arguments.value }] } })",
-        '  }',
-        '})'
+        `import { McpServer } from ${JSON.stringify(import.meta.resolve('@modelcontextprotocol/sdk/server/mcp.js'))}`,
+        `import { StdioServerTransport } from ${JSON.stringify(import.meta.resolve('@modelcontextprotocol/sdk/server/stdio.js'))}`,
+        `import { z } from ${JSON.stringify(import.meta.resolve('zod'))}`,
+        "const server = new McpServer({ name: 'probe-server', version: '1.0.0' })",
+        "server.registerTool('echo', { inputSchema: { value: z.string() } }, ({ value }) => ({ content: [{ type: 'text', text: 'echo:' + value }] }))",
+        'await server.connect(new StdioServerTransport())'
       ].join('\n'),
       'utf8'
     )
@@ -82,12 +77,44 @@ it.runIf(runLiveContract)(
         return responsesSse([
           { type: 'response.created', response: { id: 'native-call' } },
           {
+            type: 'response.output_item.added',
+            output_index: 0,
+            item: {
+              id: 'fc-native-echo',
+              type: 'function_call',
+              call_id: 'call-native-echo',
+              name: 'mcp__probe_server__echo',
+              arguments: ''
+            }
+          },
+          ...(argumentSource === 'arguments-delta'
+            ? [
+                {
+                  type: 'response.function_call_arguments.delta',
+                  item_id: 'fc-native-echo',
+                  output_index: 0,
+                  delta: '{"value":"native"}'
+                }
+              ]
+            : argumentSource === 'arguments-done'
+              ? [
+                  {
+                    type: 'response.function_call_arguments.done',
+                    item_id: 'fc-native-echo',
+                    output_index: 0,
+                    arguments: '{"value":"native"}'
+                  }
+                ]
+              : []),
+          {
             type: 'response.output_item.done',
+            output_index: 0,
             item: {
               type: 'function_call',
               call_id: 'call-native-echo',
               name: 'mcp__probe_server__echo',
-              arguments: '{"value":"native"}'
+              id: 'fc-native-echo',
+              arguments: argumentSource === 'complete-item' ? '{"value":"native"}' : ''
             }
           },
           {
@@ -205,7 +232,8 @@ it.runIf(runLiveContract)(
       expect(upstreamTools).not.toEqual(
         expect.arrayContaining([expect.objectContaining({ type: 'namespace' })])
       )
-      expect(JSON.stringify(upstreamRequests[1]?.input)).toContain('echo:native')
+      const replay = JSON.stringify(upstreamRequests[1]?.input)
+      expect(replay, replay.match(/MCP error[^"]+/)?.[0]).toContain('echo:native')
       expect(JSON.stringify(upstreamRequests[1]?.input)).not.toContain('unsupported call')
       expect(JSON.stringify(result)).toContain('mcp.probe-server.echo')
     } catch (error) {
