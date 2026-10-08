@@ -2192,10 +2192,11 @@ describe('host-owned Notebook code-risk review receipts', () => {
       })
       const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'ask' })
       const rawInput = {
-        code: 'os.unlink(path)',
+        code: 'Remove-Item ./temporary.txt',
         notebookCodeRisk: {
-          language: 'python',
-          risks: [{ operation: 'os.unlink', source: 'os.unlink(path)', line: 1 }]
+          language: 'bash',
+          shellRuntime: { kind: 'powershell' },
+          risks: [{ operation: 'Remove-Item', source: 'Remove-Item ./temporary.txt', line: 1 }]
         }
       }
       for (const next of ['allow', 'deny', 'cancel'] as const) {

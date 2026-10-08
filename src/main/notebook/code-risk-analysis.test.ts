@@ -1,7 +1,307 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import * as childProcess from 'node:child_process'
+import * as parser from './dependency-analysis-parser'
+import * as powerShellParser from './powershell-search-parser'
 import { analyzeNotebookCodeRisk, analyzePowerShellCodeRisk } from './code-risk-analysis'
+import type { NotebookSourceFileAccessContext } from './dependency-analysis-types'
+
+vi.mock('node:child_process', { spy: true })
 
 describe('Notebook execution code risk', () => {
+  describe('bounded history replay evidence', () => {
+    it.each([
+      ['python', '#', 'print("hello")', 'import os\nerase=os.unlink', 'erase("target.txt")'],
+      ['r', '#', 'print("hello")', 'erase <- unlink', 'erase("target.txt")'],
+      [
+        'repl',
+        '//',
+        'console.log("hello")',
+        'const fs=require("node:fs");const erase=fs.unlinkSync',
+        'erase("target.txt")'
+      ],
+      ['bash', '#', 'printf hello', 'erase(){ rm -- "$1"; }', 'erase target.txt']
+    ] as const)(
+      'keeps long %s history prompt-free without dropping deletion',
+      async (language, comment, query, setup, erase) => {
+        const history = Array.from(
+          { length: 40 },
+          (_, index) => comment + 'x'.repeat(9_000) + index + '\n'
+        )
+        history.push(setup)
+        expect(await analyzeNotebookCodeRisk(language, query, undefined, history)).toEqual([])
+        expect(await analyzeNotebookCodeRisk(language, query, undefined, history)).toEqual([])
+        expect(await analyzeNotebookCodeRisk(language, erase, undefined, history)).not.toEqual([])
+      }
+    )
+    it('accepts one large data cell and budgets each cell independently', async () => {
+      const history = [
+        'data=' + JSON.stringify('x'.repeat(300_000)),
+        ...Array(100).fill('value=1\n'.repeat(100))
+      ]
+      expect(await analyzeNotebookCodeRisk('python', 'print("hello")', undefined, history)).toEqual(
+        []
+      )
+    })
+    it('reuses exact prefix evidence while reviewing the current code again', async () => {
+      const history = ['import os\n# replay prefix\nerase=os.unlink', 'reader=os.listdir']
+      await analyzeNotebookCodeRisk('python', 'print(1)', undefined, history)
+      const spy = vi.spyOn(parser, 'withParsedNotebookSource')
+      try {
+        expect(
+          await analyzeNotebookCodeRisk('python', 'erase("target.txt")', undefined, history)
+        ).toEqual(expect.arrayContaining([expect.objectContaining({ operation: 'os.unlink' })]))
+        expect(spy.mock.calls.some(([, source]) => history.includes(source))).toBe(false)
+        expect(spy.mock.calls.some(([, source]) => source === 'erase("target.txt")')).toBe(true)
+        expect(
+          await analyzeNotebookCodeRisk('python', 'erase("target.txt")', undefined, history)
+        ).not.toEqual([])
+      } finally {
+        spy.mockRestore()
+      }
+    })
+    it('keeps changed and reordered branches separate', async () => {
+      const first = ['import os\n# branch replay\nerase=os.unlink', 'erase=os.listdir']
+      expect(
+        await analyzeNotebookCodeRisk('python', 'erase("target.txt")', undefined, first)
+      ).toEqual([])
+      for (const history of [[first[0]], [first[1], first[0]], [first[0], 'erase=os.unlink']])
+        expect(
+          await analyzeNotebookCodeRisk('python', 'erase("target.txt")', undefined, history)
+        ).not.toEqual([])
+      expect(
+        await analyzeNotebookCodeRisk('python', 'erase("target.txt")', undefined, first)
+      ).toEqual([])
+    })
+    it('does not turn completed evidence into a failed-cell conclusion', async () => {
+      const first = 'import os\n# partial replay\nerase=os.unlink'
+      const script = 'erase=None'
+      expect(
+        await analyzeNotebookCodeRisk('python', 'erase("target.txt")', undefined, [
+          first,
+          { script, incomplete: false }
+        ])
+      ).toEqual([])
+      expect(
+        await analyzeNotebookCodeRisk('python', 'erase("target.txt")', undefined, [
+          first,
+          { script, incomplete: true }
+        ])
+      ).not.toEqual([])
+      expect(
+        await analyzeNotebookCodeRisk('python', 'erase("target.txt")', undefined, [first, script])
+      ).toEqual([])
+    })
+    it('keys initial bindings and platform as part of the source evidence', async () => {
+      const context = (qualifiedName: string): NotebookSourceFileAccessContext => ({
+        staticStrings: [],
+        staticCollections: [],
+        localFileWrappers: [],
+        pythonBindings: [{ name: 'erase', qualifiedName, kind: 'import' as const }]
+      })
+      const history = ['# contextual replay']
+      expect(
+        await analyzeNotebookCodeRisk(
+          'python',
+          'erase("target.txt")',
+          context('os.listdir'),
+          history
+        )
+      ).toEqual([])
+      expect(
+        await analyzeNotebookCodeRisk(
+          'python',
+          'erase("target.txt")',
+          context('os.unlink'),
+          history
+        )
+      ).not.toEqual([])
+      const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+      await analyzeNotebookCodeRisk('python', 'print(1)', undefined, history)
+      const spy = vi.spyOn(parser, 'withParsedNotebookSource')
+      try {
+        Object.defineProperty(process, 'platform', {
+          value: process.platform === 'win32' ? 'darwin' : 'win32'
+        })
+        await analyzeNotebookCodeRisk('python', 'print(1)', undefined, history)
+        expect(spy.mock.calls.some(([, source]) => source === history[0])).toBe(true)
+      } finally {
+        Object.defineProperty(process, 'platform', platform)
+        spy.mockRestore()
+      }
+    })
+    it('isolates concurrent analyses and caller mutations of returned findings', async () => {
+      const history = ['import os\n# parallel replay\ndef erase(path):\n os.unlink(path)']
+      const [safe, danger] = await Promise.all([
+        analyzeNotebookCodeRisk('python', 'print(1)', undefined, history),
+        analyzeNotebookCodeRisk('python', 'erase("target.txt")', undefined, history)
+      ])
+      expect(safe).toEqual([])
+      expect(danger).not.toEqual([])
+      ;(danger[0] as { operation: string }).operation = 'changed by caller'
+      expect(
+        (await analyzeNotebookCodeRisk('python', 'erase("target.txt")', undefined, history))[0]
+          .operation
+      ).not.toBe('changed by caller')
+      expect(
+        await analyzeNotebookCodeRisk('python', 'erase("target.txt")', undefined, [
+          history[0],
+          'erase=None'
+        ])
+      ).toEqual([])
+    })
+    it('evicts old summaries without losing deletion evidence', async () => {
+      const history = ['import os\n# evict replay\nerase=os.unlink']
+      await analyzeNotebookCodeRisk('python', 'print(1)', undefined, history)
+      for (let i = 0; i < 12; i++)
+        await analyzeNotebookCodeRisk('python', `# unrelated replay ${i}\nprint(1)`)
+      const spy = vi.spyOn(parser, 'withParsedNotebookSource')
+      try {
+        expect(
+          await analyzeNotebookCodeRisk('python', 'erase("target.txt")', undefined, history)
+        ).not.toEqual([])
+        expect(spy.mock.calls.some(([, source]) => source === history[0])).toBe(true)
+      } finally {
+        spy.mockRestore()
+      }
+    })
+    it('retains distinct object identities when a later cell creates another object', async () => {
+      const history = ['const fs=require("node:fs");const first={run:fs.unlinkSync}']
+      await analyzeNotebookCodeRisk('repl', 'console.log(1)', undefined, history)
+      expect(
+        await analyzeNotebookCodeRisk(
+          'repl',
+          'const second={run:()=>{}};first.run("target.txt")',
+          undefined,
+          history
+        )
+      ).not.toEqual([])
+    })
+    it('retains function member effects behind a cached prefix', async () => {
+      const history = ['import os\ndef replace():\n os.listdir=os.unlink']
+      await analyzeNotebookCodeRisk('python', 'print(1)', undefined, history)
+      expect(
+        await analyzeNotebookCodeRisk(
+          'python',
+          'replace()\nos.listdir("target.txt")',
+          undefined,
+          history
+        )
+      ).not.toEqual([])
+    })
+    it('keys exact source code units without normalizing malformed Unicode', async () => {
+      await analyzeNotebookCodeRisk('python', 'print(1)', undefined, ['# unicode replay \ud800'])
+      const spy = vi.spyOn(parser, 'withParsedNotebookSource')
+      try {
+        await analyzeNotebookCodeRisk('python', 'print(1)', undefined, ['# unicode replay \ufffd'])
+        expect(spy.mock.calls.some(([, source]) => source === '# unicode replay \ufffd')).toBe(true)
+      } finally {
+        spy.mockRestore()
+      }
+    })
+    it('honors cancellation even when all historical evidence is cached', async () => {
+      const history = ['import os\n# cancel cached replay\nerase=os.unlink']
+      await analyzeNotebookCodeRisk('python', 'print(1)', undefined, history)
+      const controller = new AbortController()
+      const pending = analyzeNotebookCodeRisk(
+        'python',
+        'erase("target.txt")',
+        undefined,
+        history,
+        controller.signal
+      )
+      controller.abort()
+      await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    })
+    it('retains state and current-cell bounds after caching a valid prefix', async () => {
+      const history = ['# bounded replay\nvalue=1']
+      await analyzeNotebookCodeRisk('python', 'print(1)', undefined, history)
+      expect(
+        await analyzeNotebookCodeRisk('python', '#' + 'x'.repeat(1024 * 1024), undefined, history)
+      ).toEqual([expect.objectContaining({ operation: 'code source exceeds analysis limit' })])
+      expect(
+        await analyzeNotebookCodeRisk('python', 'print(1)', undefined, [
+          Array.from({ length: 4097 }, (_, i) => `value${i}=0`).join('\n')
+        ])
+      ).toEqual([expect.objectContaining({ operation: 'code analysis unavailable' })])
+    })
+  })
+  describe('PowerShell risk source locations', () => {
+    it('retains native command, member and redirection source positions', async () => {
+      const observations = [
+        {
+          name: 'Remove-Item',
+          arguments: ['target.txt'],
+          source: 'Remove-Item target.txt',
+          line: 3
+        },
+        {
+          name: '@member:Delete',
+          arguments: ['[System.IO.File]::Delete("target.txt")'],
+          source: '[System.IO.File]::Delete("target.txt")',
+          line: 5
+        },
+        { name: '@overwrite', arguments: ['> target.txt'], source: '> target.txt', line: 7 }
+      ]
+      const spy = vi
+        .spyOn(powerShellParser, 'parsePowerShellSearchCommands')
+        .mockResolvedValue(observations)
+      try {
+        expect(
+          await analyzePowerShellCodeRisk('Write-Output hello\n\nRemove-Item target.txt')
+        ).toEqual(observations.map(({ name, source, line }) => ({ operation: name, source, line })))
+      } finally {
+        spy.mockRestore()
+      }
+    })
+    it.each([
+      { name: 'Remove-Item', arguments: ['x'], source: 'Remove-Item x' },
+      { name: 'Remove-Item', arguments: ['x'], source: 'Remove-Item x', line: 0 },
+      { name: 'Remove-Item', arguments: ['x'], source: 'Remove-Item x', line: 1.5 },
+      { name: 'Remove-Item', arguments: ['x'], line: 2 },
+      { name: 'Remove-Item', arguments: ['x'], source: 42, line: 2 }
+    ])('rejects missing or malformed native locations: %j', async (entry) => {
+      const spy = vi.spyOn(childProcess, 'execFile').mockImplementation(((...args: unknown[]) => {
+        const callback = args.at(-1) as (
+          error: Error | null,
+          stdout: string,
+          stderr: string
+        ) => void
+        queueMicrotask(() => callback(null, JSON.stringify([entry]), ''))
+        return {} as childProcess.ChildProcess
+      }) as typeof childProcess.execFile)
+      try {
+        await expect(
+          powerShellParser.parsePowerShellSearchCommands('Remove-Item x', undefined, '5.1', true)
+        ).rejects.toThrow('invalid PowerShell syntax inspection result')
+      } finally {
+        spy.mockRestore()
+      }
+    })
+    it('keeps default search payloads compatible and enables Extent evidence only for reviews', async () => {
+      const spy = vi.spyOn(childProcess, 'execFile').mockImplementation(((...args: unknown[]) => {
+        const callback = args.at(-1) as (
+          error: Error | null,
+          stdout: string,
+          stderr: string
+        ) => void
+        queueMicrotask(() =>
+          callback(null, JSON.stringify([{ name: 'Get-ChildItem', arguments: ['.'] }]), '')
+        )
+        return {} as childProcess.ChildProcess
+      }) as typeof childProcess.execFile)
+      try {
+        expect(await powerShellParser.parsePowerShellSearchCommands('Get-ChildItem .')).toEqual([
+          { name: 'Get-ChildItem', arguments: ['.'] }
+        ])
+        const command = spy.mock.calls[0][1] as string[]
+        const script = Buffer.from(command.at(-1)!, 'base64').toString('utf16le')
+        expect(script).toContain('$entry.line = $_.Extent.StartLineNumber')
+        expect(script).toContain('$entry.source = $_.Extent.Text')
+      } finally {
+        spy.mockRestore()
+      }
+    })
+  })
   describe('Python native process returned vectors', () => {
     const prelude =
       'import os,pathlib,subprocess,builtins,operator\npick=operator.getitem\ngetter=operator.itemgetter("args")\nmulti=operator.itemgetter(0,1)\n'
@@ -5267,7 +5567,7 @@ ${use.replace('VALUE', value)}`
     it('bounds structured historical source size', async () => {
       expect(
         await analyzeNotebookCodeRisk('python', 'print("ok")', undefined, [
-          { script: '#' + 'x'.repeat(256_001), incomplete: true }
+          { script: '#' + 'x'.repeat(1024 * 1024), incomplete: true }
         ])
       ).toEqual([
         expect.objectContaining({ operation: 'kernel source history exceeds analysis limit' })

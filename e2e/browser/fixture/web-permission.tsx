@@ -1,3 +1,4 @@
+import { getRenderableActivityEntries } from '../../../src/renderer/src/pages/workspace/workspace-tool-activity-groups'
 import '@/assets/main.css'
 import { useState } from 'react'
 import { WorkspaceToolDetailsRow } from '@/pages/workspace/WorkspaceToolDetailsRow'
@@ -47,6 +48,7 @@ const request: AcpPermissionRequest = {
     { optionId: 'deny', name: 'Deny', kind: 'reject_once' }
   ]
 }
+const powershell = new URLSearchParams(location.search).has('powershell')
 const risk = new URLSearchParams(location.search).has('risk')
 const large = new URLSearchParams(location.search).has('large')
 const riskPrefix = large
@@ -82,6 +84,16 @@ const riskRequest: AcpPermissionRequest = {
     { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
     { optionId: 'deny', name: 'Deny', kind: 'reject_once' }
   ]
+}
+if (powershell) {
+  riskRequest.rawInput = {
+    code: '$path = "./temporary.txt"\nGet-Item $path\nRemove-Item -LiteralPath $path',
+    notebookCodeRisk: {
+      language: 'bash',
+      shellRuntime: { kind: 'powershell' },
+      risks: [{ operation: 'Remove-Item', source: 'Remove-Item -LiteralPath $path', line: 3 }]
+    }
+  }
 }
 const runtimeSelection = new URLSearchParams(location.search).has('runtime')
 const runtimeRequest: AcpPermissionRequest = {
@@ -203,26 +215,45 @@ const RiskReceipt = (): React.JSX.Element => {
         activity={{
           ...activity,
           id: 'notebook-run',
-          providerToolName: 'mcp__open-science-notebook__notebook_execute',
-          rawInput: { language: 'python', code: (riskRequest.rawInput as { code: string }).code }
+          providerToolName: powershell
+            ? 'mcp__open-science-notebook__bash_execute'
+            : 'mcp__open-science-notebook__notebook_execute',
+          rawInput: {
+            language: powershell ? 'bash' : 'python',
+            code: (riskRequest.rawInput as { code: string }).code
+          },
+          rawOutput: powershell
+            ? { kernelKind: 'bash', shellRuntime: { kind: 'powershell' } }
+            : undefined
         }}
         details={buildToolActivityDetails({
           ...activity,
           id: 'notebook-run',
-          providerToolName: 'mcp__open-science-notebook__notebook_execute',
-          rawInput: { language: 'python', code: (riskRequest.rawInput as { code: string }).code }
+          providerToolName: powershell
+            ? 'mcp__open-science-notebook__bash_execute'
+            : 'mcp__open-science-notebook__notebook_execute',
+          rawInput: {
+            language: powershell ? 'bash' : 'python',
+            code: (riskRequest.rawInput as { code: string }).code
+          },
+          rawOutput: powershell
+            ? { kernelKind: 'bash', shellRuntime: { kind: 'powershell' } }
+            : undefined
         })!}
         phase="interrupted"
         isExpanded={runExpanded}
         onToggle={(_id, open) => setRunExpanded(open)}
       />
-      <WorkspaceToolDetailsRow
-        activity={activity}
-        details={buildToolActivityDetails(activity)!}
-        phase={getToolExecutionPhase(activity, undefined)}
-        isExpanded={expanded}
-        onToggle={(_id, open) => setExpanded(open)}
-      />
+      {getRenderableActivityEntries([activity]).map(({ activity }) => (
+        <WorkspaceToolDetailsRow
+          key={activity.id}
+          activity={activity}
+          details={buildToolActivityDetails(activity)!}
+          phase={getToolExecutionPhase(activity, undefined)}
+          isExpanded={expanded}
+          onToggle={(_id, open) => setExpanded(open)}
+        />
+      ))}
     </section>
   )
 }

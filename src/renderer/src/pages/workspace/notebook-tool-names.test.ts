@@ -5,7 +5,8 @@ import {
   isNotebookManagePackagesToolName,
   matchNotebookControlTool,
   matchNotebookMemoryTool,
-  matchNotebookRunTool
+  matchNotebookRunTool,
+  resolveNotebookLanguage
 } from './notebook-tool-names'
 
 describe('isNotebookExecuteToolName', () => {
@@ -138,4 +139,33 @@ describe('isNotebookExecuteToolName', () => {
     expect(isNotebookExecuteToolName(undefined)).toBe(false)
     expect(isNotebookExecuteToolName(null)).toBe(false)
   })
+})
+
+describe('Shell display dialect', () => {
+  it.each([
+    'mcp__open-science-notebook__bash_execute',
+    'open_science_notebook_bash_execute',
+    'mcp__open_science_notebook__bash_execute',
+    'mcp.open-science-notebook.bash_execute'
+  ])('uses runtime evidence for %s', (toolName) => {
+    expect(
+      resolveNotebookLanguage(toolName, { shellRuntime: { kind: 'powershell' } }, undefined)
+    ).toBe('powershell')
+    expect(resolveNotebookLanguage(toolName, {}, '$value = 1')).toBe('bash')
+    expect(
+      resolveNotebookLanguage(
+        toolName,
+        { kernelKind: 'python', shellRuntime: { kind: 'powershell' } },
+        undefined
+      )
+    ).toBe('python')
+  })
+  it.each([undefined, null, 'powershell', { kind: 'unknown' }, { kind: 'bash' }])(
+    'keeps legacy or invalid runtime evidence as bash (%j)',
+    (shellRuntime) => {
+      expect(
+        resolveNotebookLanguage(undefined, { language: 'bash', shellRuntime }, undefined)
+      ).toBe('bash')
+    }
+  )
 })

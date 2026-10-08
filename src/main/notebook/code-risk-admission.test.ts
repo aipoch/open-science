@@ -8,6 +8,8 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { NotebookRuntimeService, type NotebookExecutionRequest } from './runtime-service'
 import { analyzeNotebookCodeRisk } from './code-risk-analysis'
+import * as riskAnalysis from './code-risk-analysis'
+import type { ShellRuntimeBinding } from '../../shared/notebook'
 import type { DiscoveredInterpreter } from '../../shared/notebook-runtime'
 
 const roots: string[] = []
@@ -129,7 +131,10 @@ afterEach(async () => {
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true })
 })
 
-async function harness(environmentCount = 0): Promise<{
+async function harness(
+  environmentCount = 0,
+  shellRuntimeBinding?: ShellRuntimeBinding
+): Promise<{
   service: NotebookRuntimeService
   execute: ReturnType<typeof vi.fn>
   shell: ReturnType<typeof vi.fn>
@@ -173,6 +178,7 @@ async function harness(environmentCount = 0): Promise<{
     projectId: 'project',
     discoverRuntimes: async (language) => (language === 'python' ? runtimes : []),
     executorFactory: () => ({ execute, shutdown: async () => ({ reaped: true }) }),
+    shellRuntimeBinding,
     shellProcess: { execute: shell }
   })
   services.push(service)
@@ -186,6 +192,101 @@ async function harness(environmentCount = 0): Promise<{
 }
 
 describe('host-owned one-shot execution admission', () => {
+  it('carries PowerShell dialect from the actual runtime into approval evidence', async () => {
+    const analyze = vi
+      .spyOn(riskAnalysis, 'analyzePowerShellCodeRisk')
+      .mockResolvedValue([
+        { operation: 'Remove-Item', source: 'Remove-Item ./temporary.txt', line: 1 }
+      ])
+    try {
+      const { service, shell, request } = await harness(0, { kind: 'powershell', version: '5.1' })
+      const approve = vi.fn(async () => false)
+      service.setExecutionApproval(approve)
+      await expect(
+        service.executeShell({ ...request, command: 'Remove-Item ./temporary.txt' })
+      ).rejects.toThrow('one-time approval')
+      expect(approve).toHaveBeenCalledWith(
+        expect.objectContaining({
+          rawInput: expect.objectContaining({
+            notebookCodeRisk: expect.objectContaining({
+              language: 'bash',
+              shellRuntime: { kind: 'powershell' }
+            })
+          })
+        })
+      )
+      expect(shell).not.toHaveBeenCalled()
+    } finally {
+      analyze.mockRestore()
+    }
+  })
+
+  it('keeps long kernel history prompt-free and reviews every deletion separately', async () => {
+    const { service, execute, request } = await harness()
+    const approve = vi.fn(async () => false)
+    service.setExecutionApproval(approve)
+    for (let index = 0; index < 8; index++)
+      await service.execute({
+        ...request,
+        code: '#' + 'x'.repeat(35_000) + `\nimport os\nprint(${index})`
+      })
+    await service.execute({ ...request, code: 'print("hello")' })
+    expect(approve).not.toHaveBeenCalled()
+    expect(execute).toHaveBeenCalledTimes(9)
+    const code = 'os.unlink("target.txt")'
+    await expect(service.execute({ ...request, code })).rejects.toThrow('one-time approval')
+    expect(execute).toHaveBeenCalledTimes(9)
+    approve.mockResolvedValueOnce(true)
+    await service.execute({ ...request, code })
+    await expect(service.execute({ ...request, code })).rejects.toThrow('one-time approval')
+    expect(approve).toHaveBeenCalledTimes(3)
+    expect(execute).toHaveBeenCalledTimes(10)
+  })
+  it.skipIf(!process.env.OPEN_SCIENCE_RISK_PYTHON)(
+    'executes real Python after long history without reusing deletion consent',
+    async () => {
+      const { service, execute, request } = await harness()
+      const target = join(request.workspaceCwd, 'history-target.txt')
+      const keep = join(request.workspaceCwd, 'keep.txt')
+      await writeFile(target, 'test')
+      await writeFile(keep, 'keep')
+      execute.mockImplementation(async (execution) => {
+        const { stdout, stderr } = await promisify(execFile)(
+          process.env.OPEN_SCIENCE_RISK_PYTHON!,
+          ['-c', execution.code],
+          { cwd: execution.cwd, timeout: 5000 }
+        )
+        return {
+          status: 'completed',
+          stdout,
+          stderr,
+          traceback: '',
+          cwdAfter: execution.cwd,
+          outputs: [],
+          kernelDispatched: true
+        }
+      })
+      const approve = vi.fn(async () => false)
+      service.setExecutionApproval(approve)
+      for (let index = 0; index < 8; index++)
+        await service.execute({ ...request, code: '#' + 'x'.repeat(35_000) + `\nprint(${index})` })
+      await service.execute({ ...request, code: `print(open(${JSON.stringify(target)}).read())` })
+      expect((await execute.mock.results[8].value).stdout).toContain('test')
+      expect(approve).not.toHaveBeenCalled()
+      const code = `import os\nos.unlink(${JSON.stringify(target)})`
+      await expect(service.execute({ ...request, code })).rejects.toThrow('one-time approval')
+      expect(await readFile(target, 'utf8')).toBe('test')
+      approve.mockResolvedValueOnce(true)
+      await service.execute({ ...request, code })
+      await expect(readFile(target)).rejects.toMatchObject({ code: 'ENOENT' })
+      await writeFile(target, 'next run')
+      await expect(service.execute({ ...request, code })).rejects.toThrow('one-time approval')
+      expect(execute).toHaveBeenCalledTimes(10)
+      expect(approve).toHaveBeenCalledTimes(3)
+      expect(await readFile(target, 'utf8')).toBe('next run')
+      expect(await readFile(keep, 'utf8')).toBe('keep')
+    }
+  )
   it.skipIf(!process.env.OPEN_SCIENCE_RISK_PYTHON)(
     'matches native Python split keyword mappings and container truth',
     async () => {
@@ -7499,7 +7600,24 @@ print(reader("."))`)
     }
     expect(await service.bindRuntime(binding)).toHaveProperty('bound.runtimeId', runtimes[0].envId)
     expect(approve).toHaveBeenCalledTimes(1)
+    expect(approve).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        rawInput: {
+          notebookRuntimeSelection: {
+            language: 'python',
+            runtimeId: runtimes[0].envId,
+            label: runtimes[0].label,
+            interpreterPath: runtimes[0].interpreterPath,
+            previousRuntimeId: undefined,
+            previousLabel: undefined
+          }
+        }
+      })
+    )
     await service.bindRuntime(binding)
+    expect(approve).toHaveBeenCalledTimes(1)
+    await service.execute({ ...request, code: 'print(1)' })
     expect(approve).toHaveBeenCalledTimes(1)
     approve.mockResolvedValue(false)
     expect(
@@ -7507,5 +7625,34 @@ print(reader("."))`)
     ).toHaveProperty('bindingChanged', false)
     expect((await service.listRuntimes(request)).bindings.python?.runtimeId).toBe(runtimes[0].envId)
     expect(approve).toHaveBeenCalledTimes(2)
+    expect(approve).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        rawInput: {
+          notebookRuntimeSelection: {
+            language: 'python',
+            runtimeId: runtimes[1].envId,
+            label: runtimes[1].label,
+            interpreterPath: runtimes[1].interpreterPath,
+            previousRuntimeId: runtimes[0].envId,
+            previousLabel: runtimes[0].label
+          }
+        }
+      })
+    )
+    await expect(
+      service.execute({ ...request, code: 'import os\nos.unlink("a.txt")' })
+    ).rejects.toThrow('one-time approval')
+    expect(approve).toHaveBeenCalledTimes(3)
+    expect(approve).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({
+        rawInput: expect.objectContaining({
+          notebookCodeRisk: expect.objectContaining({
+            risks: [{ operation: 'os.unlink', source: 'os.unlink("a.txt")', line: 2 }]
+          })
+        })
+      })
+    )
   })
 })

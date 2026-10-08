@@ -961,13 +961,32 @@ export const synchronizeActiveConversationActivities = (
   }
   const path = resolveMessageBranchPath(next, branch.id)
   const userMessages = path.filter((message) => message.role === 'user')
-  const promptForTime = (createdAt: number): PersistedMessageNode | undefined =>
-    userMessages.filter((message) => message.createdAt <= createdAt).at(-1) ?? userMessages.at(-1)
+  const userMessagesById = indexById(userMessages)
+  const messagesById = indexById(path)
+  const orderedPromptTimes = userMessages.every(
+    (message, index) => index === 0 || userMessages[index - 1].createdAt <= message.createdAt
+  )
+  const promptForTime = (createdAt: number): PersistedMessageNode | undefined => {
+    // Historical timestamps can be out of path order; keep their last-matching-path semantics.
+    if (!orderedPromptTimes || Number.isNaN(createdAt))
+      return (
+        userMessages.filter((message) => message.createdAt <= createdAt).at(-1) ??
+        userMessages.at(-1)
+      )
+    let low = 0
+    let high = userMessages.length
+    while (low < high) {
+      const middle = (low + high) >>> 1
+      if (userMessages[middle].createdAt <= createdAt) low = middle + 1
+      else high = middle
+    }
+    return userMessages[low - 1] ?? userMessages.at(-1)
+  }
   const byActivityId = indexById(next.activities)
 
   for (const activity of activities) {
     const prompt = activity.promptMessageId
-      ? userMessages.find((message) => message.id === activity.promptMessageId)
+      ? userMessagesById.get(activity.promptMessageId)
       : promptForTime(activity.createdAt)
     if (!prompt) continue
     const existing = byActivityId.get(activity.id)
@@ -1004,9 +1023,9 @@ export const synchronizeActiveConversationActivities = (
       .map((id) => byActivityId.get(id))
       .find((activity) => activity !== undefined)
     const prompt = group.promptMessageId
-      ? userMessages.find((message) => message.id === group.promptMessageId)
+      ? userMessagesById.get(group.promptMessageId)
       : firstActivity
-        ? path.find((message) => message.id === firstActivity.promptMessageId)
+        ? messagesById.get(firstActivity.promptMessageId)
         : promptForTime(group.createdAt)
     if (!prompt) continue
     const scoped: PersistedBranchActivityGroup = {

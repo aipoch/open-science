@@ -743,7 +743,11 @@ const getNotebookLanguage = (
       : typeof summary?.script === 'string'
         ? summary.script
         : undefined
-  return resolveNotebookLanguage(getNotebookRunToolName(activity), resolvedInput, code)
+  return resolveNotebookLanguage(
+    getNotebookRunToolName(activity),
+    { ...resolvedInput, shellRuntime: summary?.shellRuntime ?? input.shellRuntime },
+    code
+  )
 }
 
 // Reads the notebook run summary the execute tool returns as JSON content (or raw output).
@@ -885,7 +889,8 @@ const buildNotebookDetails = (activity: ToolActivity): ToolActivityDetails | und
   const language = getNotebookLanguage(activity, summary)
   const code = getNotebookCode(activity, summary)
   const sections: ToolDetailSection[] = []
-  const codeLabel = language === 'bash' ? 'Command' : 'Code'
+  const isShell = language === 'bash' || language === 'powershell'
+  const codeLabel = isShell ? 'Command' : 'Code'
   // Preserve original whitespace so transcript line numbers match the approval and actual source.
   if (code)
     sections.push({
@@ -909,8 +914,7 @@ const buildNotebookDetails = (activity: ToolActivity): ToolActivityDetails | und
 
   // Derive display name from language: python/r are Notebook runs, javascript (repl) is Agent SDK,
   // and bash is shell.
-  const displayName =
-    language === 'javascript' ? 'Agent SDK' : language === 'bash' ? 'Shell' : 'Notebook run'
+  const displayName = language === 'javascript' ? 'Agent SDK' : isShell ? 'Shell' : 'Notebook run'
 
   return {
     displayName,

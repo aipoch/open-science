@@ -388,21 +388,6 @@ const NotebookCodeReviewDetail = ({
           revealLine={revealLine}
         />
       </div>
-      {review.environment ? (
-        <details className="text-xs text-muted-foreground">
-          <summary className="w-fit cursor-pointer rounded-sm py-1 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
-            {t('Execution details')}
-          </summary>
-          <dl className="mt-2 grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
-            {review.environment ? (
-              <>
-                <dt>{t('Environment')}</dt>
-                <dd className="break-all font-mono text-foreground">{review.environment}</dd>
-              </>
-            ) : null}
-          </dl>
-        </details>
-      ) : null}
     </div>
   )
 }
@@ -943,20 +928,33 @@ const PermissionApprovalCard = ({
         data-testid="permission-header"
         className={cn(
           'flex min-w-0 items-center gap-2',
+          codeReview && 'flex-wrap',
           embedded &&
             'sticky top-0 z-10 -mx-4 -mt-4 -mb-3 bg-card px-4 pb-3 pt-4 sm:-mx-5 sm:-mt-5 sm:px-5 sm:pt-5'
         )}
       >
         {codeReview ? (
-          <div className="flex min-w-0 items-start gap-2">
-            <TriangleAlert
-              className="mt-0.5 size-5 shrink-0 text-status-warning-foreground dark:text-status-warning-dark-foreground"
-              aria-hidden="true"
-            />
-            <span className={cn(dialogTitleClassName, 'min-w-0 break-words')}>
-              {t('Review risky code')}
-            </span>
-          </div>
+          <>
+            <div className="flex min-w-0 items-start gap-2">
+              <TriangleAlert
+                className="mt-0.5 size-5 shrink-0 text-status-warning-foreground dark:text-status-warning-dark-foreground"
+                aria-hidden="true"
+              />
+              <span className={cn(dialogTitleClassName, 'min-w-0 break-words')}>
+                {t('Review risky code')}
+              </span>
+            </div>
+            {codeReview.environment ? (
+              <Badge
+                variant="secondary"
+                data-testid="permission-env-badge"
+                className="ml-auto min-w-0 max-w-full whitespace-normal break-all"
+                title={t('Environment')}
+              >
+                {codeReview.environment}
+              </Badge>
+            ) : null}
+          </>
         ) : (
           <>
             <div className="flex min-w-0 items-center gap-1.5">

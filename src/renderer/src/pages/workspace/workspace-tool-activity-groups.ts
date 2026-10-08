@@ -295,6 +295,7 @@ const formatActivityGroupTitle = (
 
   let hasEarlierToolSearchWrapper = false
   activities.forEach((activity, activityIndex) => {
+    if (isNotebookCodeReviewActivity(activity)) return
     const category = categorizeActivity(
       activity,
       activities,
@@ -357,13 +358,17 @@ const formatActivityGroupPresentationTitle = (
   return formatActivityGroupTitle(activities, declaredTitle, t)
 }
 
-// Removes ToolSearch wrapper rows from rendering once concrete search rows are available.
+// Hides internal review receipts and ToolSearch wrappers superseded by concrete search rows.
 const getRenderableActivityEntries = (activities: ToolActivity[]): RenderableActivityEntry[] => {
   const hasSearchActivities = countSearchActivities(activities) > 0
 
   return activities
     .map((activity, activityIndex) => ({ activity, activityIndex }))
-    .filter(({ activity }) => !(hasSearchActivities && isToolSearchWrapperActivity(activity)))
+    .filter(
+      ({ activity }) =>
+        !isNotebookCodeReviewActivity(activity) &&
+        !(hasSearchActivities && isToolSearchWrapperActivity(activity))
+    )
 }
 
 // Formats the group header's total visible-step count, flagging any failed steps.

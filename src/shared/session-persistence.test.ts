@@ -3993,34 +3993,46 @@ describe('normalizeSessionFile with activities', () => {
     expect(activities?.[0]).not.toHaveProperty('executionInvocationId')
   })
 
-  it('restores a pending host risk review as closed with complete long source', () => {
-    const code = '# context\n'.repeat(2000) + 'os.unlink(path)'
-    const activities = getRestoredActivities(
-      createSessionWithActivity({
-        id: 'app-approval:risk',
-        kind: 'tool',
-        title: 'Review code',
-        providerToolName: 'Open-Science',
+  it.each(['python', 'powershell'])(
+    'restores a pending %s review as closed with complete source and dialect',
+    (dialect) => {
+      const operation = dialect === 'powershell' ? 'Remove-Item' : 'os.unlink'
+      const source = dialect === 'powershell' ? 'Remove-Item ./temporary.txt' : 'os.unlink(path)'
+      const code = '# context\n'.repeat(2000) + source
+      const activities = getRestoredActivities(
+        createSessionWithActivity({
+          id: 'app-approval:risk',
+          kind: 'tool',
+          title: 'Review code',
+          providerToolName: 'Open-Science',
+          status: 'in_progress',
+          sortIndex: 1,
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 2,
+          rawInput: {
+            code,
+            notebookCodeRisk: {
+              language: dialect === 'powershell' ? 'bash' : 'python',
+              ...(dialect === 'powershell' ? { shellRuntime: { kind: 'powershell' } } : {}),
+              risks: [{ operation, source, line: 2001 }]
+            }
+          }
+        })
+      )
+      expect(activities?.[0]).toMatchObject({
         status: 'in_progress',
-        sortIndex: 1,
-        eventIds: [],
-        createdAt: 1,
-        updatedAt: 2,
+        toolDisposition: 'permission-closed',
         rawInput: {
           code,
           notebookCodeRisk: {
-            language: 'python',
-            risks: [{ operation: 'os.unlink', source: 'os.unlink(path)', line: 2001 }]
+            language: dialect === 'powershell' ? 'bash' : 'python',
+            ...(dialect === 'powershell' ? { shellRuntime: { kind: 'powershell' } } : {})
           }
         }
       })
-    )
-    expect(activities?.[0]).toMatchObject({
-      status: 'in_progress',
-      toolDisposition: 'permission-closed',
-      rawInput: { code }
-    })
-  })
+    }
+  )
 
   it('keeps terminal Notebook Run correlation for historical projection', () => {
     const activities = getRestoredActivities(

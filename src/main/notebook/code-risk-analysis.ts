@@ -1,4 +1,5 @@
 import { setImmediate as yieldAnalysis } from 'node:timers/promises'
+import { createHash } from 'node:crypto'
 import { win32 } from 'node:path'
 import {
   fieldChild,
@@ -18,6 +19,35 @@ export type NotebookCodeRisk = Readonly<{
 
 type Language = 'python' | 'r' | 'repl' | 'bash'
 type Bindings = Map<string, string>
+
+type FunctionEvidence = { name: string; effects: NotebookCodeRisk[]; members: Bindings }
+type ReplaySnapshot = {
+  bindings: [string, string][]
+  functions: [string, { name: string; effects: NotebookCodeRisk[]; members: [string, string][] }][]
+  objectRevision: number
+}
+
+// Content-addressed source evidence only. No parser nodes, execution receipts or permissions survive.
+const replaySnapshots = new Map<string, string>()
+let replaySnapshotCharacters = 0
+const MAX_REPLAY_STATE_CHARACTERS = 1024 * 1024
+const replayKey = (parent: string, script: string, incomplete: boolean): string =>
+  createHash('sha256')
+    .update(parent)
+    .update(incomplete ? '1' : '0')
+    .update(script, 'utf16le')
+    .digest('hex')
+const rememberReplaySnapshot = (key: string, snapshot: string): void => {
+  replaySnapshotCharacters -= replaySnapshots.get(key)?.length ?? 0
+  replaySnapshots.delete(key)
+  replaySnapshots.set(key, snapshot)
+  replaySnapshotCharacters += snapshot.length
+  while (replaySnapshots.size > 8 || replaySnapshotCharacters > 4 * MAX_REPLAY_STATE_CHARACTERS) {
+    const oldest = replaySnapshots.keys().next().value!
+    replaySnapshotCharacters -= replaySnapshots.get(oldest)!.length
+    replaySnapshots.delete(oldest)
+  }
+}
 
 // Branch evidence contains only target strings, never parser nodes or reusable permissions.
 const possibleTargets = (target: string | undefined): (string | undefined)[] =>
@@ -156,7 +186,7 @@ export async function analyzePowerShellCodeRisk(
 ): Promise<NotebookCodeRisk[]> {
   try {
     const commands = await parsePowerShellSearchCommands(source, signal, version, true)
-    return commands.flatMap(({ name, arguments: args }) => {
+    return commands.flatMap(({ name, arguments: args, source: commandSource, line }) => {
       const command = name?.split('\\').at(-1)?.toLowerCase()
       const risky =
         !command ||
@@ -188,8 +218,8 @@ export async function analyzePowerShellCodeRisk(
         ? [
             {
               operation: name ?? 'dynamic PowerShell command',
-              source: args.filter((arg) => arg !== null).join(' '),
-              line: 1
+              source: commandSource ?? args.filter((arg) => arg !== null).join(' '),
+              line: line ?? 1
             }
           ]
         : []
@@ -4544,10 +4574,7 @@ export async function analyzeNotebookCodeRisk(
   const bindings: Bindings = new Map(
     context?.pythonBindings?.map(({ name, qualifiedName }) => [name, qualifiedName])
   )
-  const functions = new Map<
-    string,
-    { name: string; effects: NotebookCodeRisk[]; members: Bindings }
-  >()
+  const functions = new Map<string, FunctionEvidence>()
   let objectMethodDepth = 0
   let objectRevision = 0
   let remainingWork = 100_000
@@ -4561,6 +4588,22 @@ export async function analyzeNotebookCodeRisk(
   }
   const spendWork = (): void => {
     if (--remainingWork < 0) throw new Error('Notebook risk analysis exceeds work limit')
+  }
+  const snapshot = (): string => {
+    if (bindings.size > 4096 || functions.size > 2048)
+      throw new Error('Notebook risk replay state exceeds analysis limit')
+    const state: ReplaySnapshot = {
+      bindings: [...bindings],
+      functions: [...functions].map(([key, value]) => [
+        key,
+        { ...value, members: [...value.members] }
+      ]),
+      objectRevision
+    }
+    const serialized = JSON.stringify(state)
+    if (serialized.length > MAX_REPLAY_STATE_CHARACTERS)
+      throw new Error('Notebook risk replay state exceeds analysis limit')
+    return serialized
   }
   const analyze = (root: Node, incomplete = false): NotebookCodeRisk[] => {
     const risks: NotebookCodeRisk[] = []
@@ -5865,6 +5908,7 @@ export async function analyzeNotebookCodeRisk(
       script: string,
       incomplete = false
     ): ReturnType<typeof withParsedNotebookSource<NotebookCodeRisk[]>> => {
+      remainingWork = 100_000
       if (language !== 'bash' && process.platform !== 'win32') {
         // Earlier data strings must not consume the current cell's literal probe allowance.
         // Function effects have already been summarized using their declaring source's verdicts.
@@ -5927,27 +5971,59 @@ export async function analyzeNotebookCodeRisk(
       }
       return withParsedNotebookSource(parserLanguage, script, (root) => analyze(root, incomplete))
     }
-    // Prior source is same-kernel evidence only. Bound work; never silently drop uncertain history.
-    if (
-      previousSources.reduce(
-        (size, previous) =>
-          size + (typeof previous === 'string' ? previous : previous.script).length,
-        0
-      ) > 256_000
-    ) {
-      return [{ operation: 'kernel source history exceeds analysis limit', source, line: 1 }]
-    }
-    for (const previous of previousSources) {
-      await checkpoint()
-      const parsed = await parseSource(
-        typeof previous === 'string' ? previous : previous.script,
-        typeof previous === 'string' ? false : previous.incomplete
+    // Exact ordered source and completion state determine replay evidence, never permission.
+    // Bound each cell and the retained state rather than turning a long kernel into repeated consent.
+    const initialKey = createHash('sha256')
+      .update(JSON.stringify([language, process.platform, [...bindings]]))
+      .digest('hex')
+    let historyKey = initialKey
+    let replayStart = 0
+    let cached: string | undefined
+    let cachedKey = initialKey
+    for (let index = 0; index < previousSources.length; index++) {
+      if (index % 32 === 0) await checkpoint()
+      const previous = previousSources[index]
+      const script = typeof previous === 'string' ? previous : previous.script
+      if (script.length > MAX_REPLAY_STATE_CHARACTERS)
+        return [{ operation: 'kernel source history exceeds analysis limit', source, line: 1 }]
+      historyKey = replayKey(
+        historyKey,
+        script,
+        typeof previous !== 'string' && previous.incomplete
       )
+      const candidate = replaySnapshots.get(historyKey)
+      if (candidate !== undefined) {
+        cached = candidate
+        cachedKey = historyKey
+        replayStart = index + 1
+      }
+    }
+    if (cached !== undefined) {
+      const state = JSON.parse(cached) as ReplaySnapshot
+      bindings.clear()
+      for (const [name, value] of state.bindings) bindings.set(name, value)
+      for (const [key, value] of state.functions)
+        functions.set(key, { ...value, members: new Map(value.members) })
+      objectRevision = state.objectRevision
+      rememberReplaySnapshot(cachedKey, cached)
+    }
+    for (let index = replayStart; index < previousSources.length; index++) {
+      await checkpoint()
+      const previous = previousSources[index]
+      const script = typeof previous === 'string' ? previous : previous.script
+      const incomplete = typeof previous !== 'string' && previous.incomplete
+      const parsed = await parseSource(script, incomplete)
       if (parsed.state !== 'ok') return [{ operation: parsed.reason, source, line: 1 }]
+      cachedKey = replayKey(cachedKey, script, incomplete)
+      rememberReplaySnapshot(cachedKey, snapshot())
     }
     await checkpoint()
+    if (source.length > MAX_REPLAY_STATE_CHARACTERS)
+      return [{ operation: 'code source exceeds analysis limit', source, line: 1 }]
     const parsed = await parseSource(source)
-    return parsed.state === 'ok' ? parsed.value : [{ operation: parsed.reason, source, line: 1 }]
+    if (parsed.state !== 'ok') return [{ operation: parsed.reason, source, line: 1 }]
+    rememberReplaySnapshot(replayKey(historyKey, source, false), snapshot())
+    return parsed.value
   } catch {
     signal?.throwIfAborted()
     return [{ operation: 'code analysis unavailable', source, line: 1 }]

@@ -1,4 +1,4 @@
-import { matchNotebookControlTool } from './notebook-tool-names'
+import { matchNotebookControlTool, resolveNotebookLanguage } from './notebook-tool-names'
 import { identityTranslate, type TranslateClause } from './workspace-translate-clause'
 
 export type ToolSummary = {
@@ -89,7 +89,7 @@ export const readNotebookCodeReview = (rawInput: unknown): NotebookCodeReview | 
     return undefined
   return {
     code: input.code,
-    language: risk.language === 'repl' ? 'javascript' : risk.language,
+    language: resolveNotebookLanguage(undefined, risk, input.code),
     environment:
       [risk.environment, risk.runtimeId]
         .filter(

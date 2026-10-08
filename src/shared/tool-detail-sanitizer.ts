@@ -7,6 +7,34 @@ import {
 const MAX_TOOL_DETAIL_TEXT_CHARS = 16_000
 const MAX_TOOL_DETAIL_CONTENT_CHARS = 32_000
 
+// Long immutable source is revalidated at several transport and persistence boundaries. Reuse
+// only exact fixed points of the existing redactor; never retain changed/unredacted credentials.
+// ponytail: bounded per-process reuse, not a source store or an authorization cache.
+const unchangedLongToolTexts = new Set<string>()
+let unchangedLongToolTextChars = 0
+const MAX_UNCHANGED_TOOL_TEXT_CHARS = 16 * 1024 * 1024
+const redactToolPayloadText = (value: string): string => {
+  const cacheable = value.length >= 16_000 && value.length <= 1024 * 1024
+  if (cacheable && unchangedLongToolTexts.delete(value)) {
+    unchangedLongToolTexts.add(value)
+    return value
+  }
+  const redacted = redactSensitiveText(value)
+  if (cacheable && redacted === value) {
+    unchangedLongToolTexts.add(value)
+    unchangedLongToolTextChars += value.length
+    while (
+      unchangedLongToolTexts.size > 64 ||
+      unchangedLongToolTextChars > MAX_UNCHANGED_TOOL_TEXT_CHARS
+    ) {
+      const oldest = unchangedLongToolTexts.values().next().value!
+      unchangedLongToolTexts.delete(oldest)
+      unchangedLongToolTextChars -= oldest.length
+    }
+  }
+  return redacted
+}
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
@@ -135,6 +163,11 @@ const sanitizeNotebookCodeReviewPayload = (value: unknown): unknown | undefined 
       notebookCodeRisk: {
         ...metadata,
         language: review.language,
+        ...(review.language === 'bash' &&
+        isRecord(review.shellRuntime) &&
+        review.shellRuntime.kind === 'powershell'
+          ? { shellRuntime: { kind: 'powershell' } }
+          : {}),
         riskCount: Math.max(
           review.risks.length,
           Number.isSafeInteger(review.riskCount) && (review.riskCount as number) <= 100_000
@@ -162,7 +195,7 @@ const sanitizeRawToolPayload = (
   try {
     const serialized = JSON.stringify(value, (key, nestedValue) => {
       if (key && isSensitiveDiagnosticKey(key)) return REDACTED_MARKER
-      return typeof nestedValue === 'string' ? redactSensitiveText(nestedValue) : nestedValue
+      return typeof nestedValue === 'string' ? redactToolPayloadText(nestedValue) : nestedValue
     })
 
     if (serialized === undefined || serialized.length > maxSerializedChars) return undefined

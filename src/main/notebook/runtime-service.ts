@@ -497,6 +497,9 @@ class NotebookRuntimeService {
         notebookCodeRisk: {
           runId: run.runId,
           language: run.kernelKind,
+          ...(run.shellRuntime?.kind === 'powershell'
+            ? { shellRuntime: { kind: 'powershell' } }
+            : {}),
           environment: run.environment,
           runtimeId: run.runtimeId,
           cwd: run.cwdBefore,

@@ -32,16 +32,21 @@ try {
   $commands = @($ast.FindAll({param($node) $node -is [System.Management.Automation.Language.CommandAst]}, $true) | ForEach-Object {
     $arguments = @()
     foreach ($element in $_.CommandElements | Select-Object -Skip 1) { $arguments += Read-Literal $element }
-    @{ name = $_.GetCommandName(); arguments = $arguments }
+    $entry = @{ name = $_.GetCommandName(); arguments = $arguments }
+    if ($includeMutationEvidence) {
+      $entry.source = $_.Extent.Text
+      $entry.line = $_.Extent.StartLineNumber
+    }
+    $entry
   })
   if ($includeMutationEvidence) {
     $commands += @($ast.FindAll({param($node) $node -is [System.Management.Automation.Language.InvokeMemberExpressionAst]}, $true) | ForEach-Object {
       $member = Read-Literal $_.Member
       $name = if ($null -eq $member[0]) { '@dynamic-member' } else { '@member:' + $member[0] }
-      @{ name = $name; arguments = @($_.Extent.Text) }
+      @{ name = $name; arguments = @($_.Extent.Text); source = $_.Extent.Text; line = $_.Extent.StartLineNumber }
     })
     $commands += @($ast.FindAll({param($node) $node -is [System.Management.Automation.Language.FileRedirectionAst] -and -not $_.Append}, $true) | ForEach-Object {
-      @{ name = '@overwrite'; arguments = @($_.Extent.Text) }
+      @{ name = '@overwrite'; arguments = @($_.Extent.Text); source = $_.Extent.Text; line = $_.Extent.StartLineNumber }
     })
   }
   [Console]::Out.Write((ConvertTo-Json -InputObject $commands -Depth 10 -Compress))
@@ -51,7 +56,12 @@ try {
 }
 `
 
-export type ParsedPowerShellCommand = { name: string | null; arguments: (string | null)[] }
+export type ParsedPowerShellCommand = {
+  name: string | null
+  arguments: (string | null)[]
+  source?: string
+  line?: number
+}
 
 export const parsePowerShellSearchCommands = (
   source: string,
@@ -93,7 +103,11 @@ export const parsePowerShellSearchCommands = (
                 !entry ||
                 (entry.name !== null && typeof entry.name !== 'string') ||
                 !Array.isArray(entry.arguments) ||
-                entry.arguments.some((arg: unknown) => arg !== null && typeof arg !== 'string')
+                entry.arguments.some((arg: unknown) => arg !== null && typeof arg !== 'string') ||
+                (includeMutationEvidence &&
+                  (typeof entry.source !== 'string' ||
+                    !Number.isInteger(entry.line) ||
+                    entry.line < 1))
             )
           )
             throw new Error('Invalid PowerShell parser output')

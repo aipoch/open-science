@@ -588,6 +588,47 @@ describe('Notebook risk review waiting presentation', () => {
       'Waiting for your approval'
     )
   })
+  it.each(['in_progress', 'completed', 'failed'] as const)(
+    'hides %s review rows without discarding their timing and approval evidence',
+    (status) => {
+      const activities = [review({ status }), run]
+      expect(getRenderableActivityEntries(activities)).toEqual([
+        { activity: run, activityIndex: 1 }
+      ])
+      expect(getRenderableActivityEntries([review({ status })])).toEqual([])
+      expect(formatActivityGroupTitle(activities)).toBe('Completed a Notebook run')
+      expect(
+        formatStepCount(getRenderableActivityEntries(activities).map(({ activity }) => activity))
+      ).toBe('1 step')
+      expect(activities).toHaveLength(2)
+    }
+  )
+
+  it('keeps environment selection and switching visible when hiding code-risk reviews', () => {
+    const selection = createActivity({
+      id: 'app-approval:environment',
+      providerToolName: 'Open-Science',
+      rawInput: {
+        notebookRuntimeSelection: {
+          language: 'python',
+          runtimeId: 'research',
+          label: 'Python research',
+          previousRuntimeId: 'base',
+          previousLabel: 'Python base'
+        }
+      }
+    })
+    const switched = createActivity({
+      id: 'runtime-switch',
+      providerToolName: 'mcp__open-science-notebook__notebook_switch_runtime',
+      rawInput: { language: 'python', runtimeId: 'research' }
+    })
+    expect(getRenderableActivityEntries([selection, review(), switched])).toEqual([
+      { activity: selection, activityIndex: 0 },
+      { activity: switched, activityIndex: 2 }
+    ])
+  })
+
   it('excludes review waiting intervals and does not double count review steps', () => {
     expect(getActivityGroupElapsedMs([run, review()], 1400, () => true)).toBe(100)
     expect(

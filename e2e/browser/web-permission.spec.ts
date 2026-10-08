@@ -117,7 +117,7 @@ for (const language of ['en', 'zh-Hans']) {
       await page.goto(`/web-permission.html?risk=1&lang=${language}${light ? '&light=1' : ''}`)
       const review = page.getByTestId('notebook-code-review')
       await expect(page.getByTestId('permission-header')).toHaveText(
-        chinese ? '检查高风险代码' : 'Review risky code'
+        chinese ? '检查高风险代码default-python' : 'Review risky codedefault-python'
       )
       await expect(page.getByTestId('permission-impact-info')).toHaveCount(0)
       await expect(page.getByTestId('permission-category-badge')).toHaveCount(0)
@@ -131,7 +131,7 @@ for (const language of ['en', 'zh-Hans']) {
       await expect(review.locator('[data-code-line="9"]')).toContainText('os.unlink(a_path)')
       await expect(review.locator('[data-line="9"]')).toBeVisible()
       await expect(review.getByTestId('tool-code-block')).toHaveAttribute('data-language', 'python')
-      await expect(review.locator('details')).not.toHaveAttribute('open')
+      await expect(review.locator('details')).toHaveCount(0)
       for (const width of [320, 375, 414, 768]) {
         await page.setViewportSize({ width, height: 850 })
         expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
@@ -143,13 +143,10 @@ for (const language of ['en', 'zh-Hans']) {
           animations: 'disabled'
         })
       }
-      const details = review.locator('summary')
-      await details.focus()
-      await page.keyboard.press('Enter')
-      await expect(review.locator('details')).toHaveAttribute('open', '')
-      await expect(review.getByText('default-python', { exact: true })).toBeVisible()
+      await expect(
+        page.getByTestId('permission-header').getByTestId('permission-env-badge')
+      ).toHaveText('default-python')
       await expect(review).not.toContainText('/workspace/open-science/')
-      await details.press('Enter')
       const optionId = light ? 'allow-once' : 'deny'
       await page
         .getByRole('button', {
@@ -191,43 +188,18 @@ test('reveals a risky line inside a long code block without scrolling the conver
   await page.screenshot({ path: testInfo.outputPath('risk-reveal-line.png'), fullPage: true })
 })
 
-for (const [state, label] of [
-  ['declined', 'declined by you'],
-  ['allowed', 'Allowed once'],
-  ['closed', 'request ended']
-]) {
-  test(`shows a compact ${state} code-review receipt in the message`, async ({
-    page
-  }, testInfo) => {
-    await page.setViewportSize({ width: 768, height: 650 })
+for (const state of ['declined', 'allowed', 'closed']) {
+  test(`hides the ${state} code-review receipt in the message`, async ({ page }) => {
     await page.goto(`/web-permission.html?receipt=${state}&light=1`)
-    const row = page.getByTestId('tool-chip').filter({ hasText: 'Code risk review' })
-    await expect(row).toHaveText(`Code risk review·os.unlink${label}`)
-    await expect(row).toHaveAttribute('aria-expanded', 'false')
-    await expect(page.getByTestId('permission-header')).toHaveCount(0)
-    await page.screenshot({
-      path: testInfo.outputPath(`receipt-${state}-collapsed.png`),
-      fullPage: true
-    })
-    await row.click()
-    const receipt = page.getByTestId('notebook-code-review-receipt')
-    await expect(receipt).toBeVisible()
-    await expect(receipt).not.toContainText('notebookCodeRisk')
-    await expect(receipt.locator('[data-code-line="9"]')).toHaveAttribute(
-      'data-highlighted',
-      'true'
+    await expect(page.getByTestId('risk-receipt-fixture')).toBeVisible()
+    await expect(page.getByTestId('tool-chip')).toHaveCount(1)
+    await expect(page.getByTestId('tool-chip').filter({ hasText: 'Code risk review' })).toHaveCount(
+      0
     )
-    await expect(receipt.locator('details')).not.toHaveAttribute('open')
-    await receipt.getByRole('button', { name: 'Line 9', exact: true }).click()
-    await expect(receipt.locator('[data-code-line="9"]')).toBeFocused()
+    await expect(page.getByTestId('notebook-code-review-receipt')).toHaveCount(0)
+    await expect(page.getByTestId('tool-code-block')).toBeVisible()
     await expect(page.getByRole('button', { name: 'Allow once', exact: true })).toHaveCount(0)
     await expect(page.getByRole('button', { name: 'Deny', exact: true })).toHaveCount(0)
-    await page.screenshot({
-      path: testInfo.outputPath(`receipt-${state}-expanded.png`),
-      fullPage: true
-    })
-    await row.click()
-    await expect(row).toHaveAttribute('aria-expanded', 'false')
   })
 }
 
@@ -293,4 +265,24 @@ test('presents environment switch and variable loss without raw runtime JSON', a
       () => (window as unknown as { webPermissionResponses: unknown[] }).webPermissionResponses
     )
   ).toEqual([{ requestId: 'runtime-selection', optionId: 'allow-once' }])
+})
+
+test('shows PowerShell syntax in approval and Shell run with hidden review receipts', async ({
+  page
+}, testInfo) => {
+  await page.goto('/web-permission.html?risk=1&powershell=1&light=1')
+  const review = page.getByTestId('notebook-code-review')
+  await expect(review.getByTestId('tool-code-block')).toHaveAttribute('data-language', 'powershell')
+  await expect(review.locator('[data-code-line="3"]')).toHaveAttribute('data-highlighted', 'true')
+  await review.getByRole('button', { name: 'Line 3', exact: true }).click()
+  await expect(review.locator('[data-code-line="3"]')).toBeFocused()
+  await page.screenshot({ path: testInfo.outputPath('powershell-approval.png') })
+  await page.goto('/web-permission.html?receipt=allowed&powershell=1&light=1')
+  await expect(page.getByTestId('tool-code-block')).toHaveAttribute('data-language', 'powershell')
+  await expect(page.getByTestId('tool-chip').filter({ hasText: 'Code risk review' })).toHaveCount(0)
+  await expect(page.getByTestId('notebook-code-review-receipt')).toHaveCount(0)
+  await expect(
+    page.locator('[data-testid="tool-code-block"][data-language="powershell"]')
+  ).toHaveCount(1)
+  await page.screenshot({ path: testInfo.outputPath('powershell-receipt.png') })
 })

@@ -4,7 +4,11 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import type { ToolActivity } from '@/stores/session-store'
 import type { AcpPermissionRequest } from '../../../../shared/acp'
 import { buildToolActivityDetails } from './workspace-tool-activity-details'
-import { buildNotebookToolSummary, readNotebookToolResult } from './notebook-tool-presentation'
+import {
+  buildNotebookToolSummary,
+  readNotebookToolResult,
+  readNotebookCodeReview
+} from './notebook-tool-presentation'
 import { WorkspaceToolDetailsRow } from './WorkspaceToolDetailsRow'
 import { PermissionApprovalControls } from './PermissionApprovalControls'
 import { WorkspaceToolSummaryCard } from './WorkspaceToolSummaryCard'
@@ -322,3 +326,19 @@ it.each([
   expect(details.codeReview).toBeUndefined()
   expect(JSON.stringify(details.sections)).toContain('/production')
 })
+
+it.each([undefined, { kind: 'powershell' }])(
+  'reads persisted Shell review dialect (%j)',
+  (shellRuntime) => {
+    expect(
+      readNotebookCodeReview({
+        code: 'Remove-Item ./temporary.txt',
+        notebookCodeRisk: {
+          language: 'bash',
+          shellRuntime,
+          risks: [{ operation: 'Remove-Item', source: 'Remove-Item ./temporary.txt', line: 1 }]
+        }
+      })?.language
+    ).toBe(shellRuntime ? 'powershell' : 'bash')
+  }
+)

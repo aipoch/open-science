@@ -361,15 +361,18 @@ describe('PermissionApprovalControls', () => {
       const review = host.querySelector('[data-testid="notebook-code-review"]')
       expect(review?.textContent).toContain('This code may make irreversible changes.')
       expect(host.querySelector('[data-testid="permission-header"]')?.textContent).toBe(
-        'Review risky code'
+        'Review risky codedefault-python'
       )
       expect(host.querySelector('[data-testid="permission-impact-info"]')).toBeNull()
       expect(host.querySelector('[data-testid="permission-category-badge"]')).toBeNull()
-      expect(review?.querySelector('details')?.open).toBe(false)
+      expect(review?.querySelector('details')).toBeNull()
       expect(review?.textContent).toContain('os.unlink')
       expect(review?.textContent).toContain('Line 3')
       expect(review?.textContent).not.toContain('/workspace/risk-test')
-      expect(review?.textContent).toContain('default-python')
+      expect(
+        host.querySelector('[data-testid="permission-header"] [data-testid="permission-env-badge"]')
+          ?.textContent
+      ).toBe('default-python')
       expect(review?.textContent).not.toContain('notebookCodeRisk')
       expect(review?.textContent).not.toContain('internal-run-id')
       const block = review?.querySelector('[data-testid="tool-code-block"]')
