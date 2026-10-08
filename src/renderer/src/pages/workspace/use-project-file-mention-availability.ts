@@ -8,29 +8,32 @@ export const isProjectFileMentionAvailable = (projectId: string): boolean => {
     typeof window.api?.managedFileVersions?.inspect === 'function' &&
     navigation.view === 'workspace' &&
     navigation.activeProjectId === projectId &&
-    sessions.sessions.find((item) => item.id === sessions.selectedSessionId)?.projectId ===
-      projectId &&
+    (sessions.selectedSessionId === undefined ||
+      sessions.sessions.find((item) => item.id === sessions.selectedSessionId)?.projectId ===
+        projectId) &&
     navigation.artifactMentionAvailability?.projectId === projectId &&
     navigation.artifactMentionAvailability.canMention &&
     !navigation.pendingArtifactMention
   )
 }
 
-// Mirrors the Global Search mention gate: the composer must be mounted in the workspace for the
-// same project, with an active session in that project, and the draft below its mention cap.
+// The composer may own a new-conversation draft before a Session exists. An explicitly selected
+// Session must still belong to this project; the composer owns editability and the mention cap.
 export const useProjectFileMentionAvailability = (projectId: string): boolean => {
   const view = useNavigationStore((state) => state.view)
   const activeProjectId = useNavigationStore((state) => state.activeProjectId)
   const availability = useNavigationStore((state) => state.artifactMentionAvailability)
   const pending = useNavigationStore((state) => state.pendingArtifactMention)
-  const sessionProjectId = useSessionStore(
-    (state) => state.sessions.find((item) => item.id === state.selectedSessionId)?.projectId
+  const sessionMatchesProject = useSessionStore(
+    (state) =>
+      state.selectedSessionId === undefined ||
+      state.sessions.find((item) => item.id === state.selectedSessionId)?.projectId === projectId
   )
   return (
     typeof window.api?.managedFileVersions?.inspect === 'function' &&
     view === 'workspace' &&
     activeProjectId === projectId &&
-    sessionProjectId === projectId &&
+    sessionMatchesProject &&
     availability?.projectId === projectId &&
     availability.canMention &&
     !pending

@@ -191,8 +191,11 @@ describe('project file mention drag and drop', () => {
   })
 })
 
-describe('mentionProjectFile', () => {
-  beforeEach(composerAvailable)
+describe.each(['existing', 'new'])('mentionProjectFile in a %s conversation', (conversation) => {
+  beforeEach(() => {
+    composerAvailable()
+    if (conversation === 'new') useSessionStore.setState({ selectedSessionId: undefined })
+  })
   const headVersion = {
     id: 'head-1',
     checksum: 'a'.repeat(64),
@@ -329,32 +332,68 @@ describe('useProjectFileMentionAction', () => {
     expect(inspect).not.toHaveBeenCalled()
   })
 
-  it('mentions the file and resolves the head version when available', async () => {
+  it.each(['session-1', undefined])(
+    'mentions the file with selected session %s',
+    async (selectedSessionId) => {
+      composerAvailable()
+      useSessionStore.setState({ selectedSessionId })
+      const inspect = vi.fn(async () => ({
+        ok: true as const,
+        value: {
+          headVersionId: 'head-1',
+          versions: [headVersion],
+          headVersion,
+          sessionId: 'session-1',
+          displayName: 'report.md'
+        }
+      }))
+      window.api = { managedFileVersions: { inspect } } as unknown as Window['api']
+      const { result } = renderHook(() => useProjectFileMentionAction(file()))
+      expect(result.current.available).toBe(true)
+      let mentioned = false
+      await act(async () => {
+        mentioned = await result.current.mention()
+      })
+      expect(mentioned).toBe(true)
+      expect(inspect).toHaveBeenCalledOnce()
+      expect(useNavigationStore.getState().pendingArtifactMention).toMatchObject({
+        projectId: 'project-1',
+        sourceVersionId: 'head-1'
+      })
+    }
+  )
+
+  it.each(['missing-session', 'other-project-session'])(
+    'rejects an invalid selected session: %s',
+    async (selectedSessionId) => {
+      composerAvailable()
+      const session = useSessionStore.getState().sessions[0]!
+      useSessionStore.setState({
+        selectedSessionId,
+        sessions: [session, { ...session, id: 'other-project-session', projectId: 'project-2' }]
+      })
+      const inspect = vi.fn()
+      window.api = { managedFileVersions: { inspect } } as unknown as Window['api']
+      const { result } = renderHook(() => useProjectFileMentionAction(file()))
+      expect(result.current.available).toBe(false)
+      await expect(mentionProjectFile(file())).resolves.toBe('unavailable')
+      expect(inspect).not.toHaveBeenCalled()
+    }
+  )
+
+  it('updates availability when switching between new and invalid selected sessions', () => {
     composerAvailable()
-    const inspect = vi.fn(async () => ({
-      ok: true as const,
-      value: {
-        headVersionId: 'head-1',
-        versions: [headVersion],
-        headVersion,
-        sessionId: 'session-1',
-        displayName: 'report.md'
-      }
-    }))
-    window.api = { managedFileVersions: { inspect } } as unknown as Window['api']
+    window.api = { managedFileVersions: { inspect: vi.fn() } } as unknown as Window['api']
     const { result } = renderHook(() => useProjectFileMentionAction(file()))
     expect(result.current.available).toBe(true)
-    let mentioned = false
-    await act(async () => {
-      mentioned = await result.current.mention()
-    })
-    expect(mentioned).toBe(true)
-    expect(inspect).toHaveBeenCalledOnce()
-    expect(useNavigationStore.getState().pendingArtifactMention).toMatchObject({
-      projectId: 'project-1',
-      sourceVersionId: 'head-1'
-    })
+    act(() => useSessionStore.setState({ selectedSessionId: undefined }))
+    expect(result.current.available).toBe(true)
+    act(() => useSessionStore.setState({ selectedSessionId: 'missing-session' }))
+    expect(result.current.available).toBe(false)
+    act(() => useSessionStore.setState({ selectedSessionId: undefined }))
+    expect(result.current.available).toBe(true)
   })
+
   it('disables the action when the Web API has no version inspection capability', async () => {
     composerAvailable()
     window.api = {} as Window['api']

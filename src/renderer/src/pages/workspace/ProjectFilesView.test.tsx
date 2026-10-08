@@ -395,9 +395,14 @@ describe('ProjectFilesView', () => {
     expect(container.textContent).toContain('No files yet')
   })
 
-  it.each(['Grid view', 'List view'])(
-    'shows mention failures on a file card in %s',
-    async (view) => {
+  it.each([
+    ['Grid view', 'session-1'],
+    ['List view', 'session-1'],
+    ['Grid view', undefined],
+    ['List view', undefined]
+  ])(
+    'shows mention failures on a file card in %s with selected session %s',
+    async (view, selectedSessionId) => {
       const { useNavigationStore } = await import('@/stores/navigation-store')
       const { useSessionStore } = await import('@/stores/session-store')
       await renderView(
@@ -415,7 +420,7 @@ describe('ProjectFilesView', () => {
         ],
         false,
         () => {
-          useSessionStore.setState({ selectedSessionId: 'session-1' })
+          useSessionStore.setState({ selectedSessionId })
           useNavigationStore.setState({
             pendingArtifactMention: undefined,
             artifactMentionAvailability: { projectId: 'default', canMention: true }
