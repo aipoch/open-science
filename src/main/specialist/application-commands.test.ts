@@ -168,6 +168,44 @@ const fixture = async (beforeCatalog: () => Promise<void> = async () => {}): Pro
 }
 
 describe('Specialist Remote Web application commands', () => {
+  it('loads Marketplace snapshots on automatic refresh, forced refresh and retry through JSON RPC', async () => {
+    const { installWebRendererContracts } = await import('../../renderer/web/api-installer')
+    const { useMarketplaceStore, resetMarketplaceStoreForTests } =
+      await import('../../renderer/src/stores/marketplace-store')
+    const { first, marketplace } = await fixture()
+    const api: Record<string, unknown> = {}
+    installWebRendererContracts(api, {
+      availableRpcChannels: new Set(['specialist:marketplace-list']),
+      restrictedRpcChannels: new Set(),
+      invoke: (channel, args) => {
+        const body = JSON.parse(JSON.stringify({ args })) as { args: unknown[] }
+        return first.invoke(channel, ...body.args)
+      },
+      subscribe: () => () => {},
+      nativeAdapters: {}
+    })
+    resetMarketplaceStoreForTests()
+    vi.stubGlobal('window', { api })
+    cleanup.push(() => {
+      resetMarketplaceStoreForTests()
+      vi.unstubAllGlobals()
+    })
+
+    for (const options of [undefined, { forceRefresh: true }, undefined]) {
+      marketplace.list.mockRejectedValueOnce(new Error('offline'))
+      await useMarketplaceStore.getState().refresh(options)
+      expect(useMarketplaceStore.getState().lastRefreshFailed).toBe(true)
+
+      await useMarketplaceStore.getState().refresh(options)
+      expect(useMarketplaceStore.getState()).toMatchObject({
+        snapshot: { sources: [], specialists: [], failures: [] },
+        lastRefreshFailed: false,
+        isRefreshing: false
+      })
+    }
+    expect(marketplace.list).toHaveBeenCalledTimes(6)
+  })
+
   it('serves Marketplace browsing through the public commands and validates the list request', async () => {
     const { first, marketplace } = await fixture()
     const snapshot = { sources: [], specialists: [], failures: [] }

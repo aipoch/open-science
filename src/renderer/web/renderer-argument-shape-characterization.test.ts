@@ -213,6 +213,25 @@ afterEach(() => {
 })
 
 describe('renderer argument-shape characterization', () => {
+  it('omits the Marketplace request on automatic refresh and retry over Web JSON transport', async () => {
+    const { useMarketplaceStore, resetMarketplaceStoreForTests } =
+      await import('../src/stores/marketplace-store')
+    resetMarketplaceStoreForTests()
+
+    await useMarketplaceStore.getState().refresh()
+    await useMarketplaceStore.getState().refresh({ forceRefresh: true })
+    // A failed load's Retry action takes the same unforced path as view entry.
+    useMarketplaceStore.setState({ lastRefreshFailed: true })
+    await useMarketplaceStore.getState().refresh()
+
+    expect(webInvocations).toEqual([
+      { channel: 'specialist:marketplace-list', args: [] },
+      { channel: 'specialist:marketplace-list', args: [{ forceRefresh: true }] },
+      { channel: 'specialist:marketplace-list', args: [] }
+    ])
+    expect(useMarketplaceStore.getState().lastRefreshFailed).toBe(false)
+  })
+
   it('waits for actual API registration when module loading outlasts the polling deadline', async () => {
     vi.resetModules()
     delete (window as unknown as { api?: unknown }).api

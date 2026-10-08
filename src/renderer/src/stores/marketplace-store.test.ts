@@ -96,7 +96,7 @@ describe('marketplace store', () => {
     await state().refresh()
     await state().refresh({ forceRefresh: true })
 
-    expect(list).toHaveBeenNthCalledWith(1, undefined)
+    expect(list).toHaveBeenNthCalledWith(1)
     expect(list).toHaveBeenNthCalledWith(2, { forceRefresh: true })
   })
 

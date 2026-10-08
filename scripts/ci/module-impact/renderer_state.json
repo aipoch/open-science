@@ -150,6 +150,7 @@
     ],
     "contract": [],
     "consumer": [
+      "src/main/specialist/application-commands.test.ts",
       "src/renderer/src/pages/workspace/project-file-mention.interaction.test.tsx",
       "src/renderer/src/lib/acp/workspace-subagent-runtime-presentation.test.ts",
       "src/renderer/src/lib/acp/runtime-observer.test.ts",
