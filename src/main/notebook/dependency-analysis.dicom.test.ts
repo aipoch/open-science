@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { NotebookRunRecord } from '../../shared/notebook'
 import { NotebookDependencyAnalyzer } from './dependency-analysis'
-import { analyzePythonNotebookSource } from './dependency-analysis-python'
+import { analyzePythonNotebookSource, analyzePythonSources } from './dependency-analysis-python'
 import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
 
 const temporaryRoots: string[] = []
@@ -108,5 +108,46 @@ describe('DICOM multi-cell lineage', { timeout: 60_000 }, () => {
     expect(projection?.stalenessByRunId['run-2']).toEqual({ state: 'clear' })
     expect(projection?.stalenessByRunId['run-3']).toEqual({ state: 'clear' })
     expect(projection?.stalenessByRunId['run-4']).toEqual({ state: 'clear' })
+  })
+
+  it('links a SimpleITK series reader across discovery and execution cells', async () => {
+    const [facts] = await analyzePythonSources([
+      'import SimpleITK as sitk\nfiles = sitk.ImageSeriesReader.GetGDCMSeriesFileNames("inputs/dicom-series")\nreader = sitk.ImageSeriesReader()\nreader.SetFileNames(files)\nimage = reader.Execute()\narray = sitk.GetArrayFromImage(image)'
+    ])
+    expect(facts.typeBindings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ target: 'image', typeName: 'SimpleITK.Image' }),
+        expect.objectContaining({ target: 'array', typeName: 'numpy.ndarray' })
+      ])
+    )
+
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-simpleitk-series-'))
+    temporaryRoots.push(storageRoot)
+    const runs: NotebookRunRecord[] = []
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => runs) }
+    })
+    const scripts = [
+      'import SimpleITK as sitk\nfiles = sitk.ImageSeriesReader.GetGDCMSeriesFileNames("inputs/dicom-series")\nreader = sitk.ImageSeriesReader()\nreader.SetFileNames(files)',
+      'image = reader.Execute()\narray = sitk.GetArrayFromImage(image)'
+    ]
+    let projection: Awaited<ReturnType<NotebookDependencyAnalyzer['project']>> | undefined
+    for (const [index, script] of scripts.entries()) {
+      const run = {
+        ...completedRun(`run-${index + 1}`, script, storageRoot),
+        startedAt: index + 1,
+        endedAt: index + 1,
+        executionCount: index + 1
+      }
+      runs.push(run)
+      projection = await analyzer.project({
+        projectId: 'default-project',
+        sessionId: 'session-1',
+        completedRun: run,
+        interpreter: { command: 'unused-python' }
+      })
+    }
+    expect(projection?.dependenciesByRunId?.['run-2']).toContain('run-1')
   })
 })

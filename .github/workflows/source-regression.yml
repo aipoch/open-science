@@ -14,6 +14,7 @@ on:
         default: full
         options:
           - full
+          - presentation
           - workspace-images
           - presentation-screening
 
@@ -50,7 +51,7 @@ jobs:
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'full' }}
         run: npm run build:web
       - name: Install headless Chromium
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'full' || inputs.mode == 'presentation-screening' }}
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'full' || inputs.mode == 'presentation' || inputs.mode == 'presentation-screening' }}
         run: npx playwright install chromium --only-shell
       - name: Run complete Mac functional journeys
         id: functional
@@ -78,14 +79,15 @@ jobs:
           --fail-on-flaky-tests
       - name: Run complete Mac browser and visual coverage
         id: presentation
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'full' }}
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'full' || inputs.mode == 'presentation' }}
         continue-on-error: true
         run: |
-          # Browser coverage reaches the tab-motion cases near five minutes on
-          # macOS; leave enough headroom for the complete suite and teardown.
-          presentation_timeout=600000
-          npx playwright test --config e2e/playwright.browser.config.ts --fail-on-flaky-tests --global-timeout="$presentation_timeout"
-          npm run test:e2e:visual -- --fail-on-flaky-tests --global-timeout="$presentation_timeout"
+          # All 462 browser tests passed before the 10-minute budget expired in
+          # teardown. Keep visual's separate budget and collect both outcomes.
+          browser_status=0
+          npx playwright test --config e2e/playwright.browser.config.ts --fail-on-flaky-tests --global-timeout=900000 || browser_status=$?
+          npm run test:e2e:visual -- --fail-on-flaky-tests --global-timeout=600000
+          exit "$browser_status"
       - name: Test concurrent screening flights
         id: presentation_screening
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'presentation-screening' }}
@@ -97,7 +99,7 @@ jobs:
           --fail-on-flaky-tests
       - name: Run complete Mac accessibility checks
         id: accessibility
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'full' }}
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'full' || inputs.mode == 'presentation' }}
         continue-on-error: true
         run: npm run test:e2e:accessibility:signal
       # Collect both outcomes using one build and one macOS slot. Neither failure is advisory.
@@ -145,6 +147,13 @@ jobs:
           DELEGATION: ${{ steps.delegation.outcome }}
         run: |
           [[ "$REGRESSIONS" == "success" && "$DELEGATION" == "success" ]]
+      - name: Enforce presentation dry-run
+        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.mode == 'presentation' }}
+        shell: bash
+        env:
+          PRESENTATION: ${{ steps.presentation.outcome }}
+          ACCESSIBILITY: ${{ steps.accessibility.outcome }}
+        run: '[[ "$PRESENTATION" == "success" && "$ACCESSIBILITY" == "success" ]]'
       - name: Enforce workspace image dry-run
         if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.mode == 'workspace-images' }}
         shell: bash

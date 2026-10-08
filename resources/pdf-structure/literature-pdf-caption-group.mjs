@@ -234,10 +234,47 @@ export function startsDetachedTextColumn(pending, item) {
 }
 
 export function captionKind(text) {
+  // A printed supplementary ordinal may use several letters. Classify only
+  // its punctuation-delimited title through the existing single-letter
+  // grammar; the source label and all prose-reference guards remain intact.
+  text = (text ?? '').replace(
+    /^((?:(?:Supplementary|Supplemental)\s+)?(?:Fig\.?|Figure)\s+)[A-Z]{2,3}(\d+(?:\.\d+)*)(?=[.:]\s+\p{L})/u,
+    '$1S$2'
+  )
+  // A same-page continued block can carry only its ordinal and source row
+  // range. Require the entire label so narrative uses of "continued" stay prose.
+  if (
+    /^(?:Table|Tab\.?)\s+(?:[A-Z]?\d+(?:\.\d+)*|[A-Z]\.\d+|[IVXLCDM]+)\s*,\s*(?:continued|contd\.?)(?:\s+\((?:items|rows)\s+\d+\s*[-–]\s*\d+\))?\.?$/i.test(
+      text?.trim() ?? ''
+    )
+  )
+    return 'table'
   // Preserve the printed label; these substitutions are only classification
   // aliases. Finite-verb references remain prose in each supported language.
   if (
-    /^(?:Figura|Tabla|▶?\s*(?:Abb\.|Tab\.))\s*[AS]?\d+\.?\s+(?:muestra|muestran|presenta|presentan|ilustra|ilustran|se\s+(?:muestra|presenta)|zeigt|zeigen|enthält|enthalten|stellt|stellen)\b/i.test(
+    /^(?:Figura|Tabla|▶?\s*(?:Abb\.|Tab\.))\s*[A-Z]?\d+\.?\s+(?:muestra|muestran|presenta|presentan|ilustra|ilustran|se\s+(?:muestra|presenta)|zeigt|zeigen|enthält|enthalten|stellt|stellen)\b/i.test(
+      text ?? ''
+    )
+  )
+    return undefined
+  // A numbered figure reference can be split at the start of a paragraph
+  // before a short sentence opener. Keep these narrow prose shapes out of
+  // caption ownership while preserving ordinary noun titles.
+  if (
+    /^(?:(?:Supplementary|Supplemental)\s+)?(?:Fig\.?|Figure)\s+[A-Z]?\d+(?:\.\d+)*[,:]\s+(?:we|our)\s+(?:show|present|compare|evaluate|report|describe|visuali[sz]e|plot)\b/i.test(
+      text ?? ''
+    ) ||
+    /^(?:Fig\.?|Figure)\s+[A-Z]?\d+(?:\.\d+)*[.:]\s+(?:Therefore|Thus),?\b/i.test(text ?? '') ||
+    /^(?:Fig\.?|Figure)\s+[A-Z]?\d+(?:\.\d+)*\s+and\s+Appendix\s+Tab\.?\s+[A-Z]?\d+\s+(?:we|our)\b/i.test(
+      text ?? ''
+    ) ||
+    /^(?:(?:Supplementary|Supplemental)\s+)?(?:Fig\.?|Figure)\s+[A-Z]?\d+(?:\.\d+)*(?:\s+and\s+(?:(?:Fig\.?|Figure)\s+)?[A-Z]?\d+|\s+and\s+Appendix\s+Tab\.?\s+[A-Z]?\d+)?\s+(?:we|our)\s+(?:show|present|compare|evaluate|report|describe|visuali[sz]e|plot)\b/i.test(
+      text ?? ''
+    ) ||
+    /^(?:Fig\.?|Figure)\s+[A-Z]?\d+(?:\.\d+)*\s+(?:top|bottom|left|right|middle)\s+row\.\s+Note\b/i.test(
+      text ?? ''
+    ) ||
+    /^(?:Fig\.?|Figure)\s+[A-Z]?\d+(?:\.\d+)*\s+and\s+[A-Z]?\d+[.:]\s+(?:To|For|As|In|When|Where|Since|Because)\b/i.test(
       text ?? ''
     )
   )
@@ -245,12 +282,26 @@ export function captionKind(text) {
   text = (text ?? '')
     // Some publishers punctuate the full keyword before its printed ordinal.
     // This is a classification alias only; preserve every source caption glyph.
-    .replace(/^Figure\.(?=\s+[AS]?\d)/i, 'Figure')
-    .replace(/^Figura(?=\s+[AS]?\d)/i, 'Figure')
-    .replace(/^Tabla(?=\s+[AS]?\d)/i, 'Table')
-    .replace(/^▶?\s*Abb\.(?=\s*[AS]?\d)/i, 'Fig.')
-    .replace(/^▶\s*Tab\.(?=\s*[AS]?\d)/i, 'Table')
-  if (/^\(Table\s+[AS]?\d+\)\s+(?:Contd|Continued)[.．…]*$/i.test(text?.trim() ?? ''))
+    .replace(/^Figure\.(?=\s+[A-Z]?\d)/i, 'Figure')
+    .replace(/^Figura(?=\s+[A-Z]?\d)/i, 'Figure')
+    .replace(/^Tabla(?=\s+[A-Z]?\d)/i, 'Table')
+    .replace(/^▶?\s*Abb\.(?=\s*[A-Z]?\d)/i, 'Fig.')
+    .replace(/^▶\s*Tab\.(?=\s*[A-Z]?\d)/i, 'Table')
+  // Panel-qualified figure references at the start of a paragraph are not
+  // captions when the next sentence reads as ordinary prose.
+  if (
+    /^(?:Fig\.?|Figure)\s+[A-Z]?\d+[A-Za-z]\.[\s]+(?:The|This|These|Those|Our|Their|It|They|Results?)\b[^.!?]{0,90}\b(?:is|are|was|were|has|have|had|does|do|did|shows?|demonstrates?|indicates?|describes?|reveals?|suggests?|compares?|contains?|includes?|uses?|achieves?|improves?|changes?|remains?|represents?|provides?|illustrates?)\b/i.test(
+      text
+    ) ||
+    /^(?:Fig\.?|Figure)\s+[A-Z]?\d+\s+and\s+(?:Fig\.?|Figure)\s+[A-Z]?\d+\.[\s]+(?:As|For|In|When|Where|Since|Because|The|This|These|Those)\b/i.test(
+      text
+    ) ||
+    /^(?:Fig\.?|Figure)\s+[A-Z]?\d+[A-Za-z]?\s+and\s+(?:suggests?|shows?|indicates?|demonstrates?|describes?|reveals?)\b/i.test(
+      text
+    )
+  )
+    return undefined
+  if (/^\(Table\s+[A-Z]?\d+\)\s+(?:Contd|Continued)[.．…]*$/i.test(text?.trim() ?? ''))
     return 'table'
   if (/^\((?:Fig\.?|Figure)\s+\d+\s+continues on (?:the )?next page\)$/i.test(text?.trim() ?? ''))
     return 'figure'
@@ -259,8 +310,8 @@ export function captionKind(text) {
   text = (text ?? '')
     .replace(/^TaggedEnd(?=Table\s+\d)/, '')
     .replace(/^Appendix\s+(?=(?:Figure|Fig\.|Table)\b)/i, '')
-    .replace(/^Legend to\s+(?=(?:Figure|Fig\.?)\s+[AS]?\d+[.:])/i, '')
-    .replace(/^Tableau(?=\s+[AS]?\d+(?:[.:\s]|$))/i, 'Table')
+    .replace(/^Legend to\s+(?=(?:Figure|Fig\.?)\s+[A-Z]?\d+[.:])/i, '')
+    .replace(/^Tableau(?=\s+[A-Z]?\d+(?:[.:\s]|$))/i, 'Table')
   // Appendix ordinals have a letter followed by a decimal number. Classify
   // the whole printed ordinal before the Roman-label path can mistake C.1
   // for table C. The source text is never rewritten.
@@ -270,7 +321,11 @@ export function captionKind(text) {
     const tail = appendix[2]
     if (
       /^\)/.test(tail) ||
-      /^\s+(?:and\s+(?:Table|Tab\.?|Fig\.?|Figure|Chart)\s+[A-Z]\.\d+(?:\.\d+)*\s+)?(?:reports?|reported|shows?|shown|presents?|presented|illustrat(?:es?|ed)|visuali[sz](?:es?|ed)|plots?|gives?|follows?|ablates?|sweeps?|tests?|evaluates?|compares?|depict(?:s|ed)?|represents?|contains?|lists?|summari[sz](?:e(?:s|d)?|ing)|indicates?|suggests?|describes?|demonstrates?|in\s+(?:the\s+)?(?:Appendix|Supplement(?:ary)?|Section|ESM))\b/i.test(
+      /^[,:]\s+(?:we|our)\s+(?:show|present|compare|evaluate|report|describe|visuali[sz]e|plot)\b/i.test(
+        tail
+      ) ||
+      /^[.:]\s+(?:Therefore|Thus),?\b/i.test(tail) ||
+      /^\s+(?:and\s+(?:Table|Tab\.?|Fig\.?|Figure|Chart)\s+[A-Z]\.\d+(?:\.\d+)*\s+)?(?:reports?|reported|shows?|shown|presents?|presented|illustrat(?:es?|ed)|visuali[sz](?:es?|ed)|plots?|gives?|follows?|ablates?|sweeps?|tests?|evaluates?|compares?|depict(?:s|ed)?|represents?|contains?|lists?|summari[sz](?:e(?:s|d)?|ing)|indicates?|suggests?|describes?|demonstrates?|preserves?|grounds?|defines?|makes?|sets?|adds?|complements?|uses?(?=\s+(?:one|a|an|the|our|this|these|those|its|their|\d+)\b)|in\s+(?:the\s+)?(?:Appendix|Supplement(?:ary)?|Section|ESM))\b/i.test(
         tail
       ) ||
       /^[.:]\s+(?:It|This|These|Those)\s+(?:should|is|are|was|were|has|have|had|contains?|includes?)\b/i.test(
@@ -280,9 +335,32 @@ export function captionKind(text) {
       return undefined
     return /^(?:Table|Tab\.?)$/i.test(appendix[1]) ? 'table' : 'figure'
   }
+  // Some appendices omit the separator in labels such as "Table D4.". Keep
+  // this compact form narrow: a punctuation-delimited title is required so
+  // running references such as "Table S6 generalizes ..." still reach the
+  // existing prose guards below.
+  const compactTableAppendix = /^(Table|Tab\.?)\s+[A-Z]\d+(?:\.\d+)*(?=[\s.:)]|$)(.*)$/i.exec(text)
+  const romanTableTail = /^(?:Table|Tab\.?)\s+[IVXLCDM]+\s*([.:]\s+.*)$/i.exec(text)?.[1]
+  const punctuatedTableTail = compactTableAppendix?.[2] ?? romanTableTail
+  if (
+    punctuatedTableTail &&
+    (/^[.:]\s+(?:Therefore|Thus|However|Meanwhile|Additionally|Moreover),?\s+(?:reports?|shows?|presents?|describes?|indicates?|demonstrates?)\b/i.test(
+      punctuatedTableTail
+    ) ||
+      /^[.:]\s+(?:Among|Below|In each|For instance|Unlike)\b(?=[\s\S]*\b(?:is|are|differ|differs|report|reports|increase|increases|improve|improves|achieves?|shows?)\b)/i.test(
+        punctuatedTableTail
+      ) ||
+      /^[.:]\s+To\s+(?:compare|check|verify)\b[\s\S]*\bwe\s+(?:repeat|compare|report|find|show|use|measure)\b/i.test(
+        punctuatedTableTail
+      ))
+  )
+    return undefined
+  // The final numbered-label matcher already accepts compact appendix
+  // ordinals. Let them pass through the same remaining prose guards as
+  // ordinary numbered captions before assigning ownership.
   // A closing parenthesis ends an inline cross-reference, not a caption.
   if (
-    /^(?:(?:Supplementary|Supplemental)\s+)?(?:Fig\.?|Figure|Table)\s+[AS]?\d+(?:\s+[A-Z](?:\s*(?:[+,&/–-]|and)\s*[A-Z])*)?(?:\s+and\s+(?:(?:Supplementary|Supplemental)\s+)?(?:Fig\.?|Figure|Table)\s+[AS]?\d+)?\)\./i.test(
+    /^(?:(?:Supplementary|Supplemental)\s+)?(?:Fig\.?|Figure|Table)\s+[A-Z]?\d+(?:\s+[A-Z](?:\s*(?:[+,&/–-]|and)\s*[A-Z])*)?(?:\s+and\s+(?:(?:Supplementary|Supplemental)\s+)?(?:Fig\.?|Figure|Table)\s+[A-Z]?\d+)?\)\./i.test(
       text
     )
   )
@@ -292,29 +370,360 @@ export function captionKind(text) {
   const ordinalLabel = /^\d+\.\s+(ábra|táblázat)(?=\s|$)/i.exec(text)
   if (ordinalLabel) return ordinalLabel[1].toLowerCase() === 'ábra' ? 'figure' : 'table'
   if (/^(?:Figure|Fig\.?)\s+\d+\s+(?:but\b|\(available\b)/i.test(text)) return undefined
+  // Retain the publisher's standalone full-keyword label with spaced punctuation.
+  // A tight label-only prefix needs a descriptive title before claiming a region.
+  if (/^Figure\s+(?:[A-Z]?\d+(?:\.\d+)*|[IVXLCDM]+)\s+[.:]\s*$/i.test(text.trim())) return 'figure'
+  if (/^(?:Fig\.?|Figure)\s+(?:[A-Z]?\d+(?:\.\d+)*|[IVXLCDM]+)[.:]\s*$/i.test(text.trim()))
+    return undefined
+  // Small-caps manuscript labels use an all-caps TABLE prefix. Keep that
+  // source form eligible so the ruled-title continuation pass can attach its
+  // centered number to the descriptive title below.
+  if (/^TABLE\s+(?:[A-Z]?\d+(?:\.\d+)*|[IVXLCDM]+)\.\s*$/u.test(text.trim())) return 'table'
+  if (/^(?:Table|Tab\.?)\s+(?:[A-Z]?\d+(?:\.\d+)*|[IVXLCDM]+)\.\s*$/i.test(text.trim()))
+    return undefined
   // "List of ..." is a noun title; "lists ..." remains a finite-verb reference.
-  if (/^Table\s+[AS]?\d+\s+List of\s+\p{L}/u.test(text)) return 'table'
+  if (/^Table\s+[A-Z]?\d+\s+List of\s+\p{L}/u.test(text)) return 'table'
   // A numbered table reference can look like a caption when a PDF stream
   // starts a new line at the reference. These finite-verb forms introduce
   // surrounding prose, not a table title; keep them out of ownership and
   // crop matching. Descriptive titles remain eligible after the label.
   if (
-    /^(?:Table|Tab\.?)\s+[AS]?\d+\s+(?:reports?|reported|shows?|shown|presents?|presented|describes?|contains?|lists?|summari[sz](?:es|ed|ing)?|indicates?|demonstrates?)\b/i.test(
+    /^(?:Table|Tab\.?)\s+[A-Z]?\d+\s+(?:reports?|reported|shows?|shown|presents?|presented|describes?|contains?|lists?|summari[sz](?:es|ed|ing)?|indicates?|demonstrates?|highlights?|consolidates?|places?|outlines?|changes?|records?|generalizes?|measures?|reveals?|reads?|sweeps?|groups?|excludes?|distinguishes?|denotes?|details?|removes?|expresses?|separates?|explains?|tracks?|trains?|evaluates?|ablates?|moves?|scores?|repeats?|reproduc(?:es?|ed)|isolates?|expands?|covers?|buckets?|combines?)\b/i.test(
       text
     ) ||
-    /^(?:Table|Tab\.?)\s+[AS]?\d+[.:]\s+(?:It|This|These|Those)\s+(?:should|is|are|was|were|has|have|had|contains?|includes?)\b/i.test(
+    /^(?:Table|Tab\.?)\s+[A-Z]?\d+[.:]\s+(?:It|This|These|Those)\s+(?:should|is|are|was|were|has|have|had|contains?|includes?)\b/i.test(
+      text
+    )
+  )
+    return undefined
+  // A reference followed by a discourse connector and a finite verb is a
+  // sentence lead, not a caption title. Keep the connector set narrow so
+  // ordinary noun captions such as `Table S4: Retrieval results` remain
+  // eligible while prose like `Table S4 therefore reports ...` cannot claim
+  // the neighboring table region.
+  if (
+    /^(?:Table|Tab\.?)\s+[A-Z]?\d+(?:\.\d+)*\s+(?:therefore|thus|however|meanwhile|additionally|moreover),?\s+(?:reports?|shows?|presents?|describes?|indicates?|demonstrates?|summari[sz](?:es|ed|ing)?|lists?|contains?|reveals?|records?)\b/i.test(
+      text
+    )
+  )
+    return undefined
+  if (/^table\.\s+First,/i.test(text)) return undefined
+  if (/^(?:Table|Tab\.?)\s+[A-Z]?\d+[.:]\s+Spearman\s+ρ\s*=/iu.test(text)) return undefined
+  if (/^(?:Table|Tab\.?)\s+[A-Z]?\d+[.:]\s+(?:Among|Below)\b/i.test(text)) return undefined
+  if (/^Table\s+[A-Z]\s*=\s*\(/.test(text)) return undefined
+  if (/^Table\s+[A-Z]?\d+\s+use\s+predicted\b/i.test(text)) return undefined
+  // A few next-batch references keep the same sentence shape but use a
+  // parenthetical appendix marker, a Roman ordinal, an omitted repeated
+  // label, or an infinitive continuation. These are paragraph prose rather
+  // than captions; keep the guards narrow so noun titles remain eligible.
+  if (
+    /^(?:Table|Tab\.?)\s+[A-Z]?\d+\s+\([^)]*\)\s+(?:changes?|enumerates?|repeats?|quantifies?|summari[sz](?:es|ed|ing)?|gives?|provides?)\b/i.test(
+      text
+    ) ||
+    /^(?:Table|Tab\.?)\s+[A-Z]?\d+\s+(?:enumerates?)\b/i.test(text) ||
+    /^(?:Table|Tab\.?)\s+[IVXLCDM]+\s+(?:repeats?|quantifies?|enumerates?|collects?|records?|gives?|provides?)\b/i.test(
+      text
+    ) ||
+    /^(?:Table|Tab\.?)\s+[IVXLCDM]+\s+\([^)]*%[^)]*\)\.\s+D(?:[_a-z]*,\s*j)\b/i.test(text) ||
+    /^(?:Table|Tab\.?)\s+[A-Z]?\d+\s+to\s+the\s+full\b/i.test(text) ||
+    /^(?:Table|Tab\.?)\s+[A-Z]?\d+\s+and\s+[A-Z]?\d+\s+(?:gives?|provide|provides?|repeats?|quantifies?)\b/i.test(
       text
     )
   )
     return undefined
   if (
-    /^(?:Table|Fig\.?|Figure)\s+(?:[AS]?\d+|[IVXLCDM]+)\s+in\s+(?:the\s+)?(?:Appendix|Supplement(?:ary)?|Section|ESM)\b/i.test(
+    /^(?:Table|Tab\.?)\s+[A-Z]?\d+[.:]\s+Equation\s+\(\d+\)\s+agrees?\b/i.test(text) ||
+    /^(?:Table|Tab\.?)\s+[A-Z]?\d+[.:]\s+Unlike\s+the\b/i.test(text)
+  )
+    return undefined
+  // Roman-numbered references and sentence-opening continuations use the
+  // same label shape but are still running prose (for example, "Table IV
+  // details ..." or "Table 1. For instance, ..."). Keep these narrow forms
+  // out of caption ownership while leaving descriptive noun titles eligible.
+  if (
+    /^(?:Table|Tab\.?)\s+[IVXLCDM]+\s+details?\b/i.test(text) ||
+    /^(?:Table|Tab\.?)\s+[A-Z]?\d+(?:[.:])\s+(?:In each|For instance)\b/i.test(text)
+  )
+    return undefined
+  if (/^(?:Table|Tab\.?)\s+[A-Z]?\d+\s+(?:contrasts?|collects?)\b/i.test(text)) return undefined
+  // A page-direction phrase makes a numbered table label an in-text pointer,
+  // even when the following verb is split onto the same extracted line. Such
+  // references commonly introduce tables on the next page and must not own a
+  // table or absorb the surrounding paragraph as a caption.
+  if (
+    /^(?:Table|Tab\.?)\s+(?:[A-Z]?\d+(?:\.\d+)*|[IVXLCDM]+)\s+(?:on|in|from)\s+(?:the\s+)?(?:next|following|previous)\s+page\b/i.test(
       text
     )
   )
     return undefined
+  // A table label can begin a sentence that explains how a comparison was
+  // performed, rather than naming the table itself.  Keep this guard narrow:
+  // require the observed infinitive/propositional openings and a later
+  // sentence-level continuation, while leaving noun titles such as
+  // "Table 5. To-scale measurements" eligible.
   if (
-    /^(?:Table|Chart|Fig\.?|Figure)\s+[AS]?\d+(?:\s+and\s+(?:(?:Supplementary|Supplemental)\s+)?(?:Table|Chart|Fig\.?|Figure)\s+[AS]?\d+)?\s+(?:shows?|shown|presents?|presented|compares?|compared(?=\s+(?:the|these|those|this|that|our)\b)|illustrat(?:es?|ed)|visuali[sz](?:es?|ed)|plots|gives?|follows?|depict(?:s|ed)?|represents?|reiterates?|reviews?|summari[sz](?:e(?:s|d)?|ing)|indicates?|suggests?|describes?|demonstrates?)\b/i.test(
+    /^(?:Table|Tab\.?)\s+(?:[A-Z]?\d+(?:\.\d+)*|[IVXLCDM]+)\s*[.:]\s+To\s+(?:check|verify|confirm|ensure|compare|assess|test)\b[\s\S]*(?:,\s+(?:we|our|the|they|this|these)\b|\b(?:we|our|they)\s+(?:repeat|compare|report|find|show|use|measure))\b/i.test(
+      text
+    ) ||
+    /^(?:Table|Tab\.?)\s+(?:[A-Z]?\d+(?:\.\d+)*|[IVXLCDM]+)\s+to\s+(?:our|the)\s+sign\s+convention\b/i.test(
+      text
+    )
+  )
+    return undefined
+  // Reproduction maps often begin rows with a figure label and a section
+  // reference (for example, "Figure 1 (§4.7) figures/..."). These are table
+  // cells, not figure captions; the bare section form can be emitted as a
+  // separate line by the PDF text stream.
+  if (/^(?:Fig\.?|Figure)\s+[A-Z]?\d+\s+\(§?\s*\d+(?:\.\d+)*\)(?:\s|$)/i.test(text))
+    return undefined
+  if (/^Table\s+[A-Z]?\d+\s+maps\s+each\s+figure\s+and\s+data\s+table\b/i.test(text))
+    return undefined
+  if (
+    /^(?:Table|Fig\.?|Figure)\s+(?:[A-Z]?\d+|[IVXLCDM]+)\s+in\s+(?:the\s+)?(?:Appendix|Supplement(?:ary)?|Section|ESM)\b/i.test(
+      text
+    )
+  )
+    return undefined
+  // Panel references in running prose are often emitted as a standalone line
+  // (for example, "Fig. 6 (b) illustrates ...").  The panel marker used to
+  // hide the finite verb from the reference guard below, so these lines could
+  // be mistaken for captions and steal a neighbouring figure crop.  Keep
+  // punctuation-delimited titles eligible while rejecting one or more labels
+  // followed by a finite verb.  The repeated-label form also covers prose
+  // such as "Table 1 and Table 2 report ...".
+  const narrativeReferenceLabel =
+    '(?:(?:Supplementary|Supplemental)\\s+)?(?:Table|Tab\\.?|Chart|Fig\\.?|Figure)\\s+(?:[A-Z]?\\d+(?:\\.\\d+)?|[A-Z]\\.\\d+|[IVXLCDM]+)'
+  const narrativeReferencePanel =
+    '(?:\\s*\\((?:[A-Za-z]|left|right|top|bottom|middle|center|centre)\\)(?:\\s*(?:,|and|&)\\s*\\((?:[A-Za-z]|left|right|top|bottom|middle|center|centre)\\))*)?'
+  const narrativeReferenceVerb =
+    '(?:is|are|was|were|has|have|had|shows?|shown|presents?|presented|compares?|compared(?=\\s+(?:the|these|those|this|that|our)\\b)|reports?|reported|confirms?|reveals?|illustrat(?:es?|ed)|visuali[sz](?:es?|ed)|analy[sz](?:es?|ed)|provides?|plots|gives?|follows?|splits?|separates?|breaks?|lists?|decomposes?|contains?|depict(?:s|ed)?|represents?|reiterates?|reviews?|summari[sz](?:e(?:s|d)?|ing)|indicates?|suggests?|describes?|demonstrates?|displays?|exhibits?|achieves?|carr(?:y|ies|ied)|extends?|preserves?|grounds?|defines?|makes?|sets?|adds?|complements?|uses?(?=\\s+(?:one|a|an|the|our|this|these|those|its|their|\\d+)\\b)|examines?|var(?:y|ies|ied)|evaluates?|isolates?|paves?|introduces?)'
+  const narrativeReference = new RegExp(
+    `^${narrativeReferenceLabel}${narrativeReferencePanel}(?:\\s*(?:,|and|&)\\s*${narrativeReferenceLabel}${narrativeReferencePanel})*\\s+(?:(?:also|further)\\s+)?${narrativeReferenceVerb}\\b`,
+    'i'
+  )
+  if (narrativeReference.test(text ?? '')) return undefined
+  if (
+    /^(?:Fig\.?|Figure)\s+[A-Z]?\d+(?:\.\d+)*\s+(?:solidifies|connects|serves\s+(?:two|three|several)\s+purposes)\b/i.test(
+      text
+    )
+  )
+    return undefined
+  // A plain numbered label followed by a sentence opener is body prose even
+  // when the opener is capitalized after a period. The panel-specific guard
+  // below intentionally handles letter-suffixed labels; keep this companion
+  // rule broad enough for ordinary `Fig./Figure N. As|For|In ...` references
+  // while requiring a later finite verb so noun titles such as
+  // `Figure 3. Inference results` remain valid captions.
+  if (
+    /^(?:(?:Supplementary|Supplemental)\s+)?(?:Fig\.?|Figure)\s+[A-Z]?\d+(?:\.\d+)*[.:]\s+(?:As|For|In|When|Where|Since|Because|Like|Unlike)\b(?=[\s\S]*\b(?:is|are|was|were|has|have|had|does|do|did|shows?|presents?|contains?|includes?|uses?|provides?|reports?|describes?|demonstrates?|indicates?|suggests?|reveals?|means?)\b)/i.test(
+      text ?? ''
+    )
+  )
+    return undefined
+  if (/^(?:Fig\.?|Figure)\s+[A-Z]?\d+\s+we\s+plot\b/i.test(text ?? '')) return undefined
+  if (
+    /^(?:Fig\.?|Figure)\s+[A-Z]?\d+\s+(?:ranks?|restores?|traces?)\b/i.test(text ?? '') ||
+    /^(?:Fig\.?|Figure)\s+[A-Z]?\d+\s+paves?\b/i.test(text ?? '') ||
+    /^(?:Fig\.?|Figure)\s+[A-Z]?\d+[.:]\s+[^.!?]{1,48}\bpaves?\b/i.test(text ?? '') ||
+    /^(?:Fig\.?|Figure)\s+[A-Z]?\d+\s+further\s+compares?\b/i.test(text ?? '') ||
+    /^(?:Fig\.?|Figure)\s+[A-Z]?\d+\s+(?:stratifies|identifies|projects?|resolves?)\b/i.test(
+      text ?? ''
+    ) ||
+    /^(?:Fig\.?|Figure)\s+[A-Z]?\d+\s+over\s+each\s+panel(?:'s|’s)\b/i.test(text ?? '')
+  )
+    return undefined
+  // Keep an unpunctuated title such as "Figure 1 Outline of ..." eligible;
+  // only the lower-case verb form is a running-prose reference.
+  if (/^(?:[Ff]ig(?:ure)?\.?)\s+[A-Z]?\d+\s+outlines\b/.test(text ?? '')) return undefined
+  // Lowercase figure references can continue directly into a sentence after a
+  // conjunction (for example, "fig. 6 and the same whole-domain error").
+  // This is body prose, while a combined caption normally uses a colon or
+  // punctuation-delimited title after the label.
+  if (/^fig\.\s+[A-Z]?\d+\s+and\s+(?:the|same|this|these|those|our|their|its)\b/i.test(text ?? ''))
+    return undefined
+  if (/^(?:Table|Tab\.?)\s+[A-Z]?\d+\s+confirms?\b/i.test(text ?? '')) return undefined
+  if (/^(?:Table|Tab\.?)\s+[A-Z]?\d+\s+we\s+(?:see|study|evaluate|report)\b/i.test(text ?? ''))
+    return undefined
+  if (
+    /^(?:Fig\.?|Figure)\s+[A-Z]?\d+\s+and\s+reference\s+scores?\s+in\s+(?:Table|Tab\.?)\b/i.test(
+      text ?? ''
+    )
+  )
+    return undefined
+  // A bracketed citation followed by a sentence opener is an inline body
+  // reference (for example, "Fig. 1 [30]. The two tasks ..."), not a caption.
+  if (
+    /^(?:Fig\.?|Figure)\s+[A-Z]?\d+\s+\[\d+(?:\s*[-,]\s*\d+)*\]\.\s+(?:The|This|These|Those|Our|Their|It|They)\b/i.test(
+      text ?? ''
+    )
+  )
+    return undefined
+  // A label followed by an adverb and a finite verb is still running prose
+  // when PDF extraction keeps the reference at the start of a line (for
+  // example, "Fig. 4 qualitatively compares ...").  Restrict this guard to
+  // adverbs ending in -ly so noun-phrase captions such as "Figure 4 visual
+  // comparison ..." remain eligible.
+  const adverbNarrativeReference = new RegExp(
+    `^(?:(?:Supplementary|Supplemental)\\s+)?(?:Fig\\.?|Figure|Chart)\\s+(?:[A-Z]?\\d+(?:\\.\\d+)?|[A-Z]\\.\\d+|[IVXLCDM]+)${narrativeReferencePanel}\\s+[a-z]+ly\\s+${narrativeReferenceVerb}\\b`,
+    'i'
+  )
+  if (adverbNarrativeReference.test(text ?? '')) return undefined
+  // Generated-figure index rows can begin with a figure number followed by a
+  // source filename. They are metadata prose, not figure captions.
+  if (
+    /^(?:Fig(?:ure)?\.?\s*[A-Z]?\d+(?:\.\d+)?)\s+(?:[\w-]+\s+)*[\w-]+\.(?:py|ipynb|js|jsx|ts|tsx|json|ya?ml|csv|tex|sh|r|jl|m)\b/i.test(
+      text ?? ''
+    )
+  )
+    return undefined
+  if (/^fig\d+\s+.+\.(?:py|ipynb|js|jsx|ts|tsx|json|ya?ml|csv|tex|sh|r|jl|m)\b/i.test(text ?? ''))
+    return undefined
+  if (
+    /^(?:Fig\.?|Figure)\s+[A-Z]?\d+\s+(?:draws?|places?|dissects?|magnifies?|puts?|sits?|sitting)\b/i.test(
+      text ?? ''
+    ) ||
+    /^(?:Fig\.?|Figure)\s+[A-Z]?\d+\s+and\s+(?:briefly\s+)?(?:describe|discuss|compare|summari[sz]e|explain|outline)\b/i.test(
+      text ?? ''
+    )
+  )
+    return undefined
+  // Sentence-level transitions after a punctuated label are running prose,
+  // not caption titles (for example, "Fig. 4. First, the situation ...").
+  if (
+    /^(?:Fig\.?|Figure)\s+(?:[A-Z]?\d+|[IVXLCDM]+)\s*\.\s+(?:First|Second|Third|However|Therefore|Thus|Meanwhile|Additionally|Moreover)\s*,/i.test(
+      text ?? ''
+    )
+  )
+    return undefined
+  // A bare label followed by a relative clause is an inline reference when
+  // extraction starts the sentence at the label (for example, "Figure 5 where
+  // the bounding box ...").  Punctuation-delimited captions remain eligible.
+  const relativeClauseReference = new RegExp(
+    `^${narrativeReferenceLabel}${narrativeReferencePanel}\\s+(?:where|which|that)\\b`,
+    'i'
+  )
+  if (relativeClauseReference.test(text ?? '')) return undefined
+  // Letter-suffixed panel references can be followed by a prose opener after
+  // a period (for example, "Figure 7b. For pie charts ...").  Keep ordinary
+  // panel captions such as "Figure 7b. Accuracy by chart type" eligible.
+  if (
+    /^(?:(?:Supplementary|Supplemental)\s+)?(?:Fig\.?|Figure)\s+[A-Z]?\d+(?:\.\d+)*[A-Za-z][.:]\s+(?:For|In|As|When|Where|Since|Because|The|This|These|Our)\b(?=[\s\S]*\b(?:is|are|was|were|has|have|had|does|do|did|shows?|presents?|contains?|includes?|uses?|provides?|reports?|passes?)\b)/i.test(
+      text ?? ''
+    )
+  )
+    return undefined
+  // OCR/table-row extraction can put a data row behind a label-like token
+  // (for example, "Table 77-81 82.2 ...").  A continuation made entirely of
+  // numeric values and separators is data, not a descriptive caption.
+  // Parse the label separately so a nonnumeric suffix cannot make the engine
+  // repartition one long run of values into exponentially many token groups.
+  const numericRowTail = /^\s+[\d.,:%()+/–—-][\d.,:%()+/–—\s-]*$/
+  const integerRowLabel = /^(?:Table|Tab\.?|Figure|Fig\.?)\s+[A-Z]?\d+/i.exec(text)
+  if (integerRowLabel) {
+    const tail = text.slice(integerRowLabel[0].length)
+    if (numericRowTail.test(tail)) return undefined
+    const ordinalRange = /^\s*[-–—]\s*[A-Z]?\d+/i.exec(tail)
+    if (ordinalRange && numericRowTail.test(tail.slice(ordinalRange[0].length))) return undefined
+  }
+  // Decimal-looking table labels followed only by numeric values are common
+  // extracted data rows (for example, "Table 82.9 82.2 86.3 ..."), not
+  // descriptive captions. Handle the decimal label before the general row
+  // guard, whose first ordinal intentionally accepts only integers.
+  const decimalRowLabel = /^(?:Table|Tab\.?)\s+[A-Z]?\d+\.\d+/i.exec(text)
+  if (decimalRowLabel && numericRowTail.test(text.slice(decimalRowLabel[0].length)))
+    return undefined
+  // Some references repeat the kind only once and use a bare second ordinal
+  // ("Table 3 and 4, where ...").  Require a prose continuation after a
+  // comma so a real combined caption such as "Table 3 and 4: Results" stays
+  // eligible.
+  if (
+    /^(?:Table|Tab\.?)\s+[A-Z]?\d+\s+and\s+[A-Z]?\d+\s*,\s*(?:where|which|that|as|while|respectively)\b/i.test(
+      text ?? ''
+    )
+  )
+    return undefined
+  // Appendix cross-reference indexes can start with a figure label followed by
+  // shorthand and a "Main text"/"Supp. Table" destination. These are table
+  // cells, not captions, even though they begin with a printed figure number.
+  if (
+    /^(?:Figure|Fig\.?)\s+[A-Z]?\d+\s+[A-Z]{1,8}\s+\d+.*\b(?:Main text|Supp(?:lementary)?\.?\s+Table)\b/i.test(
+      text ?? ''
+    )
+  )
+    return undefined
+  // Supplementary index tables may omit the "Main text" destination while
+  // retaining an SM method number and a list of supplementary tables/figures.
+  if (
+    /^(?:Figure|Fig\.?)\s+[A-Z]?\d+\s+SM\s+\d+.*\bSupp(?:lementary)?\.?\s+(?:Tables?|Figs?\.?|Figures?)\b/i.test(
+      text ?? ''
+    )
+  )
+    return undefined
+  // A symbol immediately after a printed label usually belongs to a table
+  // footnote continuation (for example, "Table 9. † means ..."), not a new
+  // caption heading.
+  if (/^(?:Table|Tab\.?|Figure|Fig\.?)\s+[A-Z]?\d+[.:]\s+[†‡*#]/i.test(text ?? '')) return undefined
+  // Lowercase, unnumbered "table."/"figure." lines are usually sentence
+  // continuations from body prose rather than captions.  Preserve the
+  // explicit uppercase form handled below for single-table manuscripts.
+  if (
+    /^table[.:]\s+(?:Subsequently|The|This|These|Those|In|As|For|When|Where|Since|Because|Also|Moreover|Additionally|Furthermore|Overall)\b/i.test(
+      text ?? ''
+    )
+  )
+    return undefined
+  if (
+    /^(?:fig\.?|figure)[.:]\s+(?:For|In|As|When|Where|Since|Because|To|The|This|These|Those|However|Therefore|Thus)\b/.test(
+      text ?? ''
+    )
+  )
+    return undefined
+  if (
+    /^(?:fig\.?|figure)\s+[A-Z]?\d+[.:]\s+(?:For|In|As|When|Where|Since|Because|To|The|This|These|Those|However|Therefore|Thus)\b/.test(
+      text ?? ''
+    )
+  )
+    return undefined
+  if (
+    /^(?:fig\.?|figure)\s+[A-Z]?\d+\s+(?:for|in|as|when|where|since|because|to|the|this|these|those|however|therefore|thus)\b/i.test(
+      text ?? ''
+    )
+  )
+    return undefined
+  if (
+    /^figure[.:]\s+[A-Z][A-Z\s-]+,\s+(?:however|therefore|thus|meanwhile|additionally|moreover)\b/.test(
+      text ?? ''
+    )
+  )
+    return undefined
+  // Some IEEE captions are split from a sentence after the label and begin
+  // with a short proper subject ("Fig. 4. ASTER exhibits ...").  Requiring a
+  // capitalized subject and a finite verb keeps ordinary noun titles such as
+  // "Figure 1. Plot of the results" eligible.
+  const subjectNarrativeReference = new RegExp(
+    `^${narrativeReferenceLabel}${narrativeReferencePanel}\\s*\\.\\s+(?!(?:there|the|this|these|those|our|their|its|it|they|a|an)\\b)\\p{Lu}[\\p{L}\\p{N}-]*\\s+${narrativeReferenceVerb}\\s+\\p{L}(?=\\s|[.,;:!?]|$)`,
+    'iu'
+  )
+  if (subjectNarrativeReference.test(text ?? '')) return undefined
+  if (
+    /^(?:Table|Tab\.?)\s+[IVXLCDM]+\s*\.\s+\p{Lu}[\p{L}\p{N}-]*\s+(?:achieves?|reports?|shows?|indicates?|describes?)\b/iu.test(
+      text ?? ''
+    )
+  )
+    return undefined
+  if (/^(?:Fig\.?|Figure)\s+[A-Z]?\d+\s*\.\s+Results\s+use\b/i.test(text ?? '')) return undefined
+  // A panel list followed by a closing parenthesis is another common inline
+  // form ("Fig. 4 (b) and (c)). The adapter ...").  It has no caption title;
+  // reject it without affecting the normal "Figure 4. (A) ..." heading.
+  if (
+    new RegExp(
+      `^${narrativeReferenceLabel}\\s+\\([A-Za-z]\\)(?:\\s*(?:,|and|&)\\s*\\([A-Za-z]\\))*\\)+\\.`,
+      'i'
+    ).test(text ?? '')
+  )
+    return undefined
+  if (
+    /^(?:Table|Chart|Fig\.?|Figure)\s+[A-Z]?\d+(?:\s+and\s+(?:(?:Supplementary|Supplemental)\s+)?(?:Table|Chart|Fig\.?|Figure)\s+[A-Z]?\d+)?\s+(?:shows?|shown|presents?|presented|compares?|compared(?=\s+(?:the|these|those|this|that|our)\b)|illustrat(?:es?|ed)|visuali[sz](?:es?|ed)|plots|gives?|follows?|depict(?:s|ed)?|represents?|reiterates?|reviews?|summari[sz](?:e(?:s|d)?|ing)|indicates?|suggests?|describes?|demonstrates?)\b/i.test(
       text ?? ''
     )
   )
@@ -326,7 +735,7 @@ export function captionKind(text) {
   const unnumbered = /^(Table|Figure)[.:]\s+/i.exec(text)
   if (unnumbered && /^\p{Lu}\p{L}/u.test(text.slice(unnumbered[0].length)))
     return unnumbered[1].toLowerCase() === 'table' ? 'table' : 'figure'
-  if (/^(?:Figure|Fig\.?)\s+[AS]?\d+\s*[—–-]\s*Continued\.?$/i.test(text)) return 'figure'
+  if (/^(?:Figure|Fig\.?)\s+[A-Z]?\d+\s*[—–-]\s*Continued\.?$/i.test(text)) return 'figure'
   if (/^Figure\s+(?:[n▪■]\s+)?(?:Flow diagram|Flowchart)\b/.test(text ?? '')) return 'figure'
   // Pathology journals use decorated Image labels; a closing marker followed
   // by a period is an inline reference, not a caption heading.
@@ -346,12 +755,12 @@ export function captionKind(text) {
   // title without whitespace. Require a title after the delimiter so ranges
   // and inline references do not become captions.
   const dashed =
-    /^(Table|TABLE|Tab\.|TAB\.|Figure|FIGURE|Fig\.?|FIG\.?)\s+[AS]?\d+[A-Z]?\s*[—–-]\s*\p{Lu}/u.exec(
+    /^(Table|TABLE|Tab\.|TAB\.|Figure|FIGURE|Fig\.?|FIG\.?)\s+[A-Z]?\d+[A-Z]?\s*[—–-]\s*\p{Lu}/u.exec(
       text ?? ''
     )
   if (dashed) return /^(?:Table|Tab\.)$/i.test(dashed[1]) ? 'table' : 'figure'
   const match =
-    /^(?:(?:Supplementary|Supplemental|Supplement|Extended\s+Data)\s+)?(F\s*I\s*G\s*U\s*R\s*E|F\s*I\s*G\.?|C\s*H\s*A\s*R\s*T|T\s*A\s*B\s*L\s*E|T\s*A\s*B\.?|图|圖|表)\s*[AS]?\d+(?:[.-]\d+)*(?=[\s.:：．、。]|$)/i.exec(
+    /^(?:(?:Supplementary|Supplemental|Supplement|Extended\s+Data)\s+)?(F\s*I\s*G\s*U\s*R\s*E|F\s*I\s*G\.?|C\s*H\s*A\s*R\s*T|T\s*A\s*B\s*L\s*E|T\s*A\s*B\.?|图|圖|表)\s*[A-Z]?\d+(?:[.-]\d+)*(?=[\s.:：．、。]|$)/i.exec(
       text ?? ''
     )
   return match
@@ -431,6 +840,31 @@ export function findOutdentedParagraphContinuation(start, lines) {
 
 export function groupPageLines(page) {
   const rows = []
+  // A narrow algorithm gutter can be smaller than the generic fragment join.
+  // Repeated aligned numbered instructions prove a separate source column;
+  // ordinary numerical fields or a single inline reference do not.
+  const algorithmSteps = page.lines.filter((line) =>
+    /^\d+:\s+(?:end\s+(?:for|while|if)|(?:for|while|if|return|store)\b)/i.test(line.text.trim())
+  )
+  const separateSteps = new Set(
+    algorithmSteps.filter(
+      (line) =>
+        algorithmSteps.filter(
+          (other) =>
+            Math.abs(line.x - other.x) < line.fontSize * 0.1 &&
+            Math.abs(line.fontSize - other.fontSize) < line.fontSize * 0.05
+        ).length >= 3
+    )
+  )
+  // Two side-by-side tables can start on the same baseline. Their captions
+  // often end and begin within one nominal font-size gutter, so the generic
+  // fragment join below would merge the two labels into one candidate. Keep
+  // independently numbered caption labels in separate runs; ordinary title
+  // fragments still use the existing measured-gutter rule.
+  const startsCaptionLabel = (text) =>
+    /^(?:(?:Supplementary|Supplemental)\s+)?(?:Table|Tab\.?|Figure|Fig\.?)\s+(?:[A-Z]?\d+(?:[.-]\d+)*|[IVXLCDM]+)(?=[\s.:：．、。]|$)/i.test(
+      text.trim()
+    )
   // Join nearby fragments on the same visual line, including superscripts split by the first probe.
   for (const line of page.lines
     .filter((line) => !/^[◂◀◃]$/.test(line.text.trim()))
@@ -441,6 +875,8 @@ export function groupPageLines(page) {
     else rows.push({ y: line.y, parts: [line] })
   }
   const runs = []
+  let captionColumns = []
+  let captionColumnsY = -Infinity
   // A raised numeric reference or lowered subscript can sit outside the normal line tolerance.
   // Require text tightly adjoining both sides on one baseline, rather than
   // widening that tolerance and absorbing the next physical line.
@@ -478,12 +914,39 @@ export function groupPageLines(page) {
     }
   }
   for (const row of rows) {
+    const captionStarts = row.parts
+      .filter((part) => startsCaptionLabel(part.text))
+      .sort((a, b) => a.x - b.x)
+    if (captionStarts.length >= 2) {
+      captionColumns = captionStarts.map((part) => ({ x: part.x, right: part.x + part.width }))
+      captionColumnsY = row.y
+    }
+    const activeCaptionColumns =
+      captionColumns.length >= 2 &&
+      row.y - captionColumnsY <= Math.max(...row.parts.map((part) => part.fontSize)) * 5
+        ? captionColumns
+        : []
     let run
     let previous
+    let runColumn = -1
     for (const part of row.parts.sort((a, b) => a.x - b.x)) {
+      const partColumn =
+        activeCaptionColumns.length >= 2
+          ? activeCaptionColumns.reduce(
+              (index, column, candidate) => (part.x >= column.x ? candidate : index),
+              0
+            )
+          : -1
+      const separateCaptionLabels =
+        run && runColumn >= 0 && partColumn >= 0 && runColumn !== partColumn
       // Geometry only: permit nearby fragments, but do not bridge a typical column gutter.
       // A narrow gutter or unusually wide within-caption gap still needs layout-level evidence.
-      if (run && part.x - run.right <= Math.max(run.fontSize, part.fontSize) * 0.8) {
+      if (
+        run &&
+        !separateCaptionLabels &&
+        !(separateSteps.has(part) && part.x - run.right > part.fontSize * 0.5) &&
+        part.x - run.right <= Math.max(run.fontSize, part.fontSize) * 0.8
+      ) {
         // Preserve numeric superscripts in the shared plain-text result. A smaller font alone
         // is not evidence: require a raised baseline and tight attachment to preceding text.
         const rise = run.bottom - (part.y + part.height)
@@ -514,6 +977,7 @@ export function groupPageLines(page) {
           fontSize: part.fontSize
         }
         runs.push(run)
+        runColumn = partColumn
       }
       previous = part
     }
@@ -613,6 +1077,16 @@ function findNativeMathCaptionParagraph(start, runs, page, rules) {
     const parts = row.parts.sort((a, b) => a.x - b.x),
       text = parts.map((l) => l.text).join(' '),
       previous = owned.at(-1)
+    // A closed short row followed by extra paragraph leading is a native
+    // ownership boundary. Scripts in the following body cannot prove math
+    // ownership for the caption that has already ended.
+    if (
+      owned.length >= 2 &&
+      /[.!?]$/.test(previous.text.trim()) &&
+      previous.right - previous.x < (edge - start.x) * 0.8 &&
+      row.y - previous.y > previous.y - owned.at(-2).y + em * 0.2
+    )
+      break
     if (
       parts.every((l) => l.text.trim().length <= 2) &&
       row.y - (previous?.y ?? start.y) < em * 0.9
@@ -734,6 +1208,82 @@ function findNativeMathCaptionParagraph(start, runs, page, rules) {
   return owned.slice(1)
 }
 
+// Centered publisher prose has a stable native center, not a stable left
+// edge. Require a complete connected block and its independently painted
+// graphic; neither indentation nor a closed sentence alone proves ownership.
+function provesSingleCaptionRaster(start, runs, page) {
+  const em = start.fontSize
+  const images = (page.graphicsBounds ?? [])
+    .filter((g) => g.kind === 'image')
+    .map((g) => g.normalizedRect.map((v, axis) => v * (axis % 2 ? page.height : page.width)))
+    .filter(
+      (r) =>
+        r.every(Number.isFinite) &&
+        r[0] >= start.x - em &&
+        r[2] <= start.right + em &&
+        r[1] < r[3] &&
+        r[2] > r[0] &&
+        r[3] <= start.y + em * 0.1 &&
+        start.y - r[3] < em * 6 &&
+        (r[2] - r[0]) * (r[3] - r[1]) > page.width * page.height * 0.04 &&
+        r[2] - r[0] > (start.right - start.x) * 0.5
+    )
+  if (images.length !== 1) return false
+  const image = images[0]
+  return !runs.some(
+    (line) =>
+      line !== start &&
+      line.text.length >= 30 &&
+      line.fontSize >= em * 0.8 &&
+      line.y >= image[3] - em * 0.1 &&
+      line.bottom <= start.y &&
+      line.x < start.right &&
+      line.right > start.x
+  )
+}
+
+function findNativeCenteredFigureParagraph(start, runs, page) {
+  if (captionKind(start.text) !== 'figure' || start.text.length < 35) return
+  const em = start.fontSize,
+    center = (start.x + start.right) / 2,
+    rows = [start]
+  const following = runs
+    .filter((line) => line.y > start.y + 2 && line.y - start.y < em * 24)
+    .sort((a, b) => a.y - b.y)
+  for (const line of following) {
+    if (Math.abs((line.x + line.right) / 2 - center) > em * 0.15) continue
+    const previous = rows.at(-1)
+    if (
+      line.y - previous.y < em * 0.85 ||
+      line.y - previous.y > em * 1.65 ||
+      Math.abs(line.fontSize - em) > em * 0.015 ||
+      captionKind(line.text) ||
+      /^Notes?\s*[:.]/i.test(line.text)
+    )
+      break
+    rows.push(line)
+    const width = Math.max(...rows.map((r) => r.right)) - Math.min(...rows.map((r) => r.x))
+    if (/[.!?]$/.test(line.text.trim()) && line.right - line.x < width * 0.8) break
+  }
+  if (
+    rows.length < 3 ||
+    !/[.!?]$/.test(rows.at(-1).text.trim()) ||
+    !rows.some((line) => Math.abs(line.x - start.x) > em * 0.25)
+  )
+    return
+  const envelope = {
+    ...start,
+    x: Math.min(...rows.map((line) => line.x)),
+    right: Math.max(...rows.map((line) => line.right))
+  }
+  if (
+    !provesSingleCaptionRaster(envelope, runs, page) &&
+    !provesFragmentedCaptionGraphic(envelope, runs, page, rows.at(-1))
+  )
+    return
+  return rows.slice(1)
+}
+
 function findNativeCaptionParagraph(start, runs, page, rules) {
   if (start.text.length < 35) return
   const em = start.fontSize
@@ -742,7 +1292,7 @@ function findNativeCaptionParagraph(start, runs, page, rules) {
   const first = following.find((l) => l.text.length > 15 && Math.abs(l.fontSize - em) < 0.7)
   const referenceContinuation =
     first &&
-    /^(?:Fig\.?|Figure\.?)\s+[AS]?\d+(?:[.-]\d+)*[.:]\s/u.test(start.text) &&
+    /^(?:Fig\.?|Figure\.?)\s+[A-Z]?\d+(?:[.-]\d+)*[.:]\s/u.test(start.text) &&
     /^figure\.\s/u.test(first.text) &&
     Math.abs(first.x - start.x) < 2
   if (
@@ -849,15 +1399,24 @@ function findNativeCaptionParagraph(start, runs, page, rules) {
 // uniformly spaced, closed paragraph is already proven by the caller. Require
 // a numbered native title, a substantial graphics group in the same column, and
 // no intervening prose; separate captions and standalone Notes stay outside.
-function provesFragmentedCaptionGraphic(start, runs, page, last) {
+function provesFragmentedCaptionGraphic(
+  start,
+  runs,
+  page,
+  last,
+  maxLastWidth = 0.95,
+  minArea = 0.04
+) {
   if (
-    !/^(?:Fig\.?|Figure\.?)\s+[AS]?\d+(?:[.-]\d+)*[.:]\s/u.test(start.text) ||
-    last.right - last.x >= (start.right - start.x) * 0.95
+    !/^(?:Fig\.?|Figure\.?)\s+[A-Z]?\d+(?:[.-]\d+)*[.:]?\s/u.test(start.text) ||
+    last.right - last.x >= (start.right - start.x) * maxLastWidth
   )
     return false
   const em = start.fontSize
   const prior = runs
-    .filter((l) => l.bottom < start.y && captionKind(l.text))
+    .filter(
+      (l) => l.bottom < start.y && l.x < start.right && l.right > start.x && captionKind(l.text)
+    )
     .sort((a, b) => b.bottom - a.bottom)[0]
   const limit = Math.max(start.y - page.height * 0.65, prior?.bottom ?? 0)
   const bounds = (page.graphicsBounds ?? [])
@@ -880,7 +1439,7 @@ function provesFragmentedCaptionGraphic(start, runs, page, last) {
   const right = Math.max(...unique.map((r) => r[2]))
   const bottom = Math.max(...unique.map((r) => r[3]))
   if (
-    (right - left) * (bottom - top) < page.width * page.height * 0.04 ||
+    (right - left) * (bottom - top) < page.width * page.height * minArea ||
     right - left < (start.right - start.x) * 0.5 ||
     start.y - bottom > em * 6 ||
     runs.some(
@@ -956,7 +1515,22 @@ function findNativeMixedLegend(start, page) {
     ).values()
   ]
   if (graphics.length !== 1) return
-  const edge = pageEnd ? Math.max(start.right, page.width - start.x) : start.right
+  const aligned = page.lines.filter(
+    (l) =>
+      l.y > start.y + em * 0.8 &&
+      l.y < start.y + em * 8 &&
+      Math.abs(l.x - start.x) < em * 0.1 &&
+      Math.abs(l.fontSize - em) < em * 0.01 &&
+      l.text.length >= 40
+  )
+  const repeatedEdge = aligned.find((l) =>
+    aligned.some(
+      (other) => other !== l && Math.abs(other.x + other.width - l.x - l.width) < em * 0.1
+    )
+  )
+  const edge = pageEnd
+    ? Math.max(start.right, page.width - start.x)
+    : Math.max(start.right, repeatedEdge ? repeatedEdge.x + repeatedEdge.width : start.right)
   const source = page.lines
     .filter(
       (l) =>
@@ -968,8 +1542,9 @@ function findNativeMixedLegend(start, page) {
         l.fontSize >= em * 0.5
     )
     .sort((a, b) => a.y - b.y || a.x - b.x)
-  const rows = groupNativeCaptionFragments(source, em)
-  if (!rows) return
+  const connected = groupNativeCaptionFragments(source, em)
+  if (!connected) return
+  const rows = connected.flatMap((row) => splitNativeCaptionBaselines(row, start.x, em))
   const selected = []
   for (const row of rows) {
     const sorted = row.parts.sort((a, b) => a.x - b.x || a.y - b.y)
@@ -993,7 +1568,7 @@ function findNativeMixedLegend(start, page) {
         /[.!?]$/.test(l.text.trim()) &&
         l.x + l.width >= Math.max(...sorted.map((p) => p.x + p.width)) - em * 0.2
     )
-    if (selected.length >= 3 && terminal) break
+    if (selected.length >= 3 && terminal && selected.at(-1).right < edge - em * 0.4) break
   }
   const unfinishedPageEnd =
     pageEnd &&
@@ -1007,7 +1582,10 @@ function findNativeMixedLegend(start, page) {
     )
   if (
     !unfinishedPageEnd &&
-    (selected.length < 3 || !selected.some((r) => r.parts.some((l) => l.fontSize > em * 1.2)))
+    (selected.length < 3 ||
+      !selected.some((r) =>
+        r.parts.some((l) => l.fontSize > em * 1.2 || (r.parts.length > 1 && l.height > em * 1.1))
+      ))
   )
     return
   const last = selected.at(-1)
@@ -1019,12 +1597,61 @@ function findNativeMixedLegend(start, page) {
   return selected.slice(1)
 }
 
+// Raised operators may connect the ink boxes of two separate prose rows.
+// Repeated left-edge baselines and unique literal edge attachment split that
+// connection without interpreting the formula or dropping any source part.
+function splitNativeCaptionBaselines(row, left, em) {
+  const heads = row.parts
+    .filter(
+      (p) =>
+        Math.abs(p.x - left) < em * 0.1 &&
+        Math.abs(p.fontSize - em) < em * 0.01 &&
+        p.text.length >= 10
+    )
+    .sort((a, b) => a.y - b.y)
+  if (
+    heads.length < 2 ||
+    heads.some((p, i) => i && (p.y - heads[i - 1].y < em * 0.9 || p.y - heads[i - 1].y > em * 1.6))
+  )
+    return [row]
+  const groups = heads.map((h) => ({ ...row, y: h.y, parts: [] }))
+  for (const part of row.parts) {
+    let owners = heads.flatMap((h, i) => (Math.abs(part.y - h.y) < em * 0.15 ? [i] : []))
+    if (!owners.length && part.text.trim().length <= 2 && Math.abs(part.fontSize - em) < em * 0.01)
+      owners = heads.flatMap((h, i) =>
+        h.y > part.y + em * 0.2 &&
+        h.y - part.y < em &&
+        row.parts.some(
+          (base) =>
+            Math.abs(base.y - h.y) < em * 0.1 &&
+            Math.abs(base.fontSize - em) < em * 0.01 &&
+            Math.min(
+              Math.abs(part.x - base.x - base.width),
+              Math.abs(base.x - part.x - part.width)
+            ) <
+              em * 0.2
+        )
+          ? [i]
+          : []
+      )
+    if (owners.length !== 1) return [row]
+    groups[owners[0]].parts.push(part)
+  }
+  return groups.map((g) => ({
+    ...g,
+    parts: g.parts.sort((a, b) => a.x - b.x || a.y - b.y),
+    text: g.parts.map((p) => p.text).join(' '),
+    bottom: Math.max(...g.parts.map((p) => p.y + p.height)),
+    right: Math.max(...g.parts.map((p) => p.x + p.width))
+  }))
+}
+
 // Mutate the canonical caption only after a unique same-source match. Table
 // matching retains the established exact-title/accent proof; figure formulas
 // may change the title text but cannot change its formal ordinal or position.
 export function applyRuledCaptionRecovery(captions, ruledCaptions, page, rules) {
   const ordinal = (text) =>
-    /^(?:Legend to\s+)?(?:Fig(?:ure)?\.?|Chart)\s+([AS]?\d+(?:[.-]\d+)*|[A-Z]\.\d+(?:\.\d+)*)(?=[.:\s]|$)/i.exec(
+    /^(?:Legend to\s+)?(?:Fig(?:ure)?\.?|Chart)\s+([A-Z]?\d+(?:[.-]\d+)*|[A-Z]\.\d+(?:\.\d+)*)(?=[.:\s]|$)/i.exec(
       text
     )?.[1]
   for (const candidate of captions.filter((c) => c.page === page.pageNumber)) {
@@ -1053,6 +1680,118 @@ export function applyRuledCaptionRecovery(captions, ruledCaptions, page, rules) 
   }
 }
 
+// Some legends print their first line slightly larger than the remaining
+// paragraph. Recover only a closed, flush, uniformly spaced smaller-font tail
+// beside an independently proved graphic; do not widen the generic font gate.
+function findNativeSmallerFigureCaption(start, runs, page) {
+  if (
+    captionKind(start.text) !== 'figure' ||
+    start.text.length < 35 ||
+    /[.!?]$/.test(start.text.trim()) ||
+    start.right - start.x < page.width * 0.35
+  )
+    return
+  const em = start.fontSize
+  const following = runs
+    .filter(
+      (l) =>
+        l.y > start.y + em * 0.2 &&
+        l.y - start.y < em * 14 &&
+        Math.abs(l.x - start.x) <= em * 0.2 &&
+        l.right <= start.right + em * 0.2
+    )
+    .sort((a, b) => a.y - b.y || a.x - b.x)
+  const first = following[0]
+  if (
+    !first ||
+    first.fontSize < em * 0.86 ||
+    first.fontSize > em * 0.94 ||
+    Math.abs(first.x - start.x) > em * 0.2 ||
+    first.y < start.y + em * 0.95 ||
+    first.y - start.y > em * 1.4 ||
+    first.right > start.right + em * 0.2
+  )
+    return
+  const tail = []
+  for (const line of following) {
+    const previous = tail.at(-1) ?? start
+    if (
+      Math.abs(line.fontSize - first.fontSize) > em * 0.02 ||
+      Math.abs(line.x - start.x) > em * 0.2 ||
+      line.right > start.right + em * 0.2 ||
+      line.y < previous.y + first.fontSize * 0.95 ||
+      line.y - previous.y > em * 1.4 ||
+      (tail.length && Math.abs(line.y - previous.y - first.fontSize * 1.11) > em * 0.2) ||
+      captionKind(line.text) ||
+      /^\d+(?:\.\d+)*\s+[A-Z][A-Z\s-]{4,}$/.test(line.text.trim()) ||
+      /^Notes?\s*[:.]/i.test(line.text)
+    )
+      break
+    tail.push(line)
+    if (/[.!?]$/.test(line.text.trim()) && line.right - line.x < (start.right - start.x) * 0.98)
+      break
+  }
+  const last = tail.at(-1)
+  if (
+    tail.length < 2 ||
+    !/[.!?]$/.test(last.text.trim()) ||
+    last.right - last.x >= (start.right - start.x) * 0.98 ||
+    tail.slice(0, -1).some((l) => l.right - l.x < (start.right - start.x) * 0.85)
+  )
+    return
+  const singleGraphic = (page.graphicsBounds ?? []).some((g) => {
+    if (g.kind !== 'image' && g.kind !== 'path') return false
+    const r = (g.paintedNormalizedRect ?? g.normalizedRect).map(
+      (v, n) => v * (n % 2 ? page.height : page.width)
+    )
+    return (
+      r[0] >= start.x - em &&
+      r[2] <= start.right + em &&
+      r[2] - r[0] >= (start.right - start.x) * 0.75 &&
+      (r[2] - r[0]) * (r[3] - r[1]) > page.width * page.height * 0.04 &&
+      r[3] <= start.y + em * 0.1 &&
+      start.y - r[3] < em * 3
+    )
+  })
+  if (
+    !singleGraphic &&
+    !provesFragmentedCaptionGraphic(
+      start,
+      runs,
+      page,
+      last,
+      0.98,
+      tail.length >= 4 || tail.some((l) => l.bottom - l.y > first.fontSize * 1.2) ? 0.025 : 0.04
+    )
+  )
+    return
+  return tail
+}
+
+function isNumberedCaptionSectionBoundary(line, n, lines, runs) {
+  if (
+    n < 2 ||
+    !/^\d+(?:\.\d+)+\s+[A-Z][A-Z\s-]{4,}$/.test(line.text.trim()) ||
+    !/[.!?]$/.test(lines[n - 1].text.trim())
+  )
+    return false
+  const em = lines[0].fontSize,
+    leading = lines[n - 1].y - lines[n - 2].y
+  if (line.y - lines[n - 1].y <= Math.max(leading * 1.2, em * 1.2)) return false
+  const body = runs
+    .filter(
+      (l) =>
+        l.y >= line.bottom &&
+        l.y - line.bottom < em * 5 &&
+        Math.abs(l.x - lines[0].x) < em * 0.3 &&
+        Math.abs(l.fontSize - em) < em * 0.05 &&
+        l.text.length >= 25 &&
+        !captionKind(l.text)
+    )
+    .sort((a, b) => a.y - b.y)
+  return body.length >= 2 && body[1].y - body[0].y < em * 1.5
+}
+
 export function findCaptionCandidates(pages, rulesByPage = new Map()) {
   // Table borders are often painted one segment per column. Treat subpixel
   // joints as one separator without connecting unrelated rules across gutters.
@@ -1074,7 +1813,27 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
   for (const page of pages) {
     const runs = groupPageLines(page)
     const ownedRuns = new Set()
-    for (const start of runs.filter(({ text }) => captionKind(text))) {
+    // Bare figure labels are conservative in `captionKind` because they can
+    // be inline references. Re-admit them only when a non-page-sized native
+    // graphic starts in the same label band, which proves a real top figure.
+    const hasNearbyBareFigureGraphic = (start) =>
+      /^(?:Fig\.?|Figure)\s+(?:[A-Z]?\d+(?:\.\d+)*|[IVXLCDM]+)\.\s*$/i.test(start.text) &&
+      (page.graphicsBounds ?? []).some(({ normalizedRect: r }) => {
+        const bounds = r.map((v, n) => v * (n % 2 ? page.height : page.width))
+        const graphicArea = Math.max(0, bounds[2] - bounds[0]) * Math.max(0, bounds[3] - bounds[1])
+        return (
+          graphicArea < page.width * page.height * 0.8 &&
+          graphicArea > page.width * page.height * 0.003 &&
+          bounds[1] <= start.bottom + start.fontSize * 0.6 &&
+          bounds[3] > start.y
+        )
+      })
+    for (const start of runs.filter(
+      ({ text, ...line }) =>
+        captionKind(text) ||
+        /^Table\s+\d+\.\s*$/i.test(text.trim()) ||
+        hasNearbyBareFigureGraphic({ text, ...line })
+    )) {
       if (ownedRuns.has(start)) continue
       // A numbered box is a table only when its enclosing frame contains
       // repeated, genuinely separate text columns. A framed paragraph or
@@ -1116,6 +1875,62 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
         )
           continue
       }
+      // Range-qualified labels are also legitimate graphic captions. Reject
+      // only a native continuation after two consecutive same-column prose
+      // rows ending in a comma, with no independently adjacent visual plate.
+      if (
+        /^(?:Fig\.?|Figure)\s+[A-Z]?\d+\s*\([a-z]\)\s*[-–]\s*\([a-z]\)\.\s+(?:The|This|These|Those|Our|Their|It|They)\b[^.!?]{0,90}\b(?:is|are|was|were|has|have|had)\b/i.test(
+          start.text
+        )
+      ) {
+        const preceding = runs
+          .filter(
+            (line) =>
+              line.text.length >= 40 &&
+              Math.abs(line.x - start.x) < start.fontSize * 0.1 &&
+              Math.abs(line.fontSize - start.fontSize) < start.fontSize * 0.03 &&
+              line.bottom <= start.y &&
+              start.y - line.y <= start.fontSize * 3 &&
+              line.right - line.x >= (start.right - start.x) * 0.6
+          )
+          .sort((a, b) => a.y - b.y)
+        const previous = preceding.at(-1),
+          earlier = preceding.at(-2)
+        const plate = (page.graphicsBounds ?? []).some((graphic) => {
+          const [left, top, right, bottom] = graphic.normalizedRect.map(
+            (v, axis) => v * (axis % 2 ? page.height : page.width)
+          )
+          if (
+            graphic.kind === 'path' &&
+            previous &&
+            earlier &&
+            [earlier, previous].every(
+              (line) =>
+                left <= line.x + start.fontSize * 0.1 &&
+                right >= line.right - start.fontSize * 0.1 &&
+                top <= line.y &&
+                bottom >= line.bottom
+            )
+          )
+            return false
+          return (
+            bottom <= start.y + start.fontSize * 0.2 &&
+            start.y - bottom < start.fontSize * 4 &&
+            bottom - top > start.fontSize * (graphic.kind === 'image' ? 0.5 : 2) &&
+            right - left > page.width * 0.15 &&
+            Math.min(right, start.right) - Math.max(left, start.x) > (start.right - start.x) * 0.3
+          )
+        })
+        if (
+          previous &&
+          earlier &&
+          /,$/.test(previous.text.trim()) &&
+          start.y - previous.bottom < start.fontSize * 0.5 &&
+          previous.y - earlier.y < start.fontSize * 1.6 &&
+          !plate
+        )
+          continue
+      }
       // A reference wrapped after "listed in" is part of the same paragraph.
       // Require its preceding source line, matching typography and tight leading.
       if (
@@ -1125,7 +1940,7 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
           )) &&
         runs.some(
           (line) =>
-            (/(?:\b(?:listed|shown|provided|presented|reported|conditions) in|\bbetween conditions,|\bin (?:Supplemental|Supplementary)|\b(?:Supplementary |Supplemental )?(?:Table|Figure|Fig\.) \d+ and)$/.test(
+            (/(?:\b(?:listed|shown|provided|presented|reported|displayed|conditions) in|\bbetween conditions,|\bin (?:Supplemental|Supplementary)|\b(?:Supplementary |Supplemental )?(?:Table|Figure|Fig\.) \d+ and)$/.test(
               line.text
             ) ||
               // A reference can end a statistical sentence and share its
@@ -1136,9 +1951,27 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
                 start.y - line.bottom <= start.fontSize * 0.5)) &&
             Math.abs(line.x - start.x) <= 2 &&
             Math.abs(line.fontSize - start.fontSize) <= 0.5 &&
-            line.bottom <= start.y &&
+            line.y + Math.min(line.bottom - line.y, line.fontSize) <= start.y &&
             start.y - line.bottom <=
               start.fontSize * (captionKind(start.text) === 'figure' ? 1.5 : 0.5)
+        )
+      )
+        continue
+      // A paragraph opener can indent the preposition that introduces a
+      // serial pointer. Require that source cue rather than classifying all
+      // titles containing a second figure label as prose.
+      if (
+        /^(?:Fig\.?|Figure)\s+[A-Z]?\d+[.:]\s+(?:Fig\.?|Figure)\s+[A-Z]?\d+\s+(?:shows?|presents?|describes?|illustrates?)\b/i.test(
+          start.text
+        ) &&
+        runs.some(
+          (line) =>
+            /\b(?:introduced|described|shown|illustrated)\s+in$/i.test(line.text.trim()) &&
+            line.x >= start.x - 0.1 &&
+            line.x - start.x <= start.fontSize * 2 &&
+            Math.abs(line.fontSize - start.fontSize) < start.fontSize * 0.015 &&
+            line.y < start.y &&
+            start.y - line.y <= start.fontSize * 2
         )
       )
         continue
@@ -1179,11 +2012,60 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
         )
       )
         continue
+      // Supplementary ordinals and Roman table labels can also be split from
+      // a following-page caption. A preceding prose line ending in a
+      // reference preposition makes the bare label an inline pointer.
+      if (
+        /^(?:Figure|Fig\.?|Table|Tab\.?)\s+(?:[A-Z]?\d+(?:\.\d+)*|[A-Z]\.\d+(?:\.\d+)*|[IVXLCDM]+)\.\s*$/i.test(
+          start.text
+        ) &&
+        runs.some(
+          (line) =>
+            line.text.length > 24 &&
+            /\bin$/i.test(line.text.trim()) &&
+            Math.abs(line.fontSize - start.fontSize) <= 0.7 &&
+            Math.abs(line.x - start.x) < start.fontSize * 0.1 &&
+            line.y + Math.min(line.bottom - line.y, line.fontSize) <= start.y &&
+            start.y - line.y < start.fontSize * 1.7
+        )
+      )
+        continue
       const nativeParagraph =
+        findNativeCenteredFigureParagraph(start, runs, page) ??
         findNativeMathCaptionParagraph(start, runs, page, separators.get(page.pageNumber) ?? []) ??
         findNativeCaptionParagraph(start, runs, page, separators.get(page.pageNumber) ?? []) ??
-        findNativeMixedLegend(start, page)
+        findNativeMixedLegend(start, page) ??
+        findNativeSmallerFigureCaption(start, runs, page)
       const lines = [start, ...(nativeParagraph ?? [])]
+      // IEEE-style tables often emit an all-caps Roman label as one run and
+      // the centered all-caps title as one or more following runs. Keep the
+      // title with the label so table ownership and unstructured text retain
+      // the visible description. Lowercase body lines and column headers stop
+      // the bounded title scan.
+      if (/^TABLE\s+[IVXLCDM]+\.?\s*$/u.test(start.text.trim())) {
+        let previous = start
+        const title = []
+        const startCenter = (start.x + start.right) / 2
+        for (const line of runs
+          .filter(
+            (line) =>
+              line.y > start.bottom &&
+              Math.abs((line.x + line.right) / 2 - startCenter) <= start.fontSize * 3
+          )
+          .sort((a, b) => a.y - b.y)) {
+          if (line.y - previous.bottom > start.fontSize * 1.6) break
+          if (
+            line.text.length < 12 ||
+            !/\p{Lu}/u.test(line.text) ||
+            /\p{Ll}/u.test(line.text) ||
+            Math.abs((line.x + line.right) / 2 - startCenter) > start.fontSize * 3
+          )
+            break
+          title.push(line)
+          previous = line
+        }
+        lines.push(...title)
+      }
       // A measured table edge also owns a hanging terminal caption below the
       // table. The short tail must close before a distinct body paragraph.
       if (captionKind(start.text) === 'table' && lines.length === 1 && start.text.length >= 35) {
@@ -1357,7 +2239,23 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
       const hangingTableTitle =
         captionKind(start.text) === 'table' && /\b(?:of|with|for|and)$/i.test(start.text)
       const outdented =
-        captionKind(start.text) === 'figure' && findOutdentedParagraphContinuation(start, runs)
+        captionKind(start.text) === 'figure' &&
+        (findOutdentedParagraphContinuation(start, runs) ??
+          // A broken native hyphenated word can continue at the paragraph
+          // edge instead of the indented first-line edge. Require a complete
+          // lowercase tail and the independently painted panel above it.
+          (/[\p{L}\d]-$/u.test(start.text.trim()) &&
+            runs.find(
+              (l) =>
+                l.y > start.y + 2 &&
+                l.y - start.y < start.fontSize * 1.6 &&
+                start.x - l.x > start.fontSize * 1.8 &&
+                start.x - l.x < start.fontSize * 2.5 &&
+                Math.abs(l.fontSize - start.fontSize) < 0.1 &&
+                /^[a-z].*[.!?]$/.test(l.text) &&
+                l.right <= start.right + 0.1 &&
+                provesFragmentedCaptionGraphic({ ...start, x: l.x }, runs, page, l)
+            )))
       const hanging =
         (captionKind(start.text) === 'figure' || hangingTableTitle) &&
         runs.find(
@@ -1427,7 +2325,41 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
       // A standalone table number may precede a left-aligned title, with or
       // without punctuation. Require one prose block ending at the top rule.
       if (/^Table\s+\d+[.:]?$/i.test(start.text.trim())) {
-        const border = (rulesByPage.get(page.pageNumber) ?? [])
+        // A centered bare number may head a two-line italic title with a
+        // first-line indent. The literal hyphen, shared paragraph/table center
+        // and closing opening-rule gap establish both lines independently.
+        const nextRows = runs
+          .filter((l) => l.y > start.bottom && l.y - start.bottom < start.fontSize * 4)
+          .sort((a, b) => a.y - b.y)
+        const [firstTitle, finalTitle] = nextRows
+        if (
+          lines.length === 1 &&
+          firstTitle &&
+          finalTitle &&
+          firstTitle.text.length >= 40 &&
+          /\p{L}-$/u.test(firstTitle.text.trim()) &&
+          /^[a-z].*\.$/.test(finalTitle.text.trim()) &&
+          !captionKind(firstTitle.text) &&
+          !captionKind(finalTitle.text) &&
+          Math.abs(firstTitle.fontSize - start.fontSize) < start.fontSize * 0.02 &&
+          Math.abs(finalTitle.fontSize - start.fontSize) < start.fontSize * 0.02 &&
+          firstTitle.y - start.y < start.fontSize * 1.4 &&
+          finalTitle.y - firstTitle.y < start.fontSize * 1.4 &&
+          firstTitle.x - finalTitle.x > start.fontSize * 1.8 &&
+          firstTitle.x - finalTitle.x < start.fontSize * 2.5 &&
+          finalTitle.right < firstTitle.right &&
+          Math.abs(finalTitle.x + firstTitle.right - start.x - start.right) <
+            start.fontSize * 0.1 &&
+          (separators.get(page.pageNumber) ?? []).some(
+            (r) =>
+              r[1] > finalTitle.bottom &&
+              r[1] - finalTitle.bottom < start.fontSize * 1.8 &&
+              r[2] - r[0] > page.width * 0.5 &&
+              Math.abs(r[0] + r[2] - start.x - start.right) < start.fontSize * 0.1
+          )
+        )
+          lines.push(firstTitle, finalTitle)
+        const borderParts = (rulesByPage.get(page.pageNumber) ?? [])
           .filter(
             (r) =>
               r[1] === r[3] &&
@@ -1436,8 +2368,20 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
               r[0] < start.x &&
               r[2] - r[0] > start.fontSize * 5
           )
-          .sort((a, b) => a[1] - b[1])[0]
-        const title =
+          .sort((a, b) => a[1] - b[1] || a[0] - b[0])
+        const joinedBorders = []
+        for (const part of borderParts) {
+          const previous = joinedBorders.at(-1)
+          if (
+            previous &&
+            Math.abs(previous[1] - part[1]) <= 0.1 &&
+            part[0] <= previous[2] + start.fontSize * 0.15
+          )
+            previous[2] = Math.max(previous[2], part[2])
+          else joinedBorders.push([...part])
+        }
+        const border = joinedBorders.sort((a, b) => a[1] - b[1])[0]
+        const rawTitle =
           border &&
           runs.filter(
             (line) =>
@@ -1446,14 +2390,33 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
               line.x >= border[0] - 2 &&
               line.bottom - line.y <= line.fontSize * 1.5
           )
+        const title = rawTitle?.length
+          ? groupPageLines({
+              ...page,
+              lines: rawTitle.map((line) => ({
+                ...line,
+                width: line.width ?? line.right - line.x,
+                height: line.height ?? line.bottom - line.y
+              }))
+            }).filter((line) => line.y > start.bottom && line.bottom < border[1])
+          : rawTitle
         if (
+          lines.length === 1 &&
           title?.length &&
           title.length <= 3 &&
           title[0].text.length >= 25 &&
           title.every(
             (line, index) =>
               !captionKind(line.text) &&
-              Math.abs(line.x - title[0].x) <= 2 &&
+              (Math.abs(line.x - title[0].x) <= 2 ||
+                (index === title.length - 1 &&
+                  /[\p{L}\d]-$/u.test(title[index - 1]?.text.trim() ?? '') &&
+                  title[0].x - line.x > line.fontSize * 1.8 &&
+                  title[0].x - line.x < line.fontSize * 2.5 &&
+                  Math.abs(line.x - border[0]) < line.fontSize * 0.2 &&
+                  /^[a-z].*\.$/.test(line.text.trim()) &&
+                  line.right < title[0].right &&
+                  title[0].right <= border[2] + line.fontSize * 0.2)) &&
               // Italic font matrices can slightly inflate fontSize while the
               // painted height still matches the surrounding upright title.
               Math.min(
@@ -1609,9 +2572,14 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
           line.right <= start.right + start.fontSize * 2
         const centeredFigureTail = (line) =>
           captionKind(start.text) === 'figure' &&
-          !/[.!?]$/.test(previous.text.trim()) &&
+          (!/[.!?]$/.test(previous.text.trim()) ||
+            (/\bLeft:\s/.test(start.text) &&
+              /\bMiddle:\s/.test(start.text) &&
+              /^Right:\s+\p{L}[^.!?]{5,70}\.$/u.test(line.text.trim()))) &&
           previous.right - previous.x >= page.width * 0.35 &&
-          /^[a-z].*[.!?]$/.test(line.text.trim()) &&
+          (/^[a-z].*[.!?]$/.test(line.text.trim()) ||
+            /^[a-z][\p{L}\s-]{4,60}$/u.test(line.text.trim()) ||
+            /^Right:\s+\p{L}[^.!?]{5,70}\.$/u.test(line.text.trim())) &&
           line.right - line.x < (start.right - start.x) * 0.8 &&
           Math.abs((line.x + line.right - start.x - start.right) / 2) <= 2 &&
           Math.abs(line.fontSize - start.fontSize) <= 0.1 &&
@@ -1624,14 +2592,56 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
               other.x >= start.x &&
               other.right <= start.right
           ) &&
-          (page.graphicsBounds ?? []).some(
-            (g) =>
-              g.kind === 'image' &&
-              g.normalizedRect[0] * page.width >= start.x - start.fontSize &&
-              g.normalizedRect[2] * page.width <= start.right + start.fontSize &&
-              g.normalizedRect[3] * page.height <= start.y + page.height / 256 &&
-              start.y - g.normalizedRect[3] * page.height < start.fontSize * 3
+          ((/\bLeft:\s/.test(start.text) &&
+            /\bMiddle:\s/.test(start.text) &&
+            /^Right:\s/.test(line.text)) ||
+            (page.graphicsBounds ?? []).some(
+              (g) =>
+                g.kind === 'image' &&
+                g.normalizedRect[0] * page.width >= start.x - start.fontSize &&
+                g.normalizedRect[2] * page.width <= start.right + start.fontSize &&
+                g.normalizedRect[3] * page.height <= start.y + page.height / 256 &&
+                start.y - g.normalizedRect[3] * page.height < start.fontSize * 3
+            ))
+        // Background boxes around several literal words can slightly inset
+        // the final prose row. Require an unfinished caption and independent
+        // native boxes on this row, rather than accepting indentation alone.
+        const boxedTableTail = (line) => {
+          if (
+            captionKind(start.text) !== 'table' ||
+            lines.length < 2 ||
+            !/\bin$/i.test(previous.text.trim()) ||
+            !/[.!?]$/.test(line.text.trim()) ||
+            line.text.length < 15 ||
+            line.text.length > 100 ||
+            line.x < start.x ||
+            line.x - start.x > start.fontSize * 0.8 ||
+            line.right > Math.max(...lines.map((l) => l.right)) ||
+            Math.abs(line.fontSize - start.fontSize) > start.fontSize * 0.01 ||
+            line.y - previous.y > start.fontSize * 1.6
           )
+            return false
+          const boxes = (page.graphicsBounds ?? [])
+            .filter((g) => g.kind === 'path')
+            .map((g) => [
+              g.normalizedRect[0] * page.width,
+              g.normalizedRect[1] * page.height,
+              g.normalizedRect[2] * page.width,
+              g.normalizedRect[3] * page.height
+            ])
+            .filter(
+              (r) =>
+                r[0] >= line.x - start.fontSize &&
+                r[2] <= line.right + start.fontSize &&
+                r[2] - r[0] >= start.fontSize &&
+                r[2] - r[0] <= start.fontSize * 8 &&
+                r[1] <= line.y &&
+                r[3] >= line.bottom &&
+                r[3] - r[1] <= start.fontSize * 3
+            )
+            .sort((a, b) => a[0] - b[0])
+          return boxes.length >= 2 && boxes.some((r, i) => i && r[0] > boxes[i - 1][2])
+        }
         const next = runs
           .filter(
             (line) =>
@@ -1640,6 +2650,7 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
                 (hanging && Math.abs(line.x - hanging.x) <= 2) ||
                 (outdented && Math.abs(line.x - outdented.x) <= 2) ||
                 centeredFigureTail(line) ||
+                boxedTableTail(line) ||
                 scannedTitle(line) ||
                 participantLine(line) ||
                 // Short centered continuation lines need a nearby table-header rule.
@@ -1672,6 +2683,35 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
           ownedRuns.add(next)
           break
         }
+        // An unfinished caption can refer to another numbered figure and
+        // continue on the same physical baseline sequence. Keep that literal
+        // reference with its owner only when no new plate separates the rows.
+        const internalReference =
+          next &&
+          lines.length >= 3 &&
+          captionKind(start.text) === 'figure' &&
+          /\b(?:discussed|shown|described|reported|illustrated|explained)(?:\s+further)?\s+in$/i.test(
+            previous.text.trim()
+          ) &&
+          /^(?:Fig\.?|Figure)\s+[A-Z]?\d+(?:\.\d+)*[.:]\s+\p{L}/u.test(next.text) &&
+          Math.abs(next.x - start.x) < start.fontSize * 0.1 &&
+          Math.abs(next.fontSize - start.fontSize) < start.fontSize * 0.015 &&
+          Math.abs(next.y - previous.y - (previous.y - lines.at(-2).y)) < start.fontSize * 0.1 &&
+          (provesSingleCaptionRaster(start, runs, page) ||
+            provesFragmentedCaptionGraphic(start, runs, page, next, 1.2)) &&
+          !(page.graphicsBounds ?? []).some((graphic) => {
+            const [left, top, right, bottom] = graphic.normalizedRect.map(
+              (v, axis) => v * (axis % 2 ? page.height : page.width)
+            )
+            return (
+              top >= previous.bottom - start.fontSize * 0.1 &&
+              bottom <= next.y + start.fontSize * 0.1 &&
+              bottom - top >= start.fontSize * 0.3 &&
+              right - left > start.fontSize * 3 &&
+              left < next.right &&
+              right > next.x
+            )
+          })
         const boundedTableTail =
           next &&
           /^Table\s+\d+\s*[.:]\s*\S.{15}/i.test(start.text) &&
@@ -1761,7 +2801,7 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
                     )
                   ? 1.1
                   : 0.7) ||
-          captionKind(next.text) ||
+          (captionKind(next.text) && !internalReference) ||
           (captionKind(start.text) === 'table' &&
             (separators.get(page.pageNumber) ?? []).some(
               ([x0, y0, x1, y1]) =>
@@ -1774,6 +2814,7 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
         )
           break
         lines.push(next)
+        if (internalReference) ownedRuns.add(next)
       }
       // Nature-style legends can flow from a left column into a right column.
       // Require a caption separator or an unfinished sentence with consecutive
@@ -1895,6 +2936,12 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
       // but enumerate several tables and figures in one prose block. Once the
       // continuation contains multiple supplementary labels and the matching
       // section heading is nearby, keep it out of caption ownership entirely.
+      if (captionKind(start.text) === 'figure') {
+        const section = lines.findIndex((line, n) =>
+          isNumberedCaptionSectionBoundary(line, n, lines, runs)
+        )
+        if (section >= 0) lines.splice(section)
+      }
       const candidateText = lines.map((line) => line.text).join(' ')
       const supplementaryLabels = [...candidateText.matchAll(/\b(?:Table|Figure)\s+S\d+\s*[:.]/gi)]
       const supplementaryHeading = runs.some(
@@ -1972,12 +3019,16 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
       if (scriptLines) candidate.lines = scriptLines
       const literalFragments = nativeCaptionLiteralFragments(page, candidate)
       if (literalFragments) Object.assign(candidate, literalFragments)
-      const inlineFragments = nativeCaptionOwnedInlineFragments(
-        page,
-        candidate,
-        lines,
-        separators.get(page.pageNumber) ?? []
-      )
+      // Complete literal baseline recovery may split connected source rows.
+      // The earlier grouped rows must not overwrite that conserved paragraph.
+      const inlineFragments = literalFragments
+        ? undefined
+        : nativeCaptionOwnedInlineFragments(
+            page,
+            candidate,
+            lines,
+            separators.get(page.pageNumber) ?? []
+          )
       if (inlineFragments) Object.assign(candidate, inlineFragments)
       if (nativeParagraph) for (const line of lines) ownedRuns.add(line)
       candidates.push(candidate)

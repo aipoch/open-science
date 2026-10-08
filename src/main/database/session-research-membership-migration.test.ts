@@ -29,11 +29,11 @@ it('adds nullable research projections without changing existing Session identit
     await client.$executeRawUnsafe('ALTER TABLE "Session" DROP COLUMN "researchMembershipJson"')
     await client.$executeRawUnsafe('ALTER TABLE "Session" DROP COLUMN "importedResearchId"')
     await client.$executeRawUnsafe(
-      "DELETE FROM _open_science_migrations WHERE id = '0049_session_research_membership'"
+      "DELETE FROM _open_science_migrations WHERE id = '0050_session_research_membership'"
     )
     await expect(
       migrateApplicationDatabase(client, { databasePath: join(root, 'open-science.db') })
-    ).resolves.toMatchObject({ applied: ['0049_session_research_membership'] })
+    ).resolves.toMatchObject({ applied: ['0050_session_research_membership'] })
     expect(await client.session.findUnique({ where: { id: 's' } })).toEqual(before)
     expect(await client.$queryRawUnsafe('PRAGMA foreign_key_check')).toEqual([])
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })

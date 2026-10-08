@@ -129,7 +129,13 @@ export function nativeCaptionOwnedInlineFragments(page, caption, ownedLines, rul
       const distances = ownedLines
         .map((r) => Math.abs(s.y + s.height / 2 - r.y - r.fontSize / 2))
         .sort((a, b) => a - b)
-      if (distances.length > 1 && distances[1] - distances[0] < em * 0.1) continue
+      const distance = Math.abs(s.y + s.height / 2 - row.y - row.fontSize / 2)
+      if (
+        distance > distances[0] + em * 0.01 ||
+        distance > em * 0.8 ||
+        (distances.length > 1 && distances[1] - distances[0] < em * 0.1)
+      )
+        continue
       const parent = parents[0]
       if (!attached.has(parent)) attached.set(parent, [])
       attached.get(parent).push(s)
@@ -200,8 +206,20 @@ export function nativeCaptionOwnedInlineFragments(page, caption, ownedLines, rul
       result.push(row.text)
       continue
     }
-    if (text !== row.text && (bases.length > 1 || attached.size)) changed = true
-    result.push(text)
+    // A connected native formula row can contain more than one prose
+    // baseline. Reordering scripts must not discard any already owned text
+    // from that physical row. Superscript normalization keeps literal digits
+    // equivalent while preserving unknown mathematical glyphs unchanged.
+    const available = new Map()
+    for (const char of text.normalize('NFKD').replace(/\s/gu, ''))
+      available.set(char, (available.get(char) ?? 0) + 1)
+    const conserves = [...row.text.normalize('NFKD').replace(/\s/gu, '')].every((char) => {
+      const count = available.get(char) ?? 0
+      available.set(char, count - 1)
+      return count > 0
+    })
+    if (conserves && text !== row.text && (bases.length > 1 || attached.size)) changed = true
+    result.push(conserves ? text : row.text)
   }
   return changed ? { lines: result } : undefined
 }
@@ -220,7 +238,10 @@ export function nativeCaptionLiteralFragments(page, caption) {
     (l) =>
       caption.lines[0].startsWith(l.text) &&
       Math.abs(l.x - caption.rect[0]) < 0.1 &&
-      Math.abs(l.y - caption.rect[1]) < 0.1
+      // A uniquely attached raised script can define the paragraph's top edge
+      // above its first physical prose baseline. The complete source proof
+      // below still requires every fragment to have one literal row owner.
+      Math.abs(l.y - caption.rect[1]) < l.fontSize * 0.3
   )
   if (!first) return
   const em = first.fontSize
@@ -230,7 +251,12 @@ export function nativeCaptionLiteralFragments(page, caption) {
     page.lines.some((l) => ![l.x, l.y, l.width, l.height, l.fontSize].every(Number.isFinite))
   )
     return
-  const frame = [...caption.rect.slice(0, 3), caption.rect[3] + em * 0.4]
+  const frame = [
+    caption.rect[0],
+    Math.min(caption.rect[1], first.y - em * 0.3),
+    caption.rect[2],
+    caption.rect[3] + em * 0.4
+  ]
   const source = page.lines.filter((l) => l.text.trim() && intersection(lineRect(l), frame) > 0)
   if (
     source.some(
@@ -248,7 +274,7 @@ export function nativeCaptionLiteralFragments(page, caption) {
   )
     return
   const heads = source
-    .filter((l) => Math.abs(l.x - first.x) < 0.1 && Math.abs(l.fontSize - em) < 0.1)
+    .filter((l) => Math.abs(l.x - first.x) < em * 0.1 && Math.abs(l.fontSize - em) < 0.1)
     .sort((a, b) => a.y - b.y)
   if (
     heads.length < 3 ||
@@ -266,7 +292,7 @@ export function nativeCaptionLiteralFragments(page, caption) {
       (b) =>
         b !== s &&
         b.fontSize > em * 0.8 &&
-        Math.abs(s.x - b.x - b.width) < em * 0.1 &&
+        Math.abs(s.x - b.x - b.width) < em * 0.2 &&
         Math.abs(s.y + s.fontSize - (b.y + b.fontSize)) > em * 0.15 &&
         Math.abs(s.y + s.fontSize - (b.y + b.fontSize)) < em * 1.2
     )
@@ -306,14 +332,16 @@ export function nativeCaptionLiteralFragments(page, caption) {
           const rise = parent.y + parent.height - (script.y + script.height),
             gap = script.x - parent.x - parent.width,
             superscript =
-              /^\d+$/.test(script.text) &&
+              /^[−-]?\d+$/.test(script.text) &&
               script.fontSize <= parent.fontSize * 0.8 &&
               rise >= parent.fontSize * 0.2 &&
               rise <= parent.fontSize * 0.8 &&
               gap >= -parent.fontSize * 0.1 &&
               gap <= parent.fontSize * 0.3
           text += superscript
-            ? script.text.replace(/\d/g, (digit) => '⁰¹²³⁴⁵⁶⁷⁸⁹'[Number(digit)])
+            ? script.text
+                .replace(/[−-]/g, '⁻')
+                .replace(/\d/g, (digit) => '⁰¹²³⁴⁵⁶⁷⁸⁹'[Number(digit)])
             : ' ' + script.text.trim()
         }
         return text

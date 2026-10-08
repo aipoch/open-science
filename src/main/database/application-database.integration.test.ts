@@ -1,3 +1,5 @@
+import { MIGRATION_MANIFEST } from './migration-service'
+import { createDatabaseAtReleasedManifest } from '../../../test/fixtures/application-database'
 import { access, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -19,89 +21,6 @@ import { ReviewRepository } from '../reviewer/repository'
 
 let storageRoot: string | undefined
 let disconnect: (() => Promise<void>) | undefined
-
-const removeAgentMemoryTriggers = async (client: PrismaClient): Promise<void> => {
-  await client.$executeRawUnsafe('DROP TRIGGER "MemoryEntry_fts_insert"')
-  await client.$executeRawUnsafe('DROP TRIGGER "MemoryEntry_fts_delete"')
-  await client.$executeRawUnsafe('DROP TRIGGER "MemoryEntry_fts_update"')
-  await client.$executeRawUnsafe('DROP TRIGGER "MemoryCategory_about_you_delete"')
-  await client.$executeRawUnsafe('DROP TRIGGER "MemoryCategory_about_you_update"')
-  await client.$executeRawUnsafe('DROP TRIGGER "MemoryCategory_custom_limit"')
-  await client.$executeRawUnsafe('DROP TABLE "MemoryEntryFts"')
-}
-
-const removeComputePasswordAuthSchema = async (client: PrismaClient): Promise<void> => {
-  await client.$executeRawUnsafe('DROP TABLE "ComputeCredential"')
-  await client.$executeRawUnsafe('DROP TABLE "ComputeAuthOperation"')
-  await client.$executeRawUnsafe('DROP TABLE "ComputeHost"')
-  await client.$executeRawUnsafe(`CREATE TABLE "ComputeHost" (
-    "id" TEXT NOT NULL PRIMARY KEY,
-    "providerId" TEXT NOT NULL,
-    "displayName" TEXT NOT NULL,
-    "shape" TEXT NOT NULL DEFAULT 'direct_ssh',
-    "sshAlias" TEXT NOT NULL,
-    "sshOverrides" TEXT,
-    "scratchRoot" TEXT,
-    "scratchPinned" BOOLEAN NOT NULL DEFAULT false,
-    "concurrencyLimit" INTEGER,
-    "probeResult" TEXT,
-    "detailsDoc" TEXT NOT NULL DEFAULT '',
-    "detailsUpdatedAt" DATETIME,
-    "detailsUpdatedBy" TEXT,
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL
-  )`)
-  await client.$executeRawUnsafe(
-    'CREATE UNIQUE INDEX "ComputeHost_providerId_key" ON "ComputeHost"("providerId")'
-  )
-}
-
-const removeComputeAnalysisSchema = async (client: PrismaClient): Promise<void> => {
-  const [{ sql }] = await client.$queryRawUnsafe<Array<{ sql: string }>>(
-    `SELECT "sql" FROM "sqlite_schema" WHERE "type" = 'table' AND "name" = 'ComputeJob'`
-  )
-  const removedLines = [
-    '"remoteCleanupDisposition" TEXT',
-    'CONSTRAINT "ComputeJob_remoteCleanupDisposition_check"',
-    'CONSTRAINT "ComputeJob_analysisState_check"',
-    'CONSTRAINT "ComputeJob_analysisBundle_check"',
-    'CONSTRAINT "ComputeJob_analysisConsumption_check"',
-    '"analysisState" TEXT',
-    '"analysisMessageId" TEXT',
-    '"analysisUpdatedAt" DATETIME'
-  ]
-  const legacyDdl = sql
-    .split('\n')
-    .filter((line) => removedLines.every((removed) => !line.includes(removed)))
-    .join('\n')
-    .replace(/CREATE TABLE (?:IF NOT EXISTS )?"ComputeJob"/u, 'CREATE TABLE "__legacy_ComputeJob"')
-  const columns = await client.$queryRawUnsafe<Array<{ name: string }>>(
-    `PRAGMA table_info('ComputeJob')`
-  )
-  const copiedColumns = columns
-    .map(({ name }) => name)
-    .filter(
-      (name) =>
-        name !== 'remoteCleanupDisposition' &&
-        !['analysisState', 'analysisMessageId', 'analysisUpdatedAt'].includes(name)
-    )
-    .map((name) => `"${name}"`)
-    .join(', ')
-
-  await client.$executeRawUnsafe(legacyDdl)
-  await client.$executeRawUnsafe(
-    `INSERT INTO "__legacy_ComputeJob" (${copiedColumns}) SELECT ${copiedColumns} FROM "ComputeJob"`
-  )
-  await client.$executeRawUnsafe('DROP TABLE "ComputeJob"')
-  await client.$executeRawUnsafe('ALTER TABLE "__legacy_ComputeJob" RENAME TO "ComputeJob"')
-  await client.$executeRawUnsafe(
-    'CREATE INDEX "ComputeJob_providerId_idx" ON "ComputeJob"("providerId")'
-  )
-  await client.$executeRawUnsafe(
-    'CREATE INDEX "ComputeJob_sessionId_idx" ON "ComputeJob"("sessionId")'
-  )
-  await client.$executeRawUnsafe('CREATE INDEX "ComputeJob_status_idx" ON "ComputeJob"("status")')
-}
 
 afterEach(async () => {
   await disconnect?.()
@@ -233,7 +152,8 @@ describe('application database (integration)', () => {
         '0046_journal_attributes',
         '0047_session_replay',
         '0048_pdf_annotation_sharing',
-        '0049_session_research_membership'
+        '0049_pascalcase_table_names',
+        '0050_session_research_membership'
       ]
     })
 
@@ -680,7 +600,7 @@ describe('application database (integration)', () => {
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
 
-    await migrateApplicationDatabase(client)
+    await createDatabaseAtReleasedManifest(client, MIGRATION_MANIFEST.slice(0, 1))
     await client.$executeRawUnsafe('PRAGMA foreign_keys = OFF')
     await client.$executeRawUnsafe('DROP TABLE "ArtifactVersionInput"')
     await client.$executeRawUnsafe(`CREATE TABLE "ArtifactVersionInput" (
@@ -705,20 +625,7 @@ describe('application database (integration)', () => {
       CONSTRAINT "ArtifactVersionInput_sourceKind_check" CHECK ("sourceKind" IN ('artifact-version', 'upload-version'))
     )`)
     await client.$executeRawUnsafe('PRAGMA foreign_keys = ON')
-    await client.$executeRawUnsafe('DROP TABLE "VisionEvidence"')
-    await client.$executeRawUnsafe('DROP TABLE "TagAssignment"')
-    await client.$executeRawUnsafe('DROP TABLE "Tag"')
-    await removeAgentMemoryTriggers(client)
-    // Simulate a current pre-ledger schema with the targeted legacy table shape.
-    await client.$executeRawUnsafe('DROP TABLE "ManagedFileVersionWriteOperation"')
     await client.$executeRawUnsafe('DROP TABLE "_open_science_migrations"')
-    await client.$executeRawUnsafe('ALTER TABLE "Project" DROP COLUMN "agentContext"')
-    await removeComputePasswordAuthSchema(client)
-    await removeComputeAnalysisSchema(client)
-    await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "fileEvidence"')
-    await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "producerRunId"')
-    await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "sensitiveDataEncrypted"')
-    await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "executionMode"')
 
     await migrateApplicationDatabase(client)
     await client.$executeRawUnsafe('PRAGMA foreign_keys = OFF')
@@ -741,41 +648,12 @@ describe('application database (integration)', () => {
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
 
-    await migrateApplicationDatabase(client)
-    await client.fileOriginSession.create({
-      data: { projectId: 'project-1', sessionId: 'session-1' }
-    })
-    await client.artifactLineage.create({
-      data: {
-        id: 'artifact-1',
-        projectId: 'project-1',
-        sessionId: 'session-1',
-        normalizedFilename: 'result.png',
-        filename: 'Result.png'
-      }
-    })
-    await client.artifactVersion.create({
-      data: {
-        id: 'artifact-version-1',
-        artifactId: 'artifact-1',
-        versionNumber: 1,
-        filename: 'Result.png',
-        artifactRunId: 'artifact-run-1',
-        rootFrameId: 'root-1',
-        agentFrameId: 'agent-1',
-        messageBranchId: 'branch-1',
-        runtimeSegmentId: 'runtime-1',
-        promptMessageId: 'prompt-1',
-        state: 'pending',
-        contentStorageKey: 'artifacts/result.png',
-        evidenceStorageKey: 'artifacts/evidence.json',
-        sizeBytes: 3n,
-        checksum: 'a'.repeat(64),
-        evidenceJson: '{}',
-        evidenceChecksum: 'b'.repeat(64),
-        evidenceSchemaVersion: 1
-      }
-    })
+    await createDatabaseAtReleasedManifest(client, MIGRATION_MANIFEST.slice(0, 1))
+    await client.$executeRaw`INSERT INTO "FileOriginSession" (projectId, sessionId, updatedAt) VALUES ('project-1', 'session-1', 1234567890000)`
+    await client.$executeRaw`INSERT INTO "ArtifactLineage" (id, projectId, sessionId, normalizedFilename, filename, updatedAt)
+      VALUES ('artifact-1', 'project-1', 'session-1', 'result.png', 'Result.png', 1234567890000)`
+    await client.$executeRaw`INSERT INTO "ArtifactVersion" (id, artifactId, versionNumber, filename, artifactRunId, rootFrameId, agentFrameId, messageBranchId, runtimeSegmentId, promptMessageId, state, contentStorageKey, evidenceStorageKey, sizeBytes, checksum, evidenceJson, evidenceChecksum, evidenceSchemaVersion, updatedAt)
+      VALUES ('artifact-version-1', 'artifact-1', 1, 'Result.png', 'artifact-run-1', 'root-1', 'agent-1', 'branch-1', 'runtime-1', 'prompt-1', 'pending', 'artifacts/result.png', 'artifacts/evidence.json', 3, ${'a'.repeat(64)}, '{}', ${'b'.repeat(64)}, 1, 1234567890000)`
 
     const versionColumns = await client.$queryRawUnsafe<Array<{ name: string }>>(
       `PRAGMA table_info('ArtifactVersion')`
@@ -794,20 +672,7 @@ describe('application database (integration)', () => {
       'ALTER TABLE "ArtifactVersionLegacy" RENAME TO "ArtifactVersion"'
     )
     await client.$executeRawUnsafe('PRAGMA foreign_keys = ON')
-    await client.$executeRawUnsafe('DROP TABLE "VisionEvidence"')
-    await client.$executeRawUnsafe('DROP TABLE "TagAssignment"')
-    await client.$executeRawUnsafe('DROP TABLE "Tag"')
-    await removeAgentMemoryTriggers(client)
-    // Simulate a current pre-ledger schema with the targeted legacy table shape.
-    await client.$executeRawUnsafe('DROP TABLE "ManagedFileVersionWriteOperation"')
     await client.$executeRawUnsafe('DROP TABLE "_open_science_migrations"')
-    await client.$executeRawUnsafe('ALTER TABLE "Project" DROP COLUMN "agentContext"')
-    await removeComputePasswordAuthSchema(client)
-    await removeComputeAnalysisSchema(client)
-    await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "fileEvidence"')
-    await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "producerRunId"')
-    await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "sensitiveDataEncrypted"')
-    await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "executionMode"')
 
     await migrateApplicationDatabase(client)
 
@@ -1312,7 +1177,8 @@ describe('application database (integration)', () => {
         '0046_journal_attributes',
         '0047_session_replay',
         '0048_pdf_annotation_sharing',
-        '0049_session_research_membership'
+        '0049_pascalcase_table_names',
+        '0050_session_research_membership'
       ]
     })
 

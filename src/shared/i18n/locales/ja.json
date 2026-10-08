@@ -133,6 +133,11 @@
     "More items": "その他のセッション"
   },
   "renderer": {
+    "Cancer proteomics studies, sample and aliquot mappings, and file discovery from PDC.": "PDC のがんプロテオミクス研究、サンプルと分注試料の対応、およびファイルの検索。",
+    "Search PDC studies and versions by name or identifier.": "名前または識別子で PDC の研究とバージョンを検索。",
+    "Retrieve PDC study metadata and available versions.": "PDC 研究のメタデータと利用可能なバージョンを取得。",
+    "Map PDC aliquots to samples, cases and external references.": "PDC の分注試料をサンプル、症例、外部参照に対応付け。",
+    "Discover PDC study files and quantitative reports without downloading files.": "ファイルをダウンロードせずに PDC の研究ファイルと定量レポートを検索。",
     "List GWAS summary statistics files, YAML metadata, reference genomes and standard column definitions by GCST accession.": "GCST アクセッション番号で GWAS 要約統計量ファイル、YAML メタデータ、参照ゲノム、標準の列定義を一覧表示します。",
     "PDF analysis options": "PDF 解析オプション",
     "Retrieve GEO series metadata, samples and supplementary-file links.": "GEO シリーズのメタデータ、サンプル、補足ファイルへのリンクを取得。",
@@ -1822,6 +1827,7 @@
     "Max tokens": "最大トークン数",
     "Maximize": "最大化する",
     "Mention {{name}}": "{{name}}をメンション",
+    "Drop to mention in chat": "チャットでメンションするにはここにドロップ",
     "Mermaid syntax could not be rendered": "Mermaid 構文をレンダリングできませんでした",
     "Message center": "メッセージセンター",
     "Message revision": "メッセージの改訂",

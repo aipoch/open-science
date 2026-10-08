@@ -185,15 +185,15 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     baseUrl: 'https://api.anthropic.com',
     apiKeyUrl: 'https://console.anthropic.com/settings/keys',
     modelsListUrl: 'https://api.anthropic.com/v1/models',
-    // Models with a 1M-context variant list both the standard id and the `[1m]` one.
     models: [
       { id: 'claude-opus-5', contextWindow: 1_000_000 },
       { id: 'claude-opus-5-5', contextWindow: 1_000_000 },
       { id: 'claude-fable-5-1', contextWindow: 1_000_000 },
       { id: 'claude-opus-4-8', contextWindow: 1_000_000 },
-      { id: 'claude-opus-4-8[1m]', contextWindow: 1_000_000 },
       { id: 'claude-sonnet-5', contextWindow: 1_000_000 },
       { id: 'claude-sonnet-5-5', contextWindow: 1_000_000 },
+      // https://platform.claude.com/docs/en/models/haiku-5-5/overview
+      { id: 'claude-haiku-5-5', contextWindow: 1_000_000 },
       {
         id: 'claude-haiku-4-5-20251001',
         contextWindow: 200_000,
@@ -269,7 +269,6 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     modelsListUrl: 'https://api.deepseek.com/v1/models',
     models: [
       { id: 'deepseek-v4-pro', contextWindow: 1_000_000 },
-      { id: 'deepseek-v4-pro[1m]', contextWindow: 1_000_000 },
       // DeepSeek V4.1 Flash uses the stable API id deepseek-flash.
       { id: 'deepseek-flash', contextWindow: 1_000_000 },
       { id: 'deepseek-v4-flash', contextWindow: 1_000_000 },
@@ -280,7 +279,6 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     responsesModels: [
       'deepseek-flash',
       'deepseek-v4-pro',
-      'deepseek-v4-pro[1m]',
       'deepseek-v4-flash',
       'deepseek-v4-flash-vision-exp'
     ],
@@ -546,13 +544,12 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
         contextWindow: 1_000_000,
         reasoningEffort: 'standard-5'
       },
-      { id: 'MiniMax-M3[1m]', contextWindow: 1_000_000, reasoningEffort: 'none-high' },
       { id: 'MiniMax-M2.7', contextWindow: 204_800 },
       { id: 'MiniMax-M2.5', contextWindow: 204_800 }
     ],
     // M3 and M3.1 are natively multimodal; older M2 models remain text-only.
     multimodal: {
-      multimodalModels: ['MiniMax-M3', 'MiniMax-M3[1m]', 'MiniMax-M3.1-Flash-Preview']
+      multimodalModels: ['MiniMax-M3', 'MiniMax-M3.1-Flash-Preview']
     }
   },
   {
@@ -1753,14 +1750,18 @@ export const getOfficialVendorModelIds = (
   if (!vendor) return []
   const region =
     vendor.regions?.find((candidate) => candidate.id === regionId) ?? vendor.regions?.[0]
-  // DeepSeek discovery omits still-routable legacy ids. Preserve the bundled names so
+  // Context suffixes are Claude Code syntax, not official API model ids. Filter discovered
+  // catalogs on read without rewriting persisted selections or the vendor cache. An all-alias
+  // cache falls back to the bundled catalog so an empty list cannot bypass model validation.
+  const discoveredModels = fetchedModels?.filter((model) => !/\[1m\]$/i.test(model))
+  // DeepSeek discovery omits still-routable legacy ids. Preserve the bundled API names so
   // pinned sessions remain usable, including settings cached before this compatibility rule.
-  if (id === 'deepseek' && fetchedModels?.length) {
-    return [...new Set([...fetchedModels, ...vendor.models.map((model) => model.id)])]
+  if (id === 'deepseek' && discoveredModels?.length) {
+    return [...new Set([...discoveredModels, ...vendor.models.map((model) => model.id)])]
   }
   return [
     ...(region?.modelIds ??
-      (fetchedModels?.length ? fetchedModels : vendor.models.map((model) => model.id)))
+      (discoveredModels?.length ? discoveredModels : vendor.models.map((model) => model.id)))
   ]
 }
 
@@ -1971,11 +1972,8 @@ export const DEFAULT_CUSTOM_MODEL_CONTEXT_WINDOW = 200_000
 // stable conservative fallback until their exact metadata is added to the bundled catalog.
 export const DEFAULT_OFFICIAL_MODEL_CONTEXT_WINDOW = 200_000
 
-// The universal, exact convention: a model id ending in `[1m]` denotes a 1M-token context variant.
-const ONE_MILLION_SUFFIX = /\[1m\]$/i
-
 // Resolves an official vendor model's context window from the exact bundled entry. For ids returned
-// later by a live model-list refresh, an exact `[1m]` suffix wins before the conservative fallback.
+// later by a live model-list refresh, use the conservative fallback without inferring from the id.
 // A missing model id or unknown vendor remains unknown.
 export const resolveModelContextWindow = (
   vendorId: OfficialVendorId,
@@ -1988,8 +1986,6 @@ export const resolveModelContextWindow = (
 
   const bundledModel = vendor.models.find((model) => model.id === modelId)
   if (bundledModel) return bundledModel.contextWindow
-
-  if (ONE_MILLION_SUFFIX.test(modelId)) return 1_000_000
 
   return DEFAULT_OFFICIAL_MODEL_CONTEXT_WINDOW
 }

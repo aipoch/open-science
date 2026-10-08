@@ -48,6 +48,21 @@ it('rejects an author/contact band that continues into an abstract prose block',
   expect(isNativeFrontMatterRegion(table(), items, 1, undefined, [])).toBe(true)
 })
 
+it('rejects a compact corporate author band when organization labels are opaque', () => {
+  const items = [
+    token('Ada Lovelace', 20, 20),
+    token('Grace Hopper', 220, 20),
+    token('Alan Turing', 420, 20),
+    token('Katherine Johnson', 20, 60),
+    token('ada@example.test', 20, 45, 100),
+    token('grace@example.test', 220, 45, 110),
+    token('alan@example.test', 420, 45, 100),
+    token('kj@example.test', 20, 85, 90),
+    token('Acme Commerce Platform', 220, 85, 150)
+  ]
+  expect(isNativeFrontMatterRegion(table(), items, 1, undefined, [])).toBe(true)
+})
+
 it('rejects compact author and affiliation metadata with an abstract when emails are absent', () => {
   const items = [
     token('Ada Lovelace1,2', 20, 20, 130),

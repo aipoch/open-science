@@ -16,6 +16,70 @@ const { ProviderRuntimeProjectionOwner } = await import('./provider-runtime-proj
 const { encryptKey } = await import('./crypto')
 
 describe('ProviderRuntimeProjectionOwner', () => {
+  it.each(['claude-code', 'opencode', 'codex', 'codebuddy'] as const)(
+    'offers only the base DeepSeek model and rejects removed selections for %s',
+    (frameworkId) => {
+      const owner = new ProviderRuntimeProjectionOwner()
+      const provider: StoredProvider = {
+        id: 'deepseek',
+        type: 'official',
+        vendorId: 'deepseek',
+        name: 'DeepSeek',
+        fetchedModels: ['deepseek-v4-pro', 'deepseek-v4-pro[1m]']
+      }
+      const before = structuredClone(provider)
+      const framework = getAgentFramework(frameworkId)
+      const catalog = owner.resolveRuntimeModelCatalog(provider, framework)
+      expect(catalog.every(({ effectiveModel }) => !effectiveModel?.includes('[1m]'))).toBe(true)
+      expect(catalog).toContainEqual(
+        expect.objectContaining({
+          effectiveModel: 'deepseek-v4-pro',
+          frameworkCompatible: true,
+          provider: expect.objectContaining({ model: 'deepseek-v4-pro', contextWindow: 1_000_000 })
+        })
+      )
+      expect(() =>
+        owner.resolveRuntimeTarget(
+          provider,
+          { kind: 'configured', requestedModel: 'deepseek-v4-pro[1m]' },
+          framework
+        )
+      ).toThrow(/no longer available/)
+      expect(() =>
+        owner.resolveRuntimeTarget(
+          provider,
+          { kind: 'required', model: 'deepseek-v4-pro[1m]' },
+          framework
+        )
+      ).toThrow(/not available/)
+      expect(provider).toEqual(before)
+    }
+  )
+
+  it.each(['custom', 'claude-shared', 'claude-isolated'] as const)(
+    'preserves manually entered context suffixes for %s providers',
+    (type) => {
+      const owner = new ProviderRuntimeProjectionOwner()
+      const provider: StoredProvider = {
+        id: 'manual',
+        type,
+        name: 'Manual model',
+        model: 'manual-model[1m]'
+      }
+      expect(owner.toProviderView(provider).models).toEqual(['manual-model[1m]'])
+      expect(
+        owner.resolveRuntimeTarget(
+          provider,
+          { kind: 'required', model: 'manual-model[1m]' },
+          getAgentFramework('claude-code')
+        ).provider
+      ).toMatchObject({
+        model: 'manual-model[1m]',
+        contextWindow: type === 'custom' ? 200_000 : 1_000_000
+      })
+    }
+  )
+
   it('projects DeepSeek native Responses traffic to its documented origin', () => {
     const owner = new ProviderRuntimeProjectionOwner()
     const provider: StoredProvider = {
@@ -172,11 +236,10 @@ describe('ProviderRuntimeProjectionOwner', () => {
     }
   )
 
-  it.each(['claude-opus-5-5', 'claude-sonnet-5-5'])(
-    'resolves %s for API and pinned subscription targets',
+  it.each(['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'])(
+    'resolves %s for API and pinned subscription targets across frameworks',
     (model) => {
       const owner = new ProviderRuntimeProjectionOwner()
-      const framework = getAgentFramework('claude-code')
       const providers: StoredProvider[] = [
         {
           id: 'anthropic',
@@ -199,14 +262,30 @@ describe('ProviderRuntimeProjectionOwner', () => {
       ]
 
       for (const provider of providers) {
-        const target = owner.resolveRuntimeTarget(provider, { kind: 'required', model }, framework)
+        const before = structuredClone(provider)
+        for (const frameworkId of ['claude-code', 'opencode', 'codex'] as const) {
+          const target = owner.resolveRuntimeTarget(
+            provider,
+            { kind: 'required', model },
+            getAgentFramework(frameworkId)
+          )
 
-        expect(target.effectiveModel).toBe(model)
-        expect(target.provider).toMatchObject({
-          model,
-          contextWindow: 1_000_000,
-          supportsImageInput: true
-        })
+          expect(target).toMatchObject({
+            effectiveModel: model,
+            apiEndpoints: ['anthropic'],
+            frameworkCompatible:
+              frameworkId === 'claude-code' ||
+              (provider.type === 'official' && frameworkId === 'opencode'),
+            needsChatResponsesBridge: false,
+            needsNativeResponsesCompatibility: false,
+            reasoningEffortProfile: {
+              supported: true,
+              slots: ['low', 'medium', 'high', 'xhigh', 'max']
+            },
+            provider: { model, contextWindow: 1_000_000, supportsImageInput: true }
+          })
+        }
+        expect(provider).toEqual(before)
       }
     }
   )
@@ -368,11 +447,7 @@ describe('ProviderRuntimeProjectionOwner', () => {
         name: 'DeepSeek',
         fetchedModels: ['deepseek-flash', 'deepseek-v4-pro']
       }
-      for (const model of [
-        'deepseek-v4-pro[1m]',
-        'deepseek-v4-flash',
-        'deepseek-v4-flash-vision-exp'
-      ]) {
+      for (const model of ['deepseek-v4-flash', 'deepseek-v4-flash-vision-exp']) {
         expect(owner.toProviderView(provider).models).toContain(model)
         expect(
           owner.resolveRuntimeTarget(

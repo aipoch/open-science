@@ -1295,7 +1295,7 @@ class LiteratureCatalog {
       const needle = query.toLowerCase()
       const notePredicates = [
         Prisma.sql`(a.note <> '' OR ${quote} <> '')`,
-        Prisma.sql`EXISTS (SELECT 1 FROM "pdf_annotation_sources" annotationSource WHERE annotationSource."documentId" = a."documentId" AND (
+        Prisma.sql`EXISTS (SELECT 1 FROM "PdfAnnotationSourceBinding" annotationSource WHERE annotationSource."documentId" = a."documentId" AND (
         (annotationSource."sourceKind" = 'literature-attachment-version' AND EXISTS (
           SELECT 1 FROM "LiteratureAttachmentVersion" v
           JOIN "LiteratureAttachment" attachment ON attachment.id = v."attachmentId"
@@ -1334,12 +1334,12 @@ class LiteratureCatalog {
       const [noteCount, notes] = includeNotes
         ? await Promise.all([
             client.$queryRaw<{ total: bigint }[]>(
-              Prisma.sql`SELECT COUNT(*) AS total FROM "pdf_annotations" a WHERE ${noteWhere}`
+              Prisma.sql`SELECT COUNT(*) AS total FROM "PdfAnnotation" a WHERE ${noteWhere}`
             ),
             request.countOnly
               ? []
               : client.$queryRaw<{ id: string; updatedAt: Date; score: number }[]>(Prisma.sql`
-          SELECT a.id, a."updatedAt", ${score} AS score FROM "pdf_annotations" a WHERE ${noteWhere}
+          SELECT a.id, a."updatedAt", ${score} AS score FROM "PdfAnnotation" a WHERE ${noteWhere}
           ORDER BY score DESC, a."updatedAt" DESC, a.id ASC LIMIT ${offset + limit}`)
           ])
         : [[], []]

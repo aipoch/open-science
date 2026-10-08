@@ -146,6 +146,8 @@ describe('module impact shadow', () => {
         'compute_service',
         'project_files_view',
         'session_renderer',
+        'workspace_conversation',
+        'workspace_file_presentation',
         'workspace_page',
         'workspace_runtime'
       ]

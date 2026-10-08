@@ -135,6 +135,11 @@
     "More items": "Más sesiones"
   },
   "renderer": {
+    "Cancer proteomics studies, sample and aliquot mappings, and file discovery from PDC.": "Estudios de proteómica del cáncer, correspondencias de muestras y alícuotas, y búsqueda de archivos de PDC.",
+    "Search PDC studies and versions by name or identifier.": "Buscar estudios y versiones de PDC por nombre o identificador.",
+    "Retrieve PDC study metadata and available versions.": "Obtener metadatos y versiones disponibles de estudios de PDC.",
+    "Map PDC aliquots to samples, cases and external references.": "Relacionar alícuotas de PDC con muestras, casos y referencias externas.",
+    "Discover PDC study files and quantitative reports without downloading files.": "Buscar archivos de estudios e informes cuantitativos de PDC sin descargar archivos.",
     "List GWAS summary statistics files, YAML metadata, reference genomes and standard column definitions by GCST accession.": "Consultar archivos de estadísticas resumidas de GWAS, metadatos YAML, genomas de referencia y definiciones estándar de columnas mediante un identificador GCST.",
     "PDF analysis options": "Opciones de análisis del PDF",
     "Retrieve GEO series metadata, samples and supplementary-file links.": "Obtener metadatos, muestras y enlaces a archivos complementarios de una serie de GEO.",
@@ -1892,6 +1897,7 @@
     "Max tokens": "Máximo de tokens",
     "Maximize": "Maximizar",
     "Mention {{name}}": "Mencionar a {{name}}",
+    "Drop to mention in chat": "Suelta para mencionar en el chat",
     "Mermaid syntax could not be rendered": "No se pudo representar la sintaxis de Mermaid",
     "Message center": "Centro de mensajes",
     "Message revision": "Revisión del mensaje",

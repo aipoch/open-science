@@ -12,12 +12,25 @@ import {
 import { analyzePythonSources } from './dependency-analysis-python'
 import { analyzeRNotebookSource, analyzeRSources } from './dependency-analysis-r'
 import { projectNotebookDependencies } from './dependency-projection'
+import { projectNotebookFileContext, type FileContextEntry } from './dependency-file-context'
+import { normalizeNotebookSourceFileAccess } from './source-file-access-analysis'
+import type {
+  NotebookDependencyTypeSummary,
+  NotebookRunDependencyFacts
+} from './dependency-analysis-types'
 
 const unusedInterpreter = (kernelKind: 'python' | 'r'): NotebookDependencyInterpreter => ({
   command: kernelKind === 'python' ? 'unused-python' : 'unused-rscript'
 })
 
 const temporaryRoots: string[] = []
+
+// Insert only at the outer function body; nested bodies must stay unchanged.
+const prependFunctionBody = (source: string, statements: string): string => {
+  const opening = source.indexOf('{')
+  if (opening < 0) throw new Error('Expected a function body in the regression source')
+  return source.slice(0, opening + 1) + '\n' + statements + source.slice(opening + 1)
+}
 
 afterEach(async () => {
   await Promise.all(temporaryRoots.splice(0).map((path) => rm(path, { recursive: true })))
@@ -79,6 +92,801 @@ const projectScripts = async (
   if (!projection) throw new Error('projectScripts requires at least one script')
   return projection
 }
+
+it('links a local fsspec input into a downstream scientific cell', async () => {
+  const projection = await projectScripts(
+    'python',
+    [
+      "import fsspec\nwith fsspec.open('inputs/measurements.csv', 'rt') as handle:\n    text = handle.read()",
+      "import pandas as pd\nframe = pd.DataFrame({'text': [text]})\nframe.to_parquet('outputs/measurements.parquet')"
+    ],
+    'notebook-fsspec-lineage-'
+  )
+
+  expect(projection.dependenciesByRunId?.['run-2']).toContain('run-1')
+})
+
+it('propagates a Seurat object across multi-cell analysis steps', async () => {
+  const scripts = [
+    'counts <- Seurat::Read10X_h5("inputs/pbmc.h5")\nobj <- Seurat::CreateSeuratObject(counts)',
+    'obj <- Seurat::NormalizeData(obj, normalization.method = "LogNormalize")',
+    'obj <- Seurat::FindVariableFeatures(obj, nfeatures = 2000)',
+    'obj <- Seurat::RunPCA(obj, npcs = 30)',
+    'obj <- Seurat::FindNeighbors(obj, dims = 1:20)',
+    'obj <- Seurat::FindClusters(obj, resolution = 0.5)',
+    'SeuratDisk::SaveH5Seurat(obj, filename = "outputs/pbmc.h5seurat")'
+  ]
+  const projection = await projectScripts('r', scripts, 'notebook-seurat-lineage-')
+  const first = await analyzeRNotebookSource(scripts[0])
+  const pca = await analyzeRNotebookSource(`${scripts[0]}\n${scripts[3]}`)
+
+  expect(first.facts.typeBindings).toEqual(
+    expect.arrayContaining([expect.objectContaining({ target: 'obj', typeName: 'Seurat' })])
+  )
+  expect(projection.dependenciesByRunId?.['run-2']).toContain('run-1')
+  expect(projection.dependenciesByRunId?.['run-4']).toContain('run-3')
+  expect(projection.dependenciesByRunId?.['run-6']).toContain('run-5')
+  expect(projection.dependenciesByRunId?.['run-7']).toContain('run-6')
+  expect(pca.facts).toMatchObject({
+    state: 'unknown',
+    reasons: expect.arrayContaining(['external-state'])
+  })
+})
+
+it('keeps Seurat integration anchors and marker tables distinct from the object', async () => {
+  const scripts = [
+    'obj <- Seurat::CreateSeuratObject(counts)',
+    'anchors <- Seurat::FindIntegrationAnchors(object.list = list(obj, obj), dims = 1:20)',
+    'integrated <- Seurat::IntegrateData(anchors)',
+    'markers <- Seurat::FindAllMarkers(integrated, only.pos = TRUE)'
+  ]
+  const projection = await projectScripts('r', scripts, 'notebook-seurat-integration-lineage-')
+  const entry = await analyzeRNotebookSource(scripts.join('\n'))
+  const bindings = entry.facts.typeBindings
+
+  expect(bindings).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ target: 'anchors', typeName: 'SeuratIntegrationAnchorSet' }),
+      expect.objectContaining({ target: 'integrated', typeName: 'Seurat' }),
+      expect.objectContaining({ target: 'markers', typeName: 'data.frame' })
+    ])
+  )
+  expect(projection.dependenciesByRunId?.['run-2']).toContain('run-1')
+  expect(projection.dependenciesByRunId?.['run-3']).toContain('run-2')
+  expect(projection.dependenciesByRunId?.['run-4']).toContain('run-3')
+})
+
+it('retains phyloseq conversion reads without certifying an unproved cross-cell input', async () => {
+  const scripts = [
+    'counts <- matrix(c(1, 2, 3, 4), nrow = 2)\nps <- phyloseq::phyloseq(phyloseq::otu_table(counts, taxa_are_rows = TRUE))',
+    'dds <- phyloseq::phyloseq_to_deseq2(ps, ~ treatment + batch)',
+    'dds <- DESeq2::DESeq(dds)\nres <- DESeq2::results(dds)'
+  ]
+  const projection = await projectScripts('r', scripts, 'notebook-phyloseq-deseq2-lineage-')
+  const entry = await analyzeRNotebookSource(scripts.join('\n'))
+
+  expect(entry.facts.typeBindings).toEqual(
+    expect.arrayContaining([expect.objectContaining({ target: 'dds', typeName: 'DESeqDataSet' })])
+  )
+  const consumer = await analyzeRNotebookSource(scripts[1])
+  expect(consumer.facts.usedNames).toContain('ps')
+  expect(projection.dependenciesByRunId?.['run-2']).toBeUndefined()
+  expect(projection.stalenessByRunId['run-2']).toMatchObject({ state: 'unknown' })
+})
+
+it('requires a phyloseq input before certifying DESeq2 conversion', async () => {
+  for (const setup of ['', 'ps <- Seurat::CreateSeuratObject(counts)']) {
+    const { facts } = await analyzeRNotebookSource(
+      `${setup}\ndds <- phyloseq::phyloseq_to_deseq2(ps, ~ treatment + batch)`
+    )
+    expect(facts.typeBindings?.find((binding) => binding.target === 'dds')).toBeUndefined()
+    expect(facts.safeCallNames ?? []).not.toContain('phyloseq::phyloseq_to_deseq2')
+  }
+  const { facts } = await analyzeRNotebookSource(
+    'ps <- phyloseq::phyloseq(phyloseq::otu_table(counts, taxa_are_rows = TRUE))\nps <- phyloseq::phyloseq_to_deseq2(ps, ~ treatment + batch)'
+  )
+  expect(facts.typeBindings).toContainEqual(
+    expect.objectContaining({ target: 'ps', typeName: 'DESeqDataSet' })
+  )
+  expect(facts.safeCallNames).toContain('phyloseq::phyloseq_to_deseq2')
+})
+
+it('keeps DESeq2 result and count outputs typed across R cells', async () => {
+  const scripts = [
+    'counts <- read.csv("inputs/counts.csv")\nmetadata <- read.csv("inputs/metadata.csv")\ndds <- DESeq2::DESeqDataSetFromMatrix(countData = counts, colData = metadata, design = ~ condition)',
+    'dds <- DESeq2::DESeq(dds)',
+    'res <- DESeq2::results(dds)\ncount_matrix <- DESeq2::counts(dds)'
+  ]
+  const projection = await projectScripts('r', scripts, 'notebook-deseq2-output-types-')
+  const entry = await analyzeRNotebookSource(scripts.join('\n'))
+
+  expect(entry.facts.typeBindings).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ target: 'res', typeName: 'data.frame' }),
+      expect.objectContaining({ target: 'count_matrix', typeName: 'matrix' })
+    ])
+  )
+  expect(projection.dependenciesByRunId?.['run-2']).toContain('run-1')
+  expect(projection.dependenciesByRunId?.['run-3']).toContain('run-2')
+})
+
+it('tracks Visium spatial input and VCF output contracts across R cells', async () => {
+  const scripts = [
+    'spe <- SpatialExperiment::read10xVisium(samples = "inputs/visium")',
+    'coords <- SpatialExperiment::spatialCoords(spe)',
+    'vcf <- VariantAnnotation::readVcf("inputs/cohort.vcf.gz", genome = "hg38")',
+    'VariantAnnotation::writeVcf(vcf, "outputs/cohort.filtered.vcf.gz")'
+  ]
+  const projection = await projectScripts('r', scripts, 'notebook-spatial-vcf-lineage-')
+  const entry = await analyzeRNotebookSource(scripts.join('\n'))
+  const outputFacts = await analyzeRNotebookSource(scripts[3]!)
+
+  expect(entry.facts.typeBindings).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ target: 'spe', typeName: 'SpatialExperiment' })
+    ])
+  )
+  expect(projection.dependenciesByRunId?.['run-2']).toContain('run-1')
+  expect(outputFacts.facts.usedNames).toContain('VariantAnnotation::writeVcf')
+})
+
+it('preserves MultiAssayExperiment assay and sample-map lineage across R cells', async () => {
+  const scripts = [
+    'rna <- SummarizedExperiment::SummarizedExperiment(assays = list(counts = matrix(1:4, nrow = 2)))\natac <- SummarizedExperiment::SummarizedExperiment(assays = list(counts = matrix(5:8, nrow = 2)))\nmae <- MultiAssayExperiment::MultiAssayExperiment(experiments = list(rna = rna, atac = atac))',
+    'rna_assay <- MultiAssayExperiment::experiments(mae)[["rna"]]',
+    'mapping <- MultiAssayExperiment::sampleMap(mae)\nprint(mapping)'
+  ]
+  const projection = await projectScripts('r', scripts, 'notebook-multi-assay-experiment-lineage-')
+  const entry = await analyzeRNotebookSource(scripts.join('\n'))
+
+  expect(entry.facts.typeBindings).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ target: 'mae', typeName: 'MultiAssayExperiment' }),
+      expect.objectContaining({ target: 'mapping', typeName: 'S4Vectors.DataFrame' })
+    ])
+  )
+  expect(entry.facts.aliases).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        target: 'rna_assay',
+        source: 'mae',
+        access: 'subscript',
+        member: 'rna'
+      })
+    ])
+  )
+  expect(projection.dependenciesByRunId?.['run-2']).toContain('run-1')
+  expect(projection.dependenciesByRunId?.['run-3']).toContain('run-1')
+
+  const dynamic = await analyzeRNotebookSource(
+    `${scripts[0]}\nassay_name <- get_assay_name()\nrna_assay <- MultiAssayExperiment::experiments(mae)[[assay_name]]`
+  )
+  expect(dynamic.facts.aliases ?? []).not.toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ target: 'rna_assay', source: 'mae', member: 'rna' })
+    ])
+  )
+
+  const unknownReceiver = await analyzeRNotebookSource(
+    'mae <- external_container\nmapping <- MultiAssayExperiment::sampleMap(mae)'
+  )
+  expect(unknownReceiver.facts.typeBindings ?? []).not.toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ target: 'mapping', typeName: 'S4Vectors.DataFrame' })
+    ])
+  )
+  const otherPackage = await analyzeRNotebookSource(
+    `${scripts[0]}\nmapping <- custom::sampleMap(mae)`
+  )
+  expect(otherPackage.facts.typeBindings ?? []).not.toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ target: 'mapping', typeName: 'S4Vectors.DataFrame' })
+    ])
+  )
+})
+
+it('resolves unqualified Seurat transforms after the package is loaded', async () => {
+  const scripts = [
+    'library(Seurat)',
+    'obj <- CreateSeuratObject(counts)',
+    'obj <- NormalizeData(obj)',
+    'obj <- RunPCA(obj, npcs = 10)'
+  ]
+  const projection = await projectScripts('r', scripts, 'notebook-seurat-unqualified-lineage-')
+  const entry = await analyzeRNotebookSource(scripts.join('\n'))
+
+  expect(entry.facts.typeBindings).toEqual(
+    expect.arrayContaining([expect.objectContaining({ target: 'obj', typeName: 'Seurat' })])
+  )
+  expect(entry.facts).toMatchObject({
+    state: 'unknown',
+    reasons: expect.arrayContaining(['external-state'])
+  })
+  expect(projection.dependenciesByRunId?.['run-3']).toContain('run-2')
+  expect(projection.dependenciesByRunId?.['run-4']).toContain('run-3')
+})
+
+describe('loaded scientific package call identities', () => {
+  it.each([
+    ['Seurat', 'NormalizeData', 'Seurat::CreateSeuratObject(counts)', 'Seurat'],
+    [
+      'MultiAssayExperiment',
+      'sampleMap',
+      'MultiAssayExperiment::MultiAssayExperiment()',
+      'S4Vectors.DataFrame'
+    ]
+  ])('preserves binding barriers for loaded %s::%s', async (pkg, name, constructor, type) => {
+    const shadow = `${name} <- function(x) readLines("secret.txt")`
+    const producer = await analyzeRNotebookSource(shadow)
+    expect(producer.fileAccess).toBeDefined()
+    const context = projectNotebookFileContext('r', [
+      { facts: producer.facts, fileContext: producer.fileAccess!.context }
+    ])
+    for (const binding of ['local', 'incoming', 'dynamic']) {
+      for (const qualified of [false, true]) {
+        const call = qualified ? `${pkg}::${name}` : name
+        const source = [
+          `library(${pkg})`,
+          `obj <- ${constructor}`,
+          ...(binding === 'incoming' ? [] : [binding === 'local' ? shadow : 'source("setup.R")']),
+          `result <- ${call}(obj)`
+        ].join('\n')
+        const { facts } = await analyzeRNotebookSource(
+          source,
+          binding === 'incoming' ? context : undefined
+        )
+        const resultType = facts.typeBindings?.find((binding) => binding.target === 'result')
+        if (qualified) {
+          expect(resultType?.typeName).toBe(type)
+          expect(facts.safeCallNames).toContain(`${pkg}::${name}`)
+        } else {
+          expect(resultType).toBeUndefined()
+          expect(facts.safeCallNames ?? []).not.toContain(`${pkg}::${name}`)
+        }
+      }
+    }
+  })
+})
+
+it.each([
+  ['Pipeline', 'from sklearn.pipeline import Pipeline\nmodel = Pipeline(steps)'],
+  [
+    'ColumnTransformer',
+    'from sklearn.compose import ColumnTransformer\nmodel = ColumnTransformer(steps)'
+  ]
+])('keeps unproved delegated %s operations opaque', async (_name, setup) => {
+  const [facts] = await analyzePythonSources([`${setup}\nresult = model.transform(values)`])
+  expect(facts.typeBindings ?? []).not.toEqual(
+    expect.arrayContaining([expect.objectContaining({ target: 'result' })])
+  )
+  const projection = await projectScripts(
+    'python',
+    ['steps = []\nvalues = [1]', setup, 'result = model.transform(values)'],
+    'notebook-delegated-estimator-'
+  )
+  expect(projection.stalenessByRunId['run-3'].state).toBe('unknown')
+  expect(projection.dependenciesByRunId?.['run-3']).toBeUndefined()
+})
+
+it('propagates nonlinear least-squares parameters without certifying callback purity', async () => {
+  const scripts = [
+    'import numpy as np\nfrom scipy.optimize import least_squares\nx = np.array([1., 2., 3.])\ny = np.array([2., 4., 6.])\np0 = np.array([1.])\ndef residuals(p):\n    return p[0] * x - y',
+    'fit = least_squares(residuals, p0, method="trf", x_scale="jac")',
+    'parameters = fit.x\njacobian = fit.jac\nconverged = fit.success\nvalues = parameters.astype("float64")',
+    'np.save("outputs/fitted-parameters.npy", values)'
+  ]
+  const [facts] = await analyzePythonSources([scripts.join('\n')])
+  expect(facts.typeBindings).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ target: 'fit', typeName: 'scipy.optimize.OptimizeResult' }),
+      expect.objectContaining({ target: 'parameters', typeName: 'numpy.ndarray' }),
+      expect.objectContaining({ target: 'values', typeName: 'numpy.ndarray' }),
+      expect.objectContaining({ target: 'converged', typeName: 'python.scalar' })
+    ])
+  )
+  expect(facts.typeBindings).not.toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ target: 'jacobian', typeName: 'numpy.ndarray' })
+    ])
+  )
+  expect(facts.state).toBe('unknown')
+  const projection = await projectScripts('python', scripts, 'notebook-least-squares-lineage-')
+  // Result properties remain typed, but arbitrary callbacks mean the solver
+  // and downstream consumers cannot be certified reproducible from source.
+  expect(projection.stalenessByRunId['run-2']).toMatchObject({ state: 'unknown' })
+  expect(projection.stalenessByRunId['run-3']).toMatchObject({ state: 'unknown' })
+  expect(projection.stalenessByRunId['run-4']).toMatchObject({ state: 'unknown' })
+})
+
+it.each([
+  'residuals, p0',
+  'residuals, p0, jac=jacobian',
+  'residuals, p0, loss=loss_function',
+  'residuals, p0, callback=observer',
+  'residuals, p0, workers=pool.map'
+])('keeps least_squares callbacks conservative: %s', async (arguments_) => {
+  const [facts] = await analyzePythonSources([
+    `from scipy.optimize import least_squares\nfit = least_squares(${arguments_})`
+  ])
+  expect(facts.state).toBe('unknown')
+  if (facts.state !== 'unknown') throw new Error('least_squares must remain conservative')
+  expect(facts.reasons).toEqual(expect.arrayContaining(['external-state']))
+  expect(facts.typeBindings).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ target: 'fit', typeName: 'scipy.optimize.OptimizeResult' })
+    ])
+  )
+})
+
+it.each([
+  ['callback', 19],
+  ['workers', 20],
+  ['loss', 9]
+] as const)('retains captures of a positional least_squares %s', async (_, position) => {
+  const args = [
+    'residuals',
+    'p0',
+    '"2-point"',
+    '(-1, 1)',
+    '"trf"',
+    '1e-8',
+    '1e-8',
+    '1e-8',
+    '1.0',
+    '"linear"',
+    '1.0',
+    'None',
+    'None',
+    '{}',
+    'None',
+    'None',
+    '0',
+    '()',
+    'None',
+    'None',
+    'None'
+  ]
+  args[position] = 'observer'
+  const projection = await projectScripts(
+    'python',
+    [
+      'from scipy.optimize import least_squares\np0 = [0.]\ncallback_gain = 1.0',
+      'def residuals(p):\n    return p\ndef observer(value):\n    return callback_gain',
+      `fit = least_squares(${args.join(', ')})`,
+      'callback_gain = 2.0'
+    ],
+    'notebook-positional-optimizer-'
+  )
+  expect(projection.invalidatedByRunId['run-4']).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        runId: 'run-3',
+        state: 'unknown',
+        names: expect.arrayContaining(['callback_gain'])
+      })
+    ])
+  )
+  expect(projection.stalenessByRunId['run-3'].state).toBe('unknown')
+  expect(projection.dependenciesByRunId?.['run-3']).toBeUndefined()
+})
+
+it.each([
+  'import scipy.optimize as opt\nfit = opt.least_squares(residuals, p0)',
+  'from scipy.optimize import least_squares as solve\nfit = solve(residuals, p0)'
+])('resolves a least_squares import alias: %s', async (source) => {
+  const [facts] = await analyzePythonSources([`${source}\nparameters = fit.x`])
+  expect(facts.typeBindings).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ target: 'fit', typeName: 'scipy.optimize.OptimizeResult' }),
+      expect.objectContaining({ target: 'parameters', typeName: 'numpy.ndarray' })
+    ])
+  )
+})
+
+it('does not reuse least_squares result semantics after rebinding', async () => {
+  const [facts] = await analyzePythonSources([
+    'from scipy.optimize import least_squares\nleast_squares = replacement\nfit = least_squares(residuals, p0)\nparameters = fit.x'
+  ])
+  expect(facts.typeBindings ?? []).not.toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ target: 'fit', typeName: 'scipy.optimize.OptimizeResult' })
+    ])
+  )
+})
+
+it.each(['residuals, p0', 'fun=residuals, x0=p0'])(
+  'retains known captures of an opaque optimizer callback: %s',
+  async (arguments_) => {
+    const projection = await projectScripts(
+      'python',
+      [
+        'import numpy as np\nfrom scipy.optimize import least_squares\nx = np.array([1., 2., 3.])\ny = np.array([2., 4., 6.])\np0 = np.array([1.])',
+        'def residuals(p):\n    return model(p, x) - y',
+        `fit = least_squares(${arguments_})`,
+        'parameters = fit.x',
+        'x = np.array([4., 5., 6.])'
+      ],
+      'notebook-opaque-optimizer-captures-'
+    )
+
+    expect(projection.invalidatedByRunId['run-5']).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ runId: 'run-3', state: 'unknown', names: ['x'] })
+      ])
+    )
+    expect(projection.stalenessByRunId['run-3']).toMatchObject({
+      state: 'unknown',
+      reasons: expect.arrayContaining(['opaque-call', 'external-state'])
+    })
+    // Captures retain invalidation evidence, not a verified reproducibility edge.
+    expect(projection.dependenciesByRunId?.['run-3']).toBeUndefined()
+    expect(projection.stalenessByRunId['run-4']).toMatchObject({ state: 'unknown' })
+  }
+)
+
+it('does not retain captures from a replaced optimizer callback', async () => {
+  const projection = await projectScripts(
+    'python',
+    [
+      'import numpy as np\nfrom scipy.optimize import least_squares\nx = np.array([1.])\nz = np.array([2.])\np0 = np.array([1.])',
+      'def residuals(p):\n    return model(p, x)',
+      'def residuals(p):\n    return replacement_model(p, z)',
+      'fit = least_squares(residuals, p0)',
+      'x = np.array([3.])',
+      'z = np.array([4.])'
+    ],
+    'notebook-replaced-optimizer-callback-'
+  )
+
+  expect(projection.invalidatedByRunId['run-5'] ?? []).not.toEqual(
+    expect.arrayContaining([expect.objectContaining({ runId: 'run-4', names: ['x'] })])
+  )
+  expect(projection.invalidatedByRunId['run-6']).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ runId: 'run-4', state: 'unknown', names: ['z'] })
+    ])
+  )
+})
+
+it('retains captures of every opaque optimizer callback', async () => {
+  const projection = await projectScripts(
+    'python',
+    [
+      'from scipy.optimize import least_squares\nx = [1.]\nscale = [2.]\np0 = [1.]',
+      'def residuals(p):\n    return model(p, x)\ndef jacobian(p):\n    return custom_jacobian(p, scale)',
+      'fit = least_squares(residuals, p0, jac=jacobian)',
+      'x = [3.]',
+      'scale = [4.]'
+    ],
+    'notebook-multiple-optimizer-callbacks-'
+  )
+
+  for (const [runId, name] of [
+    ['run-4', 'x'],
+    ['run-5', 'scale']
+  ]) {
+    expect(projection.invalidatedByRunId[runId]).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ runId: 'run-3', state: 'unknown', names: [name] })
+      ])
+    )
+  }
+  expect(projection.dependenciesByRunId?.['run-3']).toBeUndefined()
+})
+
+it('retains captures of every opaque callback in an aggregation list', async () => {
+  const projection = await projectScripts(
+    'python',
+    [
+      'import pandas as pd\nframe = pd.DataFrame({"group": [1, 1], "value": [2., 3.]})\nfirst_scale = 2.\nsecond_scale = 3.',
+      'def first(values):\n    return custom_aggregate(values, first_scale)\ndef second(values):\n    return other_aggregate(values, second_scale)',
+      'result = frame.groupby("group").agg(func=[first, second])',
+      'first_scale = 4.',
+      'second_scale = 5.'
+    ],
+    'notebook-opaque-aggregation-callbacks-'
+  )
+
+  for (const [runId, name] of [
+    ['run-4', 'first_scale'],
+    ['run-5', 'second_scale']
+  ]) {
+    expect(projection.invalidatedByRunId[runId]).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ runId: 'run-3', state: 'unknown', names: [name] })
+      ])
+    )
+  }
+  expect(projection.stalenessByRunId['run-3']).toMatchObject({
+    state: 'unknown',
+    reasons: expect.arrayContaining(['opaque-call'])
+  })
+  expect(projection.dependenciesByRunId?.['run-3']).toBeUndefined()
+})
+
+it('retains captures of an unpatched opaque optimizer worker', async () => {
+  const projection = await projectScripts(
+    'python',
+    [
+      'from scipy.optimize import least_squares\nx = [1.]\np0 = [1.]',
+      'class Worker:\n    def map(self, function, parameters):\n        return custom_map(function, parameters, x)\ndef residuals(p):\n    return p\npool = Worker()',
+      'fit = least_squares(residuals, p0, workers=pool.map)',
+      'x = [2.]'
+    ],
+    'notebook-opaque-optimizer-worker-'
+  )
+
+  expect(projection.invalidatedByRunId['run-4']).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ runId: 'run-3', state: 'unknown', names: ['x'] })
+    ])
+  )
+})
+
+it.each([
+  ['pool.map = replacement', 'fit = least_squares(residuals, p0, workers=pool.map)'],
+  ['', 'pool.map = replacement\nfit = least_squares(residuals, p0, workers=pool.map)']
+])('does not reuse captures of a patched optimizer worker: %s', async (patch, solve) => {
+  const projection = await projectScripts(
+    'python',
+    [
+      'import numpy as np\nfrom scipy.optimize import least_squares\nx = np.array([1.])\np0 = np.array([1.])',
+      'class Worker:\n    def map(self, function, parameters):\n        return custom_map(function, parameters, x)\ndef residuals(p):\n    return p\npool = Worker()',
+      patch || 'untouched = 1',
+      solve,
+      'x = np.array([2.])'
+    ],
+    'notebook-patched-optimizer-worker-'
+  )
+
+  expect(projection.stalenessByRunId['run-4']).toMatchObject({
+    state: 'unknown',
+    reasons: expect.arrayContaining(['opaque-call'])
+  })
+  expect(projection.invalidatedByRunId['run-5'] ?? []).not.toEqual(
+    expect.arrayContaining([expect.objectContaining({ runId: 'run-4', names: ['x'] })])
+  )
+})
+
+it.each([
+  '    x.append(p)\n    return model(p, x)',
+  '    with open("inputs/calibration.csv") as handle:\n        return custom_residual(p, x, handle.read())'
+])('retains captures without certifying mutation or I/O callbacks: %s', async (body) => {
+  const projection = await projectScripts(
+    'python',
+    [
+      'from scipy.optimize import least_squares\nx = [1., 2.]\np0 = [1.]',
+      `def residuals(p):\n${body}`,
+      'fit = least_squares(residuals, p0)',
+      'x = [3., 4.]'
+    ],
+    'notebook-effectful-optimizer-callback-'
+  )
+
+  expect(projection.invalidatedByRunId['run-4']).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ runId: 'run-3', state: 'unknown', names: ['x'] })
+    ])
+  )
+  expect(projection.stalenessByRunId['run-3']).toMatchObject({
+    state: 'unknown',
+    reasons: expect.arrayContaining(['opaque-call', 'external-state'])
+  })
+  expect(projection.dependenciesByRunId?.['run-3']).toBeUndefined()
+})
+
+it('propagates an xarray variable selection across Python cells', async () => {
+  const scripts = [
+    'import xarray as xr\nds = xr.open_dataset("inputs/climate.nc")',
+    'temperature = ds["temperature"]',
+    'mean_temperature = temperature.mean(dim="time")',
+    'temperature.to_netcdf("outputs/temperature.nc")'
+  ]
+  const projection = await projectScripts('python', scripts, 'notebook-xarray-selection-lineage-')
+  const [facts] = await analyzePythonSources([scripts.join('\n')])
+
+  expect(facts.typeBindings).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ target: 'temperature', typeName: 'xarray.DataArray' }),
+      expect.objectContaining({ target: 'mean_temperature', typeName: 'xarray.DataArray' })
+    ])
+  )
+  expect(projection.dependenciesByRunId?.['run-2']).toContain('run-1')
+  expect(projection.dependenciesByRunId?.['run-3']).toContain('run-2')
+  expect(projection.dependenciesByRunId?.['run-4']).toContain('run-2')
+
+  const [dynamicFacts] = await analyzePythonSources([
+    'import xarray as xr\nds = xr.open_dataset("inputs/climate.nc")\nvariable_name = get_variable_name()\ntemperature = ds[variable_name]'
+  ])
+  expect(dynamicFacts.typeBindings ?? []).not.toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ target: 'temperature', typeName: 'xarray.DataArray' })
+    ])
+  )
+})
+
+it('propagates a multi-page TIFF frame across Python cells', async () => {
+  const scripts = [
+    'import tifffile\ntif = tifffile.TiffFile("inputs/stack.tiff")',
+    'page = tif.pages[0]',
+    'frame = page.asarray()',
+    'tifffile.imwrite("outputs/frame.tiff", frame)'
+  ]
+  const projection = await projectScripts('python', scripts, 'notebook-tiff-pages-lineage-')
+  const [facts] = await analyzePythonSources([scripts.join('\n')])
+
+  expect(facts.typeBindings).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ target: 'page', typeName: 'tifffile.TiffPage' }),
+      expect.objectContaining({ target: 'frame', typeName: 'numpy.ndarray' })
+    ])
+  )
+  expect(projection.dependenciesByRunId?.['run-2']).toContain('run-1')
+  expect(projection.dependenciesByRunId?.['run-3']).toContain('run-2')
+})
+
+it('propagates AnnData matrix annotations across Python cells', async () => {
+  const scripts = [
+    'import anndata as ad\nadata = ad.read_h5ad("inputs/cells.h5ad")',
+    'metadata = adata.obs\nembedding = adata.obsm["X_pca"]\ncounts = adata.layers["counts"]',
+    'clusters = metadata["cluster"].value_counts()',
+    'adata.write_h5ad("outputs/annotated.h5ad", convert_strings_to_categoricals = False)'
+  ]
+  const projection = await projectScripts('python', scripts, 'notebook-anndata-attributes-lineage-')
+  const [facts] = await analyzePythonSources([scripts.join('\n')])
+
+  expect(facts.typeBindings).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ target: 'metadata', typeName: 'pandas.DataFrame' }),
+      expect.objectContaining({ target: 'embedding', typeName: 'anndata.ArrayLike' }),
+      expect.objectContaining({ target: 'counts', typeName: 'anndata.ArrayLike' }),
+      expect.objectContaining({ target: 'clusters', typeName: 'pandas.Series' })
+    ])
+  )
+  expect(projection.dependenciesByRunId?.['run-2']).toContain('run-1')
+  expect(projection.dependenciesByRunId?.['run-3']).toContain('run-2')
+  expect(projection.dependenciesByRunId?.['run-4']).toContain('run-1')
+})
+
+it('propagates Scanpy copy-mode preprocessing as a new AnnData object', async () => {
+  const scripts = [
+    'import scanpy as sc\nadata = sc.read_h5ad("inputs/cells.h5ad")',
+    'normalized = sc.pp.normalize_total(adata, copy = True)',
+    'clusters = normalized.obs["cluster"].value_counts()'
+  ]
+  const projection = await projectScripts('python', scripts, 'notebook-scanpy-copy-lineage-')
+  const [facts] = await analyzePythonSources([scripts.join('\n')])
+
+  expect(facts.typeBindings).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ target: 'normalized', typeName: 'anndata.AnnData' }),
+      expect.objectContaining({ target: 'clusters', typeName: 'pandas.Series' })
+    ])
+  )
+  expect(projection.dependenciesByRunId?.['run-2']).toContain('run-1')
+  expect(projection.dependenciesByRunId?.['run-3']).toContain('run-2')
+})
+
+it('does not claim Scanpy copy-mode returns AnnData for array inputs', async () => {
+  const [facts] = await analyzePythonSources([
+    'import numpy as np\nimport scanpy as sc\nvalues = np.ones((2, 2))\nnormalized = sc.pp.log1p(values, copy = True)'
+  ])
+
+  expect(facts.typeBindings).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ target: 'values', typeName: 'numpy.ndarray' })
+    ])
+  )
+  expect(facts.typeBindings).not.toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ target: 'normalized', typeName: 'anndata.AnnData' })
+    ])
+  )
+})
+
+it('keeps backed AnnData matrix lineage conservative', async () => {
+  const [facts] = await analyzePythonSources([
+    'import anndata as ad\nadata = ad.read_h5ad("inputs/cells.h5ad", backed = "r")\nmatrix = adata.X\nembedding = adata.obsm["X_pca"]'
+  ])
+
+  expect(facts.typeBindings).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ target: 'adata', typeName: 'anndata.AnnDataBacked' }),
+      expect.objectContaining({ target: 'matrix', typeName: 'anndata.ArrayLike' }),
+      expect.objectContaining({ target: 'embedding', typeName: 'anndata.ArrayLike' })
+    ])
+  )
+  expect(facts.typeBindings).not.toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ target: 'matrix', typeName: 'numpy.ndarray' }),
+      expect.objectContaining({ target: 'embedding', typeName: 'numpy.ndarray' })
+    ])
+  )
+})
+
+it.each([
+  ['', 'anndata.AnnData'],
+  [', None', 'anndata.AnnData'],
+  [', False', 'anndata.AnnData'],
+  [', "r"', 'anndata.AnnDataBacked'],
+  [', "r+"', 'anndata.AnnDataBacked'],
+  [', **options', 'anndata.AnnDataBacked'],
+  [', backed=None, **options', 'anndata.AnnDataBacked']
+])('specializes AnnData read_h5ad backed arguments %s', async (arguments_, typeName) => {
+  const [facts] = await analyzePythonSources([
+    `import anndata as ad\nadata = ad.read_h5ad("inputs/cells.h5ad"${arguments_})`
+  ])
+  expect(facts.typeBindings).toEqual(
+    expect.arrayContaining([expect.objectContaining({ target: 'adata', typeName })])
+  )
+})
+
+it.each([
+  ['', true],
+  [', convert_strings_to_categoricals=True', true],
+  [', convert_strings_to_categoricals=False', false]
+])('tracks metadata mutation during AnnData write_zarr%s', async (options, mutates) => {
+  const projection = await projectScripts(
+    'python',
+    [
+      'import anndata as ad\nadata = ad.read_h5ad("inputs/cells.h5ad")',
+      `adata.write_zarr("outputs/cells.zarr"${options})`,
+      'metadata = adata.obs'
+    ],
+    'notebook-anndata-zarr-mutation-'
+  )
+  expect(projection.dependenciesByRunId?.['run-2']).toContain('run-1')
+  if (mutates) expect(projection.dependenciesByRunId?.['run-3']).toContain('run-2')
+  else expect(projection.dependenciesByRunId?.['run-3']).not.toContain('run-2')
+})
+
+it.each([
+  ['MSnbase::filterMsLevel(input, msLevel = 1L)', 'xcms.XCMSnExp'],
+  ['xcms::findChromPeaks(input, param = parameters)', 'xcms.XCMSnExp'],
+  ['xcms::featureValues(input, value = "into")', 'data.frame']
+])('requires a proved mass-spectrometry input for %s', async (call, expectedType) => {
+  for (const setup of ['', 'input <- Seurat::CreateSeuratObject(counts)']) {
+    const { facts } = await analyzeRNotebookSource(`${setup}\nresult <- ${call}`)
+    expect(facts.typeBindings?.find((binding) => binding.target === 'result')).toBeUndefined()
+    expect(facts.safeCallNames ?? []).not.toContain(call.split('(')[0])
+  }
+  const { facts } = await analyzeRNotebookSource(
+    `raw <- MSnbase::readMSData(files = "input.mzML", mode = "onDisk")\ninput <- xcms::findChromPeaks(raw, param = parameters)\nresult <- ${call}`
+  )
+  expect(facts.typeBindings).toContainEqual(
+    expect.objectContaining({ target: 'result', typeName: expectedType })
+  )
+  expect(facts.safeCallNames).toContain(call.split('(')[0])
+})
+
+it('propagates an MSnbase/xcms proteomics object across R cells', async () => {
+  const scripts = [
+    'raw_files <- c("inputs/control-a.mzML", "inputs/treated-a.mzML")\nsample_groups <- c("control", "treated")\nraw <- MSnbase::readMSData(files = raw_files, mode = "onDisk")\nms1 <- MSnbase::filterMsLevel(raw, msLevel = 1L)\nwindow <- MSnbase::filterRt(ms1, rt = c(60, 600))',
+    'parameters <- xcms::CentWaveParam(ppm = 15, peakwidth = c(5, 30), snthresh = 10)\npeaks <- xcms::findChromPeaks(window, param = parameters)',
+    'aligned <- xcms::adjustRtime(peaks, param = xcms::ObiwarpParam(binSize = 1))\ngrouping <- xcms::PeakDensityParam(sampleGroups = sample_groups, minFraction = 0.5, bw = 5)\ngrouped <- xcms::groupChromPeaks(aligned, param = grouping)\nfilled <- xcms::fillChromPeaks(grouped)\nintensity <- xcms::featureValues(filled, value = "into")\nfeatures <- xcms::featureDefinitions(filled)\nwrite.csv(intensity, "outputs/feature-intensities.csv")\nsaveRDS(filled, "outputs/processed-spectra.rds")',
+    'matrix <- read.csv("outputs/feature-intensities.csv", row.names = 1)\nkeep <- rowSums(is.na(matrix)) <= 1\nwrite.csv(matrix[keep, , drop = FALSE], "outputs/filtered-intensities.csv")'
+  ]
+  const projection = await projectScripts('r', scripts, 'notebook-xcms-lineage-')
+  const entry = await analyzeRNotebookSource(scripts.join('\n'))
+
+  expect(entry.facts.typeBindings).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ target: 'raw', typeName: 'MSnbase.MSnExp' }),
+      expect.objectContaining({ target: 'peaks', typeName: 'xcms.XCMSnExp' }),
+      expect.objectContaining({ target: 'intensity', typeName: 'data.frame' })
+    ])
+  )
+  expect(entry.facts).toMatchObject({
+    state: 'unknown',
+    reasons: expect.arrayContaining(['external-state'])
+  })
+  expect(entry.facts.usedNames).toEqual(
+    expect.arrayContaining(['peaks', 'filled', 'xcms::adjustRtime', 'xcms::featureValues'])
+  )
+  expect(projection.dependenciesByRunId?.['run-2']).toContain('run-1')
+  expect(projection.stalenessByRunId['run-2']).toEqual({ state: 'clear' })
+  expect(projection.stalenessByRunId['run-3']).toMatchObject({ state: 'unknown' })
+})
 
 describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
   it('invalidates transcript counts after their sample file vector is replaced', async () => {
@@ -3063,5 +3871,910 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
     )
     expect(entries[1]?.facts.usedNames).toContain('sce')
     expect(projection.dependenciesByRunId?.['run-2']).toContain('run-1')
+  })
+})
+
+describe('R primitive predicate evidence across cells', () => {
+  it('retains owned class containers without certifying primitive dispatch', async () => {
+    const { facts } = await analyzeRNotebookSource(
+      'sensor <- structure(c(1., 2.), class="mercury_sensor")\nconverted <- as.numeric(sensor)'
+    )
+    expect(facts.copyOnModifyNames).toContain('sensor')
+    expect(facts.rAtomicValueNames ?? []).not.toContain('sensor')
+    expect(facts.rAtomicValueNames ?? []).not.toContain('converted')
+  })
+
+  it('does not publish verified dependencies for class-dispatched predicate results', async () => {
+    const projection = await projectScripts(
+      'r',
+      [
+        'original <- structure(c(1., 2.), class="mercury_sensor")\nsensor <- as.numeric(original)',
+        'flags <- base::is.finite(sensor)',
+        'sensor <- c(3., 4.)'
+      ],
+      'r-class-predicate-lineage-'
+    )
+    expect(projection.stalenessByRunId['run-2']).toMatchObject({ state: 'unknown' })
+    expect(projection.dependenciesByRunId?.['run-2']).toBeUndefined()
+  })
+
+  it('retains ordinary primitive coercion dependencies and invalidation', async () => {
+    const projection = await projectScripts(
+      'r',
+      [
+        'sensor <- as.numeric(c("1", "2"))',
+        'flags <- base::is.finite(sensor)',
+        'sensor <- c(3., 4.)'
+      ],
+      'r-primitive-predicate-lineage-'
+    )
+    expect(projection.stalenessByRunId['run-2']).toMatchObject({ state: 'stale' })
+    expect(projection.invalidatedByRunId['run-3']).toEqual(
+      expect.arrayContaining([expect.objectContaining({ runId: 'run-2', names: ['sensor'] })])
+    )
+  })
+})
+
+describe('R count and sequence atomic kernel context', () => {
+  it('retains container ownership without exporting class-derived counts or endpoints as atomic', async () => {
+    const { facts } = await analyzeRNotebookSource(
+      [
+        'sensor <- structure(c(1., 2.), class="mercury_sensor")',
+        'count <- length(sensor)',
+        'limit <- structure(3., class="mercury_limit")',
+        'values <- seq(1., limit, by=1.)'
+      ].join('\n')
+    )
+    expect(facts.copyOnModifyNames).toEqual(expect.arrayContaining(['sensor', 'limit']))
+    expect(facts.rAtomicValueNames ?? []).not.toContain('count')
+    expect(facts.rAtomicValueNames ?? []).not.toContain('values')
+  })
+})
+
+describe('R opaque scientific closure captures', () => {
+  // Reduced from an executed multi-cell Puromycin fit. Only the helper body is preserved;
+  // the small data scaffold exercises static dependency projection, not numerical fitting.
+  const helper = [
+    'mm_response <- function(conc, Vm, K) {',
+    '  scale_val <- as.numeric(readLines("outputs/assay-scale.txt", warn = FALSE)[1])',
+    '  cat("call\\n", file = mm_log_path, append = TRUE)',
+    '  calibration_gain * scale_val * Vm * conc / (K + conc)',
+    '}'
+  ].join('\n')
+  const setup = [
+    'calibration_gain <- 1.0',
+    'mm_log_path <- "outputs/mm-calls.txt"',
+    'd <- data.frame(conc=c(0.1,0.2,0.4),rate=c(100,150,190))'
+  ].join('\n')
+  const fit = 'fit <- stats::nls(rate ~ mm_response(conc,Vm,K),data=d,start=list(Vm=200,K=0.1))'
+  const predict = 'p <- stats::predict(fit,newdata=data.frame(conc=c(0.1,0.2,0.4)))'
+  const summarizeHelper = async (
+    script: string
+  ): Promise<{
+    facts: NotebookRunDependencyFacts
+    method: NotebookDependencyTypeSummary['methods'][number]
+  }> => {
+    const { facts } = await analyzeRNotebookSource(script)
+    const typeName = facts.typeBindings?.find(
+      (binding) => binding.target === 'mm_response'
+    )?.typeName
+    const method = facts.typeSummaries?.find((summary) => summary.name === typeName)?.methods[0]
+    expect(method).toBeDefined()
+    return { facts, method: method! }
+  }
+  const expectOpaqueFallback = async (script: string): Promise<void> => {
+    const { method } = await summarizeHelper(script)
+    expect(method).toMatchObject({ effect: 'unknown', unknownScope: 'namespace' })
+    expect(method.usedNames ?? []).toEqual([])
+    expect(method.safeCallNames).toBeUndefined()
+    expect(method.returnType).toBeUndefined()
+    expect(method.returnCopyArguments).toBeUndefined()
+  }
+
+  it.each([
+    ['direct helper', 'v <- mm_response(c(0.1,0.2),200,0.1)', false],
+    ['nls formula', fit, false],
+    ['fit and later prediction', fit, true]
+  ] as const)(
+    'retains known captures through %s without certifying the call',
+    async (_, call, consumer) => {
+      for (const [name, replacement] of [
+        ['calibration_gain', '2.0'],
+        ['mm_log_path', '"outputs/alternative-calls.txt"']
+      ]) {
+        const scripts = [
+          setup,
+          helper,
+          call,
+          ...(consumer ? [predict] : []),
+          `${name} <- ${replacement}`
+        ]
+        const projection = await projectScripts('r', scripts, 'r-opaque-scientific-captures-')
+        const invalidated = projection.invalidatedByRunId[`run-${scripts.length}`] ?? []
+        for (const runId of consumer ? ['run-3', 'run-4'] : ['run-3']) {
+          expect(invalidated).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                runId,
+                state: 'unknown',
+                names: expect.arrayContaining([name])
+              })
+            ])
+          )
+        }
+      }
+    }
+  )
+
+  it('retains a true outer read before a later local assignment', async () => {
+    const altered = prependFunctionBody(
+      helper,
+      '  previous_gain <- calibration_gain\n  calibration_gain <- 1.0'
+    )
+    const { method } = await summarizeHelper([setup, altered].join('\n'))
+    expect(method.usedNames).toContain('calibration_gain')
+    expect(method.usedNames ?? []).not.toContain('previous_gain')
+  })
+
+  it('keeps effectful helper and fitted model namespace opaque without return or copy evidence', async () => {
+    const { facts, method } = await summarizeHelper([setup, helper, fit].join('\n'))
+    expect(method).toMatchObject({ effect: 'unknown', unknownScope: 'namespace' })
+    expect(method.safeCallNames).toBeUndefined()
+    expect(method.returnType).toBeUndefined()
+    expect(method.returnCopyArguments).toBeUndefined()
+    expect(facts.copyOnModifyNames ?? []).not.toContain('fit')
+  })
+
+  it('excludes formal parameters and genuine local bindings from outer captures', async () => {
+    for (const [altered, excluded] of [
+      [helper.replace('conc, Vm, K', 'conc, Vm, K, calibration_gain=1.0'), 'calibration_gain'],
+      [prependFunctionBody(helper, '  calibration_gain <- 1.0'), 'calibration_gain'],
+      [helper, 'scale_val']
+    ]) {
+      const projection = await projectScripts(
+        'r',
+        [setup + '\nscale_val <- 42', altered, fit, `${excluded} <- 2.0`],
+        'r-opaque-scientific-local-bindings-'
+      )
+      expect(projection.invalidatedByRunId['run-4'] ?? []).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ runId: 'run-3', names: expect.arrayContaining([excluded]) })
+        ])
+      )
+    }
+  })
+
+  it.each(['formal', 'local', 'global'] as const)(
+    'rejects lexical inference for %s-shadowed base callees and operators',
+    async (scope) => {
+      const scripts =
+        scope === 'formal'
+          ? [
+              helper.replace('conc, Vm, K', 'conc, Vm, K, as.numeric'),
+              helper.replace('conc, Vm, K', 'conc, Vm, K, `+`')
+            ]
+          : scope === 'local'
+            ? [
+                prependFunctionBody(helper, '  as.numeric <- function(x) 1'),
+                prependFunctionBody(helper, '  `+` <- function(e1,e2) 1')
+              ]
+            : [
+                'readLines <- function(...) "1.0"\n' + helper,
+                'as.numeric <- function(x) 1\n' + helper,
+                '`+` <- function(e1,e2) 1\n' + helper
+              ]
+      for (const script of scripts) {
+        await expectOpaqueFallback([setup, script, fit].join('\n'))
+      }
+    }
+  )
+
+  it('does not let an unforced argument assignment hide a later outer read', async () => {
+    const altered = helper.replace(
+      '  scale_val <- as.numeric(readLines("outputs/assay-scale.txt", warn = FALSE)[1])',
+      '  scale_val <- as.numeric(calibration_gain <- 2)'
+    )
+    // The formal is a lazy promise; this replacement never forces it.
+    await expectOpaqueFallback([setup, 'as.numeric <- function(x) 1', altered, fit].join('\n'))
+  })
+
+  it.each([
+    [
+      'nonconstant default promise',
+      helper.replace('conc, Vm, K', 'conc, Vm, K, calibration_gain=outer_gain')
+    ],
+    [
+      'nonlocal assignment',
+      prependFunctionBody(helper, '  calibration_gain <<- calibration_gain + 1')
+    ],
+    [
+      'dynamic lookup',
+      helper.replace('calibration_gain * scale_val', 'get("calibration_gain") * scale_val')
+    ],
+    [
+      'data-mask ambiguity',
+      helper.replace(
+        'calibration_gain * scale_val * Vm * conc / (K + conc)',
+        'transform(d, adjusted=conc * calibration_gain)'
+      )
+    ]
+  ])('preserves the opaque fallback for %s', async (_, altered) => {
+    await expectOpaqueFallback([setup, altered, fit].join('\n'))
+  })
+})
+
+describe('R uniroot opaque capture-only callbacks', () => {
+  const captures = ['TARGET_PATH', 'PHASE', 'ozone_values', 'BANDWIDTH', 'TRACE_PATH']
+  const body = [
+    'target <- as.numeric(readLines(TARGET_PATH)[1])',
+    'score <- mean(1 / (1 + exp(-(ozone_values - theta) / BANDWIDTH))) - target',
+    'call_id <- length(readLines(TRACE_PATH))',
+    'cat(paste(PHASE, formatC(score), call_id), file=TRACE_PATH, append=TRUE)',
+    'invisible(score)'
+  ].join('\n')
+  const callback = `score_callback <- function(theta) {\n${body}\n}`
+
+  it('retains vectorized opaque captures through a named solver without return or ownership proof', async () => {
+    const { facts, fileAccess } = await analyzeRNotebookSource(
+      `${callback}\nroot <- stats::uniroot(f=score_callback, interval=c(-1,1))`
+    )
+    expect(facts.usedNames).toEqual(expect.arrayContaining(captures))
+    const binding = facts.typeBindings?.find((item) => item.target === 'score_callback')
+    const method = facts.typeSummaries?.find((item) => item.name === binding?.typeName)?.methods[0]
+    expect(method).toMatchObject({ effect: 'unknown', unknownScope: 'namespace' })
+    expect(method?.usedNames).toEqual(expect.arrayContaining(captures))
+    expect(method?.safeCallNames).toBeUndefined()
+    expect(method?.returnType).toBeUndefined()
+    expect(method?.returnCopyArguments).toBeUndefined()
+    expect(facts.safeCallNames ?? []).not.toContain('stats::uniroot')
+    expect(facts.copyOnModifyNames ?? []).not.toContain('root')
+    expect(facts.aliases ?? []).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ target: 'root', kind: 'reference' })])
+    )
+    expect(normalizeNotebookSourceFileAccess('r', facts, fileAccess)).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+    expect(facts.state).toBe('unknown')
+    if (facts.state === 'unknown') expect(facts.reasons).toContain('opaque-call')
+  })
+
+  const analyzeCells = async (scripts: string[]): Promise<NotebookRunDependencyFacts> => {
+    const entries: FileContextEntry[] = []
+    let facts: NotebookRunDependencyFacts | undefined
+    for (const script of scripts) {
+      const result = await analyzeRNotebookSource(script, projectNotebookFileContext('r', entries))
+      facts = result.facts
+      if (result.fileAccess) entries.push({ facts, fileContext: result.fileAccess.context })
+    }
+    return facts!
+  }
+  const expectNoCaptures = (facts: NotebookRunDependencyFacts): void => {
+    for (const name of captures) expect(facts.usedNames ?? []).not.toContain(name)
+    expect(facts.safeCallNames ?? []).not.toContain('stats::uniroot')
+    // Existing unresolved generic calls can be represented by receiver evidence;
+    // the public projection still quarantines their effects.
+    if (facts.state === 'available') expect(facts.receiverCalls?.length).toBeGreaterThan(0)
+  }
+
+  it.each([
+    ['inline slot zero', `stats::uniroot(function(theta) {${body}}, c(-1,1))`],
+    ['inline named f', `stats::uniroot(interval=c(-1,1), f=function(theta) {${body}})`],
+    ['unshadowed bare solver', `${callback}\nuniroot(f=score_callback, interval=c(-1,1))`],
+    [
+      'ordinary callback alias',
+      `${callback}\nselected <- score_callback\nstats::uniroot(selected, c(-1,1))`
+    ],
+    [
+      'exact f instead of another positional function',
+      `${callback}\nstats::uniroot(function(x) unrelated_value, f=score_callback, interval=c(-1,1))`
+    ]
+  ])('retains bounded captures for %s', async (_, source) => {
+    const { facts } = await analyzeRNotebookSource(source)
+    expect(facts.usedNames).toEqual(expect.arrayContaining(captures))
+    expect(facts.usedNames ?? []).not.toContain('unrelated_value')
+    expect(facts.state).toBe('unknown')
+  })
+
+  it.each(['score_callback', 'selected'])(
+    'consumes %s from an available definition-only producer',
+    async (name) => {
+      const facts = await analyzeCells([
+        `${callback}\nselected <- score_callback`,
+        `stats::uniroot(f=${name}, interval=c(-1,1))`
+      ])
+      expect(facts.usedNames).toEqual(expect.arrayContaining(captures))
+      expect(facts.state).toBe('unknown')
+    }
+  )
+
+  it.each(['mean', 'exp', 'length', 'formatC', 'paste', 'invisible', '+', '::'])(
+    'rejects late and cross-cell %s rebinding before consuming a callback',
+    async (name) => {
+      const rebound = `\`${name}\` <- function(...) 0`
+      expectNoCaptures(
+        (
+          await analyzeRNotebookSource(
+            `${callback}\n${rebound}\nstats::uniroot(score_callback,c(-1,1))`
+          )
+        ).facts
+      )
+      expectNoCaptures(
+        await analyzeCells([callback, rebound, 'stats::uniroot(score_callback,c(-1,1))'])
+      )
+    }
+  )
+
+  it('revalidates stored read-only captures without inheriting their return or safe-call proofs', async () => {
+    const pure = 'known_callback <- function(theta) theta - captured_offset'
+    for (const name of ['known_callback', 'selected']) {
+      const facts = await analyzeCells([
+        `${pure}\nselected <- known_callback`,
+        `root <- stats::uniroot(f=${name},interval=c(-1,1))`
+      ])
+      expect(facts.usedNames).toContain('captured_offset')
+      expect(facts.state).toBe('unknown')
+      expect(facts.safeCallNames ?? []).not.toContain('-')
+      expect(facts.copyOnModifyNames ?? []).not.toContain('root')
+    }
+    const rebound = await analyzeCells([
+      pure,
+      '`-` <- function(...) 0',
+      'stats::uniroot(known_callback,c(-1,1))'
+    ])
+    expect(rebound.usedNames ?? []).not.toContain('captured_offset')
+    expect(rebound.state).toBe('unknown')
+  })
+
+  const normalizedCallbackContext = async (
+    overrides: Partial<NotebookDependencyTypeSummary['methods'][number]> = {}
+  ): Promise<NonNullable<ReturnType<typeof projectNotebookFileContext>>> => {
+    const producer = await analyzeRNotebookSource(`${callback}\nselected <- score_callback`)
+    const context = projectNotebookFileContext('r', [
+      { facts: producer.facts, fileContext: producer.fileAccess!.context }
+    ])!
+    return {
+      ...context,
+      rFunctions: context.rFunctions?.map((item) => ({
+        ...item,
+        summary: {
+          ...item.summary,
+          methods: item.summary.methods.map((method) => ({
+            ...method,
+            // The public cache normalizes absent safe-call and return proofs.
+            safeCallNames: [],
+            returnType: null,
+            ...overrides
+          }))
+        }
+      }))
+    }
+  }
+
+  it.each(['score_callback', 'selected'])(
+    'retains normalized stored opaque captures for %s without certification',
+    async (name) => {
+      const { facts, fileAccess } = await analyzeRNotebookSource(
+        `root <- stats::uniroot(f=${name}, interval=c(-1,1))`,
+        await normalizedCallbackContext()
+      )
+      expect(facts.usedNames).toEqual(expect.arrayContaining(captures))
+      expect(facts.priorUsedNames).toEqual(expect.arrayContaining(captures))
+      expect(facts.state).toBe('unknown')
+      expect(facts.safeCallNames ?? []).not.toContain('stats::uniroot')
+      expect(facts.copyOnModifyNames ?? []).not.toContain('root')
+      expect(normalizeNotebookSourceFileAccess('r', facts, fileAccess)).toMatchObject({
+        readState: 'partial',
+        writeState: 'partial',
+        externalState: 'partial'
+      })
+    }
+  )
+
+  const unsupportedProofs: [string, Partial<NotebookDependencyTypeSummary['methods'][number]>][] = [
+    ['no bounded captures', { usedNames: [] }],
+    ['safe-call proof', { safeCallNames: ['mean'] }],
+    ['return proof', { returnType: 'vector' }],
+    ['copy proof', { returnCopyArguments: true }]
+  ]
+  it.each(unsupportedProofs)(
+    'rejects a normalized opaque summary with %s',
+    async (_, overrides) => {
+      const { facts } = await analyzeRNotebookSource(
+        'stats::uniroot(score_callback,c(-1,1))',
+        await normalizedCallbackContext(overrides)
+      )
+      expectNoCaptures(facts)
+    }
+  )
+
+  it.each(['mean', 'exp', 'length', 'formatC', 'paste', 'invisible', '+', '::'])(
+    'revalidates normalized opaque captures after %s rebinding',
+    async (name) => {
+      const { facts } = await analyzeRNotebookSource(
+        `\`${name}\` <- function(...) 0\nstats::uniroot(score_callback,c(-1,1))`,
+        await normalizedCallbackContext()
+      )
+      expectNoCaptures(facts)
+    }
+  )
+
+  it('rejects empty stored unknown summaries without bounded capture authority', async () => {
+    const producer = await analyzeRNotebookSource(callback)
+    const context = projectNotebookFileContext('r', [
+      {
+        facts: producer.facts,
+        fileContext: producer.fileAccess!.context
+      }
+    ])!
+    // Removing a producer's bounded evidence models an empty generic fallback;
+    // it must not become a supported callback merely because [] is truthy.
+    const stripped = {
+      ...context,
+      rFunctions: context.rFunctions?.map((item) => ({
+        ...item,
+        summary: {
+          ...item.summary,
+          methods: item.summary.methods.map((method) => ({
+            ...method,
+            usedNames: []
+          }))
+        }
+      }))
+    }
+    const { facts } = await analyzeRNotebookSource(
+      'stats::uniroot(score_callback,c(-1,1))',
+      stripped
+    )
+    expectNoCaptures(facts)
+    if (facts.state === 'unknown') expect(facts.reasons).toContain('function-scope')
+  })
+
+  it('does not borrow a read-only summary with a shadowed formal operator', async () => {
+    const facts = await analyzeCells([
+      'known_callback <- function(theta, `-`) theta - captured_offset',
+      'stats::uniroot(known_callback,c(-1,1))'
+    ])
+    expect(facts.usedNames ?? []).not.toContain('captured_offset')
+    expect(facts.state).toBe('unknown')
+  })
+
+  it.each(['mean', 'exp', 'length', 'formatC', 'paste', 'invisible'])(
+    'rejects formal and local %s shadowing in the opaque body',
+    async (name) => {
+      for (const altered of [
+        callback.replace('function(theta)', `function(theta, ${name})`),
+        prependFunctionBody(callback, `${name} <- function(...) 0`)
+      ]) {
+        expectNoCaptures(
+          (await analyzeRNotebookSource(`${altered}\nstats::uniroot(score_callback,c(-1,1))`)).facts
+        )
+      }
+    }
+  )
+
+  it.each([
+    ['callback dots', callback.replace('function(theta)', 'function(theta, ...)')],
+    [
+      'nonconstant default',
+      callback.replace('function(theta)', 'function(theta, value=outer_value)')
+    ],
+    ['lazy assignment', callback.replace('invisible(score)', 'invisible(hidden <- score)')],
+    ['nonlocal mutation', callback.replace('invisible(score)', 'hidden <<- score')],
+    ['dynamic lookup', callback.replace('invisible(score)', 'get("hidden")')],
+    ['qualified body call', callback.replace('mean(', 'base::mean(')]
+  ])('retains the opaque fallback for %s', async (_, altered) => {
+    expectNoCaptures(
+      (await analyzeRNotebookSource(`${altered}\nstats::uniroot(score_callback,c(-1,1))`)).facts
+    )
+  })
+
+  it.each([
+    ['duplicate f', 'stats::uniroot(f=score_callback,f=score_callback,interval=c(-1,1))'],
+    ['missing f', 'stats::uniroot(interval=c(-1,1))'],
+    ['named-before-positional f', 'stats::uniroot(interval=c(-1,1),score_callback)'],
+    ['partial f name', 'stats::uniroot(f.lower=score_callback,interval=c(-1,1))'],
+    ['dots expansion', 'stats::uniroot(score_callback,c(-1,1),...)'],
+    ['private namespace', 'stats:::uniroot(score_callback,c(-1,1))'],
+    ['wrong namespace', 'other::uniroot(score_callback,c(-1,1))'],
+    ['solver alias', 'solver <- stats::uniroot\nsolver(score_callback,c(-1,1))'],
+    ['dynamic solver', 'do.call(stats::uniroot,list(f=score_callback,interval=c(-1,1)))'],
+    ['shadowed bare solver', 'uniroot <- function(...) 0\nuniroot(score_callback,c(-1,1))'],
+    [
+      'rebound callback',
+      'score_callback <- function(...) 0\nstats::uniroot(score_callback,c(-1,1))'
+    ],
+    ['conditional alias', 'if(flag) selected <- score_callback\nstats::uniroot(selected,c(-1,1))']
+  ])('does not consume hidden captures for %s', async (_, source) => {
+    expectNoCaptures((await analyzeRNotebookSource(`${callback}\n${source}`)).facts)
+  })
+
+  it('keeps actual R2 top-level opaque checks as cross-cell context barriers', async () => {
+    for (const guard of ['all(diff(ozone_values) > 0)', 'all(is.finite(ozone_values))']) {
+      expectNoCaptures(
+        await analyzeCells([
+          `${callback}\nstopifnot(${guard})`,
+          'stats::uniroot(score_callback,c(-1,1))'
+        ])
+      )
+    }
+  })
+
+  it.each(['stats::uniroot', 'uniroot'])(
+    'keeps unsupported %s aliases unknown in the public projection',
+    async (solver) => {
+      const projection = await projectScripts(
+        'r',
+        [callback, `solver <- ${solver}\nroot <- solver(score_callback,c(-1,1))`],
+        'r-opaque-solver-alias-'
+      )
+      expect(projection.stalenessByRunId['run-2']).toMatchObject({ state: 'unknown' })
+      expect(projection.dependenciesByRunId?.['run-2']).toBeUndefined()
+    }
+  )
+
+  it('does not promote nested solvers or opaque callbacks in existing functionals', async () => {
+    for (const source of [
+      `outer <- function(theta) stats::uniroot(function(x) {${body}}, c(-1,1))`,
+      callback
+    ]) {
+      const { facts } = await analyzeRNotebookSource(source)
+      const method = facts.typeSummaries?.find((summary) => summary.kind === 'r-function')
+        ?.methods[0]
+      expect(method).toMatchObject({ effect: 'unknown', unknownScope: 'namespace' })
+      expect(method?.safeCallNames).toBeUndefined()
+      expect(method?.returnType).toBeUndefined()
+      expect(method?.returnCopyArguments).toBeUndefined()
+    }
+    for (const call of [
+      'lapply(c(1,2),score_callback)',
+      'Map(score_callback,c(1,2))',
+      'Reduce(score_callback,c(1,2))',
+      'purrr::map(c(1,2),score_callback)'
+    ])
+      expectNoCaptures((await analyzeRNotebookSource(`${callback}\n${call}`)).facts)
+  })
+})
+
+describe('R integrate partial callback captures', () => {
+  const captures = ['BANDWIDTH_PATH', 'PHASE', 'waiting_values', 'TRACE_PATH', 'read_next_batch_id']
+  // Reduced from the genuinely generated Faithful producer. This is parser
+  // coverage, not a replacement scientific execution or numerical fixture.
+  const helper = [
+    'read_next_batch_id <- function(path) {',
+    '  lines <- readLines(path, warn=FALSE)',
+    '  if (length(lines) <= 1L) return(1L)',
+    '  max(as.integer(lines[-1])) + 1L',
+    '}'
+  ].join('\n')
+  const body = [
+    'if (!file.exists(BANDWIDTH_PATH)) stop("missing bandwidth", BANDWIDTH_PATH)',
+    'bw_text <- readLines(BANDWIDTH_PATH, warn=FALSE)',
+    'h <- as.numeric(bw_text[1])',
+    'if (!is.finite(h) || h <= 0) stop("invalid bandwidth")',
+    'x <- as.numeric(x)',
+    'if (!all(is.finite(x))) stop("nonfinite nodes")',
+    'next_batch <- read_next_batch_id(TRACE_PATH)',
+    'n <- length(waiting_values)',
+    'if (n <= 0L) stop("empty waiting values")',
+    'norm_const <- 1 / (n * h * sqrt(2 * pi))',
+    'nx <- length(x)',
+    'y <- numeric(nx)',
+    'for (j in seq_len(nx)) {',
+    '  diffs <- (x[j] - waiting_values) / h',
+    '  y[j] <- sum(exp(-0.5 * diffs * diffs)) * norm_const',
+    '}',
+    'if (length(y) != nx) stop("node count mismatch")',
+    'if (any(!is.finite(y))) stop("nonfinite density")',
+    'if (any(y < 0)) stop("negative density")',
+    'con <- file(TRACE_PATH, open="ab")',
+    'node_count <- nx',
+    'for (k in seq_len(nx)) {',
+    '  line <- sprintf("%d,%d,%s,%.17g", next_batch, k, PHASE, y[k])',
+    '  writeLines(line, con=con, useBytes=TRUE)',
+    '}',
+    'close(con)',
+    'y'
+  ].join('\n')
+  const callback = `kde_callback <- function(x) {\n${body}\n}`
+  const producer = `${helper}\n${callback}\ncallback_alias <- kde_callback`
+  const consumer = 'result <- stats::integrate(kde_callback, lower=60, upper=70)'
+  const locals = [
+    'x',
+    'bw_text',
+    'h',
+    'next_batch',
+    'n',
+    'norm_const',
+    'nx',
+    'y',
+    'j',
+    'diffs',
+    'con',
+    'node_count',
+    'k',
+    'line'
+  ]
+
+  it('retains actual Faithful if-for-file captures without completing callback effects', async () => {
+    const { facts: producerFacts } = await analyzeRNotebookSource(producer)
+    const binding = producerFacts.typeBindings?.find((item) => item.target === 'kde_callback')
+    const method = producerFacts.typeSummaries?.find((item) => item.name === binding?.typeName)
+      ?.methods[0]
+    expect(method).toMatchObject({ effect: 'unknown', unknownScope: 'namespace' })
+    expect(method?.usedNames).toEqual(expect.arrayContaining(captures))
+    expect(method?.safeCallNames).toBeUndefined()
+    expect(method?.returnType).toBeUndefined()
+    expect(method?.returnCopyArguments).toBeUndefined()
+    for (const name of locals) expect(method?.usedNames ?? []).not.toContain(name)
+
+    const { facts, fileAccess } = await analyzeRNotebookSource(`${producer}\n${consumer}`)
+    expect(facts.usedNames).toEqual(expect.arrayContaining(captures))
+    expect(facts.state).toBe('unknown')
+    expect(facts.safeCallNames ?? []).not.toContain('stats::integrate')
+    expect(facts.copyOnModifyNames ?? []).not.toContain('result')
+    expect(facts.aliases ?? []).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ target: 'result', kind: 'reference' })])
+    )
+    expect(facts.typeBindings ?? []).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ target: 'result' })])
+    )
+    expect(normalizeNotebookSourceFileAccess('r', facts, fileAccess)).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  const analyzeCells = async (scripts: string[]): ReturnType<typeof analyzeRNotebookSource> => {
+    const entries: FileContextEntry[] = []
+    let result: Awaited<ReturnType<typeof analyzeRNotebookSource>> | undefined
+    for (const script of scripts) {
+      result = await analyzeRNotebookSource(script, projectNotebookFileContext('r', entries))
+      if (result.fileAccess)
+        entries.push({ facts: result.facts, fileContext: result.fileAccess.context })
+    }
+    return result!
+  }
+  const expectNoCaptures = (facts: NotebookRunDependencyFacts): void => {
+    for (const name of captures) expect(facts.usedNames ?? []).not.toContain(name)
+    expect(facts.safeCallNames ?? []).not.toContain('stats::integrate')
+    expect(facts.copyOnModifyNames ?? []).not.toContain('result')
+  }
+  const callbackMethod = (
+    facts: NotebookRunDependencyFacts,
+    name = 'kde_callback'
+  ): NotebookDependencyTypeSummary['methods'][number] | undefined => {
+    const binding = facts.typeBindings?.find((item) => item.target === name)
+    return facts.typeSummaries?.find((item) => item.name === binding?.typeName)?.methods[0]
+  }
+
+  it.each([
+    ['exact f', 'stats::integrate(lower=60, upper=70, f=kde_callback)'],
+    ['unshadowed bare solver', 'integrate(f=kde_callback, lower=60, upper=70)'],
+    ['ordinary callback alias', 'stats::integrate(callback_alias, lower=60, upper=70)'],
+    ['inline callback', `stats::integrate(function(x) {${body}}, lower=60, upper=70)`],
+    [
+      'exact f instead of another positional function',
+      'stats::integrate(function(x) unrelated_value, f=kde_callback, lower=60, upper=70)'
+    ]
+  ])('consumes bounded captures for %s without a solver return contract', async (_, call) => {
+    const { facts } = await analyzeRNotebookSource(`${producer}\nresult <- ${call}`)
+    expect(facts.usedNames).toEqual(expect.arrayContaining(captures))
+    expect(facts.usedNames ?? []).not.toContain('unrelated_value')
+    expect(facts.state).toBe('unknown')
+    expect(facts.safeCallNames ?? []).not.toContain('stats::integrate')
+    expect(facts.safeCallNames ?? []).not.toContain('integrate')
+    expect(facts.copyOnModifyNames ?? []).not.toContain('result')
+    expect(facts.typeBindings ?? []).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ target: 'result' })])
+    )
+  })
+
+  it.each(['kde_callback', 'callback_alias'])(
+    'consumes %s from a separate producer while retaining UNKNOWN and partial I/O',
+    async (name) => {
+      const { facts, fileAccess } = await analyzeCells([
+        producer,
+        `result <- stats::integrate(f=${name}, lower=60, upper=70)`
+      ])
+      expect(facts.usedNames).toEqual(expect.arrayContaining(captures))
+      expect(facts.priorUsedNames).toEqual(expect.arrayContaining(captures))
+      expect(facts.state).toBe('unknown')
+      expect(facts.safeCallNames ?? []).not.toContain('stats::integrate')
+      expect(facts.copyOnModifyNames ?? []).not.toContain('result')
+      expect(normalizeNotebookSourceFileAccess('r', facts, fileAccess)).toMatchObject({
+        readState: 'partial',
+        writeState: 'partial',
+        externalState: 'partial'
+      })
+    }
+  )
+
+  it('borrows only captures from a read-only producer, not its return or copy authority', async () => {
+    const { facts } = await analyzeCells([
+      'known_callback <- function(x) x - captured_offset',
+      'result <- stats::integrate(known_callback, lower=60, upper=70)'
+    ])
+    expect(facts.usedNames).toContain('captured_offset')
+    expect(facts.state).toBe('unknown')
+    expect(facts.safeCallNames ?? []).not.toContain('-')
+    expect(facts.copyOnModifyNames ?? []).not.toContain('result')
+    expect(facts.typeBindings ?? []).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ target: 'result' })])
+    )
+  })
+
+  it('captures a plain helper name without recursively reading its body or forcing arguments', async () => {
+    const source = [
+      'read_next_batch_id <- function(path) hidden_helper_state + as.numeric(path)',
+      callback.replace('read_next_batch_id(TRACE_PATH)', 'read_next_batch_id(UNFORCED_ARGUMENT)'),
+      consumer
+    ].join('\n')
+    const { facts } = await analyzeRNotebookSource(source)
+    expect(facts.usedNames).toEqual(expect.arrayContaining(captures))
+    expect(facts.usedNames ?? []).not.toContain('hidden_helper_state')
+    expect(facts.usedNames ?? []).not.toContain('UNFORCED_ARGUMENT')
+    expect(facts.state).toBe('unknown')
+  })
+
+  it('does not infer a local binding from assignment inside an unforced helper argument', async () => {
+    const altered = callback
+      .replace(
+        'read_next_batch_id(TRACE_PATH)',
+        'read_next_batch_id(argument_local <- UNFORCED_ARGUMENT)'
+      )
+      .replace('\nclose(con)', '\nclose(con)\nargument_local')
+    const { facts } = await analyzeRNotebookSource(`${helper}\n${altered}\n${consumer}`)
+    expect(facts.usedNames ?? []).not.toContain('UNFORCED_ARGUMENT')
+    expect(facts.usedNames).toContain('argument_local')
+    expect(facts.state).toBe('unknown')
+  })
+
+  it('excludes deferred nested body and default reads while retaining direct outer captures', async () => {
+    const altered = callback.replace(
+      '\nclose(con)',
+      '\nclose(con)\ndeferred <- function(z=DEFERRED_DEFAULT) { DEFERRED_BODY + z }'
+    )
+    const { facts } = await analyzeRNotebookSource(`${helper}\n${altered}\n${consumer}`)
+    expect(facts.usedNames).toEqual(expect.arrayContaining(captures))
+    for (const name of ['deferred', 'z', 'DEFERRED_DEFAULT', 'DEFERRED_BODY'])
+      expect(callbackMethod(facts)?.usedNames ?? []).not.toContain(name)
+    expect(callbackMethod(facts)?.safeCallNames).toBeUndefined()
+    expect(callbackMethod(facts)?.returnType).toBeUndefined()
+    expect(callbackMethod(facts)?.returnCopyArguments).toBeUndefined()
+  })
+
+  it.each([
+    ['callback dots', callback.replace('function(x)', 'function(x, ...)')],
+    ['nonconstant default', callback.replace('function(x)', 'function(x, value=DEFAULT_VALUE)')],
+    [
+      'effectful default',
+      callback.replace('function(x)', 'function(x, value=readLines(DEFAULT_PATH))')
+    ],
+    ['dynamic lookup', callback.replace('y\n}', 'get(DYNAMIC_NAME)\ny\n}')],
+    ['reflective evaluation', callback.replace('y\n}', 'eval(REFLECTIVE_CODE)\ny\n}')],
+    [
+      'dynamic invocation',
+      callback.replace('y\n}', 'do.call(DYNAMIC_FUNCTION, list(DYNAMIC_ARGUMENT))\ny\n}')
+    ],
+    ['dynamic namespace', callback.replace('sum(exp(', 'get(PACKAGE)::sum(exp(')],
+    ['nonlocal mutation', callback.replace('y\n}', 'SHARED_STATE <<- y\ny\n}')],
+    ['reflective assignment', callback.replace('y\n}', 'assign(ASSIGNED_NAME, y)\ny\n}')],
+    [
+      'lazy argument assignment',
+      callback.replace('readLines(BANDWIDTH_PATH,', 'readLines(hidden <- BANDWIDTH_PATH,')
+    ]
+  ])('retains the opaque fallback for %s', async (_, altered) => {
+    const { facts } = await analyzeRNotebookSource(`${helper}\n${altered}\n${consumer}`)
+    expectNoCaptures(facts)
+    expect(facts.state).toBe('unknown')
+  })
+
+  it.each(['exp', 'readLines', 'file', 'writeLines', 'seq_len', 'sum', 'sqrt', 'sprintf'])(
+    'does not force argument captures through formal, local, or late %s shadowing',
+    async (callee) => {
+      const minimal = `minimal <- function(x) ${callee}(HIDDEN_ARGUMENT)`
+      for (const source of [
+        minimal.replace('function(x)', `function(x, ${callee})`),
+        `minimal <- function(x) { ${callee} <- function(...) 0; ${callee}(HIDDEN_ARGUMENT) }`,
+        `${minimal}\n${callee} <- function(...) 0`
+      ]) {
+        const { facts } = await analyzeRNotebookSource(
+          `${source}\nstats::integrate(minimal, lower=60, upper=70)`
+        )
+        expect(facts.usedNames ?? []).not.toContain('HIDDEN_ARGUMENT')
+      }
+    }
+  )
+
+  it.each(['exp', 'file', 'sprintf', '+', '::'])(
+    'rejects stored captures after current %s rebinding',
+    async (name) => {
+      const { facts } = await analyzeCells([producer, `\`${name}\` <- function(...) 0`, consumer])
+      expectNoCaptures(facts)
+      expect(facts.state).toBe('unknown')
+    }
+  )
+
+  it.each([
+    ['duplicate f', 'stats::integrate(f=kde_callback,f=kde_callback,lower=60,upper=70)'],
+    ['missing f', 'stats::integrate(lower=60,upper=70)'],
+    ['named-before-positional f', 'stats::integrate(lower=60,kde_callback,upper=70)'],
+    ['partial f name', 'stats::integrate(fu=kde_callback,lower=60,upper=70)'],
+    ['dots expansion', 'stats::integrate(kde_callback,lower=60,upper=70,...)'],
+    ['private namespace', 'stats:::integrate(kde_callback,lower=60,upper=70)'],
+    ['wrong namespace', 'other::integrate(kde_callback,lower=60,upper=70)'],
+    ['solver alias', 'solver <- stats::integrate\nsolver(kde_callback,lower=60,upper=70)'],
+    ['dynamic solver', 'do.call(stats::integrate,list(f=kde_callback,lower=60,upper=70))'],
+    [
+      'shadowed bare solver',
+      'integrate <- function(...) 0\nintegrate(kde_callback,lower=60,upper=70)'
+    ],
+    [
+      'shadowed namespace operator',
+      '`::` <- function(...) 0\nstats::integrate(kde_callback,lower=60,upper=70)'
+    ],
+    [
+      'rebound callback',
+      'kde_callback <- function(...) 0\nstats::integrate(kde_callback,lower=60,upper=70)'
+    ],
+    [
+      'conditional alias',
+      'if(flag) selected <- kde_callback\nstats::integrate(selected,lower=60,upper=70)'
+    ]
+  ])('does not consume hidden captures for %s', async (_, call) => {
+    expectNoCaptures((await analyzeRNotebookSource(`${producer}\n${call}`)).facts)
+  })
+
+  it('preserves the later opaque consumer context barrier', async () => {
+    const { facts } = await analyzeCells([producer, consumer, consumer])
+    expectNoCaptures(facts)
+    expect(facts.state).toBe('unknown')
+  })
+
+  it('does not certify nested solver returns or opaque callbacks in other functionals', async () => {
+    const { facts: nested } = await analyzeRNotebookSource(
+      `outer <- function(x) stats::integrate(function(z) DEFERRED_CAPTURE, lower=60, upper=70)`
+    )
+    const method = callbackMethod(nested, 'outer')
+    expect(method).toMatchObject({ effect: 'unknown', unknownScope: 'namespace' })
+    expect(method?.usedNames ?? []).not.toContain('DEFERRED_CAPTURE')
+    expect(method?.safeCallNames).toBeUndefined()
+    expect(method?.returnType).toBeUndefined()
+    expect(method?.returnCopyArguments).toBeUndefined()
+    for (const call of ['lapply(c(1,2),kde_callback)', 'Map(kde_callback,c(1,2))'])
+      expectNoCaptures((await analyzeRNotebookSource(`${producer}\n${call}`)).facts)
+  })
+
+  it.each([
+    ['branch', 'if (TRUE) exp <- function(ignored) x'],
+    ['loop', 'for (j in 1:1) exp <- function(ignored) x']
+  ])('does not force arguments after a possible %s callee shadow', async (_, shadow) => {
+    const { facts } = await analyzeRNotebookSource(
+      `cb <- function(x) { ${shadow}; exp(HIDDEN) }\nstats::integrate(cb, lower=60, upper=70)`
+    )
+    expect(facts.usedNames ?? []).not.toContain('HIDDEN')
+    expect(callbackMethod(facts, 'cb')?.usedNames ?? []).not.toContain('HIDDEN')
+    expect(callbackMethod(facts, 'cb')?.safeCallNames).toBeUndefined()
+    expect(callbackMethod(facts, 'cb')?.returnType).toBeUndefined()
+    expect(facts.state).toBe('unknown')
+  })
+
+  it('does not borrow a global helper after a possible branch or loop shadow', async () => {
+    for (const shadow of [
+      'if (TRUE) read_next_batch_id <- function(ignored) x',
+      'for (j in 1:1) read_next_batch_id <- function(ignored) x'
+    ]) {
+      const { facts } = await analyzeRNotebookSource(
+        `${helper}\ncb <- function(x) { ${shadow}; read_next_batch_id(HIDDEN) }\nstats::integrate(cb, lower=60, upper=70)`
+      )
+      expect(facts.usedNames ?? []).not.toContain('HIDDEN')
+      expect(facts.usedNames ?? []).not.toContain('read_next_batch_id')
+      expect(callbackMethod(facts, 'cb')?.safeCallNames).toBeUndefined()
+      expect(callbackMethod(facts, 'cb')?.returnCopyArguments).toBeUndefined()
+      expect(facts.state).toBe('unknown')
+    }
   })
 })

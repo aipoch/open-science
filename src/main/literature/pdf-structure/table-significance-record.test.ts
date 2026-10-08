@@ -20,7 +20,60 @@ it('recovers a complete record with a source significance marker in the P column
     '13.271',
     '***'
   ])
-  expect(result.unassigned).toEqual([])
+  expect(result.unassigned).toEqual(
+    expect.arrayContaining(['Item (mean', '±', 'SD)', 'CG (n', '=', '62)'])
+  )
+  expect(result.issues).toContain('unassigned-source-text')
+})
+it('completes the existing source-owned record without duplicating its measurement tokens', () => {
+  const x = structuredClone(fixture)
+  const stub = x.tokens.find(
+    (token: { text: string; rect: number[] }) => token.text === 'Depression' && token.rect[1] < 300
+  )
+  const recordTokens = x.tokens.filter(
+    (token: { horizontal: boolean; baseline: number }) =>
+      token.horizontal && Math.abs(token.baseline - stub.baseline) < 0.02
+  )
+  const result = refineTable(x.table, x.tokens, x.captions, [], x.rules)
+  const sourceRows = new Set<number>()
+  for (const token of recordTokens) {
+    const owners = result.cells.filter((cell: { row: number; sourceRects: number[][] }) =>
+      cell.sourceRects.some((rect) => rect.every((value, index) => value === token.rect[index]))
+    )
+    expect(owners, token.text).toHaveLength(1)
+    sourceRows.add(owners[0].row)
+  }
+  expect(sourceRows.size).toBe(1)
+  expect(result.grid.filter((row: string[]) => row[0] === 'Depression')).toHaveLength(1)
+})
+it('retains an unrelated unassigned header with the same literal as an owned measurement', () => {
+  const x = structuredClone(fixture)
+  const header = x.tokens.find((token: { text: string }) => token.text === 'SD)')
+  const unrelated = {
+    ...header,
+    text: '7.29',
+    rect: [170, header.rect[1], 190, header.rect[3]]
+  }
+  x.tokens.push(unrelated)
+  const result = refineTable(x.table, x.tokens, x.captions, [], x.rules)
+  expect(result.unassigned).toContain(unrelated.text)
+  expect(result.issues).toContain('unassigned-source-text')
+})
+it('retains the partial record when its existing row also owns unrelated source text', () => {
+  const x = structuredClone(fixture)
+  const measurement = x.tokens.find(
+    (token: { text: string; rect: number[] }) => token.text === '7.29' && token.rect[1] < 300
+  )
+  x.tokens.push({
+    ...measurement,
+    text: 'EXTRA',
+    rect: [302, 235, 315, 247.75],
+    baseline: 247.75
+  })
+  const result = refineTable(x.table, x.tokens, x.captions, [], x.rules)
+  expect(result.unassigned).toContain('Depression')
+  expect(result.grid.flat().join(' ')).toContain('EXTRA')
+  expect(result.repairs).not.toContain('source-significance-row-recovered')
 })
 it.each(['missing-value', 'textual-marker', 'missing-p-heading'])(
   'preserves ambiguous records with %s',

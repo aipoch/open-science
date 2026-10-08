@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-const { isFigureRiskTable } = await import(
+const { isFigureRiskTable, isFigureOwnedPartialTable } = await import(
   pathToFileURL(resolve('resources/pdf-structure/literature-pdf-table-evidence.mjs')).href
 )
 it('rejects a risk strip even when detector padding captures adjacent prose', () => {
@@ -41,4 +41,15 @@ it('rejects a risk strip even when detector padding captures adjacent prose', ()
       1
     )
   ).toBe(false)
+})
+
+it('rejects an uncaptioned partial table crop owned by a larger figure panel', () => {
+  const table = {
+    cropRect: [150, 120, 455, 287],
+    issues: ['text-crosses-crop-boundary', 'unassigned-source-text'],
+    unassigned: ['32 frames · 128 trajectories per dataset']
+  }
+  const figures = [{ rect: [108, 80, 506, 196] }]
+  expect(isFigureOwnedPartialTable(table, figures)).toBe(true)
+  expect(isFigureOwnedPartialTable({ ...table, issues: [], unassigned: [] }, figures)).toBe(false)
 })

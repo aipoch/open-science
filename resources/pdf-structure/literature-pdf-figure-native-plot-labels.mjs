@@ -29,7 +29,7 @@ export function nativeAttachedPlotLabels(page, figure, captions, tables, rules, 
   )
   const axes = source.filter(
     (t) =>
-      !t.horizontal &&
+      t.horizontal === false &&
       t.rect[2] <= bounds[0] &&
       t.rect[1] >= bounds[1] &&
       t.rect[3] <= bounds[3] &&
@@ -38,8 +38,19 @@ export function nativeAttachedPlotLabels(page, figure, captions, tables, rules, 
         (p) =>
           p.rect[0] - t.rect[2] >= 0 &&
           p.rect[0] - t.rect[2] < Math.max(p.height, t.height) * 3 &&
-          t.rect[1] < p.rect[3] &&
-          t.rect[3] > p.rect[1]
+          ((t.rect[1] < p.rect[3] && t.rect[3] > p.rect[1]) ||
+            // A one-letter rotated axis can fit between neighboring ticks.
+            // Require the same repeated tick column on both sides, within
+            // the existing local label margin; distant rotated prose stays out.
+            [true, false].every((above) =>
+              columns.some(
+                (q) =>
+                  Math.abs(q.rect[2] - p.rect[2]) < p.height * 0.6 &&
+                  (above ? q.rect[3] <= t.rect[1] : q.rect[1] >= t.rect[3]) &&
+                  (above ? t.rect[1] - q.rect[3] : q.rect[1] - t.rect[3]) <
+                    Math.max(p.height, t.height) * 3
+              )
+            ))
       )
   )
   // Script fragments can sit just beyond the main rotated baseline. They must
@@ -47,7 +58,7 @@ export function nativeAttachedPlotLabels(page, figure, captions, tables, rules, 
   for (let pass = 0; pass < source.length; pass++) {
     const added = source.filter(
       (t) =>
-        !t.horizontal &&
+        t.horizontal === false &&
         !axes.includes(t) &&
         t.rect[2] <= bounds[0] &&
         t.rect[1] >= bounds[1] &&

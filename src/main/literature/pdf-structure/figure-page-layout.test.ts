@@ -82,6 +82,27 @@ it('ignores a tiny footer path that overlaps a publisher URL', () => {
   expect(figure.reason).toBeUndefined()
 })
 
+it('stops a lower figure from claiming graphics above an intervening figure caption', () => {
+  const source = {
+    ...page,
+    graphicsBounds: [
+      graphic('image', [0.1, 0.1, 0.9, 0.18]),
+      graphic('image', [0.1, 0.19, 0.9, 0.27]),
+      graphic('image', [0.1, 0.31, 0.9, 0.38]),
+      graphic('image', [0.1, 0.39, 0.9, 0.46]),
+      graphic('image', [0.1, 0.47, 0.9, 0.54])
+    ]
+  }
+  const captions = [
+    { page: 1, lines: ['Figure 1. Upper panel'], rect: [50, 245, 550, 265] },
+    { page: 1, lines: ['Figure 2. Lower panel'], rect: [50, 500, 550, 520] }
+  ]
+  const figures = associateFigures(source, captions)
+  expect(figures).toHaveLength(2)
+  expect(figures[1].rect[1]).toBeGreaterThan(210)
+  expect(figures[1].rect[3]).toBeLessThan(500)
+})
+
 it('drops an unresolved duplicate when an adjacent page resolved the caption', () => {
   const caption = {
     page: 12,

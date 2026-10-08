@@ -90,6 +90,7 @@
     ],
     "contract": [],
     "consumer": [
+      "src/renderer/src/pages/workspace/project-file-mention.interaction.test.tsx",
       "src/renderer/src/lib/acp/runtime-observer.test.ts",
       "src/renderer/src/lib/acp/runtime-writer-takeover.test.ts",
       "src/renderer/src/App.test.tsx",

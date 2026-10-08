@@ -89,11 +89,143 @@ function closedCellParts(item, glyphs, first, scale, context, frames) {
   return parts.length === boundaries.length + 1 && parts.every(Boolean) ? parts : undefined
 }
 
+// Independent text operations can be joined into one PDF.js item. Observe their
+// explicit text/graphics positions only; the numeric splitter retains its own
+// eligibility rules and never uses this observation to infer a column.
+function positionedNativeGlyphs(operators) {
+  const points = new Map(),
+    stack = []
+  let matrix = [1, 0, 0, 1, 0, 0],
+    textMatrix = [...matrix]
+  let size = 0,
+    charSpace = 0,
+    wordSpace = 0,
+    hScale = 1,
+    rise = 0,
+    leading = 0
+  let x = 0,
+    y = 0,
+    lineX = 0,
+    lineY = 0,
+    active = false
+  const move = (dx, dy) => {
+    x = lineX += dx
+    y = lineY += dy
+  }
+  for (let run = 0; run < operators.fnArray.length; run++) {
+    const op = operators.fnArray[run],
+      args = operators.argsArray[run]
+    if (op === OPS.save || op === OPS.paintFormXObjectBegin) {
+      stack.push({ matrix, size, charSpace, wordSpace, hScale, rise, leading })
+      if (op === OPS.paintFormXObjectBegin && args[0])
+        matrix = Util.transform(matrix, Array.from(args[0]))
+    } else if (op === OPS.restore || op === OPS.paintFormXObjectEnd) {
+      const state = stack.pop()
+      if (state) ({ matrix, size, charSpace, wordSpace, hScale, rise, leading } = state)
+      else active = false
+    } else if (op === OPS.transform) matrix = Util.transform(matrix, args)
+    else if (op === OPS.beginText) {
+      textMatrix = [1, 0, 0, 1, 0, 0]
+      x = y = lineX = lineY = 0
+      active = true
+    } else if (op === OPS.endText) active = false
+    else if (op === OPS.setTextMatrix) {
+      textMatrix = Array.from(args)
+      x = y = lineX = lineY = 0
+    } else if (op === OPS.moveText) move(args[0], args[1])
+    else if (op === OPS.setLeadingMoveText) {
+      leading = -args[1]
+      move(args[0], args[1])
+    } else if (op === OPS.nextLine) move(0, -leading)
+    else if (op === OPS.setFont) size = args[1]
+    else if (op === OPS.setCharSpacing) charSpace = args[0]
+    else if (op === OPS.setWordSpacing) wordSpace = args[0]
+    else if (op === OPS.setHScale) hScale = args[0] / 100
+    else if (op === OPS.setTextRise) rise = args[0]
+    else if (op === OPS.setLeading) leading = args[0]
+    else if ([OPS.nextLineShowText, OPS.nextLineSetSpacingShowText, OPS.setGState].includes(op))
+      active = false
+    else if (op === OPS.showText) {
+      const transform = Util.transform(matrix, textMatrix),
+        glyphs = new Map()
+      const valid =
+        active &&
+        transform.every(Number.isFinite) &&
+        transform[0] > 0 &&
+        transform[3] > 0 &&
+        Math.abs(transform[1]) < 1e-8 &&
+        Math.abs(transform[2]) < 1e-8 &&
+        [size, charSpace, wordSpace, hScale, rise, x, y].every(Number.isFinite) &&
+        size > 0 &&
+        hScale > 0
+      for (const [index, glyph] of args[0].entries()) {
+        if (typeof glyph === 'number') {
+          x -= ((glyph * size) / 1000) * hScale
+          continue
+        }
+        if (!glyph || !Number.isFinite(glyph.width)) {
+          active = false
+          continue
+        }
+        const width = (glyph.width * size) / 1000
+        const start = [x, y + rise],
+          end = [x + width * hScale, y + rise]
+        if (valid) {
+          Util.applyTransform(start, transform)
+          Util.applyTransform(end, transform)
+          glyphs.set(index, {
+            start,
+            end,
+            axis: size * hScale * transform[0],
+            height: size * transform[3]
+          })
+        }
+        x += (width + charSpace + (glyph.isSpace ? wordSpace : 0)) * hScale
+      }
+      if (valid && active) points.set(run, glyphs)
+    }
+  }
+  return points
+}
+
+function observePositionedGlyphs(glyphs, item, points, scale) {
+  const first = glyphs[0],
+    start = points.get(first.run)?.get(first.glyphIndex)?.start
+  if (
+    !start ||
+    Math.abs(start[0] - item.transform[4]) > 0.02 ||
+    Math.abs(start[1] - item.transform[5]) > 0.02
+  )
+    return
+  const measured = []
+  for (const glyph of glyphs) {
+    const point = points.get(glyph.run)?.get(glyph.glyphIndex)
+    if (
+      !point ||
+      ![...point.start, ...point.end, point.axis, point.height].every(Number.isFinite) ||
+      Math.abs(point.start[1] - start[1]) > 0.02 ||
+      Math.abs(point.end[1] - start[1]) > 0.02 ||
+      Math.abs(point.axis - item.transform[0]) > 0.02 ||
+      Math.abs(point.height - item.height) > 0.02
+    )
+      return
+    measured.push({
+      ...glyph,
+      start: first.start + (point.start[0] - start[0]) / scale,
+      end: first.start + (point.end[0] - start[0]) / scale
+    })
+  }
+  if (measured.some((g, n) => g.end < g.start || (n && g.start < measured[n - 1].start - 0.001)))
+    return
+  return measured
+}
+
 // Recover separate numeric entries from one PDF.js item using the original TJ
 // advances, not equal-width guesses. Bounded count/fraction, header and statistic
 // patterns are eligible; incompatible font streams or geometry remain untouched.
 export function splitPdfNumericRuns(content, operators, context) {
   const observeWhitespace = context?.observeWhitespace
+  const positioned = observeWhitespace ? positionedNativeGlyphs(operators) : undefined
   const frames =
     context?.viewport?.rotation === 0
       ? [...closedTextFrames(context), ...(context?.provenFrames ?? [])]
@@ -276,35 +408,40 @@ export function splitPdfNumericRuns(content, operators, context) {
         item.str.trim().match(adjoiningIntervals)
       let separateRuns = false
       if (glyphs.some((g) => g.run !== first.run)) {
-        if (!statistics && !frames.length) return [item]
-        const split = statistics
-            ? statistics[1].replace(/\s/g, '').length
-            : glyphs.findIndex((g) => g.run !== first.run),
-          second = glyphs[split]
-        if (
-          second.run === first.run ||
-          glyphs.some(
-            (g, n) => g.size !== first.size || g.run !== (n < split ? first.run : second.run)
+        const observed =
+          observeWhitespace && observePositionedGlyphs(glyphs, item, positioned, scale)
+        if (observed) glyphs = observed
+        else {
+          if (!statistics && !frames.length) return [item]
+          const split = statistics
+              ? statistics[1].replace(/\s/g, '').length
+              : glyphs.findIndex((g) => g.run !== first.run),
+            second = glyphs[split]
+          if (
+            second.run === first.run ||
+            glyphs.some(
+              (g, n) => g.size !== first.size || g.run !== (n < split ? first.run : second.run)
+            )
           )
-        )
-          return [item]
-        // PDF.js may combine two independent showText runs on one baseline.
-        // Their measured glyph widths and the combined item extent determine
-        // the sole intervening gap; no equal-width character estimate is used.
-        const secondStart = first.start + item.width / scale - (glyphs.at(-1).end - second.start)
-        const gap = (secondStart - glyphs[split - 1].end) * scale
-        if (gap < 0 || (!frames.length && gap > item.height * 2)) return [item]
-        if (intervalStatistic.test(item.str.trim()) && gap < item.height * 0.2) return [item]
-        glyphs = glyphs.map((g, n) =>
-          n < split
-            ? g
-            : {
-                ...g,
-                start: g.start + secondStart - second.start,
-                end: g.end + secondStart - second.start
-              }
-        )
-        separateRuns = true
+            return [item]
+          // PDF.js may combine two independent showText runs on one baseline.
+          // Their measured glyph widths and the combined item extent determine
+          // the sole intervening gap; no equal-width character estimate is used.
+          const secondStart = first.start + item.width / scale - (glyphs.at(-1).end - second.start)
+          const gap = (secondStart - glyphs[split - 1].end) * scale
+          if (gap < 0 || (!frames.length && gap > item.height * 2)) return [item]
+          if (intervalStatistic.test(item.str.trim()) && gap < item.height * 0.2) return [item]
+          glyphs = glyphs.map((g, n) =>
+            n < split
+              ? g
+              : {
+                  ...g,
+                  start: g.start + secondStart - second.start,
+                  end: g.end + secondStart - second.start
+                }
+          )
+          separateRuns = true
+        }
       }
       if (scale <= 0 || Math.abs((glyphs.at(-1).end - first.start) * scale - item.width) > 0.02)
         return [item]

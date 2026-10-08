@@ -207,14 +207,22 @@ export function nativeTableDividerGraphic(page, rect, tables, rules) {
     const horizontals = rules.filter(
       (r) =>
         r[1] === r[3] &&
-        Math.abs(r[0] - table[0]) < 0.02 &&
-        Math.abs(r[2] - table[2]) < 0.02 &&
+        // A refined crop can retain a small outer margin around the printed
+        // fence. The source rules themselves must still share exact endpoints.
+        Math.abs(r[0] - table[0]) <= ux * 2 &&
+        Math.abs(r[2] - table[2]) <= ux * 2 &&
         r[1] >= table[1] - uy &&
         r[1] <= table[3] + 0.02
     )
     if (
       new Set(horizontals.map((r) => r[1])).size < 3 ||
-      !horizontals.some((r) => Math.abs(r[1] - table[3]) < 0.02)
+      horizontals.some(
+        (r) =>
+          Math.abs(r[0] - horizontals[0][0]) > 0.02 || Math.abs(r[2] - horizontals[0][2]) > 0.02
+      ) ||
+      // Painted stroke margins can place the crop just below the rule's
+      // centreline. This does not license a remotely closing table boundary.
+      !horizontals.some((r) => Math.abs(r[1] - table[3]) <= Math.max(0.02, uy * 0.2))
     )
       return false
     const native = rules.filter(

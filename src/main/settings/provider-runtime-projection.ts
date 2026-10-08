@@ -253,11 +253,14 @@ class ProviderRuntimeProjectionOwner {
     }
 
     const model = modelOverride ?? provider.model
+    // Hand-entered Claude subscription overrides retain their engine-specific context syntax.
     const contextWindow =
       provider.type === 'custom'
         ? resolveCustomModelContextWindow(provider.contextWindow)
         : isClaudeSubscriptionProvider(provider.type)
-          ? resolveModelContextWindow('anthropic', model)
+          ? /\[1m\]$/i.test(model ?? '')
+            ? 1_000_000
+            : resolveModelContextWindow('anthropic', model)
           : undefined
     return {
       type: provider.type,

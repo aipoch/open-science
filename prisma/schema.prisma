@@ -61,7 +61,6 @@ model Bookmark {
 
   @@index([projectId, sessionId, createdAt, id])
   @@index([projectId, sessionId, sourceKind, sourceId])
-  @@map("bookmarks")
 }
 
 // Personal-database PDF identity. Only verified immutable bytes may acquire this identity.
@@ -75,7 +74,6 @@ model PdfDocument {
   annotationDocuments PdfAnnotationDocument[]
 
   @@unique([checksum, sizeBytes])
-  @@map("pdf_documents")
 }
 
 // Legacy groups remain separate until conflicting native edits have been reconciled.
@@ -93,7 +91,6 @@ model PdfAnnotationDocument {
   aliases     PdfAnnotationAlias[]
 
   @@index([pdfDocumentId])
-  @@map("pdf_annotation_documents")
 }
 
 model PdfAnnotationSourceBinding {
@@ -111,7 +108,6 @@ model PdfAnnotationSourceBinding {
 
   @@index([projectId, sourceFileId, versionId])
   @@index([documentId])
-  @@map("pdf_annotation_sources")
 }
 
 // Aliases preserve old links after explicit duplicate reconciliation. A null target is a deletion.
@@ -122,7 +118,6 @@ model PdfAnnotationAlias {
   document     PdfAnnotationDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
 
   @@index([annotationId])
-  @@map("pdf_annotation_aliases")
 }
 
 // PDF annotations belong to a shared document. Original source columns record provenance. sessionId records creation context only.
@@ -158,7 +153,6 @@ model PdfAnnotation {
   @@index([projectId, sourceKind, sourceFileId, versionId, createdAt, id])
   @@index([sourceKind, sourceFileId, versionId, createdAt, id])
   @@index([documentId, createdAt, id])
-  @@map("pdf_annotations")
 }
 
 // Receipt survives individual annotation deletion, so exports can remove only imported originals.
@@ -176,7 +170,6 @@ model PdfAnnotationImport {
 
   @@index([projectId, sessionId])
   @@index([sourceKind, sourceFileId, versionId])
-  @@map("pdf_annotation_imports")
 }
 
 // Monotonic allocator for the app-wide human-facing Session number. The row is never deleted when

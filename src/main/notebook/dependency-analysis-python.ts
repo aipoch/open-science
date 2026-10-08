@@ -252,6 +252,26 @@ const pyChildren = (node: PyNode): PyNode[] => {
 
 const walkPy = (node: PyNode): PyNode[] => [node, ...pyChildren(node).flatMap(walkPy)]
 
+// The public periodogram detrend argument may invoke arbitrary user code. A
+// known ndarray result is independent of proving its inputs or effects complete.
+// Keep this gate shared by variable and file analysis, including positional calls.
+const pythonPeriodogramHasClosedDetrend = (node: PyNode): boolean => {
+  const args = Array.isArray(node.args) ? node.args : []
+  if (
+    args.some((argument) => argument.type === 'Starred') ||
+    (node.keywords ?? []).some((keyword) => !keyword.arg)
+  )
+    return false
+  const detrend =
+    (node.keywords ?? []).find((keyword) => keyword.arg === 'detrend')?.value ?? args[4]
+  return (
+    !detrend ||
+    (detrend.type === 'Constant' &&
+      ((detrend.constKind === 'bool' && detrend.value === false) ||
+        (detrend.constKind === 'str' && ['constant', 'linear'].includes(String(detrend.value)))))
+  )
+}
+
 const pythonRedirectsConsole = (node: PyNode): boolean =>
   (node.type === 'Call' &&
     ['redirect_stdout', 'redirect_stderr'].includes(
@@ -3380,6 +3400,33 @@ class Analyzer extends NodeVisitor {
     }
     if (owner === 'python.string') return 'python.string'
     if (owner === 'python.numbers') return node.slice?.type === 'Slice' ? owner : 'python.scalar'
+    if (owner === 'xarray.Dataset') {
+      const selector = node.slice
+      const staticString = (value: PyNode | null | undefined): boolean =>
+        value?.type === 'Constant' && value.constKind === 'str'
+      if (staticString(selector)) return 'xarray.DataArray'
+      if (
+        (selector?.type === 'List' || selector?.type === 'Tuple') &&
+        (selector.elts ?? []).length > 0 &&
+        selector.elts!.every(staticString)
+      )
+        return 'xarray.Dataset'
+    }
+    if (owner === 'xarray.DataArray' && node.slice) return 'xarray.DataArray'
+    if (owner === 'tifffile.TiffPageSequence') return 'tifffile.TiffPage'
+    if (
+      owner !== undefined &&
+      ['anndata.AxisArrays', 'anndata.Layers', 'anndata.PairwiseArrays'].includes(owner)
+    )
+      return 'anndata.ArrayLike'
+    if (
+      owner !== undefined &&
+      ['anndata.BackedAxisArrays', 'anndata.BackedLayers', 'anndata.BackedPairwiseArrays'].includes(
+        owner
+      )
+    )
+      return 'anndata.ArrayLike'
+    if (owner === 'anndata.Unstructured') return 'python.container'
     if (
       owner === 'numpy.ndarray' &&
       node.slice &&
@@ -4088,6 +4135,32 @@ class Analyzer extends NodeVisitor {
     }
   }
 
+  specializeScientificCallEffect(
+    effect: PythonLibraryMethodEffect,
+    node: PyNode,
+    canonicalName: string
+  ): PythonLibraryMethodEffect {
+    if (canonicalName === 'scipy.signal.periodogram') {
+      return pythonPeriodogramHasClosedDetrend(node)
+        ? { ...effect, callbackKeywords: undefined }
+        : { ...effect, effect: 'unknown', scopedOpaque: true, externalState: true }
+    }
+    if (!['scanpy.read_h5ad', 'anndata.read_h5ad', 'anndata.io.read_h5ad'].includes(canonicalName))
+      return effect
+    // read_h5ad accepts backed as its second positional argument. Expanded
+    // kwargs can supply it too, so an absent explicit option is not proof of
+    // an in-memory object when **options is present.
+    if (node.keywords?.some((keyword) => !keyword.arg))
+      return { ...effect, returnType: 'anndata.AnnDataBacked' }
+    const backed =
+      node.keywords?.find((keyword) => keyword.arg === 'backed')?.value ??
+      (Array.isArray(node.args) ? node.args[1] : undefined)
+    if (!backed) return effect
+    if (backed.type === 'Constant' && (backed.value === false || backed.constKind === 'none'))
+      return effect
+    return { ...effect, returnType: 'anndata.AnnDataBacked' }
+  }
+
   libraryCallEffect(node: PyNode): PythonLibraryMethodEffect | undefined {
     const serializedType = this.serializedReadType(node)
     if (serializedType) return { effect: 'read', returnType: serializedType }
@@ -4134,7 +4207,13 @@ class Analyzer extends NodeVisitor {
       const module = modules[0]?.[0]
       if (!module) return undefined
       const effect = pythonLibraryMethodEffect(module, canonical.slice(module.length + 1))
-      return effect ? this.specializeLibraryReturn(effect, node) : undefined
+      return effect
+        ? this.specializeScientificCallEffect(
+            this.specializeLibraryReturn(effect, node),
+            node,
+            canonical
+          )
+        : undefined
     }
     if (!isPyNode(node.func) || node.func.type !== 'Attribute') return undefined
     let receiverNode = node.func.value as PyNode
@@ -4156,7 +4235,37 @@ class Analyzer extends NodeVisitor {
     if (!typeName) return undefined
     const member = node.func.attr ?? ''
     const effect = pythonLibraryMethodEffect(typeName, member)
-    const registered = effect ? this.specializeLibraryReturn(effect, node) : undefined
+    const registered = effect
+      ? this.specializeScientificCallEffect(
+          this.specializeLibraryReturn(effect, node),
+          node,
+          `${typeName}.${member}`
+        )
+      : undefined
+    const scanpyCopyInputType =
+      Array.isArray(node.args) && node.args.length > 0
+        ? (this.libraryTypeName(node.args[0]) ??
+          (node.args[0]?.type === 'Call'
+            ? this.libraryCallEffect(node.args[0])?.returnType
+            : undefined))
+        : undefined
+    const scanpyCopyRequested =
+      registered !== undefined &&
+      typeName.startsWith('scanpy.') &&
+      node.keywords?.some(
+        (keyword) =>
+          keyword.arg === 'copy' &&
+          keyword.value.type === 'Constant' &&
+          keyword.value.value === true
+      )
+    if (scanpyCopyRequested)
+      return scanpyCopyInputType === 'anndata.AnnData'
+        ? {
+            ...registered,
+            returnType: 'anndata.AnnData',
+            possiblyMutatesPositionalArgument: undefined
+          }
+        : { ...registered, possiblyMutatesPositionalArgument: undefined }
     if (
       registered &&
       typeName === 'numpy.ndarray' &&
@@ -4390,8 +4499,24 @@ class Analyzer extends NodeVisitor {
     collectResultPaths(target, [])
     const nestedUnpacking =
       resultPaths.length === targetNames.length && resultPaths.some((path) => path.length > 1)
+    const periodogramResult =
+      value?.type === 'Call' &&
+      (this.serializationCallName(value) === 'scipy.signal.periodogram' ||
+        (value.func?.type === 'Name' &&
+          this.importedFunctions.get(value.func.id ?? '') ===
+            'python-callable:scipy.signal.periodogram'))
+    const unsupportedPeriodogramUnpacking =
+      periodogramResult &&
+      !(
+        (target?.type === 'Tuple' || target?.type === 'List') &&
+        target.elts?.length === 2 &&
+        target.elts.every((element) => element.type === 'Name')
+      )
+    if (unsupportedPeriodogramUnpacking) this.unknown.add('scoped-opaque-call')
     if (value?.type === 'Call') {
-      this.callResultNames.set(value, targetNames)
+      // periodogram returns a tuple, not its first array. Avoid certifying
+      // single/extended/nested assignment shapes without a tuple value model.
+      this.callResultNames.set(value, unsupportedPeriodogramUnpacking ? [] : targetNames)
       if (nestedUnpacking) this.callResultPaths.set(value, resultPaths)
     }
     const aliasSource =
@@ -4459,7 +4584,9 @@ class Analyzer extends NodeVisitor {
       (value?.type === 'Attribute' ? this.libraryPropertyEffect(value)?.returnType : undefined) ??
       (value?.type === 'Subscript' ? this.librarySubscriptType(value) : undefined) ??
       (arithmeticValue ? this.arithmeticResultType(value) : undefined)
-    const destructuredReturnTypes = libraryEffect?.destructuredReturnTypes
+    const destructuredReturnTypes = unsupportedPeriodogramUnpacking
+      ? undefined
+      : libraryEffect?.destructuredReturnTypes
     // Preserve fresh containers and scalars in simultaneous unpacking. Resolve all
     // RHS types before rebinding any target (including swaps and repeated names).
     const literalParts =
@@ -4495,6 +4622,7 @@ class Analyzer extends NodeVisitor {
       value?.type === 'Name' && this.freshCalculatedNames.has(value.id ?? '')
     const freshCallResult =
       libraryEffect?.returnsFreshValue &&
+      !unsupportedPeriodogramUnpacking &&
       value &&
       !(value.keywords ?? []).some(
         (keyword) => !keyword.arg || keyword.arg === libraryEffect.mutatesKeyword
@@ -4573,6 +4701,10 @@ class Analyzer extends NodeVisitor {
         if (typeName && PYTHON_LIBRARY_EFFECTS[typeName]) {
           this.localLibraryTypes.set(targetName, typeName)
           if (typeName === 'python.container') this.builtinContainers.add(targetName)
+          if (freshCallResult) {
+            this.freshCalculatedNames.add(targetName)
+            this.typeBindings.push({ target: targetName, typeName, argumentNames: [] })
+          }
         }
       }
     } else if (unpackedTypes.length) {
@@ -5973,6 +6105,18 @@ class Analyzer extends NodeVisitor {
     }
     const libraryEffect = this.libraryCallEffect(node)
     if (
+      libraryEffect &&
+      this.serializationCallName(node) === 'scipy.signal.periodogram' &&
+      !pythonPeriodogramHasClosedDetrend(node)
+    ) {
+      // SciPy supplies an input-backed segment to arbitrary detrend callbacks.
+      // Typed fresh outputs cannot prove that an earlier observer of x is valid.
+      const input =
+        (node.keywords ?? []).find((keyword) => keyword.arg === 'x')?.value ??
+        (Array.isArray(node.args) ? node.args[0] : undefined)
+      for (const name of this.expressionVisibleRoots(input)) this.possiblyMutated.add(name)
+    }
+    if (
       !libraryEffect &&
       node.func?.type === 'Attribute' &&
       isPyNode(node.func.value) &&
@@ -6794,6 +6938,24 @@ const pythonStaticString = (
     const index = staticInteger(node.slice)
     if (collection?.kind === 'sequence' && index !== undefined && Number.isSafeInteger(index))
       return collection.values.at(index)
+    if (
+      node.value.type === 'Subscript' &&
+      isPyNode(node.value.value) &&
+      index !== undefined &&
+      Number.isSafeInteger(index)
+    ) {
+      const rows = pythonStaticStringCollection(
+        node.value.value,
+        bindings,
+        context?.collections ?? new Map(),
+        context
+      )
+      const rowIndex = staticInteger(node.value.slice)
+      // Resolve only the leaf string; selecting a row does not create a
+      // collection binding or add rows to the cross-cell file context.
+      if (rows?.kind === 'rows' && rowIndex !== undefined && Number.isSafeInteger(rowIndex))
+        return rows.rows.at(rowIndex)?.at(index)
+    }
     return undefined
   }
   if (node.type === 'JoinedStr') {
@@ -7470,9 +7632,13 @@ const analyzePythonFileAccessTree = (
   // effects so later write_h5ad calls remain attributable.
   const inMemoryMutationTypes = new Set(['anndata.AnnData'])
   const activeStaticLoops: Array<{ names: Set<string>; invalidated: boolean }> = []
-  const invalidateStaticValue = (name: string | undefined, taintIdentity = true): void => {
+  const invalidateStaticValue = (
+    name: string | undefined,
+    taintIdentity = true,
+    shadowHelper = true
+  ): void => {
     if (!name) return
-    if (isHelperName(name)) shadowedHelperNames.add(name)
+    if (shadowHelper && isHelperName(name)) shadowedHelperNames.add(name)
     const affectedNames = new Set([name])
     for (const affected of affectedNames) {
       for (const { target, source } of possibleAliases) {
@@ -7594,17 +7760,27 @@ const analyzePythonFileAccessTree = (
     return [canonicalRoot, ...members].filter(Boolean).join('.')
   }
 
+  const isBuiltinOpenCall = (node: PyNode): boolean => {
+    if (pythonTaintedNamespaces.has('*') || pythonTaintedNamespaces.has('builtins')) return false
+    const rawName = pythonDottedName(node.func)
+    if (canonicalCallName(node) === 'builtins.open') {
+      const root = rawName?.split('.')[0]
+      return root !== undefined && importedNames.get(root)?.split('.')[0] === 'builtins'
+    }
+    return (
+      node.func?.type === 'Name' &&
+      rawName === 'open' &&
+      !shadowedStaticCalls.has('open') &&
+      !context?.resolvedKernelNames?.includes('open')
+    )
+  }
+
   const fileConnectionPath = (node: PyNode | null | undefined): string | undefined => {
     if (node?.type === 'Name' && node.id) return fileConnections.get(node.id)
     if (node?.type !== 'Call') return undefined
     const name = canonicalCallName(node)
-    const rawName = pythonDottedName(node.func)
     const args = Array.isArray(node.args) ? node.args : []
-    if (
-      (rawName === 'open' && node.func?.type === 'Name') ||
-      name === 'builtins.open' ||
-      ['gzip.open', 'bz2.open', 'lzma.open'].includes(name ?? '')
-    ) {
+    if (isBuiltinOpenCall(node) || ['gzip.open', 'bz2.open', 'lzma.open'].includes(name ?? '')) {
       return resolveStaticString(
         (node.keywords ?? []).find((keyword) => ['file', 'filename'].includes(keyword.arg ?? ''))
           ?.value ?? args[0],
@@ -8218,7 +8394,7 @@ const analyzePythonFileAccessTree = (
       )
       return
     }
-    if (node.func?.type === 'Name' && node.func.id === 'open' && !shadowedStaticCalls.has('open')) {
+    if (isBuiltinOpenCall(node)) {
       const args = Array.isArray(node.args) ? node.args : []
       recordModeFileAccess(
         (node.keywords ?? []).find((keyword) => ['file', 'filename'].includes(keyword.arg ?? ''))
@@ -8320,6 +8496,13 @@ const analyzePythonFileAccessTree = (
       member
     )
     const libraryFileEffect = libraryMethodEffect?.file
+    if (canonicalName === 'scipy.signal.periodogram' && !pythonPeriodogramHasClosedDetrend(node)) {
+      // A callback can read/write files or mutate the supplied array. Keep the
+      // known return types, but do not certify its source I/O from the call name.
+      unresolvedReads = true
+      unresolvedWrites = true
+      unsupportedExternalState = true
+    }
     if (canonicalName === 'sqlite3.connect') {
       const args = Array.isArray(node.args) ? node.args : []
       const targetNode =
@@ -8643,6 +8826,7 @@ const analyzePythonFileAccessTree = (
       // images. Keep the explicit root as evidence, but do not invent the
       // companion filenames or claim complete coverage.
       recordFileAccess('read', path)
+      directoryStateRead = true
       if (!(loadImages?.type === 'Constant' && loadImages.value === false) && sourceImagePath)
         recordFileAccess('read', sourceImagePath)
       unresolvedReads = true
@@ -8809,6 +8993,23 @@ const analyzePythonFileAccessTree = (
       return
     }
 
+    if (canonicalName === 'SimpleITK.ImageSeriesReader.GetGDCMSeriesFileNames') {
+      // DICOM series discovery returns a list of slice paths from a directory.
+      // The directory root is useful lineage evidence, but static analysis
+      // cannot enumerate the selected series or account for GDCM metadata, so
+      // preserve it as a partial directory read.
+      const args = Array.isArray(node.args) ? node.args : []
+      const directoryNode =
+        (node.keywords ?? []).find((keyword) => keyword.arg === 'directory')?.value ?? args[0]
+      const directory = resolveStaticString(directoryNode, bindings)
+      if (directory && !isExternalNotebookPath(directory)) recordFileAccess('read', directoryNode)
+      else unresolvedReads = true
+      directoryStateRead = true
+      unresolvedReads = true
+      unsupportedExternalState = true
+      return
+    }
+
     if (canonicalName === 'pyarrow.parquet.read_table') {
       const args = Array.isArray(node.args) ? node.args : []
       const keywords = node.keywords ?? []
@@ -8880,6 +9081,7 @@ const analyzePythonFileAccessTree = (
         // companion files cannot be enumerated statically, so retain it while
         // keeping the overall read state partial below.
         recordFileAccess('read', pathNode)
+        directoryStateRead = true
       } else if (
         ['dask.dataframe.read_parquet', 'dask.dataframe.read_csv'].includes(canonicalName)
       ) {
@@ -8889,8 +9091,87 @@ const analyzePythonFileAccessTree = (
           (node.keywords ?? []).find((entry) => entry.arg === parameter)?.value ?? args[0]
         const path = resolveStaticString(fileArgument, bindings)
         if (path && !isExternalNotebookPath(path)) recordFileAccess('read', fileArgument)
+      } else {
+        const args = Array.isArray(node.args) ? node.args : []
+        const pathNode =
+          (node.keywords ?? []).find((entry) =>
+            ['urlpath', 'path', 'url'].includes(entry.arg ?? '')
+          )?.value ?? args[0]
+        const filesystemNode = (node.keywords ?? []).find((entry) =>
+          ['filesystem', 'fs', 'storage_options'].includes(entry.arg ?? '')
+        )?.value
+        const protocolNode = (node.keywords ?? []).find((entry) => entry.arg === 'protocol')?.value
+        const filesystemIsDefault =
+          !filesystemNode ||
+          (filesystemNode.type === 'Constant' && filesystemNode.constKind === 'none')
+        const protocol = protocolNode ? resolveStaticString(protocolNode, bindings) : undefined
+        const protocolIsLocal = !protocolNode || protocol === 'file' || protocol === 'local'
+        const fsspecKnownKeywords = new Set([
+          'urlpath',
+          'path',
+          'url',
+          'filesystem',
+          'fs',
+          'storage_options',
+          'protocol',
+          'mode',
+          'compression',
+          'encoding',
+          'errors',
+          'auto_mkdir',
+          'num',
+          'expand',
+          'name_function',
+          'check',
+          'create',
+          'missing_exceptions',
+          'alternate_root'
+        ])
+        const hasUnknownFsspecKeyword = (node.keywords ?? []).some(
+          (entry) => entry.arg === null || !fsspecKnownKeywords.has(entry.arg ?? '')
+        )
+        if (filesystemIsDefault && protocolIsLocal && !hasUnknownFsspecKeyword) {
+          if (canonicalName === 'fsspec.get_mapper') {
+            // get_mapper has no read/write mode; kwargs configure the filesystem.
+            // A later key assignment or Zarr writer establishes output evidence.
+            recordFileAccess('read', pathNode)
+            directoryStateRead = true
+          } else {
+            const modeNode =
+              (node.keywords ?? []).find((entry) => entry.arg === 'mode')?.value ?? args[1]
+            const mode = modeNode ? resolveStaticString(modeNode, bindings) : 'rb'
+            const collection =
+              canonicalName === 'fsspec.open_files'
+                ? pythonStaticStringCollection(pathNode, bindings, collections)
+                : undefined
+            const paths =
+              collection?.kind === 'sequence'
+                ? collection.values
+                : collection?.kind === 'mapping'
+                  ? collection.entries.map(([, value]) => value)
+                  : undefined
+            if (paths?.length) {
+              for (const path of paths)
+                recordModeFileAccess(
+                  { type: 'Constant', constKind: 'str', value: path, _fields: [] },
+                  modeNode,
+                  mode ?? 'rb'
+                )
+            } else recordModeFileAccess(pathNode, modeNode, mode ?? 'rb')
+          }
+        } else if (canonicalName === 'fsspec.open' || canonicalName === 'fsspec.open_files') {
+          // Unknown options or filesystem identity also prevent proving that
+          // no output will be materialized when the deferred handle is used.
+          unresolvedWrites = true
+        }
       }
       unresolvedReads = true
+      if (canonicalName === 'fsspec.get_mapper') {
+        directoryStateRead = true
+        // A mapper can be read or used as a Zarr output store;
+        // static analysis cannot prove which keys will be materialized.
+        unresolvedWrites = true
+      }
       unsupportedExternalState = true
       return
     }
@@ -8921,16 +9202,6 @@ const analyzePythonFileAccessTree = (
           (Array.isArray(node.args) ? node.args[0] : undefined),
         'r'
       )
-      return
-    }
-
-    if (rawName === 'open' || canonicalName === 'builtins.open') {
-      const args = Array.isArray(node.args) ? node.args : []
-      const modeNode =
-        (node.keywords ?? []).find((keyword) => keyword.arg === 'mode')?.value ?? args[1]
-      const pathNode =
-        (node.keywords ?? []).find((keyword) => keyword.arg === 'file')?.value ?? args[0]
-      recordModeFileAccess(pathNode, modeNode, 'r')
       return
     }
 
@@ -9707,6 +9978,9 @@ const analyzePythonFileAccessTree = (
           (helperScopeDepth === 0 || helperScopes.at(-1)?.get(node.name)?.function !== node)
         )
           shadowedHelperNames.add(node.name)
+        // Definition identity is guarded above. Forget any old static data
+        // without shadowing the current helper or undoing an earlier shadow.
+        invalidateStaticValue(node.name, false, false)
         importedNames.delete(node.name)
         scientificObjectTypes.delete(node.name)
       }

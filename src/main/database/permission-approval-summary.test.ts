@@ -1,3 +1,4 @@
+import { createDatabaseAtReleasedManifest } from '../../../test/fixtures/application-database'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -14,7 +15,7 @@ it('upgrades historical permissions without inferring descriptions or changing a
   const root = await mkdtemp(join(tmpdir(), 'permission-summary-migration-'))
   const client = createProjectDbClient(root)
   try {
-    await migrateApplicationDatabase(client)
+    await createDatabaseAtReleasedManifest(client)
     const registry = await createPermissionGrantRegistry({ getClient: async () => client })
     const capability = capabilityFromLegacyCategory(
       commandPrefixPermissionCategory(['git', 'status'])!
@@ -22,10 +23,8 @@ it('upgrades historical permissions without inferring descriptions or changing a
     const grant = await registry.remember({ capability, scope: { kind: 'global' } })
     await client.$executeRawUnsafe('ALTER TABLE "PermissionGrant" DROP COLUMN "approvalSummary"')
     await client.$executeRawUnsafe('DROP TABLE IF EXISTS "LiteratureMetadataCommitReceipt"')
-    await client.$executeRawUnsafe('ALTER TABLE "Session" DROP COLUMN "researchMembershipJson"')
-    await client.$executeRawUnsafe('ALTER TABLE "Session" DROP COLUMN "importedResearchId"')
     await client.$executeRawUnsafe(
-      "DELETE FROM \"_open_science_migrations\" WHERE id IN ('0032_permission_approval_summary', '0033_compute_job_harvest_retry', '0034_background_result_delivery', '0035_literature_pdf_provenance', '0036_content_verification_observation', '0037_literature_inbox_integrity', '0038_literature_search_text', '0039_literature_metadata_commit_receipt', '0040_literature_collection_revision', '0041_bookmarks', '0042_classification_usage', '0043_pdf_annotations', '0044_literature_smart_collections', '0045_literature_smart_pause_run', '0046_journal_attributes', '0047_session_replay', '0048_pdf_annotation_sharing', '0049_session_research_membership')"
+      "DELETE FROM \"_open_science_migrations\" WHERE id IN ('0032_permission_approval_summary', '0033_compute_job_harvest_retry', '0034_background_result_delivery', '0035_literature_pdf_provenance', '0036_content_verification_observation', '0037_literature_inbox_integrity', '0038_literature_search_text', '0039_literature_metadata_commit_receipt', '0040_literature_collection_revision', '0041_bookmarks', '0042_classification_usage', '0043_pdf_annotations', '0044_literature_smart_collections', '0045_literature_smart_pause_run', '0046_journal_attributes', '0047_session_replay', '0048_pdf_annotation_sharing')"
     )
     const before = await client.$queryRawUnsafe(
       'SELECT id, capabilityKind, capabilityKey, qualifierMode, qualifierValue, scopeKind, projectId, sessionId, fingerprint, revision, createdAt FROM "PermissionGrant"'
@@ -51,7 +50,8 @@ it('upgrades historical permissions without inferring descriptions or changing a
         '0046_journal_attributes',
         '0047_session_replay',
         '0048_pdf_annotation_sharing',
-        '0049_session_research_membership'
+        '0049_pascalcase_table_names',
+        '0050_session_research_membership'
       ]
     })
     const after = await client.$queryRawUnsafe<Array<Record<string, unknown>>>(

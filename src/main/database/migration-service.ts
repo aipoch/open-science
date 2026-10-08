@@ -1,4 +1,5 @@
-import { sessionResearchMembershipMigration } from './migrations/0049-session-research-membership'
+import { sessionResearchMembershipMigration } from './migrations/0050-session-research-membership'
+import { pascalcaseTableNamesMigration } from './migrations/0049-pascalcase-table-names'
 import { pdfAnnotationSharingMigration } from './migrations/0048-pdf-annotation-sharing'
 import { journalAttributesMigration } from './migrations/0046-journal-attributes'
 import { sessionReplayMigration } from './migrations/0047-session-replay'
@@ -908,6 +909,18 @@ const MIGRATION_MANIFEST = [
       pdfAnnotationSharingMigration.statements,
       pdfAnnotationSharingMigration.verifiers,
       pdfAnnotationSharingMigration.operations
+    ),
+    foreignKeysDuringApply: 'disabled',
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...pascalcaseTableNamesMigration,
+    checksum: checksumMigrationPayload(
+      pascalcaseTableNamesMigration.id,
+      pascalcaseTableNamesMigration.statements,
+      pascalcaseTableNamesMigration.verifiers,
+      pascalcaseTableNamesMigration.operations
     ),
     foreignKeysDuringApply: 'disabled',
     backupOnApply: 'required',
@@ -1937,10 +1950,11 @@ const applyManifestMigration = async (
         'PRAGMA table_info("pdf_annotations")'
       )
       if (columns.some((column) => column.name === 'documentId')) {
-        await verifyCurrentRuntimeSchemaTables(targetClient, [
-          'pdf_annotations',
-          'pdf_annotation_imports'
-        ])
+        await verifyCurrentRuntimeSchemaTables(
+          targetClient,
+          ['pdf_annotations', 'pdf_annotation_imports'],
+          pdfAnnotationSharingMigration.statements
+        )
         return
       }
     }
@@ -2295,6 +2309,23 @@ const migrateApplicationDatabaseWithManifest = async (
 
   let nextIndex = appliedCount
   if (nextIndex === 0) {
+    // These names first shipped with a ledgered migration. Treat a missing ledger as
+    // corruption/development data, not a pre-ledger release that can safely replay history.
+    const renamedTables = new Set<string>(
+      pascalcaseTableNamesMigration.verifiers.flatMap((verifier) =>
+        verifier.kind === 'table-exists' ? [verifier.table] : []
+      )
+    )
+    const tables = await client.$queryRaw<Array<{ name: string }>>`
+      SELECT name FROM sqlite_schema WHERE type = 'table'
+    `
+    if (tables.some(({ name }) => renamedTables.has(name))) {
+      throw classifyDatabaseFailure(
+        new Error('A database with canonical table names requires its migration ledger.'),
+        'validation',
+        BASELINE_ID
+      )
+    }
     const baseline = manifest[0]!
     options.onProgress?.({ phase: 'migrating', migrationId: baseline.id })
     await ensureBackupBeforeMigration(baseline)

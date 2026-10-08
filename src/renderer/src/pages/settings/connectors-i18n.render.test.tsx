@@ -709,3 +709,30 @@ describe('ConnectorAddForm copy', () => {
     expect(connectorToolDescription('custom/tool', fallback, t)).toBe(fallback)
   })
 })
+
+describe('PDC settings translations', () => {
+  it.each(['de', 'es', 'fr', 'ja', 'ko', 'ru', 'zh-Hans', 'zh-Hant'] as const)(
+    'translates the connector and all four tool summaries in %s',
+    async (locale) => {
+      await prepareI18nLocale(locale)
+      initI18n(locale)
+      const t = i18next.getFixedT(locale, 'renderer')
+      const description =
+        'Cancer proteomics studies, sample and aliquot mappings, and file discovery from PDC.'
+      expect(connectorDescription({ id: 'pdc', description }, t)).not.toBe(description)
+      for (const [method, english] of [
+        ['pdc_search_studies', 'Search PDC studies and versions by name or identifier.'],
+        ['pdc_get_study', 'Retrieve PDC study metadata and available versions.'],
+        ['pdc_list_biospecimens', 'Map PDC aliquots to samples, cases and external references.'],
+        [
+          'pdc_list_files',
+          'Discover PDC study files and quantitative reports without downloading files.'
+        ]
+      ]) {
+        const translated = connectorToolDescription(`pdc/${method}`, english, t)
+        expect(translated).not.toBe(english)
+        expect(translated).toContain('PDC')
+      }
+    }
+  )
+})

@@ -17,12 +17,20 @@ it.each(cells)('analyzes contrast cell $index with its preparation', async (cell
           .join('\n')
       : cell.script
   const { facts } = await analyzeRNotebookSource(script)
+  if (cell.index >= 4) {
+    // Table ownership does not prove primitive columns for is.finite.
+    expect(facts, JSON.stringify(facts)).toMatchObject({
+      state: 'unknown',
+      reasons: expect.arrayContaining(['external-state', 'opaque-call'])
+    })
+    return
+  }
   expect(facts.state === 'unknown' ? facts.reasons : [], JSON.stringify(facts)).toEqual([
     'external-state'
   ])
 })
 
-it('connects the final plot to all required contrast preparation cells', async () => {
+it('keeps finite-filtered contrast plots uncertified while retaining known file paths', async () => {
   const root = await mkdtemp(join(tmpdir(), 'contrasts-volcano-'))
   const runs: NotebookRunRecord[] = cells.map((c) => ({
     runId: String(c.index),
@@ -47,9 +55,20 @@ it('connects the final plot to all required contrast preparation cells', async (
     })
     const projection = await analyzer.project({ projectId: 'p', sessionId: 's', throughRunId: '6' })
     for (const index of [3, 4, 5, 6]) {
-      expect(projection.stalenessByRunId[String(index)], JSON.stringify(projection)).toEqual({
-        state: 'clear'
-      })
+      if (index === 3) {
+        expect(projection.stalenessByRunId[String(index)], JSON.stringify(projection)).toEqual({
+          state: 'clear'
+        })
+      } else {
+        expect(
+          projection.stalenessByRunId[String(index)],
+          JSON.stringify(projection)
+        ).toMatchObject({
+          state: 'unknown',
+          reasons: expect.arrayContaining(['opaque-call'])
+        })
+        expect(projection.dependenciesByRunId?.[String(index)]).toBeUndefined()
+      }
       const context = await analyzer.sourceFileAccessContext({
         projectId: 'p',
         sessionId: 's',
@@ -61,17 +80,14 @@ it('connects the final plot to all required contrast preparation cells', async (
       expect(
         await analyzeNotebookSourceFileAccess('r', cells[index].script, context)
       ).toMatchObject({
-        readState: 'complete',
-        writeState: 'complete',
-        externalState: 'complete',
+        readState: index === 3 ? 'complete' : 'partial',
+        writeState: index === 4 || index === 5 ? 'partial' : 'complete',
+        externalState: index === 4 || index === 5 ? 'partial' : 'complete',
         reads: index === 3 ? ['inputs/expression-matrix-444444444444.csv'] : [],
         writes: index === 6 ? ['diagonal_volcano.pdf', 'diagonal_volcano.png'] : []
       })
     }
     expect(projection.dependenciesByRunId?.['3']).toEqual([])
-    expect(projection.dependenciesByRunId?.['4']).toContain('3')
-    expect(projection.dependenciesByRunId?.['5']).toContain('4')
-    expect(projection.dependenciesByRunId?.['6']).toContain('5')
   } finally {
     await rm(root, { recursive: true, force: true })
   }

@@ -525,6 +525,10 @@ for (const theme of ['Light', 'Dark'] as const) {
         `Empty conversation ${width}px`
       )
       await checkContrast(
+        page.getByText('Import previous research', { exact: true }),
+        `Research import ${width}px`
+      )
+      await checkContrast(
         page
           .getByRole('button', { name: 'Select model', exact: true })
           .getByText('e2e-model', { exact: true }),

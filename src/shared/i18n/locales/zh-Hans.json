@@ -133,6 +133,11 @@
     "More items": "更多会话"
   },
   "renderer": {
+    "Cancer proteomics studies, sample and aliquot mappings, and file discovery from PDC.": "PDC 癌症蛋白质组研究、样本和等分试样映射及文件发现。",
+    "Search PDC studies and versions by name or identifier.": "按名称或标识符搜索 PDC 研究及版本。",
+    "Retrieve PDC study metadata and available versions.": "获取 PDC 研究元数据和可用版本。",
+    "Map PDC aliquots to samples, cases and external references.": "将 PDC 等分试样映射到样本、病例和外部引用。",
+    "Discover PDC study files and quantitative reports without downloading files.": "发现 PDC 研究文件和定量报告，不下载文件。",
     "List GWAS summary statistics files, YAML metadata, reference genomes and standard column definitions by GCST accession.": "按 GCST 编号列出 GWAS 汇总统计文件、YAML 元数据、参考基因组和标准列定义。",
     "PDF analysis options": "PDF 分析选项",
     "Retrieve GEO series metadata, samples and supplementary-file links.": "获取 GEO 系列的元数据、样本和补充文件链接。",
@@ -1909,6 +1914,7 @@
     "Max tokens": "词元上限",
     "Maximize": "最大化",
     "Mention {{name}}": "提及 {{name}}",
+    "Drop to mention in chat": "拖放到此处以在对话中提及",
     "Mermaid syntax could not be rendered": "无法渲染 Mermaid 语法",
     "Message center": "消息中心",
     "Message revision": "消息版本",

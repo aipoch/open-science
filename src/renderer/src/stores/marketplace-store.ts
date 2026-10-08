@@ -33,7 +33,7 @@ export const useMarketplaceStore = create<MarketplaceStore>((set) => ({
   integrityFailed: false,
 
   refresh: async (options) => {
-    // Guard: specialist.listMarketplace is Electron-only and unavailable in the web gateway.
+    // Defensive: keep the view inert if a host surface omits this capability.
     if (typeof window.api?.specialist?.listMarketplace !== 'function') {
       latestRefreshRequest += 1
       set({ isRefreshing: false, lastRefreshFailed: true, integrityFailed: false })
@@ -42,9 +42,10 @@ export const useMarketplaceStore = create<MarketplaceStore>((set) => ({
     const requestId = ++latestRefreshRequest
     set({ isRefreshing: true, lastRefreshFailed: false })
     try {
-      const snapshot = await window.api.specialist.listMarketplace(
-        options?.forceRefresh ? { forceRefresh: true } : undefined
-      )
+      // Explicit undefined becomes null in the Web RPC argument array.
+      const snapshot = options?.forceRefresh
+        ? await window.api.specialist.listMarketplace({ forceRefresh: true })
+        : await window.api.specialist.listMarketplace()
       if (requestId !== latestRefreshRequest) return
       set({ snapshot, isRefreshing: false, lastRefreshFailed: false, integrityFailed: false })
     } catch (error) {

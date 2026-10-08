@@ -5,11 +5,15 @@ import { readPdfFixture } from './read-fixture'
 const { associateFigures } = await import(
   pathToFileURL(resolve('resources/pdf-structure/literature-pdf-association.mjs')).href
 )
-const { nativeOwnedFigureLabels, nativeOwnedFigureGlyphTails, nativePanelTopHeading } =
-  await import(
-    pathToFileURL(resolve('resources/pdf-structure/literature-pdf-native-owned-figure-labels.mjs'))
-      .href
-  )
+const {
+  nativeOwnedFigureLabels,
+  nativeOwnedFigureGlyphTails,
+  nativePanelTopHeading,
+  nativeTableDividerGraphic
+} = await import(
+  pathToFileURL(resolve('resources/pdf-structure/literature-pdf-native-owned-figure-labels.mjs'))
+    .href
+)
 const line = (
   text: string,
   x: number,
@@ -184,4 +188,47 @@ it.each([
   if (reason === 'native-outside-table') f.rules.at(-1)[3] = 170
   if (reason === 'wide-drawing') f.page.graphicsBounds[1].normalizedRect[2] += 0.01
   expect(associateFigures(f.page, f.captions, f.tables, f.rules)[0].rect[1]).toBeLessThan(160)
+})
+
+const paddedNativeDivider = (): ReturnType<typeof JSON.parse> => ({
+  page: { width: 612, height: 792 },
+  graphic: [205.59375, 303.1875, 210.375, 318.65625],
+  tables: [[104, 156.8866461933333, 503.3333333333333, 314.96080405333333]],
+  rules: [
+    [108, 156.95331285999995, 504.00735912322995, 156.95331285999995],
+    [108, 301.79971293, 504.00735912322995, 301.79971293],
+    [108, 314.62747072, 504.00735912322995, 314.62747072],
+    [207.04742672999998, 304.2173103816175, 207.04742672999998, 312.94407138]
+  ]
+})
+
+it.each([0.75, 1, 1.5])(
+  'retains native terminal-divider ownership inside a padded table crop at scale %s',
+  (scale) => {
+    const f = paddedNativeDivider()
+    f.page.width *= scale
+    f.page.height *= scale
+    f.graphic = f.graphic.map((v: number) => v * scale)
+    f.tables = f.tables.map((r: number[]) => r.map((v) => v * scale))
+    f.rules = f.rules.map((r: number[]) => r.map((v) => v * scale))
+    const before = structuredClone(f)
+    expect(nativeTableDividerGraphic(f.page, f.graphic, f.tables, f.rules)).toBe(true)
+    expect(f).toEqual(before)
+  }
+)
+
+it.each([
+  'closing-gap',
+  'horizontal-padding',
+  'missing-fence',
+  'competing-owner',
+  'outside-segment'
+])('requires the same native fence despite table crop padding: %s', (missing) => {
+  const f = paddedNativeDivider()
+  if (missing === 'closing-gap') f.tables[0][3] += 2
+  if (missing === 'horizontal-padding') f.tables[0][0] -= 5
+  if (missing === 'missing-fence') f.rules.splice(0, 1)
+  if (missing === 'competing-owner') f.tables.push([...f.tables[0]])
+  if (missing === 'outside-segment') f.rules.at(-1)[3] = f.tables[0][3] + 1
+  expect(nativeTableDividerGraphic(f.page, f.graphic, f.tables, f.rules)).toBe(false)
 })

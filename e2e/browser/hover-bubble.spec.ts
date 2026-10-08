@@ -286,8 +286,13 @@ test('shares Home hover intent without replaying entry motion across header comp
   await page.clock.install()
   await page.clock.pauseAt(new Date())
   for (const [index, action] of actions.entries()) {
-    const box = (await action.boundingBox())!
-    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 5 })
+    // Leave Radix's hoverable-content grace corridor before testing the next
+    // trigger. The paused clock keeps this transfer inside the warm window.
+    if (index > 0) {
+      await page.mouse.move(0, 0, { steps: 5 })
+      await expect(page.locator('[data-slot="tooltip-content"]')).toHaveCount(0)
+    }
+    await action.hover()
     await page.clock.runFor(index === 0 ? 200 : 1)
     await expect(page.locator('[data-slot="tooltip-content"]')).toHaveAttribute(
       'data-state',

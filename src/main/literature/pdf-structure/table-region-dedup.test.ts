@@ -201,6 +201,28 @@ it('drops a refined narrative duplicate beside the numeric grid', () => {
   expect(narrativeDuplicateTableIndices([outer, inner])).toEqual(new Set([0]))
 })
 
+it('drops a tall captionless duplicate that repeats an independent inner grid', () => {
+  const grid = [
+    ['Model', 'Top-K', 'Ours'],
+    ['Alpha', '64.6', '66.1'],
+    ['Beta', '62.7', '65.0'],
+    ['Gamma', '61.3', '63.8']
+  ]
+  const outer = {
+    cropRect: [100, 100, 500, 420],
+    grid,
+    unassigned: ['Model', 'Top-K', 'Ours', 'Alpha', '64.6', '66.1'],
+    issues: ['unassigned-source-text']
+  }
+  const inner = {
+    cropRect: [105, 300, 495, 390],
+    grid,
+    unassigned: [],
+    issues: []
+  }
+  expect(narrativeDuplicateTableIndices([outer, inner])).toEqual(new Set([0]))
+})
+
 it('keeps a captioned wide candidate even when a narrower numeric grid overlaps it', () => {
   const outer = {
     cropRect: [152, 752, 753, 837],
@@ -222,6 +244,59 @@ it('keeps a captioned wide candidate even when a narrower numeric grid overlaps 
   expect(
     narrativeDuplicateTableIndices([outer, inner], { captionedIndices: new Set([0]) })
   ).toEqual(new Set())
+})
+
+it('drops a captioned side-by-side spill when the adjacent complete grid owns the suffix', () => {
+  const outer = {
+    cropRect: [405, 329, 734, 404],
+    grid: [
+      ['Similarity ↑', 'Model', 'SECS ↑', 'Musicality ↑', 'Similarity ↑'],
+      ['79 ± 0.09', 'Ground Truth', '0.62', '3.63 ± 0.08', '3.57 ± 0.08'],
+      ['27 ± 0.11 ± 0.08', 'VALL - E', '0.66', '3.34 ± 0.07', '3.30 ± 0.08'],
+      ['', 'SongCreator', '0.68', '3.57 ± 0.06', '3.55 ± 0.07']
+    ],
+    issues: ['text-crosses-crop-boundary'],
+    unassigned: ['82']
+  }
+  const inner = {
+    cropRect: [465, 321, 751, 406],
+    grid: [
+      ['Model', 'SECS ↑', 'Musicality ↑', 'Similarity ↑'],
+      ['Ground Truth', '0.62', '3.63 ± 0.08', '3.57 ± 0.08'],
+      ['VALL - E', '0.66', '3.34 ± 0.07', '3.30 ± 0.08'],
+      ['SongCreator', '0.68', '3.57 ± 0.06', '3.55 ± 0.07']
+    ],
+    issues: [],
+    unassigned: []
+  }
+  expect(
+    narrativeDuplicateTableIndices([outer, inner], { captionedIndices: new Set([0]) })
+  ).toEqual(new Set([0]))
+})
+
+it('drops a partial side-by-side crop after its caption moves to the complete grid', () => {
+  const outer = {
+    cropRect: [405, 329, 734, 404],
+    grid: [
+      ['Similarity ↑', 'Model', 'SECS ↑', 'Musicality ↑', 'Similarity ↑'],
+      ['79 ± 0.09', 'Ground Truth', '0.62', '3.63 ± 0.08', '3.57 ± 0.08']
+    ],
+    issues: ['text-crosses-crop-boundary'],
+    unassigned: ['VALL - E', '0.66', '3.34 ± 0.07']
+  }
+  const inner = {
+    cropRect: [465, 321, 751, 406],
+    grid: [
+      ['Model', 'SECS ↑', 'Musicality ↑', 'Similarity ↑'],
+      ['Ground Truth', '0.62', '3.63 ± 0.08', '3.57 ± 0.08'],
+      ['VALL - E', '0.66', '3.34 ± 0.07', '3.30 ± 0.08']
+    ],
+    issues: [],
+    unassigned: []
+  }
+  expect(
+    narrativeDuplicateTableIndices([outer, inner], { captionedIndices: new Set([1]) })
+  ).toEqual(new Set([0]))
 })
 
 it('keeps a wide narrative table when the overlapping numeric grid has no matching cells', () => {
@@ -317,4 +392,69 @@ it('keeps a real numeric stub column beside an independent grid', () => {
     unassigned: []
   }
   expect(narrativeDuplicateTableIndices([outer, inner])).toEqual(new Set())
+})
+
+it('drops an oversized record that merges independently ruled labelled panels', () => {
+  const panel = (
+    top: number,
+    bottom: number
+  ): {
+    cropRect: number[]
+    grid: string[][]
+    unassigned: string[]
+    issues: string[]
+  } => ({
+    cropRect: [10, top, 190, bottom],
+    grid: [
+      ['Header', 'Value'],
+      ['Row A', '1'],
+      ['Row B', '2']
+    ],
+    unassigned: [],
+    issues: []
+  })
+  const outer = {
+    cropRect: [0, 0, 200, 240],
+    grid: Array.from({ length: 24 }, () => Array.from({ length: 9 }, () => 'value')),
+    unassigned: [
+      '(a) First panel',
+      '(b) Second panel',
+      '(c) Third panel',
+      'First panel note',
+      'Second panel note',
+      'Third panel note',
+      '7',
+      '8'
+    ],
+    issues: ['nonrectangular-spanning-cell', 'conflicting-spanning-cells']
+  }
+  const rules = [
+    [0, 10, 200, 10],
+    [0, 100, 200, 100],
+    [0, 110, 200, 110],
+    [0, 200, 200, 200]
+  ]
+  expect(
+    narrativeDuplicateTableIndices([outer, panel(10, 100), panel(110, 200)], { rules })
+  ).toEqual(new Set([0]))
+})
+
+it('keeps a wide table when panel boundaries are not independently ruled', () => {
+  const outer = {
+    cropRect: [0, 0, 200, 240],
+    grid: Array.from({ length: 24 }, () => Array.from({ length: 9 }, () => 'value')),
+    unassigned: ['(a) footnote', '(b) footnote', 'text', 'text', 'text', 'text'],
+    issues: ['nonrectangular-spanning-cell']
+  }
+  const inner = {
+    cropRect: [10, 10, 190, 100],
+    grid: [
+      ['Header', 'Value'],
+      ['Row A', '1'],
+      ['Row B', '2']
+    ],
+    unassigned: [],
+    issues: []
+  }
+  expect(narrativeDuplicateTableIndices([outer, inner], { rules: [] })).toEqual(new Set())
 })

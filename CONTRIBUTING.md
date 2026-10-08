@@ -242,6 +242,9 @@ schema module is generated; do not edit it or add feature DDL to startup code.
    migration or extend the frozen `0001` legacy repair list.
 4. Run `npm run db:schema:check` and the migration tests before committing.
 
+Application table names use singular PascalCase and default to the Prisma model name. Avoid
+`@@map` unless an intentional external database contract requires a different physical name.
+
 Prisma CLI is a development and CI tool only. Packaged applications execute the checked-in
 migration manifest and do not ship the Prisma migrate engine.
 
@@ -513,7 +516,10 @@ By contributing, you agree that your contributions will be licensed under the
 ### Supplemental desktop coverage
 
 Complete Mac regression and Delegation suites run in Source Regression at 01:37 and 13:37
-Asia/Singapore, as well as focused manual validation. Automatic PRs use the affected Windows mainline groups;
+Asia/Singapore, as well as focused manual validation. Its manual `presentation` mode runs the real
+Mac browser, visual and accessibility steps without functional, workspace, capacity or Delegation
+suites. Browser and visual outcomes are both collected, and any failure remains blocking.
+Automatic PRs use the affected Windows mainline groups;
 queue uses short Mac core plus focused native checks for sensitive changes. Full Mac presentation,
 regression and Delegation matrices are not repeated in the queue. Capacity profiling remains in
 Source Regression; manual callers without an explicit capacity input retain complete coverage.

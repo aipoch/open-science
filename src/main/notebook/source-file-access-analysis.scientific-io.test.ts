@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { NotebookLanguage } from '../../shared/notebook'
+import { analyzeRNotebookSource } from './dependency-analysis-r'
 import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
 
 describe('scientific reader review regressions', () => {
@@ -40,6 +41,312 @@ describe('scientific reader review regressions', () => {
       ).toMatchObject({ readState: 'partial', externalState: 'partial' })
     }
   )
+
+  it.each([
+    "import fsspec\nwith fsspec.open('inputs/measurements.csv', 'rt') as handle:\n    text = handle.read()",
+    "import fsspec\nhandles = fsspec.open_files(['inputs/a.csv', 'inputs/b.csv'])\ntext = [handle.read() for handle in handles]",
+    "import fsspec\nmapper = fsspec.get_mapper('inputs/store.zarr')\nvalue = mapper['zarr.json']"
+  ])('retains explicit local fsspec inputs while staying partial: %s', async (source) => {
+    const result = await analyzeNotebookSourceFileAccess('python', source)
+    expect(result).toMatchObject({
+      readState: 'partial',
+      externalState: 'partial',
+      writes: [],
+      reasonCodes: expect.arrayContaining(['source-analysis-unsupported-call'])
+    })
+    expect(result.reads).toEqual(
+      expect.arrayContaining(
+        source.includes('open_files') ? ['inputs/a.csv', 'inputs/b.csv'] : [expect.any(String)]
+      )
+    )
+  })
+
+  it('records fsspec write modes as outputs instead of inputs', async () => {
+    const result = await analyzeNotebookSourceFileAccess(
+      'python',
+      "import fsspec\nwith fsspec.open('outputs/result.csv', 'wt') as handle:\n    handle.write('value\\n')"
+    )
+    expect(result).toMatchObject({
+      readState: 'partial',
+      externalState: 'partial',
+      reads: [],
+      writes: ['outputs/result.csv']
+    })
+  })
+
+  it('does not infer mapper output from a filesystem mode option', async () => {
+    await expect(
+      analyzeNotebookSourceFileAccess(
+        'python',
+        "import fsspec\nmapper = fsspec.get_mapper('outputs/store.zarr', mode = 'w')"
+      )
+    ).resolves.toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      writes: []
+    })
+  })
+
+  it.each([
+    "fsspec.open('outputs/result.csv', 'wt', **options)",
+    "fsspec.open('outputs/result.csv', 'wt', filesystem=custom_fs)",
+    "fsspec.open('outputs/result.csv', 'wt', protocol='s3')",
+    "fsspec.open('outputs/result.csv', 'wt', custom_option=True)",
+    "fsspec.open('outputs/result.csv', mode=selected_mode, fs=custom_fs)",
+    "fsspec.open_files(['outputs/a.csv'], 'wb', storage_options=options)",
+    "fsspec.open('inputs/result.csv', 'rb', **options)"
+  ])('keeps unproved fsspec outputs partial: %s', async (call) => {
+    expect(
+      await analyzeNotebookSourceFileAccess('python', `import fsspec\nhandle = ${call}`)
+    ).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial',
+      writes: []
+    })
+  })
+
+  it.each([
+    "fsspec.open('inputs/result.csv')",
+    "fsspec.open('inputs/result.csv', 'rt')",
+    "fsspec.open_files(['inputs/result.csv'], mode='rb')"
+  ])('keeps proved read-only fsspec calls free of possible writes: %s', async (call) => {
+    expect(
+      await analyzeNotebookSourceFileAccess('python', `import fsspec\nhandle = ${call}`)
+    ).toMatchObject({
+      readState: 'partial',
+      writeState: 'complete',
+      writes: [],
+      reads: ['inputs/result.csv']
+    })
+  })
+
+  it('tracks Visium directory input and VCF output paths', async () => {
+    const result = await analyzeNotebookSourceFileAccess(
+      'r',
+      'spe <- SpatialExperiment::read10xVisium(samples = "inputs/visium")\nVariantAnnotation::writeVcf(vcf, "outputs/cohort.filtered.vcf.gz", index = TRUE)'
+    )
+    expect(result.reads).toContain('inputs/visium')
+    expect(result.writes).toContain('outputs/cohort.filtered.vcf.gz')
+    expect(result.readState).toBe('partial')
+    expect(result.writeState).toBe('partial')
+    expect(result.externalState).toBe('partial')
+  })
+
+  it.each([
+    'param = VariantAnnotation::ScanVcfParam(which = GenomicRanges::GRanges("chr1", IRanges::IRanges(1, 10)))',
+    '"hg38", VariantAnnotation::ScanVcfParam(which = GenomicRanges::GRanges("chr1", IRanges::IRanges(1, 10)))'
+  ])('keeps indexed VariantAnnotation reads partial: %s', async (argumentsSource) => {
+    await expect(
+      analyzeNotebookSourceFileAccess(
+        'r',
+        `vcf <- VariantAnnotation::readVcf("inputs/cohort.vcf.gz", ${argumentsSource})`
+      )
+    ).resolves.toMatchObject({
+      readState: 'partial',
+      externalState: 'partial',
+      reads: ['inputs/cohort.vcf.gz'],
+      reasonCodes: expect.arrayContaining(['source-analysis-unsupported-call'])
+    })
+  })
+
+  it.each([
+    'SpatialExperiment::read10xVisium(samples = "inputs/visium")',
+    'SpatialExperiment::read10xVisium(samples = c("inputs/control", "inputs/treated"))',
+    'DropletUtils::read10xCounts(samples = "inputs/matrix")'
+  ])('retains directory evidence before collection reader returns: %s', async (source) => {
+    const { fileAccess } = await analyzeRNotebookSource(`object <- ${source}`)
+    expect(fileAccess).toMatchObject({ unresolvedReads: true, directoryStateRead: true })
+  })
+
+  it.each([
+    "import scanpy as sc\nadata = sc.read_10x_mtx('inputs/matrix')",
+    "import scanpy as sc\nadata = sc.read_visium('inputs/visium')"
+  ])('marks directory-backed Scanpy readers as partial: %s', async (source) => {
+    await expect(analyzeNotebookSourceFileAccess('python', source)).resolves.toMatchObject({
+      readState: 'partial',
+      externalState: 'partial',
+      reasonCodes: expect.arrayContaining(['source-analysis-unsupported-call'])
+    })
+  })
+
+  it.each([
+    "import fsspec\nwith fsspec.open('https://example.org/measurements.csv', 'rt') as handle:\n    text = handle.read()",
+    "import fsspec\nmapper = fsspec.get_mapper('s3://bucket/store.zarr')",
+    "import fsspec\nwith fsspec.open('inputs/measurements.csv', filesystem=remote_fs) as handle:\n    text = handle.read()",
+    "import fsspec\nwith fsspec.open('inputs/measurements.csv', fs=remote_fs) as handle:\n    text = handle.read()",
+    "import fsspec\nmapper = fsspec.get_mapper('inputs/store.zarr', storage_options=remote_options)"
+  ])('does not attribute fsspec inputs to remote resources: %s', async (source) => {
+    await expect(analyzeNotebookSourceFileAccess('python', source)).resolves.toMatchObject({
+      readState: 'partial',
+      externalState: 'partial',
+      reads: [],
+      writes: []
+    })
+  })
+})
+
+describe('SciPy curve_fit hidden callback I/O', () => {
+  // Reduced from an executed mercury vapor-pressure workflow. The Jacobian
+  // accesses these files during the solver call, not while it is defined.
+  it.each([
+    'model_fn, temperatures, log_observed, jac=jac_fn',
+    'model_fn, temperatures, log_observed, None, None, False, None, (-np.inf, np.inf), "lm", jac_fn'
+  ])('does not certify complete I/O for model/Jacobian callbacks: %s', async (arguments_) => {
+    const source = [
+      'import numpy as np',
+      'from scipy.optimize import curve_fit',
+      'kelvin_offset = 273.15',
+      'ref_temperature = 298.15',
+      'temperatures = np.array([0.0, 20.0, 40.0])',
+      'log_observed = np.array([-8.5, -6.7, -5.1])',
+      'def model_fn(temp_c, a, b):',
+      '    return a + b * (1.0 / (temp_c + kelvin_offset) - 1.0 / ref_temperature)',
+      'def jac_fn(temp_c, a, b):',
+      '    with open("outputs/jacobian-scale.txt", "r") as fh:',
+      '        scale = float(fh.read().strip())',
+      '    n = len(temp_c)',
+      '    dinv = 1.0 / (temp_c + kelvin_offset) - 1.0 / ref_temperature',
+      '    with open("outputs/jacobian-calls.txt", "a") as fo:',
+      '        fo.write("jac_fn called n=%d\\n" % n)',
+      '    return np.column_stack([np.ones(n), dinv]) * scale',
+      `popt, pcov = curve_fit(${arguments_})`
+    ].join('\n')
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial',
+      // Callback bodies are not expanded into exact paths without runtime evidence.
+      reads: [],
+      writes: [],
+      reasonCodes: expect.arrayContaining(['source-analysis-unsupported-call'])
+    })
+  })
+})
+
+describe('SciPy Welch hidden callback I/O', () => {
+  it.each(['x, detrend=detrend_calibrated', 'x, 12, "boxcar", 256, 128, 256, detrend_calibrated'])(
+    'keeps scale reads and trace appends partial inside detrend: %s',
+    async (arguments_) => {
+      const source = [
+        'import numpy as np',
+        'from scipy.signal import welch',
+        'x = np.array([1.0, 2.0, 1.0, 2.0])',
+        'spectral_gain = 1.0',
+        'calls_log_path = "outputs/detrend-calls.txt"',
+        'def detrend_calibrated(segment):',
+        '    with open("outputs/detrend-scale.txt", "r") as fh:',
+        '        scale = float(fh.read().strip())',
+        '    with open(calls_log_path, "a") as log_fh:',
+        '        log_fh.write(str(spectral_gain))',
+        '    return (segment - np.mean(segment, axis=-1, keepdims=True)) * spectral_gain * scale',
+        `freq, psd = welch(${arguments_})`
+      ].join('\n')
+      expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+        readState: 'partial',
+        writeState: 'partial',
+        externalState: 'partial',
+        reads: [],
+        writes: [],
+        reasonCodes: expect.arrayContaining(['source-analysis-unsupported-call'])
+      })
+    }
+  )
+})
+
+describe('SciPy solve_ivp hidden callback I/O', () => {
+  // Minimal call-level reduction of the executed Indometh workflow. Its full
+  // original cell was already partial due to other operations; the solver
+  // reduction must not falsely certify the hidden callback accesses as complete.
+  it.each([
+    'fun=rhs, t_span=(0.0, 8.0), y0=initials, method="Radau", jac=jac, events=[half_first, half_last]',
+    'rhs, (0.0, 8.0), initials, "Radau", None, False, [half_first, half_last], jac=jac'
+  ])('keeps opaque RHS, Jacobian and event I/O partial: %s', async (arguments_) => {
+    const source = String.raw`
+import os
+import numpy as np
+from scipy.integrate import solve_ivp
+rates = np.array([0.2, 0.25, 0.3, 0.35, 0.4, 0.45])
+initials = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+rate_factor = 1.0
+half_initial_first = float(initials[0])
+half_initial_last = float(initials[5])
+rhs_log_path = os.path.join('outputs', 'rhs-calls.txt')
+jac_log_path = os.path.join('outputs', 'jac-calls.txt')
+event_log_path = os.path.join('outputs', 'event-calls.txt')
+def rhs(t, y):
+    with open(os.path.join('outputs', 'rate-scale.txt'), 'r') as fh:
+        scale = float(fh.read().strip())
+    with open(rhs_log_path, 'a') as fh:
+        fh.write('1\n')
+    return -rate_factor * scale * rates * y
+def jac(t, y):
+    with open(os.path.join('outputs', 'rate-scale.txt'), 'r') as fh:
+        scale = float(fh.read().strip())
+    with open(jac_log_path, 'a') as fh:
+        fh.write('1\n')
+    return np.diag(-rate_factor * scale * rates)
+def half_first(t, y):
+    with open(os.path.join('outputs', 'event-fraction.txt'), 'r') as fh:
+        fraction = float(fh.read().strip())
+    with open(event_log_path, 'a') as fh:
+        fh.write('half_first\n')
+    return y[0] - half_initial_first * fraction
+def half_last(t, y):
+    with open(os.path.join('outputs', 'event-fraction.txt'), 'r') as fh:
+        fraction = float(fh.read().strip())
+    with open(event_log_path, 'a') as fh:
+        fh.write('half_last\n')
+    return y[5] - half_initial_last * fraction
+solution = solve_ivp(${arguments_})
+`
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial',
+      reads: [],
+      writes: [],
+      reasonCodes: expect.arrayContaining(['source-analysis-unsupported-call'])
+    })
+  })
+})
+
+describe('SciPy generic_filter hidden callback I/O', () => {
+  // Reduced from an executed lynx time-series filter. The callback accesses
+  // files while filtering; source analysis must not replay its body as exact I/O.
+  it.each([
+    'values, neighborhood_response, size=5, output=filter_buffer',
+    'values, function=neighborhood_response, size=5, output=filter_buffer',
+    'values, neighborhood_response, 5, None, filter_buffer',
+    'values, size=5, **options'
+  ])('keeps callback and expanded-option access partial: %s', async (arguments_) => {
+    const source = [
+      'import numpy as np',
+      'from scipy.ndimage import generic_filter',
+      'filter_gain = 1.0',
+      'SCALE_PATH = "outputs/filter-scale.txt"',
+      'TRACE_PATH = "outputs/filter-calls.txt"',
+      'values = np.array([1., 2., 3.])',
+      'parent = np.full((3, 2), -999.)',
+      'filter_buffer = parent[:, 0]',
+      'def neighborhood_response(values):',
+      '    with open(SCALE_PATH, "r") as f:',
+      '        scale = float(f.read().strip())',
+      '    with open(TRACE_PATH, "a") as f:',
+      '        f.write("call\\n")',
+      '    return float(np.median(values) * filter_gain * scale)',
+      'options = {"output": filter_buffer, "function": neighborhood_response}',
+      `ret = generic_filter(${arguments_})`
+    ].join('\n')
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial',
+      reads: [],
+      writes: [],
+      reasonCodes: expect.arrayContaining(['source-analysis-unsupported-call'])
+    })
+  })
 })
 
 type ScientificIoCase = {
@@ -112,6 +419,14 @@ const cases: ScientificIoCase[] = [
       "from scipy.sparse import csr_matrix, save_npz\nmatrix = csr_matrix([[1]])\nsave_npz('matrix.npz', matrix)",
     reads: [],
     writes: ['matrix.npz']
+  },
+  {
+    name: 'Python SciPy sparse output appends NPZ suffix',
+    language: 'python',
+    source:
+      "from scipy.sparse import csr_matrix, save_npz\nmatrix = csr_matrix([[1]])\nsave_npz('outputs/counts', matrix)",
+    reads: [],
+    writes: ['outputs/counts.npz']
   },
   {
     name: 'Python Pillow image pipeline',
@@ -403,6 +718,230 @@ adata = ${module === 'scanpy' ? 'sc' : 'ad'}.read_zarr('inputs/cells.zarr')`
       writeState: 'partial',
       externalState: 'partial',
       reasonCodes: expect.arrayContaining(['source-analysis-unsupported-call'])
+    })
+  })
+})
+
+describe('Python scientific checkpoint record paths', () => {
+  const records =
+    'TARGETS = [("outputs/target-0.25.txt", "0.25"), ("outputs/target-0.50.txt", "0.50")]'
+
+  it('records both target outputs selected from literal checkpoint rows', async () => {
+    // Reduced from the executed airquality threshold-reference producer.
+    const source = [
+      'TARGETS = [("outputs/target-0.25.txt", "0.25"), ("outputs/target-0.50.txt", "0.50")]',
+      'with open(TARGETS[0][0], "w") as handle:',
+      '    handle.write(TARGETS[0][1] + "\\n")',
+      'with open(TARGETS[1][0], "w") as handle:',
+      '    handle.write(TARGETS[1][1] + "\\n")'
+    ].join('\n')
+
+    await expect(analyzeNotebookSourceFileAccess('python', source)).resolves.toEqual({
+      readState: 'complete',
+      writeState: 'complete',
+      externalState: 'complete',
+      reads: [],
+      writes: ['outputs/target-0.25.txt', 'outputs/target-0.50.txt'],
+      reasonCodes: []
+    })
+  })
+
+  it.each([
+    ['TARGETS[-1][-2]', 'outputs/target-0.50.txt'],
+    ['TARGETS[+0][+0]', 'outputs/target-0.25.txt'],
+    ['[("outputs/inline.txt", "value")][0][0]', 'outputs/inline.txt']
+  ])('resolves bounded scalar record access: %s', async (expression, path) => {
+    await expect(
+      analyzeNotebookSourceFileAccess(
+        'python',
+        `${records}\nwith open(${expression}, "w") as handle:\n    pass`
+      )
+    ).resolves.toMatchObject({
+      writeState: 'complete',
+      writes: [path],
+      reasonCodes: []
+    })
+  })
+
+  it.each(['True', '0.0', 'index', '2', '-3', '9007199254740992'])(
+    'does not resolve an unsupported row or column index: %s',
+    async (index) => {
+      await expect(
+        analyzeNotebookSourceFileAccess(
+          'python',
+          [
+            records,
+            `with open(TARGETS[${index}][0], "w") as handle:`,
+            '    pass',
+            `with open(TARGETS[0][${index}], "w") as handle:`,
+            '    pass'
+          ].join('\n')
+        )
+      ).resolves.toMatchObject({
+        writeState: 'partial',
+        writes: [],
+        reasonCodes: expect.arrayContaining(['dynamic-path-unresolved'])
+      })
+    }
+  )
+
+  it.each([
+    'TARGETS[:1][0][0]',
+    'TARGETS[0][:1]',
+    '[][0][0]',
+    '[()][0][0]',
+    '[(build_path(), "value")][0][0]'
+  ])('keeps unresolved record shapes conservative: %s', async (expression) => {
+    await expect(
+      analyzeNotebookSourceFileAccess(
+        'python',
+        `${records}\nwith open(${expression}, "w") as handle:\n    pass`
+      )
+    ).resolves.toMatchObject({
+      writeState: 'partial',
+      writes: [],
+      reasonCodes: expect.arrayContaining(['dynamic-path-unresolved'])
+    })
+  })
+
+  it.each([
+    'TARGETS = custom',
+    'if flag:\n    TARGETS = custom',
+    'alias = TARGETS\nalias[0] = ("outputs/new.txt", "new")',
+    'TARGETS[0][0] = "outputs/new.txt"'
+  ])('drops record paths after an unresolved rebind or mutation: %s', async (update) => {
+    await expect(
+      analyzeNotebookSourceFileAccess(
+        'python',
+        [
+          'TARGETS = [["outputs/old.txt", "old"]]',
+          update,
+          'with open(TARGETS[0][0], "w") as handle:',
+          '    pass'
+        ].join('\n')
+      )
+    ).resolves.toMatchObject({
+      writeState: 'partial',
+      writes: [],
+      reasonCodes: expect.arrayContaining(['dynamic-path-unresolved'])
+    })
+  })
+
+  it('does not turn an extracted record into a new path collection', async () => {
+    await expect(
+      analyzeNotebookSourceFileAccess(
+        'python',
+        `${records}\nrow = TARGETS[0]\nwith open(row[0], "w") as handle:\n    pass`
+      )
+    ).resolves.toMatchObject({
+      writeState: 'partial',
+      writes: [],
+      reasonCodes: expect.arrayContaining(['dynamic-path-unresolved'])
+    })
+  })
+
+  it('retains known target outputs without certifying opaque scientific operations', async () => {
+    await expect(
+      analyzeNotebookSourceFileAccess(
+        'python',
+        `${records}\nunknown_effect()\nwith open(TARGETS[0][0], "w") as handle:\n    pass`
+      )
+    ).resolves.toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial',
+      writes: ['outputs/target-0.25.txt'],
+      reasonCodes: expect.arrayContaining(['source-analysis-unsupported-call'])
+    })
+  })
+
+  it('does not attribute the builtin writer effect to a custom open callable', async () => {
+    await expect(
+      analyzeNotebookSourceFileAccess(
+        'python',
+        `${records}\ndef open(path, mode):\n    return None\nwith open(TARGETS[0][0], "w") as handle:\n    pass`
+      )
+    ).resolves.toMatchObject({ writes: [] })
+  })
+
+  it.each([
+    ['import builtins as io', 'io.open'],
+    ['from builtins import open as open_file', 'open_file']
+  ])('retains an imported builtin opener: %s', async (importSource, opener) => {
+    await expect(
+      analyzeNotebookSourceFileAccess(
+        'python',
+        `${records}\n${importSource}\nwith ${opener}(TARGETS[0][0], "w") as handle:\n    pass`
+      )
+    ).resolves.toMatchObject({ writes: ['outputs/target-0.25.txt'] })
+  })
+
+  it('uses the independent writer summary of a local helper named open', async () => {
+    await expect(
+      analyzeNotebookSourceFileAccess(
+        'python',
+        [
+          records,
+          'import numpy as np',
+          'def open(path, mode):',
+          '    np.savetxt(path, values)',
+          'open(TARGETS[0][0], "r")'
+        ].join('\n')
+      )
+    ).resolves.toMatchObject({ reads: [], writes: ['outputs/target-0.25.txt'] })
+  })
+
+  it.each([
+    'def TARGETS():\n    pass',
+    'async def TARGETS():\n    pass',
+    'class TARGETS:\n    pass'
+  ])(
+    'drops stale checkpoint paths when a definition replaces the records: %s',
+    async (definition) => {
+      const source = [
+        'TARGETS = [("outputs/old.txt", "old")]',
+        definition,
+        'with open(TARGETS[0][0], "w") as handle:',
+        '    pass'
+      ].join('\n')
+
+      await expect(analyzeNotebookSourceFileAccess('python', source)).resolves.toMatchObject({
+        writeState: 'partial',
+        writes: [],
+        reasonCodes: expect.arrayContaining(['dynamic-path-unresolved'])
+      })
+    }
+  )
+
+  it.each([
+    [
+      'ordinary',
+      'def emit(path):\n    payload = "value"\n    with open(path, "w") as handle:\n        handle.write(payload)\nemit("outputs/result.txt")'
+    ],
+    [
+      'nested',
+      'def outer(path):\n    def emit(target):\n        with open(target, "w") as handle:\n            handle.write("value")\n    emit(path)\nouter("outputs/result.txt")'
+    ],
+    [
+      'awaited async',
+      'async def emit(path):\n    payload = "value"\n    with open(path, "w") as handle:\n        handle.write(payload)\nawait emit("outputs/result.txt")'
+    ]
+  ])('retains the current %s writer helper paths', async (_name, source) => {
+    await expect(analyzeNotebookSourceFileAccess('python', source)).resolves.toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial',
+      reads: [],
+      writes: ['outputs/result.txt']
+    })
+  })
+
+  it.each([
+    'emit = replacement\ndef emit(path):\n    payload = "value"\n    with open(path, "w") as handle:\n        handle.write(payload)\nemit("outputs/result.txt")',
+    'def emit(path):\n    payload = "value"\n    with open(path, "w") as handle:\n        handle.write(payload)\nemit = replacement\nemit("outputs/result.txt")'
+  ])('keeps an already shadowed writer helper conservative: %s', async (source) => {
+    await expect(analyzeNotebookSourceFileAccess('python', source)).resolves.toMatchObject({
+      writes: []
     })
   })
 })

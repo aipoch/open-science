@@ -2,6 +2,622 @@
 import { inside } from './literature-pdf-table-geometry.mjs'
 import { area, intersection } from './literature-pdf-page-geometry.mjs'
 import { hasNativeNonTableLayout } from './literature-pdf-native-non-table-layout.mjs'
+import { joinHorizontalTableRules, classifyTableRuleEdge } from './literature-pdf-table-rules.mjs'
+import { groupSourceRowsWithScripts } from './literature-pdf-source-records.mjs'
+import { proveNativeClosedLeafHeader } from './literature-pdf-native-header-grid.mjs'
+
+// A native image fallback adds nothing when a source-backed grid already owns
+// exactly the same glyphs and its thumbnail contains every one. Printed caption
+// numbers and detector fence margins do not establish a different physical table.
+export function isNativeClosedFrameOwnedByTable(table, frame) {
+  const valid = (rect) =>
+    Array.isArray(rect) &&
+    rect.length === 4 &&
+    rect.every(Number.isFinite) &&
+    rect[2] > rect[0] &&
+    rect[3] > rect[1]
+  const crop = table?.cropRect
+  if (
+    !valid(crop) ||
+    !Array.isArray(table.grid) ||
+    table.grid.length < 2 ||
+    (table.grid[0]?.length ?? 0) < 2 ||
+    !Array.isArray(frame?.sourceTokens) ||
+    frame.sourceTokens.length < 4
+  )
+    return false
+  const assigned = (table.cells ?? []).flatMap((cell) => cell.sourceRects ?? [])
+  if (assigned.length !== frame.sourceTokens.length || assigned.some((rect) => !valid(rect)))
+    return false
+  const owned = new Set()
+  for (const token of frame.sourceTokens) {
+    const rect = token.rect
+    if (
+      !valid(rect) ||
+      !token.text?.trim() ||
+      rect[0] < crop[0] - 0.02 ||
+      rect[1] < crop[1] - 0.02 ||
+      rect[2] > crop[2] + 0.02 ||
+      rect[3] > crop[3] + 0.02
+    )
+      return false
+    const matches = assigned.flatMap((source, index) =>
+      source.every((value, axis) => Math.abs(value - rect[axis]) <= 0.02) ? [index] : []
+    )
+    if (matches.length !== 1 || owned.has(matches[0])) return false
+    owned.add(matches[0])
+  }
+  return owned.size === assigned.length
+}
+
+// Tighten a detector crop only when an independently closed native frame owns
+// every assigned glyph and every native glyph within it. Neighboring panel
+// ink cannot lend a wider boundary to this complete source grid.
+export function proveNativeAssignedClosedTableFrame(table, items, rules) {
+  const valid = (r) => r?.length === 4 && r.every(Number.isFinite) && r[2] > r[0] && r[3] > r[1]
+  const crop = table.cropRect
+  if (
+    !valid(crop) ||
+    !Array.isArray(table.grid) ||
+    table.grid.length < 3 ||
+    table.grid[0]?.length < 2
+  )
+    return
+  const cells = (table.cells ?? []).filter((c) => c.sourceRects?.length)
+  if (
+    new Set(cells.map((c) => c.row)).size !== table.grid.length ||
+    cells.some((c) => !Number.isInteger(c.row) || c.row < 0 || c.row >= table.grid.length)
+  )
+    return
+  const source = cells.flatMap((c) => c.sourceRects)
+  if (!source.length || source.some((r) => !valid(r))) return
+  const same = (a, b) => a.every((v, n) => Math.abs(v - b[n]) <= 0.02)
+  const tokens = source.map((r) => items.filter((i) => i.text?.trim() && same(r, i.rect)))
+  if (tokens.some((matches) => matches.length !== 1)) return
+  const owned = tokens.map((matches) => matches[0])
+  if (
+    new Set(owned).size !== owned.length ||
+    owned.some((i) => !i.horizontal || !Number.isFinite(i.height) || !(i.height > 0))
+  )
+    return
+  const headers = cells.filter((c) => c.row === 0).flatMap((c) => c.sourceRects)
+  const body = cells.filter((c) => c.row > 0).flatMap((c) => c.sourceRects)
+  if (!headers.length || !body.length) return
+  const height = Math.max(...owned.map((i) => i.height))
+  const x0 = Math.min(...source.map((r) => r[0])),
+    x1 = Math.max(...source.map((r) => r[2])),
+    y0 = Math.min(...source.map((r) => r[1])),
+    y1 = Math.max(...source.map((r) => r[3]))
+  const horizontal = joinHorizontalTableRules(rules).filter(
+    (r) =>
+      r.every(Number.isFinite) &&
+      r[1] === r[3] &&
+      r[0] >= crop[0] - 0.02 &&
+      r[2] <= crop[2] + 0.02 &&
+      r[1] >= crop[1] - 0.02 &&
+      r[1] <= crop[3] + 0.02 &&
+      r[0] <= x0 + 0.02 &&
+      r[2] >= x1 - 0.02 &&
+      x0 - r[0] <= height * 2 &&
+      r[2] - x1 <= height * 2
+  )
+  const proofs = []
+  for (const opening of horizontal.filter((r) => r[1] < y0 && y0 - r[1] <= height)) {
+    for (const closing of horizontal.filter((r) => r[1] > y1 && r[1] - y1 <= height)) {
+      if (Math.abs(opening[0] - closing[0]) > 0.02 || Math.abs(opening[2] - closing[2]) > 0.02)
+        continue
+      const dividers = horizontal.filter(
+        (r) =>
+          Math.abs(r[0] - opening[0]) <= 0.02 &&
+          Math.abs(r[2] - opening[2]) <= 0.02 &&
+          r[1] > Math.max(...headers.map((s) => s[3])) &&
+          r[1] < Math.min(...body.map((s) => s[1]))
+      )
+      if (dividers.length !== 1) continue
+      const rect = [opening[0], opening[1], opening[2], closing[1]]
+      const native = items.filter((i) => i.text?.trim() && intersection(i.rect, rect) > 0.02)
+      if (
+        native.length !== owned.length ||
+        native.some(
+          (i) =>
+            !owned.includes(i) ||
+            i.rect[0] < rect[0] - 0.02 ||
+            i.rect[1] < rect[1] - 0.02 ||
+            i.rect[2] > rect[2] + 0.02 ||
+            i.rect[3] > rect[3] + 0.02
+        )
+      )
+        continue
+      proofs.push({ cropRect: rect, sourceTokens: native })
+    }
+  }
+  return proofs.length === 1 ? proofs[0] : undefined
+}
+
+export function isRecognizedAlgorithmOwnedTable(table, caption, algorithms, scale = 1.5) {
+  if (
+    caption ||
+    !Number.isFinite(scale) ||
+    !(scale > 0) ||
+    (table.rows?.length ?? table.grid?.length ?? 0) < 2
+  )
+    return false
+  const source = (table.cells ?? []).flatMap((c) => c.sourceRects ?? [])
+  if (
+    !source.length ||
+    source.some((r) => r.length !== 4 || !r.every(Number.isFinite) || r[2] <= r[0] || r[3] <= r[1])
+  )
+    return false
+  return algorithms.some((algorithm) => {
+    if (
+      algorithm.rect?.length !== 4 ||
+      !algorithm.rect.every(Number.isFinite) ||
+      algorithm.rect[2] <= algorithm.rect[0] ||
+      algorithm.rect[3] <= algorithm.rect[1]
+    )
+      return false
+    const owned = source.filter(
+      (r) =>
+        r[0] / scale >= algorithm.rect[0] - 0.5 &&
+        r[1] / scale >= algorithm.rect[1] - 0.5 &&
+        r[2] / scale <= algorithm.rect[2] + 0.5 &&
+        r[3] / scale <= algorithm.rect[3] + 0.5
+    )
+    return (
+      owned.length >= 2 &&
+      owned.reduce((sum, r) => sum + area(r), 0) >=
+        source.reduce((sum, r) => sum + area(r), 0) * 0.99
+    )
+  })
+}
+
+function isNativeProseFootnoteOverlap(table, caption, items, rules) {
+  if (
+    caption ||
+    !table.cropRect ||
+    !table.cells?.length ||
+    table.grid.length > 4 ||
+    table.grid[0]?.length > 3
+  )
+    return false
+  const numbers = table.cells.filter((c) => /^\d{1,3}$/u.test(c.text?.trim() ?? ''))
+  if (!numbers.length || numbers.length > 2) return false
+  const source = table.cells.flatMap((c) => c.sourceRects ?? [])
+  const assigned = items.filter((i) =>
+    source.some((r) => r.every((v, n) => Math.abs(v - i.rect[n]) < 0.02))
+  )
+  const prose = assigned.filter(
+    (i) =>
+      i.horizontal &&
+      (i.text.match(/\p{L}{2,}/gu) ?? []).length >= 5 &&
+      i.rect[0] < table.cropRect[0] - i.height &&
+      i.rect[2] < table.cropRect[2] - i.height
+  )
+  if (prose.length < 2) return false
+  const h = Math.max(...prose.map((i) => i.height))
+  if (
+    Math.max(...prose.map((i) => i.rect[0])) - Math.min(...prose.map((i) => i.rect[0])) >
+    h * 0.08
+  )
+    return false
+  return numbers.every((c) => {
+    const markers = items.filter(
+      (i) =>
+        i.horizontal &&
+        i.text.trim() === c.text.trim() &&
+        i.height < h * 0.65 &&
+        (c.sourceRects ?? []).some((r) => r.every((v, n) => Math.abs(v - i.rect[n]) < 0.02))
+    )
+    if (markers.length !== 1) return false
+    const marker = markers[0]
+    return (
+      rules.some(
+        (r) =>
+          r[1] === r[3] &&
+          r[0] <= marker.rect[0] &&
+          r[2] > marker.rect[2] &&
+          r[2] - r[0] < h * 9 &&
+          marker.rect[1] - r[1] >= 0 &&
+          marker.rect[1] - r[1] < h * 0.3
+      ) &&
+      items.some(
+        (i) =>
+          i !== marker &&
+          i.horizontal &&
+          /\p{L}/u.test(i.text) &&
+          (i.height > marker.height * 1.3 ||
+            (i.height > marker.height * 1.15 && i.height < h * 0.8)) &&
+          i.rect[0] >= marker.rect[2] &&
+          i.rect[0] - marker.rect[2] < marker.height &&
+          Math.abs(i.baseline - marker.baseline) < marker.height
+      )
+    )
+  })
+}
+
+// A literal caption and a closed native frame preserve the visual table when
+// its detector grid cannot prove cell semantics. This does not create cells or
+// propagate a grouped stub through quoted or mathematical records.
+export function proveCaptionedNativeClosedTableFrame(table, caption, items, rules) {
+  if (
+    !table.cropRect ||
+    !caption?.rect ||
+    !/^Table\s+[\dIVXLC]+\s*[:.]/iu.test(caption.lines?.[0] ?? '')
+  )
+    return
+  const [left, top, right, bottom] = table.cropRect
+  const near = items.filter(
+    (i) =>
+      i.horizontal &&
+      i.height > 0 &&
+      i.rect[0] >= left - 2 &&
+      i.rect[2] <= right + 2 &&
+      i.rect[1] >= top - 20 &&
+      i.rect[3] <= bottom + 20
+  )
+  const heights = near.map((i) => i.height).sort((a, b) => a - b),
+    h = heights[heights.length >> 1]
+  if (!(h > 0)) return
+  let horizontal = joinHorizontalTableRules(rules)
+    .filter(
+      (r) =>
+        r[1] >= top - h * 1.5 &&
+        r[1] <= bottom + h * 1.5 &&
+        Math.abs(r[0] - left) < h * 1.5 &&
+        r[2] >= right - h * 1.5 &&
+        r[2] - right < (right - left) * 0.4
+    )
+    .sort((a, b) => a[1] - b[1])
+  if (horizontal.length < 2) return
+  const opening = horizontal.toSorted((a, b) => Math.abs(a[1] - top) - Math.abs(b[1] - top))[0]
+  horizontal = horizontal.filter(
+    (r) =>
+      r[1] >= opening[1] && Math.abs(r[0] - opening[0]) < 0.05 && Math.abs(r[2] - opening[2]) < 0.05
+  )
+  const closing = horizontal.toSorted(
+    (a, b) => Math.abs(a[1] - bottom) - Math.abs(b[1] - bottom)
+  )[0]
+  horizontal = horizontal.filter((r) => r[1] <= closing[1])
+  if (
+    closing[1] - opening[1] < h * 3 ||
+    Math.abs(opening[0] - closing[0]) > 0.05 ||
+    Math.abs(opening[2] - closing[2]) > 0.05 ||
+    caption.rect[0] >= opening[2] ||
+    caption.rect[2] <= opening[0] ||
+    !(
+      (caption.rect[3] <= opening[1] && opening[1] - caption.rect[3] < h * 3) ||
+      (caption.rect[1] >= closing[1] && caption.rect[1] - closing[1] < h * 4)
+    )
+  )
+    return
+  const source = items.filter(
+    (i) =>
+      i.horizontal &&
+      i.text?.trim() &&
+      i.rect[0] >= opening[0] - 0.05 &&
+      i.rect[2] <= opening[2] + 0.05 &&
+      i.rect[1] >= opening[1] - h * 0.2 &&
+      i.rect[3] <= closing[1] + 0.05
+  )
+  if (source.length < 8 || source.some((i) => /^Algorithm\s+\d/iu.test(i.text))) return
+  const vertical = rules.filter(
+    (r) =>
+      r[0] === r[2] &&
+      r[0] >= opening[0] - 0.6 &&
+      r[0] <= opening[2] + 0.6 &&
+      classifyTableRuleEdge(rules, 0, r[0], opening[1], closing[1]) === 1
+  )
+  const cuts = [...new Set(vertical.map((r) => r[0]))].sort((a, b) => a - b)
+  if (
+    cuts.length >= 3 &&
+    cuts.length <= 7 &&
+    Math.abs(cuts[0] - opening[0]) < 0.6 &&
+    Math.abs(cuts.at(-1) - opening[2]) < 0.6 &&
+    cuts
+      .slice(1)
+      .filter((x, c) => source.some((i) => i.rect[0] >= cuts[c] - 0.05 && i.rect[2] <= x + 0.05))
+      .length >= 2
+  ) {
+    return {
+      kind: 'native-boxed-table-visual',
+      cropRect: [opening[0], opening[1], opening[2], closing[1]],
+      sourceTokens: source,
+      columns: cuts.slice(1).map((x, c) => [cuts[c], opening[1], x, closing[1]])
+    }
+  }
+  if (horizontal.length !== 3) return
+  const divider = horizontal[1]
+  if (
+    Math.abs(divider[0] - opening[0]) > 0.05 ||
+    Math.abs(divider[2] - opening[2]) > 0.05 ||
+    divider[1] - opening[1] > h * 2.8
+  )
+    return
+  const header = source.filter((i) => i.baseline > opening[1] && i.rect[3] < divider[1])
+  if (
+    header.length < 2 ||
+    header.length > 20 ||
+    header.some((i) => Math.abs(i.baseline - header[0].baseline) > h * 0.2)
+  )
+    return
+  const ordered = header.toSorted((a, b) => a.rect[0] - b.rect[0])
+  const fields = []
+  for (const i of ordered) {
+    const previous = fields.at(-1)
+    if (previous && i.rect[0] - previous.at(-1).rect[2] < h * 0.4) previous.push(i)
+    else fields.push([i])
+  }
+  if (
+    fields.length < 2 ||
+    fields.length > 6 ||
+    fields.some((g) => !g.some((i) => /\p{L}/u.test(i.text)))
+  )
+    return
+  const body = source.filter((i) => i.baseline > divider[1])
+  // A visual-only fallback does not need to assign ambiguous scripts to a
+  // body record. The complete native enclosure and explicit leaf header own
+  // those glyphs; repeated ordinary baselines prove there is table content.
+  const ordinaryBands = []
+  for (const i of body
+    .filter((i) => i.height >= h * 0.8)
+    .sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])) {
+    const band = ordinaryBands.at(-1)
+    if (band && Math.abs(i.baseline - band[0].baseline) < h * 0.2) band.push(i)
+    else ordinaryBands.push([i])
+  }
+  const bands = groupSourceRowsWithScripts(body, h, 0.2) ?? ordinaryBands
+  if (
+    !bands ||
+    bands.length < 4 ||
+    body.filter((i) => /\p{L}/u.test(i.text)).length < Math.min(6, bands.length)
+  )
+    return
+  return {
+    kind: 'native-closed-table-visual',
+    cropRect: [opening[0], opening[1], opening[2], closing[1]],
+    sourceTokens: source,
+    headerTokens: header
+  }
+}
+
+// Seed only unique closed native tables next to the supplied literal caption.
+// Further boxed parts must continue the same physical fence widths; they have
+// no invented caption ownership and are returned as visual-only source parts.
+export function findCaptionedNativeClosedTableFrames(caption, items, rules) {
+  if (!caption?.rect || !/^Table\s+[\dIVXLC]+\s*[:.]/iu.test(caption.lines?.[0] ?? '')) return []
+  const h = items
+    .filter((i) => i.height > 0)
+    .map((i) => i.height)
+    .sort((a, b) => a - b)[items.filter((i) => i.height > 0).length >> 1]
+  if (!(h > 0)) return []
+  const horizontal = joinHorizontalTableRules(rules)
+    .filter(
+      (r) =>
+        r[2] - r[0] > h * 8 &&
+        r[1] > caption.rect[3] &&
+        r[0] < caption.rect[2] &&
+        r[2] > caption.rect[0]
+    )
+    .sort((a, b) => a[1] - b[1])
+  const openings = horizontal.filter((r) => r[1] - caption.rect[3] < h * 3)
+  const matches = []
+  for (const opening of openings) {
+    const closing = horizontal.filter(
+      (r) =>
+        r[1] > opening[1] + h * 3 &&
+        Math.abs(r[0] - opening[0]) < 0.05 &&
+        Math.abs(r[2] - opening[2]) < 0.05
+    )
+    const frames = closing
+      .map((r) =>
+        proveCaptionedNativeClosedTableFrame(
+          { cropRect: [opening[0], opening[1], r[2], r[1]] },
+          caption,
+          items,
+          rules
+        )
+      )
+      .filter(Boolean)
+    if (frames.length) matches.push(frames.at(-1))
+  }
+  if (matches.length !== 1) return []
+  const center = (caption.rect[0] + caption.rect[2]) / 2
+  const frame = matches[0].cropRect
+  const first = {
+      ...matches[0],
+      caption: center >= frame[0] - h && center <= frame[2] + h ? caption : undefined
+    },
+    out = [first]
+  if (first.kind !== 'native-boxed-table-visual') return out
+  let previous = first
+  for (let n = 0; n < 2; n++) {
+    const opening = horizontal.find(
+      (r) =>
+        r[1] > previous.cropRect[3] + h * 0.3 &&
+        r[1] - previous.cropRect[3] < h * 2 &&
+        Math.abs(r[0] - first.cropRect[0]) < 0.6 &&
+        Math.abs(r[2] - first.cropRect[2]) < 0.6
+    )
+    if (!opening) break
+    const intervening = items.filter(
+      (i) =>
+        i.horizontal &&
+        i.text?.trim() &&
+        i.rect[1] > previous.cropRect[3] + 0.05 &&
+        i.rect[3] < opening[1] - 0.05 &&
+        i.rect[0] < opening[2] &&
+        i.rect[2] > opening[0]
+    )
+    if (intervening.length) break
+    const fakeCaption = {
+      ...caption,
+      rect: [opening[0], opening[1] - h, opening[2], opening[1] - 0.01]
+    }
+    const proofs = horizontal
+      .filter(
+        (r) =>
+          r[1] > opening[1] + h * 3 &&
+          Math.abs(r[0] - opening[0]) < 0.05 &&
+          Math.abs(r[2] - opening[2]) < 0.05
+      )
+      .map((r) =>
+        proveCaptionedNativeClosedTableFrame(
+          { cropRect: [opening[0], opening[1], r[2], r[1]] },
+          fakeCaption,
+          items,
+          rules
+        )
+      )
+      .filter((p) => p?.kind === 'native-boxed-table-visual')
+    if (!proofs.length) break
+    previous = { ...proofs.at(-1), caption: undefined }
+    out.push(previous)
+  }
+  return out
+}
+
+// A complete native definition frame is stronger ownership than a damaged
+// formula-like detector grid. Return geometry proof, never invented math cells.
+export function proveCaptionedNativeDefinitionFrame(table, caption, items, rules) {
+  if (
+    !table.cropRect ||
+    !caption?.rect ||
+    !/^Table\s+[\dIVXLC]+\s*[:.]/iu.test(caption.lines?.[0] ?? '')
+  )
+    return
+  const [left, top, right, bottom] = table.cropRect
+  const near = items.filter(
+    (i) =>
+      i.horizontal &&
+      i.height > 0 &&
+      i.rect[0] >= left - 5 &&
+      i.rect[2] <= right + 5 &&
+      i.rect[1] >= top - 15 &&
+      i.rect[3] <= bottom + 15
+  )
+  const heights = near.map((i) => i.height).sort((a, b) => a - b),
+    h = heights[heights.length >> 1]
+  if (!(h > 0)) return
+  const frame = joinHorizontalTableRules(rules)
+    .filter(
+      (r) =>
+        r[1] >= top - h &&
+        r[1] <= bottom + h &&
+        Math.abs(r[0] - left) < h &&
+        Math.abs(r[2] - right) < h
+    )
+    .sort((a, b) => a[1] - b[1])
+  if (frame.length !== 2 && frame.length !== 3) return
+  const opening = frame[0],
+    closing = frame.at(-1)
+  if (
+    opening[1] - caption.rect[3] < -0.05 ||
+    opening[1] - caption.rect[3] > h * 2 ||
+    caption.rect[2] <= opening[0] ||
+    caption.rect[0] >= opening[2] ||
+    closing[1] - opening[1] < h * 4
+  )
+    return
+  const source = items.filter(
+    (i) =>
+      i.horizontal &&
+      i.text?.trim() &&
+      i.rect[0] >= opening[0] - 0.05 &&
+      i.rect[2] <= opening[2] + 0.05 &&
+      i.rect[1] >= opening[1] - h * 0.3 &&
+      i.rect[3] <= closing[1] + 0.05
+  )
+  if (!source.length) return
+  const cropRect = [
+    opening[0],
+    Math.min(opening[1], ...source.map((i) => i.rect[1])),
+    closing[2],
+    closing[1]
+  ]
+  if (frame.length === 3) {
+    const divider = frame[1],
+      header = source.filter((i) => i.baseline < divider[1])
+    if (
+      header.length !== 3 ||
+      header.map((i) => i.text.trim()).join('|') !== 'Symbol|Meaning|Notes' ||
+      header.some((i) => Math.abs(i.baseline - header[0].baseline) > h * 0.15) ||
+      divider[1] - opening[1] > h * 2.5
+    )
+      return
+    const body = source.filter((i) => i.baseline > divider[1])
+    if (body.length < 30 || body.filter((i) => /[=∑∏≤≥]/u.test(i.text)).length < 3) return
+    return { kind: 'native-notation-visual', cropRect, sourceTokens: source, headerTokens: header }
+  }
+  const bands = groupSourceRowsWithScripts(source, h, 0.25)
+  if (!bands || bands.length < 4 || bands.length > 12) return
+  const labels = bands.map((g) => g.toSorted((a, b) => a.rect[0] - b.rect[0])[0])
+  if (
+    labels.some((i) => !/^\p{L}[\p{L}\d\s,/()−-]{5,60}$/u.test(i.text.trim())) ||
+    labels.some((i) => Math.abs(i.rect[0] - labels[0].rect[0]) > h * 0.1)
+  )
+    return
+  const values = bands.map((g, n) => g.filter((i) => i !== labels[n]))
+  if (
+    values.some(
+      (g) =>
+        g.length < 2 ||
+        !g.some((i) => /\d/u.test(i.text)) ||
+        !g.some((i) => /[=<>≤≥]/u.test(i.text))
+    )
+  )
+    return
+  const labelRight = Math.max(...labels.map((i) => i.rect[2])),
+    valueLeft = Math.min(...values.flat().map((i) => i.rect[0]))
+  if (valueLeft - labelRight < h * 0.8) return
+  const cut = (labelRight + valueLeft) / 2
+  if (
+    bands
+      .slice(1)
+      .some(
+        (g, n) =>
+          Math.max(...bands[n].map((i) => i.rect[3])) - Math.min(...g.map((i) => i.rect[1])) >
+          h * 0.1
+      )
+  )
+    return
+  const rows = bands.map((g, n) => [
+    opening[0],
+    n
+      ? Math.min(
+          Math.min(...g.map((i) => i.rect[1])),
+          (Math.max(...bands[n - 1].map((i) => i.rect[3])) + Math.min(...g.map((i) => i.rect[1]))) /
+            2
+        )
+      : cropRect[1],
+    closing[2],
+    n === bands.length - 1
+      ? closing[1]
+      : Math.max(
+          Math.max(...g.map((i) => i.rect[3])),
+          (Math.max(...g.map((i) => i.rect[3])) + Math.min(...bands[n + 1].map((i) => i.rect[1]))) /
+            2
+        )
+  ])
+  if (
+    rows.some((r) => r[3] <= r[1]) ||
+    bands.some((g, n) =>
+      g.some((i) => i.rect[1] < rows[n][1] - 0.05 || i.rect[3] > rows[n][3] + 0.05)
+    )
+  )
+    return
+  return {
+    kind: 'native-parameter-records',
+    cropRect,
+    sourceTokens: source,
+    columns: [
+      [opening[0], cropRect[1], cut, closing[1]],
+      [cut, cropRect[1], closing[2], closing[1]]
+    ],
+    rows,
+    bodyRecords: bands,
+    headerRows: []
+  }
+}
 
 // Native paragraph ink crosses a detector's artificial column cuts. Require
 // several connected words on the same baseline; separate description columns
@@ -198,6 +814,30 @@ function isImageBackedNonTable(table, caption, sourceGraphics = []) {
   )
 }
 
+// A detector can crop the tabular-looking left side of a figure panel while
+// the right side remains part of the figure.  Publish the figure as one
+// region instead of exposing a misleading partial table when the candidate
+// has crop-boundary/unassigned evidence and sits almost entirely inside a
+// captioned figure, but occupies only a portion of that figure.
+export function isFigureOwnedPartialTable(table, figures, scale = 1.5) {
+  if (
+    !table?.cropRect ||
+    !Array.isArray(figures) ||
+    !table.issues?.includes('text-crosses-crop-boundary') ||
+    !(table.unassigned?.length ?? 0)
+  )
+    return false
+  const rect = table.cropRect.map((value) => value / scale)
+  const rectArea = area(rect)
+  if (!rectArea) return false
+  return figures.some((figure) => {
+    const graphic = figure?.rect
+    if (!Array.isArray(graphic) || area(graphic) <= 0) return false
+    const overlapArea = intersection(rect, graphic)
+    return overlapArea / rectArea >= 0.85 && overlapArea / area(graphic) < 0.8
+  })
+}
+
 function isCaptionedNarrativeCard(table, caption) {
   if (!caption || !table.grid.length || !table.unassigned?.length) return false
   const text = table.grid.flat().join(' ')
@@ -213,6 +853,69 @@ function isCaptionedNarrativeCard(table, caption) {
       table.issues?.includes('overlapping-predicted-columns')) &&
     table.grid.length <= 5
   )
+}
+
+// Syntax-highlighted code listings can look like sparse multi-column tables
+// when the detector follows the painted background or indentation.  Keep this
+// proof deliberately narrow: require repeated declaration/return lines,
+// source-level punctuation, and substantial text that the inferred grid did
+// not assign.  Captioned tables remain eligible because a real caption is
+// stronger ownership evidence than a lexical code signal.
+function isNativeCodeListing(table, caption, items) {
+  if (caption || !table.cropRect || !Array.isArray(items)) return false
+  const populated = table.grid.flat().filter((text) => text.trim())
+  if (populated.length < 2) return false
+  const text = [...populated, ...(table.unassigned ?? [])].join(' ')
+  const numberedAlgorithm =
+    table.grid.length >= 6 &&
+    table.grid.every((row) => row.length === 2 && /^(?:\d+:\s*)+$/.test(row[0].trim())) &&
+    table.grid.filter((row) => /\b(?:for|while|if|continue|end\s+(?:if|for|while))\b/i.test(row[1]))
+      .length >= 4 &&
+    /\b(?:input|initialize|output)\s*:/i.test(text)
+  if (numberedAlgorithm) return true
+  const procedureRows = table.grid.filter((row) =>
+    /\b(?:while|if|then|for\b[^\n]{0,60}\bdo|plan|sub-?goals?|node\s*\(|re-?enter)\b/iu.test(
+      row.join(' ')
+    )
+  )
+  const numberedProcedureRows = table.grid.filter((row) =>
+    /^\s*\d+(?:\s+\d+)?\s*$/u.test(row.find((value) => value.trim())?.trim() ?? '')
+  )
+  if (
+    table.grid.length >= 5 &&
+    table.grid.every((row) => row.length <= 3) &&
+    numberedProcedureRows.length >= 3 &&
+    procedureRows.length >= 3 &&
+    procedureRows.length >= table.grid.length * 0.5
+  )
+    return true
+  if (!table.unassigned?.length || table.unassigned.length < populated.length) return false
+  const declarations = (text.match(/\b(?:def|function|class|import|const|let|var)\b/gi) ?? [])
+    .length
+  const returns = (text.match(/\b(?:return|yield)\b/gi) ?? []).length
+  const declarationKinds = new Set(
+    (text.match(/\b(?:def|function|class|import|const|let|var)\b/gi) ?? []).map((word) =>
+      word.toLowerCase()
+    )
+  )
+  const syntax = (text.match(/[()[\]{}:=#]/g) ?? []).length
+  if (syntax < 6) return false
+  if (declarations < 2 || returns < 2 || declarationKinds.size < 1) return false
+  const source = items.filter(
+    (item) =>
+      item.horizontal &&
+      item.rect?.[1] >= table.cropRect[1] &&
+      item.rect?.[3] <= table.cropRect[3] &&
+      item.rect?.[2] > table.cropRect[0] &&
+      item.rect?.[0] < table.cropRect[2]
+  )
+  const sourceDeclarations = source.filter((item) =>
+    /^(?:def|function|class|import|const|let|var)\b/i.test(item.text.trim())
+  ).length
+  const sourceReturns = source.filter((item) =>
+    /^(?:return|yield)\b/i.test(item.text.trim())
+  ).length
+  return sourceDeclarations >= 2 && sourceReturns >= 2
 }
 
 function isNativeSingleColumnDerivation(table, caption, items, rules) {
@@ -375,6 +1078,217 @@ function isLetteredContentsDirectory(table, pageItems) {
   )
 }
 
+// A flat supplemental directory still has explicit native navigation roles:
+// one local Contents title, consecutive S ordinals and a separate right page
+// lane. Neither a section-looking data label nor the grid alone proves this.
+function isFlatSupplementalContentsDirectory(table, items, rules) {
+  if (!table.cropRect || table.grid.length < 4) return false
+  const [left, top, right, bottom] = table.cropRect,
+    width = right - left,
+    source = items.filter(
+      (i) =>
+        i.horizontal &&
+        i.height > 0 &&
+        i.text?.trim() &&
+        i.rect?.length === 4 &&
+        i.rect.every(Number.isFinite)
+    ),
+    titles = source.filter(
+      (i) =>
+        /^contents$/iu.test(i.text.trim()) &&
+        i.rect[0] >= left &&
+        i.rect[2] <= right &&
+        i.rect[1] >= top &&
+        i.rect[3] <= bottom
+    )
+  if (titles.length !== 1) return false
+  const title = titles[0],
+    bands = []
+  for (const i of source
+    .filter(
+      (i) =>
+        i.baseline > title.baseline &&
+        i.rect[1] >= top &&
+        i.rect[3] <= bottom &&
+        i.rect[0] >= left &&
+        i.rect[2] <= right
+    )
+    .sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])) {
+    const band = bands.at(-1)
+    if (band && Math.abs(i.baseline - band[0].baseline) < Math.min(i.height, band[0].height) * 0.2)
+      band.push(i)
+    else bands.push([i])
+  }
+  const entries = bands.flatMap((g) => {
+    const ordered = [...g].sort((a, b) => a.rect[0] - b.rect[0]),
+      target = ordered.at(-1),
+      labelItems = ordered.slice(0, -1),
+      label = labelItems.map((i) => i.text.trim()).join(' '),
+      match = /^S(\d+)\s+(\p{L}.*)$/u.exec(label)
+    if (
+      !match ||
+      !/^\d{1,4}$/u.test(target.text.trim()) ||
+      target.rect[0] < left + width * 0.8 ||
+      target.rect[0] - labelItems.at(-1).rect[2] < target.height * 2
+    )
+      return []
+    return [
+      { ordinal: Number(match[1]), page: Number(target.text.trim()), target, first: ordered[0] }
+    ]
+  })
+  if (
+    entries.length < 4 ||
+    entries.length < table.grid.length * 0.8 ||
+    entries[0].first.rect[1] - title.rect[3] > entries[0].first.height * 3 ||
+    entries.some(
+      (e, n) =>
+        e.ordinal !== n + 1 ||
+        e.page < 1 ||
+        (n && e.page < entries[n - 1].page) ||
+        Math.abs(e.target.rect[2] - entries[0].target.rect[2]) > e.target.height * 0.2
+    )
+  )
+    return false
+  return !rules.some(
+    (r) =>
+      r[1] === r[3] &&
+      r[2] - r[0] > width * 0.5 &&
+      r[1] > entries[0].first.rect[1] &&
+      r[1] < entries.at(-1).target.rect[3]
+  )
+}
+
+// Hierarchical contents pages are often emitted as a two-column table: the
+// section label is followed by a dotted leader and a printed page number. A
+// page-level Contents heading plus repeated navigation-shaped rows is a
+// stronger non-table proof than detector confidence. Keep the test narrow so
+// dotted values in a real data table are not discarded.
+function isHierarchicalContentsDirectory(table, pageItems, sourceRules) {
+  if (!table?.grid || table.grid.length < 5 || !Array.isArray(pageItems)) return false
+  const rules = Array.isArray(sourceRules) ? sourceRules : []
+  const horizontal = pageItems
+    .filter((item) => item?.horizontal !== false && item?.text?.trim() && Array.isArray(item.rect))
+    .sort((a, b) => a.rect[1] - b.rect[1] || a.rect[0] - b.rect[0])
+  const lines = []
+  for (const item of horizontal) {
+    const height = Number.isFinite(item.height) ? item.height : item.rect[3] - item.rect[1]
+    const line = lines.find(
+      (candidate) =>
+        Math.abs(candidate[0].rect[1] - item.rect[1]) < Math.min(candidate[0].height, height) * 0.3
+    )
+    if (line) line.push({ ...item, height })
+    else lines.push([{ ...item, height }])
+  }
+  const joinedLines = lines.map((line) =>
+    line
+      .sort((a, b) => a.rect[0] - b.rect[0])
+      .map((item) => item.text.trim())
+      .join('')
+      .replace(/\s+/g, ' ')
+      .trim()
+  )
+  if (!joinedLines.some((text) => /^(?:table\s+of\s+)?contents$/i.test(text))) return false
+
+  // Hierarchical navigation also occurs without leaders, between page-wide
+  // outer separators. Prove native section/title/page lanes, a consecutive
+  // major sequence and nested ordinals before allowing those outer strokes.
+  if (table.cropRect) {
+    const [left, top, right, bottom] = table.cropRect,
+      width = right - left
+    const titles = lines.filter((line) =>
+      /^(?:table\s+of\s+)?contents$/i.test(line.map((i) => i.text.trim()).join(''))
+    )
+    const title = titles.length === 1 ? titles[0] : undefined
+    const entries = lines.flatMap((line) => {
+      const ordered = [...line].sort((a, b) => a.rect[0] - b.rect[0]),
+        first = ordered[0],
+        target = ordered.at(-1),
+        label = ordered
+          .slice(0, -1)
+          .map((i) => i.text.trim())
+          .join(' '),
+        match = /^(\d+(?:\.\d+)*|[A-Z])\s+(.+)$/.exec(label)
+      if (
+        !match ||
+        !target ||
+        !title ||
+        !/\p{L}{2}/u.test(match[2]) ||
+        !/^\d{1,4}$/.test(target.text.trim()) ||
+        first.rect[1] <= title[0].rect[1] ||
+        first.rect[0] < left - first.height * 0.2 ||
+        first.rect[1] < top ||
+        target.rect[2] > right + target.height * 0.2 ||
+        target.rect[3] > bottom ||
+        target.rect[0] < left + width * 0.8 ||
+        target.rect[0] - ordered.at(-2).rect[2] < target.height * 2
+      )
+        return []
+      return [{ ordinal: match[1], page: Number(target.text.trim()), first, target }]
+    })
+    const majors = entries.filter((e) => /^\d+$/.test(e.ordinal)),
+      nested = entries.filter((e) => /^\d+\.\d+$/.test(e.ordinal))
+    const navigable =
+      majors.length >= 4 &&
+      nested.length >= 3 &&
+      entries.length >= 9 &&
+      entries.length >= table.grid.length * 0.8 &&
+      title.every(
+        (i) => i.rect[0] >= left - i.height * 0.2 && i.rect[2] <= right + i.height * 0.2
+      ) &&
+      entries[0].first.rect[1] - Math.max(...title.map((i) => i.rect[3])) <=
+        entries[0].first.height * 4 &&
+      Math.min(...title.map((i) => i.rect[1])) >= top - entries[0].first.height * 2 &&
+      majors.every((e, n) => Number(e.ordinal) === n + 1) &&
+      nested.every((e) =>
+        majors.some(
+          (m) => m.ordinal === e.ordinal.split('.')[0] && m.first.rect[1] < e.first.rect[1]
+        )
+      ) &&
+      entries.every(
+        (e, n) =>
+          e.page > 0 &&
+          (!n || e.page >= entries[n - 1].page) &&
+          Math.abs(e.target.rect[2] - entries[0].target.rect[2]) <= e.target.height * 0.2
+      )
+    const interiorRule = rules.some(
+      (r) =>
+        Math.abs(r[3] - r[1]) < 1 &&
+        r[2] - r[0] > width * 0.5 &&
+        entries.length &&
+        r[1] > entries[0].first.rect[1] &&
+        r[1] < entries.at(-1).target.rect[3]
+    )
+    if (navigable && !interiorRule) return true
+  }
+  if (
+    table.cropRect &&
+    rules.some(
+      (r) =>
+        Math.abs(r[3] - r[1]) < 1 && r[2] - r[0] > (table.cropRect[2] - table.cropRect[0]) * 0.5
+    )
+  )
+    return false
+
+  const rows = table.grid.map((row) => row.map((text) => String(text ?? '').trim()).filter(Boolean))
+  const leader = /(?:\.\s*){3,}|…{2,}/
+  const pageNumber = /(?:^|\s)\d{1,4}$/
+  const navigable = rows.filter((row) => {
+    const text = row.join(' ').replace(/\s+/g, ' ').trim()
+    return leader.test(text) && pageNumber.test(text)
+  })
+  if (navigable.length < 5 || navigable.length / rows.length < 0.7) return false
+
+  const hierarchical = navigable.filter((row) => {
+    const text = row.join(' ').trim()
+    return /^(?:[A-Z]|\d+(?:\.\d+)*)(?:[.)]|\s)/.test(text)
+  })
+  // Require either a nested numeric section or several lettered/numbered
+  // section markers. This prevents a captioned data table containing dotted
+  // decimal values from being treated as a directory.
+  const nested = navigable.some((row) => /^\d+\.\d+(?:\.|\s)/.test(row.join(' ').trim()))
+  return nested || hierarchical.length >= 3
+}
+
 // Detection confidence alone also accepts affiliations and prose. Like the upstream
 // content-supported row/column refinement, require evidence from source text.
 // ponytail: uncaptioned single-column or single-row tables remain ambiguous with lists;
@@ -382,7 +1296,61 @@ function isLetteredContentsDirectory(table, pageItems) {
 export function hasTableEvidence(table, caption, pageItems = [], sourceRules, sourceGraphics = []) {
   const populatedRows = table.grid.map((row) => row.filter((text) => text.trim()).length)
   if (!populatedRows.some((count) => count > 0)) return false
+  if (isNativeProseFootnoteOverlap(table, caption, pageItems, sourceRules ?? [])) return false
+  const nativeCaption = caption?.rect
+    ? { ...caption, rect: caption.rect.map((v) => v * (table.sourceViewport?.scale ?? 1.5)) }
+    : undefined
+  const nativeLeaves =
+    nativeCaption &&
+    sourceRules &&
+    proveNativeClosedLeafHeader(table, pageItems, [nativeCaption], sourceRules)
+  if (
+    nativeLeaves &&
+    table.grid.length === nativeLeaves.bodyRecords.length + 1 &&
+    table.grid.every((row) => row.length === nativeLeaves.columns.length) &&
+    nativeLeaves.headerCells.every(
+      (c) => table.grid[0][c.column].replace(/\s/gu, '') === c.text.replace(/\s/gu, '')
+    ) &&
+    [...nativeLeaves.ownedTokens, ...nativeLeaves.originalBody].every((i) =>
+      (table.cells ?? []).some((c) =>
+        (c.sourceRects ?? []).some((r) => r.every((v, n) => Math.abs(v - i.rect[n]) < 0.02))
+      )
+    ) &&
+    (table.cells ?? []).every(
+      (c) =>
+        c.rect?.length === 4 &&
+        c.rect.every(Number.isFinite) &&
+        c.rect[2] > c.rect[0] &&
+        c.rect[3] > c.rect[1]
+    )
+  )
+    return true
+  const nativeDefinition =
+    caption?.rect &&
+    sourceRules &&
+    proveCaptionedNativeDefinitionFrame(
+      table,
+      { ...caption, rect: caption.rect.map((v) => v * (table.sourceViewport?.scale ?? 1.5)) },
+      pageItems,
+      sourceRules
+    )
+  if (
+    nativeDefinition?.kind === 'native-parameter-records' &&
+    table.grid.length === nativeDefinition.bodyRecords.length &&
+    table.grid.every((row) => row.length === 2 && row.every((text) => text.trim())) &&
+    !table.unassigned?.length &&
+    !table.clipped?.length &&
+    nativeDefinition.sourceTokens.every((i) =>
+      (table.cells ?? []).some((c) =>
+        (c.sourceRects ?? []).some((r) => r.every((v, n) => Math.abs(v - i.rect[n]) < 0.02))
+      )
+    )
+  )
+    return true
+  if (!caption && isHierarchicalContentsDirectory(table, pageItems, sourceRules)) return false
   if (!caption && isLetteredContentsDirectory(table, pageItems)) return false
+  if (!caption && isFlatSupplementalContentsDirectory(table, pageItems, sourceRules ?? []))
+    return false
   // A supplementary-materials directory names several external tables. Its
   // neighboring entry is not a caption for the directory or nearby references.
   if (
@@ -405,6 +1373,7 @@ export function hasTableEvidence(table, caption, pageItems = [], sourceRules, so
   if (isDamagedNativeFormulaLayout(table, caption)) return false
   if (isCaptionedNarrativeCard(table, caption)) return false
   if (isImageBackedNonTable(table, caption, sourceGraphics)) return false
+  if (isNativeCodeListing(table, caption, pageItems)) return false
   if (caption) return true
   if (hasNativeNonTableLayout(table, pageItems, sourceRules)) return false
   if (
@@ -1264,6 +2233,82 @@ export function hasTableEvidence(table, caption, pageItems = [], sourceRules, so
     !table.grid
       .slice(0, table.grid.indexOf(numbered[0]))
       .some((row) => row.filter((text) => /\p{L}/u.test(text)).length >= 2)
+  )
+    return false
+  // Captionless reference pages can be mistaken for two-column tables when
+  // bracketed citation keys occupy the first model column. Require a dense
+  // sequence of citation keys, reference-length prose, and bibliography
+  // anchors; measured or captioned tables remain eligible.
+  const citationKeyRows = table.grid.filter((row) =>
+    /^\s*\[[^\]]{2,16}\](?:\s+\[[^\]]{2,16}\])?\s*$/u.test(row[0]?.trim() ?? '')
+  )
+  const citationProseRows = citationKeyRows.filter((row) => words(row.slice(1).join(' ')) >= 8)
+  const citationText = [
+    ...citationKeyRows.flatMap((row) => row.slice(1)),
+    ...(table.unassigned ?? [])
+  ].join(' ')
+  if (
+    !caption &&
+    table.grid.flat().filter(measurement).length <= 2 &&
+    table.grid.length >= 8 &&
+    citationKeyRows.length >= Math.max(8, table.grid.length * 0.55) &&
+    citationProseRows.length >= citationKeyRows.length * 0.65 &&
+    (citationText.match(/(?:\b(?:19|20)\d{2}\b|\bet al\.|\barXiv:|\bdoi\b|https?:\/\/)/gi) ?? [])
+      .length >= 3
+  )
+    return false
+  // Short references-page tails can contain only four or five rows after a
+  // page crop, so the long-list guard above intentionally does not cover
+  // them.  Keep the fallback strict: every row must carry a bracketed
+  // citation key and reference-length prose, with several publication
+  // anchors.  Captioned or measured tables continue through this path.
+  if (
+    !caption &&
+    table.grid.length <= 7 &&
+    table.grid.flat().filter(measurement).length <= 2 &&
+    citationKeyRows.length >= 4 &&
+    citationKeyRows.length >= table.grid.length * 0.75 &&
+    citationProseRows.length >= citationKeyRows.length * 0.75 &&
+    (citationText.match(/(?:\b(?:19|20)\d{2}\b|\bet al\.|\barXiv:|\bdoi\b|https?:\/\/)/gi) ?? [])
+      .length >= 3
+  )
+    return false
+  // Boxed pseudocode is unstructured algorithm content, not a data grid.
+  // Require an explicit Algorithm heading and numbered instruction rows so a
+  // measured table with a numbered first column remains eligible.
+  const algorithmHeading = [
+    ...(table.grid[0] ?? []).filter(Boolean),
+    ...(table.unassigned ?? [])
+  ].some((text) => /^\s*Algorithm\b/i.test(text.trim()))
+  const algorithmRows = table.grid
+    .slice(1)
+    .filter((row) => /^\s*\d+[.:)]\s*/u.test(row.find((text) => text.trim())?.trim() ?? ''))
+  if (
+    !caption &&
+    table.grid.flat().filter(measurement).length === 0 &&
+    algorithmHeading &&
+    algorithmRows.length >= 3 &&
+    algorithmRows.length >= (table.grid.length - 1) * 0.6
+  )
+    return false
+  // Some boxed procedures omit the literal Algorithm heading. A numbered
+  // instruction lane with repeated control-flow vocabulary is still
+  // pseudocode, not a data grid; require several independent witnesses so a
+  // labelled prose table remains eligible.
+  const numberedProcedureRows = table.grid.filter((row) =>
+    /^\s*\d+(?:\s+\d+)?\s*$/u.test(row.find((text) => text.trim())?.trim() ?? '')
+  )
+  const procedureRows = table.grid.filter((row) =>
+    /\b(?:while|if|then|for\b[^\n]{0,60}\bdo|plan|sub-?goals?|node\s*\(|re-?enter)\b/iu.test(
+      row.join(' ')
+    )
+  )
+  if (
+    !caption &&
+    table.grid.flat().filter(measurement).length === 0 &&
+    numberedProcedureRows.length >= 3 &&
+    procedureRows.length >= 3 &&
+    procedureRows.length >= table.grid.length * 0.5
   )
     return false
   // A ruled article-info/abstract panel is not a table, even when the whole prose

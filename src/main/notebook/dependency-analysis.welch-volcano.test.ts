@@ -44,7 +44,7 @@ it.each(
   variants.flatMap(({ name, cells }) =>
     cells.filter((cell) => cell.status === 'completed').map((cell) => ({ ...cell, name, cells }))
   )
-)('captures $name cell $runId with its upstream values', async ({ script, runId, cells }) => {
+)('captures $name cell $runId with its upstream values', async ({ script, runId, cells, name }) => {
   const root = await mkdtemp(join(tmpdir(), 'welch-cell-'))
   const runs = runsFor(false, cells)
   const analyzer = new NotebookDependencyAnalyzer({
@@ -61,6 +61,20 @@ it.each(
       kernelEpochId: 'epoch'
     })
     const { facts } = await analyzeRNotebookSource(script, context)
+    if (name === 'BH companion' && ['6', '7'].includes(runId)) {
+      expect(facts, JSON.stringify(facts)).toMatchObject({
+        state: 'unknown',
+        reasons: expect.arrayContaining(['opaque-call'])
+      })
+      expect(await analyzeNotebookSourceFileAccess('r', script, context)).toMatchObject({
+        readState: 'partial',
+        writeState: 'partial',
+        externalState: 'partial',
+        reads: [],
+        writes: runId === '7' ? ['diagonal_volcano.png', 'diagonal_volcano_diff.csv'] : []
+      })
+      return
+    }
     expect(
       facts.state === 'unknown' ? facts.reasons.filter((r) => r !== 'external-state') : [],
       JSON.stringify(facts)
@@ -77,8 +91,8 @@ it.each(
 })
 
 it.each(variants)(
-  'reconstructs the $name producer through its upstream cells',
-  async ({ cells }) => {
+  'projects $name upstream provenance within certified coverage',
+  async ({ cells, name }) => {
     const root = await mkdtemp(join(tmpdir(), 'welch-volcano-'))
     const runs = runsFor(false, cells)
     const producer = runs.at(-1)!
@@ -92,19 +106,32 @@ it.each(variants)(
         sessionId: 's',
         completedRun: producer
       })
-      expect(projection.stalenessByRunId[producer.runId], JSON.stringify(projection)).toEqual({
-        state: 'clear'
-      })
-      const upstream = new Set<string>()
-      const pending = [producer.runId]
-      while (pending.length) {
-        for (const dependency of projection.dependenciesByRunId?.[pending.pop()!] ?? []) {
-          if (upstream.has(dependency)) continue
-          upstream.add(dependency)
-          pending.push(dependency)
+      if (name === 'BH companion') {
+        for (const runId of ['6', '7']) {
+          expect(projection.stalenessByRunId[runId], JSON.stringify(projection)).toMatchObject({
+            state: 'unknown',
+            reasons: expect.arrayContaining(['opaque-call'])
+          })
+          expect(projection.dependenciesByRunId?.[runId]).toBeUndefined()
         }
+        expect(projection.stalenessByRunId['4']).toEqual({ state: 'clear' })
+        expect(projection.dependenciesByRunId?.['3']).toEqual(['2'])
+        expect(projection.dependenciesByRunId?.['4']).toEqual(['3'])
+      } else {
+        expect(projection.stalenessByRunId[producer.runId], JSON.stringify(projection)).toEqual({
+          state: 'clear'
+        })
+        const upstream = new Set<string>()
+        const pending = [producer.runId]
+        while (pending.length) {
+          for (const dependency of projection.dependenciesByRunId?.[pending.pop()!] ?? []) {
+            if (upstream.has(dependency)) continue
+            upstream.add(dependency)
+            pending.push(dependency)
+          }
+        }
+        expect([...upstream].sort()).toEqual(['2', '3', '4', '6'])
       }
-      expect([...upstream].sort()).toEqual(['2', '3', '4', '6'])
       const context = await analyzer.sourceFileAccessContext({
         projectId: 'p',
         sessionId: 's',
@@ -114,6 +141,11 @@ it.each(variants)(
         kernelEpochId: 'epoch'
       })
       const access = await analyzeNotebookSourceFileAccess('r', producer.script, context)
+      expect(access).toMatchObject({
+        readState: name === 'BH companion' ? 'partial' : 'complete',
+        writeState: name === 'BH companion' ? 'partial' : 'complete',
+        externalState: name === 'BH companion' ? 'partial' : 'complete'
+      })
       expect(access.writes).toEqual(['diagonal_volcano.png', 'diagonal_volcano_diff.csv'])
     } finally {
       await rm(root, { recursive: true, force: true })

@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest'
+import type { NotebookRunRecord } from '../../shared/notebook'
+import { analyzeRNotebookSource } from './dependency-analysis-r'
+import { projectNotebookDependencies } from './dependency-projection'
 
 import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
 
@@ -102,6 +105,143 @@ describe('scientific storage modes', () => {
       'import importlib.util\nspec = importlib.util.spec_from_file_location("helper", "outputs/helper.py")\nmodule = importlib.util.module_from_spec(spec)\nexecute = spec.loader.exec_module\nexecute = lambda module: None\nexecute(module)'
     expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
       writes: [],
+      writeState: 'complete'
+    })
+  })
+
+  it('records the known trace destination of R cat', async () => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'TRACE_PATH <- "outputs/score-trace.csv"; header <- "call_id,score"; cat(header, "\\n", file=TRACE_PATH, append=FALSE, sep="")'
+      )
+    ).toMatchObject({ reads: [], writes: ['outputs/score-trace.csv'] })
+  })
+
+  it.each([
+    ['base::cat("next", file="report.txt", append=TRUE)', ['report.txt']],
+    ['cat("next", file="report.txt", append=FALSE)', []],
+    ['cat("next", file="report.txt")', []],
+    ['cat("next", file="report.txt", app=TRUE)', []]
+  ] as const)('matches only the exact post-dots R cat append option: %s', async (source, reads) => {
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads,
+      writes: ['report.txt'],
+      writeState: 'complete'
+    })
+  })
+
+  it('does not require old bytes after R cat replaces and then appends', async () => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'cat("first", file="report.txt"); cat("next", file="report.txt", append=TRUE)'
+      )
+    ).toMatchObject({ reads: [], writes: ['report.txt'], writeState: 'complete' })
+  })
+
+  it('retains a known R cat destination with uncertain append intent', async () => {
+    expect(
+      await analyzeNotebookSourceFileAccess('r', 'cat("next", file="report.txt", append=flag)')
+    ).toMatchObject({ writes: ['report.txt'], readState: 'partial', writeState: 'partial' })
+  })
+
+  it.each([
+    'con <- file("report.txt", "rt"); cat("next", file=con); readLines("report.txt")',
+    'con <- file("report.txt", "wt"); close(con); cat("next", file=con); readLines("report.txt")',
+    'con <- file("report.txt", mode); cat("next", file=con); readLines("report.txt")'
+  ])(
+    'does not certify a cat write through an unusable or unknown connection: %s',
+    async (source) => {
+      expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+        reads: ['report.txt'],
+        writes: ['report.txt'],
+        readState: 'partial',
+        writeState: 'partial'
+      })
+    }
+  )
+
+  it.each([
+    ['at', 'FALSE', ['report.txt']],
+    ['wt', 'TRUE', []],
+    ['', 'TRUE', []]
+  ] as const)('uses the R cat connection mode %s before append=%s', async (mode, append, reads) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        `con <- file("report.txt", "${mode}"); alias <- con; cat("next", file=alias, append=${append})`
+      )
+    ).toMatchObject({ reads, writes: ['report.txt'], writeState: 'complete' })
+  })
+
+  it.each([
+    'cat("next", "report.txt")',
+    'cat("next", fil="report.txt")',
+    'cat("next", fi="report.txt")'
+  ])('does not interpret R cat data after dots as a file control: %s', async (source) => {
+    expect((await analyzeNotebookSourceFileAccess('r', source)).writes).toEqual([])
+  })
+
+  it.each([
+    'cat(readLines("input.txt"))',
+    'base::cat(readLines("input.txt"), file="")',
+    'cat(readLines("input.txt"), file="|consumer")',
+    'cat(readLines("input.txt"), file=1)'
+  ])('retains nested R cat readers without inventing a disk destination: %s', async (source) => {
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: ['input.txt'],
+      writes: []
+    })
+  })
+
+  it.each([
+    'other::cat("next", file="report.txt")',
+    'cat <- custom; cat("next", file="report.txt")',
+    'if (flag) cat <- custom; cat("next", file="report.txt")',
+    'emit <- base::cat; emit <- custom; emit("next", file="report.txt")',
+    'emit <- function(path) cat("next", file=path); cat <- custom; emit("report.txt")',
+    'emit <- function(path) base::cat("next", file=path); emit("")',
+    'emit <- function(path) base::cat("next", file=path); emit("|consumer")'
+  ])(
+    'does not infer a base R cat destination through a different callable or wrapper: %s',
+    async (source) => {
+      expect((await analyzeNotebookSourceFileAccess('r', source)).writes).toEqual([])
+    }
+  )
+
+  it('preserves opaque R effects alongside a known cat destination', async () => {
+    expect(
+      await analyzeNotebookSourceFileAccess('r', 'opaque(); base::cat("next", file="report.txt")')
+    ).toMatchObject({
+      writes: ['report.txt'],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it.each(['TRUE', 'flag'])(
+    'does not borrow base cat append=%s semantics for a known local replacement writer',
+    async (append) => {
+      expect(
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          `cat <- function(file, append) writeLines("next", file); cat("report.txt", append=${append})`
+        )
+      ).toMatchObject({ reads: [], writes: ['report.txt'], writeState: 'complete' })
+    }
+  )
+
+  it('keeps base cat append separate from a same-name local replacement writer', async () => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'cat <- function(file, append) writeLines("next", file); base::cat("base", file="base.txt", append=TRUE); cat("report.txt", append=TRUE)'
+      )
+    ).toMatchObject({
+      reads: ['base.txt'],
+      writes: ['base.txt', 'report.txt'],
       writeState: 'complete'
     })
   })
@@ -549,4 +689,366 @@ it('does not apply SQLite effects after the imported constructor is rebound', as
   )
   expect(result.reads).toEqual([])
   expect(result.writes).toEqual([])
+})
+
+describe('R compressed serialization path evidence', () => {
+  it.each([
+    'gzfile <- custom\ncon <- gzfile("fake.gz", "wb")\nserialize(list(x = 1), con)',
+    'gzcon <- custom\nserialize(list(x = 1), gzcon(gzfile("fake.gz", "wb")))',
+    'gzfile <- custom\nrestored <- unserialize(gzfile("fake.gz", "rb"))'
+  ])('does not infer a base connection from a shadowed constructor: %s', async (source) => {
+    const result = await analyzeNotebookSourceFileAccess('r', source)
+    expect(result.reads).not.toContain('fake.gz')
+    expect(result.writes).not.toContain('fake.gz')
+  })
+  const captureSerialization = async (
+    source: string
+  ): Promise<
+    Awaited<ReturnType<typeof analyzeRNotebookSource>> & {
+      normalized: Awaited<ReturnType<typeof analyzeNotebookSourceFileAccess>>
+    }
+  > => ({
+    ...(await analyzeRNotebookSource(source)),
+    normalized: await analyzeNotebookSourceFileAccess('r', source)
+  })
+
+  it.each([
+    [
+      'literal gz writer',
+      'con <- gzfile("outputs/checkpoint.gz", "wb")\nserialize(list(values = c(1, 2)), con)\nclose(con)'
+    ],
+    [
+      'aliased gz writer',
+      'pack <- base::serialize\ncon <- gzfile("outputs/checkpoint.gz", "wb")\nother <- con\npack(list(values = c(1, 2)), other)\nclose(con)'
+    ]
+  ])('captures exact compressed output evidence: %s', async (_label, source) => {
+    const result = await captureSerialization(source)
+    expect(result.fileAccess?.writes).toContain('outputs/checkpoint.gz')
+    expect(result.normalized.writes).toContain('outputs/checkpoint.gz')
+  })
+
+  it.each([
+    [
+      'literal gz reader',
+      'con <- gzfile("outputs/checkpoint.gz", "rb")\nrestored <- unserialize(con)\nclose(con)'
+    ],
+    ['qualified gz reader', 'restored <- base::unserialize(gzfile("outputs/checkpoint.gz", "rb"))'],
+    [
+      'aliased gz reader',
+      'restore <- base::unserialize\ncon <- gzfile("outputs/checkpoint.gz", "rb")\nother <- con\nrestored <- restore(other)\nclose(con)'
+    ]
+  ])('captures exact compressed input evidence: %s', async (_label, source) => {
+    const result = await captureSerialization(source)
+    expect(result.fileAccess?.reads).toContain('outputs/checkpoint.gz')
+    expect(result.normalized.reads).toContain('outputs/checkpoint.gz')
+  })
+
+  it.each([
+    ['raw serialization', 'payload <- serialize(list(values = c(1, 2)), NULL)'],
+    [
+      'raw roundtrip',
+      'payload <- serialize(list(values = c(1, 2)), NULL)\nrestored <- unserialize(payload)'
+    ],
+    [
+      'aliased raw roundtrip',
+      'pack <- base::serialize\nrestore <- base::unserialize\npayload <- pack(list(values = c(1, 2)), NULL)\nrestored <- restore(payload)'
+    ],
+    [
+      'invalid character deserializer argument',
+      'restored <- base::unserialize("not-a-file-argument")'
+    ]
+  ])('does not invent a disk artifact for %s', async (_label, source) => {
+    const result = await captureSerialization(source)
+    expect(result.normalized.reads).toEqual([])
+    expect(result.normalized.writes).toEqual([])
+  })
+
+  it.each([
+    [
+      'serialize refhook',
+      'con <- gzfile("outputs/checkpoint.gz", "wb")\nserialize(new.env(), con, refhook = function(x) { writeLines("hook", "outputs/hook.txt"); "token" })\nclose(con)'
+    ],
+    [
+      'unserialize refhook',
+      'con <- gzfile("outputs/checkpoint.gz", "rb")\nrestored <- unserialize(con, refhook = function(x) readRDS("inputs/reference.rds"))\nclose(con)'
+    ]
+  ])('retains uncertainty for %s', async (_label, source) => {
+    const result = await captureSerialization(source)
+    expect(result.facts.state).toBe('unknown')
+    expect(result.normalized.readState).toBe('partial')
+    expect(result.normalized.writeState).toBe('partial')
+  })
+
+  it('retains an append checkpoint as both input and output through aliases', async () => {
+    const source =
+      'pack <- base::serialize\ncon <- gzfile("state.bin.gz", "ab")\nother <- con\npack(list(x = 1), other)\nclose(con)'
+    const result = await analyzeNotebookSourceFileAccess('r', source)
+    expect(result.reads).toContain('state.bin.gz')
+    expect(result.writes).toContain('state.bin.gz')
+  })
+
+  it.each([
+    'pack <- base::serialize\npack <- custom\npack(list(x = 1), gzfile("fake.gz", "wb"))',
+    'if (flag) pack <- base::serialize\npack(list(x = 1), gzfile("fake.gz", "wb"))',
+    'custom::serialize(list(x = 1), gzfile("fake.gz", "wb"))',
+    'serialize(list(x = 1), "fake.gz")',
+    'con <- gzfile("fake.gz", "rb")\nserialize(list(x = 1), con)',
+    'con <- gzfile("fake.gz")\nserialize(list(x = 1), con)',
+    'con <- gzfile("fake.gz", "wb")\nclose(con)\nserialize(list(x = 1), con)'
+  ])(
+    'does not publish a serialization write without valid known callable/connection: %s',
+    async (source) => {
+      const result = await analyzeNotebookSourceFileAccess('r', source)
+      expect(result.writes).not.toContain('fake.gz')
+      expect(result.writeState).toBe('partial')
+    }
+  )
+
+  it.each([
+    'restore <- base::unserialize\nrestore <- custom\nrestored <- restore(gzfile("fake.gz", "rb"))',
+    'custom::unserialize(gzfile("fake.gz", "rb"))',
+    'restored <- unserialize("fake.gz")',
+    'con <- gzfile("fake.gz", "wb")\nrestored <- unserialize(con)',
+    'con <- gzfile("fake.gz", "rb")\nclose(con)\nrestored <- unserialize(con)'
+  ])('does not publish an invalid/unknown unserialization input: %s', async (source) => {
+    const result = await analyzeNotebookSourceFileAccess('r', source)
+    expect(result.reads).not.toContain('fake.gz')
+    expect(result.readState).toBe('partial')
+  })
+
+  it('captures reordered named connection arguments without certifying restored ownership', async () => {
+    const writer = await analyzeRNotebookSource(
+      'con <- gzfile("state.gz", "wb")\nserialize(connection = con, object = list(x = 1))'
+    )
+    expect(writer.fileAccess?.writes).toContain('state.gz')
+    expect(writer.facts.serializedValueWrites ?? []).toEqual([])
+    const reader = await analyzeRNotebookSource(
+      'con <- gzfile("state.gz", "rb")\nrestored <- unserialize(connection = con)'
+    )
+    expect(reader.fileAccess?.reads).toContain('state.gz')
+    expect(reader.facts.typeBindings ?? []).toEqual([])
+    expect(reader.facts.safeCallNames ?? []).not.toContain('unserialize')
+    const run: NotebookRunRecord = {
+      runId: 'restore-run',
+      cellId: 'restore-cell',
+      source: 'agent',
+      kernelKind: 'r',
+      kernelEpochId: 'epoch',
+      environment: 'r',
+      script: 'con <- gzfile("state.gz", "rb")\nrestored <- unserialize(connection = con)',
+      status: 'completed',
+      startedAt: 1,
+      endedAt: 2,
+      text: { stdout: '', stderr: '', traceback: '', plain: [] },
+      outputs: [],
+      workingFiles: []
+    }
+    const snapshotScript = 'snapshot <- sum(restored$x)\nprint(snapshot)'
+    const mutationScript = 'external_mutation(restored)'
+    const snapshot = (await analyzeRNotebookSource(snapshotScript)).facts
+    const mutation = (await analyzeRNotebookSource(mutationScript)).facts
+    const projection = projectNotebookDependencies([
+      { run, facts: reader.facts },
+      {
+        run: {
+          ...run,
+          runId: 'snapshot',
+          cellId: 'snapshot',
+          startedAt: 3,
+          endedAt: 4,
+          script: snapshotScript
+        },
+        facts: snapshot
+      },
+      {
+        run: {
+          ...run,
+          runId: 'mutation',
+          cellId: 'mutation',
+          startedAt: 5,
+          endedAt: 6,
+          script: mutationScript
+        },
+        facts: mutation
+      }
+    ])
+    expect(projection.stalenessByRunId.snapshot).toMatchObject({ state: 'unknown' })
+  })
+
+  it('keeps NULL serialization with a refhook conservative for both IO directions', async () => {
+    const result = await analyzeNotebookSourceFileAccess(
+      'r',
+      'payload <- serialize(new.env(), NULL, refhook = function(x) { writeLines("hook", "side.txt"); "token" })'
+    )
+    expect(result.readState).toBe('partial')
+    expect(result.writeState).toBe('partial')
+    expect(result.writes).not.toContain('NULL')
+  })
+})
+
+describe('base R generic predicates require primitive dispatch proof', () => {
+  it.each([
+    'sensor <- as.numeric(read.csv("inputs/pressure.csv")$pressure)\nstopifnot(all(is.finite(sensor)))',
+    'sensor <- as.numeric(structure(c(1., 2.), class="mercury_sensor"))\nflags <- is.finite(sensor)',
+    'original <- structure(c(1., 2.), class="mercury_sensor")\nsensor <- as.integer(original)\nflags <- is.infinite(sensor)',
+    'sensor <- as.logical(structure(c(1., 2.), .Dim=c(1L,2L)))\nflags <- is.nan(sensor)',
+    'sensor <- as.character(structure(c(1., 2.), class="mercury_sensor"))\nflags <- base::is.finite(sensor)',
+    'raw <- read.csv("inputs/pressure.csv")\nsensor <- structure(as.numeric(raw$pressure),class="mercury_sensor")\nis.finite.mercury_sensor <- function(x) { writeLines(as.character(length(x)), "outputs/r-sensor-audit.txt"); base::is.finite(unclass(x)) }\nflags <- base::is.finite(sensor)',
+    'sensor <- structure(c(1., 2.), class = "mercury_sensor")\nstopifnot(all(is.finite(sensor)))',
+    'sensor <- structure(c(1., 2.), class = "mercury_sensor")\nflags <- is.finite(sensor)',
+    'sensor <- structure(c(1., 2.), class = "mercury_sensor")\nalias <- sensor\nflags <- is.infinite(alias)',
+    'sensor <- structure(c(1., 2.), class = "mercury_sensor")\nflags <- base::is.nan(sensor)',
+    'original <- structure(c(1., 2.), class = "mercury_sensor")\nsensor <- structure(original)\nstopifnot(all(is.finite(sensor)))',
+    'sensor <- structure(get_sensor(), names = c("first", "second"))\nflags <- is.finite(sensor)',
+    'sensor <- structure(c(1., 2.), ...)\nflags <- is.finite(sensor)',
+    'sensor <- structure(c(1., 2.), dim = c(1L, 2L))\nstopifnot(all(is.finite(sensor)))',
+    'sensor <- structure(c(1., 2.), .Dim = c(1L, 2L))\nflags <- is.finite(sensor)',
+    'sensor <- matrix(c(1., 2.), nrow = 1L)\nflags <- is.finite(sensor)',
+    'sensor <- structure(c(1., 2.), names = c("first", "second"))\nflags <- is.finite(sensor)',
+    'sensor <- structure(c(1., 2.), .Names = c("first", "second"))\nflags <- is.finite(sensor)'
+  ])('does not borrow ownership as proof of an unmodeled predicate method: %s', async (source) => {
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it.each([
+    'sensor <- as.numeric(c(first="1",second="2"))\nflags <- is.finite(sensor)',
+    'sensor <- as.integer(c(1.,2.))\nflags <- is.infinite(sensor)',
+    'sensor <- as.logical(c(1L,0L))\nflags <- is.nan(sensor)',
+    'sensor <- as.character(c(1.,2.))\nflags <- is.finite(sensor)',
+    'sensor <- c(first = 1., second = 2.)\nstopifnot(all(is.finite(sensor)))',
+    'sensor <- c(1., 2.)\nstopifnot(all(base::is.finite(sensor)))',
+    'sensor <- seq_len(2L)\nflags <- is.infinite(sensor)',
+    'sensor <- numeric(2L)\nflags <- is.nan(sensor)'
+  ])('retains fresh primitive vector predicate certainty: %s', async (source) => {
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      readState: 'complete',
+      writeState: 'complete',
+      externalState: 'complete'
+    })
+  })
+
+  it('uses existing atomic context without inventing class metadata', async () => {
+    const context = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      resolvedKernelNames: ['sensor'],
+      rAtomicValueNames: ['sensor'],
+      rCopyOnModifyNames: ['sensor']
+    }
+    expect(
+      await analyzeNotebookSourceFileAccess('r', 'flags <- is.finite(sensor)', context)
+    ).toMatchObject({
+      readState: 'complete',
+      writeState: 'complete',
+      externalState: 'complete'
+    })
+  })
+
+  it('does not equate contextual copy ownership with primitive dispatch', async () => {
+    const context = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      resolvedKernelNames: ['sensor'],
+      rCopyOnModifyNames: ['sensor']
+    }
+    expect(
+      await analyzeNotebookSourceFileAccess('r', 'flags <- is.finite(sensor)', context)
+    ).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+})
+
+describe('R count and sequence generic dispatch', () => {
+  it.each(['length', 'nrow', 'ncol'])(
+    'keeps classed %s results conservative when a predicate can dispatch hidden IO',
+    async (inspector) => {
+      // Native R permits length/dim methods to return classed counts. nrow/ncol
+      // select dim(x), so a classed dimension's subset method can preserve that class.
+      const source = [
+        'sensor <- structure(c(1., 2.), class="mercury_sensor")',
+        'length.mercury_sensor <- function(x) structure(base::length(unclass(x)), class="classed_count")',
+        'dim.mercury_sensor <- function(x) structure(c(2L, 1L), class="classed_dim")',
+        '`[.classed_dim` <- function(x, ...) structure(NextMethod("["), class="classed_count")',
+        'is.finite.classed_count <- function(x) { writeLines("audit", "outputs/count-audit.txt"); base::is.finite(unclass(x)) }',
+        `count <- ${inspector}(sensor)`,
+        'flags <- base::is.finite(count)'
+      ].join('\n')
+      expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+        readState: 'partial',
+        writeState: 'partial',
+        externalState: 'partial'
+      })
+    }
+  )
+
+  it('does not infer a pure sequence from only its primitive starting value', async () => {
+    const source = [
+      'Ops.mercury_limit <- function(e1, e2) { writeLines(.Generic, "outputs/seq-audit.txt"); do.call(.Generic, list(unclass(e1), unclass(e2))) }',
+      'limit <- structure(3., class="mercury_limit")',
+      'values <- seq(1., limit, by=1.)',
+      'flags <- is.finite(values)'
+    ].join('\n')
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it('does not borrow table ownership to prove a primitive count', async () => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'raw <- read.csv("inputs/pressure.csv")\ncount <- nrow(raw)\nflags <- is.finite(count)'
+      )
+    ).toMatchObject({
+      reads: ['inputs/pressure.csv'],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it.each([
+    'count <- length(c(first="one", second="two"))\nflags <- is.finite(count)',
+    'endpoint <- length(c(1., 2., 3.))\nvalues <- seq(1., endpoint, by=1.)\nflags <- is.finite(values)',
+    'values <- seq(0, 2*pi, length.out=400)\nflags <- is.finite(values)'
+  ])('retains recursively proven primitive counts and endpoints: %s', async (source) => {
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      readState: 'complete',
+      writeState: 'complete',
+      externalState: 'complete'
+    })
+  })
+
+  it('retains sequence proof through existing atomic kernel context', async () => {
+    const context = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      resolvedKernelNames: ['endpoint'],
+      rAtomicValueNames: ['endpoint'],
+      rCopyOnModifyNames: ['endpoint']
+    }
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'values <- seq(1., endpoint, by=1.)\nflags <- is.finite(values)',
+        context
+      )
+    ).toMatchObject({
+      readState: 'complete',
+      writeState: 'complete',
+      externalState: 'complete'
+    })
+  })
 })

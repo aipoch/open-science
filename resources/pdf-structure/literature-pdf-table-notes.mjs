@@ -1131,6 +1131,30 @@ export function associateTableNotes(page, tables, rules = []) {
     )
     return owners.length === 1
   }
+  const fullSizeBelowTableMarker = (part, line) =>
+    part.fontSize >= line.fontSize * 1.02 &&
+    part.fontSize <= line.fontSize * 1.1 &&
+    tables.some(
+      ({ rect }) =>
+        part.x >= rect[0] - 1 &&
+        part.right <= rect[2] + 1 &&
+        part.y >= rect[3] &&
+        part.y - rect[3] <= line.fontSize * 6 &&
+        line.x >= part.x - 1 &&
+        line.x - part.x <= line.fontSize * 1.5 &&
+        page.lines.some(
+          (caption) =>
+            /^(?:Table|Tab\.?)\s+[AS]?\d+[.:]?/i.test(caption.text.trim()) &&
+            caption.y < rect[1] &&
+            page.lines.some(
+              (witness) =>
+                witness !== part &&
+                witness.text === part.text &&
+                witness.y < rect[1] &&
+                rect[1] - witness.y <= line.fontSize * 40
+            )
+        )
+    )
   const detachedMarker = (line) =>
     /^(?:\p{L}|\d+[–-]\p{L}|\d+(?:\.\d+)?%?\s+\p{L})/u.test(line.text) &&
     lines.find(
@@ -1158,7 +1182,11 @@ export function associateTableNotes(page, tables, rules = []) {
                           c.x < rect[2]
                       )))
               )
-            ))) &&
+            )) ||
+          // A full-size marker can sit on its own baseline immediately below
+          // the table. Require a caption-owned witness above the table and a
+          // short aligned gap before accepting the following wrapped line.
+          fullSizeBelowTableMarker(part, line)) &&
         (Math.abs(part.right - line.x) < line.fontSize * 0.25 ||
           (part.fontSize >= line.fontSize * 0.9 &&
             part.x < line.x &&
@@ -2113,6 +2141,8 @@ export function associateTableNotes(page, tables, rules = []) {
         (/\b(?:in|see)\s+(?:the\s+)?Supplementary\s*$/i.test(previous.text) ||
           (/^Notes?\./i.test(start.text) && /\bin\s*$/i.test(previous.text))) &&
         /^(?:Table|Fig\.|Figure)\s+S?\d+[a-z]?\.?$/i.test(next.text.trim())
+      const standaloneTableLabel =
+        /^(?:Table|Tab\.?)\s+(?:[AS]?\d+(?:\.\d+)*|[IVXLCDM]+)\.?$/i.test(next.text.trim())
       // A method name can also start a new note. Here it completes the prior
       // sentence; the usual font, indentation and line-gap checks still apply.
       const methodContinuation =
@@ -2173,7 +2203,8 @@ export function associateTableNotes(page, tables, rules = []) {
                 ? start.x - start.fontSize * 1.25
                 : start.x - 4) ||
         next.x > start.x + 24 ||
-        (captionKind(next.text) && !referenceContinuation)
+        ((captionKind(next.text) || (standaloneTableLabel && !referenceContinuation)) &&
+          !referenceContinuation)
       )
         break
       if (tables.some(({ rect }) => intersection(rect, lineRect(next)) > 0)) break

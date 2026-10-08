@@ -4039,7 +4039,8 @@ describe('SettingsService: official vendors', () => {
       hasKey: true
     })
     // Catalog comes from the registry, not the user; base URL is not stored on the record.
-    expect(view.models).toContain('MiniMax-M3[1m]')
+    expect(view.models).toContain('MiniMax-M3')
+    expect(view.models).not.toContain('MiniMax-M3[1m]')
     expect(view.baseUrl).toBeUndefined()
 
     const stored = (await repository.getSettings()).providers[0]
@@ -4121,14 +4122,12 @@ describe('SettingsService: official vendors', () => {
         availableModels: [
           'deepseek-v4-flash',
           'deepseek-v4-pro',
-          'deepseek-v4-pro[1m]',
           'deepseek-flash',
           'deepseek-v4-flash-vision-exp'
         ],
         modelOverrides: {
           'deepseek-v4-flash': 'deepseek-v4-flash',
           'deepseek-v4-pro': 'deepseek-v4-pro',
-          'deepseek-v4-pro[1m]': 'deepseek-v4-pro[1m]',
           'deepseek-flash': 'deepseek-flash',
           'deepseek-v4-flash-vision-exp': 'deepseek-v4-flash-vision-exp'
         }
@@ -4141,14 +4140,12 @@ describe('SettingsService: official vendors', () => {
       availableModels: [
         'deepseek-v4-flash',
         'deepseek-v4-pro',
-        'deepseek-v4-pro[1m]',
         'deepseek-flash',
         'deepseek-v4-flash-vision-exp'
       ],
       modelOverrides: {
         'deepseek-v4-flash': 'deepseek-v4-flash',
         'deepseek-v4-pro': 'deepseek-v4-pro',
-        'deepseek-v4-pro[1m]': 'deepseek-v4-pro[1m]',
         'deepseek-flash': 'deepseek-flash',
         'deepseek-v4-flash-vision-exp': 'deepseek-v4-flash-vision-exp'
       }
@@ -4215,7 +4212,6 @@ describe('SettingsService: official vendors', () => {
     expect(view.models).toEqual([
       'deepseek-v5',
       'deepseek-v4-pro',
-      'deepseek-v4-pro[1m]',
       'deepseek-flash',
       'deepseek-v4-flash',
       'deepseek-v4-flash-vision-exp'

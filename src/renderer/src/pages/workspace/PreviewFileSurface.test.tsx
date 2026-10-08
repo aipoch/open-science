@@ -363,6 +363,56 @@ describe('PreviewFileSurface header', () => {
   })
 })
 
+describe('PreviewFileSurface file mentions', () => {
+  let previousNavigation: ReturnType<typeof useNavigationStore.getState>
+  beforeEach(() => {
+    previousNavigation = useNavigationStore.getState()
+    useNavigationStore.setState({
+      view: 'workspace',
+      activeProjectId: 'project-1',
+      pendingArtifactMention: undefined,
+      artifactMentionAvailability: { projectId: 'project-1', canMention: true }
+    })
+    useSessionStore.setState({
+      sessions: [
+        {
+          id: 'session-1',
+          projectId: 'project-1',
+          title: 'Session',
+          cwd: '/workspace',
+          status: 'idle',
+          messages: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      selectedSessionId: 'session-1'
+    })
+  })
+  afterEach(() => useNavigationStore.setState(previousNavigation))
+
+  it('keeps the preview open and displays an error when mention inspection fails', async () => {
+    const close = vi.fn()
+    await act(async () =>
+      root.render(<PreviewFileSurface item={managedUploadItem} onClose={close} />)
+    )
+    await click(container.querySelector('[aria-label="Mention README.md"]'))
+    expect(container.textContent).toContain('Could not resolve file version.')
+    expect(close).not.toHaveBeenCalled()
+    expect(useNavigationStore.getState().pendingArtifactMention).toBeUndefined()
+  })
+
+  it('disables the preview mention when Web has no inspection API', async () => {
+    window.api.managedFileVersions = undefined as unknown as Window['api']['managedFileVersions']
+    await act(async () =>
+      root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
+    )
+    expect(
+      container.querySelector<HTMLButtonElement>('[aria-label="Mention README.md"]')?.disabled
+    ).toBe(true)
+  })
+})
+
 describe('PreviewFileSurface managed text versions', () => {
   beforeEach(() => {
     window.api.managedFileVersions.inspect = vi

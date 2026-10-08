@@ -57,6 +57,7 @@
       "src/shared/renderer-surface-matrix.test.ts"
     ],
     "consumer": [
+      "src/main/specialist/application-commands.test.ts",
       "src/main/acp/runtime.test.ts",
       "src/main/application-command-client.test.ts",
       "src/main/application-command-composition.test.ts",

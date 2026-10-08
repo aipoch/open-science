@@ -5,6 +5,9 @@ export function connectorDescription(
   connector: { id: string; description: string; sources?: string[] },
   t: TFunction
 ): string {
+  if (connector.id === 'pdc') {
+    return t('Cancer proteomics studies, sample and aliquot mappings, and file discovery from PDC.')
+  }
   if (connector.id === 'iedb') {
     return t(
       'Immune epitopes, T/B cell and MHC assays, TCR/BCR receptors, antigens and literature evidence from IEDB.'
@@ -70,6 +73,15 @@ export function connectorDescription(
 
 export function connectorToolDescription(id: string, fallback: string, t: TFunction): string {
   switch (id) {
+    case 'pdc/pdc_search_studies':
+      return t('Search PDC studies and versions by name or identifier.')
+    case 'pdc/pdc_get_study':
+      return t('Retrieve PDC study metadata and available versions.')
+    case 'pdc/pdc_list_biospecimens':
+      return t('Map PDC aliquots to samples, cases and external references.')
+    case 'pdc/pdc_list_files':
+      return t('Discover PDC study files and quantitative reports without downloading files.')
+
     case 'human-genetics/gwas_get_summary_statistics':
       return t(
         'List GWAS summary statistics files, YAML metadata, reference genomes and standard column definitions by GCST accession.'

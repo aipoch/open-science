@@ -1,6 +1,6 @@
 // Immutable migration: these columns are a disposable projection of Session JSON.
 const sessionResearchMembershipMigration = {
-  id: '0049_session_research_membership',
+  id: '0050_session_research_membership',
   statements: [
     `ALTER TABLE "Session" ADD COLUMN "researchMembershipJson" TEXT`,
     `ALTER TABLE "Session" ADD COLUMN "importedResearchId" TEXT`

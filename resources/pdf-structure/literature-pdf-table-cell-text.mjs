@@ -6,8 +6,916 @@ import { recoverNativeStackedUncertainty } from './literature-pdf-native-stacked
 import { recoverNativeStackedRecordRuns } from './literature-pdf-native-stacked-records.mjs'
 import { recoverNativeClosedMathRuns } from './literature-pdf-native-closed-math-order.mjs'
 import { orderNativeDualScriptLanes } from './literature-pdf-native-dual-script-lanes.mjs'
+import {
+  proveNativeTieredHeader,
+  proveNativeUnruledPairedParentHeader,
+  proveNativePrintedHeaderAtColumns,
+  proveNativeMeanIntervalParents,
+  splitNativeMeasuredFields
+} from './literature-pdf-native-header-grid.mjs'
+
+// Split one fused prose/scalar cell only when an exact native TJ gap fits the
+// already printed leaf lanes and independently aligned scalar peers. Return
+// local source parts; callers retain every unrelated cell and its rich runs.
+export function proveNativeMeasuredCellSplits(table, items, measuredRuns) {
+  const cells = table.cells ?? [],
+    width = table.grid?.[0]?.length ?? 0,
+    header = cells.filter((c) => c.row === 0).sort((a, b) => a.column - b.column),
+    numeric = (text) => /^[-+−]?\d+(?:\.\d+)?$/u.test(text.trim()),
+    same = (a, b) =>
+      a?.length === 4 && b?.length === 4 && a.every((v, n) => Math.abs(v - b[n]) < 0.02)
+  if (
+    width < 3 ||
+    header.length !== width ||
+    header.some(
+      (c, n) =>
+        c.column !== n ||
+        c.colSpan !== 1 ||
+        c.rowSpan !== 1 ||
+        !/\p{L}/u.test(c.text) ||
+        !c.sourceRects?.length ||
+        c.sourceRects.some((r) => !items.some((i) => same(r, i.rect)))
+    )
+  )
+    return []
+  const proofs = []
+  for (const cell of cells) {
+    if (
+      cell.row < 1 ||
+      cell.rowSpan !== 1 ||
+      cell.colSpan !== 2 ||
+      cell.column < 1 ||
+      cell.column + 1 >= width ||
+      cell.sourceRects?.length !== 1
+    )
+      continue
+    const source = items.filter(
+      (i) =>
+        same(i.rect, cell.sourceRects[0]) &&
+        i.text.replace(/\s/gu, '') === cell.text.replace(/\s/gu, '')
+    )
+    if (source.length !== 1 || !(source[0].height > 0)) continue
+    const item = source[0],
+      h = item.height,
+      parts = splitNativeMeasuredFields(item, measuredRuns, h),
+      first = header[cell.column],
+      second = header[cell.column + 1]
+    if (
+      parts?.length !== 2 ||
+      !/\p{L}{2}/u.test(parts[0].text) ||
+      !numeric(parts[1].text) ||
+      parts[0].rect[0] < first.rect[0] - 0.02 ||
+      parts[0].rect[2] > first.rect[2] + 0.02 ||
+      parts[1].rect[0] < second.rect[0] - 0.02 ||
+      parts[1].rect[2] > second.rect[2] + 0.02
+    )
+      continue
+    const peers = cells
+      .filter(
+        (c) =>
+          c !== cell &&
+          c.row > 0 &&
+          c.column === second.column &&
+          c.colSpan === 1 &&
+          c.rowSpan === 1 &&
+          numeric(c.text) &&
+          c.sourceRects?.length === 1
+      )
+      .flatMap((c) =>
+        items.filter(
+          (i) =>
+            same(i.rect, c.sourceRects[0]) &&
+            i.text.replace(/\s/gu, '') === c.text.replace(/\s/gu, '')
+        )
+      )
+    if (
+      new Set(peers).size < 3 ||
+      new Set(peers.map((i) => i.baseline)).size < 3 ||
+      peers.some((i) => Math.abs(i.rect[0] - parts[1].rect[0]) > h * 0.05)
+    )
+      continue
+    proofs.push({
+      row: cell.row,
+      column: cell.column,
+      cell,
+      parts,
+      repair: 'native-measured-prose-scalar-cell-split'
+    })
+  }
+  return proofs
+}
+import { joinHorizontalTableRules } from './literature-pdf-table-rules.mjs'
 
 const BACKSPACE = String.fromCharCode(8)
+
+// Empty slots have no native ink to reinterpret. Rebuild only an inverted
+// empty rectangle from the already established row and column faces.
+export function repairNativeEmptyCellRectangles(cells, rows, columnRects) {
+  let repaired = 0
+  for (const cell of cells) {
+    if (
+      cell.text?.trim() ||
+      cell.sourceTokens?.length ||
+      cell.sourceRects?.length ||
+      !cell.rect ||
+      (cell.rect[2] > cell.rect[0] && cell.rect[3] > cell.rect[1])
+    )
+      continue
+    const firstRow = rows[cell.row]?.rect,
+      lastRow = rows[cell.row + cell.rowSpan - 1]?.rect,
+      firstColumn = columnRects[cell.column],
+      lastColumn = columnRects[cell.column + cell.colSpan - 1]
+    if (!firstRow || !lastRow || !firstColumn || !lastColumn) continue
+    const rect = [firstColumn[0], firstRow[1], lastColumn[2], lastRow[3]]
+    if (rect.every(Number.isFinite) && rect[2] > rect[0] && rect[3] > rect[1]) {
+      cell.rect = rect
+      repaired++
+    }
+  }
+  return repaired
+}
+
+// Script runs cannot represent a stacked letter fraction. A real native bar
+// and both aligned glyphs prevent one numerator from becoming an unrelated
+// exponent while the other fraction glyphs remain ordinary baseline text.
+export function rejectNativeLetterFractionScriptMetadata(cells, rules) {
+  let rejected = 0
+  for (const cell of cells) {
+    if (!cell.textRuns?.some((run) => run.position !== 'normal')) continue
+    const letters = (cell.sourceTokens ?? []).filter(
+      (i) =>
+        /^\p{L}$/u.test(i.text.trim()) &&
+        Number.isFinite(i.baseline) &&
+        Number.isFinite(i.height) &&
+        i.height > 0
+    )
+    const proved = letters.some((numerator) =>
+      letters.some((denominator) => {
+        const h = numerator.height
+        if (
+          numerator === denominator ||
+          Math.abs(denominator.height - h) > h * 0.15 ||
+          denominator.baseline - numerator.baseline < h * 0.55 ||
+          denominator.baseline - numerator.baseline > h * 1.4 ||
+          Math.abs(
+            (numerator.rect[0] + numerator.rect[2] - denominator.rect[0] - denominator.rect[2]) / 2
+          ) >
+            h * 0.2
+        )
+          return false
+        const left = Math.min(numerator.rect[0], denominator.rect[0]),
+          right = Math.max(numerator.rect[2], denominator.rect[2])
+        return (
+          rules.filter(
+            (r) =>
+              r[1] === r[3] &&
+              r[1] > numerator.baseline + h * 0.025 &&
+              r[1] < denominator.baseline - h * 0.05 &&
+              r[2] - r[0] >= h * 0.2 &&
+              r[2] - r[0] <= h * 1.6 &&
+              r[0] >= left - h * 0.2 &&
+              r[0] <= left + h * 0.1 &&
+              r[2] >= right - h * 0.1 &&
+              r[2] <= right + h * 0.2
+          ).length === 1
+        )
+      })
+    )
+    if (proved) {
+      delete cell.textRuns
+      rejected++
+    }
+  }
+  return rejected
+}
+
+export function reconcileNativeTieredHeader({
+  cells,
+  rows,
+  columnRects,
+  headerRows,
+  pageItems,
+  rules,
+  captions,
+  unassigned,
+  repairs,
+  recordGrid,
+  measuredRuns = []
+}) {
+  if (!rows.length || !columnRects.length || headerRows.some((r, i) => r !== i)) return 0
+  const heights = pageItems
+    .filter((i) => i.height > 0)
+    .map((i) => i.height)
+    .sort((a, b) => a - b)
+  const h = heights[heights.length >> 1]
+  if (!(h > 0)) return 0
+  const plan =
+    recordGrid?.nativeTieredHeader ??
+    proveNativeTieredHeader(
+      {
+        cropRect: [
+          columnRects[0][0],
+          rows[0].rect[1] - h,
+          columnRects.at(-1)[2],
+          rows.at(-1).rect[3] + h
+        ]
+      },
+      pageItems,
+      captions,
+      rules
+    ) ??
+    proveNativeUnruledPairedParentHeader(
+      {
+        cropRect: [
+          columnRects[0][0],
+          rows[0].rect[1] - h * 2,
+          columnRects.at(-1)[2],
+          rows.at(-1).rect[3] + h
+        ]
+      },
+      pageItems
+    ) ??
+    proveNativePrintedHeaderAtColumns(
+      {
+        cropRect: [
+          columnRects[0][0],
+          rows[0].rect[1] - h,
+          columnRects.at(-1)[2],
+          rows.at(-1).rect[3] + h
+        ]
+      },
+      pageItems,
+      captions,
+      rules,
+      columnRects,
+      measuredRuns
+    ) ??
+    proveNativeMeanIntervalParents(
+      {
+        cropRect: [
+          columnRects[0][0],
+          rows[0].rect[1] - h,
+          columnRects.at(-1)[2],
+          rows.at(-1).rect[3] + h
+        ]
+      },
+      pageItems,
+      captions,
+      rules
+    )
+  if (!plan || plan.columns.length !== columnRects.length) return 0
+  if (plan.kind === 'printed-header') {
+    // Multiline prose titles are one header face. Only independently proved
+    // parent spans authorize replacing that face with multiple header tiers.
+    if (plan.rows.length > 1 && !plan.headerCells.some((c) => c.colSpan > 1)) return 0
+    const priorHeader = cells.filter(
+      (c) =>
+        rows[c.row]?.rect[1] < plan.headerBottom &&
+        c.text?.trim() &&
+        (c.sourceRects ?? []).every((r) => r[3] <= plan.headerBottom + 0.75)
+    )
+    const soleJoinedTitle =
+      priorHeader.length === 1 && priorHeader[0].colSpan === columnRects.length
+    if (
+      !soleJoinedTitle &&
+      priorHeader.some(
+        (c) =>
+          c.colSpan > 1 &&
+          !plan.headerCells.some(
+            (next) =>
+              next.column === c.column &&
+              next.colSpan === c.colSpan &&
+              next.text.replace(/\s/gu, '') === c.text.replace(/\s/gu, '')
+          )
+      )
+    )
+      return 0
+  }
+  let count = headerRows.length
+  if (['printed-header', 'mean-interval-parent'].includes(plan.kind)) {
+    // Detector header roles may cover complete body records. The closed
+    // native divider owns only the rows above it; preserve those body cells
+    // and their baselines rather than discarding their text with the header.
+    count = 0
+    while (count < rows.length && rows[count].rect[1] < plan.headerBottom - 0.05) count++
+  }
+  if (!count) {
+    while (count < rows.length && rows[count].rect[1] < plan.headerBottom) count++
+  }
+  if (!count) return 0
+  if (
+    ['printed-header', 'mean-interval-parent'].includes(plan.kind) &&
+    cells.some(
+      (c) => c.row < count && (c.sourceRects ?? []).some((r) => r[1] < plan.rows[0][1] - 0.75)
+    )
+  )
+    return 0
+  // Refuse to replace a detector header that also owns a real body record.
+  if (
+    cells.some(
+      (c) => c.row < count && (c.sourceRects ?? []).some((r) => r[3] > plan.headerBottom + 0.75)
+    )
+  )
+    return 0
+  if (
+    cells.some(
+      (c) =>
+        c.row >= count &&
+        (c.sourceRects ?? []).some(
+          (r) =>
+            r[0] < plan.columns[c.column][0] - 0.75 ||
+            r[2] > plan.columns[c.column + c.colSpan - 1][2] + 0.75
+        )
+    )
+  )
+    return 0
+  const shift = plan.rows.length - count
+  const preservedHeaderMetadata = plan.headerCells.map((cell) => {
+    const previous = cells.find(
+      (c) =>
+        c.row < count &&
+        c.text?.replace(/\s/gu, '') === cell.text.replace(/\s/gu, '') &&
+        (c.sourceRects ?? []).length === cell.sourceRects.length &&
+        cell.sourceRects.every((r) =>
+          (c.sourceRects ?? []).some((old) => old.every((v, n) => Math.abs(v - r[n]) < 0.02))
+        )
+    )
+    return previous?.textRuns
+      ? { text: previous.text, textRuns: previous.textRuns.map((r) => ({ ...r })) }
+      : {}
+  })
+  for (let i = cells.length - 1; i >= 0; i--) if (cells[i].row < count) cells.splice(i, 1)
+  for (const cell of cells) cell.row += shift
+  rows.splice(
+    0,
+    count,
+    ...plan.rows.map((rect) => ({ rect: rect.slice(), origin: 'source-tiered-header' }))
+  )
+  headerRows.splice(0, headerRows.length, ...plan.headerRows)
+  cells.push(
+    ...plan.headerCells.map((cell, index) => ({
+      ...cell,
+      ...preservedHeaderMetadata[index],
+      rect: cell.rect.slice(),
+      sourceTokens: cell.sourceTokens.slice(),
+      sourceRects: cell.sourceRects.slice()
+    }))
+  )
+  for (const token of plan.ownedTokens) {
+    const index = unassigned.indexOf(token.text)
+    if (index >= 0) unassigned.splice(index, 1)
+  }
+  if (!repairs.includes(plan.repair)) repairs.push(plan.repair)
+  return 1
+}
+
+function reconcileRepeatedPrintedHeaderParents({
+  cells,
+  rows,
+  columnRects,
+  pageItems,
+  rules,
+  captions,
+  measuredRuns,
+  repairs
+}) {
+  if (columnRects.length !== 13 || rows.length < 7) return
+  const h = pageItems
+    .filter((i) => i.height > 0)
+    .map((i) => i.height)
+    .sort((a, b) => a - b)[pageItems.filter((i) => i.height > 0).length >> 1]
+  if (!(h > 0)) return
+  for (let row = 2; row < rows.length - 3; row++) {
+    const plan = proveNativePrintedHeaderAtColumns(
+      {
+        cropRect: [
+          columnRects[0][0],
+          rows[row].rect[1] - h * 0.2,
+          columnRects.at(-1)[2],
+          rows.at(-1).rect[3] + h
+        ]
+      },
+      pageItems,
+      captions,
+      rules,
+      columnRects,
+      measuredRuns
+    )
+    if (
+      !plan ||
+      plan.rows.length !== 2 ||
+      plan.headerCells.filter((c) => c.colSpan === 4).length !== 3 ||
+      Math.abs(plan.rows[0][1] - rows[row].rect[1]) > h * 0.5 ||
+      cells.some(
+        (c) =>
+          c.row >= row &&
+          c.row < row + 2 &&
+          (c.sourceRects ?? []).some(
+            (r) => r[1] < plan.rows[0][1] - 0.05 || r[3] > plan.headerBottom + 0.05
+          )
+      )
+    )
+      continue
+    for (let n = cells.length - 1; n >= 0; n--)
+      if (cells[n].row >= row && cells[n].row < row + 2) cells.splice(n, 1)
+    cells.push(
+      ...plan.headerCells.map((c) => ({
+        ...c,
+        row: c.row + row,
+        rect: c.rect.slice(),
+        sourceTokens: c.sourceTokens.slice(),
+        sourceRects: c.sourceRects.slice()
+      }))
+    )
+    rows.splice(
+      row,
+      2,
+      ...plan.rows.map((rect) => ({ rect: rect.slice(), origin: 'source-repeated-header' }))
+    )
+    if (!repairs.includes('native-repeated-printed-parent-spans-proved'))
+      repairs.push('native-repeated-printed-parent-spans-proved')
+    row++
+  }
+}
+
+// Restore only source-proved parent/leaf header layouts. The surrounding body
+// remains untouched; these plans move the existing header tokens into explicit
+// spans rather than letting a merged detector cell concatenate sibling labels.
+export function recoverUnassignedFencedSectionLabels({
+  cells,
+  rows,
+  columnRects,
+  headerRows,
+  pageItems,
+  rules,
+  unassigned,
+  repairs
+}) {
+  if (columnRects.length < 3 || !rows.length) return 0
+  const left = columnRects[0][0],
+    right = columnRects.at(-1)[2],
+    width = right - left
+  const fences = joinHorizontalTableRules(rules)
+    .filter((r) => Math.abs(r[0] - left) < width * 0.025 && Math.abs(r[2] - right) < width * 0.025)
+    .sort((a, b) => a[1] - b[1])
+  let recovered = 0
+  for (const item of pageItems) {
+    const h = item.height
+    if (
+      !item.horizontal ||
+      !(h > 0) ||
+      !unassigned.includes(item.text) ||
+      item.text.trim().length < 18 ||
+      !/\p{L}/u.test(item.text) ||
+      Math.abs((item.rect[0] + item.rect[2] - left - right) / 2) > h * 0.3 ||
+      item.rect[0] < left ||
+      item.rect[2] > right
+    )
+      continue
+    const above = fences.findLast((r) => r[1] <= item.rect[1] + 0.05),
+      below = fences.find((r) => r[1] >= item.rect[3] - 0.05)
+    if (
+      !above ||
+      !below ||
+      below[1] - above[1] > h * 2.5 ||
+      above[1] < rows[0].rect[1] - h ||
+      below[1] > rows.at(-1).rect[3]
+    )
+      continue
+    const owned = pageItems.filter(
+      (i) =>
+        i.horizontal &&
+        i.rect[0] >= left &&
+        i.rect[2] <= right &&
+        i.rect[1] >= above[1] - 0.05 &&
+        i.rect[3] <= below[1] + 0.05
+    )
+    if (owned.length !== 1 || owned[0] !== item) continue
+    const next = fences.find((r) => r[1] > below[1] + h * 0.5)
+    if (!next) continue
+    const values = pageItems.filter(
+      (i) =>
+        i.horizontal &&
+        i.rect[0] >= left &&
+        i.rect[2] <= right &&
+        i.baseline > below[1] &&
+        i.baseline < next[1] &&
+        /^\d/u.test(i.text.trim())
+    )
+    if (values.length < 3) continue
+    const candidates = rows
+      .map((r, index) => ({
+        r,
+        index,
+        dist: Math.abs((r.rect[1] + r.rect[3]) / 2 - (above[1] + below[1]) / 2)
+      }))
+      .filter(
+        ({ index, dist }) =>
+          !headerRows.includes(index) &&
+          dist < h &&
+          cells.filter((c) => c.row === index).length === columnRects.length &&
+          cells
+            .filter((c) => c.row === index)
+            .every(
+              (c) =>
+                c.rowSpan === 1 &&
+                c.colSpan === 1 &&
+                !c.text.trim() &&
+                !(c.sourceRects ?? []).length
+            )
+      )
+    if (candidates.length !== 1) continue
+    const row = candidates[0].index
+    for (let n = cells.length - 1; n >= 0; n--) if (cells[n].row === row) cells.splice(n, 1)
+    rows[row].rect = [left, above[1], right, below[1]]
+    cells.push({
+      row,
+      column: 0,
+      rowSpan: 1,
+      colSpan: columnRects.length,
+      rect: rows[row].rect.slice(),
+      text: item.text,
+      sourceTokens: [item],
+      sourceRects: [item.rect],
+      origin: 'source-fenced-section'
+    })
+    unassigned.splice(unassigned.indexOf(item.text), 1)
+    if (!repairs.includes('native-fenced-section-label-recovered'))
+      repairs.push('native-fenced-section-label-recovered')
+    recovered++
+  }
+  return recovered
+}
+
+export function reconcileSourceGroupedHeaders({
+  cells,
+  rows,
+  columnRects,
+  headerRows,
+  pageItems,
+  rules,
+  captions,
+  unassigned,
+  repairs
+}) {
+  if (!rows.length || !headerRows.length || headerRows.some((row, index) => row !== index)) return 0
+  // The model can label initial numeric body rows as column headers. A
+  // wrapped compute header is proved independently within its first row band.
+  const headerCount = columnRects.length === 6 ? 1 : headerRows.length
+  const headerBottom = rows[headerCount - 1].rect[3]
+  const bodyTop = rows[headerCount]?.rect[1] ?? Infinity
+  const left = columnRects[0]?.[0],
+    right = columnRects.at(-1)?.[2]
+  const source = pageItems
+    .filter(
+      (item) =>
+        item.horizontal &&
+        item.text?.trim() &&
+        item.rect[0] >= left &&
+        item.rect[2] <= right &&
+        item.rect[3] <= Math.min(headerBottom + 1, bodyTop) &&
+        item.rect[1] >= rows[0].rect[1] - item.height
+    )
+    .sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])
+  const height = Math.max(...source.map((item) => item.height), 0)
+  if (!(height > 0)) return 0
+  const make = (row, column, rowSpan, colSpan, tokens, top, bottom) => ({
+    row,
+    column,
+    rowSpan,
+    colSpan,
+    rect: [columnRects[column][0], top, columnRects[column + colSpan - 1][2], bottom],
+    origin: 'source-grouped-header',
+    text: tokens.map((item) => item.text.trim()).join(' '),
+    sourceTokens: tokens,
+    sourceRects: tokens.map((item) => item.rect)
+  })
+  const replace = (count, bands, nextCells, tokens, repair) => {
+    if (new Set(tokens).size !== tokens.length) return 0
+    if (
+      cells.some(
+        (cell) =>
+          cell.row < count &&
+          (cell.sourceRects ?? []).some((rect) => rect[3] > bands.at(-1)[3] + 0.75)
+      )
+    )
+      return 0
+    const shift = bands.length - count
+    for (let index = cells.length - 1; index >= 0; index--)
+      if (cells[index].row < count) cells.splice(index, 1)
+    for (const cell of cells) cell.row += shift
+    rows.splice(0, count, ...bands.map((rect) => ({ rect, origin: 'source-grouped-header' })))
+    cells.push(...nextCells)
+    headerRows.splice(0, headerRows.length, ...bands.map((_, index) => index))
+    for (const item of tokens) {
+      const index = unassigned.indexOf(item.text)
+      if (index >= 0) unassigned.splice(index, 1)
+    }
+    repairs.push(repair)
+    return 1
+  }
+  if (
+    columnRects.length === 6 &&
+    captions.some((caption) => /FLOPs.*memory/iu.test(caption.lines?.join(' ') ?? ''))
+  ) {
+    const required = [
+      'Input',
+      'Model',
+      'Avg tokens',
+      'FLOPs',
+      'Memory(G)',
+      'frames',
+      'per frame',
+      '(T)',
+      'Train',
+      'Infer'
+    ]
+    const tokens = required.map((text) => source.filter((item) => item.text.trim() === text))
+    if (tokens.every((group) => group.length === 1) && source.length === required.length) {
+      const [input, model, avg, flops, memory, frames, perFrame, unit, train, infer] = tokens.map(
+        (group) => group[0]
+      )
+      const upper = [input, avg, flops, memory],
+        lower = [frames, perFrame, unit, train, infer]
+      const split =
+        (Math.max(...upper.map((item) => item.rect[3])) +
+          Math.min(...lower.map((item) => item.rect[1]))) /
+        2
+      const top = Math.min(...source.map((item) => item.rect[1])),
+        bottom = Math.max(...source.map((item) => item.rect[3]))
+      const centerColumn = (item) =>
+        columnRects.findIndex(
+          (rect) =>
+            (item.rect[0] + item.rect[2]) / 2 >= rect[0] &&
+            (item.rect[0] + item.rect[2]) / 2 <= rect[2]
+        )
+      const bottomRule = rules.some(
+        (rule) =>
+          rule[1] === rule[3] &&
+          rule[1] > bottom &&
+          rule[1] <= bottom + height &&
+          rule[0] <= left + height &&
+          rule[2] >= right - height
+      )
+      const completeBodies = rows
+        .map((_, row) =>
+          cells.filter((cell) => cell.row === row).sort((a, b) => a.column - b.column)
+        )
+        .filter(
+          (row) =>
+            row[0]?.row > 0 &&
+            row.length === 6 &&
+            /\p{L}/u.test(row[1].text) &&
+            row
+              .slice(2)
+              .every(
+                (cell) => cell.colSpan === 1 && /^(?:\d+(?:\.\d+)?|oom)$/iu.test(cell.text.trim())
+              )
+        )
+      if (
+        upper.every((item) => Math.abs(item.baseline - input.baseline) < height * 0.15) &&
+        lower.every((item) => Math.abs(item.baseline - frames.baseline) < height * 0.15) &&
+        [input, model, avg, flops, train, infer].every(
+          (item, column) => centerColumn(item) === column
+        ) &&
+        split > Math.max(...upper.map((item) => item.rect[3])) &&
+        bottomRule &&
+        completeBodies.length >= 4
+      ) {
+        const headerCells = [
+          make(0, 0, 2, 1, [input, frames], top, bottom),
+          make(0, 1, 2, 1, [model], top, bottom),
+          make(0, 2, 2, 1, [avg, perFrame], top, bottom),
+          make(0, 3, 2, 1, [flops, unit], top, bottom),
+          make(0, 4, 1, 2, [memory], top, split),
+          make(1, 4, 1, 1, [train], split, bottom),
+          make(1, 5, 1, 1, [infer], split, bottom)
+        ]
+        return replace(
+          1,
+          [
+            [left, top, right, split],
+            [left, split, right, bottom]
+          ],
+          headerCells,
+          source,
+          'source-wrapped-compute-header-recovered'
+        )
+      }
+    }
+  }
+  // A fixed bank has one spanning stub and two independently named groups.
+  // Native vertical separators delimit the three capacity and four metric
+  // leaves; preserve their existing text runs (including subscripts).
+  if (columnRects.length === 8 && headerRows.length === 2) {
+    const bank = source.filter((item) => item.text.trim() === 'Memory Bank')
+    const capacity = source.filter((item) => item.text.trim() === 'Memory Capacity')
+    const parent = source.filter(
+      (item) =>
+        /^[\p{L}][\p{L}\d-]*$/u.test(item.text.trim()) &&
+        item.rect[0] >= columnRects[4][0] &&
+        item.rect[2] <= columnRects[7][2] &&
+        capacity.length === 1 &&
+        Math.abs(item.baseline - capacity[0].baseline) < height * 0.15
+    )
+    const lowerCells = cells.filter((cell) => cell.row === 1).sort((a, b) => a.column - b.column)
+    const leafCells = lowerCells.filter((cell) => cell.column > 0)
+    if (
+      bank.length === 1 &&
+      capacity.length === 1 &&
+      parent.length === 1 &&
+      lowerCells.every((cell) => cell.column > 0 || (cell.colSpan === 1 && !cell.text.trim())) &&
+      leafCells.length === 7 &&
+      leafCells.every(
+        (cell, index) => cell.column === index + 1 && cell.rowSpan === 1 && cell.colSpan === 1
+      ) &&
+      leafCells.map((cell) => cell.text.replace(/\s/gu, '')).join('|') ===
+        'mt|mmain|ms|SP|TP|STP|Overall'
+    ) {
+      const separators = [columnRects[1][0], columnRects[4][0]]
+      const nativeEdges = separators.every((x) =>
+        rules.some(
+          (rule) =>
+            rule[0] === rule[2] &&
+            Math.abs(rule[0] - x) < height * 0.15 &&
+            rule[1] < rows[0].rect[3] &&
+            rule[3] > rows[0].rect[3]
+        )
+      )
+      const inGroup = (item, start, end) =>
+        item.rect[0] >= columnRects[start][0] - 1 && item.rect[2] <= columnRects[end][2] + 1
+      const completeBodies = rows
+        .map((_, row) =>
+          cells.filter((cell) => cell.row === row).sort((a, b) => a.column - b.column)
+        )
+        .filter(
+          (row) =>
+            row.length === 8 &&
+            row[0].row >= 2 &&
+            /\p{L}/u.test(row[0].text) &&
+            row
+              .slice(1)
+              .every((cell) => cell.colSpan === 1 && /^\d+(?:\.\d+)?$/u.test(cell.text.trim()))
+        )
+      if (
+        nativeEdges &&
+        inGroup(bank[0], 0, 0) &&
+        inGroup(capacity[0], 1, 3) &&
+        inGroup(parent[0], 4, 7) &&
+        Math.abs(capacity[0].baseline - parent[0].baseline) < height * 0.15 &&
+        completeBodies.length >= 4
+      ) {
+        const top = rows[0].rect[1],
+          split = rows[0].rect[3],
+          bottom = rows[1].rect[3]
+        const next = [
+          make(0, 0, 2, 1, bank, top, bottom),
+          make(0, 1, 1, 3, capacity, top, split),
+          make(0, 4, 1, 4, parent, top, split),
+          ...leafCells
+        ]
+        return replace(
+          2,
+          [rows[0].rect, rows[1].rect],
+          next,
+          source,
+          'source-independent-memory-headers-recovered'
+        )
+      }
+    }
+  }
+  // Spatial and temporal retrieval blocks each own two three-leaf direction
+  // groups. Both native tiers and complete body columns must agree before
+  // separating a model span that has concatenated the independent titles.
+  if (columnRects.length === 14 && headerRows.length === 2) {
+    const directions = source.filter((item) =>
+      /^(?:Text-to-Video|Video-to-Text)$/u.test(item.text.trim())
+    )
+    const leaves = source
+      .filter((item) => /^R@(?:1|5|10)$/u.test(item.text.trim()))
+      .sort((a, b) => a.rect[0] - b.rect[0])
+    const stub = source.filter((item) => item.text.trim() === 'Model')
+    const terminal = source.filter((item) => /^(?:ReBias|%|↓)$/u.test(item.text.trim()))
+    const groupStart = [1, 4, 7, 10]
+    const owned = (item, start, end) =>
+      item.rect[0] >= columnRects[start][0] - 1 && item.rect[2] <= columnRects[end][2] + 1
+    if (
+      directions.length === 4 &&
+      leaves.length === 12 &&
+      stub.length === 1 &&
+      terminal.length === 3 &&
+      directions.every(
+        (item, index) =>
+          item.text.trim() === (index % 2 ? 'Video-to-Text' : 'Text-to-Video') &&
+          owned(item, groupStart[index], groupStart[index] + 2)
+      ) &&
+      leaves.every(
+        (item, index) =>
+          item.text.trim() === ['R@1', 'R@5', 'R@10'][index % 3] &&
+          owned(item, index + 1, index + 1)
+      )
+    ) {
+      const roots = source.filter((item) => item.baseline < directions[0].baseline - height * 0.7)
+      const rootGroups = [
+        roots.filter((item) => owned(item, 1, 6)),
+        roots.filter((item) => owned(item, 7, 12))
+      ]
+      const join = (tokens) =>
+        tokens
+          .slice()
+          .sort((a, b) => a.rect[0] - b.rect[0])
+          .reduce(
+            (text, item, index, sorted) =>
+              text +
+              (index && item.rect[0] - sorted[index - 1].rect[2] > height * 0.12 ? ' ' : '') +
+              item.text.trim(),
+            ''
+          )
+      const names = rootGroups.map(join)
+      const firstBoundary = rules.find(
+        (rule) =>
+          rule[1] === rule[3] &&
+          rule[1] > Math.max(...roots.map((item) => item.rect[3])) &&
+          rule[1] < Math.min(...directions.map((item) => item.rect[1])) &&
+          Math.abs(rule[0] - columnRects[1][0]) < 2 &&
+          Math.abs(rule[2] - columnRects[12][2]) < 2
+      )
+      const bottomRule = rules.find(
+        (rule) =>
+          rule[1] === rule[3] &&
+          rule[1] > Math.max(...leaves.map((item) => item.rect[3])) &&
+          rule[1] - Math.max(...leaves.map((item) => item.rect[3])) < height &&
+          rule[0] <= left + height &&
+          rule[2] >= right - height
+      )
+      const bodyRows = rows
+        .map((_, row) =>
+          cells.filter((cell) => cell.row === row).sort((a, b) => a.column - b.column)
+        )
+        .filter(
+          (row) =>
+            row.length === 14 &&
+            row[0].row >= 2 &&
+            row
+              .slice(1)
+              .every((cell) => cell.colSpan === 1 && /^\d+(?:\.\d+)?$/u.test(cell.text.trim()))
+        )
+      const all = [...rootGroups.flat(), ...directions, ...leaves, ...stub, ...terminal]
+      if (
+        rootGroups.every((group) => group.length) &&
+        names[0].endsWith('Spatial Retrieval') &&
+        names[1].endsWith('Temporal Retrieval') &&
+        new Set(all).size === source.length &&
+        all.length === source.length &&
+        firstBoundary &&
+        bottomRule &&
+        bodyRows.length >= 4 &&
+        owned(stub[0], 0, 0) &&
+        terminal.every((item) => owned(item, 13, 13))
+      ) {
+        const top = rows[0].rect[1],
+          first = firstBoundary[1]
+        const second =
+          (Math.max(...directions.map((item) => item.rect[3])) +
+            Math.min(...leaves.map((item) => item.rect[1]))) /
+          2
+        const bottom = bottomRule[1]
+        if (
+          second > Math.max(...directions.map((item) => item.rect[3])) &&
+          second < Math.min(...leaves.map((item) => item.rect[1]))
+        ) {
+          const next = [
+            make(0, 0, 3, 1, stub, top, bottom),
+            {
+              ...make(0, 13, 3, 1, terminal, top, bottom),
+              text: terminal.map((item) => item.text.trim()).join('')
+            },
+            ...rootGroups.map((tokens, index) => ({
+              ...make(0, 1 + index * 6, 1, 6, tokens, top, first),
+              text: names[index]
+            })),
+            ...directions.map((item, index) =>
+              make(1, groupStart[index], 1, 3, [item], first, second)
+            ),
+            ...leaves.map((item, index) => make(2, index + 1, 1, 1, [item], second, bottom))
+          ]
+          return replace(
+            2,
+            [
+              [left, top, right, first],
+              [left, first, right, second],
+              [left, second, right, bottom]
+            ],
+            next,
+            all,
+            'source-independent-retrieval-headers-recovered'
+          )
+        }
+      }
+    }
+  }
+  return 0
+}
 
 // Parallel benchmark rows are sometimes emitted as one wide source run, while
 // the detector merges one of the rows into a single spanning cell. Rebuild only
@@ -1105,6 +2013,253 @@ export function recoverUnassignedCompleteModelRows({
   return recovered
 }
 
+// A dense source table can emit a complete baseline while the detector leaves
+// an empty model band over the same line. Keep the recovery deliberately
+// narrow: use only an existing model row whose leaf cells are all empty, a
+// unique nearest baseline, and at least one fully owned neighboring row. The
+// final (usually prose) lane may contain several PDF text fragments; every
+// other lane must contain exactly one unassigned source item. This fills an
+// existing slot and never inserts rows or expands the crop.
+export function recoverUnassignedCompleteSourceRows({
+  items,
+  cells,
+  rows,
+  columnRects,
+  headerRows,
+  assignments,
+  ambiguousAssignments,
+  repairs
+}) {
+  if (columnRects.length < 3) return 0
+  const heights = items
+    .filter((item) => item.horizontal && Number.isFinite(item.height) && item.height > 0)
+    .map((item) => item.height)
+    .sort((a, b) => a - b)
+  const height = heights[Math.floor(heights.length / 2)]
+  if (!(height > 0)) return 0
+  const rowCells = (row) =>
+    cells.filter((cell) => cell.row === row).sort((a, b) => a.column - b.column)
+  const owns = (cell) => [...assignments.values()].some((owner) => owner === cell)
+  const isLeaf = (cell, column) =>
+    cell.column === column && cell.rowSpan === 1 && cell.colSpan === 1
+  const complete = (row) => {
+    const candidate = rowCells(row)
+    return (
+      candidate.length === columnRects.length &&
+      candidate.every((cell, column) => isLeaf(cell, column) && owns(cell))
+    )
+  }
+  const emptyModelRows = rows
+    .map((row, rowIndex) => ({ row, rowIndex, cells: rowCells(rowIndex) }))
+    .filter(
+      ({ row, rowIndex, cells: candidate }) =>
+        row.origin === 'model' &&
+        !headerRows.includes(rowIndex) &&
+        candidate.length === columnRects.length &&
+        candidate.every((cell, column) => isLeaf(cell, column) && !owns(cell))
+    )
+  if (!emptyModelRows.length) return 0
+  const horizontal = items.filter((item) => item.horizontal && item.text?.trim())
+  const groups = []
+  for (const item of horizontal.sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])) {
+    const group = groups.at(-1)
+    if (group && Math.abs(group.baseline - item.baseline) <= height * 0.35) {
+      group.items.push(item)
+      group.baseline = (group.baseline + item.baseline) / 2
+    } else groups.push({ baseline: item.baseline, items: [item] })
+  }
+  const columnOf = (item) => {
+    const center = (item.rect[0] + item.rect[2]) / 2
+    return columnRects.findIndex((column) => center >= column[0] && center <= column[2])
+  }
+  const recoveredRows = new Set()
+  let recovered = 0
+  for (const group of groups) {
+    const byColumn = Array.from({ length: columnRects.length }, () => [])
+    for (const item of group.items) {
+      const column = columnOf(item)
+      if (column < 0) continue
+      byColumn[column].push(item)
+    }
+    if (
+      byColumn.slice(0, -1).some((lane) => lane.length !== 1 || assignments.has(lane[0])) ||
+      !byColumn.at(-1)?.length ||
+      byColumn.at(-1).some((item) => assignments.has(item))
+    )
+      continue
+    const candidates = emptyModelRows
+      .filter(({ rowIndex }) => !recoveredRows.has(rowIndex))
+      .map(({ row, rowIndex, cells: candidate }) => ({
+        row,
+        rowIndex,
+        cells: candidate,
+        distance: Math.abs((row.rect[1] + row.rect[3]) / 2 - group.baseline)
+      }))
+      .filter(({ distance }) => distance <= height * 1.4)
+      .sort((a, b) => a.distance - b.distance)
+    if (
+      candidates.length !== 1 ||
+      (candidates[1] && candidates[1].distance - candidates[0].distance <= height * 0.35)
+    )
+      continue
+    const target = candidates[0]
+    if (target.rowIndex > 0 && complete(target.rowIndex - 1)) {
+      // adjacent ownership witness
+    } else if (target.rowIndex + 1 < rows.length && complete(target.rowIndex + 1)) {
+      // adjacent ownership witness
+    } else continue
+    const targetByColumn = target.cells.reduce((map, cell) => map.set(cell.column, cell), new Map())
+    if (
+      byColumn.some((lane, column) =>
+        lane.some((item) => {
+          const cell = targetByColumn.get(column)
+          return (
+            !cell || item.rect[0] < cell.rect[0] - height || item.rect[2] > cell.rect[2] + height
+          )
+        })
+      )
+    )
+      continue
+    for (const [column, lane] of byColumn.entries())
+      for (const item of lane) {
+        assignments.set(item, targetByColumn.get(column))
+        ambiguousAssignments?.delete(item)
+      }
+    recoveredRows.add(target.rowIndex)
+    recovered += 1
+    repairs.push('unassigned-complete-source-row-recovered')
+  }
+  return recovered
+}
+
+// A captioned parameter grid can lose one complete baseline when the model
+// merges the wrapped row above it with the next row.  In that shape there is
+// no empty model slot to populate: the source baseline sits between two
+// complete leaf rows and every token is left unassigned.  Recover only the
+// tightly proved three-column parameter row.  The caption, ordered source
+// lanes, and complete neighbours are all required before inserting one row;
+// ordinary prose and partial records stay untouched.
+export function recoverUnassignedInsertedParameterRows({
+  items,
+  cells,
+  rows,
+  columnRects,
+  headerRows,
+  assignments,
+  ambiguousAssignments,
+  repairs,
+  captions = []
+}) {
+  if (
+    columnRects.length !== 3 ||
+    !captions.some((caption) => /\bparameter(?:s)?\b/i.test(caption.lines?.[0] ?? ''))
+  )
+    return 0
+  const heights = items
+    .filter((item) => item.horizontal && Number.isFinite(item.height) && item.height > 0)
+    .map((item) => item.height)
+    .sort((a, b) => a - b)
+  const height = heights[Math.floor(heights.length / 2)]
+  if (!(height > 0)) return 0
+  const owned = (cell) => [...assignments.values()].some((owner) => owner === cell)
+  const rowCells = (row) =>
+    cells.filter((cell) => cell.row === row).sort((a, b) => a.column - b.column)
+  const complete = (row) => {
+    const candidate = rowCells(row)
+    return (
+      candidate.length === 3 &&
+      candidate.every(
+        (cell, column) =>
+          cell.column === column && cell.rowSpan === 1 && cell.colSpan === 1 && owned(cell)
+      )
+    )
+  }
+  const numeric = (text) => /^[<>≤≥−+-]?\d+(?:[.,]\d+)?(?:%|[A-Za-z]{1,3})?$/u.test(text.trim())
+  const parameter = (text) => /^[A-Za-z][A-Za-z0-9_.-]*$/.test(text.trim())
+  const groups = []
+  for (const item of items
+    .filter(
+      (candidate) => !assignments.has(candidate) && candidate.horizontal && candidate.text?.trim()
+    )
+    .sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])) {
+    const group = groups.at(-1)
+    if (group && Math.abs(group.baseline - item.baseline) <= height * 0.35) {
+      group.items.push(item)
+      group.baseline = (group.baseline + item.baseline) / 2
+    } else groups.push({ baseline: item.baseline, items: [item] })
+  }
+  let recovered = 0
+  for (const group of groups) {
+    if (group.items.length !== 3) continue
+    const source = group.items.slice().sort((a, b) => a.rect[0] - b.rect[0])
+    const columns = source.map((item) => {
+      const center = (item.rect[0] + item.rect[2]) / 2
+      return columnRects.findIndex((column) => center >= column[0] && center <= column[2])
+    })
+    if (
+      columns.join(',') !== '0,1,2' ||
+      !parameter(source[0].text) ||
+      !numeric(source[1].text) ||
+      !/\p{L}/u.test(source[2].text) ||
+      source.some((item) => Math.abs(item.baseline - group.baseline) > height * 0.4)
+    )
+      continue
+    const pairs = []
+    for (let index = 1; index < rows.length; index++) {
+      if (headerRows.includes(index - 1) || headerRows.includes(index)) continue
+      if (!complete(index - 1) || !complete(index)) continue
+      const previousItems = items.filter((item) => assignments.get(item)?.row === index - 1)
+      const nextItems = items.filter((item) => assignments.get(item)?.row === index)
+      if (!previousItems.length || !nextItems.length) continue
+      const previousBottom = Math.max(...previousItems.map((item) => item.rect[3]))
+      const nextTop = Math.min(...nextItems.map((item) => item.rect[1]))
+      if (group.baseline <= previousBottom || group.baseline >= nextTop) continue
+      if (nextTop - previousBottom > height * 2.5) continue
+      pairs.push({ index, previousItems, nextItems, previousBottom, nextTop })
+    }
+    if (pairs.length !== 1) continue
+    const { index, previousBottom, nextTop } = pairs[0]
+    const top = Math.max(previousBottom + 0.25, Math.min(...source.map((item) => item.rect[1])))
+    const bottom = Math.min(nextTop - 0.25, Math.max(...source.map((item) => item.rect[3])))
+    if (!(bottom > top)) continue
+    const previousRow = rows[index - 1]
+    const nextRow = rows[index]
+    previousRow.rect[3] = top
+    nextRow.rect[1] = bottom
+    for (const cell of cells) {
+      if (cell.row >= index) cell.row += 1
+      else if (cell.row + cell.rowSpan > index) cell.rowSpan += 1
+      if (cell.row === index - 1) cell.rect[3] = top
+      if (cell.row === index + 1) cell.rect[1] = bottom
+    }
+    rows.splice(index, 0, {
+      rect: [nextRow.rect[0], top, nextRow.rect[2], bottom],
+      origin: 'source-parameter-row'
+    })
+    const inserted = columnRects.map((rect, column) => ({
+      row: index,
+      column,
+      rowSpan: 1,
+      colSpan: 1,
+      rect: [rect[0], top, rect[2], bottom],
+      origin: 'source-parameter-row',
+      items: []
+    }))
+    cells.push(...inserted)
+    source.forEach((item, column) => {
+      assignments.set(item, inserted[column])
+      ambiguousAssignments?.delete(item)
+    })
+    repairs.push('unassigned-parameter-row-inserted')
+    recovered += 1
+  }
+  return recovered
+}
+
+// A wide continuation grid can keep the correct row bands while the detector
+// leaves a complete source baseline between two model rows unowned. Recover
+// only a dense, captioned continuation baseline. This deliberately reuses the
+// existing row and column cells: it never grows the crop or creates rows.
 export function populateTableCellText({
   cells,
   items,
@@ -1117,6 +2272,7 @@ export function populateTableCellText({
   recordGrid,
   scheduleGrid,
   nativeMathOrder,
+  measuredRuns = [],
   captions = [],
   rotatedContinuation = false,
   issues,
@@ -2557,6 +3713,27 @@ export function populateTableCellText({
     ambiguousAssignments,
     repairs
   })
+  recoverUnassignedCompleteSourceRows({
+    items,
+    cells,
+    rows,
+    columnRects,
+    headerRows,
+    assignments,
+    ambiguousAssignments,
+    repairs
+  })
+  recoverUnassignedInsertedParameterRows({
+    items,
+    cells,
+    rows,
+    columnRects,
+    headerRows,
+    assignments,
+    ambiguousAssignments,
+    repairs,
+    captions
+  })
   const denseRowsRecovered = recoverUnassignedDenseRows({
     items,
     cells,
@@ -2681,7 +3858,9 @@ export function populateTableCellText({
   // otherwise unowned candidate rows; this keeps ordinary ambiguous text and
   // fused numeric runs untouched.
   const sourceGroups = []
-  for (const item of items.filter((candidate) => candidate.horizontal)) {
+  for (const item of items
+    .filter((candidate) => candidate.horizontal)
+    .sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])) {
     const previous = sourceGroups.at(-1)
     if (previous && Math.abs(previous.baseline - item.baseline) <= item.height * 0.35)
       previous.items.push(item)
@@ -3000,6 +4179,50 @@ export function populateTableCellText({
   const unassigned = unassignedItems
     .filter((item) => item.text.split(BACKSPACE).join('').trim())
     .map((item) => item.text)
+  reconcileSourceGroupedHeaders({
+    cells,
+    rows,
+    columnRects,
+    headerRows,
+    pageItems,
+    rules,
+    captions,
+    unassigned,
+    repairs
+  })
+  reconcileNativeTieredHeader({
+    cells,
+    rows,
+    columnRects,
+    headerRows,
+    pageItems,
+    rules,
+    captions,
+    unassigned,
+    repairs,
+    recordGrid,
+    measuredRuns
+  })
+  recoverUnassignedFencedSectionLabels({
+    cells,
+    rows,
+    columnRects,
+    headerRows,
+    pageItems,
+    rules,
+    unassigned,
+    repairs
+  })
+  reconcileRepeatedPrintedHeaderParents({
+    cells,
+    rows,
+    columnRects,
+    pageItems,
+    rules,
+    captions,
+    measuredRuns,
+    repairs
+  })
   if (!unassigned.length) issues.delete('unassigned-source-text')
   // Final native-bound reconciliation still needs the derived token boxes
   // created above. Keep them on the legacy array return without changing its

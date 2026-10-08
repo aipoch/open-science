@@ -1,3 +1,4 @@
+import { createDatabaseAtReleasedManifest } from '../../../test/fixtures/application-database'
 import { numericAndNullConstraintsMigration } from './migrations/0028-database-numeric-and-null-constraints'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -18,7 +19,7 @@ afterEach(async () => {
 it('preserves old usage measurements and admits only the new known source after migration', async () => {
   root = await mkdtemp(join(tmpdir(), 'classification-migration-'))
   client = createProjectDbClient(root)
-  await migrateApplicationDatabase(client)
+  await createDatabaseAtReleasedManifest(client)
   await client.$executeRawUnsafe(
     `DELETE FROM "_open_science_migrations" WHERE "id" >= '0042_classification_usage'`
   )

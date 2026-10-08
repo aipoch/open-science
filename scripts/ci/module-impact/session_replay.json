@@ -124,6 +124,7 @@
     ],
     "contract": [],
     "consumer": [
+      "src/renderer/src/pages/workspace/project-file-mention.interaction.test.tsx",
       "src/main/acp/literature-reference-prompt.test.ts",
       "src/renderer/src/App.test.tsx",
       "src/renderer/src/app-shell-presentation-owner.test.ts",

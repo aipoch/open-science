@@ -136,6 +136,11 @@
     "More items": "Другие сеансы"
   },
   "renderer": {
+    "Cancer proteomics studies, sample and aliquot mappings, and file discovery from PDC.": "Исследования протеомики рака, сопоставление образцов и аликвот и поиск файлов в PDC.",
+    "Search PDC studies and versions by name or identifier.": "Поиск исследований и версий PDC по названию или идентификатору.",
+    "Retrieve PDC study metadata and available versions.": "Получение метаданных исследований PDC и доступных версий.",
+    "Map PDC aliquots to samples, cases and external references.": "Сопоставление аликвот PDC с образцами, случаями и внешними ссылками.",
+    "Discover PDC study files and quantitative reports without downloading files.": "Поиск файлов исследований и количественных отчётов PDC без скачивания файлов.",
     "List GWAS summary statistics files, YAML metadata, reference genomes and standard column definitions by GCST accession.": "Получить список файлов сводной статистики GWAS, метаданные YAML, референсные геномы и стандартные определения столбцов по идентификатору GCST.",
     "PDF analysis options": "Параметры анализа PDF",
     "Retrieve GEO series metadata, samples and supplementary-file links.": "Получить метаданные серии GEO, образцы и ссылки на дополнительные файлы.",
@@ -1895,6 +1900,7 @@
     "Maximum output tokens must be a positive whole number of tokens.": "Максимальное количество выходных токенов должно быть положительным целым числом.",
     "Maximize": "Развернуть",
     "Mention {{name}}": "Упомянуть {{name}}",
+    "Drop to mention in chat": "Отпустите, чтобы упомянуть в чате",
     "Mermaid syntax could not be rendered": "Не удалось отобразить диаграмму Mermaid",
     "Message center": "Центр сообщений",
     "Message revision": "Версия сообщения",

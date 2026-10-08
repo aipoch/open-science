@@ -1157,6 +1157,14 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
   'scipy.stats': {
     kind: 'module',
     methods: {
+      bootstrap: {
+        // Statistic callbacks can perform arbitrary I/O or mutate inputs/captures.
+        effect: 'unknown',
+        scopedOpaque: true,
+        externalState: true,
+        callbackKeywords: ['statistic'],
+        callbackPositionalKeywords: { 1: 'statistic' }
+      },
       chi2_contingency: { effect: 'read' },
       mannwhitneyu: { effect: 'read' },
       pearsonr: { effect: 'read' },
@@ -1164,6 +1172,96 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
       ttest_1samp: { effect: 'read' },
       ttest_ind: { effect: 'read' },
       ttest_rel: { effect: 'read' }
+    }
+  },
+  'scipy.integrate': {
+    kind: 'module',
+    methods: {
+      solve_ivp: {
+        // RHS, event and Jacobian callbacks can perform arbitrary I/O.
+        // Preserve every known event capture without certifying solver outputs.
+        effect: 'unknown',
+        scopedOpaque: true,
+        externalState: true,
+        callbackKeywords: ['fun', 'events', 'jac'],
+        callbackPositionalKeywords: { 0: 'fun', 6: 'events' },
+        callbackContainerKeywords: ['events']
+      }
+    }
+  },
+  'scipy.ndimage': {
+    kind: 'module',
+    methods: {
+      generic_filter: {
+        // The neighborhood callback can read files or mutate captured state.
+        // Output may be an array or dtype: retain unknown argument effects
+        // without certifying return ownership or definite output mutation.
+        effect: 'unknown',
+        scopedOpaque: true,
+        externalState: true,
+        callbackKeywords: ['function'],
+        callbackPositionalKeywords: { 1: 'function' }
+      }
+    }
+  },
+  'scipy.signal': {
+    kind: 'module',
+    methods: {
+      welch: {
+        // Detrend callbacks may access files or mutate captured state.
+        // Preserve dependencies without certifying output types or ownership.
+        effect: 'unknown',
+        scopedOpaque: true,
+        externalState: true,
+        callbackKeywords: ['detrend'],
+        callbackPositionalKeywords: { 6: 'detrend' }
+      },
+      periodogram: {
+        effect: 'read',
+        destructuredReturnTypes: ['numpy.ndarray', 'numpy.ndarray'],
+        returnsFreshValue: true,
+        callbackKeywords: ['detrend'],
+        callbackPositionalKeywords: { 4: 'detrend' }
+      }
+    }
+  },
+  'scipy.optimize': {
+    kind: 'module',
+    methods: {
+      curve_fit: {
+        // Model and Jacobian callbacks may perform I/O or mutate captures.
+        // Preserve their dependencies without certifying solver purity or
+        // assigning types to its option-dependent return tuple.
+        effect: 'unknown',
+        scopedOpaque: true,
+        externalState: true,
+        callbackKeywords: ['f', 'jac'],
+        callbackPositionalKeywords: { 0: 'f', 9: 'jac' }
+      },
+      least_squares: {
+        // The residual, Jacobian, loss and execution callbacks can perform
+        // arbitrary I/O or mutate arguments. A result type does not establish
+        // purity of the solver call or completeness of its external inputs.
+        effect: 'unknown',
+        scopedOpaque: true,
+        externalState: true,
+        returnType: 'scipy.optimize.OptimizeResult',
+        callbackKeywords: ['fun', 'jac', 'loss', 'callback', 'workers'],
+        callbackPositionalKeywords: { 0: 'fun', 2: 'jac', 9: 'loss', 19: 'callback', 20: 'workers' }
+      }
+    }
+  },
+  'scipy.optimize.OptimizeResult': {
+    kind: 'type',
+    methods: {
+      '@x': { effect: 'read', returnType: 'numpy.ndarray', returnsPossibleAliasOf: 'receiver' },
+      '@success': { effect: 'read', returnType: 'python.scalar' },
+      '@status': { effect: 'read', returnType: 'python.scalar' },
+      '@message': { effect: 'read', returnType: 'python.string' },
+      '@nfev': { effect: 'read', returnType: 'python.scalar' }
+      // jac can be dense, sparse or LinearOperator; other solvers also vary in
+      // their result fields. Leave those properties untyped rather than
+      // incorrectly enabling ndarray operations on them.
     }
   },
   'scipy.sparse': {
@@ -1868,8 +1966,21 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
     kind: 'type',
     unknownMethodsHaveExternalState: true,
     methods: {
+      '@pages': { effect: 'read', returnType: 'tifffile.TiffPageSequence' },
       asarray: { effect: 'read', returnType: 'numpy.ndarray' },
       close: { effect: 'mutate' }
+    }
+  },
+  'tifffile.TiffPageSequence': {
+    kind: 'type',
+    unknownMethodsHaveExternalState: true,
+    methods: {}
+  },
+  'tifffile.TiffPage': {
+    kind: 'type',
+    unknownMethodsHaveExternalState: true,
+    methods: {
+      asarray: { effect: 'read', returnType: 'numpy.ndarray' }
     }
   },
   cv2: {
@@ -1938,6 +2049,18 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
   'anndata.AnnData': {
     kind: 'type',
     methods: {
+      '@X': { effect: 'read', returnType: 'anndata.ArrayLike' },
+      '@layers': { effect: 'read', returnType: 'anndata.Layers' },
+      '@obs': { effect: 'read', returnType: 'pandas.DataFrame' },
+      '@obs_names': { effect: 'read', returnType: 'pandas.Index' },
+      '@obsm': { effect: 'read', returnType: 'anndata.AxisArrays' },
+      '@obsp': { effect: 'read', returnType: 'anndata.PairwiseArrays' },
+      '@raw': { effect: 'read', returnType: 'anndata.Raw' },
+      '@shape': { effect: 'read', returnType: 'python.container' },
+      '@uns': { effect: 'read', returnType: 'anndata.Unstructured' },
+      '@var': { effect: 'read', returnType: 'pandas.DataFrame' },
+      '@var_names': { effect: 'read', returnType: 'pandas.Index' },
+      '@varm': { effect: 'read', returnType: 'anndata.AxisArrays' },
       copy: { effect: 'read', returnType: 'anndata.AnnData' },
       obs_names_make_unique: { effect: 'mutate' },
       var_names_make_unique: { effect: 'mutate' },
@@ -1953,10 +2076,41 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
       write_loom: { effect: 'read' },
       write_zarr: {
         effect: 'read',
-        file: { kind: 'write', position: 0, keywords: ['store', 'filename'] }
+        file: { kind: 'write', position: 0, keywords: ['store', 'filename'] },
+        mutatesReceiverUnlessKeywordFalse: 'convert_strings_to_categoricals'
       }
     }
   },
+  'anndata.AnnDataBacked': {
+    kind: 'type',
+    methods: {
+      '@X': { effect: 'read', returnType: 'anndata.ArrayLike' },
+      '@layers': { effect: 'read', returnType: 'anndata.BackedLayers' },
+      '@obs': { effect: 'read', returnType: 'pandas.DataFrame' },
+      '@obsm': { effect: 'read', returnType: 'anndata.BackedAxisArrays' },
+      '@obsp': { effect: 'read', returnType: 'anndata.BackedPairwiseArrays' },
+      '@raw': { effect: 'read', returnType: 'anndata.Raw' },
+      '@uns': { effect: 'read', returnType: 'anndata.Unstructured' },
+      '@var': { effect: 'read', returnType: 'pandas.DataFrame' },
+      '@varm': { effect: 'read', returnType: 'anndata.BackedAxisArrays' }
+    }
+  },
+  'anndata.ArrayLike': { kind: 'type', methods: {} },
+  'anndata.BackedAxisArrays': { kind: 'type', methods: {} },
+  'anndata.BackedLayers': { kind: 'type', methods: {} },
+  'anndata.BackedPairwiseArrays': { kind: 'type', methods: {} },
+  'anndata.AxisArrays': { kind: 'type', methods: {} },
+  'anndata.Layers': { kind: 'type', methods: {} },
+  'anndata.PairwiseArrays': { kind: 'type', methods: {} },
+  'anndata.Raw': {
+    kind: 'type',
+    methods: {
+      '@X': { effect: 'read', returnType: 'anndata.ArrayLike' },
+      '@var': { effect: 'read', returnType: 'pandas.DataFrame' },
+      '@var_names': { effect: 'read', returnType: 'pandas.Index' }
+    }
+  },
+  'anndata.Unstructured': { kind: 'type', methods: {} },
   openslide: {
     kind: 'module',
     methods: {
@@ -2135,6 +2289,14 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
           singleFileSuffixes: medicalSingleFileSuffixes
         }
       },
+      // A series reader is assembled across cells in common DICOM workflows:
+      // discover the slice paths, configure the reader, then Execute() in a
+      // later cell. Keep the handle typed so that the final image retains the
+      // reader cell as a dependency.
+      ImageSeriesReader: {
+        effect: 'read',
+        returnType: 'SimpleITK.ImageSeriesReader'
+      },
       WriteTransform: {
         effect: 'read',
         file: { kind: 'write', position: 1, keywords: ['transformFileName'] }
@@ -2156,6 +2318,20 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
         returnsPossibleAliasOf: 'firstArgument'
       },
       GetImageFromArray: { effect: 'read', returnType: 'SimpleITK.Image' }
+    }
+  },
+  'SimpleITK.ImageSeriesReader': {
+    kind: 'type',
+    unknownMethodsHaveExternalState: true,
+    methods: {
+      GetGDCMSeriesFileNames: {
+        effect: 'read',
+        returnType: 'python.container'
+      },
+      SetFileNames: { effect: 'mutate' },
+      Execute: { effect: 'read', returnType: 'SimpleITK.Image', externalState: true },
+      GetMetaDataKeys: { effect: 'read', returnType: 'python.container' },
+      GetMetaData: { effect: 'read', returnType: 'python.string' }
     }
   },
   'SimpleITK.Image': {

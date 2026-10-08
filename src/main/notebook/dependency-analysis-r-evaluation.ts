@@ -114,6 +114,13 @@ export interface RFunctionalCall {
   optional?: boolean
 }
 
+// Lexical captures only: these solver calls are never functional purity,
+// callback return-value, argument-forcing or ownership contracts.
+export const R_OPAQUE_CALLBACK_CAPTURE_CALLS = new Map([
+  ['uniroot', { package: 'stats', keyword: 'f', position: 0 }],
+  ['integrate', { package: 'stats', keyword: 'f', position: 0 }]
+] as const)
+
 export const R_FUNCTIONAL_CALLS = new Map<string, RFunctionalCall>([
   ['aggregate', { package: 'stats', precedingArguments: ['x', 'by'], keywords: ['FUN'] }],
   ['apply', { package: 'base', precedingArguments: ['X', 'MARGIN'], keywords: ['FUN'] }],

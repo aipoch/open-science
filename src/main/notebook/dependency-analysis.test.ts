@@ -13,6 +13,7 @@ import {
   unavailableNotebookDependencyProjection
 } from './dependency-analysis'
 import { NotebookDependencyProjector } from './dependency-projection'
+import type { NotebookDependencyAnalysisSidecar } from './dependency-analysis-types'
 
 const temporaryRoots: string[] = []
 const unusedPython = { command: 'unused-python' }
@@ -1713,6 +1714,42 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
     }
   )
 
+  it('persists a scalar record path without persisting its rows or selected row', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-record-path-context-'))
+    temporaryRoots.push(storageRoot)
+    const analyzedRun = run(
+      'run-1',
+      'select-record-path',
+      [
+        "records = (('outputs/target-0.25.txt', '0.25'), ('outputs/target-0.50.txt', '0.50'))",
+        'target_path = records[-1][0]',
+        'row = records[0]'
+      ].join('\n'),
+      1
+    )
+    const runs: NotebookRunRecord[] = [analyzedRun]
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: vi.fn(async () => runs) }
+    })
+    await analyzer.project({ projectId: 'default-project', sessionId: 'session-1' })
+    runs.push({ ...run('current-run', 'consume-path', '', 2), status: 'running' })
+
+    await expect(
+      analyzer.sourceFileAccessContext({
+        projectId: 'default-project',
+        sessionId: 'session-1',
+        currentRunId: 'current-run',
+        language: 'python',
+        environment: 'default-python',
+        kernelEpochId: 'epoch-1'
+      })
+    ).resolves.toMatchObject({
+      staticStrings: [{ name: 'target_path', value: 'outputs/target-0.50.txt' }],
+      staticCollections: []
+    })
+  })
+
   it.each([
     [
       'Python',
@@ -2945,7 +2982,10 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
     'scientific-python-stdlib-plotting-9',
     'scientific-file-readers-10',
     'scientific-file-readers-11',
-    'scientific-file-reader-handles'
+    'scientific-file-reader-handles',
+    'tree-sitter-in-process-137-scientific-filter-callbacks',
+    'tree-sitter-in-process-138-opaque-helper-captures',
+    'tree-sitter-in-process-139-r-cat-file-writes'
   ])('reanalyzes a valid v1 sidecar from analyzer revision %s', async (legacyRevision) => {
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-legacy-v1-checksum-'))
     temporaryRoots.push(storageRoot)
@@ -6870,6 +6910,226 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
 
     expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
     expect(projection.dependenciesByRunId?.['run-1']).toEqual([])
+  })
+
+  it('retains default cached opaque R captures without certification', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-cached-opaque-captures-'))
+    temporaryRoots.push(storageRoot)
+    const captures = ['TARGET_PATH', 'PHASE', 'ozone_values', 'BANDWIDTH', 'TRACE_PATH']
+    const producer = [
+      'TARGET_PATH <- "outputs/target-0.25.txt"',
+      'PHASE <- "baseline"',
+      'TRACE_PATH <- "outputs/trace.csv"',
+      'BANDWIDTH <- 10',
+      'ozone_values <- c(1, 2, 3)',
+      'cat("header\\n", file=TRACE_PATH, append=FALSE)',
+      'score_callback <- function(threshold) {',
+      '  target <- as.numeric(readLines(TARGET_PATH, n=1L, warn=FALSE))',
+      '  score <- mean(1 / (1 + exp((threshold - ozone_values) / BANDWIDTH))) - target',
+      '  call_id <- length(readLines(TRACE_PATH, warn=FALSE))',
+      '  row <- paste(call_id, PHASE, formatC(score), TARGET_PATH, sep=",")',
+      '  cat(row, "\\n", file=TRACE_PATH, append=TRUE, sep="")',
+      '  score',
+      '}',
+      'cb_alias <- score_callback',
+      'cb_env <- environment(score_callback)',
+      'stopifnot(identical(cb_alias, score_callback))',
+      'stopifnot(identical(cb_env, environment(score_callback)))'
+    ].join('\n')
+    const rRun = (id: string, script: string, count: number): NotebookRunRecord => ({
+      ...run(id, id, script, count),
+      kernelKind: 'r',
+      environment: 'default-r'
+    })
+    const runs = [rRun('producer', producer, 1)]
+    const repository = { readSessionRuns: vi.fn(async () => runs) }
+    const request = { projectId: 'p', sessionId: 's' }
+    const cachePath = join(storageRoot, 'notebooks', 'p', 's', 'cache', 'dependency-analysis.json')
+    const readSidecar = async (): Promise<NotebookDependencyAnalysisSidecar> =>
+      JSON.parse(await readFile(cachePath, 'utf8'))
+    await new NotebookDependencyAnalyzer({ storageRoot, repository }).project(request)
+    const producerFacts = (await readSidecar()).runs.producer!.facts
+    const callbackType = producerFacts.typeBindings?.find(
+      (binding) => binding.target === 'score_callback'
+    )?.typeName
+    const method = producerFacts.typeSummaries?.find((summary) => summary.name === callbackType)
+      ?.methods[0]
+    expect(method).toMatchObject({
+      effect: 'unknown',
+      unknownScope: 'namespace',
+      usedNames: expect.arrayContaining(captures),
+      safeCallNames: [],
+      returnType: null
+    })
+
+    runs.push(rRun('consumer', 'fit <- stats::uniroot(f=score_callback, interval=c(-1, 1))', 2))
+    const restored = new NotebookDependencyAnalyzer({ storageRoot, repository })
+    const input = await restored.sourceFileAccessContext({
+      ...request,
+      currentRunId: 'consumer',
+      language: 'r',
+      environment: 'default-r',
+      kernelEpochId: 'epoch-1'
+    })
+    const inputCallback = input?.rFunctions?.find((item) => item.name === 'score_callback')
+    expect(inputCallback?.summary.methods[0]).toMatchObject({
+      effect: 'unknown',
+      unknownScope: 'namespace',
+      usedNames: expect.arrayContaining(captures),
+      safeCallNames: [],
+      returnType: null
+    })
+    const projection = await restored.project(request)
+    const consumer = (await readSidecar()).runs.consumer!
+    expect(consumer.facts).toMatchObject({
+      state: 'unknown',
+      reasons: expect.arrayContaining(['opaque-call', 'dynamic-namespace'])
+    })
+    expect(consumer.fileAccess).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+    expect(consumer.facts.safeCallNames ?? []).not.toContain('stats::uniroot')
+    expect(consumer.facts.copyOnModifyNames ?? []).not.toContain('fit')
+    expect(consumer.facts.aliases ?? []).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ target: 'fit', kind: 'reference' })])
+    )
+    expect(projection.stalenessByRunId.consumer).toMatchObject({ state: 'unknown' })
+    expect(projection.dependenciesByRunId?.consumer).toBeUndefined()
+    expect(projection.fileDependenciesByRunId ?? {}).toEqual({})
+    expect(consumer.facts.usedNames).toEqual(expect.arrayContaining(captures))
+    expect(consumer.facts.priorUsedNames).toEqual(expect.arrayContaining(captures))
+
+    const changeSource = 'PHASE <- "changed"\nTARGET_PATH <- "outputs/target-0.50.txt"'
+    runs.push(rRun('change', changeSource, 3))
+    const changed = await restored.project(request)
+    const named = changed.invalidatedByRunId.change?.filter((item) => item.runId === 'consumer')
+    expect(named).toEqual([
+      expect.objectContaining({ runId: 'consumer', names: ['PHASE', 'TARGET_PATH'] })
+    ])
+    expect(changed.stalenessByRunId.consumer).toMatchObject({ state: 'unknown' })
+
+    const persisted = await readFile(cachePath, 'utf8')
+    const cachedAgain = new NotebookDependencyAnalyzer({ storageRoot, repository })
+    expect(await cachedAgain.project(request)).toEqual(changed)
+    expect(await readFile(cachePath, 'utf8')).toBe(persisted)
+  })
+
+  it('retains default cached partial R integral captures and named invalidation', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-cached-integral-captures-'))
+    temporaryRoots.push(storageRoot)
+    const captures = [
+      'BANDWIDTH_PATH',
+      'PHASE',
+      'waiting_values',
+      'TRACE_PATH',
+      'read_next_batch_id'
+    ]
+    // Reduced from a real vector KDE integration workflow: control flow and file
+    // operations make the callback opaque without erasing its direct free reads.
+    const producer = [
+      'BANDWIDTH_PATH <- "outputs/bandwidth-4.txt"',
+      'TRACE_PATH <- "outputs/trace.csv"',
+      'PHASE <- "baseline"',
+      'waiting_values <- c(43, 58, 80)',
+      'read_next_batch_id <- function(path) {',
+      '  lines <- readLines(path, warn=FALSE)',
+      '  if (length(lines) <= 1L) return(1L)',
+      '  length(lines)',
+      '}',
+      'kde_callback <- function(x) {',
+      '  if (!file.exists(BANDWIDTH_PATH)) stop("missing bandwidth", BANDWIDTH_PATH)',
+      '  bandwidth <- as.numeric(readLines(BANDWIDTH_PATH, warn=FALSE)[1])',
+      '  batch <- read_next_batch_id(TRACE_PATH)',
+      '  y <- numeric(length(x))',
+      '  for (index in seq_len(length(x))) {',
+      '    diffs <- (x[index] - waiting_values) / bandwidth',
+      '    y[index] <- sum(exp(-0.5 * diffs * diffs))',
+      '  }',
+      '  con <- file(TRACE_PATH, open="ab")',
+      '  for (index in seq_len(length(x))) {',
+      '    line <- sprintf("%d,%s,%.17g", batch, PHASE, y[index])',
+      '    writeLines(line, con=con, useBytes=TRUE)',
+      '  }',
+      '  close(con)',
+      '  y',
+      '}',
+      'callback_alias <- kde_callback'
+    ].join('\n')
+    const rRun = (id: string, script: string, count: number): NotebookRunRecord => ({
+      ...run(id, id, script, count),
+      kernelKind: 'r',
+      environment: 'default-r'
+    })
+    const runs = [rRun('producer', producer, 1)]
+    const repository = { readSessionRuns: vi.fn(async () => runs) }
+    const request = { projectId: 'p', sessionId: 's' }
+    const cachePath = join(storageRoot, 'notebooks', 'p', 's', 'cache', 'dependency-analysis.json')
+    const readSidecar = async (): Promise<NotebookDependencyAnalysisSidecar> =>
+      JSON.parse(await readFile(cachePath, 'utf8'))
+    await new NotebookDependencyAnalyzer({ storageRoot, repository }).project(request)
+    const producerFacts = (await readSidecar()).runs.producer!.facts
+    const callbackType = producerFacts.typeBindings?.find(
+      (binding) => binding.target === 'kde_callback'
+    )?.typeName
+    const method = producerFacts.typeSummaries?.find((summary) => summary.name === callbackType)
+      ?.methods[0]
+    expect(method).toMatchObject({
+      effect: 'unknown',
+      unknownScope: 'namespace',
+      usedNames: expect.arrayContaining(captures),
+      safeCallNames: [],
+      returnType: null
+    })
+    for (const local of ['x', 'index', 'bandwidth', 'diffs', 'con', 'line']) {
+      expect(method?.usedNames).not.toContain(local)
+    }
+
+    runs.push(rRun('consumer', 'fit <- stats::integrate(f=callback_alias, lower=60, upper=70)', 2))
+    const restored = new NotebookDependencyAnalyzer({ storageRoot, repository })
+    const input = await restored.sourceFileAccessContext({
+      ...request,
+      currentRunId: 'consumer',
+      language: 'r',
+      environment: 'default-r',
+      kernelEpochId: 'epoch-1'
+    })
+    expect(
+      input?.rFunctions?.find((item) => item.name === 'callback_alias')?.summary.methods[0]
+    ).toMatchObject({ effect: 'unknown', usedNames: expect.arrayContaining(captures) })
+    const projection = await restored.project(request)
+    const consumer = (await readSidecar()).runs.consumer!
+    expect(consumer.facts).toMatchObject({
+      state: 'unknown',
+      reasons: expect.arrayContaining(['opaque-call', 'dynamic-namespace']),
+      usedNames: expect.arrayContaining(captures),
+      priorUsedNames: expect.arrayContaining(captures)
+    })
+    expect(consumer.fileAccess).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+    expect(consumer.facts.safeCallNames ?? []).not.toContain('stats::integrate')
+    expect(consumer.facts.copyOnModifyNames ?? []).not.toContain('fit')
+    expect(consumer.facts.aliases ?? []).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ target: 'fit', kind: 'reference' })])
+    )
+    expect(projection.stalenessByRunId.consumer).toMatchObject({ state: 'unknown' })
+    expect(projection.dependenciesByRunId?.consumer).toBeUndefined()
+    expect(projection.fileDependenciesByRunId ?? {}).toEqual({})
+    runs.push(rRun('change', 'PHASE <- "changed"\nBANDWIDTH_PATH <- "outputs/bandwidth-12.txt"', 3))
+    const changed = await restored.project(request)
+    expect(changed.invalidatedByRunId.change?.filter((item) => item.runId === 'consumer')).toEqual([
+      expect.objectContaining({ runId: 'consumer', names: ['BANDWIDTH_PATH', 'PHASE'] })
+    ])
+    expect(changed.stalenessByRunId.consumer).toMatchObject({ state: 'unknown' })
+    const persisted = await readFile(cachePath, 'utf8')
+    expect(
+      await new NotebookDependencyAnalyzer({ storageRoot, repository }).project(request)
+    ).toEqual(changed)
+    expect(await readFile(cachePath, 'utf8')).toBe(persisted)
   })
 
   it('classifies nested deterministic R plotting loops', async () => {

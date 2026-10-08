@@ -1,23 +1,23 @@
 {
   "constraints": [
     {
-      "tableName": "bookmarks",
-      "name": "bookmarks_identity_check",
+      "tableName": "Bookmark",
+      "name": "Bookmark_identity_check",
       "expression": "length(trim(\"id\")) > 0 AND length(trim(\"projectId\")) > 0 AND length(trim(\"sessionId\")) > 0 AND length(trim(\"sourceId\")) > 0"
     },
     {
-      "tableName": "bookmarks",
-      "name": "bookmarks_kind_check",
+      "tableName": "Bookmark",
+      "name": "Bookmark_kind_check",
       "expression": "\"kind\" IN ('text', 'pdf-text', 'pdf-region') AND \"sourceKind\" IN ('agent-message', 'session-item', 'project-file', 'artifact-version', 'upload-version', 'literature-attachment-version')"
     },
     {
-      "tableName": "bookmarks",
-      "name": "bookmarks_json_check",
+      "tableName": "Bookmark",
+      "name": "Bookmark_json_check",
       "expression": "json_valid(\"sourceJson\") AND json_type(\"sourceJson\") = 'object' AND json_valid(\"selectorJson\") AND json_type(\"selectorJson\") = 'object' AND length(\"sourceJson\") <= 65536 AND length(\"selectorJson\") <= 65536"
     },
     {
-      "tableName": "bookmarks",
-      "name": "bookmarks_content_check",
+      "tableName": "Bookmark",
+      "name": "Bookmark_content_check",
       "expression": "length(\"note\") <= 2000 AND (\"quote\" IS NULL OR length(\"quote\") BETWEEN 1 AND 4000) AND (\"kind\" != 'text' OR \"quote\" IS NOT NULL)"
     },
     {
@@ -836,42 +836,42 @@
       "expression": "(\"continuationMessageId\" IS NULL OR length(trim(\"continuationMessageId\")) > 0) AND (\"state\" <> 'dispatching' OR \"continuationMessageId\" IS NOT NULL) AND (\"state\" <> 'waiting-result' OR \"continuationMessageId\" IS NULL)"
     },
     {
-      "tableName": "pdf_annotations",
+      "tableName": "PdfAnnotation",
       "name": "PdfAnnotation_identity_check",
       "expression": "length(trim(\"id\")) > 0 AND length(trim(\"projectId\")) > 0 AND length(trim(\"sourceFileId\")) > 0 AND length(trim(\"versionId\")) > 0 AND length(trim(\"name\")) > 0 AND length(trim(\"path\")) > 0 AND length(trim(\"sessionId\")) > 0"
     },
     {
-      "tableName": "pdf_annotations",
+      "tableName": "PdfAnnotation",
       "name": "PdfAnnotation_source_check",
       "expression": "\"sourceKind\" IN ('artifact-version', 'upload-version', 'literature-attachment-version') AND length(\"checksum\") = 64 AND \"checksum\" NOT GLOB '*[^0-9a-f]*'"
     },
     {
-      "tableName": "pdf_annotations",
+      "tableName": "PdfAnnotation",
       "name": "PdfAnnotation_kind_check",
       "expression": "\"kind\" IN ('highlight', 'underline', 'squiggly', 'strikethrough', 'area', 'page-note', 'document-note') AND (\"color\" IS NULL OR \"color\" IN ('yellow', 'blue', 'green', 'pink', 'purple'))"
     },
     {
-      "tableName": "pdf_annotations",
+      "tableName": "PdfAnnotation",
       "name": "PdfAnnotation_origin_check",
       "expression": "\"origin\" IN ('user', 'imported') AND (\"origin\" = 'imported' OR \"externalSubtype\" IS NULL) AND (\"externalSubtype\" IS NULL OR (length(trim(\"externalSubtype\")) > 0 AND length(\"externalSubtype\") <= 64))"
     },
     {
-      "tableName": "pdf_annotations",
+      "tableName": "PdfAnnotation",
       "name": "PdfAnnotation_json_check",
       "expression": "json_valid(\"selectorJson\") AND json_type(\"selectorJson\") = 'object' AND length(\"selectorJson\") <= 65536"
     },
     {
-      "tableName": "pdf_annotations",
+      "tableName": "PdfAnnotation",
       "name": "PdfAnnotation_content_check",
       "expression": "length(\"note\") <= 20000"
     },
     {
-      "tableName": "pdf_annotations",
+      "tableName": "PdfAnnotation",
       "name": "PdfAnnotation_scope_check",
       "expression": "(\"projectId\" IS NOT NULL AND \"sourceKind\" <> 'literature-attachment-version') OR (\"projectId\" IS NULL AND \"sessionId\" IS NULL AND \"sourceKind\" = 'literature-attachment-version' AND \"sourceSessionId\" IS NULL)"
     },
     {
-      "tableName": "pdf_annotation_imports",
+      "tableName": "PdfAnnotationImport",
       "name": "PdfAnnotationImport_json_check",
       "expression": "json_valid(\"resultJson\")"
     },

@@ -1,3 +1,4 @@
+import { createDatabaseAtReleasedManifest } from '../../../test/fixtures/application-database'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -18,10 +19,8 @@ afterEach(async () => {
 it('installs the Bookmark table with durable ownership, JSON, and paging constraints', async () => {
   root = await mkdtemp(join(tmpdir(), 'bookmarks-migration-'))
   client = createProjectDbClient(root)
-  await migrateApplicationDatabase(client)
+  await createDatabaseAtReleasedManifest(client)
   await client.$executeRawUnsafe('DROP TABLE "bookmarks"')
-  await client.$executeRawUnsafe('ALTER TABLE "Session" DROP COLUMN "researchMembershipJson"')
-  await client.$executeRawUnsafe('ALTER TABLE "Session" DROP COLUMN "importedResearchId"')
   await client.$executeRawUnsafe(
     'DELETE FROM "_open_science_migrations" WHERE id >= \'0041_bookmarks\''
   )
@@ -38,17 +37,18 @@ it('installs the Bookmark table with durable ownership, JSON, and paging constra
       '0046_journal_attributes',
       '0047_session_replay',
       '0048_pdf_annotation_sharing',
-      '0049_session_research_membership'
+      '0049_pascalcase_table_names',
+      '0050_session_research_membership'
     ]
   })
 
   const indexes = await client.$queryRawUnsafe<Array<{ name: string }>>(
-    'PRAGMA index_list("bookmarks")'
+    'PRAGMA index_list("Bookmark")'
   )
   expect(indexes.map(({ name }) => name)).toEqual(
     expect.arrayContaining([
-      'bookmarks_projectId_sessionId_createdAt_id_idx',
-      'bookmarks_projectId_sessionId_sourceKind_sourceId_idx'
+      'Bookmark_projectId_sessionId_createdAt_id_idx',
+      'Bookmark_projectId_sessionId_sourceKind_sourceId_idx'
     ])
   )
   await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })

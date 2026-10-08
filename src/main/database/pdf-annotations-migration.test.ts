@@ -1,3 +1,4 @@
+import { createDatabaseAtReleasedManifest } from '../../../test/fixtures/application-database'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -13,23 +14,11 @@ it('upgrades an existing database without copying or changing Bookmarks', async 
   const root = await mkdtemp(join(tmpdir(), 'pdf-annotation-migration-'))
   const client = createProjectDbClient(root)
   try {
-    await migrateApplicationDatabase(client)
+    await createDatabaseAtReleasedManifest(client)
     await client.project.create({ data: { id: 'p1', name: 'Research' } })
-    await client.bookmark.create({
-      data: {
-        id: 'saved-location',
-        projectId: 'p1',
-        sessionId: 's1',
-        kind: 'text',
-        sourceKind: 'agent-message',
-        sourceId: 'message-1',
-        sourceJson: '{}',
-        selectorJson: '{}',
-        quote: 'Original',
-        note: 'Keep this'
-      }
-    })
-    const before = await client.bookmark.findMany()
+    await client.$executeRaw`INSERT INTO bookmarks (id, projectId, sessionId, kind, sourceKind, sourceId, sourceJson, selectorJson, quote, note, updatedAt)
+      VALUES ('saved-location', 'p1', 's1', 'text', 'agent-message', 'message-1', '{}', '{}', 'Original', 'Keep this', 1234567890000)`
+    const before = await client.$queryRaw`SELECT * FROM bookmarks`
     for (const table of [
       'ClassificationUsage',
       'LiteratureSmartRunItem',
@@ -43,8 +32,6 @@ it('upgrades an existing database without copying or changing Bookmarks', async 
     }
     await client.$executeRawUnsafe('DROP TABLE "pdf_annotations"')
     await client.$executeRawUnsafe('DROP TABLE "pdf_annotation_imports"')
-    await client.$executeRawUnsafe('ALTER TABLE "Session" DROP COLUMN "researchMembershipJson"')
-    await client.$executeRawUnsafe('ALTER TABLE "Session" DROP COLUMN "importedResearchId"')
     await client.$executeRawUnsafe(
       'DELETE FROM "_open_science_migrations" WHERE id >= \'0043_pdf_annotations\''
     )
@@ -56,14 +43,15 @@ it('upgrades an existing database without copying or changing Bookmarks', async 
         '0046_journal_attributes',
         '0047_session_replay',
         '0048_pdf_annotation_sharing',
-        '0049_session_research_membership'
+        '0049_pascalcase_table_names',
+        '0050_session_research_membership'
       ]
     })
-    expect(await client.bookmark.findMany()).toEqual(before)
+    expect(await client.$queryRaw`SELECT * FROM "Bookmark"`).toEqual(before)
     expect(await client.pdfAnnotation.count()).toBe(0)
     expect(await client.pdfAnnotationImport.count()).toBe(0)
     const columns = await client.$queryRawUnsafe<Array<{ name: string; notnull: bigint }>>(
-      'PRAGMA table_info("pdf_annotations")'
+      'PRAGMA table_info("PdfAnnotation")'
     )
     expect(columns.find(({ name }) => name === 'projectId')?.notnull).toBe(0n)
     expect(columns.find(({ name }) => name === 'sessionId')?.notnull).toBe(0n)
@@ -149,7 +137,7 @@ it.each(['upload-version', 'artifact-version'] as const)(
     const root = await mkdtemp(join(tmpdir(), 'pdf-sharing-upgrade-'))
     const client = createProjectDbClient(root)
     try {
-      await migrateApplicationDatabase(client)
+      await createDatabaseAtReleasedManifest(client)
       await client.$executeRawUnsafe('PRAGMA foreign_keys = OFF')
       for (const table of [
         'pdf_annotations',
@@ -161,10 +149,8 @@ it.each(['upload-version', 'artifact-version'] as const)(
         await client.$executeRawUnsafe(`DROP TABLE "${table}"`)
       for (const statement of pdfAnnotationsMigration.statements)
         await client.$executeRawUnsafe(statement)
-      await client.$executeRawUnsafe('ALTER TABLE "Session" DROP COLUMN "researchMembershipJson"')
-      await client.$executeRawUnsafe('ALTER TABLE "Session" DROP COLUMN "importedResearchId"')
       await client.$executeRawUnsafe(
-        "DELETE FROM _open_science_migrations WHERE id >= '0048_pdf_annotation_sharing'"
+        "DELETE FROM _open_science_migrations WHERE id = '0048_pdf_annotation_sharing'"
       )
       await client.project.createMany({
         data: [
@@ -185,7 +171,11 @@ it.each(['upload-version', 'artifact-version'] as const)(
       await client.$executeRaw`INSERT INTO pdf_annotation_imports (id, projectId, sessionId, sourceKind, sourceFileId, versionId, checksum, resultJson) VALUES ('deleted-native', 'legacy-p', 'legacy-session', ${kind}, 'deleted-file', 'deleted-v', ${'a'.repeat(64)}, ${receipt})`
       await client.$executeRawUnsafe('PRAGMA foreign_keys = ON')
       expect(await migrateApplicationDatabase(client)).toMatchObject({
-        applied: ['0048_pdf_annotation_sharing', '0049_session_research_membership']
+        applied: [
+          '0048_pdf_annotation_sharing',
+          '0049_pascalcase_table_names',
+          '0050_session_research_membership'
+        ]
       })
       const rows = await client.pdfAnnotation.findMany({ orderBy: { id: 'asc' } })
       expect(rows.map((row) => row.note)).toEqual(['Keep my edit', 'Keep my edit'])

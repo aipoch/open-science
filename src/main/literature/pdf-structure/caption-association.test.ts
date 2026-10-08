@@ -13,6 +13,111 @@ const { associateFigures, associateTableCaptions } = await import(
   pathToFileURL(resolve('resources/pdf-structure/literature-pdf-association.mjs')).href
 )
 
+const multilineFigureCaption = (title: string): ReturnType<typeof JSON.parse> => ({
+  pageNumber: 1,
+  width: 600,
+  height: 800,
+  invalidGraphicsBounds: 0,
+  lines: [title, 'demonstrate the response across the measured conditions.'].map((text, n) => ({
+    text,
+    x: 50,
+    y: 250 + n * 14,
+    width: 300,
+    height: 10,
+    fontSize: 10
+  })),
+  graphicsBounds: [{ kind: 'image', normalizedRect: [50 / 600, 50 / 800, 350 / 600, 235 / 800] }]
+})
+
+it.each(['Figure 1b. Results', 'Fig. 1b. Results'])(
+  'associates the complete native multiline caption after its first line is accepted: %s',
+  (title) => {
+    const page = multilineFigureCaption(title),
+      before = structuredClone(page),
+      captions = findCaptionCandidates([page])
+    expect(captions).toHaveLength(1)
+    expect(captions[0].lines).toEqual(page.lines.map((line: { text: string }) => line.text))
+    const figures = associateFigures(page, captions)
+    expect(figures).toHaveLength(1)
+    expect(figures[0].caption).toEqual(captions[0])
+    expect(figures[0].rect).toEqual([50, 50, 350, 235])
+    expect(page).toEqual(before)
+  }
+)
+
+it.each(['Figure 1b. Results demonstrate a measured effect.', 'Fig. 1b. Results show the effect.'])(
+  'retains first-line prose rejection during figure association: %s',
+  (title) => {
+    const page = multilineFigureCaption(title)
+    expect(findCaptionCandidates([page])).toEqual([])
+    expect(
+      associateFigures(page, [
+        { page: 1, lines: [title, page.lines[1].text], rect: [50, 250, 350, 274] }
+      ])
+    ).toEqual([])
+  }
+)
+
+it('retains the complete multiline facing-page exclusion after accepting the figure title', () => {
+  const page = multilineFigureCaption('Figure 1b. Results'),
+    caption = {
+      page: 1,
+      lines: [page.lines[0].text, `${page.lines[1].text} (facing page)`],
+      rect: [50, 250, 350, 274]
+    }
+  expect(associateFigures(page, [caption])).toEqual([])
+})
+
+const splitFigureHeading = (): ReturnType<typeof JSON.parse> =>
+  readPdfFixture('src/main/literature/pdf-structure/fixtures/branching-flowchart.jsonl')
+
+it('associates an independently grouped native figure label with its immediate title', () => {
+  const f = splitFigureHeading(),
+    before = structuredClone(f),
+    captions = findCaptionCandidates([f.page])
+  expect(captions).toEqual(f.captions)
+  expect(captions[0].lines).toEqual(['Figure 1.', 'CONSORT diagram.'])
+  const figures = associateFigures(f.page, captions, f.tables)
+  expect(figures).toHaveLength(1)
+  expect(figures[0].caption).toEqual(captions[0])
+  expect(figures[0].rect).toEqual([80.192125, 95.10697265625001, 441.0566875, 475.53486328125])
+  expect(figures[0].graphicsCount).toBe(17)
+  expect(f).toEqual(before)
+})
+
+it.each(['Figure 1.', 'Fig. 1.', 'Fig 1:', 'Figure S1.', 'Figure SM1.'])(
+  'classifies only the immediate title of a split numbered figure label: %s',
+  (label) => {
+    const f = splitFigureHeading()
+    f.captions[0].lines = [label, 'CONSORT diagram.', 'Results demonstrate the measured response.']
+    expect(captionKind(label)).toBeUndefined()
+    const figures = associateFigures(f.page, f.captions, f.tables)
+    expect(figures).toHaveLength(1)
+    expect(figures[0].caption).toEqual(f.captions[0])
+    expect(figures[0].rect).toBeDefined()
+  }
+)
+
+it.each([
+  ['Figure 1.'],
+  ['Figure 1.', ''],
+  ['Figure 1.', '   '],
+  ['Figure 1.', '', 'CONSORT diagram.'],
+  ['Figure 1.', 'As shown in the figure, the response is stable.'],
+  ['Figure 1.', 'In our study, the baseline is unchanged.'],
+  ['Fig. 1.', 'Thus, the result is larger.'],
+  ['Figure 1.', 'CONSORT diagram. (facing page)'],
+  ['Figure.', 'CONSORT diagram.'],
+  ['Figure Title.', 'CONSORT diagram.'],
+  ['Figure 1 shows a measured response.', 'CONSORT diagram.'],
+  ['Figure IV.', 'CONSORT diagram.'],
+  ['Fig. IV.', 'CONSORT diagram.']
+])('refuses unsupported or prose split-heading evidence: %s', (...lines) => {
+  const f = splitFigureHeading()
+  f.captions[0].lines = lines
+  expect(associateFigures(f.page, f.captions, f.tables)).toEqual([])
+})
+
 const repeatedTableNumber = (): ReturnType<typeof JSON.parse> =>
   readPdfFixture(
     'src/main/literature/pdf-structure/fixtures/source-grids/repeated-number-above-described-table.jsonl'
@@ -1687,6 +1792,33 @@ it('rejects a bare table number emitted after a paragraph reference', () => {
     lines: [line('Test statistics are shown in', 540, 145), line('Table 3.', 554, 32)]
   }
   expect(findCaptionCandidates([page])).toEqual([])
+})
+
+it('rejects supplementary and table labels split after a reference preposition', () => {
+  const line = (text: string, y: number, x = 108): object => ({
+    text,
+    x,
+    y,
+    width: text.length * 5,
+    height: 10,
+    fontSize: 10
+  })
+  expect(
+    findCaptionCandidates([
+      {
+        pageNumber: 1,
+        lines: [line('the decoding framework is illustrated in', 680, 215), line('Figure S2.', 691)]
+      }
+    ])
+  ).toEqual([])
+  expect(
+    findCaptionCandidates([
+      {
+        pageNumber: 1,
+        lines: [line('the rates are summarized in', 680, 72), line('Table 4.', 691, 72)]
+      }
+    ])
+  ).toEqual([])
 })
 
 it('retains double-spaced manuscript legends only below a legends heading', () => {

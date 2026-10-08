@@ -1,10 +1,12 @@
 import type { TFunction } from 'i18next'
 import {
   ArrowUpRight,
+  AtSign,
   Boxes,
   Check,
   ChevronDown,
   Folder,
+  Loader2,
   Monitor,
   Paperclip,
   Plus,
@@ -14,6 +16,7 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
+import { ActionToast } from '@/components/ActionToast'
 import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
 import {
   DropdownMenu,
@@ -37,6 +40,9 @@ import { ArtifactPreview } from './artifact-preview'
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
 import { FileTypeIcon } from './file-type-icon'
 import { ManagedFileDownloadButton } from './ManagedFileDownloadButton'
+import { useProjectFileMentionAction } from './use-project-file-mention-action'
+import { useProjectFileMentionAvailability } from './use-project-file-mention-availability'
+import { useProjectFileMentionDrag } from './use-project-file-mention-drag'
 import type { MessageArtifact } from './preview-file-item'
 import { GrantedRootMenuRow } from './project-files-granted-root-menu-row'
 import { createProjectFilePreviewArtifact } from './project-files-preview-owner'
@@ -46,7 +52,6 @@ import { useNearViewport } from './previews/useNearViewport'
 import { useUnavailablePreviewProbe } from './previews/useUnavailablePreviewProbe'
 
 type ProjectFilesViewMode = 'grid' | 'list'
-
 // Keeps collection semantics visible in both the menu rows and the currently selected trigger.
 const ProjectFilesFilterIcon = ({
   kind,
@@ -63,9 +68,7 @@ const ProjectFilesFilterIcon = ({
   }
   return <Boxes className={className} strokeWidth={1.8} aria-hidden="true" />
 }
-
 const COLLAPSED_SESSION_OPTION_COUNT = 5
-
 // Caps the collapsed menu at five sessions while reserving the final slot for an active session
 // that lies later in the independently paginated option catalog.
 const getCollapsedSessionOptions = (
@@ -77,16 +80,13 @@ const getCollapsedSessionOptions = (
   if (!selectedOption || firstOptions.some((option) => option.id === selectedOptionId)) {
     return firstOptions
   }
-
   return [...firstOptions.slice(0, COLLAPSED_SESSION_OPTION_COUNT - 1), selectedOption]
 }
-
 const MINUTE_MS = 60 * 1000
 const HOUR_MS = 60 * MINUTE_MS
 const DAY_MS = 24 * HOUR_MS
 const MONTH_MS = 30 * DAY_MS
 const YEAR_MS = 365 * DAY_MS
-
 // Each bucket names its own English text: a natural-language key has to be a literal, so the unit
 // cannot be interpolated into one shared string. The plural rule then lives in the catalog, where a
 // language that inflects differently from English can express it.
@@ -97,25 +97,23 @@ const RELATIVE_FILE_TIME = [
   { key: '{{count}} hours ago', singular: '{{count}} hour ago', ms: HOUR_MS },
   { key: '{{count}} minutes ago', singular: '{{count}} minute ago', ms: MINUTE_MS }
 ] as const
-
 const formatRelativeFileTime = (
   timestamp: number | undefined,
   t: TFunction
 ): string | undefined => {
   if (typeof timestamp !== 'number' || !Number.isFinite(timestamp)) return undefined
-
   const elapsedMs = Math.max(0, Date.now() - timestamp)
   const unit =
     RELATIVE_FILE_TIME.find((item) => elapsedMs >= item.ms) ??
     RELATIVE_FILE_TIME[RELATIVE_FILE_TIME.length - 1]
   const value = Math.max(1, Math.floor(elapsedMs / unit.ms))
-
   return t(unit.key, { defaultValue_one: unit.singular, count: value })
 }
 
 // Hallmark · component: file-actions · genre: modern-minimal · theme: workspace tokens
 // states: default · hover · focus · active · disabled · download loading/error/success
 const FileActionButtons = ({
+  file,
   source,
   path,
   projectId,
@@ -125,6 +123,7 @@ const FileActionButtons = ({
   className,
   onOpenInPanel
 }: {
+  file: ProjectFileItem
   source: 'artifact' | 'upload'
   path: string
   projectId: string
@@ -136,47 +135,79 @@ const FileActionButtons = ({
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const openLabel = t('Open {{name}} in split view beside the session', { name })
-
+  const mentionLabel = t('Mention {{name}}', { name })
+  const mention = useProjectFileMentionAction(file)
   return (
-    <div
-      className={cn(
-        'absolute z-10 flex items-center gap-1 opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100 motion-reduce:transition-none [@media(hover:none)]:opacity-100',
-        className
-      )}
-    >
-      <ManagedFileDownloadButton
-        source={source}
-        path={path}
-        projectId={projectId}
-        fileId={fileId}
-        suggestedName={name}
-        disabled={disabled}
-        iconSize="icon-sm"
-        className="cursor-pointer border-border bg-bg-000/95 shadow-sm"
-      />
-      <TooltipProvider delayDuration={200}>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              type="button"
-              variant="outline"
-              size="icon-sm"
-              className="cursor-pointer bg-bg-000/95 text-text-100 shadow-sm"
-              aria-label={openLabel}
-              disabled={disabled}
-              onClick={onOpenInPanel}
-            >
-              <ArrowUpRight aria-hidden="true" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>{openLabel}</TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
-    </div>
+    <>
+      <div
+        className={cn(
+          'absolute z-10 flex items-center gap-1 opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100 motion-reduce:transition-none [@media(hover:none)]:opacity-100',
+          className
+        )}
+      >
+        <ManagedFileDownloadButton
+          source={source}
+          path={path}
+          projectId={projectId}
+          fileId={fileId}
+          suggestedName={name}
+          disabled={disabled}
+          iconSize="icon-sm"
+          className="cursor-pointer border-border bg-bg-000/95 shadow-sm"
+        />
+        <TooltipProvider delayDuration={200}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon-sm"
+                className="cursor-pointer bg-bg-000/95 text-text-100 shadow-sm"
+                aria-label={mentionLabel}
+                disabled={disabled || !mention.available || mention.pending}
+                aria-busy={mention.pending}
+                onClick={() => void mention.mention()}
+              >
+                {mention.pending ? (
+                  <Loader2 className="animate-spin motion-reduce:animate-none" aria-hidden="true" />
+                ) : (
+                  <AtSign aria-hidden="true" />
+                )}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{mentionLabel}</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon-sm"
+                className="cursor-pointer bg-bg-000/95 text-text-100 shadow-sm"
+                aria-label={openLabel}
+                disabled={disabled}
+                onClick={onOpenInPanel}
+              >
+                <ArrowUpRight aria-hidden="true" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{openLabel}</TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      </div>
+      {mention.error ? (
+        <ActionToast
+          title={t('Could not resolve file version.')}
+          dismissLabel={t('Dismiss')}
+          onDismiss={mention.dismissError}
+        />
+      ) : null}
+    </>
   )
 }
 
 const FileTile = ({
+  file,
   name,
   previewArtifact,
   preview,
@@ -190,6 +221,7 @@ const FileTile = ({
   onPreview,
   onOpenInPanel
 }: {
+  file: ProjectFileItem
   name: string
   previewArtifact: MessageArtifact
   preview?: ArtifactPreviewResult
@@ -217,11 +249,18 @@ const FileTile = ({
     size,
     mtimeMs: timestamp
   })
+  const mentionable = useProjectFileMentionAvailability(file.projectId)
+  const mentionDrag = useProjectFileMentionDrag(file, { disabled: missing || !mentionable })
 
   return (
     // The focus ring stays non-inset: an inset ring paints below the opaque preview area, so the
     // focus returned by the preview dialog (Escape) would show only the ring's bottom half.
-    <div className="group relative h-[128px] min-w-0 overflow-hidden rounded-lg border border-border-300/50 bg-bg-000 shadow-sm hover:border-border-200 hover:bg-bg-100 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring/50">
+    <div
+      className="group relative h-[128px] min-w-0 overflow-hidden rounded-lg border border-border-300/50 bg-bg-000 shadow-sm hover:border-border-200 hover:bg-bg-100 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring/50"
+      draggable={mentionDrag.draggable}
+      onDragStart={mentionDrag.onDragStart}
+      onDragEnd={mentionDrag.onDragEnd}
+    >
       <button
         ref={setTileElement}
         type="button"
@@ -274,6 +313,7 @@ const FileTile = ({
         </span>
       </button>
       <FileActionButtons
+        file={file}
         source={source}
         path={previewArtifact.path}
         projectId={projectId}
@@ -312,11 +352,18 @@ const FileListRow = ({
     size: file.size,
     mtimeMs: file.mtimeMs
   })
+  const mentionable = useProjectFileMentionAvailability(file.projectId)
+  const mentionDrag = useProjectFileMentionDrag(file, { disabled: missing || !mentionable })
   const sizeLabel = formatByteSize(file.size)
   const relativeTimeLabel = formatRelativeFileTime(file.mtimeMs ?? file.sortAtMs, t)
 
   return (
-    <div className="group relative flex h-9 min-w-0 items-center rounded-md text-text-000 transition-colors duration-150 hover:bg-bg-200 has-[:focus-visible]:ring-3 has-[:focus-visible]:ring-ring/50 has-[:focus-visible]:ring-inset motion-reduce:transition-none">
+    <div
+      className="group relative flex h-9 min-w-0 items-center rounded-md text-text-000 transition-colors duration-150 hover:bg-bg-200 has-[:focus-visible]:ring-3 has-[:focus-visible]:ring-ring/50 has-[:focus-visible]:ring-inset motion-reduce:transition-none"
+      draggable={mentionDrag.draggable}
+      onDragStart={mentionDrag.onDragStart}
+      onDragEnd={mentionDrag.onDragEnd}
+    >
       <button
         ref={setRowElement}
         type="button"
@@ -349,6 +396,7 @@ const FileListRow = ({
         ) : null}
       </button>
       <FileActionButtons
+        file={file}
         source={file.source}
         path={file.path}
         projectId={file.projectId}
@@ -408,6 +456,7 @@ const ProjectFileItems = ({
         return (
           <FileTile
             key={file.id}
+            file={file}
             name={file.name}
             previewArtifact={createProjectFilePreviewArtifact(file)}
             preview={previewById.get(file.id)}

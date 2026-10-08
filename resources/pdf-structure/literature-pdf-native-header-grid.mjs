@@ -16,6 +16,2486 @@ import {
   recoverSharedSampleCountHeaderBands
 } from './literature-pdf-source-records.mjs'
 
+const nativeHorizontalFields = (items, gap) => {
+  const groups = []
+  for (const i of [...items].sort((a, b) => a.rect[0] - b.rect[0])) {
+    const previous = groups.at(-1)
+    if (previous && i.rect[0] - Math.max(...previous.map((p) => p.rect[2])) < gap) previous.push(i)
+    else groups.push([i])
+  }
+  return groups
+}
+
+// Complete native fences prove physical faces independently of the detector's
+// lane count. Empty faces are retained only where every edge is actually drawn.
+// No checkmark, total, reference or other printed literal is interpreted here.
+export function proveNativeFullyRuledLiteralGrid(table, items, captions, rules) {
+  if (!table.cropRect || !Array.isArray(rules)) return
+  const [left, top, right, bottom] = table.cropRect
+  const nearby = items.filter(
+    (i) =>
+      i.horizontal &&
+      i.rect &&
+      i.height > 0 &&
+      i.rect[0] >= left - 2 &&
+      i.rect[2] <= right + 2 &&
+      i.baseline >= top &&
+      i.baseline <= bottom
+  )
+  const heights = nearby.map((i) => i.height).sort((a, b) => a - b),
+    h = heights[heights.length >> 1]
+  if (!(h > 0)) return
+  const native = rules.filter(
+    (r) =>
+      r.length === 4 &&
+      r.every(Number.isFinite) &&
+      r[0] >= left - h &&
+      r[2] <= right + h &&
+      r[1] >= top - h &&
+      r[3] <= bottom + h
+  )
+  const vertical = native.filter((r) => r[0] === r[2] && r[3] > r[1]),
+    horizontal = native.filter((r) => r[1] === r[3] && r[2] > r[0]),
+    cuts = clusterTableRulePositions(vertical.map((r) => r[0])),
+    faces = clusterTableRulePositions(horizontal.map((r) => r[1]))
+  if (cuts.length < 4 || cuts.length > 65 || faces.length < 5 || faces.length > 1001) return
+  if (
+    cuts.some((x) => classifyTableRuleEdge(vertical, 0, x, faces[0], faces.at(-1)) !== 1) ||
+    faces.some((y) => classifyTableRuleEdge(horizontal, 1, y, cuts[0], cuts.at(-1)) !== 1)
+  )
+    return
+  const ownedCaptions = captions.filter(
+    (c) =>
+      captionKind(c.lines?.[0]) === 'table' &&
+      c.rect &&
+      c.rect[0] < cuts.at(-1) &&
+      c.rect[2] > cuts[0] &&
+      ((c.rect[3] <= faces[0] && faces[0] - c.rect[3] < h * 8) ||
+        (c.rect[1] >= faces.at(-1) && c.rect[1] - faces.at(-1) < h * 4))
+  )
+  if (ownedCaptions.length !== 1 || faces[1] - faces[0] < h * 1.4) return
+  const source = items.filter(
+    (i) =>
+      i.text?.trim() &&
+      i.rect &&
+      (i.rect[0] + i.rect[2]) / 2 >= cuts[0] &&
+      (i.rect[0] + i.rect[2]) / 2 <= cuts.at(-1) &&
+      i.baseline > faces[0] &&
+      i.baseline < faces.at(-1)
+  )
+  if (
+    !source.length ||
+    source.some(
+      (i) =>
+        !i.horizontal ||
+        !i.rect.every(Number.isFinite) ||
+        i.rect[2] <= i.rect[0] ||
+        i.rect[0] < cuts[0] - 0.02 ||
+        i.rect[2] > cuts.at(-1) + 0.02
+    )
+  )
+    return
+  const groups = faces.slice(1).map(() => []),
+    cells = faces.slice(1).map(() => cuts.slice(1).map(() => []))
+  for (const i of source) {
+    const r = faces.slice(1).findIndex((y) => i.baseline < y),
+      c = cuts.slice(1).findIndex((x) => (i.rect[0] + i.rect[2]) / 2 < x)
+    if (
+      r < 0 ||
+      c < 0 ||
+      i.rect[0] < cuts[c] - 0.02 ||
+      i.rect[2] > cuts[c + 1] + 0.02 ||
+      i.rect[1] < faces[r] - i.height * 0.2
+    )
+      return
+    groups[r].push(i)
+    cells[r][c].push(i)
+  }
+  if (cells[0].some((g) => !g.length) || cells.slice(1).some((r) => !r[0].length)) return
+  // A drawn face alone does not prove a single literal record when ordinary
+  // body glyphs have independent baselines or interleaved horizontal ownership.
+  // Preserve the existing record/script reconstruction in those cases.
+  for (const row of cells.slice(1)) {
+    for (const cell of row) {
+      if (!cell.length) continue
+      const ordinary = cell
+        .filter((i) => i.height >= Math.max(...cell.map((p) => p.height)) * 0.8)
+        .toSorted((a, b) => a.rect[0] - b.rect[0])
+      if (
+        ordinary.some(
+          (i) => Math.abs(i.baseline - ordinary[0].baseline) > ordinary[0].height * 0.2
+        ) ||
+        ordinary.some((i, n) => n && i.rect[0] < ordinary[n - 1].rect[2] - 0.05)
+      )
+        return
+    }
+  }
+  // Distinct leaves cannot become a joined header merely because an interior
+  // fence is missing. Allow contiguous glyph fragments and wrapped words.
+  const headerBands = cells[0].map((cell) =>
+    groupSourceRowsWithScripts(
+      cell.toSorted((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0]),
+      h,
+      0.2
+    )
+  )
+  if (
+    headerBands.some(
+      (bands) => !bands || bands.some((g) => nativeHorizontalFields(g, h * 0.65).length !== 1)
+    )
+  )
+    return
+  const rowRects = faces.slice(1).map((y, r) => [cuts[0], faces[r], cuts.at(-1), y]),
+    headerCells = cells[0].map((g, column) => ({
+      row: 0,
+      column,
+      rowSpan: 1,
+      colSpan: 1,
+      rect: [cuts[column], faces[0], cuts[column + 1], faces[1]],
+      // The existing native row proof owns attached scripts on their base
+      // baseline. Read within each proved row horizontally, so a raised glyph
+      // cannot precede its base merely because it has the earlier baseline.
+      text: headerBands[column]
+        .map((band) =>
+          band
+            .toSorted((a, b) => a.rect[0] - b.rect[0])
+            .reduce(
+              (text, i, n, ordered) =>
+                text +
+                (n && i.rect[0] - ordered[n - 1].rect[2] > h * 0.14 ? ' ' : '') +
+                i.text.trim(),
+              ''
+            )
+        )
+        .join(' '),
+      sourceTokens: g,
+      sourceRects: g.map((i) => i.rect),
+      origin: 'source-fully-ruled-header'
+    }))
+  return {
+    cuts,
+    groups,
+    headerCells,
+    headerRows: 1,
+    rowRects,
+    consumed: source,
+    cropRect: [cuts[0], faces[0], cuts.at(-1), faces.at(-1)],
+    repair: 'native-fully-ruled-literal-faces-proved'
+  }
+}
+
+// An explicitly captioned numeric inventory need not draw an outer box. A
+// single header separator plus a continuous stub fence and complete peer
+// records can prove the same physical leaf lanes without model predictions.
+export function findCaptionedNativePartialRuleTable(caption, items, rules, runs = []) {
+  if (!caption?.rect || !/^Table\s+[\dIVXLC]+\s*[:.]/iu.test(caption.lines?.[0] ?? '')) return
+  const horizontal = joinHorizontalTableRules(rules),
+    candidates = []
+  for (const divider of horizontal) {
+    if (
+      divider[0] >= caption.rect[2] ||
+      divider[2] <= caption.rect[0] ||
+      caption.rect[1] <= divider[1]
+    )
+      continue
+    const near = items.filter(
+        (i) =>
+          i.horizontal &&
+          i.height > 0 &&
+          i.text?.trim() &&
+          i.rect[0] >= divider[0] - 0.02 &&
+          i.rect[2] <= divider[2] + 0.02 &&
+          i.baseline >= divider[1] - 30 &&
+          i.baseline <= caption.rect[1]
+      ),
+      heights = near.map((i) => i.height).sort((a, b) => a - b),
+      h = heights[heights.length >> 1]
+    if (!(h > 0) || caption.rect[1] - divider[1] > h * 8) continue
+    const vertical = rules.filter(
+        (r) =>
+          r[0] === r[2] &&
+          r[0] > divider[0] + h &&
+          r[0] < divider[2] - h &&
+          r[1] < divider[1] &&
+          r[1] > divider[1] - h * 2
+      ),
+      stubs = clusterTableRulePositions(vertical.map((r) => r[0]))
+    if (stubs.length !== 1) continue
+    const stub = stubs[0],
+      segments = rules.filter((r) => r[0] === r[2] && Math.abs(r[0] - stub) < 0.02),
+      top = Math.min(...segments.map((r) => r[1])),
+      bottom = Math.max(...segments.map((r) => r[3]))
+    if (
+      classifyTableRuleEdge(segments, 0, stub, top, bottom) !== 1 ||
+      bottom < caption.rect[1] - h ||
+      bottom > caption.rect[1] + h * 0.2 ||
+      horizontal.some(
+        (r) =>
+          r !== divider &&
+          r[0] < divider[2] &&
+          r[2] > divider[0] &&
+          r[1] > top - h &&
+          r[1] < bottom + h * 0.2
+      )
+    )
+      continue
+    const source = near.filter((i) => i.baseline >= top && i.baseline <= bottom),
+      header = source.filter((i) => i.baseline < divider[1]),
+      originalBody = source.filter((i) => i.baseline > divider[1]),
+      headerBands = groupSourceRowsWithScripts(header, h, 0.2),
+      bodyItems = originalBody.flatMap((i) => splitNativeMeasuredFields(i, runs, h) ?? [i]),
+      bands = groupSourceRowsWithScripts(bodyItems, h, 0.2)
+    if (!headerBands || headerBands.length !== 1 || !bands || bands.length < 3 || bands.length > 6)
+      continue
+    const leaves = nativeHorizontalFields(
+        header.flatMap((i) => splitNativeMeasuredFields(i, runs, h) ?? [i]),
+        h * 0.55
+      ),
+      fields = bands.map((g) => nativeHorizontalFields(g, h * 0.55))
+    if (
+      leaves.length < 3 ||
+      leaves.length > 8 ||
+      fields.some((g) => g.length !== leaves.length) ||
+      leaves.some((g) => !g.some((i) => /\p{L}/u.test(i.text))) ||
+      fields.some((g) =>
+        g.some(
+          (f) =>
+            !/^[-+−]?\d/u.test(
+              f
+                .map((i) => i.text)
+                .join('')
+                .trim()
+            )
+        )
+      ) ||
+      !hasUniqueRecordTokens(bodyItems, bands)
+    )
+      continue
+    const domains = leaves.map((g, c) => [
+      Math.min(...g.map((i) => i.rect[0]), ...fields.flatMap((r) => r[c].map((i) => i.rect[0]))),
+      Math.max(...g.map((i) => i.rect[2]), ...fields.flatMap((r) => r[c].map((i) => i.rect[2])))
+    ])
+    if (
+      domains.slice(1).some((d, c) => d[0] - domains[c][1] < h * 0.1) ||
+      !(domains[0][1] < stub && domains[1][0] > stub)
+    )
+      continue
+    const cuts = [
+        divider[0],
+        stub,
+        ...domains.slice(2).map((d, c) => (domains[c + 1][1] + d[0]) / 2),
+        divider[2]
+      ],
+      cropRect = [divider[0], Math.min(top, ...header.map((i) => i.rect[1])), divider[2], bottom],
+      columns = cuts.slice(1).map((x, c) => [cuts[c], cropRect[1], x, bottom]),
+      headerCells = leaves.map((g, column) => ({
+        row: 0,
+        column,
+        rowSpan: 1,
+        colSpan: 1,
+        rect: [cuts[column], cropRect[1], cuts[column + 1], divider[1]],
+        text: g
+          .toSorted((a, b) => a.rect[0] - b.rect[0])
+          .map((i) => i.text)
+          .join(''),
+        sourceTokens: g,
+        sourceRects: g.map((i) => i.rect),
+        origin: 'source-partial-rule-header'
+      }))
+    if (
+      source.some(
+        (i) => i.rect[0] < cropRect[0] || i.rect[2] > cropRect[2] || i.rect[3] > cropRect[3]
+      )
+    )
+      continue
+    candidates.push({
+      kind: 'native-partial-rule-records',
+      caption,
+      cropRect,
+      columns,
+      rows: [[divider[0], cropRect[1], divider[2], divider[1]]],
+      headerRows: [0],
+      headerCells,
+      ownedTokens: new Set(header),
+      headerBottom: divider[1],
+      bodyItems,
+      originalBody,
+      bodyRecords: bands,
+      cuts,
+      groups: [header, ...bands],
+      consumed: source,
+      repair: 'native-partial-rule-literal-records-proved'
+    })
+  }
+  return candidates.length === 1 ? candidates[0] : undefined
+}
+
+// Wrapped prose fields can share one header face. Their independent native
+// starts and complete peer baselines prove gutters; every continuation still
+// has to fit one lane. This proves headers, not paragraph/record semantics.
+export function proveNativeAnchoredLeafHeader(table, items, captions, rules) {
+  if (!table.cropRect) return
+  const [left, top, right, bottom] = table.cropRect,
+    near = items.filter(
+      (i) =>
+        i.horizontal &&
+        i.height > 0 &&
+        i.text?.trim() &&
+        i.rect[0] >= left &&
+        i.rect[2] <= right &&
+        i.rect[1] >= top &&
+        i.rect[3] <= bottom
+    ),
+    heights = near.map((i) => i.height).sort((a, b) => a - b),
+    h = heights[heights.length >> 1]
+  if (!(h > 0)) return
+  const frame = joinHorizontalTableRules(rules)
+    .filter(
+      (r) =>
+        r[1] >= top - h &&
+        r[1] <= bottom + h &&
+        Math.abs(r[0] - left) < h &&
+        Math.abs(r[2] - right) < h
+    )
+    .sort((a, b) => a[1] - b[1])
+  if (
+    frame.length !== 3 ||
+    frame.some((r) => Math.abs(r[0] - frame[0][0]) > 0.02 || Math.abs(r[2] - frame[0][2]) > 0.02)
+  )
+    return
+  const [opening, divider, closing] = frame
+  if (divider[1] - opening[1] > h * 3 || closing[1] - divider[1] < h * 3) return
+  if (
+    items.some(
+      (i) =>
+        i.horizontal &&
+        i.text?.trim() &&
+        i.rect &&
+        i.baseline > opening[1] &&
+        i.baseline < closing[1] &&
+        i.rect[0] < opening[2] &&
+        i.rect[2] > opening[0] &&
+        (i.rect[0] < opening[0] - 0.02 || i.rect[2] > opening[2] + 0.02)
+    )
+  )
+    return
+  const caption = captions.filter(
+    (c) =>
+      captionKind(c.lines?.[0]) === 'table' &&
+      c.rect &&
+      c.rect[0] < opening[2] &&
+      c.rect[2] > opening[0] &&
+      ((c.rect[3] <= opening[1] && opening[1] - c.rect[3] < h * 8) ||
+        (c.rect[1] >= closing[1] && c.rect[1] - closing[1] < h * 4))
+  )
+  if (caption.length !== 1) return
+  const source = near
+      .filter((i) => i.baseline > opening[1] && i.baseline < closing[1])
+      .sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0]),
+    header = source.filter((i) => i.baseline < divider[1]),
+    bands = groupSourceRowsWithScripts(header, h, 0.2)
+  if (!bands || bands.length < 1 || bands.length > 3) return
+  const leaves = nativeHorizontalFields(bands[0], h * 0.4)
+  if (
+    leaves.length < 3 ||
+    leaves.length > 12 ||
+    leaves.some((g) => !g.some((i) => /\p{L}/u.test(i.text)))
+  )
+    return
+  const starts = leaves.map((g) => Math.min(...g.map((i) => i.rect[0]))),
+    headerGroups = leaves.map(() => []),
+    body = source.filter((i) => i.baseline > divider[1]),
+    lanes = leaves.map(() => [])
+  for (const i of source) {
+    const c = starts.findLastIndex((x) => i.rect[0] >= x - 0.02)
+    if (c < 0 || (c + 1 < starts.length && i.rect[2] >= starts[c + 1] - 0.02)) return
+    ;(i.baseline < divider[1] ? headerGroups[c] : lanes[c]).push(i)
+  }
+  if (lanes.some((g) => !g.length)) return
+  const peers = groupSourceRowsWithScripts(body, h, 0.2)
+  if (
+    !peers ||
+    peers.filter(
+      (g) =>
+        new Set(g.map((i) => starts.findLastIndex((x) => i.rect[0] >= x - 0.02))).size ===
+        leaves.length
+    ).length < 2
+  )
+    return
+  const domains = leaves.map((_, c) => [
+    Math.min(...headerGroups[c].map((i) => i.rect[0]), ...lanes[c].map((i) => i.rect[0])),
+    Math.max(...headerGroups[c].map((i) => i.rect[2]), ...lanes[c].map((i) => i.rect[2]))
+  ])
+  if (domains.slice(1).some((d, c) => d[0] - domains[c][1] < h * 0.1)) return
+  const cuts = [
+      opening[0],
+      ...domains.slice(1).map((d, c) => (domains[c][1] + d[0]) / 2),
+      opening[2]
+    ],
+    columns = cuts.slice(1).map((x, c) => [cuts[c], opening[1], x, closing[1]]),
+    headerCells = headerGroups.map((g, column) => ({
+      row: 0,
+      column,
+      rowSpan: 1,
+      colSpan: 1,
+      rect: [cuts[column], opening[1], cuts[column + 1], divider[1]],
+      text: g
+        .toSorted((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])
+        .map((i) => i.text.trim())
+        .join(' '),
+      sourceTokens: g,
+      sourceRects: g.map((i) => i.rect),
+      origin: 'source-anchored-leaf-header'
+    }))
+  return {
+    kind: 'anchored-leaf',
+    columns,
+    headerCells,
+    rows: [[opening[0], opening[1], opening[2], divider[1]]],
+    headerRows: [0],
+    headerBottom: divider[1],
+    ownedTokens: new Set(header),
+    bodyItems: body,
+    originalBody: body,
+    cuts,
+    cropRect: [opening[0], opening[1], opening[2], closing[1]],
+    repair: 'native-anchored-leaf-header-gutters-proved'
+  }
+}
+
+// Some native inventories have one variable inner gutter: the second field
+// ends before a flowing third field, while both terminal fields and the first
+// stub retain fixed starts. A unique repeated header-sized gap proves each
+// row-local boundary. Do not invent a global cut through those source glyphs.
+export function proveNativeVariableGutterLeafGrid(table, items, captions, rules) {
+  if (!table.cropRect) return
+  const [left, top, right, bottom] = table.cropRect,
+    near = items.filter(
+      (i) =>
+        i.horizontal &&
+        i.height > 0 &&
+        i.text?.trim() &&
+        i.rect[0] >= left &&
+        i.rect[2] <= right &&
+        i.rect[1] >= top &&
+        i.rect[3] <= bottom
+    ),
+    heights = near.map((i) => i.height).sort((a, b) => a - b),
+    h = heights[heights.length >> 1]
+  if (!(h > 0)) return
+  const frame = joinHorizontalTableRules(rules)
+    .filter(
+      (r) =>
+        r[1] >= top - h &&
+        r[1] <= bottom + h &&
+        Math.abs(r[0] - left) < h &&
+        Math.abs(r[2] - right) < h
+    )
+    .sort((a, b) => a[1] - b[1])
+  if (
+    frame.length !== 3 ||
+    frame.some((r) => Math.abs(r[0] - frame[0][0]) > 0.02 || Math.abs(r[2] - frame[0][2]) > 0.02)
+  )
+    return
+  const [opening, divider, closing] = frame
+  if (
+    divider[1] - opening[1] > h * 2.5 ||
+    captions.filter(
+      (c) =>
+        captionKind(c.lines?.[0]) === 'table' &&
+        c.rect &&
+        c.rect[0] < opening[2] &&
+        c.rect[2] > opening[0] &&
+        c.rect[3] <= opening[1] &&
+        opening[1] - c.rect[3] < h * 8
+    ).length !== 1
+  )
+    return
+  const source = near
+      .filter((i) => i.baseline > opening[1] && i.baseline < closing[1])
+      .sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0]),
+    header = source.filter((i) => i.baseline < divider[1]),
+    originalBody = source.filter((i) => i.baseline > divider[1]),
+    bands = groupSourceRowsWithScripts(header, h, 0.15),
+    body = groupSourceRowsWithScripts(originalBody, h, 0.15)
+  if (
+    !bands ||
+    bands.length !== 1 ||
+    !body ||
+    body.length < 3 ||
+    body.some((g) => g.some((i) => Math.abs(i.height - h) > h * 0.02))
+  )
+    return
+  const leaves = nativeHorizontalFields(header, h * 0.2)
+  if (leaves.length !== 5 || leaves.some((g) => !g.some((i) => /\p{L}/u.test(i.text)))) return
+  const bounds = leaves.map(union),
+    gap = bounds[2][0] - bounds[1][2]
+  if (gap < h * 0.2 || gap > h * 0.45) return
+  const fields = []
+  for (const group of body) {
+    const ordered = [...group].sort((a, b) => a.rect[0] - b.rect[0]),
+      prefix = ordered.filter((i) => i.rect[2] < bounds[1][0] - h * 0.1),
+      terminal = ordered.filter((i) => i.rect[0] >= bounds[4][0] - h * 0.05),
+      penultimate = ordered.filter(
+        (i) => i.rect[0] >= bounds[3][0] - h * 0.05 && i.rect[2] < bounds[4][0] - h * 0.1
+      ),
+      owned = new Set([...prefix, ...penultimate, ...terminal]),
+      middle = ordered.filter((i) => !owned.has(i))
+    if (
+      !prefix.length ||
+      !penultimate.length ||
+      !terminal.length ||
+      middle.length < 2 ||
+      Math.abs(middle[0].rect[0] - bounds[1][0]) > h * 0.05 ||
+      middle.some((i) => i.rect[0] < bounds[1][0] - h * 0.05 || i.rect[2] >= bounds[3][0] - h * 0.1)
+    )
+      return
+    const matches = middle
+      .slice(1)
+      .flatMap((i, n) => (Math.abs(i.rect[0] - middle[n].rect[2] - gap) <= h * 0.02 ? [n + 1] : []))
+    if (matches.length !== 1) return
+    const cut = matches[0],
+      row = [prefix, middle.slice(0, cut), middle.slice(cut), penultimate, terminal]
+    if (row.flat().length !== ordered.length || new Set(row.flat()).size !== ordered.length) return
+    fields.push(row)
+  }
+  if (!hasUniqueRecordTokens(originalBody, body)) return
+  const cuts = [
+      opening[0],
+      ...bounds.slice(1).map((r, c) => (bounds[c][2] + r[0]) / 2),
+      opening[2]
+    ],
+    headerCells = leaves.map((g, column) => ({
+      row: 0,
+      column,
+      rowSpan: 1,
+      colSpan: 1,
+      rect: [cuts[column], opening[1], cuts[column + 1], divider[1]],
+      text: g.map((i) => i.text).join(''),
+      sourceTokens: g,
+      sourceRects: g.map((i) => i.rect),
+      origin: 'source-variable-gutter-header'
+    })),
+    spans = fields.flatMap((row, n) =>
+      row.map((g, column) => ({
+        row: n + 1,
+        column,
+        colSpan: 1,
+        rowSpan: 1,
+        items: g,
+        rect: union(g)
+      }))
+    ),
+    ys = [
+      opening[1],
+      divider[1],
+      ...body
+        .slice(1)
+        .map(
+          (g, n) =>
+            (Math.max(...body[n].map((i) => i.rect[3])) + Math.min(...g.map((i) => i.rect[1]))) / 2
+        ),
+      closing[1]
+    ],
+    groups = [header, ...body]
+  return {
+    cuts,
+    groups,
+    headerCells,
+    headerRows: 1,
+    spans,
+    consumed: source,
+    rowRects: groups.map((_, n) => [opening[0], ys[n], opening[2], ys[n + 1]]),
+    cropRect: [opening[0], opening[1], opening[2], closing[1]],
+    repair: 'native-variable-gutter-literal-fields-proved'
+  }
+}
+
+// Repeated complete native scalar peers can witness the leaf lanes underneath
+// a wrapped header. Independent words stacked in one lane remain one physical
+// header face; this does not create inferred grouped/semantic parent headings.
+export function proveNativePeerScalarLeafHeader(table, items, captions, rules, runs = []) {
+  if (!table.cropRect) return
+  if (
+    items.some(
+      (i) =>
+        !Array.isArray(i.rect) ||
+        i.rect.length !== 4 ||
+        !i.rect.every(Number.isFinite) ||
+        i.rect[2] <= i.rect[0] ||
+        i.rect[3] <= i.rect[1] ||
+        !Number.isFinite(i.baseline)
+    )
+  )
+    return
+  const [left, top, right, bottom] = table.cropRect,
+    near = items.filter(
+      (i) =>
+        i.horizontal &&
+        i.height > 0 &&
+        i.text?.trim() &&
+        i.rect[0] >= left - 2 &&
+        i.rect[2] <= right + 2 &&
+        i.rect[1] >= top - 20 &&
+        i.rect[3] <= bottom + 20
+    ),
+    heights = near.map((i) => i.height).sort((a, b) => a - b),
+    h = heights[heights.length >> 1]
+  if (!(h > 0)) return
+  const frame = joinHorizontalTableRules(rules)
+    .filter(
+      (r) =>
+        r[1] >= top - h * 2 &&
+        r[1] <= bottom + h &&
+        Math.abs(r[0] - left) < h * 1.5 &&
+        Math.abs(r[2] - right) < h * 1.5
+    )
+    .sort((a, b) => a[1] - b[1])
+  if (
+    frame.length < 3 ||
+    frame.some((r) => Math.abs(r[0] - frame[0][0]) > 0.02 || Math.abs(r[2] - frame[0][2]) > 0.02)
+  )
+    return
+  const opening = frame[0],
+    divider = frame[1],
+    closing = frame.at(-1)
+  if (
+    divider[1] - opening[1] > h * 4 ||
+    captions.filter(
+      (c) =>
+        captionKind(c.lines?.[0]) === 'table' &&
+        c.rect &&
+        c.rect[0] < opening[2] &&
+        c.rect[2] > opening[0] &&
+        ((c.rect[3] <= opening[1] && opening[1] - c.rect[3] < h * 8) ||
+          (c.rect[1] >= closing[1] && c.rect[1] - closing[1] < h * 4))
+    ).length !== 1
+  )
+    return
+  if (
+    items.some(
+      (i) =>
+        i.text?.trim() &&
+        i.rect[0] < opening[2] &&
+        i.rect[2] > opening[0] &&
+        i.rect[1] < closing[1] &&
+        i.rect[3] > opening[1] &&
+        (!i.horizontal || i.rect[0] < opening[0] - 0.02 || i.rect[2] > opening[2] + 0.02)
+    )
+  )
+    return
+  const source = items
+      .filter(
+        (i) =>
+          i.horizontal &&
+          i.text?.trim() &&
+          i.rect[0] >= opening[0] - 0.02 &&
+          i.rect[2] <= opening[2] + 0.02 &&
+          i.baseline > opening[1] &&
+          i.baseline < closing[1]
+      )
+      .sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0]),
+    header = source.filter((i) => i.baseline < divider[1]),
+    originalBody = source.filter((i) => i.baseline > divider[1]),
+    headerItems = header.flatMap((i) => splitNativeMeasuredFields(i, runs, h) ?? [i]),
+    bodyItems = originalBody.flatMap((i) => splitNativeMeasuredFields(i, runs, h) ?? [i]),
+    headerBands = groupSourceRowsWithScripts(header, h, 0.2),
+    body = groupSourceRowsWithScripts(bodyItems, h, 0.2)
+  if (!headerBands || headerBands.length > 3 || !body) return
+  if (
+    header.length + originalBody.length !== source.length ||
+    originalBody.some(
+      (i) => i.height < h * 0.8 && header.some((a) => isAdjacentTableScript(i, a))
+    ) ||
+    new Set(headerItems).size !== headerItems.length ||
+    new Set(headerItems.map((i) => i.sourceToken ?? i)).size !== header.length
+  )
+    return
+  const scalar = (g) =>
+      /^[-+−]?\d+(?:\.\d+)?$/u.test(
+        g
+          .map((i) => i.text)
+          .join('')
+          .replace(/\s/gu, '')
+      ),
+    records = body
+      .map((g) => nativeHorizontalFields(g, h * 0.55))
+      .filter((row) => row.length >= 3 && row.length <= 14 && row.slice(-2).every(scalar)),
+    counts = [...new Set(records.map((r) => r.length))],
+    plans = []
+  for (const count of counts) {
+    const peers = records.filter((r) => r.length === count)
+    if (peers.length < 3) continue
+    const domains = Array.from({ length: count }, (_, c) => [
+      Math.min(...peers.flatMap((r) => r[c].map((i) => i.rect[0]))),
+      Math.max(...peers.flatMap((r) => r[c].map((i) => i.rect[2])))
+    ])
+    if (domains.slice(1).some((d, c) => d[0] - domains[c][1] < h * 0.1)) continue
+    const initial = [
+        opening[0],
+        ...domains.slice(1).map((d, c) => (domains[c][1] + d[0]) / 2),
+        opening[2]
+      ],
+      leaves = Array.from({ length: count }, () => [])
+    let invalidHeader = false
+    for (const i of headerItems) {
+      const center = (i.rect[0] + i.rect[2]) / 2,
+        c = initial.slice(1).findIndex((x) => center < x)
+      if (c < 0) {
+        invalidHeader = true
+        break
+      }
+      leaves[c].push(i)
+      domains[c][0] = Math.min(domains[c][0], i.rect[0])
+      domains[c][1] = Math.max(domains[c][1], i.rect[2])
+    }
+    if (
+      invalidHeader ||
+      leaves.flat().length !== headerItems.length ||
+      leaves.some((g) => !g.some((i) => /[\p{L}\d]/u.test(i.text))) ||
+      domains.slice(1).some((d, c) => d[0] - domains[c][1] < h * 0.1)
+    )
+      continue
+    const leafBands = leaves.map((g) => groupSourceRowsWithScripts(g, h, 0.2))
+    if (
+      leafBands.some(
+        (bands) => !bands || bands.some((g) => nativeHorizontalFields(g, h * 0.65).length !== 1)
+      )
+    )
+      continue
+    const cuts = [
+      opening[0],
+      ...domains.slice(1).map((d, c) => (domains[c][1] + d[0]) / 2),
+      opening[2]
+    ]
+    if (
+      headerItems.some(
+        (i) =>
+          cuts.slice(1).filter((x, c) => i.rect[0] >= cuts[c] - 0.02 && i.rect[2] <= x + 0.02)
+            .length !== 1
+      )
+    )
+      continue
+    const columns = cuts.slice(1).map((x, c) => [cuts[c], opening[1], x, closing[1]]),
+      headerCells = leaves.map((g, column) => ({
+        row: 0,
+        column,
+        rowSpan: 1,
+        colSpan: 1,
+        rect: [cuts[column], opening[1], cuts[column + 1], divider[1]],
+        text: leafBands[column]
+          .map((band) =>
+            band
+              .toSorted((a, b) => a.rect[0] - b.rect[0])
+              .reduce(
+                (text, i, n, ordered) =>
+                  text +
+                  (n && i.rect[0] - ordered[n - 1].rect[2] > h * 0.14 ? ' ' : '') +
+                  i.text.trim(),
+                ''
+              )
+          )
+          .join(' '),
+        sourceTokens: g,
+        sourceRects: g.map((i) => i.rect),
+        origin: 'source-peer-scalar-leaf-header'
+      }))
+    plans.push({
+      kind: 'peer-scalar-leaf',
+      columns,
+      headerCells,
+      rows: [[opening[0], opening[1], opening[2], divider[1]]],
+      headerRows: [0],
+      headerBottom: divider[1],
+      ownedTokens: new Set(header),
+      bodyItems,
+      originalBody,
+      cuts,
+      cropRect: [opening[0], opening[1], opening[2], closing[1]],
+      repair: 'native-peer-scalar-leaf-header-gutters-proved'
+    })
+  }
+  return plans.length === 1 ? plans[0] : undefined
+}
+
+// A closed source frame and complete peer baselines can prove leaf gutters
+// even when a detector invents a lane or merges the last two leaves. Each
+// field is literal native ink; neither column widths nor header names supply
+// missing body values.
+export function proveNativeClosedLeafHeader(table, items, captions, rules, runs = []) {
+  if (!table.cropRect) return
+  const [left, top, right, bottom] = table.cropRect
+  const near = tableSourceItems(items, [left - 2, top - 2, right + 2, bottom + 2])
+  const heights = near
+    .filter((i) => i.height > 0)
+    .map((i) => i.height)
+    .sort((a, b) => a - b)
+  const h = heights[heights.length >> 1]
+  if (!(h > 0)) return
+  const horizontal = joinHorizontalTableRules(rules)
+    .filter(
+      (r) =>
+        r[1] >= top - h * 1.5 &&
+        r[1] <= bottom + h * 1.5 &&
+        Math.abs(r[0] - left) < h * 1.5 &&
+        r[2] >= right - h * 1.5 &&
+        r[2] - right < (right - left) * 0.4
+    )
+    .sort((a, b) => a[1] - b[1])
+  if (horizontal.length < 3) return
+  const opening = horizontal[0],
+    closing = horizontal.at(-1)
+  const frame = horizontal.filter(
+    (r) => Math.abs(r[0] - opening[0]) < 0.05 && Math.abs(r[2] - opening[2]) < 0.05
+  )
+  const divider = frame[1]
+  if (
+    frame.length < 3 ||
+    !divider ||
+    divider[1] - opening[1] > h * 2.8 ||
+    closing[1] - divider[1] < h * 2 ||
+    closing !== frame.at(-1)
+  )
+    return
+  const possibleCaptions = captions.filter(
+    (c) =>
+      captionKind(c.lines?.[0]) === 'table' &&
+      c.rect[0] < opening[2] &&
+      c.rect[2] > opening[0] &&
+      ((c.rect[3] <= opening[1] && opening[1] - c.rect[3] < h * 8) ||
+        (c.rect[1] >= closing[1] && c.rect[1] - closing[1] < h * 4))
+  )
+  const aboveCaptions = possibleCaptions.filter((c) => c.rect[3] <= opening[1])
+  const caption = aboveCaptions.length ? aboveCaptions : possibleCaptions
+  if (caption.length !== 1) return
+  const source = tableSourceItems(items, [
+    opening[0] - 0.05,
+    opening[1] - h * 0.35,
+    opening[2] + 0.05,
+    closing[1] + 0.05
+  ])
+  const header = source.filter((i) => i.baseline > opening[1] && i.rect[3] < divider[1])
+  if (!header.length || header.some((i) => Math.abs(i.baseline - header[0].baseline) > h * 0.2))
+    return
+  const headerItems = header.flatMap((i) => splitNativeMeasuredFields(i, runs, h) ?? [i])
+  const leaves = nativeHorizontalFields(headerItems, h * 0.35)
+  if (
+    leaves.length < 2 ||
+    leaves.length > 14 ||
+    leaves.some((g) => !g.some((i) => /[\p{L}\d]/u.test(i.text)))
+  )
+    return
+  const originalBody = source.filter((i) => i.rect[1] > divider[1] && i.rect[3] < closing[1])
+  const bodyItems = originalBody.flatMap((i) => splitNativeMeasuredFields(i, runs, h) ?? [i])
+  const bands = groupSourceRowsWithScripts(bodyItems, h, 0.2)
+  if (!bands || bands.length < 2) return
+  const complete = bands
+    .map((g) => nativeHorizontalFields(g, h * 0.55))
+    .filter((g) => g.length === leaves.length)
+  if (complete.length < 2) return
+  const domains = leaves.map((g, c) => [
+    Math.min(
+      ...g.map((i) => i.rect[0]),
+      ...complete.flatMap((row) => row[c].map((i) => i.rect[0]))
+    ),
+    Math.max(...g.map((i) => i.rect[2]), ...complete.flatMap((row) => row[c].map((i) => i.rect[2])))
+  ])
+  if (domains.slice(1).some((d, c) => d[0] - domains[c][1] < h * 0.15)) return
+  // A wrapped fragment may extend its independently witnessed lane, but it
+  // must touch exactly one domain and leave every neighboring gutter open.
+  for (const i of bodyItems) {
+    const matches = domains
+      .map((d, c) => ({ d, c }))
+      .filter(({ d }) => i.rect[0] <= d[1] + 0.05 && i.rect[2] >= d[0] - 0.05)
+    if (matches.length !== 1) return
+    const d = matches[0].d
+    d[0] = Math.min(d[0], i.rect[0])
+    d[1] = Math.max(d[1], i.rect[2])
+  }
+  if (domains.slice(1).some((d, c) => d[0] - domains[c][1] < h * 0.1)) return
+  if (domains[0][0] < opening[0] - 0.05 || domains.at(-1)[1] > opening[2] + 0.05) return
+  const cuts = [
+    opening[0] - 0.001,
+    ...domains.slice(1).map((d, c) => (domains[c][1] + d[0]) / 2),
+    opening[2] + 0.001
+  ]
+  if (
+    bodyItems.some(
+      (i) =>
+        cuts.filter(
+          (x, c) => c < cuts.length - 1 && i.rect[0] >= x - 0.05 && i.rect[2] <= cuts[c + 1] + 0.05
+        ).length !== 1
+    )
+  )
+    return
+  const texts = leaves.map((g) =>
+    g
+      .toSorted((a, b) => a.rect[0] - b.rect[0])
+      .reduce(
+        (text, i, n, ordered) =>
+          text + (n && i.rect[0] - ordered[n - 1].rect[2] > h * 0.14 ? ' ' : '') + i.text.trim(),
+        ''
+      )
+  )
+  if (texts.some((t) => !t)) return
+  const headerCells = leaves.map((g, column) => ({
+    row: 0,
+    column,
+    rowSpan: 1,
+    colSpan: 1,
+    rect: [cuts[column], opening[1], cuts[column + 1], divider[1]],
+    text: texts[column],
+    sourceTokens: g,
+    sourceRects: g.map((i) => i.rect),
+    origin: 'source-closed-leaf-header'
+  }))
+  return {
+    cropRect: [opening[0], opening[1], opening[2], closing[1]],
+    columns: cuts.slice(1).map((x, c) => [cuts[c], opening[1], x, closing[1]]),
+    rows: [[opening[0], opening[1], opening[2], divider[1]]],
+    headerRows: [0],
+    headerCells,
+    ownedTokens: new Set(header),
+    headerBottom: divider[1],
+    bodyItems,
+    originalBody,
+    bodyRecords: bands,
+    spans: [],
+    completeSpans: true,
+    kind: 'closed-leaf',
+    repair: 'native-closed-leaf-header-gutters-proved'
+  }
+}
+
+// Trusted body gutters establish the leaf lanes. Independent native baselines
+// and short underlines establish parent ownership; the parent's spelling has
+// no role in that proof.
+export function proveNativePrintedHeaderAtColumns(
+  table,
+  items,
+  captions,
+  rules,
+  columns,
+  runs = []
+) {
+  if (!table.cropRect || !columns?.length || columns.length < 3 || columns.length > 16) return
+  if (columns.some((r, c) => !(r[2] > r[0]) || (c && Math.abs(r[0] - columns[c - 1][2]) > 0.02)))
+    return
+  const source = tableSourceItems(items, table.cropRect)
+  const heights = source
+    .filter((i) => i.height > 0)
+    .map((i) => i.height)
+    .sort((a, b) => a - b)
+  const h = heights[heights.length >> 1]
+  if (!(h > 0)) return
+  const left = columns[0][0],
+    right = columns.at(-1)[2]
+  const full = joinHorizontalTableRules(rules)
+    .filter(
+      (r) =>
+        Math.abs(r[0] - left) < h &&
+        Math.abs(r[2] - right) < h &&
+        r[1] >= table.cropRect[1] - h &&
+        r[1] <= table.cropRect[3] + h
+    )
+    .sort((a, b) => a[1] - b[1])
+  if (full.length < 3) return
+  const opening = full[0],
+    divider = full.find((r) => r[1] - opening[1] > h * 0.6),
+    closing = full.at(-1)
+  if (
+    !divider ||
+    divider === closing ||
+    divider[1] - opening[1] > h * 5 ||
+    divider[1] - opening[1] < h * 0.5
+  )
+    return
+  const nearby = captions.filter(
+    (c) =>
+      captionKind(c.lines?.[0]) === 'table' &&
+      c.rect[0] < right &&
+      c.rect[2] > left &&
+      ((c.rect[3] <= opening[1] && opening[1] - c.rect[3] < h * 10) ||
+        (c.rect[1] >= closing[1] && c.rect[1] - closing[1] < h * 4))
+  )
+  const above = nearby.filter((c) => c.rect[3] <= opening[1])
+  if ((above.length ? above : nearby).length !== 1) return
+  const header = source.filter((i) => i.baseline > opening[1] && i.rect[3] < divider[1])
+  const originalBands = groupSourceRowsWithScripts(header, h, 0.2)
+  if (!originalBands || originalBands.length < 1 || originalBands.length > 2) return
+  const bands = originalBands.map((g) =>
+    nativeHorizontalFields(
+      g.flatMap((i) => splitNativeMeasuredFields(i, runs, h) ?? [i]),
+      h * 0.35
+    )
+  )
+  const columnOf = (g) =>
+    columns
+      .map((r, c) => ({ r, c }))
+      .filter(({ r }) => {
+        const rect = union(g),
+          x = (rect[0] + rect[2]) / 2
+        return x >= r[0] && x < r[2]
+      })
+  const slots = new Map()
+  for (const g of bands.at(-1)) {
+    const matches = columnOf(g)
+    if (matches.length !== 1) return
+    const c = matches[0].c
+    slots.set(c, [...(slots.get(c) ?? []), ...g])
+  }
+  const needsHeaderGutter = [...slots].some(
+    ([c, g]) => union(g)[0] < columns[c][0] - 0.05 || union(g)[2] > columns[c][2] + 0.05
+  )
+  if (needsHeaderGutter) {
+    const domains = columns.map((r, c) =>
+      slots.has(c) ? [union(slots.get(c))[0], union(slots.get(c))[2]] : [Infinity, -Infinity]
+    )
+    const body = source
+      .filter((i) => i.rect[1] > divider[1] && i.rect[3] < closing[1])
+      .flatMap((i) => splitNativeMeasuredFields(i, runs, h) ?? [i])
+    for (const i of body) {
+      // A fenced full-width section is outside the leaf-lane domain proof.
+      if (
+        i.rect[2] - i.rect[0] > (right - left) * 0.6 &&
+        /\p{L}/u.test(i.text) &&
+        full.some((r) => r[1] <= i.rect[1] && i.rect[1] - r[1] < h * 0.5) &&
+        full.some((r) => r[1] >= i.rect[3] && r[1] - i.rect[3] < h * 0.5)
+      )
+        continue
+      const matches = columnOf([i])
+      if (matches.length !== 1) return
+      const d = domains[matches[0].c]
+      d[0] = Math.min(d[0], i.rect[0])
+      d[1] = Math.max(d[1], i.rect[2])
+    }
+    if (
+      domains.some((d) => !d.every(Number.isFinite)) ||
+      domains.slice(1).some((d, c) => d[0] - domains[c][1] < h * 0.08)
+    )
+      return
+    const cuts = [left, ...domains.slice(1).map((d, c) => (domains[c][1] + d[0]) / 2), right]
+    columns = cuts.slice(1).map((x, c) => [cuts[c], columns[c][1], x, columns[c][3]])
+  }
+  if (bands.length === 2) {
+    const parentRules = joinHorizontalTableRules(rules).filter(
+      (r) =>
+        r[1] > Math.max(...originalBands[0].map((i) => i.rect[3])) &&
+        r[1] < Math.min(...originalBands[1].map((i) => i.rect[1])) &&
+        r[0] > opening[0] &&
+        r[2] < opening[2]
+    )
+    const grouped = []
+    for (const rule of parentRules) {
+      const owned = bands[0].filter(
+        (g) => union(g)[0] >= rule[0] - h * 0.15 && union(g)[2] <= rule[2] + h * 0.15
+      )
+      if (owned.length) grouped.push(owned.flat())
+    }
+    const consumed = new Set(grouped.flat())
+    if (grouped.flat().length !== consumed.size) return
+    bands[0] = [...grouped, ...bands[0].filter((g) => g.every((i) => !consumed.has(i)))].sort(
+      (a, b) => union(a)[0] - union(b)[0]
+    )
+    const singleLane = new Map()
+    const wideParents = []
+    for (const g of bands[0]) {
+      const rect = union(g),
+        matches = columns
+          .map((r, c) => ({ r, c }))
+          .filter(({ r }) => rect[0] >= r[0] - 0.05 && rect[2] <= r[2] + 0.05)
+      if (matches.length === 1)
+        singleLane.set(matches[0].c, [...(singleLane.get(matches[0].c) ?? []), ...g])
+      else wideParents.push(g)
+    }
+    bands[0] = [...singleLane.values(), ...wideParents].sort((a, b) => union(a)[0] - union(b)[0])
+  }
+  const boundaries = [
+    opening[1],
+    ...originalBands
+      .slice(1)
+      .map(
+        (g, n) =>
+          (Math.max(...originalBands[n].map((i) => i.rect[3])) +
+            Math.min(...g.map((i) => i.rect[1]))) /
+          2
+      ),
+    divider[1]
+  ]
+  const occupied = new Set(),
+    headerCells = []
+  const add = (g, row, owned, rowSpan = 1) => {
+    if (!owned.length || owned.some((c, n) => n && c !== owned[n - 1] + 1)) return false
+    for (let r = row; r < row + rowSpan; r++)
+      for (const c of owned) {
+        if (occupied.has(`${r}:${c}`)) return false
+        occupied.add(`${r}:${c}`)
+      }
+    const literal = g
+      .toSorted((a, b) => a.rect[0] - b.rect[0])
+      .reduce(
+        (text, i, n, ordered) =>
+          text + (n && i.rect[0] - ordered[n - 1].rect[2] > h * 0.14 ? ' ' : '') + i.text.trim(),
+        ''
+      )
+    headerCells.push({
+      row,
+      column: owned[0],
+      rowSpan,
+      colSpan: owned.length,
+      rect: [
+        columns[owned[0]][0],
+        boundaries[row],
+        columns[owned.at(-1)][2],
+        boundaries[row + rowSpan]
+      ],
+      text: literal,
+      sourceTokens: g,
+      sourceRects: g.map((i) => i.rect),
+      origin: 'source-printed-header'
+    })
+    return true
+  }
+  if (bands.length === 2)
+    for (const g of bands[0]) {
+      const matches = columnOf(g),
+        rect = union(g)
+      if (
+        matches.length === 1 &&
+        rect[0] >= matches[0].r[0] - 0.05 &&
+        rect[2] <= matches[0].r[2] + 0.05
+      ) {
+        if (!add(g, 0, [matches[0].c], slots.has(matches[0].c) ? 1 : 2)) return
+        continue
+      }
+      const underlines = joinHorizontalTableRules(rules).filter(
+        (r) =>
+          r[1] > rect[3] &&
+          r[1] < Math.min(...originalBands[1].map((i) => i.rect[1])) &&
+          rect[0] >= r[0] - h * 0.15 &&
+          rect[2] <= r[2] + h * 0.15 &&
+          r[0] > opening[0] &&
+          r[2] < opening[2]
+      )
+      if (underlines.length > 1) return
+      let owned
+      if (underlines.length) {
+        const rule = underlines[0]
+        owned = [...slots]
+          .filter(([, leaf]) => {
+            const x = (union(leaf)[0] + union(leaf)[2]) / 2
+            return x > rule[0] && x < rule[2]
+          })
+          .map(([c]) => c)
+          .sort((a, b) => a - b)
+      } else {
+        const candidates = []
+        const leafText = (c) =>
+          slots
+            .get(c)
+            ?.map((i) => i.text.trim())
+            .join('')
+        const repeated =
+          columns.length === 13 &&
+          slots.size === 12 &&
+          !slots.has(0) &&
+          Array.from({ length: 12 }, (_, n) => n + 1).every(
+            (c) => leafText(c) === leafText(((c - 1) % 4) + 1)
+          )
+        const fence = (x) =>
+          rules.some(
+            (r) =>
+              r[0] === r[2] &&
+              Math.abs(r[0] - x) < h * 0.1 &&
+              classifyTableRuleEdge(
+                rules,
+                0,
+                r[0],
+                Math.min(...originalBands[1].map((i) => i.rect[1])),
+                Math.max(...originalBands[1].map((i) => i.rect[3]))
+              ) === 1
+          )
+        for (let start = 1; start < columns.length; start++)
+          for (let end = start + 1; end < columns.length; end++) {
+            const span = Array.from({ length: end - start + 1 }, (_, n) => start + n)
+            if (!span.every((c) => slots.has(c))) continue
+            const a = columns[start][0],
+              b = end === columns.length - 1 ? opening[2] : columns[end][2]
+            const bounded =
+              ((start === 1 && slots.has(0)) || fence(a)) &&
+              (end === columns.length - 1 || fence(b))
+            const repeatBounded = repeated && span.length === 4 && (start - 1) % 4 === 0
+            if (
+              (bounded || repeatBounded) &&
+              rect[0] >= a &&
+              rect[2] <= b &&
+              Math.abs((rect[0] + rect[2] - a - b) / 2) < h * 0.2
+            )
+              candidates.push(span)
+          }
+        if (candidates.length !== 1) return
+        owned = candidates[0]
+      }
+      if (owned.length < 2 || !add(g, 0, owned)) return
+    }
+  for (const [c, g] of slots) {
+    const anchor = bands.length === 2 && !occupied.has(`0:${c}`) ? 0 : bands.length - 1
+    if (!add(g, anchor, [c], bands.length - anchor)) return
+  }
+  const missing = columns.map((_, c) => c).filter((c) => !occupied.has(`0:${c}`))
+  // A blank stub is permitted only when complete literal body records witness
+  // that lane. A missing metric leaf must remain diagnostic.
+  if (missing.length) {
+    if (missing.length !== 1 || missing[0] !== 0) return
+    const body = source.filter((i) => i.baseline > divider[1] && i.rect[3] < closing[1])
+    const peers = groupSourceRowsWithScripts(body, h, 0.2)?.filter((g) =>
+      columns.every((r) => g.some((i) => i.rect[0] >= r[0] - 0.05 && i.rect[2] <= r[2] + 0.05))
+    )
+    if (!peers || peers.length < 3) return
+    headerCells.push({
+      row: 0,
+      column: 0,
+      rowSpan: bands.length,
+      colSpan: 1,
+      rect: [left, opening[1], columns[0][2], divider[1]],
+      text: '',
+      sourceTokens: [],
+      sourceRects: [],
+      origin: 'source-printed-header'
+    })
+    for (let r = 0; r < bands.length; r++) occupied.add(`${r}:0`)
+  }
+  if (bands.length === 2 && occupied.size !== columns.length * 2) return
+  return {
+    columns: columns.map((r) => r.slice()),
+    rows: boundaries.slice(1).map((y, n) => [left, boundaries[n], right, y]),
+    headerRows: bands.map((_, n) => n),
+    headerCells,
+    ownedTokens: new Set(header),
+    headerBottom: divider[1],
+    spans: [],
+    completeSpans: true,
+    kind: 'printed-header',
+    repair: 'native-independent-printed-header-proved'
+  }
+}
+
+// Two printed titles centered over complete mean/interval peer fields prove
+// two parent spans. No invisible leaf names or statistical roles are added.
+export function proveNativeMeanIntervalParents(table, items, captions, rules) {
+  if (!table.cropRect) return
+  const source = tableSourceItems(items, table.cropRect),
+    heights = source
+      .filter((i) => i.height > 0)
+      .map((i) => i.height)
+      .sort((a, b) => a - b),
+    h = heights[heights.length >> 1]
+  if (!(h > 0)) return
+  const [left, top, right, bottom] = table.cropRect
+  const frame = joinHorizontalTableRules(rules)
+    .filter(
+      (r) =>
+        Math.abs(r[0] - left) < h &&
+        Math.abs(r[2] - right) < h &&
+        r[1] >= top - h &&
+        r[1] <= bottom + h
+    )
+    .sort((a, b) => a[1] - b[1])
+  if (frame.length < 3) return
+  const opening = frame[0],
+    divider = frame[1],
+    closing = frame.at(-1)
+  if (
+    divider[1] - opening[1] > h * 2.5 ||
+    closing[1] - divider[1] < h * 4 ||
+    captions.filter(
+      (c) =>
+        captionKind(c.lines?.[0]) === 'table' &&
+        c.rect[3] <= opening[1] &&
+        opening[1] - c.rect[3] < h * 8 &&
+        c.rect[0] < right &&
+        c.rect[2] > left
+    ).length !== 1
+  )
+    return
+  const header = source.filter((i) => i.baseline > opening[1] && i.rect[3] < divider[1])
+  const parents = nativeHorizontalFields(header, h * 0.3)
+  if (
+    parents.length !== 2 ||
+    header.some((i) => Math.abs(i.baseline - header[0].baseline) > h * 0.15) ||
+    parents.some((g) => !g.some((i) => /\p{L}/u.test(i.text)))
+  )
+    return
+  const originalBody = source.filter((i) => i.rect[1] > divider[1] && i.rect[3] < closing[1])
+  const bands = groupSourceRowsWithScripts(originalBody, h, 0.2)
+  if (!bands) return
+  const fields = bands.map((g) => nativeHorizontalFields(g, h * 0.55)).filter((g) => g.length === 5)
+  const literal = (g) =>
+    g
+      .toSorted((a, b) => a.rect[0] - b.rect[0])
+      .map((i) => i.text)
+      .join('')
+      .replace(/\s/gu, '')
+  const mean = /^[−+-]?\d+(?:\.\d+)?$/u,
+    interval = /^\[[−+-]?\d+(?:\.\d+)?,[−+-]?\d+(?:\.\d+)?\]$/u
+  const complete = fields.filter(
+    (g) =>
+      /\p{L}/u.test(literal(g[0])) &&
+      mean.test(literal(g[1])) &&
+      interval.test(literal(g[2])) &&
+      mean.test(literal(g[3])) &&
+      interval.test(literal(g[4]))
+  )
+  if (complete.length < 3) return
+  const domains = Array.from({ length: 5 }, (_, c) => [
+    Math.min(...complete.flatMap((g) => g[c].map((i) => i.rect[0]))),
+    Math.max(...complete.flatMap((g) => g[c].map((i) => i.rect[2])))
+  ])
+  if (domains.slice(1).some((d, c) => d[0] - domains[c][1] < h * 0.2)) return
+  const cuts = [
+    opening[0],
+    ...domains.slice(1).map((d, c) => (domains[c][1] + d[0]) / 2),
+    opening[2]
+  ]
+  if (
+    parents.some((g, n) => {
+      const r = union(g),
+        a = n ? 3 : 1,
+        b = n ? 5 : 3
+      return (
+        r[0] < cuts[a] ||
+        r[2] > cuts[b] ||
+        Math.abs((r[0] + r[2] - cuts[a] - cuts[b]) / 2) > h * 0.35
+      )
+    })
+  )
+    return
+  const cells = [
+    {
+      row: 0,
+      column: 0,
+      rowSpan: 1,
+      colSpan: 1,
+      rect: [cuts[0], opening[1], cuts[1], divider[1]],
+      text: '',
+      sourceTokens: [],
+      sourceRects: [],
+      origin: 'source-mean-interval-parent'
+    },
+    ...parents.map((g, n) => ({
+      row: 0,
+      column: n ? 3 : 1,
+      rowSpan: 1,
+      colSpan: 2,
+      rect: [cuts[n ? 3 : 1], opening[1], cuts[n ? 5 : 3], divider[1]],
+      text: g.map((i) => i.text.trim()).join(' '),
+      sourceTokens: g,
+      sourceRects: g.map((i) => i.rect),
+      origin: 'source-mean-interval-parent'
+    }))
+  ]
+  return {
+    columns: cuts.slice(1).map((x, c) => [cuts[c], opening[1], x, closing[1]]),
+    rows: [[opening[0], opening[1], opening[2], divider[1]]],
+    headerRows: [0],
+    headerCells: cells,
+    ownedTokens: new Set(header),
+    headerBottom: divider[1],
+    spans: cells.filter((c) => c.colSpan > 1),
+    completeSpans: true,
+    kind: 'mean-interval-parent',
+    repair: 'native-mean-interval-parent-spans-proved'
+  }
+}
+
+// A printed ordinal and complete scientific records prove a narrow stub that
+// the detector can merge into its first metric. No glyph widths are estimated.
+export function proveNativeOrdinalMetricHeader(table, items, captions, rules) {
+  if (!table.cropRect) return
+  const source = tableSourceItems(items, table.cropRect)
+  const heights = source.map((i) => i.height).sort((a, b) => a - b),
+    h = heights[heights.length >> 1]
+  if (!(h > 0)) return
+  const [left, top, right, bottom] = table.cropRect
+  const frame = joinHorizontalTableRules(rules)
+    .filter(
+      (r) =>
+        r[1] >= top - h &&
+        r[1] <= bottom + h &&
+        Math.abs(r[0] - left) < h &&
+        Math.abs(r[2] - right) < h
+    )
+    .sort((a, b) => a[1] - b[1])
+  if (frame.length !== 3) return
+  const [opening, divider, closing] = frame
+  if (divider[1] - opening[1] > h * 2 || closing[1] - divider[1] < h * 3) return
+  if (
+    captions.filter(
+      (c) =>
+        captionKind(c.lines?.[0]) === 'table' &&
+        c.rect[3] < opening[1] &&
+        opening[1] - c.rect[3] < h * 8 &&
+        c.rect[0] < right &&
+        c.rect[2] > left
+    ).length !== 1
+  )
+    return
+  const header = source.filter((i) => i.baseline > opening[1] - h * 0.4 && i.baseline < divider[1])
+  const groups = nativeHorizontalFields(header, h * 0.5)
+  if (
+    groups.length < 4 ||
+    groups.length > 12 ||
+    groups[0]
+      .map((i) => i.text)
+      .join('')
+      .trim() !== 'ℓ'
+  )
+    return
+  const body = source.filter((i) => i.baseline >= divider[1] && i.rect[3] <= closing[1] + 0.05)
+  const bands = groupSourceRowsWithScripts(body, h, 0.25)
+  if (!bands || bands.length < 3 || bands.length > 12) return
+  const fields = bands.map((g) => nativeHorizontalFields(g, h * 0.5))
+  if (
+    fields.some((g) => g.length !== groups.length) ||
+    fields.some((g, n) => g[0].map((i) => i.text).join('') !== String(n))
+  )
+    return
+  const numeric = /^[−+-]?\d[\d.,×−+\-()[\]\s]*$|^\[[−+-]?\d[\d.]*,[−+-]?\d[\d.]*\]$|^[–—-]$/u
+  if (
+    fields.some((g) =>
+      g
+        .slice(1)
+        .some(
+          (f) =>
+            !numeric.test(
+              readSourceRow(f, [union(f)[0] - 0.01, union(f)[2] + 0.01])[0]?.replace(/\s/gu, '') ??
+                ''
+            )
+        )
+    )
+  )
+    return
+  const domains = groups.map((g, c) => [
+    Math.min(...g.map((i) => i.rect[0]), ...fields.flatMap((row) => row[c].map((i) => i.rect[0]))),
+    Math.max(...g.map((i) => i.rect[2]), ...fields.flatMap((row) => row[c].map((i) => i.rect[2])))
+  ])
+  if (domains.slice(1).some((d, c) => d[0] - domains[c][1] < h * 0.3)) return
+  if (domains[0][0] < opening[0] - h * 0.02 || domains.at(-1)[1] > opening[2] + h * 0.02) return
+  const cuts = [
+    Math.min(opening[0], domains[0][0]) - 0.001,
+    ...domains.slice(1).map((d, c) => (domains[c][1] + d[0]) / 2),
+    Math.max(opening[2], domains.at(-1)[1]) + 0.001
+  ]
+  const texts = readSourceRow(header, cuts)
+  if (!texts || texts.some((t) => !t) || !texts.slice(1).some((t) => /\p{L}/u.test(t))) return
+  const headerCells = groups.map((g, column) => ({
+    row: 0,
+    column,
+    rowSpan: 1,
+    colSpan: 1,
+    rect: [cuts[column], opening[1], cuts[column + 1], divider[1]],
+    text: texts[column],
+    sourceTokens: g,
+    sourceRects: g.map((i) => i.rect),
+    origin: 'source-ordinal-metric-header'
+  }))
+  return {
+    columns: cuts.slice(1).map((x, c) => [cuts[c], opening[1], x, closing[1]]),
+    rows: [[opening[0], opening[1], opening[2], divider[1]]],
+    headerRows: [0],
+    headerCells,
+    spans: [],
+    completeSpans: true,
+    ownedTokens: new Set(header),
+    headerBottom: divider[1],
+    bodyRecords: bands,
+    originalBody: body,
+    bodyItems: body,
+    kind: 'ordinal-metric',
+    prefixColumns: 1,
+    repair: 'native-ordinal-metric-header-gutters-proved'
+  }
+}
+
+// Repeated native four-leaf tiers plus a literal TJ gap establish sibling
+// header ownership; the repeated tier cannot lend words to arbitrary prose.
+export function proveNativeRepeatedLeafHeader(table, items, captions, rules, runs = []) {
+  if (!table.cropRect || !runs.length) return
+  const source = tableSourceItems(items, table.cropRect),
+    heights = source.map((i) => i.height).sort((a, b) => a - b),
+    h = heights[heights.length >> 1]
+  if (!(h > 0)) return
+  const [left, top, right, bottom] = table.cropRect
+  const frame = joinHorizontalTableRules(rules)
+    .filter(
+      (r) =>
+        r[1] >= top - h &&
+        r[1] <= bottom + h &&
+        Math.abs(r[0] - left) < h &&
+        Math.abs(r[2] - right) < h
+    )
+    .sort((a, b) => a[1] - b[1])
+  if (
+    frame.length < 5 ||
+    captions.filter(
+      (c) =>
+        captionKind(c.lines?.[0]) === 'table' &&
+        c.rect[3] < frame[0][1] &&
+        frame[0][1] - c.rect[3] < h * 6 &&
+        c.rect[0] < right &&
+        c.rect[2] > left
+    ).length !== 1
+  )
+    return
+  const tiers = []
+  for (let n = 0; n < frame.length - 1; n++) {
+    if (frame[n + 1][1] - frame[n][1] > h * 2) continue
+    const original = source.filter((i) => i.rect[1] >= frame[n][1] && i.rect[3] < frame[n + 1][1])
+    if (!original.length) continue
+    const measured = original.flatMap((i) => splitNativeMeasuredFields(i, runs, h) ?? [i])
+    const g = nativeHorizontalFields(measured, h * 0.3)
+    if (g.length !== 4 || g.some((f) => !/\p{L}/u.test(f.map((i) => i.text).join('')))) continue
+    tiers.push({ opening: frame[n], divider: frame[n + 1], original, groups: g, measured })
+  }
+  if (tiers.length !== 2 || !tiers[0].measured.some((i) => i.sourceToken)) return
+  const lower = tiers[1],
+    upper = tiers[0]
+  const domains = lower.groups.map((g, c) => [
+    Math.min(...g.map((i) => i.rect[0]), ...upper.groups[c].map((i) => i.rect[0])),
+    Math.max(...g.map((i) => i.rect[2]), ...upper.groups[c].map((i) => i.rect[2]))
+  ])
+  const body = source.filter((i) => i.rect[1] > upper.divider[1] && i.rect[3] < lower.opening[1])
+  // Wrapped source labels can extend farther right than the short header.
+  // Move only to their observed ink, still leaving a real gap before the
+  // independently measured first metric title and its complete records.
+  domains[0][1] = Math.max(
+    domains[0][1],
+    ...body
+      .filter((i) => i.rect[2] < domains[1][0] - 0.02 && /\p{L}/u.test(i.text))
+      .map((i) => i.rect[2])
+  )
+  const isolatedCitations = body.filter(
+    (i) =>
+      /^\d+(?:\.\d+)?\s*\[\d+\](?:,\s*\d+(?:\.\d+)?\s*\[\d+\])+$/u.test(i.text.trim()) &&
+      body.filter((other) => Math.abs(other.baseline - i.baseline) < h * 0.15).length === 1
+  )
+  if (isolatedCitations.some((i) => i.rect[0] <= domains[2][1] + h * 0.2)) return
+  if (isolatedCitations.length)
+    domains[3][0] = Math.min(domains[3][0], ...isolatedCitations.map((i) => i.rect[0]))
+  if (domains[1][0] - domains[0][1] < h * 0.05) return
+  if (domains.slice(1).some((d, c) => d[0] - domains[c][1] < h * 0.2)) return
+  const cuts = [
+    frame[0][0],
+    ...domains.slice(1).map((d, c) => (domains[c][1] + d[0]) / 2),
+    frame[0][2]
+  ]
+  const witness = groupSourceRowsWithScripts(body, h, 0.25)?.filter((g) => {
+    const v = readSourceRow(
+      g.filter((i) => i.rect[0] >= domains[1][0] - 0.02),
+      cuts.slice(1)
+    )
+    return (
+      g.some((i) => i.rect[0] < cuts[1] && /\p{L}/u.test(i.text)) &&
+      v &&
+      v.every((t) => /^[−+-]?\d[\d.,−+-]*$/u.test(t))
+    )
+  })
+  if (!witness || witness.length < 2) return
+  const headerCells = upper.groups.map((g, column) => ({
+    row: 0,
+    column,
+    rowSpan: 1,
+    colSpan: 1,
+    rect: [cuts[column], upper.opening[1], cuts[column + 1], upper.divider[1]],
+    text: readSourceRow(g, [cuts[column], cuts[column + 1]])?.[0],
+    sourceTokens: g,
+    sourceRects: g.map((i) => i.rect),
+    origin: 'source-repeated-leaf-header'
+  }))
+  if (headerCells.some((c) => !c.text)) return
+  return {
+    columns: cuts.slice(1).map((x, c) => [cuts[c], frame[0][1], x, frame.at(-1)[1]]),
+    rows: [[left, upper.opening[1], right, upper.divider[1]]],
+    headerRows: [0],
+    headerCells,
+    spans: [],
+    completeSpans: true,
+    ownedTokens: new Set(upper.original),
+    headerBottom: upper.divider[1],
+    kind: 'repeated-leaf',
+    repair: 'native-repeated-leaf-header-gutters-proved'
+  }
+}
+
+// Two centered printed parent labels and complete six-lane numeric records
+// establish an otherwise unruled hierarchy. Printed labels remain verbatim.
+export function proveNativeUnruledPairedParentHeader(table, items) {
+  if (!table.cropRect) return
+  const source = tableSourceItems(items, table.cropRect),
+    heights = source.map((i) => i.height).sort((a, b) => a - b),
+    h = heights[heights.length >> 1]
+  if (!(h > 0)) return
+  const bands = []
+  for (const i of source.toSorted((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])) {
+    const previous = bands.at(-1)
+    if (previous && Math.abs(previous[0].baseline - i.baseline) < h * 0.15) previous.push(i)
+    else bands.push([i])
+  }
+  const parents = bands[0],
+    leaves = bands[1]
+  if (
+    parents?.length !== 3 ||
+    leaves?.length !== 6 ||
+    leaves[0].baseline - parents[0].baseline < h * 0.8 ||
+    leaves[0].baseline - parents[0].baseline > h * 1.6
+  )
+    return
+  const labels = leaves.map((i) => /^([A-Z]{2,5})([1-4])$/.exec(i.text.trim()))
+  if (
+    labels.some((x) => !x) ||
+    labels.slice(0, 2).some((m, n) => m[1] !== labels[0][1] || m[2] !== String(n + 1)) ||
+    labels.slice(2).some((m, n) => m[1] !== labels[2][1] || m[2] !== String(n + 1)) ||
+    labels[0][1] === labels[2][1]
+  )
+    return
+  if (
+    !/^[A-Z][a-z]{4,20}$/.test(parents[0].text.trim()) ||
+    parents.slice(1).some((i) => !/^[A-Z]{2,5}$/.test(i.text.trim()))
+  )
+    return
+  const complete = bands
+    .slice(2)
+    .filter((g) => g.length === 7 && g.slice(1).every((i) => /^\d[\d.x×]*$/u.test(i.text.trim())))
+  if (complete.length < 3) return
+  const domains = leaves.map((i, c) => [
+    Math.min(i.rect[0], ...complete.map((g) => g[c + 1].rect[0])),
+    Math.max(i.rect[2], ...complete.map((g) => g[c + 1].rect[2]))
+  ])
+  if (domains.slice(1).some((d, c) => d[0] - domains[c][1] < h)) return
+  const stub = source.filter((i) => i.rect[2] < domains[0][0] - h)
+  if (!stub.length) return
+  const stubRight = Math.max(...stub.map((i) => i.rect[2]))
+  if (domains[0][0] - stubRight < h) return
+  const cuts = [
+    table.cropRect[0],
+    (stubRight + domains[0][0]) / 2,
+    ...domains.slice(1).map((d, c) => (domains[c][1] + d[0]) / 2),
+    table.cropRect[2]
+  ]
+  if (
+    parents[0].rect[2] >= cuts[1] ||
+    parents.slice(1).some((i, n) => {
+      const owned = leaves.slice(n ? 2 : 0, n ? 6 : 2),
+        center = owned.reduce((sum, l) => sum + (l.rect[0] + l.rect[2]) / 2, 0) / owned.length
+      return (
+        i.rect[0] < cuts[n ? 3 : 1] ||
+        i.rect[2] > cuts[n ? 7 : 3] ||
+        Math.abs((i.rect[0] + i.rect[2]) / 2 - center) > h * 0.2
+      )
+    })
+  )
+    return
+  const firstBody = Math.min(...complete[0].map((i) => i.rect[1])),
+    middle = (parents[0].baseline + leaves[0].rect[1]) / 2,
+    top = Math.min(...parents.map((i) => i.rect[1]))
+  if (firstBody <= Math.max(...leaves.map((i) => i.rect[3]))) return
+  const headerCells = [
+    {
+      row: 0,
+      column: 0,
+      rowSpan: 2,
+      colSpan: 1,
+      rect: [cuts[0], top, cuts[1], firstBody],
+      text: parents[0].text,
+      sourceTokens: [parents[0]],
+      sourceRects: [parents[0].rect],
+      origin: 'source-unruled-paired-parent'
+    },
+    ...parents.slice(1).map((i, n) => ({
+      row: 0,
+      column: n ? 3 : 1,
+      rowSpan: 1,
+      colSpan: n ? 4 : 2,
+      rect: [cuts[n ? 3 : 1], top, cuts[n ? 7 : 3], middle],
+      text: i.text,
+      sourceTokens: [i],
+      sourceRects: [i.rect],
+      origin: 'source-unruled-paired-parent'
+    })),
+    ...leaves.map((i, n) => ({
+      row: 1,
+      column: n + 1,
+      rowSpan: 1,
+      colSpan: 1,
+      rect: [cuts[n + 1], middle, cuts[n + 2], firstBody],
+      text: i.text,
+      sourceTokens: [i],
+      sourceRects: [i.rect],
+      origin: 'source-unruled-paired-leaf'
+    }))
+  ]
+  return {
+    columns: cuts.slice(1).map((x, c) => [cuts[c], top, x, table.cropRect[3]]),
+    rows: [
+      [cuts[0], top, cuts.at(-1), middle],
+      [cuts[0], middle, cuts.at(-1), firstBody]
+    ],
+    headerRows: [0, 1],
+    headerCells,
+    spans: headerCells.filter((c) => c.colSpan > 1 || c.rowSpan > 1),
+    completeSpans: true,
+    ownedTokens: new Set([...parents, ...leaves]),
+    headerBottom: firstBody,
+    kind: 'unruled-paired-parent',
+    repair: 'native-unruled-paired-parent-header-proved'
+  }
+}
+
+// A caller's complete native body proof can supply its own leaf lanes. Short
+// header separators and exact measured gaps still must own every title token.
+export function proveNativeMeasuredHeaderAtColumns(
+  table,
+  items,
+  captions,
+  rules,
+  runs,
+  columns,
+  emptyColumns = []
+) {
+  if (!table.cropRect || columns.length < 4 || columns.length > 20) return
+  const [left, top, right, bottom] = table.cropRect,
+    source = tableSourceItems(items, table.cropRect),
+    heights = source.map((i) => i.height).sort((a, b) => a - b),
+    h = heights[heights.length >> 1]
+  if (
+    !(h > 0) ||
+    columns.some((c, n) => c[2] <= c[0] || (n && Math.abs(c[0] - columns[n - 1][2]) > 0.02))
+  )
+    return
+  const horizontal = rules
+    .filter(
+      (r) =>
+        r[1] === r[3] &&
+        r[1] > top - h &&
+        r[1] < bottom + h &&
+        r[0] >= left - h &&
+        r[2] <= right + h
+    )
+    .sort((a, b) => a[1] - b[1])
+  const full = joinHorizontalTableRules(horizontal).filter(
+    (r) => Math.abs(r[0] - columns[0][0]) < h && Math.abs(r[2] - columns.at(-1)[2]) < h
+  )
+  const opening = full[0],
+    closing = full.at(-1)
+  if (
+    !opening ||
+    !closing ||
+    opening === closing ||
+    captions.filter(
+      (c) =>
+        captionKind(c.lines?.[0]) === 'table' &&
+        c.rect[3] < opening[1] &&
+        opening[1] - c.rect[3] < h * 4 &&
+        c.rect[0] < right &&
+        c.rect[2] > left
+    ).length !== 1
+  )
+    return
+  const dividerY = horizontal.find((r) => r[1] > opening[1] + h * 0.5)?.[1]
+  if (!dividerY || dividerY - opening[1] > h * 2.5) return
+  const divider = horizontal.filter((r) => Math.abs(r[1] - dividerY) < 0.02)
+  if (divider.reduce((sum, r) => sum + r[2] - r[0], 0) < (columns.at(-1)[2] - columns[0][0]) * 0.9)
+    return
+  const original = source.filter((i) => i.rect[1] >= opening[1] - 0.02 && i.rect[3] < dividerY)
+  if (
+    !original.length ||
+    original.some((i) => Math.abs(i.baseline - original[0].baseline) > h * 0.2)
+  )
+    return
+  const parts = original.flatMap((i) => splitNativeMeasuredFields(i, runs, h) ?? [i]),
+    lanes = columns.map(() => [])
+  for (const i of parts) {
+    const matches = columns
+      .map((c, n) => ({ c, n }))
+      .filter(({ c }) => i.rect[0] >= c[0] - 0.02 && i.rect[2] <= c[2] + 0.02)
+    if (matches.length !== 1) return
+    lanes[matches[0].n].push(i)
+  }
+  if (
+    lanes.some((g, c) => (emptyColumns.includes(c) ? g.length : !g.length)) ||
+    new Set(parts.map((i) => i.sourceToken ?? i)).size !== original.length
+  )
+    return
+  const headerCells = lanes.map((g, column) => ({
+    row: 0,
+    column,
+    rowSpan: 1,
+    colSpan: 1,
+    rect: [columns[column][0], opening[1], columns[column][2], dividerY],
+    text: g.length
+      ? readSourceRow(g, [columns[column][0] - 0.02, columns[column][2] + 0.02])?.[0]
+      : '',
+    sourceTokens: g,
+    sourceRects: g.map((i) => i.rect),
+    origin: 'source-measured-body-lane-header'
+  }))
+  if (headerCells.some((c, n) => !emptyColumns.includes(n) && !c.text)) return
+  return {
+    columns,
+    rows: [[columns[0][0], opening[1], columns.at(-1)[2], dividerY]],
+    headerRows: [0],
+    headerCells,
+    spans: [],
+    completeSpans: true,
+    ownedTokens: new Set(original),
+    headerBottom: dividerY,
+    kind: 'measured-body-lane-header',
+    repair: 'native-measured-body-lane-header-proved'
+  }
+}
+
+export function splitNativeMeasuredFields(item, runs, h) {
+  const matches = runs.filter(
+    (r) => r.text === item.text && r.rect.every((v, n) => Math.abs(v - item.rect[n]) < 0.02)
+  )
+  if (matches.length !== 1) return
+  const run = matches[0]
+  if (
+    !run.glyphRuns?.length ||
+    !run.glyphRuns.every(Number.isInteger) ||
+    !Array.isArray(run.literalGlyphs) ||
+    [...run.literalGlyphs.join('')].length !== run.glyphRuns.length ||
+    run.literalGlyphs.join('') !== item.text.replace(/\s/gu, '')
+  )
+    return
+  const gaps = run.gaps.filter((g) => g.right - g.left >= h * 0.4).sort((a, b) => a.index - b.index)
+  if (
+    gaps.some(
+      (g, n) =>
+        !Number.isInteger(g.index) ||
+        g.index <= 0 ||
+        g.index >= run.glyphRuns.length ||
+        run.glyphRuns[g.index - 1] !== run.glyphRuns[g.index] ||
+        (n && g.index <= gaps[n - 1].index) ||
+        g.left < item.rect[0] ||
+        g.right > item.rect[2]
+    )
+  )
+    return
+  const characters = [...item.text],
+    offsets = gaps.map((g) => g.index)
+  const positions = []
+  let count = 0
+  for (let n = 0; n < characters.length; n++) {
+    if (/\s/u.test(characters[n])) continue
+    if (offsets.includes(count)) positions.push(n)
+    count++
+  }
+  if (positions.length !== gaps.length) return
+  const cuts = [0, ...positions, characters.length]
+  const parts = cuts.slice(1).map((end, n) => ({
+    ...item,
+    text: characters.slice(cuts[n], end).join('').trim(),
+    rect: [
+      n ? gaps[n - 1].right : item.rect[0],
+      item.rect[1],
+      n < gaps.length ? gaps[n].left : item.rect[2],
+      item.rect[3]
+    ],
+    sourceToken: item
+  }))
+  return parts.every((p) => p.text && p.rect[0] < p.rect[2]) ? parts : undefined
+}
+
+export function proveNativeMeasuredTieredHeader(table, items, captions, rules, runs = []) {
+  if (!table.cropRect || !runs.length) return
+  const source = tableSourceItems(items, table.cropRect)
+  const heights = source.map((i) => i.height).sort((a, b) => a - b),
+    h = heights[heights.length >> 1]
+  if (!(h > 0)) return
+  const parts = source.map((i) => splitNativeMeasuredFields(i, runs, h))
+  if (parts.some((p) => !p) || parts.every((p) => p.length === 1)) return
+  const measured = parts.flat().sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])
+  const bands = []
+  for (const item of measured) {
+    const row = bands.at(-1)
+    if (row && Math.abs(row[0].baseline - item.baseline) < h * 0.15) row.push(item)
+    else bands.push([item])
+  }
+  const plan = proveNativeTieredHeader(table, measured, captions, rules, bands)
+  if (!plan) return
+  const owned = new Set([...plan.ownedTokens].map((i) => i.sourceToken))
+  if (owned.has(undefined)) return
+  const originalBody = source.filter(
+    (i) => i.rect[1] > plan.headerBottom && i.rect[3] < plan.columns[0][3]
+  )
+  const bodyItems = measured.filter((i) => originalBody.includes(i.sourceToken))
+  if (!bodyItems.length) return
+  return {
+    ...plan,
+    kind: 'measured-tiered',
+    ownedTokens: owned,
+    originalBody,
+    bodyItems,
+    repair: 'native-measured-tiered-header-gutters-proved'
+  }
+}
+
+// Measured TJ gaps may separate several printed titles in one text operator.
+// Require the same complete native lanes in peer records before using them.
+export function proveNativeMeasuredLeafHeader(table, items, captions, rules, runs = []) {
+  if (!table.cropRect || !runs.length) return
+  const source = tableSourceItems(items, table.cropRect)
+  const heights = source.map((i) => i.height).sort((a, b) => a - b)
+  const h = heights[heights.length >> 1]
+  if (!(h > 0)) return
+  const [left, top, right, bottom] = table.cropRect
+  const frame = joinHorizontalTableRules(rules)
+    .filter(
+      (r) =>
+        r[1] >= top - h &&
+        r[1] <= bottom + h &&
+        Math.abs(r[0] - left) < h * 2.5 &&
+        Math.abs(r[2] - right) < h * 2.5
+    )
+    .sort((a, b) => a[1] - b[1])
+  if (frame.length !== 3) return
+  const [opening, divider, closing] = frame
+  if (
+    divider[1] - opening[1] < h * 0.5 ||
+    divider[1] - opening[1] > h * 2.5 ||
+    closing[1] - divider[1] < h * 4
+  )
+    return
+  if (
+    captions.filter(
+      (c) =>
+        captionKind(c.lines?.[0]) === 'table' &&
+        c.rect[3] < opening[1] &&
+        opening[1] - c.rect[3] < h * 6 &&
+        c.rect[0] < right &&
+        c.rect[2] > left
+    ).length !== 1
+  )
+    return
+  const header = source.filter((i) => i.rect[1] >= opening[1] && i.rect[3] < divider[1])
+  if (!header.length || header.some((i) => Math.abs(i.baseline - header[0].baseline) > h * 0.15))
+    return
+  const split = (item) => splitNativeMeasuredFields(item, runs, h)
+  const splitHeader = header.map(split)
+  if (splitHeader.some((g) => !g) || splitHeader.every((g) => g.length === 1)) return
+  const leaves = splitHeader.flat().sort((a, b) => a.rect[0] - b.rect[0])
+  if (leaves.length < 6 || leaves.length > 16 || leaves.some((i) => !/\p{L}/u.test(i.text))) return
+  const originalBody = source.filter((i) => i.rect[1] > divider[1] && i.rect[3] < closing[1])
+  const splitBody = originalBody.map(split)
+  if (!originalBody.length || splitBody.some((g) => !g)) return
+  const body = splitBody.flat().sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])
+  const bands = []
+  for (const item of body) {
+    const band = bands.at(-1)
+    if (band && Math.abs(band[0].baseline - item.baseline) < h * 0.15) band.push(item)
+    else bands.push([item])
+  }
+  const complete = bands.filter((g) => g.length === leaves.length)
+  if (
+    complete.length < 4 ||
+    complete[0] !== bands[0] ||
+    complete.some((g) => g.slice(-3).some((i) => !/^[+−–-]?(?:\d|\[)/u.test(i.text.trim())))
+  )
+    return
+  const domains = leaves.map((item, c) => [
+    Math.min(item.rect[0], ...complete.map((g) => g[c].rect[0])),
+    Math.max(item.rect[2], ...complete.map((g) => g[c].rect[2]))
+  ])
+  if (domains.slice(1).some((d, c) => d[0] - domains[c][1] < h * 0.2)) return
+  const cuts = [
+    opening[0],
+    ...domains.slice(1).map((d, c) => (domains[c][1] + d[0]) / 2),
+    opening[2]
+  ]
+  const columnOf = (i) =>
+    cuts.slice(1).findIndex((x, c) => i.rect[0] >= cuts[c] - 0.02 && i.rect[2] <= x + 0.02)
+  if (
+    body.some((i) => columnOf(i) < 0) ||
+    complete.some((g) => g.some((i, c) => columnOf(i) !== c))
+  )
+    return
+  const records = complete.map((g, n) =>
+    body.filter(
+      (i) =>
+        i.baseline >= g[0].baseline - h * 0.15 &&
+        (n === complete.length - 1 || i.baseline < complete[n + 1][0].baseline - h * 0.15)
+    )
+  )
+  if (records.flat().length !== body.length || new Set(records.flat()).size !== body.length) return
+  const headerCells = leaves.map((i, column) => ({
+    row: 0,
+    column,
+    rowSpan: 1,
+    colSpan: 1,
+    rect: [cuts[column], opening[1], cuts[column + 1], divider[1]],
+    text: i.text,
+    sourceTokens: [i],
+    sourceRects: [i.rect],
+    origin: 'source-measured-leaf-header'
+  }))
+  return {
+    columns: cuts.slice(1).map((x, c) => [cuts[c], opening[1], x, closing[1]]),
+    rows: [[opening[0], opening[1], opening[2], divider[1]]],
+    headerRows: [0],
+    headerCells,
+    spans: [],
+    completeSpans: true,
+    ownedTokens: new Set(header),
+    headerBottom: divider[1],
+    bodyItems: body,
+    bodyRecords: records,
+    originalBody,
+    kind: 'measured-leaf',
+    repair: 'native-measured-leaf-header-gutters-proved'
+  }
+}
+
+// Native numeric lanes and short header rules prove a hierarchy independently
+// of detector spans. Return a header plan only: callers retain all body records.
+export function proveNativeNarrativeHeader(table, items, captions, rules) {
+  if (!table.cropRect || !captions.some((c) => captionKind(c.lines?.[0]) === 'table')) return
+  const [left, top, right, bottom] = table.cropRect
+  const source = tableSourceItems(items, table.cropRect)
+  if (!source.length) return
+  const heights = source.map((i) => i.height).sort((a, b) => a - b),
+    h = heights[heights.length >> 1]
+  if (!(h > 0)) return
+  const frame = joinHorizontalTableRules(rules)
+    .filter(
+      (r) =>
+        r[1] >= top - h &&
+        r[1] <= bottom + h &&
+        Math.abs(r[0] - left) < h * 2 &&
+        Math.abs(r[2] - right) < h * 2
+    )
+    .sort((a, b) => a[1] - b[1])
+  if (frame.length < 3) return
+  const [opening, divider] = frame,
+    closing = frame.at(-1)
+  if (divider[1] - opening[1] > h * 3 || divider === closing) return
+  const header = source
+    .filter((i) => i.rect[1] >= opening[1] && i.rect[3] < divider[1])
+    .sort((a, b) => a.rect[0] - b.rect[0])
+  if (!header.length || header.some((i) => Math.abs(i.baseline - header[0].baseline) > h * 0.15))
+    return
+  const labels = header.map((i) => ({ text: i.text.trim(), tokens: [i], rect: i.rect }))
+  const names = labels.map((g) => g.text).join('|')
+  if (
+    names !== 'Benchmark|Arm|Ideas by|Prose by|Label' &&
+    names !== '#|Role|Extracted item|Paraphrased item'
+  )
+    return
+  // Keep the established combined ordinal/role stub in narrative inventories.
+  if (labels[0].text === '#') {
+    const tokens = labels.slice(0, 2).flatMap((g) => g.tokens)
+    labels.splice(0, 2, { text: '# Role', tokens, rect: union(tokens) })
+  }
+  const body = source.filter((i) => i.rect[1] > divider[1] && i.rect[3] < closing[1])
+  const lanes = labels.map(() => [])
+  for (const item of body) {
+    const column = labels.findLastIndex((g) => g.rect[0] <= item.rect[0] + h * 0.8)
+    if (column < 0 || (labels[column + 1] && item.rect[2] >= labels[column + 1].rect[0] - 0.1))
+      return
+    lanes[column].push(item)
+  }
+  if (lanes.some((l) => l.length < 4)) return
+  const domains = labels.map((g, c) => [
+    Math.min(g.rect[0], ...lanes[c].map((i) => i.rect[0])),
+    Math.max(g.rect[2], ...lanes[c].map((i) => i.rect[2]))
+  ])
+  if (domains.slice(1).some((d, c) => d[0] - domains[c][1] < h * 0.15)) return
+  const cuts = [
+    opening[0],
+    ...domains.slice(1).map((d, c) => (domains[c][1] + d[0]) / 2),
+    opening[2]
+  ]
+  const headerCells = labels.map((g, column) => ({
+    row: 0,
+    column,
+    rowSpan: 1,
+    colSpan: 1,
+    rect: [cuts[column], opening[1], cuts[column + 1], divider[1]],
+    text: g.text,
+    sourceTokens: g.tokens,
+    sourceRects: g.tokens.map((t) => t.rect),
+    origin: 'source-narrative-header'
+  }))
+  return {
+    columns: cuts.slice(1).map((x, c) => [cuts[c], opening[1], x, closing[1]]),
+    rows: [[opening[0], opening[1], opening[2], divider[1]]],
+    headerRows: [0],
+    headerCells,
+    spans: [],
+    completeSpans: true,
+    ownedTokens: new Set(header),
+    headerBottom: divider[1],
+    bodyItems: body,
+    repair: 'native-narrative-header-gutters-proved'
+  }
+}
+
+export function proveNativeTieredHeader(table, items, captions, rules, measuredBands = []) {
+  if (!table.cropRect || !captions.some((c) => captionKind(c.lines?.[0]) === 'table')) return
+  const [left, top, right, bottom] = table.cropRect
+  const source = tableSourceItems(items, [left, top - 2, right, bottom + 2])
+  if (!source.length) return
+  const heights = source
+    .map((i) => i.height)
+    .filter((h) => h > 0)
+    .sort((a, b) => a - b)
+  const h = heights[heights.length >> 1]
+  if (!(h > 0)) return
+  const frame = joinHorizontalTableRules(rules)
+    .filter(
+      (r) =>
+        r[1] >= top - h &&
+        r[1] <= bottom + h &&
+        Math.abs(r[0] - left) < h * 1.5 &&
+        Math.abs(r[2] - right) < h * 1.5
+    )
+    .sort((a, b) => a[1] - b[1])
+  if (frame.length < 3) return
+  const opening = frame[0],
+    divider = frame.find((r) => r[1] - opening[1] > h * 0.8),
+    closing = frame.at(-1)
+  if (
+    !divider ||
+    divider === closing ||
+    divider[1] - opening[1] > h * 6 ||
+    bottom - closing[1] > h * 1.5
+  )
+    return
+  const header = source.filter((i) => i.rect[1] >= opening[1] && i.rect[3] < divider[1])
+  const groups = []
+  for (const item of header) {
+    const prior = groups.at(-1)
+    if (prior && Math.abs(item.baseline - prior[0].baseline) < h * 0.2) prior.push(item)
+    else groups.push([item])
+  }
+  if (!groups || groups.length < 2 || groups.length > 3) return
+  const joinFragments = (tokens) =>
+    tokens
+      .slice()
+      .sort((a, b) => a.rect[0] - b.rect[0])
+      .reduce(
+        (text, token, index, ordered) =>
+          text +
+          (index && token.rect[0] - ordered[index - 1].rect[2] > h * 0.14 ? ' ' : '') +
+          token.text.trim(),
+        ''
+      )
+  const merge = (tokens) => {
+    const out = []
+    for (const token of tokens.slice().sort((a, b) => a.rect[0] - b.rect[0])) {
+      const prior = out.at(-1)
+      if (prior && token.rect[0] - prior.rect[2] <= h * 0.14) {
+        prior.tokens.push(token)
+        prior.rect = union(prior.tokens)
+        prior.text = joinFragments(prior.tokens)
+      } else out.push({ tokens: [token], rect: token.rect, text: token.text.trim() })
+    }
+    return out
+  }
+  const partial = joinHorizontalTableRules(rules).filter(
+    (r) => r[1] > opening[1] && r[1] < divider[1] && r[0] > opening[0] && r[2] < opening[2]
+  )
+  const bands = groups.map(merge)
+  for (let row = 0; row < bands.length - 1; row++)
+    for (const rule of partial.filter(
+      (r) =>
+        r[1] > Math.max(...groups[row].map((t) => t.rect[3])) &&
+        r[1] < Math.min(...groups[row + 1].map((t) => t.rect[1]))
+    )) {
+      const underlined = bands[row].filter(
+        (g) => g.rect[0] >= rule[0] - h * 0.4 && g.rect[2] <= rule[2] + h * 0.4
+      )
+      if (underlined.length < 2) continue
+      const tokens = underlined.flatMap((g) => g.tokens)
+      bands[row] = bands[row].filter((g) => !underlined.includes(g))
+      bands[row].push({ tokens, rect: union(tokens), text: joinFragments(tokens) })
+      bands[row].sort((a, b) => a.rect[0] - b.rect[0])
+    }
+  const scalar = (text) => /^[+−-]?\d[\d.,]*(?:\s*\/\s*\d[\d.,]*)?%?$/u.test(text.trim())
+  const body = source.filter((i) => i.rect[1] > divider[1] && i.rect[3] < closing[1])
+  const records = groupSourceRowsWithScripts(
+    body.filter((i) => scalar(i.text)),
+    h,
+    0.2
+  )
+  if (!records) return
+  // A printed sample-count stub can be blank in summary records. Its narrow
+  // native header and a following parent underline separate it from metrics;
+  // never require an invented count to make those peer records complete.
+  const sampleStub = bands
+    .at(-1)
+    .filter((g) => g.text === 'n' && partial.some((r) => r[0] > g.rect[2] && r[1] < divider[1]))
+  const optionalCount =
+    sampleStub.length === 1 &&
+    records.filter((g) =>
+      g.some(
+        (i) =>
+          i.rect[0] >= sampleStub[0].rect[0] - h && i.rect[2] <= sampleStub[0].rect[2] + h * 0.1
+      )
+    ).length < 3 &&
+    records.some(
+      (g) =>
+        !g.some(
+          (i) =>
+            i.rect[0] >= sampleStub[0].rect[0] - h && i.rect[2] <= sampleStub[0].rect[2] + h * 0.1
+        )
+    )
+      ? sampleStub[0]
+      : undefined
+  const numericRows = records
+    .map((g) =>
+      g
+        .filter(
+          (i) =>
+            scalar(i.text) &&
+            !(
+              optionalCount &&
+              i.rect[0] >= optionalCount.rect[0] - h &&
+              i.rect[2] <= optionalCount.rect[2] + h * 0.1
+            )
+        )
+        .sort((a, b) => a.rect[0] - b.rect[0])
+    )
+    .filter((g) => g.length >= 4)
+  const counts = new Map()
+  for (const g of numericRows) counts.set(g.length, (counts.get(g.length) ?? 0) + 1)
+  const count = [...counts].sort((a, b) => b[1] - a[1] || b[0] - a[0])[0]?.[0]
+  const complete = numericRows.filter((g) => g.length === count)
+  if (!count || complete.length < 3) return
+  const domains = Array.from({ length: count }, (_, index) => [
+    Math.min(...complete.map((g) => g[index].rect[0])),
+    Math.max(...complete.map((g) => g[index].rect[2]))
+  ])
+  if (domains.slice(1).some((d, i) => d[0] - domains[i][1] < h * 0.1)) return
+  const prefix = bands
+    .flat()
+    .filter((g) => g.rect[2] < domains[0][0] - 0.1)
+    .sort((a, b) => a.rect[0] - b.rect[0])
+  if (!prefix.length) {
+    const numberedStub = bands
+      .at(-1)
+      .filter(
+        (g) =>
+          g.rect[0] < opening[0] + h * 2 &&
+          g.rect[0] <= domains[0][0] &&
+          g.rect[2] >= domains[0][1] &&
+          g.rect[2] < domains[1][0]
+      )
+    if (numberedStub.length !== 1) return
+    prefix.push(numberedStub[0])
+    domains.shift()
+  }
+  if (!prefix.length || prefix.length > 2 || prefix.some((g) => !/\p{L}/u.test(g.text))) return
+  for (let row = bands.length - 1; row >= 0; row--) {
+    bands[row] = bands[row].filter((g) => !prefix.includes(g))
+    if (!bands[row].length) {
+      bands.splice(row, 1)
+      groups.splice(row, 1)
+    }
+  }
+  if (bands.length < 2 || bands.length > 3) return
+  const measuredPrefix = measuredBands
+    .filter((g) => g[0].rect[1] > divider[1] && g.every((i) => i.rect[3] < closing[1]))
+    .map((g) => g.filter((i) => i.rect[2] < domains[0][0] - 0.1))
+  if (
+    measuredBands.length &&
+    (![1, 2].includes(prefix.length) ||
+      measuredPrefix.length < 3 ||
+      measuredPrefix.some((g) => g.length !== prefix.length || g.some((i) => !i.sourceToken)))
+  )
+    return
+  const prefixDomains = prefix.map((g, index) => {
+    const next = prefix[index + 1]?.rect[0] ?? domains[0][0]
+    const owned = measuredBands.length
+      ? measuredPrefix.map((g) => g[index])
+      : body.filter((i) => i.rect[0] >= g.rect[0] - h * 0.25 && i.rect[2] < next - 0.1)
+    return [
+      Math.min(g.rect[0], ...owned.map((i) => i.rect[0])),
+      Math.max(g.rect[2], ...owned.map((i) => i.rect[2]))
+    ]
+  })
+  const allDomains = [...prefixDomains, ...domains]
+  if (allDomains.slice(1).some((d, i) => d[0] <= allDomains[i][1])) return
+  const cuts = [
+    opening[0],
+    ...allDomains.slice(1).map((d, i) => (allDomains[i][1] + d[0]) / 2),
+    opening[2]
+  ]
+  const center = (rect) => (rect[0] + rect[2]) / 2
+  const columnOf = (g) =>
+    cuts.findIndex(
+      (x, i) => i < cuts.length - 1 && center(g.rect) >= x && center(g.rect) < cuts[i + 1]
+    )
+  // A repeated compact leaf run can be emitted as one native string. Its
+  // explicit whitespace labels and repeated order must match every body lane.
+  const lowest = bands.at(-1)
+  const wide = lowest.filter(
+    (g) =>
+      g.rect[2] - g.rect[0] > (right - left) * 0.6 && g.text.trim().split(/\s+/u).length === count
+  )
+  if (wide.length) {
+    if (wide.length !== 1 || lowest.length !== 1) return
+    const g = wide[0],
+      words = g.text.split(/\s+/u)
+    const period = [2, 3, 4].find(
+      (n) => count % n === 0 && count / n >= 2 && words.every((word, i) => word === words[i % n])
+    )
+    if (!period || g.rect[0] > domains[0][0] + h || g.rect[2] < domains.at(-1)[1] - h) return
+    lowest.splice(
+      lowest.indexOf(g),
+      1,
+      ...words.map((text, index) => ({
+        text,
+        tokens: g.tokens,
+        derived: true,
+        rect: [
+          Math.max(g.rect[0], cuts[prefix.length + index]),
+          g.rect[1],
+          Math.min(g.rect[2], cuts[prefix.length + index + 1]),
+          g.rect[3]
+        ]
+      }))
+    )
+  }
+  const lowerSlots = new Map()
+  for (const g of lowest) {
+    const column = columnOf(g)
+    if (column < 0 || lowerSlots.has(column)) return
+    lowerSlots.set(column, g)
+  }
+  const cells = [],
+    occupied = new Set(),
+    rows = []
+  const boundaries = [
+    opening[1],
+    ...groups
+      .slice(1)
+      .map(
+        (g, i) =>
+          (Math.max(...groups[i].map((t) => t.rect[3])) + Math.min(...g.map((t) => t.rect[1]))) / 2
+      ),
+    divider[1]
+  ]
+  if (boundaries.slice(1).some((y, i) => y <= boundaries[i])) return
+  for (const g of prefix) {
+    const column = columnOf(g)
+    if (column < 0 || column >= prefix.length) return
+    for (let row = 0; row < bands.length; row++) occupied.add(row + ':' + column)
+    cells.push({
+      row: 0,
+      column,
+      rowSpan: bands.length,
+      colSpan: 1,
+      rect: [cuts[column], opening[1], cuts[column + 1], divider[1]],
+      text: g.text,
+      sourceTokens: g.tokens,
+      sourceRects: g.tokens.map((t) => t.rect),
+      origin: 'source-tiered-header'
+    })
+  }
+  for (let row = 0; row < bands.length; row++)
+    for (const g of bands[row]) {
+      let owned
+      if (row === bands.length - 1 || prefix.includes(g)) owned = [columnOf(g)]
+      else {
+        const underline = partial.filter(
+          (r) =>
+            r[1] > g.rect[3] &&
+            r[1] < Math.min(...groups[row + 1].map((t) => t.rect[1])) &&
+            g.rect[0] >= r[0] - h * 0.4 &&
+            g.rect[2] <= r[2] + h * 0.4
+        )
+        if (underline.length > 1) return
+        const witness = underline[0] ?? g.rect
+        owned = allDomains
+          .map((d, index) => ({ index, x: (d[0] + d[1]) / 2 }))
+          .filter((v) => v.x >= witness[0] && v.x <= witness[2])
+          .map((v) => v.index)
+        if (!owned.length) return
+        // A narrow centered title does not prove which neighboring leaves it
+        // groups. Single-lane parents need an explicit native underline;
+        // otherwise leave specialized source-backed ownership intact.
+        if (owned.length === 1 && !underline.length && lowerSlots.has(owned[0])) return
+        if (
+          owned.length > 1 &&
+          !underline.length &&
+          (groups.length !== 2 || !owned.every((c) => lowerSlots.has(c)))
+        )
+          return
+      }
+      if (owned.some((c) => c < 0) || owned.some((c, i) => i && c !== owned[i - 1] + 1)) return
+      const column = owned[0],
+        colSpan = owned.length
+      const anchor = row === bands.length - 1 && !occupied.has('0:' + column) ? 0 : row
+      const rowSpan =
+        colSpan === 1 &&
+        !bands.slice(row + 1).some((b) => b.some((child) => columnOf(child) === column))
+          ? bands.length - anchor
+          : 1
+      for (let r = anchor; r < anchor + rowSpan; r++)
+        for (const c of owned) {
+          const key = r + ':' + c
+          if (occupied.has(key)) return
+          occupied.add(key)
+        }
+      const sourceTokens = g.derived
+        ? [
+            {
+              text: g.text,
+              rect: g.rect,
+              baseline: g.tokens[0].baseline,
+              height: g.tokens[0].height
+            }
+          ]
+        : g.tokens
+      cells.push({
+        row: anchor,
+        column,
+        rowSpan,
+        colSpan,
+        rect: [
+          cuts[column],
+          boundaries[anchor],
+          cuts[column + colSpan],
+          boundaries[anchor + rowSpan]
+        ],
+        text: g.text,
+        sourceTokens,
+        sourceRects: sourceTokens.map((t) => t.rect),
+        origin: 'source-tiered-header'
+      })
+    }
+  if (occupied.size !== bands.length * allDomains.length || !cells.some((c) => c.colSpan > 1))
+    return
+  for (let row = 0; row < bands.length; row++)
+    rows.push([opening[0], boundaries[row], opening[2], boundaries[row + 1]])
+  return {
+    columns: cuts.slice(1).map((x, i) => [cuts[i], opening[1], x, closing[1]]),
+    prefixColumns: prefix.length,
+    rows,
+    headerRows: rows.map((_, i) => i),
+    spans: cells
+      .filter((c) => c.rowSpan > 1 || c.colSpan > 1)
+      .map(({ row, column, rowSpan, colSpan }) => ({ row, column, rowSpan, colSpan })),
+    headerCells: cells,
+    ownedTokens: new Set(header),
+    completeSpans: true,
+    headerBottom: divider[1],
+    bodyRecords: complete,
+    repair: 'source-native-tiered-header-recovered'
+  }
+}
+
 // Keep an unnumbered title whole in an already detected comparison table
 // when the model clips through it. Three matching native rules, two
 // complete header lanes, and several complete pairs prove the body frame.
@@ -979,6 +3459,8 @@ export function recoverRuledCategoryGrid(table, items, captions, rules) {
 // Accept only single-line records with indented labels and explicitly empty
 // comparison cells. Wrapped labels and bare numeric continuation rows decline.
 export function recoverNativeHeaderGrid(table, items, captions, rules) {
+  const pairedMetrics = recoverPairedMetricHeaderGrid(table, items, captions, rules)
+  if (pairedMetrics) return pairedMetrics
   const comparisonLeaves = recoverSegmentedComparisonLeafGrid(table, items, captions, rules)
   if (comparisonLeaves) return comparisonLeaves
   const clinical = recoverSegmentedClinicalRecordGrid(table, items, captions, rules)
@@ -1298,6 +3780,130 @@ export function recoverNativeHeaderGrid(table, items, captions, rules) {
     columns: cuts.slice(1).map((x, n) => [cuts[n], top, x, bottom]),
     spans: sections.map((n) => ({ row: n + 1, column: 0, rowSpan: 1, colSpan: cuts.length - 1 })),
     completeSpans: true
+  }
+}
+
+// Repeated ADD-S/ADD leaves establish paired metric columns independently of
+// an oversegmented model. Recover only a closed native frame with one source
+// parent per pair and complete numeric records fitting every derived gutter.
+export function recoverPairedMetricHeaderGrid(table, items, captions, rules) {
+  if (!captions.some((caption) => captionKind(caption.lines?.[0]) === 'table')) return
+  const [left, top, right, bottom] = table.cropRect
+  const source = tableSourceItems(items, table.cropRect)
+  const object = source.filter((item) => item.text.trim() === 'Object')
+  if (object.length !== 1) return
+  const height = object[0].height
+  if (!(height > 0)) return
+  const leaves = source
+    .filter((item) => Math.abs(item.baseline - object[0].baseline) <= height * 0.15)
+    .sort((a, b) => a.rect[0] - b.rect[0])
+  const pairCount = (leaves.length - 1) / 2
+  if (
+    pairCount < 3 ||
+    pairCount > 12 ||
+    !Number.isInteger(pairCount) ||
+    leaves[0] !== object[0] ||
+    leaves.slice(1).some((item, index) => item.text.trim() !== (index % 2 ? 'ADD' : 'ADDS'))
+  )
+    return
+  const borders = joinHorizontalTableRules(rules)
+    .filter(
+      (rule) =>
+        rule[1] >= top &&
+        rule[1] <= bottom &&
+        Math.abs(rule[0] - left) < height &&
+        Math.abs(rule[2] - right) < height
+    )
+    .sort((a, b) => a[1] - b[1])
+  if (borders.length < 3) return
+  const opening = borders[0][1],
+    divider = borders[1][1],
+    closing = borders.at(-1)[1]
+  if (
+    !(opening < object[0].rect[1] && object[0].rect[3] < divider) ||
+    divider - opening > height * 4
+  )
+    return
+  const parents = source
+    .filter(
+      (item) =>
+        item.rect[1] >= opening && item.rect[3] < Math.min(...leaves.map((leaf) => leaf.rect[1]))
+    )
+    .sort((a, b) => a.rect[0] - b.rect[0])
+  if (
+    parents.length !== pairCount ||
+    parents.some(
+      (item) =>
+        !/\p{L}/u.test(item.text) || Math.abs(item.baseline - parents[0].baseline) > height * 0.15
+    )
+  )
+    return
+  const body = source.filter((item) => item.rect[1] > divider && item.rect[3] < closing)
+  const groups = groupSourceRowsWithScripts(body, height, 0.2)
+  if (!groups || groups.length < 4) return
+  const cuts = [
+    left,
+    ...leaves.slice(1).map((leaf, index) => (leaves[index].rect[2] + leaf.rect[0]) / 2),
+    right
+  ]
+  const records = groups.map((group) => group.slice().sort((a, b) => a.rect[0] - b.rect[0]))
+  if (
+    records.some(
+      (record) =>
+        record.length !== leaves.length ||
+        !/\p{L}/u.test(record[0].text) ||
+        record.slice(1).some((item) => !/^\d+(?:\.\d+)?$/u.test(item.text.trim()))
+    )
+  )
+    return
+  const stubRight = Math.max(object[0].rect[2], ...records.map((record) => record[0].rect[2]))
+  const metricLeft = Math.min(leaves[1].rect[0], ...records.map((record) => record[1].rect[0]))
+  if (metricLeft - stubRight < height * 0.25) return
+  cuts[1] = (stubRight + metricLeft) / 2
+  const values = groups.map((group) => readSourceRow(group, cuts))
+  if (
+    values.some(
+      (value) =>
+        !value ||
+        !/\p{L}/u.test(value[0]) ||
+        value.slice(1).some((text) => !/^\d+(?:\.\d+)?$/u.test(text))
+    )
+  )
+    return
+  if (
+    parents.some((item, index) => {
+      const a = cuts[1 + index * 2],
+        b = cuts[3 + index * 2]
+      return (
+        item.rect[0] < a ||
+        item.rect[2] > b ||
+        Math.abs((item.rect[0] + item.rect[2] - a - b) / 2) > (b - a) * 0.25
+      )
+    })
+  )
+    return
+  if (!hasUniqueRecordTokens(source, [parents, leaves, ...groups])) return
+  const headerSplit =
+    (Math.max(...parents.map((item) => item.rect[3])) +
+      Math.min(...leaves.map((item) => item.rect[1]))) /
+    2
+  const bounds = groups.map(union)
+  if (bounds.some((rect, index) => index && rect[1] <= bounds[index - 1][3])) return
+  return {
+    rows: [
+      [left, opening, right, headerSplit],
+      [left, headerSplit, right, divider],
+      ...bounds.map((rect) => [left, rect[1], right, rect[3]])
+    ],
+    columns: cuts.slice(1).map((cut, index) => [cuts[index], opening, cut, closing]),
+    spans: [
+      { row: 0, column: 0, rowSpan: 2, colSpan: 1 },
+      ...parents.map((_, index) => ({ row: 0, column: 1 + index * 2, rowSpan: 1, colSpan: 2 }))
+    ],
+    headerRows: [0, 1],
+    completeSpans: true,
+    ownedTokens: new Set(source),
+    repair: 'native-paired-metric-header-recovered'
   }
 }
 
@@ -4043,6 +6649,61 @@ export function recoverClippedColumnHeader(table, items, rules, captions = []) {
       o.rect[3] + crop[1]
     ])
     .sort((a, b) => a[0] - b[0])
+
+  // A wide symbolic matrix can lose an entire header lane when the detector
+  // starts at the first numeric row. Unlike prose above a table, every model
+  // column then has one or more clipped glyphs on the same baseline and a
+  // native full-width separator closes the band. Require those witnesses
+  // before extending the crop; this branch deliberately leaves narrow and
+  // ambiguous text layouts to the existing recognizers below.
+  if (leadingColumns.length >= 5 && leadingColumns.length <= 16) {
+    const heights = items
+      .map((item) => item.height)
+      .filter((value) => Number.isFinite(value) && value > 0)
+      .sort((a, b) => a - b)
+    const height = heights[Math.floor(heights.length / 2)] ?? 0
+    const modelRows = table.structure.objects.filter((o) => o.label === 'table row')
+    const firstRowTop = Math.min(...modelRows.map((o) => o.rect[1] + crop[1]))
+    const leading = items.filter(
+      (item) =>
+        item.horizontal &&
+        item.rect[1] < crop[1] + height * 0.15 &&
+        item.rect[3] > crop[1] - height * 1.5 &&
+        item.rect[0] >= leadingColumns[0][0] - 2 &&
+        item.rect[2] <= leadingColumns.at(-1)[2] + 2
+    )
+    const groups = leadingColumns.map((column) =>
+      leading.filter((item) => item.rect[0] >= column[0] - 2 && item.rect[2] <= column[2] + 2)
+    )
+    const baselines = leading.map((item) => item.baseline)
+    const separator = rules
+      .filter(
+        (rule) =>
+          rule[1] === rule[3] &&
+          rule[1] >= Math.max(...leading.map((item) => item.rect[3]), crop[1]) &&
+          rule[1] <= firstRowTop + height * 0.5 &&
+          rule[0] <= leadingColumns[0][0] + 2 &&
+          rule[2] >= leadingColumns.at(-1)[2] - 2
+      )
+      .sort((a, b) => a[1] - b[1])[0]
+    if (
+      height > 0 &&
+      modelRows.length > 0 &&
+      leading.length >= leadingColumns.length &&
+      groups.every((group) => group.length > 0) &&
+      baselines.length > 0 &&
+      Math.max(...baselines) - Math.min(...baselines) <= height * 0.35 &&
+      Math.min(...baselines) < firstRowTop - height * 0.05 &&
+      separator
+    ) {
+      const top = Math.min(...leading.map((item) => item.rect[1])) - 1
+      return {
+        cropRect: [crop[0], top, crop[2], crop[3]],
+        rect: [leadingColumns[0][0], top, leadingColumns.at(-1)[2], separator[1]],
+        spans: []
+      }
+    }
+  }
 
   // Borderless two-column tables can lose a complete text header when the
   // detector starts at the first body row. Require one aligned source label

@@ -93,7 +93,28 @@ export function findAlgorithmCandidates(page) {
       ordinals.every((line, index) => Number(line.text.match(/^(\d+)\s*:/)[1]) === index + 1) &&
       ordinals.some((line) => /^\d+\s*:\s*function\b/i.test(line.text)) &&
       ordinals.some((line) => /^\d+\s*:\s*return\b/i.test(line.text))
-    if (!(io && ordinals.length >= 2) && !loops && !headed && !routine) return []
+    // A short numbered loop can declare its inputs in the title and return
+    // after assignment steps, without Require or explicit end-for lines.
+    // Its separate title/body rule and complete consecutive body are required.
+    const numberedLoop =
+      /\([^()]+\)\s*$/.test(title.text) &&
+      ordinals.length >= 4 &&
+      ordinals.every(
+        (line, index) =>
+          Number(line.text.match(/^(\d+)\s*:/)[1]) === index + 1 &&
+          Math.abs(line.x - ordinals[0].x) <= line.fontSize * 0.2
+      ) &&
+      /^1\s*:\s*(?:for|while)\b.+\bdo\s*$/i.test(ordinals[0].text) &&
+      /^\d+\s*:\s*return\b/i.test(ordinals.at(-1).text) &&
+      ordinals.slice(1, -1).every((line) => /←/.test(line.text)) &&
+      aligned.some(
+        (rule) =>
+          rule !== top &&
+          rule[1] > title.bottom &&
+          rule[1] < ordinals[0].bottom &&
+          Math.abs(rule[2] - bottom[2]) <= 8
+      )
+    if (!(io && ordinals.length >= 2) && !loops && !headed && !routine && !numberedLoop) return []
     const titleTails = content.filter(
       (l) =>
         /[-–]$/.test(title.text) &&

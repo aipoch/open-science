@@ -3,6 +3,7 @@ import { useVersionHistoryPages } from './use-version-history-pages'
 import { VersionHistoryLoadButton } from './VersionHistoryLoadButton'
 import { unwrapProvenanceRead } from '../../../../shared/provenance-read-result'
 import {
+  AtSign,
   BookOpen,
   Check,
   ChevronLeft,
@@ -32,6 +33,7 @@ import {
 import { useTranslation } from 'react-i18next'
 
 import { ActionMenuItems, ActionMenuProvider, ActionMenuTarget } from '@/components/action-menu'
+import { ActionToast } from '@/components/ActionToast'
 import { ErrorNotice } from '@/components/error-notice'
 import { Button } from '@/components/ui/button'
 import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
@@ -67,6 +69,8 @@ import {
   type SaveAsArtifactState
 } from './LocalFileHeaderActions'
 import { ManagedFileDownloadButton } from './ManagedFileDownloadButton'
+import { useProjectFileMentionAction } from './use-project-file-mention-action'
+import type { ProjectFileMentionTarget } from './project-file-mention'
 import {
   useManagedFileDownload,
   type ManagedFileDownloadController
@@ -201,6 +205,56 @@ const PreviewProvenanceButton = ({
   )
 }
 
+const ProjectFileMentionButton = ({
+  target,
+  tooltipClassName,
+  onMentioned
+}: {
+  target: ProjectFileMentionTarget
+  tooltipClassName?: string
+  onMentioned?: () => void
+}): React.JSX.Element => {
+  const { t } = useTranslation()
+  const mention = useProjectFileMentionAction(target)
+  const label = t('Mention {{name}}', { name: target.name })
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            className={previewHeaderActionClassName}
+            aria-label={label}
+            disabled={!mention.available || mention.pending}
+            aria-busy={mention.pending}
+            onClick={() => {
+              void mention.mention().then((mentioned) => {
+                if (mentioned) onMentioned?.()
+              })
+            }}
+          >
+            {mention.pending ? (
+              <Loader2 className="animate-spin motion-reduce:animate-none" aria-hidden="true" />
+            ) : (
+              <AtSign aria-hidden="true" />
+            )}
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent className={tooltipClassName}>{label}</TooltipContent>
+      </Tooltip>
+      {mention.error ? (
+        <ActionToast
+          title={t('Could not resolve file version.')}
+          dismissLabel={t('Dismiss')}
+          onDismiss={mention.dismissError}
+        />
+      ) : null}
+    </TooltipProvider>
+  )
+}
+
 const PreviewViewInContextButton = ({
   item,
   onViewInContext,
@@ -292,6 +346,24 @@ const PreviewFileHeader = ({
     ...(provenanceActionEntry && viewInContextEntry ? [{ kind: 'separator' as const }] : []),
     ...(viewInContextEntry ? [viewInContextEntry] : [])
   ]
+  // Managed artifact/upload previews can be mentioned in the chat straight from the open surface;
+  // local and literature previews carry no managed identity and never offer the action. An omitted
+  // source is the artifact default the preview projection uses for generated files.
+  const mentionTarget = useMemo<ProjectFileMentionTarget | undefined>(() => {
+    const source = item.source ?? 'artifact'
+    if (!item.projectId || !item.managedFileId || (source !== 'artifact' && source !== 'upload')) {
+      return undefined
+    }
+    return {
+      id: item.managedFileId,
+      source,
+      sourceFileId: item.managedFileId,
+      projectId: item.projectId,
+      name: item.name,
+      path: item.path,
+      ...(item.mimeType ? { mimeType: item.mimeType } : {})
+    }
+  }, [item.managedFileId, item.mimeType, item.name, item.path, item.projectId, item.source])
 
   return (
     <header
@@ -440,6 +512,13 @@ const PreviewFileHeader = ({
                 tone="strong"
                 className="bg-transparent shadow-none"
               />
+              {mentionTarget ? (
+                <ProjectFileMentionButton
+                  target={mentionTarget}
+                  tooltipClassName={tooltipClassName}
+                  onMentioned={onClose}
+                />
+              ) : null}
               {item.originSession?.state === 'deleted' ? (
                 <span
                   data-testid="deleted-origin-session"
