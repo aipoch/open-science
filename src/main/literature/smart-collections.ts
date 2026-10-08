@@ -728,7 +728,7 @@ export class LiteratureSmartCollections {
       }
     })()
     const runUsageScenarios =
-      run && ['cancelled', 'interrupted'].includes(run.state)
+      run && ['cancelled', 'interrupted', 'failed'].includes(run.state)
         ? await client.classificationUsage.findMany({
             where: { runId: run.id },
             distinct: ['scenario'],
@@ -1130,7 +1130,7 @@ export class LiteratureSmartCollections {
         definition.automaticPauseReason !== 'run-limit' &&
         Boolean(
           await client.literatureSmartRunItem.findFirst({
-            where: { runId: latest.id, deferred: false, state: 'pending' },
+            where: { runId: latest.id, deferred: false, state: { in: ['pending', 'error'] } },
             select: { itemId: true }
           })
         )
@@ -1345,7 +1345,7 @@ export class LiteratureSmartCollections {
             checkpoint = await this.checkpoint(client, previous.id)
             const current = checkpoint.filter((row) => !row.deferred)
             if (
-              !current.some((row) => row.state === 'pending') ||
+              !current.some((row) => row.state !== 'done') ||
               current.some((row) => digests.get(row.id) !== row.digest)
             )
               throw new Error(SMART_COLLECTION_RESUME_UNAVAILABLE)
@@ -1377,9 +1377,22 @@ export class LiteratureSmartCollections {
               (entry) => entry.scenario === 'literature-automatic'
             )
             const ownsPause = definition.automaticPauseRunId === previous.id
+            // Request failures clear the automatic pause, but retain authoritative usage.
+            // Do not adopt cancelled legacy work whose pause ownership was discarded.
+            const failedAutomaticRun =
+              previous.state === 'failed' &&
+              hasAutomaticUsage &&
+              usage.every((entry) => entry.scenario === 'literature-automatic') &&
+              !definition.automaticPauseReason &&
+              !definition.automaticPauseRunId
             automatic =
-              ownsPause && (hasAutomaticUsage || (!usage.length && snapshot.action === 'refresh'))
-            if (ownsPause ? !automatic : !hasManualResumeProvenance(snapshot.action, usage))
+              failedAutomaticRun ||
+              (ownsPause && (hasAutomaticUsage || (!usage.length && snapshot.action === 'refresh')))
+            if (
+              ownsPause
+                ? !automatic
+                : !automatic && !hasManualResumeProvenance(snapshot.action, usage)
+            )
               throw new Error(SMART_COLLECTION_RESUME_UNAVAILABLE)
             if (
               automatic &&
@@ -1389,7 +1402,7 @@ export class LiteratureSmartCollections {
             )
               throw new Error(SMART_COLLECTION_RESUME_UNAVAILABLE)
             controller.signal.throwIfAborted()
-            const resumed = await client.$transaction(async (tx) => {
+            await client.$transaction(async (tx) => {
               if (automatic) {
                 const reserved = await tx.literatureSmartCollection.updateMany({
                   where: {
@@ -1405,12 +1418,22 @@ export class LiteratureSmartCollections {
                 })
                 if (!reserved.count) throw new Error(SMART_COLLECTION_RESUME_UNAVAILABLE)
               }
-              return tx.literatureSmartRun.updateMany({
+              const resumed = await tx.literatureSmartRun.updateMany({
                 where: { id: previous.id, state: previous.state },
                 data: { state: 'queued', updatedAt: new Date() }
               })
+              if (!resumed.count) throw new Error(SMART_COLLECTION_RESUME_UNAVAILABLE)
+              await tx.literatureSmartRunItem.updateMany({
+                where: { runId: previous.id, deferred: false, state: 'error' },
+                data: { state: 'pending', failure: null }
+              })
             })
-            if (!resumed.count) throw new Error(SMART_COLLECTION_RESUME_UNAVAILABLE)
+            for (const row of current) {
+              if (row.state === 'error') {
+                row.state = 'pending'
+                row.failure = undefined
+              }
+            }
             run = previous
           } else {
             const selected = command.itemIds ? new Set(command.itemIds) : undefined

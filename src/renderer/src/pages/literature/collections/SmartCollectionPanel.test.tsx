@@ -748,7 +748,7 @@ it('allows abandoning an interrupted manual run when the model is no longer conf
   )
 })
 
-it.each(['cancelled', 'interrupted'] as const)(
+it.each(['cancelled', 'interrupted', 'failed'] as const)(
   'resumes %s analysis and offers re-analysis when its checkpoint is invalid',
   async (state) => {
     view = {
@@ -771,11 +771,15 @@ it.each(['cancelled', 'interrupted'] as const)(
       return { kind: 'collection', id: 'smart', smart: view }
     })
     render(<SmartCollectionPanel collectionId="smart" name="Trials" description="Adult trials" />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Resume analysis' }))
+    fireEvent.click(
+      await screen.findByRole('button', { name: state === 'failed' ? 'Retry' : 'Resume analysis' })
+    )
     await screen.findByText(
       'This run cannot be resumed because its settings, papers, or saved progress have changed.'
     )
-    expect(transact).toHaveBeenCalledWith(expect.objectContaining({ action: 'resume' }))
+    expect(transact).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'resume', runId: 'same-run' })
+    )
     expect(transact.mock.calls.some(([command]) => command.action === 'refresh')).toBe(false)
     expect(screen.getByRole('button', { name: 'Re-evaluate all' })).toBeTruthy()
   }

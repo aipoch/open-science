@@ -2,6 +2,174 @@ import type { SmartCollectionView } from '../src/shared/literature-smart-collect
 import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
 
+test('retries a disconnected batch and resumes it after restart without repeating saved papers', async ({
+  app
+}, testInfo) => {
+  test.setTimeout(180_000)
+  const { createServer } = await import('node:http')
+  const { literatureItemInputSchema } = await import('../src/shared/literature')
+  const requests: string[] = []
+  let offline = true
+  const service = createServer(async (request, response) => {
+    let data = ''
+    for await (const chunk of request) data += chunk
+    const body = JSON.parse(data)
+    if (body.questions.membership) {
+      requests.push(body.state)
+      if (offline && requests.length > 1) {
+        response.destroy()
+        return
+      }
+    }
+    response.setHeader('Content-Type', 'application/json')
+    response.end(
+      JSON.stringify({
+        model: 'fixture-classifier',
+        answers: body.questions.membership
+          ? {
+              membership: {
+                type: 'choice',
+                choice: 'match',
+                confidence: 1,
+                probabilities: { match: 1, 'no-match': 0, uncertain: 0 }
+              }
+            }
+          : { test: { type: 'noul', noul: 1 } },
+        usage: { input_tokens: 42, output_tokens: 5 }
+      })
+    )
+  })
+  await new Promise<void>((resolve) => service.listen(0, '127.0.0.1', resolve))
+  try {
+    const page = await app.completeOnboarding()
+    const { port } = service.address() as { port: number }
+    const item = literatureItemInputSchema.parse({
+      itemType: 'journalArticle',
+      title: 'Retry paper',
+      abstract: 'Original study of adult participants.'
+    })
+    const id = await page.evaluate(
+      async ({ port, item }) => {
+        await window.api.locale.setPreference({ preference: 'en' })
+        for (let i = 0; i < 8; i++)
+          await window.api.literature.transact({
+            kind: 'create-item',
+            item: { ...item, title: `Retry paper ${i}` }
+          })
+        const snapshot = await window.api.settings.getClassification()
+        const serviceId = '55555555-5555-4555-8555-555555555555'
+        const saved = await window.api.settings.updateClassification({
+          kind: 'save',
+          revision: snapshot.revision,
+          id: serviceId,
+          adapter: 'custom',
+          name: 'Retry fixture',
+          baseUrl: `http://127.0.0.1:${port}`,
+          modelId: 'fixture-classifier'
+        })
+        if (saved.validation && !saved.validation.ok)
+          throw new Error(JSON.stringify(saved.validation))
+        await window.api.settings.updateClassification({
+          kind: 'bind',
+          feature: 'smart-collections',
+          revision: saved.revision,
+          binding: { serviceId, modelId: 'fixture-classifier' }
+        })
+        return (
+          await window.api.literature.transact({
+            kind: 'create-smart-collection',
+            name: 'Retry trials',
+            scope: { kind: 'library' },
+            description: JSON.stringify({
+              description: '',
+              inclusion: 'Original studies',
+              exclusion: ''
+            })
+          })
+        ).id
+      },
+      { port, item }
+    )
+    const read = (target: typeof page): Promise<SmartCollectionView> =>
+      target.evaluate(
+        async (collectionId) =>
+          (
+            await window.api.literature.transact({
+              kind: 'smart-collection',
+              collectionId,
+              action: 'read',
+              offset: 0
+            })
+          ).smart!,
+        id
+      )
+    await page.getByRole('button', { name: 'Library', exact: true }).click()
+    await page.getByRole('button', { name: 'Retry trials', exact: true }).click()
+    const panel = page.getByRole('region', { name: 'Smart collection', exact: true })
+    await panel.getByRole('button', { name: 'Update collection', exact: true }).click()
+    await expect.poll(async () => (await read(page)).run?.state).toBe('failed')
+    const failed = await read(page)
+    expect(failed.run).toMatchObject({ total: 8, failure: 'network' })
+    expect(failed.matches).toBe(1)
+    const savedRequest = requests[0]
+    const saved = failed.rows.find((row) => row.verdict === 'match')!
+    await page.evaluate(async (item) => {
+      await window.api.literature.transact({
+        kind: 'create-item',
+        item: { ...item, title: 'Added after interruption' }
+      })
+    }, item)
+    const beforeRetry = requests.length
+    await panel.getByRole('button', { name: 'Retry', exact: true }).click()
+    await expect.poll(() => requests.length).toBeGreaterThan(beforeRetry)
+    await expect
+      .poll(async () => (await read(page)).run)
+      .toMatchObject({ id: failed.run!.id, state: 'failed', total: 8, failure: 'network' })
+    await page.screenshot({ path: testInfo.outputPath('smart-network-retry-same-batch.png') })
+
+    const restarted = await app.restartAfterCrash({ force: true })
+    const restored = await read(restarted)
+    expect(restored.run).toMatchObject({ id: failed.run!.id, state: 'failed', total: 8 })
+    const beforeResume = requests.length
+    offline = false
+    await restarted.evaluate(
+      async ({ collectionId, runId }) => {
+        await window.api.literature.transact({
+          kind: 'smart-collection',
+          collectionId,
+          action: 'resume',
+          runId,
+          offset: 0
+        })
+      },
+      { collectionId: id, runId: failed.run!.id }
+    )
+    await expect.poll(async () => (await read(restarted)).run?.state).toBe('completed')
+    const completed = await read(restarted)
+    expect(completed.run).toMatchObject({
+      id: failed.run!.id,
+      total: 8,
+      done: 8,
+      inputTokens: 336,
+      outputTokens: 40
+    })
+    expect(completed.matches).toBe(8)
+    expect(completed.rows.find((row) => row.id === saved.id)?.assessment).toEqual(saved.assessment)
+    expect(requests.length - beforeResume).toBe(7)
+    expect(requests.filter((input) => input === savedRequest)).toHaveLength(1)
+    expect(requests.some((input) => input.includes('Added after interruption'))).toBe(false)
+    await testInfo.attach('same-batch-recovery.json', {
+      contentType: 'application/json',
+      body: JSON.stringify({ failed: failed.run, restored: restored.run, completed: completed.run })
+    })
+  } finally {
+    await new Promise<void>((resolve) => {
+      service.close(() => resolve())
+      service.closeAllConnections()
+    })
+  }
+})
+
 test('creates a smart collection without a model and preserves the setup path', async ({
   app
 }, testInfo) => {
