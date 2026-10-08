@@ -839,8 +839,56 @@ async function generate({ data, units, pages, preserveUnsupported = false, selec
   // Read the painted spelling on an isolated copy; retain the original metadata.
   // Exact object-local marks, claimed source and unchanged native ink are required.
   const actualTextSources = new Map()
+  const nestedActualTextSources = new Map()
+  // Nested labels remain read-only. Limit this proof to unclipped identity Forms:
+  // their object bounds are already in page coordinates, with no inferred transform.
+  const actualTextObjects = (page, objects) => {
+    if (!objects.some((object) => object.type === 5)) return objects
+    const result = [...objects],
+      text = p.FPDFText_LoadPage(page)
+    check(text, 'source-mismatch')
+    const at = e.alloc(24)
+    const visit = (object, depth) => {
+      if (
+        object.type !== 5 ||
+        depth >= 8 ||
+        p.FPDFClipPath_CountPaths(p.FPDFPageObj_GetClipPath(object.obj)) !== -1 ||
+        !p.FPDFPageObj_GetMatrix(object.obj, at) ||
+        [1, 0, 0, 1, 0, 0].some((value, index) => e.m.HEAPF32[at / 4 + index] !== value)
+      )
+        return
+      const count = p.FPDFFormObj_CountObjects(object.obj)
+      if (count < 0 || result.length + count > 10000) return
+      for (let index = 0; index < count; index++) {
+        const obj = p.FPDFFormObj_GetObject(object.obj, index),
+          child = { i: result.length, obj, type: p.FPDFPageObj_GetType(obj), bounds: e.bounds(obj) }
+        result.push(child)
+        if (child.type === 1) {
+          const size = p.FPDFTextObj_GetText(obj, text, 0, 0)
+          if (size <= 0 || size > 200000) continue
+          const buffer = e.alloc(size)
+          try {
+            p.FPDFTextObj_GetText(obj, text, buffer, size)
+            child.text = Buffer.from(e.m.HEAPU8.slice(buffer, buffer + size))
+              .toString('utf16le')
+              .replace(/\0$/u, '')
+          } finally {
+            e.free(buffer)
+          }
+        } else visit(child, depth + 1)
+      }
+    }
+    try {
+      for (const object of objects) visit(object, 0)
+      return result
+    } finally {
+      e.free(at)
+      p.FPDFText_ClosePage(text)
+    }
+  }
   const applyActualTextSources = (number, objects) => {
     for (const entry of actualTextSources.get(number) ?? []) {
+      if (entry.nested) continue
       const object = objects[entry.index]
       check(
         object?.type === 1 &&
@@ -851,13 +899,15 @@ async function generate({ data, units, pages, preserveUnsupported = false, selec
       object.text = entry.text
     }
   }
-  const recoverActualTextSources = (number, objects) => {
+  const recoverActualTextSources = (number, objects, sourcePage) => {
+    const expanded = actualTextObjects(sourcePage, objects)
     const claims = units
         .flatMap((unit) => unit.fragments)
         .filter((fragment) => fragment.pageNumber === number && fragment.items?.length),
-      candidates = objects.filter(
+      candidates = expanded.filter(
         (object) =>
           object.type === 1 &&
+          typeof object.text === 'string' &&
           /^[A-Za-z ]{1,64}$/u.test(object.text) &&
           p.FPDFPageObj_CountMarks(object.obj) === 1 &&
           claims.some((fragment) => {
@@ -899,7 +949,7 @@ async function generate({ data, units, pages, preserveUnsupported = false, selec
     }
     try {
       check(page)
-      const cloned = e.objects(page)
+      const cloned = actualTextObjects(page, e.objects(page))
       for (const original of candidates) {
         const object = cloned[original.i]
         if (
@@ -931,7 +981,7 @@ async function generate({ data, units, pages, preserveUnsupported = false, selec
         if (semantic.trim() !== original.text.trim()) continue
         const before = snapshot(object)
         if (!before || !p.FPDFPageObj_RemoveMark(object.obj, mark)) continue
-        const painted = e.objects(page)[original.i],
+        const painted = actualTextObjects(page, e.objects(page))[original.i],
           after = snapshot(painted)
         if (
           !/^[A-Za-z ]{1,64}$/u.test(painted.text) ||
@@ -958,6 +1008,7 @@ async function generate({ data, units, pages, preserveUnsupported = false, selec
           continue
         entries.push({
           index: original.i,
+          nested: original.i >= objects.length,
           original: original.text,
           text: painted.text,
           bounds: original.bounds
@@ -965,6 +1016,22 @@ async function generate({ data, units, pages, preserveUnsupported = false, selec
       }
       actualTextSources.set(number, entries)
       applyActualTextSources(number, objects)
+      if (entries.some((entry) => entry.nested)) {
+        const corrected = new Map(
+          entries.filter((entry) => entry.nested).map((entry) => [entry.index, entry.text])
+        )
+        nestedActualTextSources.set(
+          number,
+          expanded
+            .slice(objects.length)
+            .filter((object) => object.type === 1)
+            .map((object) => ({
+              ...object,
+              original: object.text,
+              text: corrected.get(object.i) ?? object.text
+            }))
+        )
+      }
     } finally {
       e.free(at)
       e.free(length)
@@ -1075,7 +1142,7 @@ async function generate({ data, units, pages, preserveUnsupported = false, selec
       const { sources: overprintedSources, groups: overprintGroups } =
         recoverOverprintedTextSources(e, page, objects)
       for (const object of objects) object.text = overprintedSources.get(object.obj) ?? object.text
-      recoverActualTextSources(number, objects)
+      recoverActualTextSources(number, objects, page)
       proveAsciiHyphens(page, objects)
       // Some publishers serialize an invisible discretionary hyphen as its own
       // text object. PDF.js omits it, while PDFium exposes U+00AD beside the real
@@ -1896,10 +1963,28 @@ async function generate({ data, units, pages, preserveUnsupported = false, selec
               p.FPDFText_GetBoundedText(...args, at, count + 1) === count + 1,
               'source-mismatch'
             )
+            const boundedSource = Buffer.from(e.m.HEAPU8.slice(at, at + count * 2)).toString(
+                'utf16le'
+              ),
+              nested = (nestedActualTextSources.get(fragment.pageNumber) ?? []).filter(
+                (object) =>
+                  object.bounds[0] >= sourceRect.x - 0.05 &&
+                  object.bounds[2] <= sourceRect.x + sourceRect.width + 0.05 &&
+                  object.bounds[1] >= sourceRect.bottom - 0.05 &&
+                  object.bounds[3] <= sourceRect.top + 0.05
+              )
             regions.push({
               fragment,
               rect: sourceRect,
-              source: Buffer.from(e.m.HEAPU8.slice(at, at + count * 2)).toString('utf16le'),
+              source: boundedSource,
+              // Require the entire bounded native spelling before substituting
+              // independently verified marks; no partial/neighbor text is omitted.
+              nestedSource:
+                !selected.length &&
+                nested.length &&
+                sourceMatches(boundedSource, nested.map((object) => object.original).join(''))
+                  ? nested.map((object) => object.text).join('')
+                  : undefined,
               objectSource: matchingObjects.map((o) => o.text).join(''),
               sourceObjects: matchingObjects,
               containedSource: matchingObjects
@@ -3981,6 +4066,7 @@ async function generate({ data, units, pages, preserveUnsupported = false, selec
           for (const [text, verifiedObjects, sourceObjects] of [
             [region.objectSource, true, region.sourceObjects],
             [region.containedSource, true],
+            [region.nestedSource, false],
             [region.source, false]
           ]) {
             if (!text?.trim()) continue
