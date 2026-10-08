@@ -2151,7 +2151,6 @@ const ConversationPanel = ({
                         inert={ordinaryComposerBlocked || undefined}
                         className={cn(
                           'relative z-10 flex flex-col gap-2 rounded-2xl border border-border-200 bg-bg-000 px-3 py-2',
-                          isNewConversation && '[&_[contenteditable]]:min-h-20',
                           ordinaryComposerBlocked && 'invisible pointer-events-none'
                         )}
                         data-specialist-color={specialistComposerColor}
@@ -2745,6 +2744,7 @@ const ConversationPanel = ({
                           <div className="relative min-w-0 flex-1">
                             {/* Draft editing waits for persistence hydration to avoid targeting the wrong session. */}
                             <ComposerEditor
+                              className={isNewConversation ? 'min-h-20' : undefined}
                               doc={draftDoc}
                               onDocChange={onValidatedDraftDocChange}
                               onSubmit={handleSubmit}

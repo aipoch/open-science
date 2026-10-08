@@ -1411,6 +1411,41 @@ describe('ConversationPanel composer errors', () => {
 })
 
 describe('ConversationPanel research starters', () => {
+  it('applies the new conversation height only to the editor, including while disabled', () => {
+    const doc: ComposerDoc = {
+      nodes: [
+        { type: 'artifact', id: 'file', source: 'upload', name: 'paper.pdf', path: '/paper.pdf' },
+        { type: 'skill', id: 'skill', name: 'Analyze' },
+        { type: 'session', sessionId: 'source', title: 'Previous research' },
+        { type: 'pasted-text', id: 'paste', text: 'Long research notes' }
+      ]
+    }
+    for (const canEditDraft of [true, false]) {
+      renderPanel({ view: { canEditDraft }, composer: { view: { doc } } })
+      const editor = getComposerEditor()
+      expect(editor.classList.contains('min-h-20')).toBe(true)
+      expect(editor.getAttribute('contenteditable')).toBe(String(canEditDraft))
+      expect(Array.from(container.querySelectorAll('.min-h-20'))).toEqual([editor])
+      expect(editor.querySelectorAll('[contenteditable="false"]')).toHaveLength(4)
+    }
+    renderPanel({
+      view: {
+        activeSession: {
+          id: 'sent',
+          projectId: 'project-a',
+          title: 'First message',
+          cwd: '/workspace',
+          status: 'idle',
+          messages: [],
+          createdAt: 1,
+          updatedAt: 2
+        }
+      },
+      composer: { view: { doc } }
+    })
+    expect(getComposerEditor().classList.contains('min-h-20')).toBe(false)
+  })
+
   it('prepares and appends prompts while preserving structured draft content', () => {
     const changeDoc = vi.fn()
     const submit = vi.fn()
