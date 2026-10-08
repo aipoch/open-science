@@ -285,7 +285,7 @@ test('shows a recoverable disk-capacity error before copying an import', async (
   await operation.getByRole('button', { name: 'Close', exact: true }).click()
 })
 
-test('exports a Session package and opens the imported Session with replay @pr-mainline-projects', async ({
+test('exports a Session package and opens the imported Session with replay', async ({
   app
 }, testInfo) => {
   // This journey validates the archive several times and performs two persistence restarts.

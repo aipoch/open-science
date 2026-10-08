@@ -424,7 +424,11 @@ ci(review): unify automated AI reviews
   Windows behavior. The Notebook journey uploads CSV data, runs real Python through the Agent/MCP
   path, previews the generated report, and resumes the saved research after relaunch. Only the Agent
   responses are deterministic; computation and persistence use the production application.
-  Keep `@pr-mainline-<group>` tags in existing test titles; untagged variants stay scheduled.
+  Keep one reviewed `@pr-mainline-<group>` representative per group: project creation/relaunch,
+  Agent Allow/Deny, uploaded Markdown editing/preview, real Python analysis/resumption, and
+  Windows tray/second-launch lifecycle. New cases and additional variants stay untagged in
+  complete scheduled/manual regression; adding a mainline tag requires CI policy review.
+  The discovery guard asserts these five exact test identities to prevent silent growth.
   Selection uses the trusted base module owners and consumer graph and explains every chosen group
   in the preflight summary. Unknown/shared/build changes select all mainline groups, never complete
   E2E suites. Windows core checks remain blocking. Complete Windows business/browser variants run

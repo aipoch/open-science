@@ -219,9 +219,7 @@ test('edits uploaded Markdown versions and keeps diff navigation coherent @pr-ma
   await expect(preview).toBeHidden()
 })
 
-test('links a multi-page PDF upload as Reading context in a new project @pr-mainline-files', async ({
-  app
-}) => {
+test('links a multi-page PDF upload as Reading context in a new project', async ({ app }) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
   await createProject(page)
