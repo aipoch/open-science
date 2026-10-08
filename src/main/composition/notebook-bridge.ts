@@ -238,6 +238,16 @@ export async function composeNotebookBridge({
         if (!runtime) throw new Error('ACP runtime is not initialized.')
         return runtime.requestUserInput(request)
       },
+      requestFolderAccess: ({ sessionId, projectId, path, signal }) => {
+        const runtime = runtimeRef.current
+        if (!runtime) return Promise.resolve(false)
+        return runtime.requestAppApproval({
+          sessionId,
+          title: 'Grant folder access',
+          rawInput: { notebookFolderAccess: { path, projectId } },
+          signal
+        })
+      },
       artifactProvenance: {
         saveVersion: (request, sourceScope, signal, onMetadataBytes) =>
           artifactProvenanceRepository.saveVersion(request, sourceScope, signal, onMetadataBytes),

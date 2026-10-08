@@ -2,6 +2,7 @@ import { expect, it, vi } from 'vitest'
 import type { NotebookProcessSandbox } from './process-sandbox'
 import { probeWindowsRuntimeComponent } from './windows-runtime-probe'
 import type { WindowsRuntimeComponentSelection } from './windows-runtime-components'
+import { dirname, win32 } from 'node:path'
 
 const selection = (): WindowsRuntimeComponentSelection => ({
   release: {
@@ -28,6 +29,36 @@ const wrapWith =
     annotateStderr: (stderr: string) => stderr,
     cleanup: overrides.cleanup as never
   })
+
+it('does not grant inherited developer PATH trees to the fixed runtime self-check', async () => {
+  const inheritedPath = process.env.PATH
+  process.env.PATH = 'C:\\unrelated-tools;C:\\large-package-cache'
+  const runtime = selection()
+  const wrap = vi.fn(
+    wrapWith({
+      confirm: async () => true,
+      cleanup: async () => ({
+        processesTerminated: true,
+        networkClosed: true,
+        temporaryResourcesRemoved: true
+      })
+    })
+  )
+  try {
+    await probeWindowsRuntimeComponent(runtime, wrap)
+    const request = wrap.mock.calls[0]![0]
+    const windowsRoot = process.env.SystemRoot ?? process.env.WINDIR ?? 'C:\\Windows'
+    expect(request.env.PATH?.split(';')).toEqual([
+      dirname(runtime.executable),
+      win32.join(windowsRoot, 'System32'),
+      windowsRoot
+    ])
+    expect(request.filesystem.readOnlyRoots).toEqual([runtime.root])
+  } finally {
+    if (inheritedPath === undefined) delete process.env.PATH
+    else process.env.PATH = inheritedPath
+  }
+})
 
 it('polls the termination proof within a bounded window instead of sampling a single instant', async () => {
   let confirmations = 0

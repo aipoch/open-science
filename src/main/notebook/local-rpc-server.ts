@@ -27,6 +27,7 @@ import {
 } from '../../shared/artifact-provenance'
 import { createUploadVersionReference, parseUploadVersionReference } from '../../shared/uploads'
 import type { NotebookRpcConnection } from './mcp-server'
+import { notebookFolderAccessPath } from './folder-access'
 import { NotebookControlCompletionCapturedError } from './execution-owner'
 import {
   NOTEBOOK_LOCAL_RPC_METHODS,
@@ -244,6 +245,12 @@ type NotebookLocalRpcServerOptions = {
     }): Promise<unknown>
   }
   requestUserInput?: (request: AgentUserChoiceRequest) => Promise<AgentUserChoiceResult>
+  requestFolderAccess?: (request: {
+    sessionId: string
+    projectId: string
+    path: string
+    signal?: AbortSignal
+  }) => Promise<boolean>
   artifactProvenance?: {
     saveVersion?(
       request: SaveArtifactVersionRequest,
@@ -548,6 +555,19 @@ const CONTROL_RPC_METHODS = new Set([
   'memoryRemember'
 ])
 const MEMORY_RPC_METHODS = new Set(['memoryListCategories', 'memorySearch', 'memoryRemember'])
+const FOLDER_ACCESS_EXECUTION_METHODS = new Set<NotebookExecutionRpcMethod>([
+  'execute',
+  'executeControl',
+  'executeShell'
+])
+// Read snapshots and cancellation remain available while a user decision is pending.
+const FOLDER_ACCESS_SAFE_METHODS = new Set([
+  'state',
+  'listRuntimes',
+  'getBackgroundRun',
+  'cancelBackgroundRun',
+  'abortCodeCell'
+])
 const DELEGATED_CONTROL_RPC_METHODS = new Set([
   ...[...CONTROL_RPC_METHODS].filter((method) => !MEMORY_RPC_METHODS.has(method)),
   'delegatedOutputCall'
@@ -669,6 +689,7 @@ class NotebookLocalRpcServer {
   private readonly skillImporter: NotebookLocalRpcServerOptions['skillImporter']
   private readonly planService: NotebookLocalRpcServerOptions['planService']
   private readonly requestUserInput: NotebookLocalRpcServerOptions['requestUserInput']
+  private readonly requestFolderAccess: NotebookLocalRpcServerOptions['requestFolderAccess']
   private readonly artifactProvenance: NotebookLocalRpcServerOptions['artifactProvenance']
   private readonly inputRegistry: NotebookLocalRpcServerOptions['inputRegistry']
   private readonly hostArtifacts: NotebookLocalRpcServerOptions['hostArtifacts']
@@ -733,6 +754,16 @@ class NotebookLocalRpcServer {
     string,
     Map<string, { fingerprint: string; submission: Promise<unknown>; completed: boolean }>
   >()
+  // A granted folder releases exactly one retry of the original execution input. This prevents
+  // the agent from changing the path or command after the user has approved the parked call.
+  private readonly folderAccessRetries = new Map<
+    string,
+    Set<{ method: NotebookExecutionRpcMethod; inputFingerprint: string; path: string }>
+  >()
+  private readonly folderAccessWaits = new Map<
+    string,
+    Set<{ method: NotebookExecutionRpcMethod; inputFingerprint: string; path: string }>
+  >()
 
   constructor(
     private readonly service: NotebookLocalRpcCapability,
@@ -754,6 +785,7 @@ class NotebookLocalRpcServer {
     this.skillImporter = options.skillImporter
     this.planService = options.planService
     this.requestUserInput = options.requestUserInput
+    this.requestFolderAccess = options.requestFolderAccess
     this.artifactProvenance = options.artifactProvenance
     this.inputRegistry = options.inputRegistry
     this.hostArtifacts = options.hostArtifacts
@@ -1107,6 +1139,8 @@ class NotebookLocalRpcServer {
       this.claimedDurableExecutionAuthorizations.delete(ownedSessionId)
       this.consumedExecutionToolCalls.delete(ownedSessionId)
       this.computeSubmissionInvocations.delete(ownedSessionId)
+      this.folderAccessRetries.delete(ownedSessionId)
+      this.folderAccessWaits.delete(ownedSessionId)
     }
     for (const [aliasSessionId, targetSessionId] of this.sessionAliases) {
       if (ownedSessionIds.has(aliasSessionId) || ownedSessionIds.has(targetSessionId)) {
@@ -1263,6 +1297,107 @@ class NotebookLocalRpcServer {
       })
     )
     return Array.isArray(requestOrRequests) ? canonicalized : canonicalized[0]
+  }
+
+  private folderAccessFingerprint(
+    method: string,
+    params: Record<string, unknown>
+  ): string | undefined {
+    if (!FOLDER_ACCESS_EXECUTION_METHODS.has(method as NotebookExecutionRpcMethod)) return undefined
+    const input = notebookExecutionInputFingerprint(method as NotebookExecutionRpcMethod, params)
+    if (!input) return undefined
+    // Bind context separately from the durable execution join, whose normalization is a different
+    // contract. Runtime-changing RPCs stay fenced until these exact retries have been consumed.
+    const shell = isRecord(params.shellRuntime) ? params.shellRuntime : undefined
+    return JSON.stringify([
+      input,
+      params.projectId,
+      params.workspaceCwd,
+      params.environment,
+      params.timeoutMs,
+      params.inputKind,
+      shell && [shell.kind, shell.version, shell.shell, shell.profileId, shell.distro, shell.user]
+    ])
+  }
+
+  private assertFolderAccessRetry(method: string, params: Record<string, unknown>): void {
+    if (!isNotebookLocalRpcMethod(method) || FOLDER_ACCESS_SAFE_METHODS.has(method)) return
+    if (method === 'manageEnvironments' && params.action === 'list') return
+    const sessionId = typeof params.sessionId === 'string' ? params.sessionId : undefined
+    if (!sessionId) return
+    const waiting = this.folderAccessWaits.get(sessionId)?.values().next().value
+    if (waiting) {
+      throw new RpcHttpError(
+        409,
+        `Folder access approval is pending for the ${waiting.method} call. Wait for the user before running another Notebook command.`
+      )
+    }
+    const retries = this.folderAccessRetries.get(sessionId)
+    if (!retries) return
+    const inputFingerprint = this.folderAccessFingerprint(method, params)
+    const pending = [...retries].find(
+      (retry) => retry.method === method && retry.inputFingerprint === inputFingerprint
+    )
+    if (!pending) {
+      throw new RpcHttpError(
+        409,
+        'Folder access was granted for an exact previous Notebook call. Retry an approved call unchanged before running another Notebook command.'
+      )
+    }
+    retries.delete(pending)
+    if (retries.size === 0) this.folderAccessRetries.delete(sessionId)
+  }
+
+  private async settleFolderAccess(
+    method: string,
+    params: Record<string, unknown>,
+    result: unknown,
+    signal: AbortSignal
+  ): Promise<unknown> {
+    if (
+      !FOLDER_ACCESS_EXECUTION_METHODS.has(method as NotebookExecutionRpcMethod) ||
+      params.background === true ||
+      !this.requestFolderAccess
+    ) {
+      return result
+    }
+    const sessionId = typeof params.sessionId === 'string' ? params.sessionId : undefined
+    const projectId = typeof params.projectId === 'string' ? params.projectId : undefined
+    const path = notebookFolderAccessPath(result)
+    if (!sessionId || !projectId || !path) return result
+
+    const inputFingerprint = this.folderAccessFingerprint(method, params)
+    if (!inputFingerprint) return result
+    const pending = {
+      method: method as NotebookExecutionRpcMethod,
+      inputFingerprint,
+      path
+    }
+    const waits = this.folderAccessWaits.get(sessionId) ?? new Set()
+    waits.add(pending)
+    this.folderAccessWaits.set(sessionId, waits)
+    let granted: boolean
+    try {
+      granted = await this.requestFolderAccess({ sessionId, projectId, path, signal })
+      // Turn/session teardown can remove this set while the UI decision is still settling.
+      // Such a decision must never recreate a retry gate for the replacement turn.
+      if (granted && !signal.aborted && this.folderAccessWaits.get(sessionId) === waits) {
+        const retries = this.folderAccessRetries.get(sessionId) ?? new Set()
+        retries.add(pending)
+        this.folderAccessRetries.set(sessionId, retries)
+      }
+    } finally {
+      waits.delete(pending)
+      if (waits.size === 0 && this.folderAccessWaits.get(sessionId) === waits) {
+        this.folderAccessWaits.delete(sessionId)
+      }
+    }
+    const folderAccess = {
+      status: granted ? 'granted' : 'denied',
+      path,
+      ...(granted ? { retryRequired: true } : {})
+    } as const
+    return isRecord(result) ? { ...result, folderAccess } : { result, folderAccess }
   }
 
   async issueSessionConnection(
@@ -1553,6 +1688,8 @@ class NotebookLocalRpcServer {
       this.executionAuthorizations.delete(sessionId)
       this.claimedDurableExecutionAuthorizations.delete(sessionId)
       this.consumedExecutionToolCalls.delete(sessionId)
+      this.folderAccessWaits.delete(sessionId)
+      this.folderAccessRetries.delete(sessionId)
     }
     const boundTurn: BoundArtifactTurn = { ...binding, pendingRequests: new Set() }
     let ownedTurns = this.artifactTurnBindingsByExecution.get(sessionId)
@@ -1593,6 +1730,8 @@ class NotebookLocalRpcServer {
       this.executionAuthorizations.delete(sessionId)
       this.claimedDurableExecutionAuthorizations.delete(sessionId)
       this.consumedExecutionToolCalls.delete(sessionId)
+      this.folderAccessWaits.delete(sessionId)
+      this.folderAccessRetries.delete(sessionId)
     }
     await Promise.all(draining)
     if (ownedTurns?.get(ownerExecutionId) === binding) {
@@ -3373,6 +3512,7 @@ class NotebookLocalRpcServer {
         }
       }
     }
+    this.assertFolderAccessRetry(method, trustedParams)
     const handler = parseRpcParams(() =>
       resolveNotebookLocalRpcHandler(this.service, method, trustedParams)
     )
@@ -3447,17 +3587,18 @@ class NotebookLocalRpcServer {
           signal,
           onExecutionSettled
         )
+        const settledResult = await this.settleFolderAccess(method, trustedParams, result, signal)
         const backgroundRunId =
           (method === 'execute' || method === 'executeControl' || method === 'executeShell') &&
           params.background === true &&
-          isRecord(result)
-            ? result.runId
+          isRecord(settledResult)
+            ? settledResult.runId
             : undefined
         if (typeof backgroundRunId === 'string') {
           retainedForBackgroundRun = true
           void this.service.waitForBackgroundRun(backgroundRunId).then(closeLease, closeLease)
         }
-        return result
+        return settledResult
       } finally {
         if (!retainedForBackgroundRun) await closeLease()
       }
@@ -3473,7 +3614,8 @@ class NotebookLocalRpcServer {
       )
     }
 
-    return handler(trustedParams, signal, onExecutionSettled)
+    const result = await handler(trustedParams, signal, onExecutionSettled)
+    return this.settleFolderAccess(method, trustedParams, result, signal)
   }
 
   // Rewrites the temporary notebook session id to the final ACP session id when needed.

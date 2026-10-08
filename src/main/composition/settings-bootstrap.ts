@@ -333,6 +333,7 @@ export async function composeSettingsBootstrap({
     }
   })
   settingsServiceRef.current = settingsService
+  void notebookNetworkSandbox.prewarmStatus()
   const settingsSnapshotCommits = new SettingsSnapshotCommitOwner(
     settingsService,
     applicationEvents

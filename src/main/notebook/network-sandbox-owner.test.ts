@@ -76,6 +76,10 @@ vi.mock('@aipoch/notebook-network-sandbox', () => ({
 
 import { NotebookNetworkSandboxOwner, commandLine } from './network-sandbox-owner'
 import { WindowsNotebookRuntimeManager } from './windows-runtime-manager'
+import {
+  WindowsRuntimeComponentStore,
+  type WindowsRuntimeComponentDependencies
+} from './windows-runtime-components'
 import { NotebookKernelExecutor } from './kernel-executor'
 import { DEFAULT_R_ENV, envPrefix, legacyDefaultEnvPrefix, rScriptBin } from './runtime-paths'
 import {
@@ -1324,6 +1328,76 @@ describe('NotebookNetworkSandboxOwner', () => {
     ).toHaveLength(1)
     expect(JSON.stringify(records)).not.toContain('Notebook isolation requires bubblewrap')
     await owner.dispose()
+  })
+
+  it('prewarms the protected runtime check without blocking the caller', async () => {
+    const prepare = vi.spyOn(WindowsNotebookRuntimeManager.prototype, 'prepare').mockResolvedValue({
+      root: '/fixture/runtime',
+      node: '/fixture/runtime/node.exe',
+      powershell: '/fixture/runtime/pwsh.exe'
+    })
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: '/resources',
+      windowsRuntimeRoot: join(tmpdir(), 'prewarm-runtime'),
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn(),
+      platform: 'win32'
+    })
+    try {
+      await owner.prewarmStatus()
+      expect(prepare).toHaveBeenCalledWith(false)
+    } finally {
+      prepare.mockRestore()
+      await owner.dispose()
+    }
+  })
+
+  it('keeps stale user folder grants out of the first protected runtime self-check', async () => {
+    const select = vi
+      .spyOn(WindowsRuntimeComponentStore.prototype, 'select')
+      .mockImplementation(async function (this: WindowsRuntimeComponentStore, releases, request) {
+        const release = releases.find((entry) => entry.component === request.component)!
+        const selection = { release, root: tmpdir(), executable: process.execPath }
+        // Substitute only the catalog inventory; run the owner's actual probe and launch policy.
+        const store = this as unknown as { deps: WindowsRuntimeComponentDependencies }
+        await store.deps.probe(selection, request.signal)
+        return selection
+      })
+    backend.wrap.mockImplementation(async () => ({
+      argv: [process.execPath, '-e', 'console.log("RUNTIME_PROBE_OK")'],
+      env: process.env,
+      resetNetworkConnections: backend.resetNetworkConnections,
+      setExecutionActive: backend.setExecutionActive,
+      confirmProcessTreeTermination: async () => true,
+      annotateStderr: (stderr: string) => stderr,
+      cleanup: async () => ({
+        processesTerminated: true,
+        networkClosed: true,
+        temporaryResourcesRemoved: true
+      })
+    }))
+    const getGrantedLocalRoots = vi.fn().mockRejectedValue(new Error('stale user grants'))
+    const { logger, records } = createCapturingLogger()
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: '/resources',
+      windowsRuntimeRoot: join(tmpdir(), 'self-check-runtime'),
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      getGrantedLocalRoots,
+      logger,
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn(),
+      platform: 'win32'
+    })
+    try {
+      expect(await owner.status(), JSON.stringify(records)).toMatchObject({ kind: 'ready' })
+      expect(select).toHaveBeenCalledTimes(2)
+      expect(getGrantedLocalRoots).not.toHaveBeenCalled()
+      expect(backend.wrap).toHaveBeenCalledTimes(2)
+    } finally {
+      select.mockRestore()
+      await owner.dispose()
+    }
   })
 
   it('denies requests after a wrapped process has been cleaned up', async () => {

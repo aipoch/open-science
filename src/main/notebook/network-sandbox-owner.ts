@@ -330,7 +330,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         (selection, signal) =>
           probeWindowsRuntimeComponent(
             selection,
-            (request) => this.prepare(request),
+            (request) => this.prepare(request, false),
             signal,
             (message) => this.log.warn(message)
           )
@@ -419,6 +419,13 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     }
   }
 
+  // Warm the first Windows protection check in the background after Settings is available. The
+  // component isolation probes are intentionally retained, but they should overlap application
+  // composition instead of blocking the first Network settings view.
+  async prewarmStatus(): Promise<void> {
+    await this.status().catch(() => undefined)
+  }
+
   async initialize(): Promise<void> {
     if (this.initialized) return
     if (this.initializePromise) return this.initializePromise
@@ -477,7 +484,10 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     }
   }
 
-  private async prepare(invocation: NotebookSandboxInvocation): Promise<NotebookSandboxedSpawn> {
+  private async prepare(
+    invocation: NotebookSandboxInvocation,
+    includeGrantedRoots = true
+  ): Promise<NotebookSandboxedSpawn> {
     const preparationStartedAt = performance.now()
     assertProcessTreeSupport(this.platform)
     const runtimeAccessRevision = this.runtimeAccessRevision
@@ -485,7 +495,11 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     const target = invocation.target ?? { kind: 'native' as const }
     await this.reconcilePendingCommandCleanups(target)
     await this.updateTrustBundle()
-    const grantedRoots = (await this.options.getGrantedLocalRoots?.()) ?? []
+    // Runtime self-checks use only their fixture and interpreter. Unrelated user grants can be
+    // stale or expensive to traverse, and must not grant the self-check access to private data.
+    const grantedRoots = includeGrantedRoots
+      ? ((await this.options.getGrantedLocalRoots?.()) ?? [])
+      : []
     const { commandTempRoot, receipt, retained } = await this.createCommandTemporaryRoot(target)
     this.pendingTemporaryRoots.set(commandTempRoot, receipt)
     const env = {

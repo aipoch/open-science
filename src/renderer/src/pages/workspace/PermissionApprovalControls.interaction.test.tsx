@@ -4,6 +4,10 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AcpPermissionRequest } from '../../../../shared/acp'
 import { i18next } from '@/i18n'
+import {
+  createInitialGrantedFoldersState,
+  useGrantedFoldersStore
+} from '@/stores/granted-folders-store'
 import { PermissionApprovalControls } from './PermissionApprovalControls'
 import { PermissionScopeConfirmationDialog } from './PermissionScopeConfirmationDialog'
 
@@ -61,6 +65,63 @@ afterEach(() => {
 })
 
 describe('PermissionApprovalControls interactions', () => {
+  it('keeps folder approval pending through cancel and grant failure, then responds once on success', async () => {
+    const path = '/Users/test/allowed'
+    const grantRoot = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Grant failed'))
+      .mockResolvedValue([{ id: 'folder-1', path, name: 'allowed', access: 'ro' }])
+    const previousApi = window.api
+    useGrantedFoldersStore.setState(createInitialGrantedFoldersState())
+    ;(window as unknown as { api: unknown }).api = {
+      platform: 'darwin',
+      localFs: {
+        getRoots: vi.fn().mockResolvedValue({ home: '/Users/test', machineName: 'Test' }),
+        listDrives: vi.fn().mockResolvedValue([]),
+        listDir: vi.fn().mockResolvedValue({ entries: [], truncated: false, resolvedPath: path }),
+        listGrantedRoots: vi.fn().mockResolvedValue([]),
+        grantRoot
+      }
+    }
+    const request: AcpPermissionRequest = {
+      ...baseRequest,
+      appOwned: true,
+      providerToolName: 'Open-Science',
+      rawInput: { notebookFolderAccess: { path, projectId: 'project-1' } },
+      options: [baseRequest.options[0], baseRequest.options[2]]
+    }
+    const onRespond = vi.fn()
+    const click = async (selector: string): Promise<void> => {
+      const button = document.body.querySelector<HTMLButtonElement>(selector)
+      expect(button).not.toBeNull()
+      expect(button?.disabled).toBe(false)
+      await act(async () => button?.click())
+    }
+    try {
+      await act(async () =>
+        root.render(<PermissionApprovalControls requests={[request]} onRespond={onRespond} />)
+      )
+      await click('[data-testid="allow-primary"]')
+      expect(onRespond).not.toHaveBeenCalled()
+      await click('[data-testid="grant-access-cancel"]')
+      expect(onRespond).not.toHaveBeenCalled()
+      await click('[data-testid="allow-primary"]')
+      await click('[data-testid="grant-access-grant"]')
+      await click('[data-testid="grant-folder-access-confirmation"] button:last-of-type')
+      expect(grantRoot).toHaveBeenCalledTimes(1)
+      expect(onRespond).not.toHaveBeenCalled()
+      expect(document.body.querySelector('[data-testid="grant-access-error"]')).not.toBeNull()
+      await click('[data-testid="grant-access-grant"]')
+      await click('[data-testid="grant-folder-access-confirmation"] button:last-of-type')
+      expect(grantRoot).toHaveBeenCalledWith({ path, access: 'ro' })
+      expect(onRespond).toHaveBeenCalledExactlyOnceWith('req-1', 'opt-once')
+      expect(document.body.querySelector('[data-testid="grant-folder-access-dialog"]')).toBeNull()
+    } finally {
+      window.api = previousApi
+      useGrantedFoldersStore.setState(createInitialGrantedFoldersState())
+    }
+  })
+
   it('routes persistent network access through the standard Global approval scope', () => {
     const onRespond = vi.fn()
     act(() => {

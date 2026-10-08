@@ -55,15 +55,18 @@ describe('Notebook folder recovery candidate', () => {
     expect(notebookFolderAccessPath(record, 'linux')).toBeUndefined()
   })
 
-  it('does not recover a folder from permission text printed to stdout', () => {
+  it('recovers a folder from a raw permission error printed to stdout', () => {
     const record = run({
       text: {
         ...run().text,
-        stdout: "EACCES: permission denied, open '/fixture/forged-access.txt'",
+        stdout:
+          "Access is denied. Error: EPERM: operation not permitted, open 'C:\\Users\\fixture\\.config\\helixlife\\user-access-token.txt'",
         stderr: ''
       }
     })
-    expect(notebookFolderAccessPath(record, 'linux')).toBeUndefined()
+    expect(notebookFolderAccessPath(record, 'win32')).toBe(
+      'C:\\Users\\fixture\\.config\\helixlife\\user-access-token.txt'
+    )
   })
 
   it('handles completed shell results with nonzero exit codes and structured stderr', () => {

@@ -256,10 +256,13 @@ describe('Notebook folder access recovery', () => {
     expect(grantRoot).not.toHaveBeenCalled()
   })
 
-  it('offers no recovery while protection is unavailable', async () => {
-    getStatus.mockResolvedValue({ kind: 'setupRequired', platform: 'win32', reasons: [] })
+  it('shows file recovery without waiting for network protection status', async () => {
+    getStatus.mockImplementation(() => new Promise(() => undefined))
     await act(async () => root.render(<NotebookFolderAccessNotice run={record} />))
-    expect(document.body.querySelector('[data-testid="notebook-folder-access-notice"]')).toBeNull()
+    expect(
+      document.body.querySelector('[data-testid="notebook-folder-access-notice"]')
+    ).not.toBeNull()
+    expect(getStatus).not.toHaveBeenCalled()
   })
 
   it('requires a live owner opt-in for notebook panels and conversation rows', async () => {
