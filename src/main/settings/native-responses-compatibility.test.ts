@@ -1167,10 +1167,21 @@ describe('native Responses compatibility', () => {
         await upstreamRequested.promise
         const response = await responsePromise
         const reader = response.body!.getReader()
-        const first = await reader.read()
-        expect(new TextDecoder().decode(first.value)).toContain('cancelled')
+        const decoder = new TextDecoder()
+        let received = ''
+        while (!received.includes('cancelled')) {
+          const chunk = await reader.read()
+          expect(chunk.done).toBe(false)
+          received += decoder.decode(chunk.value, { stream: true })
+        }
         if (cancellation === 'client abort') client.abort()
-        await expect(reader.read()).rejects.toThrow()
+        await expect(
+          (async (): Promise<void> => {
+            while (!(await reader.read()).done) {
+              // Drain any remaining chunks until cancellation rejects the stream.
+            }
+          })()
+        ).rejects.toThrow()
         await vi.waitFor(() => expect(upstreamSignal?.aborted).toBe(true))
         if (cancellation === 'idle timeout') {
           expect(logSpies.warn.mock.calls).toContainEqual([
