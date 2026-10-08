@@ -236,11 +236,10 @@ describe('ProviderRuntimeProjectionOwner', () => {
     }
   )
 
-  it.each(['claude-opus-5-5', 'claude-sonnet-5-5'])(
-    'resolves %s for API and pinned subscription targets',
+  it.each(['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'])(
+    'resolves %s for API and pinned subscription targets across frameworks',
     (model) => {
       const owner = new ProviderRuntimeProjectionOwner()
-      const framework = getAgentFramework('claude-code')
       const providers: StoredProvider[] = [
         {
           id: 'anthropic',
@@ -263,14 +262,30 @@ describe('ProviderRuntimeProjectionOwner', () => {
       ]
 
       for (const provider of providers) {
-        const target = owner.resolveRuntimeTarget(provider, { kind: 'required', model }, framework)
+        const before = structuredClone(provider)
+        for (const frameworkId of ['claude-code', 'opencode', 'codex'] as const) {
+          const target = owner.resolveRuntimeTarget(
+            provider,
+            { kind: 'required', model },
+            getAgentFramework(frameworkId)
+          )
 
-        expect(target.effectiveModel).toBe(model)
-        expect(target.provider).toMatchObject({
-          model,
-          contextWindow: 1_000_000,
-          supportsImageInput: true
-        })
+          expect(target).toMatchObject({
+            effectiveModel: model,
+            apiEndpoints: ['anthropic'],
+            frameworkCompatible:
+              frameworkId === 'claude-code' ||
+              (provider.type === 'official' && frameworkId === 'opencode'),
+            needsChatResponsesBridge: false,
+            needsNativeResponsesCompatibility: false,
+            reasoningEffortProfile: {
+              supported: true,
+              slots: ['low', 'medium', 'high', 'xhigh', 'max']
+            },
+            provider: { model, contextWindow: 1_000_000, supportsImageInput: true }
+          })
+        }
+        expect(provider).toEqual(before)
       }
     }
   )

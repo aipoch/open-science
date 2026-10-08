@@ -73,17 +73,20 @@ describe('provider registry', () => {
     })
   })
 
-  it('offers Claude Sonnet 5.5 with its published capabilities and preserves the default', () => {
-    expect(getOfficialVendorModelIds('anthropic')).toContain('claude-sonnet-5-5')
-    expect(defaultVendorModel('anthropic')).toBe('claude-opus-5')
-    expect(resolveModelContextWindow('anthropic', 'claude-sonnet-5-5')).toBe(1_000_000)
-    expect(isVendorModelMultimodal('anthropic', 'claude-sonnet-5-5')).toBe(true)
-    expect(resolveVendorModelApiEndpoints('anthropic', 'claude-sonnet-5-5')).toEqual(['anthropic'])
-    expect(resolveVendorModelReasoningEffort('anthropic', 'claude-sonnet-5-5')).toEqual({
-      supported: true,
-      slots: ['low', 'medium', 'high', 'xhigh', 'max']
-    })
-  })
+  it.each(['claude-sonnet-5-5', 'claude-haiku-5-5'])(
+    'offers %s with its published capabilities and preserves the default',
+    (model) => {
+      expect(getOfficialVendorModelIds('anthropic')).toContain(model)
+      expect(defaultVendorModel('anthropic')).toBe('claude-opus-5')
+      expect(resolveModelContextWindow('anthropic', model)).toBe(1_000_000)
+      expect(isVendorModelMultimodal('anthropic', model)).toBe(true)
+      expect(resolveVendorModelApiEndpoints('anthropic', model)).toEqual(['anthropic'])
+      expect(resolveVendorModelReasoningEffort('anthropic', model)).toEqual({
+        supported: true,
+        slots: ['low', 'medium', 'high', 'xhigh', 'max']
+      })
+    }
+  )
 
   it('defines exactly one of baseUrl or regions per vendor, with a non-empty catalog', () => {
     for (const vendor of OFFICIAL_VENDORS) {
