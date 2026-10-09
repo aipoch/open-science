@@ -285,7 +285,12 @@
         "src/shared/update.ts",
         "src/shared/web-api-map.generated.ts",
         "src/shared/wsl-setup.ts",
-        "src/main/delegation/production-framework-runtime.ts"
+        "src/main/delegation/production-framework-runtime.ts",
+        "src/main/notebook/managed-environment-directory.ts",
+        "src/main/notebook/managed-research-environment.ts",
+        "src/main/notebook/managed-research-node-runtime.ts",
+        "src/main/notebook/research-materials.ts",
+        "src/shared/research-execution-profile.ts"
       ],
       "capabilities": ["windows_sensitive"]
     },
