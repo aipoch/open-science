@@ -39,10 +39,12 @@ export const showSessionReplay = (
   projectId: string,
   sourceSessionId: string,
   title: string,
-  workspaceProjectId = projectId
+  workspaceProjectId = projectId,
+  mode: 'replay' | 'runs' = 'replay'
 ): void => {
   usePreviewWorkbenchStore.getState().upsertAndActivateItem({
     ...createSessionReplayItem(projectId, sourceSessionId, title, workspaceProjectId),
+    replayRevealMode: mode,
     replayRevealRequest: ++replayRevealRequest
   })
 }

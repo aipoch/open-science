@@ -30,7 +30,9 @@
     "resources/find-overlay/findOverlay.test.js",
     "resources/find-overlay/index.html",
     "src/shared/renderer-contracts/research-execution-profiles.ts",
-    "src/shared/renderer-contracts/run-observation.ts"
+    "src/shared/renderer-contracts/run-observation.ts",
+    "src/shared/renderer-contracts/research-runs.ts",
+    "src/shared/renderer-contracts/research-demos.ts"
   ],
   "interfacePaths": [
     "src/main/ipc-surfaces/adapter.ts",
@@ -47,7 +49,9 @@
     "src/main/ipc-surfaces/office-preview.ts",
     "src/main/session-package/desktop-composition.ts",
     "src/shared/renderer-contracts/research-execution-profiles.ts",
-    "src/shared/renderer-contracts/run-observation.ts"
+    "src/shared/renderer-contracts/run-observation.ts",
+    "src/shared/renderer-contracts/research-runs.ts",
+    "src/shared/renderer-contracts/research-demos.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -205,7 +209,8 @@
       "src/renderer/src/pages/workspace/handoff-lifecycle-source.test.ts",
       "src/renderer/web/bootstrap.test.ts",
       "src/renderer/web/renderer-argument-shape-characterization.test.ts",
-      "src/shared/renderer-surface-inventory.test.ts"
+      "src/shared/renderer-surface-inventory.test.ts",
+      "src/main/research-demos/owner.macos.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation"],

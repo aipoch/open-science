@@ -21,7 +21,8 @@ const clamp = (value: number, maximum: number): number =>
 export const projectReplayScene = (
   document: ReplayDocument,
   branchId: string,
-  positionMs: number
+  positionMs: number,
+  recordedTimeOrigin?: number
 ): ReplayScene => {
   const branch = document.branches.find((candidate) => candidate.id === branchId)
   if (!branch) throw new Error('Replay branch is unavailable.')
@@ -36,20 +37,34 @@ export const projectReplayScene = (
   const stepIndex = low - 1
   const step = branch.steps[stepIndex]
   const visibleSteps = branch.steps.slice(0, stepIndex + 1)
-  const stepProgress = step ? clamp(position - step.startMs, step.durationMs) / step.durationMs : 0
+  const stepProgress = step
+    ? step.durationMs > 0
+      ? clamp(position - step.startMs, step.durationMs) / step.durationMs
+      : 1
+    : 0
   // Standalone files and reviews are recorded outcomes, with no input or execution to animate.
   // Expose their references immediately so seeking to a step also makes it discussable.
   const phase: ReplayPhase =
-    step?.kind === 'message' || step?.kind === 'artifact' || step?.kind === 'review'
-      ? 'result'
-      : stepProgress < 0.2
-        ? 'input'
-        : stepProgress < 0.55
-          ? 'activity'
-          : 'result'
+    recordedTimeOrigin !== undefined
+      ? step?.recordedEndAt !== undefined && recordedTimeOrigin + position < step.recordedEndAt
+        ? 'activity'
+        : 'result'
+      : step?.kind === 'message' || step?.kind === 'artifact' || step?.kind === 'review'
+        ? 'result'
+        : stepProgress < 0.2
+          ? 'input'
+          : stepProgress < 0.55
+            ? 'activity'
+            : 'result'
   const showResults = phase === 'result'
+  const resultKnown = (item: NonNullable<typeof step>): boolean =>
+    recordedTimeOrigin === undefined ||
+    item.recordedEndAt === undefined ||
+    item.recordedEndAt <= recordedTimeOrigin + position
   const messageCharacters = step?.message
-    ? Math.ceil(step.message.content.length * Math.min(1, (stepProgress + 0.08) / 0.7))
+    ? recordedTimeOrigin !== undefined
+      ? step.message.content.length
+      : Math.ceil(step.message.content.length * Math.min(1, (stepProgress + 0.08) / 0.7))
     : 0
   const materialReferenceIds = new Map<string, Set<string>>()
   const visibleMaterialReference = (
@@ -117,7 +132,7 @@ export const projectReplayScene = (
           (existing) => existing.kind === reference.kind && existing.id === reference.id
         )
       )
-        visibleEvidence.push({ ...reference, part: 'record' })
+        visibleEvidence.push({ ...reference, part: resultKnown(previous) ? 'record' : 'input' })
     }
   }
   // The Stage keeps the latest recorded material beside later conversation. A question about
@@ -134,12 +149,13 @@ export const projectReplayScene = (
       )
         continue
       if (!visibleMaterialReference(materialStep, reference)) continue
+      if (reference.kind !== 'notebook-run' && !resultKnown(materialStep)) continue
       if (
         !visibleEvidence.some(
           (existing) => existing.kind === reference.kind && existing.id === reference.id
         )
       )
-        visibleEvidence.push({ ...reference, part: 'record' })
+        visibleEvidence.push({ ...reference, part: resultKnown(materialStep) ? 'record' : 'input' })
     }
   }
   return {
@@ -157,7 +173,7 @@ export const projectReplayScene = (
     visibleResourceIds: [
       ...new Set(
         visibleSteps.flatMap((item) =>
-          item.id === step?.id && !showResults ? [] : item.resourceIds
+          (item.id === step?.id && !showResults) || !resultKnown(item) ? [] : item.resourceIds
         )
       )
     ],

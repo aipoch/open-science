@@ -161,6 +161,8 @@ export type CreateManagedSessionRequest = z.input<typeof createManagedSessionReq
 export type ManagedExecutionMethod =
   | 'runtimes'
   | 'inspectMaterials'
+  | 'inspectOfflinePlans'
+  | 'executeOfflinePlan'
   | 'preflight'
   | 'requestConfiguration'
   | 'getConfiguration'

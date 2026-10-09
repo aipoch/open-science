@@ -1328,6 +1328,8 @@ async function hostLlm(request, options = undefined) {
 const managedExecutionMethods = [
   'runtimes',
   'inspectMaterials',
+  'inspectOfflinePlans',
+  'executeOfflinePlan',
   'preflight',
   'requestConfiguration',
   'getConfiguration',

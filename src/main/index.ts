@@ -809,6 +809,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
               mainEntryPath,
               settingsStore,
               translate,
+              desktopLocale: () => localeOwner.snapshot().locale,
               managedPreviewProtocol: managedPreviewProtocolBridge.registrar,
               handoffRuntime: 'production',
               headless: webMode.headless,

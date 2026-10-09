@@ -3,6 +3,7 @@ import type { PdfAnnotation, PdfAnnotationSource } from '../../../shared/pdf-ann
 import { create } from 'zustand'
 
 import { recordLastOpenedProject } from '@/lib/last-opened-project'
+import { rememberResearchProjectDestination } from '@/lib/research-project-entry'
 import type { CustomizeGoal } from '@/lib/customize-chat'
 import type { ComposerDoc } from '@/pages/workspace/composer/composer-doc'
 
@@ -117,12 +118,18 @@ type NavigationStore = {
     options?: { pdf: PdfAnnotationSource }
   ) => boolean
   openCollectionLiterature: (collectionId: string, origin: NavigationOrigin) => boolean
-  openProject: (projectId: string, origin: NavigationOrigin, afterNavigate?: () => void) => boolean
+  openProject: (
+    projectId: string,
+    origin: NavigationOrigin,
+    afterNavigate?: () => void,
+    canNavigate?: () => boolean
+  ) => boolean
   openSession: (
     projectId: string,
     sessionId: string,
     origin: NavigationOrigin,
-    afterNavigate?: () => void
+    afterNavigate?: () => void,
+    canNavigate?: () => boolean
   ) => boolean
   // Opens a session knowing only its id (e.g. a desktop-notification click); a no-op when the
   // session no longer exists or hasn't loaded yet.
@@ -221,15 +228,14 @@ const isActiveSession = (projectId: string, sessionId: string): boolean =>
 
 const requestPreviewLeaveForNavigation = (
   target: { view: NavigationView; projectId?: string },
-  action: () => void
+  action: () => boolean | void
 ): boolean => {
   const navigation = useNavigationStore.getState()
   const staysInCurrentWorkspace =
     navigation.view !== 'workspace' ||
     (target.view === 'workspace' && target.projectId === navigation.activeProjectId)
   if (staysInCurrentWorkspace) {
-    action()
-    return true
+    return action() !== false
   }
 
   const preview = usePreviewWorkbenchStore.getState()
@@ -347,10 +353,10 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
 
   // Enters a project's workspace, selecting its most recent session when one exists. An explicit user
   // open also records the durable last-opened project so `Chat with agent` re-opens it next time.
-  openProject: (projectId, origin, afterNavigate) => {
+  openProject: (projectId, origin, afterNavigate, canNavigate) => {
     if (!isActiveProject(projectId)) return false
     return requestPreviewLeaveForNavigation({ view: 'workspace', projectId }, () => {
-      if (!isActiveProject(projectId)) return false
+      if (canNavigate?.() === false || !isActiveProject(projectId)) return false
       const mostRecentSessionId = findMostRecentSessionId(projectId)
 
       if (mostRecentSessionId) {
@@ -372,13 +378,20 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
 
   // Opens a specific session inside its project's workspace. An optional continuation runs only
   // after navigation, including when a dirty-preview confirmation deferred it.
-  openSession: (projectId, sessionId, origin, afterNavigate) => {
+  openSession: (projectId, sessionId, origin, afterNavigate, canNavigate) => {
     if (!isActiveSession(projectId, sessionId)) return false
     return requestPreviewLeaveForNavigation({ view: 'workspace', projectId }, () => {
-      if (!isActiveSession(projectId, sessionId)) return false
+      if (canNavigate?.() === false || !isActiveSession(projectId, sessionId)) return false
       useSessionStore.getState().selectSession(sessionId)
 
-      if (origin === 'user') recordLastOpenedProject(projectId)
+      if (origin === 'user') {
+        recordLastOpenedProject(projectId)
+        rememberResearchProjectDestination(
+          projectId,
+          { kind: 'session', sessionId },
+          useSessionStore.getState().sessions
+        )
+      }
 
       set((state) =>
         navigationState(state, origin, { view: 'workspace', activeProjectId: projectId })

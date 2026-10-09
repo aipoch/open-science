@@ -19,6 +19,7 @@ import { WorkspaceComposerDraftsProvider } from './workspace-composer-drafts'
 import {
   useWorkspaceConversationController,
   type WorkspaceConversationController,
+  type ResearchRunSubmitIntent,
   type WorkspaceConversationControllerOptions
 } from './workspace-conversation-controller'
 
@@ -2347,3 +2348,260 @@ it.each(['retrying', 'pending'] as const)(
     }
   }
 )
+
+describe('prepared research Run admission', () => {
+  const source = {
+    sourceProjectId: 'project-a',
+    sourceSessionId: 'source-a',
+    sourceImportId: 'import-a',
+    sourceTitle: 'Study A'
+  }
+  const intent = (): ResearchRunSubmitIntent => ({
+    requestId: 'run-request-a',
+    source,
+    text: 'Run the selected research plan.',
+    onMessageAppended: vi.fn(),
+    onSettled: vi.fn(),
+    onRejected: vi.fn()
+  })
+  const researchOptions = (
+    overrides: Partial<WorkspaceConversationControllerOptions> = {}
+  ): WorkspaceConversationControllerOptions =>
+    options({ activeSession: session({ researchMembership: source }), ...overrides })
+
+  it('admits a prepared research request with an empty composer and creates a source-owned discussion', async () => {
+    const input = researchOptions({
+      activeSession: undefined,
+      currentDraftKey: researchDraftKey(source)
+    })
+    input.composer.view.doc = { nodes: [] }
+    const hook = renderController(input)
+    mounted.push(hook)
+    const request = intent()
+    expect(hook.result.current.availability.researchRun).toBe(true)
+    expect(hook.result.current.availability.submit).toBe(false)
+    await act(async () => hook.result.current.actions.submit.researchRun(request))
+    expect(input.runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: undefined,
+        researchMembership: source,
+        text: request.text,
+        annotations: [],
+        attachments: [],
+        projectId: 'project-a'
+      })
+    )
+    expect(request.onMessageAppended).toHaveBeenCalledWith({
+      sessionId: 'session-a',
+      messageId: 'message-a'
+    })
+    expect(request.onSettled).toHaveBeenCalledWith({
+      sessionId: 'session-a',
+      messageId: 'message-a'
+    })
+    for (const action of Object.values(input.composer.lifecycle))
+      expect(action).not.toHaveBeenCalled()
+  })
+
+  it.each(['success', 'failure'] as const)(
+    'preserves unrelated draft text, uploads, annotations and recovery on %s',
+    async (outcome) => {
+      const input = researchOptions()
+      input.composer.view.annotations = [quotedAnnotation()]
+      input.composer.view.attachments = [
+        {
+          id: 'draft-upload',
+          sessionId: 'session-a',
+          name: 'notes.pdf',
+          originalName: 'notes.pdf',
+          path: '/data/notes.pdf',
+          mimeType: 'application/pdf',
+          size: 123
+        }
+      ]
+      const originalDraft = structuredClone(input.composer.view)
+      if (outcome === 'failure')
+        input.runtime.sendMessage = vi.fn().mockRejectedValue(new Error('Unavailable'))
+      const hook = renderController(input)
+      mounted.push(hook)
+      const request = intent()
+      await act(async () => {
+        const result = hook.result.current.actions.submit.researchRun(request)
+        if (outcome === 'failure') await expect(result).rejects.toThrow()
+        else await result
+      })
+      expect(input.composer.view).toEqual(originalDraft)
+      for (const action of Object.values(input.composer.lifecycle))
+        expect(action).not.toHaveBeenCalled()
+      expect(input.composer.actions.setError).not.toHaveBeenCalled()
+      expect(input.runtime.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ text: request.text, annotations: [], attachments: [] })
+      )
+      expect(input.resetNewConversationSettings).not.toHaveBeenCalled()
+      expect(input.session.actions.resetNewConversationSpecialist).not.toHaveBeenCalled()
+    }
+  )
+
+  it('publishes the exact prompt before the turn finishes, then reports the durable destination', async () => {
+    const input = researchOptions({
+      activeSession: undefined,
+      currentDraftKey: researchDraftKey(source)
+    })
+    let finish!: (value: { sessionId: string; messageId: string }) => void
+    input.runtime.sendMessage = vi.fn((message) => {
+      message.onMessageAppended?.({ sessionId: 'pending-a', messageId: 'exact-prompt' })
+      return new Promise<{ sessionId: string; messageId: string }>((resolve) => {
+        finish = resolve
+      })
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+    const request = intent()
+    await act(async () => hook.result.current.actions.submit.researchRun(request))
+    expect(request.onMessageAppended).toHaveBeenCalledExactlyOnceWith({
+      sessionId: 'pending-a',
+      messageId: 'exact-prompt'
+    })
+    expect(request.onSettled).not.toHaveBeenCalled()
+    await act(async () => finish({ sessionId: 'durable-a', messageId: 'exact-prompt' }))
+    expect(request.onMessageAppended).toHaveBeenCalledOnce()
+    expect(request.onSettled).toHaveBeenCalledExactlyOnceWith({
+      sessionId: 'durable-a',
+      messageId: 'exact-prompt'
+    })
+  })
+
+  it.each([
+    ['unowned discussion', { activeSession: session() }],
+    [
+      'different import',
+      {
+        activeSession: session({
+          researchMembership: { ...source, sourceImportId: 'another-import' }
+        })
+      }
+    ],
+    [
+      'imported summary',
+      {
+        activeSession: session({
+          researchMembership: source,
+          importedResearch: { importId: 'import-a' } as ChatSession['importedResearch']
+        })
+      }
+    ],
+    [
+      'wrong source draft',
+      {
+        activeSession: undefined,
+        currentDraftKey: researchDraftKey({ ...source, sourceImportId: 'other' })
+      }
+    ],
+    ['missing provider', { agentConfiguration: undefined }],
+    ['admission blocked', { isTurnAdmissionBlocked: true }],
+    [
+      'busy session',
+      {
+        activeSession: runningSession(),
+        actionability: projectSessionActionability(runningSession())
+      }
+    ]
+  ] as const)('rejects %s without consuming the ordinary draft', async (_reason, overrides) => {
+    const input = researchOptions(overrides)
+    const hook = renderController(input)
+    mounted.push(hook)
+    await act(async () => {
+      await expect(hook.result.current.actions.submit.researchRun(intent())).rejects.toThrow()
+    })
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+    expect(input.composer.lifecycle.captureSend).not.toHaveBeenCalled()
+  })
+
+  it('deduplicates a second Run click while specialist admission is still pending', async () => {
+    const input = researchOptions()
+    input.session.lifecycle.captureSendIntent = vi.fn(() => ({
+      draftSpecialistId: 'specialist-a',
+      hasPendingSwitch: true,
+      pendingSpecialistId: 'specialist-a'
+    }))
+    let finish!: (ready: boolean) => void
+    input.session.lifecycle.prepareSpecialistSend = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          finish = resolve
+        })
+    )
+    const hook = renderController(input)
+    mounted.push(hook)
+    let first!: Promise<void>
+    act(() => {
+      first = hook.result.current.actions.submit.researchRun(intent())
+    })
+    await act(async () => {
+      await expect(
+        hook.result.current.actions.submit.researchRun({ ...intent(), requestId: 'second' })
+      ).rejects.toThrow()
+    })
+    expect(input.session.lifecycle.prepareSpecialistSend).toHaveBeenCalledOnce()
+    await act(async () => {
+      finish(true)
+      await first
+    })
+    expect(input.runtime.sendMessage).toHaveBeenCalledOnce()
+  })
+
+  it('does not send after navigation supersedes pending specialist preparation', async () => {
+    const input = researchOptions()
+    input.session.lifecycle.captureSendIntent = vi.fn(() => ({
+      draftSpecialistId: 'specialist-a',
+      hasPendingSwitch: true,
+      pendingSpecialistId: 'specialist-a'
+    }))
+    let finish!: (ready: boolean) => void
+    input.session.lifecycle.prepareSpecialistSend = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          finish = resolve
+        })
+    )
+    const hook = renderController(input)
+    mounted.push(hook)
+    const request = intent()
+    let first!: Promise<void>
+    act(() => {
+      first = hook.result.current.actions.submit.researchRun(request)
+    })
+    useNavigationStore.setState((state) => ({
+      explicitNavigationRevision: state.explicitNavigationRevision + 1
+    }))
+    await act(async () => {
+      finish(true)
+      await expect(first).rejects.toThrow()
+    })
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+    expect(request.onRejected).toHaveBeenCalledOnce()
+  })
+
+  it('uses the same admission boundary as a simultaneous ordinary Send', async () => {
+    const input = researchOptions()
+    let finish!: (result: { sessionId: string; messageId: string }) => void
+    input.runtime.sendMessage = vi.fn(
+      () =>
+        new Promise<{ sessionId: string; messageId: string }>((resolve) => {
+          finish = resolve
+        })
+    )
+    const hook = renderController(input)
+    mounted.push(hook)
+    let research!: Promise<void>
+    act(() => {
+      research = hook.result.current.actions.submit.researchRun(intent())
+      hook.result.current.actions.submit.draft({ forcedSkillIds: [] })
+    })
+    expect(input.runtime.sendMessage).toHaveBeenCalledOnce()
+    await act(async () => {
+      finish({ sessionId: 'session-a', messageId: 'exact-prompt' })
+      await research
+    })
+  })
+})

@@ -7,6 +7,7 @@ import { ErrorNotice } from '@/components/error-notice'
 import { useSessionStore } from '@/stores/session-store'
 import { openResearchWorkspace } from './workspace-discussion-navigation'
 import { showSessionReplay } from './workspace-session-actions'
+import { requestComposerFocus } from './composer-focus-events'
 
 // A narrow presentation layer over ordinary conversations and the existing preview workbench.
 // Membership determines this breadcrumb; changing a reading reference never changes its parent.
@@ -37,11 +38,11 @@ export const ResearchWorkspaceHeader = ({
   const showReplay = (): void => {
     showSessionReplay(source.sourceProjectId, source.sourceSessionId, title)
   }
-  const newDiscussion = async (): Promise<void> => {
+  const enterDiscussion = async (newDiscussion: boolean): Promise<void> => {
     setPending(true)
     setError(false)
     try {
-      if (!(await openResearchWorkspace(source, { newDiscussion: true }))) setError(true)
+      if (!(await openResearchWorkspace(source, { newDiscussion }))) setError(true)
     } catch {
       setError(true)
     } finally {
@@ -71,10 +72,13 @@ export const ResearchWorkspaceHeader = ({
           size="sm"
           className="h-7 gap-1 px-2 text-xs"
           disabled={!available || pending}
-          onClick={() => void newDiscussion()}
+          onClick={() => {
+            if (historical) requestComposerFocus()
+            else void enterDiscussion(true)
+          }}
         >
           <MessageSquarePlus className="size-3" aria-hidden="true" />
-          {t('New discussion')}
+          {historical ? t('Ask about this research') : t('New discussion')}
         </Button>
       </div>
       {!available ? (

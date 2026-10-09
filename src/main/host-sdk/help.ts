@@ -1196,12 +1196,12 @@ const MANAGED_EXECUTION_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
       {
         name: 'recordObservation',
         type: 'boolean',
-        description: 'Requires observation adapter; default false.'
+        description: 'Record; default false.'
       },
       {
         name: 'projectView',
         type: 'object',
-        description: 'Requires project-view adapter; otherwise rejected.'
+        description: '{title,entryPath?}; relative path, port >=1024.'
       },
       {
         name: 'command',
@@ -1218,6 +1218,7 @@ const MANAGED_EXECUTION_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   },
   constraints: [
     'Main turn; does not create another Session/model.',
+    'Offline: help("offlineExecution").',
     'Preflight; explain gaps/changes. No demo fallback.',
     'macOS Node >=22; OPEN_SCIENCE_INPUT_DIR / OPEN_SCIENCE_OUTPUT_DIR.',
     'Node found is not plan readiness. No installs/host-terminal fallback.',
@@ -1236,6 +1237,63 @@ const MANAGED_EXECUTION_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
           status: 'unavailable',
           reason: 'Active Main turn/service required.'
         }
+}
+
+const OFFLINE_EXECUTION_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
+  kind: 'operation',
+  id: 'host.managedExecution.executeOfflinePlan',
+  path: 'host.managedExecution.executeOfflinePlan',
+  aliases: ['offlineExecution', 'host.managedExecution.inspectOfflinePlans'],
+  summary: 'Run a fixed package offline plan in the current ordinary Session.',
+  callForms: [
+    {
+      signature: 'host.managedExecution.inspectOfflinePlans({ sourceSessionId, sourceIdentity? })',
+      accepts: 'options'
+    },
+    {
+      signature:
+        'host.managedExecution.executeOfflinePlan({ sourceSessionId, sourceIdentity, planVersionId, requestId })',
+      accepts: 'options'
+    }
+  ],
+  request: {
+    fields: [
+      {
+        name: 'sourceSessionId',
+        type: 'string',
+        description: 'Research material source; may be imported read-only.'
+      },
+      {
+        name: 'sourceIdentity',
+        type: 'string',
+        description: 'Fixed identity from inspection; required for execution.'
+      },
+      {
+        name: 'planVersionId',
+        type: 'string',
+        description: 'Immutable package plan Version from inspection.'
+      },
+      { name: 'requestId', type: 'string', description: 'Stable retry identity within this turn.' }
+    ]
+  },
+  options: NO_OPTIONS,
+  returns: {
+    type: 'object',
+    description:
+      'inspect: source and plans with blockers/substitutions. execute: Run result and environmentId for collection/release.'
+  },
+  constraints: [
+    'Main turn only. Destination Session and provenance are injected; no hidden Session is created.',
+    'Inspection is read-only. Explain substitutions before explicitly selecting an offline plan; never silently replace real reproduction.',
+    'Main derives commands and fixed materials. No profile, credential, network or command overrides.',
+    'Offline applies to the project process; the orchestration Agent may use a model and tokens.',
+    'These are new results under declared substitutions, not original observations or proof of reproduction.',
+    'Stop the turn to cancel; releaseEnvironment after publication. collectOutputs saves retained files without rerunning.'
+  ],
+  examples: [],
+  backgroundSafety: 'unsafe',
+  backgroundSafetyReason: 'Main Artifact turn.',
+  resolveAvailability: MANAGED_EXECUTION_DESCRIPTOR.resolveAvailability
 }
 
 const OPERATION_DESCRIPTORS: readonly HostSdkHelpOperationDescriptor[] = [
@@ -1300,7 +1358,7 @@ const editDistance = (left: string, right: string): number => {
 
 const entries = [...OPERATION_DESCRIPTORS].sort((left, right) => left.id.localeCompare(right.id))
 const topics = new Map<string, HostSdkHelpOperationDescriptor>()
-for (const descriptor of entries) {
+for (const descriptor of [...entries, OFFLINE_EXECUTION_DESCRIPTOR]) {
   for (const topic of [descriptor.id, descriptor.path, ...descriptor.aliases]) {
     const normalizedTopic = normalizeTopic(topic)
     const existing = topics.get(normalizedTopic)

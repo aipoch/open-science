@@ -39,12 +39,17 @@ import type {
   NotebookSessionState
 } from '../../../../shared/notebook'
 import { isCurrentInFlight } from '../../../../shared/in-flight-promise'
+import { WEB_CALLER_LOCATION_ATTRIBUTE } from '../../../../shared/web-caller-location'
 import { resolveProjectId } from '../../../../shared/project-scope'
 import { EnvProvisionOverlay } from './EnvProvisionOverlay'
 import { shouldProvisionR } from './lazy-r'
 import { hasActiveRuntimeTarget, notebookGated } from './provisioning-view'
 import { NotebookCodeBlock } from './notebook-code'
 import { NotebookRunEvidence } from './NotebookRunEvidence'
+import { NotebookRunObservationActions } from './replay/NotebookRunObservationActions'
+import { showSessionReplay } from './workspace-session-actions'
+import { Button } from '@/components/ui/button'
+import type { RunObservationTarget } from '../../../../shared/run-observation'
 import { NotebookRunOutputs } from './NotebookRunOutputs'
 import { NotebookInputDataStrip } from './NotebookInputDataStrip'
 import { isCurrentSessionNotebookView } from './follow-notebook-scroll'
@@ -217,13 +222,15 @@ const NotebookRunCell = ({
   index,
   staleness,
   causedByRunIndex,
-  allowFolderAccess
+  allowFolderAccess,
+  observationTarget
 }: {
   run: NotebookRunRecord
   index: number
   staleness?: NotebookRunStaleness
   causedByRunIndex?: number
   allowFolderAccess?: boolean
+  observationTarget?: RunObservationTarget
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const isProblem = isProblemRunStatus(run.status)
@@ -279,6 +286,9 @@ const NotebookRunCell = ({
       />
       <NotebookRunOutputs run={run} allowFolderAccess={allowFolderAccess} />
       <NotebookRunEvidence run={run} />
+      {observationTarget ? (
+        <NotebookRunObservationActions target={observationTarget} runStatus={run.status} />
+      ) : null}
     </div>
   )
 }
@@ -1105,6 +1115,17 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
             <div key={run.runId} data-run-id={run.runId}>
               <NotebookRunCell
                 run={run}
+                observationTarget={
+                  !document.documentElement.hasAttribute(WEB_CALLER_LOCATION_ATTRIBUTE) &&
+                  // Public Run DTOs omit the private submission identity. The retained invocation
+                  // identifies managed execution; Main still authorizes the exact Run on opening.
+                  run.executionInvocationId?.startsWith('managed-') &&
+                  session &&
+                  !session.packageOrigin &&
+                  !session.importedResearch
+                    ? { projectId: session.projectId, sessionId: session.id, runId: run.runId }
+                    : undefined
+                }
                 allowFolderAccess={Boolean(
                   session && session.contentLoaded !== false && !session.packageOrigin
                 )}
@@ -1343,6 +1364,25 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
             ui={provisionUi}
             onRetry={() => void retryProvision()}
           />
+        ) : null}
+        {session && (session.packageOrigin || session.importedResearch) ? (
+          <div className="shrink-0 border-b border-border-100 px-3 py-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                showSessionReplay(
+                  session.projectId,
+                  session.id,
+                  session.title,
+                  item.projectId ?? session.projectId,
+                  'runs'
+                )
+              }
+            >
+              {t('View saved run recordings')}
+            </Button>
+          </div>
         ) : null}
         {frameOptions.length > 0 ? (
           <div className="flex max-w-full shrink-0 items-center gap-2 overflow-hidden border-b border-border-100 px-2 py-1.5">

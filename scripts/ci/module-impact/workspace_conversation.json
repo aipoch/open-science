@@ -89,7 +89,12 @@
     "src/renderer/src/pages/workspace/TurnOutcomeNotice.test.tsx",
     "src/renderer/src/pages/workspace/SessionHeaderMenu.tsx",
     "src/renderer/src/pages/workspace/SessionHeaderMenu.test.tsx",
-    "src/renderer/src/pages/workspace/workspace-session-recovery.ts"
+    "src/renderer/src/pages/workspace/workspace-session-recovery.ts",
+    "src/renderer/src/pages/workspace/ResearchRunLauncher.tsx",
+    "src/renderer/src/pages/workspace/ResearchRunLauncher.test.tsx",
+    "src/renderer/src/pages/workspace/research-run-request.ts",
+    "src/renderer/src/pages/workspace/use-research-run-launcher.tsx",
+    "src/renderer/src/pages/workspace/use-research-run-launcher.test.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/workspace/ComposerMessageQueue.tsx",
@@ -123,7 +128,10 @@
     "src/renderer/src/pages/workspace/workspace-message-queue-projection.ts",
     "src/renderer/src/pages/workspace/workspace-tool-activity-details.ts",
     "src/renderer/src/pages/workspace/workspace-tool-activity-groups.ts",
-    "src/renderer/src/pages/workspace/workspace-session-recovery.ts"
+    "src/renderer/src/pages/workspace/workspace-session-recovery.ts",
+    "src/renderer/src/pages/workspace/ResearchRunLauncher.tsx",
+    "src/renderer/src/pages/workspace/research-run-request.ts",
+    "src/renderer/src/pages/workspace/use-research-run-launcher.tsx"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -165,7 +173,9 @@
       "src/renderer/src/pages/workspace/workspace-tool-activity-groups.test.ts",
       "src/renderer/src/pages/workspace/workspace-tool-activity-style.test.ts",
       "src/renderer/src/pages/workspace/TurnOutcomeNotice.test.tsx",
-      "src/renderer/src/pages/workspace/SessionHeaderMenu.test.tsx"
+      "src/renderer/src/pages/workspace/SessionHeaderMenu.test.tsx",
+      "src/renderer/src/pages/workspace/ResearchRunLauncher.test.tsx",
+      "src/renderer/src/pages/workspace/use-research-run-launcher.test.tsx"
     ],
     "contract": [],
     "consumer": [
@@ -268,7 +278,41 @@
       "src/renderer/src/pages/workspace/workspace-discussion-navigation.test.ts",
       "src/renderer/src/pages/workspace/ResearchWorkspaceHeader.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationControls.test.tsx",
-      "src/renderer/src/pages/workspace/session-plan/session-plan-resume.test.tsx"
+      "src/renderer/src/pages/workspace/session-plan/session-plan-resume.test.tsx",
+      "src/main/composition/handoff.test.ts",
+      "src/main/composition/managed-execution.integration.test.ts",
+      "src/main/index-fatal-errors.test.ts",
+      "src/main/index-startup-failure.test.ts",
+      "src/main/replay-viewer/assets.test.ts",
+      "src/main/runtime-electron-wiring.test.ts",
+      "src/renderer/replay-viewer/ViewerApp.test.tsx",
+      "src/renderer/replay-viewer/browser.integration.test.ts",
+      "src/renderer/replay-viewer/recorded-viewer.test.tsx",
+      "src/renderer/src/pages/workspace/RecordedRunObservationPreview.test.tsx",
+      "src/renderer/src/pages/workspace/replay/LiveReplayView.test.tsx",
+      "src/renderer/src/pages/workspace/use-run-observation-question.test.tsx",
+      "src/renderer/src/pages/workspace/replay/use-observation-question-recovery.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/PlanJsonPreview.recorded.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/PlanJsonPreview.test.tsx",
+      "src/renderer/src/pages/workspace/RunObservationPreview.test.tsx",
+      "src/main/replay-viewer/desktop-embed.integration.test.ts",
+      "src/renderer/src/pages/workspace/replay/ReplaySourceBar.test.tsx",
+      "src/renderer/src/pages/workspace/research-preview-navigation.test.ts",
+      "src/renderer/src/pages/workspace/project-workspace-entry.test.ts",
+      "src/renderer/src/pages/workspace/NotebookPreview.follow-scroll.test.tsx",
+      "src/renderer/src/pages/workspace/NotebookPreview.gate.render.test.tsx",
+      "src/renderer/src/pages/workspace/replay/ResearchDemoPanel.test.tsx",
+      "src/main/research-demos/owner.macos.integration.test.ts",
+      "src/renderer/src/pages/workspace/replay/use-recorded-materials.test.tsx",
+      "src/renderer/replay-viewer/browser-recording-viewer.test.tsx",
+      "src/renderer/replay-viewer/browser-recording.integration.test.ts",
+      "src/renderer/src/pages/workspace/browser-recording-question.test.tsx",
+      "src/renderer/replay-viewer/browser-recording-transport.integration.test.ts",
+      "src/renderer/replay-viewer/research-browser.integration.test.ts",
+      "src/renderer/replay-viewer/research-client.test.ts",
+      "src/renderer/replay-viewer/research-viewer.test.tsx",
+      "src/renderer/src/lib/replay/transcript.test.ts",
+      "src/renderer/src/pages/workspace/replay/ReplayPanel.layout.test.tsx"
     ]
   },
   "capabilityOverlays": [],

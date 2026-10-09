@@ -78,7 +78,16 @@
       "src/renderer/src/pages/workspace/replay/ReplayToolRecord.test.tsx",
       "src/renderer/web/bootstrap.test.ts",
       "src/renderer/web/renderer-argument-shape-characterization.test.ts",
-      "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.interaction.test.tsx"
+      "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.interaction.test.tsx",
+      "src/renderer/src/pages/workspace/replay/ReplayPanel.layout.test.tsx",
+      "src/renderer/src/pages/workspace/RecordedRunObservationPreview.test.tsx",
+      "src/renderer/replay-viewer/ViewerApp.test.tsx",
+      "src/renderer/replay-viewer/browser-recording-viewer.test.tsx",
+      "src/renderer/replay-viewer/recorded-viewer.test.tsx",
+      "src/renderer/src/pages/workspace/replay/LiveReplayView.test.tsx",
+      "src/renderer/src/pages/workspace/replay/use-recorded-materials.test.tsx",
+      "src/renderer/replay-viewer/research-client.test.ts",
+      "src/renderer/replay-viewer/research-viewer.test.tsx"
     ]
   },
   "capabilityOverlays": [],

@@ -1,3 +1,4 @@
+import { openProjectWorkspace } from '../workspace/project-workspace-entry'
 import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
 import { LITERATURE_JOB_MAX_ITEMS } from '../../../../shared/literature-jobs'
 import type { PdfAnnotation } from '../../../../shared/pdf-annotations'
@@ -198,7 +199,6 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const consumeLiteratureCollection = useNavigationStore(
     (state) => state.consumeLiteratureCollection
   )
-  const openProject = useNavigationStore((state) => state.openProject)
   const projects = useProjectStore((state) => state.projects)
   const projectsLoaded = useProjectStore((state) => state.isLoaded)
   const loadProjects = useProjectStore((state) => state.loadProjects)
@@ -1625,7 +1625,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
               selectedCollection={selectedCollection}
               selectedProject={selectedProject}
               section={section}
-              openProject={openProject}
+              openProject={openProjectWorkspace}
               smartSetup={smartSetup}
               showLiteratureReviewAction={showLiteratureReviewAction}
               reviewProjectId={reviewProjectId}

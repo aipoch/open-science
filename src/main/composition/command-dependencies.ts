@@ -45,6 +45,7 @@ import type { composeStorageStartup } from './storage-startup'
 
 export function composeCommandDependencies({
   applicationEvents,
+  readObservationBindings,
   settingsBootstrap,
   storageStartup,
   managedFileVersionService,
@@ -79,6 +80,7 @@ export function composeCommandDependencies({
   listAppIconPreviews
 }: {
   applicationEvents: ApplicationEvents
+  readObservationBindings?: import('./managed-execution').ManagedExecutionComposition['readObservationBindings']
   settingsBootstrap: Awaited<ReturnType<typeof composeSettingsBootstrap>>
   storageStartup: Awaited<ReturnType<typeof composeStorageStartup>>
   managedFileVersionService: ManagedFileVersionService
@@ -142,7 +144,8 @@ export function composeCommandDependencies({
     new SessionReadingOwner(
       new SessionReplayRepository(() => getProjectDbClient(resolveConfigRoot())),
       sessionAuthority.sessionPersistenceCoordinator
-    )
+    ),
+    readObservationBindings
   )
   const applicationCommandDependencies: ApplicationCommandCompositionDependencies = {
     sessionReplay,

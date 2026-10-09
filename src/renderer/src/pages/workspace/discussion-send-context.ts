@@ -1,3 +1,4 @@
+import { toSessionDiscussionSnapshot } from './replay/replay-context'
 import type { Annotation } from '../../../../shared/annotations'
 import type { SessionDiscussionCapture } from './replay/replay-context'
 import {
@@ -19,7 +20,7 @@ export const prepareDiscussionSendAnnotations = async (
   await window.api.sessionReplay.saveSelectionSnapshot({
     projectId: frozen.projectId,
     sourceSessionId: frozen.sourceSessionId,
-    context: { ...frozen, id }
+    context: toSessionDiscussionSnapshot(frozen, id)
   })
   return [...annotations, annotation]
 }

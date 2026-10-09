@@ -1,3 +1,4 @@
+import { RESEARCH_REPLAY_METHODS, type ResearchReplayMethod } from '../../shared/research-replay'
 import { createHash } from 'node:crypto'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { readFile, stat } from 'node:fs/promises'
@@ -65,6 +66,14 @@ import {
   type SessionPackageExternalMethod
 } from '../session-package-external-port'
 import { PublicTaskEventStream } from './public-task-event-stream'
+import {
+  RUN_OBSERVATION_EXTERNAL_METHODS,
+  type RunObservationExternalMethod
+} from '../run-observation-external-port'
+import {
+  BROWSER_RECORDING_EXTERNAL_METHODS,
+  type BrowserRecordingExternalMethod
+} from '../browser-recordings/external-port'
 
 const MAX_RPC_BODY_BYTES = 64 * 1024 * 1024
 // Preserve one maximum-size request per logical client while leaving the same amount of capacity
@@ -161,6 +170,9 @@ type WebServerOptions = {
       Pick<
         HeadlessTaskApi,
         | 'callManagedExecution'
+        | 'callRunObservation'
+        | 'callProjectRecordings'
+        | 'callResearchReplay'
         | 'callSessionPackages'
         | 'getSessionPlan'
         | 'respondSessionPlan'
@@ -1064,7 +1076,123 @@ const handleTaskApiRequest = async (
         json(response, 200, { data })
         return true
       }
+      const researchReplayMatch = url.pathname.match(/^\/api\/v1\/replays\/([^/]+)$/)
+      if (
+        researchReplayMatch &&
+        request.method === 'POST' &&
+        RESEARCH_REPLAY_METHODS.includes(researchReplayMatch[1] as ResearchReplayMethod)
+      ) {
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        const peer = request.socket.remoteAddress?.replace(/^::ffff:/, '') ?? ''
+        if (
+          callerContext.location !== 'local' ||
+          !(peer === '::1' || (isIP(peer) === 4 && peer.startsWith('127.')))
+        )
+          throw new ManagedExecutionExternalError(
+            'unsupported_location',
+            'Research replay is local to this device.'
+          )
+        if (!tasks.callResearchReplay)
+          throw new ManagedExecutionExternalError('unavailable', 'Research replay is unavailable.')
+        const body = await readJsonBody(
+          request,
+          response,
+          requestBodyBudgetRegistry,
+          requestBodyClientId
+        )
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        const data = await tasks.callResearchReplay(
+          researchReplayMatch[1] as ResearchReplayMethod,
+          body
+        )
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        json(response, 200, { data })
+        return true
+      }
       const executionMatch = url.pathname.match(/^\/api\/v1\/execution\/([^/]+)$/)
+      const browserRecordingMatch = url.pathname.match(/^\/api\/v1\/project-recordings\/([^/]+)$/)
+      if (
+        browserRecordingMatch &&
+        request.method === 'POST' &&
+        BROWSER_RECORDING_EXTERNAL_METHODS.includes(
+          browserRecordingMatch[1] as BrowserRecordingExternalMethod
+        )
+      ) {
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        const peer = request.socket.remoteAddress?.replace(/^::ffff:/, '') ?? ''
+        if (
+          callerContext.location !== 'local' ||
+          !(peer === '::1' || (isIP(peer) === 4 && peer.startsWith('127.')))
+        )
+          throw new ManagedExecutionExternalError(
+            'unsupported_location',
+            'Project recording is local to this device.'
+          )
+        if (!tasks.callProjectRecordings)
+          throw new ManagedExecutionExternalError(
+            'unavailable',
+            'Project recording is unavailable.'
+          )
+        const body = await readJsonBody(
+          request,
+          response,
+          requestBodyBudgetRegistry,
+          requestBodyClientId
+        )
+        if (!body || typeof body !== 'object' || Array.isArray(body))
+          throw new ManagedExecutionExternalError(
+            'invalid_request',
+            'Project recording input must be a JSON object.'
+          )
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        const data = await tasks.callProjectRecordings(
+          browserRecordingMatch[1] as BrowserRecordingExternalMethod,
+          body
+        )
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        json(response, 200, { data })
+        return true
+      }
+      const observationMatch = url.pathname.match(/^\/api\/v1\/observations\/([^/]+)$/)
+      if (
+        observationMatch &&
+        request.method === 'POST' &&
+        RUN_OBSERVATION_EXTERNAL_METHODS.includes(
+          observationMatch[1] as RunObservationExternalMethod
+        )
+      ) {
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        const peer = request.socket.remoteAddress?.replace(/^::ffff:/, '') ?? ''
+        if (
+          callerContext.location !== 'local' ||
+          !(peer === '::1' || (isIP(peer) === 4 && peer.startsWith('127.')))
+        )
+          throw new ManagedExecutionExternalError(
+            'unsupported_location',
+            'Run observation is local to this device.'
+          )
+        if (!tasks.callRunObservation)
+          throw new ManagedExecutionExternalError('unavailable', 'Run observation is unavailable.')
+        const body = await readJsonBody(
+          request,
+          response,
+          requestBodyBudgetRegistry,
+          requestBodyClientId
+        )
+        if (!body || typeof body !== 'object' || Array.isArray(body))
+          throw new ManagedExecutionExternalError(
+            'invalid_request',
+            'Observation input must be a JSON object.'
+          )
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        const data = await tasks.callRunObservation(
+          observationMatch[1] as RunObservationExternalMethod,
+          body
+        )
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        json(response, 200, { data })
+        return true
+      }
       if (
         executionMatch &&
         MANAGED_EXECUTION_EXTERNAL_METHODS.includes(
@@ -1117,7 +1245,13 @@ const handleTaskApiRequest = async (
         assertExternalAuthorizationCurrent(externalAuthorization)
         const operation = (): Promise<unknown> => tasks.callManagedExecution!(method, body)
         // Reads and waits must observe fresh state, even when a caller sends an Idempotency-Key.
-        const data = ['createSession', 'prepare', 'execute', 'collectOutputs'].includes(method)
+        const data = [
+          'createSession',
+          'prepare',
+          'execute',
+          'executeOfflinePlan',
+          'collectOutputs'
+        ].includes(method)
           ? await runIdempotentTask(
               idempotencyRegistry,
               request,
@@ -1129,7 +1263,11 @@ const handleTaskApiRequest = async (
             )
           : await operation()
         assertExternalAuthorizationCurrent(externalAuthorization)
-        json(response, ['execute', 'collectOutputs'].includes(method) ? 202 : 200, { data })
+        json(
+          response,
+          ['execute', 'executeOfflinePlan', 'collectOutputs'].includes(method) ? 202 : 200,
+          { data }
+        )
         return true
       }
       if (url.pathname === '/api/v1/doctor' && request.method === 'GET' && tasks.doctor) {

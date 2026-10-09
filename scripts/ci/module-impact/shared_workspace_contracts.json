@@ -40,7 +40,9 @@
     "src/shared/uploads.test.ts",
     "src/shared/uploads.ts",
     "src/shared/renderer-contracts/session-replay.ts",
-    "src/shared/recorded-observation-selection.ts"
+    "src/shared/recorded-observation-selection.ts",
+    "src/shared/research-replay-observations.ts",
+    "src/shared/research-replay.ts"
   ],
   "interfacePaths": [
     "src/shared/artifact-code-reconstruction.ts",
@@ -71,7 +73,9 @@
     "src/shared/storage.ts",
     "src/shared/uploads.ts",
     "src/shared/renderer-contracts/session-replay.ts",
-    "src/shared/recorded-observation-selection.ts"
+    "src/shared/recorded-observation-selection.ts",
+    "src/shared/research-replay-observations.ts",
+    "src/shared/research-replay.ts"
   ],
   "consumerModules": [],
   "testFiles": {

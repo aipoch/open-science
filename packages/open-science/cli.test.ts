@@ -388,7 +388,7 @@ describe('task CLI', () => {
     expect(() => parseCliArgs(['run', '--jsonl'])).toThrow('--jsonl requires run --wait.')
     expect(() => parseCliArgs(['run', '--timeout-ms', '0', '--wait'])).toThrow('Invalid timeout: 0')
     expect(() => parseCliArgs(['run', '--timeout-ms', '1000'])).toThrow(
-      '--timeout-ms requires run --wait or an execution wait.'
+      '--timeout-ms requires run --wait, package or observations.'
     )
     expect(() => parseCliArgs(['run', '--cancel-on-timeout', '--wait'])).toThrow(
       '--cancel-on-timeout requires --timeout-ms.'
@@ -2529,6 +2529,8 @@ describe('managed execution CLI', () => {
     ['runtimes', 'runtimes'],
     ['session-create', 'createSession'],
     ['materials', 'inspectMaterials'],
+    ['offline-plans', 'inspectOfflinePlans'],
+    ['offline-run', 'executeOfflinePlan'],
     ['prepare', 'prepare'],
     ['run', 'execute'],
     ['status', 'getOperation'],

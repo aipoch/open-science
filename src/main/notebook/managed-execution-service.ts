@@ -1,3 +1,8 @@
+import { OfflinePlanAdmission } from './offline-plan-admission'
+import {
+  executeOfflinePlanRequestSchema,
+  type OfflinePlanInspection
+} from '../../shared/offline-execution'
 import { configuredCredentialPatterns, screenAuxiliaryOutput } from './screened-auxiliary-output'
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { readdir, open } from 'node:fs/promises'
@@ -488,7 +493,11 @@ export class ManagedExecutionService {
     { fingerprint: string; completion: Promise<ManagedExecutionResult> }
   >()
 
-  constructor(private readonly dependencies: ManagedExecutionServiceDependencies) {}
+  private readonly offlinePlans: OfflinePlanAdmission
+
+  constructor(private readonly dependencies: ManagedExecutionServiceDependencies) {
+    this.offlinePlans = new OfflinePlanAdmission({ ...dependencies, service: this })
+  }
 
   private get observation(): ManagedExecutionObservationPort {
     if (!this.dependencies.observation)
@@ -1561,6 +1570,51 @@ export class ManagedExecutionService {
     return this.startExecution(value, 'research')
   }
 
+  inspectOfflinePlans(value: unknown, signal?: AbortSignal): Promise<OfflinePlanInspection> {
+    return this.offlinePlans.inspect(value, signal)
+  }
+
+  /** External clients select a package plan; Main retains its offline policy and provenance. */
+  async executeOfflinePlan(
+    value: unknown
+  ): Promise<Awaited<ReturnType<SessionOperationOwner['start']>> & { environmentId: string }> {
+    const { request, options } = await this.offlinePlans.prepare(value)
+    return { ...(await this.executeDemo(request, options)), environmentId: request.environmentId }
+  }
+
+  /** Borrow the current ordinary Session turn instead of starting a hidden/parallel Session. */
+  async executeOfflinePlanInTurn(
+    value: unknown,
+    context: ManagedExecutionTurnContext,
+    signal?: AbortSignal
+  ): Promise<ManagedExecutionResult & { environmentId: string }> {
+    const selected = executeOfflinePlanRequestSchema.parse(value)
+    if (
+      selected.projectId !== context.projectId ||
+      selected.sessionId !== context.sessionId ||
+      !context.provenanceContext.rootFrameId ||
+      context.provenanceContext.rootFrameId !== context.provenanceContext.agentFrameId
+    )
+      throw new Error('Offline execution requires the current Main Agent Session context.')
+    const { request, options } = await this.offlinePlans.prepare(
+      selected,
+      context.operationId,
+      signal
+    )
+    return {
+      ...(await this.executeDemoInTurn(request, context, signal, options)),
+      environmentId: request.environmentId
+    }
+  }
+
+  /** Main-only admitted offline execution. Public schemas cannot inject its policy. */
+  async executeDemo(
+    value: unknown,
+    options: { inputVersionIds?: string[]; demoViewing?: RunObservationDemoViewingAdmission } = {}
+  ): ReturnType<SessionOperationOwner['start']> {
+    return this.startExecution(value, 'offline-demo', options.inputVersionIds, options.demoViewing)
+  }
+
   private async startExecution(
     value: unknown,
     purpose: 'research' | 'offline-demo',
@@ -1611,7 +1665,13 @@ export class ManagedExecutionService {
       execute: async (context, signal) => {
         let result: ManagedExecutionResult
         try {
-          result = await this.executeInTurn(request, context, signal)
+          result =
+            purpose === 'offline-demo'
+              ? await this.executeDemoInTurn(request, context, signal, {
+                  inputVersionIds,
+                  demoViewing
+                })
+              : await this.executeInTurn(request, context, signal)
         } catch (error) {
           if (!(error instanceof ManagedEnvironmentCancelledError)) throw error
           return { status: 'cancelled', text: error.message }
@@ -1670,6 +1730,22 @@ export class ManagedExecutionService {
     signal?: AbortSignal
   ): Promise<ManagedExecutionResult> {
     return this.executeWithPurpose(value, admittedContext, signal, 'research')
+  }
+
+  async executeDemoInTurn(
+    value: unknown,
+    admittedContext: ManagedExecutionTurnContext,
+    signal?: AbortSignal,
+    options: { inputVersionIds?: string[]; demoViewing?: RunObservationDemoViewingAdmission } = {}
+  ): Promise<ManagedExecutionResult> {
+    return this.executeWithPurpose(
+      value,
+      admittedContext,
+      signal,
+      'offline-demo',
+      options.inputVersionIds,
+      options.demoViewing
+    )
   }
 
   private validateDemoViewing(

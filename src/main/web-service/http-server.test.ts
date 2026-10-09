@@ -5099,6 +5099,99 @@ describe('managed execution HTTP API', () => {
       body: JSON.stringify(body)
     })
 
+  it('dispatches observation requests through the scoped local adapter without execution', async () => {
+    const { base, call, contexts } = await setup()
+    for (const method of [
+      'open',
+      'snapshot',
+      'history',
+      'changes',
+      'select',
+      'selection',
+      'revoke'
+    ]) {
+      const body = { viewerId: 'viewer-fixture' }
+      const response = await fetch(`${base}/api/v1/observations/${method}`, {
+        method: 'POST',
+        headers: { authorization: 'Bearer execution-token', 'content-type': 'application/json' },
+        body: JSON.stringify(body)
+      })
+      expect(response.status).toBe(200)
+      expect(call).toHaveBeenLastCalledWith(method, body)
+    }
+    expect(contexts.every((context) => context.location === 'local')).toBe(true)
+  })
+
+  it('keeps the observation route authenticated, local and budgeted', async () => {
+    const local = await setup({ budget: true })
+    const invoke = (base: string, body: unknown, authenticated = true): Promise<Response> =>
+      fetch(`${base}/api/v1/observations/open`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(authenticated ? { authorization: 'Bearer execution-token' } : {})
+        },
+        body: JSON.stringify(body)
+      })
+    expect((await invoke(local.base, {}, false)).status).toBe(401)
+    expect((await invoke(local.base, [])).status).toBe(400)
+    expect((await invoke(local.base, { payload: 'x'.repeat(200) })).status).toBe(413)
+    expect(local.call).not.toHaveBeenCalled()
+    const remote = await setup({ remote: true })
+    const denied = await fetch(`${remote.base}/api/v1/observations/open`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}'
+    })
+    expect(denied.status).toBe(403)
+    expect(remote.call).not.toHaveBeenCalled()
+    const unavailable = await setup({ unavailable: true })
+    expect((await invoke(unavailable.base, {})).status).toBe(503)
+  })
+
+  it('dispatches project recordings only through authenticated local and budgeted requests', async () => {
+    const local = await setup({ budget: true })
+    const invoke = (
+      base: string,
+      method: string,
+      body: unknown,
+      authenticated = true
+    ): Promise<Response> =>
+      fetch(`${base}/api/v1/project-recordings/${method}`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(authenticated ? { authorization: 'Bearer execution-token' } : {})
+        },
+        body: JSON.stringify(body)
+      })
+    expect((await invoke(local.base, 'inspect', {}, false)).status).toBe(401)
+    expect((await invoke(local.base, 'start', [])).status).toBe(400)
+    expect((await invoke(local.base, 'start', { data: 'x'.repeat(200) })).status).toBe(413)
+    expect(local.call).not.toHaveBeenCalled()
+    for (const method of [
+      'inspect',
+      'start',
+      'status',
+      'pause',
+      'resume',
+      'stop',
+      'read',
+      'openRecorded',
+      'selectMoment',
+      'selection'
+    ]) {
+      expect((await invoke(local.base, method, { viewerId: 'viewer' })).status).toBe(200)
+      expect(local.call).toHaveBeenLastCalledWith(method, { viewerId: 'viewer' })
+    }
+    expect(local.contexts.every((context) => context.location === 'local')).toBe(true)
+    const remote = await setup({ remote: true })
+    expect((await invoke(remote.base, 'inspect', {}, false)).status).toBe(403)
+    expect(remote.call).not.toHaveBeenCalled()
+    const unavailable = await setup({ unavailable: true })
+    expect((await invoke(unavailable.base, 'inspect', {})).status).toBe(503)
+  })
+
   const materialRequest = (
     materials: PrepareManagedEnvironmentRequest['materials']
   ): PrepareManagedEnvironmentRequest =>
@@ -5123,6 +5216,8 @@ describe('managed execution HTTP API', () => {
         requestConfiguration: vi.fn(),
         getConfiguration: vi.fn(),
         inspectMaterials: vi.fn(),
+        inspectOfflinePlans: vi.fn(),
+        executeOfflinePlan: vi.fn(),
         prepare: (value) => prepare(prepareManagedEnvironmentRequestSchema.parse(value)),
         execute: vi.fn(),
         getOperation: vi.fn(),
@@ -5413,6 +5508,8 @@ describe('managed execution HTTP API', () => {
       'preflight',
       'requestConfiguration',
       'getConfiguration',
+      'inspectOfflinePlans',
+      'executeOfflinePlan',
       'prepare',
       'execute',
       'getOperation',
@@ -5424,10 +5521,12 @@ describe('managed execution HTTP API', () => {
       'discardOutputs'
     ]) {
       const response = await post(base, method, { requestId: 'run-1' })
-      expect(response.status).toBe(['execute', 'collectOutputs'].includes(method) ? 202 : 200)
+      expect(response.status).toBe(
+        ['execute', 'executeOfflinePlan', 'collectOutputs'].includes(method) ? 202 : 200
+      )
       expect(await response.json()).toMatchObject({ data: { status: 'running' } })
     }
-    expect(call).toHaveBeenCalledTimes(15)
+    expect(call).toHaveBeenCalledTimes(17)
     expect(
       contexts.every(
         (context) =>
@@ -5504,6 +5603,8 @@ describe('managed execution HTTP API', () => {
         requestConfiguration: vi.fn(),
         getConfiguration: vi.fn(),
         inspectMaterials: vi.fn(),
+        inspectOfflinePlans: vi.fn(),
+        executeOfflinePlan: vi.fn(),
         prepare: vi.fn(),
         execute,
         getOperation: vi.fn(),

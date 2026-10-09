@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react'
+import { WEB_CALLER_LOCATION_ATTRIBUTE } from '../../../../../../shared/web-caller-location'
+import { lazy, Suspense, useMemo, useState } from 'react'
 import { Code2, ListChecks } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
@@ -16,6 +17,20 @@ import type { PreviewFileRendererProps } from '../preview-types'
 import { createPreviewResourceKey } from '../preview-resource-key'
 import { usePreviewFileContent } from '../usePreviewFileContent'
 import { JsonPreviewBody } from './JsonPreview'
+
+import {
+  isRecordedObservationContent,
+  isProjectRecordingContent,
+  isBrowserRecordingContent,
+  recordedObservationTargetForFile
+} from '../../replay/recorded-file-entry'
+import { useRunObservationQuestionStore } from '@/stores/run-observation-question-store'
+import { useObservationQuestionRecovery } from '../../replay/use-observation-question-recovery'
+const RunObservationPreview = lazy(() =>
+  import('../../RunObservationPreview').then((module) => ({
+    default: module.RunObservationPreview
+  }))
+)
 
 type PlanViewMode = 'plan' | 'raw'
 
@@ -51,9 +66,92 @@ export const PlanJsonPreview = ({
   // The Files-tab dialog updates the previewed item in place instead of remounting, so the toggle
   // resets whenever the underlying file (not just the component) changes.
   const resourceKey = createPreviewResourceKey(item)
+  const [recordedViewKey, setRecordedViewKey] = useState<string>()
   const [viewState, setViewState] = useState<{ key: string; view: PlanViewMode }>()
   const view = viewState?.key === resourceKey ? viewState.view : 'plan'
 
+  const recordedTarget = recordedObservationTargetForFile(item)
+  const questionRecovery = useObservationQuestionRecovery(recordedTarget)
+  const recordedContent =
+    state.status === 'ready' &&
+    state.preview.encoding === 'utf8' &&
+    state.pagination.pageNumber === 1 &&
+    isRecordedObservationContent(state.preview.content, !state.preview.truncated)
+  const projectContent =
+    state.status === 'ready' &&
+    state.preview.encoding === 'utf8' &&
+    state.pagination.pageNumber === 1 &&
+    isProjectRecordingContent(state.preview.content, !state.preview.truncated)
+  const browserContent =
+    state.status === 'ready' &&
+    state.preview.encoding === 'utf8' &&
+    state.pagination.pageNumber === 1 &&
+    isBrowserRecordingContent(state.preview.content, !state.preview.truncated)
+  if (
+    recordedTarget &&
+    (recordedContent || projectContent || browserContent) &&
+    !document.documentElement.hasAttribute(WEB_CALLER_LOCATION_ATTRIBUTE) &&
+    typeof window.api?.observations?.openRecorded === 'function'
+  ) {
+    const viewing = recordedViewKey === resourceKey
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        <div className="flex shrink-0 justify-end border-b border-border-200 p-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setRecordedViewKey(viewing ? undefined : resourceKey)}
+          >
+            {viewing ? t('View raw JSON') : t('View archived replay')}
+          </Button>
+        </div>
+        <div className="min-h-0 flex-1">
+          {viewing ? (
+            <Suspense
+              fallback={
+                <p role="status" className="p-4 text-sm">
+                  {t('Loading…')}
+                </p>
+              }
+            >
+              <RunObservationPreview
+                mode="recorded"
+                format={
+                  browserContent
+                    ? 'web-recording'
+                    : projectContent
+                      ? 'project-recording'
+                      : undefined
+                }
+                onAskBrowserMoment={(selection) => {
+                  if (!useRunObservationQuestionStore.getState().askRecorded(selection))
+                    throw new Error('Discussion unavailable')
+                }}
+                onAskArchiveFile={(selection) => {
+                  if (!useRunObservationQuestionStore.getState().askRecorded(selection))
+                    throw new Error('Discussion unavailable')
+                }}
+                target={recordedTarget}
+                questionRecovery={questionRecovery}
+                title={item.title}
+                isActive
+                onAskArchiveSelection={(selection) => {
+                  if (!useRunObservationQuestionStore.getState().askRecorded(selection))
+                    throw new Error(
+                      t(
+                        'Open an editable Session in this Project, or use Discuss from the imported research, to ask about this step.'
+                      )
+                    )
+                }}
+              />
+            </Suspense>
+          ) : (
+            <JsonPreviewBody item={item} state={state} />
+          )}
+        </div>
+      </div>
+    )
+  }
   if (!planDocument) return <JsonPreviewBody item={item} state={state} />
 
   const resolved = readOnly ? undefined : resolvePlanFileProjection(session, item.selectedVersionId)

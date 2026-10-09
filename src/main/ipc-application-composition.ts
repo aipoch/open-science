@@ -15,6 +15,10 @@ import { composeDocumentReading } from './composition/document-reading'
 import { composeHandoff, composeStorageHandoff } from './composition/handoff'
 import { composeManagedFiles } from './composition/managed-files'
 import { composeManagedExecution } from './composition/managed-execution'
+import { registerRunObservationIpc } from './run-observation/ipc'
+import { registerBrowserRecordingIpc } from './browser-recordings/ipc'
+import { registerResearchRunInspectionIpc } from './research-runs/ipc'
+import { registerResearchDemoIpc } from './research-demos/ipc'
 import { registerResearchExecutionProfileIpc } from './research-execution-profiles/ipc'
 import { composeNotebookBridge } from './composition/notebook-bridge'
 import { composeNotebookRuntime } from './composition/notebook-runtime'
@@ -95,6 +99,7 @@ export type IpcRegistrationOptions = {
   // non-desktop compositions may omit it and receive the existing default store.
   settingsStore?: SettingsDocumentStore
   translate?: NativeTranslator
+  desktopLocale?: () => import('../shared/locale').Locale
   managedPreviewProtocol: PreviewProtocolRegistrar
   // Headless web-serve launches (--serve) have no local desktop user; task notifications are
   // disabled there by contract, not just incidentally via Notification.isSupported().
@@ -166,6 +171,7 @@ export const createApplicationModules = async (
     managedPreviewProtocol,
     headless = false,
     translate = englishNativeTranslator,
+    desktopLocale,
     onAppIconVariantChanged,
     listAppIconPreviews,
     confirmRendererDurability = () => Promise.resolve(true),
@@ -298,6 +304,7 @@ export const createApplicationModules = async (
   })
   const specialistCatalog = await composeSpecialistCatalog({ ...settingsBootstrap, composition })
   const managedExecution = await composeManagedExecution({
+    desktopLocale,
     applicationEvents,
     managedFiles,
     sessionAuthority,
@@ -308,9 +315,21 @@ export const createApplicationModules = async (
     modules
   })
   notebookRuntime.notebookLifecycle = managedExecution.notebookLifecycle
+  declareElectronAdapter('research-runs', () =>
+    registerResearchRunInspectionIpc(managedExecution.researchRuns)
+  )
+  declareElectronAdapter('research-demos', () =>
+    registerResearchDemoIpc(managedExecution.researchDemos)
+  )
   declareElectronAdapter('research-execution-profiles', () =>
     registerResearchExecutionProfileIpc(managedExecution.service)
   )
+  declareElectronAdapter('run-observation', () => {
+    if (managedExecution.external.observation)
+      registerRunObservationIpc(managedExecution.external.observation)
+    if (managedExecution.external.projectRecordings)
+      registerBrowserRecordingIpc(managedExecution.external.projectRecordings)
+  })
   sessionAuthority.notebookActivityRef.current = managedExecution.notebookLifecycle
   const researchCatalog = await composeResearchCatalog({
     applicationEvents,
@@ -731,6 +750,7 @@ export const createApplicationModules = async (
   sessionAuthority.reviewerCommandOwnerRef.current = reviewerCommandOwner
   const commandDependencies = composeCommandDependencies({
     applicationEvents,
+    readObservationBindings: managedExecution.readObservationBindings,
     settingsBootstrap,
     storageStartup,
     ...uploadStorage,

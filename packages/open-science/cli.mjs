@@ -63,15 +63,20 @@ Commands:
   plan approve <session-id> --artifact-version <id> --revision <number>
   plan reject <session-id> --artifact-version <id> --revision <number>
   plan revise <session-id> --feedback <text>
-  package preflight-import | commit-import | cancel-import | export
-                          Read package JSON from stdin, --input-json, or --input-file
   execution runtimes      List independent local execution runtimes
+  execution offline-plans | offline-run  Inspect or run a package offline plan
   execution session-create | materials | prepare | run | status | wait | cancel | environment | release
                           Read execution JSON from stdin, --input-json, or --input-file
   execution collect-outputs | discard-outputs
                           Save retained outputs or explicitly abandon them; never rerun
-  execution run | collect-outputs --wait
+  execution run | offline-run | collect-outputs --wait
                           Wait up to 60 seconds; never cancel implicitly
+  observations open | snapshot | history | changes | select | selection | revoke
+  observations open-recorded | recording | select-recording | recording-selection | recording-status
+  observations capture-options | capture | captures | capture-content
+                          Observe existing work; JSON from stdin, --input-json, or --input-file
+  package preflight-import | commit-import | cancel-import | export
+                          Read package JSON from stdin, --input-json, or --input-file
   artifacts list <session-id>
   artifacts download <artifact-id> --output <path>
   rollback-to-0.7.3 --yes [--output <path>]
@@ -114,12 +119,12 @@ Options:
   --permission-prompts none  Deny unresolved human interactions instead of waiting (run only)
   --wait                 Wait for the run to finish
   --return-on-attention  With --wait, return when the Plan needs approval
-  --timeout-ms <ms>      Run or execution wait timeout in milliseconds
+  --timeout-ms <ms>      Run wait, package or observation request timeout in milliseconds
+  --idempotency-key <id> Retry a package transfer request without repeating it
   --cancel-on-timeout    Cancel the server run when --timeout-ms expires
   --jsonl                With run --wait, stream one machine-readable event per line
-  --idempotency-key <id> Retry a package transfer without repeating it
-  --input-json <json>    Execution request as a JSON object
-  --input-file <path>    Read an execution JSON object from a UTF-8 file
+  --input-json <json>    Execution, observation or package request as a JSON object
+  --input-file <path>    Read an execution, observation or package JSON object from a UTF-8 file
   --output <path>        Artifact download destination
   --yes                  Confirm the offline rollback conversion
   --credential-store <os|file>  Settings credential storage (Linux headless; start only)
@@ -179,6 +184,8 @@ const EXECUTION_COMMANDS = Object.freeze({
   runtimes: 'runtimes',
   'session-create': 'createSession',
   materials: 'inspectMaterials',
+  'offline-plans': 'inspectOfflinePlans',
+  'offline-run': 'executeOfflinePlan',
   prepare: 'prepare',
   run: 'execute',
   status: 'getOperation',
@@ -190,6 +197,30 @@ const EXECUTION_COMMANDS = Object.freeze({
   'discard-outputs': 'discardOutputs'
 })
 
+const OBSERVATION_COMMANDS = Object.freeze({
+  'open-recorded': 'openRecorded',
+  'read-recorded': 'readRecorded',
+  'read-project-recording': 'readProjectRecording',
+  'select-recorded-file': 'selectRecordedFile',
+  'select-recording-file': 'selectRecordingFile',
+  'recording-file-selection': 'recordingFileSelection',
+  recording: 'recording',
+  'select-recording': 'selectRecording',
+  'recording-selection': 'recordingSelection',
+  'recording-status': 'recordingStatus',
+  'capture-options': 'captureOptions',
+  capture: 'capture',
+  captures: 'captures',
+  'capture-content': 'captureContent',
+  open: 'open',
+  snapshot: 'snapshot',
+  history: 'history',
+  changes: 'changes',
+  select: 'select',
+  selection: 'selection',
+  revoke: 'revoke'
+})
+
 const PACKAGE_COMMANDS = Object.freeze({
   'preflight-import': 'preflightImport',
   'commit-import': 'commitImport',
@@ -198,6 +229,7 @@ const PACKAGE_COMMANDS = Object.freeze({
 })
 
 const TASK_COMMANDS = new Set([
+  'observations',
   'package',
   'execution',
   'doctor',
@@ -215,6 +247,7 @@ const TASK_COMMANDS = new Set([
   'cli'
 ])
 const GROUP_COMMANDS = new Set([
+  'observations',
   'package',
   'execution',
   'codex',
@@ -233,6 +266,7 @@ const GROUP_COMMANDS = new Set([
 // Project create, update, and session-defaults intentionally remain unbounded because their
 // positional Project names may contain multiple unquoted words.
 const POSITIONAL_LIMITS = new Map([
+  ...Object.keys(OBSERVATION_COMMANDS).map((command) => [`observations ${command}`, 0]),
   ...Object.keys(PACKAGE_COMMANDS).map((command) => [`package ${command}`, 0]),
   ...Object.keys(EXECUTION_COMMANDS).map((command) => [`execution ${command}`, 0]),
   ['doctor', 0],
@@ -309,7 +343,10 @@ export const parseCliArgs = (argv) => {
   const command = args.shift()
   const subcommand =
     (GROUP_COMMANDS.has(command) &&
-      !(['execution', 'package'].includes(command) && ['--help', '-h'].includes(args[0]))) ||
+      !(
+        ['execution', 'observations', 'package'].includes(command) &&
+        ['--help', '-h'].includes(args[0])
+      )) ||
     (command === 'run' && (args[0] === 'status' || args[0] === 'cancel'))
       ? args.shift()
       : undefined
@@ -480,20 +517,21 @@ export const parseCliArgs = (argv) => {
   }
   const executionWait =
     command === 'execution' &&
-    (subcommand === 'wait' || (['run', 'collect-outputs'].includes(subcommand) && options.wait))
+    (subcommand === 'wait' ||
+      (['run', 'offline-run', 'collect-outputs'].includes(subcommand) && options.wait))
   if (
     options.timeoutMs !== undefined &&
-    command !== 'package' &&
+    !['package', 'observations'].includes(command) &&
     !executionWait &&
     (command !== 'run' || subcommand || !options.wait)
   ) {
-    throw new CliUsageError('--timeout-ms requires run --wait or an execution wait.')
+    throw new CliUsageError('--timeout-ms requires run --wait, package or observations.')
   }
   if (command === 'execution' && !options.help) {
     if (!Object.hasOwn(EXECUTION_COMMANDS, subcommand))
       throw new CliUsageError('Unknown execution command.')
-    if (options.wait && !['run', 'collect-outputs'].includes(subcommand))
-      throw new CliUsageError('--wait requires execution run or collect-outputs.')
+    if (options.wait && !['run', 'offline-run', 'collect-outputs'].includes(subcommand))
+      throw new CliUsageError('--wait requires execution run, offline-run or collect-outputs.')
     if (options.cancelOnTimeout)
       throw new CliUsageError('Execution waits never cancel implicitly; use execution cancel.')
     if (options.timeoutMs > 60_000)
@@ -510,9 +548,19 @@ export const parseCliArgs = (argv) => {
     if (options.wait || options.cancelOnTimeout)
       throw new CliUsageError('Package transfers do not accept execution wait flags.')
   }
+  if (command === 'observations' && !options.help) {
+    if (!Object.hasOwn(OBSERVATION_COMMANDS, subcommand))
+      throw new CliUsageError('Unknown observations command.')
+    if (options.wait || options.cancelOnTimeout)
+      throw new CliUsageError(
+        'Observation requests do not accept execution wait or cancellation flags.'
+      )
+  }
   if (options.inputJson !== undefined || options.inputFile !== undefined) {
-    if (!['execution', 'package'].includes(command))
-      throw new CliUsageError('--input-json and --input-file require execution or package.')
+    if (!['execution', 'observations', 'package'].includes(command))
+      throw new CliUsageError(
+        '--input-json and --input-file require execution, observations or package.'
+      )
     if (options.inputJson !== undefined && options.inputFile !== undefined)
       throw new CliUsageError('Use only one of --input-json or --input-file.')
   }
@@ -1632,6 +1680,34 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
     return
   }
 
+  if (command === 'observations') {
+    const method = OBSERVATION_COMMANDS[subcommand]
+    if (!method) throw new CliUsageError('Unknown observations command.')
+    if (options.inputJson === undefined && options.inputFile === undefined && deps.stdinIsTTY)
+      throw new CliUsageError(
+        'Provide observation JSON through stdin, --input-json, or --input-file.'
+      )
+    const source =
+      options.inputJson ??
+      (options.inputFile !== undefined
+        ? await deps.readFile(resolve(options.inputFile))
+        : await deps.readStdin())
+    let input
+    try {
+      input = JSON.parse(source)
+    } catch {
+      throw new CliUsageError('Observation input must be valid JSON.')
+    }
+    if (!input || typeof input !== 'object' || Array.isArray(input))
+      throw new CliUsageError('Observation input must be a JSON object.')
+    const result =
+      options.timeoutMs === undefined
+        ? await client.observations[method](input)
+        : await client.observations[method](input, { timeoutMs: options.timeoutMs })
+    outputValue(result, options, deps)
+    return
+  }
+
   if (command === 'execution') {
     const method = EXECUTION_COMMANDS[subcommand]
     if (!method) throw new CliUsageError('Unknown execution command.')
@@ -1663,7 +1739,7 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
       input = { ...input, timeoutMs: options.timeoutMs }
     let result = await client.execution[method](input)
     if (
-      ['run', 'collect-outputs'].includes(subcommand) &&
+      ['run', 'offline-run', 'collect-outputs'].includes(subcommand) &&
       options.wait &&
       ['admitting', 'running', 'cancelling'].includes(result.status)
     ) {

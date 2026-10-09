@@ -1,3 +1,4 @@
+import { createManagedRunObservationReader } from '../managed-run-observation'
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -1504,6 +1505,134 @@ it.skipIf(process.platform !== 'darwin')(
   }
 )
 
+it('keeps offline execution purpose Main-owned and rejects switching the same request into research', async () => {
+  const h = await setup()
+  let policy: ReturnType<typeof resolveManagedShellExecutionCapability> | undefined
+  vi.mocked(h.runtime.executeManagedShell).mockImplementation(
+    async (request, capability, ...rest) => {
+      policy = resolveManagedShellExecutionCapability(capability, {
+        ...scope,
+        executionInvocationId: request.executionInvocationId!
+      })
+      return h.executeFixture(request, capability, ...rest)
+    }
+  )
+  await expect(
+    h.service.executeInTurn({ ...h.request, confinement: { mode: 'offline-demo' } }, h.context)
+  ).rejects.toThrow()
+  const result = await h.service.executeDemoInTurn(h.request, h.context)
+  expect(result.status).toBe('completed')
+  expect((await h.service.inspectExecution({ ...scope, operationId: 'operation' }))?.purpose).toBe(
+    'offline-demo'
+  )
+  expect(policy?.confinement).toEqual({ mode: 'offline-demo', allowedNetworkHosts: [] })
+  await expect(h.service.executeInTurn(h.request, h.context)).rejects.toThrow('conflict')
+  expect(h.runtime.executeManagedShell).toHaveBeenCalledTimes(1)
+  expect(
+    h.savedOutputs.find((output) => output.filename.startsWith('execution-'))?.content
+  ).toContain('"purpose": "offline-demo"')
+})
+
+it('keeps the demo viewing budget Main-only, binds retries and persists it without extending process lifetime', async () => {
+  const h = await setup()
+  h.request.timeoutMs = 10000
+  h.request.projectView = { title: 'Project' }
+  h.request.localServicePort = 4173
+  h.dependencies.registerProjectService = vi.fn(() => () => undefined)
+  const demoViewing = { mode: 'until-stop-or-timeout' as const, timeoutMs: 10000 }
+  for (const untrusted of [{ demoViewing }, { viewing: { mode: 'until-stop-or-timeout' } }])
+    await expect(
+      h.service.executeInTurn({ ...h.request, ...untrusted }, h.context)
+    ).rejects.toThrow()
+  await expect(
+    h.service.executeDemoInTurn(h.request, h.context, undefined, {
+      demoViewing: { ...demoViewing, timeoutMs: 20000 }
+    })
+  ).rejects.toThrow('does not match')
+  await expect(
+    h.service.executeDemoInTurn(h.request, h.context, undefined, {
+      demoViewing: { ...demoViewing, endReason: 'time-limit' } as never
+    })
+  ).rejects.toThrow()
+  expect(h.runtime.executeManagedShell).not.toHaveBeenCalled()
+
+  const result = await h.service.executeDemoInTurn(h.request, h.context, undefined, { demoViewing })
+  expect(result.status).toBe('completed')
+  expect(h.runtime.executeManagedShell).toHaveBeenCalledWith(
+    expect.objectContaining({ timeoutMs: 10000 }),
+    expect.anything(),
+    expect.anything(),
+    undefined
+  )
+  const restarted = new ManagedExecutionService(h.dependencies)
+  expect(
+    await restarted.executeDemoInTurn(h.request, h.context, undefined, { demoViewing })
+  ).toEqual(result)
+  await expect(
+    restarted.executeDemoInTurn(h.request, h.context, undefined, {
+      demoViewing: { ...demoViewing, mode: 'process-lifetime' }
+    })
+  ).rejects.toThrow('conflict')
+  expect(h.runtime.executeManagedShell).toHaveBeenCalledOnce()
+  expect(
+    (await restarted.inspectExecution({ ...scope, operationId: 'operation' }))?.demoViewing
+  ).toEqual(demoViewing)
+  const observed = await createManagedRunObservationReader(restarted)({
+    ...scope,
+    operationId: 'operation'
+  })
+  expect(observed?.executionContext?.demoViewing).toEqual({
+    ...demoViewing,
+    endReason: 'process-exited'
+  })
+  const receipt = JSON.parse(
+    h.savedOutputs.find((output) => output.filename.startsWith('execution-'))!.content
+  )
+  expect(receipt.demoViewing).toEqual(demoViewing)
+  expect(receipt.demoViewing).not.toHaveProperty('endReason')
+})
+
+it('does not invent viewing facts when replaying a legacy demo journal', async () => {
+  const h = await setup()
+  const result = await h.service.executeDemoInTurn(h.request, h.context)
+  const key = sha(
+    JSON.stringify([scope.projectId, scope.sessionId, h.context.operationId, h.request.requestId])
+  )
+  const path = join(h.root, 'managed-execution-requests', key + '.json')
+  const legacy = JSON.parse(await readFile(path, 'utf8'))
+  delete legacy.demoViewing
+  await writeFile(path, JSON.stringify(legacy))
+  const restarted = new ManagedExecutionService(h.dependencies)
+  expect(await restarted.executeDemoInTurn(h.request, h.context)).toEqual(result)
+  const observed = await createManagedRunObservationReader(restarted)({
+    ...scope,
+    operationId: 'operation'
+  })
+  expect(observed?.executionContext?.purpose).toBe('offline-demo')
+  expect(observed?.executionContext?.demoViewing).toBeUndefined()
+  expect(h.runtime.executeManagedShell).toHaveBeenCalledOnce()
+})
+
+it('verifies supplemental demo Versions against the source and records their dependency without restoring caller paths', async () => {
+  const h = await setup()
+  await expect(
+    h.service.executeDemoInTurn(h.request, h.context, undefined, {
+      inputVersionIds: ['outside-source']
+    })
+  ).rejects.toThrow('unavailable')
+  expect(h.runtime.executeManagedShell).not.toHaveBeenCalled()
+  await h.service.executeDemoInTurn(h.request, h.context, undefined, {
+    inputVersionIds: ['version-1']
+  })
+  const receipt = JSON.parse(
+    h.savedOutputs.find((output) => output.filename.startsWith('execution-'))!.content
+  )
+  expect(receipt.supplementalInputs).toEqual([
+    expect.objectContaining({ versionId: 'version-1', sha256: sha('export const input = 42') })
+  ])
+  expect(h.dependencies.resolvePreparedInputs).toHaveBeenCalledTimes(2)
+})
+
 it('recognizes old research request receipts after upgrade without rerunning or relabeling them as demos', async () => {
   const h = await setup()
   const result = await h.service.executeInTurn(h.request, h.context)
@@ -1520,6 +1649,7 @@ it('recognizes old research request receipts after upgrade without rerunning or 
   expect(
     (await restarted.inspectExecution({ ...scope, operationId: 'operation' }))?.purpose
   ).toBeUndefined()
+  await expect(restarted.executeDemoInTurn(h.request, h.context)).rejects.toThrow('conflicts')
   expect(h.runtime.executeManagedShell).toHaveBeenCalledTimes(1)
   vi.mocked(h.dependencies.operations.get).mockResolvedValueOnce({
     requestFingerprint: legacy.fingerprint

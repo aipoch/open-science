@@ -698,12 +698,7 @@ function partialPdfSnapshot(results: PdfTranslationResults): Readonly<{
     readyPages,
     units: sourceUnits.map((unit) => ({
       source: unit.source,
-      // Retained source has no output capacity to reserve. Enlarging its region
-      // can include rotated figure labels excluded from prose extraction.
-      fragments:
-        !translations.has(unit.id) || translations.get(unit.id)!.translation === unit.source
-          ? unit.fragments
-          : pdfTranslationLayoutFragments(unit, results.source),
+      fragments: pdfTranslationLayoutFragments(unit, results.source),
       translation: translations.get(unit.id)?.translation ?? unit.source
     }))
   }

@@ -2420,6 +2420,95 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     )
   })
 
+  it.each(['filesRevision', 'revision', 'in-flight'] as const)(
+    'refreshes only pending public Artifact descriptors on publication progress: %s',
+    async (progress) => {
+      const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+      const artifact = {
+        id: 'managed-version',
+        artifactId: 'managed-artifact',
+        versionId: 'managed-version',
+        kind: 'managed-file' as const,
+        path: '/workspace/managed.txt',
+        name: 'managed.txt',
+        mimeType: 'text/plain',
+        size: 10,
+        mtimeMs: 1
+      }
+      const session = createSession({
+        status: 'running',
+        revision: 1,
+        filesRevision: 1,
+        messages: [
+          createMessage({ id: 'managed-reply', role: 'agent', artifactIds: [artifact.id] })
+        ],
+        artifacts: [artifact]
+      })
+      const descriptor: ArtifactVersionDescriptor = {
+        ...artifact,
+        projectId: session.projectId!,
+        sessionId: session.id,
+        versionNumber: 1,
+        checksum: 'a'.repeat(64),
+        createdAt: '2026-09-05T00:00:00.000Z',
+        state: 'finalized',
+        isPublished: false
+      }
+      let pendingResponse!: (value: ArtifactVersionDescriptor[]) => void
+      const read = vi
+        .fn()
+        .mockImplementationOnce(() =>
+          progress === 'in-flight'
+            ? new Promise<ArtifactVersionDescriptor[]>((resolve) => {
+                pendingResponse = resolve
+              })
+            : Promise.resolve([descriptor])
+        )
+        .mockResolvedValue([{ ...descriptor, isPublished: true }])
+      window.api.artifacts.resolveVersionDescriptors = read
+      root = createRoot(container)
+      const renderSession = async (value: ChatSession): Promise<void> => {
+        await act(async () =>
+          root.render(
+            <WorkspaceMessageScroller activeSession={value} onSendEditedMessage={vi.fn()} />
+          )
+        )
+      }
+      const card = (): HTMLButtonElement | null =>
+        container.querySelector('button[aria-label="Preview generated file managed.txt"]')
+      await renderSession(session)
+      expect(read).toHaveBeenCalledOnce()
+      expect(card()?.disabled).toBe(true)
+      expect(window.api.previewResources.acquire).not.toHaveBeenCalled()
+      await renderSession({ ...session, messages: [...session.messages] })
+      expect(read).toHaveBeenCalledOnce()
+
+      // Managed operations publish a durable Session projection, without an ACP Artifact event.
+      const publishedSession = {
+        ...session,
+        [progress === 'revision' ? 'revision' : 'filesRevision']: 2
+      }
+      await renderSession(publishedSession)
+      await waitFor(() => expect(read).toHaveBeenCalledTimes(2))
+      await waitFor(() => expect(card()?.disabled).toBe(false))
+      if (progress === 'in-flight') {
+        await act(async () => pendingResponse([descriptor]))
+        expect(card()?.disabled).toBe(false)
+      }
+      await renderSession({ ...publishedSession, revision: 3, filesRevision: 3 })
+      expect(read).toHaveBeenCalledTimes(2)
+      await act(async () => card()?.click())
+      expect(upsertAndActivateItem).toHaveBeenCalledWith(
+        expect.objectContaining({
+          artifactId: artifact.artifactId,
+          path: expect.stringContaining(`/${artifact.artifactId}/${artifact.versionId}`)
+        })
+      )
+      expect(session.artifacts).toEqual([artifact])
+      expect('isPublished' in artifact).toBe(false)
+    }
+  )
+
   it.each([true, false])(
     'hydrates historical publication without saving Session metadata: %s',
     async (isPublished) => {

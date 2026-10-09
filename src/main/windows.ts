@@ -17,6 +17,7 @@ import { is } from '@electron-toolkit/utils'
 import iconPng from '../../resources/icon.png?asset'
 import iconWindows from '../../resources/icon-light.ico?asset'
 import { createFrameNavigationGuard, isAllowedExternalNavigation } from './navigation-policy'
+import { desktopObservationFrameRegistry } from './replay-viewer/desktop-frame-registry'
 import { createFindOverlayManager, type FindOverlayDeps } from './find-overlay'
 import { registerFindOverlayOwner } from './find-overlay-registry'
 import { createLogger, diagnosticErrorFields } from './logger'
@@ -58,7 +59,7 @@ const E2E_WINDOW_MODE_ENV = 'OPEN_SCIENCE_E2E_WINDOW_MODE'
 const RENDERER_RECOVERY_WINDOW_MS = 60_000
 const MAX_AUTOMATIC_RENDERER_RECOVERIES = 2
 const CHROMIUM_ERR_ABORTED = -3
-const ALLOWED_RENDERER_PERMISSIONS = new Set(['clipboard-sanitized-write'])
+const ALLOWED_RENDERER_PERMISSIONS = new Set(['clipboard-sanitized-write', 'fullscreen'])
 const RECOVERABLE_RENDERER_EXIT_REASONS = new Set([
   'abnormal-exit',
   'crashed',
@@ -132,7 +133,14 @@ const createAppWindow = (options: BrowserWindowConstructorOptions): BrowserWindo
     window.webContents as unknown as PreviewContextMenuWebContents
   )
   window.on('closed', unregisterPreviewContextMenuBridge)
-  const isAllowedFrameNavigation = createFrameNavigationGuard()
+  const isAllowedFrameNavigation = createFrameNavigationGuard((url, frame) =>
+    desktopObservationFrameRegistry.allows({
+      url,
+      frame,
+      webContentsId: window.webContents.id,
+      mainFrame: window.webContents.mainFrame
+    })
+  )
   type FrameNavigationDetails = {
     url: string
     isMainFrame: boolean
