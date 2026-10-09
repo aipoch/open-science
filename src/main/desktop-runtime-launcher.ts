@@ -107,6 +107,7 @@ export function desktopBackendPaths(options: {
 
 export async function startOrAttachDesktopBackend(options: {
   configRoot: string
+  profilePath: string
   version: string
   command: string
   entry: string
@@ -124,7 +125,12 @@ export async function startOrAttachDesktopBackend(options: {
     'wx',
     0o600
   )
-  const env: NodeJS.ProcessEnv = { ...process.env, OPEN_SCIENCE_CONFIG_ROOT: options.configRoot }
+  // The explicit config root must not make Node select a different credential profile.
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    OPEN_SCIENCE_CONFIG_ROOT: options.configRoot,
+    OPEN_SCIENCE_USER_DATA: options.profilePath
+  }
   delete env.ELECTRON_RUN_AS_NODE
   let child: ChildProcess
   let failure: Error | undefined
