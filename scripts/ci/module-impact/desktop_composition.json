@@ -1263,7 +1263,12 @@
       "src/main/notebook/code-risk-admission.test.ts",
       "src/main/notebook/code-risk-analysis.test.ts",
       "src/main/literature/pdf-translation/native-reading-order.test.ts",
-      "src/main/session-plan/session-plan-turn-outcome.test.ts"
+      "src/main/session-plan/session-plan-turn-outcome.test.ts",
+      "src/main/notebook/runtime-repair.windows.integration.test.ts",
+      "src/main/notebook/python-command.probe.test.ts",
+      "src/main/notebook/windows-python-probe.integration.test.ts",
+      "src/main/notebook/python-command.test.ts",
+      "src/main/skills/registered-helper-catalog.runtime.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
