@@ -597,7 +597,8 @@
       "src/main/literature/pdf-translation/spaced-script-roundtrip.test.ts",
       "src/main/literature/pdf-translation/structural-roundtrip.test.ts",
       "src/main/literature/pdf-translation/styled-float-roundtrip.test.ts",
-      "src/main/literature/pdf-translation/terminal-link-roundtrip.test.ts"
+      "src/main/literature/pdf-translation/terminal-link-roundtrip.test.ts",
+      "src/main/literature/pdf-translation/native-reading-order.test.ts"
     ]
   },
   "capabilityOverlays": [],

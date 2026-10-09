@@ -188,7 +188,10 @@
     "test/fixtures/pdf-translation/wrapped-citation-float-column-roundtrip.jsonl",
     "test/fixtures/pdf-translation/wrapped-inline-identifier-roundtrip.jsonl",
     "test/fixtures/pdf-translation/wrapped-parameter-native-roundtrip.jsonl",
-    "scripts/pdf-translation-corpus.test.ts"
+    "scripts/pdf-translation-corpus.test.ts",
+    "resources/pdf-translation/reading-order.mjs",
+    "src/main/literature/pdf-translation/native-reading-order.test.ts",
+    "test/fixtures/pdf-translation/native-visual-reading-order.jsonl"
   ],
   "interfacePaths": [
     "src/main/literature/pdf-translation/index.ts",
@@ -238,7 +241,8 @@
       "src/main/literature/pdf-translation/parameter-prose-roundtrip.test.ts",
       "src/main/literature/pdf-translation/spaced-script-roundtrip.test.ts",
       "src/main/literature/pdf-translation/structural-roundtrip.test.ts",
-      "src/main/literature/pdf-translation/terminal-link-roundtrip.test.ts"
+      "src/main/literature/pdf-translation/terminal-link-roundtrip.test.ts",
+      "src/main/literature/pdf-translation/native-reading-order.test.ts"
     ],
     "contract": [
       "src/main/literature/pdf-translation/ipc.test.ts",

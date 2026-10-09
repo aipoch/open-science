@@ -21,6 +21,7 @@ import {
   decodePDFRawStream
 } from 'pdf-lib'
 import { engine } from './pdfium.mjs'
+import { nativeReadingOrder } from './reading-order.mjs'
 import { unwrapPageContainers } from './page-containers.mjs'
 import { translateFormLabels } from './form-labels.mjs'
 import { splitSharedTextRuns, recoverOverprintedTextSources } from './shared-text-runs.mjs'
@@ -1990,8 +1991,8 @@ async function generate({ data, units, pages, preserveUnsupported = false, selec
               containedSource: matchingObjects
                 .filter(
                   (o) =>
-                    o.bounds[0] >= sourceRect.x - 0.05 &&
-                    o.bounds[2] <= sourceRect.x + sourceRect.width + 0.05 &&
+                    o.bounds[0] >= sourceRect.x - objectTolerance &&
+                    o.bounds[2] <= sourceRect.x + sourceRect.width + objectTolerance &&
                     o.bounds[3] <= sourceRect.top + 0.05 &&
                     o.bounds[1] >= sourceRect.bottom - 0.05
                 )
@@ -4081,6 +4082,24 @@ async function generate({ data, units, pages, preserveUnsupported = false, selec
             if (!aligned.endOffset) continue
             const end = cursor + aligned.endOffset
             if (!next.has(end)) next.set(end, [...proof, verifiedObjects])
+          }
+        }
+        if (!next.size || (regionIndex === regions.length - 1 && !next.has(unit.source.length))) {
+          const text = nativeReadingOrder(
+            e,
+            planningPage(region.fragment.pageNumber).page,
+            region.rect
+          )
+          if (text) {
+            for (const [cursor, proof] of proofs) {
+              const aligned = objectSourceOffsets(
+                unit.source.slice(cursor),
+                [{ i: 0, text }],
+                verifiedHyphens,
+                true
+              )
+              if (aligned.endOffset) next.set(cursor + aligned.endOffset, [...proof, false])
+            }
           }
         }
         check(next.size > 0 && next.size <= 128, 'source-mismatch')

@@ -1261,7 +1261,8 @@
       "src/main/literature/pdf-translation/styled-float-roundtrip.test.ts",
       "src/main/literature/pdf-translation/terminal-link-roundtrip.test.ts",
       "src/main/notebook/code-risk-admission.test.ts",
-      "src/main/notebook/code-risk-analysis.test.ts"
+      "src/main/notebook/code-risk-analysis.test.ts",
+      "src/main/literature/pdf-translation/native-reading-order.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
