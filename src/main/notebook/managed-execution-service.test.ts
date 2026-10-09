@@ -1533,8 +1533,9 @@ it('keeps offline execution purpose Main-owned and rejects switching the same re
   ).toContain('"purpose": "offline-demo"')
 })
 
-it('keeps the demo viewing budget Main-only, binds retries and persists it without extending process lifetime', async () => {
+it('keeps the demo viewing budget Main-only and validates its execution timeout before admission', async () => {
   const h = await setup()
+  const executionAdmission = vi.spyOn(h.environments, 'withExecution')
   h.request.timeoutMs = 10000
   h.request.projectView = { title: 'Project' }
   h.request.localServicePort = 4173
@@ -1554,43 +1555,86 @@ it('keeps the demo viewing budget Main-only, binds retries and persists it witho
       demoViewing: { ...demoViewing, endReason: 'time-limit' } as never
     })
   ).rejects.toThrow()
+  expect(executionAdmission).not.toHaveBeenCalled()
   expect(h.runtime.executeManagedShell).not.toHaveBeenCalled()
-
-  const result = await h.service.executeDemoInTurn(h.request, h.context, undefined, { demoViewing })
-  expect(result.status).toBe('completed')
-  expect(h.runtime.executeManagedShell).toHaveBeenCalledWith(
-    expect.objectContaining({ timeoutMs: 10000 }),
-    expect.anything(),
-    expect.anything(),
-    undefined
-  )
-  const restarted = new ManagedExecutionService(h.dependencies)
-  expect(
-    await restarted.executeDemoInTurn(h.request, h.context, undefined, { demoViewing })
-  ).toEqual(result)
-  await expect(
-    restarted.executeDemoInTurn(h.request, h.context, undefined, {
-      demoViewing: { ...demoViewing, mode: 'process-lifetime' }
-    })
-  ).rejects.toThrow('conflict')
-  expect(h.runtime.executeManagedShell).toHaveBeenCalledOnce()
-  expect(
-    (await restarted.inspectExecution({ ...scope, operationId: 'operation' }))?.demoViewing
-  ).toEqual(demoViewing)
-  const observed = await createManagedRunObservationReader(restarted)({
-    ...scope,
-    operationId: 'operation'
-  })
-  expect(observed?.executionContext?.demoViewing).toEqual({
-    ...demoViewing,
-    endReason: 'process-exited'
-  })
-  const receipt = JSON.parse(
-    h.savedOutputs.find((output) => output.filename.startsWith('execution-'))!.content
-  )
-  expect(receipt.demoViewing).toEqual(demoViewing)
-  expect(receipt.demoViewing).not.toHaveProperty('endReason')
 })
+
+it.skipIf(process.platform !== 'darwin')(
+  'binds demo viewing retries and persists the budget without extending process lifetime',
+  async () => {
+    const h = await setup()
+    h.request.timeoutMs = 10000
+    h.request.projectView = { title: 'Project' }
+    h.request.localServicePort = 4173
+    h.dependencies.registerProjectService = vi.fn(() => () => undefined)
+    const demoViewing = { mode: 'until-stop-or-timeout' as const, timeoutMs: 10000 }
+    const result = await h.service.executeDemoInTurn(h.request, h.context, undefined, {
+      demoViewing
+    })
+    expect(result.status).toBe('completed')
+    expect(h.runtime.executeManagedShell).toHaveBeenCalledWith(
+      expect.objectContaining({ timeoutMs: 10000 }),
+      expect.anything(),
+      expect.anything(),
+      undefined
+    )
+    const restarted = new ManagedExecutionService(h.dependencies)
+    expect(
+      await restarted.executeDemoInTurn(h.request, h.context, undefined, { demoViewing })
+    ).toEqual(result)
+    await expect(
+      restarted.executeDemoInTurn(h.request, h.context, undefined, {
+        demoViewing: { ...demoViewing, mode: 'process-lifetime' }
+      })
+    ).rejects.toThrow('conflict')
+    expect(h.runtime.executeManagedShell).toHaveBeenCalledOnce()
+    expect(
+      (await restarted.inspectExecution({ ...scope, operationId: 'operation' }))?.demoViewing
+    ).toEqual(demoViewing)
+    const observed = await createManagedRunObservationReader(restarted)({
+      ...scope,
+      operationId: 'operation'
+    })
+    expect(observed?.executionContext?.demoViewing).toEqual({
+      ...demoViewing,
+      endReason: 'process-exited'
+    })
+    const receipt = JSON.parse(
+      h.savedOutputs.find((output) => output.filename.startsWith('execution-'))!.content
+    )
+    expect(receipt.demoViewing).toEqual(demoViewing)
+    expect(receipt.demoViewing).not.toHaveProperty('endReason')
+  }
+)
+
+it.each(['linux', 'win32'] as const)(
+  'rejects a trusted demo viewing request on %s before starting a local service',
+  async (platform) => {
+    const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')!
+    try {
+      Object.defineProperty(process, 'platform', { ...descriptor, value: platform })
+      const h = await setup()
+      h.request.timeoutMs = 10000
+      h.request.projectView = { title: 'Project' }
+      h.request.localServicePort = 4173
+      h.dependencies.registerProjectService = vi.fn(() => () => undefined)
+      await expect(
+        h.service.executeDemoInTurn(h.request, h.context, undefined, {
+          demoViewing: { mode: 'until-stop-or-timeout', timeoutMs: 10000 }
+        })
+      ).rejects.toThrow('Managed local services currently require native macOS.')
+      expect(h.runtime.executeManagedShell).not.toHaveBeenCalled()
+      expect(h.dependencies.registerProjectService).not.toHaveBeenCalled()
+      expect(h.runs).toEqual([])
+      expect(h.savedOutputs).toEqual([])
+      expect(
+        (await h.service.inspectExecution({ ...scope, operationId: 'operation' }))?.state
+      ).toBe('failed')
+    } finally {
+      Object.defineProperty(process, 'platform', descriptor)
+    }
+  }
+)
 
 it('does not invent viewing facts when replaying a legacy demo journal', async () => {
   const h = await setup()
