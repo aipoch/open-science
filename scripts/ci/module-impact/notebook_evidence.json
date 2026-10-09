@@ -195,7 +195,21 @@
       "src/main/notebook/managed-nested-generation.integration.test.ts",
       "src/main/composition/session-packages.test.ts",
       "src/main/composition/artifact-surfaces.test.ts",
-      "src/main/notebook/screened-auxiliary-output.test.ts"
+      "src/main/notebook/screened-auxiliary-output.test.ts",
+      "src/main/run-observation/project-export-reader.test.ts",
+      "src/main/run-observation/capture-package.integration.test.ts",
+      "src/main/run-observation/managed-coordinator.test.ts",
+      "src/main/project-recordings/managed-adapter.test.ts",
+      "src/main/run-observation-external-port.test.ts",
+      "src/main/browser-recordings/external-port.test.ts",
+      "src/main/runtime-view/browser-host.integration.test.ts",
+      "src/main/replay-viewer/http-host.integration.test.ts",
+      "src/main/browser-recordings/owner.test.ts",
+      "src/main/run-observation/media-collector.test.ts",
+      "src/main/run-observation/managed-port.test.ts",
+      "src/main/run-observation/recorded-reader.test.ts",
+      "src/main/run-observation/managed-status.test.ts",
+      "src/main/project-recordings/recorder.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

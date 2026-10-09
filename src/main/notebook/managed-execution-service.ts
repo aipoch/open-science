@@ -32,6 +32,7 @@ import {
   managedObservationResultSchema,
   prepareManagedEnvironmentRequestSchema,
   type CreateManagedSessionRequest,
+  type ManagedObservationResult,
   type ManagedRuntimeDiagnosticCode,
   type ManagedRuntimeDiagnostics
 } from '../../shared/managed-execution'
@@ -252,6 +253,9 @@ export type ManagedExecutionInspection = {
   run: NotebookRunRecord | null
   artifacts: ArtifactVersionDescriptor[]
   projectView?: RuntimeViewLaunch
+  /** Main-only evidence admission, consumed by the independent recording status reader. */
+  recordObservation?: boolean
+  observation?: ManagedObservationResult
   /** Main-private redaction inputs, never a public response. */
   secrets: string[]
 }
@@ -597,6 +601,8 @@ export class ManagedExecutionService {
         : {}),
       run,
       artifacts,
+      ...(journal.recordObservation ? { recordObservation: true } : {}),
+      ...(journal.observation ? { observation: structuredClone(journal.observation) } : {}),
       ...(journal.projectView ? { projectView: journal.projectView } : {}),
       secrets: [...(live?.secrets ?? [])]
     }

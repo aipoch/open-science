@@ -15,10 +15,7 @@
   ],
   "consumerModules": [],
   "testFiles": {
-    "owner": [
-      "src/main/locale/owner.test.ts",
-      "src/main/locale/resources.lazy.test.ts"
-    ],
+    "owner": ["src/main/locale/owner.test.ts", "src/main/locale/resources.lazy.test.ts"],
     "contract": [
       "src/renderer/src/i18n/resources.test.ts",
       "src/preload/index.test.ts",
@@ -479,11 +476,22 @@
       "src/main/research-execution-profiles/ipc.test.ts",
       "src/main/session-package/headless.test.ts",
       "src/main/session-persistence/create-local-session.test.ts",
-      "src/main/session-persistence/create-managed-session.test.ts"
+      "src/main/session-persistence/create-managed-session.test.ts",
+      "src/main/run-observation/capture-package.integration.test.ts",
+      "src/main/run-observation/managed-coordinator.test.ts",
+      "src/main/run-observation-external-port.test.ts",
+      "src/main/browser-recordings/external-port.test.ts",
+      "src/main/run-observation/recorded-reader.test.ts",
+      "src/main/run-observation/managed-port.test.ts",
+      "src/main/project-recordings/managed-adapter.test.ts",
+      "src/main/runtime-view/browser-host.integration.test.ts",
+      "src/main/replay-viewer/http-host.integration.test.ts",
+      "src/main/browser-recordings/owner.test.ts",
+      "src/main/run-observation/media-collector.test.ts",
+      "src/main/project-recordings/recorder.test.ts",
+      "src/main/run-observation/managed-status.test.ts"
     ]
   },
-  "capabilityOverlays": [
-    "i18n_catalog"
-  ],
+  "capabilityOverlays": ["i18n_catalog"],
   "fallbackCapability": "main_runtime"
 }

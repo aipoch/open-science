@@ -218,7 +218,17 @@
       "src/main/notebook/managed-execution-entrypoints.integration.test.ts",
       "src/main/notebook/session-operation-owner.integration.test.ts",
       "src/main/notebook/managed-execution-service.test.ts",
-      "src/main/research-execution-profiles/ipc.test.ts"
+      "src/main/research-execution-profiles/ipc.test.ts",
+      "src/main/run-observation/capture-package.integration.test.ts",
+      "src/main/run-observation/managed-coordinator.test.ts",
+      "src/main/project-recordings/managed-adapter.test.ts",
+      "src/main/run-observation-external-port.test.ts",
+      "src/main/browser-recordings/external-port.test.ts",
+      "src/main/runtime-view/browser-host.integration.test.ts",
+      "src/main/replay-viewer/http-host.integration.test.ts",
+      "src/main/run-observation/managed-port.test.ts",
+      "src/main/run-observation/recorded-reader.test.ts",
+      "src/main/run-observation/managed-status.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

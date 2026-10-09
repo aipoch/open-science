@@ -6,9 +6,7 @@
     "packages/safe-file-publisher-native/package.json",
     "packages/safe-file-publisher-native/src/safe_file_publisher_native.cc"
   ],
-  "interfacePaths": [
-    "packages/safe-file-publisher-native/index.cjs"
-  ],
+  "interfacePaths": ["packages/safe-file-publisher-native/index.cjs"],
   "consumerModules": [],
   "testFiles": {
     "owner": [],
@@ -408,12 +406,22 @@
       "src/main/notebook/screened-auxiliary-output.test.ts",
       "src/main/notebook/session-operation-owner.integration.test.ts",
       "src/main/research-execution-profiles/ipc.test.ts",
-      "src/main/session-package/headless.test.ts"
+      "src/main/session-package/headless.test.ts",
+      "src/main/run-observation/capture-package.integration.test.ts",
+      "src/main/run-observation/recorded-reader.test.ts",
+      "src/main/run-observation/managed-coordinator.test.ts",
+      "src/main/project-recordings/managed-adapter.test.ts",
+      "src/main/run-observation-external-port.test.ts",
+      "src/main/browser-recordings/external-port.test.ts",
+      "src/main/runtime-view/browser-host.integration.test.ts",
+      "src/main/replay-viewer/http-host.integration.test.ts",
+      "src/main/run-observation/managed-port.test.ts",
+      "src/main/browser-recordings/owner.test.ts",
+      "src/main/run-observation/media-collector.test.ts",
+      "src/main/project-recordings/recorder.test.ts",
+      "src/main/run-observation/managed-status.test.ts"
     ]
   },
-  "capabilityOverlays": [
-    "notebook_network_sandbox",
-    "windows_sensitive"
-  ],
+  "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],
   "fallbackCapability": "main_runtime"
 }

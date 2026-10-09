@@ -29,7 +29,8 @@
     "resources/find-overlay/findOverlay.js",
     "resources/find-overlay/findOverlay.test.js",
     "resources/find-overlay/index.html",
-    "src/shared/renderer-contracts/research-execution-profiles.ts"
+    "src/shared/renderer-contracts/research-execution-profiles.ts",
+    "src/shared/renderer-contracts/run-observation.ts"
   ],
   "interfacePaths": [
     "src/main/ipc-surfaces/adapter.ts",
@@ -45,7 +46,8 @@
     "src/main/ipc-surfaces/session-persistence.ts",
     "src/main/ipc-surfaces/office-preview.ts",
     "src/main/session-package/desktop-composition.ts",
-    "src/shared/renderer-contracts/research-execution-profiles.ts"
+    "src/shared/renderer-contracts/research-execution-profiles.ts",
+    "src/shared/renderer-contracts/run-observation.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -206,9 +208,6 @@
       "src/shared/renderer-surface-inventory.test.ts"
     ]
   },
-  "capabilityOverlays": [
-    "e2e_regressions",
-    "e2e_delegation"
-  ],
+  "capabilityOverlays": ["e2e_regressions", "e2e_delegation"],
   "fallbackCapability": "main_runtime"
 }

@@ -72,11 +72,7 @@
     "src/main/settings/xai-protocol.ts",
     "src/main/settings/backend-target.ts"
   ],
-  "consumerModules": [
-    "settings_service_facade",
-    "reviewer_orchestrator",
-    "artifact_provenance"
-  ],
+  "consumerModules": ["settings_service_facade", "reviewer_orchestrator", "artifact_provenance"],
   "testFiles": {
     "owner": [
       "src/main/settings/settings-backend.architecture.test.ts",
@@ -594,13 +590,22 @@
       "src/main/notebook/screened-auxiliary-output.test.ts",
       "src/main/notebook/session-operation-owner.integration.test.ts",
       "src/main/research-execution-profiles/ipc.test.ts",
-      "src/main/session-package/headless.test.ts"
+      "src/main/session-package/headless.test.ts",
+      "src/main/run-observation/capture-package.integration.test.ts",
+      "src/main/run-observation/recorded-reader.test.ts",
+      "src/main/browser-recordings/external-port.test.ts",
+      "src/main/run-observation/managed-coordinator.test.ts",
+      "src/main/run-observation/managed-port.test.ts",
+      "src/main/project-recordings/managed-adapter.test.ts",
+      "src/main/run-observation-external-port.test.ts",
+      "src/main/runtime-view/browser-host.integration.test.ts",
+      "src/main/replay-viewer/http-host.integration.test.ts",
+      "src/main/browser-recordings/owner.test.ts",
+      "src/main/run-observation/media-collector.test.ts",
+      "src/main/project-recordings/recorder.test.ts",
+      "src/main/run-observation/managed-status.test.ts"
     ]
   },
-  "capabilityOverlays": [
-    "windows_sensitive",
-    "e2e_regressions",
-    "e2e_delegation"
-  ],
+  "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
   "fallbackCapability": "main_runtime"
 }
