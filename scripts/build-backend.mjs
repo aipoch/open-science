@@ -4,6 +4,7 @@ import { build } from 'esbuild'
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { resolve, basename, join } from 'node:path'
 import { createHash } from 'node:crypto'
+import { wsl2BuildDefines } from './wsl2-build-flags.mjs'
 
 const root = resolve(import.meta.dirname, '..')
 const out = join(root, 'out/backend')
@@ -25,8 +26,7 @@ const buildEntry = async (entry, outfile) => {
     define: {
       'import.meta.url': '__entryUrl',
       __OPEN_SCIENCE_NATIVE_LOCALE_DIRECTORY__: JSON.stringify('native-locales'),
-      __OPEN_SCIENCE_WSL2_BASH_PREVIEW__: process.platform === 'win32' ? 'true' : 'false',
-      __OPEN_SCIENCE_WSL2_BASH_DEVELOPMENT_PREVIEW__: 'false'
+      ...wsl2BuildDefines(process.platform, process.argv.includes('--development'), process.env)
     },
     banner: { js: 'const __entryUrl = require("node:url").pathToFileURL(__filename).href;' },
     plugins: [

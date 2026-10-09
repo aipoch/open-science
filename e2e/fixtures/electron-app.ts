@@ -687,6 +687,20 @@ class ElectronAppHarness implements ElectronApp {
     const destination = join(evidenceRoot, name)
     if (!this.mainLogDirectory) throw new Error('Electron log directory is unavailable.')
     await copyFile(join(this.mainLogDirectory, 'main.log'), destination)
+    // Business owners now log in the isolated Node configuration root. Preserve these before
+    // fixture teardown removes it, including backend startup stderr from each desktop launch.
+    const backendLogDirectory = join(this.roots.storageRoot, 'logs')
+    const backendLogs = await readdir(backendLogDirectory).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return []
+      throw error
+    })
+    for (const file of backendLogs.sort()) {
+      if (file !== 'main.log' && !/^desktop-backend-\d+-\d+\.log$/u.test(file)) continue
+      await appendFile(
+        destination,
+        `\n--- Node backend: ${file} ---\n${await readFile(join(backendLogDirectory, file), 'utf8')}`
+      )
+    }
     if (this.flushTimeline) {
       await appendFile(
         destination,

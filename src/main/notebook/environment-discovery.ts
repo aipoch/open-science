@@ -571,10 +571,13 @@ export const defaultDiscoveryDeps = (
     probeVersion: async (interpreterPath, language) => {
       try {
         if (language === 'python') {
-          const { stdout, stderr } = await exec(interpreterPath, ['--version'], {
-            ...probeOptions(interpreterPath, language),
-            shell: platform === 'win32'
-          })
+          // Discovery returns executable paths, not shell launchers. Pass the path literally so
+          // spaces and shell metacharacters in a selected environment cannot change the command.
+          const { stdout, stderr } = await exec(
+            interpreterPath,
+            ['--version'],
+            probeOptions(interpreterPath, language)
+          )
           const output = `${stdout}\n${stderr}`
           return isPython3Version(output) ? output.trim().replace(/^Python\s+/i, '') : undefined
         }

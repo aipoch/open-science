@@ -50,7 +50,7 @@
     "check:claude-acp-patch": "node scripts/check-claude-acp-patch.mjs",
     "build:web": "npm run gen:web-api-map && node --max-old-space-size=8192 node_modules/vite/bin/vite.js build --config vite.web.config.ts",
     "start": "electron-vite preview",
-    "dev": "npm run build:backend && npm run stage:node-runtime && electron-vite dev",
+    "dev": "npm run build:backend -- --development && npm run stage:node-runtime && electron-vite dev",
     "dev:native-send-now": "node scripts/dev-native-send-now.cjs",
     "dev:web": "npm run build:backend && npm run build:web && node scripts/dev-web.cjs",
     "dev:headless": "npm run dev:web --",

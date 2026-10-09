@@ -228,6 +228,8 @@
     "scripts/backend-dependencies.mjs",
     "scripts/backend-dependencies.test.ts",
     "scripts/build-backend.mjs",
+    "scripts/wsl2-build-flags.mjs",
+    "scripts/wsl2-build-flags.d.mts",
     "scripts/stage-backend.mjs",
     "src/main/node-process-host.test.ts",
     "scripts/test-backend-installed.mjs",
@@ -451,6 +453,8 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "test/config/electron.vite.config.test.ts",
+      "scripts/electron-vite-config.test.ts",
       "src/main/notebook/dependency-analysis.r-arrow-dataset.test.ts",
       "src/main/notebook/dependency-analysis.r-deseq2.test.ts",
       "src/main/notebook/dependency-analysis.r-hdf5array.test.ts",
