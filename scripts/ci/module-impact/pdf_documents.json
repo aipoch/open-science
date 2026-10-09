@@ -330,7 +330,8 @@
       "src/main/literature/pdf-translation/reader-ownership.test.ts",
       "src/main/literature/pdf-translation/usage.test.ts",
       "src/main/database/workspace-pdf-translation-migration.test.ts",
-      "src/main/literature/pdf-translation/pdf-cache.test.ts"
+      "src/main/literature/pdf-translation/pdf-cache.test.ts",
+      "src/main/session-package/research-reproduction.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions"],

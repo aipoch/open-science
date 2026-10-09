@@ -53,7 +53,8 @@
       "src/shared/renderer-surface-matrix.test.ts",
       "src/main/session-package/fork.test.ts",
       "src/main/session-package/ro-crate.integration.test.ts",
-      "src/main/session-persistence/ipc.test.ts"
+      "src/main/session-persistence/ipc.test.ts",
+      "src/main/session-package/research-reproduction.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

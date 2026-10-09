@@ -20,6 +20,7 @@ import {
 import { ViolationLog } from './gateway/violation-log.js'
 import { checkLinuxTools, linuxLaunch } from './platform/linux-isolation.js'
 import { macosLaunch } from './platform/macos-isolation.js'
+import { validateLocalService, type NotebookLocalService } from './platform/local-service.js'
 import { wsl2Launch } from './platform/wsl2-isolation.js'
 import {
   checkWindowsAppContainer,
@@ -99,6 +100,7 @@ const cleanupComplete = (result: SandboxCleanupResult): boolean =>
   result.processesTerminated && result.networkClosed && result.temporaryResourcesRemoved
 
 type NetworkWrapRequest = Readonly<{
+  localService?: NotebookLocalService
   target?: NotebookSandboxTarget
   command: string
   executable?: string
@@ -274,10 +276,13 @@ const wrap = async (
   confirmProcessState?: () => Promise<SandboxProcessState>
   beginSpawn?: () => Readonly<{ started: () => void; notStarted: () => void }>
 }> => {
+  const target = request.target ?? { kind: 'native' }
+  const localService = request.localService
+    ? validateLocalService(request.localService, process.platform, target.kind)
+    : undefined
   if (finishing.size > 0) await Promise.allSettled([...finishing])
   const config = runtimeConfig
   if (!config) throw new Error('Notebook process runtime is not initialized.')
-  const target = request.target ?? { kind: 'native' }
   const filesystem = normalizeFilesystemLayout({
     ...request.filesystem,
     ...((process.platform === 'darwin' || process.platform === 'linux') &&
@@ -455,6 +460,7 @@ const wrap = async (
     context.gateway = gateway
     if (process.platform === 'darwin') {
       const launch = macosLaunch({
+        ...(localService ? { localService } : {}),
         command: request.command,
         shell: typeof request.shell === 'string' ? request.shell : '/bin/bash',
         gatewayPort: gateway.port,

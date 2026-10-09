@@ -266,6 +266,9 @@ type NotebookRuntimeServiceOptions = ProjectIdScope & {
   // Stateless shell child-process port. The production adapter owns platform invocation, encoding,
   // environment projection, and timeout teardown; tests inject a fake without crossing IPC/shared.
   shellProcess?: NotebookShellProcess
+  // Main-owned execution policy for bounded engineering runs; never accepted from tool arguments.
+  // Ordinary Notebook Sessions retain their persistent Shell interpreter by default.
+  shellExecutionMode?: 'persistent' | 'bounded'
   shellConcurrencyLimit?: number
   // Callback to fetch currently granted external folder roots. Production wires the
   // GrantedLocalRootsRepository; tests can inject an in-memory list or omit for empty-list default.
@@ -878,7 +881,8 @@ class NotebookRuntimeService {
         new NotebookShellProcessAdapter(
           options.platform,
           options.processSandbox,
-          this.shellProcessOwnership
+          this.shellProcessOwnership,
+          options.shellExecutionMode
         ),
       shellConcurrencyLimit: options.shellConcurrencyLimit,
       getGrantedLocalRoots: options.getGrantedLocalRoots

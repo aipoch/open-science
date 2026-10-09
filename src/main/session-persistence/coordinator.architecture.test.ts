@@ -1814,7 +1814,10 @@ describe('Session persistence coordinator architecture', () => {
       'src/renderer/src/lib/acp/workspace-prompt-rollback-failure.test.ts',
       'src/main/literature/pdf-translation/checkpoints.test.ts',
       'src/main/literature/pdf-translation/usage.test.ts',
-      'src/main/notebook/code-risk-admission.test.ts'
+      'src/main/notebook/code-risk-admission.test.ts',
+      'src/main/session-package/research-reproduction.integration.test.ts',
+      'src/main/notebook/research-service.macos.integration.test.ts',
+      'src/main/notebook/local-service.macos.integration.test.ts'
     ])
     expect(sessionPersistence.capabilityOverlays).toEqual([
       'windows_sensitive',

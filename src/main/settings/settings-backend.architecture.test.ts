@@ -1571,7 +1571,8 @@ describe('Settings backend ownership architecture', () => {
       'src/main/literature/pdf-translation/usage.test.ts',
       'src/main/literature/pdf-translation/pdf-cache.test.ts',
       'src/main/literature/pdf-translation/api-target.test.ts',
-      'src/main/literature/pdf-translation/agent-target.test.ts'
+      'src/main/literature/pdf-translation/agent-target.test.ts',
+      'src/main/session-package/research-reproduction.integration.test.ts'
     ])
     expect(
       [

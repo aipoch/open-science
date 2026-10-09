@@ -122,7 +122,7 @@
       "id": "notebook_network_sandbox",
       "role": "owner",
       "paths": ["packages/notebook-network-sandbox/**"],
-      "capabilities": ["notebook_network_sandbox"]
+      "capabilities": ["notebook_network_sandbox", "main_runtime", "windows_sensitive"]
     },
     {
       "id": "shared_contract",
@@ -277,6 +277,7 @@
         "src/shared/local-fs.ts",
         "src/shared/notebook.ts",
         "src/shared/notebook-network.ts",
+        "src/shared/research-reproduction.ts",
         "src/shared/renderer-contract-catalog.ts",
         "src/shared/renderer-contracts/**",
         "src/shared/settings.ts",

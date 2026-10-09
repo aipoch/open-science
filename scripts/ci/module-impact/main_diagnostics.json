@@ -410,7 +410,10 @@
       "src/main/acp/approved-handoff-outcome.test.ts",
       "src/main/literature/pdf-translation/ipc.test.ts",
       "src/main/literature/pdf-translation/checkpoints.test.ts",
-      "src/main/local-models/ipc.test.ts"
+      "src/main/local-models/ipc.test.ts",
+      "src/main/session-package/research-reproduction.integration.test.ts",
+      "src/main/notebook/local-service.macos.integration.test.ts",
+      "src/main/notebook/research-service.macos.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

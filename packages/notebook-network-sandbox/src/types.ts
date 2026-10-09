@@ -1,4 +1,6 @@
 import type { TrustedPrivateDestination } from '../runtime/src/gateway/address-policy.js'
+import type { NotebookLocalService } from '../runtime/src/platform/local-service.js'
+export type { NotebookLocalService } from '../runtime/src/platform/local-service.js'
 export type NotebookNetworkPolicy = Readonly<{
   trustedPrivateDestinations?: readonly TrustedPrivateDestination[]
   allowedDomains: readonly string[]
@@ -82,6 +84,7 @@ export type NotebookNetworkSandboxStatus =
   | Readonly<{ kind: 'error'; message: string }>
 
 export type NotebookSandboxCommand = Readonly<{
+  localService?: NotebookLocalService
   target?: NotebookSandboxTarget
   command: string
   // Protected Windows launches use the exact process argv so PowerShell never has to initialize the
