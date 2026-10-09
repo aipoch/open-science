@@ -1,6 +1,6 @@
 import * as filesystem from 'node:fs/promises'
 import { existsSync } from 'node:fs'
-import { mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
@@ -15,6 +15,7 @@ const boundary = vi.hoisted(() => ({
     use: (app: {
       restartAfterCrash: () => Promise<unknown>
       restart: () => Promise<unknown>
+      addCleanupAudit: (audit: () => Promise<void>) => void
     }) => Promise<void>,
     info: unknown
   ) => Promise<void>,
@@ -58,7 +59,7 @@ vi.mock('../e2e/fixtures/renderer-failure-gate', () => ({
     assertNoFailures = boundary.rendererFailure
   }
 }))
-import { removeTreeForCleanup } from '../e2e/fixtures/electron-app'
+import { removeTreeForCleanup, runWithCleanup } from '../e2e/fixtures/electron-app'
 
 const startupBudget = process.platform === 'win32' ? 180_000 : 90_000
 const forcedCleanupBudget =
@@ -127,6 +128,94 @@ it('removes the owned root after successful fixture teardown', async () => {
     attach
   })
   expect(existsSync(root)).toBe(false)
+})
+
+it.each(['receipt.json', 'creating.json', 'acl-state.json', 'acl-leases/live.json'])(
+  'retains the entire profile and recovery evidence when %s remains',
+  async (record) => {
+    let evidence = ''
+    const operation = boundary.fixture(
+      { windowMode: 'hidden' },
+      async () => {
+        evidence = join(root, 'storage', 'notebook-sandbox', 'installation', record)
+        await mkdir(dirname(evidence), { recursive: true })
+        await writeFile(evidence, 'original ownership and recovery evidence')
+      },
+      { status: 'passed', expectedStatus: 'passed', attach }
+    )
+    await expect(operation).rejects.toThrow(/protection.*cleanup/i)
+    expect(await readFile(evidence, 'utf8')).toBe('original ownership and recovery evidence')
+    expect(existsSync(join(root, 'logs', 'main.log'))).toBe(true)
+  }
+)
+
+it('does not delete the profile when an external resource audit fails', async () => {
+  const audit = vi.fn(async () => {
+    throw new Error('test WFP filter still exists')
+  })
+  await expect(
+    boundary.fixture(
+      { windowMode: 'hidden' },
+      async (app) => {
+        app.addCleanupAudit(audit)
+      },
+      { status: 'passed', expectedStatus: 'passed', attach }
+    )
+  ).rejects.toThrow('test WFP filter still exists')
+  expect(audit).toHaveBeenCalledOnce()
+  expect(existsSync(root)).toBe(true)
+})
+
+it('deletes the profile only after its external audit completes', async () => {
+  const audit = vi.fn(async () => {
+    expect(existsSync(root)).toBe(true)
+  })
+  await boundary.fixture(
+    { windowMode: 'hidden' },
+    async (app) => {
+      app.addCleanupAudit(audit)
+    },
+    { status: 'passed', expectedStatus: 'passed', attach }
+  )
+  expect(audit).toHaveBeenCalledOnce()
+  expect(existsSync(root)).toBe(false)
+})
+
+it('preserves the first error when protected-workflow cleanup also fails', async () => {
+  const first = new Error('restart inspector promise was garbage collected')
+  const cleanup = new Error('Electron application is not running')
+  const failure = await runWithCleanup(
+    async () => {
+      throw first
+    },
+    async () => {
+      throw cleanup
+    }
+  ).catch((error: unknown) => error)
+  expect(failure).toBeInstanceOf(AggregateError)
+  expect((failure as AggregateError).errors).toEqual([first, cleanup])
+  expect((failure as AggregateError).message).toContain(first.message)
+  expect((failure as AggregateError).cause).toBe(first)
+})
+
+it('preserves a body-only or cleanup-only failure without wrapping it', async () => {
+  const first = new Error('first')
+  await expect(
+    runWithCleanup(
+      async () => {
+        throw first
+      },
+      async () => undefined
+    )
+  ).rejects.toBe(first)
+  await expect(
+    runWithCleanup(
+      async () => undefined,
+      async () => {
+        throw first
+      }
+    )
+  ).rejects.toBe(first)
 })
 
 it.each(['not reaped', 'rejected', 'timeout'])(

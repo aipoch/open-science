@@ -313,6 +313,7 @@ type NativeMenuProbe = {
   dispose: () => void
 }
 type ElectronApp = {
+  addCleanupAudit: (audit: () => Promise<void>) => void
   captureBrandState: () => Promise<BrandState>
   restartWithBrandFixture: (
     mode: 'legacy' | 'legacy-config' | 'custom' | 'onboarding'
@@ -537,6 +538,62 @@ const makeTreeWritable = async (root: string): Promise<void> => {
   )
 }
 
+// Protection may outlive Electron. Never erase its ownership/rollback evidence just because
+// the desktop process exited, including when a UAC removal request was cancelled.
+const assertProtectionCleanup = async (storageRoot: string): Promise<void> => {
+  const sandboxRoot = join(storageRoot, 'notebook-sandbox')
+  let installations: string[]
+  try {
+    installations = await readdir(sandboxRoot)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
+    throw error
+  }
+  for (const installation of installations) {
+    const root = join(sandboxRoot, installation)
+    const records = await readdir(root)
+    const pending = records.some((name) =>
+      ['receipt.json', 'creating.json', 'acl-state.json', 'receipt.json.tmp'].includes(name)
+    )
+    const leases = records.includes('acl-leases') ? await readdir(join(root, 'acl-leases')) : []
+    if (pending || leases.length > 0) {
+      throw new Error(
+        'Notebook protection cleanup is unverified; retain the profile and ownership records.'
+      )
+    }
+  }
+}
+
+// A finally error must not replace the failing assertion or restart error that led to cleanup.
+const runWithCleanup = async <T>(
+  body: () => Promise<T>,
+  cleanup: () => Promise<void>
+): Promise<T> => {
+  let result!: T
+  let bodyError: unknown
+  let failed = false
+  try {
+    result = await body()
+  } catch (error) {
+    failed = true
+    bodyError = error
+  }
+  try {
+    await cleanup()
+  } catch (cleanupError) {
+    if (failed) {
+      throw new AggregateError(
+        [bodyError, cleanupError],
+        `Test body and cleanup failed; first error: ${String(bodyError)}`,
+        { cause: bodyError }
+      )
+    }
+    throw cleanupError
+  }
+  if (failed) throw bodyError
+  return result
+}
+
 const waitForRendererReady = async (page: Page): Promise<void> => {
   const deadline = performance.now() + (process.platform === 'win32' ? 180_000 : 90_000)
   const remainingTimeout = (): number => Math.max(1, deadline - performance.now())
@@ -594,6 +651,11 @@ const enableRendererRuntimeProfiling = async (page: Page): Promise<void> => {
 }
 
 class ElectronAppHarness implements ElectronApp {
+  private readonly cleanupAudits: Array<() => Promise<void>> = []
+
+  addCleanupAudit(audit: () => Promise<void>): void {
+    this.cleanupAudits.push(audit)
+  }
   private application: ElectronApplication | undefined
   private currentPage: Page | undefined
   private mainLogDirectory: string | undefined
@@ -1537,6 +1599,8 @@ class ElectronAppHarness implements ElectronApp {
     const errors: unknown[] = []
     try {
       await this.closeForCleanup()
+      await assertProtectionCleanup(this.roots.storageRoot)
+      for (const audit of this.cleanupAudits) await audit()
       await makeTreeWritable(this.testRoot)
       await removeTreeForCleanup(this.testRoot)
     } catch (error) {
@@ -1808,6 +1872,7 @@ const test = base.extend<{ app: ElectronApp; windowMode: E2eWindowMode }>({
 })
 
 export {
+  runWithCleanup,
   closeElectronApplicationForCleanup,
   installRestartPersistenceRetry,
   observeElectronFlushDiagnostics,
