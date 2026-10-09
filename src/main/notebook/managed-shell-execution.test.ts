@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
+import { buildSync } from 'esbuild'
+import { execFileSync } from 'node:child_process'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, sep } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
   createManagedShellExecutionCapability,
   resolveManagedShellExecutionCapability,
@@ -23,6 +27,39 @@ const input = (): typeof scope & {
 })
 
 describe('main-owned managed Shell capability', () => {
+  it('loads the ordinary Shell adapter from a CommonJS recovery bundle without starting a sandbox', () => {
+    const fixture = mkdtempSync(join(tmpdir(), 'ordinary-shell-commonjs-'))
+    try {
+      const bundle = join(fixture, 'recovery.cjs')
+      buildSync({
+        stdin: {
+          contents: `
+            import { NotebookShellProcessAdapter } from './shell-process'
+            console.log(JSON.stringify({ adapter: typeof NotebookShellProcessAdapter }))
+          `,
+          resolveDir: fileURLToPath(new URL('.', import.meta.url)),
+          sourcefile: 'ordinary-shell-recovery.ts'
+        },
+        outfile: bundle,
+        bundle: true,
+        platform: 'node',
+        format: 'cjs',
+        packages: 'external',
+        logLevel: 'silent'
+      })
+      // Match the disposable Windows recovery controller: Node loads package exports at runtime,
+      // rather than Vitest resolving an import-only TypeScript entry on its behalf.
+      const output = execFileSync(process.execPath, [bundle], {
+        encoding: 'utf8',
+        env: { ...process.env, NODE_PATH: join(process.cwd(), 'node_modules') },
+        timeout: 10_000
+      })
+      expect(JSON.parse(output)).toEqual({ adapter: 'function' })
+    } finally {
+      rmSync(fixture, { recursive: true, force: true })
+    }
+  })
+
   it('rejects copies, serialized capabilities and wrong execution owners', () => {
     const capability = createManagedShellExecutionCapability(input())
     for (const forged of [{}, { ...capability }, JSON.parse(JSON.stringify(capability))]) {
