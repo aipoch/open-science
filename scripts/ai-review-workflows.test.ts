@@ -97,6 +97,8 @@ function simpleOutputs(path: string): Record<string, string> {
 
 type TargetOptions = {
   authMode?: 'api-key' | 'subscription'
+  dryRun?: boolean
+  dryRunAuthMode?: string
   event?: 'pull_request_target' | 'workflow_dispatch'
   enabled?: string
   isFork?: boolean
@@ -153,6 +155,8 @@ printf '%s' "$PR_JSON"
         EVENT_PR_NUMBER: event === 'pull_request_target' ? '392' : '',
         FORK_REVIEW_MODE: options.forkMode ?? 'manual',
         CODEX_REVIEW_AUTH_MODE: options.authMode ?? 'subscription',
+        DRY_RUN: String(options.dryRun ?? false),
+        DISPATCH_AUTH_MODE: options.dryRunAuthMode ?? 'repository-default',
         CODEX_REVIEW_MODE: options.reviewMode ?? 'correctness',
         ENABLE_CODEX_REVIEW: options.enabled ?? 'true',
         REVIEW_API_KEY_CONFIGURED: String(credentialKeys.includes('review')),
@@ -473,6 +477,23 @@ describe('single Codex workflow contract', () => {
     expect(
       runTarget({ event: 'workflow_dispatch', reviewMode: 'disabled' }).outputs.review_enabled
     ).toBe('true')
+  })
+
+  it('overrides authentication only for an explicit manual dry run', () => {
+    const options = { dryRunAuthMode: 'api-key', dryRun: true }
+    expect(runTarget({ ...options, event: 'workflow_dispatch' }).outputs.auth_mode).toBe('api-key')
+    expect(runTarget({ ...options, event: 'pull_request_target' }).outputs.auth_mode).toBe(
+      'subscription'
+    )
+    expect(
+      runTarget({ ...options, event: 'workflow_dispatch', dryRun: false }).outputs.auth_mode
+    ).toBe('subscription')
+    expect(runTarget({ dryRun: true, event: 'workflow_dispatch' }).outputs.auth_mode).toBe(
+      'subscription'
+    )
+    expect(
+      runTarget({ ...options, event: 'workflow_dispatch', dryRunAuthMode: 'invalid' }).status
+    ).not.toBe(0)
   })
 
   it('selects API credentials as an atomic pair with deterministic legacy priority', () => {

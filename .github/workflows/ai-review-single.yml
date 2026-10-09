@@ -39,6 +39,14 @@ on:
         description: Run the real reviewer without posting comments or changing labels
         type: boolean
         default: false
+      dry_run_auth_mode:
+        description: Authentication comparison (ignored unless dry_run is enabled)
+        type: choice
+        default: repository-default
+        options:
+          - repository-default
+          - subscription
+          - api-key
 
 concurrency:
   group: ai-pr-review-${{ github.event.inputs.pull_request_number || github.event.pull_request.number }}${{ inputs.dry_run && '-dry-run' || '' }}
@@ -74,6 +82,8 @@ jobs:
           EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
           FORK_REVIEW_MODE: ${{ vars.FORK_REVIEW_MODE || 'manual' }}
           CODEX_REVIEW_AUTH_MODE: ${{ vars.CODEX_REVIEW_AUTH_MODE || 'subscription' }}
+          DRY_RUN: ${{ inputs.dry_run || false }}
+          DISPATCH_AUTH_MODE: ${{ inputs.dry_run_auth_mode || 'repository-default' }}
           CODEX_REVIEW_MODE: ${{ vars.CODEX_REVIEW_MODE || 'correctness' }}
           ENABLE_CODEX_REVIEW: ${{ vars.ENABLE_CODEX_REVIEW || 'true' }}
           REVIEW_API_KEY_CONFIGURED: ${{ secrets.CODEX_REVIEW_API_KEY != '' }}
@@ -102,6 +112,10 @@ jobs:
               exit 1
               ;;
           esac
+          if [[ "$REVIEW_EVENT" == "workflow_dispatch" && "$DRY_RUN" == "true" &&
+            "$DISPATCH_AUTH_MODE" != "repository-default" ]]; then
+            CODEX_REVIEW_AUTH_MODE="$DISPATCH_AUTH_MODE"
+          fi
           case "$CODEX_REVIEW_AUTH_MODE" in
             api-key|subscription) ;;
             *)

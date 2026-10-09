@@ -136,6 +136,10 @@ gh workflow run ai-review-single.yml --ref ci/codex-review-dry-run \
 
 Dry runs use separate concurrency groups so they cannot cancel production reviews. Existing
 enablement, fork policy, and round limits still apply; verify that the review job actually ran.
+For an authentication comparison, add `-f dry_run_auth_mode=api-key` or select `subscription`.
+The default `repository-default` preserves repository configuration. The override applies only
+to manual dry runs; automatic and publishing runs ignore it. Subscription preflight can still
+fall back, so check the effective authentication mode in telemetry.
 Merged PRs are supported and compare the merge commit with its first parent. A successful workflow
 with a skipped review is not evidence that the CLI or model works.
 
