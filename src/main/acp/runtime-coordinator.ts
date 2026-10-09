@@ -2494,14 +2494,23 @@ class AcpRuntimeCoordinator {
       // Rejected teardowns may nevertheless have cleared their session maps before the failing step.
       outcomes.forEach((outcome, index) => {
         const runtime = runtimes[index]
-        if (outcome.status === 'fulfilled') this.releaseRuntimeOwnership(runtime)
+        if (outcome.status === 'fulfilled' && outcome.value.reaped)
+          this.releaseRuntimeOwnership(runtime)
         else this.releaseMissingRuntimeSessions(runtime, runtime.getSnapshot())
       })
       this.emitState()
       throw failure.reason
     }
-    this.clearRuntimeOwnership()
-    this.onDisconnected?.()
+    // A refused quit can reopen admission while this snapshot is still stopping. Never clear
+    // runtimes or session routing acquired after teardown began, including on a degraded stop.
+    outcomes.forEach((outcome, index) => {
+      const runtime = runtimes[index]
+      if (outcome.status === 'fulfilled' && outcome.value.reaped)
+        this.releaseRuntimeOwnership(runtime)
+      else this.releaseMissingRuntimeSessions(runtime, runtime.getSnapshot())
+    })
+    this.emitState()
+    if (this.runtimes.size === 0) this.onDisconnected?.()
     return {
       reaped: outcomes.every((outcome) => outcome.status === 'fulfilled' && outcome.value.reaped)
     }
