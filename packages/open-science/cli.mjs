@@ -66,14 +66,12 @@ Commands:
   plan revise <session-id> --feedback <text>
   artifacts list <session-id>
   artifacts download <artifact-id> --output <path>
-  rollback-to-0.7.3 --yes [--output <path>]
 
 Options:
   --port <port>          Web service port (default: 44100)
   --password-store <name>  Linux OS vault (gnome-libsecret, kwallet5, kwallet6)
   --config-root <path>   Config directory override
   --profile <path>       Alias for --config-root (portable CLI profile)
-  --data-root <path>     Current Data Root override (rollback only)
   --project <id-or-name> Project id or exact name
   --session <id>         Resume an existing session
   --cwd <path>           Working directory for a new or matching existing session
@@ -110,7 +108,6 @@ Options:
   --cancel-on-timeout    Cancel the server run when --timeout-ms expires
   --jsonl                With run --wait, stream one machine-readable event per line
   --output <path>        Artifact download destination
-  --yes                  Confirm the offline rollback conversion
   --credential-store <os|file>  Settings credential storage (Linux headless; start only)
   --no-open              Do not open the browser after start
   --no-sandbox           Disable Chromium's process sandbox (security risk; start/update only)
@@ -131,7 +128,6 @@ const VALUE_OPTIONS = {
   '--vendor': 'vendor',
   '--api-key-env': 'apiKeyEnv',
   '--openalex-key-env': 'openAlexKeyEnv',
-  '--data-root': 'dataRoot',
   '--project': 'project',
   '--session': 'session',
   '--cwd': 'cwd',
@@ -218,7 +214,6 @@ const POSITIONAL_LIMITS = new Map([
   ['status', 0],
   ['url', 0],
   ['update', 0],
-  ['rollback-to-0.7.3', 0],
   ['codex login', 0],
   ['project list', 0],
   ['run', 0],
@@ -289,7 +284,6 @@ export const parseCliArgs = (argv) => {
       options.passwordStore = arg.slice('--password-store='.length)
     else if (arg === '--no-sandbox') options.noSandbox = true
     else if (arg === '--json') options.json = true
-    else if (arg === '--yes') options.yes = true
     else if (arg === '--force') options.force = true
     else if (arg === '--jsonl') options.jsonl = true
     else if (arg === '--wait') options.wait = true
@@ -472,12 +466,6 @@ export const parseCliArgs = (argv) => {
   }
   if (options.noSandbox && command !== 'start' && command !== 'update') {
     throw new CliUsageError('--no-sandbox requires start or update.')
-  }
-  if (options.yes && command !== 'rollback-to-0.7.3') {
-    throw new CliUsageError('--yes requires rollback-to-0.7.3.')
-  }
-  if (options.dataRoot && command !== 'rollback-to-0.7.3') {
-    throw new CliUsageError('--data-root requires rollback-to-0.7.3.')
   }
   if (options.force && (command !== 'codex' || subcommand !== 'login')) {
     throw new CliUsageError('--force requires codex login.')
@@ -1034,37 +1022,6 @@ const outputValue = (value, options, deps) => {
             .join('\t') || JSON.stringify(value)
     )
   }
-}
-
-export const rollbackCommand = async (options, dependencies = {}) => {
-  const defaultRunRollback = async (rollbackOptions) => {
-    const { runRollbackToV073 } = await import('./rollback-to-0.7.3.mjs')
-    return runRollbackToV073(rollbackOptions)
-  }
-  const deps = {
-    runRollback: defaultRunRollback,
-    log: (...args) => console.log(...args),
-    ...dependencies
-  }
-  if (!options.json) {
-    deps.log('Validating and copying rollback data. Keep this terminal open until it completes...')
-  }
-  const manifest = await deps.runRollback({
-    configRoot: options.configRoot,
-    dataRoot: options.dataRoot,
-    output: options.output,
-    confirm: options.yes === true
-  })
-  if (options.json) {
-    deps.log(JSON.stringify(manifest))
-    return
-  }
-  deps.log(`Prepared an isolated Open-Science ${manifest.targetVersion} rollback.`)
-  deps.log(`Rollback Data Root: ${manifest.rollbackDataRoot}`)
-  deps.log(`Preserved newer Config Root: ${manifest.preservedConfigRoot}`)
-  deps.log(`Preserved newer Data Root: ${manifest.preservedDataRoot}`)
-  deps.log(`Converted Sessions: ${manifest.sessionsConverted}`)
-  deps.log(`You can now install and start Open-Science ${manifest.targetVersion}.`)
 }
 
 const UPDATE_DOWNLOAD_PAGE = 'https://www.aipoch.com/open-science'
@@ -2046,7 +2003,6 @@ export const runCli = async (argv = process.argv.slice(2), dependencies = {}) =>
   else if (command === 'url') await urlCommand(options)
   else if (command === 'update') await updateCommand(options, dependencies.update)
   else if (command === 'codex' && parsed.subcommand === 'login') await codexLoginCommand(options)
-  else if (command === 'rollback-to-0.7.3') await rollbackCommand(options)
   else if (TASK_COMMANDS.has(command)) await runTaskCommand(parsed)
   else throw new CliUsageError(`Unknown command: ${command}\n\n${usage}`)
 }

@@ -16,8 +16,6 @@
     "packages/open-science/index.mjs",
     "packages/open-science/locate-app.mjs",
     "packages/open-science/package.json",
-    "packages/open-science/rollback-to-0.7.3.mjs",
-    "packages/open-science/rollback-to-0.7.3.test.ts",
     "packages/open-science/locate-backend.mjs",
     "packages/open-science/runtime-control.mjs",
     "packages/open-science/runtime-control.d.mts",
@@ -44,7 +42,6 @@
       "packages/open-science/codex-login.test.ts",
       "packages/open-science/connector-types.test.ts",
       "packages/open-science/connector.test.ts",
-      "packages/open-science/rollback-to-0.7.3.test.ts",
       "packages/open-science/appimage-launcher.test.ts"
     ],
     "contract": [],

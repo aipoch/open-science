@@ -19,7 +19,6 @@ import {
   initCommand,
   parseCliArgs,
   reportCliError,
-  rollbackCommand,
   runCli,
   runTaskCommand,
   updateCommand
@@ -85,7 +84,7 @@ describe('CLI help', () => {
       const output = String(log.mock.calls[0][0])
       expect(output).toContain('project create <name>')
       expect(output).toContain('project session-defaults update')
-      expect(output).not.toContain('rollback-to-0.7.3')
+      expect(output).not.toContain('runtime install')
       await expect(runCli(['unknown-command', '--help'])).rejects.toThrow('Unknown command')
       expect(() => parseCliArgs(['project', '--typo'])).toThrow('Unknown option')
       expect(() => parseCliArgs(['doctor'])).toThrow('doctor requires --json.')
@@ -289,10 +288,6 @@ describe('task CLI', () => {
     {
       argv: ['codex', 'login', 'unexpected'],
       message: 'codex login accepts no arguments.'
-    },
-    {
-      argv: ['rollback-to-0.7.3', 'unexpected'],
-      message: 'rollback-to-0.7.3 accepts no arguments.'
     },
     { argv: ['project', 'list', 'unexpected'], message: 'project list accepts no arguments.' },
     {
@@ -984,50 +979,22 @@ describe('task CLI', () => {
     )
   })
 
-  it('parses and runs the explicit offline rollback command', async () => {
-    const parsed = parseCliArgs([
-      'rollback-to-0.7.3',
-      '--yes',
-      '--config-root',
-      '/config',
-      '--data-root',
-      '/data',
-      '--output',
-      '/rollback'
-    ])
-    expect(parsed).toEqual({
-      command: 'rollback-to-0.7.3',
-      options: {
-        open: true,
-        json: false,
-        yes: true,
-        configRoot: '/config',
-        dataRoot: '/data',
-        output: '/rollback'
-      }
-    })
-
-    const runRollback = vi.fn().mockResolvedValue({
-      targetVersion: '0.7.3',
-      rollbackDataRoot: '/rollback',
-      preservedConfigRoot: '/config.before-rollback',
-      preservedDataRoot: '/data',
-      sessionsConverted: 4
-    })
-    const log = vi.fn()
-    await rollbackCommand(parsed.options, { runRollback, log })
-
-    expect(runRollback).toHaveBeenCalledWith({
-      configRoot: '/config',
-      dataRoot: '/data',
-      output: '/rollback',
-      confirm: true
-    })
-    expect(log.mock.calls.map(([line]) => line)).toContain(
-      'Preserved newer Config Root: /config.before-rollback'
+  it('rejects the retired rollback command and its exclusive options', async () => {
+    await expect(runCli(['rollback-to-0.7.3'])).rejects.toThrow(
+      'Unknown command: rollback-to-0.7.3'
     )
-    expect(() => parseCliArgs(['rollback-to-0.7.3'])).not.toThrow()
-    expect(() => parseCliArgs(['status', '--yes'])).toThrow('--yes requires rollback-to-0.7.3.')
+    for (const option of ['--yes', '--data-root']) {
+      expect(() => parseCliArgs(['status', option])).toThrow(`Unknown option: ${option}`)
+    }
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    try {
+      await runCli(['--help'])
+      const help = log.mock.calls.flat().join('\n')
+      expect(help).not.toMatch(/rollback-to-0\.7\.3|--yes|--data-root/)
+      expect(help).toContain('--output <path>')
+    } finally {
+      log.mockRestore()
+    }
   })
 
   it('dispatches project, session, and artifact commands through the SDK', async () => {
