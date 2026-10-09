@@ -2694,8 +2694,26 @@ class MethodNameVisitor extends NodeVisitor {
   globals = new Set<string>()
   loaded = new Set<string>()
   safeCalls = new Set<string>()
-  private classDepth = 0
+  private readonly classBindings: Array<Set<string> | undefined> = []
   private readonly classLoads = new Set<string>()
+
+  private get classDepth(): number {
+    return this.classBindings.length
+  }
+
+  private visitHeaderExpression(value: PyNode): void {
+    // Comprehensions have their own bindings; generator bodies are deferred.
+    // Keep the entire expression opaque without polluting the enclosing locals.
+    if (
+      walkPy(value).some((item) =>
+        ['ListComp', 'SetComp', 'DictComp', 'GeneratorExp'].includes(item.type)
+      )
+    ) {
+      this.classBindings.at(-1)?.clear()
+      return
+    }
+    this.visit(value)
+  }
 
   capturedNames(receiver?: string): string[] {
     return [...this.loaded]
@@ -2717,19 +2735,61 @@ class MethodNameVisitor extends NodeVisitor {
       ...(fnArgs?.defaults ?? []),
       ...(fnArgs?.kw_defaults ?? []).filter((item): item is PyNode => Boolean(item))
     ]) {
-      this.visit(value)
+      this.visitHeaderExpression(value)
     }
   }
   visit_AsyncFunctionDef = this.visit_FunctionDef
   visit_ClassDef(node: PyNode): void {
     if (node.name && this.classDepth === 0) this.locals.add(node.name)
     // Headers execute in the enclosing scope; body bindings belong to the class.
-    this.genericVisit({ ...node, body: [] })
-    this.classDepth += 1
+    // Visit header children, not ClassDef again.
+    for (const value of [
+      ...(node.bases ?? []),
+      ...(node.decorator_list ?? []),
+      ...(node.classKeywords ?? []).map((keyword) => keyword.value)
+    ]) {
+      if (isPyNode(value)) this.visitHeaderExpression(value)
+    }
+    const body = Array.isArray(node.body) ? node.body : []
+    // Custom class namespaces and explicit scope declarations need fallback.
+    const bindings =
+      !(node.bases?.length || node.classKeywords?.length || node.decorator_list?.length) &&
+      !body.some((statement) =>
+        walkPy(statement).some((item) => ['Global', 'Nonlocal'].includes(item.type))
+      )
+        ? new Set<string>()
+        : undefined
+    this.classBindings.push(bindings)
     try {
-      for (const statement of Array.isArray(node.body) ? node.body : []) this.visit(statement)
+      for (const statement of body) {
+        const targets =
+          statement.type === 'Assign'
+            ? statement.targets
+            : ['AnnAssign', 'AugAssign'].includes(statement.type) && statement.value
+              ? [statement.target]
+              : undefined
+        const names = targets?.every((target) => target?.type === 'Name' && target.id)
+          ? targets.map((target) => target!.id!)
+          : ['FunctionDef', 'AsyncFunctionDef', 'ClassDef'].includes(statement.type) &&
+              statement.name
+            ? [statement.name]
+            : undefined
+        if (
+          (!names && !['Pass', 'Delete'].includes(statement.type)) ||
+          walkPy(statement).some((item) =>
+            ['ListComp', 'SetComp', 'DictComp', 'GeneratorExp', 'NamedExpr'].includes(item.type)
+          )
+        )
+          bindings?.clear()
+        this.visit(statement)
+        // RHS/header evaluation precedes binding. Branches never establish names.
+        for (const name of names ?? []) bindings?.add(name)
+        if (statement.type === 'Delete')
+          for (const target of statement.targets ?? [])
+            if (target.type === 'Name' && target.id) bindings?.delete(target.id)
+      }
     } finally {
-      this.classDepth -= 1
+      this.classBindings.pop()
     }
   }
   visit_Lambda(node: PyNode): void {
@@ -2740,15 +2800,7 @@ class MethodNameVisitor extends NodeVisitor {
       ...(fnArgs?.defaults ?? []),
       ...(fnArgs?.kw_defaults ?? []).filter((item): item is PyNode => Boolean(item))
     ]) {
-      // Comprehensions have their own bindings, and generator bodies are
-      // deferred. Keep the whole default opaque rather than leak those names.
-      if (
-        walkPy(value).some((item) =>
-          ['ListComp', 'SetComp', 'DictComp', 'GeneratorExp'].includes(item.type)
-        )
-      )
-        continue
-      this.visit(value)
+      this.visitHeaderExpression(value)
     }
   }
   visit_Global(node: PyNode): void {
@@ -2760,6 +2812,7 @@ class MethodNameVisitor extends NodeVisitor {
   visit_Name(node: PyNode): void {
     if (!node.id) return
     if (node.ctx === 'Load') {
+      if (this.classBindings.at(-1)?.has(node.id)) return
       this.loaded.add(node.id)
       // Class-local reads can fall back to globals even beside enclosing locals.
       if (this.classDepth > 0) this.classLoads.add(node.id)
@@ -2769,9 +2822,8 @@ class MethodNameVisitor extends NodeVisitor {
   }
   visit_AugAssign(node: PyNode): void {
     // AugAssign stores its target in the AST but also reads its prior value.
-    if (this.classDepth > 0 && node.target?.type === 'Name' && node.target.id) {
-      this.loaded.add(node.target.id)
-      this.classLoads.add(node.target.id)
+    if (this.classDepth > 0 && node.target?.type === 'Name') {
+      this.visit_Name({ ...node.target, ctx: 'Load' })
     }
     this.genericVisit(node)
   }
@@ -2780,6 +2832,9 @@ class MethodNameVisitor extends NodeVisitor {
       this.safeCalls.add(node.func.id ?? '')
     }
     this.genericVisit(node)
+    // Opaque calls can modify the executing class namespace. Only subsequent
+    // explicit bindings may suppress later fallback reads.
+    this.classBindings.at(-1)?.clear()
   }
 }
 

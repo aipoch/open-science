@@ -26,6 +26,44 @@ const run = (script: string, index = 0): NotebookRunRecord => ({
   workingFiles: []
 })
 
+describe('nested definition header scope isolation', () => {
+  it.each([
+    'def inner(scale=[helper for helper in [1, 2]]):\n        return 0',
+    'async def inner(*, scale={helper for helper in [1, 2]}):\n        return 0',
+    'def inner(scale={helper: 1 for helper in [1, 2]}):\n        return 0',
+    'def inner(scale=(helper for helper in [1, 2])):\n        return 0',
+    '@decorate([helper for helper in [1, 2]])\n    def inner():\n        return 0'
+  ])('preserves enclosing helper captures beside %s', async (declaration) => {
+    for (const method of [false, true]) {
+      const body = `def callback(${method ? 'self, ' : ''}t, value):\n    ${declaration}\n    return helper(value)`
+      const source = method ? 'class Model:\n' + body.replace(/^/gm, '    ') : body
+      const [facts] = await analyzePythonSources([source])
+      const summary = facts.typeSummaries?.find(
+        (item) => item.name === (method ? 'Model' : 'python-function:callback')
+      )
+      expect(
+        summary?.methods.find((item) => item.name === (method ? 'callback' : '__call__'))?.usedNames
+      ).toContain('helper')
+    }
+    const scripts = [
+      'from scipy.integrate import solve_ivp\nGLOBAL_CAPTURE = 1',
+      `def helper(value):\n    return GLOBAL_CAPTURE * value\ndef callback(t, value):\n    ${declaration}\n    return helper(value)`,
+      'result = solve_ivp(callback, (0, 1), [0])',
+      'GLOBAL_CAPTURE = 2'
+    ]
+    const projection = await projectPythonScripts(scripts)
+    expect(projection.invalidatedByRunId['run-4']).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          runId: 'run-3',
+          names: expect.arrayContaining(['GLOBAL_CAPTURE'])
+        })
+      ])
+    )
+    expect(projection.stalenessByRunId['run-3'].state).toBe('unknown')
+  })
+})
+
 // Original fixtures informed by Python for Data Analysis and the Python Data Science Handbook.
 // https://wesmckinney.com/book/pandas-basics.html#pandas-loc-iloc
 // https://wesmckinney.com/book/data-cleaning.html#pandas_missing_filling

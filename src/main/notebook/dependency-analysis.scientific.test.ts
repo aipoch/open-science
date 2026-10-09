@@ -374,6 +374,51 @@ describe('Python lexical callback helper bindings', () => {
   const globalHelper = 'def penalty_helper(value):\n    return float(open(PENALTY_PATH).read())'
 
   it.each([
+    'penalty_helper = lambda: 1.0\n        value = penalty_helper()',
+    'def penalty_helper():\n            return 1.0\n        value = penalty_helper()',
+    'penalty_helper = 1.0\n        penalty_helper += 1.0\n        value = penalty_helper'
+  ])('excludes a class helper bound before its read: %s', async (body) => {
+    const projection = await projectScripts(
+      'python',
+      [
+        prelude,
+        `${globalHelper}\ndef callback(window):\n    class Inner:\n        ${body}\n    return FROZEN_SCALE`,
+        'result = generic_filter(values, function=callback, size=3)',
+        'PENALTY_PATH = "penalty-b.txt"',
+        'FROZEN_SCALE = 2.0'
+      ],
+      'notebook-class-local-helper-'
+    )
+    expect(
+      projection.invalidatedByRunId['run-4']?.find((item) => item.runId === 'run-3')?.names ?? []
+    ).not.toContain('PENALTY_PATH')
+    expect(projection.invalidatedByRunId['run-5']).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ runId: 'run-3', names: expect.arrayContaining(['FROZEN_SCALE']) })
+      ])
+    )
+    expect(projection.stalenessByRunId['run-3'].state).toBe('unknown')
+  })
+
+  it.each([
+    'penalty_helper = penalty_helper(1.0)',
+    'penalty_helper = 1.0\n        del penalty_helper\n        value = penalty_helper(1.0)',
+    'if flag:\n            penalty_helper = 1.0\n        value = penalty_helper(1.0)',
+    'penalty_helper = 1.0\n        if flag:\n            del penalty_helper\n        value = penalty_helper(1.0)',
+    'penalty_helper = 1.0\n        mutate_namespace()\n        value = penalty_helper(1.0)',
+    'penalty_helper = 1.0\n        class Nested:\n            value = penalty_helper(1.0)',
+    'global penalty_helper\n        penalty_helper = replacement\n        value = penalty_helper(1.0)'
+  ])('retains uncertain class helper fallback: %s', async (body) => {
+    const [facts] = await analyzePythonSources([
+      `def callback(window):\n    class Inner:\n        ${body}\n    return window`
+    ])
+    expect(
+      facts.typeSummaries?.find((item) => item.name === 'python-function:callback')?.methods[0]
+        .usedNames
+    ).toContain('penalty_helper')
+  })
+
+  it.each([
     ['local definition', '    def penalty_helper(value):\n        return value'],
     [
       'conditional definition',
