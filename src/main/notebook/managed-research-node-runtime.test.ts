@@ -249,6 +249,51 @@ describe('independent research Node discovery', () => {
     ).toBe(true)
   })
 
+  it.each(['candidate-count', 'path-length', 'entry-length', 'nul-entry'])(
+    'keeps invalid ambient discovery isolated from startup: %s',
+    async (mode) => {
+      const node = await fakeBinary(process.platform === 'win32' ? 'node.exe' : 'node')
+      mockProbe((file) => response(file))
+      const { runtime, runtimeId } = await select(node)
+      vi.mocked(execFile).mockClear()
+      const path =
+        mode === 'candidate-count'
+          ? Array.from({ length: 65 }, (_, i) => join(dirname(node), String(i))).join(delimiter)
+          : mode === 'path-length'
+            ? 'x'.repeat(65_537)
+            : mode === 'entry-length'
+              ? join(dirname(node), 'x'.repeat(4096))
+              : join(dirname(node), 'invalid\0entry')
+      const registry = createManagedResearchNodeRuntimeRegistry({ path })
+      const discovery = await registry.discover()
+      expect(discovery).toEqual({
+        runtimes: [],
+        unavailable: [
+          {
+            candidate: 'PATH',
+            code: 'node_unusable',
+            reason: expect.stringContaining('host PATH')
+          }
+        ]
+      })
+      await expect(registry.resolve(runtimeId)).rejects.toMatchObject({ code: 'node_unusable' })
+      await expect(registry.verify(runtime)).rejects.toMatchObject({ code: 'node_unusable' })
+      expect(execFile).not.toHaveBeenCalled()
+    }
+  )
+
+  it('keeps explicit trusted discovery independent from an unusable ambient PATH', async () => {
+    const node = await fakeBinary()
+    mockProbe((file) => response(file))
+    const registry = createManagedResearchNodeRuntimeRegistry({
+      trustedCandidates: [node],
+      path: 'x'.repeat(65_537)
+    })
+    const discovery = await registry.discover()
+    expect(discovery.unavailable).toEqual([])
+    expect(discovery.runtimes.map(({ runtime }) => runtime.executable)).toEqual([node])
+  })
+
   it('discovers an independent Node from the Main-supplied PATH without a candidate override', async () => {
     const node = await fakeBinary(process.platform === 'win32' ? 'node.exe' : 'node')
     const linkDirectory = await realpath(await mkdtemp(join(tmpdir(), 'research-node-path-')))

@@ -123,6 +123,15 @@ const systemCandidates = (): string[] =>
     ? [join(process.env.ProgramFiles ?? 'C:\\Program Files', 'nodejs', 'node.exe')]
     : ['/opt/homebrew/bin/node', '/usr/local/bin/node', '/usr/bin/node']
 
+const unusableHostDiscovery = (message: string): ManagedResearchNodeRuntimeRegistry => ({
+  discover: async () => ({
+    runtimes: [],
+    unavailable: [{ candidate: 'PATH', reason: message, code: 'node_unusable' }]
+  }),
+  resolve: async () => unavailable(message),
+  verify: async () => unavailable(message)
+})
+
 /** Main-owned registry. Public callers select opaque runtime IDs, never executable paths. */
 export const createManagedResearchNodeRuntimeRegistry = (
   options: ManagedResearchNodeRuntimeOptions = {}
@@ -139,7 +148,8 @@ export const createManagedResearchNodeRuntimeRegistry = (
   )
     return unavailable('invalid trusted probe limits.')
   const launchPath = options.path ?? process.env.PATH ?? ''
-  if (launchPath.length > 65_536) return unavailable('host PATH exceeds the discovery limit.')
+  if (options.trustedCandidates === undefined && launchPath.length > 65_536)
+    return unusableHostDiscovery('host PATH exceeds the discovery limit.')
   const candidates = [
     ...new Set(
       options.trustedCandidates ?? [
@@ -156,8 +166,13 @@ export const createManagedResearchNodeRuntimeRegistry = (
     candidates.some(
       (candidate) => !isAbsolute(candidate) || candidate.length > 4096 || candidate.includes('\0')
     )
-  )
-    return unavailable('invalid or excessive trusted candidates.')
+  ) {
+    if (options.trustedCandidates !== undefined)
+      return unavailable('invalid or excessive trusted candidates.')
+    // Ambient host discovery is optional during application composition. Keep its bounds and
+    // refuse execution, but report unusable discovery without taking ordinary Sessions down.
+    return unusableHostDiscovery('host PATH contains invalid or excessive runtime candidates.')
+  }
   const records = new Map<string, ManagedResearchRuntime>()
 
   const probe = async (

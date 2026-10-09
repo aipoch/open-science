@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { readFile, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { delimiter, join } from 'node:path'
+import { tmpdir } from 'node:os'
 import { ManagedFileVersionService } from '../managed-file-versions/service'
 import { ImmutableInputAuthority } from '../immutable-input-authority'
 import { ManagedFileIndexRepository } from '../project-files/repository'
@@ -200,6 +201,25 @@ it('uses Main host PATH augmentation for runtime discovery without inheriting it
   await expect(composed.external.call('runtimes', {}, createTaskCallerContext())).resolves.toEqual(
     discovery
   )
+})
+
+it('keeps application composition available when host PATH exceeds runtime discovery bounds', async () => {
+  vi.spyOn(hostShellPath, 'augmentedPathEnv').mockReturnValue({
+    PATH: Array.from({ length: 65 }, (_, i) => join(tmpdir(), `private-node-${i}`)).join(delimiter)
+  })
+  const { composed, h, reserveSessionOperation } = await setup()
+  const execute = vi.spyOn(h.notebook, 'executeManagedShell')
+  const discovery = await composed.external.call('runtimes', {}, createTaskCallerContext())
+  expect(discovery).toMatchObject({
+    available: false,
+    runtimes: [],
+    diagnostics: {
+      issues: expect.arrayContaining([expect.objectContaining({ code: 'node_unusable' })])
+    }
+  })
+  expect(JSON.stringify(discovery)).not.toContain('private-node')
+  expect(reserveSessionOperation).not.toHaveBeenCalled()
+  expect(execute).not.toHaveBeenCalled()
 })
 
 it('keeps the actual external adapter authenticated, local-only, schema-checked and held during handoff', async () => {
