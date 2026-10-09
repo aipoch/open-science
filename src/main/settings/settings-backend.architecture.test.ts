@@ -673,6 +673,7 @@ describe('Settings backend ownership architecture', () => {
     expect(stringSetValues(settingsPaths.notebookLocalRpcServer, 'CONTROL_RPC_METHODS')).toEqual([
       'capabilitiesCall',
       'artifactsCall',
+      'managedExecutionCall',
       'lineageCall',
       'framesCall',
       'sessionsCall',
@@ -1113,7 +1114,11 @@ describe('Settings backend ownership architecture', () => {
       'src/main/web-service/controller.test.ts',
       'src/main/web-service/task-api.test.ts',
       'src/main/literature/smart-collections.test.ts',
-      'src/main/session-persistence/ipc.test.ts'
+      'src/main/session-persistence/ipc.test.ts',
+      'src/main/composition/artifact-surfaces.test.ts',
+      'src/main/composition/managed-execution.integration.test.ts',
+      'src/main/composition/session-packages.test.ts',
+      'src/main/composition/handoff.test.ts'
     ])
     expect(manifest.modules.settings_backend_resolution.testFiles.consumer).toEqual([
       'src/main/storage/wsl-npm-migration.integration.test.ts',
@@ -1573,7 +1578,24 @@ describe('Settings backend ownership architecture', () => {
       'src/main/literature/pdf-translation/api-target.test.ts',
       'src/main/literature/pdf-translation/agent-target.test.ts',
       'src/main/session-package/research-reproduction.integration.test.ts',
-      'src/main/session-plan/session-plan-turn-outcome.test.ts'
+      'src/main/session-plan/session-plan-turn-outcome.test.ts',
+      'src/main/composition/artifact-surfaces.test.ts',
+      'src/main/composition/handoff.test.ts',
+      'src/main/composition/managed-execution.integration.test.ts',
+      'src/main/composition/session-packages.test.ts',
+      'src/main/notebook/local-rpc-server.managed-execution.test.ts',
+      'src/main/notebook/managed-auxiliary-output.test.ts',
+      'src/main/notebook/managed-execution-collection.integration.test.ts',
+      'src/main/notebook/managed-execution-entrypoints.integration.test.ts',
+      'src/main/notebook/managed-execution-output.test.ts',
+      'src/main/notebook/managed-execution-service.test.ts',
+      'src/main/notebook/managed-nested-generation.integration.test.ts',
+      'src/main/notebook/managed-output-publication.integration.test.ts',
+      'src/main/notebook/research-material-authority.test.ts',
+      'src/main/notebook/screened-auxiliary-output.test.ts',
+      'src/main/notebook/session-operation-owner.integration.test.ts',
+      'src/main/research-execution-profiles/ipc.test.ts',
+      'src/main/session-package/headless.test.ts'
     ])
     expect(
       [
