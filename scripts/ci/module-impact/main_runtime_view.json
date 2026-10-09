@@ -12,7 +12,8 @@
     "src/main/runtime-view/owner.integration.test.ts",
     "src/main/runtime-view/owner.ts",
     "src/main/replay-viewer/desktop-frame-registry.ts",
-    "src/main/replay-viewer/desktop-frame-registry.test.ts"
+    "src/main/replay-viewer/desktop-frame-registry.test.ts",
+    "src/main/managed-runtime-views.integration.test.ts"
   ],
   "interfacePaths": [
     "src/shared/runtime-view.ts",
@@ -31,7 +32,8 @@
       "src/main/runtime-view/browser-host.integration.test.ts",
       "src/main/runtime-view/launch-schema.test.ts",
       "src/main/runtime-view/owner.integration.test.ts",
-      "src/main/replay-viewer/desktop-frame-registry.test.ts"
+      "src/main/replay-viewer/desktop-frame-registry.test.ts",
+      "src/main/managed-runtime-views.integration.test.ts"
     ],
     "contract": ["src/main/notebook/managed-execution-service.test.ts"],
     "consumer": [
@@ -184,8 +186,7 @@
       "src/main/browser-recordings/external-port.test.ts",
       "src/main/specialist/application-commands.test.ts",
       "src/main/run-observation/managed-port.test.ts",
-      "src/main/run-observation/managed-status.test.ts",
-      "src/main/managed-runtime-views.integration.test.ts"
+      "src/main/run-observation/managed-status.test.ts"
     ]
   },
   "capabilityOverlays": [],

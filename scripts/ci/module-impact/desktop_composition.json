@@ -208,8 +208,7 @@
     "src/main/composition/handoff.test.ts",
     "src/main/composition/managed-execution.integration.test.ts",
     "src/main/composition/managed-execution.ts",
-    "src/main/composition/session-packages.test.ts",
-    "src/main/managed-runtime-views.integration.test.ts"
+    "src/main/composition/session-packages.test.ts"
   ],
   "interfacePaths": [
     "src/main/app-lifecycle.ts",
@@ -355,8 +354,7 @@
       "src/main/composition/artifact-surfaces.test.ts",
       "src/main/composition/handoff.test.ts",
       "src/main/composition/managed-execution.integration.test.ts",
-      "src/main/composition/session-packages.test.ts",
-      "src/main/managed-runtime-views.integration.test.ts"
+      "src/main/composition/session-packages.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -1325,7 +1323,8 @@
       "src/main/replay-viewer/desktop-frame-registry.test.ts",
       "src/main/run-observation/viewers.test.ts",
       "src/main/runtime-view/owner.integration.test.ts",
-      "src/main/run-observation/electron-capture.integration.test.ts"
+      "src/main/run-observation/electron-capture.integration.test.ts",
+      "src/main/managed-runtime-views.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
