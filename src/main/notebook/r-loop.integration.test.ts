@@ -879,8 +879,24 @@ gate('r_loop.R', () => {
             expect(result.error).toBeNull()
             if (name === 'original') captured = result.environmentOverlay
             const evidence = await observation.finish()
-            expect(evidence.fileEvidence).toMatchObject(partialRColumnEvidence)
-            expect(evidence.confirmedReadPaths).toBeUndefined()
+            if (name === 'original') {
+              expect(evidence.fileEvidence).toMatchObject(partialRColumnEvidence)
+              expect(evidence.confirmedReadPaths).toBeUndefined()
+            } else {
+              // The replay omits the exploratory is.finite checks on unproven column values.
+              expect(evidence.fileEvidence).toMatchObject({
+                state: 'available',
+                fileReads: 'complete',
+                writerAttribution: 'complete',
+                reasonCodes: []
+              })
+              expect(evidence.confirmedReadPaths?.sort()).toEqual(
+                [
+                  'data/inputs/expression-matrix-444444444444.csv',
+                  'data/inputs/differential-results-333333333333.xlsx'
+                ].sort()
+              )
+            }
             expect(evidence.workingFiles.map((f) => f.relativePath).sort()).toEqual([
               'data/diagonal_volcano.pdf',
               'data/diagonal_volcano.png',
