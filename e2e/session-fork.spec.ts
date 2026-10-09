@@ -72,7 +72,7 @@ test('forks local and imported research and immediately continues through the re
         'Original record · Read-only'
       )
       await expect(page.getByRole('textbox', { name: 'Ask anything', exact: true })).toHaveCount(0)
-      await page.getByRole('button', { name: 'Fork to run experiments', exact: true }).click()
+      await page.getByRole('button', { name: 'Create a working copy', exact: true }).click()
       await expect(
         page.getByRole('region', { name: 'Research discussion', exact: true })
       ).toHaveCount(0)

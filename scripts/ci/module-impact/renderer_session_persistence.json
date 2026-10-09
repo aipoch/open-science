@@ -241,7 +241,19 @@
       "src/renderer/src/pages/workspace/replay/LiveReplayView.test.tsx",
       "src/renderer/src/pages/workspace/replay/use-recorded-materials.test.tsx",
       "src/renderer/replay-viewer/research-client.test.ts",
-      "src/renderer/replay-viewer/research-viewer.test.tsx"
+      "src/renderer/replay-viewer/research-viewer.test.tsx",
+      "src/main/replay-viewer/desktop-embed.integration.test.ts",
+      "src/main/replay-viewer/assets.test.ts",
+      "src/renderer/replay-viewer/browser-recording-transport.integration.test.ts",
+      "src/renderer/replay-viewer/browser-recording.integration.test.ts",
+      "src/renderer/replay-viewer/browser.integration.test.ts",
+      "src/renderer/replay-viewer/research-browser.integration.test.ts",
+      "src/main/composition/managed-execution.integration.test.ts",
+      "src/main/research-demos/owner.macos.integration.test.ts",
+      "src/main/index-startup-failure.test.ts",
+      "src/main/runtime-electron-wiring.test.ts",
+      "src/main/index-fatal-errors.test.ts",
+      "src/main/composition/handoff.test.ts"
     ]
   },
   "capabilityOverlays": [],

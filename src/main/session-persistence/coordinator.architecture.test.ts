@@ -1895,7 +1895,9 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/research-replay/service-timing.test.ts',
       'src/main/research-replay/service.test.ts',
       'src/main/research-runs/inspection.test.ts',
-      'src/main/research-runs/ipc.test.ts'
+      'src/main/research-runs/ipc.test.ts',
+      'src/main/replay-viewer/desktop-embed.integration.test.ts',
+      'src/main/notebook/managed-execution-service.macos.integration.test.ts'
     ])
     expect(sessionPersistence.capabilityOverlays).toEqual([
       'windows_sensitive',

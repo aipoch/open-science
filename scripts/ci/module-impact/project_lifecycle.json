@@ -279,7 +279,8 @@
       "src/main/browser-recordings/owner.test.ts",
       "src/main/run-observation/media-collector.test.ts",
       "src/main/run-observation/managed-coordinator.test.ts",
-      "src/main/research-demos/owner.macos.integration.test.ts"
+      "src/main/research-demos/owner.macos.integration.test.ts",
+      "src/main/notebook/managed-execution-service.macos.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],

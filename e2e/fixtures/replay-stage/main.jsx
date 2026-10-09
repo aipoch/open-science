@@ -602,6 +602,7 @@ function PanelFixture() {
         >
           <div className={evidenceStep ? 'hidden' : 'min-h-0 flex-1'}>
             <ReplayPanel
+              presentationMode={params.has('research') ? 'research' : undefined}
               document={{ ...document, source }}
               expanded={expanded}
               onToggleExpanded={() => setExpanded((value) => !value)}

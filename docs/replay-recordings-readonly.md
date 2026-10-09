@@ -56,7 +56,8 @@ capture error cannot retry the experiment or change its scientific outcome.
 The existing observation archive stays version 1. Its captured images adapt to the same Project
 Replay model, retaining source-step links when actually recorded. Several frames can belong to
 one observation; a frame's position does not invent a Notebook step. Project playback uses actual
-frame intervals. Browsing another material pauses its clock; the frame choice survives returning.
+frame intervals. Embedded materials follow the shared research clock; switching material tabs does
+not pause playback. A standalone recording viewer retains its own playback controls.
 
 Results are fixed immutable file Versions with source, scope, and stage. A recording-level
 attachment is not silently assigned to the current step. An unspecified stage is not inferred to
@@ -68,40 +69,17 @@ receiving recording and exact file Version/checksum. They do not fabricate a ste
 reply after navigation cannot attach itself to the replacement draft. The browser viewer retains
 and exposes the same file selection for Codex through a dedicated read-only selection endpoint.
 
-## Scope of this delivery
+## Scope and verification
 
-This delivery does not install a DOM recorder, execute bundled research JavaScript inside Replay,
-or render MP4. Recording timestamps and independent media references leave room for subsequent
-video or DOM adapters and an MP4 export renderer without coupling recording to Notebook or to a
-particular research project. State-derived Tuanzi reports remain labeled as derived output; only
-real captures claim to show the observed project UI.
+Replay reads captured evidence without running bundled project JavaScript. Image sampling and
+browser video are independent recording adapters; see [browser recording](browser-recording.md)
+for supported WebM segments, the shared research clock, and exact media selection. DOM recording
+and MP4 export are not implemented. Author-declared states and derived reports remain labeled as
+such; only actual captures claim to show the observed project interface.
 
-Tuanzi acceptance materials are maintained outside this repository in a fresh research directory,
-using source commit `b6d5810fef3baac1195c980fe728ce7a8a69408b`. Engineering offline runs do not
-establish scientific reproduction of the external-model experiment. The installed Test release
-and actual sandbox/export/import validation are recorded separately after execution.
-
-## Installed acceptance, 2026-10-07
-
-The isolated Test client executed the fixed Tuanzi rule/local plan in ordinary writable Sessions
-through the SDK. Both bounded runs completed and their environments were explicitly released.
-The first pass saved one screenshot; its two-frame acceptance failed and was retained. The second
-pass saved two actual host-view screenshots (the final Canvas world and diagnostics), six declared
-states and four declared state-change events. These screenshots are not a continuous recording of
-the four actions, and the derived HTML report is not a captured project frame. External provider
-calls were zero; scientific reproduction remains `NOT_EVALUATED`.
-
-The second result package was exported and imported into a new Project/Session. Both recording
-formats, media and results resolved to new receiving Versions with byte-identical checksums.
-The SDK read/view/file-selection checks left environment, operation and Notebook metadata
-unchanged. This checks the persistent execution boundary; no global in-memory service census API
-is available. The package SHA-256 is
-`e22a6aa68869b02ed516e3ceca360962117a0e06d4e3ef327e334cb69c394384`.
-
-The Codex browser displayed the archived Canvas image after service shutdown, switched between
-the two frames, and displayed the saved HTML as inert content. Asking about that HTML produced
-an exact `recorded-observation-file` selection readable by the SDK. A real narrow-browser check
-also exposed a first-click loss when the inspection banner moved the material tabs; the regression
-uses an actual pointer press/release and verifies a single click selects Project Replay or Results.
-Local receipts and the final installed release are retained in the fresh Tuanzi acceptance
-directory, outside the source repository. No upstream submission is part of this acceptance.
+The generic tests verify that imported recording indexes, media, and results resolve through exact
+receiving Versions and checksums, including export/import and re-export. Read and selection paths
+must leave execution and Notebook state unchanged. Browser tests cover material switching with
+actual pointer events; native integration tests cover admitted iframe navigation and context menus.
+These engineering checks establish recording and viewing behavior. They do not establish scientific
+equivalence between an offline plan and an experiment which used external models or services.

@@ -837,7 +837,9 @@
       "src/renderer/replay-viewer/browser.integration.test.ts",
       "src/renderer/replay-viewer/browser-recording-transport.integration.test.ts",
       "src/main/research-demos/inspection.test.ts",
-      "src/renderer/src/pages/workspace/NotebookPreview.gate.render.test.tsx"
+      "src/renderer/src/pages/workspace/NotebookPreview.gate.render.test.tsx",
+      "src/main/replay-viewer/desktop-embed.integration.test.ts",
+      "src/main/notebook/managed-execution-service.macos.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

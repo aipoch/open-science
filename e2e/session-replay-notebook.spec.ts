@@ -1,3 +1,4 @@
+import { askReplayStep, openReplayFiles } from './helpers/research-replay'
 import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
 import { createProject } from './certification/helpers'
@@ -23,11 +24,11 @@ test('asks about a standalone Notebook input and restores its exact step offset 
     status: 'idle',
     messages: [],
     activities: [],
-    createdAt: 1,
-    updatedAt: 3,
+    createdAt: 1000,
+    updatedAt: 11000,
     packageOrigin: {
       importId: 'standalone-notebook-import',
-      importedAt: 4,
+      importedAt: 12000,
       sourceProjectId: 'foreign-project',
       sourceSessionId: 'foreign-source',
       manifestChecksum: 'c'.repeat(64)
@@ -40,8 +41,8 @@ test('asks about a standalone Notebook input and restores its exact step offset 
     kernelKind: 'r',
     script: 'values <- c(19, 23)\nprint(sum(values))',
     status: 'completed',
-    startedAt: 1,
-    endedAt: 2,
+    startedAt: 1000,
+    endedAt: 11000,
     text: { stdout: 'ARCHIVED_RESULT_42\n', stderr: '', traceback: '', plain: [] },
     outputs: [],
     artifacts: [],
@@ -69,13 +70,14 @@ test('asks about a standalone Notebook input and restores its exact step offset 
         .click()
     } else {
       await page
-        .getByRole('region', { name: 'Imported research history', exact: true })
+        .getByTestId('research-workspace-header')
         .getByRole('button', { name: 'View replay', exact: true })
         .click()
     }
     await expect(page.getByTestId('replay-panel')).toBeVisible()
   }
   await open()
+  await page.getByTestId('replay-panel').getByRole('tab', { name: 'Notebook', exact: true }).click()
   await expect
     .poll(() =>
       page
@@ -131,7 +133,7 @@ test('asks about a standalone Notebook input and restores its exact step offset 
   await expect(replay.getByText('ARCHIVED_RESULT_42', { exact: true })).toHaveCount(0)
   const stepId = await replay.locator('[data-replay-active]').getAttribute('data-replay-step')
   const branchId = await page.getByTestId('replay-stage').getAttribute('data-replay-branch')
-  await replay.getByRole('button', { name: 'Ask about this step', exact: true }).click()
+  await askReplayStep(replay)
   await expect(page.getByRole('dialog', { name: 'Ask in a conversation' })).toHaveCount(0)
   const editor = page.getByRole('textbox', { name: 'Ask anything', exact: true })
   await expect(page.locator('[data-session-discussion-source]')).toContainText(source.title)
@@ -145,7 +147,7 @@ test('asks about a standalone Notebook input and restores its exact step offset 
   // Asking freezes the visible input, even if the reader reveals the result before sending.
   await slider.focus()
   await page.keyboard.press('End')
-  await replay.getByRole('button', { name: 'Notebook', exact: true }).click()
+  await replay.getByRole('tab', { name: 'Notebook', exact: true }).click()
   await expect(replay.getByText('ARCHIVED_RESULT_42', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Send message', exact: true }).click()
   const conversation = page.getByRole('region', { name: 'Conversation', exact: true })
@@ -212,7 +214,7 @@ test('asks about a standalone Notebook input and restores its exact step offset 
   })
   await restoredSlider.focus()
   await page.keyboard.press('End')
-  await restoredReplay.getByRole('button', { name: 'Notebook', exact: true }).click()
+  await restoredReplay.getByRole('tab', { name: 'Notebook', exact: true }).click()
   await expect(restoredReplay.getByText('ARCHIVED_RESULT_42', { exact: true })).toBeVisible()
   const restoredConversation = page.getByRole('region', { name: 'Conversation', exact: true })
   const expand = restoredConversation.getByRole('button', { name: 'Show more', exact: true })
@@ -374,7 +376,7 @@ test('renders archived research with shared workspace messages, grouped tools an
     .click()
   const replay = page.getByTestId('replay-panel')
   await page
-    .getByRole('region', { name: 'Imported research history', exact: true })
+    .getByTestId('research-workspace-header')
     .getByRole('button', { name: 'View replay', exact: true })
     .click()
   await expect(replay).toBeVisible()
@@ -401,45 +403,48 @@ test('renders archived research with shared workspace messages, grouped tools an
   await group.getByTestId('tool-group-header').click()
   await expect(figure).toBeVisible()
   await page.setViewportSize({ width: 1280, height: 960 })
-  await replay.getByRole('button', { name: 'Enter full screen', exact: true }).click()
+  await replay.getByRole('button', { name: 'Expand preview', exact: true }).click()
   const conversationPane = replay.getByRole('region', { name: 'Historical conversation' })
   const notebookPane = replay.getByRole('region', { name: 'Research materials' })
   const filesPane = replay.getByRole('complementary', { name: 'Files' })
   await expect(conversationPane).toBeVisible()
-  await expect(notebookPane).toBeVisible()
-  await expect(filesPane).toBeVisible()
-  // Sample all panes in the same animation frame.
-  const [conversationBox, notebookBox, filesBox] = await replay.evaluate((element) =>
-    ['Historical conversation', 'Research materials', 'Files'].map((label) =>
-      element.querySelector(`[aria-label="${label}"]`)!.getBoundingClientRect().toJSON()
-    )
-  )
-  expect(notebookBox.x).toBeCloseTo(conversationBox.x + conversationBox.width, 0)
-  expect(filesBox.x).toBeCloseTo(notebookBox.x + notebookBox.width, 0)
-  await replay.screenshot({ path: testInfo.outputPath('replay-modal-three-columns.png') })
-  await replay.getByRole('button', { name: 'Close files', exact: true }).click()
-  await expect(conversationPane).toBeVisible()
-  await expect(notebookPane).toBeVisible()
-  await replay.screenshot({
-    path: testInfo.outputPath('replay-modal-notebook-beside-conversation.png')
+  await expect(notebookPane).not.toBeVisible()
+  await expect(filesPane).not.toBeVisible()
+  await replay.evaluate(async (element) => {
+    const animations: Animation[] = []
+    for (let node: Element | null = element; node; node = node.parentElement)
+      animations.push(...node.getAnimations())
+    await Promise.all(animations.map((animation) => animation.finished.catch(() => undefined)))
   })
-  await replay.getByRole('button', { name: 'Exit full screen', exact: true }).click()
+  const conversationBox = (await conversationPane.boundingBox())!
+  await replay.getByRole('tab', { name: 'Notebook', exact: true }).click()
+  await expect(conversationPane).not.toBeVisible()
+  await expect(notebookPane).toBeVisible()
+  const notebookBox = (await notebookPane.boundingBox())!
+  expect(notebookBox.x).toBeCloseTo(conversationBox.x, 0)
+  expect(notebookBox.width).toBeCloseTo(conversationBox.width, 0)
+  await openReplayFiles(replay)
+  await expect(filesPane).toBeVisible()
+  const filesBox = (await filesPane.boundingBox())!
+  expect(filesBox.x).toBeGreaterThanOrEqual(notebookBox.x)
+  expect(filesBox.x + filesBox.width).toBeLessThanOrEqual(notebookBox.x + notebookBox.width)
+  await replay.screenshot({
+    path: testInfo.outputPath('replay-expanded-notebook-files-inspector.png')
+  })
+  await replay.getByRole('button', { name: 'Close files', exact: true }).click()
+  await expect(notebookPane).toBeVisible()
+  await replay.getByRole('tab', { name: 'Original conversation', exact: true }).click()
+  await expect(conversationPane).toBeVisible()
+  await replay.getByRole('button', { name: 'Collapse preview', exact: true }).click()
   await replay.evaluate((element) => {
     element.style.width = '1000px'
   })
-  await replay.getByRole('button', { name: 'Enter full screen', exact: true }).click()
-  await expect(replay.getByRole('button', { name: 'Notebook', exact: true })).toHaveAttribute(
-    'aria-expanded',
-    'true'
-  )
-  await expect(replay.getByRole('button', { name: 'View files', exact: true })).toHaveAttribute(
-    'aria-expanded',
-    'true'
-  )
-  await expect(replay.getByRole('region', { name: 'Research materials' })).toBeVisible()
-  await expect(replay.getByRole('complementary', { name: 'Files' })).toBeVisible()
-  await replay.getByRole('button', { name: 'Close files', exact: true }).click()
-  await replay.getByRole('button', { name: 'Close research materials', exact: true }).click()
+  await replay.getByRole('button', { name: 'Expand preview', exact: true }).click()
+  await expect(
+    replay.getByRole('tab', { name: 'Original conversation', exact: true })
+  ).toHaveAttribute('aria-selected', 'true')
+  await expect(notebookPane).not.toBeVisible()
+  await expect(filesPane).not.toBeVisible()
   const expectCompleteGroup = async (): Promise<void> => {
     await expect
       .poll(() =>
@@ -458,10 +463,10 @@ test('renders archived research with shared workspace messages, grouped tools an
     const results = replay.getByRole('region', { name: 'Research materials' })
     await expect(conversation).toBeVisible()
     await expect(results).not.toBeVisible()
-    await replay.getByRole('button', { name: 'Notebook', exact: true }).click()
+    await replay.getByRole('tab', { name: 'Notebook', exact: true }).click()
     await expect(conversation).not.toBeVisible()
     await expect(results).toBeVisible()
-    await replay.getByRole('button', { name: 'Close research materials', exact: true }).click()
+    await replay.getByRole('tab', { name: 'Original conversation', exact: true }).click()
     const rows = replay.locator('[data-replay-activity]')
     await expect(rows).toHaveCount(2)
     const overflow = await rows.evaluateAll((elements) =>
@@ -492,7 +497,7 @@ test('renders archived research with shared workspace messages, grouped tools an
   await replay.evaluate((element) => {
     element.style.removeProperty('width')
   })
-  await replay.getByRole('button', { name: 'Exit full screen', exact: true }).click()
+  await replay.getByRole('button', { name: 'Collapse preview', exact: true }).click()
   await record.getByTestId('tool-chip').click()
   await expect(record.getByTestId('tool-summary-card')).toContainText('49 KB')
   await expect(record).not.toContainText('archived-version-id')

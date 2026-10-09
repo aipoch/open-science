@@ -106,7 +106,8 @@
       "src/renderer/src/lib/acp/workspace-prompt-rollback-failure.test.ts",
       "src/renderer/src/lib/acp/workspace-runtime-overflow-recovery-failures.test.ts",
       "src/renderer/src/pages/workspace/use-run-observation-question.test.tsx",
-      "src/renderer/src/pages/workspace/use-research-run-launcher.test.tsx"
+      "src/renderer/src/pages/workspace/use-research-run-launcher.test.tsx",
+      "src/main/replay-viewer/desktop-embed.integration.test.ts"
     ]
   },
   "capabilityOverlays": [],
