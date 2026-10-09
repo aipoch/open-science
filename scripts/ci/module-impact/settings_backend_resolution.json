@@ -571,7 +571,14 @@
       "src/main/literature/pdf-translation/usage.test.ts",
       "src/main/literature/pdf-translation/pdf-cache.test.ts",
       "src/main/literature/pdf-translation/api-target.test.ts",
-      "src/main/literature/pdf-translation/agent-target.test.ts"
+      "src/main/literature/pdf-translation/agent-target.test.ts",
+      "src/main/desktop-runtime-transport.integration.test.ts",
+      "src/main/side-chat/application-commands.test.ts",
+      "src/main/artifacts/artifact-reproducibility-commands.test.ts",
+      "src/main/settings/file-commands.test.ts",
+      "src/main/office-preview/application-commands.test.ts",
+      "src/main/reviewer/paged-preview-host.test.ts",
+      "src/main/desktop-native-electron.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],

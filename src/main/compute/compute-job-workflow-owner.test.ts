@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -1844,3 +1845,5 @@ describe('ComputeJobWorkflowOwner.submitJob - harvest safety', () => {
     expect(createCalls).not.toHaveBeenCalled()
   })
 })
+
+configureTestRuntimeMetadata()

@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -164,3 +165,5 @@ it.each(commonAnalysisScripts)('resolves common %s %s', async (language, _name, 
     await rm(root, { recursive: true, force: true })
   }
 })
+
+configureTestRuntimeMetadata()

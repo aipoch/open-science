@@ -1,4 +1,5 @@
-import { app } from 'electron'
+import { createSpecialistElectronSurface } from '../desktop-surface-declarations'
+import { runtimeMetadata } from '../runtime-metadata'
 import {
   LIFECYCLE_CHANNELS,
   MAIN_SESSION_DETAILS_LIFECYCLE_CLIENT_ID
@@ -11,7 +12,7 @@ import { type ApplicationModuleBuilder } from '../application-runtime'
 import { ArtifactReproducibilityAttemptOwner } from '../artifacts/artifact-reproducibility-lifecycle'
 import { createComputeIpcModule } from '../compute/ipc'
 import { type DiagnosticOperation } from '../diagnostics/operation'
-import { createSpecialistElectronSurface } from '../ipc-surfaces/specialist'
+
 import { createLogger, diagnosticErrorFields, errorLogFields } from '../logger'
 import { buildSessionDetailsUserPrompt, createSessionDetailsOwner } from '../session-details/owner'
 import type { SessionPersistenceCommands } from '../session-persistence/coordinator'
@@ -35,6 +36,7 @@ import { WslSetupSessionOwner } from '../wsl/wsl-setup-session-owner'
 
 export async function composeSessionSurfaces({
   surfaceAdapters,
+  reportMarketplaceProgress,
   applicationEvents,
   wslSetupSessions,
   settingsService,
@@ -57,6 +59,10 @@ export async function composeSessionSurfaces({
   modules,
   composition
 }: {
+  reportMarketplaceProgress?: (
+    clientId: string,
+    progress: import('../../shared/specialist-marketplace').MarketplaceDownloadProgress
+  ) => void
   surfaceAdapters: import('../runtime-electron-wiring').NamedElectronSurfaceAdapter[]
   applicationEvents: ApplicationEvents
   wslSetupSessions: WslSetupSessionOwner
@@ -125,7 +131,7 @@ export async function composeSessionSurfaces({
   )
   const sessionDetailsOwner = await modules.add(
     {
-      appVersion: app.getVersion(),
+      appVersion: runtimeMetadata().version,
       configRoot,
       settingsService,
       sessionPersistenceBackend,
@@ -231,7 +237,16 @@ export async function composeSessionSurfaces({
     uploads: uploadCommandOwner,
     marketplace: marketplaceService,
     sessionReconfiguration: sessionSpecialistReconfiguration,
-    onProfilesChanged: () => void runtime.requestSkillsReload()
+    onProfilesChanged: () => void runtime.requestSkillsReload(),
+    disposeMarketplace: (id) => marketplaceService.dispose(id),
+    desktop: {
+      service: specialistService,
+      packages: specialistPackageService,
+      marketplace: marketplaceService,
+      bindings: sessionBindingService,
+      translate,
+      reportProgress: (clientId, progress) => reportMarketplaceProgress?.(clientId, progress)
+    }
   })
   specialistService.subscribe(() =>
     applicationEvents.publish('specialist:catalog-changed', undefined)

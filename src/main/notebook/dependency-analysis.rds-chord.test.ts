@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -200,3 +201,5 @@ it.each(['completed', 'failed', 'epoch-change', 'opaque', 'guarded-reset', 'wrap
     }
   }
 )
+
+configureTestRuntimeMetadata()

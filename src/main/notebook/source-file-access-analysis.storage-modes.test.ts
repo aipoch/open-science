@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { describe, expect, it } from 'vitest'
 import type { NotebookRunRecord } from '../../shared/notebook'
 import { analyzeRNotebookSource } from './dependency-analysis-r'
@@ -1052,3 +1053,5 @@ describe('R count and sequence generic dispatch', () => {
     })
   })
 })
+
+configureTestRuntimeMetadata()

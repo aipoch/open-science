@@ -1,4 +1,4 @@
-import { app } from 'electron'
+import { runtimeMetadata } from '../runtime-metadata'
 import { ImageInputCompatibilityOwner } from '../acp/image-input-compatibility-owner'
 import { createAcpRuntime } from '../acp/runtime-composition'
 import { type ApplicationModuleBuilder } from '../application-runtime'
@@ -147,7 +147,7 @@ export async function composeAgentRuntime({
   )
   const runtime = await modules.add(
     {
-      appVersion: app.getVersion(),
+      appVersion: runtimeMetadata().version,
       mcpEntryPath: mainEntryPath,
       repository: artifactRepository,
       runRegistry: artifactRunRegistry,

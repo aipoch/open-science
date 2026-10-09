@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../../test/runtime-host'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -1144,3 +1145,5 @@ describe('settings Connectors slice', () => {
     expect(store.getState().pendingCredentialRequests).toEqual([])
   })
 })
+
+await configureTestElectronHost(await import('electron'))

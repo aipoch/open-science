@@ -1,3 +1,4 @@
+import { RUNTIME_LOCK_FILE } from '../runtime-ownership'
 import { readdir, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, type Dirent } from 'node:fs'
 import { randomUUID } from 'node:crypto'
@@ -376,7 +377,9 @@ export const classifyDataRoot = async (
 
   let entries: Dirent[]
   try {
-    entries = await readdir(target, { withFileTypes: true })
+    entries = (await readdir(target, { withFileTypes: true })).filter(
+      (entry) => entry.name !== RUNTIME_LOCK_FILE
+    )
   } catch {
     return { kind: 'invalid', error: 'The selected folder is not usable.' }
   }
@@ -790,7 +793,14 @@ export const runDataRootMigration = async (
     if (await needsWslNpmMigration(target, [RUNTIME_NPM_DIR])) {
       await requireNpmMigration(deps.npmMigration).remove(target)
     }
-    await rm(target, { recursive: true, force: true })
+    // Never unlink the runtime lock inode while an entry may hold it. Older staging directories
+    // without this reserved file can still be removed completely.
+    if (existsSync(join(target, RUNTIME_LOCK_FILE))) {
+      for (const name of await readdir(target)) {
+        if (name !== RUNTIME_LOCK_FILE)
+          await rm(join(target, name), { recursive: true, force: true })
+      }
+    } else await rm(target, { recursive: true, force: true })
   }
 
   try {
@@ -1342,6 +1352,12 @@ export const discardStagedCopy = async (
   if (await needsWslNpmMigration(target, [RUNTIME_NPM_DIR])) {
     await requireNpmMigration(deps.npmMigration).remove(target)
   }
-  await rm(target, { recursive: true, force: true })
+  // Never unlink the runtime lock inode while an entry may hold it. Older staging directories
+  // without this reserved file can still be removed completely.
+  if (existsSync(join(target, RUNTIME_LOCK_FILE))) {
+    for (const name of await readdir(target)) {
+      if (name !== RUNTIME_LOCK_FILE) await rm(join(target, name), { recursive: true, force: true })
+    }
+  } else await rm(target, { recursive: true, force: true })
   return { ok: true }
 }

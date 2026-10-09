@@ -96,3 +96,21 @@ compiling the non-Windows executable is not evidence of a Windows run.
 
 Run tests through the task's approved isolated configuration runner. Real-helper execution and
 real-Keychain integration checks require a separately authorized test environment.
+
+## Standalone Node secret helper
+
+`secretExecutablePath` identifies `credential_secret`, a separate secret-access executable used
+only by the Node host. Build it with `npm run build:backend-native`; ordinary desktop builds keep
+only the existing metadata probe and validator targets. On Linux this target requires libsecret
+and libdbus development headers plus pkg-config.
+
+After the shared identity/inventory preflight has permitted access, the helper reads the selected
+macOS Keychain, Linux Secret Service/KWallet key, or protects/unprotects Windows data using DPAPI.
+Creation is explicit and serialized by the entry's credential bootstrap lease. Secret bytes travel
+only on bounded private stdio pipes; failures are sanitized and never trigger a plaintext fallback.
+This does not change the metadata probe's read-only contract above.
+
+The Node cipher is pinned to Electron 43.7.5's
+[OSCrypt sync implementation](https://github.com/electron/electron/blob/v43.7.5/patches/chromium/revert_oscrypt_remove_sync_backend.patch).
+See [compatibility and persistent-state notes](../../docs/standalone-runtime.md#historical-compatibility)
+before changing its format or selected OS identity.

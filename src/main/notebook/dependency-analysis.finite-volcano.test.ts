@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { expect, it } from 'vitest'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -204,3 +205,5 @@ it('retains the producer workbook and output paths under partial coverage', asyn
   expect(access.reads).toEqual(['inputs/differential-results-333333333333.xlsx'])
   expect([...access.writes].sort()).toEqual(['diagonal_volcano.png', 'volcano_data.csv'])
 })
+
+configureTestRuntimeMetadata()

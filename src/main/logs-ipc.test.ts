@@ -149,3 +149,5 @@ describe('logs IPC handlers', () => {
     expect(showItemInFolder).not.toHaveBeenCalled()
   })
 })
+
+await (await import('../../test/runtime-host')).configureTestElectronHost(await import('electron'))

@@ -1,4 +1,4 @@
-import { session } from 'electron'
+import { runtimeNetwork } from '../runtime-network'
 
 // Resolve the same public origin the subscription contacts. Electron evaluates the user's native
 // proxy settings (including PAC rules) for this URL; the resulting endpoint can then be handed to
@@ -119,7 +119,7 @@ export const parseSystemProxyRules = (rules: string): SystemProxyEnvironment => 
 }
 
 export const resolveSystemProxyEnvironment = async (
-  resolveProxy: ResolveProxy = (url) => session.defaultSession.resolveProxy(url),
+  resolveProxy: ResolveProxy = (url) => runtimeNetwork().resolveProxy(url),
   sourceEnv: NodeJS.ProcessEnv = process.env
 ): Promise<SystemProxyEnvironment | undefined> => {
   try {

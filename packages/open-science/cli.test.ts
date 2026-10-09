@@ -81,7 +81,7 @@ describe('task CLI', () => {
     await expect(
       initCommand(
         { configRoot: root, json: true },
-        { log, locateApp: vi.fn().mockResolvedValue({ packaged: false }) }
+        { log, locateBackend: vi.fn().mockResolvedValue({ development: true }) }
       )
     ).resolves.toEqual({
       configRoot: root,
@@ -92,13 +92,18 @@ describe('task CLI', () => {
     await rm(root, { recursive: true, force: true })
   })
 
-  it('rejects profile overrides for packaged initialization', async () => {
-    await expect(
-      initCommand(
-        { configRoot: '/tmp/profile', json: true },
-        { log: vi.fn(), locateApp: vi.fn().mockResolvedValue({ packaged: true }) }
-      )
-    ).rejects.toThrow('--config-root is only supported for development builds.')
+  it('allows an explicit profile for an installed Node backend', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-installed-profile-'))
+    try {
+      await expect(
+        initCommand(
+          { configRoot: root },
+          { log: vi.fn(), locateBackend: vi.fn().mockResolvedValue({ development: false }) }
+        )
+      ).resolves.toMatchObject({ configRoot: root })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 
   it('requires JSON output for doctor', () => {

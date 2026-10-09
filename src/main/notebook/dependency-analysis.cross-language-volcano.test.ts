@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { expect, it } from 'vitest'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -133,3 +134,5 @@ it.each([
   const { facts } = await analyzeRNotebookSource(`${prefix}df<-read.csv("input.csv"); ids<-${call}`)
   expect(facts.rPackageReads?.includes('dplyr') ?? false).toBe(prior)
 })
+
+configureTestRuntimeMetadata()

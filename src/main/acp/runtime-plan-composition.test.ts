@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
@@ -2599,3 +2600,5 @@ describe('Agent-visible committed Plan decisions', () => {
     })
   })
 })
+
+configureTestRuntimeMetadata()

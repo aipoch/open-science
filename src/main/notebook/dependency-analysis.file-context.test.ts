@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -2208,3 +2209,5 @@ it('drops R atomic knowledge across an interrupted kernel operation', async () =
   )
   expect(context?.rAtomicValueNames ?? []).not.toContain('source')
 })
+
+configureTestRuntimeMetadata()

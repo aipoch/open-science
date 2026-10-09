@@ -1,4 +1,4 @@
-import { app } from 'electron'
+import { runtimeMetadata } from '../runtime-metadata'
 import { join } from 'node:path'
 import type { AcpSessionAgentTarget } from '../../shared/acp'
 import { SPECIALIST_IPC } from '../../shared/specialist'
@@ -50,10 +50,12 @@ import type { TaskAgentPort } from '../tasks/task-runner'
 export async function composeAgentCompletion({
   notebookService,
   specialistService,
+  declareElectronAdapter,
   modules
 }: {
   notebookService: NotebookRuntimeService
   specialistService: SpecialistService
+  declareElectronAdapter: (name: string, install: () => void) => void
   modules: ApplicationModuleBuilder
 }): Promise<{
   completionGateRuntimeRegistry: CompletionGateRuntimeRegistry
@@ -74,7 +76,9 @@ export async function composeAgentCompletion({
       return { specialistId: profile.id, revision: profile.revision }
     }
   )
-  registerCompletionHandoffIpcHandlers(completionHandoffLifecycle)
+  declareElectronAdapter('completion-handoff', () =>
+    registerCompletionHandoffIpcHandlers(completionHandoffLifecycle)
+  )
   const completionGateCoordinator = new CompletionGateCoordinator(
     completionGateRuntimeRegistry,
     completionHandoffLifecycle
@@ -170,7 +174,7 @@ export async function composeAgentWorkflows({
   const codeReconstructionLog = createLogger('artifacts:code-reconstruction')
   const codeReconstructionRunner = await modules.add(
     {
-      appVersion: app.getVersion(),
+      appVersion: runtimeMetadata().version,
       configRoot,
       captureTarget: () => settingsService.captureActiveExplicitAgentBackendTarget(),
       resolveTarget: (target, context) =>

@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { expect, it } from 'vitest'
 import { analyzeRSources } from './dependency-analysis-r'
 import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
@@ -105,3 +106,5 @@ it.skipIf(!process.env.RUN_KERNEL || !rCommand)(
 )
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
+
+configureTestRuntimeMetadata()

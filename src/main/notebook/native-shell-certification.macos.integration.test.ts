@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { mkdtemp, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -37,3 +38,5 @@ describeMacOS('native shell certification through the production sandbox', () =>
     }
   }, 20_000)
 })
+
+configureTestRuntimeMetadata()

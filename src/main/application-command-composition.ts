@@ -1,4 +1,15 @@
 import {
+  pdfTranslationApplicationCommandGroup,
+  registerPdfTranslationApplicationCommands
+} from './literature/pdf-translation/application-commands'
+import type { PdfTranslationOwner } from './literature/pdf-translation/index'
+import { specialistDesktopCommandGroup } from './specialist/desktop-commands'
+import {
+  sideChatApplicationCommandGroup,
+  registerSideChatApplicationCommands
+} from './side-chat/application-commands'
+import type { SideChatCommandOwner } from './side-chat/command-owner'
+import {
   bootstrapApplicationCommandGroup,
   registerBootstrapApplicationCommands
 } from './settings/bootstrap-application-commands'
@@ -132,6 +143,8 @@ type ApplicationCommandModuleDescriptor = Readonly<{
 }>
 
 type ApplicationCommandCompositionDependencies = Readonly<{
+  pdfTranslation: PdfTranslationOwner
+  sideChat: SideChatCommandOwner
   acp: AcpApplicationCommandDependencies
   notebook: NotebookApplicationCommandDependencies
   notebookEnvironment: NotebookEnvironmentDependencies
@@ -153,6 +166,7 @@ type ApplicationCommandCompositionDependencies = Readonly<{
 }>
 
 type ApplicationCommandComposition = Readonly<{
+  desktop: ApplicationCommandByNameDispatcher
   electron: ApplicationCommandByNameDispatcher
   localWeb: ApplicationCommandByNameDispatcher
   remoteWeb: RemoteWebApplicationCommandDispatcher
@@ -162,6 +176,74 @@ type ApplicationCommandComposition = Readonly<{
 }>
 
 const ELECTRON_NATIVE_COMMAND_NAMES = Object.freeze([
+  ...pdfTranslationApplicationCommandGroup.commands.map(({ name }) => name),
+  'office-preview:open',
+  'office-preview:attach-frame',
+  'office-preview:close',
+  'office-preview:report-state',
+
+  'sessions:open-recovery-folder',
+  'specialist:get-handoff-events',
+  'specialist:retry-handoff',
+  'specialist:cancel-handoff',
+  'file:save-blob',
+  'file:save-managed',
+  'file:save-session-artifacts',
+  'file:save-project-artifacts',
+  'specialist:create',
+  'specialist:duplicate',
+  'specialist:delete',
+  'specialist:delete-preview',
+  'specialist:export-preview',
+  'specialist:export-save',
+  'specialist:package-select',
+  'specialist:package-report-save',
+  'specialist:export-contribution-template',
+  'specialist:resolve-session-specialist',
+  'specialist:marketplace-source-inspect-github',
+  'specialist:marketplace-source-add',
+  'specialist:marketplace-source-remove',
+  'specialist:marketplace-install-prepare',
+  'specialist:marketplace-install',
+  'specialist:marketplace-candidate-cancel',
+  'settings:export-skill',
+  'settings:select-custom-server-template',
+  'settings:export-custom-server-template',
+
+  'settings:resolve-skill-document',
+  'settings:list-agent-home-skills',
+  'settings:preview-custom-server-template-export',
+  'settings:import-agent-home-skills',
+  'connectors:credential-respond',
+  'connectors:credential-replay-pending',
+  'notifications:get-desktop-availability',
+  'notifications:send-test',
+  'artifacts:session-reproducibility',
+  'artifacts:get-reproducibility-output-storage',
+  'artifacts:clear-reproducibility-outputs',
+  'artifacts:read-reproducibility-output',
+  'artifacts:describe-environment-lock',
+  'artifacts:create-environment-from-lock',
+  'artifacts:export-environment-lock',
+  'artifacts:export-reproducibility-receipt',
+  'artifacts:import-environment-lock',
+  'artifacts:get-reproducibility-check',
+  'artifacts:get-reproducibility-check-log',
+  'artifacts:list-reproducibility-receipts',
+  'artifacts:start-reproducibility-check',
+  'artifacts:cancel-reproducibility-check',
+
+  'locale:initialize',
+  'locale:set-preference',
+  'network:get-info',
+  'network:check-connectivity',
+  'managed-file-versions:inspect',
+  'managed-file-versions:save-text-edit',
+  'managed-file-versions:diff-text',
+  'managed-file-versions:cancel-diff',
+  'background-result-delivery:session-activity',
+  'background-result-delivery:project-activity',
+  ...sideChatApplicationCommandGroup.commands.map(({ name }) => name),
   'remote-access:detect',
   'remote-access:disable',
   'remote-access:set-mode',
@@ -259,6 +341,12 @@ const createApplicationCommandModules = (
   remoteAccess: RemoteAccessOwner
 ): readonly ApplicationCommandModuleDescriptor[] =>
   Object.freeze([
+    defineApplicationCommandModule([pdfTranslationApplicationCommandGroup], (registrar) =>
+      registerPdfTranslationApplicationCommands(registrar, dependencies.pdfTranslation)
+    ),
+    defineApplicationCommandModule([sideChatApplicationCommandGroup], (registrar) =>
+      registerSideChatApplicationCommands(registrar, dependencies.sideChat)
+    ),
     defineApplicationCommandModule([bootstrapApplicationCommandGroup], (registrar) =>
       registerBootstrapApplicationCommands(registrar, dependencies.settingsCore)
     ),
@@ -301,8 +389,9 @@ const createApplicationCommandModules = (
     defineApplicationCommandModule([memoryApplicationCommandGroup], (registrar) =>
       registerMemoryApplicationCommands(registrar, dependencies.memory)
     ),
-    defineApplicationCommandModule([specialistApplicationCommandGroup], (registrar) =>
-      registerSpecialistApplicationCommands(registrar, dependencies.specialist)
+    defineApplicationCommandModule(
+      [specialistApplicationCommandGroup, specialistDesktopCommandGroup],
+      (registrar) => registerSpecialistApplicationCommands(registrar, dependencies.specialist)
     ),
     defineApplicationCommandModule([literatureApplicationCommandGroup], (registrar) =>
       registerLiteratureApplicationCommands(registrar, dependencies.literature)
@@ -510,6 +599,13 @@ const createApplicationCommandComposition = (
     })
   }
 
+  const desktop = view([
+    ...new Set([
+      ...certified.localWebNames,
+      ...certified.electronNames,
+      ...ELECTRON_NATIVE_COMMAND_NAMES
+    ])
+  ])
   const electron = view(certified.electronNames)
   const localWeb = view(certified.localWebNames)
   const remoteDispatcher = view(certified.remoteWebNames, certified.remoteRejectedNames)
@@ -520,6 +616,7 @@ const createApplicationCommandComposition = (
   const task = view(TASK_COMMAND_NAMES)
 
   return Object.freeze({
+    desktop,
     electron,
     localWeb,
     remoteWeb,

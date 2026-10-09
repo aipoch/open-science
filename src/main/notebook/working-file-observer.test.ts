@@ -4092,3 +4092,5 @@ describe('working-file evidence', () => {
     })
   })
 })
+
+;(await import('../../../test/runtime-metadata')).configureTestRuntimeMetadata()

@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { describe, expect, it, vi } from 'vitest'
 import { spawn } from 'node:child_process'
 import { createConnection } from 'node:net'
@@ -1958,3 +1959,5 @@ describe('ComputeConnectionBroker SSH configuration compatibility', () => {
     expect(getCredential).toHaveBeenNthCalledWith(2, 'host-1')
   })
 })
+
+await configureTestElectronHost(await import('electron'))

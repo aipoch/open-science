@@ -1,4 +1,7 @@
 import type { PersistedConversationGraph } from './conversation-graph'
+import { z } from 'zod'
+import { defineApplicationCommandContract } from './application-command-contract'
+import { isReasoningEffort, type ReasoningEffort } from './settings'
 export type SideChatModelSelection = Readonly<{
   providerId: string
   model?: string
@@ -106,3 +109,93 @@ export type SideChatRelayDeliveredEvent = Readonly<{
   projectId: string
   message: import('./session-persistence').PersistedChatMessage
 }>
+
+const identity = z.string().min(1)
+const branchSchema = z.object({ frameId: identity, branchId: identity }).strict()
+const modelSchema = z
+  .object({
+    providerId: identity,
+    model: z.string().optional(),
+    reasoningEffort: z.custom<ReasoningEffort>(isReasoningEffort).optional()
+  })
+  .strict()
+const sessionSchema = z.object({ sideSessionId: identity }).strict()
+const snapshotSchema = z
+  .object({
+    modelSelection: modelSchema.optional(),
+    revision: z.number().int().nonnegative(),
+    parentSessionId: identity,
+    projectId: identity,
+    sideSessionId: identity.optional(),
+    entries: z.array(
+      z.discriminatedUnion('kind', [
+        z
+          .object({
+            id: identity,
+            kind: z.literal('message'),
+            role: z.enum(['user', 'assistant']),
+            text: z.string()
+          })
+          .strict(),
+        z
+          .object({
+            id: identity,
+            kind: z.literal('tool'),
+            title: z.string(),
+            status: z.string().optional()
+          })
+          .strict()
+      ])
+    ),
+    running: z.boolean(),
+    error: z.string().optional(),
+    persistenceError: z.string().optional(),
+    notice: z.enum(['interrupted', 'connection-ended']).optional()
+  })
+  .strict()
+
+export const sideChatCommandContracts = {
+  list: defineApplicationCommandContract(
+    z.tuple([]),
+    z.object({ revision: z.number().int().nonnegative(), chats: z.array(snapshotSchema) }).strict()
+  ),
+  start: defineApplicationCommandContract(
+    z.tuple([
+      z
+        .object({
+          expectedParentBranch: branchSchema.optional(),
+          sideSessionId: identity.optional(),
+          parentSessionId: identity,
+          projectId: identity,
+          modelSelection: modelSchema.optional(),
+          text: z.string()
+        })
+        .strict()
+    ]),
+    z
+      .object({
+        sideSessionId: identity,
+        frameworkId: z.enum(['claude-code', 'opencode', 'codex', 'codebuddy']),
+        model: z.string().optional()
+      })
+      .strict()
+  ),
+  send: defineApplicationCommandContract(
+    z.tuple([
+      z
+        .object({
+          expectedParentBranch: branchSchema.optional(),
+          modelSelection: modelSchema.optional(),
+          sideSessionId: identity,
+          text: z.string()
+        })
+        .strict()
+    ]),
+    z.void()
+  ),
+  cancel: defineApplicationCommandContract(z.tuple([sessionSchema]), z.void()),
+  close: defineApplicationCommandContract(
+    z.tuple([z.union([sessionSchema, z.object({ parentSessionId: identity }).strict()])]),
+    z.void()
+  )
+} as const

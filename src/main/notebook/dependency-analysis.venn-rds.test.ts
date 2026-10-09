@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { expect, it } from 'vitest'
 import { analyzeRNotebookSource } from './dependency-analysis-r'
 import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
@@ -83,3 +84,5 @@ it('does not turn deletion into proof of a generated input', async () => {
 it('keeps missing intermediate generation evidence blocked', async () => {
   expect((await analyzeNotebookSourceFileAccess('r', cells[7])).externalState).toBe('partial')
 })
+
+configureTestRuntimeMetadata()

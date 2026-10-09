@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { constants, type Stats } from 'node:fs'
 import { link, lstat, mkdir, open, rename, rm, type FileHandle } from 'node:fs/promises'
-import { basename, join, posix } from 'node:path'
+import { basename, join, posix, win32 } from 'node:path'
 
 import type { CliLauncherStatus } from '../../shared/cli'
 import { defaultFileDurability } from '../storage/file-durability'
@@ -22,9 +22,9 @@ const LEGACY_WINDOWS_HEADER =
 // Electron or the real filesystem. The IPC wrapper fills these from `app`/`process` at call time.
 export type CliLauncherEnv = {
   platform: NodeJS.Platform
-  // The app's own executable. Run with ELECTRON_RUN_AS_NODE it behaves as Node; for a packaged build
-  // it is also the app the CLI should spawn, so the shim pins OPEN_SCIENCE_APP_PATH to it.
+  // Used only to locate the AppImage mount; never executed as a backend or Node replacement.
   appExecPath: string
+  nodeExecPath?: string
   // Absolute path to the bundled CLI entry (resources/cli/index.mjs when packaged).
   cliEntryPath: string
   // Stable path to the AppImage file. APPDIR/process paths point into an ephemeral FUSE mount.
@@ -65,13 +65,21 @@ const isOnPath = (binDir: string, pathVar: string, platform: NodeJS.Platform): b
 const isLinuxAppImage = (env: CliLauncherEnv): boolean =>
   env.platform === 'linux' && env.packaged && Boolean(env.appImagePath)
 
+const nodeExecutable = (env: CliLauncherEnv): string =>
+  env.nodeExecPath ??
+  (env.platform === 'win32' ? win32.join : posix.join)(
+    (env.platform === 'win32' ? win32.dirname : posix.dirname)(env.cliEntryPath),
+    '../node-runtime',
+    env.platform === 'win32' ? 'node.exe' : 'node'
+  )
+
 // electron-builder's AppRun may prepend --no-sandbox before user arguments when user namespaces are
 // unavailable. Node mode rejects that Chromium flag before it can reach a script argument. Ask the
 // AppImage runtime to mount and wait instead, then invoke the payload directly for the lifetime of the
 // CLI process so AppRun never gets a chance to rewrite the Node argument list.
 const appImagePayloadPaths = (env: CliLauncherEnv): { executable: string; cliEntry: string } => {
   const currentMount = posix.dirname(env.appExecPath)
-  const executable = posix.relative(currentMount, env.appExecPath)
+  const executable = posix.relative(currentMount, nodeExecutable(env))
   const cliEntry = posix.relative(currentMount, env.cliEntryPath)
   const isInsideMount = (path: string): boolean =>
     path.length > 0 && !posix.isAbsolute(path) && path !== '..' && !path.startsWith('../')
@@ -130,32 +138,29 @@ const posixShim = (env: CliLauncherEnv): string => {
       "  echo 'Open-Science AppImage is missing its executable or CLI entry.' >&2",
       '  exit 1',
       'fi',
-      'OPEN_SCIENCE_APP_PATH="$app_image" ELECTRON_RUN_AS_NODE=1 \\',
-      '  "$app_exec" "$cli_entry" "$@"',
+      '"$app_exec" "$(dirname "$cli_entry")/appimage-launcher.mjs" "$app_image" "$@"',
       'status=$?',
       'exit "$status"',
       ''
     ].join('\n')
   }
-  const appPathLine = env.packaged ? `OPEN_SCIENCE_APP_PATH=${quote(env.appExecPath)} ` : ''
   return [
     '#!/bin/sh',
     `# ${MANAGED_LAUNCHER_HEADER_V1}`,
-    "# Edits are overwritten on reinstall. Runs the app's Electron in Node mode.",
-    `${appPathLine}ELECTRON_RUN_AS_NODE=1 exec ${quote(env.appExecPath)} ${quote(env.cliEntryPath)} "$@"`,
+    '# Edits are overwritten on reinstall. Runs the bundled ordinary Node runtime.',
+    `exec ${quote(nodeExecutable(env))} ${quote(env.cliEntryPath)} "$@"`,
     ''
   ].join('\n')
 }
 // Windows: an open-science.cmd in a per-user bin dir. %* forwards all arguments.
 const windowsShim = (env: CliLauncherEnv): string => {
-  const appPathLine = env.packaged ? `set "OPEN_SCIENCE_APP_PATH=${env.appExecPath}"\r\n` : ''
   return [
     '@echo off',
     `rem ${MANAGED_LAUNCHER_HEADER_V1}`,
     'rem Edits are overwritten on reinstall.',
     'setlocal EnableExtensions DisableDelayedExpansion',
-    'set ELECTRON_RUN_AS_NODE=1',
-    `${appPathLine}"${env.appExecPath}" "${env.cliEntryPath}" %*`,
+    'set ELECTRON_RUN_AS_NODE=',
+    `"${nodeExecutable(env)}" "${env.cliEntryPath}" %*`,
     'endlocal & exit /b %errorlevel%',
     ''
   ].join('\r\n')

@@ -48,13 +48,11 @@ describe('createNotificationInboxController', () => {
     const onChanged = vi.fn()
     const setCount = vi.fn()
     const inbox = createNotificationInboxController({
-      headless: true,
       repository: db,
       onChanged,
       createId: () => 'message-1',
       now: () => 1000
     })
-    inbox.configureDesktop({ isAppFocused: () => false, badge: { setCount } })
 
     await inbox.restore()
     await inbox.record({
@@ -75,12 +73,16 @@ describe('createNotificationInboxController', () => {
       latestSequence: 1
     })
     expect(setCount).not.toHaveBeenCalled()
+    inbox.configureDesktop({ isAppFocused: () => false, badge: { setCount } })
+    expect(setCount).toHaveBeenCalledExactlyOnceWith(1)
+    inbox.configureDesktop()
+    inbox.refreshBadge()
+    expect(setCount).toHaveBeenCalledOnce()
   })
 
   it('expires only transient authorization requests during startup restore', async () => {
     const db = repository()
     const inbox = createNotificationInboxController({
-      headless: true,
       repository: db,
       onChanged: vi.fn(),
       createId: () => 'message-1',
@@ -99,7 +101,6 @@ describe('createNotificationInboxController', () => {
     const db = repository({ migrateLegacyUnread: vi.fn().mockRejectedValue(error) } as never)
     const onError = vi.fn()
     const inbox = createNotificationInboxController({
-      headless: true,
       repository: db,
       onChanged: vi.fn(),
       onError
@@ -119,7 +120,6 @@ describe('createNotificationInboxController', () => {
     const db = repository({ record } as never)
     let focused = true
     const inbox = createNotificationInboxController({
-      headless: false,
       repository: db,
       onChanged: vi.fn(),
       createId: () => 'message',
@@ -167,7 +167,6 @@ describe('createNotificationInboxController', () => {
   it('uses the snapshot sequence when a client explicitly marks all read', async () => {
     const db = repository()
     const inbox = createNotificationInboxController({
-      headless: false,
       repository: db,
       onChanged: vi.fn(),
       now: () => 3000
@@ -181,7 +180,6 @@ describe('createNotificationInboxController', () => {
   it('marks every completion for an explicitly dismissed session', async () => {
     const db = repository()
     const inbox = createNotificationInboxController({
-      headless: false,
       repository: db,
       onChanged: vi.fn(),
       now: () => 3500
@@ -205,7 +203,6 @@ describe('createNotificationInboxController', () => {
     })
     const db = repository({ record, settle } as never)
     const inbox = createNotificationInboxController({
-      headless: false,
       repository: db,
       onChanged: vi.fn(),
       createId: () => 'approval-1',
@@ -254,7 +251,6 @@ describe('createNotificationInboxController', () => {
     const settle = vi.fn(async () => ({ changed: true, unreadCount: 1, latestSequence: 1 }))
     const db = repository({ record, settle } as never)
     const inbox = createNotificationInboxController({
-      headless: true,
       repository: db,
       onChanged: vi.fn(),
       createId: () => 'question-1',
@@ -281,10 +277,32 @@ describe('createNotificationInboxController', () => {
     expect(settle).toHaveBeenCalledWith('input:agent-question:choice-1', 'resolved', 4500)
   })
 
+  it('does not acknowledge an old document after asynchronous focus or detach', async () => {
+    const db = repository()
+    const inbox = createNotificationInboxController({ repository: db, onChanged: vi.fn() })
+    let resolveFocus!: (focused: boolean) => void
+    inbox.configureDesktop({
+      isAppFocused: () =>
+        new Promise<boolean>((resolve) => {
+          resolveFocus = resolve
+        }),
+      badge: { setCount: vi.fn() }
+    })
+    const oldView = inbox.syncViewState({ visibleSessionId: 'old-session' })
+    inbox.handleWindowCreated()
+    resolveFocus(true)
+    await oldView
+    expect(db.markSessionsRead).not.toHaveBeenCalled()
+    const detachedView = inbox.syncViewState({ visibleSessionId: 'old-session' })
+    inbox.configureDesktop()
+    resolveFocus(true)
+    await detachedView
+    expect(db.markSessionsRead).not.toHaveBeenCalled()
+  })
+
   it('auto-acknowledges all session notifications when a conversation becomes visible', async () => {
     const db = repository()
     const inbox = createNotificationInboxController({
-      headless: false,
       repository: db,
       onChanged: vi.fn(),
       now: () => 5000

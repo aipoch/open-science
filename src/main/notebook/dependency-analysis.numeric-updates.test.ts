@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -235,3 +236,5 @@ it('retains the prior R value when a conditional replacement may be skipped', as
   expect(result.stalenessByRunId['run-2']).toEqual({ state: 'clear' })
   expect(result.dependenciesByRunId?.['run-2']).toEqual(expect.arrayContaining(['run-0', 'run-1']))
 })
+
+configureTestRuntimeMetadata()

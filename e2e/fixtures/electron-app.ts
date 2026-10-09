@@ -64,7 +64,7 @@ const electronLaunchTarget = (
   return {
     args: [
       `--user-data-dir=${userDataRoot}`,
-      ...(platform === 'linux' ? ['--password-store=basic'] : []),
+      ...(platform === 'linux' ? ['--password-store=gnome-libsecret'] : []),
       ...(platform === 'darwin' && !executablePath
         ? [
             '--use-mock-keychain',
@@ -72,7 +72,9 @@ const electronLaunchTarget = (
             resolve(APP_ROOT, 'e2e/fixtures/mock-credential-identity.cjs')
           ]
         : []),
-      ...(executablePath ? [] : [APP_ROOT])
+      ...(executablePath
+        ? []
+        : ['--require', resolve(APP_ROOT, 'e2e/fixtures/node-runtime-preload.cjs'), APP_ROOT])
     ],
     ...(executablePath ? { executablePath } : {})
   }
@@ -455,23 +457,18 @@ const launchOpenScience = async (
         windowMode,
         sessionPerformanceTrace
       ),
+      ...(process.platform === 'darwin' && !process.env.OPEN_SCIENCE_E2E_EXECUTABLE
+        ? {
+            NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --require=${JSON.stringify(resolve(APP_ROOT, 'e2e/fixtures/mock-node-credentials.cjs'))}`
+          }
+        : {}),
       OPEN_SCIENCE_CONFIG_ROOT: storageRoot,
       OPEN_SCIENCE_USER_DATA: userDataRoot
     }
   })
 
-  if (process.platform === 'linux') {
-    await application.evaluate(({ safeStorage }) => {
-      // Linux CI has no desktop keyring. Keep its isolated test cipher, but make this
-      // Playwright-controlled main process report a secure test backend so fake credentials can
-      // exercise the production Settings path without adding a production security bypass.
-      safeStorage.setUsePlainTextEncryption(true)
-      Object.defineProperty(safeStorage, 'getSelectedStorageBackend', {
-        configurable: true,
-        value: () => 'gnome_libsecret'
-      })
-    })
-  }
+  // Linux source certification requires an unlocked Secret Service on its test D-Bus session.
+  // Both ordinary Node and Electron use that same vault; no plaintext test fallback.
 
   return application
 }
@@ -870,16 +867,6 @@ class ElectronAppHarness implements ElectronApp {
   }
 
   async authenticatedWebUrl(): Promise<string> {
-    const target = electronLaunchTarget(this.roots.userDataRoot)
-    const child = spawn(
-      target.executablePath ?? ((await import('electron')).default as unknown as string),
-      [...target.args, '--serve=0'],
-      { env: launchEnvironment(this.roots.storageRoot), stdio: 'ignore' }
-    )
-    await new Promise<void>((resolve, reject) => {
-      child.once('error', reject)
-      child.once('exit', () => resolve())
-    })
     let port: number | undefined
     await expect
       .poll(async () => {
@@ -1552,20 +1539,12 @@ class ElectronAppHarness implements ElectronApp {
     }
   }
 
-  // Keep real Chromium redirect handling while replacing external GitHub traffic with a local
-  // HTTP fixture. URL admission still sees the original URL; only the transport destination changes.
+  // Keep production URL admission and redirect logic; route only the Node HTTP transport.
   async routeMarketplaceRequests(origin: string): Promise<void> {
-    await this.runningApplication.evaluate(({ net }, origin) => {
-      const fetch = net.fetch.bind(net)
-      const request = net.request.bind(net)
-      const route = (url: string): string =>
-        url.startsWith(origin + '/') ? url : `${origin}/${encodeURIComponent(url)}`
-      net.fetch = (input, init) => fetch(route(String(input)), init)
-      net.request = (options) =>
-        request(
-          typeof options === 'string' ? route(options) : { ...options, url: route(options.url!) }
-        )
-    }, origin)
+    if (process.env.OPEN_SCIENCE_E2E_EXECUTABLE)
+      throw new Error('Marketplace transport routing requires the source-test Node preload.')
+    if (!/^http:\/\/127\.0\.0\.1:\d+$/.test(origin)) throw new Error('Invalid E2E origin.')
+    await writeFile(join(this.roots.storageRoot, 'e2e-marketplace-origin'), origin, { mode: 0o600 })
   }
 
   private async launch(packagePath?: string, timingName = 'startup-ready'): Promise<void> {
@@ -1812,6 +1791,7 @@ export {
   installRestartPersistenceRetry,
   observeElectronFlushDiagnostics,
   electronLaunchTarget,
+  launchOpenScience,
   launchEnvironment,
   removeTreeForCleanup,
   test

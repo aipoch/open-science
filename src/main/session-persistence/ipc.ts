@@ -1,3 +1,4 @@
+import { desktopShellInteraction } from '../desktop-interaction'
 import type { RuntimeWriterOwner } from './runtime-writer'
 import type { AcpRuntimeEvent } from '../../shared/acp'
 import { createMessageSearch } from './message-search'
@@ -462,3 +463,13 @@ export type {
   SessionPersistenceBackend,
   SessionPersistenceHandlers
 }
+
+export const createSessionRecoveryFolderCommand =
+  (
+    repository: Pick<SessionRepository, 'recoveryFolderPath'>
+  ): ((request: OpenSessionRecoveryFolderRequest) => Promise<void>) =>
+  async (request) => {
+    const path = repository.recoveryFolderPath(request.projectId)
+    const error = await desktopShellInteraction().openPath(path)
+    if (error) throw new Error('Session recovery folder could not be opened.')
+  }

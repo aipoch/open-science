@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { expect, it } from 'vitest'
 import type { NotebookRunRecord } from '../../shared/notebook'
 import { analyzeRNotebookSource } from './dependency-analysis-r'
@@ -81,3 +82,5 @@ it('does not trust a DESeq2 constructor from another namespace', async () => {
   expect(facts.state).toBe('unknown')
   expect(facts.state === 'unknown' ? facts.reasons : []).toContain('opaque-call')
 })
+
+configureTestRuntimeMetadata()

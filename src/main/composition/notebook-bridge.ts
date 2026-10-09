@@ -1,9 +1,9 @@
+import { runtimeMetadata } from '../runtime-metadata'
 import { ReviewRepository } from '../reviewer/repository'
 import { readLinkedSession } from '../notebook/host-session-reading'
 import { SessionReplayRepository } from '../session-replay/repository'
 import { NotebookRunRepository } from '../notebook/repository'
 import { getProjectDbClient } from '../projects/prisma-client'
-import { app } from 'electron'
 import { resolveEffectiveSpecialistSkills } from '../../shared/specialist'
 import { ImageInputCompatibilityOwner } from '../acp/image-input-compatibility-owner'
 import { RestrictedInferenceRunner } from '../acp/restricted-inference-runner'
@@ -160,7 +160,7 @@ export async function composeNotebookBridge({
       }
     },
     runner: new RestrictedInferenceRunner({
-      appVersion: app.getVersion(),
+      appVersion: runtimeMetadata().version,
       configRoot,
       profileNamespace: 'host-llm',
       resolveTarget: (target, context) =>
@@ -384,7 +384,7 @@ export async function composeNotebookBridge({
       hostLlmLog.error('stale host.llm profile cleanup failed', diagnosticErrorFields(error))
     )
   const visionInferenceRunner = new RestrictedInferenceRunner({
-    appVersion: app.getVersion(),
+    appVersion: runtimeMetadata().version,
     configRoot,
     profileNamespace: 'vision-evidence',
     resolveTarget: (target, context) =>

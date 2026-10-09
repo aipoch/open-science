@@ -104,7 +104,7 @@ describe('production application command wiring', () => {
       'sessionPackageDesktopLifecycle.isActive = () => sessionPackageDesktop.operations.active'
     )
     expect(source).toContain(
-      'sessionPackageDesktopLifecycle.close = async () => { removePackageQuitGuard() await sessionPackageDesktop.close() }'
+      'sessionPackageDesktopLifecycle.close = async () => { await sessionPackageDesktop.close() }'
     )
     expect(source).toContain(
       'await Promise.all([service.close(), sessionPackageDesktopLifecycle.close()])'
@@ -153,7 +153,7 @@ describe('production application command wiring', () => {
   it('installs Office preview once with shared resources between managed preview and environment', () => {
     const source = domainCompact('notebook-surfaces')
     expect(source).toContain(
-      "...createOfficePreviewElectronSurfaces({ previewResources: managedFiles.previewResources, runtimeHtmlPath: join(__dirname, '../renderer/office-preview.html') })"
+      "...createOfficePreviewElectronSurfaces({ commands: officePreviewCommands, previewResources: managedFiles.previewResources, runtimeHtmlPath: join(__dirname, '../renderer/office-preview.html') })"
     )
     const preview = source.indexOf("declareElectronAdapter('managed-preview'")
     const office = source.indexOf('...createOfficePreviewElectronSurfaces(')
@@ -168,7 +168,7 @@ describe('production application command wiring', () => {
   it('installs Settings once with shared owners before Notebook in afterAcp', () => {
     const source = domainCompact('settings-effects')
     expect(source).toContain(
-      'createSettingsElectronSurface({ service: settingsService, workflows: settingsWorkflows, snapshotCommits: settingsSnapshotCommits, listAppIconPreviews, translate })'
+      'createSettingsElectronSurface({ fileCommands: settingsFileCommands, service: settingsService, workflows: settingsWorkflows, snapshotCommits: settingsSnapshotCommits, listAppIconPreviews, translate })'
     )
     const settings = source.indexOf('createSettingsElectronSurface(')
     expect(settings).toBeGreaterThan(-1)
@@ -307,7 +307,7 @@ describe('production application command wiring', () => {
   it('installs the Artifact surface in its existing phase with the shared owners', () => {
     const source = domainCompact('artifact-surfaces')
     expect(source).toContain(
-      'surfaceAdapters.push( createArtifactElectronSurface({ artifactRepository, artifactRunRegistry, artifactProvenanceRepository, artifactHandlers, artifactReproducibilityAttemptOwnerRef, archiveCoordinator, sessionPersistenceCoordinator, notebookService, translate }) )'
+      'surfaceAdapters.push( createArtifactElectronSurface({ reproducibilityCommands, artifactRepository, artifactRunRegistry, artifactProvenanceRepository, artifactHandlers, artifactReproducibilityAttemptOwnerRef, archiveCoordinator, sessionPersistenceCoordinator, notebookService, translate }) )'
     )
     expect(source.indexOf('createArtifactElectronSurface(')).toBeLessThan(
       source.indexOf('createUploadElectronSurface(uploadCommandOwner)')
@@ -446,7 +446,8 @@ describe('production application command wiring', () => {
     expect(returnedViews).toContain('localWeb: applicationCommandComposition.localWeb')
     expect(returnedViews).toContain('remoteWeb: applicationCommandComposition.remoteWeb')
     expect(returnedViews).toContain('task: applicationCommandComposition.task')
-    expect(occurrences(returnedViews, 'applicationCommandComposition.')).toBe(3)
+    expect(returnedViews).toContain('desktop: applicationCommandComposition.desktop')
+    expect(occurrences(returnedViews, 'applicationCommandComposition.')).toBe(4)
   })
 
   it('shares one Electron page preview resolver with the production Reviewer owner', () => {
@@ -457,11 +458,11 @@ describe('production application command wiring', () => {
       'previewResources: managedFiles.previewResources, runtimeShutdownOwner: handoff.reviewerModelRuntimeShutdown, declareElectronAdapter'
     )
     expect(reviewerCompositionSource).toContain(
-      'pagedContentResolver: createReviewerElectronPagedContentResolver(previewResources)'
+      'pagedContentResolver: createReviewerHostPagedContentResolver(previewResources)'
     )
-    expect(
-      occurrences(reviewerCompositionSource, 'createReviewerElectronPagedContentResolver(')
-    ).toBe(1)
+    expect(occurrences(reviewerCompositionSource, 'createReviewerHostPagedContentResolver(')).toBe(
+      1
+    )
     expect(reviewerCompositionSource).toContain('createReviewerCommandOwner(reviewerOptions)')
     expect(reviewerCompositionSource).toContain(
       'registerReviewerIpcHandlers(reviewerOptions, reviewerCommandOwner)'
@@ -473,7 +474,7 @@ describe('production application command wiring', () => {
   it('installs every notification inbox request on the Electron adapter', () => {
     callBefore('composeNotifications({', 'composeComputeServices({')
     expect(domainCompact('notifications')).toContain(
-      'surfaceAdapters.push( createNotificationElectronSurface( storageStartup.notificationInbox, taskNotifications, taskNotificationDeliveryDeps ) )'
+      'surfaceAdapters.push( createNotificationElectronSurface( storageStartup.notificationInbox, taskNotifications, taskNotificationDeliveryDeps, delivery ) )'
     )
     expect(occurrences(domain('notifications'), 'createNotificationElectronSurface(')).toBe(1)
     expect(notificationAdapterBlock).toContain(

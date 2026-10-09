@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { expect, it } from 'vitest'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -348,3 +349,5 @@ it('captures the ExcelFile preview and its workbook input', async () => {
     reads: ['inputs/differential-results-333333333333.xlsx']
   })
 })
+
+configureTestRuntimeMetadata()

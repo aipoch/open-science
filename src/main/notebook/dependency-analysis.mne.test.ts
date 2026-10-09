@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { createHash } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -126,3 +127,5 @@ it('keeps dynamic MNE input paths conservative', async () => {
     reasonCodes: expect.arrayContaining(['source-analysis-unsupported-call'])
   })
 })
+
+configureTestRuntimeMetadata()

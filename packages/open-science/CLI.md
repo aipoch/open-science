@@ -5,10 +5,27 @@ requiring browser interaction.
 
 ## Installation
 
-### From a Debian package (including WSL)
+### Standalone Node package
+
+Install the target-specific standalone tarball built with `npm run pack:backend`, using ordinary
+Node >=22.13.0. It includes the backend, Web UI, resources and native dependencies; Electron and
+a graphical display are not required.
+
+```bash
+npm install --global ./aipoch-open-science-0.35.1.tgz
+open-science start --no-open
+open-science url
+```
+
+Linux secure storage requires an unlocked OS vault and user D-Bus session. See the
+[standalone runtime guide](https://github.com/aipoch/open-science/blob/main/docs/standalone-runtime.md)
+for build dependencies, compatibility and desktop-only capabilities.
+
+### Desktop package launchers (including Debian/WSL)
 
 Installing the `.deb` package registers `/usr/bin/open-science` automatically. No separate
-Node.js, desktop Settings interaction, or `cli install` command is needed:
+desktop Settings interaction or `cli install` command is needed to use the launcher.
+It starts or reuses the bundled ordinary Node backend without opening Electron:
 
 ```bash
 sudo apt install ./open-science.deb  # Use the downloaded package's actual filename.
@@ -21,7 +38,7 @@ The desktop shortcut continues to launch the application directly. Debian mainta
 through upgrades and removal. Upgrades migrate only the old package-owned system alternative;
 existing user launchers and unrelated manually selected alternatives are preserved. The installer
 reports a conflict instead of overwriting an unmanaged `/usr/bin/open-science` file or symlink.
-The Settings and `cli install`/`cli uninstall` controls manage the optional user launcher, not the
+The desktop Settings controls manage the optional user launcher, not the
 Debian-owned system entry; remove the Debian package to remove that entry.
 
 ### From other application packages
@@ -36,7 +53,9 @@ terminal after updating PATH. Choose **Uninstall command** in the same panel to 
 
 ### From npm
 
-The npm package requires Node.js 22.5 or later and an installed Open-Science desktop application.
+The lightweight CLI/SDK package requires Node.js 22.5 or later. It controls an existing service.
+To start an independent service, install the standalone artifact (Node >=22.13.0); the lightweight
+package alone does not contain backend resources.
 Install it globally after the package is published:
 
 ```bash
@@ -84,18 +103,17 @@ open-science url
 `open-science url` is the only command that intentionally prints an authenticated browser URL. Normal
 human-readable, JSON, and JSONL output never includes the local token.
 
-Use `--port <port>` to override the default port of `44100`. `--app-path <path>` selects a specific
-Open-Science executable, taking priority over `OPEN_SCIENCE_APP_PATH`; both override automatic app
-location. An invalid explicit path is an error, never a reason to silently select another installation.
-Old-name, custom and mixed-name layouts remain usable through an explicit executable path.
+Use `--port <port>` to override the default port of `44100`. `start` discovers the standalone
+Node entry bundled beside the CLI, or `out/backend/index.cjs` in a source checkout. Build the
+source entry with `npm run build:backend` and Web UI with `npm run build:web` first.
+`--app-path` and `OPEN_SCIENCE_APP_PATH` no longer select a hidden Electron backend.
+`--no-sandbox` does not apply to Node startup; existing Notebook/process permissions still apply.
 
-Standalone app discovery checks only current new-brand defaults: `/Applications/Open-Science.app`
-and `~/Applications/Open-Science.app` (internal executable `Contents/MacOS/Open-Science`) on macOS;
-`%LOCALAPPDATA%/Programs/Open-Science/open-science.exe` and
-`%PROGRAMFILES%/Open-Science/open-science.exe` on Windows; `/opt/Open-Science/open-science` on Linux.
-It does not search arbitrary PATH directories or use public CLI wrappers as desktop executables.
-Portable AppImages and nondefault installations require an explicit path. Existing repository
-build discovery still precedes installed defaults. Development builds also support `--config-root <path>`.
+An already running Node runtime is reused through authenticated discovery, including one started
+by the desktop. Electron attaches to an existing same-version Node server without adding another
+writer. Quitting a desktop stops only a server it started; a desktop attached to a CLI-started
+server only detaches. Closing a Web tab or SDK connection does not stop the server. Use
+`open-science stop` for an explicit global stop affecting every connected client.
 
 `open-science stop` requests an authenticated graceful shutdown and waits for the service to exit. If
 the request cannot be accepted or a dedicated daemon remains alive after the shutdown deadline, the
@@ -110,11 +128,11 @@ unhealthy records are retained; failed authentication never authorizes signallin
 
 `open-science stop --json` prints exactly one result object on success:
 
-| `result`              | Meaning                                                            |
-| --------------------- | ------------------------------------------------------------------ |
-| `already-stopped`     | No live service record was found.                                  |
-| `daemon-stopped`      | The authenticated standalone daemon exited.                        |
-| `web-service-stopped` | The attached web service stopped; the desktop app remains running. |
+| `result`              | Meaning                                                                      |
+| --------------------- | ---------------------------------------------------------------------------- |
+| `already-stopped`     | No live service record was found.                                            |
+| `daemon-stopped`      | The authenticated Node daemon exited (desktop-started or CLI-started).       |
+| `web-service-stopped` | Legacy desktop-host protocol only: Web stopped; old desktop remains running. |
 
 Among lifecycle commands, `status`, `stop`, and `update` support `--json`. `start` and `url` reject
 it; run `start --no-open` followed by `status --json` for machine-readable startup status. Errors
@@ -145,7 +163,7 @@ nonzero CLI error codes.
 
 ## First-run setup (Codex)
 
-The desktop application must already be installed. The standalone npm runtime remains deferred.
+Install the standalone artifact or a desktop package containing the ordinary Node backend first.
 `init` creates a configuration directory only; packaged builds do not accept `--profile` overrides.
 
 ```bash
@@ -202,26 +220,19 @@ profile. Doctor reports readiness, not a live third-party authorization or resea
 include the submitted secret or raw upstream error. Bootstrap/launcher writes require an
 authenticated local connection and are not exposed as research-agent tools.
 
-For packages without an automatically registered command, install the optional user PATH launcher
-with `cli install --json`. Before a launcher exists, invoke
-the bundled CLI by absolute path using the application's Electron executable in Node mode (for
-example on macOS):
+For desktop packages without an automatically registered command, use **Settings > General >
+Command line tool > Install command**. To invoke the bundled ordinary Node CLI directly on macOS:
 
 ```bash
-OPEN_SCIENCE_APP_PATH="/Applications/Open-Science.app/Contents/MacOS/Open-Science" \
-ELECTRON_RUN_AS_NODE=1 "/Applications/Open-Science.app/Contents/MacOS/Open-Science" \
-  "/Applications/Open-Science.app/Contents/Resources/cli/index.mjs" start --no-open
+"/Applications/Open-Science.app/Contents/Resources/node-runtime/node" \
+  "/Applications/Open-Science.app/Contents/Resources/backend/cli.mjs" start --no-open
 ```
 
-Repeat the same absolute invocation with `cli install --json`. Respect the returned `pathHint`;
-Windows may require a new terminal and Unix shells may need the existing launcher directory on PATH.
-The launcher uses the existing ownership receipts and does not claim unrelated executables.
-An app-installed launcher stays bound to its installing application's actual executable. AppImage
-launchers use the stable AppImage file and mount its payload for each invocation. Startup maintenance
-repairs confirmed missing bindings, but does not rewrite an otherwise working launcher merely for
-new brand wording or take over a surviving binding to another installation. Use an explicit
-`cli install` to rebind and `cli uninstall` to remove an app-managed command. Old applications and
-launchers may remain; this does not authorize simultaneous writes to shared research data.
+The native Settings controls own launcher installation/removal. `cli install`/`cli uninstall` over
+the Node service are unavailable; npm owns standalone launchers. Reinstall historical Electron-as-Node
+launchers in desktop Settings. AppImage launchers retain a private immutable backend/Node cache so
+an independently started server survives the invocation's temporary mount. Existing ownership
+receipts and unrelated executables remain protected.
 
 ## Agent runtimes
 
@@ -242,12 +253,13 @@ open-science update
 open-science update --json
 ```
 
-The command updates the installed Open-Science application, not the npm package. It reuses the
-application's release feed, artifact selection, checksum verification, and platform installer. If
-Open-Science is not running, it starts the local headless service. It normally leaves that service
-available for later CLI commands. When the update requires a visible installer, the command stops a
-service it started after the installer is safely downloaded; a service that was already running is
-left alone, and the printed next step tells you to run `open-science stop` before the installer.
+The Node runtime reports that updates must use the package manager. Install a replacement standalone
+tarball with npm after deliberately stopping the backend. Use the desktop's native update UI for a
+desktop installation; it stops an owned Node service through the existing handoff gate. If desktop
+is borrowing a CLI-started service, stop that service explicitly before applying a desktop update.
+The CLI never starts an invisible Electron application to perform an update.
+
+The compatibility behavior below applies only when talking to an older Electron-host service:
 
 In-place installation never interrupts active root-agent, subagent, Notebook, or Reviewer work. Stop
 the reported work and run the command again. Platforms that require a visible installer download it
@@ -267,9 +279,8 @@ update behavior, it returns `manual-action-required` instead of guessing. Instal
 Because the CLI is bundled with the installed application, installations predating this command need
 that one-time manual update before `open-science update` is available.
 
-On a rootless Linux host where Chromium sandboxing is unavailable, use
-`open-science update --no-sandbox`. This reuses the same explicit, security-reducing startup fallback
-as `open-science start --no-sandbox`; prefer the Debian package or a sandbox-capable host.
+The legacy `--no-sandbox` startup option is unavailable for Node. It does not bypass the Notebook
+or child-process sandbox.
 
 ## Codex subscription sign-in
 

@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -532,3 +533,5 @@ JT  - Second Journal
     expect(parsed.truncated).toBe(true)
   })
 })
+
+configureTestRuntimeMetadata()

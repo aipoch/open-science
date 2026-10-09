@@ -474,7 +474,9 @@ describe('Reviewer orchestrator architecture', () => {
         'src/main/reviewer/stale-reviews.ts',
         'src/main/reviewer/submission-limits.ts',
         'src/main/reviewer/turn-evidence.test.ts',
-        'src/main/reviewer/turn-evidence.ts'
+        'src/main/reviewer/turn-evidence.ts',
+        'src/main/reviewer/paged-preview-host.ts',
+        'src/main/reviewer/paged-preview-host.test.ts'
       ],
       interfacePaths: [
         'src/main/reviewer/orchestrator.ts',
@@ -493,7 +495,8 @@ describe('Reviewer orchestrator architecture', () => {
         'src/main/reviewer/rubric.ts',
         'src/main/reviewer/scope.ts',
         'src/main/reviewer/stale-reviews.ts',
-        'src/main/reviewer/turn-evidence.ts'
+        'src/main/reviewer/turn-evidence.ts',
+        'src/main/reviewer/paged-preview-host.ts'
       ],
       consumerModules: [
         'workspace_runtime',
@@ -533,7 +536,8 @@ describe('Reviewer orchestrator architecture', () => {
           'src/main/reviewer/reviewer-resilience.test.ts',
           'src/main/reviewer/rubric.test.ts',
           'src/main/reviewer/scope-snapshot.test.ts',
-          'src/main/reviewer/turn-evidence.test.ts'
+          'src/main/reviewer/turn-evidence.test.ts',
+          'src/main/reviewer/paged-preview-host.test.ts'
         ],
         contract: [
           'src/main/reviewer/ipc.test.ts',
@@ -851,7 +855,14 @@ describe('Reviewer orchestrator architecture', () => {
           'src/main/session-persistence/attention-projection.test.ts',
           'src/main/acp/approved-handoff-outcome.integration.test.ts',
           'src/main/acp/approved-handoff-outcome.test.ts',
-          'src/main/literature/pdf-translation/checkpoints.test.ts'
+          'src/main/literature/pdf-translation/checkpoints.test.ts',
+          'src/main/node-process-host.test.ts',
+          'src/main/desktop-runtime-transport.integration.test.ts',
+          'src/main/side-chat/application-commands.test.ts',
+          'src/main/artifacts/artifact-reproducibility-commands.test.ts',
+          'src/main/settings/file-commands.test.ts',
+          'src/main/office-preview/application-commands.test.ts',
+          'src/main/desktop-native-electron.test.ts'
         ]
       },
       capabilityOverlays: ['windows_sensitive', 'e2e_regressions', 'e2e_delegation'],

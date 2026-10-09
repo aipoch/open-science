@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { expect, it } from 'vitest'
 import { analyzeRSources } from './dependency-analysis-r'
 import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
@@ -225,3 +226,5 @@ it.each(['jsonlite::parse_json()', 'jsonlite::fromJSON()'])(
     expect((await analyzeNotebookSourceFileAccess('r', source)).readState).toBe('partial')
   }
 )
+
+configureTestRuntimeMetadata()

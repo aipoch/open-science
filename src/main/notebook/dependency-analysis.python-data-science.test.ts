@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { describe, expect, it, vi } from 'vitest'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -1292,3 +1293,5 @@ fraction_reader = _read_fraction`
     }
   })
 })
+
+configureTestRuntimeMetadata()

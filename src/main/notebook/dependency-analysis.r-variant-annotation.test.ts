@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { expect, it } from 'vitest'
 import type { NotebookRunRecord } from '../../shared/notebook'
 import { analyzeRNotebookSource } from './dependency-analysis-r'
@@ -69,3 +70,5 @@ it('keeps remote VCF inputs as unresolved external evidence', async () => {
     readState: 'partial'
   })
 })
+
+configureTestRuntimeMetadata()

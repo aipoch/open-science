@@ -18,7 +18,9 @@
     "src/main/notifications/task-notifications.test.ts",
     "src/main/notifications/task-notifications.ts",
     "src/main/notifications/unread-task-ipc.test.ts",
-    "src/main/notifications/unread-task-ipc.ts"
+    "src/main/notifications/unread-task-ipc.ts",
+    "src/main/notifications/desktop-delivery.ts",
+    "src/main/notifications/desktop-delivery.test.ts"
   ],
   "interfacePaths": [
     "src/main/notifications/desktop-attention.ts",
@@ -30,7 +32,8 @@
     "src/main/notifications/notification-inbox-requests.ts",
     "src/main/notifications/notification-inbox-runtime.ts",
     "src/main/notifications/task-notifications.ts",
-    "src/main/notifications/unread-task-ipc.ts"
+    "src/main/notifications/unread-task-ipc.ts",
+    "src/main/notifications/desktop-delivery.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -43,7 +46,8 @@
       "src/main/notifications/notification-inbox-repository.test.ts",
       "src/main/notifications/notification-inbox-runtime.test.ts",
       "src/main/notifications/task-notifications.test.ts",
-      "src/main/notifications/unread-task-ipc.test.ts"
+      "src/main/notifications/unread-task-ipc.test.ts",
+      "src/main/notifications/desktop-delivery.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -107,7 +111,10 @@
       "src/main/session-package/fork.test.ts",
       "src/renderer/src/lib/acp/workspace-runtime-interrupted-recovery.test.ts",
       "src/main/compute/cancellation-runtime.integration.test.ts",
-      "src/main/session-persistence/ipc.test.ts"
+      "src/main/session-persistence/ipc.test.ts",
+      "src/main/composition/notebook-environment.test.ts",
+      "src/main/composition/reviewer.test.ts",
+      "src/main/desktop-runtime-transport.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

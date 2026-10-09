@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { EventEmitter } from 'node:events'
 import { PassThrough, Readable, Writable } from 'node:stream'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
@@ -323,3 +324,5 @@ describe('OpenCode immediate handoff production path', () => {
     }
   })
 })
+
+configureTestRuntimeMetadata()

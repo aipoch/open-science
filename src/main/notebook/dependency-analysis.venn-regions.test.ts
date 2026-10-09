@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { expect, it } from 'vitest'
 import { analyzeRNotebookSource } from './dependency-analysis-r'
 import cells from './reported-venn-regions.fixture.json'
@@ -194,3 +195,5 @@ it.each([
     await rm(root, { recursive: true, force: true })
   }
 })
+
+configureTestRuntimeMetadata()

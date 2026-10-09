@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { expect, it } from 'vitest'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -160,3 +161,5 @@ it('captures the Venn plot through its set preparation and skips inspection cell
     await rm(root, { recursive: true, force: true })
   }
 })
+
+configureTestRuntimeMetadata()

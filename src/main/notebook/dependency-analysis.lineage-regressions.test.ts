@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
@@ -1689,3 +1690,5 @@ describe('file lineage identity and completeness guards', () => {
     expect(projection.consumer).toBeUndefined()
   })
 })
+
+configureTestRuntimeMetadata()

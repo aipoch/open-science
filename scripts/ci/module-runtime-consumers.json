@@ -21,5 +21,16 @@
   "src/main/pdf-annotations/native-import-worker-entry.ts": [
     "src/main/pdf-annotations/native-import.ts"
   ],
-  "src/main/session-diagnostics/worker-entry.ts": ["src/main/ipc.ts"]
+  "src/main/session-diagnostics/worker-entry.ts": ["src/main/ipc.ts"],
+  "packages/credential-identity-probe-native/src/credential_secret.cc": [
+    "packages/credential-identity-probe-native/index.cjs"
+  ],
+  "packages/credential-identity-probe-native/src/credential_secret_linux.h": [
+    "packages/credential-identity-probe-native/src/credential_secret.cc"
+  ],
+  "packages/credential-identity-probe-native/index.cjs": [
+    "src/main/credential-identity/node-cipher.ts",
+    "src/main/credential-identity/probe.ts",
+    "src/main/credential-identity/windows-profile-key.ts"
+  ]
 }

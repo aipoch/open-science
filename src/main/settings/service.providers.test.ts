@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -269,3 +270,5 @@ describe('SettingsService provider facade', () => {
     }
   })
 })
+
+await configureTestElectronHost(await import('electron'))

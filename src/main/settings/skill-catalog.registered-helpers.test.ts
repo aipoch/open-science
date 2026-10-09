@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -383,3 +384,5 @@ describe('SkillCatalogModule registered helper projection', () => {
     })
   })
 })
+
+await configureTestElectronHost(await import('electron'))

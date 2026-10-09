@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { createHash } from 'node:crypto'
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -976,3 +977,4 @@ it('isolates flat translation assets and receipts from parser model management',
   ).toBe('v1')
   await owner.close()
 })
+await configureTestElectronHost(await import('electron'))

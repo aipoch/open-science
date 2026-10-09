@@ -1,3 +1,4 @@
+import { desktopNativeRequestSchema, type DesktopNativeHandler } from '../desktop-native-contract'
 import type { Notification } from 'electron'
 
 import type { ComputeApprovalRequest } from '../../shared/compute'
@@ -24,7 +25,7 @@ import {
 // inline closures were untestable, and a future regression on the headless contract would be invisible
 // to the existing TaskNotificationService tests (which only see the primitive filter rules).
 export type BuildTaskNotificationShowDeps = {
-  notificationCtor: typeof Notification
+  notificationCtor?: typeof Notification
   liveNotifications: Set<Notification>
   log: Pick<Logger, 'info' | 'warn'>
   headless: boolean
@@ -39,7 +40,7 @@ type TaskNotificationAvailabilityDeps = Pick<
 export const getTaskNotificationAvailability = (
   deps: TaskNotificationAvailabilityDeps
 ): NotificationDesktopAvailability => {
-  if (deps.headless) return 'unavailable'
+  if (deps.headless || !deps.notificationCtor) return 'unavailable'
   try {
     return deps.notificationCtor.isSupported() ? 'supported' : 'unavailable'
   } catch {
@@ -53,11 +54,13 @@ const errorMessage = (error: unknown): string =>
 const deliverTaskNotification = (
   deps: BuildTaskNotificationShowDeps,
   request: TaskNotificationRequest,
-  onResult?: (result: NotificationTestResult) => void
+  onResult?: (result: NotificationTestResult) => void,
+  onTerminal?: (action: 'clicked' | 'closed') => void
 ): Notification | undefined => {
   const { title, body, onClick } = request
-  if (getTaskNotificationAvailability(deps) === 'unavailable') {
+  if (!deps.notificationCtor || getTaskNotificationAvailability(deps) === 'unavailable') {
     onResult?.('unavailable')
+    onTerminal?.('closed')
     return undefined
   }
 
@@ -67,9 +70,16 @@ const deliverTaskNotification = (
   } catch (error) {
     deps.log.warn('task notification delivery failed', { title, error: errorMessage(error) })
     onResult?.('failed')
+    onTerminal?.('closed')
     return undefined
   }
 
+  let terminalReported = false
+  const terminal = (action: 'clicked' | 'closed'): void => {
+    if (terminalReported) return
+    terminalReported = true
+    onTerminal?.(action)
+  }
   let resultReported = false
   const reportResult = (result: NotificationTestResult): void => {
     if (resultReported) return
@@ -87,14 +97,17 @@ const deliverTaskNotification = (
     deps.liveNotifications.delete(notification)
     deps.log.warn('task notification delivery failed', { title, error })
     reportResult('failed')
+    terminal('closed')
   })
   notification.once('click', () => {
     deps.liveNotifications.delete(notification)
     onClick()
+    terminal('clicked')
   })
   notification.once('close', () => {
     deps.liveNotifications.delete(notification)
     reportResult('unconfirmed')
+    terminal('closed')
   })
   try {
     notification.show()
@@ -102,6 +115,7 @@ const deliverTaskNotification = (
     deps.liveNotifications.delete(notification)
     deps.log.warn('task notification delivery failed', { title, error: errorMessage(error) })
     reportResult('failed')
+    terminal('closed')
     return undefined
   }
   return notification
@@ -115,7 +129,8 @@ export const buildTaskNotificationShow =
 
 export const showTestTaskNotification = (
   deps: BuildTaskNotificationShowDeps,
-  timeoutMs = 2_000
+  timeoutMs = 2_000,
+  copy?: { title: string; body: string }
 ): Promise<NotificationTestResult> =>
   new Promise((resolve) => {
     let settled = false
@@ -130,8 +145,9 @@ export const showTestTaskNotification = (
     const notification = deliverTaskNotification(
       deps,
       {
-        title: deps.translate?.('Test notification') ?? 'Test notification',
+        title: copy?.title ?? deps.translate?.('Test notification') ?? 'Test notification',
         body:
+          copy?.body ??
           deps.translate?.('System notifications from Open-Science are working.') ??
           'System notifications from Open-Science are working.',
         onClick: () => undefined
@@ -232,3 +248,83 @@ export const buildSkillImportApprovalBroadcast =
       deps.onNotificationError
     )
   }
+
+// Only the authenticated runtime connection may call this handler. Native focus is sampled again
+// immediately before showing a banner; the user may have refocused during the Node round trip.
+export function createDesktopNotificationHandler(deps: {
+  delivery: BuildTaskNotificationShowDeps
+  isAppFocused(): boolean
+  isMainWindowFocused(): boolean
+  confirmSessionVisible(sessionId: string): Promise<boolean>
+  setBadgeCount(count: number): void
+  requestAttention(): void
+  clearAttention(): void
+  activate(sessionId?: string): void
+  onAction(token: string, action: 'clicked' | 'closed'): void
+}): { handle: DesktopNativeHandler; dispose(): void } {
+  let disposed = false
+  const action = (token: string, state: 'clicked' | 'closed'): void => {
+    if (disposed) return
+    try {
+      deps.onAction(token, state)
+    } catch (error) {
+      deps.delivery.log.warn('desktop notification action failed', { error: errorMessage(error) })
+    }
+  }
+  return {
+    handle: async (raw, signal) => {
+      signal.throwIfAborted()
+      if (disposed) throw new Error('Desktop notification delivery is closed.')
+      const { request } = desktopNativeRequestSchema.parse(raw)
+      switch (request.operation) {
+        case 'notification-main-focus':
+          return deps.isMainWindowFocused()
+        case 'notification-visible':
+          return deps.confirmSessionVisible(request.sessionId)
+        case 'notification-badge':
+          deps.setBadgeCount(request.count)
+          return null
+        case 'notification-focus':
+          return deps.isAppFocused()
+        case 'notification-availability':
+          return getTaskNotificationAvailability(deps.delivery)
+        case 'notification-test':
+          return showTestTaskNotification(deps.delivery, 2_000, request)
+        case 'notification-show':
+          if (deps.isAppFocused()) {
+            action(request.token, 'closed')
+          } else {
+            deliverTaskNotification(
+              deps.delivery,
+              { ...request, onClick: () => undefined },
+              undefined,
+              (state) => action(request.token, state)
+            )
+          }
+          return null
+        case 'notification-attention':
+          if (request.action === 'clear') deps.clearAttention()
+          else deps.requestAttention()
+          return null
+        case 'notification-activate':
+          deps.activate(request.sessionId)
+          return null
+        default:
+          throw new Error('Unsupported desktop notification operation.')
+      }
+    },
+    dispose: () => {
+      if (disposed) return
+      disposed = true
+      for (const notification of deps.delivery.liveNotifications) {
+        try {
+          notification.close()
+        } catch {
+          /* OS notification may already be gone. */
+        }
+      }
+      deps.delivery.liveNotifications.clear()
+      deps.clearAttention()
+    }
+  }
+}

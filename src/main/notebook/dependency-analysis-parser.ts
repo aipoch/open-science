@@ -1,3 +1,4 @@
+import { runtimeMetadata } from '../runtime-metadata'
 import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -14,7 +15,7 @@ const wasmFile = (language: NotebookParserLanguage | 'runtime'): string =>
   language === 'runtime' ? 'web-tree-sitter.wasm' : `tree-sitter-${language}.wasm`
 
 const resolveTreeSitterDir = (): string | undefined => {
-  const resourcesPath = process.resourcesPath
+  const resourcesPath = runtimeMetadata().resourcesPath
   const candidates = [
     join(here, '../../../resources/tree-sitter'),
     join(here, '../../resources/tree-sitter'),

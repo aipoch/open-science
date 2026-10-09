@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { chmod, mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -1820,3 +1821,5 @@ it.skipIf(process.platform === 'win32').each(['CON.csv', 'trailing.'])(
     await expect(readFile(join(refsDir, name))).rejects.toMatchObject({ code: 'ENOENT' })
   }
 )
+
+await configureTestElectronHost(await import('electron'))

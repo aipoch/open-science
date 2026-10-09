@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
+import { configureRuntimeNetwork } from '../runtime-network'
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { ConnectorService } from './service'
 import { ParserEngine } from './engine'
@@ -7,6 +8,13 @@ import type { SpecialistView } from '../../shared/specialist'
 import type { CustomMcpServerConfig } from './custom-mcp'
 
 const internal = { origin: 'internal' as const }
+
+configureRuntimeNetwork({
+  fetch: (...args) => fetch(...args),
+  fetchWithManualRedirect: (...args) => fetch(...args),
+  resolveProxy: vi.fn(),
+  setProxy: vi.fn()
+})
 
 const jsonRes = (body: unknown): Response =>
   ({ ok: true, status: 200, json: async () => body }) as Response

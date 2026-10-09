@@ -105,7 +105,11 @@ it('signs the unpacked credential executables before signing the outer macOS app
     app,
     'Contents/Resources/app.asar.unpacked/node_modules/@aipoch/credential-identity-probe-native/build/Release'
   )
-  for (const executable of ['credential_identity_probe', 'credential_key_validator']) {
+  for (const executable of [
+    'credential_identity_probe',
+    'credential_key_validator',
+    'credential_secret'
+  ]) {
     const position = calls.findIndex(
       (args) => args.at(-1) === posix.join(packageDirectory, executable)
     )

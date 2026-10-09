@@ -4089,7 +4089,7 @@ describe('NotebookKernelExecutor spawn env', () => {
     const buildEnv = (executor as unknown as { buildEnv: BuildEnvFn }).buildEnv.bind(executor)
 
     const replEnv = buildEnv('repl', request, '/tmp/figs')
-    expect(replEnv.ELECTRON_RUN_AS_NODE).toBe('1')
+    expect(replEnv.ELECTRON_RUN_AS_NODE).toBe(process.versions.electron ? '1' : undefined)
     expect(replEnv.OPEN_SCIENCE_MCP_RPC_ENDPOINT).toBe('http://127.0.0.1:9/x')
     expect(replEnv.OPEN_SCIENCE_MCP_RPC_SOCKET_PATH).toBe('\\\\.\\pipe\\open-science-notebook')
     expect(replEnv.OPEN_SCIENCE_MCP_RPC_TOKEN).toBe('tok')
@@ -5710,3 +5710,5 @@ describe('NotebookKernelExecutor readiness gate', () => {
     }
   })
 })
+
+;(await import('../../../test/runtime-metadata')).configureTestRuntimeMetadata()

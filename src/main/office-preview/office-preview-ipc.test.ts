@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 type TestSender = {
@@ -164,3 +165,5 @@ describe('registerOfficePreviewIpcHandlers', () => {
     ).resolves.toEqual({ kind: 'cancelled' })
   })
 })
+
+await configureTestElectronHost(await import('electron'))

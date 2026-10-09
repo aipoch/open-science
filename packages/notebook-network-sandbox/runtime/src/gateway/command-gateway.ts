@@ -1356,3 +1356,15 @@ class CommandGateway {
 
 export { CommandGateway, LOCAL_RPC_BROKER_HOST, sharedGatewayPortActive, tunnelThroughProxy }
 export type { CommandGatewayOptions, GatewayCredentials, GatewayDecision, ParentProxySettings }
+
+// The host HTTP client and Notebook gateway share proxy selection and credential handling.
+export const resolveParentProxyUrl = (
+  settings: ParentProxySettings,
+  target: URL
+): URL | undefined =>
+  selectProxy(
+    parseProxy(settings),
+    target.hostname.replace(/^\[|\]$/g, ''),
+    Number(target.port || (target.protocol === 'https:' ? 443 : 80)),
+    target.protocol === 'https:'
+  )

@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { existsSync } from 'node:fs'
 import {
   chmod,
@@ -8965,3 +8966,5 @@ describe('Notebook protection Shell capability switch', () => {
     }
   )
 })
+
+await configureTestElectronHost(await import('electron'))

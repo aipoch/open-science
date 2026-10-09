@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { describe, expect, it } from 'vitest'
 
 import { analyzePythonSources } from './dependency-analysis-python'
@@ -186,3 +187,5 @@ reader = VCF("not-a-proven-input.vcf")
     expect(result.readState).toBe('partial')
   })
 })
+
+configureTestRuntimeMetadata()

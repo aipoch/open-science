@@ -1,4 +1,4 @@
-import { app } from 'electron'
+import { runtimeMetadata } from '../runtime-metadata'
 import { SPECIALIST_IPC } from '../../shared/specialist'
 import { createAcpRuntime } from '../acp/runtime-composition'
 import { PendingSessionSpecialistBindings } from '../agents/pending-session-specialist-bindings'
@@ -50,7 +50,7 @@ export async function composeSpecialistCatalog({
   // Builtins are validated once at startup from read-only repository resources. Package imports use
   // the same repository while keeping their dynamic Connector/custom-Skill catalog separate.
   const specialistRepository = new SpecialistRepository(resolveConfigRoot())
-  const appVersion = app.getVersion()
+  const appVersion = runtimeMetadata().version
   const specialistSkills = await settingsService.listSpecialistSkillCatalog({ bundledOnly: true })
   composition.phase('specialist-catalog')
   const builtinRegistry = new BuiltinSpecialistRegistry({
@@ -123,7 +123,7 @@ export async function composeSpecialistPackages({
     storageDir: resolveConfigRoot(),
     repository: specialistRepository,
     catalog: async () => {
-      const appVersion = app.getVersion()
+      const appVersion = runtimeMetadata().version
       const [skills, packageSkills, connectorSettings] = await Promise.all([
         settingsService.listSpecialistSkillCatalog(),
         specialistPackageSkillAdapter.snapshot(),

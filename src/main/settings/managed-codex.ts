@@ -1,3 +1,4 @@
+import { nodeRuntimeEnvironment } from '../node-process-host'
 import { randomUUID } from 'node:crypto'
 import { execFile, spawn, type ChildProcess } from 'node:child_process'
 import { createReadStream, type Dirent } from 'node:fs'
@@ -1270,7 +1271,7 @@ const defaultVerifyAdapter: VersionVerifier = async (adapterPath, signal) =>
     [adapterPath, '--version'],
     {
       ...process.env,
-      ELECTRON_RUN_AS_NODE: '1',
+      ...nodeRuntimeEnvironment(),
       NO_BROWSER: '1'
     },
     process.platform,
@@ -1330,7 +1331,7 @@ export const verifyManagedCodexPair: PairVerifier = async (
     stdio: ['pipe', 'pipe', 'pipe'],
     env: {
       ...stripCodexCredentialEnv(process.env),
-      ELECTRON_RUN_AS_NODE: '1',
+      ...nodeRuntimeEnvironment(),
       CODEX_HOME: codexHome,
       CODEX_PATH: codexPath,
       NO_BROWSER: '1'

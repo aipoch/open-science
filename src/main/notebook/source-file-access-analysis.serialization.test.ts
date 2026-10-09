@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { describe, expect, it } from 'vitest'
 
 import type { NotebookLanguage } from '../../shared/notebook'
@@ -147,3 +148,5 @@ describe('serialization and visualization file access coverage', () => {
     })
   })
 })
+
+configureTestRuntimeMetadata()

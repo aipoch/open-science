@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { RuntimeSessionOwner } from '../session-persistence/runtime-session-owner'
 import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
 import { createFrameNotebookLane } from '../notebook/lane-identity'
@@ -29436,3 +29437,5 @@ it('protects disposable OpenCode homes at the ACP read boundary while allowing w
     await rm(workspaceRoot, { recursive: true, force: true })
   }
 })
+
+configureTestRuntimeMetadata()

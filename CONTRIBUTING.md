@@ -18,8 +18,8 @@ project for everyone.
 - Git
 
 Node 24 is the development and CI toolchain. The published CLI continues to support
-Node >=22.5.0; PR Gate checks CLI/SDK compatibility on Node 22 as well. Electron
-ships its own Node runtime, so changing the toolchain does not upgrade Electron.
+Node >=22.5.0; PR Gate checks CLI/SDK compatibility on Node 22 as well. Standalone artifacts require Node >=22.13.0. Desktop packages include a separately pinned ordinary
+Node backend executable; Electron remains the native UI host.
 
 The typecheck scripts use the native TypeScript compiler pinned as `typescript-native`.
 The separate `typescript` dependency provides the JavaScript compiler API used by API-map
@@ -61,6 +61,10 @@ partially patched installation. See the upstream
 [patch-package guidance](https://github.com/ds300/patch-package#applying-patches).
 
 ### Run in development
+
+`npm run dev:web` builds and runs the ordinary Node host and Web UI. `npm run pack:backend`
+creates an independent, target-specific npm tarball. See the [standalone runtime guide](docs/standalone-runtime.md)
+for native build prerequisites, secure-storage requirements and host capability boundaries.
 
 ```bash
 npm run dev
@@ -125,11 +129,11 @@ Read the existing owner document before changing one of these areas, then run it
 
 ## Project Structure
 
-This is an Electron application built with electron-vite, React, and TypeScript.
-Three runtime process layers and a shared module live under `src/`:
+The desktop uses Electron, electron-vite, React and TypeScript; business owners run in ordinary Node.
+The desktop host, standalone Node host, and shared modules live under `src/`:
 
-- `src/main/` — Electron main process (ACP runtime, session persistence,
-  artifacts, notebook, projects, IPC handlers).
+- `src/main/` — shared business runtime and its Node/Electron entry points (ACP, session
+  persistence, artifacts, Notebook, projects, host adapters).
 - `src/preload/` — preload bridge exposing a typed `window.api` to the renderer.
 - `src/renderer/` — React UI (pages, stores, components).
 - `src/shared/` — types and helpers shared across processes.
