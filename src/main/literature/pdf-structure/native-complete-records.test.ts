@@ -3000,8 +3000,85 @@ it('keeps independently ruled panels as separate complete literal record grids',
   expect(f).toEqual(before)
 })
 
-it('reads independent panel blank cells through the actual application worker boundary', async () => {
-  const f = fixture('independent-native-ruled-panels'),
+const indexedIndependentPanels = (): ReturnType<typeof JSON.parse> => {
+  const f = fixture('independent-native-ruled-panels')
+  for (const [index, item] of f.items.entries())
+    item.sourceItem = { pageNumber: 1, index, text: item.text }
+  return f
+}
+
+it('conserves whole native origins when publishing independent panels', () => {
+  const f = indexedIndependentPanels(),
+    refined = run(f),
+    before = structuredClone({ f, refined }),
+    baseline = independentPanelParts(fixture('independent-native-ruled-panels')),
+    result = panelRefineHelpers.recoverNativeIndependentPanelParts(
+      refined,
+      f.items,
+      f.captions,
+      f.rules,
+      f.runs
+    )
+  expect(result.parts).toHaveLength(2)
+  for (const part of result.parts)
+    for (const cell of part.cells) {
+      const origins = cell.sourceTokens.map((t: ReturnType<typeof JSON.parse>) => {
+        const owner = t.sourceToken ?? t
+        const matches = f.items.filter(
+          (i: ReturnType<typeof JSON.parse>) =>
+            i.text === owner.text &&
+            i.baseline === owner.baseline &&
+            i.height === owner.height &&
+            i.rect.every((v: number, n: number) => v === owner.rect[n])
+        )
+        expect(matches).toHaveLength(1)
+        return matches[0].sourceItem
+      })
+      const expected = [
+        ...new Map(origins.map((o: ReturnType<typeof JSON.parse>) => [o.index, o])).values()
+      ].sort(
+        (a: ReturnType<typeof JSON.parse>, b: ReturnType<typeof JSON.parse>) => a.index - b.index
+      )
+      if (expected.length) expect(cell.sourceItems).toEqual(expected)
+      else expect(cell).not.toHaveProperty('sourceItems')
+    }
+  const semantics = (value: ReturnType<typeof JSON.parse>): ReturnType<typeof JSON.parse> =>
+    JSON.parse(
+      JSON.stringify(value, (key, item) =>
+        key === 'sourceItems' || key === 'sourceItem' ? undefined : item
+      )
+    )
+  expect(semantics(result)).toEqual(semantics(baseline))
+  expect({ f, refined }).toEqual(before)
+})
+
+it.each(['conflicting text', 'duplicate origin', 'opaque origin', 'empty origins'])(
+  'refuses independent panel projection with invalid donor origins: %s',
+  (kind) => {
+    const f = indexedIndependentPanels(),
+      refined = run(f)
+    const donor = refined.cells.find((c: ReturnType<typeof JSON.parse>) => c.sourceItems?.length)
+    expect(donor).toBeDefined()
+    if (kind === 'conflicting text') donor.sourceItems[0].text = 'unknown-owner'
+    if (kind === 'duplicate origin') donor.sourceItems.push({ ...donor.sourceItems[0] })
+    if (kind === 'opaque origin') donor.sourceItems[0].unprovedOpaque = true
+    if (kind === 'empty origins') donor.sourceItems = []
+    const before = structuredClone({ f, refined })
+    expect(
+      panelRefineHelpers.recoverNativeIndependentPanelParts(
+        refined,
+        f.items,
+        f.captions,
+        f.rules,
+        f.runs
+      )
+    ).toBeUndefined()
+    expect({ f, refined }).toEqual(before)
+  }
+)
+
+it('reads independent panel blank cells and origins through the actual application worker boundary', async () => {
+  const f = indexedIndependentPanels(),
     result = independentPanelParts(f),
     scratch = await mkdtemp(join(tmpdir(), 'native-independent-panel-worker-')),
     id = 'anonymous-independent-native-panels',
@@ -3073,21 +3150,27 @@ it('reads independent panel blank cells through the actual application worker bo
       expect(part.title).toBe(expected.title)
       expect(part.table.cells).toEqual(
         expected.cells.map(
-          (cell: {
-            row: number
-            column: number
-            rowSpan: number
-            colSpan: number
-            text: string
-            textRuns: { text: string; position: string }[]
-            sourceRects: number[][]
-          }) => ({
+          (
+            cell: {
+              row: number
+              column: number
+              rowSpan: number
+              colSpan: number
+              text: string
+              textRuns: { text: string; position: string }[]
+              sourceRects: number[][]
+            },
+            cellIndex: number
+          ) => ({
             row: cell.row,
             column: cell.column,
             rowSpan: cell.rowSpan,
             columnSpan: cell.colSpan,
             text: cell.text,
             ...(cell.textRuns.length ? { textRuns: cell.textRuns } : {}),
+            ...(result.parts[index].cells[cellIndex].sourceItems
+              ? { sourceItems: result.parts[index].cells[cellIndex].sourceItems }
+              : {}),
             regions: cell.sourceRects.map((box) => ({
               page: 1,
               x: box[0] / 900,

@@ -13743,8 +13743,18 @@ export function recoverNativeIndependentPanelParts(
         grid[row][column] = text
       }
     }
-    return { title: panel.subtitle.text, grid, cells, unassigned: [], issues: [], notes: [] }
+    const conservedCells = nativeRecoveredCellOrigins(table.cells, cells, items)
+    if (!conservedCells) return
+    return {
+      title: panel.subtitle.text,
+      grid,
+      cells: conservedCells,
+      unassigned: [],
+      issues: [],
+      notes: []
+    }
   })
+  if (parts.some((part) => !part)) return
   return { parts, cropRect: plan.cropRect }
 }
 

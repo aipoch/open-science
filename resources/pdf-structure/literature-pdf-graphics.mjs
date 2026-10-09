@@ -162,7 +162,8 @@ export function collectClosedFigureFrames(operators, viewport) {
     pendingClip = false,
     lineWidth = 1,
     solidStroke = true,
-    strokeAlpha = 1
+    strokeAlpha = 1,
+    fillAlpha = 1
   const stack = [],
     frames = [],
     sides = []
@@ -172,7 +173,8 @@ export function collectClosedFigureFrames(operators, viewport) {
       clip: clip && [...clip],
       lineWidth,
       solidStroke,
-      strokeAlpha
+      strokeAlpha,
+      fillAlpha
     })
   const restore = () => {
     const state = stack.pop()
@@ -181,6 +183,7 @@ export function collectClosedFigureFrames(operators, viewport) {
     lineWidth = state?.lineWidth ?? 1
     solidStroke = state?.solidStroke ?? true
     strokeAlpha = state?.strokeAlpha ?? 1
+    fillAlpha = state ? state.fillAlpha : 1
     pendingClip = false
   }
   const intersectClip = (rect) => {
@@ -273,6 +276,7 @@ export function collectClosedFigureFrames(operators, viewport) {
         if (key === 'LW') lineWidth = value
         if (key === 'D') solidStroke = Array.isArray(value?.[0]) && value[0].length === 0
         if (key === 'CA') strokeAlpha = value
+        if (key === 'ca') fillAlpha = value
       }
     } else if (op === OPS.clip || op === OPS.eoClip) pendingClip = true
     else if (
@@ -324,6 +328,7 @@ export function collectClosedFigureFrames(operators, viewport) {
         continue
       }
       if (args[0] === OPS.fill) {
+        if (!(fillAlpha > 0) || !Number.isFinite(fillAlpha)) continue
         // SVG stroke conversion can paint a border as two closed contours.
         // Prove its hollow perimeter from opposite winding and four long
         // straight sides; a solid background or arbitrary filled AABB fails.

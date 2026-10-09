@@ -546,6 +546,77 @@ it('collects a thin native hollow perimeter while rejecting solid fills and open
   const adjacent = [0, 111, 20, 1, 111, 120, 1, 211, 120, 1, 211, 20, 1, 111, 20, 4]
   expect(collectClosedFigureFrames(ops([...outer, ...adjacent]), view)).toEqual([])
 })
+it.each([0, -1, NaN, Infinity, null, undefined, '1'])(
+  'refuses a hollow perimeter without finite positive fill opacity: %s',
+  async (alpha) => {
+    const { OPS } = await import('pdfjs-dist/legacy/build/pdf.mjs')
+    const path = [
+      0, 10, 20, 1, 110, 20, 1, 110, 120, 1, 10, 120, 1, 10, 20, 0, 11, 21, 1, 11, 119, 1, 109, 119,
+      1, 109, 21, 1, 11, 21, 4
+    ]
+    const operators = {
+      fnArray: [OPS.setGState, OPS.constructPath],
+      argsArray: [[[['ca', alpha]]], [OPS.fill, [path], [10, 20, 110, 120]]]
+    }
+    expect(
+      collectClosedFigureFrames(operators, {
+        width: 200,
+        height: 200,
+        transform: [1, 0, 0, 1, 0, 0]
+      })
+    ).toEqual([])
+  }
+)
+it.each(['save', 'form'])(
+  'restores fill opacity after %s without confusing it with stroke opacity',
+  async (scope) => {
+    const { OPS } = await import('pdfjs-dist/legacy/build/pdf.mjs')
+    const path = [
+      0, 10, 20, 1, 110, 20, 1, 110, 120, 1, 10, 120, 1, 10, 20, 0, 11, 21, 1, 11, 119, 1, 109, 119,
+      1, 109, 21, 1, 11, 21, 4
+    ]
+    const paint = [OPS.fill, [path], [10, 20, 110, 120]]
+    const operators: { fnArray: number[]; argsArray: unknown[][] } = {
+      fnArray: [
+        OPS.setGState,
+        scope === 'save' ? OPS.save : OPS.paintFormXObjectBegin,
+        OPS.setGState,
+        OPS.constructPath,
+        scope === 'save' ? OPS.restore : OPS.paintFormXObjectEnd,
+        OPS.constructPath
+      ],
+      argsArray: [
+        [
+          [
+            ['ca', 0.5],
+            ['CA', 0]
+          ]
+        ],
+        [],
+        [[['ca', 0]]],
+        paint,
+        [],
+        paint
+      ]
+    }
+    expect(
+      collectClosedFigureFrames(operators, {
+        width: 200,
+        height: 200,
+        transform: [1, 0, 0, 1, 0, 0]
+      })
+    ).toEqual([[10, 20, 110, 120]])
+    // An unknown parent alpha must remain unknown after restoring the scope.
+    operators.argsArray[0] = [[['ca', null]]]
+    expect(
+      collectClosedFigureFrames(operators, {
+        width: 200,
+        height: 200,
+        transform: [1, 0, 0, 1, 0, 0]
+      })
+    ).toEqual([])
+  }
+)
 it('preserves continuous monotonic native rule segments without bridging a branch or curve', async () => {
   const { OPS } = await import('pdfjs-dist/legacy/build/pdf.mjs')
   const ops = (path: number[]): { fnArray: number[]; argsArray: unknown[][] } => ({
