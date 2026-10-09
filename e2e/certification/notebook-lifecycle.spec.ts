@@ -16,6 +16,32 @@ const captureLifecycleEvidence = async (
 const controlledWindowsFixtureAvailable =
   process.platform === 'win32' && Boolean(process.env.OPEN_SCIENCE_E2E_MICROMAMBA_EVENTS)
 
+const sendReviewedPrompt = async (
+  page: Parameters<typeof sendPrompt>[0],
+  prompt: string,
+  reply: string,
+  commands: string[],
+  timeout: number
+): Promise<void> => {
+  await Promise.all([
+    sendPrompt(page, prompt, reply, timeout),
+    (async () => {
+      const review = page.getByRole('group', {
+        name: 'Permission request: Review potentially destructive code',
+        exact: true
+      })
+      let previousCode: string | undefined
+      for (const command of commands) {
+        await expect(review).toContainText(command)
+        const code = review.getByTestId('tool-code-block')
+        if (previousCode) await expect(code).not.toHaveText(previousCode)
+        previousCode = await code.innerText()
+        await review.getByRole('button', { name: 'Allow once', exact: true }).click()
+      }
+    })()
+  ])
+}
+
 test('executes Windows REPL cells and recovers Shell after an interpreter exit', async ({
   app
 }) => {
@@ -39,18 +65,20 @@ test('installs global npm tools through the app and reuses them across Sessions 
   await app.completeOnboarding()
   let page = await app.configureFakeAgent()
   await createProject(page, 'Npm installation')
-  await sendPrompt(
+  await sendReviewedPrompt(
     page,
     'Verify application npm global install.',
     'Application npm install verified',
+    ['node -e "eval(Buffer.from('],
     90_000
   )
   await page.getByRole('button', { name: 'All projects', exact: true }).click()
   await createProject(page, 'Npm shared tools')
-  await sendPrompt(
+  await sendReviewedPrompt(
     page,
     'Verify application npm shared tool and local install.',
     'Application npm local verified',
+    ['node -e "eval(Buffer.from(', 'node -e "eval(Buffer.from('],
     90_000
   )
   await captureLifecycleEvidence(page, 'npm-across-sessions.png')
@@ -118,7 +146,13 @@ test('runs and shuts down a Notebook session through its packaged MCP boundary',
   await app.completeOnboarding()
   let page = await app.configureFakeAgent()
   await createProject(page, 'Notebook lifecycle evidence')
-  await sendPrompt(page, 'Verify the notebook lifecycle.', 'Notebook lifecycle verified for')
+  await sendReviewedPrompt(
+    page,
+    'Verify the notebook lifecycle.',
+    'Notebook lifecycle verified for',
+    ['node -e "setTimeout(() => console.log(\'notebook-lifecycle-e2e\'), 0)"'],
+    30_000
+  )
 
   page = await app.restart()
   await openRecentSession(page, 'Verify the notebook lifecycle.')
