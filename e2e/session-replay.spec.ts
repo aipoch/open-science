@@ -242,6 +242,8 @@ test('opens imported research, asks about a recorded step and restores the ordin
     .poll(() => replay.evaluate((element) => element.getBoundingClientRect().width))
     .toBeGreaterThan(dockedWidth)
   await page.screenshot({ path: testInfo.outputPath('session-replay-expanded.png') })
+  // Expanded research uses resizable columns; test the docked, tabbed presentation at narrow widths.
+  await replay.getByRole('button', { name: 'Collapse preview', exact: true }).click()
   // Exercise the actual replay pane at narrow widths independently of the desktop shell minimum.
   for (const width of [320, 375, 414, 768]) {
     await replay.evaluate((element, width) => {
@@ -298,7 +300,6 @@ test('opens imported research, asks about a recorded step and restores the ordin
     element.style.removeProperty('width')
   })
 
-  await replay.getByRole('button', { name: 'Collapse preview', exact: true }).click()
   await askReplayStep(replay)
   await expect(page.getByRole('dialog', { name: 'Ask in a conversation' })).toHaveCount(0)
   await expect(page.locator('[data-session-discussion-source]')).toBeVisible()
