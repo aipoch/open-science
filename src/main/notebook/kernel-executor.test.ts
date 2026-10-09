@@ -253,11 +253,16 @@ const processIsAlive = (pid: number): boolean => {
 const stubEnvPython = async (
   runtimeRootDir: string,
   name: string,
-  platform: NodeJS.Platform = process.platform
+  platform: NodeJS.Platform = 'linux'
 ): Promise<void> => {
   const bin = pythonBin(envPrefix(runtimeRootDir, name, platform), platform)
   await mkdir(dirname(bin), { recursive: true })
   await symlink(python3 as string, bin)
+  // Windows CreateProcess needs an .exe sibling when the emulated POSIX command has no suffix.
+  // Keep the extensionless entry too: it is the interpreter path selected by the resolver under test.
+  if (process.platform === 'win32' && platform !== 'win32') {
+    await symlink(python3 as string, `${bin}.exe`)
+  }
 }
 
 const stubEnvR = async (runtimeRootDir: string, name: string): Promise<void> => {
@@ -271,7 +276,7 @@ const stubEnvR = async (runtimeRootDir: string, name: string): Promise<void> => 
 // readiness gate and spawns the fake loop under an on-disk env interpreter (never a system python).
 const makeDefaultEnvCwd = async (
   prefix: string,
-  platform: NodeJS.Platform = process.platform
+  platform: NodeJS.Platform = 'linux'
 ): Promise<string> => {
   const dir = await mkdtemp(join(tmpdir(), prefix))
   await stubEnvPython(join(dir, 'runtime'), DEFAULT_PY_ENV, platform)
@@ -491,6 +496,11 @@ gate('NotebookKernelExecutor failed-cell output capture', () => {
 })
 
 beforeEach(() => {
+  // A linked Windows python.exe searches its new executable directory for Python's DLLs.
+  // Only this test process inherits the installed test interpreter's DLL directory.
+  if (process.platform === 'win32' && python3) {
+    vi.stubEnv('PATH', `${dirname(python3)};${process.env.PATH ?? ''}`)
+  }
   // OS-adapter tests simulate Windows on every host. Native runtime isolation is covered by
   // windows-notebook-runtime.integration.test.ts; these protocol children use the test host Node.
   vi.spyOn(windowsNotebookRuntime, 'resolveWindowsNotebookRuntime').mockReturnValue({
@@ -501,6 +511,7 @@ beforeEach(() => {
 })
 
 afterEach(async () => {
+  vi.unstubAllEnvs()
   if (cwdDir) {
     await rm(cwdDir, { recursive: true, force: true })
     cwdDir = undefined
@@ -942,7 +953,7 @@ gate('NotebookKernelExecutor (fake loop)', () => {
       const written = await executor.execute({
         ...request,
         cwd: otherDir,
-        code: 'with open("generated.csv", "w") as output: output.write("x,y\\n1,2\\n")'
+        code: 'with open("generated.csv", "w", newline="\\n") as output: output.write("x,y\\n1,2\\n")'
       })
       expect(written.status).toBe('completed')
       expect(await readFile(join(firstDir, 'generated.csv'), 'utf8')).toBe('x,y\n1,2\n')
@@ -1539,7 +1550,7 @@ gate('NotebookKernelExecutor (fake loop)', () => {
   )
 
   it('durably binds the OS process to its lane and Kernel epoch until shutdown reaps it', async () => {
-    cwdDir = await makeDefaultEnvCwd('os-kernel-durable-owner-')
+    cwdDir = await makeDefaultEnvCwd('os-kernel-durable-owner-', process.platform)
     const owner = new KernelProcessLifecycleOwner({
       storageRoot: cwdDir,
       ownerInstanceId: 'test-owner'
