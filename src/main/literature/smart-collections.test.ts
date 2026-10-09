@@ -496,6 +496,227 @@ it('resumes the same stopped run once and preserves completed outcomes', async (
   ).toEqual(before)
 })
 
+it.each(['refresh', 'recompute', 'preview', 'automatic'] as const)(
+  'retries failures and pending papers in the same %s batch without repeating saved results',
+  async (action) => {
+    await db.literatureItem.createMany({
+      data: Array.from({ length: 8 }, (_, i) => ({
+        id: `retry-${i}`,
+        itemType: 'journalArticle',
+        title: `Retry ${i}`,
+        abstract: 'Original study'
+      }))
+    })
+    const id = await create()
+    if (action === 'automatic')
+      await db.literatureSmartCollection.update({
+        where: { collectionId: id },
+        data: { autoUpdate: true }
+      })
+    const success = classify.getMockImplementation()!
+    let first = true
+    classify.mockImplementation(async (input) => {
+      if (first) {
+        first = false
+        return success(input)
+      }
+      throw new ClassificationEvaluationError('network')
+    })
+    await owner.execute(
+      {
+        kind: 'smart-collection',
+        collectionId: id,
+        action: action === 'automatic' ? 'refresh' : action,
+        ...(action === 'recompute'
+          ? { itemIds: ['paper', 'retry-0', 'retry-1', 'retry-2', 'retry-3'] }
+          : {}),
+        offset: 0
+      },
+      action === 'automatic'
+    )
+    await vi.waitFor(async () => expect((await owner.view(id)).run?.state).toBe('failed'))
+    const run = await db.literatureSmartRun.findFirstOrThrow({ where: { collectionId: id } })
+    const items = await db.literatureSmartRunItem.findMany({ where: { runId: run.id } })
+    const done = items.filter((item) => item.state === 'done')
+    expect(done).toHaveLength(1)
+    expect(items.some((item) => item.state === 'error')).toBe(true)
+    expect(items.some((item) => item.state === 'pending')).toBe(true)
+    const usage = await db.classificationUsage.findMany({
+      where: { runId: run.id },
+      orderBy: { eventId: 'asc' }
+    })
+    await db.literatureItem.create({
+      data: { id: 'later', itemType: 'journalArticle', title: 'Added later', abstract: 'Study' }
+    })
+    const calls = classify.mock.calls.length
+    classify.mockImplementation(success)
+    await Promise.all(
+      Array.from({ length: 2 }, () =>
+        owner.execute({
+          kind: 'smart-collection',
+          collectionId: id,
+          action: 'resume',
+          runId: run.id,
+          offset: 0
+        })
+      )
+    )
+    await vi.waitFor(async () => expect((await owner.view(id)).run?.state).toBe('completed'), {
+      timeout: 15000
+    })
+    expect((await owner.view(id)).run).toMatchObject({
+      id: run.id,
+      done: items.length,
+      total: items.length,
+      failure: undefined
+    })
+    expect(await db.literatureSmartRun.count({ where: { collectionId: id } })).toBe(1)
+    expect(
+      (await db.literatureSmartRun.findUniqueOrThrow({ where: { id: run.id } })).snapshotJson
+    ).toBe(run.snapshotJson)
+    expect(
+      await db.literatureSmartRunItem.findMany({
+        where: { runId: run.id, itemId: { in: done.map((item) => item.itemId) } }
+      })
+    ).toEqual(done)
+    const retries = classify.mock.calls.slice(calls)
+    expect(retries).toHaveLength(items.length - done.length)
+    expect(retries.map(([input]) => input.title)).not.toContain('Added later')
+    for (const [input] of retries)
+      expect(input.usageContext).toMatchObject({
+        runId: run.id,
+        scenario:
+          action === 'automatic'
+            ? 'literature-automatic'
+            : action === 'preview'
+              ? 'literature-trial'
+              : action === 'recompute'
+                ? 'literature-reevaluate'
+                : 'literature-update'
+      })
+    expect(
+      await db.classificationUsage.findMany({
+        where: { eventId: { in: usage.map((entry) => entry.eventId) } },
+        orderBy: { eventId: 'asc' }
+      })
+    ).toEqual(usage)
+    expect(await db.classificationUsage.count({ where: { runId: run.id } })).toBe(
+      usage.length + retries.length
+    )
+  }
+)
+
+it.each([false, true])(
+  'retries an error-only batch without creating a run (automatic: %s)',
+  async (automatic) => {
+    const id = await create()
+    if (automatic)
+      await db.literatureSmartCollection.update({
+        where: { collectionId: id },
+        data: { autoUpdate: true }
+      })
+    classify.mockRejectedValueOnce(new ClassificationEvaluationError('network'))
+    await owner.execute(
+      { kind: 'smart-collection', collectionId: id, action: 'refresh', offset: 0 },
+      automatic
+    )
+    await vi.waitFor(async () => expect((await owner.view(id)).run?.state).toBe('failed'))
+    const runId = (await owner.view(id)).run!.id
+    expect((await owner.view(id)).run).toMatchObject({
+      done: 1,
+      total: 1,
+      manualResumeAllowed: !automatic
+    })
+    await owner.execute({
+      kind: 'smart-collection',
+      collectionId: id,
+      action: 'resume',
+      runId,
+      offset: 0
+    })
+    await vi.waitFor(async () => expect((await owner.view(id)).run?.state).toBe('completed'))
+    expect((await owner.view(id)).run).toMatchObject({
+      id: runId,
+      done: 1,
+      total: 1,
+      failure: undefined
+    })
+    expect(classify).toHaveBeenCalledTimes(2)
+    expect(await db.literatureSmartRun.count({ where: { collectionId: id } })).toBe(1)
+  }
+)
+
+it('rolls back retry admission when resetting a failed checkpoint cannot be saved', async () => {
+  const id = await create()
+  classify.mockRejectedValueOnce(new ClassificationEvaluationError('network'))
+  await owner.execute({ kind: 'smart-collection', collectionId: id, action: 'refresh', offset: 0 })
+  await vi.waitFor(async () => expect((await owner.view(id)).run?.state).toBe('failed'))
+  const run = await db.literatureSmartRun.findFirstOrThrow({ where: { collectionId: id } })
+  const items = await db.literatureSmartRunItem.findMany({ where: { runId: run.id } })
+  await db.$executeRawUnsafe(
+    "CREATE TRIGGER fail_retry BEFORE UPDATE ON LiteratureSmartRunItem WHEN OLD.state = 'error' AND NEW.state = 'pending' BEGIN SELECT RAISE(ABORT,'disk full'); END"
+  )
+  try {
+    await expect(
+      owner.execute({
+        kind: 'smart-collection',
+        collectionId: id,
+        action: 'resume',
+        runId: run.id,
+        offset: 0
+      })
+    ).rejects.toThrow()
+    expect(await db.literatureSmartRun.findUniqueOrThrow({ where: { id: run.id } })).toEqual(run)
+    expect(await db.literatureSmartRunItem.findMany({ where: { runId: run.id } })).toEqual(items)
+    expect(classify).toHaveBeenCalledTimes(1)
+  } finally {
+    await db.$executeRawUnsafe('DROP TRIGGER fail_retry')
+  }
+  await owner.execute({
+    kind: 'smart-collection',
+    collectionId: id,
+    action: 'resume',
+    runId: run.id,
+    offset: 0
+  })
+  await vi.waitFor(async () => expect((await owner.view(id)).run?.state).toBe('completed'))
+})
+
+it('keeps repeated automatic failures and the request limit in the original batch', async () => {
+  const id = await create()
+  await db.literatureSmartCollection.update({
+    where: { collectionId: id },
+    data: { autoUpdate: true }
+  })
+  classify.mockRejectedValue(new ClassificationEvaluationError('network'))
+  await owner.execute(
+    { kind: 'smart-collection', collectionId: id, action: 'refresh', offset: 0 },
+    true
+  )
+  await vi.waitFor(async () => expect((await owner.view(id)).run?.state).toBe('failed'))
+  const runId = (await owner.view(id)).run!.id
+  const retry = {
+    kind: 'smart-collection' as const,
+    collectionId: id,
+    action: 'resume' as const,
+    runId,
+    offset: 0
+  }
+  await owner.execute(retry)
+  await vi.waitFor(async () => expect((await owner.view(id)).run?.state).toBe('failed'))
+  expect(classify).toHaveBeenCalledTimes(2)
+  classify.mockRejectedValue(new AutomaticClassificationPausedError('run-limit'))
+  await owner.execute(retry)
+  await vi.waitFor(async () =>
+    expect((await owner.view(id)).automaticPauseReason).toBe('run-limit')
+  )
+  await expect(owner.execute(retry)).rejects.toThrow(SMART_COLLECTION_RESUME_UNAVAILABLE)
+  expect(classify).toHaveBeenCalledTimes(3)
+  expect(await db.literatureSmartRun.count({ where: { collectionId: id } })).toBe(1)
+  for (const [input] of classify.mock.calls)
+    expect(input.usageContext).toMatchObject({ runId, scenario: 'literature-automatic' })
+})
+
 it('resumes a manual refresh with recorded manual usage', async () => {
   const { id, runId } = await pauseAfterOneResult(false, 'refresh')
   await db.literatureSmartRun.create({
@@ -645,7 +866,8 @@ it.each([
   'snapshot',
   'details',
   'incomplete-result',
-  'timestamp'
+  'timestamp',
+  'run-id'
 ] as const)('rejects resume after %s changes without dispatching paid work', async (change) => {
   const { id, runId, doneId } = await pauseAfterOneResult()
   if (change === 'paper')
@@ -683,7 +905,13 @@ it.each([
     })
   const calls = classify.mock.calls.length
   await expect(
-    owner.execute({ kind: 'smart-collection', collectionId: id, action: 'resume', offset: 0 })
+    owner.execute({
+      kind: 'smart-collection',
+      collectionId: id,
+      action: 'resume',
+      runId: change === 'run-id' ? 'another-run' : runId,
+      offset: 0
+    })
   ).rejects.toThrow(SMART_COLLECTION_RESUME_UNAVAILABLE)
   expect(classify).toHaveBeenCalledTimes(calls)
   expect((await owner.view(id)).run).toMatchObject({ id: runId, state: 'cancelled' })

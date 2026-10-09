@@ -106,7 +106,9 @@ jobs:
     env:
       VITEST_DEFER_COVERAGE_THRESHOLDS: '1'
       VITEST_PORTABLE_CI: '1'
-    timeout-minutes: 25
+    # Full-suite shards peaked at ~24.5m on the v0.35.1 release and now exceed
+    # the old 25m budget; keep headroom for suite growth and runner load.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:

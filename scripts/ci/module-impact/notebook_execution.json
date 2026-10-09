@@ -208,7 +208,12 @@
     "src/main/notebook/fixtures/lineage/r-save-promises.R",
     "src/main/notebook/windows-notebook-runtime.ts",
     "src/main/notebook/windows-notebook-runtime.test.ts",
-    "src/main/notebook/code-risk-admission.test.ts"
+    "src/main/notebook/code-risk-admission.test.ts",
+    "test/fixtures/fake_loop.py",
+    "src/main/notebook/python-command.probe.test.ts",
+    "src/main/notebook/runtime-repair.windows.integration.test.ts",
+    "src/main/notebook/windows-python-probe.integration.test.ts",
+    "src/main/notebook/windows-python.test-support.ts"
   ],
   "interfacePaths": [
     "src/main/notebook/configured-shell-runtime.ts",
@@ -306,7 +311,8 @@
     "src/main/notebook/dependency-analysis.rasterio.test.ts",
     "src/main/notebook/dependency-analysis.rdkit.test.ts",
     "src/main/notebook/dependency-analysis.scipy-sparse-composition.test.ts",
-    "src/main/notebook/dependency-analysis.scipy-sparse.test.ts"
+    "src/main/notebook/dependency-analysis.scipy-sparse.test.ts",
+    "src/main/notebook/windows-python.test-support.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -388,7 +394,10 @@
       "src/main/notebook/r-save-guard.test.ts",
       "src/main/notebook/r-connection-guard.test.ts",
       "src/main/notebook/windows-notebook-runtime.test.ts",
-      "src/main/notebook/code-risk-admission.test.ts"
+      "src/main/notebook/code-risk-admission.test.ts",
+      "src/main/notebook/python-command.probe.test.ts",
+      "src/main/notebook/runtime-repair.windows.integration.test.ts",
+      "src/main/notebook/windows-python-probe.integration.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -995,7 +1004,8 @@
       "src/main/notebook/dependency-analysis.scipy-sparse-composition.test.ts",
       "src/main/notebook/dependency-analysis.scipy-sparse.test.ts",
       "src/main/literature/pdf-translation/checkpoints.test.ts",
-      "src/main/notebook/code-risk-analysis.test.ts"
+      "src/main/notebook/code-risk-analysis.test.ts",
+      "src/main/session-plan/session-plan-turn-outcome.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

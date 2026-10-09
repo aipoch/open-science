@@ -395,7 +395,7 @@ test('shares PDF editions across independent projects and Literature after owner
     await expect(readable).toBeVisible()
     await page.screenshot({ path: testInfo.outputPath('shared-pdf-edition-text.png') })
 
-    await panel.getByRole('button', { name: 'Translation settings', exact: true }).click()
+    await panel.getByRole('button', { name: /^Translation settings(?: |$)/ }).click()
     await panel.getByRole('button', { name: 'New translation', exact: true }).click()
     const newTranslation = page.getByRole('dialog', { name: 'New translation', exact: true })
     const language = newTranslation.getByRole('combobox', { name: 'Target language', exact: true })

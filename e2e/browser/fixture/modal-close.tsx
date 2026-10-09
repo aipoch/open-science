@@ -55,6 +55,7 @@ window.api = {
     })
   },
   literature: { onChanged: () => noop, search: async () => ({ entries: [] }) },
+  specialist: { inspectGitHubMarketplaceSource: done, removeMarketplaceSource: done },
   tags: { onChanged: () => noop },
   specialists: { list: async () => useSpecialistStore.getState().items }
 } as unknown as Window['api']

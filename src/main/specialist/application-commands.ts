@@ -12,7 +12,12 @@ import {
   type UploadTransferRequest,
   type UploadTransferStatus
 } from '../../shared/uploads'
-import type { UpdateSpecialistRequest, SetSpecialistEnabledRequest } from '../../shared/specialist'
+import type {
+  UpdateSpecialistRequest,
+  SetSpecialistEnabledRequest,
+  SetSessionSpecialistRequest,
+  SetSessionSpecialistResponse
+} from '../../shared/specialist'
 import type {
   GetMarketplaceReleaseRequest,
   ListMarketplaceRequest,
@@ -32,12 +37,14 @@ import type { UploadCommandOwner } from '../uploads/command-owner'
 import type { SpecialistService } from './service'
 import type { SpecialistPackageService } from './package/service'
 import type { MarketplaceService } from './marketplace/service'
+import type { SessionSpecialistReconfiguration } from './session-reconfiguration'
 
 type Dependencies = {
   service: Pick<SpecialistService, 'listForSettingsSnapshot' | 'update' | 'setEnabled'>
   packages: Pick<SpecialistPackageService, 'preview' | 'install' | 'cancel' | 'dispose' | 'report'>
   uploads: UploadCommandOwner
   marketplace: Pick<MarketplaceService, 'list' | 'getRelease'>
+  sessionReconfiguration: Pick<SessionSpecialistReconfiguration, 'requestSwitch'>
   onProfilesChanged: () => void
 }
 
@@ -78,6 +85,9 @@ export type SpecialistApplicationOwner = {
   setEnabled: (
     request: SetSpecialistEnabledRequest
   ) => ReturnType<Dependencies['service']['setEnabled']>
+  setSessionSpecialist: (
+    request: SetSessionSpecialistRequest
+  ) => Promise<SetSessionSpecialistResponse>
   listMarketplace: (request?: ListMarketplaceRequest) => Promise<MarketplaceSnapshot>
   getMarketplaceRelease: (
     request: GetMarketplaceReleaseRequest
@@ -103,6 +113,7 @@ export const createSpecialistApplicationOwner = ({
   packages,
   uploads,
   marketplace,
+  sessionReconfiguration,
   onProfilesChanged
 }: Dependencies): SpecialistApplicationOwner => {
   type Caller = {
@@ -179,6 +190,17 @@ export const createSpecialistApplicationOwner = ({
       const result = await service.setEnabled(id, enabled)
       onProfilesChanged()
       return result
+    },
+    // Parity with the Electron IPC parse in ipc.ts: sessionId must be a string, specialistId
+    // must be a string or undefined — anything else is rejected as renderer data.
+    setSessionSpecialist: async (request: SetSessionSpecialistRequest) => {
+      if (!request || typeof request.sessionId !== 'string') {
+        throw new Error('SET_SESSION_SPECIALIST: sessionId must be a string.')
+      }
+      if (request.specialistId !== undefined && typeof request.specialistId !== 'string') {
+        throw new Error('SET_SESSION_SPECIALIST: specialistId must be a string or undefined.')
+      }
+      return sessionReconfiguration.requestSwitch(request.sessionId, request.specialistId)
     },
     listMarketplace: async (request?: ListMarketplaceRequest) =>
       marketplace.list(parseListMarketplaceRequest(request)),
@@ -313,6 +335,11 @@ const commands = [
     Awaited<ReturnType<SpecialistApplicationOwner['setEnabled']>>
   >('specialist:set-enabled'),
   command<
+    'specialist:set-session-specialist',
+    readonly [SetSessionSpecialistRequest],
+    Awaited<ReturnType<SpecialistApplicationOwner['setSessionSpecialist']>>
+  >('specialist:set-session-specialist'),
+  command<
     'specialist:package-upload-begin',
     readonly [BeginUploadTransferRequest],
     Awaited<ReturnType<SpecialistApplicationOwner['beginUpload']>>
@@ -359,6 +386,7 @@ export const registerSpecialistApplicationCommands = (
       'specialist:list': () => owner.list(),
       'specialist:update': ({ args }) => owner.update(args[0]),
       'specialist:set-enabled': ({ args }) => owner.setEnabled(args[0]),
+      'specialist:set-session-specialist': ({ args }) => owner.setSessionSpecialist(args[0]),
       'specialist:package-upload-begin': (invocation) => owner.beginUpload(invocation),
       'specialist:package-upload-preview': (invocation) => owner.previewUpload(invocation),
       'specialist:package-upload-abort': (invocation) => owner.abortUpload(invocation),

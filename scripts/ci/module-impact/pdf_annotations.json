@@ -661,7 +661,8 @@
       "src/main/acp/approved-handoff-outcome.integration.test.ts",
       "src/main/acp/approved-handoff-outcome.test.ts",
       "src/main/literature/pdf-translation/checkpoints.test.ts",
-      "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationExport.test.tsx"
+      "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationExport.test.tsx",
+      "src/main/session-plan/session-plan-turn-outcome.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions"],

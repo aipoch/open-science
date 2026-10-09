@@ -342,6 +342,7 @@
       "src/main/literature/pdf-structure/agent-reader.test.ts",
       "src/main/literature/pdf-structure/cache.test.ts",
       "src/main/literature/pdf-structure/engine.test.ts",
+      "src/main/literature/pdf-structure/native-complete-records.test.ts",
       "src/main/literature/pdf-structure/owner.test.ts",
       "src/main/literature/pdf-structure/reader.test.ts",
       "src/main/literature/pdf-structure/source-metadata.test.ts",
@@ -773,7 +774,9 @@
       "src/main/literature/pdf-translation/local.test.ts",
       "src/main/local-models/ipc.test.ts",
       "src/main/literature/pdf-translation/pdf-cache.test.ts",
-      "src/main/notebook/code-risk-admission.test.ts"
+      "src/main/notebook/code-risk-admission.test.ts",
+      "src/main/session-plan/session-plan-turn-outcome.test.ts",
+      "src/main/notebook/runtime-repair.windows.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

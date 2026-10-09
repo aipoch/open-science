@@ -88,7 +88,8 @@
     "src/renderer/src/pages/workspace/TurnOutcomeNotice.tsx",
     "src/renderer/src/pages/workspace/TurnOutcomeNotice.test.tsx",
     "src/renderer/src/pages/workspace/SessionHeaderMenu.tsx",
-    "src/renderer/src/pages/workspace/SessionHeaderMenu.test.tsx"
+    "src/renderer/src/pages/workspace/SessionHeaderMenu.test.tsx",
+    "src/renderer/src/pages/workspace/workspace-session-recovery.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/workspace/ComposerMessageQueue.tsx",
@@ -121,7 +122,8 @@
     "src/renderer/src/pages/workspace/workspace-message-queue-drain.ts",
     "src/renderer/src/pages/workspace/workspace-message-queue-projection.ts",
     "src/renderer/src/pages/workspace/workspace-tool-activity-details.ts",
-    "src/renderer/src/pages/workspace/workspace-tool-activity-groups.ts"
+    "src/renderer/src/pages/workspace/workspace-tool-activity-groups.ts",
+    "src/renderer/src/pages/workspace/workspace-session-recovery.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -265,7 +267,8 @@
       "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.interaction.test.tsx",
       "src/renderer/src/pages/workspace/workspace-discussion-navigation.test.ts",
       "src/renderer/src/pages/workspace/ResearchWorkspaceHeader.test.tsx",
-      "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationControls.test.tsx"
+      "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationControls.test.tsx",
+      "src/renderer/src/pages/workspace/session-plan/session-plan-resume.test.tsx"
     ]
   },
   "capabilityOverlays": [],

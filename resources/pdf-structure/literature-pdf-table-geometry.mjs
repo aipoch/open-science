@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
-import { joinHorizontalTableRules } from './literature-pdf-table-rules.mjs'
+import { classifyTableRuleEdge, joinHorizontalTableRules } from './literature-pdf-table-rules.mjs'
 import {
   captionKind,
   sourceWordSpellings,
@@ -41,13 +41,304 @@ export const union = (items) => [
   Math.max(...items.map((i) => i.rect[3]))
 ]
 
+// Repeated native rule segments can outlive a detector crop even when every
+// literal font fits. Require complete leaf owners and every measured paint bound;
+// only the right edge grows, without inventing a vertical table fence.
+export function completeRepeatedHorizontalRuleCarrierCrop(
+  table,
+  rules,
+  pageSize,
+  pageItems,
+  rulePaintBounds,
+  graphics = [],
+  pageFontItems = []
+) {
+  const rect = (r) =>
+    Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && r[2] > r[0] && r[3] > r[1]
+  const contains = (a, b) => b.every((v, n) => (n < 2 ? v >= a[n] - 1e-7 : v <= a[n] + 1e-7))
+  const overlaps = (a, b) => a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1]
+  const same = (a, b, tolerance = 0.02) =>
+    Array.isArray(a) &&
+    Array.isArray(b) &&
+    a.length === b.length &&
+    a.every(
+      (v, n) => Number.isFinite(v) && Number.isFinite(b[n]) && Math.abs(v - b[n]) <= tolerance
+    )
+  const fontRect = (f) => [f.rect[0], f.rect[1], f.rect[2], f.rect[3] - f.fontDescent * f.height]
+  if (
+    !table ||
+    typeof table !== 'object' ||
+    ![
+      rules,
+      pageSize,
+      pageItems,
+      graphics,
+      pageFontItems,
+      table.cells,
+      table.grid,
+      table.unassigned
+    ].every(Array.isArray) ||
+    pageSize.length !== 2 ||
+    !pageSize.every((v) => Number.isFinite(v) && v > 0) ||
+    !(rulePaintBounds instanceof Map) ||
+    !pageFontItems.length ||
+    !graphics.length ||
+    (table.readingRotation !== undefined &&
+      (!Number.isFinite(table.readingRotation) || table.readingRotation !== 0)) ||
+    !Array.isArray(table.clipped) ||
+    table.clipped.length ||
+    ['parts', 'notes'].some(
+      (key) => table[key] !== undefined && (!Array.isArray(table[key]) || table[key].length)
+    ) ||
+    table.unassigned.length ||
+    (table.issues !== undefined && (!Array.isArray(table.issues) || table.issues.length)) ||
+    !rect(table.cropRect)
+  )
+    return
+  const rows = table.grid.length,
+    columns = table.grid[0]?.length
+  if (
+    rows < 3 ||
+    !Number.isInteger(columns) ||
+    columns < 2 ||
+    !table.grid.every(
+      (row) =>
+        Array.isArray(row) &&
+        row.length === columns &&
+        row.every((t) => typeof t === 'string' && t.trim())
+    ) ||
+    table.cells.length !== rows * columns ||
+    rules.length > 81 ||
+    rulePaintBounds.size !== rules.length
+  )
+    return
+  if (
+    !pageItems.every(
+      (i) =>
+        i && typeof i === 'object' && typeof i.text === 'string' && (!i.text.trim() || rect(i.rect))
+    )
+  )
+    return
+  if (
+    !pageFontItems.every(
+      (f) =>
+        f &&
+        typeof f === 'object' &&
+        typeof f.text === 'string' &&
+        f.horizontal === true &&
+        rect(f.rect) &&
+        [f.height, f.baseline, f.fontDescent].every(Number.isFinite) &&
+        f.height > 0 &&
+        f.fontDescent >= -1 &&
+        f.fontDescent <= 0 &&
+        Math.abs(f.rect[3] - f.rect[1] - f.height) <= 1e-6 &&
+        Math.abs(f.rect[3] - f.baseline) <= 1e-6
+    )
+  )
+    return
+  if (!graphics.every((g) => g && typeof g === 'object' && g.kind === 'path' && rect(g.rect)))
+    return
+  if (
+    !rules.every(
+      (r) =>
+        Array.isArray(r) &&
+        r.length === 4 &&
+        r.every(Number.isFinite) &&
+        r[2] > r[0] &&
+        r[1] === r[3] &&
+        rulePaintBounds.has(r.join(',')) &&
+        rect(rulePaintBounds.get(r.join(',')))
+    )
+  )
+    return
+  const owners = [],
+    slots = new Set()
+  for (const c of table.cells) {
+    if (
+      !c ||
+      typeof c !== 'object' ||
+      !Number.isInteger(c.row) ||
+      !Number.isInteger(c.column) ||
+      c.row < 0 ||
+      c.row >= rows ||
+      c.column < 0 ||
+      c.column >= columns ||
+      c.rowSpan !== 1 ||
+      c.colSpan !== 1 ||
+      typeof c.text !== 'string' ||
+      !c.text.trim() ||
+      !Array.isArray(c.sourceRects) ||
+      !Array.isArray(c.sourceTokens) ||
+      !c.sourceRects.length ||
+      c.sourceRects.length !== c.sourceTokens.length ||
+      slots.has(c.row + ',' + c.column)
+    )
+      return
+    slots.add(c.row + ',' + c.column)
+    for (let n = 0; n < c.sourceRects.length; n++) {
+      const r = c.sourceRects[n],
+        token = c.sourceTokens[n]
+      if (
+        !rect(r) ||
+        !token ||
+        typeof token !== 'object' ||
+        typeof token.text !== 'string' ||
+        !rect(token.rect) ||
+        !same(token.rect, r, 1e-7)
+      )
+        return
+      const matches = pageFontItems.filter((f) => f.text === token.text && same(f.rect, r, 1e-7))
+      if (matches.length !== 1 || owners.some((o) => o.font === matches[0])) return
+      owners.push({ cell: c, font: matches[0] })
+    }
+  }
+  if (!owners.length || table.cells.some((c) => table.grid[c.row][c.column] !== c.text)) return
+  const heights = owners.map((o) => o.font.height).sort((a, b) => a - b),
+    height = heights[heights.length >> 1]
+  const ys = [...new Set(rules.map((r) => r[1]))].sort((a, b) => a - b)
+  if (
+    ys.length !== rows + 1 ||
+    rules.length !== ys.length * columns ||
+    ys[0] < table.cropRect[1] ||
+    ys.at(-1) > table.cropRect[3]
+  )
+    return
+  const bands = ys.map((y) => rules.filter((r) => r[1] === y).sort((a, b) => a[0] - b[0]))
+  if (
+    !bands.every((b) => b.length === columns) ||
+    !bands
+      .slice(0, -1)
+      .every((b) => b.every((r, n) => same([r[0], r[2]], [bands[0][n][0], bands[0][n][2]]))) ||
+    !bands[0].every(
+      (r, n) =>
+        r[2] - r[0] >= height * 3 &&
+        (!n || (r[0] > bands[0][n - 1][2] && r[0] - bands[0][n - 1][2] <= height * 0.1))
+    )
+  )
+    return
+  // Closing left paint can overlap a narrow existing seam. It does not create a
+  // vertical fence or a new leaf; its right endpoint must still match exactly.
+  if (
+    !bands.at(-1).every((r, n) => {
+      const p = rulePaintBounds.get(r.join(',')),
+        opening = bands[0][n]
+      return (
+        Math.abs(r[2] - opening[2]) <= 0.02 &&
+        r[0] <= opening[0] + 0.02 &&
+        opening[0] - r[0] <= 2 * (p[3] - p[1]) + 0.02
+      )
+    })
+  )
+    return
+  if (!ys.slice(1).every((y, n) => y - ys[n] >= height * 1.5 && y - ys[n] <= height * 4)) return
+  for (const { cell: c, font: f } of owners) {
+    const lane = bands[c.row][c.column]
+    if (
+      f.rect[0] < lane[0] - 1e-7 ||
+      f.rect[2] > lane[2] + 1e-7 ||
+      f.baseline < ys[c.row] ||
+      f.baseline > ys[c.row + 1] ||
+      !contains(table.cropRect, fontRect(f))
+    )
+      return
+  }
+  const painted = rules.map((r) => rulePaintBounds.get(r.join(',')))
+  if (
+    painted.some(
+      (p, n) =>
+        Math.abs((p[1] + p[3]) / 2 - rules[n][1]) > 0.02 ||
+        p[3] - p[1] > height * 0.1 ||
+        p[0] > rules[n][0] + 0.02 ||
+        p[2] < rules[n][2] - 0.02 ||
+        rules[n][0] - p[0] > height * 0.1 ||
+        p[2] - rules[n][2] > height * 0.1
+    )
+  )
+    return
+  const bounds = [
+    Math.min(...painted.map((p) => p[0])),
+    Math.min(...painted.map((p) => p[1])),
+    Math.max(...painted.map((p) => p[2])),
+    Math.max(...painted.map((p) => p[3]))
+  ]
+  if (
+    bounds[0] < table.cropRect[0] ||
+    bounds[1] < table.cropRect[1] ||
+    bounds[3] > table.cropRect[3] ||
+    bounds[2] <= table.cropRect[2] ||
+    bounds[2] - table.cropRect[2] > height * 2
+  )
+    return
+  if (
+    graphics.some(
+      (g) =>
+        ys.filter((y) => y >= g.rect[1] && y <= g.rect[3]).length !== 1 ||
+        g.rect[3] - g.rect[1] > height * 0.75 ||
+        g.rect[0] < bounds[0] - (pageSize[0] / 256) * 2 ||
+        g.rect[2] > bounds[2] + (pageSize[0] / 256) * 2 ||
+        g.rect[1] < ys[0] - (pageSize[1] / 256) * 2 ||
+        g.rect[3] > ys.at(-1) + (pageSize[1] / 256) * 2
+    )
+  )
+    return
+  const crossed = graphics.filter((g) => g.rect[2] > table.cropRect[2])
+  if (
+    crossed.length !== ys.length ||
+    !ys.every(
+      (y, n) =>
+        crossed.filter(
+          (g) =>
+            g.rect[1] <= y &&
+            g.rect[3] >= y &&
+            g.rect[0] >= bands[n].at(-1)[0] - (pageSize[0] / 256) * 2 &&
+            g.rect[0] <= bands[n].at(-1)[0] + pageSize[0] / 256 &&
+            g.rect[2] >= bands[n].at(-1)[2] &&
+            g.rect[2] <= bands[n].at(-1)[2] + (pageSize[0] / 256) * 2
+        ).length === 1
+    )
+  )
+    return
+  const crop = [...table.cropRect]
+  crop[2] = Math.max(bounds[2], ...crossed.map((g) => g.rect[2]))
+  if (
+    !contains([0, 0, ...pageSize], crop) ||
+    !graphics.every((g) => contains(crop, g.rect)) ||
+    !painted.every((p) => contains(crop, p))
+  )
+    return
+  const strip = [table.cropRect[2], table.cropRect[1], crop[2], table.cropRect[3]],
+    owned = new Set(owners.map((o) => o.font))
+  if (pageFontItems.some((f) => overlaps(fontRect(f), strip) && !owned.has(f))) return
+  if (pageItems.some((i) => i.text.trim() && overlaps(i.rect, strip))) return
+  return crop
+}
+
 // Recovered header glyphs can outlive an undersized detector crop. Require a
 // nearby native full-width border and complete source ownership before growing
 // the thumbnail; a paragraph or a short group underline is not that evidence.
-export function recoverOwnedTableCrop(table, rules, pageSize = [Infinity, Infinity]) {
+export function recoverOwnedTableCrop(
+  table,
+  rules,
+  pageSize = [Infinity, Infinity],
+  pageItems = [],
+  rulePaintBounds,
+  sourceGraphics = [],
+  pageFontItems = []
+) {
+  const completed = completeRepeatedHorizontalRuleCarrierCrop(
+    table,
+    rules,
+    pageSize,
+    pageItems,
+    rulePaintBounds,
+    sourceGraphics,
+    pageFontItems
+  )
+  if (completed) return completed
   const crop = [...table.cropRect]
   const source = table.cells.flatMap((cell) => cell.sourceRects)
   if (table.unassigned.length || !source.length) return crop
+  recoverClosedTableSides(crop, table, rules, pageItems, rulePaintBounds, pageSize)
   const left = Math.min(...source.map((r) => r[0])),
     top = Math.min(...source.map((r) => r[1])),
     right = Math.max(...source.map((r) => r[2]))
@@ -82,6 +373,88 @@ export function recoverOwnedTableCrop(table, rules, pageSize = [Infinity, Infini
   ].map((value, index) => Math.max(0, Math.min(value, pageSize[index % 2])))
 }
 
+// Segmented native outer borders can lie outside the detector even when every
+// glyph fits. Grow only the sides of one closed frame, with exact cell owners
+// and no foreign text in either newly included strip.
+function recoverClosedTableSides(crop, table, rules, items, rulePaintBounds, pageSize) {
+  const rects = table.cells.flatMap((c) => c.sourceRects),
+    source = new Set()
+  if (
+    !items.length ||
+    new Set(table.cells.map((c) => c.row)).size < 3 ||
+    new Set(table.cells.map((c) => c.column)).size < 2 ||
+    new Set(rects.map((r) => r.join(','))).size !== rects.length
+  )
+    return
+  for (const rect of rects) {
+    const matches = items.filter((i) => i.rect.join(',') === rect.join(','))
+    if (matches.length !== 1) return
+    const item = matches[0]
+    if (!item.horizontal || !Number.isFinite(item.baseline) || !(item.height > 0)) return
+    source.add(item)
+  }
+  const native = [...source],
+    height = native.map((i) => i.height).sort((a, b) => a - b)[native.length >> 1],
+    left = Math.min(...rects.map((r) => r[0])),
+    right = Math.max(...rects.map((r) => r[2])),
+    top = Math.min(...native.map((i) => i.baseline)),
+    bottom = Math.max(...native.map((i) => i.baseline)),
+    horizontal = joinHorizontalTableRules(rules, 0.01, 1),
+    vertical = rules.filter((r) => r[0] === r[2]),
+    sides = [...new Set(vertical.map((r) => r[0]))],
+    frames = []
+  for (const a of sides.filter((x) => x <= left && Math.abs(x - crop[0]) <= height * 2))
+    for (const b of sides.filter((x) => x >= right && Math.abs(x - crop[2]) <= height * 2)) {
+      const edges = horizontal.filter((r) => Math.abs(r[0] - a) < 1 && Math.abs(r[2] - b) < 1)
+      for (const opening of edges.filter((r) => r[1] <= top && top - r[1] <= height * 2))
+        for (const closing of edges.filter((r) => r[1] >= bottom && r[1] - bottom <= height * 2)) {
+          if (
+            opening[1] < crop[1] ||
+            closing[1] > crop[3] ||
+            rects.some((r) => r[1] < opening[1] - height * 0.5 || r[3] > closing[1] + 0.5) ||
+            classifyTableRuleEdge(vertical, 0, a, opening[1], closing[1]) !== 1 ||
+            classifyTableRuleEdge(vertical, 0, b, opening[1], closing[1]) !== 1
+          )
+            continue
+          frames.push([a, opening[1], b, closing[1]])
+        }
+    }
+  if (frames.length !== 1) return
+  const frame = frames[0],
+    paintedSide = (x, index) => {
+      const painted = vertical
+        .filter((r) => r[0] === x && r[1] >= frame[1] - 1 && r[3] <= frame[3] + 1)
+        .map((r) => rulePaintBounds instanceof Map && rulePaintBounds.get(r.join(',')))
+        .filter(
+          (p) =>
+            Array.isArray(p) &&
+            p.length === 4 &&
+            p.every(Number.isFinite) &&
+            Math.abs((p[0] + p[2]) / 2 - x) < 0.01 &&
+            p[2] > p[0] &&
+            p[2] - p[0] <= 2
+        )
+      return index === 0
+        ? Math.min(x - 0.5, ...painted.map((p) => p[0]))
+        : Math.max(x + 0.5, ...painted.map((p) => p[2]))
+    },
+    a = paintedSide(frame[0], 0),
+    b = paintedSide(frame[2], 2),
+    clearStrip = (start, end) =>
+      !items.some(
+        (i) =>
+          i.text.trim() &&
+          !source.has(i) &&
+          i.rect[0] < end &&
+          i.rect[2] > start &&
+          i.rect[1] < crop[3] &&
+          i.rect[3] > crop[1]
+      )
+  if ((a < crop[0] && !clearStrip(a, crop[0])) || (b > crop[2] && !clearStrip(crop[2], b))) return
+  if (a < crop[0]) crop[0] = Math.max(0, a)
+  if (b > crop[2]) crop[2] = Math.min(pageSize[0], b)
+}
+
 // Place the caption cut in native whitespace, preserving any top border.
 // Model row padding can start inside caption glyphs, so use owned source text.
 export function tableCaptionCropTop(table, captionBottom, rules) {
@@ -114,14 +487,25 @@ export function trimTableCaptionCrop({
   pageNumber,
   scale,
   pageItems = [],
+  pageFontItems = [],
+  noteOwnerRects = [],
   rulePaintBounds
 }) {
   // A caption sheet can be associated from another page; its coordinates
   // cannot delimit this table page's thumbnail.
   if (!caption || caption.page !== pageNumber) return
-  const frame = proveCaptionedTableRuleFrame(table, caption, rules, pageItems, scale)
+  const frame = proveCaptionedTableRuleFrame(
+    table,
+    caption,
+    rules,
+    pageItems,
+    scale,
+    false,
+    rulePaintBounds
+  )
   const footerFrame =
-    frame ?? proveCaptionedTableRuleFrame(table, caption, rules, pageItems, scale, true)
+    frame ??
+    proveCaptionedTableRuleFrame(table, caption, rules, pageItems, scale, true, rulePaintBounds)
   const original = [...cropRect]
   // Glyph outlines can extend beyond their font-metric boxes. Cut inside
   // the measured caption/content gap instead of hugging the caption.
@@ -136,7 +520,18 @@ export function trimTableCaptionCrop({
   if (openingFrame) {
     if (
       original[1] > Math.min(openingFrame.opening[1] - 0.5, openingPaint?.[1] ?? Infinity) &&
-      original[1] - openingFrame.opening[1] < openingFrame.height * 0.25
+      (original[1] - openingFrame.opening[1] < openingFrame.height * 0.25 ||
+        (openingFrame.secondOpening &&
+          openingPaint &&
+          nativeFrameRulePaint(
+            openingFrame.secondOpening,
+            openingFrame,
+            pageItems,
+            rulePaintBounds,
+            original
+          ) &&
+          original[1] >= openingFrame.secondOpening[1] &&
+          original[1] - openingFrame.secondOpening[1] < openingFrame.height * 0.25))
     )
       cropRect[1] = Math.min(
         cropRect[1],
@@ -193,6 +588,357 @@ export function trimTableCaptionCrop({
         cropRect[2] = Math.max(cropRect[2], right)
     }
   }
+  const visualFooter = nativeVisualFooterCrop({
+    cropRect: original,
+    table,
+    caption,
+    contentRect,
+    rules,
+    scale,
+    pageItems,
+    pageFontItems,
+    noteOwnerRects,
+    rulePaintBounds
+  })
+  if (visualFooter) cropRect.splice(0, 4, ...visualFooter)
+}
+
+// These two finite visual bands are not public note assignments. Require a
+// complete native body, unique existing cell/recipient ownership, and the
+// original font descent before changing a crop with unresolved footer text.
+function nativeVisualFooterCrop({
+  cropRect,
+  table,
+  caption,
+  contentRect,
+  rules,
+  scale,
+  pageItems,
+  pageFontItems,
+  noteOwnerRects,
+  rulePaintBounds
+}) {
+  const validRect = (r) =>
+      Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && r[0] < r[2] && r[1] < r[3],
+    sameRect = (a, b) => a.every((v, n) => v === b[n]),
+    contains = (a, b, tolerance = 0) =>
+      a[0] >= b[0] - tolerance &&
+      a[1] >= b[1] - tolerance &&
+      a[2] <= b[2] + tolerance &&
+      a[3] <= b[3] + tolerance,
+    overlaps = (a, b) => a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1],
+    literal = (s) => s.replace(/\s/gu, ''),
+    nativeItem = (i) =>
+      i &&
+      typeof i.text === 'string' &&
+      i.text.trim() &&
+      validRect(i.rect) &&
+      i.horizontal &&
+      Number.isFinite(i.baseline) &&
+      Number.isFinite(i.height) &&
+      i.height > 0,
+    width = table.grid?.[0]?.length,
+    owners = new Map(),
+    slots = new Set(),
+    rectKeys = new Set()
+  if (
+    !validRect(cropRect) ||
+    !validRect(contentRect) ||
+    !Number.isFinite(scale) ||
+    scale <= 0 ||
+    !pageFontItems.length ||
+    !noteOwnerRects.length ||
+    !(rulePaintBounds instanceof Map) ||
+    captionKind(caption.lines[0]) !== 'table' ||
+    !table.unassigned.length ||
+    !(width >= 2) ||
+    table.grid.length < 3 ||
+    table.cells.length !== width * table.grid.length
+  )
+    return
+  for (const cell of table.cells) {
+    const slot = `${cell.row},${cell.column}`,
+      tokens = cell.sourceTokens
+    if (
+      slots.has(slot) ||
+      cell.rowSpan !== 1 ||
+      cell.colSpan !== 1 ||
+      !Number.isInteger(cell.row) ||
+      !Number.isInteger(cell.column) ||
+      table.grid[cell.row]?.length !== width ||
+      !cell.text ||
+      table.grid[cell.row]?.[cell.column] !== cell.text ||
+      !tokens?.length ||
+      cell.sourceRects.length !== tokens.length ||
+      literal(tokens.map((i) => i.text).join('')) !== literal(cell.text)
+    )
+      return
+    slots.add(slot)
+    for (const rect of cell.sourceRects) {
+      if (!validRect(rect) || rectKeys.has(rect.join(','))) return
+      rectKeys.add(rect.join(','))
+      const parts = tokens.filter((i) => sameRect(i.rect, rect))
+      if (parts.length !== 1) return
+      const part = parts[0],
+        original = part.sourceToken ?? part,
+        matches = pageItems.filter(
+          (i) =>
+            sameRect(i.rect, original.rect) &&
+            i.text === original.text &&
+            i.baseline === original.baseline &&
+            i.height === original.height
+        )
+      if (
+        matches.length !== 1 ||
+        !nativeItem(matches[0]) ||
+        !contains(rect, matches[0].rect) ||
+        part.baseline !== matches[0].baseline ||
+        part.height !== matches[0].height
+      )
+        return
+      const old = owners.get(matches[0])
+      if (old && old.cell !== cell) return
+      owners.set(matches[0], { cell, parts: [...(old?.parts ?? []), part] })
+    }
+  }
+  for (const [parent, { parts }] of owners) {
+    const ordered = [...parts].sort((a, b) => a.rect[0] - b.rect[0])
+    if (
+      ordered[0].rect[0] !== parent.rect[0] ||
+      ordered.at(-1).rect[2] !== parent.rect[2] ||
+      literal(ordered.map((i) => i.text).join('')) !== literal(parent.text) ||
+      ordered.some((i, n) => n && i.rect[0] < ordered[n - 1].rect[2])
+    )
+      return
+  }
+  const source = [...owners.keys()],
+    bounds = union(source),
+    heights = source.map((i) => i.height).sort((a, b) => a - b),
+    height = heights[heights.length >> 1],
+    captionRect = caption.rect.map((v) => v * scale),
+    horizontal = joinHorizontalTableRules(rules, 0.01, 1).filter(
+      (r) =>
+        r[0] <= bounds[0] + 0.01 &&
+        r[2] >= bounds[2] - 0.01 &&
+        Math.abs(r[0] - bounds[0]) < height &&
+        Math.abs(r[2] - bounds[2]) < height * 2
+    ),
+    openings = horizontal.filter(
+      (r) => r[1] > captionRect[3] && r[1] < bounds[1] && bounds[1] - r[1] < height
+    ),
+    header = table.cells.filter((c) => c.row === 0).flatMap((c) => c.sourceTokens),
+    firstBody = table.cells.filter((c) => c.row === 1).flatMap((c) => c.sourceTokens),
+    dividers = horizontal.filter(
+      (r) =>
+        r[1] > Math.max(...header.map((i) => i.rect[3])) &&
+        r[1] < Math.min(...firstBody.map((i) => i.baseline))
+    ),
+    closings = horizontal
+      .filter((r) => r[1] > bounds[3] && r[1] - bounds[3] < height * 2)
+      .sort((a, b) => a[1] - b[1])
+  if (openings.length !== 1 || dividers.length !== 1 || !closings.length) return
+  const opening = openings[0],
+    closing = closings[0],
+    edges = [opening, dividers[0], closing],
+    frame = [opening[0], opening[1], opening[2], closing[1]],
+    paint = (rule) => {
+      const p = rulePaintBounds.get(rule.join(','))
+      return validRect(p) &&
+        p[0] <= rule[0] &&
+        p[2] >= rule[2] &&
+        Math.abs((p[1] + p[3]) / 2 - rule[1]) < 0.01 &&
+        p[3] - p[1] <= 2 &&
+        rule[0] - p[0] <= (p[3] - p[1]) / 2 + 0.01 &&
+        p[2] - rule[2] <= (p[3] - p[1]) / 2 + 0.01
+        ? p
+        : undefined
+    },
+    paints = edges.map(paint)
+  if (
+    edges.some((r) => Math.abs(r[0] - opening[0]) >= 0.01 || Math.abs(r[2] - opening[2]) >= 0.01) ||
+    horizontal.filter((r) => r[1] >= opening[1] && r[1] <= closing[1]).length !== 3 ||
+    rules.some(
+      (r) =>
+        r[0] === r[2] && r[0] > frame[0] && r[0] < frame[2] && r[1] < frame[3] && r[3] > frame[1]
+    ) ||
+    paints.some((p) => !p) ||
+    source.some((i) => !contains(i.rect, frame, 0.01)) ||
+    pageItems.some((i) => i.text.trim() && overlaps(i.rect, frame) && !owners.has(i))
+  )
+    return
+  const fontBottom = (items) => {
+      const fonts = items.map((item) =>
+        pageFontItems.filter((i) => i.text === item.text && sameRect(i.rect, item.rect))
+      )
+      if (
+        !items.length ||
+        fonts.some(
+          (m, n) =>
+            m.length !== 1 ||
+            m[0].baseline !== items[n].baseline ||
+            m[0].height !== items[n].height ||
+            !Number.isFinite(m[0].fontDescent) ||
+            m[0].fontDescent < -1 ||
+            m[0].fontDescent > 0
+        )
+      )
+        return
+      return Math.max(...fonts.map(([i]) => i.baseline - i.fontDescent * i.height))
+    },
+    captionItems = pageItems.filter((i) => nativeItem(i) && contains(i.rect, captionRect, 1e-7))
+  if (literal(captionItems.map((i) => i.text).join('')) !== literal(caption.lines.join(''))) return
+  const captionBottom = fontBottom(captionItems),
+    footer = pageItems
+      .filter(
+        (i) =>
+          i.text.trim() &&
+          !owners.has(i) &&
+          i.rect[0] < frame[2] &&
+          i.rect[2] > frame[0] &&
+          i.rect[1] >= closing[1] &&
+          i.rect[1] < closing[1] + height * 2.5
+      )
+      .sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])
+  if (
+    footer.length !== 2 ||
+    footer.some(
+      (i) =>
+        !nativeItem(i) ||
+        i.height !== footer[0].height ||
+        Math.abs(i.rect[3] - i.baseline) > 1e-9 ||
+        Math.abs(i.rect[3] - i.rect[1] - i.height) > 1e-9
+    )
+  )
+    return
+  const footerRect = union(footer),
+    footerBottom = fontBottom(footer),
+    fh = footer[0].height,
+    recipients = noteOwnerRects.filter(
+      (r) =>
+        validRect(r) &&
+        r[0] * scale <= footerRect[0] &&
+        r[2] * scale >= footerRect[2] &&
+        r[3] * scale <= footerRect[1] &&
+        footerRect[1] - r[3] * scale < height * 2
+    )
+  if (
+    !Number.isFinite(captionBottom) ||
+    !Number.isFinite(footerBottom) ||
+    footerRect[0] < frame[0] ||
+    footerRect[2] > frame[2] + 0.01 ||
+    recipients.length !== 1 ||
+    !sameRect(recipients[0], contentRect) ||
+    new Set(table.unassigned).size !== table.unassigned.length ||
+    table.unassigned.some((s) => footer.filter((i) => i.text === s).length !== 1)
+  )
+    return
+  const strip = [
+    Math.min(cropRect[0], frame[0]),
+    closing[1],
+    Math.max(cropRect[2], frame[2]),
+    footerBottom + 0.5
+  ]
+  if (
+    pageItems.some(
+      (i) => i.text.trim() && overlaps(i.rect, strip) && !footer.includes(i) && !owners.has(i)
+    )
+  )
+    return
+  let proposed
+  if (footer[0].baseline !== footer[1].baseline) {
+    const firstColumn = table.cells
+        .filter((c) => c.row > 0 && c.column === 0)
+        .flatMap((c) => c.sourceTokens),
+      leading = footer[1].baseline - footer[0].baseline,
+      next = pageItems
+        .filter(
+          (i) =>
+            i.text.trim() &&
+            i.rect[0] < frame[2] &&
+            i.rect[2] > frame[0] &&
+            i.rect[1] >= footerRect[3]
+        )
+        .sort((a, b) => a.rect[1] - b.rect[1])[0]
+    if (
+      firstColumn.some((i) => fh >= i.height * 0.85) ||
+      Math.abs(footer[0].rect[0] - footer[1].rect[0]) > 1e-7 ||
+      footer[0].rect[0] - frame[0] > fh ||
+      footer[0].rect[1] - closing[1] > fh * 0.1 ||
+      leading < fh ||
+      leading > fh * 1.3 ||
+      footer[1].rect[0] < cropRect[0] ||
+      footer[0].rect[2] > cropRect[2] ||
+      footer[0].rect[2] - footer[0].rect[0] < (frame[2] - frame[0]) * 0.8 ||
+      footer[1].rect[2] - footer[1].rect[0] >= (footer[0].rect[2] - footer[0].rect[0]) * 0.75 ||
+      !/[.!?]$/.test(footer[1].text) ||
+      !next ||
+      next.rect[1] - footerBottom < fh * 2 ||
+      next.height <= fh * 1.2 ||
+      captionBottom >= cropRect[1] ||
+      cropRect[3] < closing[1] ||
+      cropRect[3] >= footerBottom
+    )
+      return
+    proposed = [cropRect[0], cropRect[1], cropRect[2], footerBottom + 0.5]
+  } else {
+    const lower = horizontal.filter(
+        (r) =>
+          r[1] > footerRect[3] &&
+          r[1] - footerRect[3] < fh &&
+          Math.abs(r[0] - frame[0]) < 0.01 &&
+          Math.abs(r[2] - frame[2]) < 0.01
+      ),
+      top = (captionBottom + Math.min(bounds[1], paints[0][1])) / 2,
+      bottom = Math.max(closing[1] + 0.5, paints[2][3])
+    if (
+      !/^References:\s+\p{L}/u.test(footer[0].text) ||
+      footer[0].rect[0] !== frame[0] ||
+      footer[1].rect[0] <= footer[0].rect[2] ||
+      table.unassigned.length !== 2 ||
+      lower.length !== 1 ||
+      !paint(lower[0]) ||
+      top >= paints[0][1] ||
+      bottom >= footerRect[1] ||
+      top < cropRect[1] ||
+      bottom >= cropRect[3] ||
+      paints[0][2] - cropRect[2] > height * 2
+    )
+      return
+    proposed = [cropRect[0], top, Math.max(cropRect[2], paints[0][2], paints[2][2]), bottom]
+    if (
+      pageItems.some(
+        (i) =>
+          i.text.trim() &&
+          !owners.has(i) &&
+          overlaps(i.rect, [cropRect[2], proposed[1], proposed[2], proposed[3]])
+      )
+    )
+      return
+  }
+  const bodyBottom = fontBottom(source)
+  if (
+    !Number.isFinite(bodyBottom) ||
+    bodyBottom > proposed[3] ||
+    !source.every((i) => contains(i.rect, proposed))
+  )
+    return
+  // Reject foreign glyphs in crop padding as well as the ruled body. Use the
+  // original descent when available, so an adjacent em box cannot hide ink.
+  if (
+    pageItems.some((i) => {
+      if (!i.text.trim() || owners.has(i) || footer.includes(i) || captionItems.includes(i))
+        return false
+      const bottom = fontBottom([i])
+      return overlaps(
+        Number.isFinite(bottom)
+          ? [i.rect[0], i.rect[1], i.rect[2], Math.max(i.rect[3], bottom)]
+          : i.rect,
+        proposed
+      )
+    })
+  )
+    return
+  return proposed
 }
 
 // The operator collector supplies painted bounds without changing rule centers.
@@ -237,7 +983,8 @@ function proveCaptionedTableRuleFrame(
   rules,
   items,
   scale,
-  strictCompleteRecords = false
+  strictCompleteRecords = false,
+  rulePaintBounds
 ) {
   if (
     !items.length ||
@@ -447,8 +1194,14 @@ function proveCaptionedTableRuleFrame(
       (r) =>
         r[1] > bottomInk && r[1] - bottomInk < height * 2 && Math.abs(r[1] - crop[3]) < height * 2
     )
-  if (openings.length !== 1 || closings.length !== 1) return
-  const opening = openings[0],
+  const sortedOpenings = [...openings].sort((a, b) => a[1] - b[1]),
+    doubleOpening =
+      sortedOpenings.length === 2 &&
+      sortedOpenings[1][1] - sortedOpenings[0][1] < height * 0.25 &&
+      Math.abs(sortedOpenings[0][0] - sortedOpenings[1][0]) < 0.01 &&
+      Math.abs(sortedOpenings[0][2] - sortedOpenings[1][2]) < 0.01
+  if ((!doubleOpening && openings.length !== 1) || closings.length !== 1) return
+  const opening = sortedOpenings[0],
     closing = closings[0]
   if (Math.abs(opening[0] - closing[0]) > 0.5 || Math.abs(opening[2] - closing[2]) > 0.5) return
   const header = cells
@@ -504,7 +1257,7 @@ function proveCaptionedTableRuleFrame(
       captionRect[1] - closing[1] < height * 4 &&
       parts.every((i) => Number.isFinite(i.baseline) && i.baseline > closing[1] + height * 0.5)
   if (!above && !below) return
-  if (strictCompleteRecords && !below) return
+  if (strictCompleteRecords && !below && !doubleOpening) return
   const unique = new Set(source),
     captionSource = new Set(parts)
   const frame = [opening[0], opening[1], opening[2], closing[1]]
@@ -528,7 +1281,16 @@ function proveCaptionedTableRuleFrame(
     )
   )
     return
-  return { opening, closing, height, source: unique, captionSource }
+  const proved = { opening, closing, height, source: unique, captionSource }
+  if (doubleOpening) {
+    if (
+      !nativeFrameRulePaint(opening, proved, items, rulePaintBounds, crop) ||
+      !nativeFrameRulePaint(sortedOpenings[1], proved, items, rulePaintBounds, crop)
+    )
+      return
+    proved.secondOpening = sortedOpenings[1]
+  }
+  return proved
 }
 
 // Notes are assigned before the final grid excludes their source tokens. Use

@@ -380,7 +380,9 @@
       "src/main/literature/pdf-translation/reader-ownership.test.ts",
       "src/main/literature/pdf-translation/local.test.ts",
       "src/main/local-models/ipc.test.ts",
-      "src/main/literature/pdf-translation/pdf-cache.test.ts"
+      "src/main/literature/pdf-translation/pdf-cache.test.ts",
+      "src/main/session-plan/session-plan-turn-outcome.test.ts",
+      "src/main/notebook/runtime-repair.windows.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

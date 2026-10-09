@@ -19,6 +19,136 @@ import { ApplicationCallerLeaseRegistry } from '../../caller-lifecycle'
 
 it.each([
   'case',
+  'unchanged',
+  'wrong-case',
+  'semantic-change',
+  'missing-items',
+  'resource-matrix',
+  'invocation-matrix',
+  'extra-param',
+  'extra-owned',
+  'body-translation'
+])('verifies nested Form ActualText without changing its original paint: %s', async (kind) => {
+  const pdf = await PDFDocument.create(),
+    font = await pdf.embedFont(StandardFonts.Helvetica),
+    page = pdf.addPage([300, 200]),
+    semantic = kind === 'semantic-change' ? 'X' : 'R',
+    form = pdf.context.register(
+      pdf.context.flateStream(
+        `BT /F1 10 Tf 1 0 0 1 40 150 Tm (Sample ) Tj ` +
+          `/Span << /ActualText <FEFF00${semantic.charCodeAt(0).toString(16)}> ${kind === 'extra-param' ? '/Other /Value' : ''} >> BDC ` +
+          `(r) Tj EMC (ecord) Tj ${kind === 'extra-owned' ? '( EXTRA) Tj' : ''} ET`,
+        {
+          Type: 'XObject',
+          Subtype: 'Form',
+          BBox: [30, 135, 150, 170],
+          Resources: { Font: { F1: font.ref } },
+          ...(kind === 'resource-matrix' ? { Matrix: [1, 0, 0, 1, 0, -1] } : {})
+        }
+      )
+    )
+  const key = page.node.newXObject('Label', form)
+  if (kind === 'invocation-matrix')
+    page.pushOperators(
+      PDFOperator.of(
+        PDFOperatorNames.ConcatTransformationMatrix,
+        [1, 0, 0, 1, 0, -1].map(PDFNumber.of)
+      )
+    )
+  page.pushOperators(PDFOperator.of(PDFOperatorNames.DrawObject, [key]))
+  page.drawText('Neighbor 17', { font, x: 40, y: 110, size: 10 })
+  const data = await pdf.save(),
+    registry = new ApplicationCallerLeaseRegistry(),
+    caller = registry.acquire({ leaseId: 'nested-actual-text', surface: 'electron' }),
+    source = kind === 'wrong-case' ? 'Sample RECORD' : 'Sample record'
+  try {
+    const output = new PdfTranslationWriter(() =>
+      resolve('resources/pdf-translation/worker.mjs')
+    ).generateDetailed(
+      {
+        id: 'nested-actual-text',
+        data,
+        pages: [{ width: 300, height: 200 }],
+        preserveUnsupported: true,
+        units: [
+          ...(kind === 'body-translation'
+            ? [
+                {
+                  source: 'Neighbor 17',
+                  translation: '邻居 17',
+                  fragments: [
+                    {
+                      pageNumber: 1,
+                      rect: { x: 39 / 300, y: 78 / 200, width: 100 / 300, height: 16 / 200 }
+                    }
+                  ]
+                }
+              ]
+            : []),
+          {
+            source,
+            translation: kind === 'unchanged' ? source : '样本记录',
+            fragments: [
+              {
+                pageNumber: 1,
+                rect: { x: 39 / 300, y: 38 / 200, width: 100 / 300, height: 16 / 200 },
+                ...(kind === 'missing-items'
+                  ? {}
+                  : {
+                      items: [
+                        { index: 0, text: 'Sample ' },
+                        { index: 1, text: 'r' },
+                        { index: 2, text: 'ecord' }
+                      ]
+                    })
+              }
+            ]
+          }
+        ]
+      },
+      caller.lease
+    )
+    if (!['case', 'unchanged', 'resource-matrix', 'body-translation'].includes(kind)) {
+      await expect(output).rejects.toMatchObject({
+        failure: { code: 'source-mismatch', pageNumber: 1 }
+      })
+      return
+    }
+    const result = (await output)!
+    if (kind === 'body-translation') {
+      const task = getDocument({ data: result.data.slice(), useSystemFonts: true })
+      try {
+        const text = (await (await (await task.promise).getPage(1)).getTextContent()).items
+          .flatMap((item) => ('str' in item ? [item.str] : []))
+          .join('')
+        expect(text).toContain('Sample record')
+        expect(text).toContain('邻居 17')
+        expect(text).not.toContain('Neighbor 17')
+      } finally {
+        await task.destroy()
+      }
+    } else expect(Buffer.from(result.data).equals(Buffer.from(data))).toBe(true)
+    expect(result.layoutFailures).toEqual(
+      kind === 'unchanged'
+        ? []
+        : [
+            {
+              unitIndex: kind === 'body-translation' ? 1 : 0,
+              code: 'unsupported-layout',
+              phase: 'planning',
+              pageNumbers: [1],
+              fragmentCount: 1
+            }
+          ]
+    )
+  } finally {
+    caller.release()
+    registry.dispose()
+  }
+})
+
+it.each([
+  'case',
   'kerned',
   'ascii-mark',
   'semantic-change',

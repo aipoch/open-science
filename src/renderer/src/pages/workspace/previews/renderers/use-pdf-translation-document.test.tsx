@@ -548,6 +548,32 @@ describe('translated PDF ownership', () => {
     expect(hook.result.current.isCurrent).toBe(true)
   })
 
+  it.each([1, 2])('keeps original bounds for unchanged labels with %i fragments', async (count) => {
+    const f = fixture()
+    const fragments = Array.from({ length: count }, (_, index) => ({
+      pageNumber: 1,
+      rect: { x: 0.1, y: 0.1 + index * 0.01, width: 0.04, height: 0.01 },
+      items: [{ index, text: 'cell' }]
+    }))
+    const source = createPdfTranslationSource({
+      ...f.results.source,
+      units: [{ ...f.results.source.units[0], fragments }]
+    })
+    const results = {
+      ...f.results,
+      source,
+      units: [{ id: 'one', translationSource: 'cell', translation: 'cell' }]
+    }
+    const generatePdf = vi.fn(async (_request: PdfTranslationPdfRequest) => {
+      void _request
+      return new Uint8Array([4, 5])
+    })
+    vi.stubGlobal('api', { pdfTranslation: { generatePdf, cancelPdf: vi.fn(async () => {}) } })
+    renderHook(() => usePdfTranslationDocument(f.original, results, undefined, 'reader:0'))
+    await waitFor(() => expect(generatePdf).toHaveBeenCalledOnce())
+    expect(generatePdf.mock.calls[0][0].units[0].fragments).toEqual(fragments)
+  })
+
   it('renders the completed page while preserving a skipped block as original text', async () => {
     const f = fixture()
     const source = createPdfTranslationSource({
@@ -5647,7 +5673,7 @@ it('keeps all accepted text marked unfilled when first PDF generation fails', as
   expect(f.results.units[0].translation).toBe('细胞')
 })
 
-it.each([false, true, 'automatic'] as const)(
+it.each([false, true, 'automatic', 'automatic-cache'] as const)(
   'retries one retained paragraph page with new pending results: %s',
   async (pendingResults) => {
     const fixtures = Array.from({ length: 3 }, () => fixture())
@@ -5687,10 +5713,19 @@ it.each([false, true, 'automatic'] as const)(
       promise: Promise.resolve(target),
       destroy: vi.fn(async () => {})
     })
-    const generatePdf = vi.fn(async (input: PdfTranslationPdfRequest) => {
-      void input
-      return new Uint8Array([4, 5])
-    })
+    const failure = {
+      code: 'annotations' as const,
+      phase: 'planning' as const,
+      pageNumbers: [1],
+      fragmentCount: 1
+    }
+    const generatePdf = vi.fn(async (input: PdfTranslationPdfRequest) => ({
+      data: new Uint8Array([4, 5]),
+      layoutFailures: input.incremental ? [] : [{ unitIndex: 0, ...failure }],
+      ...(pendingResults === 'automatic-cache' && input.cache
+        ? { cacheToken: '00000000-0000-4000-8000-000000000001' }
+        : {})
+    }))
     const recordLayout = vi.fn(async () => {})
     vi.stubGlobal('api', {
       pdfTranslation: { generatePdf, recordLayout, cancelPdf: vi.fn(async () => {}) }
@@ -5709,7 +5744,7 @@ it.each([false, true, 'automatic'] as const)(
     )
     fixtures[1].targetPage.getTextContent.mockResolvedValue({ items: [fixtures[1].item] })
     if (pendingResults) hook.rerender({ current: results })
-    if (pendingResults === 'automatic') {
+    if (pendingResults === 'automatic' || pendingResults === 'automatic-cache') {
       await waitFor(() => expect(generatePdf).toHaveBeenCalledTimes(2))
       await waitFor(() => expect(hook.result.current.state.status).toBe('ready'))
       expect(generatePdf.mock.calls[1][0]).toMatchObject({ incremental: { pageNumbers: [3] } })
@@ -5717,9 +5752,18 @@ it.each([false, true, 'automatic'] as const)(
       // so their first manual retry must remain available.
       expect(hook.result.current.unchangedLayoutUnitIds).toEqual([])
       expect(hook.result.current.unfilledUnitIds).toEqual(['page-1', 'page-2', 'page-3'])
+      expect(hook.result.current.layoutFailures['page-1']).toEqual(failure)
+      if (pendingResults === 'automatic-cache') {
+        expect(recordLayout).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            pdfCacheToken: '00000000-0000-4000-8000-000000000001',
+            units: [expect.objectContaining({ sourceIndex: 2 })]
+          })
+        )
+      }
     }
     act(() => hook.result.current.refresh('page-2'))
-    const expectedCalls = pendingResults === 'automatic' ? 3 : 2
+    const expectedCalls = typeof pendingResults === 'string' ? 3 : 2
     await waitFor(() => expect(generatePdf).toHaveBeenCalledTimes(expectedCalls))
     await waitFor(() => expect(hook.result.current.state.status).toBe('ready'))
     expect(generatePdf.mock.calls[expectedCalls - 1][0]).toMatchObject({
@@ -5736,7 +5780,7 @@ it.each([false, true, 'automatic'] as const)(
             : [expect.objectContaining({ sourceIndex: 1 })]
       })
     )
-    expect(hook.result.current.layoutFailures['page-1']).toBeDefined()
+    expect(hook.result.current.layoutFailures['page-1']).toEqual(failure)
     expect(hook.result.current.layoutFailures['page-2']).toBeUndefined()
     expect(hook.result.current.unfilledUnitIds).toEqual(['page-1', 'page-3'])
     expect(hook.result.current.unchangedLayoutUnitIds).toEqual([])

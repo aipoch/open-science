@@ -682,7 +682,10 @@ describe('Compute service architecture', () => {
       'src/renderer/src/lib/compute/job-analysis-trigger.test.ts',
       'src/renderer/src/lib/compute/useJobAnalysisEffect.render.test.tsx',
       'src/renderer/src/lib/compute/useSessionJobHydration.render.test.tsx',
-      'src/main/compute/compute-submission-evidence-recovery.integration.test.ts'
+      'src/main/compute/compute-submission-evidence-recovery.integration.test.ts',
+      'resources/compute-askpass-win.cjs',
+      'resources/compute-askpass.cjs',
+      'resources/compute-askpass.sh'
     ])
     expect(computeService.interfacePaths).toEqual([
       'src/main/compute/connection-broker.ts',
@@ -1139,7 +1142,8 @@ describe('Compute service architecture', () => {
       'src/main/session-persistence/attention-projection.test.ts',
       'src/main/acp/approved-handoff-outcome.integration.test.ts',
       'src/main/acp/approved-handoff-outcome.test.ts',
-      'src/main/literature/pdf-translation/checkpoints.test.ts'
+      'src/main/literature/pdf-translation/checkpoints.test.ts',
+      'src/main/session-plan/session-plan-turn-outcome.test.ts'
     ])
   })
 

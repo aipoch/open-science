@@ -698,7 +698,12 @@ function partialPdfSnapshot(results: PdfTranslationResults): Readonly<{
     readyPages,
     units: sourceUnits.map((unit) => ({
       source: unit.source,
-      fragments: pdfTranslationLayoutFragments(unit, results.source),
+      // Retained source has no output capacity to reserve. Enlarging its region
+      // can include rotated figure labels excluded from prose extraction.
+      fragments:
+        !translations.has(unit.id) || translations.get(unit.id)!.translation === unit.source
+          ? unit.fragments
+          : pdfTranslationLayoutFragments(unit, results.source),
       translation: translations.get(unit.id)?.translation ?? unit.source
     }))
   }
@@ -3460,7 +3465,7 @@ export function usePdfTranslationDocument(
           generatedUnits.flatMap(({ unit, sourceIndex, snapshot }) => {
             if (
               incremental &&
-              !cacheToken &&
+              (!cacheToken || retainedUnitIds.includes(unit.id)) &&
               !unit.fragments.some((fragment) =>
                 incremental?.pageNumbers.includes(fragment.pageNumber)
               )

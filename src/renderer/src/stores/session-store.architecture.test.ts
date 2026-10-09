@@ -1404,7 +1404,8 @@ describe('Session Store architecture', () => {
           'src/renderer/src/pages/workspace/ResearchWorkspaceHeader.test.tsx',
           'src/renderer/src/pages/workspace/research-navigation-model.test.ts',
           'src/renderer/src/pages/workspace/previews/renderers/PdfTranslationControls.test.tsx',
-          'src/renderer/src/pages/workspace/previews/renderers/PdfTranslationEditions.test.tsx'
+          'src/renderer/src/pages/workspace/previews/renderers/PdfTranslationEditions.test.tsx',
+          'src/renderer/src/pages/workspace/session-plan/session-plan-resume.test.tsx'
         ]
       },
       capabilityOverlays: ['renderer_state'],

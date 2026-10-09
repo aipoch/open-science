@@ -157,6 +157,7 @@ test('keeps the failed turn and Operation Error while a later turn succeeds', as
   await historical.locator('summary').click()
   await expect(page.getByText(FAILURE, { exact: false })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Report this error', exact: true })).toBeVisible()
+  await expect(page.locator('[data-slot="session-recovery-notice"]')).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Resume session', exact: true })).toHaveCount(0)
   const laterPromptId = completed.messages.find(
     (message) => message.role === 'user' && message.content === successPrompt
@@ -373,12 +374,16 @@ for (const latestKind of ['cancelled', 'interrupted', 'legacy-failed'] as const)
         preparing.promptPreparation?.previousState.resumeRecovery?.promptMessageId
       ).toBeUndefined()
       expect(preparing.promptPreparation?.noticeBaseline?.promptMessageId).toBe(latestId)
-      await expect(
-        page.locator(`[data-slot="turn-outcome-notice"][data-prompt-message-id="${latestId}"]`)
-      ).toBeVisible()
       if (latestKind === 'legacy-failed') {
+        await expect(
+          page.locator(`[data-slot="turn-outcome-notice"][data-prompt-message-id="${latestId}"]`)
+        ).toBeVisible()
         await expect(page.getByText(FAILURE, { exact: false })).toBeVisible()
+        await expect(page.locator('[data-slot="session-recovery-notice"]')).toHaveCount(0)
       } else {
+        await expect(page.locator('[data-slot="turn-outcome-notice"]')).toHaveCount(0)
+        await expect(page.locator('[data-slot="session-recovery-notice"]')).toHaveCount(1)
+        await expect(page.locator('[data-slot="session-recovery-notice"]')).toBeVisible()
         await expect(
           page.getByRole('button', { name: 'Resume session', exact: true })
         ).toBeVisible()
@@ -394,6 +399,7 @@ for (const latestKind of ['cancelled', 'interrupted', 'legacy-failed'] as const)
       .poll(async () => outcomeFor(await sessionForPrompt(page, editedPrompt), editedPrompt))
       .toMatchObject({ kind: 'completed' })
     await expect(page.locator('[data-slot="turn-outcome-notice"]')).toHaveCount(0)
+    await expect(page.locator('[data-slot="session-recovery-notice"]')).toHaveCount(0)
     await expect(page.getByRole('button', { name: 'Resume session', exact: true })).toHaveCount(0)
   })
 
@@ -498,6 +504,8 @@ test('cancelled Resume completes the original turn without an Attention dot', as
     .toMatchObject({ kind: 'cancelled', recovery: 'resume' })
   const cancelled = await sessionForPrompt(page, HOLD_PROMPT)
   const promptId = cancelled.messages.find((message) => message.role === 'user')!.id
+  await expect(page.locator('[data-slot="session-recovery-notice"]')).toHaveCount(1)
+  await expect(page.locator('[data-slot="session-recovery-notice"]')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Resume session', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Report this error', exact: true })).toHaveCount(0)
   await assertNoAttention(page, cancelled.id)
@@ -510,6 +518,7 @@ test('cancelled Resume completes the original turn without an Attention dot', as
   const completed = await sessionForPrompt(page, HOLD_PROMPT)
   expect(completed.messages.filter((message) => message.role === 'user')).toHaveLength(1)
   expect(completed.messages.find((message) => message.role === 'user')?.id).toBe(promptId)
+  await expect(page.locator('[data-slot="session-recovery-notice"]')).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Resume session', exact: true })).toHaveCount(0)
   await assertNoAttention(page, completed.id)
   await evidence(page, testInfo, 'cancelled-turn-resumed-completed', completed)
@@ -559,6 +568,8 @@ test('cancelled Resume completes the original turn without an Attention dot', as
     expect(preparing.promptPreparation?.previousState.resumeRecovery?.promptMessageId).toBe(
       historicalPromptId
     )
+    await expect(page.locator('[data-slot="session-recovery-notice"]')).toHaveCount(1)
+    await expect(page.locator('[data-slot="session-recovery-notice"]')).toBeVisible()
     await expect(page.getByRole('button', { name: 'Resume session', exact: true })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Resume session', exact: true })).toBeDisabled()
     await evidence(page, testInfo, 'cancelled-new-prompt-keeps-disabled-resume', preparing)
@@ -577,7 +588,10 @@ test('cancelled Resume completes the original turn without an Attention dot', as
       `[data-slot="historical-turn-outcome"][data-prompt-message-id="${historicalPromptId}"]`
     )
   ).toHaveCount(0)
-  await expect(page.getByText('This turn was interrupted.', { exact: true })).toHaveCount(0)
+  await expect(
+    page.getByText('This turn was interrupted. Resume to continue.', { exact: true })
+  ).toHaveCount(0)
+  await expect(page.locator('[data-slot="session-recovery-notice"]')).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Resume session', exact: true })).toHaveCount(0)
   await evidence(page, testInfo, 'historical-cancellation-has-no-marker', afterAdmission)
 })
@@ -613,6 +627,8 @@ test('interrupted recovery keeps exact Resume during a new prompt preparation', 
     expect(preparing.promptPreparation?.previousState.resumeRecovery?.promptMessageId).toBe(
       recoveryId
     )
+    await expect(page.locator('[data-slot="session-recovery-notice"]')).toHaveCount(1)
+    await expect(page.locator('[data-slot="session-recovery-notice"]')).toBeVisible()
     await expect(page.getByRole('button', { name: 'Resume session', exact: true })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Resume session', exact: true })).toBeDisabled()
     await evidence(page, testInfo, 'interrupted-new-prompt-keeps-disabled-resume', preparing)
@@ -622,12 +638,15 @@ test('interrupted recovery keeps exact Resume during a new prompt preparation', 
   await expect
     .poll(async () => outcomeFor(await sessionForPrompt(page, followup), followup))
     .toMatchObject({ kind: 'completed' })
+  await expect(page.locator('[data-slot="session-recovery-notice"]')).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Resume session', exact: true })).toHaveCount(0)
   await expect(page.locator('[data-slot="historical-turn-outcome"]')).toHaveCount(0)
   expect(outcomeFor(await sessionForPrompt(page, followup), prompt)).toMatchObject({
     kind: 'interrupted'
   })
-  await expect(page.getByText('This turn was interrupted.', { exact: true })).toHaveCount(0)
+  await expect(
+    page.getByText('This turn was interrupted. Resume to continue.', { exact: true })
+  ).toHaveCount(0)
   await expect(
     page.getByText('Session was interrupted before the app closed.', { exact: true })
   ).toHaveCount(0)
@@ -696,6 +715,7 @@ for (const recovery of ['global Retry', 'Fork'] as const)
       await expect(
         page.getByRole('button', { name: 'Report this error', exact: true })
       ).toHaveCount(0)
+      await expect(page.locator('[data-slot="session-recovery-notice"]')).toHaveCount(0)
       await expect(page.getByRole('button', { name: 'Resume session', exact: true })).toHaveCount(0)
       await assertNoAttention(page, live.id)
       await expect(page.getByRole('button', { name: 'Cancel run', exact: true })).toHaveCount(0)
@@ -873,6 +893,7 @@ test('Artifact publication Retry completes the same turn and Version exactly onc
   await expect(
     page.getByRole('button', { name: 'Retry Artifact publication', exact: true })
   ).toHaveCount(0)
+  await expect(page.locator('[data-slot="session-recovery-notice"]')).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Resume session', exact: true })).toHaveCount(0)
   await assertNoAttention(page, completed.id)
   await expect(page.locator('[data-slot="assistant-message-footer"] time')).toHaveCount(2)
@@ -927,6 +948,7 @@ test('keeps a prepared message after a real pre-admission crash without inventin
     expect(restored.status).toBe('idle')
     expect(restored.promptPreparation).toBeUndefined()
     await assertNoAttention(page, restored.id)
+    await expect(page.locator('[data-slot="session-recovery-notice"]')).toHaveCount(0)
     await expect(page.getByRole('button', { name: 'Resume session', exact: true })).toHaveCount(0)
     await evidence(page, testInfo, 'unadmitted-message-preserved-after-crash', restored)
     const followup = 'Summarize the deterministic fixture.'

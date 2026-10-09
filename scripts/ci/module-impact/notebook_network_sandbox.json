@@ -70,7 +70,11 @@
     "packages/notebook-network-sandbox/vendor/windows-runtime/powershell-build-metadata.patch",
     "packages/notebook-network-sandbox/vendor/windows-runtime/README.md",
     "packages/notebook-network-sandbox/vendor/windows-runtime/sources.json",
-    "packages/notebook-network-sandbox/vendor/windows-runtime/npm/prepare.mjs"
+    "packages/notebook-network-sandbox/vendor/windows-runtime/npm/prepare.mjs",
+    "scripts/windows-installer-smoke.test.ts",
+    "scripts/check-windows-notebook-runtime.test.ts",
+    "scripts/windows-runtime-cdn.test.ts",
+    "scripts/windows-release-workflows.test.ts"
   ],
   "interfacePaths": [
     "packages/notebook-network-sandbox/src/index.ts",
@@ -616,7 +620,9 @@
       "src/main/literature/pdf-translation/local.test.ts",
       "src/main/local-models/ipc.test.ts",
       "src/main/literature/pdf-translation/pdf-cache.test.ts",
-      "src/main/notebook/code-risk-admission.test.ts"
+      "src/main/notebook/code-risk-admission.test.ts",
+      "src/main/session-plan/session-plan-turn-outcome.test.ts",
+      "src/main/notebook/runtime-repair.windows.integration.test.ts"
     ]
   },
   "capabilityOverlays": [],

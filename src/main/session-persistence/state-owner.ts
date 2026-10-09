@@ -561,29 +561,11 @@ class SessionPersistenceStateOwner {
       )
     )
 
-    let durableSession: PersistedChatSession = {
+    const durableSession: PersistedChatSession = {
       ...session,
       ...(sessionStatus ? { status: sessionStatus } : {}),
       runtimeContext,
       updatedAt: Math.max(session.updatedAt + 1, Date.now())
-    }
-    const rejectedPlan = runtimeContext.plan
-    if (
-      rejectedPlan?.approval === 'rejected' &&
-      current.plan?.approval !== 'rejected' &&
-      rejectedPlan.artifactVersionId === current.plan?.artifactVersionId &&
-      rejectedPlan.originatingPromptMessageId
-    ) {
-      const outcome: TurnOutcome = {
-        kind: 'cancelled',
-        settledAt: durableSession.updatedAt,
-        recovery: 'resume'
-      }
-      durableSession = {
-        ...setTurnOutcome(durableSession, rejectedPlan.originatingPromptMessageId, outcome),
-        ...legacySessionStateForOutcome(outcome, rejectedPlan.originatingPromptMessageId),
-        activeRun: undefined
-      }
     }
     if (planHistoryProjections) durableSession.planHistoryProjections = planHistoryProjections
     else delete durableSession.planHistoryProjections

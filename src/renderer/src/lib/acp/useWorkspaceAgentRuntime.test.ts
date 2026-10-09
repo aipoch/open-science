@@ -10699,38 +10699,58 @@ describe('recovering from a request-size overflow', () => {
     )
 
     it('retries the same unanswered message and branch even with a failed reply', async () => {
-      seedOverflowedConversation()
-      const original = useSessionStore.getState().sessions[0]
-      const question = original.messages.at(-1)!
-      const runtime = {
-        state: createSnapshot(['session-1']),
-        createSession: vi.fn(),
-        resumeSession: vi.fn(),
-        resetSessionContext: vi.fn().mockResolvedValue({ sessionId: 'session-1' }),
-        sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+      const now = vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000)
+      try {
+        seedOverflowedConversation()
+        const original = useSessionStore.getState().sessions[0]
+        const question = original.messages.at(-1)!
+        const runtime = {
+          state: createSnapshot(['session-1']),
+          createSession: vi.fn(),
+          resumeSession: vi.fn(),
+          resetSessionContext: vi.fn().mockResolvedValue({ sessionId: 'session-1' }),
+          sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+        }
+        // An error response still belongs to the unanswered turn and must not suppress its retry.
+        useSessionStore.getState().appendAgentMessageChunk({
+          sessionId: 'session-1',
+          streamId: 'failed-reply',
+          eventId: 'failed-event',
+          content: 'Partial reply'
+        })
+        useSessionStore.getState().failRun('session-1', 'Context window exceeded')
+        const graphBeforeRetry = useSessionStore.getState().sessions[0].conversationGraph
+        now.mockReturnValue(1_700_000_001_000)
+        expect(await recoverContextOverflowWorkspaceSession(runtime, 'session-1')).toBe(true)
+        await flushRuntimeTasks()
+        const session = useSessionStore.getState().sessions[0]
+        expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+        expect(session.messages.filter((message) => message.role === 'user').at(-1)?.id).toBe(
+          question.id
+        )
+        expect(session.conversationGraph?.activeFrameId).toBe(
+          original.conversationGraph?.activeFrameId
+        )
+        // Retrying refreshes branch activity metadata without forking or truncating its path.
+        expect(session.conversationGraph?.branches).toEqual(
+          graphBeforeRetry?.branches.map((branch) => ({
+            ...branch,
+            updatedAt: 1_700_000_001_000
+          }))
+        )
+        expect(
+          session.conversationGraph?.frames.map(({ id, activeBranchId }) => ({
+            id,
+            activeBranchId
+          }))
+        ).toEqual(
+          graphBeforeRetry?.frames.map(({ id, activeBranchId }) => ({ id, activeBranchId }))
+        )
+        expect(session.activeRun?.promptMessageId).toBe(question.id)
+        expect(session.compacting).not.toBe(true)
+      } finally {
+        now.mockRestore()
       }
-      // An error response still belongs to the unanswered turn and must not suppress its retry.
-      useSessionStore.getState().appendAgentMessageChunk({
-        sessionId: 'session-1',
-        streamId: 'failed-reply',
-        eventId: 'failed-event',
-        content: 'Partial reply'
-      })
-      useSessionStore.getState().failRun('session-1', 'Context window exceeded')
-      const graphBeforeRetry = useSessionStore.getState().sessions[0].conversationGraph
-      expect(await recoverContextOverflowWorkspaceSession(runtime, 'session-1')).toBe(true)
-      await flushRuntimeTasks()
-      const session = useSessionStore.getState().sessions[0]
-      expect(runtime.sendPrompt).toHaveBeenCalledOnce()
-      expect(session.messages.filter((message) => message.role === 'user').at(-1)?.id).toBe(
-        question.id
-      )
-      expect(session.conversationGraph?.activeFrameId).toBe(
-        original.conversationGraph?.activeFrameId
-      )
-      expect(session.conversationGraph?.branches).toEqual(graphBeforeRetry?.branches)
-      expect(session.activeRun?.promptMessageId).toBe(question.id)
-      expect(session.compacting).not.toBe(true)
     })
 
     it.each(['replay', 'dispatch'] as const)(

@@ -194,6 +194,7 @@ const RiskReceipt = (): React.JSX.Element => {
   const [runExpanded, setRunExpanded] = useState(true)
   const activity: ToolActivity = {
     id: 'app-approval:receipt',
+    appOwned: true,
     kind: 'tool',
     title: riskRequest.title,
     providerToolName: 'Open-Science',

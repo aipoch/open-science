@@ -30,6 +30,187 @@ const source = (bands: number[][]): object => ({
   }
 })
 
+type ClosedGridFont = {
+  text: string
+  rect: number[]
+  height: number
+  baseline: number
+  horizontal: boolean
+}
+type ClosedGridCaption = { page: number; lines: string[]; rect: number[] }
+
+const closedTwoLeafGrid = (
+  rows = 4,
+  offset = 0
+): {
+  items: ClosedGridFont[]
+  rules: number[][]
+  paint: Map<string, number[]>
+  captions: ClosedGridCaption[]
+  grid: string[][]
+  xs: number[]
+  ys: number[]
+  crop: number[]
+} => {
+  const xs = [30.3, 90, 239.7].map((x) => x + offset)
+  const ys = Array.from({ length: rows + 1 }, (_, r) => 50 + r * 13.5)
+  const rules = ys.map((y) => [30 + offset, y, 240 + offset, y])
+  const paint = new Map<string, number[]>(
+    rules.map((r) => [r.join(','), [r[0], r[1] - 0.3, r[2], r[3] + 0.3]])
+  )
+  for (const x of xs)
+    for (let row = 0; row < rows; row++) {
+      // Adjacent original segments can touch a painted horizontal band with
+      // sub-pixel PDF float drift. That does not make them part of both faces.
+      const r = [x, ys[row] + (row % 2 ? 0.2999999 : 0.3015), x, ys[row + 1] - 0.3]
+      rules.push(r)
+      paint.set(r.join(','), [x - 0.3, r[1], x + 0.3, r[3]])
+    }
+  const font = (text: string, x: number, baseline: number, width: number): ClosedGridFont => ({
+    text,
+    rect: [x + offset, baseline - 10, x + offset + width, baseline],
+    height: 10,
+    baseline,
+    horizontal: true
+  })
+  const items = [font('Index', 38, ys[0] + 11, 28), font('q', 128, ys[0] + 11, 7)]
+  items.push({
+    text: 'k',
+    rect: [135.4 + offset, ys[0] + 6, 139.4 + offset, ys[0] + 12],
+    height: 6,
+    baseline: ys[0] + 12,
+    horizontal: true
+  })
+  const grid = [['Index', 'qk']]
+  for (let row = 1; row < rows; row++) {
+    const values = [String(row), `0.${row + 2}1 ± 0.04`]
+    grid.push(values)
+    items.push(font(values[0], 38, ys[row] + 8.5, 8))
+    items.push(font(values[1], 110, ys[row] + 8.5, 80))
+  }
+  const captions = [
+    {
+      page: 1,
+      lines: ['Table 3. Summary of measured results.'],
+      rect: [10 + offset, ys[rows] + 10, 260 + offset, ys[rows] + 20]
+    }
+  ]
+  return {
+    items,
+    rules,
+    paint,
+    captions,
+    grid,
+    xs,
+    ys,
+    crop: [30 + offset, ys[0] - 0.3, 240 + offset, ys[rows] + 0.3]
+  }
+}
+
+it.each([
+  [4, 0],
+  [6, 260]
+])(
+  'recovers a complete two-leaf painted grid before its caption (%s rows, translated %s)',
+  (rows, offset) => {
+    const f = closedTwoLeafGrid(rows, offset)
+    const before = structuredClone(f)
+    const recovered = recoverCaptionedRuledTables(f.items, f.rules, f.captions, 1, [], [], f.paint)
+    expect(recovered).toHaveLength(1)
+    expect(recovered[0].caption).toBe(f.captions[0])
+    expect(recovered[0].cropRect).toEqual(f.crop)
+    const result = refineTable(recovered[0], f.items, f.captions, [], f.rules)
+    expect(result.grid).toEqual(f.grid)
+    expect(result.cells).toHaveLength(rows * 2)
+    expect(result.unassigned).toEqual([])
+    expect(result.cells[1].textRuns).toEqual([
+      { text: 'q', position: 'normal' },
+      { text: 'k', position: 'subscript' }
+    ])
+    expect(result.cells.flatMap((c: { sourceRects: number[][] }) => c.sourceRects).sort()).toEqual(
+      f.items.map((i) => i.rect).sort()
+    )
+    expect(f).toEqual(before)
+    expect(
+      recoverCaptionedRuledTables(f.items, f.rules, f.captions, 1, recovered, [], f.paint)
+    ).toEqual([])
+    expect(
+      recoverCaptionedRuledTables(
+        f.items,
+        f.rules,
+        [...f.captions, { ...structuredClone(f.captions[0]), page: 2 }],
+        1,
+        [],
+        [],
+        f.paint
+      )
+    ).toHaveLength(1)
+  }
+)
+
+it.each([
+  'no-paint',
+  'missing-paint',
+  'paint-gap',
+  'missing-bottom',
+  'missing-cut',
+  'missing-field',
+  'clipped-font',
+  'nonfinite-font',
+  'crossing-font',
+  'duplicate-font',
+  'foreign-corridor',
+  'wrong-page',
+  'competing-caption',
+  'figure-caption',
+  'foreign-rule',
+  'neighbor-figure',
+  'oversized-paint',
+  'nonfinite-rect',
+  'unbounded-grid'
+])('does not recover an unproved below-caption two-leaf grid: %s', (condition) => {
+  const f = closedTwoLeafGrid(condition === 'unbounded-grid' ? 81 : 4)
+  let paint: Map<string, number[]> | undefined = f.paint
+  const vertical = f.rules.find((r) => r[0] === f.xs[1] && r[1] > f.ys[1])!
+  if (condition === 'no-paint') paint = undefined
+  else if (condition === 'missing-paint') f.paint.delete(vertical.join(','))
+  else if (condition === 'paint-gap') f.paint.get(vertical.join(','))![3] -= 0.03
+  else if (condition === 'missing-bottom')
+    f.rules = f.rules.filter((r) => r[1] !== f.ys.at(-1) || r[3] !== f.ys.at(-1))
+  else if (condition === 'missing-cut') f.rules = f.rules.filter((r) => r !== vertical)
+  else if (condition === 'missing-field') f.items.pop()
+  else if (condition === 'clipped-font') f.items[0].rect[1]++
+  else if (condition === 'nonfinite-font') f.items[0].baseline = NaN
+  else if (condition === 'nonfinite-rect') f.items[0].rect[0] = NaN
+  else if (condition === 'crossing-font') f.items[3].rect[2] = f.xs[1] + 2
+  else if (condition === 'duplicate-font') f.items.push(structuredClone(f.items[0]))
+  else if (condition === 'foreign-corridor')
+    f.items.push({
+      text: 'foreign',
+      rect: [80, f.ys.at(-1)! + 2, 105, f.ys.at(-1)! + 7],
+      height: 5,
+      baseline: f.ys.at(-1)! + 7,
+      horizontal: true
+    })
+  else if (condition === 'wrong-page') f.captions[0].page++
+  else if (condition === 'competing-caption') f.captions.push(structuredClone(f.captions[0]))
+  else if (condition === 'figure-caption')
+    f.captions[0].lines = ['Figure 3. A plot of measured results.']
+  else if (condition === 'neighbor-figure')
+    f.captions.push({
+      page: 1,
+      lines: ['Figure 4. Independent neighboring plot.'],
+      rect: [100, f.ys[1], 180, f.ys[1] + 10]
+    })
+  else if (condition === 'oversized-paint') f.paint.get(vertical.join(','))![0] -= 40
+  else if (condition === 'foreign-rule') {
+    const r = [100, f.ys[1] + 2, 120, f.ys[1] + 2]
+    f.rules.push(r)
+    f.paint.set(r.join(','), [100, r[1] - 0.3, 120, r[1] + 0.3])
+  }
+  expect(recoverCaptionedRuledTables(f.items, f.rules, f.captions, 1, [], [], paint)).toEqual([])
+})
+
 it('rejects a structured abstract and publisher contact grid while preserving a captioned table', () => {
   const grid = ['Background', 'Methods', 'Results', 'Conclusions'].map((label) => [
     label,

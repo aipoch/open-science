@@ -305,7 +305,20 @@
     "src/main/notebook/dependency-analysis.r-variant-annotation.test.ts",
     "src/main/notebook/notebook-path-utils.test.ts",
     "src/main/notebook/code-risk-analysis.ts",
-    "src/main/notebook/code-risk-analysis.test.ts"
+    "src/main/notebook/code-risk-analysis.test.ts",
+    "resources/notebook/file_evidence_worker.js",
+    "resources/notebook/kernel_process_host.js",
+    "resources/notebook/package.json",
+    "resources/notebook/python_loop.py",
+    "resources/notebook/r_loop.R",
+    "resources/notebook/repl_loop.js",
+    "resources/tree-sitter/tree-sitter-bash.LICENSE",
+    "resources/tree-sitter/tree-sitter-bash.provenance.json",
+    "resources/tree-sitter/tree-sitter-bash.wasm",
+    "resources/tree-sitter/tree-sitter-python.wasm",
+    "resources/tree-sitter/tree-sitter-r.wasm",
+    "resources/tree-sitter/web-tree-sitter.wasm",
+    "scripts/windows-runtime-cache-uninstall.test.ts"
   ],
   "interfacePaths": [
     "src/main/notebook/analysis-version.ts",
@@ -1021,7 +1034,10 @@
       "src/main/notebook/dependency-analysis.scipy-sparse-composition.test.ts",
       "src/main/notebook/dependency-analysis.scipy-sparse.test.ts",
       "src/main/literature/pdf-translation/checkpoints.test.ts",
-      "src/main/notebook/code-risk-admission.test.ts"
+      "src/main/notebook/code-risk-admission.test.ts",
+      "src/main/session-plan/session-plan-turn-outcome.test.ts",
+      "src/main/notebook/runtime-repair.windows.integration.test.ts",
+      "src/main/notebook/windows-python-probe.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

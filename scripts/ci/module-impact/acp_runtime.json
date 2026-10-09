@@ -809,7 +809,9 @@
       "src/main/literature/pdf-translation/ipc.test.ts",
       "src/main/literature/pdf-translation/reader-ownership.test.ts",
       "src/main/literature/pdf-translation/usage.test.ts",
-      "src/main/literature/pdf-translation/pdf-cache.test.ts"
+      "src/main/literature/pdf-translation/pdf-cache.test.ts",
+      "src/main/session-plan/session-plan-turn-outcome.test.ts",
+      "src/renderer/src/pages/workspace/session-plan/session-plan-resume.test.tsx"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],

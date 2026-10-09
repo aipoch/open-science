@@ -227,7 +227,9 @@ export function SmartCollectionPanel({
         offset: 0,
         collectionId,
         action,
-        ...(action === 'abandon' && targetRunId ? { runId: targetRunId } : {})
+        ...((action === 'abandon' || action === 'resume') && targetRunId
+          ? { runId: targetRunId }
+          : {})
       })
       state.finishWrite(receipt.smart)
       setRefreshFailed(receipt.smartRefreshFailed === true)
@@ -276,7 +278,7 @@ export function SmartCollectionPanel({
     Boolean(view?.automaticPauseRunId) &&
     view?.run?.id === view?.automaticPauseRunId &&
     !view?.run?.abandoned &&
-    Boolean(view?.run && view.run.done < view.run.total) &&
+    Boolean(view?.run && (view.run.done < view.run.total || view.run.failure)) &&
     (view?.run?.state === 'cancelled' ||
       view?.run?.state === 'interrupted' ||
       ((view.automaticPauseReason === 'storage-error' ||
@@ -402,7 +404,11 @@ export function SmartCollectionPanel({
             variant="outline"
             size="sm"
             disabled={disabled}
-            onClick={() => void run('refresh')}
+            onClick={() =>
+              view?.run?.state === 'failed'
+                ? void run('resume', view.run.id)
+                : setRevision((value) => value + 1)
+            }
           >
             {t('Retry')}
           </Button>
@@ -490,7 +496,7 @@ export function SmartCollectionPanel({
                 size="icon-sm"
                 aria-label={t('Resume analysis')}
                 disabled={disabled || (automaticPauseVisible && !view.automaticPauseRunId)}
-                onClick={() => void run('resume')}
+                onClick={() => void run('resume', view.run?.id)}
               >
                 <Play className="size-4" aria-hidden="true" />
               </Button>

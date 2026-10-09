@@ -270,6 +270,7 @@ for (const secondDecision of ['allow', 'deny'] as const) {
     expect(initial.runtimeContext?.permission?.request.rawInput).toMatchObject({
       code: 'return { marker: "permission-handoff-first" }'
     })
+    expect(initial.runtimeContext?.permission?.request.isMcp).toBe(true)
     const firstRequestId = initial.runtimeContext!.permission!.request.requestId
 
     page = await app.restart()
@@ -280,8 +281,6 @@ for (const secondDecision of ['allow', 'deny'] as const) {
     await expect(page.getByTestId('permission-card')).toBeVisible()
     expect((await readSession()).runtimeContext?.permission?.request.requestId).toBe(firstRequestId)
     const allowOnce = async (): Promise<void> => {
-      await page.getByTestId('permission-actions').getByTestId('scope-chevron').click()
-      await page.getByRole('menuitemradio', { name: 'Once This call only', exact: true }).click()
       const approval = page.getByTestId('permission-actions').getByTestId('allow-primary')
       await expect(approval).toHaveText('Allow once')
       await approval.click()
@@ -289,7 +288,7 @@ for (const secondDecision of ['allow', 'deny'] as const) {
     await allowOnce()
 
     // Reproduce the production failure: the restored exact call succeeds, then a different
-    // app-owned MCP call asks within the same continuation instead of silently being cancelled.
+    // provider-owned MCP call asks within the same continuation instead of silently being cancelled.
     await expect
       .poll(async () => (await readSession()).runtimeContext?.permission?.request.rawInput, {
         timeout: 40_000

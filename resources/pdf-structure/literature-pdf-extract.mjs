@@ -39,15 +39,28 @@ import {
   recoverRuledDefinitionNoteCrop,
   recoverRepeatedRecordFooterNotes
 } from './literature-pdf-table-notes.mjs'
-import { rebaseTableCrop, selectResultGeometryPages } from './literature-pdf-table-geometry.mjs'
+import {
+  inside,
+  rebaseTableCrop,
+  selectResultGeometryPages
+} from './literature-pdf-table-geometry.mjs'
 import {
   hasTableEvidence,
   refineTable,
   recoverRuledTable,
   seedNativeClosedRecordTable,
   splitCaptionedTableRegions,
-  recoverCaptionedRuledTables
+  recoverCaptionedRuledTables,
+  recoverNativeIndependentCaptionedTables,
+  recoverNativeIndependentPanelParts,
+  recoverNativeFourFieldOrdinaryRecordOwners
 } from './literature-pdf-table-refine.mjs'
+import {
+  recoverNativeFencedGroupLabels,
+  recoverNativeExistingWholeRecordRows,
+  recoverNativeBlankFirstLeafOwners,
+  recoverNativeStackedSharedCaptionParts
+} from './literature-pdf-native-leaf-record-repair.mjs'
 import {
   deduplicateTableRegions,
   narrativeDuplicateTableIndices
@@ -63,6 +76,9 @@ import {
   proveCaptionedNativeClosedTableFrame,
   findCaptionedNativeClosedTableFrames,
   isRecognizedAlgorithmOwnedTable,
+  nativeSourceDuplicateTableIndices,
+  isNativeRepeatedAuthorContactPanel,
+  recoverNativeCenteredTableCaption,
   isNativeClosedFrameOwnedByTable
 } from './literature-pdf-table-evidence.mjs'
 import { recoverNativeMixedSectionParts } from './literature-pdf-native-mixed-section-parts.mjs'
@@ -96,7 +112,10 @@ import {
 } from './literature-pdf-long-question-record-grid.mjs'
 import { recoverNativeQuestionContinuationCaption } from './literature-pdf-native-question-continuation.mjs'
 import { renderPdfCrop, recoverScannedFigures } from './literature-pdf-crop.mjs'
-import { nativeProseInkTopLimit } from './literature-pdf-figure-crop-geometry.mjs'
+import {
+  nativeOwnedFigureInkBottom,
+  nativeProseInkTopLimit
+} from './literature-pdf-figure-crop-geometry.mjs'
 import {
   collectTableRules,
   collectClosedFigureFrames,
@@ -322,10 +341,15 @@ try {
         )
         return relativePath
       }
+      const nativeViewport = page.getViewport({ scale: 1, rotation: pageGeometry.renderRotation })
+      const operators = await page.getOperatorList()
       // A numbered algorithm's opening rule can occupy the running-head band.
       // The algorithm proof checks its complete frame and numbered steps; retain
       // that native frame while ordinary figure/table inputs still omit headers.
-      const pageAlgorithms = findAlgorithmCandidates(originalPages.get(pageNumber) ?? pageGeometry)
+      const pageAlgorithms = findAlgorithmCandidates(
+        originalPages.get(pageNumber) ?? pageGeometry,
+        collectTableRules(operators, nativeViewport)
+      )
       for (const [index, algorithm] of pageAlgorithms.entries()) {
         const id = `p${pageNumber}-algorithm-${index + 1}`
         algorithms.push({
@@ -348,8 +372,6 @@ try {
           })
       )
       const viewport = page.getViewport({ scale: 1.5, rotation: pageGeometry.renderRotation })
-      const nativeViewport = page.getViewport({ scale: 1, rotation: pageGeometry.renderRotation })
-      const operators = await page.getOperatorList()
       const originalContent = await page.getTextContent()
       const sourceContent = {
         ...originalContent,
@@ -562,7 +584,8 @@ try {
         pageCaptions,
         pageNumber,
         pageInference.tables,
-        measuredRuns
+        measuredRuns,
+        rulePaintBounds
       )
       pageInference.tables.push(...recoveredCaptionedTables)
       for (const table of recoveredCaptionedTables) {
@@ -972,7 +995,8 @@ try {
           [],
           rules,
           measuredRuns,
-          pairedTextContexts.get(raw.id)
+          pairedTextContexts.get(raw.id),
+          rulePaintBounds
         )
       )
       // Use recovered row extents, not the padded inference crop, for caption distance.
@@ -1012,7 +1036,18 @@ try {
           rules,
           owned.caption
         )
-        return enclosed ? { ...owned, caption: enclosed } : owned
+        if (enclosed) owned = { ...owned, caption: enclosed }
+        const centered =
+          !owned.caption &&
+          recoverNativeCenteredTableCaption(
+            refined[index],
+            tokens,
+            rules,
+            pageGeometry,
+            captions,
+            refined
+          )
+        return centered ? { caption: centered } : owned
       })
       // A stacked page can place the next caption inside the previous
       // detector crop. When every visible table has its own consecutive
@@ -1143,7 +1178,8 @@ try {
           scaledNotes,
           rules,
           measuredRuns,
-          pairedTextContexts.get(refined[index].id)
+          pairedTextContexts.get(refined[index].id),
+          rulePaintBounds
         )
       }
       // Cell row extents omit border rules; the full detected crop owns those rules too.
@@ -1167,7 +1203,8 @@ try {
           [],
           rules.map((r) => r.map((v) => v / 1.5)),
           closedFrames,
-          nativeFigureTokens
+          nativeFigureTokens,
+          { operators, viewport: nativeViewport }
         )
       ].filter((f) => f.rect)
       // A side-by-side detector can attach a caption to a narrow crop that
@@ -1239,6 +1276,12 @@ try {
         captionedIndices: captionedTableIndices,
         rules
       })
+      const nativeSourceDuplicates = nativeSourceDuplicateTableIndices(
+        refined,
+        associations,
+        tokens,
+        rules
+      )
       const nativeEvidenceGraphics = pageGeometry.graphicsBounds.map((graphic) => ({
         kind: graphic.kind,
         rect: graphic.normalizedRect.map(
@@ -1286,6 +1329,7 @@ try {
         (table, index) =>
           !nativeNotationIndices.has(index) &&
           !narrativeDuplicates.has(index) &&
+          !nativeSourceDuplicates.has(index) &&
           // A recognized, explicitly numbered procedure already owns its
           // native source. A detector grid cannot publish those instructions
           // a second time as table cells merely because they align in rows.
@@ -1300,6 +1344,16 @@ try {
             rules
           ) &&
           !isNativeFrontMatterRegion(
+            table,
+            tokens,
+            pageNumber,
+            associations[index].caption,
+            rules
+          ) &&
+          // Repeated native name/institution/email lanes and an independent
+          // larger Abstract heading prove a first-page contact panel even
+          // when the institution names are opaque abbreviations.
+          !isNativeRepeatedAuthorContactPanel(
             table,
             tokens,
             pageNumber,
@@ -1499,7 +1553,8 @@ try {
         ],
         rules.map((r) => r.map((v) => v / 1.5)),
         closedFrames,
-        nativeFigureTokens
+        nativeFigureTokens,
+        { operators, viewport: nativeViewport }
       )
       let pageFigures =
         localFigures.length || recognizedTableRects.length
@@ -1688,7 +1743,10 @@ try {
             serializedCaption?.page === pageNumber && captionRect?.[1] >= candidate.rect[3]
               ? captionRect[1] - 0.5
               : pageGeometry.height,
-            candidate.rect[3] + 2 / scale
+            Math.max(
+              candidate.rect[3] + 2 / scale,
+              nativeOwnedFigureInkBottom(candidate, nativeFigureTokens)
+            )
           )
         ]
         figures.push({
@@ -1703,9 +1761,19 @@ try {
       }
       const pageTables = []
       for (const [index, refinedTable] of refined.entries()) {
+        const uprightRuleCrop =
+          pageInference.tables[index].readingRotation === 0 && !notes[index].length
         const table = {
           ...refinedTable,
-          cropRect: recoverOwnedTableCrop(refinedTable, rules, [viewport.width, viewport.height])
+          cropRect: recoverOwnedTableCrop(
+            refinedTable,
+            rules,
+            [viewport.width, viewport.height],
+            tokens,
+            rulePaintBounds,
+            uprightRuleCrop ? nativeEvidenceGraphics : [],
+            uprightRuleCrop ? sourceFigureTokens : []
+          )
         }
         const association = associations[index]
         const cropRect = [...table.cropRect]
@@ -1734,6 +1802,8 @@ try {
           pageNumber,
           scale: 1.5,
           pageItems: tokens,
+          pageFontItems: sourceFigureTokens,
+          noteOwnerRects: contentRects,
           rulePaintBounds
         })
         trimTableNoteCrop({
@@ -1756,6 +1826,83 @@ try {
           footerBottom < caption.rect[1] * 1.5
         )
           cropRect[3] = Math.max(cropRect[3], footerBottom)
+        // Refinement can rebase a native grid to rule center lines. Retain
+        // the measured stroke envelope only for the very same complete
+        // below-caption recovery, with every original font still owned once.
+        const paintedSeed = recoveredCaptionedTables.find(
+          (seed) =>
+            seed === pageInference.tables[index] &&
+            seed.id === table.id &&
+            seed.id.startsWith(`p${pageNumber}-below-caption-two-leaf-table-`)
+        )
+        if (
+          paintedSeed &&
+          caption === continuationCaptions.get(paintedSeed.id) &&
+          caption?.page === pageNumber &&
+          !notes[index].length &&
+          !table.issues.length &&
+          !table.unassigned.length
+        ) {
+          const rows = paintedSeed.structure.objects
+              .filter((object) => object.label === 'table row')
+              .map((object) => object.rect.map((v, axis) => v + paintedSeed.cropRect[axis % 2]))
+              .sort((a, b) => a[1] - b[1]),
+            columns = paintedSeed.structure.objects
+              .filter((object) => object.label === 'table column')
+              .map((object) => object.rect.map((v, axis) => v + paintedSeed.cropRect[axis % 2]))
+              .sort((a, b) => a[0] - b[0]),
+            source = tokens.filter(
+              (item) => item.text.trim() && inside(paintedSeed.cropRect, item)
+            ),
+            owners = table.cells.flatMap((cell) => cell.sourceTokens ?? []),
+            sameFont = (a, b) =>
+              a.text === b.text &&
+              a.baseline === b.baseline &&
+              a.height === b.height &&
+              a.rect.every((v, axis) => v === b.rect[axis]),
+            complete =
+              columns.length === 2 &&
+              table.grid.length === rows.length &&
+              table.grid.every((row) => row.length === 2) &&
+              table.cells.length === rows.length * 2 &&
+              new Set(table.cells.map((cell) => `${cell.row},${cell.column}`)).size ===
+                table.cells.length &&
+              owners.length === source.length &&
+              source.every(
+                (item) => owners.filter((owner) => sameFont(item, owner)).length === 1
+              ) &&
+              table.cells.every((cell) => {
+                const row = rows[cell.row],
+                  column = columns[cell.column],
+                  fonts = cell.sourceTokens
+                return (
+                  row &&
+                  column &&
+                  cell.rowSpan === 1 &&
+                  cell.colSpan === 1 &&
+                  table.grid[cell.row][cell.column] === cell.text &&
+                  fonts?.length &&
+                  fonts.length === cell.sourceRects.length &&
+                  fonts
+                    .map((item) => item.text)
+                    .join('')
+                    .replace(/\s/gu, '') === cell.text.replace(/\s/gu, '') &&
+                  fonts.every(
+                    (item, n) =>
+                      !item.sourceToken &&
+                      source.filter((original) => sameFont(item, original)).length === 1 &&
+                      item.rect.every((v, axis) => v === cell.sourceRects[n][axis]) &&
+                      item.rect[0] >= column[0] &&
+                      item.rect[2] <= column[2] &&
+                      item.baseline > row[1] &&
+                      item.baseline < row[3] &&
+                      (item.rect[1] + item.rect[3]) / 2 > row[1] &&
+                      (item.rect[1] + item.rect[3]) / 2 < row[3]
+                  )
+                )
+              })
+          if (complete) cropRect.splice(0, 4, ...paintedSeed.cropRect)
+        }
         pageTables.push({
           ...table,
           cropRect,
@@ -1766,12 +1913,89 @@ try {
           sourceViewport: { width: viewport.width, height: viewport.height, scale: 1.5 }
         })
       }
+      // Split complete source owners after index-coupled crop and note assembly.
+      const independentPageTables = pageTables.flatMap((table) => {
+        const recovered = recoverNativeIndependentCaptionedTables(
+          table,
+          tokens,
+          pageCaptions,
+          rules,
+          measuredRuns,
+          rulePaintBounds,
+          nativeEvidenceGraphics
+        )
+        if (!recovered) return [table]
+        const canonical = recovered.map((part) => {
+          const matches = captions.filter(
+            (caption) =>
+              caption.page === part.caption.page &&
+              caption.lines.length === part.caption.lines.length &&
+              caption.lines.every((line, index) => line === part.caption.lines[index]) &&
+              caption.rect.every((value, axis) => value * 1.5 === part.caption.rect[axis])
+          )
+          return matches.length === 1 ? { ...part, caption: captionValue(matches[0]) } : undefined
+        })
+        return canonical.every(Boolean) ? canonical : [table]
+      })
+      const fencedPageTables = independentPageTables.map((table) => {
+        const seeds = pageInference.tables.filter((seed) => seed.id === table.id)
+        if (
+          seeds.length !== 1 ||
+          seeds[0].readingRotation !== 0 ||
+          pageGeometry.invalidGraphicsBounds !== 0
+        )
+          return table
+        const grouped =
+          recoverNativeFencedGroupLabels(
+            table,
+            tokens,
+            pageCaptions,
+            rules,
+            measuredRuns,
+            rulePaintBounds,
+            nativeEvidenceGraphics,
+            { operators, viewport }
+          ) ?? table
+        const records =
+          recoverNativeExistingWholeRecordRows(
+            grouped,
+            tokens,
+            pageCaptions,
+            rules,
+            measuredRuns,
+            rulePaintBounds,
+            nativeEvidenceGraphics
+          ) ?? grouped
+        const blank =
+          recoverNativeBlankFirstLeafOwners(
+            records,
+            tokens,
+            pageCaptions,
+            rules,
+            measuredRuns,
+            rulePaintBounds,
+            nativeEvidenceGraphics,
+            { operators, viewport }
+          ) ?? records
+        return (
+          recoverNativeFourFieldOrdinaryRecordOwners(
+            blank,
+            tokens,
+            pageCaptions,
+            rules,
+            measuredRuns,
+            rulePaintBounds,
+            nativeEvidenceGraphics,
+            { operators, viewport }
+          ) ?? blank
+        )
+      })
       for (let table of groupRuledComparisonSections(
         groupNativeStatisticalSections(
           groupMixedQuestionSections(
             groupDescriptiveRecordBlocks(
               groupRepeatedRecordBlocks(
-                groupTableParts(pageTables, pageGeometry),
+                groupTableParts(fencedPageTables, pageGeometry),
                 repeatedRecordBlocks
               ),
               descriptiveRecordBlock
@@ -1781,7 +2005,17 @@ try {
       )) {
         const mixedSections =
           !table.parts &&
-          recoverNativeMixedSectionParts(table, tokens, pageCaptions, rules, measuredRuns)
+          (recoverNativeMixedSectionParts(table, tokens, pageCaptions, rules, measuredRuns) ??
+            recoverNativeIndependentPanelParts(table, tokens, pageCaptions, rules, measuredRuns) ??
+            recoverNativeStackedSharedCaptionParts(
+              table,
+              tokens,
+              pageCaptions,
+              rules,
+              measuredRuns,
+              refined,
+              { operators, content, viewport, rulePaintBounds, nativeEvidenceGraphics }
+            ))
         if (mixedSections)
           table = {
             id: table.id,
@@ -1891,6 +2125,21 @@ try {
     ...tables,
     ...algorithms
   ])
+  // These fields describe assembly geometry, while the worker contract uses
+  // grid/cells and each cell's sourceRects. Keep them in memory for repairs,
+  // then omit only table-owned duplicates from the bounded result payload.
+  const tableTransportData = (data) => {
+    const transport = { ...data }
+    delete transport.rows
+    if (Array.isArray(data.cells))
+      transport.cells = data.cells.map((cell) => {
+        const value = { ...cell }
+        delete value.rect
+        delete value.origin
+        return value
+      })
+    return transport
+  }
   const result = {
     schemaVersion: 1,
     warning: 'Experimental candidates; not a production cache, copy gate, or accuracy guarantee.',
@@ -1926,7 +2175,11 @@ try {
     modelAssets: inference.modelEvidence,
     figures,
     algorithms,
-    tables
+    tables: tables.map((table) =>
+      table.parts
+        ? { ...tableTransportData(table), parts: table.parts.map(tableTransportData) }
+        : tableTransportData(table)
+    )
   }
   await writeFile(join(output, 'structure.pending.json'), serializeWorkerResult(result))
   await rename(join(output, 'structure.pending.json'), join(output, 'structure.json'))

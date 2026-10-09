@@ -7,6 +7,10 @@ import { recoverNativeStackedRecordRuns } from './literature-pdf-native-stacked-
 import { recoverNativeClosedMathRuns } from './literature-pdf-native-closed-math-order.mjs'
 import { orderNativeDualScriptLanes } from './literature-pdf-native-dual-script-lanes.mjs'
 import {
+  nativeWholeFontOrigins,
+  nativeRecoveredCellOrigins
+} from './literature-pdf-native-leaf-record-repair.mjs'
+import {
   proveNativeTieredHeader,
   proveNativeUnruledPairedParentHeader,
   proveNativePrintedHeaderAtColumns,
@@ -195,6 +199,7 @@ export function reconcileNativeTieredHeader({
   columnRects,
   headerRows,
   pageItems,
+  assignedSourceItems = pageItems,
   rules,
   captions,
   unassigned,
@@ -344,6 +349,58 @@ export function reconcileNativeTieredHeader({
       ? { text: previous.text, textRuns: previous.textRuns.map((r) => ({ ...r })) }
       : {}
   })
+  const previousHeaders = cells.filter((cell) => cell.row < count)
+  let sourceHeaders = previousHeaders
+  if (previousHeaders.some((cell) => Object.hasOwn(cell, 'sourceItems'))) {
+    if (
+      !Array.isArray(assignedSourceItems) ||
+      previousHeaders.some((cell) => !Array.isArray(cell.sourceTokens))
+    )
+      return 0
+    // The existing assignment collection retains original-item references for
+    // measured split glyphs. Resolve each sanitized old token through that
+    // exact evidence rather than treating a fragment as a new native item.
+    sourceHeaders = previousHeaders.map((cell) => ({
+      ...cell,
+      sourceTokens: cell.sourceTokens.map((token) => {
+        const matched = assignedSourceItems.filter(
+          (item) =>
+            item.text === token.text &&
+            item.baseline === token.baseline &&
+            item.height === token.height &&
+            Array.isArray(item.rect) &&
+            Array.isArray(token.rect) &&
+            item.rect.length === 4 &&
+            token.rect.length === 4 &&
+            item.rect.every((v, n) => Math.abs(v - token.rect[n]) < 0.02)
+        )
+        if (matched.length !== 1) return
+        const item = matched[0].sourceToken ?? matched[0]
+        if (pageItems.includes(item)) return item
+        const origin = nativeWholeFontOrigins([item])?.[0]
+        if (!origin) return
+        const whole = pageItems.filter((font) => {
+          const candidate = nativeWholeFontOrigins([font])?.[0]
+          return (
+            candidate &&
+            candidate.pageNumber === origin.pageNumber &&
+            candidate.index === origin.index &&
+            candidate.text === origin.text
+          )
+        })
+        return whole.length === 1 ? whole[0] : undefined
+      })
+    }))
+  }
+  const projectedHeaders = plan.headerCells.map((cell, index) => ({
+      ...cell,
+      ...preservedHeaderMetadata[index],
+      rect: cell.rect.slice(),
+      sourceTokens: cell.sourceTokens.slice(),
+      sourceRects: cell.sourceRects.slice()
+    })),
+    conservedHeaders = nativeRecoveredCellOrigins(sourceHeaders, projectedHeaders, pageItems)
+  if (!conservedHeaders) return 0
   for (let i = cells.length - 1; i >= 0; i--) if (cells[i].row < count) cells.splice(i, 1)
   for (const cell of cells) cell.row += shift
   rows.splice(
@@ -352,15 +409,7 @@ export function reconcileNativeTieredHeader({
     ...plan.rows.map((rect) => ({ rect: rect.slice(), origin: 'source-tiered-header' }))
   )
   headerRows.splice(0, headerRows.length, ...plan.headerRows)
-  cells.push(
-    ...plan.headerCells.map((cell, index) => ({
-      ...cell,
-      ...preservedHeaderMetadata[index],
-      rect: cell.rect.slice(),
-      sourceTokens: cell.sourceTokens.slice(),
-      sourceRects: cell.sourceRects.slice()
-    }))
-  )
+  cells.push(...conservedHeaders)
   for (const token of plan.ownedTokens) {
     const index = unassigned.indexOf(token.text)
     if (index >= 0) unassigned.splice(index, 1)
@@ -4210,6 +4259,7 @@ export function populateTableCellText({
     columnRects,
     headerRows,
     pageItems,
+    assignedSourceItems: items,
     rules,
     captions,
     unassigned,

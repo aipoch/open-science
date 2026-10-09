@@ -7714,6 +7714,7 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/workspace-session-delegation-control-owner.ts',
       'src/renderer/src/pages/workspace/workspace-session-details-controller.ts',
       'src/renderer/src/pages/workspace/workspace-session-discussion.ts',
+      'src/renderer/src/pages/workspace/workspace-session-recovery.ts',
       'src/renderer/src/pages/workspace/workspace-skill-load.ts',
       'src/renderer/src/pages/workspace/workspace-tool-activity-details.ts',
       'src/renderer/src/pages/workspace/workspace-tool-activity-groups.ts',

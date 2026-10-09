@@ -3407,6 +3407,7 @@ describe('startWebHttpServer', () => {
       'specialist:list',
       'specialist:update',
       'specialist:set-enabled',
+      'specialist:set-session-specialist',
       'specialist:package-upload-begin',
       'specialist:package-upload-preview',
       'specialist:package-upload-abort',

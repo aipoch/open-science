@@ -54,6 +54,19 @@ import {
 const SIDECAR_FILE = 'dependency-analysis.json'
 const MAX_NAMES_PER_RUN = 512
 const MAX_STATIC_STRING_LENGTH = 4_096
+const boundedPythonFilePath = (kind: unknown, qualifiedName: unknown, filePath: unknown): boolean =>
+  kind === 'object' &&
+  (qualifiedName === 'pandas.ExcelFile' ||
+    qualifiedName === 'sqlite3.Connection' ||
+    qualifiedName === 'sqlite3.Cursor') &&
+  typeof filePath === 'string' &&
+  filePath.length > 0 &&
+  filePath.length <= MAX_STATIC_STRING_LENGTH &&
+  (qualifiedName === 'pandas.ExcelFile' ||
+    (!filePath.includes('\0') &&
+      !filePath.includes('\\') &&
+      !filePath.startsWith('//') &&
+      !/^[a-z][a-z\d+.-]*:/iu.test(filePath)))
 const helperReplayWithinBudget = (
   modules: readonly { source: string; exports: readonly string[] }[]
 ): boolean =>
@@ -453,11 +466,7 @@ const fileContextValue = (value: unknown): NotebookSourceFileAccessContext | und
         !binding.qualifiedName ||
         binding.qualifiedName.length > MAX_STATIC_STRING_LENGTH ||
         (binding.filePath !== undefined &&
-          (binding.kind !== 'object' ||
-            binding.qualifiedName !== 'pandas.ExcelFile' ||
-            typeof binding.filePath !== 'string' ||
-            !binding.filePath ||
-            binding.filePath.length > MAX_STATIC_STRING_LENGTH)) ||
+          !boundedPythonFilePath(binding.kind, binding.qualifiedName, binding.filePath)) ||
         (binding.kind !== 'import' && binding.kind !== 'object') ||
         names.has(binding.name)
       )
@@ -1134,9 +1143,48 @@ const plottingState = (value: unknown): NotebookRunDependencyFacts['pythonPlotti
   return { reads: value.reads, writes: value.writes }
 }
 
+const callbackContainerSummaryArray = (
+  value: unknown
+): NotebookRunDependencyFacts['pythonCallbackContainerSummaries'] => {
+  if (!Array.isArray(value) || value.length > MAX_NAMES_PER_RUN) return undefined
+  const summaries: NonNullable<NotebookRunDependencyFacts['pythonCallbackContainerSummaries']> = []
+  const seen = new Set<string>()
+  let totalMembers = 0
+  for (const entry of value) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return undefined
+    const record = entry as Record<string, unknown>
+    const callbackNames = orderedStringArray(record.callbackNames)
+    if (
+      typeof record.name !== 'string' ||
+      !record.name ||
+      record.name.length > MAX_STATIC_STRING_LENGTH ||
+      seen.has(record.name) ||
+      !callbackNames?.length ||
+      callbackNames.length > MAX_STATIC_COLLECTION_VALUES ||
+      new Set(callbackNames).size !== callbackNames.length ||
+      callbackNames.some((name) => !name || name.length > MAX_STATIC_STRING_LENGTH) ||
+      totalMembers + callbackNames.length > MAX_STATIC_COLLECTION_VALUES_PER_CONTEXT
+    )
+      return undefined
+    seen.add(record.name)
+    totalMembers += callbackNames.length
+    summaries.push({ name: record.name, callbackNames })
+  }
+  return summaries
+}
+
 const normalizeFacts = (value: unknown): NotebookRunDependencyFacts => {
   if (!value || typeof value !== 'object') return unknownFacts('invalid-parser-result')
   const record = value as Record<string, unknown>
+  const callbackContainers = callbackContainerSummaryArray(
+    record.pythonCallbackContainerSummaries === undefined
+      ? []
+      : record.pythonCallbackContainerSummaries
+  )
+  if (!callbackContainers) return unknownFacts('invalid-parser-result')
+  const callbackContainerFacts = callbackContainers.length
+    ? { pythonCallbackContainerSummaries: callbackContainers }
+    : {}
   if (
     record.pythonRandomStateReads !== undefined &&
     typeof record.pythonRandomStateReads !== 'boolean'
@@ -1188,6 +1236,7 @@ const normalizeFacts = (value: unknown): NotebookRunDependencyFacts => {
     }
     return {
       state: 'unknown',
+      ...callbackContainerFacts,
       reasons,
       ...(stringArray(record.definedNames)
         ? { definedNames: stringArray(record.definedNames) }
@@ -1282,6 +1331,7 @@ const normalizeFacts = (value: unknown): NotebookRunDependencyFacts => {
     memberWrites
     ? {
         state: 'available',
+        ...callbackContainerFacts,
         definedNames,
         ...(conditionallyDefinedNames.length ? { conditionallyDefinedNames } : {}),
         usedNames,
@@ -1358,15 +1408,15 @@ const boundedFileContext = (
   const wrapperNames = new Set(localFileWrappers.map(({ name }) => name))
   const pythonBindings = (context.pythonBindings ?? [])
     .filter(
-      ({ name, qualifiedName, filePath }) =>
-        (definedNames.has(name) || (qualifiedName === 'pandas.ExcelFile' && Boolean(filePath))) &&
+      ({ name, kind, qualifiedName, filePath }) =>
+        (definedNames.has(name) || boundedPythonFilePath(kind, qualifiedName, filePath)) &&
         !conditionalNames.has(name) &&
         !staticNames.has(name) &&
         !collectionNames.has(name) &&
         !wrapperNames.has(name) &&
         name.length <= MAX_STATIC_STRING_LENGTH &&
         qualifiedName.length <= MAX_STATIC_STRING_LENGTH &&
-        (!filePath || filePath.length <= MAX_STATIC_STRING_LENGTH)
+        (filePath === undefined || boundedPythonFilePath(kind, qualifiedName, filePath))
     )
     .slice(0, MAX_NAMES_PER_RUN)
   const namespaces = context.pythonTaintedNamespaces ?? []
@@ -1487,6 +1537,20 @@ const sourceFileAccessContextNeedsRefresh = (
   return false
 }
 
+// Host path normalization cannot prove equality for a different runtime platform.
+const sqliteCwdBoundaryUnknown = (before?: string, after?: string): boolean =>
+  !before ||
+  !after ||
+  before.length > MAX_STATIC_STRING_LENGTH ||
+  after.length > MAX_STATIC_STRING_LENGTH ||
+  before !== after
+
+// A change followed by restoration is still unsafe for a relative candidate.
+// Literal detection is deliberately conservative; opaque calls remain subject
+// to the existing unknown-facts context reset.
+const pythonSourceMayChangeWorkingDirectory = (source: string): boolean =>
+  /\b(?:chdir|fchdir)\b|(?:^|\n)\s*%cd(?:\s|$)/u.test(source)
+
 const projectSourceFileAccessContext = (
   runs: readonly NotebookRunRecord[],
   sidecar: NotebookDependencyAnalysisSidecar,
@@ -1496,6 +1560,7 @@ const projectSourceFileAccessContext = (
   >
 ): NotebookSourceFileAccessContext | undefined => {
   const entries: Array<FileContextEntry | undefined> = []
+  let previousRun: NotebookRunRecord | undefined
   for (const run of runs) {
     if (run.runId === request.currentRunId) break
     if (!isSourceFileAccessContextRun(run, request)) continue
@@ -1520,13 +1585,32 @@ const projectSourceFileAccessContext = (
                       'execution-incomplete'
                     ]
                   },
-            fileContext
+            fileContext,
+            ...(request.language === 'python'
+              ? {
+                  sqliteRelativePathBarrier:
+                    sqliteCwdBoundaryUnknown(run.cwdBefore, run.cwdAfter) ||
+                    (previousRun !== undefined &&
+                      sqliteCwdBoundaryUnknown(previousRun.cwdAfter, run.cwdBefore)) ||
+                    pythonSourceMayChangeWorkingDirectory(run.script)
+                }
+              : {})
           }
         : undefined
     )
+    previousRun = run
   }
-  const context = projectNotebookFileContext(request.language, entries)
   const current = runs.find((run) => run.runId === request.currentRunId)
+  const context = projectNotebookFileContext(request.language, entries, {
+    // A live preexecution request has no current history envelope. Do not infer
+    // its cwd from the preceding run or persist a new cwd origin in the cache.
+    sqliteRelativePathBarrier:
+      request.language === 'python' &&
+      (!current ||
+        !isSourceFileAccessContextRun(current, request) ||
+        sqliteCwdBoundaryUnknown(previousRun?.cwdAfter, current.cwdBefore) ||
+        (current !== undefined && pythonSourceMayChangeWorkingDirectory(current.script)))
+  })
   return current?.cwdBefore
     ? {
         ...(context ?? { staticStrings: [], staticCollections: [], localFileWrappers: [] }),

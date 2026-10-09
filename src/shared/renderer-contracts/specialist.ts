@@ -173,7 +173,7 @@ export const contracts = {
   >()('specialist', ['specialist:set-enabled', WEB]),
   'specialist.setSessionSpecialist': callable<
     (request: SetSessionSpecialistRequest) => Promise<SetSessionSpecialistResponse>
-  >()('specialist', ['specialist:set-session-specialist', ELECTRON]),
+  >()('specialist', ['specialist:set-session-specialist', WEB]),
   'specialist.update': callable<(request: UpdateSpecialistRequest) => Promise<SpecialistView>>()(
     'specialist',
     ['specialist:update', WEB]

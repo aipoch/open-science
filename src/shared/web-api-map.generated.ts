@@ -389,6 +389,7 @@ export const WEB_INVOKE_CHANNELS = {
   'specialist.listMarketplace': 'specialist:marketplace-list',
   'specialist.previewPackageUpload': 'specialist:package-upload-preview',
   'specialist.setEnabled': 'specialist:set-enabled',
+  'specialist.setSessionSpecialist': 'specialist:set-session-specialist',
   'specialist.update': 'specialist:update',
   'storage.acceptMissingDataRoot': 'storage:accept-missing-data-root',
   'storage.ackDataRootHandoffFlush': 'storage:ack-data-root-handoff-flush',
