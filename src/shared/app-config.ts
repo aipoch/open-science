@@ -24,7 +24,7 @@ export const APP = {
     discord: 'https://discord.gg/85dKfuGM9',
     x: 'https://x.com/aipoch_ai'
   },
-  copyright: '© 2026 AIPOCH. All rights reserved.',
+  copyright: '© 2026 AIPOCH',
   update: {
     manifestUrl: `${CDN_BASE_URL}/app/stable/version.json`,
     downloadPage: 'https://www.aipoch.com/open-science'

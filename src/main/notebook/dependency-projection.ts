@@ -13,6 +13,7 @@ import type {
   NotebookDependencyProjection,
   NotebookFileDependency,
   NotebookDependencyTypeSummary,
+  NotebookDependencyReceiverCall,
   NotebookRunDependencyFacts,
   NotebookSourceFileWriteScope
 } from './dependency-analysis-types'
@@ -369,6 +370,7 @@ class NotebookDependencyProjector {
   private readonly possibleAliasesByNamespace = new Map<string, Map<string, Set<string>>>()
   private readonly rCopyAliasesByNamespace = new Map<string, Map<string, Set<string>>>()
   private readonly builtinContainersByNamespace = new Map<string, Set<string>>()
+  private readonly pythonCallbackContainersByNamespace = new Map<string, Map<string, string[]>>()
   private readonly copyOnModifyNamesByNamespace = new Map<string, Set<string>>()
   private readonly typeSummariesByNamespace = new Map<
     string,
@@ -400,6 +402,7 @@ class NotebookDependencyProjector {
       possibleAliasesByNamespace,
       rCopyAliasesByNamespace,
       builtinContainersByNamespace,
+      pythonCallbackContainersByNamespace,
       copyOnModifyNamesByNamespace,
       typeSummariesByNamespace,
       objectTypesByNamespace,
@@ -449,6 +452,49 @@ class NotebookDependencyProjector {
     )
     const builtinContainers = builtinContainersByNamespace.get(namespace) ?? new Set<string>()
     builtinContainersByNamespace.set(namespace, builtinContainers)
+    const callbackContainers =
+      pythonCallbackContainersByNamespace.get(namespace) ?? new Map<string, string[]>()
+    pythonCallbackContainersByNamespace.set(namespace, callbackContainers)
+    const callbackNamespaceUncertain =
+      incompleteRun ||
+      (facts.state === 'unknown' &&
+        facts.reasons.some(
+          (reason) =>
+            [
+              'dynamic-namespace',
+              'dynamic-assignment',
+              'wildcard-import',
+              'alias-rebind',
+              'class-scope',
+              'comprehension-scope',
+              'analysis-unavailable',
+              'analysis-unknown',
+              'invalid-parser-result',
+              'parse-error'
+            ].includes(reason) || reason.startsWith('parser-')
+        ))
+    if (callbackNamespaceUncertain) callbackContainers.clear()
+    // Lists capture a function object, not a live binding to its old global name.
+    // A rebind or uncertain alias must not turn that stored object into the new one.
+    const callbackCandidateWrites = new Set([
+      ...(facts.definedNames ?? []),
+      ...(facts.conditionallyDefinedNames ?? [])
+    ])
+    const callbackAliasExposures = new Set(
+      (facts.aliases ?? []).flatMap((alias) => [alias.source, alias.target])
+    )
+    for (const [container, callbacks] of callbackContainers) {
+      if (
+        [container, ...callbacks].some(
+          (name) =>
+            callbackCandidateWrites.has(name) ||
+            callbackAliasExposures.has(name) ||
+            (name === container && (facts.mutatedNames ?? []).includes(name)) ||
+            (name !== container && (facts.possiblyMutatedNames ?? []).includes(name))
+        )
+      )
+        callbackContainers.delete(container)
+    }
     const copyOnModifyNames = copyOnModifyNamesByNamespace.get(namespace) ?? new Set<string>()
     copyOnModifyNamesByNamespace.set(namespace, copyOnModifyNames)
     const copyOnModifyNamesAtRunStart = new Set(copyOnModifyNames)
@@ -824,7 +870,24 @@ class NotebookDependencyProjector {
       }
     }
 
+    if (!callbackNamespaceUncertain && run.kernelKind === 'python') {
+      for (const candidate of facts.pythonCallbackContainerSummaries ?? []) {
+        if (
+          conditionallyDefinedNames.has(candidate.name) ||
+          uncertainBindings.has(candidate.name) ||
+          (facts.mutatedNames ?? []).includes(candidate.name) ||
+          callbackAliasExposures.has(candidate.name) ||
+          candidate.callbackNames.some(
+            (name) => callbackAliasExposures.has(name) || !currentPythonFunctionSummary(name)
+          )
+        )
+          continue
+        callbackContainers.set(candidate.name, [...candidate.callbackNames])
+      }
+    }
     for (const call of facts.receiverCalls ?? []) {
+      const priorActualMutationCount = typeAwareMutatedNames.length
+      const priorPossibleMutationCount = typeAwarePossiblyMutatedNames.length
       const addTypeAwareMutation = (names: readonly string[]): void => {
         if (call.conditional) {
           typeAwarePossiblyMutatedNames.push(...names)
@@ -1183,10 +1246,76 @@ class NotebookDependencyProjector {
           libraryEffect?.callbackAllKeywords === true ||
           libraryEffect?.callbackKeywords?.includes(keyword.name)
       )
+      const namedCallbackContainersUsed = new Set<string>()
+      const callbackReferences = (
+        keyword: NonNullable<NotebookDependencyReceiverCall['keywordArguments']>[number]
+      ): NonNullable<typeof keyword.callableReferences> =>
+        (keyword.callableReferences ?? []).flatMap((reference) => {
+          if (!libraryEffect?.callbackContainerKeywords?.includes(keyword.name)) return [reference]
+          if (reference.member !== undefined || reference.container !== undefined)
+            return [reference]
+          const callbacks = callbackContainers.get(reference.root)
+          if (!callbacks) return [reference]
+          const names = [reference.root, ...callbacks]
+          const uncertain = names.some(
+            (name) =>
+              conditionallyDefinedNames.has(name) ||
+              uncertainBindings.has(name) ||
+              callbackAliasExposures.has(name) ||
+              (name === reference.root &&
+                (facts.mutatedNames ?? []).some((written) => receiversMayAlias(written, name)))
+          )
+          // Calls are aggregated without enough ordering/effect evidence to
+          // prove this stored identity survived another use in the same run.
+          // The solver's own use is allowed; any other exposure is a barrier.
+          const otherCallUsesContainer = (facts.receiverCalls ?? []).some((other) => {
+            if (other === call) return false
+            const helper = currentPythonFunctionSummary(other.receiver)
+            const captures = helper ? opaquePythonFunctionCaptures(other.receiver, helper) : []
+            const namespaceUncertain = [helper, ...captures.map(currentPythonFunctionSummary)].some(
+              (summary) =>
+                summary?.methods.some(
+                  (method) => method.effect === 'unknown' && method.unknownScope === 'namespace'
+                )
+            )
+            return (
+              namespaceUncertain ||
+              [
+                other.receiver,
+                ...(other.argumentNames ?? []),
+                ...captures,
+                ...(other.keywordArguments ?? []).flatMap((argument) => [
+                  ...(argument.argumentNames ?? []),
+                  ...(argument.possibleArgumentNames ?? [])
+                ])
+              ].some((name) => receiversMayAlias(name, reference.root))
+            )
+          })
+          if (
+            uncertain ||
+            typeAwareReasons.includes('dynamic-namespace') ||
+            typeAwareMutatedNames.some(
+              (mutation, index) =>
+                index < priorActualMutationCount && receiversMayAlias(mutation, reference.root)
+            ) ||
+            typeAwarePossiblyMutatedNames.some(
+              (mutation, index) =>
+                index < priorPossibleMutationCount &&
+                names.some((name) => receiversMayAlias(mutation, name))
+            ) ||
+            otherCallUsesContainer ||
+            callbacks.some((name) => !currentPythonFunctionSummary(name))
+          ) {
+            callbackContainers.delete(reference.root)
+            return [reference]
+          }
+          namedCallbackContainersUsed.add(reference.root)
+          return callbacks.map((root) => ({ root, container: 'list' as const }))
+        })
       // Visit every contracted callback before aggregating uncertainty: a
       // dynamic callback must not hide the known captures of later callbacks.
       const callbackUncertainties = callbackArguments.map((keyword) =>
-        (keyword.callableReferences ?? []).map((reference) => {
+        callbackReferences(keyword).map((reference) => {
           if (
             reference.container &&
             !libraryEffect?.callbackContainerKeywords?.includes(keyword.name)
@@ -1280,6 +1409,10 @@ class NotebookDependencyProjector {
       if (callbackUncertainties.some((references) => references.some(Boolean))) {
         typeAwareReasons.push('opaque-call')
       }
+      for (const container of namedCallbackContainersUsed) {
+        if ((facts.possiblyMutatedNames ?? []).some((name) => receiversMayAlias(name, container)))
+          callbackContainers.delete(container)
+      }
       if (libraryEffect?.mutatesReceiverUnlessKeywordFalse) {
         const option = call.keywordArguments?.find(
           (keyword) => keyword.name === libraryEffect.mutatesReceiverUnlessKeywordFalse
@@ -1368,6 +1501,27 @@ class NotebookDependencyProjector {
           typeAwareReasons.push('opaque-call', 'dynamic-namespace')
         }
       }
+    }
+    // Effective type-aware mutations also invalidate future candidates.
+    if (typeAwareReasons.includes('dynamic-namespace')) callbackContainers.clear()
+    const callbackActualMutationNames = [...(facts.mutatedNames ?? []), ...typeAwareMutatedNames]
+    const callbackPossibleMutationNames = [
+      ...(facts.possiblyMutatedNames ?? []),
+      ...typeAwarePossiblyMutatedNames
+    ]
+    for (const [container, callbacks] of callbackContainers) {
+      if (
+        callbackActualMutationNames.some((mutation) => receiversMayAlias(mutation, container)) ||
+        [container, ...callbacks].some((name) =>
+          callbackPossibleMutationNames.some((mutation) => receiversMayAlias(mutation, name))
+        ) ||
+        callbacks.some(
+          (name) =>
+            callbackActualMutationNames.some((mutation) => receiversMayAlias(mutation, name)) &&
+            !currentPythonFunctionSummary(name)
+        )
+      )
+        callbackContainers.delete(container)
     }
     const packageUpstreamRunIds = new Set<string>()
     const packageReasons: string[] = []

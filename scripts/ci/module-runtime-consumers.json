@@ -32,5 +32,79 @@
     "src/main/credential-identity/node-cipher.ts",
     "src/main/credential-identity/probe.ts",
     "src/main/credential-identity/windows-profile-key.ts"
-  ]
+  ],
+  "resources/citation/NOTICE.md": ["src/main/literature/citation-style-library.ts"],
+  "resources/citation/american-medical-association.csl": [
+    "src/main/literature/citation-style-library.ts"
+  ],
+  "resources/citation/apa.csl": ["src/main/literature/citation-style-library.ts"],
+  "resources/citation/chicago-author-date.csl": ["src/main/literature/citation-style-library.ts"],
+  "resources/citation/harvard-cite-them-right.csl": [
+    "src/main/literature/citation-style-library.ts"
+  ],
+  "resources/citation/ieee.csl": ["src/main/literature/citation-style-library.ts"],
+  "resources/citation/locales-en-US.xml": ["src/main/literature/citation-style-library.ts"],
+  "resources/citation/locales-zh-CN.xml": ["src/main/literature/citation-style-library.ts"],
+  "resources/citation/mla.csl": ["src/main/literature/citation-style-library.ts"],
+  "resources/citation/nature.csl": ["src/main/literature/citation-style-library.ts"],
+  "resources/citation/vancouver.csl": ["src/main/literature/citation-style-library.ts"],
+  "resources/compute-askpass-win.cjs": ["src/main/compute/connection-adapters.ts"],
+  "resources/compute-askpass.cjs": ["src/main/compute/connection-adapters.ts"],
+  "resources/compute-askpass.sh": ["src/main/compute/connection-adapters.ts"],
+  "resources/pdf-translation-local/worker.mjs": ["src/main/literature/pdf-translation/local.ts"],
+  "resources/tree-sitter/tree-sitter-bash.LICENSE": [
+    "src/main/notebook/dependency-analysis-parser.ts"
+  ],
+  "resources/tree-sitter/tree-sitter-bash.provenance.json": [
+    "src/main/notebook/dependency-analysis-parser.ts"
+  ],
+  "resources/tree-sitter/tree-sitter-bash.wasm": [
+    "src/main/notebook/dependency-analysis-parser.ts"
+  ],
+  "resources/tree-sitter/tree-sitter-javascript.LICENSE": [
+    "src/main/notebook/dependency-analysis-parser.ts"
+  ],
+  "resources/tree-sitter/tree-sitter-javascript.provenance.json": [
+    "src/main/notebook/dependency-analysis-parser.ts"
+  ],
+  "resources/tree-sitter/tree-sitter-javascript.wasm": [
+    "src/main/notebook/dependency-analysis-parser.ts"
+  ],
+  "resources/tree-sitter/tree-sitter-python.wasm": [
+    "src/main/notebook/dependency-analysis-parser.ts"
+  ],
+  "resources/tree-sitter/tree-sitter-r.wasm": ["src/main/notebook/dependency-analysis-parser.ts"],
+  "resources/tree-sitter/web-tree-sitter.wasm": ["src/main/notebook/dependency-analysis-parser.ts"],
+  "resources/notebook/python_loop.py": [
+    "src/main/notebook/kernel-executor.ts",
+    "src/main/notebook/runtime-service.ts"
+  ],
+  "resources/notebook/r_loop.R": [
+    "src/main/notebook/kernel-executor.ts",
+    "src/main/notebook/runtime-service.ts"
+  ],
+  "resources/notebook/repl_loop.js": [
+    "src/main/notebook/kernel-executor.ts",
+    "src/main/notebook/runtime-service.ts"
+  ],
+  "resources/notebook/kernel_process_host.js": [
+    "src/main/notebook/kernel-executor.ts",
+    "src/main/notebook/runtime-service.ts",
+    "src/main/notebook/shell-process-ownership.windows-posix.ts"
+  ],
+  "resources/notebook/package.json": [
+    "src/main/notebook/kernel-executor.ts",
+    "src/main/notebook/runtime-service.ts"
+  ],
+  "resources/notebook/file_evidence_worker.js": ["src/main/notebook/working-file-observer.ts"],
+  "resources/pdf-translation/worker.mjs": [
+    "src/main/literature/pdf-translation/ipc.ts",
+    "src/main/literature/pdf-translation/writer.ts"
+  ],
+  "resources/pdf-structure/host.mjs": ["src/main/literature/pdf-structure/engine.ts"],
+  "resources/find-overlay/index.html": [
+    "resources/find-overlay/findOverlay.js",
+    "src/main/windows.ts"
+  ],
+  "resources/find-overlay/findOverlay.js": ["src/main/find-overlay.ts"]
 }

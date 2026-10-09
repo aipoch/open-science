@@ -74,8 +74,8 @@ export async function composeSessionPackages({
     const service = new SessionPackageService({
       getDefaultPermissionProfile: async () =>
         getDefaultPermissionProfile(await settingsRepository.getSettings()),
-      onSessionPublished: async ({ projectId, sessionId }) => {
-        await packagePublicationOwner.current?.adoptPublishedSession(projectId, sessionId)
+      onSessionPublished: async (publication) => {
+        await packagePublicationOwner.current?.adoptPublishedSession(publication)
       },
       inspectPackage: createPackageInspector(createInspectionWorker),
       configRoot: resolveConfigRoot(),

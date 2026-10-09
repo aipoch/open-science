@@ -5,7 +5,14 @@ import { pathToFileURL } from 'node:url'
 const { trimTableCaptionCrop: trim } = await import(
   pathToFileURL(resolve('resources/pdf-structure/literature-pdf-table-geometry.mjs')).href
 )
-type Item = { text: string; rect: number[]; baseline: number; height: number; horizontal: boolean }
+type Item = {
+  text: string
+  rect: number[]
+  baseline: number
+  height: number
+  horizontal: boolean
+  sourceToken?: Item
+}
 const source = (text: string, x: number, y: number): Item => ({
   text,
   rect: [x, y - 10, x + 20, y],
@@ -37,6 +44,8 @@ const setup = (
   contentRect: number[]
   rules: number[][]
   pageItems: Item[]
+  pageFontItems?: (Item & { fontDescent: number })[]
+  noteOwnerRects?: number[][]
   pageNumber: number
   scale: number
   rulePaintBounds?: Map<string, number[]>
@@ -129,6 +138,53 @@ const paintedTextFrame = (): ReturnType<typeof setup> => {
   ])
   return f
 }
+
+const doubleOpeningFrame = (): ReturnType<typeof setup> => {
+  const f = setup()
+  f.rules.splice(1, 0, [0, 22, 240, 22])
+  for (const i of f.pageItems.filter((i) => i.baseline === 32)) {
+    i.baseline += 2
+    i.rect[1] += 2
+    i.rect[3] += 2
+  }
+  f.cropRect[1] = f.table.cropRect[1] = 22.8
+  f.rulePaintBounds = new Map([
+    [f.rules[0].join(','), [0, 19.6, 240, 20.4]],
+    [f.rules[1].join(','), [0, 21.6, 240, 22.4]],
+    [f.rules.at(-1)!.join(','), [0, 99.6, 240, 100.4]]
+  ])
+  return f
+}
+it('preserves both painted opening rules of one wholly owned captioned native table', () => {
+  const f = doubleOpeningFrame(),
+    before = structuredClone(f.table)
+  trim(f)
+  expect(f.cropRect[1]).toBe(19.5)
+  expect(f.table).toEqual(before)
+})
+it.each([
+  'missing-first-paint',
+  'missing-second-paint',
+  'different-endpoints',
+  'third-opening',
+  'separated-rules',
+  'far-crop',
+  'foreign-strip'
+])(
+  'does not widen opening recovery without the exact same owned painted double frame: %s',
+  (variant) => {
+    const f = doubleOpeningFrame()
+    if (variant === 'missing-first-paint') f.rulePaintBounds!.delete(f.rules[0].join(','))
+    if (variant === 'missing-second-paint') f.rulePaintBounds!.delete(f.rules[1].join(','))
+    if (variant === 'different-endpoints') f.rules[1][0] = 1
+    if (variant === 'third-opening') f.rules.splice(1, 0, [0, 21, 240, 21])
+    if (variant === 'separated-rules') f.rules[0][1] = f.rules[0][3] = 16
+    if (variant === 'far-crop') f.cropRect[1] = f.table.cropRect[1] = 26
+    if (variant === 'foreign-strip') f.pageItems.push(source('foreign', 100, 21.8))
+    trim(f)
+    expect(f.cropRect[1]).toBeGreaterThan(20)
+  }
+)
 
 it.each(['left', 'right', 'both'])(
   'retains both measured frame endpoints at a near %s crop edge',
@@ -430,6 +486,25 @@ const textFrame = (
   }
 }
 
+it('recovers a double painted opening above complete descriptive native records with an above-frame caption', () => {
+  const f = textFrame()
+  const item = f.pageItems.at(-1)!
+  item.baseline = 4
+  item.rect[1] = -8
+  item.rect[3] = 4
+  f.caption.rect = [...item.rect]
+  f.rules.splice(1, 0, [0, 12, 180, 12])
+  f.cropRect[1] = f.table.cropRect[1] = 12.8
+  f.rulePaintBounds = new Map([
+    [f.rules[0].join(','), [0, 9.6, 180, 10.4]],
+    [f.rules[1].join(','), [0, 11.6, 180, 12.4]],
+    [f.rules.at(-1)!.join(','), [0, 84.6, 180, 85.4]]
+  ])
+  trim(f)
+  expect(f.cropRect[1]).toBe(9.5)
+  expect(f.table.grid.slice(1).every((r) => r.every((s) => s.startsWith('Text')))).toBe(true)
+})
+
 it.each([
   { name: 'three text columns', columns: 3, twoTier: false, smallFont: false, wrapped: false },
   { name: 'two text columns', columns: 2, twoTier: false, smallFont: false, wrapped: false },
@@ -563,3 +638,369 @@ it.each([
   trim(f)
   expect(f.cropRect[3]).toBe(97)
 })
+
+// The source footer is visually adjacent, but its public note ownership is
+// intentionally unchanged. Native font descent supplies the final ink edge.
+const unresolvedVisualFooter = (references = false): ReturnType<typeof setup> => {
+  const left = references ? 126.885 : 73.446,
+    right = references ? 766.0275018310547 : 450.03450860595706,
+    h = 13.4496,
+    baselines = references ? [171.666, 223.3065, 294.237] : [174.6, 209.76, 263.9265],
+    edges = references ? [155.3805, 179.5455, 302.115] : [158.6025, 182.7735, 272.0565],
+    pageItems: Item[] = [],
+    cells: ReturnType<typeof setup>['table']['cells'] = [],
+    grid = [
+      ['Treatment', 'Leaf A', 'Leaf B'],
+      ['Record A', 'Value A', 'Value B'],
+      ['Record B', 'Value C', 'Value D']
+    ]
+  for (const [row, texts] of grid.entries())
+    for (const [column, text] of texts.entries()) {
+      const x = column === 2 ? right - 40 : left + (column * (right - left)) / 3,
+        item = {
+          text,
+          rect: [x, baselines[row] - h, x + 40, baselines[row]],
+          baseline: baselines[row],
+          height: h,
+          horizontal: true
+        }
+      pageItems.push(item)
+      cells.push({
+        row,
+        column,
+        rowSpan: 1,
+        colSpan: 1,
+        text,
+        rect: [...item.rect],
+        sourceRects: [item.rect],
+        sourceTokens: [item]
+      })
+    }
+  const footer = references
+      ? [
+          {
+            text: 'References: Native comparison: 0.748',
+            rect: [left, 304.7259, 303.007512, 318.1755],
+            baseline: 318.1755,
+            height: h,
+            horizontal: true
+          },
+          {
+            text: 'Direct comparison: 0.828',
+            rect: [319.819512, 304.7259, 483.2456016, 318.1755],
+            baseline: 318.1755,
+            height: h,
+            horizontal: true
+          }
+        ]
+      : [
+          {
+            text: 'All treatments use the same observed records',
+            rect: [77.2125, 272.3163, 446.265996, 282.777],
+            baseline: 282.777,
+            height: 10.4607,
+            horizontal: true
+          },
+          {
+            text: 'and produce identical estimates and intervals.',
+            rect: [77.2125, 284.2713, 272.7648258, 294.732],
+            baseline: 294.732,
+            height: 10.4607,
+            horizontal: true
+          }
+        ],
+    captionItem = {
+      text: 'Table 1. Source-owned descriptive records.',
+      rect: references ? [91.4295, 138.74535, 803.208098664, 150.7005] : [73.446, 128, 430, 140],
+      baseline: references ? 150.7005 : 140,
+      height: references ? 11.95515 : 12,
+      horizontal: true
+    },
+    cropRect = references ? [116, 152.2005, 752, 316] : [63, 152, 458, 278],
+    rules = edges.map((y) => [left, y, right, y]),
+    contentRect = [left, baselines[0] - h, right - 1, baselines.at(-1)!]
+  if (references) rules.push([left, 326.2785, right, 326.2785])
+  pageItems.push(...footer, captionItem, {
+    text: 'A separate following paragraph.',
+    rect: [left, references ? 356.7636 : 325.8951, right, references ? 371.7075 : 340.839],
+    baseline: references ? 371.7075 : 340.839,
+    height: 14.9439,
+    horizontal: true
+  })
+  return {
+    table: {
+      cropRect: [...cropRect],
+      grid,
+      columns: [],
+      cells,
+      unassigned: references ? footer.map((i) => i.text) : [footer[0].text]
+    },
+    cropRect,
+    caption: { page: 1, lines: [captionItem.text], rect: [...captionItem.rect] },
+    contentRect,
+    rules,
+    rulePaintBounds: new Map(
+      rules.map((rule, n) => [
+        rule.join(','),
+        [
+          left,
+          rule[1] - (n === 1 || (n === 2 && references) ? 0.3735 : 0.59775),
+          right,
+          rule[1] + (n === 1 || (n === 2 && references) ? 0.3735 : 0.59775)
+        ]
+      ])
+    ),
+    pageItems,
+    pageFontItems: pageItems.map((i) => ({
+      ...structuredClone(i),
+      fontDescent: i === captionItem ? (references ? -0.218 : -0.216) : -0.216
+    })),
+    noteOwnerRects: [contentRect],
+    pageNumber: 1,
+    scale: 1
+  }
+}
+
+it('retains the complete two-line visual footer and native descenders without assigning a note', () => {
+  const f = unresolvedVisualFooter(),
+    before = structuredClone(f)
+  trim(f)
+  expect(f.cropRect).toEqual([63, 152, 458, 297.49151120000005])
+  expect({ ...f, cropRect: before.cropRect }).toEqual(before)
+})
+
+it('excludes the separate References band and caption descent while retaining all native body rule endpoints', () => {
+  const f = unresolvedVisualFooter(true),
+    before = structuredClone(f)
+  trim(f)
+  expect(f.cropRect).toEqual([116, 154.04473635, 766.0275018310547, 302.615])
+  expect({ ...f, cropRect: before.cropRect }).toEqual(before)
+})
+
+it.each([false, true])(
+  'requires unique complete native source before changing an unresolved visual footer (References=%s)',
+  (references) => {
+    const variants = [
+      'missing opening',
+      'missing divider',
+      'missing closing',
+      'missing paint',
+      'competing divider',
+      'missing font items',
+      'missing recipient',
+      'competing recipient',
+      'foreign recipient',
+      'missing body font',
+      'duplicate body font',
+      'missing footer font',
+      'duplicate footer font',
+      'wrong footer font baseline',
+      'invalid footer descent',
+      'missing caption font',
+      'wrong body font baseline',
+      'wrong body font height',
+      'competing body font baseline',
+      'competing footer font height',
+      'missing source owner',
+      'duplicate source owner',
+      'incomplete cell',
+      'cell literal mismatch',
+      'spanning leaf',
+      'duplicate cell slot',
+      'foreign body',
+      'foreign footer corridor',
+      'missing terminal line',
+      'duplicate footer',
+      'foreign unassigned literal',
+      'cross-page caption'
+    ]
+    for (const variant of variants) {
+      const f = unresolvedVisualFooter(references),
+        footer = f.pageItems.filter(
+          (i) => i.baseline === 282.777 || i.baseline === 294.732 || i.baseline === 318.1755
+        ),
+        removeFont = (item: Item): void => {
+          f.pageFontItems = f.pageFontItems!.filter((i) => i.text !== item.text)
+        }
+      if (variant === 'missing opening') f.rules.shift()
+      if (variant === 'missing divider') f.rules.splice(1, 1)
+      if (variant === 'missing closing') f.rules.splice(2, 1)
+      if (variant === 'missing paint') f.rulePaintBounds!.delete(f.rules[2].join(','))
+      if (variant === 'competing divider')
+        f.rules.push([f.rules[1][0], f.rules[1][1] + 1, f.rules[1][2], f.rules[1][3] + 1])
+      if (variant === 'missing font items') f.pageFontItems = []
+      if (variant === 'missing recipient') f.noteOwnerRects = []
+      if (variant === 'competing recipient') f.noteOwnerRects!.push([...f.contentRect])
+      if (variant === 'foreign recipient')
+        f.noteOwnerRects![0] = f.contentRect.map((v, n) => (n === 1 ? v + 1 : v))
+      if (variant === 'missing body font') removeFont(f.pageItems[0])
+      if (variant === 'duplicate body font')
+        f.pageFontItems!.push(structuredClone(f.pageFontItems![0]))
+      if (variant === 'missing footer font') removeFont(footer[1])
+      if (variant === 'duplicate footer font')
+        f.pageFontItems!.push(
+          structuredClone(f.pageFontItems!.find((i) => i.text === footer[0].text)!)
+        )
+      if (variant === 'wrong footer font baseline')
+        f.pageFontItems!.find((i) => i.text === footer[0].text)!.baseline += 1
+      if (variant === 'invalid footer descent')
+        f.pageFontItems!.find((i) => i.text === footer[0].text)!.fontDescent = NaN
+      if (variant === 'missing caption font')
+        removeFont(f.pageItems.find((i) => i.text === f.caption.lines[0])!)
+      if (variant === 'wrong body font baseline') f.pageFontItems![0].baseline += 1
+      if (variant === 'wrong body font height') f.pageFontItems![0].height += 1
+      if (variant === 'competing body font baseline')
+        f.pageFontItems!.push({
+          ...structuredClone(f.pageFontItems![0]),
+          baseline: f.pageFontItems![0].baseline + 1
+        })
+      if (variant === 'competing footer font height') {
+        const item = f.pageFontItems!.find((i) => i.text === footer[0].text)!
+        f.pageFontItems!.push({ ...structuredClone(item), height: item.height + 1 })
+      }
+      if (variant === 'missing source owner') f.pageItems.shift()
+      if (variant === 'duplicate source owner') f.pageItems.push(structuredClone(f.pageItems[0]))
+      if (variant === 'incomplete cell') f.table.cells.shift()
+      if (variant === 'cell literal mismatch') f.table.cells[0].text = 'Foreign'
+      if (variant === 'spanning leaf') f.table.cells[0].colSpan = 2
+      if (variant === 'duplicate cell slot') f.table.cells[0].column = 1
+      if (variant === 'foreign body')
+        f.pageItems.push({ ...source('Foreign', f.rules[0][0] + 1, 220), horizontal: false })
+      if (variant === 'foreign footer corridor')
+        f.pageItems.push({
+          ...source('Foreign', f.rules[0][0] + 1, f.rules[2][1] + 5),
+          horizontal: false
+        })
+      if (variant === 'missing terminal line')
+        f.pageItems = f.pageItems.filter((i) => i !== footer[1])
+      if (variant === 'duplicate footer') f.pageItems.push(structuredClone(footer[0]))
+      if (variant === 'foreign unassigned literal') f.table.unassigned.push('Foreign')
+      if (variant === 'cross-page caption') f.caption.page++
+      const legacy = structuredClone(f),
+        before = structuredClone(f)
+      legacy.pageFontItems = []
+      trim(legacy)
+      trim(f)
+      expect(f.cropRect, variant).toEqual(legacy.cropRect)
+      expect({ ...f, cropRect: before.cropRect }, variant).toEqual(before)
+    }
+  }
+)
+
+it.each([
+  'ordinary footer font',
+  'missing terminal punctuation',
+  'nearby prose',
+  'foreign caption descent'
+])(
+  'retains the original two-line crop without a complete small-font visual band: %s',
+  (variant) => {
+    const f = unresolvedVisualFooter(),
+      before = [...f.cropRect]
+    if (variant === 'ordinary footer font') {
+      const item = f.pageItems.find((i) => i.baseline === 294.732)!
+      item.height = 13.4496
+      item.rect[1] = item.baseline - item.height
+    }
+    if (variant === 'missing terminal punctuation')
+      f.pageItems.find((i) => i.baseline === 294.732)!.text = 'Incomplete footer'
+    if (variant === 'nearby prose') f.pageItems.push(source('Foreign paragraph', 74, 309))
+    if (variant === 'foreign caption descent') {
+      const item = source('Foreign preceding text', 75, 148)
+      f.pageItems.push(item)
+      f.pageFontItems!.push({ ...item, fontDescent: -0.8 })
+    }
+    trim(f)
+    expect(f.cropRect).toEqual(before)
+  }
+)
+
+it.each([
+  'missing outer closing',
+  'missing outer paint',
+  'unlabelled band',
+  'foreign side strip',
+  'owned body descent crosses closing'
+])(
+  'retains the original References crop when complete native ink ownership fails: %s',
+  (variant) => {
+    const f = unresolvedVisualFooter(true),
+      before = [...f.cropRect]
+    if (variant === 'missing outer closing') f.rules.pop()
+    if (variant === 'missing outer paint') f.rulePaintBounds!.delete(f.rules.at(-1)!.join(','))
+    if (variant === 'unlabelled band') {
+      const item = f.pageItems.find((i) => i.text.startsWith('References:'))!
+      item.text = item.text.replace('References:', 'Discussion:')
+      f.table.unassigned[0] = item.text
+      f.pageFontItems!.find((i) => i.text.startsWith('References:'))!.text = item.text
+    }
+    if (variant === 'foreign side strip')
+      f.pageItems.push(source('Foreign adjacent column', 753, 240))
+    if (variant === 'owned body descent crosses closing')
+      f.pageFontItems!.find((i) => i.text === 'Value D')!.fontDescent = -0.8
+    trim(f)
+    expect(f.cropRect).toEqual(before)
+  }
+)
+
+it.each([false, true])(
+  'preserves native source/recipient permutation for a proved visual footer (References=%s)',
+  (references) => {
+    const f = unresolvedVisualFooter(references),
+      original = structuredClone(f)
+    f.pageItems.reverse()
+    f.pageFontItems!.reverse()
+    f.table.cells.reverse()
+    trim(original)
+    const before = structuredClone(f)
+    trim(f)
+    expect(f.cropRect).toEqual(original.cropRect)
+    expect({ ...f, cropRect: before.cropRect }).toEqual(before)
+  }
+)
+
+it.each([false, true])(
+  'preserves independently partitioned header words without changing cell owners (References=%s)',
+  (references) => {
+    const f = unresolvedVisualFooter(references),
+      cell = f.table.cells[1],
+      parent = cell.sourceTokens![0],
+      first = {
+        ...parent,
+        text: 'Leaf',
+        sourceToken: structuredClone(parent),
+        rect: [parent.rect[0], parent.rect[1], parent.rect[0] + 20, parent.rect[3]]
+      },
+      second = {
+        ...parent,
+        text: 'A',
+        sourceToken: structuredClone(parent),
+        rect: [parent.rect[0] + 25, parent.rect[1], parent.rect[2], parent.rect[3]]
+      }
+    cell.sourceTokens = [first, second]
+    cell.sourceRects = [first.rect, second.rect]
+    const before = structuredClone(f),
+      expected = structuredClone(unresolvedVisualFooter(references))
+    trim(expected)
+    trim(f)
+    expect(f.cropRect).toEqual(expected.cropRect)
+    expect({ ...f, cropRect: before.cropRect }).toEqual(before)
+  }
+)
+
+it.each([false, true])(
+  'retains a valid smaller native descent and complete measured top/side envelopes (References=%s)',
+  (references) => {
+    const f = unresolvedVisualFooter(references),
+      expected = structuredClone(f)
+    for (const item of f.pageFontItems!.filter((i) =>
+      f.table.cells.some((c) => c.sourceTokens!.some((t) => t.text === i.text))
+    ))
+      item.fontDescent = -0.1
+    const before = structuredClone(f)
+    trim(expected)
+    trim(f)
+    expect(f.cropRect).toEqual(expected.cropRect)
+    expect({ ...f, cropRect: before.cropRect }).toEqual(before)
+  }
+)

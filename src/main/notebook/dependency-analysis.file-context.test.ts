@@ -45,7 +45,9 @@ const fileContext = async (
   overrides: Array<Partial<NotebookRunRecord>> = [],
   precompute = true,
   corruptCache?: (json: string) => string,
-  currentKernelEpochId = 'epoch-1'
+  currentKernelEpochId = 'epoch-1',
+  currentRunOverrides?: Partial<NotebookRunRecord>,
+  afterPrecompute?: (runs: NotebookRunRecord[]) => void
 ): Promise<NotebookSourceFileAccessContext | undefined> => {
   const storageRoot = await mkdtemp(join(tmpdir(), 'notebook-file-context-'))
   roots.push(storageRoot)
@@ -69,7 +71,16 @@ const fileContext = async (
     inputFiles: [],
     ...overrides[index]
   }))
-  const repository = { readSessionRuns: async () => runs }
+  const currentRun = currentRunOverrides
+    ? {
+        ...runs.at(-1)!,
+        runId: 'next-run',
+        cellId: 'next-cell',
+        script: '',
+        ...currentRunOverrides
+      }
+    : undefined
+  const repository = { readSessionRuns: async () => (currentRun ? [...runs, currentRun] : runs) }
   if (precompute)
     await new NotebookDependencyAnalyzer({ storageRoot, repository }).project({
       projectId: 'default-project',
@@ -83,6 +94,7 @@ const fileContext = async (
     )
     await writeFile(cachePath, corruptCache(await readFile(cachePath, 'utf8')))
   }
+  afterPrecompute?.(runs)
   return new NotebookDependencyAnalyzer({ storageRoot, repository }).sourceFileAccessContext({
     projectId: 'default-project',
     sessionId: 'session-1',
@@ -92,6 +104,437 @@ const fileContext = async (
     kernelEpochId: currentKernelEpochId
   })
 }
+
+describe('SQLite readonly historical file context', () => {
+  const setup = [
+    'import sqlite3',
+    'conn = sqlite3.connect("file:inputs/co2.sqlite?mode=ro", uri=True)',
+    'cur = conn.cursor()'
+  ].join('\n')
+  const select =
+    'cur.execute("SELECT row_id, uptake FROM observations WHERE conc >= ? ORDER BY row_id", (500,))\nrows = cur.fetchall()'
+  const cwd = join(tmpdir(), 'sqlite-readonly-owner')
+
+  it('retains the SQLite database input through three trustworthy cells and cache reload', async () => {
+    const context = await fileContext(
+      'python',
+      [setup, select, select],
+      Array.from({ length: 3 }, () => ({ cwdBefore: cwd, cwdAfter: cwd })),
+      true,
+      undefined,
+      'epoch-1',
+      { cwdBefore: cwd, cwdAfter: cwd }
+    )
+    expect(context?.pythonBindings).toEqual(
+      expect.arrayContaining([
+        {
+          name: 'conn',
+          qualifiedName: 'sqlite3.Connection',
+          kind: 'object',
+          filePath: 'inputs/co2.sqlite'
+        },
+        {
+          name: 'cur',
+          qualifiedName: 'sqlite3.Cursor',
+          kind: 'object',
+          filePath: 'inputs/co2.sqlite'
+        }
+      ])
+    )
+    expect(await analyzeNotebookSourceFileAccess('python', select, context)).toMatchObject({
+      reads: ['inputs/co2.sqlite'],
+      readState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it('establishes a literal SQLite connection from a still-trusted earlier import', async () => {
+    const context = await fileContext(
+      'python',
+      ['import sqlite3', setup.replace('import sqlite3\n', '')],
+      Array.from({ length: 2 }, () => ({ cwdBefore: cwd, cwdAfter: cwd })),
+      true,
+      undefined,
+      'epoch-1',
+      { cwdBefore: cwd, cwdAfter: cwd }
+    )
+    expect(await analyzeNotebookSourceFileAccess('python', select, context)).toMatchObject({
+      reads: ['inputs/co2.sqlite'],
+      readState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it('does not retain a SQLite input after a converter rebinds its cursor across cache reload', async () => {
+    const converter = [
+      'import pandas as pd',
+      'def convert(value):',
+      '    global cur',
+      '    cur = sqlite3.connect("file:inputs/replacement.sqlite?mode=ro", uri=True).cursor()',
+      '    return value',
+      'pd.read_csv("inputs/values.csv", converters={"value": convert})'
+    ].join('\n')
+    const context = await fileContext(
+      'python',
+      [setup, converter, select],
+      Array.from({ length: 3 }, () => ({ cwdBefore: cwd, cwdAfter: cwd })),
+      true,
+      undefined,
+      'epoch-1',
+      { cwdBefore: cwd, cwdAfter: cwd }
+    )
+    expect(await analyzeNotebookSourceFileAccess('python', select, context)).toMatchObject({
+      reads: [],
+      readState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it.each([
+    ['missing current cwd', {}, { cwdBefore: undefined, cwdAfter: undefined }],
+    ['missing current run', {}, undefined],
+    ['changed current cwd', {}, { cwdBefore: `${cwd}-other`, cwdAfter: `${cwd}-other` }],
+    ['missing historical cwd', { cwdBefore: undefined }, { cwdBefore: cwd, cwdAfter: cwd }],
+    [
+      'changed then restored cwd',
+      { script: 'import os\nos.chdir("elsewhere")\nos.chdir("..")' },
+      { cwdBefore: cwd, cwdAfter: cwd }
+    ],
+    [
+      'current cwd mutation',
+      {},
+      { cwdBefore: cwd, cwdAfter: cwd, script: 'import os\nos.chdir("elsewhere")\nos.chdir("..")' }
+    ]
+  ] as Array<[string, Partial<NotebookRunRecord>, Partial<NotebookRunRecord> | undefined]>)(
+    'discards relative SQLite authority after %s',
+    async (_label, historical, current) => {
+      const context = await fileContext(
+        'python',
+        [setup, select],
+        [
+          { cwdBefore: cwd, cwdAfter: cwd },
+          { cwdBefore: cwd, cwdAfter: cwd, ...historical }
+        ],
+        true,
+        undefined,
+        'epoch-1',
+        current
+      )
+      expect(context?.pythonBindings?.filter(({ filePath }) => filePath !== undefined)).toEqual([])
+      expect(await analyzeNotebookSourceFileAccess('python', select, context)).toMatchObject({
+        reads: [],
+        readState: 'partial',
+        externalState: 'partial'
+      })
+    }
+  )
+
+  it('does not recover SQLite authority across an opaque historical call', async () => {
+    const context = await fileContext(
+      'python',
+      [setup, 'unknown(conn)', select],
+      Array.from({ length: 3 }, () => ({ cwdBefore: cwd, cwdAfter: cwd })),
+      true,
+      undefined,
+      'epoch-1',
+      { cwdBefore: cwd, cwdAfter: cwd }
+    )
+    expect(context?.pythonBindings?.some(({ filePath }) => filePath !== undefined)).toBeFalsy()
+    expect(await analyzeNotebookSourceFileAccess('python', select, context)).toMatchObject({
+      reads: [],
+      readState: 'partial'
+    })
+  })
+
+  it.each([
+    'duplicate identity',
+    'oversized path',
+    'import path',
+    'NUL path',
+    'backslash path'
+  ] as const)('rebuilds a malformed SQLite cache entry with %s', async (kind) => {
+    const context = await fileContext(
+      'python',
+      [setup, select],
+      Array.from({ length: 2 }, () => ({ cwdBefore: cwd, cwdAfter: cwd })),
+      true,
+      (json) => {
+        const cache = JSON.parse(json)
+        let corruptedEntries = 0
+        for (const run of Object.values(cache.runs) as Array<{
+          fileContext?: NotebookSourceFileAccessContext
+        }>) {
+          const bindings = run.fileContext?.pythonBindings
+          const binding = bindings?.find(({ name }) => name === 'cur')
+          if (!binding) continue
+          corruptedEntries++
+          if (kind === 'duplicate identity') bindings!.push({ ...binding })
+          if (kind === 'oversized path') binding.filePath = 'x'.repeat(4097)
+          if (kind === 'import path') {
+            binding.kind = 'import'
+            binding.filePath = 'inputs/co2.sqlite'
+          }
+          if (kind === 'NUL path') binding.filePath = 'inputs/invalid\0.sqlite'
+          if (kind === 'backslash path') binding.filePath = 'inputs\\co2.sqlite'
+        }
+        expect(corruptedEntries).toBeGreaterThan(0)
+        return JSON.stringify(cache)
+      },
+      'epoch-1',
+      { cwdBefore: cwd, cwdAfter: cwd }
+    )
+    expect(await analyzeNotebookSourceFileAccess('python', select, context)).toMatchObject({
+      reads: ['inputs/co2.sqlite'],
+      readState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  const literalConnection = (path = 'inputs/co2.sqlite'): FileContextEntry => ({
+    facts: {
+      state: 'available',
+      definedNames: ['sqlite3', 'conn'],
+      usedNames: ['sqlite3'],
+      mutatedNames: [],
+      typeBindings: [{ target: 'conn', typeName: 'sqlite3.Connection' }],
+      receiverCalls: [
+        {
+          receiver: 'sqlite3',
+          member: 'connect',
+          kind: 'receiver',
+          argumentNames: [],
+          positionalArgumentNames: [[]],
+          receiverChain: [],
+          keywordArguments: [{ name: 'uri', argumentNames: [], staticBoolean: true }],
+          resultNames: ['conn']
+        }
+      ]
+    },
+    fileContext: {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonBindings: [
+        { name: 'sqlite3', qualifiedName: 'sqlite3', kind: 'import' },
+        { name: 'conn', qualifiedName: 'sqlite3.Connection', kind: 'object', filePath: path }
+      ]
+    }
+  })
+
+  it('rejects a cached fresh SQLite cursor whose actual receiver lost its path', () => {
+    const initial = literalConnection()
+    const barrier: FileContextEntry = {
+      ...initial,
+      facts: { state: 'available', definedNames: [], usedNames: [], mutatedNames: [] },
+      sqliteRelativePathBarrier: true
+    }
+    const cursor: FileContextEntry = {
+      facts: {
+        state: 'available',
+        definedNames: ['cur2'],
+        usedNames: ['conn'],
+        mutatedNames: [],
+        typeBindings: [{ target: 'cur2', typeName: 'sqlite3.Cursor' }],
+        receiverCalls: [
+          {
+            receiver: 'conn',
+            member: 'cursor',
+            kind: 'receiver',
+            argumentNames: [],
+            positionalArgumentNames: [],
+            keywordArguments: [],
+            receiverChain: [],
+            resultNames: ['cur2']
+          }
+        ]
+      },
+      fileContext: {
+        ...initial.fileContext,
+        pythonBindings: [
+          ...initial.fileContext.pythonBindings!,
+          {
+            name: 'cur2',
+            qualifiedName: 'sqlite3.Cursor',
+            kind: 'object',
+            filePath: 'inputs/co2.sqlite'
+          }
+        ]
+      }
+    }
+    const context = projectNotebookFileContext('python', [initial, barrier, cursor])
+    expect(context?.pythonBindings?.find(({ name }) => name === 'cur2')).toEqual({
+      name: 'cur2',
+      qualifiedName: 'sqlite3.Cursor',
+      kind: 'object'
+    })
+  })
+
+  it('rejects a cached fresh SQLite constructor derived from an inherited URI', () => {
+    const constructor = literalConnection()
+    constructor.facts.receiverCalls![0]!.argumentNames = ['uri']
+    constructor.facts.receiverCalls![0]!.positionalArgumentNames = [['uri']]
+    const context = projectNotebookFileContext('python', [
+      {
+        facts: { state: 'available', definedNames: ['uri'], usedNames: [], mutatedNames: [] },
+        fileContext: {
+          staticStrings: [{ name: 'uri', value: 'file:inputs/changed.sqlite?mode=ro' }],
+          staticCollections: [],
+          localFileWrappers: []
+        }
+      },
+      constructor
+    ])
+    expect(context?.pythonBindings?.find(({ name }) => name === 'conn')).toEqual({
+      name: 'conn',
+      qualifiedName: 'sqlite3.Connection',
+      kind: 'object'
+    })
+  })
+
+  it.each(['cursor after cwd restoration', 'constructor after URI replacement'] as const)(
+    'rejects cached fresh SQLite authority through the public owner: %s',
+    async (kind) => {
+      const scripts =
+        kind === 'cursor after cwd restoration'
+          ? [setup, 'print(1)', 'cur2 = conn.cursor()']
+          : [
+              'import sqlite3\nuri = "file:inputs/co2.sqlite?mode=ro"',
+              'conn = sqlite3.connect(uri, uri=True)\ncur = conn.cursor()'
+            ]
+      const context = await fileContext(
+        'python',
+        scripts,
+        scripts.map(() => ({ cwdBefore: cwd, cwdAfter: cwd })),
+        true,
+        (json) => {
+          const cached = JSON.parse(json).runs[`run-${scripts.length - 1}`]
+          expect(cached.fileContext.pythonBindings).toEqual(
+            expect.arrayContaining([
+              {
+                name: kind === 'cursor after cwd restoration' ? 'cur2' : 'conn',
+                qualifiedName:
+                  kind === 'cursor after cwd restoration' ? 'sqlite3.Cursor' : 'sqlite3.Connection',
+                kind: 'object',
+                filePath: 'inputs/co2.sqlite'
+              }
+            ])
+          )
+          return json
+        },
+        'epoch-1',
+        { cwdBefore: cwd, cwdAfter: cwd },
+        (runs) => {
+          if (kind === 'cursor after cwd restoration')
+            runs[1]!.script = 'import os\nos.chdir("elsewhere")\nos.chdir("..")'
+          else runs[0]!.script = 'import sqlite3\nuri = "file:inputs/changed.sqlite?mode=ro"'
+        }
+      )
+      expect(context?.pythonBindings?.some(({ filePath }) => filePath !== undefined)).toBe(false)
+      const query =
+        kind === 'cursor after cwd restoration' ? select.replaceAll('cur.', 'cur2.') : select
+      expect(await analyzeNotebookSourceFileAccess('python', query, context)).toMatchObject({
+        reads: [],
+        readState: 'partial',
+        externalState: 'partial'
+      })
+    }
+  )
+
+  const entry = (path?: string, definedNames = ['sqlite3', 'conn']): FileContextEntry => {
+    const value = literalConnection(path)
+    value.facts.definedNames = definedNames
+    if (path === undefined) delete value.fileContext.pythonBindings![1]!.filePath
+    return value
+  }
+
+  it('cannot restore a revoked SQLite path from an old binding or type overlay', () => {
+    const revoked = entry()
+    const context = projectNotebookFileContext('python', [entry('inputs/co2.sqlite'), revoked])
+    expect(context?.pythonBindings?.find(({ name }) => name === 'conn')).toEqual({
+      name: 'conn',
+      qualifiedName: 'sqlite3.Connection',
+      kind: 'object'
+    })
+    expect(revoked.fileContext.pythonBindings?.[1]).not.toHaveProperty('filePath')
+  })
+
+  it('does not revive relative SQLite authority from later cached outgoing candidates', () => {
+    const barrier = entry('inputs/co2.sqlite')
+    barrier.sqliteRelativePathBarrier = true
+    const later = entry('inputs/co2.sqlite', [])
+    const context = projectNotebookFileContext('python', [
+      entry('inputs/co2.sqlite'),
+      barrier,
+      later
+    ])
+    expect(context?.pythonBindings?.find(({ name }) => name === 'conn')).toEqual({
+      name: 'conn',
+      qualifiedName: 'sqlite3.Connection',
+      kind: 'object'
+    })
+  })
+
+  it.each(['entry', 'final'] as const)(
+    'keeps absolute SQLite candidates and identities behind a %s cwd barrier',
+    (barrier) => {
+      const absolute = entry('/science/co2.sqlite')
+      const relative = entry('inputs/co2.sqlite')
+      relative.fileContext.pythonBindings![1]!.name = 'relative'
+      relative.facts.definedNames = ['relative']
+      relative.facts.typeBindings = [{ target: 'relative', typeName: 'sqlite3.Connection' }]
+      relative.facts.receiverCalls![0]!.resultNames = ['relative']
+      if (barrier === 'entry') {
+        relative.sqliteRelativePathBarrier = true
+      }
+      // Each outgoing snapshot carries the still-live candidates, not just new definitions.
+      const context = projectNotebookFileContext(
+        'python',
+        [
+          absolute,
+          {
+            ...relative,
+            fileContext: {
+              ...relative.fileContext,
+              pythonBindings: [
+                absolute.fileContext.pythonBindings![1]!,
+                ...relative.fileContext.pythonBindings!
+              ]
+            }
+          }
+        ],
+        { sqliteRelativePathBarrier: barrier === 'final' }
+      )
+      expect(context?.pythonBindings).toEqual(
+        expect.arrayContaining([
+          {
+            name: 'conn',
+            qualifiedName: 'sqlite3.Connection',
+            kind: 'object',
+            filePath: '/science/co2.sqlite'
+          },
+          { name: 'relative', qualifiedName: 'sqlite3.Connection', kind: 'object' }
+        ])
+      )
+      expect(absolute.fileContext.pythonBindings?.[1]?.filePath).toBe('/science/co2.sqlite')
+      expect(relative.fileContext.pythonBindings?.[1]?.filePath).toBe('inputs/co2.sqlite')
+    }
+  )
+
+  it.each(['alias', 'close', 'mutation', 'conditional', 'taint'] as const)(
+    'does not restore SQLite candidates after %s facts',
+    (kind) => {
+      const invalid = entry('inputs/co2.sqlite')
+      if (kind === 'alias')
+        invalid.facts.aliases = [{ target: 'other', source: 'conn', kind: 'reference' }]
+      if (kind === 'close') invalid.facts.receiverCalls = [{ receiver: 'conn', member: 'close' }]
+      if (kind === 'mutation') invalid.facts.possiblyMutatedNames = ['conn']
+      if (kind === 'conditional') invalid.facts.conditionallyDefinedNames = ['conn']
+      if (kind === 'taint') invalid.fileContext.pythonTaintedNamespaces = ['sqlite3']
+      const context = projectNotebookFileContext('python', [entry('inputs/co2.sqlite'), invalid])
+      expect(context?.pythonBindings?.some(({ filePath }) => filePath !== undefined)).toBeFalsy()
+    }
+  )
+})
 
 describe('file context after mutable path collections', () => {
   it('captures parameterized I/O from multi-statement local file helpers', async () => {

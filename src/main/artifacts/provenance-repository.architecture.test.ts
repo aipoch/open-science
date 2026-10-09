@@ -990,7 +990,8 @@ describe('Artifact Provenance repository architecture', () => {
       'src/main/settings/file-commands.test.ts',
       'src/main/office-preview/application-commands.test.ts',
       'src/main/reviewer/paged-preview-host.test.ts',
-      'src/main/desktop-native-electron.test.ts'
+      'src/main/desktop-native-electron.test.ts',
+      'src/main/session-plan/session-plan-turn-outcome.test.ts'
     ])
     expect(module.capabilityOverlays).toEqual([
       'windows_sensitive',

@@ -751,7 +751,9 @@
       "src/main/settings/file-commands.test.ts",
       "src/main/office-preview/application-commands.test.ts",
       "src/main/reviewer/paged-preview-host.test.ts",
-      "src/main/desktop-native-electron.test.ts"
+      "src/main/desktop-native-electron.test.ts",
+      "src/main/session-plan/session-plan-turn-outcome.test.ts",
+      "src/main/notebook/runtime-repair.windows.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

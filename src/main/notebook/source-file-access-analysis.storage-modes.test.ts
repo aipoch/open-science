@@ -2,6 +2,7 @@ import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { describe, expect, it } from 'vitest'
 import type { NotebookRunRecord } from '../../shared/notebook'
 import { analyzeRNotebookSource } from './dependency-analysis-r'
+import { analyzePythonNotebookSource } from './dependency-analysis-python'
 import { projectNotebookDependencies } from './dependency-projection'
 
 import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
@@ -644,6 +645,214 @@ it('does not infer NumPy mapping effects after its loader is shadowed', async ()
   expect(result.reads).toEqual([])
 })
 
+it('retains a readonly SQLite cursor input without certifying complete SQL capture', async () => {
+  const { fileAccess } = await analyzePythonNotebookSource(
+    [
+      'import sqlite3',
+      'conn = sqlite3.connect("file:inputs/observations.sqlite?mode=ro", uri=True)',
+      'cur = conn.cursor()',
+      'cur.execute("SELECT row_id, uptake FROM observations ORDER BY row_id")',
+      'rows = cur.fetchall()'
+    ].join('\n')
+  )
+  expect(fileAccess?.reads).toEqual(['inputs/observations.sqlite'])
+  expect(fileAccess?.unsupportedExternalState).toBe(true)
+  expect(fileAccess?.context?.pythonBindings).toEqual(
+    expect.arrayContaining([
+      {
+        name: 'conn',
+        qualifiedName: 'sqlite3.Connection',
+        kind: 'object',
+        filePath: 'inputs/observations.sqlite'
+      },
+      {
+        name: 'cur',
+        qualifiedName: 'sqlite3.Cursor',
+        kind: 'object',
+        filePath: 'inputs/observations.sqlite'
+      }
+    ])
+  )
+})
+
+it('records the inherited readonly SQLite input of a parameterized continuation', async () => {
+  const result = await analyzeNotebookSourceFileAccess(
+    'python',
+    'cur.execute("SELECT row_id, uptake FROM observations WHERE conc >= ? ORDER BY row_id", (500,))\nrows = cur.fetchall()',
+    {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonBindings: [
+        {
+          name: 'cur',
+          qualifiedName: 'sqlite3.Cursor',
+          kind: 'object',
+          filePath: 'inputs/observations.sqlite'
+        }
+      ]
+    }
+  )
+  expect(result).toMatchObject({
+    reads: ['inputs/observations.sqlite'],
+    writes: [],
+    readState: 'partial',
+    externalState: 'partial'
+  })
+})
+
+const readonlySqliteContext = {
+  staticStrings: [],
+  staticCollections: [],
+  localFileWrappers: [],
+  pythonBindings: [
+    {
+      name: 'conn',
+      qualifiedName: 'sqlite3.Connection',
+      kind: 'object' as const,
+      filePath: 'inputs/observations.sqlite'
+    },
+    {
+      name: 'cur',
+      qualifiedName: 'sqlite3.Cursor',
+      kind: 'object' as const,
+      filePath: 'inputs/observations.sqlite'
+    }
+  ]
+}
+
+it('preserves readonly SQLite paths through the actual scalar LIVE_IDS diagnostic', async () => {
+  const { fileAccess } = await analyzePythonNotebookSource(
+    'cur.execute("SELECT 1")\nprint("LIVE_IDS", id(conn), id(cur))',
+    readonlySqliteContext
+  )
+  expect(fileAccess?.context?.pythonBindings).toEqual(readonlySqliteContext.pythonBindings)
+})
+
+it('preserves readonly SQLite context through the actual pandas scalar summary diagnostic', async () => {
+  const { fileAccess } = await analyzePythonNotebookSource(
+    'import pandas as pd\nsummary = pd.DataFrame([[7]], columns=["n"])\nprint(sorted(summary["n"].unique().tolist()))',
+    readonlySqliteContext
+  )
+  expect(fileAccess?.context?.pythonBindings).toEqual(
+    expect.arrayContaining(readonlySqliteContext.pythonBindings)
+  )
+})
+
+it.each([
+  'summary["n"].custom().tolist()',
+  'summary["n"].unique(callback).tolist()',
+  'summary["n"].unique().tolist(**options)',
+  'summary["n"].map(callback).tolist()'
+])(
+  'does not close arbitrary summary calls around readonly SQLite context: %s',
+  async (expression) => {
+    const { fileAccess } = await analyzePythonNotebookSource(
+      'import pandas as pd\nsummary = pd.DataFrame([[7]], columns=["n"])\nprint(' +
+        expression +
+        ')',
+      readonlySqliteContext
+    )
+    expect(
+      fileAccess?.context?.pythonBindings?.filter(({ filePath }) => filePath !== undefined)
+    ).toEqual([])
+  }
+)
+
+it.each(['id = custom', 'print(conn)', 'holder = list([cur])', 'alias = cur.connection'])(
+  'does not exempt arbitrary or shadowed SQLite diagnostic escapes: %s',
+  async (source) => {
+    const { fileAccess } = await analyzePythonNotebookSource(
+      source + '\nprint("LIVE_IDS", id(conn), id(cur))',
+      readonlySqliteContext
+    )
+    expect(
+      fileAccess?.context?.pythonBindings?.filter(({ filePath }) => filePath !== undefined)
+    ).toEqual([])
+  }
+)
+
+it.each([
+  'alias = cur',
+  'alias = conn',
+  'holder = [cur]',
+  'holder = {"cursor": cur}',
+  'alias = cur.execute("SELECT 1")\nalias.close()',
+  'cur.close()',
+  'conn = replacement',
+  'if flag:\n    cur = replacement',
+  'cur.row_factory = custom',
+  'conn.create_function("custom", 1, callback)',
+  'cur.execute(sql)',
+  'cur.execute("UPDATE observations SET uptake = 0")',
+  'cur.execute("ATTACH DATABASE other AS aux")',
+  'cur.executescript("SELECT 1;")',
+  'conn.cursor(factory=custom)',
+  'opaque()',
+  'def close_database():\n    conn.close()\nclose_database()',
+  'import os\nos.chdir("elsewhere")\nos.chdir("original")'
+])('revokes readonly SQLite handle paths before a later cell after: %s', async (source) => {
+  const { fileAccess } = await analyzePythonNotebookSource(source, readonlySqliteContext)
+  expect(
+    fileAccess?.context?.pythonBindings?.filter(({ filePath }) => filePath !== undefined)
+  ).toEqual([])
+  const next = await analyzeNotebookSourceFileAccess(
+    'python',
+    'cur.execute("SELECT 1")',
+    fileAccess?.context
+  )
+  expect(next.reads).toEqual([])
+  expect(next.readState).toBe('partial')
+})
+
+it.each([
+  'cur.execute("SELECT ?", (conn.close(),))',
+  'cur.execute("SELECT ?", (opaque(),))',
+  'cur.execute("SELECT ?", parameters)',
+  'cur.execute("SELECT 1"); cur.close(); cur.execute("SELECT 1")'
+])('does not certify effectful or unknown SQLite query parameter lifetimes: %s', async (source) => {
+  const { fileAccess } = await analyzePythonNotebookSource(source, readonlySqliteContext)
+  expect(
+    fileAccess?.context?.pythonBindings?.filter(({ filePath }) => filePath !== undefined)
+  ).toEqual([])
+  // An earlier SELECT can retain its potential read; effectful parameters cannot.
+  expect(fileAccess?.reads).toEqual(
+    source.startsWith('cur.execute("SELECT 1");') ? ['inputs/observations.sqlite'] : []
+  )
+  expect(fileAccess?.unsupportedExternalState).toBe(true)
+})
+
+it.each([
+  'sqlite3.connect("file:data.sqlite?mode=ro", uri=True, factory=custom)',
+  'sqlite3.connect("file:data.sqlite?mode=ro", **options)',
+  'sqlite3.connect("file:data.sqlite?mode=ro&mode=rw", uri=True)',
+  'sqlite3.connect("file:data.sqlite?mode=ro&vfs=custom", uri=True)',
+  'sqlite3.connect("file:data.sqlite?mode=ro#fragment", uri=True)',
+  'sqlite3.connect("file:data%00.sqlite?mode=ro", uri=True)',
+  'sqlite3.connect("file:data%ZZ.sqlite?mode=ro", uri=True)',
+  'sqlite3.connect("file:%5Cdata.sqlite?mode=ro", uri=True)',
+  'sqlite3.connect("file://server/data.sqlite?mode=ro", uri=True)',
+  'sqlite3.connect("file:data.sqlite?mode=ro", uri=True, database="other")',
+  'sqlite3.connect = custom\nconn = sqlite3.connect("file:data.sqlite?mode=ro", uri=True)'
+])('does not propagate ambiguous readonly SQLite constructors: %s', async (constructor) => {
+  const { fileAccess } = await analyzePythonNotebookSource('import sqlite3\nconn = ' + constructor)
+  expect(fileAccess?.reads).toEqual([])
+  expect(
+    fileAccess?.context?.pythonBindings?.filter(({ filePath }) => filePath !== undefined)
+  ).toEqual([])
+  expect(fileAccess?.unsupportedExternalState).toBe(true)
+})
+
+it('does not identify an unimported SQLite constructor by spelling alone', async () => {
+  const { fileAccess } = await analyzePythonNotebookSource(
+    'conn = sqlite3.connect("file:data.sqlite?mode=ro", uri=True)'
+  )
+  expect(fileAccess?.reads).toEqual([])
+  expect(
+    fileAccess?.context?.pythonBindings?.filter(({ filePath }) => filePath !== undefined)
+  ).toEqual([])
+})
+
 it.each([
   "import sqlite3\ncon = sqlite3.connect('outputs/checkpoint.sqlite')",
   "import sqlite3 as db\nfrom pathlib import Path\np=Path('outputs') / 'checkpoint.sqlite'\ncon=db.connect(database=p, uri=False)",
@@ -1055,3 +1264,90 @@ describe('R count and sequence generic dispatch', () => {
 })
 
 configureTestRuntimeMetadata()
+
+// A library statistic can perform I/O independently of explicit notebook paths.
+// https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.binned_statistic.html
+it.each([
+  'result = binned_statistic(depth_arr, mag_arr, statistic=bin_reducer, bins=edges)',
+  'result = binned_statistic(depth_arr, mag_arr, bin_reducer, edges)'
+])(
+  'keeps binned_statistic callback I/O partial while retaining explicit paths: %s',
+  async (call) => {
+    const source = [
+      'from scipy.stats import binned_statistic',
+      'CALIBRATION_PATH = "inputs/offset.txt"',
+      'depth_arr = [40., 100., 680.]',
+      'mag_arr = [4., 5., 6.]',
+      'edges = [0., 40., 100., 680.]',
+      'def calibrate():\n    with open(CALIBRATION_PATH) as handle:\n        return float(handle.read())',
+      'def bin_reducer(values):\n    return sum(values) + calibrate()',
+      'with open("inputs/metadata.txt") as handle:\n    metadata = handle.read()',
+      call,
+      'with open("outputs/report.txt", "w") as handle:\n    handle.write(metadata)'
+    ].join('\n')
+    const access = await analyzeNotebookSourceFileAccess('python', source)
+    expect(access).toMatchObject({
+      reads: ['inputs/metadata.txt'],
+      writes: ['outputs/report.txt'],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+    // The callback's potential global input does not identify each actual file open.
+    expect(access.reads).not.toContain('inputs/offset.txt')
+  }
+)
+
+// A reduced quad call must remain opaque even when its surrounding notebook has
+// no other opaque operations; explicit paths do not describe complete callback I/O.
+// https://docs.scipy.org/doc/scipy/reference/generated/scipy.integrate.quad.html
+it.each([
+  'result = quad(integrand, 0.0, 2.0, points=[1.0])',
+  'result = quad(func=integrand, a=0.0, b=2.0, points=[1.0])'
+])('keeps quad callback I/O partial while preserving explicit paths: %s', async (call) => {
+  const source = [
+    'from scipy.integrate import quad',
+    'CALIBRATION_PATH = "inputs/offset.txt"',
+    'def calibrate():\n    with open(CALIBRATION_PATH, "r", encoding="utf-8") as f:\n        return float(f.read().strip())',
+    'def integrand(t):\n    return t + calibrate()',
+    'with open("inputs/metadata.txt") as f:\n    metadata = f.read()',
+    call,
+    'with open("outputs/report.txt", "w") as f:\n    f.write(metadata)'
+  ].join('\n')
+  const access = await analyzeNotebookSourceFileAccess('python', source)
+  expect(access).toMatchObject({
+    reads: ['inputs/metadata.txt'],
+    writes: ['outputs/report.txt'],
+    readState: 'partial',
+    writeState: 'partial',
+    externalState: 'partial'
+  })
+  expect(access.reads).not.toContain('inputs/offset.txt')
+})
+
+// The executed pressure notebook read its calibration through a solver callback.
+// Explicit top-level paths must not make that unmodeled callback I/O complete.
+// https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.root_scalar.html
+it.each([
+  'result = optimize.root_scalar(objective, args=(50.0,), bracket=(0.0, 360.0), method="brentq")',
+  'result = optimize.root_scalar(f=objective, args=(50.0,), bracket=(0.0, 360.0), method="brentq")'
+])('keeps root_scalar callback I/O partial while preserving explicit paths: %s', async (call) => {
+  const source = [
+    'from scipy import optimize',
+    'OFFSET_PATH = "inputs/offset.txt"',
+    'def calibrated_pressure(t):\n    with open(OFFSET_PATH, "r") as f:\n        return t + float(f.read().strip())',
+    'def objective(t, target):\n    return calibrated_pressure(t) - target',
+    'with open("inputs/metadata.txt") as f:\n    metadata = f.read()',
+    call,
+    'with open("outputs/report.txt", "w") as f:\n    f.write(metadata)'
+  ].join('\n')
+  const access = await analyzeNotebookSourceFileAccess('python', source)
+  expect(access).toMatchObject({
+    reads: ['inputs/metadata.txt'],
+    writes: ['outputs/report.txt'],
+    readState: 'partial',
+    writeState: 'partial',
+    externalState: 'partial'
+  })
+  expect(access.reads).not.toContain('inputs/offset.txt')
+})

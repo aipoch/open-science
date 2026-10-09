@@ -255,7 +255,11 @@
     "src/main/desktop-runtime-launcher.integration.test.ts",
     "src/main/desktop-runtime-lifecycle.ts",
     "src/main/desktop-runtime-lifecycle.test.ts",
-    "src/main/desktop-startup-contract.ts"
+    "src/main/desktop-startup-contract.ts",
+    "scripts/electron-app-fixture.test.ts",
+    "scripts/electron-builder-config.test.ts",
+    "scripts/electron-fixture-teardown.test.ts",
+    "scripts/electron-vite-config.test.ts"
   ],
   "interfacePaths": [
     "src/main/app-lifecycle.ts",
@@ -1422,7 +1426,14 @@
       "src/main/notifications/desktop-delivery.test.ts",
       "src/main/settings/file-commands.test.ts",
       "src/main/office-preview/application-commands.test.ts",
-      "src/main/reviewer/paged-preview-host.test.ts"
+      "src/main/reviewer/paged-preview-host.test.ts",
+      "src/main/literature/pdf-translation/native-reading-order.test.ts",
+      "src/main/session-plan/session-plan-turn-outcome.test.ts",
+      "src/main/notebook/runtime-repair.windows.integration.test.ts",
+      "src/main/notebook/python-command.probe.test.ts",
+      "src/main/notebook/windows-python-probe.integration.test.ts",
+      "src/main/notebook/python-command.test.ts",
+      "src/main/skills/registered-helper-catalog.runtime.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

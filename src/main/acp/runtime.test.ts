@@ -5528,24 +5528,30 @@ describe('ACP runtime session management', () => {
     expect(fixture.promptAttempts).toEqual([])
   })
 
-  it('settles a cancelled hidden approved-Plan delivery as interrupted without replaying it', async () => {
-    const fixture = createDurablePlanDeliveryResumeHarness('queued', { stopReason: 'cancelled' })
+  it.each(['approved-plan', 'rejected-plan'] as const)(
+    'settles a cancelled hidden %s delivery as interrupted without replaying it',
+    async (kind) => {
+      const fixture = createDurablePlanDeliveryResumeHarness('queued', {
+        kind,
+        stopReason: 'cancelled'
+      })
 
-    await fixture.runtime.resumeSession({
-      sessionId: 'restored-plan-session',
-      providerSessionId: 'restored-plan-session',
-      cwd: '/workspace',
-      projectId: 'project-1',
-      previousFrameworkId: opencodeFramework.id
-    })
+      await fixture.runtime.resumeSession({
+        sessionId: 'restored-plan-session',
+        providerSessionId: 'restored-plan-session',
+        cwd: '/workspace',
+        projectId: 'project-1',
+        previousFrameworkId: opencodeFramework.id
+      })
 
-    await vi.waitFor(() =>
-      expect(fixture.runtimeContext().plan?.delivery?.state).toBe('interrupted')
-    )
-    await new Promise<void>((resolve) => queueMicrotask(resolve))
+      await vi.waitFor(() =>
+        expect(fixture.runtimeContext().plan?.delivery?.state).toBe('interrupted')
+      )
+      await new Promise<void>((resolve) => queueMicrotask(resolve))
 
-    expect(fixture.fakeAgent.prompts).toHaveLength(1)
-  })
+      expect(fixture.fakeAgent.prompts).toHaveLength(1)
+    }
+  )
 
   it('settles cancelled hidden review feedback as interrupted', async () => {
     const fixture = createDurablePlanDeliveryResumeHarness('queued', {

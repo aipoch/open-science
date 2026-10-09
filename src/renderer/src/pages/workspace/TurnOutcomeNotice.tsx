@@ -7,14 +7,8 @@ import {
   isCodexCliCompatibilityError,
   isUnsupportedCodexAcpVersionError
 } from '../../../../shared/codex-runtime'
-import { SessionInterruptedBanner } from './SessionInterruptedBanner'
 
 type TurnOutcomeActions = {
-  resumePromptMessageId?: string
-  canResume: boolean
-  isResuming: boolean
-  isDisabled: boolean
-  onResume: () => void
   artifactRetryingPromptMessageId?: string
   artifactRetryDisabled: boolean
   onRetryArtifact: (promptMessageId: string) => void
@@ -33,30 +27,8 @@ const TurnOutcomeNotice = ({
   actions: TurnOutcomeActions
 }): React.JSX.Element | null => {
   const { t } = useTranslation()
-  // Ordinary terminal write exhaustion belongs to the existing global storage alert.
-  if (outcome.kind === 'interrupted' && outcome.cause === 'terminal-commit-failed') return null
-  if (outcome.kind === 'interrupted' || outcome.kind === 'cancelled') {
-    const message =
-      outcome.kind === 'cancelled'
-        ? t('This turn was interrupted. Resume to continue.')
-        : outcome.error
-          ? actions.resolveError(outcome.error)
-          : outcome.cause === 'connection-lost'
-            ? t('Connection lost — Resume to reconnect and continue.')
-            : t('Session was interrupted before the app closed.')
-    const ownsRecovery = actions.resumePromptMessageId === promptMessageId
-    return (
-      <div data-slot="turn-outcome-notice" data-prompt-message-id={promptMessageId}>
-        <SessionInterruptedBanner
-          message={message}
-          showResume={ownsRecovery}
-          isDisabled={!actions.canResume || actions.isDisabled}
-          isResuming={ownsRecovery && actions.isResuming}
-          onResume={actions.onResume}
-        />
-      </div>
-    )
-  }
+  // Recovery belongs to the Session; a message result never owns its Resume entry.
+  if (outcome.kind === 'interrupted' || outcome.kind === 'cancelled') return null
 
   const error = actions.resolveError(outcome.error)
   const canRetryArtifact = outcome.recovery === 'retry-artifact-publication'

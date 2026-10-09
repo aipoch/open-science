@@ -166,6 +166,10 @@ jobs:
           for file in "${required[@]}"; do
             git show "${BASE_SHA}:${file}" > "$trusted_dir/${file##*/}"
           done
+          # Newer trusted selectors validate additive registration blobs as data.
+          if git cat-file -e "${BASE_SHA}:scripts/ci/module-impact-inputs.mjs" 2>/dev/null; then
+            git show "${BASE_SHA}:scripts/ci/module-impact-inputs.mjs" > "$trusted_dir/module-impact-inputs.mjs"
+          fi
           # Older trusted bases predate the loader; retain their original classifier.
           if git cat-file -e "${BASE_SHA}:scripts/ci/load-module-impact.mjs" 2>/dev/null; then
             git show "${BASE_SHA}:scripts/ci/load-module-impact.mjs" > "$trusted_dir/load-module-impact.mjs"

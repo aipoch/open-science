@@ -123,7 +123,8 @@ type NotebookSourceFileAccessContext = {
     name: string
     qualifiedName: string
     kind: 'import' | 'object'
-    // Source identity only; never serialize the workbook or its contents.
+    // Bounded source candidate for ExcelFile or readonly SQLite Connection/Cursor;
+    // never serialize workbook/database contents or certify actual file opens.
     filePath?: string
   }>
   // Observed monkeypatches survive re-imports within the same kernel epoch.
@@ -173,6 +174,8 @@ type NotebookRunDependencyFacts =
       possiblyMutatedNames?: string[]
       aliases?: NotebookDependencyAlias[]
       builtinContainerNames?: string[]
+      // Source candidates only; never container contents or live callback identities.
+      pythonCallbackContainerSummaries?: Array<{ name: string; callbackNames: string[] }>
       copyOnModifyNames?: string[]
       rAtomicValueNames?: string[]
       serializedValueWrites?: NotebookSerializedValue[]
@@ -205,6 +208,7 @@ type NotebookRunDependencyFacts =
       possiblyMutatedNames?: string[]
       aliases?: NotebookDependencyAlias[]
       builtinContainerNames?: string[]
+      pythonCallbackContainerSummaries?: Array<{ name: string; callbackNames: string[] }>
       copyOnModifyNames?: string[]
       rAtomicValueNames?: string[]
       serializedValueWrites?: NotebookSerializedValue[]

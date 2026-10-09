@@ -389,7 +389,7 @@ describe('Main Turn Outcome authority', () => {
     }
   )
 
-  it('records a rejected Plan as cancelled atomically while preserving its document identity', async () => {
+  it('persists Plan rejection independently of execution outcome while preserving its document identity', async () => {
     const plan = {
       artifactId: 'plan',
       artifactVersionId: 'version',
@@ -412,11 +412,11 @@ describe('Main Turn Outcome authority', () => {
     })
     const saved = h.durable()!
     expect(saved).toMatchObject({
-      status: 'idle',
-      resumeRecovery: { cause: 'cancelled', promptMessageId: 'prompt' },
+      status: 'waiting-plan-approval',
       runtimeContext: { plan: { artifactVersionId: 'version', approval: 'rejected' } }
     })
-    expect(saved.messages[0].turnOutcome).toMatchObject({ kind: 'cancelled', recovery: 'resume' })
+    expect(saved.resumeRecovery).toBeUndefined()
+    expect(saved.messages[0].turnOutcome).toBeUndefined()
     expect(saved.conversationGraph?.messages[0].turnOutcome).toEqual(saved.messages[0].turnOutcome)
   })
 

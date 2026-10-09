@@ -25,7 +25,10 @@
     "src/main/ipc-surfaces/specialist.test.ts",
     "src/main/ipc-surfaces/uploads.test.ts",
     "src/main/session-package/desktop-composition.test.ts",
-    "src/main/window-find-ipc.test.ts"
+    "src/main/window-find-ipc.test.ts",
+    "resources/find-overlay/findOverlay.js",
+    "resources/find-overlay/findOverlay.test.js",
+    "resources/find-overlay/index.html"
   ],
   "interfacePaths": [
     "src/main/ipc-surfaces/adapter.ts",
@@ -171,7 +174,9 @@
       "src/main/index-fatal-errors.test.ts",
       "src/main/session-package/fork.test.ts",
       "src/main/composition/notebook-environment.test.ts",
-      "src/main/composition/reviewer.test.ts"
+      "src/main/composition/reviewer.test.ts",
+      "src/main/windows.test.ts",
+      "src/renderer/src/hooks/useWindowFindAppearanceSync.overlay.test.tsx"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation"],

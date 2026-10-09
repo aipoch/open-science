@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve, sep } from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
 
@@ -117,6 +117,11 @@ describe('defaultDiscoveryDeps Windows conda probes', () => {
       runnable: true,
       version: '3.12.10'
     })
+    expect(exec).toHaveBeenCalledWith(
+      interpreter,
+      ['--version'],
+      expect.objectContaining({ shell: false, maxBuffer: 64 * 1024, timeout: 10_000 })
+    )
   })
 
   it('probes an R environment version through Rscript instead of launching R.exe', async () => {
@@ -147,7 +152,7 @@ describe('defaultDiscoveryDeps Windows conda probes', () => {
         options: { env?: NodeJS.ProcessEnv }
       ): Promise<{ stdout: string; stderr: string }> => {
         expect(options.env).toBe(env)
-        return args.includes('--version')
+        return args[0] === '--version'
           ? { stdout: 'Python 3.12.4', stderr: '' }
           : { stdout: 'TRUE', stderr: '' }
       }
@@ -246,6 +251,35 @@ const makeDeps = (
 })
 
 describe('discoverInterpreters', () => {
+  it.each(['win32', 'linux'] as const)(
+    'filters internal Windows venv templates only on win32 (%s)',
+    async (platform) => {
+      const current = 'C:/current/runtime/envs/.p/Lib/venv/scripts/nt/python.exe'
+      const old = 'C:\\old\\runtime\\envs\\.p\\LIB\\VENV\\SCRIPTS\\NT\\PYTHON.EXE'
+      const alias = 'C:/aliases/python.exe'
+      const canonical = 'C:/current/runtime/envs/.p/python.exe'
+      const venv = 'C:/project/.venv/Scripts/python.exe'
+      const installedAlias = 'C:/linked/Lib/venv/scripts/nt/python.exe'
+      const paths = [current, old, alias, canonical, venv, installedAlias]
+      const probeVersion = vi.fn(async () => '3.12.7')
+      const deps = {
+        ...makeDeps(paths, {
+          realpath: {
+            [alias]: 'C:/other/Lib/venv/scripts/nt/python.exe',
+            [installedAlias]: 'C:/installed/python.exe'
+          }
+        }),
+        platform,
+        runtimeRoot: 'C:/current/runtime',
+        probeVersion
+      }
+      const found = await discoverInterpreters('python', deps)
+      const expected = platform === 'win32' ? [canonical, venv, installedAlias] : paths
+      expect(found.map((entry) => entry.interpreterPath)).toEqual(expected)
+      expect(probeVersion.mock.calls).toHaveLength(expected.length)
+    }
+  )
+
   it('does not probe the macOS developer-tools Python stub and keeps other interpreters', async () => {
     const probeVersion = vi.fn(async (path: string) =>
       path === '/opt/homebrew/bin/python3' ? '3.12.4' : '3.9.6'
@@ -469,6 +503,81 @@ describe('collapseRscript', () => {
 })
 
 describe('defaultCandidatePaths (targeted enumeration)', () => {
+  it.each(['automatic', 'manual', 'where'] as const)(
+    'traces internal venv template candidates from %s discovery',
+    async (source) => {
+      const root = mkdtempSync(join(tmpdir(), 'os-template-source-'))
+      const runtimeRoot = join(root, 'runtime')
+      const prefix = envPrefix(runtimeRoot, DEFAULT_PY_ENV, 'win32')
+      const canonical = join(prefix, 'python.exe')
+      const template = join(prefix, 'Lib', 'venv', 'scripts', 'nt', 'python.exe')
+      try {
+        mkdirSync(join(template, '..'), { recursive: true })
+        writeFileSync(canonical, 'candidate fixture')
+        writeFileSync(template, 'candidate fixture')
+        const exec = vi.fn(async (file: string, args: readonly string[]) => ({
+          stdout:
+            source === 'where' && file === 'where' && args[0] === 'python.exe'
+              ? `${template}\r\n`
+              : '',
+          stderr: ''
+        }))
+        const candidatePaths = defaultCandidatePaths(
+          runtimeRoot,
+          () => (source === 'manual' ? [template] : []),
+          { platform: 'win32', home: root, env: { PATH: '' }, exec }
+        )
+        const raw = await candidatePaths('python')
+        expect(raw).toContain(canonical)
+        if (source === 'automatic') {
+          expect(raw).not.toContain(template)
+          expect(raw.filter((path) => path.startsWith(prefix))).toEqual([canonical])
+        } else {
+          expect(raw).toContain(template)
+          expect(raw.indexOf(template)).toBeLessThan(raw.indexOf(canonical))
+        }
+        const probeVersion = vi.fn(async () => '3.12.7')
+        const found = await discoverInterpreters('python', {
+          ...makeDeps(raw),
+          platform: 'win32',
+          runtimeRoot,
+          candidatePaths: async () => raw,
+          probeVersion
+        })
+        expect(found.map((entry) => entry.interpreterPath)).toContain(canonical)
+        expect(found.map((entry) => entry.interpreterPath)).not.toContain(template)
+        expect(probeVersion).not.toHaveBeenCalledWith(template, 'python')
+      } finally {
+        const target = resolve(root)
+        expect(target.startsWith(`${resolve(tmpdir())}${sep}`)).toBe(true)
+        rmSync(target, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it('keeps full py launcher paths containing spaces and parentheses', async () => {
+    if (process.platform !== 'win32') return
+    const root = mkdtempSync(join(tmpdir(), 'os-py-launcher-'))
+    const interpreter = join(root, 'Program Files (vee)', 'Python3.13.3', 'python.exe')
+    try {
+      mkdirSync(join(interpreter, '..'), { recursive: true })
+      writeFileSync(interpreter, 'fixture')
+      const exec = vi.fn(async (file: string) => ({
+        stdout: file === 'py' ? ` -V:3.13 *        ${interpreter}\r\n` : '',
+        stderr: ''
+      }))
+      const paths = await defaultCandidatePaths(join(root, 'runtime'), undefined, {
+        platform: 'win32',
+        home: root,
+        env: { PATH: '' },
+        exec
+      })('python')
+      expect(paths).toContain(interpreter)
+      expect(exec).toHaveBeenCalledWith('py', ['-0p'], expect.objectContaining({ timeout: 10_000 }))
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
   it('shares in-flight conda enumeration across languages but enumerates again on Recheck', async () => {
     let finish!: (result: { stdout: string; stderr: string }) => void
     const pending = new Promise<{ stdout: string; stderr: string }>((resolve) => {

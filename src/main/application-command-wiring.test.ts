@@ -86,7 +86,7 @@ describe('production application command wiring', () => {
 
   it('adopts package publications into the live persistence owner before exposing desktop commands', () => {
     expect(domainCompact('session-packages')).toContain(
-      'await packagePublicationOwner.current?.adoptPublishedSession(projectId, sessionId)'
+      'await packagePublicationOwner.current?.adoptPublishedSession(publication)'
     )
     const authority = domain('session-authority')
     expect(

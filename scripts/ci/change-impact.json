@@ -70,6 +70,7 @@
       "role": "global",
       "paths": [
         "package*.json",
+        "patches/**",
         ".nvmrc",
         "tsconfig*.json",
         "vitest.config.*",
@@ -83,7 +84,15 @@
         "e2e/vite.browser-test.config.ts",
         "test/config/**",
         ".github/actions/source-regression/**",
-        ".github/workflows/source-regression.yml"
+        ".github/workflows/source-regression.yml",
+        "scripts/backend-dependencies.mjs",
+        "scripts/build-backend.mjs",
+        "scripts/wsl2-build-flags.mjs",
+        "scripts/wsl2-build-flags.d.mts",
+        "scripts/stage-backend.mjs",
+        "scripts/test-backend-installed.mjs",
+        "scripts/stage-node-runtime.mjs",
+        "build/node-runtime.json"
       ],
       "mode": "full",
       "capabilities": []
@@ -283,7 +292,10 @@
         "src/shared/update.ts",
         "src/shared/web-api-map.generated.ts",
         "src/shared/wsl-setup.ts",
-        "src/main/delegation/production-framework-runtime.ts"
+        "src/main/delegation/production-framework-runtime.ts",
+        "src/main/desktop-connection.ts",
+        "src/main/desktop-runtime-launcher.ts",
+        "src/main/node-entry.ts"
       ],
       "capabilities": ["windows_sensitive"]
     },
@@ -549,5 +561,30 @@
       "consumers": [],
       "lanes": ["docs", "format"]
     }
-  }
+  },
+  "testFixtureSuites": [
+    {
+      "paths": ["test/fixtures/pdf-translation/*.json", "test/fixtures/pdf-translation/*.jsonl"],
+      "tests": [
+        "src/main/literature/pdf-translation/*.test.ts",
+        "src/main/settings/provider-text-generation.test.ts",
+        "src/renderer/src/pages/workspace/previews/renderers/*pdf-translation*.test.ts",
+        "src/renderer/src/pages/workspace/previews/renderers/*pdf-translation*.test.tsx",
+        "src/shared/pdf-translation*.test.ts",
+        "test/pdf-translation-native-verification.test.ts"
+      ]
+    },
+    {
+      "paths": ["test/fixtures/nbformat.v4.5.schema.json"],
+      "tests": ["src/main/notebook/ipynb-export.test.ts"]
+    },
+    {
+      "paths": ["test/fixtures/reviewer-model-evaluation.json"],
+      "tests": ["scripts/reviewer-model-evaluation.test.mjs"]
+    },
+    {
+      "paths": ["test/fixtures/shadcn-patch-history.json"],
+      "tests": ["scripts/dependency-patches.test.ts"]
+    }
+  ]
 }

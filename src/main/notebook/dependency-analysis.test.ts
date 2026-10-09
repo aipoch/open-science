@@ -14,7 +14,11 @@ import {
   unavailableNotebookDependencyProjection
 } from './dependency-analysis'
 import { NotebookDependencyProjector } from './dependency-projection'
-import type { NotebookDependencyAnalysisSidecar } from './dependency-analysis-types'
+import { analyzePythonSources } from './dependency-analysis-python'
+import type {
+  NotebookDependencyAnalysisSidecar,
+  NotebookDependencyTypeSummary
+} from './dependency-analysis-types'
 
 const temporaryRoots: string[] = []
 const unusedPython = { command: 'unused-python' }
@@ -49,6 +53,287 @@ const run = (
   artifacts: [],
   workingFiles: [],
   inputFiles: []
+})
+
+describe('Python lexical summary boundaries', () => {
+  const summarize = async (
+    body: string[],
+    surface: 'function' | 'method'
+  ): Promise<NotebookDependencyTypeSummary['methods'][number]> => {
+    const source = [
+      'def helper(values):',
+      '    return GLOBAL_CAPTURE',
+      ...(surface === 'method'
+        ? ['class Runner:', '    def callback(self, values):']
+        : ['def callback(values):']),
+      ...body.map((line) => `${surface === 'method' ? '        ' : '    '}${line}`)
+    ].join('\n')
+    const [facts] = await analyzePythonSources([source])
+    const summary = facts?.typeSummaries?.find(
+      (entry) => entry.name === (surface === 'method' ? 'Runner' : 'python-function:callback')
+    )
+    const method = summary?.methods.find(
+      (entry) => entry.name === (surface === 'method' ? 'callback' : '__call__')
+    )
+    expect(method).toBeDefined()
+    return method!
+  }
+
+  it.each([
+    ['function', 'def'],
+    ['function', 'async def'],
+    ['method', 'def'],
+    ['method', 'async def']
+  ] as const)(
+    'keeps lexical %s %s bindings out of global captures',
+    async (surface, declaration) => {
+      const method = await summarize(
+        [
+          `${declaration} helper(values):`,
+          '    return NESTED_CAPTURE',
+          'selected = helper',
+          'return OUTER_CAPTURE'
+        ],
+        surface
+      )
+      expect(method.effect).toBe('unknown')
+      expect(method.usedNames).toContain('OUTER_CAPTURE')
+      expect(method.usedNames).not.toContain('helper')
+      expect(method.usedNames).not.toContain('NESTED_CAPTURE')
+      expect(method.usedNames).not.toContain('GLOBAL_CAPTURE')
+    }
+  )
+
+  it.each(['function', 'method'] as const)(
+    'retains lexical global captures beside a nested class in a %s',
+    async (surface) => {
+      const method = await summarize(
+        [
+          'class Inner:',
+          '    def helper(self):',
+          '        return NESTED_CAPTURE',
+          'return helper(values)'
+        ],
+        surface
+      )
+      expect(method.effect).toBe('unknown')
+      expect(method.usedNames).toContain('helper')
+      expect(method.usedNames).not.toContain('NESTED_CAPTURE')
+    }
+  )
+
+  it.each(['function', 'method'] as const)(
+    'preserves an explicit lexical global declaration in a %s',
+    async (surface) => {
+      const method = await summarize(
+        ['global helper', 'def helper(values):', '    return 1.0', 'return helper(values)'],
+        surface
+      )
+      expect(method).toMatchObject({ effect: 'unknown', unknownScope: 'namespace' })
+      expect(method.usedNames).toContain('helper')
+    }
+  )
+
+  it.each(['function', 'method'] as const)(
+    'keeps a local class binding out of global captures in a %s',
+    async (surface) => {
+      const method = await summarize(
+        [
+          'class LossMetadata:',
+          '    def helper(self):',
+          '        return NESTED_CAPTURE',
+          'selected = LossMetadata',
+          'return helper(values) + OUTER_CAPTURE'
+        ],
+        surface
+      )
+      expect(method.effect).toBe('unknown')
+      expect(method.usedNames).toEqual(['OUTER_CAPTURE', 'helper'])
+    }
+  )
+
+  it.each([
+    'helper = 1.0',
+    'helper: float = 1.0',
+    'helper = 1.0\n    helper += 1.0',
+    'helper = 1.0\n    del helper'
+  ])('isolates class-body bindings from enclosing captures: %s', async (binding) => {
+    for (const surface of ['function', 'method'] as const) {
+      const method = await summarize(
+        [
+          'class Inner:',
+          ...binding.split('\n').map((line) => `    ${line.trim()}`),
+          'return helper(values)'
+        ],
+        surface
+      )
+      expect(method.effect).toBe('unknown')
+      expect(method.usedNames).toContain('helper')
+    }
+  })
+
+  it.each([
+    ['class Inner((helper := BASE)):', '    pass'],
+    ['class Inner(metaclass=(helper := META)):', '    pass'],
+    ['@(helper := DECORATOR)', 'class Inner:', '    pass']
+  ])('keeps class-header bindings in their enclosing scope: %s', async (...header) => {
+    const method = await summarize([...header, 'return helper(values) + OUTER_CAPTURE'], 'function')
+    expect(method.effect).toBe('unknown')
+    expect(method.usedNames).toContain('OUTER_CAPTURE')
+    expect(method.usedNames).not.toContain('helper')
+  })
+
+  it('keeps a nested class header in the outer class namespace', async () => {
+    const method = await summarize(
+      [
+        'class Outer:',
+        '    class Inner((helper := BASE)):',
+        '        pass',
+        'return helper(values) + OUTER_CAPTURE'
+      ],
+      'function'
+    )
+    expect(method.effect).toBe('unknown')
+    expect(method.usedNames).toEqual(['BASE', 'OUTER_CAPTURE', 'helper'])
+  })
+
+  it.each([
+    ['function', 'helper = helper(1.0)'],
+    ['method', 'helper = helper(1.0)'],
+    ['function', 'helper += 1.0'],
+    ['method', 'helper += 1.0']
+  ] as const)(
+    'retains conservative class-body loads beside enclosing locals in a %s: %s',
+    async (surface, binding) => {
+      const method = await summarize(
+        [
+          'def helper(values):',
+          '    return 1.0',
+          'class Inner:',
+          `    ${binding}`,
+          'return helper(values) + OUTER_CAPTURE'
+        ],
+        surface
+      )
+      expect(method.effect).toBe('unknown')
+      expect(method.usedNames).toEqual(['OUTER_CAPTURE', 'helper'])
+    }
+  )
+
+  it('keeps a class load from certifying an enclosing builtin shadow', async () => {
+    const method = await summarize(
+      [
+        'def len(values):',
+        '    return 1.0',
+        'class Inner:',
+        '    len = len([1.0])',
+        'return len(values)'
+      ],
+      'function'
+    )
+    expect(method).toMatchObject({ effect: 'unknown', unknownScope: 'namespace' })
+    expect(method.usedNames).toContain('len')
+    expect(method.safeCallNames ?? []).not.toContain('len')
+  })
+
+  it('keeps a lexical nonlocal mutation opaque without exporting its enclosing locals', async () => {
+    const method = await summarize(
+      [
+        'helper = 1.0',
+        'def replace():',
+        '    nonlocal helper',
+        '    helper = 2.0',
+        'replace()',
+        'return helper + OUTER_CAPTURE'
+      ],
+      'function'
+    )
+    expect(method).toMatchObject({ effect: 'unknown', unknownScope: 'namespace' })
+    expect(method.usedNames).toContain('OUTER_CAPTURE')
+    expect(method.usedNames).not.toContain('helper')
+    expect(method.usedNames).not.toContain('replace')
+  })
+
+  it.each(['function', 'method'] as const)(
+    'does not certify a lexical builtin shadow in a %s',
+    async (surface) => {
+      const method = await summarize(
+        ['def len(values):', '    return NESTED_CAPTURE', 'return len(values)'],
+        surface
+      )
+      expect(method).toMatchObject({ effect: 'unknown', unknownScope: 'namespace' })
+      expect(method.usedNames).not.toContain('len')
+      expect(method.safeCallNames ?? []).not.toContain('len')
+      expect(method.usedNames).not.toContain('NESTED_CAPTURE')
+    }
+  )
+
+  it.each([
+    'def inner(helper, scale=helper(values)):',
+    'async def inner(helper, scale=helper(values)):',
+    'def inner(helper, *, required, scale=helper(values)):',
+    'async def inner(helper, *, required, scale=helper(values)):'
+  ])('retains executed definition defaults in both summary surfaces: %s', async (header) => {
+    for (const surface of ['function', 'method'] as const) {
+      const method = await summarize(
+        [header, '    return NESTED_CAPTURE', 'return OUTER_CAPTURE'],
+        surface
+      )
+      expect(method.effect).toBe('unknown')
+      expect(method.usedNames).toEqual(['OUTER_CAPTURE', 'helper'])
+      expect(method.usedNames).not.toContain('values')
+      expect(method.usedNames).not.toContain('required')
+    }
+  })
+
+  it.each(['def', 'async def'])(
+    'retains executed %s decorators without visiting the deferred body',
+    async (declaration) => {
+      for (const surface of ['function', 'method'] as const) {
+        const method = await summarize(
+          [
+            '@DECORATOR(helper(values))',
+            `${declaration} inner(value):`,
+            '    return NESTED_CAPTURE',
+            'return OUTER_CAPTURE'
+          ],
+          surface
+        )
+        expect(method.effect).toBe('unknown')
+        expect(method.usedNames).toEqual(['DECORATOR', 'OUTER_CAPTURE', 'helper'])
+      }
+    }
+  )
+
+  it('retains a class method default without exporting its deferred method body', async () => {
+    const method = await summarize(
+      [
+        'class Inner:',
+        '    def method(self, scale=helper(1.0)):',
+        '        return NESTED_CAPTURE',
+        'return OUTER_CAPTURE'
+      ],
+      'function'
+    )
+    expect(method.effect).toBe('unknown')
+    expect(method.usedNames).toEqual(['OUTER_CAPTURE', 'helper'])
+  })
+
+  it('does not certify a local builtin invoked in a definition default', async () => {
+    const method = await summarize(
+      [
+        'def len(value):',
+        '    return NESTED_CAPTURE',
+        'def inner(value=len(values)):',
+        '    return NESTED_CAPTURE',
+        'return OUTER_CAPTURE'
+      ],
+      'function'
+    )
+    expect(method).toMatchObject({ effect: 'unknown', unknownScope: 'namespace' })
+    expect(method.usedNames).toEqual(['OUTER_CAPTURE'])
+    expect(method.safeCallNames ?? []).not.toContain('len')
+  })
 })
 
 describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
@@ -9081,3 +9366,154 @@ it.each([
 })
 
 configureTestRuntimeMetadata()
+
+describe('named Python callback container derived cache', () => {
+  const source = 'def callback(t, y):\n    return y[0]\nevent_callbacks = [callback]'
+  const expected = [{ name: 'event_callbacks', callbackNames: ['callback'] }]
+  const prepare = async (
+    unknown = false
+  ): Promise<{
+    storageRoot: string
+    repository: { readSessionRuns: () => Promise<ReturnType<typeof run>[]> }
+    analyze: AnalyzeNotebookScripts
+    request: { projectId: string; sessionId: string }
+    cachePath: string
+  }> => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'named-callback-cache-'))
+    temporaryRoots.push(storageRoot)
+    const history = [run('run-1', 'callbacks', source, 1)]
+    const repository = { readSessionRuns: async () => history }
+    const analyze: AnalyzeNotebookScripts = async (_interpreter, _language, scripts) => {
+      const facts = await analyzePythonSources(scripts)
+      return unknown
+        ? facts.map((item) => ({ ...item, state: 'unknown' as const, reasons: ['opaque-call'] }))
+        : facts
+    }
+    const request = { projectId: 'p', sessionId: 's' }
+    await new NotebookDependencyAnalyzer({ storageRoot, repository, analyze }).project(request)
+    const cachePath = join(storageRoot, 'notebooks', 'p', 's', 'cache', 'dependency-analysis.json')
+    return { storageRoot, repository, analyze, request, cachePath }
+  }
+
+  it.each([false, true])(
+    'retains bounded candidate names in cached unknown=%s facts',
+    async (unknown) => {
+      const fixture = await prepare(unknown)
+      const cached = JSON.parse(await readFile(fixture.cachePath, 'utf8'))
+      expect(cached.runs['run-1'].facts.pythonCallbackContainerSummaries).toEqual(expected)
+      const analyze = vi.fn(async () => {
+        throw new Error('current bounded cache must be reused')
+      })
+      await new NotebookDependencyAnalyzer({
+        storageRoot: fixture.storageRoot,
+        repository: fixture.repository,
+        analyze
+      }).project(fixture.request)
+      expect(analyze).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each([
+    ['non-array metadata', null],
+    ['empty callback list', [{ name: 'event_callbacks', callbackNames: [] }]],
+    ['duplicate callbacks', [{ name: 'event_callbacks', callbackNames: ['callback', 'callback'] }]],
+    [
+      'duplicate containers',
+      [
+        { name: 'event_callbacks', callbackNames: ['callback'] },
+        { name: 'event_callbacks', callbackNames: ['callback'] }
+      ]
+    ],
+    [
+      'oversized callback list',
+      [
+        {
+          name: 'event_callbacks',
+          callbackNames: Array.from({ length: 129 }, (_, index) => 'cb' + index)
+        }
+      ]
+    ],
+    ['oversized callback name', [{ name: 'event_callbacks', callbackNames: ['x'.repeat(4097)] }]],
+    [
+      'too many containers',
+      Array.from({ length: 513 }, (_, index) => ({
+        name: 'events' + index,
+        callbackNames: ['callback']
+      }))
+    ],
+    [
+      'too many total callbacks',
+      Array.from({ length: 9 }, (_, index) => ({
+        name: 'events' + index,
+        callbackNames: Array.from({ length: 128 }, (_, member) => 'cb' + member)
+      }))
+    ]
+  ])('recomputes malformed or oversized candidate metadata: %s', async (_label, bad) => {
+    const fixture = await prepare()
+    const cached = JSON.parse(await readFile(fixture.cachePath, 'utf8'))
+    cached.runs['run-1'].facts.pythonCallbackContainerSummaries = bad
+    await writeFile(fixture.cachePath, JSON.stringify(cached))
+    const analyze = vi.fn(fixture.analyze)
+    await new NotebookDependencyAnalyzer({
+      storageRoot: fixture.storageRoot,
+      repository: fixture.repository,
+      analyze
+    }).project(fixture.request)
+    expect(analyze).toHaveBeenCalled()
+    const rebuilt = JSON.parse(await readFile(fixture.cachePath, 'utf8'))
+    expect(rebuilt.runs['run-1'].facts.pythonCallbackContainerSummaries).toEqual(expected)
+  })
+
+  it('treats an absent optional current descriptor as no extra knowledge', async () => {
+    const fixture = await prepare()
+    const cached = JSON.parse(await readFile(fixture.cachePath, 'utf8'))
+    delete cached.runs['run-1'].facts.pythonCallbackContainerSummaries
+    await writeFile(fixture.cachePath, JSON.stringify(cached))
+    const analyze = vi.fn(async () => {
+      throw new Error('absent optional metadata is valid')
+    })
+    await new NotebookDependencyAnalyzer({
+      storageRoot: fixture.storageRoot,
+      repository: fixture.repository,
+      analyze
+    }).project(fixture.request)
+    expect(analyze).not.toHaveBeenCalled()
+  })
+
+  it('recomputes historical derived caches without migrating raw runs', async () => {
+    const fixture = await prepare()
+    const cached = JSON.parse(await readFile(fixture.cachePath, 'utf8'))
+    cached.analyzerRevision = 'historical-no-callback-container-candidates'
+    const historicalRun = (await fixture.repository.readSessionRuns())[0]
+    cached.runs['run-1'].checksum = createHash('sha256')
+      .update(
+        JSON.stringify([
+          cached.analyzerVersion,
+          cached.analyzerRevision,
+          historicalRun.kernelKind,
+          historicalRun.environment,
+          historicalRun.kernelEpochId,
+          historicalRun.runtimeId,
+          historicalRun.replPersistentBindings,
+          historicalRun.cwdBefore,
+          historicalRun.cwdAfter,
+          historicalRun.script,
+          historicalRun.fileEvidence?.checksum,
+          historicalRun.helperEvidenceStatus,
+          undefined
+        ])
+      )
+      .digest('hex')
+    delete cached.runs['run-1'].facts.pythonCallbackContainerSummaries
+    await writeFile(fixture.cachePath, JSON.stringify(cached))
+    const before = JSON.stringify(await fixture.repository.readSessionRuns())
+    const analyze = vi.fn(fixture.analyze)
+    await new NotebookDependencyAnalyzer({
+      storageRoot: fixture.storageRoot,
+      repository: fixture.repository,
+      analyze
+    }).project(fixture.request)
+    expect(analyze).toHaveBeenCalled()
+    expect(JSON.stringify(await fixture.repository.readSessionRuns())).toBe(before)
+  })
+})

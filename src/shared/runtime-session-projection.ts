@@ -260,44 +260,38 @@ const terminalize = (
     )
     const planPending = session.runtimeContext?.plan?.approval === 'pending'
     const blocked = permissionPending || elicitationPending || planPending
-    const rejectedPlan =
-      session.runtimeContext?.plan?.approval === 'rejected' &&
-      session.runtimeContext.plan.originatingPromptMessageId === scope.promptMessageId &&
-      prompt?.turnOutcome?.kind === 'cancelled'
-    const outcome: TurnOutcome = rejectedPlan
-      ? prompt.turnOutcome!
-      : cancelled
-        ? { kind: 'cancelled', settledAt: event.timestamp, recovery: 'resume' }
-        : interrupted
+    const outcome: TurnOutcome = cancelled
+      ? { kind: 'cancelled', settledAt: event.timestamp, recovery: 'resume' }
+      : interrupted
+        ? {
+            kind: 'interrupted',
+            settledAt: event.timestamp,
+            cause: event.interruptionCause ?? 'connection-lost',
+            error: event.text || event.title,
+            errorReportable: false,
+            recovery: 'resume'
+          }
+        : failed
           ? {
-              kind: 'interrupted',
+              kind: 'failed',
               settledAt: event.timestamp,
-              cause: event.interruptionCause ?? 'connection-lost',
               error: event.text || event.title,
-              errorReportable: false,
-              recovery: 'resume'
+              errorReportable:
+                event.errorReportable ??
+                (!event.providerError && !isExpectedRunFailure(event.text || event.title)),
+              ...(event.artifactFailure &&
+              responses.some((response) =>
+                response.artifactIds?.some((id) => {
+                  const artifact = session.artifacts?.find((candidate) => candidate.id === id)
+                  if (!artifact || artifact.kind !== 'managed-file') return false
+                  const segments = artifact.path.split(/[\\/]+/u)
+                  return Boolean(artifact.versionId) || segments.at(-3) === '.pending'
+                })
+              )
+                ? { recovery: 'retry-artifact-publication' as const }
+                : {})
             }
-          : failed
-            ? {
-                kind: 'failed',
-                settledAt: event.timestamp,
-                error: event.text || event.title,
-                errorReportable:
-                  event.errorReportable ??
-                  (!event.providerError && !isExpectedRunFailure(event.text || event.title)),
-                ...(event.artifactFailure &&
-                responses.some((response) =>
-                  response.artifactIds?.some((id) => {
-                    const artifact = session.artifacts?.find((candidate) => candidate.id === id)
-                    if (!artifact || artifact.kind !== 'managed-file') return false
-                    const segments = artifact.path.split(/[\\/]+/u)
-                    return Boolean(artifact.versionId) || segments.at(-3) === '.pending'
-                  })
-                )
-                  ? { recovery: 'retry-artifact-publication' as const }
-                  : {})
-              }
-            : { kind: 'completed', settledAt: event.timestamp }
+          : { kind: 'completed', settledAt: event.timestamp }
     if (prompt && !blocked) {
       prompt.turnOutcome = outcome
       if (outcome.kind === 'completed' || outcome.kind === 'failed') delete prompt.interrupted
