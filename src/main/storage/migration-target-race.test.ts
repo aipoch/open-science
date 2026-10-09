@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { mkdir, mkdtemp, rename, rm, writeFile, readFile, symlink } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -244,3 +245,5 @@ it.each(['replace-target', 'link-provenance', 'unowned-inventory'])(
     }
   }
 )
+
+await configureTestElectronHost(await import('electron'))

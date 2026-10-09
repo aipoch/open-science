@@ -213,7 +213,12 @@
       "src/main/session-persistence/ipc.test.ts",
       "src/main/acp/approved-handoff-outcome.integration.test.ts",
       "src/main/acp/approved-handoff-outcome.test.ts",
-      "src/main/notebook/code-risk-admission.test.ts"
+      "src/main/notebook/code-risk-admission.test.ts",
+      "src/main/desktop-runtime-transport.integration.test.ts",
+      "src/main/side-chat/application-commands.test.ts",
+      "src/main/artifacts/artifact-reproducibility-commands.test.ts",
+      "src/main/data-content-application-commands.test.ts",
+      "src/main/uploads/command-owner.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

@@ -1,3 +1,4 @@
+import { RUNTIME_LOCK_FILE } from '../runtime-ownership'
 import { createHash } from 'node:crypto'
 import { lstatSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -44,7 +45,7 @@ export const dataRootIdentity = (target: string): string => {
       return readdirSync(path)
         .filter(
           (name) =>
-            !['.DS_Store', 'desktop.ini'].includes(name) &&
+            !['.DS_Store', 'desktop.ini', RUNTIME_LOCK_FILE].includes(name) &&
             !name.startsWith('.open-science-write-test-')
         )
         .sort()

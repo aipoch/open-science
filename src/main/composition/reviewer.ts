@@ -1,13 +1,13 @@
+import { registerReviewerIpcHandlers } from '../desktop-surface-declarations'
 import type { ApplicationEvents } from '../application-events'
 import type { ApplicationModuleBuilder } from '../application-runtime'
 import { BackendShutdownOutcomeError, QUIT_SHUTDOWN_BUDGET_MS } from '../lifecycle-shutdown'
 import {
   createReviewerCommandOwner,
-  registerReviewerIpcHandlers,
   type ReviewerCommandOwner,
   type ReviewerIpcOptions
 } from '../reviewer/ipc'
-import { createReviewerElectronPagedContentResolver } from '../reviewer/paged-preview-electron'
+import { createReviewerHostPagedContentResolver } from '../reviewer/paged-preview-host'
 import { ReviewerModelRuntimeOwner } from '../reviewer/model-runtime-owner'
 
 type ReviewerRuntimeShutdownOwner = Pick<
@@ -19,7 +19,7 @@ type ReviewerCompositionDependencies = Readonly<{
   applicationEvents?: ApplicationEvents
   modelRuntime: ConstructorParameters<typeof ReviewerModelRuntimeOwner>[0]
   options: Omit<ReviewerIpcOptions, 'modelRuntime' | 'pagedContentResolver'>
-  previewResources: Parameters<typeof createReviewerElectronPagedContentResolver>[0]
+  previewResources: Parameters<typeof createReviewerHostPagedContentResolver>[0]
   runtimeShutdownOwner: { current: ReviewerRuntimeShutdownOwner | undefined }
   declareElectronAdapter: (name: string, install: () => void | (() => void)) => void
 }>
@@ -56,7 +56,7 @@ export const registerReviewerComposition = async (
   const reviewerOptions: ReviewerIpcOptions = {
     ...options,
     modelRuntime: reviewerModelRuntime,
-    pagedContentResolver: createReviewerElectronPagedContentResolver(previewResources)
+    pagedContentResolver: createReviewerHostPagedContentResolver(previewResources)
   }
   const reviewerCommandOwner = createReviewerCommandOwner(reviewerOptions)
   if (applicationEvents)

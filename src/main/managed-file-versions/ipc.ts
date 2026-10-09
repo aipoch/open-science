@@ -1,3 +1,6 @@
+import type { ApplicationCallerLease, ApplicationInvocation } from '../application-command-router'
+import { callerContextForEvent } from '../caller-context'
+import { callerLeaseForEvent } from '../caller-lifecycle'
 import type { ProjectFilesChangedEvent } from '../../shared/project-files'
 import type {
   ManagedFileVersionInspectRequest,
@@ -82,113 +85,116 @@ const createManagedFileVersionHandlers = (
     })
 })
 
-const registerManagedFileVersionIpcHandlers = (handlers: ManagedFileVersionHandlers): void => {
-  const maxActiveDiffsPerSender = 2
-  const maxActiveDiffsGlobal = 4
-  const requestOwner = new Map<string, number>()
-  const senderRequests = new Map<number, Set<string>>()
-  const observedSenders = new Set<number>()
-  const destroyedSenders = new Set<number>()
+export type ManagedFileVersionCommandOwner = Readonly<{
+  inspect: ManagedFileVersionHandlers['inspect']
+  saveTextEdit: ManagedFileVersionHandlers['saveTextEdit']
+  diffText(
+    invocation: ApplicationInvocation<readonly [ManagedFileVersionDiffRequest]>
+  ): ReturnType<ManagedFileVersionHandlers['diffText']>
+  cancelDiff(
+    invocation: ApplicationInvocation<readonly [ManagedFileVersionCancelDiffRequest]>
+  ): ReturnType<ManagedFileVersionHandlers['cancelDiff']>
+}>
+
+// One owner retains diff admission through cancellation until the worker settles. Lifetimes come
+// from the application caller lease, so navigation, a crash and a disconnected desktop revoke
+// exactly the same work without keeping WebContents objects in the core.
+export const createManagedFileVersionCommandOwner = (
+  handlers: ManagedFileVersionHandlers
+): ManagedFileVersionCommandOwner => {
+  const requestOwners = new Map<string, ApplicationCallerLease>()
+  const callers = new Map<ApplicationCallerLease, { requests: Set<string>; cancel: () => void }>()
   const cancellationRequested = new Set<string>()
-
-  const ownRequest = (
-    sender: { id: number; once(event: 'destroyed', listener: () => void): unknown },
-    requestId: string
-  ): 'owned' | 'collision' | 'limit' => {
-    if (requestOwner.has(requestId)) return 'collision'
-    if (
-      requestOwner.size >= maxActiveDiffsGlobal ||
-      (senderRequests.get(sender.id)?.size ?? 0) >= maxActiveDiffsPerSender
-    )
-      return 'limit'
-    requestOwner.set(requestId, sender.id)
-    let requests = senderRequests.get(sender.id)
-    if (!requests) {
-      requests = new Set()
-      senderRequests.set(sender.id, requests)
-    }
-    requests.add(requestId)
-    if (observedSenders.has(sender.id)) return 'owned'
-    observedSenders.add(sender.id)
-    sender.once('destroyed', () => {
-      if ((senderRequests.get(sender.id)?.size ?? 0) === 0) {
-        observedSenders.delete(sender.id)
-        destroyedSenders.delete(sender.id)
-        return
-      }
-      destroyedSenders.add(sender.id)
-      for (const ownedRequestId of senderRequests.get(sender.id) ?? []) {
-        if (requestOwner.get(ownedRequestId) !== sender.id) continue
-        if (cancellationRequested.has(ownedRequestId)) continue
-        cancellationRequested.add(ownedRequestId)
-        handlers.cancelDiff({ requestId: ownedRequestId })
-      }
-    })
-    return 'owned'
+  const cancel = (lease: ApplicationCallerLease, requestId: string): boolean => {
+    if (requestOwners.get(requestId) !== lease || cancellationRequested.has(requestId)) return false
+    cancellationRequested.add(requestId)
+    handlers.cancelDiff({ requestId })
+    return true
   }
-
-  const releaseRequest = (senderId: number, requestId: string): void => {
-    if (requestOwner.get(requestId) !== senderId) return
-    requestOwner.delete(requestId)
-    cancellationRequested.delete(requestId)
-    const requests = senderRequests.get(senderId)
-    requests?.delete(requestId)
-    if (requests?.size === 0) {
-      senderRequests.delete(senderId)
-      if (destroyedSenders.delete(senderId)) observedSenders.delete(senderId)
-    }
-  }
-
-  ipcMainHandle(
-    'managed-file-versions:inspect',
-    (_event, request: ManagedFileVersionInspectRequest) => handlers.inspect(request)
-  )
-  ipcMainHandle(
-    'managed-file-versions:diff-text',
-    async (
-      event: { sender: { id: number; once(event: 'destroyed', listener: () => void): unknown } },
-      request: ManagedFileVersionDiffRequest
-    ) => {
-      const ownership = ownRequest(event.sender, request.requestId)
-      if (ownership !== 'owned') {
+  return {
+    inspect: handlers.inspect,
+    saveTextEdit: handlers.saveTextEdit,
+    diffText: async ({ callerLease, args: [request] }) => {
+      if (
+        callerLease.signal.aborted ||
+        !callerLease.isCurrent() ||
+        typeof request?.requestId !== 'string' ||
+        !request.requestId
+      ) {
         return {
-          ok: false as const,
-          error: {
-            code:
-              ownership === 'collision'
-                ? ('INVALID_REQUEST' as const)
-                : ('DIFF_CONCURRENCY_LIMIT' as const),
-            message:
-              ownership === 'collision'
-                ? 'Diff request id is already active.'
-                : 'Too many diff requests are active.'
-          }
+          ok: false,
+          error: { code: 'INVALID_REQUEST', message: 'Diff caller or request is no longer valid.' }
         }
       }
+      const existing = callers.get(callerLease)
+      if (requestOwners.has(request.requestId)) {
+        return {
+          ok: false,
+          error: { code: 'INVALID_REQUEST', message: 'Diff request id is already active.' }
+        }
+      }
+      if (requestOwners.size >= 4 || (existing?.requests.size ?? 0) >= 2) {
+        return {
+          ok: false,
+          error: { code: 'DIFF_CONCURRENCY_LIMIT', message: 'Too many diff requests are active.' }
+        }
+      }
+      const caller = existing ?? {
+        requests: new Set<string>(),
+        cancel: () => {
+          for (const requestId of callers.get(callerLease)?.requests ?? [])
+            cancel(callerLease, requestId)
+        }
+      }
+      callers.set(callerLease, caller)
+      if (!existing) callerLease.signal.addEventListener('abort', caller.cancel, { once: true })
+      requestOwners.set(request.requestId, callerLease)
+      caller.requests.add(request.requestId)
       try {
         return await handlers.diffText(request)
       } finally {
-        releaseRequest(event.sender.id, request.requestId)
+        requestOwners.delete(request.requestId)
+        cancellationRequested.delete(request.requestId)
+        caller.requests.delete(request.requestId)
+        if (caller.requests.size === 0) {
+          callers.delete(callerLease)
+          callerLease.signal.removeEventListener('abort', caller.cancel)
+        }
       }
-    }
-  )
+    },
+    cancelDiff: ({ callerLease, args: [request] }) => ({
+      ok: true,
+      value: { cancelled: cancel(callerLease, request.requestId) }
+    })
+  }
+}
+
+const registerManagedFileVersionIpcHandlers = (owner: ManagedFileVersionCommandOwner): void => {
   ipcMainHandle(
-    'managed-file-versions:cancel-diff',
-    (event: { sender: { id: number } }, request: ManagedFileVersionCancelDiffRequest) => {
-      if (requestOwner.get(request.requestId) !== event.sender.id) {
-        return { ok: true as const, value: { cancelled: false } }
-      }
-      if (cancellationRequested.has(request.requestId)) {
-        return { ok: true as const, value: { cancelled: false } }
-      }
-      cancellationRequested.add(request.requestId)
-      handlers.cancelDiff(request)
-      return { ok: true as const, value: { cancelled: true } }
-    }
+    'managed-file-versions:inspect',
+    (_event, request: ManagedFileVersionInspectRequest) => owner.inspect(request)
   )
   ipcMainHandle(
     'managed-file-versions:save-text-edit',
-    (_event, request: ManagedFileVersionSaveTextEditRequest) => handlers.saveTextEdit(request)
+    (_event, request: ManagedFileVersionSaveTextEditRequest) => owner.saveTextEdit(request)
+  )
+  ipcMainHandle(
+    'managed-file-versions:diff-text',
+    (event, request: ManagedFileVersionDiffRequest) =>
+      owner.diffText({
+        callerContext: callerContextForEvent(event),
+        callerLease: callerLeaseForEvent(event),
+        args: [request]
+      })
+  )
+  ipcMainHandle(
+    'managed-file-versions:cancel-diff',
+    (event, request: ManagedFileVersionCancelDiffRequest) =>
+      owner.cancelDiff({
+        callerContext: callerContextForEvent(event),
+        callerLease: callerLeaseForEvent(event),
+        args: [request]
+      })
   )
 }
 

@@ -1,3 +1,5 @@
+import { createSettingsFileCommands, createSettingsExportFiles } from '../settings/file-commands'
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { EventEmitter } from 'node:events'
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -10,6 +12,7 @@ const native = vi.hoisted(() => ({
   failAt: undefined as string | undefined,
   window: null as unknown,
   fromWebContents: vi.fn(),
+  fromId: vi.fn(),
   openDialog: vi.fn(),
   saveDialog: vi.fn()
 }))
@@ -22,6 +25,7 @@ vi.mock('electron', () => ({
     },
     removeHandler: (channel: string) => native.handlers.delete(channel)
   },
+  webContents: { fromId: native.fromId },
   BrowserWindow: { fromWebContents: native.fromWebContents },
   dialog: { showOpenDialog: native.openDialog, showSaveDialog: native.saveDialog }
 }))
@@ -67,11 +71,13 @@ const fixtures = (): {
   }
   const setSkillEnabled = vi.fn().mockResolvedValue([])
   const readCurrentSnapshot = vi.fn().mockResolvedValue({ revision: 12 })
+  const sender = Object.assign(new EventEmitter(), { id: 42, isDestroyed: () => false })
+  native.fromId.mockImplementation((id) => (id === sender.id ? sender : undefined))
   return {
     service,
     setSkillEnabled,
     readCurrentSnapshot,
-    event: { sender: Object.assign(new EventEmitter(), { id: 42 }) } as IpcMainInvokeEvent,
+    event: { sender } as IpcMainInvokeEvent,
     owners: {
       // Only invoked owner methods are controlled here; their complete behavior has owner tests.
       service: service as unknown as Owners['service'],
@@ -94,7 +100,7 @@ let directory: string
 beforeEach(async () => {
   vi.clearAllMocks()
   native.failAt = undefined
-  native.window = { id: 'sender-window' }
+  native.window = { id: 'sender-window', isDestroyed: () => false }
   native.fromWebContents.mockImplementation(() => native.window)
   native.openDialog.mockResolvedValue({ canceled: true, filePaths: [] })
   native.saveDialog.mockResolvedValue({ canceled: true })
@@ -110,7 +116,13 @@ describe('Settings Electron surface', () => {
   it('installs lazily with registrar parity and routes shared owners', async () => {
     const { owners, event, service, setSkillEnabled, readCurrentSnapshot } = fixtures()
     const scope = createIpcHandlerInstallationScope()
-    registerSettingsIpcHandlers(owners)
+    registerSettingsIpcHandlers({
+      ...owners,
+      fileCommands: createSettingsFileCommands(
+        owners.service,
+        createSettingsExportFiles(owners.translate)
+      )
+    })
     const expectedChannels = [...native.handlers.keys()]
     await scope.complete().uninstall()
     const surface = createSettingsElectronSurface(owners)
@@ -142,7 +154,7 @@ describe('Settings Electron surface', () => {
       preview: { ready: true }
     })
     expect(service.previewCustomServerTemplateImport).toHaveBeenCalledWith(contents)
-    expect(native.openDialog).toHaveBeenCalledWith({
+    expect(native.openDialog).toHaveBeenCalledWith(native.window, {
       title: 'translated: Import Connector configuration',
       properties: ['openFile'],
       filters: [{ name: 'translated: Connector configuration', extensions: ['json'] }]
@@ -242,7 +254,7 @@ describe('Settings Electron surface', () => {
   })
 
   it.each(['settings:export-skill', 'settings:export-custom-server-template'])(
-    'leaves an existing file untouched when %s is canceled without a parent window',
+    'rejects %s after its parent window disappears without touching an existing file',
     async (channel) => {
       const { owners, event } = fixtures()
       await install(owners)
@@ -250,10 +262,10 @@ describe('Settings Electron surface', () => {
       const filePath = join(directory, 'existing')
       await writeFile(filePath, 'keep')
       native.saveDialog.mockResolvedValue({ canceled: true, filePath })
-      await expect(invoke(channel, event, { id: 'id', expectedDigest: 'digest' })).resolves.toEqual(
-        { saved: false }
+      await expect(invoke(channel, event, { id: 'id', expectedDigest: 'digest' })).rejects.toThrow(
+        'calling window'
       )
-      expect(native.saveDialog.mock.calls[0]).toHaveLength(1)
+      expect(native.saveDialog).not.toHaveBeenCalled()
       expect(await readFile(filePath, 'utf8')).toBe('keep')
       expect(await readdir(directory)).toEqual(['existing'])
     }
@@ -277,3 +289,5 @@ describe('Settings Electron surface', () => {
     await expect(invoke('settings:get-preflight', event)).resolves.toEqual({ needsSetup: false })
   })
 })
+
+await configureTestElectronHost(await import('electron'))

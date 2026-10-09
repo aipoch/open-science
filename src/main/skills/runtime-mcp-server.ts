@@ -1,3 +1,4 @@
+import { nodeRuntimeEnvironmentEntries } from '../node-process-host'
 import { lstat, open, readFile, readdir } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 
@@ -373,7 +374,7 @@ const skillRuntimeProcessEnvironment = ({
   string,
   string
 > => ({
-  ELECTRON_RUN_AS_NODE: '1',
+  ...Object.fromEntries(nodeRuntimeEnvironmentEntries().map(({ name, value }) => [name, value])),
   [SKILL_RUNTIME_ROOT_ENV]: root,
   ...(skillsDirectory ? { [SKILL_RUNTIME_DIRECTORY_ENV]: skillsDirectory } : {}),
   ...(allowedNames ? { [SKILL_RUNTIME_ALLOWED_NAMES_ENV]: JSON.stringify([...allowedNames]) } : {})

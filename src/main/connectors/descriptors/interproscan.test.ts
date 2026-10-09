@@ -1,3 +1,4 @@
+import { configureTestRuntimeNetwork } from '../../../../test/runtime-host'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ParserEngine } from '../engine'
 import { INTERPROSCAN_TOOLS } from './interproscan'
@@ -377,3 +378,5 @@ describe('InterProScan reads through the shared engine', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2)
   })
 })
+
+configureTestRuntimeNetwork()

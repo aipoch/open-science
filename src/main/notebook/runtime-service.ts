@@ -1,3 +1,5 @@
+import { desktopFileInteraction } from '../desktop-interaction'
+import { runtimeMetadata } from '../runtime-metadata'
 import type { ReplayRunIndex } from '../../shared/replay'
 import { randomUUID } from 'node:crypto'
 import { existsSync, realpathSync } from 'node:fs'
@@ -331,9 +333,9 @@ const saveIpynbWithDialog = async (
   data: string,
   translate: NativeTranslator = englishNativeTranslator
 ): Promise<ExportNotebookResult> => {
-  const { app, dialog } = await import('electron')
-  const { canceled, filePath } = await dialog.showSaveDialog({
-    defaultPath: join(app.getPath('downloads'), suggestedName),
+  const dialog = desktopFileInteraction()
+  const { canceled, filePath } = await dialog.chooseSavePath({
+    defaultPath: join(runtimeMetadata().downloadsPath, suggestedName),
     title: translate('Export notebook'),
     filters: [{ name: translate('Jupyter Notebook'), extensions: ['ipynb'] }]
   })
@@ -351,17 +353,18 @@ const saveIpynbWithDialog = async (
 // Resolves the on-disk locations of executable Notebook resources without depending on Electron
 // (mirrors micromamba.ts's electron-free resolution). resources/** ships via electron-builder's
 // asarUnpack, so a packaged build's scripts land beside app.asar under app.asar.unpacked rather
-// than directly under process.resourcesPath. Existence-checked so a resolution mistake fails fast at
+// than directly under runtimeMetadata().resourcesPath. Existence-checked so a resolution mistake fails fast at
 // startup instead of surfacing as an opaque spawn ENOENT.
 const resolveNotebookResource = (envOverride: string | undefined, fileName: string): string => {
   if (envOverride) return envOverride
 
   const candidates = [
-    // Packaged (asar): resources/** is unpacked next to app.asar under process.resourcesPath.
-    process.resourcesPath &&
-      join(process.resourcesPath, 'app.asar.unpacked', 'resources', 'notebook', fileName),
+    // Packaged (asar): resources/** is unpacked next to app.asar under runtimeMetadata().resourcesPath.
+    runtimeMetadata().resourcesPath &&
+      join(runtimeMetadata().resourcesPath, 'app.asar.unpacked', 'resources', 'notebook', fileName),
     // Packaged without an asar (e.g. an unpacked --dir build).
-    process.resourcesPath && join(process.resourcesPath, 'resources', 'notebook', fileName),
+    runtimeMetadata().resourcesPath &&
+      join(runtimeMetadata().resourcesPath, 'resources', 'notebook', fileName),
     // Dev: electron-vite bundles main into out/main, two levels below the repo root.
     join(__dirname, `../../resources/notebook/${fileName}`),
     // Dev/test: unbundled ts source keeps this file at src/main/notebook, three levels below root.

@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { expect, it } from 'vitest'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -276,3 +277,5 @@ it('keeps nested label inputs and does not execute quoted plotmath calls', async
     readState: 'complete'
   })
 })
+
+configureTestRuntimeMetadata()

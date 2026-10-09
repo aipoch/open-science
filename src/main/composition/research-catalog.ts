@@ -1,6 +1,6 @@
 import { JournalAttributes } from '../literature/journal-attributes'
 import { QUIT_SHUTDOWN_BUDGET_MS } from '../lifecycle-shutdown'
-import { session } from 'electron'
+import { runtimeNetwork } from '../runtime-network'
 import { join } from 'node:path'
 import type { ApplicationEvents } from '../application-events'
 import { type ApplicationModuleBuilder } from '../application-runtime'
@@ -174,7 +174,7 @@ export async function composeResearchCatalog({
       maxBytes,
       onProgress,
       async (target) => {
-        const environment = parseSystemProxyRules(await session.defaultSession.resolveProxy(target))
+        const environment = parseSystemProxyRules(await runtimeNetwork().resolveProxy(target))
         return environment.HTTPS_PROXY ?? environment.ALL_PROXY
       },
       signal

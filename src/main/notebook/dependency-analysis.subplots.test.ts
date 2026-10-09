@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -116,3 +117,5 @@ it.each([
     projectNotebookDependencies([{ run: run(script, 0), facts }]).stalenessByRunId['run-0'].state
   ).toBe('unknown')
 })
+
+configureTestRuntimeMetadata()

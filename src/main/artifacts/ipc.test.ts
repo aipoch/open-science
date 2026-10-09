@@ -1895,3 +1895,7 @@ describe('artifact handler edge cases', () => {
     })
   })
 })
+
+await (
+  await import('../../../test/runtime-host')
+).configureTestElectronHost(await import('electron'))

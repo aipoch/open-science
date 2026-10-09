@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { once } from 'node:events'
@@ -745,3 +746,5 @@ it
   },
   60_000
 )
+
+configureTestRuntimeMetadata()

@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -782,3 +783,5 @@ describe('completion gate through the real host.agents SDK and executeControl se
     }
   )
 })
+
+configureTestRuntimeMetadata()

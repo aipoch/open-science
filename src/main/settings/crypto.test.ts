@@ -1,3 +1,4 @@
+import { configureSecureStorageCipher } from '../secure-storage'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 // Toggleable keychain state so the reduced-protection fallback (keychain unavailable) can be tested
@@ -91,3 +92,5 @@ describe('crypto', () => {
     expect(maskKey('')).toBe('')
   })
 })
+
+configureSecureStorageCipher((await import('electron')).safeStorage)

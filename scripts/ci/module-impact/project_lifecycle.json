@@ -260,7 +260,10 @@
       "src/main/database/literature-translation-migration.test.ts",
       "src/main/literature/pdf-translation/checkpoints.test.ts",
       "src/main/literature/pdf-translation/usage.test.ts",
-      "src/main/database/workspace-pdf-translation-migration.test.ts"
+      "src/main/database/workspace-pdf-translation-migration.test.ts",
+      "src/main/desktop-runtime-transport.integration.test.ts",
+      "src/main/artifacts/artifact-reproducibility-commands.test.ts",
+      "src/main/settings/file-commands.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],

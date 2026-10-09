@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { createHash } from 'node:crypto'
 import { once } from 'node:events'
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
@@ -5115,3 +5116,5 @@ describe('notebook local RPC server', () => {
     }
   })
 })
+
+configureTestRuntimeMetadata()

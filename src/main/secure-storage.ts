@@ -1,4 +1,3 @@
-import { safeStorage } from 'electron'
 import { platform } from 'node:os'
 import { credentialCipher } from './credential-identity/runtime'
 
@@ -9,13 +8,24 @@ interface SecureStorageCipher {
   decryptString(value: Buffer): string
 }
 
+let selectedCipher: SecureStorageCipher | undefined
+
+export function configureSecureStorageCipher(cipher: SecureStorageCipher): void {
+  if (selectedCipher) throw new Error('Secure storage cipher is already configured.')
+  selectedCipher = cipher
+}
+
+function hostCipher(): SecureStorageCipher {
+  if (!selectedCipher) throw new Error('Secure storage must be configured by the host entry.')
+  return credentialCipher(selectedCipher)
+}
+
 // All application secret operations share the bootstrap-selected process cipher.
 const protectedSafeStorage: SecureStorageCipher = {
-  isEncryptionAvailable: () => credentialCipher(safeStorage).isEncryptionAvailable(),
-  getSelectedStorageBackend: () =>
-    credentialCipher(safeStorage).getSelectedStorageBackend?.() ?? 'unknown',
-  encryptString: (value) => credentialCipher(safeStorage).encryptString(value),
-  decryptString: (value) => credentialCipher(safeStorage).decryptString(value)
+  isEncryptionAvailable: () => hostCipher().isEncryptionAvailable(),
+  getSelectedStorageBackend: () => hostCipher().getSelectedStorageBackend?.() ?? 'unknown',
+  encryptString: (value) => hostCipher().encryptString(value),
+  decryptString: (value) => hostCipher().decryptString(value)
 }
 
 const isSecureStorageAvailable = (

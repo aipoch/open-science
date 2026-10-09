@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -101,3 +102,5 @@ it('links SeuratDisk serialization across cells', async () => {
     await rm(root, { recursive: true, force: true })
   }
 })
+
+configureTestRuntimeMetadata()

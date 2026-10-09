@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../../../test/runtime-metadata'
 import type { PdfAnnotation } from '../../../../shared/pdf-annotations'
 import * as annotationReveal from '../workspace/annotations/annotation-reveal'
 import { FocusScope } from '@radix-ui/react-focus-scope'
@@ -11242,3 +11243,5 @@ describe('LiteratureLibraryPage', () => {
     )
   })
 })
+
+configureTestRuntimeMetadata()

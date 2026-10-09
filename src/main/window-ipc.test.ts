@@ -88,3 +88,6 @@ describe('window IPC handler', () => {
     expect(setZoomFactor).not.toHaveBeenCalled()
   })
 })
+
+const { configureIpcHandlerRegistry } = await import('./ipc-handler-registry')
+configureIpcHandlerRegistry((await import('electron')).ipcMain)

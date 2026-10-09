@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { expect, it } from 'vitest'
 import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
 
@@ -297,3 +298,5 @@ it('does not trust a callable replaced in the prior kernel context', async () =>
   )
   expect(result.readState).toBe('partial')
 })
+
+configureTestRuntimeMetadata()

@@ -1,4 +1,4 @@
-import { app } from 'electron'
+import { runtimeMetadata } from '../runtime-metadata'
 import { parseArtifactVersionLocator } from '../../shared/artifact-provenance'
 import { parseUploadVersionReference } from '../../shared/uploads'
 import { ArtifactTurnOwner } from '../acp/artifact-turn-owner'
@@ -130,7 +130,7 @@ export function composeDelegation({
     capacity: 4,
     dataRoot: resolveDataRoot(),
     runtime: {
-      appVersion: app.getVersion(),
+      appVersion: runtimeMetadata().version,
       mcpEntryPath: mainEntryPath,
       repository: artifactRepository,
       runRegistry: artifactRunRegistry,

@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -103,3 +104,5 @@ it.each([
   const { facts } = await analyzeRNotebookSource(script)
   expect(facts.state === 'unknown' ? facts.reasons : []).toContain('opaque-call')
 })
+
+configureTestRuntimeMetadata()

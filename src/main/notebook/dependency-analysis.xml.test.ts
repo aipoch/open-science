@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { readFileSync } from 'node:fs'
 import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises'
 import { execFile } from 'node:child_process'
@@ -182,3 +183,5 @@ it('retains a computed array default when a sort callback mutates it', async () 
   ])
   expect(result.stalenessByRunId['run-2']?.state).not.toBe('clear')
 })
+
+configureTestRuntimeMetadata()

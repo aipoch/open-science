@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('web-tree-sitter', () => {
@@ -15,3 +16,5 @@ describe('Notebook dependency analysis parser availability', () => {
     ])
   })
 })
+
+configureTestRuntimeMetadata()

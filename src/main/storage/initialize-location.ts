@@ -1,3 +1,4 @@
+import { ownRuntimeDataDirectory } from '../runtime-ownership'
 import { existsSync, statSync } from 'node:fs'
 import { initDataRoot, resolveDataRoot } from '../storage-root'
 import { SettingsDocumentStore } from '../settings/document-store'
@@ -16,6 +17,7 @@ export const initializeDataLocation = async (repository: SettingsRepository): Pr
     throw new Error(
       `The saved data location is missing or is not a directory: ${root}. Reconnect it before restarting.`
     )
+  await ownRuntimeDataDirectory(root)
   if (settings.dataRoot === undefined && settings.onboardingCompletedAt !== undefined) {
     await repository.persistLegacyDataRoot(root, settings.onboardingCompletedAt)
     initDataRoot(root, settings.onboardingCompletedAt)

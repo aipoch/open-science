@@ -1,3 +1,4 @@
+import { nodeRuntimeEnvironment } from '../../node-process-host'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { dirname, join } from 'node:path'
@@ -66,7 +67,7 @@ export const createPdfTranslationLocalRuntime = (
     if (child && (child.exitCode !== null || child.signalCode !== null)) await stop()
     if (!child) {
       child = spawn(process.execPath, [join(resources, 'worker.mjs')], {
-        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+        env: { ...process.env, ...nodeRuntimeEnvironment() },
         stdio: ['pipe', 'pipe', 'pipe'],
         detached: process.platform !== 'win32',
         windowsHide: true

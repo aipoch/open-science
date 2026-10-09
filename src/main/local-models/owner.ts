@@ -1,3 +1,4 @@
+import type { LocalModelApi, LocalModelCapability } from '../../shared/local-models'
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { lstat, mkdir, rename, rmdir, unlink } from 'node:fs/promises'
@@ -444,4 +445,22 @@ export type LocalModelOwner = {
   install(): Promise<LocalModelSnapshot>
   cancel(): Promise<LocalModelSnapshot>
   remove(): Promise<LocalModelSnapshot>
+}
+
+// Both Electron and host commands use the same capability validation and owner routing.
+export const createLocalModelApi = (
+  tables: Pick<LocalModelOwner, 'getSnapshot' | 'install' | 'cancel' | 'remove'>,
+  translation: Pick<LocalModelOwner, 'getSnapshot' | 'install' | 'cancel' | 'remove'>
+): LocalModelApi => {
+  const owner = (capability?: LocalModelCapability): typeof tables => {
+    if (capability === undefined || capability === 'pdf-tables') return tables
+    if (capability === 'pdf-translation') return translation
+    throw new Error('Unsupported local model capability.')
+  }
+  return {
+    getSnapshot: (capability) => owner(capability).getSnapshot(),
+    install: (capability) => owner(capability).install(),
+    cancel: (capability) => owner(capability).cancel(),
+    remove: (capability) => owner(capability).remove()
+  }
 }

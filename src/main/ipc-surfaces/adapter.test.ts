@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { afterEach, expect, it, vi } from 'vitest'
 
 const native = vi.hoisted(() => ({ channels: new Set<string>() }))
@@ -46,3 +47,5 @@ it('preserves an earlier surface when a duplicate registration aborts a later su
   await earlier.uninstall()
   expect(native.channels.size).toBe(0)
 })
+
+await configureTestElectronHost(await import('electron'))

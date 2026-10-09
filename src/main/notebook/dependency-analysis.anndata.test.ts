@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { expect, it } from 'vitest'
 import type { NotebookRunRecord } from '../../shared/notebook'
 import { analyzePythonSources } from './dependency-analysis-python'
@@ -209,3 +210,5 @@ it.each([
   )
   expect(projection.stalenessByRunId['run-1']?.state).toBe(expected)
 })
+
+configureTestRuntimeMetadata()

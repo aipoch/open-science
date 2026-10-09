@@ -1,6 +1,6 @@
 # AIPOCH Open-Science — Development & Packaging
 
-AIPOCH Open-Science is an Electron application built with React, TypeScript, Prisma/SQLite, and an ACP-based agent runtime.
+AIPOCH Open-Science has an ordinary Node backend and an Electron desktop client, built with React, TypeScript, Prisma/SQLite, and an ACP-based agent runtime.
 
 Prerequisites for source development:
 
@@ -15,24 +15,27 @@ npm install
 npm run dev
 ```
 
-`npm install` automatically generates the Prisma client and installs Electron native dependencies. `npm run dev` builds the Electron main/preload bundles, starts the renderer, and opens the desktop app. Development data is isolated under `~/.open-science-project`.
+`npm install` automatically generates the Prisma client and installs Electron native dependencies. `npm run dev` builds the shared Node backend, stages its pinned executable, builds the Electron main/preload bundles, starts the renderer, and opens the desktop client. Development data is isolated under `~/.open-science-project`.
 
 Useful commands:
 
-| Command                | Purpose                                  |
-| ---------------------- | ---------------------------------------- |
-| `npm run dev`          | Start the development application        |
-| `npm run dev:web`      | Dev app + localhost web UI (127.0.0.1)   |
-| `npm run dev:headless` | Dev backend + web UI, no Electron window |
-| `npm run lint`         | Run ESLint                               |
-| `npm run typecheck`    | Type-check main and renderer code        |
-| `npm test`             | Run the Vitest suite                     |
-| `npm run build`        | Type-check and build the application     |
-| `npm run build:web`    | Build the optional localhost web UI      |
-| `npm run build:mac`    | Package macOS builds                     |
-| `npm run build:win`    | Package Windows builds                   |
-| `npm run build:linux`  | Package Linux builds                     |
+| Command                | Purpose                                     |
+| ---------------------- | ------------------------------------------- |
+| `npm run dev`          | Start the development application           |
+| `npm run dev:web`      | Dev app + localhost web UI (127.0.0.1)      |
+| `npm run dev:headless` | Ordinary Node backend + Web UI, no Electron |
+| `npm run lint`         | Run ESLint                                  |
+| `npm run typecheck`    | Type-check main and renderer code           |
+| `npm test`             | Run the Vitest suite                        |
+| `npm run build`        | Type-check and build the application        |
+| `npm run build:web`    | Build the optional localhost web UI         |
+| `npm run build:mac`    | Package macOS builds                        |
+| `npm run build:win`    | Package Windows builds                      |
+| `npm run build:linux`  | Package Linux builds                        |
 
 Packaged output is written under `dist/`.
 
 [README](../README.md)
+
+`npm run build:backend` builds the Node entry; `npm run pack:backend` builds the target-specific
+standalone package. See [standalone runtime](standalone-runtime.md) for prerequisites and boundaries.

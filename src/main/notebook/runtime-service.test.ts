@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { createHash, randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
@@ -17111,3 +17112,5 @@ it('AUDIT: removal cannot overtake a managed binding whose durable commit is in 
     lease.mockRestore()
   }
 })
+
+configureTestRuntimeMetadata()

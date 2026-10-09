@@ -533,7 +533,10 @@ class NotebookNetworkSandbox {
 
 export { NotebookNetworkSandbox, NotebookSandboxPreparationError }
 // Shared transport accepts an already validated numeric destination, preserving DNS pinning.
-export { tunnelThroughProxy } from '../runtime/src/gateway/command-gateway.js'
+export {
+  tunnelThroughProxy,
+  resolveParentProxyUrl
+} from '../runtime/src/gateway/command-gateway.js'
 export type {
   NotebookNetworkAccessRequest,
   NotebookNetworkDecisionHandler,

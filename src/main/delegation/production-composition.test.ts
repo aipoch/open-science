@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { EventEmitter } from 'node:events'
 import { access, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
@@ -4435,3 +4436,5 @@ it.each(
     await expect.soft(readFile(evidence, 'utf8')).resolves.toBe('process-owned evidence')
   }
 )
+
+configureTestRuntimeMetadata()

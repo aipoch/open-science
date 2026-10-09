@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { expect, it } from 'vitest'
 import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
 import { analyzeRNotebookSource } from './dependency-analysis-r'
@@ -108,3 +109,5 @@ it.each(['size', 'alpha', 'shape', 'linetype', 'linewidth'])(
     }
   }
 )
+
+configureTestRuntimeMetadata()

@@ -57,6 +57,7 @@ class FakeWebSocket {
 }
 
 type WebApi = {
+  getRuntimeVersions: Window['api']['getRuntimeVersions']
   storage: Window['api']['storage']
   uploads: Record<'appendTransfer' | 'getTransferStatus', (request: unknown) => Promise<unknown>>
   specialist: Record<
@@ -239,6 +240,15 @@ describe('Web bootstrap event connection', () => {
     await loadBootstrap()
 
     expect(document.documentElement.getAttribute(WEB_CALLER_LOCATION_ATTRIBUTE)).toBe('local')
+  })
+
+  it('starts the existing Web API with ordinary Node runtime versions', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json({ ...bootstrapPayload, versions: { node: '24.21.0' } }))
+    )
+    const api = await loadBootstrap()
+    expect(api.getRuntimeVersions()).toEqual({ node: '24.21.0' })
   })
 
   it('recognizes an older local protocol-v1 Main from its local-only capability', async () => {

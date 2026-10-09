@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -177,3 +178,5 @@ it('preserves row-option dependencies through the persisted analyzer cache', asy
     await rm(root, { recursive: true, force: true })
   }
 })
+
+configureTestRuntimeMetadata()

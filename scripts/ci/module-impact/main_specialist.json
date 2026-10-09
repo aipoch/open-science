@@ -56,7 +56,8 @@
     "src/main/specialist/session-reconfiguration.test.ts",
     "src/main/specialist/session-reconfiguration.ts",
     "src/main/specialist/specialist-identity-injection.test.ts",
-    "src/main/specialist/types.ts"
+    "src/main/specialist/types.ts",
+    "src/main/specialist/desktop-commands.ts"
   ],
   "interfacePaths": [
     "src/main/specialist/application-commands.ts",
@@ -76,7 +77,8 @@
     "src/main/specialist/service.ts",
     "src/main/specialist/session-binding.ts",
     "src/main/specialist/session-reconfiguration.ts",
-    "src/main/specialist/types.ts"
+    "src/main/specialist/types.ts",
+    "src/main/specialist/desktop-commands.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -287,7 +289,10 @@
       "src/main/notebook/runtime-service.macos-isolation.integration.test.ts",
       "src/main/session-persistence/ipc.test.ts",
       "src/main/acp/approved-handoff-outcome.integration.test.ts",
-      "src/main/acp/approved-handoff-outcome.test.ts"
+      "src/main/acp/approved-handoff-outcome.test.ts",
+      "src/main/desktop-runtime-transport.integration.test.ts",
+      "src/main/side-chat/application-commands.test.ts",
+      "src/main/settings/file-commands.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

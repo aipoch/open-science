@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { expect, it } from 'vitest'
 import { createHash } from 'node:crypto'
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
@@ -303,3 +304,5 @@ it('keeps the filename of a NumPy output handle unchanged', async () => {
   expect(result.writes).toEqual(['middle.bin'])
   expect(result.externalState).toBe('complete')
 })
+
+configureTestRuntimeMetadata()

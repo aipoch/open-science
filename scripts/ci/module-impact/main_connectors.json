@@ -333,7 +333,10 @@
       "src/main/acp/approved-handoff-outcome.test.ts",
       "src/main/connectors/descriptors/omics-geo-matrix.test.ts",
       "src/main/connectors/descriptors/iedb.test.ts",
-      "src/main/connectors/descriptors/pdc.test.ts"
+      "src/main/connectors/descriptors/pdc.test.ts",
+      "src/main/desktop-runtime-transport.integration.test.ts",
+      "src/main/side-chat/application-commands.test.ts",
+      "src/main/settings/file-commands.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

@@ -1308,7 +1308,9 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/session-persistence/turn-outcome-reconciliation.test.ts',
       'src/main/session-persistence/record-facts.ts',
       'src/main/session-persistence/attention-projection.test.ts',
-      'src/main/session-persistence/turn-outcome-authority.test.ts'
+      'src/main/session-persistence/turn-outcome-authority.test.ts',
+      'src/main/session-persistence/flush-protocol.ts',
+      'src/main/session-persistence/conversation-pdf-electron.ts'
     ])
     expect(sessionPersistence.interfacePaths).toEqual([
       'src/main/session-persistence/coordinator.ts',
@@ -1335,7 +1337,9 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/session-persistence/state-owner.ts',
       'src/main/session-persistence/task-admission.ts',
       'src/main/session-persistence/runtime-session-owner.ts',
-      'src/main/session-persistence/runtime-writer.ts'
+      'src/main/session-persistence/runtime-writer.ts',
+      'src/main/session-persistence/flush-protocol.ts',
+      'src/main/session-persistence/conversation-pdf-electron.ts'
     ])
     expect(sessionPersistence.consumerModules).toEqual(['project_lifecycle'])
     expect(sessionPersistence.testFiles.owner).toEqual([
@@ -1828,6 +1832,13 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/literature/pdf-translation/checkpoints.test.ts',
       'src/main/literature/pdf-translation/usage.test.ts',
       'src/main/notebook/code-risk-admission.test.ts',
+      'src/main/desktop-runtime-transport.integration.test.ts',
+      'src/main/side-chat/application-commands.test.ts',
+      'src/main/desktop-native-electron.test.ts',
+      'src/main/artifacts/artifact-reproducibility-commands.test.ts',
+      'src/main/settings/file-commands.test.ts',
+      'src/main/office-preview/application-commands.test.ts',
+      'src/main/reviewer/paged-preview-host.test.ts',
       'src/main/session-plan/session-plan-turn-outcome.test.ts',
       'src/main/notebook/runtime-repair.windows.integration.test.ts'
     ])

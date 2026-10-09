@@ -6,7 +6,7 @@ import {
   rendererSessionPersistenceFlushBlocksShutdown,
   type RendererSessionPersistenceFlushOutcome
 } from './session-persistence/renderer-flush'
-import type { ShutdownStepOutcome } from './lifecycle-shutdown'
+import { BackendShutdownOutcomeError, type ShutdownStepOutcome } from './lifecycle-shutdown'
 import { flushDiagnosticsWithTimeout, type DiagnosticFlush } from './diagnostics/flush'
 import { diagnosticErrorFields, type Logger } from './logger'
 import { startDiagnosticOperation } from './diagnostics/operation'
@@ -91,6 +91,12 @@ export type AppLifecycleDeps = {
   bindSystemShutdownWindow?: (window: BrowserWindow) => void
   // Overridable for tests; defaults to the host platform.
   platform?: NodeJS.Platform
+  // Remote hosts refresh authoritative work before each confirmation and final quit boundary.
+  // Returning true invalidates consent for a previous work snapshot.
+  refreshQuitState?: () => Promise<boolean>
+  // A failed remote preparation/stop must leave the desktop alive instead of orphaning its server.
+  requireCleanBackendShutdown?: boolean
+  onQuitError?: (error: unknown) => void
   // Snapshot of sessions with running work (in-flight agent prompt or a notebook cell mid-execution),
   // used to populate the confirmation list and to skip the quit dialog when nothing is running.
   detectActiveSessions: () => ActiveSessionInfo[]
@@ -236,6 +242,7 @@ export const installAppLifecycle = (
     if (confirmInFlight) return 'cancel'
     confirmInFlight = true
     try {
+      if (deps.refreshQuitState) await deps.refreshQuitState()
       const choice = await confirmResearchClose('close-to-tray', deps.detectActiveSessions())
       if (choice !== 'quit') return choice
       const delegated = detectDelegatedWork()
@@ -309,6 +316,8 @@ export const installAppLifecycle = (
   // migration guard (registered earlier) via defaultPrevented + isMigrationInProgress so a
   // migration-cancelled quit is respected. #177's will-quit guard remains a synchronous backstop for a
   // committed quit that never reaches this path.
+  let refreshedQuitBoundary = false
+  let refreshingQuitBoundary = false
   deps.app.on('before-quit', (event) => {
     if (shutdownFinished) return
     if (shutdownStarted) {
@@ -316,6 +325,29 @@ export const installAppLifecycle = (
       event.preventDefault()
       return
     }
+    if (deps.refreshQuitState && !refreshedQuitBoundary && !event.defaultPrevented) {
+      event.preventDefault()
+      if (refreshingQuitBoundary) return
+      refreshingQuitBoundary = true
+      void deps
+        .refreshQuitState()
+        .then((changed) => {
+          if (changed) {
+            quitConfirmed = false
+            confirmedSettingsInstallId = undefined
+            confirmedDelegatedSessionKeys = new Set()
+          }
+          refreshedQuitBoundary = true
+          refreshingQuitBoundary = false
+          deps.quit()
+        })
+        .catch((error) => deps.onQuitError?.(error))
+        .finally(() => {
+          refreshingQuitBoundary = false
+        })
+      return
+    }
+    refreshedQuitBoundary = false
     const trigger = shutdownTrigger()
     const persistenceFailureIsForced = forceQuitAfterPersistenceFailure
     forceQuitAfterPersistenceFailure = false
@@ -447,6 +479,7 @@ export const installAppLifecycle = (
       let backendTeardownResult: ShutdownStepOutcome
       let shutdownAbortReason: SessionPersistenceFlushAbortReason | undefined
       let persistenceFailureNeedsConsent = false
+      let backendFailure: unknown
       const flushRendererSessionPersistence = async (
         phase: 'renderer-session-preflight' | 'renderer-session-flush',
         timeoutMs: number
@@ -497,8 +530,17 @@ export const installAppLifecycle = (
         try {
           usageDrainResult = normalizeStepOutcome(await deps.prepareForQuit())
           diagnostics?.phase('usage-drain', { result: usageDrainResult })
+          if (deps.requireCleanBackendShutdown && usageDrainResult !== 'completed') {
+            throw new BackendShutdownOutcomeError(
+              usageDrainResult === 'timeout' ? 'timeout' : 'degraded'
+            )
+          }
         } catch (error) {
           usageDrainResult = 'failed'
+          if (deps.requireCleanBackendShutdown) {
+            backendFailure = error
+            return
+          }
           diagnostics?.phase('usage-drain', {
             result: usageDrainResult,
             ...diagnosticErrorFields(error)
@@ -539,6 +581,10 @@ export const installAppLifecycle = (
           diagnostics?.phase('backend-teardown', { result: backendTeardownResult })
         } catch (error) {
           backendTeardownResult = 'failed'
+          if (deps.requireCleanBackendShutdown) {
+            backendFailure = error
+            return
+          }
           diagnostics?.phase('backend-teardown', {
             result: backendTeardownResult,
             ...diagnosticErrorFields(error)
@@ -563,7 +609,7 @@ export const installAppLifecycle = (
           if (result === 'timeout') deps.log?.warn('final log flush timed out')
         }
       } finally {
-        if (shutdownAbortReason || persistenceFailureNeedsConsent) {
+        if (backendFailure || shutdownAbortReason || persistenceFailureNeedsConsent) {
           try {
             await deps.abortQuitPreparation(shutdownAbortReason)
           } catch (error) {
@@ -585,6 +631,7 @@ export const installAppLifecycle = (
           } else {
             clearApplicationShutdownTrigger()
             showMainWindow()
+            if (backendFailure) deps.onQuitError?.(backendFailure)
             if (persistenceFailureNeedsConsent && !confirmInFlight) {
               confirmInFlight = true
               try {

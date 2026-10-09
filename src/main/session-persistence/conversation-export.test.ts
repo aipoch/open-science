@@ -1,3 +1,4 @@
+import { printConversationPdf } from './conversation-pdf-electron'
 import { join } from 'node:path'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -96,13 +97,37 @@ describe('conversation export service', () => {
       writeFile: writeExportFile,
       createTempDirectory,
       removeDirectory,
-      createPrintWindow,
+      printPdf: (request) => printConversationPdf(request, createPrintWindow),
       getDownloadsPath: () => '/downloads',
       getTempPath: () => '/tmp',
       now: () => 3,
       publishUserFile: publishDirectly,
       ...overrides
     } as Parameters<typeof createConversationExportService>[0])
+
+  it('destroys the PDF window on caller cancellation and never prints a late-loaded document', async () => {
+    let finishLoad!: () => void
+    loadFile.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishLoad = resolve
+        })
+    )
+    const controller = new AbortController()
+    const pending = printConversationPdf(
+      { htmlPath: '/temporary/export.html', timeoutMs: 120_000, timeoutMessage: 'Timeout' },
+      createPrintWindow,
+      controller.signal
+    )
+    const rejected = expect(pending).rejects.toThrow('Caller left')
+    controller.abort(new Error('Caller left'))
+    await rejected
+    expect(destroy).toHaveBeenCalledOnce()
+    finishLoad()
+    await Promise.resolve()
+    expect(executeJavaScript).not.toHaveBeenCalled()
+    expect(printToPDF).not.toHaveBeenCalled()
+  })
 
   it.each(['markdown', 'pdf'] as const)(
     'exports imported %s history but still rejects live runtime activity',
@@ -692,7 +717,7 @@ describe('conversation export IPC handler', () => {
     fromWebContents.mockReset()
   })
 
-  it('registers the export channel and forwards the request with its parent window', async () => {
+  it('registers the export channel and forwards the request with its authenticated caller identity', async () => {
     const request = {
       projectId: 'project-1',
       sessionId: 'session-1',
@@ -709,7 +734,11 @@ describe('conversation export IPC handler', () => {
     await expect(
       ipcHandlers.get('sessions:export-conversation')?.({ sender }, request)
     ).resolves.toEqual({ saved: false })
-    expect(fromWebContents).toHaveBeenCalledWith(sender)
-    expect(exportConversation).toHaveBeenCalledWith(request, parentWindow)
+    expect(fromWebContents).not.toHaveBeenCalled()
+    expect(exportConversation).toHaveBeenCalledWith(request, '7')
   })
 })
+
+await (
+  await import('../../../test/runtime-host')
+).configureTestElectronHost(await import('electron'))

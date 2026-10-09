@@ -56,3 +56,5 @@ it('does not expose a half-prepared runtime when the second component fails', as
   expect(() => manager.get()).toThrow('not ready')
   expect(select.mock.calls.every(([, request]) => !request.allowDownload)).toBe(true)
 })
+
+;(await import('../../../test/runtime-metadata')).configureTestRuntimeMetadata()

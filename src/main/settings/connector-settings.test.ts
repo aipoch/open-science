@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -2844,3 +2845,5 @@ describe('ConnectorSettingsModule', () => {
     ).rejects.toThrow(/Unknown custom connector/)
   })
 })
+
+await configureTestElectronHost(await import('electron'))

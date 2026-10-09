@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { expect, it } from 'vitest'
 import { analyzeRNotebookSource } from './dependency-analysis-r'
 import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
@@ -88,3 +89,5 @@ it.each(['mean', 'base::mean', 'function(x) mean(x)'])(
     expect(facts.copyOnModifyNames ?? []).not.toContain('out')
   }
 )
+
+configureTestRuntimeMetadata()

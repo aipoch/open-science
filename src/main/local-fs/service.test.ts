@@ -440,3 +440,7 @@ describe('LocalFsService granted roots', () => {
     await expect(new LocalFsService().listGrantedRoots()).rejects.toThrow(/not configured/i)
   })
 })
+
+await (
+  await import('../../../test/runtime-host')
+).configureTestElectronHost(await import('electron'))

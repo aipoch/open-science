@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { describe, expect, it } from 'vitest'
 
 import type { NotebookLanguage } from '../../shared/notebook'
@@ -945,3 +946,5 @@ describe('Python scientific checkpoint record paths', () => {
     })
   })
 })
+
+configureTestRuntimeMetadata()

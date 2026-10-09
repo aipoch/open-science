@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { expect, it } from 'vitest'
 import { afterEach } from 'vitest'
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -73,3 +74,5 @@ it('keeps sparse composition typed and links it to the published artifact', asyn
     expect.arrayContaining(['run-2'])
   )
 })
+
+configureTestRuntimeMetadata()

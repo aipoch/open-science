@@ -1,3 +1,4 @@
+import { runtimeMetadata } from '../runtime-metadata'
 import { statSync } from 'node:fs'
 import { join, posix, win32 } from 'node:path'
 
@@ -35,7 +36,7 @@ const isFile = (path: string): boolean => {
 }
 
 // Enumerates micromamba binaries (contract §3). Order: OPEN_SCIENCE_MICROMAMBA_BIN override →
-// packaged resource (process.resourcesPath) → <storageRoot>/runtime/micromamba/bin → PATH. The
+// packaged resource (runtimeMetadata().resourcesPath) → <storageRoot>/runtime/micromamba/bin → PATH. The
 // storage-root fallback reuses the production session dir name
 // (PROD_SESSION_DIR_NAME, i.e. ~/.open-science) since this module stays electron-free and cannot
 // see the dev/prod choice made by resolveConfigRoot; dev builds rely on the env override or PATH.
@@ -59,7 +60,7 @@ export const resolveMicromambaLocations = (deps: MicromambaDeps = {}): Micromamb
   const override = env.OPEN_SCIENCE_MICROMAMBA_BIN
   if (override) add('override', override)
 
-  const resourcesPath = deps.resourcesPath ?? process.resourcesPath
+  const resourcesPath = deps.resourcesPath ?? runtimeMetadata().resourcesPath
   if (resourcesPath) add('bundled', join(resourcesPath, name))
 
   const home = deps.home ?? env.HOME ?? env.USERPROFILE

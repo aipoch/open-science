@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import {
   access,
   copyFile,
@@ -451,3 +452,5 @@ console.log(JSON.stringify(result))
     ).toMatchObject({ exitCode: 0, stdout: 'other' })
   })
 })
+
+configureTestRuntimeMetadata()

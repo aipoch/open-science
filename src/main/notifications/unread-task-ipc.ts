@@ -72,7 +72,12 @@ export const registerUnreadTaskIpc = (
   const onViewState = (event: IpcMainEvent, input: unknown): void => {
     if (disposed) return
     // Ignore preview/devtools/forged senders: only the current main window owns navigation state.
-    if (event.sender !== deps.getMainWindow()?.webContents) return
+    if (
+      event.sender !== deps.getMainWindow()?.webContents ||
+      !event.senderFrame ||
+      event.senderFrame !== event.sender.mainFrame
+    )
+      return
 
     const state = normalizeViewState(input)
 

@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -246,3 +247,5 @@ it.each([
   expect(facts.state).toBe('unknown')
   expect(facts.copyOnModifyNames ?? []).not.toContain('x')
 })
+
+configureTestRuntimeMetadata()

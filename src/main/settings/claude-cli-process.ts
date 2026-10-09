@@ -1,3 +1,4 @@
+import { nodeRuntimeEnvironment } from '../node-process-host'
 import { spawn, type SpawnOptions } from 'node:child_process'
 
 // Launches a resolved Claude CLI path on every supported installation shape. Windows npm shims are
@@ -8,7 +9,7 @@ export const spawnClaudeCli = (
   options: SpawnOptions
 ): ReturnType<typeof spawn> => {
   if (/\.(js|mjs)$/i.test(resolvedPath)) {
-    const env = { ...(options.env as NodeJS.ProcessEnv), ELECTRON_RUN_AS_NODE: '1' }
+    const env = { ...(options.env as NodeJS.ProcessEnv), ...nodeRuntimeEnvironment() }
     return spawn(process.execPath, [resolvedPath, ...args], { ...options, env })
   }
 

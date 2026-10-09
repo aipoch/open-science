@@ -43,3 +43,5 @@ describe('WSL setup guide', () => {
     })
   })
 })
+
+;(await import('../../../test/runtime-metadata')).configureTestRuntimeMetadata()

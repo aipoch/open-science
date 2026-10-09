@@ -5,9 +5,12 @@ import { join } from 'node:path'
 
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { DEFAULT_NOTEBOOK_NETWORK_SETTINGS } from '../../shared/notebook-network'
 import { NotebookNetworkSandboxOwner } from './network-sandbox-owner'
 import { runShellCommand } from './shell-process'
+
+configureTestRuntimeMetadata()
 
 const distro = process.env.OPEN_SCIENCE_WSL_DISTRO
 const user = process.env.OPEN_SCIENCE_WSL_USER
@@ -27,6 +30,9 @@ describe.runIf(enabled)('Notebook WSL2 Bash execution', () => {
 
   beforeAll(async () => {
     root = await mkdtemp(join(tmpdir(), 'open-science-wsl-shell-'))
+    // WSL must not probe or borrow an installed desktop's native protection profile.
+    vi.stubEnv('OPEN_SCIENCE_CONFIG_ROOT', root)
+    vi.stubEnv('OPEN_SCIENCE_E2E_STORAGE_ROOT', root)
     workspace = join(root, 'Workspace 路径')
     runtimeRoot = join(root, 'runtime')
     handoff = join(root, 'handoff')
@@ -42,6 +48,7 @@ describe.runIf(enabled)('Notebook WSL2 Bash execution', () => {
     if (!address || typeof address === 'string') throw new Error('Fixture did not bind TCP.')
     fixturePort = address.port
     sandbox = new NotebookNetworkSandboxOwner({
+      temporaryRoot: join(root, 'command-temp'),
       resourceRoot: join(process.cwd(), 'packages', 'notebook-network-sandbox', 'vendor'),
       getSettings: async () => ({
         ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
@@ -56,15 +63,20 @@ describe.runIf(enabled)('Notebook WSL2 Bash execution', () => {
   })
 
   afterAll(async () => {
-    await sandbox?.dispose()
-    await new Promise<void>((resolve) => fixture?.close(() => resolve()))
-    await rm(root, { recursive: true, force: true })
+    try {
+      await sandbox?.dispose()
+      await new Promise<void>((resolve) => fixture?.close(() => resolve()))
+      await rm(root, { recursive: true, force: true })
+    } finally {
+      vi.unstubAllEnvs()
+    }
   })
 
   it('returns bounded output and the real exit code through the existing process sandbox', async () => {
     const result = await runShellCommand({
       command:
         `printf '你好 stdout\\n'; printf 'guest stderr\\n' >&2; ` +
+        `/usr/bin/python3 -c 'print("python-result=" + str(6 * 7))'; ` +
         `head -c 2200000 /dev/zero | tr '\\0' x; exit 19`,
       cwd: workspace,
       handoffDir: handoff,
@@ -85,8 +97,9 @@ describe.runIf(enabled)('Notebook WSL2 Bash execution', () => {
       terminateTree: async () => ({ reaped: true })
     })
 
-    expect(result.exitCode).toBe(19)
+    expect(result.exitCode, JSON.stringify(result)).toBe(19)
     expect(result.stdout.startsWith('你好 stdout\n')).toBe(true)
+    expect(result.stdout).toContain('python-result=42\n')
     expect(result.stderr).toBe('guest stderr\n')
     expect(result.truncated).toBe(true)
     expect(
