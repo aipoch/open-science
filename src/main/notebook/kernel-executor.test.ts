@@ -4819,6 +4819,27 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
       expect(cleanup).not.toHaveBeenCalled()
       expect(terminateTree).not.toHaveBeenCalled()
       expect((await readdir(join(cwdDir, 'runtime', 'kernel-processes'))).length).toBeGreaterThan(0)
+      // Model the desktop caller's unchanged 15-second budget while the host is held alive.
+      // The transport suite separately exercises that budget over the authenticated socket.
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      try {
+        const bounded = Promise.race([
+          shutdown.then(() => 'cleaned'),
+          new Promise<string>((resolve) => setTimeout(() => resolve('budget-expired'), 15_000))
+        ])
+        await vi.advanceTimersByTimeAsync(15_000)
+        expect(await bounded).toBe('budget-expired')
+        expect(child.exitCode).toBeNull()
+        expect(complete).not.toHaveBeenCalled()
+        expect(cleanup).not.toHaveBeenCalled()
+        expect(terminateTree).not.toHaveBeenCalled()
+        expect((await readdir(join(cwdDir, 'runtime', 'kernel-processes'))).length).toBeGreaterThan(
+          0
+        )
+        expect(confirm).toHaveBeenCalledOnce()
+      } finally {
+        vi.useRealTimers()
+      }
       await terminateProcessTree(child)
       await expect(shutdown).resolves.toEqual({ reaped: true })
       expect(complete).toHaveBeenCalledWith(expect.anything(), true)
