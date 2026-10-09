@@ -8,7 +8,10 @@ const { log } = vi.hoisted(() => ({
   log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
 }))
 
-vi.mock('../logger', () => ({ createLogger: () => log }))
+vi.mock('../logger', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../logger')>()),
+  createLogger: () => log
+}))
 
 import type {
   FailTaskSessionRunRequest,
@@ -23,6 +26,8 @@ import type { ApplicationCommandComposition } from '../application-command-compo
 import type { TaskAgentPort, TaskComputePreferencePort } from '../tasks/task-runner'
 import { FileTaskRunJournal } from '../tasks/task-run-journal'
 import { createWebServiceController, type WebServiceControllerDeps } from './index'
+import { startWebHttpServer } from './http-server'
+import { parseWebModeOptions } from './options'
 
 type StartOptions = Parameters<WebServiceControllerDeps['startServer']>[0]
 
@@ -125,6 +130,37 @@ const makeController = (
 }
 
 describe('createWebServiceController', () => {
+  it('serves concurrent desktop backends and publishes each allocated port for discovery', async () => {
+    const first = makeController({ startServer: startWebHttpServer })
+    const second = makeController({ startServer: startWebHttpServer })
+    const port = parseWebModeOptions(['node', '--desktop', '--serve'], {}).port
+    try {
+      const a = await first.controller.ensureStarted(port, { attached: false })
+      const b = await second.controller.ensureStarted(port, { attached: false })
+      expect(a.port).toBeGreaterThan(0)
+      expect(b.port).toBeGreaterThan(0)
+      expect(b.port).not.toBe(a.port)
+      for (const [harness, result] of [
+        [first, a],
+        [second, b]
+      ] as const) {
+        expect(harness.controller.runningPort()).toBe(result.port)
+        expect(harness.writeState).toHaveBeenCalledWith(
+          '/fake/root',
+          expect.objectContaining({ port: result.port })
+        )
+        const response = await fetch(new URL('/api/bootstrap', result.url), {
+          headers: { authorization: 'Bearer tok-123' },
+          signal: AbortSignal.timeout(5000)
+        })
+        expect(response.status).toBe(200)
+        await response.body?.cancel()
+      }
+    } finally {
+      await Promise.all([first.controller.dispose(), second.controller.dispose()])
+    }
+  })
+
   it('finishes publishing and can shut down before Task journal restoration completes', async () => {
     let releaseSessionLoad: (() => void) | undefined
     const sessionLoadGate = new Promise<void>((resolve) => {

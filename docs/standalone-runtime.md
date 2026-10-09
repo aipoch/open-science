@@ -53,7 +53,11 @@ and SHA-256 values are in `build/node-runtime.json`; the runtime is Node 22.23.3
 application's macOS deployment range. Only the executable and license are staged, not npm/headers.
 The source Node metadata comes from [official Node checksums](https://nodejs.org/dist/v22.23.3/SHASUMS256.txt).
 
-`OPEN_SCIENCE_WEB_PORT` selects the Web port (default 44100). Source and installed builds retain
+`OPEN_SCIENCE_WEB_PORT` selects the Web port. CLI/Web starts default to 44100; desktop-owned
+backends default to a system-assigned free port so independent profiles can run concurrently.
+Explicit ports remain fixed: an occupied configured port fails instead of silently changing it.
+Desktop previews and CLI discovery use the actual port in the existing `web-service.json` record.
+Source and installed builds retain
 their separate development/production profile defaults; set the same explicit config root when
 checking cross-client reuse. Runtime versions must match for desktop attachment.
 
