@@ -427,6 +427,54 @@ describe('research replay layout', () => {
     expect(panel.getAttribute('data-replay-layout-mode')).toBe('tabs')
   })
 
+  it.each([false, true])(
+    'opens the shared file catalog in research presentation, returning to it from a preview (expanded=%s)',
+    async (expanded) => {
+      const document = makeDocument()
+      const resource = {
+        id: 'saved-file',
+        source: 'artifact' as const,
+        availability: 'recorded' as const,
+        projectId: 'layout-project',
+        sessionId: 'layout-session',
+        artifactId: 'saved-artifact',
+        versionId: 'saved-version',
+        name: 'recorded-study.pdf',
+        mimeType: 'application/pdf'
+      }
+      document.resources = [resource]
+      document.branches[0].steps[0].resourceIds = [resource.id]
+      harness({
+        host: undefined,
+        expanded,
+        document,
+        onToggleExpanded: vi.fn(),
+        renderResource: (selected) => <div>{`Saved Version: ${selected.versionId}`}</div>
+      })
+      await tick(5)
+      const stage = screen.getByTestId('replay-stage')
+      const originalPane = pane('conversation')
+      fireEvent.click(screen.getByTestId('replay-information-trigger'))
+      fireEvent.click(screen.getByRole('button', { name: 'View files', exact: true }))
+      await tick(2)
+      const files = screen.getByRole('complementary', { name: 'Files' })
+      expect(files.hidden).toBe(false)
+      const row = within(files).getByRole('button', { name: /recorded-study.pdf/ })
+      fireEvent.click(row)
+      expect(screen.getByText('Saved Version: saved-version')).toBeTruthy()
+      expect(files.hidden).toBe(true)
+      fireEvent.click(screen.getByRole('button', { name: 'Back to files' }))
+      await tick(2)
+      expect(files.hidden).toBe(false)
+      expect(row).toBe(window.document.activeElement)
+      fireEvent.click(within(files).getByRole('button', { name: 'Close files' }))
+      await tick(2)
+      expect(files.hidden).toBe(true)
+      expect(screen.getByTestId('replay-stage')).toBe(stage)
+      expect(pane('conversation')).toBe(originalPane)
+    }
+  )
+
   it('keeps ordinary native replay in its existing presentation when the preview expands', () => {
     harness({ host: undefined, presentationMode: undefined, expanded: true })
     expect(screen.getByTestId('replay-panel').getAttribute('data-replay-presentation')).toBeNull()

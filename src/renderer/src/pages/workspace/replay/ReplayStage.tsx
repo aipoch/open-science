@@ -1096,7 +1096,7 @@ const ReplayStageContent = ({
   )
   const closeResource = (): void => {
     onSelectResource?.()
-    if (!researchPresentation) onOpenFiles?.()
+    if (!researchPresentation || resourceOrigin?.kind === 'files') onOpenFiles?.()
     if (resourceOrigin && resourceOrigin.kind !== 'conversation')
       requestAnimationFrame(() => {
         if (material.current) material.current.scrollTop = resourceOrigin.scrollTop
@@ -1692,6 +1692,62 @@ const ReplayStageContent = ({
         })
       ]
     : []
+  const filesCatalog = fitContainer ? (
+    <aside
+      ref={filesPane}
+      id={filesId}
+      aria-label={t('Files')}
+      tabIndex={-1}
+      hidden={!filesOpen}
+      className={
+        wide && !researchPresentation
+          ? 'flex min-h-0 min-w-0 flex-col border-l border-border-200 bg-bg-000'
+          : 'absolute inset-y-2 right-2 z-20 flex w-80 max-w-[calc(100%-1rem)] flex-col overflow-hidden rounded-lg border border-border-200 bg-bg-000 shadow-lg'
+      }
+    >
+      <div className="flex h-9 shrink-0 items-center justify-between gap-2 border-b border-border-200 px-3">
+        <h2
+          tabIndex={-1}
+          data-replay-files-heading
+          className="flex items-center gap-2 text-sm font-medium"
+        >
+          <FilesIcon size={16} aria-hidden="true" />
+          {t('Files')}
+        </h2>
+        <Button variant="ghost" size="icon-sm" aria-label={t('Close files')} onClick={onCloseFiles}>
+          <X size={14} aria-hidden="true" />
+        </Button>
+      </div>
+      <div
+        ref={filesViewport}
+        data-replay-files-scroll
+        className="min-h-0 flex-1 space-y-1 overflow-auto p-2"
+      >
+        {filesPagination}
+        {!(fileResources?.length ?? scene.visibleResourceIds.length) ? (
+          <p className="p-1 text-sm text-text-300">
+            {branchMaterials.files
+              ? t('No files at this point.')
+              : t('No files recorded in this branch.')}
+          </p>
+        ) : null}
+        {(
+          fileResources ??
+          replayDocument.resources
+            .filter((resource) => scene.visibleResourceIds.includes(resource.id))
+            .slice(-REPLAY_MATERIAL_RESOURCE_LIMIT)
+        ).map((resource) => (
+          <ReplayFileRow
+            compact
+            selected={selectedResource?.id === resource.id}
+            key={resource.id}
+            resource={resource}
+            onSelect={(event) => selectResource(resource.id, event.currentTarget)}
+          />
+        ))}
+      </div>
+    </aside>
+  ) : null
   return (
     <div
       ref={stage}
@@ -1864,14 +1920,17 @@ const ReplayStageContent = ({
       ) : null}
       {!researchPresentation && fitContainer && fullHistory ? conversationHistoryControl : null}
       {researchPresentation ? (
-        <ReplayResearchLayout
-          layout={effectiveResearchLayout}
-          materialTabs={researchMaterialTabs}
-          materialTabPanelId={researchTabPanelId}
-          panes={researchPanes}
-          focusedPaneId={focusedPaneId}
-          onFocusPane={onFocusPane}
-        />
+        <div className="relative flex min-h-0 min-w-0 flex-1">
+          <ReplayResearchLayout
+            layout={effectiveResearchLayout}
+            materialTabs={researchMaterialTabs}
+            materialTabPanelId={researchTabPanelId}
+            panes={researchPanes}
+            focusedPaneId={focusedPaneId}
+            onFocusPane={onFocusPane}
+          />
+          {filesCatalog}
+        </div>
       ) : (
         <div
           className={
@@ -1981,67 +2040,7 @@ const ReplayStageContent = ({
               </div>
             ) : null}
           </section>
-          {fitContainer ? (
-            <aside
-              ref={filesPane}
-              id={filesId}
-              aria-label={t('Files')}
-              tabIndex={-1}
-              hidden={!filesOpen}
-              className={
-                wide
-                  ? 'flex min-h-0 min-w-0 flex-col border-l border-border-200 bg-bg-000'
-                  : 'absolute inset-y-2 right-2 z-20 flex w-80 max-w-[calc(100%-1rem)] flex-col overflow-hidden rounded-lg border border-border-200 bg-bg-000 shadow-lg'
-              }
-            >
-              <div className="flex h-9 shrink-0 items-center justify-between gap-2 border-b border-border-200 px-3">
-                <h2
-                  tabIndex={-1}
-                  data-replay-files-heading
-                  className="flex items-center gap-2 text-sm font-medium"
-                >
-                  <FilesIcon size={16} aria-hidden="true" />
-                  {t('Files')}
-                </h2>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label={t('Close files')}
-                  onClick={onCloseFiles}
-                >
-                  <X size={14} aria-hidden="true" />
-                </Button>
-              </div>
-              <div
-                ref={filesViewport}
-                data-replay-files-scroll
-                className="min-h-0 flex-1 space-y-1 overflow-auto p-2"
-              >
-                {filesPagination}
-                {!(fileResources?.length ?? scene.visibleResourceIds.length) ? (
-                  <p className="p-1 text-sm text-text-300">
-                    {branchMaterials.files
-                      ? t('No files at this point.')
-                      : t('No files recorded in this branch.')}
-                  </p>
-                ) : null}
-                {(
-                  fileResources ??
-                  replayDocument.resources
-                    .filter((resource) => scene.visibleResourceIds.includes(resource.id))
-                    .slice(-REPLAY_MATERIAL_RESOURCE_LIMIT)
-                ).map((resource) => (
-                  <ReplayFileRow
-                    compact
-                    selected={selectedResource?.id === resource.id}
-                    key={resource.id}
-                    resource={resource}
-                    onSelect={(event) => selectResource(resource.id, event.currentTarget)}
-                  />
-                ))}
-              </div>
-            </aside>
-          ) : null}
+          {filesCatalog}
         </div>
       )}
       {!fitContainer ? (
