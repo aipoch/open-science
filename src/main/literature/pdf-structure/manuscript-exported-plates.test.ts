@@ -97,6 +97,23 @@ it('preserves numbered records inside a uniquely captioned native table frame', 
   expect(excludePdfLineNumbers(content, indexViewport).items).toHaveLength(8)
 })
 
+it('keeps ruled indexed records when the unique caption slightly overhangs both native borders', () => {
+  const content = indexedNativeTable(),
+    proof = indexedTableProof()
+  proof.captions[0].rect = [33, 80, 291, 92]
+  expect(excludePdfLineNumbers(content, indexViewport, proof).items).toEqual(content.items)
+})
+
+it.each(['wide-caption', 'neighbor-caption'])(
+  'keeps manuscript filtering for an unowned overhanging caption: %s',
+  (mode) => {
+    const content = indexedNativeTable(),
+      proof = indexedTableProof()
+    proof.captions[0].rect = mode === 'wide-caption' ? [20, 80, 305, 92] : [282, 80, 340, 92]
+    expect(excludePdfLineNumbers(content, indexViewport, proof).items).toHaveLength(8)
+  }
+)
+
 it.each(['opening', 'footer', 'caption', 'model', 'competing-caption', 'outside-body'])(
   'does not exempt a margin sequence without complete table proof: %s',
   (mode) => {

@@ -1,15 +1,141 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { groupPageLines } from './literature-pdf-caption-group.mjs'
 
+// Dot steps require their own complete I/O/Procedure frame. An inset title
+// alone cannot turn a numbered paragraph or an input list into pseudocode.
+function findInsetDotProcedure(page, title, titles, lines, rules) {
+  const frames = rules.flatMap((top) => {
+    if (
+      top[2] - top[0] < page.width * 0.65 ||
+      title.x < top[0] ||
+      title.x - top[0] > title.fontSize * 1.2 ||
+      title.right > top[2] ||
+      Math.abs(top[1] - title.y) > title.fontSize
+    )
+      return []
+    const aligned = rules
+      .filter(
+        (r) => Math.abs(r[0] - top[0]) < 1e-8 && Math.abs(r[2] - top[2]) < 1e-8 && r[1] >= top[1]
+      )
+      .sort((a, b) => a[1] - b[1])
+    if (aligned.length !== 3 || aligned[0] !== top) return []
+    const [, divider, bottom] = aligned,
+      rect = [top[0] - 2, Math.min(top[1], title.y) - 2, top[2] + 2, bottom[3] + 2]
+    if (
+      divider[1] <= title.bottom ||
+      divider[1] - title.bottom > title.fontSize ||
+      bottom[1] <= divider[3] + title.fontSize * 4 ||
+      rect[0] < 0 ||
+      rect[1] < 0 ||
+      rect[2] > page.width ||
+      rect[3] > page.height
+    )
+      return []
+    const inside = page.lines.filter(
+      (l) =>
+        l.text.trim() &&
+        l.x < rect[2] &&
+        l.x + l.width > rect[0] &&
+        l.y < rect[3] &&
+        l.y + l.height > rect[1]
+    )
+    if (
+      !inside.length ||
+      inside.some(
+        (l) =>
+          ![l.x, l.y, l.width, l.height, l.fontSize].every(Number.isFinite) ||
+          l.height <= 0 ||
+          l.width < 0 ||
+          (l.width === 0 &&
+            (!/^\p{M}+$/u.test(l.text) ||
+              inside.filter(
+                (base) =>
+                  /^\p{L}$/u.test(base.text) &&
+                  base.width > 0 &&
+                  base.x < l.x &&
+                  base.x + base.width > l.x &&
+                  base.y >= l.y &&
+                  base.y < l.y + l.height &&
+                  base.y + base.height >= l.y + l.height &&
+                  l.fontSize >= base.fontSize * 0.6 &&
+                  l.fontSize <= base.fontSize &&
+                  base.y - l.y < base.fontSize * 0.4
+              ).length !== 1)) ||
+          l.fontSize <= 0 ||
+          l.x < rect[0] ||
+          l.y < rect[1] ||
+          l.x + l.width > rect[2] ||
+          l.y + l.height > rect[3]
+      ) ||
+      titles.filter((l) => l.y >= rect[1] && l.bottom <= rect[3]).length !== 1
+    )
+      return []
+    // Quantized path bounds can overlap a full native font's ascender box.
+    // Its complete baseline must follow the divider; the crop above still
+    // owns every whole native font without clipping or enlarging its bounds.
+    const body = lines.filter(
+        (l) =>
+          l.y > title.bottom &&
+          l.bottom > divider[3] &&
+          l.bottom <= rect[3] &&
+          l.x >= rect[0] &&
+          l.right <= rect[2]
+      ),
+      inputs = body.filter((l) => /^Inputs?\s*:/i.test(l.text)),
+      outputs = body.filter((l) => /^Outputs?\s*:/i.test(l.text)),
+      procedures = body.filter((l) => /^Procedure\s*:\s*$/i.test(l.text))
+    if (
+      inputs.length !== 1 ||
+      outputs.length !== 1 ||
+      procedures.length !== 1 ||
+      inputs[0].bottom >= outputs[0].y ||
+      outputs[0].bottom >= procedures[0].y
+    )
+      return []
+    const steps = body.filter((l) => /^\d+\.\s+\p{L}/u.test(l.text))
+    if (
+      steps.length < 3 ||
+      steps.length > 32 ||
+      steps.some(
+        (l, n) =>
+          Number(l.text.match(/^(\d+)\./u)[1]) !== n + 1 ||
+          l.y <= procedures[0].bottom ||
+          (n && l.y <= steps[n - 1].bottom)
+      )
+    )
+      return []
+    return [
+      {
+        caption: {
+          page: page.pageNumber,
+          lines: [title.text],
+          rect: [title.x, title.y, title.right, title.bottom]
+        },
+        rect
+      }
+    ]
+  })
+  return frames.length === 1 ? frames : []
+}
+
 // Complete labelled native rules own the pseudocode; keep its original image.
-export function findAlgorithmCandidates(page) {
+export function findAlgorithmCandidates(page, nativeRules = []) {
   const lines = groupPageLines(page)
   const titles = lines.filter((line) => /^Algorithm\s+(?:[A-Z]\.)?\d+\b/i.test(line.text))
   const rules = (page.graphicsBounds ?? [])
     .filter((graphic) => graphic.kind === 'path')
     .map((graphic) => graphic.normalizedRect.map((v, i) => v * (i % 2 ? page.height : page.width)))
     .filter((r) => r[3] - r[1] <= page.height / 64 && r[2] - r[0] > (r[3] - r[1]) * 15)
+  // Existing exact operator rules avoid letting a quantized closing band
+  // borrow the independent footer. Legacy branches retain their own bounds.
+  const insetRules = nativeRules.length
+    ? nativeRules.filter(
+        (r) => r.length === 4 && r.every(Number.isFinite) && r[1] === r[3] && r[2] > r[0]
+      )
+    : rules
   return titles.flatMap((title) => {
+    const inset = findInsetDotProcedure(page, title, titles, lines, insetRules)
+    if (inset.length) return inset
     const aligned = rules.filter((r) => Math.abs(r[0] - title.x) <= 8 && r[2] >= title.right - 4)
     const top = aligned
       .filter((r) => Math.abs(r[1] - title.y) <= title.fontSize)
@@ -32,7 +158,7 @@ export function findAlgorithmCandidates(page) {
         line.x >= top[0] - 4 &&
         line.right <= top[2] + 4
     )
-    const io = content.some((line) => /^(?:Require|Ensure|Input|Output)\s*:/i.test(line.text))
+    const io = content.some((line) => /^(?:Require|Ensure|Inputs?|Outputs?)\s*:/i.test(line.text))
     const ordinals = content.filter((line) => /^\d+\s*:/.test(line.text))
     const controls = content.filter((line) => /^(?:for|if|while)\b/i.test(line.text))
     const closes = content.filter((line) => /^end\s+(?:for|if|while)\b/i.test(line.text))
