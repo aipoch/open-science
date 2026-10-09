@@ -6523,3 +6523,203 @@ it.each(['reaped', 'unreaped', 'rejected'] as const)(
     }
   }
 )
+
+it('retains a reused Codex runtime after late cleanup', async () => {
+  const { BackendShutdownCoordinator, QUIT_SHUTDOWN_BUDGET_MS } =
+    await import('../lifecycle-shutdown')
+  vi.useFakeTimers()
+  const cleanup = createDeferred<{ reaped: boolean }>()
+  const created: ReturnType<typeof createFakeRuntime>[] = []
+  const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+    const fake = createFakeRuntime({
+      frameworkId: 'codex',
+      sessionIds: [`old-${created.length}`, `new-${created.length}`],
+      callbacks
+    })
+    created.push(fake)
+    return fake.runtime
+  })
+  try {
+    const target: AcpSessionAgentTarget = {
+      frameworkId: 'codex',
+      providerId: 'provider',
+      reasoningEffort: 'default'
+    }
+    await coordinator.createSession({ agentTarget: target })
+    vi.mocked(created.at(-1)!.runtime.shutdownForUpdateGate).mockReturnValue(cleanup.promise)
+    const shutdown = new BackendShutdownCoordinator({
+      runtime: coordinator,
+      notebook: {
+        shutdownAll: async () => ({ reaped: true }),
+        dispose: async () => ({ reaped: true })
+      },
+      sideChat: { suspendAll: async () => {}, shutdown: async () => {} }
+    })
+    await expect(coordinator.prepareForQuit()).resolves.toBe('completed')
+    const preparation = shutdown.runForQuitPreparation()
+    await vi.advanceTimersByTimeAsync(QUIT_SHUTDOWN_BUDGET_MS)
+    await expect(preparation).resolves.toBe('timeout')
+    coordinator.abortQuitPreparation()
+    const countBeforeNewSession = created.length
+    const next = await coordinator.createSession({ agentTarget: target })
+    expect(created.length).toBe(countBeforeNewSession)
+    expect(coordinator.getSnapshot().sessionIds).toContain(next.sessionId)
+    await coordinator.sendPrompt({ sessionId: next.sessionId, text: 'continue after refused quit' })
+    expect(created.at(-1)!.sendPrompt).toHaveBeenCalledOnce()
+    cleanup.resolve({ reaped: true })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(coordinator.getSnapshot().sessionIds).toContain(next.sessionId)
+  } finally {
+    cleanup.resolve({ reaped: true })
+    vi.useRealTimers()
+  }
+})
+
+describe.each([
+  { path: 'claude-code', frameworkId: 'claude-code' },
+  { path: 'opencode', frameworkId: 'opencode' },
+  { path: 'codex-response', frameworkId: 'codex' },
+  { path: 'codex-bridge', frameworkId: 'codex' }
+] as const)('$path coordinator admission ownership', ({ path, frameworkId }) => {
+  it.each(['reaped', 'unreaped', 'rejected'] as const)(
+    'retains send, events, cancellation and next-quit process ownership after late %s cleanup',
+    async (outcome) => {
+      const child = spawn(
+        process.execPath,
+        ['-e', 'process.on("message", () => process.exit(0))'],
+        {
+          stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+          windowsHide: true
+        }
+      )
+      const exited = new Promise<number | null>((resolve, reject) => {
+        child.once('exit', resolve)
+        child.once('error', reject)
+      })
+      const stopChild = async (): Promise<{ reaped: boolean }> => {
+        if (child.connected) child.send('stop')
+        expect(await exited).toBe(0)
+        return { reaped: true }
+      }
+      const cleanup = createDeferred<{ reaped: boolean }>()
+      const prompt = createDeferred<{ stopReason: string }>()
+      const created: ReturnType<typeof createFakeRuntime>[] = []
+      const onEvent = vi.fn()
+      const coordinator = new AcpRuntimeCoordinator(
+        (callbacks) => {
+          const fake = createFakeRuntime({
+            frameworkId,
+            sessionIds: [`old-${created.length}`, `new-${created.length}`],
+            callbacks,
+            prompt: () => prompt.promise
+          })
+          created.push(fake)
+          return fake.runtime
+        },
+        { onEvent }
+      )
+      const target: AcpSessionAgentTarget = {
+        frameworkId,
+        providerId: path,
+        reasoningEffort: 'default'
+      }
+      try {
+        await coordinator.createSession({ agentTarget: target })
+        const oldRuntime = created.at(-1)!
+        vi.mocked(oldRuntime.runtime.shutdownForUpdateGate).mockReturnValueOnce(cleanup.promise)
+        const teardown = coordinator.shutdownForUpdateGate()
+        const observed = teardown.catch((error) => error)
+        const next = await coordinator.createSession({ agentTarget: target })
+        const nextRuntime = created.at(-1)!
+        expect(nextRuntime === oldRuntime).toBe(frameworkId !== 'opencode')
+        vi.mocked(nextRuntime.runtime.shutdownForQuit).mockImplementationOnce(stopChild)
+        nextRuntime.cancelPrompt.mockImplementationOnce(async () => {
+          prompt.resolve({ stopReason: 'cancelled' })
+          return nextRuntime.runtime.getSnapshot()
+        })
+        const turn = coordinator.sendPrompt({ sessionId: next.sessionId, text: 'new work' })
+        await vi.waitFor(() =>
+          expect(coordinator.getSnapshot().promptInFlightSessionIds).toContain(next.sessionId)
+        )
+        if (outcome === 'rejected') cleanup.reject(new Error('old cleanup rejected'))
+        else cleanup.resolve({ reaped: outcome === 'reaped' })
+        const settlement = await observed
+        if (outcome === 'rejected') expect(settlement).toBeInstanceOf(Error)
+        else expect(settlement).toEqual({ reaped: false })
+        expect(coordinator.getSnapshot().sessionIds).toContain(next.sessionId)
+        nextRuntime.emitEvent({
+          id: 'new-generation-event',
+          timestamp: 1,
+          kind: 'tool',
+          level: 'info',
+          sessionId: next.sessionId,
+          toolCallId: 'new-tool',
+          status: 'completed'
+        })
+        expect(onEvent).toHaveBeenCalledWith(
+          expect.objectContaining({ sessionId: next.sessionId, toolCallId: 'new-tool' })
+        )
+        expect(coordinator.getSnapshot().events).toContainEqual(
+          expect.objectContaining({ toolCallId: 'new-tool' })
+        )
+        await coordinator.cancelPrompt({ sessionId: next.sessionId })
+        expect(nextRuntime.cancelPrompt).toHaveBeenCalledWith({ sessionId: next.sessionId })
+        await turn
+        await coordinator.sendPrompt({ sessionId: next.sessionId, text: 'still usable' })
+        expect(nextRuntime.sendPrompt).toHaveBeenCalledTimes(2)
+        expect(child.exitCode).toBeNull()
+        await expect(coordinator.shutdownForQuit()).resolves.toEqual({ reaped: true })
+        expect(child.exitCode).toBe(0)
+        expect(coordinator.getSnapshot().sessionIds).toEqual([])
+        await expect(coordinator.shutdownForQuit()).resolves.toEqual({ reaped: true })
+        expect(nextRuntime.runtime.shutdownForQuit).toHaveBeenCalledOnce()
+      } finally {
+        cleanup.resolve({ reaped: true })
+        prompt.resolve({ stopReason: 'cancelled' })
+        await stopChild()
+      }
+    }
+  )
+})
+
+it('retains a reused runtime while a newly admitted Session is still being created', async () => {
+  const cleanup = createDeferred<{ reaped: boolean }>()
+  const create = createDeferred<void>()
+  const created: ReturnType<typeof createFakeRuntime>[] = []
+  const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+    const fake = createFakeRuntime({ frameworkId: 'codex', sessionIds: ['old', 'new'], callbacks })
+    created.push(fake)
+    return fake.runtime
+  })
+  const target: AcpSessionAgentTarget = {
+    frameworkId: 'codex',
+    providerId: 'provider',
+    reasoningEffort: 'default'
+  }
+  await coordinator.createSession({ agentTarget: target })
+  const owner = created.at(-1)!
+  vi.mocked(owner.runtime.shutdownForUpdateGate).mockReturnValueOnce(cleanup.promise)
+  const teardown = coordinator.shutdownForUpdateGate()
+  const originalCreate = owner.createSession.getMockImplementation() as AcpRuntime['createSession']
+  owner.createSession.mockImplementationOnce(
+    async (...args: Parameters<AcpRuntime['createSession']>) => {
+      await create.promise
+      return originalCreate(...args)
+    }
+  )
+  const next = coordinator.createSession({ agentTarget: target })
+  await vi.waitFor(() => expect(owner.createSession).toHaveBeenCalledTimes(2))
+  cleanup.resolve({ reaped: true })
+  await teardown
+  create.resolve()
+  const session = await next
+  expect(created.at(-1)).toBe(owner)
+  expect(coordinator.getSnapshot().sessionIds).toContain(session.sessionId)
+  await coordinator.sendPrompt({
+    sessionId: session.sessionId,
+    text: 'created after teardown settled'
+  })
+  expect(owner.sendPrompt).toHaveBeenCalledOnce()
+  await expect(coordinator.shutdownForQuit()).resolves.toEqual({ reaped: true })
+  expect(owner.runtime.shutdownForQuit).toHaveBeenCalledOnce()
+})
