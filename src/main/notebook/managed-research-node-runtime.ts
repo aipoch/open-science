@@ -207,6 +207,15 @@ export const createManagedResearchNodeRuntimeRegistry = (
       return unavailable('executable changed during its probe.')
     const roots = new Set([executable])
     for (const library of result.sharedObjects) {
+      // Linux reports kernel-injected vDSO objects alongside file-backed libraries. These exact
+      // pseudo names have no disk path and grant no filesystem access; other relative names fail.
+      if (
+        result.platform === 'linux' &&
+        ['linux-vdso.so.1', 'linux-gate.so.1', 'linux-vdso32.so.1', 'linux-vdso64.so.1'].includes(
+          library
+        )
+      )
+        continue
       if (!isAbsolute(library)) return unavailable('probe returned a non-absolute library path.')
       try {
         const canonical = await realpath(library)
