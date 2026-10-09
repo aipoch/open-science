@@ -1,4 +1,4 @@
-import { normalizeExecutionConfinement } from '@aipoch/notebook-network-sandbox'
+import { normalizeExecutionConfinement } from '@aipoch/notebook-network-sandbox/execution-confinement'
 import { createHash } from 'node:crypto'
 import { isAbsolute, normalize, relative, sep } from 'node:path'
 
