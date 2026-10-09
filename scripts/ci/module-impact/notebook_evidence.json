@@ -11,13 +11,19 @@
     "src/main/notebook/host-lineage-service.test.ts",
     "src/main/notebook/host-lineage-service.ts",
     "src/main/notebook/local-rpc-server.artifacts.test.ts",
-    "src/main/notebook/local-rpc-server.lineage.test.ts"
+    "src/main/notebook/local-rpc-server.lineage.test.ts",
+    "src/main/notebook/managed-output-authority.test.ts",
+    "src/main/notebook/managed-output-authority.ts",
+    "src/main/notebook/research-material-authority.test.ts",
+    "src/main/notebook/research-material-authority.ts"
   ],
   "interfacePaths": [
     "src/main/notebook/artifact-source-scope.ts",
     "src/main/notebook/dev-web-reproducibility.fixture.json",
     "src/main/notebook/host-artifacts-service.ts",
-    "src/main/notebook/host-lineage-service.ts"
+    "src/main/notebook/host-lineage-service.ts",
+    "src/main/notebook/managed-output-authority.ts",
+    "src/main/notebook/research-material-authority.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -29,7 +35,9 @@
       "src/main/notebook/host-artifacts-service.test.ts",
       "src/main/notebook/host-lineage-service.test.ts",
       "src/main/notebook/local-rpc-server.artifacts.test.ts",
-      "src/main/notebook/local-rpc-server.lineage.test.ts"
+      "src/main/notebook/local-rpc-server.lineage.test.ts",
+      "src/main/notebook/managed-output-authority.test.ts",
+      "src/main/notebook/research-material-authority.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -170,7 +178,24 @@
       "src/main/notebook/runtime-service.macos-isolation.integration.test.ts",
       "src/main/session-persistence/ipc.test.ts",
       "src/main/acp/approved-handoff-outcome.integration.test.ts",
-      "src/main/acp/approved-handoff-outcome.test.ts"
+      "src/main/acp/approved-handoff-outcome.test.ts",
+      "src/main/composition/managed-execution.integration.test.ts",
+      "src/main/composition/handoff.test.ts",
+      "src/main/notebook/managed-execution-service.test.ts",
+      "src/main/notebook/managed-output-publication.integration.test.ts",
+      "src/main/notebook/managed-research-environment.test.ts",
+      "src/main/notebook/session-operation-owner.integration.test.ts",
+      "src/main/notebook/managed-execution-collection.integration.test.ts",
+      "src/main/notebook/managed-execution-entrypoints.integration.test.ts",
+      "src/main/notebook/managed-research-node-runtime.test.ts",
+      "src/main/research-execution-profiles/ipc.test.ts",
+      "src/main/notebook/managed-auxiliary-output.test.ts",
+      "src/main/notebook/managed-execution-output.test.ts",
+      "src/main/notebook/local-rpc-server.managed-execution.test.ts",
+      "src/main/notebook/managed-nested-generation.integration.test.ts",
+      "src/main/composition/session-packages.test.ts",
+      "src/main/composition/artifact-surfaces.test.ts",
+      "src/main/notebook/screened-auxiliary-output.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

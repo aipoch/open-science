@@ -1,3 +1,5 @@
+import type { ExecutionConfinement } from '../runtime/src/gateway/execution-confinement.js'
+export type { ExecutionConfinement } from '../runtime/src/gateway/execution-confinement.js'
 import type { TrustedPrivateDestination } from '../runtime/src/gateway/address-policy.js'
 import type { NotebookLocalService } from '../runtime/src/platform/local-service.js'
 export type { NotebookLocalService } from '../runtime/src/platform/local-service.js'
@@ -84,6 +86,7 @@ export type NotebookNetworkSandboxStatus =
   | Readonly<{ kind: 'error'; message: string }>
 
 export type NotebookSandboxCommand = Readonly<{
+  confinement?: ExecutionConfinement
   localService?: NotebookLocalService
   target?: NotebookSandboxTarget
   command: string

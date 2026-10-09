@@ -127,7 +127,7 @@ import type {
   ReviewerSessionRequest,
   ReviewerSessionResult
 } from './reviewer-session-owner'
-import type { ArtifactTurnOwner } from './artifact-turn-owner'
+import type { ArtifactTurnOwner, ArtifactTurnWriteScope } from './artifact-turn-owner'
 import type { AcpSessionInteractionOwner } from './session-interaction-owner'
 import {
   AcpNativeFollowUpWorkflow,
@@ -3159,6 +3159,23 @@ class AcpRuntime {
   // Writes an inline file into the in-flight turn's pending artifact run so it attaches to the resulting
   // message and surfaces to the renderer like any generated artifact. Used by app-side connector tools
   // (e.g. molecule preview). Throws when no assistant turn is active (e.g. a user-run notebook cell).
+  trackManagedExecutionArtifactWrite<Result extends ArtifactFile>(
+    sessionId: string,
+    ownerExecutionId: string,
+    write: (scope: ArtifactTurnWriteScope) => Promise<Result>
+  ): Promise<Result> {
+    const execution = this.sessionInteractions.current(sessionId)
+    if (
+      !this.artifactTurns ||
+      execution?.kind !== 'prompt' ||
+      execution.turnToken !== ownerExecutionId
+    ) {
+      return Promise.reject(new Error('Managed output requires its original active Agent turn.'))
+    }
+    const handle = this.artifactTurns.handleForExecution(ownerExecutionId)
+    return this.artifactTurns.trackWrite(handle, write)
+  }
+
   async writeArtifactForCurrentRun(
     sessionId: string,
     input: {

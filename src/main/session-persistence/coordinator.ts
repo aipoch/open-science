@@ -1,3 +1,4 @@
+import type { SessionPackagePublication } from '../storage/session-package-state'
 import { assertLiteratureAttachmentsUnreferenced } from './literature-attachment-removal'
 import { ProjectFilesReconciliationError } from '../project-files/repository'
 import type { ProjectFileSource, ProjectFilesChangedEvent } from '../../shared/project-files'
@@ -123,7 +124,11 @@ type SessionMutationRepository = {
   loadSessionWithDiagnostics(
     projectId: string,
     sessionId: string,
-    options?: { mode?: 'repair' | 'read-only'; preserveRuntimeState?: boolean }
+    options?: {
+      mode?: 'repair' | 'read-only'
+      preserveRuntimeState?: boolean
+      packagePublication?: SessionPackagePublication
+    }
   ): Promise<
     | { status: 'found'; session: PersistedChatSession }
     | { status: 'missing' }
@@ -474,19 +479,25 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
   // Returns undefined for missing/unreadable instead of throwing, so callers can degrade.
   readSessionSnapshot(
     projectId: string,
-    sessionId: string
+    sessionId: string,
+    options?: { preserveRuntimeState?: boolean }
   ): Promise<PersistedChatSession | undefined> {
     return this.operationScheduler.runSession(projectId, sessionId, async () => {
       const loaded = await this.repository.loadSessionWithDiagnostics(projectId, sessionId, {
-        mode: 'read-only'
+        mode: 'read-only',
+        ...(options?.preserveRuntimeState ? { preserveRuntimeState: true } : {})
       })
       return loaded.status === 'found' ? structuredClone(loaded.session) : undefined
     })
   }
 
-  loadSessionForContinuation(projectId: string, sessionId: string): Promise<PersistedChatSession> {
+  loadSessionForContinuation(
+    projectId: string,
+    sessionId: string,
+    options?: { preserveRuntimeState?: boolean }
+  ): Promise<PersistedChatSession> {
     return this.operationScheduler.runSession(projectId, sessionId, async () => {
-      const loaded = await this.repository.loadSessionWithDiagnostics(projectId, sessionId)
+      const loaded = await this.repository.loadSessionWithDiagnostics(projectId, sessionId, options)
       if (loaded.status !== 'found') {
         throw new Error(`Cannot prepare a durable continuation for a ${loaded.status} Session.`)
       }
@@ -496,10 +507,17 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
 
   // Package publication commits through its own recovery journal. Adopt only durable authority
   // into this live catalog before the new Session is exposed to runtime admission or renderers.
-  adoptPublishedSession(projectId: string, sessionId: string): Promise<void> {
+  adoptPublishedSession(
+    projectId: string,
+    sessionId: string,
+    publication?: SessionPackagePublication
+  ): Promise<void> {
     return this.operationScheduler.runSession(projectId, sessionId, async () => {
       this.assertMutable(projectId, sessionId, 'mutate')
-      const loaded = await this.repository.loadSessionWithDiagnostics(projectId, sessionId)
+      const loaded = await this.repository.loadSessionWithDiagnostics(projectId, sessionId, {
+        mode: 'read-only',
+        ...(publication ? { packagePublication: publication } : {})
+      })
       if (loaded.status !== 'found') {
         throw new Error(`Cannot adopt a published ${loaded.status} Session.`)
       }

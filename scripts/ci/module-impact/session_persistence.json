@@ -89,7 +89,11 @@
     "src/main/session-persistence/turn-outcome-reconciliation.test.ts",
     "src/main/session-persistence/record-facts.ts",
     "src/main/session-persistence/attention-projection.test.ts",
-    "src/main/session-persistence/turn-outcome-authority.test.ts"
+    "src/main/session-persistence/turn-outcome-authority.test.ts",
+    "src/main/session-persistence/create-local-session.test.ts",
+    "src/main/session-persistence/create-local-session.ts",
+    "src/main/session-persistence/create-managed-session.test.ts",
+    "src/main/session-persistence/create-managed-session.ts"
   ],
   "interfacePaths": [
     "src/main/session-persistence/coordinator.ts",
@@ -116,7 +120,9 @@
     "src/main/session-persistence/state-owner.ts",
     "src/main/session-persistence/task-admission.ts",
     "src/main/session-persistence/runtime-session-owner.ts",
-    "src/main/session-persistence/runtime-writer.ts"
+    "src/main/session-persistence/runtime-writer.ts",
+    "src/main/session-persistence/create-local-session.ts",
+    "src/main/session-persistence/create-managed-session.ts"
   ],
   "consumerModules": ["project_lifecycle"],
   "testFiles": {
@@ -161,7 +167,9 @@
       "src/main/session-persistence/terminal-live-projection.test.ts",
       "src/main/session-persistence/turn-outcome-reconciliation.test.ts",
       "src/main/session-persistence/attention-projection.test.ts",
-      "src/main/session-persistence/turn-outcome-authority.test.ts"
+      "src/main/session-persistence/turn-outcome-authority.test.ts",
+      "src/main/session-persistence/create-local-session.test.ts",
+      "src/main/session-persistence/create-managed-session.test.ts"
     ],
     "contract": [
       "src/shared/session-persistence.test.ts",
@@ -612,7 +620,27 @@
       "src/main/notebook/code-risk-admission.test.ts",
       "src/main/session-package/research-reproduction.integration.test.ts",
       "src/main/notebook/research-service.macos.integration.test.ts",
-      "src/main/notebook/local-service.macos.integration.test.ts"
+      "src/main/notebook/local-service.macos.integration.test.ts",
+      "src/main/composition/managed-execution.integration.test.ts",
+      "src/main/composition/handoff.test.ts",
+      "src/main/composition/artifact-surfaces.test.ts",
+      "src/main/notebook/managed-execution-collection.integration.test.ts",
+      "src/main/notebook/local-rpc-server.managed-execution.test.ts",
+      "src/main/notebook/managed-nested-generation.integration.test.ts",
+      "src/main/notebook/managed-output-publication.integration.test.ts",
+      "src/main/composition/session-packages.test.ts",
+      "src/main/notebook/managed-execution-entrypoints.integration.test.ts",
+      "src/main/notebook/session-operation-owner.integration.test.ts",
+      "src/main/notebook/managed-execution-service.test.ts",
+      "src/main/research-execution-profiles/ipc.test.ts",
+      "src/main/session-package/headless.test.ts",
+      "src/main/notebook/managed-shell-runtime.test.ts",
+      "src/main/notebook/managed-shell.macos.integration.test.ts",
+      "src/main/notebook/managed-confinement.macos.integration.test.ts",
+      "src/main/notebook/managed-auxiliary-output.test.ts",
+      "src/main/notebook/managed-execution-output.test.ts",
+      "src/main/notebook/screened-auxiliary-output.test.ts",
+      "src/main/notebook/research-material-authority.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],

@@ -72,7 +72,8 @@
     "packages/notebook-network-sandbox/vendor/windows-runtime/sources.json",
     "packages/notebook-network-sandbox/vendor/windows-runtime/npm/prepare.mjs",
     "packages/notebook-network-sandbox/runtime/src/platform/local-service.ts",
-    "packages/notebook-network-sandbox/src/local-service.test.ts"
+    "packages/notebook-network-sandbox/src/local-service.test.ts",
+    "packages/notebook-network-sandbox/runtime/src/gateway/execution-confinement.ts"
   ],
   "interfacePaths": [
     "packages/notebook-network-sandbox/src/index.ts",
@@ -84,7 +85,8 @@
     "packages/notebook-network-sandbox/src/config.ts",
     "packages/notebook-network-sandbox/vendor/wsl2/manifest.json",
     "packages/notebook-network-sandbox/src/config-root.ts",
-    "packages/notebook-network-sandbox/runtime/src/platform/local-service.ts"
+    "packages/notebook-network-sandbox/runtime/src/platform/local-service.ts",
+    "packages/notebook-network-sandbox/runtime/src/gateway/execution-confinement.ts"
   ],
   "consumerModules": ["notebook_execution"],
   "testFiles": {
@@ -636,7 +638,33 @@
       "src/main/acp/permission-context.test.ts",
       "src/main/acp/permission-frequency.test.ts",
       "src/main/acp/client-interaction-owner.test.ts",
-      "src/main/notebook/local-service-lease.test.ts"
+      "src/main/notebook/local-service-lease.test.ts",
+      "src/main/composition/session-packages.test.ts",
+      "src/main/session-package/headless.test.ts",
+      "src/main/composition/artifact-surfaces.test.ts",
+      "src/main/notebook/session-operation-owner.integration.test.ts",
+      "src/main/composition/managed-execution.integration.test.ts",
+      "src/main/composition/handoff.test.ts",
+      "src/main/notebook/local-rpc-server.managed-execution.test.ts",
+      "src/main/notebook/managed-nested-generation.integration.test.ts",
+      "src/main/notebook/managed-output-publication.integration.test.ts",
+      "src/main/notebook/research-material-authority.test.ts",
+      "src/main/notebook/managed-execution-entrypoints.integration.test.ts",
+      "src/main/notebook/managed-execution-collection.integration.test.ts",
+      "src/main/notebook/managed-execution-service.test.ts",
+      "src/main/research-execution-profiles/ipc.test.ts",
+      "src/main/notebook/managed-auxiliary-output.test.ts",
+      "src/main/notebook/managed-execution-output.test.ts",
+      "src/main/notebook/screened-auxiliary-output.test.ts",
+      "src/main/session-persistence/create-local-session.test.ts",
+      "src/main/session-persistence/create-managed-session.test.ts",
+      "src/main/notebook/managed-shell-runtime.test.ts",
+      "src/main/notebook/managed-shell.macos.integration.test.ts",
+      "src/main/notebook/managed-confinement.macos.integration.test.ts",
+      "src/main/notebook/managed-research-environment.test.ts",
+      "src/main/notebook/managed-shell-execution.test.ts",
+      "src/main/notebook/powershell-search-parser.windows.test.ts",
+      "src/main/notebook/managed-research-node-runtime.test.ts"
     ]
   },
   "capabilityOverlays": [],

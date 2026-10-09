@@ -27,6 +27,7 @@ import type { NotebookProcessSandbox } from './process-sandbox'
 import { normalizeFilesystemLayout } from '../../../packages/notebook-network-sandbox/runtime/src/platform/filesystem-layout.js'
 import { terminateProcessTree } from '../process-tree'
 import { notebookWorkloadCacheEnv } from './notebook-workload-cache-paths'
+import { createManagedShellExecutionCapability } from './managed-shell-execution'
 import { shellNpmPaths } from './shell-npm-environment'
 import { windowsSupervisedLaunch } from '../../../packages/notebook-network-sandbox/runtime/src/platform/windows-appcontainer'
 import { ViolationLog } from '../../../packages/notebook-network-sandbox/runtime/src/gateway/violation-log'
@@ -44,6 +45,69 @@ afterEach(async () => {
 
 const previewAvailable = (): boolean => true
 
+it.skipIf(process.platform === 'win32')(
+  'reports actual bounded managed output before exit and isolates observer failures',
+  async () => {
+    const chunks: Array<{ runId: string; stream: string; text: string }> = []
+    const early = Promise.withResolvers<void>()
+    const capability = createManagedShellExecutionCapability({
+      projectId: 'project',
+      sessionId: 'session',
+      executionInvocationId: 'live-output',
+      cwd: portableRuntimeRoot,
+      environment: { HOME: portableRuntimeRoot, PATH: '/usr/bin:/bin' },
+      filesystem: { readOnlyRoots: [], readWriteRoots: [portableRuntimeRoot] },
+      onOutput: (chunk) => {
+        chunks.push(chunk)
+        if (chunk.stream === 'stdout') {
+          early.resolve()
+          throw new Error('observer failed')
+        }
+      }
+    })
+    let settled = false
+    const execution = runShellCommand({
+      projectId: 'project',
+      sessionId: 'session',
+      runId: 'live-run',
+      executionInvocationId: 'live-output',
+      managedExecution: capability,
+      command: "printf 'early\\n'; sleep 0.1; printf 'late\\n' >&2",
+      cwd: portableRuntimeRoot,
+      handoffDir: portableRuntimeRoot,
+      runtimeRoot: portableRuntimeRoot,
+      processSandbox: {
+        wrap: async (invocation) => ({
+          executable: invocation.executable,
+          args: invocation.args,
+          env: invocation.env,
+          annotateStderr: (text) => text,
+          cleanup: async () => ({
+            processesTerminated: true,
+            networkClosed: true,
+            temporaryResourcesRemoved: true
+          })
+        })
+      },
+      timeoutMs: 5000
+    }).finally(() => {
+      settled = true
+    })
+    await Promise.race([
+      early.promise,
+      execution.then((result) => {
+        throw new Error('The process ended before live output: ' + JSON.stringify(result))
+      })
+    ])
+    expect(settled).toBe(false)
+    expect(await execution).toMatchObject({ stdout: 'early\n', stderr: 'late\n', exitCode: 0 })
+    expect(chunks).toEqual([
+      { runId: 'live-run', stream: 'stdout', text: 'early\n' },
+      { runId: 'live-run', stream: 'stderr', text: 'late\n' }
+    ])
+  }
+)
+
 describe('bounded Shell adapter lifecycle', () => {
   const request = (
     overrides: Partial<NotebookShellProcessRequest> = {}
@@ -59,6 +123,160 @@ describe('bounded Shell adapter lifecycle', () => {
     timeoutMs: 10_000,
     ...overrides
   })
+
+  const managedCapability = (): ReturnType<typeof createManagedShellExecutionCapability> =>
+    createManagedShellExecutionCapability({
+      projectId: 'project',
+      sessionId: 'session',
+      executionInvocationId: 'managed',
+      cwd: portableRuntimeRoot,
+      environment: { HOME: portableRuntimeRoot, PATH: '/usr/bin:/bin' },
+      filesystem: { readOnlyRoots: [], readWriteRoots: [portableRuntimeRoot] }
+    })
+
+  it.skipIf(process.platform === 'win32')(
+    'drains persistent and per-invocation bounded processes together',
+    async () => {
+      const gate = Promise.withResolvers<void>()
+      const cleanup = vi.fn(async () => {
+        await gate.promise
+        return { processesTerminated: true, networkClosed: true, temporaryResourcesRemoved: true }
+      })
+      const children: ChildProcess[] = []
+      const adapter = new NotebookShellProcessAdapter(
+        process.platform,
+        {
+          wrap: async (invocation) => ({
+            executable: invocation.executable,
+            args: invocation.args,
+            env: invocation.env,
+            annotateStderr: (text) => text,
+            cleanup
+          })
+        },
+        {
+          claim: (child) => {
+            children.push(child)
+            return () => undefined
+          }
+        }
+      )
+      await adapter.execute(request({ command: 'export FIXTURE_PERSISTENT=live' }))
+      const running = adapter.execute(
+        request({
+          runId: 'bounded-run',
+          executionInvocationId: 'managed',
+          managedExecution: managedCapability(),
+          command: 'echo ready; while :; do sleep 1; done'
+        })
+      )
+      let stopped = false
+      try {
+        await vi.waitFor(() => expect(children).toHaveLength(2))
+        const shutdown = adapter
+          .shutdown({ projectId: 'project', sessionId: 'session' })
+          .then((result) => {
+            stopped = true
+            return result
+          })
+        await vi.waitFor(() => expect(cleanup).toHaveBeenCalledTimes(2))
+        expect(stopped).toBe(false)
+        for (const child of children)
+          expect(() => process.kill(child.pid!, 0)).toThrow(
+            expect.objectContaining({ code: 'ESRCH' })
+          )
+        gate.resolve()
+        expect(await shutdown).toEqual({ reaped: true })
+        expect(await running).toMatchObject({ cancelled: true })
+      } finally {
+        gate.resolve()
+        expect(await adapter.shutdown()).toEqual({ reaped: true })
+        await running
+      }
+    }
+  )
+
+  it.skipIf(process.platform === 'win32')(
+    'retains failed managed cleanup and fences ordinary commands until verified',
+    async () => {
+      let verified = false
+      const cleanups: string[] = []
+      const adapter = new NotebookShellProcessAdapter(process.platform, {
+        wrap: async (invocation) => ({
+          executable: invocation.executable,
+          args: invocation.args,
+          env: invocation.env,
+          annotateStderr: (text) => text,
+          cleanup: async () => {
+            cleanups.push(invocation.executionReference ?? '')
+            const complete = invocation.executionReference !== 'managed-run' || verified
+            return {
+              processesTerminated: true,
+              networkClosed: complete,
+              temporaryResourcesRemoved: complete
+            }
+          }
+        })
+      })
+      try {
+        await adapter.execute(
+          request({ command: 'export FIXTURE_PERSISTENT=live', executionReference: 'ordinary-run' })
+        )
+        const result = await adapter.execute(
+          request({
+            runId: 'managed-run',
+            executionReference: 'managed-run',
+            executionInvocationId: 'managed',
+            managedExecution: managedCapability()
+          })
+        )
+        expect(result.errorCode).toBe('shell-cleanup-incomplete')
+        expect((await adapter.execute(request())).errorCode).toBe('shell-cleanup-incomplete')
+        expect(await adapter.shutdown()).toEqual({ reaped: false })
+        expect(cleanups).toContain('ordinary-run')
+        verified = true
+        expect(await adapter.shutdown()).toEqual({ reaped: true })
+      } finally {
+        verified = true
+        expect(await adapter.shutdown()).toEqual({ reaped: true })
+      }
+    }
+  )
+
+  it.skipIf(process.platform === 'win32')(
+    'does not let a managed invocation bypass failed persistent cleanup',
+    async () => {
+      let verified = false
+      const wrap = vi.fn(async (invocation: Parameters<NotebookProcessSandbox['wrap']>[0]) => ({
+        executable: invocation.executable,
+        args: invocation.args,
+        env: invocation.env,
+        annotateStderr: (text: string) => text,
+        cleanup: async () => ({
+          processesTerminated: true,
+          networkClosed: verified,
+          temporaryResourcesRemoved: verified
+        })
+      }))
+      const adapter = new NotebookShellProcessAdapter(process.platform, { wrap })
+      try {
+        expect((await adapter.execute(request({ command: 'exit 0' }))).errorCode).toBe(
+          'shell-cleanup-incomplete'
+        )
+        expect(
+          (
+            await adapter.execute(
+              request({ managedExecution: managedCapability(), executionInvocationId: 'managed' })
+            )
+          ).errorCode
+        ).toBe('shell-cleanup-incomplete')
+        expect(wrap).toHaveBeenCalledOnce()
+      } finally {
+        verified = true
+        expect(await adapter.shutdown()).toEqual({ reaped: true })
+      }
+    }
+  )
 
   it.skipIf(process.platform === 'win32')(
     'scopes shutdown and waits for the original process cleanup',
@@ -2158,3 +2376,68 @@ describe('notebook shell process behavior', () => {
     })
   })
 })
+
+it.skipIf(process.platform === 'win32')(
+  'injects private research bindings only at spawn and redacts live split output',
+  async () => {
+    const chunks: string[] = []
+    const secret = 'fixture-private-value'
+    const capability = createManagedShellExecutionCapability({
+      projectId: 'project',
+      sessionId: 'session',
+      executionInvocationId: 'private-output',
+      cwd: portableRuntimeRoot,
+      environment: { HOME: portableRuntimeRoot, PATH: '/usr/bin:/bin' },
+      privateEnvironment: { RESEARCH_API_KEY: secret },
+      secretValues: [secret],
+      confinement: { mode: 'research', allowedNetworkHosts: [] },
+      filesystem: { readOnlyRoots: [], readWriteRoots: [portableRuntimeRoot] },
+      onOutput: ({ text }) => chunks.push(text)
+    })
+    const wrap = vi.fn(async (invocation) => ({
+      executable: invocation.executable,
+      args: invocation.args,
+      env: invocation.env,
+      annotateStderr: (text: string) => text,
+      cleanup: async () => ({
+        processesTerminated: true,
+        networkClosed: true,
+        temporaryResourcesRemoved: true
+      })
+    }))
+    const result = await runShellCommand({
+      projectId: 'project',
+      sessionId: 'session',
+      runId: 'private-run',
+      executionInvocationId: 'private-output',
+      managedExecution: capability,
+      command: `printf '%s' "\${RESEARCH_API_KEY%value}"; sleep 0.05; printf 'value\\n'; printf '%s\\n' "$RESEARCH_API_KEY" >&2`,
+      cwd: portableRuntimeRoot,
+      handoffDir: portableRuntimeRoot,
+      runtimeRoot: portableRuntimeRoot,
+      processSandbox: { wrap },
+      timeoutMs: 5000
+    })
+    expect(wrap.mock.calls[0]![0]).toMatchObject({
+      env: { RESEARCH_API_KEY: secret },
+      confinement: { mode: 'research', allowedNetworkHosts: [] }
+    })
+    expect(result).toMatchObject({ stdout: '[redacted]\n', stderr: '[redacted]\n', exitCode: 0 })
+    expect(chunks.join('')).not.toContain(secret)
+    expect(chunks.join('')).not.toContain('fixture-private-')
+    wrap.mockRejectedValueOnce(new Error(`Preparation failed for ${secret}`))
+    const failed = await runShellCommand({
+      projectId: 'project',
+      sessionId: 'session',
+      executionInvocationId: 'private-output',
+      managedExecution: capability,
+      command: 'true',
+      cwd: portableRuntimeRoot,
+      handoffDir: portableRuntimeRoot,
+      runtimeRoot: portableRuntimeRoot,
+      processSandbox: { wrap },
+      timeoutMs: 5000
+    })
+    expect(failed.stderr).toBe('Preparation failed for [redacted]')
+  }
+)

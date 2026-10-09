@@ -1,6 +1,7 @@
 import type { RequestNotebookNetworkAccessResult } from '../../shared/notebook'
 import type { ShellRuntimeBinding } from '../../shared/notebook'
 import type { WindowsNotebookRuntime } from './windows-notebook-runtime'
+import type { ExecutionConfinement } from '@aipoch/notebook-network-sandbox'
 import type { NotebookLocalService } from '@aipoch/notebook-network-sandbox'
 export type { NotebookLocalService } from '@aipoch/notebook-network-sandbox'
 
@@ -51,6 +52,8 @@ export const withNotebookSandboxProcessState = (
 }
 
 export type NotebookSandboxInvocation = Readonly<{
+  /** Main-owned per-execution ceiling; never widened by global or session grants. */
+  confinement?: ExecutionConfinement
   /** Trusted host capability; its identity must match this invocation's executionReference. */
   localService?: NotebookLocalService
   target?: NotebookSandboxTarget

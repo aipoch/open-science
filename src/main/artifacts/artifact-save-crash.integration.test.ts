@@ -32,6 +32,11 @@ beforeAll(async () => {
     platform: 'node',
     format: 'cjs',
     packages: 'external',
+    // Production bundles this workspace's source-only ESM package too. The disposable CJS
+    // child must not require() its import-only package export or resolve another worktree's copy.
+    alias: {
+      '@aipoch/notebook-network-sandbox': resolve('packages/notebook-network-sandbox/src/index.ts')
+    },
     logLevel: 'silent'
   })
 })

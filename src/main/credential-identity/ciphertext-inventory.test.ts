@@ -28,9 +28,87 @@ const fixture = (): { configRoot: string; profilePath: string } => {
   return { configRoot, profilePath }
 }
 const ref = (text: string): string => `enc:${Buffer.from(text).toString('base64')}`
+const researchDocument = (credentialRefs: Record<string, string>): unknown => ({
+  version: 1,
+  profiles: [
+    {
+      profileId: '11111111-1111-4111-8111-111111111111',
+      projectId: 'project',
+      sourceSessionId: 'source',
+      sourceIdentity: 'native-source',
+      descriptorVersionId: 'descriptor',
+      descriptorSha256: 'a'.repeat(64),
+      planKey: 'baseline',
+      displayName: 'enc:public-label',
+      variables: { MODEL: 'enc:public-variable' },
+      allowedNetworkHosts: [],
+      conditionChanges: [],
+      credentialRefs,
+      updatedAt: 1
+    }
+  ]
+})
 afterEach(() => roots.splice(0).forEach((path) => rmSync(path, { recursive: true, force: true })))
 
 describe('read-only ciphertext inventory', () => {
+  it('finds only encrypted slots when research profiles are the sole credential document and preserves bytes', () => {
+    const paths = fixture()
+    const path = join(paths.configRoot, 'research-execution-profiles.json')
+    const contents = JSON.stringify(
+      researchDocument({ provider: ref('research-provider'), solver: ref('research-solver') })
+    )
+    writeFileSync(path, contents)
+    const ciphertexts = readCredentialCiphertexts(paths)
+    expect(ciphertexts.map((value) => value.toString())).toEqual([
+      'research-provider',
+      'research-solver'
+    ])
+    const decrypt = vi.fn(() => 'private-plaintext-is-not-returned')
+    expect(verifyCredentialCiphertexts(ciphertexts, decrypt)).toBeUndefined()
+    expect(decrypt).toHaveBeenCalledTimes(2)
+    expect(readFileSync(path, 'utf8')).toBe(contents)
+    expect(readdirSync(paths.configRoot)).toEqual(['research-execution-profiles.json'])
+  })
+
+  it.each([
+    null,
+    {},
+    { version: 2, profiles: [] },
+    { version: 1, profiles: [{}] },
+    researchDocument({ provider: 'enc:invalid-base64-private-value' })
+  ])(
+    'fails closed on malformed research credential documents without exposing values: %j',
+    (value) => {
+      const paths = fixture()
+      const path = join(paths.configRoot, 'research-execution-profiles.json')
+      const contents = JSON.stringify(value)
+      writeFileSync(path, contents)
+      let failure: unknown
+      try {
+        readCredentialCiphertexts(paths)
+      } catch (error) {
+        failure = error
+      }
+      expect(failure).toMatchObject({
+        name: 'CredentialIdentityError',
+        reason: 'ciphertext-inventory-unavailable'
+      })
+      expect(String(failure)).not.toContain('private-value')
+      expect(String(failure)).not.toContain(path)
+      expect(readFileSync(path, 'utf8')).toBe(contents)
+    }
+  )
+
+  it('does not promote a pending research profile during startup inventory', () => {
+    const paths = fixture()
+    const name = 'research-execution-profiles.json.123.tmp'
+    const contents = JSON.stringify(researchDocument({ provider: ref('pending-research') }))
+    writeFileSync(join(paths.configRoot, name), contents)
+    expect(() => readCredentialCiphertexts(paths)).toThrow(/recovery/i)
+    expect(readdirSync(paths.configRoot)).toEqual([name])
+    expect(readFileSync(join(paths.configRoot, name), 'utf8')).toBe(contents)
+  })
+
   it.each(['DELETE', 'PERSIST'])(
     'accepts an existing .open-science directory without renaming it after a completed %s transaction',
     (mode) => {

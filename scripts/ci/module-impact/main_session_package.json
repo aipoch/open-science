@@ -52,7 +52,10 @@
     "src/main/session-package/json-syntax.ts",
     "src/main/session-package/json-syntax.test.ts",
     "src/main/session-package/pdf-notes.ts",
-    "src/main/session-package/research-reproduction.integration.test.ts"
+    "src/main/session-package/research-reproduction.integration.test.ts",
+    "src/main/session-package-external-port.ts",
+    "src/main/session-package/headless.test.ts",
+    "src/main/session-package/headless.ts"
   ],
   "interfacePaths": [
     "src/main/session-package/desktop.ts",
@@ -62,7 +65,9 @@
     "src/main/session-package/literature-reader.ts",
     "src/main/session-package/quit-guard.ts",
     "src/main/session-package/service.ts",
-    "src/main/session-package/pdf-notes.ts"
+    "src/main/session-package/pdf-notes.ts",
+    "src/main/session-package-external-port.ts",
+    "src/main/session-package/headless.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -89,7 +94,8 @@
       "src/main/session-package/ro-crate.integration.test.ts",
       "src/main/session-package/sensitive-content.test.ts",
       "src/main/session-package/json-syntax.test.ts",
-      "src/main/session-package/research-reproduction.integration.test.ts"
+      "src/main/session-package/research-reproduction.integration.test.ts",
+      "src/main/session-package/headless.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -102,7 +108,28 @@
       "src/main/index-startup-failure.test.ts",
       "src/main/runtime-electron-wiring.test.ts",
       "src/main/session-package/desktop-composition.test.ts",
-      "src/main/session-persistence/prompt-preparation-restart.test.ts"
+      "src/main/session-persistence/prompt-preparation-restart.test.ts",
+      "src/main/composition/session-packages.test.ts",
+      "src/main/composition/managed-execution.integration.test.ts",
+      "src/main/composition/handoff.test.ts",
+      "src/main/acp/runtime.test.ts",
+      "src/main/settings/bootstrap.integration.test.ts",
+      "src/main/web-service/artifact-download.integration.test.ts",
+      "src/main/web-service/http-server.test.ts",
+      "src/main/web-service/task-api.test.ts",
+      "src/main/remote-access/service.test.ts",
+      "src/main/web-service/controller.test.ts",
+      "src/main/remote-access/ipc.test.ts",
+      "src/main/host-application-commands.test.ts",
+      "src/main/application-command-client.test.ts",
+      "src/main/application-command-composition.test.ts",
+      "src/main/application-command-electron-adapter.test.ts",
+      "src/main/session-persistence/ipc.test.ts",
+      "src/main/literature/scale-regressions.test.ts",
+      "src/shared/renderer-surface-inventory.test.ts",
+      "src/main/remote-access/pairing.test.ts",
+      "src/main/notebook/managed-execution-entrypoints.integration.test.ts",
+      "src/main/notebook/session-operation-owner.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

@@ -43,7 +43,8 @@
       "src/main/windows.test.ts",
       "src/main/source-preview-webview.test.ts",
       "src/main/window-find-ipc.test.ts",
-      "src/main/ipc-surfaces/desktop-utilities.test.ts"
+      "src/main/ipc-surfaces/desktop-utilities.test.ts",
+      "src/main/composition/handoff.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

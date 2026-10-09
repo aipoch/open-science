@@ -25,7 +25,8 @@
     "src/main/ipc-surfaces/specialist.test.ts",
     "src/main/ipc-surfaces/uploads.test.ts",
     "src/main/session-package/desktop-composition.test.ts",
-    "src/main/window-find-ipc.test.ts"
+    "src/main/window-find-ipc.test.ts",
+    "src/shared/renderer-contracts/research-execution-profiles.ts"
   ],
   "interfacePaths": [
     "src/main/ipc-surfaces/adapter.ts",
@@ -40,7 +41,8 @@
     "src/main/ipc-surfaces/specialist.ts",
     "src/main/ipc-surfaces/session-persistence.ts",
     "src/main/ipc-surfaces/office-preview.ts",
-    "src/main/session-package/desktop-composition.ts"
+    "src/main/session-package/desktop-composition.ts",
+    "src/shared/renderer-contracts/research-execution-profiles.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -169,7 +171,34 @@
       "src/renderer/src/components/PackageImportSelection.test.tsx",
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/main/index-fatal-errors.test.ts",
-      "src/main/session-package/fork.test.ts"
+      "src/main/session-package/fork.test.ts",
+      "src/main/compute/application-commands.test.ts",
+      "src/main/compute/compute-service.architecture.test.ts",
+      "src/main/host-application-commands.test.ts",
+      "src/main/notebook/runtime-application-commands.test.ts",
+      "src/main/permission-grants/application-commands.test.ts",
+      "src/main/reviewer/reviewer-orchestrator.architecture.test.ts",
+      "src/main/settings/application-commands.test.ts",
+      "src/main/settings/runtime-application-commands.test.ts",
+      "src/renderer/web/renderer-argument-shape-characterization.test.ts",
+      "src/shared/renderer-surface-inventory.test.ts",
+      "src/renderer/src/pages/workspace/handoff-lifecycle-source.test.ts",
+      "src/renderer/web/bootstrap.test.ts",
+      "src/main/literature/scale-regressions.test.ts",
+      "src/main/settings/bootstrap.integration.test.ts",
+      "src/main/web-service/artifact-download.integration.test.ts",
+      "src/main/web-service/http-server.test.ts",
+      "src/main/remote-access/service.test.ts",
+      "src/main/web-service/controller.test.ts",
+      "src/main/remote-access/ipc.test.ts",
+      "src/main/remote-access/pairing.test.ts",
+      "src/main/application-command-client.test.ts",
+      "src/main/web-service/task-api.test.ts",
+      "src/main/acp/runtime.test.ts",
+      "src/main/composition/session-packages.test.ts",
+      "src/main/composition/managed-execution.integration.test.ts",
+      "src/main/composition/handoff.test.ts",
+      "src/main/composition/artifact-surfaces.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation"],

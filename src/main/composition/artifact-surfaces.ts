@@ -1,4 +1,5 @@
 import { webContents } from 'electron'
+import type { ArtifactFile } from '../../shared/artifacts'
 import { createAcpRuntime } from '../acp/runtime-composition'
 import { ArchiveCoordinator } from '../archive/coordinator'
 import { ArtifactReproducibilityAttemptOwner } from '../artifacts/artifact-reproducibility-lifecycle'
@@ -59,6 +60,7 @@ export function composeArtifactSurfaces({
   codeReconstruction,
   sessionPersistenceHandlers,
   sessionDetailsOwner,
+  onArtifactsPublished,
   translate
 }: {
   surfaceAdapters: import('../runtime-electron-wiring').NamedElectronSurfaceAdapter[]
@@ -92,6 +94,7 @@ export function composeArtifactSurfaces({
     typeof createSessionPersistenceHandlersWithAttributionAuthority
   >
   sessionDetailsOwner: ReturnType<typeof createSessionDetailsOwner>
+  onArtifactsPublished?: (artifacts: readonly ArtifactFile[]) => Promise<void>
   translate: import('../locale/main-process-messages').NativeTranslator
 }): {
   artifactHandlers: ReturnType<typeof createArtifactHandlers>
@@ -121,6 +124,11 @@ export function composeArtifactSurfaces({
             storageLog.warn('Native PDF annotation import failed', errorLogFields(error))
           )
       }
+      // The handler invokes this after activation and after releasing its Session mutation.
+      // Start tracked reconciliation without delaying or failing the completed publication.
+      void onArtifactsPublished?.(artifacts).catch((error) =>
+        storageLog.warn('Managed output publication reconciliation failed', errorLogFields(error))
+      )
     },
     provenance: artifactProvenanceRepository,
     openLatestManagedFile: (request) =>

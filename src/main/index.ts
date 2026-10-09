@@ -794,6 +794,8 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
               commitClosePreference,
               taskAgent,
               taskControls,
+              managedExecution,
+              sessionPackageTransfer,
               computePreferences,
               detectActiveSessions,
               listTrayNavigationSessions,
@@ -911,6 +913,8 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
               permissionApprovalPresence,
               taskAgent,
               taskControls,
+              managedExecution,
+              sessionPackageTransfer,
               computePreferences,
               detectActiveSessions
             })

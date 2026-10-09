@@ -1,6 +1,7 @@
 import { decodeDeviceCredentialsDocument } from '../settings/device-credentials-codec'
 import { validateSettingsDocumentShape } from '../settings/document-shape'
 import { settingsDocumentReadError } from '../settings/document-read-error'
+import { researchExecutionProfileDocumentSchema } from '../research-execution-profiles/document'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { withReadOnlySqliteSnapshot as database } from './sqlite-snapshot'
@@ -34,6 +35,12 @@ export const readCredentialCiphertexts = (options: {
       name === 'credentials.json' ? decodeDeviceCredentialsDocument(contents) : JSON.parse(contents)
     if (name === 'settings.json') validateSettingsDocumentShape(value)
     const document = record(value)
+    if (name === 'research-execution-profiles.json') {
+      const profiles = researchExecutionProfileDocumentSchema.parse(value)
+      for (const profile of profiles.profiles)
+        for (const reference of Object.values(profile.credentialRefs)) collectRef(reference)
+      return
+    }
     if (name === 'credentials.json') {
       for (const item of list(document.credentials)) {
         const credential = record(item)
@@ -98,14 +105,19 @@ export const readCredentialCiphertexts = (options: {
   try {
     if (existsSync(options.configRoot)) {
       const entries = readdirSync(options.configRoot)
-      for (const name of ['settings.json', 'credentials.json']) {
+      for (const name of [
+        'settings.json',
+        'credentials.json',
+        'research-execution-profiles.json'
+      ]) {
         if (entries.some((entry) => entry.startsWith(`${name}.`) && entry.endsWith('.tmp')))
           throw new Error('Pending credential document requires recovery')
         const path = join(options.configRoot, name)
         if (!existsSync(path)) continue
         try {
-          if (statSync(path).size > MAX_DOCUMENT_BYTES)
-            throw new Error('Credential document is too large')
+          const limit =
+            name === 'research-execution-profiles.json' ? 8 * 1024 * 1024 : MAX_DOCUMENT_BYTES
+          if (statSync(path).size > limit) throw new Error('Credential document is too large')
           collectDocument(readFileSync(path, 'utf8'), name)
         } catch (cause) {
           if (name === 'settings.json')

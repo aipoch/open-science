@@ -6,7 +6,11 @@ import { constants as fsConstants } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { Buffer } from 'node:buffer'
 import { basename, dirname, join } from 'node:path'
-import { isSessionPackagePending } from '../storage/session-package-state'
+import {
+  isSessionPackagePending,
+  resolveSessionPackagePublication,
+  type SessionPackagePublication
+} from '../storage/session-package-state'
 import { preserveImportedSession } from './imported-session'
 
 import {
@@ -184,6 +188,10 @@ type SessionScanOptions = {
   mode?: 'repair' | 'read-only'
   // Main-owned same-process mutations read durable authority without applying app-restart recovery.
   preserveRuntimeState?: boolean
+}
+
+type SessionReadOptions = SessionScanOptions & {
+  packagePublication?: SessionPackagePublication
 }
 
 type SessionLoadDiagnostic =
@@ -417,8 +425,15 @@ class SessionRepository {
     }
   }
 
-  private async inspectActiveProjectBoundary(projectId: string): Promise<FilesystemBoundaryState> {
-    if (await isSessionPackagePending(this.storageDir, projectId)) return 'missing'
+  private async inspectActiveProjectBoundary(
+    projectId: string,
+    publicationImportId?: string
+  ): Promise<FilesystemBoundaryState> {
+    if (
+      (await isSessionPackagePending(this.storageDir, projectId)) &&
+      projectId !== `import-${publicationImportId}`
+    )
+      return 'missing'
     const sessions = await this.inspectDirectoryBoundary(this.sessionsDir)
     if (sessions !== 'valid') return sessions
     return this.inspectDirectoryBoundary(this.projectDir(projectId))
@@ -819,18 +834,27 @@ class SessionRepository {
   async loadSessionWithDiagnostics(
     projectId: string,
     sessionId: string,
-    options: SessionScanOptions = {}
+    options: SessionReadOptions = {}
   ): Promise<SessionLoadDiagnostic> {
     const safeProjectId = assertSafeSegment(projectId)
     const safeSessionId = assertSafeSegment(sessionId)
-    const projectBoundary = await this.inspectActiveProjectBoundary(safeProjectId)
+    const publication = options.packagePublication
+      ? resolveSessionPackagePublication(options.packagePublication, {
+          projectId: safeProjectId,
+          sessionId: safeSessionId
+        })
+      : undefined
+    const projectBoundary = await this.inspectActiveProjectBoundary(
+      safeProjectId,
+      publication?.importId
+    )
     if (projectBoundary === 'invalid') return { status: 'unreadable' }
     if (projectBoundary === 'missing') return { status: 'missing' }
     const read = await this.readSessionFile(
       this.sessionFilePath(safeProjectId, safeSessionId),
       safeProjectId,
       {
-        quarantineInvalidFiles: options.mode !== 'read-only',
+        quarantineInvalidFiles: !publication && options.mode !== 'read-only',
         preserveRuntimeState: options.preserveRuntimeState
       }
     )
@@ -838,6 +862,17 @@ class SessionRepository {
 
     const quarantine = await this.hasQuarantinedSessionFile(safeProjectId, safeSessionId)
     if (!quarantine.isComplete) return { status: 'unreadable' }
+    if (options.packagePublication) {
+      resolveSessionPackagePublication(options.packagePublication, {
+        projectId: safeProjectId,
+        sessionId: safeSessionId
+      })
+      if (
+        read.session &&
+        (read.session.packageOrigin ?? read.session.forkOrigin)?.importId !== publication!.importId
+      )
+        throw new Error('Session package publication does not match durable Session authority.')
+    }
     if (read.session) return { status: 'found', session: read.session }
     return quarantine.exists ? { status: 'unreadable' } : { status: 'missing' }
   }

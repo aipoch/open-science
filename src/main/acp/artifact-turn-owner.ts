@@ -50,6 +50,21 @@ type ArtifactTurnWriteInput = {
   literature?: ArtifactLiteratureRequest
 }
 
+type ArtifactTurnWriteScope = Readonly<{
+  executionId: string
+  projectId: string
+  appSessionId: string
+  artifactStorageSessionId: string
+  artifactRunId: string
+  workspaceCwd?: string
+  rootFrameId: string
+  agentFrameId: string
+  messageBranchId: string
+  runtimeSegmentId: string
+  promptMessageId: string
+  messageAncestry: readonly string[]
+}>
+
 type ArtifactTurnPublication = {
   appSessionId: string
   artifactStorageSessionId: string
@@ -137,6 +152,7 @@ type ArtifactTurnOwnerOptions = {
       binding: {
         ownerExecutionId: string
         artifactRunId?: string
+        artifactStorageSessionId: string
         projectId: string
         provenanceContext: {
           rootFrameId: string
@@ -263,6 +279,7 @@ class ArtifactTurnOwner {
           this.options.notebook?.setArtifactTurnBinding?.(turn.appSessionId, {
             ownerExecutionId: turn.executionId,
             artifactRunId: turn.runId,
+            artifactStorageSessionId: turn.artifactStorageSessionId,
             projectId: turn.projectId,
             provenanceContext: {
               rootFrameId: turn.rootFrameId,
@@ -356,6 +373,38 @@ class ArtifactTurnOwner {
       return Promise.reject(new Error('Artifact turn is not open for writes.'))
     }
     return this.writeTurn(turn, input)
+  }
+
+  // Main-only publishers borrow the exact turn's write lifecycle. They cannot choose a current
+  // Session turn, reopen a sealed turn, or race its sole finalization owner with a late write.
+  trackWrite<Result extends ArtifactFile>(
+    handle: ArtifactTurnHandle,
+    write: (scope: ArtifactTurnWriteScope) => Promise<Result>
+  ): Promise<Result> {
+    const turn = this.resolve(handle)
+    if (turn.phase !== 'open' || turn.disposalStarted)
+      return Promise.reject(new Error('Artifact turn is not open for writes.'))
+    const scope: ArtifactTurnWriteScope = Object.freeze({
+      executionId: turn.executionId,
+      projectId: turn.projectId,
+      appSessionId: turn.appSessionId,
+      artifactStorageSessionId: turn.artifactStorageSessionId,
+      artifactRunId: turn.runId,
+      workspaceCwd: turn.workspaceCwd,
+      rootFrameId: turn.rootFrameId,
+      agentFrameId: turn.agentFrameId,
+      messageBranchId: turn.messageBranchId,
+      runtimeSegmentId: turn.runtimeSegmentId,
+      promptMessageId: turn.promptMessageId,
+      messageAncestry: Object.freeze([...turn.messageAncestry])
+    })
+    const work = Promise.resolve().then(() => write(scope))
+    turn.inFlightAppWrites.add(work)
+    void work.then(
+      () => turn.inFlightAppWrites.delete(work),
+      () => turn.inFlightAppWrites.delete(work)
+    )
+    return work
   }
 
   private writeTurn(turn: ArtifactTurn, input: ArtifactTurnWriteInput): Promise<ArtifactFile> {
@@ -731,5 +780,6 @@ export type {
   ArtifactTurnPublication,
   ArtifactTurnSnapshot,
   ArtifactTurnWriteInput,
+  ArtifactTurnWriteScope,
   OpenExecutionArtifactTurnRequest
 }
