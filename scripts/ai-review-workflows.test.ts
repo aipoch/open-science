@@ -958,6 +958,61 @@ printf '%s\n' \\
     expect(summaryText).toContain('| `command_execution` | 1 |')
   })
 
+  it('classifies failed turns without publishing raw error text or command output', () => {
+    const root = fixtureRoot('codex-failure-telemetry-')
+    const execution = join(root, 'execution.jsonl')
+    const summary = join(root, 'summary')
+    writeJsonLines(execution, [
+      {
+        type: 'error',
+        message: 'stream disconnected before completion: unexpected status 400 secret-value'
+      },
+      {
+        type: 'turn.failed',
+        error: { message: 'Your input exceeds the context window secret-value' }
+      },
+      {
+        type: 'item.completed',
+        item: { id: 'error-1', type: 'error', message: 'invalid_encrypted_content secret-value' }
+      },
+      {
+        type: 'item.completed',
+        item: { id: 'cmd-1', type: 'command_execution', aggregated_output: 'secret-value' }
+      }
+    ])
+    const result = spawnSync(
+      'bash',
+      ['-c', getRun(codexWorkflow, 'review', 'Report Codex review telemetry')],
+      {
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          CODEX_EFFORT: 'high',
+          CODEX_MODEL: 'codex-auto-review',
+          EXECUTION_FILE: execution,
+          GITHUB_STEP_SUMMARY: summary
+        }
+      }
+    )
+    expect(result.status, result.stderr).toBe(0)
+    const report = result.stdout + readFileSync(summary, 'utf8')
+    expect(report).toContain('stream-disconnected')
+    expect(report).toContain('http-400')
+    expect(report).toContain('context-window')
+    expect(report).toContain('invalid-encrypted-content')
+    expect(report).not.toContain('secret-value')
+  })
+
+  it('keeps dry runs out of publishing, labels, and production cancellation groups', () => {
+    expect(mainWorkflow.jobs.post_codex_feedback.if).toContain('!inputs.dry_run')
+    expect(mainWorkflow.jobs.apply_review_outcome.if).toContain('!inputs.dry_run')
+    expect(mainWorkflow.concurrency?.group).toContain("inputs.dry_run && '-dry-run' || ''")
+    expect(codexWorkflow.jobs.review.concurrency?.group).toContain(
+      "inputs.dry_run && '-dry-run' || ''"
+    )
+    expect(mainWorkflow.jobs.codex_review.with?.dry_run).toBe('${{ inputs.dry_run || false }}')
+  })
+
   it('normalizes schema-valid results for the combined Codex header', async () => {
     await expect(
       normalize(
@@ -1053,11 +1108,12 @@ printf '%s\n' \\
   it('serializes duplicate runs of the single reviewer for each pull request', () => {
     expect(mainWorkflow.concurrency).toEqual({
       group:
-        'ai-pr-review-${{ github.event.inputs.pull_request_number || github.event.pull_request.number }}',
+        "ai-pr-review-${{ github.event.inputs.pull_request_number || github.event.pull_request.number }}${{ inputs.dry_run && '-dry-run' || '' }}",
       'cancel-in-progress': true
     })
     expect(codexWorkflow.jobs.review.concurrency).toEqual({
-      group: "${{ format('codex-review-{0}', inputs.pull_request_number) }}",
+      group:
+        "${{ format('codex-review-{0}{1}', inputs.pull_request_number, inputs.dry_run && '-dry-run' || '') }}",
       'cancel-in-progress': true
     })
     expect(mainWorkflow.jobs.codex_review.needs).toEqual(['review_target', 'codex_review_gate'])

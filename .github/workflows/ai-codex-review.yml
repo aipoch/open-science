@@ -3,6 +3,11 @@ name: Reusable Codex PR Review
 on:
   workflow_call:
     inputs:
+      dry_run:
+        description: Isolate diagnostic runs from production review cancellation
+        required: false
+        default: false
+        type: boolean
       auth_mode:
         description: Preferred authentication mode (subscription or api-key)
         required: true
@@ -72,7 +77,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     concurrency:
-      group: ${{ format('codex-review-{0}', inputs.pull_request_number) }}
+      group: ${{ format('codex-review-{0}{1}', inputs.pull_request_number, inputs.dry_run && '-dry-run' || '') }}
       cancel-in-progress: true
     permissions:
       contents: read
@@ -624,6 +629,27 @@ jobs:
           error_events="$(jq -r -s '[.[] | select(.type == "error")] | length' "$EXECUTION_FILE")"
           item_failed="$(jq -r -s '[.[] | select(.type == "item.failed")] | length' "$EXECUTION_FILE")"
 
+          # Emit only fixed diagnostic labels, never server messages, URLs, model text, or tools.
+          error_signals="$(jq -r -s '
+            [.[] | if .type == "error" then .message
+              elif .type == "turn.failed" then .error.message
+              elif (.type | startswith("item.")) and .item.type == "error" then .item.message
+              else empty end | select(type == "string") | ascii_downcase] | unique
+            | map(. as $message | [
+                (if test("stream disconnected|stream closed|connection reset") then "stream-disconnected" else empty end),
+                (if test("context window|context_length_exceeded|too many tokens") then "context-window" else empty end),
+                (if test("invalid_encrypted_content") then "invalid-encrypted-content" else empty end),
+                (if test("rate.limit|quota|usage limit") then "rate-or-usage-limit" else empty end),
+                (if test("model.*(not found|not supported|does not exist|unavailable)") then "model-unavailable" else empty end),
+                (if test("unauthorized|authentication|refresh.token") then "authentication" else empty end),
+                (if test("timed out|timeout") then "timeout" else empty end),
+                (if test("schema|response_format") then "output-schema" else empty end),
+                (if test("failed to compact|compaction") then "compaction" else empty end),
+                ([$message | scan("(?:status(?: code)?[ :]+|http[ /]+)([45][0-9]{2})") | .[0] | "http-" + .][])
+              ] | if length == 0 then ["unclassified-error"] else . end)
+            | flatten | unique | .[]
+          ' "$EXECUTION_FILE")"
+
           turns_tsv="$(jq -r -s '
             [.[] | select(.type == "turn.completed") | .usage // {}]
             | to_entries[]
@@ -671,6 +697,9 @@ jobs:
           echo "Codex duration: wall=${DURATION_SECONDS:-unknown}s"
           echo "Codex items: unique=${unique_items}, tool_calls=${tool_calls}, failed=${item_failed}"
           echo "Codex errors: ${error_events}"
+          if [[ -n "$error_signals" ]]; then
+            printf 'Codex error signals:\n%s\n' "$error_signals"
+          fi
           echo "Codex tokens: input=${total_input}, cached_input=${total_cached}, output=${total_output}, reasoning_output=${total_reasoning}"
           if [[ -n "$item_counts_tsv" ]]; then
             while IFS=$'\t' read -r item_type count; do
@@ -687,6 +716,13 @@ jobs:
             echo "- Duration: ${DURATION_SECONDS:-unknown}s wall"
             echo "- Items: ${unique_items} unique; ${tool_calls} tool calls; ${item_failed} failed"
             echo "- Error events: ${error_events}"
+            if [[ -n "$error_signals" ]]; then
+              printf '\n**Error signals (allowlisted; raw messages withheld)**\n\n'
+              while IFS= read -r signal; do
+                printf -- '- %s\n' "$signal"
+              done <<< "$error_signals"
+              echo
+            fi
             echo "- Tokens: ${total_input} input; ${total_cached} cached input; ${total_output} output; ${total_reasoning} reasoning output"
             echo '- Responses API request count: not exposed by the Codex JSON event stream'
             echo

@@ -35,9 +35,13 @@ on:
       pull_request_number:
         description: Pull request number to review
         required: true
+      dry_run:
+        description: Run the real reviewer without posting comments or changing labels
+        type: boolean
+        default: false
 
 concurrency:
-  group: ai-pr-review-${{ github.event.inputs.pull_request_number || github.event.pull_request.number }}
+  group: ai-pr-review-${{ github.event.inputs.pull_request_number || github.event.pull_request.number }}${{ inputs.dry_run && '-dry-run' || '' }}
   cancel-in-progress: true
 
 jobs:
@@ -239,6 +243,7 @@ jobs:
     uses: ./.github/workflows/ai-codex-review.yml
     with:
       auth_mode: ${{ needs.review_target.outputs.auth_mode }}
+      dry_run: ${{ inputs.dry_run || false }}
       pull_request_number: ${{ needs.review_target.outputs.number }}
       head_ref: ${{ needs.review_target.outputs.head_ref }}
       head_sha: ${{ needs.review_target.outputs.head_sha }}
@@ -260,7 +265,7 @@ jobs:
     name: Post Codex feedback
     needs: codex_review
     if: >-
-      ${{ needs.codex_review.result == 'success' &&
+      ${{ !inputs.dry_run && needs.codex_review.result == 'success' &&
           needs.codex_review.outputs.review_body != '' }}
     uses: ./.github/workflows/ai-post-review.yml
     permissions:
@@ -277,7 +282,7 @@ jobs:
 
   apply_review_outcome:
     name: Apply review outcome label
-    if: ${{ always() && needs.review_target.result == 'success' }}
+    if: ${{ always() && !inputs.dry_run && needs.review_target.result == 'success' }}
     needs:
       - review_target
       - codex_review
