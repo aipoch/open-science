@@ -1271,6 +1271,20 @@ class NotebookKernelExecutor implements NotebookExecutor {
           } else if (!result.reaped && (await nativeTerminationProof?.().catch(() => false))) {
             result = { reaped: true }
           }
+          if (
+            result.reaped &&
+            this.platform === 'win32' &&
+            nativeTerminationProof &&
+            child.pid !== undefined &&
+            child.exitCode === null &&
+            child.signalCode === null
+          ) {
+            // The native Job proof covers the workload, but precedes ACL restoration and the
+            // supervisor's exit. Keep this exact ChildProcess and its ownership receipt until the
+            // host exits; killing it here could interrupt ACL restoration. The caller's existing
+            // shutdown budget still applies and must not turn an unfinished drain into success.
+            await new Promise<void>((resolve) => child.once('exit', () => resolve()))
+          }
           log.info('kernel process termination proof', {
             sessionId: request.sessionId,
             projectId: request.projectId,

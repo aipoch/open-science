@@ -1576,8 +1576,8 @@ for (const variant of [
       await expect(usagePage.locator('[data-slot="translation-usage"]')).toContainText('560')
       await usagePage.screenshot({ path: testInfo.outputPath('translation-usage-accounting.png') })
     }
-    if (variant === 'standard') {
-      const dataRoot = await page.evaluate(
+    if (variant === 'standard' || variant === 'direct-api') {
+      const dataRoot = await app.page.evaluate(
         async () => (await window.api.storage.getInfo()).dataRoot
       )
       const cacheRoot = join(dataRoot, 'literature', 'pdf-translation-cache')
@@ -1612,11 +1612,13 @@ for (const variant of [
       await expect(
         restoredPanel.getByRole('button', { name: 'View translated PDF', exact: true })
       ).toBeEnabled()
-      expect(
-        (await app.readFakeAgentPrompts()).filter((entry) =>
-          entry.prompt.includes('PAIR_PDF_ACCEPTANCE')
-        )
-      ).toHaveLength(10)
+      if (variant === 'standard') {
+        expect(
+          (await app.readFakeAgentPrompts()).filter((entry) =>
+            entry.prompt.includes('PAIR_PDF_ACCEPTANCE')
+          )
+        ).toHaveLength(10)
+      }
       await selectRendition(resumedPage, 'Compare')
       await expect(resumedPage.locator('[data-page-number="1"] canvas')).toHaveCount(2)
       // Restore the already-published PDF; neither translating nor regenerating is recovery.
