@@ -80,7 +80,8 @@ async function fixture(listen = true): Promise<{
   return { bridge, owner, controller, server, bind, registration, unregister }
 }
 
-describe('the managed Run to project-view bridge', () => {
+// This fixture exercises the private Unix-socket transport, like RuntimeViewOwner's native suite.
+describe.skipIf(process.platform === 'win32')('the managed Run to project-view bridge', () => {
   it('can retry opening the same admitted generation when startup has not bound the socket yet', async () => {
     const f = await fixture(false)
     await expect(f.bridge.open(scope, 'viewer', parents)).rejects.toThrow()
