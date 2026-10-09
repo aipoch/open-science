@@ -385,7 +385,8 @@
       "src/main/notebook/code-risk-admission.test.ts",
       "src/main/session-package/research-reproduction.integration.test.ts",
       "src/main/notebook/research-service.macos.integration.test.ts",
-      "src/main/notebook/local-service.macos.integration.test.ts"
+      "src/main/notebook/local-service.macos.integration.test.ts",
+      "src/main/session-plan/session-plan-turn-outcome.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

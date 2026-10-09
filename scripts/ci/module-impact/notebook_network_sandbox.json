@@ -72,7 +72,11 @@
     "packages/notebook-network-sandbox/vendor/windows-runtime/sources.json",
     "packages/notebook-network-sandbox/vendor/windows-runtime/npm/prepare.mjs",
     "packages/notebook-network-sandbox/runtime/src/platform/local-service.ts",
-    "packages/notebook-network-sandbox/src/local-service.test.ts"
+    "packages/notebook-network-sandbox/src/local-service.test.ts",
+    "scripts/windows-installer-smoke.test.ts",
+    "scripts/check-windows-notebook-runtime.test.ts",
+    "scripts/windows-runtime-cdn.test.ts",
+    "scripts/windows-release-workflows.test.ts"
   ],
   "interfacePaths": [
     "packages/notebook-network-sandbox/src/index.ts",
@@ -636,7 +640,9 @@
       "src/main/acp/permission-context.test.ts",
       "src/main/acp/permission-frequency.test.ts",
       "src/main/acp/client-interaction-owner.test.ts",
-      "src/main/notebook/local-service-lease.test.ts"
+      "src/main/notebook/local-service-lease.test.ts",
+      "src/main/session-plan/session-plan-turn-outcome.test.ts",
+      "src/main/notebook/runtime-repair.windows.integration.test.ts"
     ]
   },
   "capabilityOverlays": [],

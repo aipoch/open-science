@@ -342,6 +342,7 @@
       "src/main/literature/pdf-structure/agent-reader.test.ts",
       "src/main/literature/pdf-structure/cache.test.ts",
       "src/main/literature/pdf-structure/engine.test.ts",
+      "src/main/literature/pdf-structure/native-complete-records.test.ts",
       "src/main/literature/pdf-structure/owner.test.ts",
       "src/main/literature/pdf-structure/reader.test.ts",
       "src/main/literature/pdf-structure/source-metadata.test.ts",
@@ -776,7 +777,9 @@
       "src/main/notebook/code-risk-admission.test.ts",
       "src/main/notebook/research-service.macos.integration.test.ts",
       "src/main/session-package/research-reproduction.integration.test.ts",
-      "src/main/notebook/local-service.macos.integration.test.ts"
+      "src/main/notebook/local-service.macos.integration.test.ts",
+      "src/main/session-plan/session-plan-turn-outcome.test.ts",
+      "src/main/notebook/runtime-repair.windows.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

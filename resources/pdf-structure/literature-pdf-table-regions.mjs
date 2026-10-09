@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { captionKind } from './literature-pdf-caption-group.mjs'
 import { area, intersection as intersect } from './literature-pdf-page-geometry.mjs'
-import { inside, rebaseTableCrop } from './literature-pdf-table-geometry.mjs'
+import { inside, isAdjacentTableScript, rebaseTableCrop } from './literature-pdf-table-geometry.mjs'
 import { clusterTableRulePositions } from './literature-pdf-table-rules.mjs'
 
 // A detector can start a lower table above its title when an upper table ends
@@ -840,9 +840,247 @@ function recoverCaptionedOpenRuleTable(items, rules, pageNumber, caption) {
   }
 }
 
-// Use each explicit caption to bound a separate grid. Page frames begin above
-// the caption and are excluded; ordinary forms cannot opt into this recovery.
-export function recoverCaptionedRuledTables(items, rules, captions, pageNumber, existing = []) {
+// A two-leaf grid above its caption needs all native faces, complete populated
+// fields and the separate measured stroke bounds. Center lines alone cannot
+// authorize this fallback or reserve a neighboring illustration as a table.
+function recoverBelowCaptionTwoLeafGrid(items, rules, captions, pageNumber, caption, paint) {
+  const finite = (r) =>
+    Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && r[2] > r[0] && r[3] > r[1]
+  if (!(paint instanceof Map) || caption.page !== pageNumber || !finite(caption.rect)) return
+  if (items.some((i) => i.text?.trim() && !finite(i.rect))) return
+  const seam = 0.02,
+    axisRules = rules.filter(
+      (r) =>
+        Array.isArray(r) &&
+        r.length === 4 &&
+        r.every(Number.isFinite) &&
+        ((r[0] === r[2] && r[3] > r[1]) || (r[1] === r[3] && r[2] > r[0]))
+    ),
+    nativeRules = [...new Map(axisRules.map((r) => [r.join(','), r])).values()],
+    vertical = nativeRules.filter((r) => r[0] === r[2]),
+    horizontal = nativeRules.filter((r) => r[1] === r[3] && r[1] < caption.rect[1]),
+    maximumHeight = Math.min(
+      caption.rect[3] - caption.rect[1],
+      items.reduce(
+        (maximum, i) => (Number.isFinite(i.height) ? Math.max(maximum, i.height) : maximum),
+        0
+      )
+    ),
+    frames = []
+  const painted = (r) => {
+    const p = paint.get(r.join(','))
+    if (
+      !finite(p) ||
+      p[0] > r[0] ||
+      p[1] > r[1] ||
+      p[2] < r[2] ||
+      p[3] < r[3] ||
+      (r[0] === r[2] ? Math.abs((p[0] + p[2]) / 2 - r[0]) : Math.abs((p[1] + p[3]) / 2 - r[1])) >
+        seam
+    )
+      return
+    return p
+  }
+  // Only native closings in the caption's short font-sized corridor can start
+  // a search. Retain the existing ruled-grid bound of at most 81 row edges.
+  for (const closing of horizontal.filter(
+    (r) =>
+      caption.rect[1] - r[1] <= maximumHeight * 2 &&
+      Math.abs((caption.rect[0] + caption.rect[2] - r[0] - r[2]) / 2) <= maximumHeight * 0.25
+  )) {
+    const family = horizontal.filter(
+      (r) =>
+        r[1] <= closing[1] &&
+        Math.abs(r[0] - closing[0]) < seam &&
+        Math.abs(r[2] - closing[2]) < seam
+    )
+    if (family.length < 4 || family.length > 81) continue
+    family.sort((a, b) => a[1] - b[1])
+    for (let start = 0; start <= family.length - 4; start++) {
+      const edges = family.slice(start),
+        frame = [edges[0][0], edges[0][1], edges[0][2], edges.at(-1)[1]],
+        owned = items.filter((i) => i.text?.trim() && intersect(i.rect, frame) > 0),
+        h = owned.reduce((maximum, i) => Math.max(maximum, i.height), 0)
+      if (
+        !finite(frame) ||
+        !Number.isFinite(h) ||
+        h <= 0 ||
+        owned.some(
+          (i) =>
+            !finite(i.rect) ||
+            !i.horizontal ||
+            !Number.isFinite(i.height) ||
+            i.height <= 0 ||
+            !Number.isFinite(i.baseline) ||
+            Math.abs(i.rect[3] - i.baseline) > seam ||
+            Math.abs(i.rect[3] - i.rect[1] - i.height) > seam ||
+            i.rect[0] < frame[0] ||
+            i.rect[2] > frame[2] ||
+            i.rect[1] < frame[1] ||
+            i.rect[3] > frame[3]
+        ) ||
+        new Set(owned.map((i) => i.rect.join(','))).size !== owned.length ||
+        caption.rect[1] - frame[3] <= 0 ||
+        caption.rect[1] - frame[3] > h * 2 ||
+        Math.abs((caption.rect[0] + caption.rect[2] - frame[0] - frame[2]) / 2) > h * 0.25
+      )
+        continue
+      const sides = vertical.filter(
+          (r) => r[0] >= frame[0] && r[0] <= frame[2] && r[1] < frame[3] && r[3] > frame[1]
+        ),
+        xs = [...new Set(sides.map((r) => r[0]))].sort((a, b) => a - b),
+        used = [...edges, ...sides],
+        bounds = used.map(painted)
+      if (
+        xs.length !== 3 ||
+        bounds.some((p) => !p) ||
+        sides.some((r) => r[1] < frame[1] - seam || r[3] > frame[3] + seam) ||
+        bounds.some((p, n) => (used[n][0] === used[n][2] ? p[2] - p[0] : p[3] - p[1]) > h * 0.5) ||
+        vertical.some(
+          (r) =>
+            xs.includes(r[0]) &&
+            ((r[1] < frame[1] - h * 0.25 && r[3] >= frame[1] - h * 0.25) ||
+              (r[3] > frame[3] + h * 0.25 && r[1] <= frame[3] + h * 0.25))
+        )
+      )
+        continue
+      let complete = true
+      for (let row = 0; row < edges.length - 1 && complete; row++) {
+        const upper = painted(edges[row]),
+          lower = painted(edges[row + 1])
+        for (const x of xs) {
+          const pieces = sides
+            .filter((r) => r[0] === x)
+            .map(painted)
+            .filter((p) => p[3] > upper[3] - seam && p[1] < lower[1] + seam)
+            .sort((a, b) => a[1] - b[1])
+          let reached = upper[3]
+          for (const p of pieces) {
+            if (p[1] > reached + seam) {
+              complete = false
+              break
+            }
+            reached = Math.max(reached, p[3])
+            if (
+              (x === xs[0] && Math.abs(p[0] - upper[0]) > seam) ||
+              (x === xs[2] && Math.abs(p[2] - upper[2]) > seam)
+            ) {
+              complete = false
+              break
+            }
+          }
+          if (reached < lower[1] - seam) complete = false
+        }
+      }
+      if (!complete) continue
+      const cells = []
+      for (let row = 0; row < edges.length - 1 && complete; row++) {
+        const rowOrdinary = []
+        for (let column = 0; column < 2; column++) {
+          const fonts = owned.filter(
+              (i) =>
+                i.rect[0] >= xs[column] &&
+                i.rect[2] <= xs[column + 1] &&
+                i.baseline > edges[row][1] &&
+                i.baseline < edges[row + 1][1] &&
+                (i.rect[1] + i.rect[3]) / 2 > edges[row][1] &&
+                (i.rect[1] + i.rect[3]) / 2 < edges[row + 1][1]
+            ),
+            ordinary = fonts.filter((i) => Math.abs(i.height - h) < seam)
+          if (
+            !ordinary.length ||
+            fonts.some(
+              (child) =>
+                !ordinary.includes(child) &&
+                ordinary.filter(
+                  (parent) =>
+                    isAdjacentTableScript(child, parent) &&
+                    Math.abs(child.rect[0] - parent.rect[2]) <= h * 0.05
+                ).length !== 1
+            )
+          ) {
+            complete = false
+            break
+          }
+          rowOrdinary.push(...ordinary)
+          cells.push(...fonts)
+        }
+        if (rowOrdinary.some((i) => Math.abs(i.baseline - rowOrdinary[0].baseline) > seam))
+          complete = false
+      }
+      if (!complete || cells.length !== owned.length || new Set(cells).size !== owned.length)
+        continue
+      const crop = bounds.reduce(
+          (a, p) => [
+            Math.min(a[0], p[0]),
+            Math.min(a[1], p[1]),
+            Math.max(a[2], p[2]),
+            Math.max(a[3], p[3])
+          ],
+          [...bounds[0]]
+        ),
+        corridor = [crop[0], crop[3], crop[2], caption.rect[1]]
+      if (
+        !finite(corridor) ||
+        items.some(
+          (i) =>
+            i.text?.trim() &&
+            ((intersect(i.rect, crop) > 0 && !owned.includes(i)) || intersect(i.rect, corridor) > 0)
+        ) ||
+        nativeRules.some(
+          (r) =>
+            Math.max(r[0], crop[0]) <= Math.min(r[2], crop[2]) &&
+            Math.max(r[1], crop[1]) <= Math.min(r[3], crop[3]) &&
+            !used.includes(r)
+        ) ||
+        captions.some(
+          (c) =>
+            c !== caption &&
+            c.page === pageNumber &&
+            (intersect(c.rect, crop) > 0 ||
+              intersect(c.rect, corridor) > 0 ||
+              (captionKind(c.lines?.[0]) === 'table' &&
+                finite(c.rect) &&
+                c.rect[1] > crop[3] &&
+                c.rect[1] - crop[3] < h * 2 &&
+                Math.abs((c.rect[0] + c.rect[2] - frame[0] - frame[2]) / 2) < h * 0.25))
+        )
+      )
+        continue
+      frames.push({ crop, edges, xs })
+    }
+  }
+  if (frames.length !== 1) return
+  const { crop, edges, xs } = frames[0]
+  return {
+    id: `p${pageNumber}-below-caption-two-leaf-table`,
+    recoveredGrid: true,
+    cropRect: crop,
+    structure: {
+      objects: [
+        ...edges.slice(1).map((edge, row) => ({
+          label: 'table row',
+          rect: [0, edges[row][1] - crop[1], crop[2] - crop[0], edge[1] - crop[1]]
+        })),
+        ...xs.slice(1).map((x, column) => ({
+          label: 'table column',
+          rect: [xs[column] - crop[0], 0, x - crop[0], crop[3] - crop[1]]
+        }))
+      ]
+    }
+  }
+}
+
+// Use each explicit caption to bound a separate grid. Page frames and ordinary
+// forms cannot opt into recovery without a complete source-owned lattice.
+export function recoverCaptionedRuledTables(
+  items,
+  rules,
+  captions,
+  pageNumber,
+  existing = [],
+  rulePaintBounds
+) {
   const tables = []
   const candidates = captions.filter((c) => captionKind(c.lines[0]) === 'table')
   // A detector can already provide the complete table while the open-rule
@@ -879,6 +1117,26 @@ export function recoverCaptionedRuledTables(items, rules, captions, pageNumber, 
     })
   }
   for (const [index, caption] of candidates.entries()) {
+    const closed = recoverBelowCaptionTwoLeafGrid(
+      items,
+      rules,
+      captions,
+      pageNumber,
+      caption,
+      rulePaintBounds
+    )
+    if (closed) {
+      if (
+        ![...existing, ...tables].some(
+          (t) => intersect(t.cropRect, closed.cropRect) > area(closed.cropRect) * 0.5
+        )
+      ) {
+        closed.caption = caption
+        closed.id += `-${index}`
+        tables.push(closed)
+      }
+      continue
+    }
     const next = candidates
       .filter((c) => c.rect[1] > caption.rect[3] && Math.abs(c.rect[0] - caption.rect[0]) < 4)
       .sort((a, b) => a.rect[1] - b.rect[1])[0]

@@ -1780,7 +1780,34 @@
     "src/main/literature/pdf-structure/source-grouped-header-recovery.test.ts",
     "src/main/literature/pdf-structure/source-hierdro-record-recovery.test.ts",
     "src/main/literature/pdf-structure/source-native-record-recovery.test.ts",
-    "src/main/literature/pdf-structure/user-study-paired-percentages.test.ts"
+    "src/main/literature/pdf-structure/user-study-paired-percentages.test.ts",
+    "resources/citation/NOTICE.md",
+    "resources/citation/american-medical-association.csl",
+    "resources/citation/apa.csl",
+    "resources/citation/chicago-author-date.csl",
+    "resources/citation/harvard-cite-them-right.csl",
+    "resources/citation/ieee.csl",
+    "resources/citation/locales-en-US.xml",
+    "resources/citation/locales-zh-CN.xml",
+    "resources/citation/mla.csl",
+    "resources/citation/nature.csl",
+    "resources/citation/vancouver.csl",
+    "resources/pdf-structure/literature-pdf-reading-order.mjs",
+    "test/fixtures/literature-pdf.ts",
+    "resources/pdf-structure/literature-pdf-native-leaf-record-repair.mjs",
+    "src/main/literature/pdf-structure/figure-native-finite-siblings.test.ts",
+    "src/main/literature/pdf-structure/fixtures/source-grids/captionless-ruled-coordinate-index-records.jsonl",
+    "src/main/literature/pdf-structure/fixtures/source-grids/native-finite-figure-siblings.jsonl",
+    "src/main/literature/pdf-structure/fixtures/source-grids/native-printed-marked-lanes.jsonl",
+    "src/main/literature/pdf-structure/fixtures/source-grids/native-printed-paired-leaves.jsonl",
+    "src/main/literature/pdf-structure/fixtures/source-grids/native-repeated-header-math-records.jsonl",
+    "src/main/literature/pdf-structure/fixtures/source-grids/native-terminal-record-after-separator.jsonl",
+    "src/main/literature/pdf-structure/fixtures/source-grids/segmented-outer-frame-outside-detector-crop.jsonl",
+    "src/main/literature/pdf-structure/native-explicit-table-evidence.test.ts",
+    "src/main/literature/pdf-structure/native-printed-leaf-repair.test.ts",
+    "src/main/literature/pdf-structure/native-raised-flag-notes.test.ts",
+    "src/main/literature/pdf-structure/native-caption-context-ownership.test.ts",
+    "src/main/literature/pdf-structure/fixtures/source-grids/native-caption-context-ownership.jsonl"
   ],
   "interfacePaths": [
     "src/main/literature/command-owner.ts",
@@ -2340,7 +2367,12 @@
       "src/main/literature/pdf-structure/source-grouped-header-recovery.test.ts",
       "src/main/literature/pdf-structure/source-hierdro-record-recovery.test.ts",
       "src/main/literature/pdf-structure/source-native-record-recovery.test.ts",
-      "src/main/literature/pdf-structure/user-study-paired-percentages.test.ts"
+      "src/main/literature/pdf-structure/user-study-paired-percentages.test.ts",
+      "src/main/literature/pdf-structure/figure-native-finite-siblings.test.ts",
+      "src/main/literature/pdf-structure/native-explicit-table-evidence.test.ts",
+      "src/main/literature/pdf-structure/native-printed-leaf-repair.test.ts",
+      "src/main/literature/pdf-structure/native-raised-flag-notes.test.ts",
+      "src/main/literature/pdf-structure/native-caption-context-ownership.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -2632,7 +2664,8 @@
       "src/main/acp/approved-handoff-outcome.integration.test.ts",
       "src/main/acp/approved-handoff-outcome.test.ts",
       "src/main/literature/pdf-translation/checkpoints.test.ts",
-      "src/main/session-package/research-reproduction.integration.test.ts"
+      "src/main/session-package/research-reproduction.integration.test.ts",
+      "src/main/session-plan/session-plan-turn-outcome.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

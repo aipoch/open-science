@@ -106,6 +106,8 @@ import {
   PackageTextScanner,
   type PackageSensitiveContentSource
 } from './sensitive-content'
+import type { PublishedSessionHandoff } from '../session-persistence/coordinator'
+import { isSessionPackagePending } from '../storage/session-package-state'
 import { SessionRepository, loadSessionMutationAuthority } from '../session-persistence/repository'
 import { defaultFileDurability } from '../storage/file-durability'
 import { writeDurableJsonFile } from '../storage/durable-json-file'
@@ -167,7 +169,7 @@ type PackageOptions = {
   getClient: () => Promise<PrismaClient>
   isSessionActive?: (projectId: string, sessionId: string) => boolean
   inspectPackage?: typeof inspectSessionPackage
-  onSessionPublished?: (identity: SessionPackageRequest) => Promise<void>
+  onSessionPublished?: (publication: PublishedSessionHandoff) => Promise<void>
 }
 
 type PackageExportOptions = {
@@ -1907,6 +1909,26 @@ export class SessionPackageService {
       {},
       new SessionProjectionRepository(this.options.getClient)
     )
+    const publish = async (saved: PersistedChatSession): Promise<void> => {
+      if (
+        saved.id !== identity.sessionId ||
+        saved.projectId !== identity.projectId ||
+        (saved.packageOrigin ?? saved.forkOrigin)?.importId !== operation
+      )
+        throw new Error('Import publication Session identity mismatch.')
+      const pendingProjectImport =
+        identity.projectId === `import-${operation}` &&
+        saved.packageOrigin?.importId === operation &&
+        (await isSessionPackagePending(this.configRoot, identity.projectId))
+          ? { operationId: operation }
+          : undefined
+      await this.options.onSessionPublished?.({
+        projectId: identity.projectId,
+        sessionId: identity.sessionId,
+        session: saved,
+        ...(pendingProjectImport ? { pendingProjectImport } : {})
+      })
+    }
     const current = await repository.loadSessionWithDiagnostics(
       identity.projectId,
       identity.sessionId,
@@ -1919,8 +1941,8 @@ export class SessionPackageService {
         throw new Error('Import publication Session identity mismatch.')
       // Resume with live authority, preserving later preferences and completing any interrupted
       // JSON-to-SQLite projection through the repository that owns that publication.
-      await repository.saveSession(current.session)
-      await this.options.onSessionPublished?.(identity)
+      const saved = await repository.saveSession(current.session)
+      await publish(saved)
       return
     }
     let session = await new SessionRepository(join(operationRoot, 'session-stage')).loadSession(
@@ -1953,8 +1975,8 @@ export class SessionPackageService {
     }
     // Live Session authority appears only after native records commit. Recovery repeats the
     // same repository publication; it never republishes records or replaces another Session.
-    await repository.saveSession(session)
-    await this.options.onSessionPublished?.(identity)
+    const saved = await repository.saveSession(session)
+    await publish(saved)
     // Keep the directory claims after publication. Startup package deletion requires these exact
     // import identities before it can retire any native scope, including retained upstream scopes.
   }

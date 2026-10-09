@@ -17,6 +17,7 @@ import {
   formatModuleImpactShadowSummary
 } from './module-impact-shadow.mjs'
 import { createAffectedTestPlan } from './module-test-impact.mjs'
+import { resolveModuleImpactInputs } from './module-impact-inputs.mjs'
 
 const manifestOnlyGraph = Object.freeze({
   status: 'unavailable-manifest-only',
@@ -60,9 +61,18 @@ export function runModuleImpactAuthorityCli(
   const base = requireCommit(argumentValue(arguments_, '--base') ?? environment.BASE_SHA, '--base')
   const head = requireCommit(argumentValue(arguments_, '--head') ?? environment.HEAD_SHA, '--head')
   const changes = changesFromGit(base, head, { cwd, execute })
-  const candidatePlan = classifyChanges(changes)
+  const { manifest, registrationModules } = resolveModuleImpactInputs(changes, {
+    base,
+    head,
+    cwd,
+    execute
+  })
+  const candidatePlan = classifyChanges(changes, undefined, {
+    moduleManifest: manifest,
+    registrationModules
+  })
   const modulePlan = candidatePlan.bundles.includes('unit')
-    ? createAffectedTestPlan(changes, manifestOnlyGraph)
+    ? createAffectedTestPlan(changes, manifestOnlyGraph, manifest, registrationModules)
     : unusedModulePlan
   const report = createModuleImpactShadowReport(candidatePlan, modulePlan)
   const plan =

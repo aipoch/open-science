@@ -24,6 +24,62 @@ const currentStatus = JSON.stringify({
 })
 
 describe('module test impact commands', () => {
+  it.each(['added', 'modified', 'deleted'])(
+    'selects regression suites for an unregistered %s fixture',
+    (status) => {
+      const plan = createAffectedTestPlan(
+        [{ path: 'test/fixtures/pdf-translation/new-regression-case.jsonl', status }],
+        { status: 'unavailable-manifest-only', testFiles: [] }
+      )
+      expect(plan.mode).toBe('selective')
+      expect(plan.modules).toEqual([])
+      expect(plan.capabilityOverlays).toEqual([])
+      expect(plan.testFiles).toEqual(
+        expect.arrayContaining([
+          'src/main/literature/pdf-translation/writer.test.ts',
+          'src/main/settings/provider-text-generation.test.ts',
+          'src/renderer/src/pages/workspace/previews/renderers/pdf-translation-extraction.test.ts',
+          'src/shared/pdf-translation-recovery.test.ts',
+          'test/pdf-translation-native-verification.test.ts'
+        ])
+      )
+      expect(plan.testFiles).not.toContain('src/main/windows.test.ts')
+    }
+  )
+
+  it('unions fixture suites for renames and mixed changes without weakening global boundaries', () => {
+    const graph = { status: 'unavailable-manifest-only', testFiles: [] }
+    const fixture = { path: 'test/fixtures/nbformat.v4.5.schema.json', status: 'modified' }
+    const source = { path: 'src/main/notebook/ipynb-export.ts', status: 'modified' }
+    const sourcePlan = createAffectedTestPlan([source], graph)
+    const mixed = createAffectedTestPlan([source, fixture], graph)
+    expect(mixed.mode).toBe(sourcePlan.mode)
+    expect(mixed.testFiles).toEqual(expect.arrayContaining(sourcePlan.testFiles))
+    const renamed = createAffectedTestPlan(
+      [
+        {
+          ...fixture,
+          status: 'renamed',
+          previousPath: 'test/fixtures/reviewer-model-evaluation.json'
+        }
+      ],
+      graph
+    )
+    expect(renamed.mode).toBe('selective')
+    expect(renamed.testFiles).toEqual([
+      'scripts/reviewer-model-evaluation.test.mjs',
+      'src/main/notebook/ipynb-export.test.ts'
+    ])
+    for (const change of [
+      { path: 'package.json', status: 'modified' },
+      { path: 'test/fixtures/unknown-domain/new.json', status: 'added' },
+      { path: 'test/fixtures/pdf-translation/helper.ts', status: 'added' },
+      { ...fixture, status: 'type-changed' },
+      { ...fixture, status: 'renamed', previousPath: 'src/main/removed.ts' }
+    ])
+      expect(createAffectedTestPlan([fixture, change], graph).mode).toBe('full')
+  })
+
   it('collects an empty shard report without discovering the full suite for an empty selection', () => {
     const plan = createAffectedTestPlan([], { status: 'unavailable-manifest-only', testFiles: [] })
     const spawn = vi.fn(() => ({ status: 0 }))

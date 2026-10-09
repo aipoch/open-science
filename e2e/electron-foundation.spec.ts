@@ -179,7 +179,9 @@ test('deletes a project through confirmation and keeps it absent after relaunch'
 
   const projects = page.getByRole('region', { name: 'Projects' })
   await expect(projects.getByRole('button', { name: PROJECT_NAME, exact: true })).toHaveCount(0)
-  await expect(projects).toContainText('No projects yet. Create one to get started.')
+  await expect(
+    projects.getByRole('heading', { name: 'Create a project, start a conversation' })
+  ).toBeVisible()
 
   page = await app.restart()
   await expect(

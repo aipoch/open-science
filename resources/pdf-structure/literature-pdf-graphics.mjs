@@ -2,7 +2,9 @@
 import assert from 'node:assert/strict'
 import { captionKind } from './literature-pdf-caption-group.mjs'
 import { createHash } from 'node:crypto'
-import { OPS, Util } from 'pdfjs-dist/legacy/build/pdf.mjs'
+import { Path2D } from '@napi-rs/canvas'
+import { OPS, Util, version } from 'pdfjs-dist/legacy/build/pdf.mjs'
+import { nativeClosedRuleFrames } from './literature-pdf-figure-connectivity.mjs'
 
 // Locate small tables missed by the detector. The structure model still owns
 // their cells: require a caption, enclosing rules and aligned numeric records.
@@ -152,25 +154,360 @@ export function findCaptionedNumericTableRegions(items, rules, detectedRects = [
 // Single-axis strokes and thin rectangular fills establish table borders.
 // Bounding boxes of backgrounds, compound grids and curves are not cell edges.
 // Keep closed stroke rectangles separate from table-rule discovery: a path's
-// bounding box does not prove four edges. Only explicit four-corner polygons
-// with a closePath and axis-aligned transformed edges establish a figure frame.
+// bounding box does not prove four edges. Explicit closed outlines and four
+// separately painted, connected sides establish frames after exact clipping.
 export function collectClosedFigureFrames(operators, viewport) {
-  let transform = [1, 0, 0, 1, 0, 0]
+  let transform = [1, 0, 0, 1, 0, 0],
+    clip = [0, 0, viewport.width ?? Infinity, viewport.height ?? Infinity],
+    pendingClip = false,
+    lineWidth = 1,
+    solidStroke = true,
+    strokeAlpha = 1,
+    fillAlpha = 1
   const stack = [],
-    frames = []
+    frames = [],
+    sides = []
+  const save = () =>
+    stack.push({
+      transform: [...transform],
+      clip: clip && [...clip],
+      lineWidth,
+      solidStroke,
+      strokeAlpha,
+      fillAlpha
+    })
+  const restore = () => {
+    const state = stack.pop()
+    transform = state?.transform ?? [1, 0, 0, 1, 0, 0]
+    clip = state ? state.clip : null
+    lineWidth = state?.lineWidth ?? 1
+    solidStroke = state?.solidStroke ?? true
+    strokeAlpha = state?.strokeAlpha ?? 1
+    fillAlpha = state ? state.fillAlpha : 1
+    pendingClip = false
+  }
+  const intersectClip = (rect) => {
+    if (!clip || !rect) return null
+    const r = [
+      Math.max(clip[0], rect[0]),
+      Math.max(clip[1], rect[1]),
+      Math.min(clip[2], rect[2]),
+      Math.min(clip[3], rect[3])
+    ]
+    return r[0] < r[2] && r[1] < r[3] ? r : null
+  }
+  const rectangle = (points) => {
+    if (
+      points.length !== 4 ||
+      points.some((p) => !p.every(Number.isFinite)) ||
+      new Set(points.map((p) => p.join(','))).size !== 4
+    )
+      return
+    if (
+      points.some((p, n) => {
+        const q = points[(n + 1) % 4]
+        return Math.min(Math.abs(p[0] - q[0]), Math.abs(p[1] - q[1])) > 1e-5
+      })
+    )
+      return
+    return [
+      Math.min(...points.map((p) => p[0])),
+      Math.min(...points.map((p) => p[1])),
+      Math.max(...points.map((p) => p[0])),
+      Math.max(...points.map((p) => p[1]))
+    ]
+  }
+  const addFrame = (rect, paintClip) => {
+    if (
+      paintClip &&
+      rect.every((v, n) => (n < 2 ? v >= paintClip[n] - 1e-8 : v <= paintClip[n] + 1e-8))
+    )
+      frames.push(rect)
+  }
   for (const [i, op] of operators.fnArray.entries()) {
-    const args = operators.argsArray[i]
-    if (op === OPS.save) stack.push([...transform])
-    else if (op === OPS.restore) transform = stack.pop() ?? [1, 0, 0, 1, 0, 0]
+    const args = operators.argsArray[i],
+      // PDF.js paints the current path against the old clip before consumePath
+      // applies a pending clip. Keep that paint domain even when the new clip
+      // is curved and therefore unproved for all subsequent frame discovery.
+      paintClip = clip
+    if (op === OPS.constructPath && (pendingClip || [OPS.clip, OPS.eoClip].includes(args?.[0]))) {
+      pendingClip = false
+      const path = args?.[1]?.length === 1 ? args[1][0] : undefined
+      if (
+        path?.length !== 13 ||
+        path[0] !== 0 ||
+        path[12] !== 4 ||
+        ![3, 6, 9].every((n) => path[n] === 1)
+      )
+        clip = null
+      else {
+        const matrix = Util.transform(viewport.transform, transform),
+          points = [0, 3, 6, 9].map((n) => [path[n + 1], path[n + 2]])
+        for (const point of points) Util.applyTransform(point, matrix)
+        clip = intersectClip(rectangle(points))
+      }
+    }
+    if (op === OPS.save) save()
+    else if (op === OPS.restore || op === OPS.paintFormXObjectEnd) restore()
     else if (op === OPS.transform) transform = Util.transform(transform, args)
-    else if (op === OPS.constructPath && args[0] === OPS.stroke && args[1]?.length === 1) {
+    else if (op === OPS.paintFormXObjectBegin) {
+      save()
+      if (args?.[0]) transform = Util.transform(transform, args[0])
+      const bounds = args?.[1],
+        matrix = Util.transform(viewport.transform, transform)
+      // A form without a BBox introduces no new clipping path; its painted
+      // paths still inherit the caller's exact clip and saved graphics state.
+      if (bounds === null || bounds === undefined) continue
+      if (bounds?.length !== 4 || !bounds.every(Number.isFinite)) clip = null
+      else {
+        const points = [
+          [bounds[0], bounds[1]],
+          [bounds[2], bounds[1]],
+          [bounds[2], bounds[3]],
+          [bounds[0], bounds[3]]
+        ]
+        for (const point of points) Util.applyTransform(point, matrix)
+        clip = intersectClip(rectangle(points))
+      }
+    } else if (op === OPS.setLineWidth) lineWidth = args[0]
+    else if (op === OPS.setDash) solidStroke = Array.isArray(args[0]) && args[0].length === 0
+    else if (op === OPS.setGState) {
+      for (const [key, value] of args?.[0] ?? []) {
+        if (key === 'LW') lineWidth = value
+        if (key === 'D') solidStroke = Array.isArray(value?.[0]) && value[0].length === 0
+        if (key === 'CA') strokeAlpha = value
+        if (key === 'ca') fillAlpha = value
+      }
+    } else if (op === OPS.clip || op === OPS.eoClip) pendingClip = true
+    else if (
+      op === OPS.constructPath &&
+      [OPS.stroke, OPS.fill, OPS.fillStroke, OPS.eoFillStroke].includes(args[0]) &&
+      args[1]?.length === 1
+    ) {
       const nativePath = args[1][0]
       if (
         !Array.isArray(nativePath) &&
         !(ArrayBuffer.isView(nativePath) && typeof nativePath.length === 'number')
       )
         continue
-      const path = Array.from(nativePath)
+      let path = Array.from(nativePath)
+      if (args[0] !== OPS.fill && (!(strokeAlpha > 0) || !Number.isFinite(strokeAlpha))) continue
+      // A fill-and-stroke operation really paints its closed perimeter. A
+      // fill alone still requires the separate hollow-contour proof below.
+      if (
+        [OPS.fillStroke, OPS.eoFillStroke].includes(args[0]) &&
+        (!(lineWidth > 0) || !Number.isFinite(lineWidth))
+      )
+        continue
+      if (args[0] === OPS.stroke && path.length === 6 && path[0] === 0 && path[3] === 1) {
+        const matrix = Util.transform(viewport.transform, transform),
+          a = [path[1], path[2]],
+          b = [path[4], path[5]]
+        if (
+          !paintClip ||
+          !solidStroke ||
+          !(lineWidth > 0) ||
+          !Number.isFinite(lineWidth) ||
+          !(strokeAlpha > 0) ||
+          !Number.isFinite(strokeAlpha) ||
+          !matrix.every(Number.isFinite)
+        )
+          continue
+        if (!((matrix[1] === 0 && matrix[2] === 0) || (matrix[0] === 0 && matrix[3] === 0)))
+          continue
+        Util.applyTransform(a, matrix)
+        Util.applyTransform(b, matrix)
+        if (![...a, ...b].every(Number.isFinite) || (a[0] !== b[0] && a[1] !== b[1])) continue
+        const r = [
+          Math.max(Math.min(a[0], b[0]), paintClip[0]),
+          Math.max(Math.min(a[1], b[1]), paintClip[1]),
+          Math.min(Math.max(a[0], b[0]), paintClip[2]),
+          Math.min(Math.max(a[1], b[1]), paintClip[3])
+        ]
+        if (r[0] <= r[2] && r[1] <= r[3] && Math.max(r[2] - r[0], r[3] - r[1]) >= 30) sides.push(r)
+        continue
+      }
+      if (args[0] === OPS.fill) {
+        if (!(fillAlpha > 0) || !Number.isFinite(fillAlpha)) continue
+        // SVG stroke conversion can paint a border as two closed contours.
+        // Prove its hollow perimeter from opposite winding and four long
+        // straight sides; a solid background or arbitrary filled AABB fails.
+        const parts = []
+        let valid = path.every(Number.isFinite)
+        for (let n = 0; valid && n < path.length;) {
+          const command = path[n]
+          if (command === 4) {
+            n++
+            continue
+          }
+          if (![0, 1].includes(command) || n + 2 >= path.length) {
+            valid = false
+            break
+          }
+          if (command === 0) parts.push([])
+          if (!parts.length) {
+            valid = false
+            break
+          }
+          const p = [path[n + 1], path[n + 2]]
+          Util.applyTransform(p, Util.transform(viewport.transform, transform))
+          parts.at(-1).push(p)
+          n += 3
+        }
+        const closed =
+          parts.length === 2 &&
+          parts.every(
+            (p) =>
+              p.length >= 5 &&
+              p.length <= 1024 &&
+              p[0].every((v, i) => Math.abs(v - p.at(-1)[i]) <= 0.01)
+          )
+        if (valid && closed) {
+          const contours = parts
+            .map((points) => {
+              const rect = [
+                Math.min(...points.map((p) => p[0])),
+                Math.min(...points.map((p) => p[1])),
+                Math.max(...points.map((p) => p[0])),
+                Math.max(...points.map((p) => p[1]))
+              ]
+              const signed =
+                points
+                  .slice(1)
+                  .reduce((sum, p, n) => sum + points[n][0] * p[1] - p[0] * points[n][1], 0) / 2
+              const sides = points
+                .slice(1)
+                .map((p, n) => [points[n], p])
+                .filter(
+                  ([p, q]) =>
+                    Math.min(Math.abs(p[0] - q[0]), Math.abs(p[1] - q[1])) <= 0.01 &&
+                    (Math.abs(p[0] - q[0]) >= (rect[2] - rect[0]) * 0.5 ||
+                      Math.abs(p[1] - q[1]) >= (rect[3] - rect[1]) * 0.5)
+                )
+              const face =
+                sides.length === 4 &&
+                sides.every(([p, q], n) => {
+                  const vertical = Math.abs(p[0] - q[0]) <= 0.01
+                  const [a, b] = sides[(n + 1) % 4]
+                  return (
+                    vertical !== Math.abs(a[0] - b[0]) <= 0.01 &&
+                    Math.min(
+                      Math.abs(p[vertical ? 0 : 1] - rect[vertical ? 0 : 1]),
+                      Math.abs(p[vertical ? 0 : 1] - rect[vertical ? 2 : 3])
+                    ) <= 0.05
+                  )
+                })
+              return { rect, signed, face }
+            })
+            .sort((a, b) => Math.abs(b.signed) - Math.abs(a.signed))
+          const [outer, inner] = contours,
+            width = outer.rect[2] - outer.rect[0],
+            height = outer.rect[3] - outer.rect[1]
+          const inset = [
+            inner.rect[0] - outer.rect[0],
+            inner.rect[1] - outer.rect[1],
+            outer.rect[2] - inner.rect[2],
+            outer.rect[3] - inner.rect[3]
+          ]
+          if (
+            width >= 4 &&
+            height >= 4 &&
+            contours.every(
+              (c) =>
+                c.face &&
+                Math.abs(c.signed) > (c.rect[2] - c.rect[0]) * (c.rect[3] - c.rect[1]) * 0.9
+            ) &&
+            outer.signed * inner.signed < 0 &&
+            inset.every((v) => v > 0 && v < Math.min(width, height) * 0.04) &&
+            Math.max(...inset) < Math.min(...inset) * 1.2
+          )
+            addFrame(outer.rect, paintClip)
+        }
+        continue
+      }
+      // The same closed rounded perimeter can start on a straight side.
+      // Rotate its exact commands to the corner-first form below; a trailing
+      // move without a painted segment contributes no edge or frame evidence.
+      if (
+        path.length === 47 &&
+        path[0] === 0 &&
+        path[3] === 1 &&
+        path[43] === 4 &&
+        path[44] === 0 &&
+        [6, 16, 26, 36].every((n) => path[n] === 2) &&
+        [13, 23, 33].every((n) => path[n] === 1) &&
+        path.every(Number.isFinite) &&
+        path[41] === path[1] &&
+        path[42] === path[2]
+      )
+        path = [0, path[4], path[5], ...path.slice(6, 44)]
+      // A rounded rectangle has four monotone quarter-corners connected by
+      // four straight axis-aligned sides. Explicit closePath is mandatory;
+      // a curved path with the same bounding box cannot establish a frame.
+      if (
+        path.length === 41 &&
+        path[0] === 0 &&
+        path[40] === 4 &&
+        [3, 13, 23, 33].every((n) => path[n] === 2) &&
+        [10, 20, 30].every((n) => path[n] === 1) &&
+        path.every(Number.isFinite)
+      ) {
+        const matrix = Util.transform(viewport.transform, transform)
+        const point = (n) => {
+          const p = [path[n], path[n + 1]]
+          Util.applyTransform(p, matrix)
+          return p
+        }
+        const start = point(1),
+          corners = [3, 13, 23, 33].map((n, i) => ({
+            start: i ? point(n - 2) : start,
+            a: point(n + 1),
+            b: point(n + 3),
+            end: point(n + 5)
+          }))
+        const sides = corners.map((c, i) => [c.end, corners[(i + 1) % 4].start])
+        const straight = sides.every(([p, q], i) => {
+          const dx = Math.abs(p[0] - q[0]),
+            dy = Math.abs(p[1] - q[1])
+          const [a, b] = sides[(i + 1) % 4]
+          return (
+            Math.min(dx, dy) <= 0.01 &&
+            Math.max(dx, dy) >= 4 &&
+            dx <= 0.01 !== Math.abs(a[0] - b[0]) <= 0.01
+          )
+        })
+        const rounded = corners.every((c) => {
+          const dx = Math.abs(c.start[0] - c.end[0]),
+            dy = Math.abs(c.start[1] - c.end[1])
+          return (
+            dx > 0.01 &&
+            dy > 0.01 &&
+            Math.max(dx, dy) < Math.min(dx, dy) * 1.1 &&
+            [c.a, c.b].every((p) =>
+              p.every(
+                (v, i) =>
+                  v >= Math.min(c.start[i], c.end[i]) - 0.01 &&
+                  v <= Math.max(c.start[i], c.end[i]) + 0.01
+              )
+            ) &&
+            ((Math.abs(c.a[0] - c.start[0]) <= 0.01 && Math.abs(c.b[1] - c.end[1]) <= 0.01) ||
+              (Math.abs(c.a[1] - c.start[1]) <= 0.01 && Math.abs(c.b[0] - c.end[0]) <= 0.01))
+          )
+        })
+        if (straight && rounded) {
+          const points = corners.flatMap((c) => [c.start, c.end])
+          addFrame(
+            [
+              Math.min(...points.map((p) => p[0])),
+              Math.min(...points.map((p) => p[1])),
+              Math.max(...points.map((p) => p[0])),
+              Math.max(...points.map((p) => p[1]))
+            ],
+            paintClip
+          )
+        }
+        continue
+      }
       const polygon = path.slice(-13),
         prefix = path.slice(0, -13)
       if (
@@ -197,15 +534,20 @@ export function collectClosedFigureFrames(operators, viewport) {
         })
       )
         continue
-      frames.push([
-        Math.min(...points.map((p) => p[0])),
-        Math.min(...points.map((p) => p[1])),
-        Math.max(...points.map((p) => p[0])),
-        Math.max(...points.map((p) => p[1]))
-      ])
+      addFrame(
+        [
+          Math.min(...points.map((p) => p[0])),
+          Math.min(...points.map((p) => p[1])),
+          Math.max(...points.map((p) => p[0])),
+          Math.max(...points.map((p) => p[1]))
+        ],
+        paintClip
+      )
     }
   }
-  return frames
+  return [...frames, ...nativeClosedRuleFrames(sides)].filter(
+    (r, n, all) => !all.slice(0, n).some((p) => p.every((v, i) => Math.abs(v - r[i]) < 0.01))
+  )
 }
 
 export function collectTableRules(operators, viewport, rulePaintBounds) {
@@ -494,7 +836,60 @@ export function collectTableRules(operators, viewport, rulePaintBounds) {
 // quantization step. Raster bounds alone never establish equal image content.
 export function excludeRepeatedMarginContent(pages) {
   const authorHeader = (text) => /^\d+\s+\p{L}[\p{L}\s.,-]+\bet al\.$/u.test(text)
-  const headerText = (text) => (authorHeader(text) ? text.replace(/^\d+\s+/, '') : text)
+  const runningSeparator = (page, line) => {
+    const matches = (page.graphicsBounds ?? []).filter((g) => {
+      const r = g.normalizedRect,
+        bottom = (line.y + line.height) / page.height
+      return (
+        bottom > 0.07 &&
+        g.kind === 'path' &&
+        r[2] - r[0] >= 0.8 &&
+        r[3] - r[1] <= 0.015 &&
+        r[3] <= 0.12 &&
+        r[1] >= bottom - (line.height / page.height) * 0.5 &&
+        r[1] - bottom <= (line.height / page.height) * 1.5 &&
+        line.x / page.width >= r[0] &&
+        (line.x + line.width) / page.width <= r[2] &&
+        (page.graphicsBounds ?? []).some(
+          (other) =>
+            other !== g &&
+            other.normalizedRect[1] >= r[3] + (line.height / page.height) * 0.5 &&
+            (other.normalizedRect[2] - other.normalizedRect[0]) *
+              (other.normalizedRect[3] - other.normalizedRect[1]) >
+              0.01
+        )
+      )
+    })
+    return matches.length === 1 ? matches[0] : undefined
+  }
+  const headerText = (page, line) => {
+    const text = line.text
+    if (authorHeader(text)) return text.replace(/^\d+\s+/, '')
+    // Native merged rows include a changing printed ordinal. Normalize only
+    // an exact page ordinal in a compact author-shaped shallow-margin row.
+    if (
+      text.startsWith(`${page.pageNumber} `) &&
+      /^\d+\s+(?:\p{Lu}\.\s*){1,3}\p{Lu}\p{L}+(?:[\p{L}\s.]+)\band\s+(?:\p{Lu}\.\s*){1,3}\p{Lu}\p{L}+$/u.test(
+        text
+      )
+    )
+      return text.slice(String(page.pageNumber).length + 1)
+    if (
+      text.endsWith(` ${page.pageNumber}`) &&
+      /^[\p{Lu}\d\s-]+\s\d+$/u.test(text) &&
+      page.lines.some(
+        (first) =>
+          first !== line &&
+          /\bet al\.:.*-$/i.test(first.text) &&
+          Math.abs(first.fontSize - line.fontSize) < 0.1 &&
+          Math.abs(first.x - line.x) < 0.1 &&
+          line.y >= first.y + first.height &&
+          line.y - first.y - first.height < line.fontSize * 0.5
+      )
+    )
+      return text.slice(0, -String(page.pageNumber).length - 1)
+    return text
+  }
   // Repeated running headers and vertical download notices can expand a figure crop.
   // Require margin geometry, repetition and separation from graphics; vertical notices
   // also need publication wording so rotated chart labels remain part of the figure.
@@ -514,15 +909,17 @@ export function excludeRepeatedMarginContent(pages) {
         !captionKind(line.text) &&
         line.width > line.height * 2 &&
         line.height > 0 &&
-        rect[3] <= (authorHeader(line.text) ? 0.1 : 0.07) &&
+        rect[3] <= (authorHeader(line.text) || runningSeparator(page, line) ? 0.1 : 0.07) &&
         rect[3] - rect[1] <= 0.03
       if (
         !(verticalNotice || runningHeader) ||
-        (page.graphicsBounds ?? []).some(
-          ({ kind, normalizedRect: r }) =>
+        (page.graphicsBounds ?? []).some((graphic) => {
+          const { kind, normalizedRect: r } = graphic
+          return (
             // A page background/border path is not evidence that a repeated
             // running header is a figure label. Real images remain protected.
             !(runningHeader && kind === 'path' && r[2] - r[0] >= 0.95 && r[3] - r[1] >= 0.95) &&
+            !(runningHeader && graphic === runningSeparator(page, line)) &&
             // Quantized separator strokes can touch the top of the header's
             // font box. A long thin rule is not an enclosing body graphic.
             !(
@@ -536,7 +933,8 @@ export function excludeRepeatedMarginContent(pages) {
             r[2] > rect[0] &&
             r[1] < rect[3] &&
             r[3] > rect[1]
-        )
+          )
+        })
       )
         return []
       return [{ pageIndex, line, rect }]
@@ -548,7 +946,8 @@ export function excludeRepeatedMarginContent(pages) {
         notices.some(
           (other) =>
             notice.pageIndex !== other.pageIndex &&
-            headerText(notice.line.text) === headerText(other.line.text) &&
+            headerText(pages[notice.pageIndex], notice.line) ===
+              headerText(pages[other.pageIndex], other.line) &&
             notice.rect.every((v, i) => Math.abs(v - other.rect[i]) <= 1 / 256)
         )
       )
@@ -718,7 +1117,7 @@ export function excludeRepeatedMarginContent(pages) {
           kind === 'path' &&
           r[3] <= 0.07 &&
           r[2] - r[0] <= 0.25 &&
-          r[3] - r[1] <= 0.03 &&
+          r[3] - r[1] <= 0.03 + 1 / 256 &&
           page.lines?.some(
             (l) =>
               excludedLines.has(l) &&
@@ -1048,7 +1447,8 @@ export function excludeRepeatedMarginContent(pages) {
                     Math.abs(other.y - line.y) <= 1 &&
                     Math.abs(other.width - line.width) <= 1
                 )) &&
-              line.y + line.height < r[1] * page.height
+              (line.y + line.height < r[1] * page.height ||
+                runningSeparator(page, line)?.normalizedRect === r)
           )
       )
       .map((graphic) => ({ pageIndex, graphic }))
@@ -1186,6 +1586,228 @@ function decodedWhiteBorderRect(decoded, matrix, viewport) {
   ]
 }
 
+// PDF.js replaces DrawOPS in the same render stream with a native Path2D while
+// painting. Observe its complete commands, never promote its bounding box.
+function imageEnvelopeRectangularClip(path) {
+  if (Array.isArray(path) || path instanceof Float32Array) {
+    return (
+      path.length === 13 &&
+      Array.from(path).every(Number.isFinite) &&
+      path[0] === 0 &&
+      path[3] === 1 &&
+      path[6] === 1 &&
+      path[9] === 1 &&
+      path[12] === 4 &&
+      path[2] === path[5] &&
+      path[4] === path[7] &&
+      path[8] === path[11] &&
+      path[10] === path[1] &&
+      path[4] > path[1] &&
+      path[8] > path[2]
+    )
+  }
+  if (!(path instanceof Path2D) || Object.getPrototypeOf(path) !== Path2D.prototype) return false
+  const commands = Path2D.prototype.toSVGString.call(path)
+  if (commands.length > 512) return false
+  const number = '[-+]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][-+]?\\d+)?'
+  const point = `(${number}) (${number})`
+  const rect = new RegExp(`^M${point}L${point}L${point}L${point}L${point}Z$`, 'u').exec(commands)
+  if (!rect) return false
+  const [x0, y0, x1, y1, x2, y2, x3, y3, x4, y4] = rect.slice(1).map(Number)
+  return (
+    rect.slice(1).map(Number).every(Number.isFinite) &&
+    y0 === y1 &&
+    x1 === x2 &&
+    y2 === y3 &&
+    x3 === x4 &&
+    x4 === x0 &&
+    y4 === y0 &&
+    x1 > x0 &&
+    y2 > y0
+  )
+}
+
+// Only a simple, observed render context supplies this image destination upper
+// bound. Reject whole streams with effects or nested programs rather than
+// reconstructing a second graphics-state engine. Clips may only reduce paint.
+function imageEnvelopeRenderContext(task, operators) {
+  const viewport = task.params?.viewport,
+    context = task.gfx?.ctx
+  if (
+    version !== '5.4.624' ||
+    task.params?.transform ||
+    (task.params?.background !== null && task.params?.background !== undefined) ||
+    !context ||
+    context !== task.params?.canvasContext ||
+    task.gfx.pageColors !== null ||
+    !['none', ''].includes(context.filter) ||
+    context.shadowBlur !== 0 ||
+    context.shadowOffsetX !== 0 ||
+    context.shadowOffsetY !== 0 ||
+    context.globalAlpha !== 1 ||
+    context.globalCompositeOperation !== 'source-over' ||
+    typeof context.getTransform !== 'function' ||
+    !(viewport?.width > 0) ||
+    !(viewport?.height > 0) ||
+    !Number.isFinite(viewport.width) ||
+    !Number.isFinite(viewport.height) ||
+    viewport.rotation !== 0 ||
+    !Array.isArray(viewport.transform) ||
+    viewport.transform.length !== 6 ||
+    !viewport.transform.every(Number.isFinite) ||
+    viewport.transform[0] <= 0 ||
+    viewport.transform[1] !== 0 ||
+    viewport.transform[2] !== 0 ||
+    viewport.transform[3] >= 0
+  )
+    return false
+  const original = context.getTransform()
+  if (
+    !original ||
+    [original.a, original.b, original.c, original.d, original.e, original.f].some(
+      (v, i) => v !== [1, 0, 0, 1, 0, 0][i]
+    )
+  )
+    return false
+  const allowed = new Set([
+    OPS.save,
+    OPS.restore,
+    OPS.transform,
+    OPS.dependency,
+    OPS.constructPath,
+    OPS.clip,
+    OPS.eoClip,
+    OPS.paintImageXObject,
+    OPS.setFillRGBColor,
+    OPS.setStrokeRGBColor,
+    OPS.beginText,
+    OPS.endText,
+    OPS.setTextRenderingMode,
+    OPS.setFont,
+    OPS.setTextMatrix,
+    OPS.showText,
+    OPS.setCharSpacing,
+    OPS.setWordSpacing,
+    OPS.setHScale,
+    OPS.setLeading,
+    OPS.moveText,
+    OPS.setLeadingMoveText,
+    OPS.nextLine,
+    OPS.setTextRise
+  ])
+  let depth = 0
+  for (const [index, operation] of operators.fnArray.entries()) {
+    const args = operators.argsArray[index]
+    if (!allowed.has(operation)) return false
+    if (operation === OPS.save) depth++
+    else if (operation === OPS.restore) {
+      if (!depth) return false
+      depth--
+    } else if (operation === OPS.transform) {
+      if (!Array.isArray(args) || args.length !== 6 || !args.every(Number.isFinite)) return false
+    } else if (operation === OPS.setTextRenderingMode && args?.[0] !== 0) return false
+    else if (operation === OPS.setFont) {
+      const source = args?.[0],
+        font =
+          typeof source === 'string' && task.commonObjs?.has(source)
+            ? task.commonObjs.get(source)
+            : undefined
+      if (
+        !font ||
+        font.isType3Font ||
+        ![
+          'Type1',
+          'Type1C',
+          'CIDFontType0',
+          'CIDFontType0C',
+          'CIDFontType2',
+          'TrueType',
+          'OpenType',
+          'MMType1'
+        ].includes(font.type)
+      )
+        return false
+    } else if (operation === OPS.clip || operation === OPS.eoClip) {
+      const next = operators.argsArray[index + 1],
+        path = next?.[1]?.[0]
+      if (
+        operators.fnArray[index + 1] !== OPS.constructPath ||
+        next?.[0] !== OPS.endPath ||
+        next?.[1]?.length !== 1 ||
+        !imageEnvelopeRectangularClip(path)
+      )
+        return false
+    } else if (
+      operation === OPS.constructPath &&
+      ![
+        OPS.endPath,
+        OPS.stroke,
+        OPS.closeStroke,
+        OPS.fill,
+        OPS.eoFill,
+        OPS.fillStroke,
+        OPS.eoFillStroke,
+        OPS.closeFillStroke,
+        OPS.closeEOFillStroke
+      ].includes(args?.[0])
+    )
+      return false
+  }
+  return depth === 0
+}
+
+function imageEnvelopeRect(decoded, transform, viewport, recorded) {
+  if (
+    !(decoded?.data instanceof Uint8Array || decoded?.data instanceof Uint8ClampedArray) ||
+    ![2, 3].includes(decoded.kind) ||
+    !Number.isSafeInteger(decoded.width) ||
+    decoded.width <= 0 ||
+    !Number.isSafeInteger(decoded.height) ||
+    decoded.height <= 0 ||
+    decoded.data.length !== decoded.width * decoded.height * (decoded.kind === 3 ? 4 : 3) ||
+    decoded.data.length > 16_000_000 ||
+    !transform.every(Number.isFinite) ||
+    transform[0] <= 0 ||
+    transform[3] <= 0 ||
+    transform[1] !== 0 ||
+    transform[2] !== 0
+  )
+    return
+  const channels = decoded.kind === 3 ? 4 : 3
+  let visible = false
+  for (let index = 0; index < decoded.data.length; index += channels)
+    if (
+      (channels === 3 || decoded.data[index + 3] > 0) &&
+      (decoded.data[index] !== 255 ||
+        decoded.data[index + 1] !== 255 ||
+        decoded.data[index + 2] !== 255)
+    ) {
+      visible = true
+      break
+    }
+  if (!visible) return
+  const matrix = Util.transform(viewport.transform, transform)
+  const topLeft = [0, 1],
+    bottomRight = [1, 0]
+  Util.applyTransform(topLeft, matrix)
+  Util.applyTransform(bottomRight, matrix)
+  if (bottomRight[0] - topLeft[0] <= 2 || bottomRight[1] - topLeft[1] <= 2) return
+  // PDFjs drawImageAtIntegerCoords rounds both destination corners. Include
+  // half an output pixel; this is not decoded-white-border ink or a crop.
+  const envelope = [
+    topLeft[0] - 0.5,
+    topLeft[1] - 0.5,
+    bottomRight[0] + 0.5,
+    bottomRight[1] + 0.5
+  ].map((v, i) => v / (i % 2 ? viewport.height : viewport.width))
+  if (
+    !envelope.every(Number.isFinite) ||
+    envelope.some((v, i) => v < 0 || v > 1 || (i < 2 ? v < recorded[i] : v > recorded[i]))
+  )
+    return
+  return envelope
+}
+
 export function collectGraphicsBounds(renderTask, boxes) {
   // PDF.js 5.4.624 getOperatorList() sets the OPLIST intent, disabling queue optimization.
   // recordedBBoxes uses the render stream, so indices from getOperatorList() are NOT compatible.
@@ -1197,6 +1819,7 @@ export function collectGraphicsBounds(renderTask, boxes) {
   let transform = [1, 0, 0, 1, 0, 0]
   const transforms = [],
     viewport = renderTask._internalRenderTask.params?.viewport
+  const envelopeContext = imageEnvelopeRenderContext(renderTask._internalRenderTask, operators)
   let invalidGraphicsBounds = 0
   for (const [index, operation] of operators.fnArray.entries()) {
     const args = operators.argsArray[index]
@@ -1232,7 +1855,7 @@ export function collectGraphicsBounds(renderTask, boxes) {
     }
     // Compare decoded pixels, not per-page object IDs or bounding boxes. Hash
     // decoded images within a bounded budget, including manuscript watermarks.
-    let imageHash, paintedNormalizedRect
+    let imageHash, paintedNormalizedRect, imageEnvelopeNormalizedRect
     if (image) {
       const source = operators.argsArray[index]?.[0]
       const task = renderTask._internalRenderTask
@@ -1271,13 +1894,21 @@ export function collectGraphicsBounds(renderTask, boxes) {
         )
           paintedNormalizedRect = painted
       }
+      if (envelopeContext && operation === OPS.paintImageXObject && imageHash)
+        imageEnvelopeNormalizedRect = imageEnvelopeRect(
+          decoded,
+          transform,
+          viewport,
+          normalizedRect
+        )
     }
     const graphic = {
       operationIndex: index,
       kind: image ? 'image' : 'path',
       normalizedRect,
       ...(imageHash ? { imageHash } : {}),
-      ...(paintedNormalizedRect ? { paintedNormalizedRect } : {})
+      ...(paintedNormalizedRect ? { paintedNormalizedRect } : {}),
+      ...(imageEnvelopeNormalizedRect ? { imageEnvelopeNormalizedRect } : {})
     }
     graphicsBounds.push(graphic)
     if (

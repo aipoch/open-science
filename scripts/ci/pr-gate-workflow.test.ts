@@ -283,6 +283,7 @@ describe('PR Gate workflow', () => {
         git('config', 'user.name', 'CI Test')
         for (const name of [
           'module-impact-authority.mjs',
+          'module-impact-inputs.mjs',
           'module-impact-shadow.mjs',
           'module-test-impact.mjs',
           'module-impact.json',

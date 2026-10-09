@@ -129,7 +129,10 @@
     "src/renderer/src/lib/compute/job-analysis-trigger.test.ts",
     "src/renderer/src/lib/compute/useJobAnalysisEffect.render.test.tsx",
     "src/renderer/src/lib/compute/useSessionJobHydration.render.test.tsx",
-    "src/main/compute/compute-submission-evidence-recovery.integration.test.ts"
+    "src/main/compute/compute-submission-evidence-recovery.integration.test.ts",
+    "resources/compute-askpass-win.cjs",
+    "resources/compute-askpass.cjs",
+    "resources/compute-askpass.sh"
   ],
   "interfacePaths": [
     "src/main/compute/connection-broker.ts",
@@ -588,7 +591,8 @@
       "src/main/acp/approved-handoff-outcome.integration.test.ts",
       "src/main/acp/approved-handoff-outcome.test.ts",
       "src/main/literature/pdf-translation/checkpoints.test.ts",
-      "src/main/session-package/research-reproduction.integration.test.ts"
+      "src/main/session-package/research-reproduction.integration.test.ts",
+      "src/main/session-plan/session-plan-turn-outcome.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],

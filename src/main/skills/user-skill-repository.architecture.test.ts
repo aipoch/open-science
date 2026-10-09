@@ -957,7 +957,9 @@ describe('User Skill repository architecture', () => {
           'src/main/notebook/code-risk-admission.test.ts',
           'src/main/session-package/research-reproduction.integration.test.ts',
           'src/main/notebook/local-service.macos.integration.test.ts',
-          'src/main/notebook/research-service.macos.integration.test.ts'
+          'src/main/notebook/research-service.macos.integration.test.ts',
+          'src/main/session-plan/session-plan-turn-outcome.test.ts',
+          'src/main/notebook/runtime-repair.windows.integration.test.ts'
         ]
       },
       capabilityOverlays: ['windows_sensitive', 'e2e_regressions', 'e2e_delegation'],

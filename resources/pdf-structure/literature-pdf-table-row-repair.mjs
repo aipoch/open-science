@@ -553,6 +553,46 @@ export function repairWrappedTableRows({
       b = items.filter((i) => inFullRow(tail, i)),
       h = Math.max(...b.map((i) => i.height)),
       cols = [...new Set(b.map(columnOf))]
+    const unfinished = cols.some((c) => {
+      const text = a
+        .filter((i) => columnOf(i) === c)
+        .map((i) => i.text)
+        .join('')
+      return (
+        (text.match(/\(/g)?.length ?? 0) > (text.match(/\)/g)?.length ?? 0) &&
+        b.filter((i) => columnOf(i) === c).some((i) => i.text.includes(')'))
+      )
+    })
+    const parallelWrap =
+      cols.length >= 2 &&
+      cols.every(
+        (c) =>
+          new Set(
+            a.filter((i) => columnOf(i) === c && /\p{L}{2}/u.test(i.text)).map((i) => i.baseline)
+          ).size >= 2
+      )
+    const closedProseTail =
+      (unfinished || parallelWrap) &&
+      cols.every((c) => b.some((i) => columnOf(i) === c && /^[a-z]{2}/u.test(i.text))) &&
+      b.every((i) => i.horizontal && Math.abs(i.height - h) < h * 0.1) &&
+      rules.some(
+        (r) =>
+          r[1] === r[3] &&
+          r[0] <= columnRects[0][0] + h &&
+          r[2] >= right - h &&
+          r[1] >= union(b)[3] &&
+          r[1] - union(b)[3] < h
+      ) &&
+      rows
+        .slice(1, -2)
+        .filter(
+          (r) =>
+            new Set(
+              items
+                .filter((i) => inFullRow(r, i) && columnOf(i) > 0 && /\p{L}{2}/u.test(i.text))
+                .map((i) => i.baseline)
+            ).size >= 2
+        ).length >= 2
     if (
       b.length &&
       cols.length >= 2 &&
@@ -560,7 +600,10 @@ export function repairWrappedTableRows({
       cols.every((c) => c > 0) &&
       a.some((i) => columnOf(i) === 0 && /\p{L}/u.test(i.text)) &&
       !a.some((i) => b.includes(i)) &&
-      b.every((i) => i.horizontal && /^[a-z]/.test(i.text) && Math.abs(i.height - h) < h * 0.1) &&
+      (closedProseTail ||
+        b.every(
+          (i) => i.horizontal && /^[a-z]/.test(i.text) && Math.abs(i.height - h) < h * 0.1
+        )) &&
       cols.every((c) => {
         const before = a
             .filter((i) => columnOf(i) === c)
@@ -574,13 +617,14 @@ export function repairWrappedTableRows({
           after[0].baseline - last.baseline <= h * 1.6
         )
       }) &&
-      cols.some((c) =>
-        a
-          .filter((i) => columnOf(i) === c)
-          .sort((x, y) => x.baseline - y.baseline || x.rect[0] - y.rect[0])
-          .at(-1)
-          ?.text.endsWith('-')
-      ) &&
+      (closedProseTail ||
+        cols.some((c) =>
+          a
+            .filter((i) => columnOf(i) === c)
+            .sort((x, y) => x.baseline - y.baseline || x.rect[0] - y.rect[0])
+            .at(-1)
+            ?.text.endsWith('-')
+        )) &&
       !hasHorizontalTableRuleBetween(rules, union(a)[3], union(b)[1]) &&
       !items.some((i) => inside(union([head, tail]), i) && !a.includes(i) && !b.includes(i))
     ) {
@@ -1287,6 +1331,116 @@ export function repairWrappedTableRows({
         repairs.push('source-record-boundary-restored')
       }
     }
+  // Three descriptive prefixes are not a numeric comparison signature. A
+  // complete framed table and independent six-leaf peers can still prove two
+  // records inside its first body band. Keep its native header and scripts.
+  if (captioned && columnRects.length === 6 && headers.length) {
+    const splitCompleteDescriptivePeers = () => {
+      if (sourceCuts.some((x, n) => !Number.isFinite(x) || (n && x <= sourceCuts[n - 1]))) return
+      const record = (g) => {
+        const values = readSourceRow(g, sourceCuts)
+        if (
+          !values ||
+          !values.slice(0, 3).every((v) => /\p{L}/u.test(v)) ||
+          !values
+            .slice(3)
+            .every(
+              (v) => /^[–—−-]$/.test(v) || /^[<>≤≥−+-]?(?:\d|\.\d)[\d.,()%±*–—−+\s/-]*$/.test(v)
+            )
+        )
+          return
+        // Native descriptive leaves provide the ordinary anchor. A smaller
+        // annotation can be just above 0.8 of the ordinary font height.
+        const prefix = g.filter((i) => i.rect[0] >= sourceCuts[0] && i.rect[2] <= sourceCuts[3])
+        if (!prefix.length || prefix.some((i) => Math.abs(i.height - font) > font * 0.1)) return
+        const anchors = prefix.map((i) => i.baseline)
+        if (Math.max(...anchors) - Math.min(...anchors) > font * 0.05) return
+        return { group: g, anchor: anchors[0], bounds: union(g) }
+      }
+      const records = sourceRows.map(record).filter(Boolean)
+      if (records.length < 5) return
+      const first = records[0],
+        second = records[1],
+        last = records.at(-1),
+        headerItems = items.filter((i) => i.rect[3] < first.bounds[1])
+      if (
+        !headerItems.length ||
+        sourceRows.some(
+          (g) => !records.some((r) => r.group === g) && g.some((i) => i.rect[3] >= first.bounds[1])
+        ) ||
+        !headers.every((h) => h.rect[3] < first.bounds[1])
+      )
+        return
+      const headerBox = union(headerItems),
+        full = joinHorizontalTableRules(rules, font * 0.1).filter(
+          (r) => r[0] <= sourceCuts[0] + font * 0.5 && r[2] >= right - font * 0.5
+        ),
+        opening = full.filter((r) => r[1] <= headerBox[1] && headerBox[1] - r[1] < font * 0.5),
+        divider = full.filter((r) => r[1] > headerBox[3] && r[1] < first.bounds[1]),
+        closing = full.filter((r) => r[1] >= last.bounds[3] && r[1] - last.bounds[3] < font * 0.5)
+      if (
+        opening.length !== 1 ||
+        divider.length !== 1 ||
+        closing.length !== 1 ||
+        [divider[0], closing[0]].some(
+          (r) =>
+            Math.abs(r[0] - opening[0][0]) > font * 0.1 ||
+            Math.abs(r[2] - opening[0][2]) > font * 0.1
+        )
+      )
+        return
+      // Every leaf must have its own native ink, separated by a common empty
+      // gutter. Model column scores or a caption alone provide no ownership.
+      for (let c = 1; c < sourceCuts.length - 1; c++) {
+        const left = records.flatMap((r) =>
+            r.group.filter((i) => i.rect[0] >= sourceCuts[c - 1] && i.rect[2] <= sourceCuts[c])
+          ),
+          next = records.flatMap((r) =>
+            r.group.filter((i) => i.rect[0] >= sourceCuts[c] && i.rect[2] <= sourceCuts[c + 1])
+          )
+        if (
+          !left.length ||
+          !next.length ||
+          Math.max(...left.map((i) => i.rect[2])) >= sourceCuts[c] ||
+          Math.min(...next.map((i) => i.rect[0])) <= sourceCuts[c]
+        )
+          return
+      }
+      const contains = (row, g) =>
+          g.every((i) => inside([sourceCuts[0], row.rect[1], right, row.rect[3]], i)),
+        owners = rows.filter((row) => contains(row, first.group) && contains(row, second.group))
+      if (owners.length !== 1) return
+      const owner = owners[0],
+        index = rows.indexOf(owner),
+        peers = records.slice(2).filter((r) => {
+          const matches = rows.filter((row) => contains(row, r.group))
+          return (
+            matches.length === 1 &&
+            records.filter((candidate) => contains(matches[0], candidate.group)).length === 1
+          )
+        })
+      if (
+        index === 0 ||
+        records.filter((r) => contains(owner, r.group)).length !== 2 ||
+        peers.length < 3 ||
+        second.bounds[1] <= first.bounds[3] ||
+        second.anchor - first.anchor < font * 0.8 ||
+        second.anchor - first.anchor > font * 1.6 ||
+        headers.some((h) => h.rect[1] < second.bounds[3] && h.rect[3] > first.bounds[1])
+      )
+        return
+      const split = splitOwnedSourceRows(
+        rows,
+        items,
+        [first.group, second.group],
+        [sourceCuts[0], right]
+      )
+      if (!split || split.index !== index) return
+      rows.splice(index, 1, ...split.rows)
+      repairs.push('source-record-boundary-restored')
+    }
+    splitCompleteDescriptivePeers()
+  }
   if (captioned && rows.length >= 3) {
     const last = rows.at(-1)
     const tail = sourceRows.filter(

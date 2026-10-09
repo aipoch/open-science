@@ -1,16 +1,17 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { basename, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { loadModuleImpactManifest } from './load-module-impact.mjs'
-import { auditModuleOwnership } from './audit-module-ownership.mjs'
+import { auditModuleOwnership, auditModuleRouting } from './audit-module-ownership.mjs'
 import {
   createAffectedTestPlan,
   createModuleTestPlan,
   modulesForPath
 } from './module-test-impact.mjs'
 import { isModuleOwnershipPath } from './module-ownership-paths.mjs'
+import { classifyChanges } from './classify-pr-changes.mjs'
 
 const manifest = loadModuleImpactManifest(resolve('scripts/ci/module-impact.json'))
 const files = [
@@ -25,9 +26,64 @@ const files = [
 const graph = { status: 'unavailable-manifest-only', testFiles: [] }
 
 describe('complete module ownership', () => {
+  it('covers existing JSONL regression readers without registering individual fixtures', () => {
+    const fixtures = files.filter(
+      (path) => path.startsWith('test/fixtures/pdf-translation/') && path.endsWith('.jsonl')
+    )
+    const plan = createAffectedTestPlan(
+      [{ path: 'test/fixtures/pdf-translation/new-case.jsonl', status: 'added' }],
+      graph
+    )
+    const readers = files.filter((path) => {
+      if (!/\.(test|spec)\.[cm]?[jt]sx?$/.test(path) || path.startsWith('scripts/ci/')) return false
+      const source = readFileSync(path, 'utf8')
+      return fixtures.some(
+        (fixture) =>
+          source.includes(`'${basename(fixture)}'`) || source.includes(`"${basename(fixture)}"`)
+      )
+    })
+    expect(readers.length).toBeGreaterThan(20)
+    expect(plan.testFiles).toEqual(expect.arrayContaining(readers))
+    expect(plan.modules).toEqual([])
+    expect(classifyChanges([{ path: fixtures[0], status: 'modified' }]).bundles).toEqual([
+      'policy',
+      'static',
+      'unit'
+    ])
+  })
+
+  it('routes every declared portable test without an unknown-path fallback', () => {
+    const tests = new Set(
+      Object.values(manifest.modules).flatMap((module) => Object.values(module.testFiles).flat())
+    )
+    const unknown = [...tests].filter((path) => {
+      const plan = classifyChanges([{ path, status: 'modified' }])
+      return plan.mode === 'full' && !plan.roots.includes('global_gate_input')
+    })
+    expect(unknown).toEqual([])
+  })
+
+  it.each(Object.entries(manifest.modules))(
+    'bounds implementation selection for %s while retaining declared evidence',
+    (id, module) => {
+      const path = module.interfacePaths.find((path) => !/\.(test|spec)\./.test(path))!
+      const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph)
+      expect(plan.mode, `${id}: ${plan.reasonChains.join('; ')}`).toBe(
+        module.fullTestReason ? 'full' : 'selective'
+      )
+      if (!module.fullTestReason) {
+        expect(plan.modules).toContain(id)
+        expect(plan.testFiles).toEqual(
+          expect.arrayContaining(Object.values(module.testFiles).flat())
+        )
+      }
+    }
+  )
+
   it('requires an exact owner for every tracked source, test and runtime helper', () => {
     const result = auditModuleOwnership(manifest, files)
     expect(result.missing).toEqual([])
+    expect(auditModuleRouting(manifest)).toEqual([])
     expect(result.owned).toBe(result.files)
     expect(result.fullModules.map(({ id }) => id)).toEqual([
       'shared_application_contracts',

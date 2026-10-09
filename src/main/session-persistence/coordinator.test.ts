@@ -39,6 +39,7 @@ import {
 import {
   SessionRuntimeContextRevisionConflictError,
   SessionPersistenceCoordinator,
+  type PublishedSessionHandoff,
   type SessionDeletionHandlers,
   type SessionFileIndex,
   type SessionMutationRepository,
@@ -411,6 +412,191 @@ const createLegacyArtifactAlias = (): PersistedArtifact => ({
 
 const createProjectReconciliationSnapshot = (): ArtifactProjectReconciliationSnapshot =>
   ({}) as ArtifactProjectReconciliationSnapshot
+
+describe('published Session adoption', () => {
+  const publication = (): PublishedSessionHandoff => {
+    const operationId = '00000000-0000-4000-8000-000000000001'
+    const session = createSession({
+      projectId: `import-${operationId}`,
+      title: 'Saved research',
+      number: 7,
+      revision: 3,
+      packageOrigin: {
+        importId: operationId,
+        sourceProjectId: 'source',
+        sourceSessionId: 'source-session',
+        importedAt: 2,
+        manifestChecksum: 'a'.repeat(64)
+      }
+    })
+    return {
+      projectId: session.projectId,
+      sessionId: session.id,
+      session,
+      pendingProjectImport: { operationId }
+    }
+  }
+
+  it('installs the saved result for an authorized hidden new Project without another catalog hydration', async () => {
+    const repository = createSessionRepository()
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    const saved = publication()
+    await coordinator.adoptPublishedSession(saved)
+    expect(repository.loadSessionWithDiagnostics).toHaveBeenCalledWith(
+      saved.projectId,
+      saved.sessionId
+    )
+    expect(repository.assertSessionIdentityOwnership).toHaveBeenCalledWith(
+      saved.sessionId,
+      saved.projectId
+    )
+    expect(repository.saveSession).not.toHaveBeenCalled()
+    expect(await coordinator.sessionProjectId(saved.sessionId)).toBe(saved.projectId)
+    expect((await coordinator.sessionMetadataSnapshot()).sessions).toEqual([
+      { id: saved.sessionId, projectId: saved.projectId, title: 'Saved research' }
+    ])
+  })
+
+  it.each(['ordinary', 'pending'] as const)(
+    'uses the latest normal read inside its lane for %s publication',
+    async (context) => {
+      const saved = publication()
+      if (context === 'ordinary') delete saved.pendingProjectImport
+      let current = { ...saved.session, title: 'Old persisted title' }
+      const repository = createSessionRepository({
+        loadSessionWithDiagnostics: vi.fn(async () => ({
+          status: 'found' as const,
+          session: current
+        }))
+      })
+      const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+      let release!: () => void
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const prior = coordinator.runSessionMutation(saved.projectId, saved.sessionId, () => gate)
+      const adoption = coordinator.adoptPublishedSession(saved)
+      expect(repository.loadSessionWithDiagnostics).not.toHaveBeenCalled()
+      current = { ...current, title: 'Latest durable title', revision: 9 }
+      release()
+      await prior
+      await adoption
+      expect((await coordinator.sessionMetadataSnapshot()).sessions[0].title).toBe(
+        'Latest durable title'
+      )
+    }
+  )
+
+  it.each([
+    'unreadable',
+    'missing',
+    'prefix-only',
+    'wrong-operation',
+    'wrong-origin',
+    'fork-origin'
+  ] as const)('rejects %s instead of masking it with the saved result', async (scenario) => {
+    const saved = publication()
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi
+        .fn()
+        .mockResolvedValue({ status: scenario === 'unreadable' ? 'unreadable' : 'missing' })
+    })
+    if (scenario === 'missing' || scenario === 'prefix-only') delete saved.pendingProjectImport
+    if (scenario === 'missing') {
+      saved.projectId = 'project-1'
+      saved.session.projectId = 'project-1'
+    }
+    if (scenario === 'wrong-operation') saved.pendingProjectImport!.operationId = 'other-operation'
+    if (scenario === 'wrong-origin') saved.session.packageOrigin!.importId = 'other-operation'
+    if (scenario === 'fork-origin') {
+      saved.session.forkOrigin = saved.session.packageOrigin
+      delete saved.session.packageOrigin
+    }
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    await expect(coordinator.adoptPublishedSession(saved)).rejects.toThrow(
+      `Cannot adopt a published ${scenario === 'unreadable' ? 'unreadable' : 'missing'} Session.`
+    )
+    expect((await coordinator.sessionMetadataSnapshot()).sessions).toEqual([])
+    expect(repository.assertSessionIdentityOwnership).not.toHaveBeenCalled()
+  })
+
+  it.each(['session', 'project'] as const)(
+    'rejects a mismatched saved %s identity',
+    async (identity) => {
+      const saved = publication()
+      if (identity === 'session') saved.session.id = 'other-session'
+      else saved.session.projectId = 'other-project'
+      const coordinator = new SessionPersistenceCoordinator(
+        createSessionRepository(),
+        createFileIndex()
+      )
+      await expect(coordinator.adoptPublishedSession(saved)).rejects.toThrow(
+        'Session identity mismatch'
+      )
+      expect((await coordinator.sessionMetadataSnapshot()).sessions).toEqual([])
+    }
+  )
+
+  it('captures handoff identity, pending authorization and nested contents before asynchronous enqueue', async () => {
+    const saved = publication()
+    const original = structuredClone(saved)
+    const repository = createSessionRepository()
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const prior = coordinator.runSessionMutation(saved.projectId, saved.sessionId, () => gate)
+    const adoption = coordinator.adoptPublishedSession(saved)
+    saved.projectId = 'other-project'
+    saved.sessionId = 'other-session'
+    saved.session.id = 'other-session'
+    saved.session.projectId = 'other-project'
+    saved.session.title = 'Mutated while queued'
+    saved.session.packageOrigin!.importId = 'other-operation'
+    saved.pendingProjectImport!.operationId = 'other-operation'
+    release()
+    await prior
+    await adoption
+    expect(repository.loadSessionWithDiagnostics).toHaveBeenCalledWith(
+      original.projectId,
+      original.sessionId
+    )
+    expect((await coordinator.sessionMetadataSnapshot()).sessions).toEqual([
+      { id: original.sessionId, projectId: original.projectId, title: original.session.title }
+    ])
+  })
+
+  it('retains catalog identity ownership checks for the hidden-Project fallback', async () => {
+    const saved = publication()
+    const coordinator = new SessionPersistenceCoordinator(
+      createSessionRepository(),
+      createFileIndex()
+    )
+    await coordinator.replaceSessionMetadata(
+      [{ id: saved.sessionId, projectId: 'another-project', title: 'Existing owner' }],
+      true
+    )
+    await expect(coordinator.adoptPublishedSession(saved)).rejects.toThrow(
+      'already owned by another Project'
+    )
+    expect(await coordinator.sessionProjectId(saved.sessionId)).toBe('another-project')
+  })
+
+  it('retains mutation admission while a Session export is reserved', async () => {
+    const saved = publication()
+    const coordinator = new SessionPersistenceCoordinator(
+      createSessionRepository(),
+      createFileIndex()
+    )
+    const release = await coordinator.reserveSessionExport(saved.projectId, saved.sessionId)
+    try {
+      await expect(coordinator.adoptPublishedSession(saved)).rejects.toThrow('locked')
+    } finally {
+      release()
+    }
+  })
+})
 
 describe('SessionPersistenceCoordinator', () => {
   it('defers late renderer saves until export releases without occupying other persistence lanes', async () => {
