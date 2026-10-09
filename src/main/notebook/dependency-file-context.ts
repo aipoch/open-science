@@ -7,6 +7,19 @@ import type {
 type FileContextEntry = {
   facts: NotebookRunDependencyFacts
   fileContext: NotebookSourceFileAccessContext
+  // Transient owner evidence: relative database paths cannot outlive an uncertain cwd.
+  sqliteRelativePathBarrier?: boolean
+}
+
+type PythonBinding = NonNullable<NotebookSourceFileAccessContext['pythonBindings']>[number]
+const isSqliteBinding = (binding: PythonBinding): boolean =>
+  binding.kind === 'object' &&
+  ['sqlite3.Connection', 'sqlite3.Cursor'].includes(binding.qualifiedName)
+const isRelativeSqlitePath = (path: string): boolean => !/^(?:[\\/]|[A-Za-z]:[\\/])/.test(path)
+const withoutFilePath = (binding: PythonBinding): PythonBinding => {
+  const identity = { ...binding }
+  delete identity.filePath
+  return identity
 }
 
 const FILE_CONTEXT_SAFE_UNKNOWN_REASONS = new Set([
@@ -20,7 +33,8 @@ const MAX_PYTHON_IDENTITIES = 512
 // an unavailable entry discards prior knowledge, and later completed runs can establish it again.
 const projectNotebookFileContext = (
   language: 'python' | 'r' | 'repl',
-  entries: Iterable<FileContextEntry | undefined>
+  entries: Iterable<FileContextEntry | undefined>,
+  options: { sqliteRelativePathBarrier?: boolean } = {}
 ): NotebookSourceFileAccessContext | undefined => {
   const staticStrings = new Map<string, string>()
   const staticCollections = new Map<
@@ -134,7 +148,11 @@ const projectNotebookFileContext = (
       pythonBindings.clear()
       // These names convey uncertainty only; they must not regain trusted library
       // effects after a re-import of the same Python module object.
-      for (const binding of poisonedBindings) pythonBindings.set(binding.name, binding)
+      for (const binding of poisonedBindings)
+        pythonBindings.set(
+          binding.name,
+          isSqliteBinding(binding) ? withoutFilePath(binding) : binding
+        )
       boundPythonState()
       aliases.clear()
       available = false
@@ -142,6 +160,19 @@ const projectNotebookFileContext = (
     }
     available = true
     const { facts, fileContext } = entry
+    // The current scanner output is authoritative for SQLite lifetimes. A previous
+    // path must not survive a typed-without-path output or a typeBindings overlay.
+    const priorSqliteBindings = new Map(
+      [...pythonBindings].filter(([, binding]) => isSqliteBinding(binding))
+    )
+    const sqliteNames = new Set(
+      [...pythonBindings.values(), ...(fileContext.pythonBindings ?? [])]
+        .filter(isSqliteBinding)
+        .map(({ name }) => name)
+    )
+    if (language === 'python')
+      for (const [name, binding] of pythonBindings)
+        if (isSqliteBinding(binding)) pythonBindings.set(name, withoutFilePath(binding))
     const conditionalNames = new Set(facts.conditionallyDefinedNames ?? [])
     const definedNames = new Set([
       ...(facts.definedNames ?? []),
@@ -166,6 +197,18 @@ const projectNotebookFileContext = (
         }
       }
     }
+    const sqliteRevokedNames = new Set(mutatedNames)
+    for (const { target, source } of facts.aliases ?? [])
+      if (sqliteNames.has(target) || sqliteNames.has(source)) {
+        sqliteRevokedNames.add(target)
+        sqliteRevokedNames.add(source)
+      }
+    for (const { receiver, member, conditional } of facts.receiverCalls ?? [])
+      if (
+        sqliteNames.has(receiver) &&
+        (conditional || !['cursor', 'execute', 'fetchall'].includes(member))
+      )
+        sqliteRevokedNames.add(receiver)
     const invalidatedNames = new Set([...definedNames, ...mutatedNames])
     for (const [key, module] of pythonHelperModules) {
       if (module.exports.some((name) => invalidatedNames.has(name))) pythonHelperModules.delete(key)
@@ -282,9 +325,96 @@ const projectNotebookFileContext = (
     for (const wrapper of fileContext.localFileWrappers) {
       if (!conditionalNames.has(wrapper.name)) localFileWrappers.set(wrapper.name, wrapper)
     }
-    for (const binding of fileContext.pythonBindings ?? []) {
-      if (!conditionalNames.has(binding.name)) pythonBindings.set(binding.name, binding)
+    const outgoingBindings = new Map(
+      (fileContext.pythonBindings ?? []).map((binding) => [binding.name, binding])
+    )
+    const sqlitePaths = new Map<string, string>()
+    if (language === 'python') {
+      const candidates = [...outgoingBindings.values()].filter(
+        (binding) =>
+          isSqliteBinding(binding) &&
+          binding.filePath !== undefined &&
+          !conditionalNames.has(binding.name) &&
+          !sqliteRevokedNames.has(binding.name) &&
+          !pythonTaintedNamespaces.has('*') &&
+          !pythonTaintedNamespaces.has('sqlite3') &&
+          !(entry.sqliteRelativePathBarrier && isRelativeSqlitePath(binding.filePath))
+      )
+      const keepsPriorPath = (binding: PythonBinding): boolean =>
+        !definedNames.has(binding.name) &&
+        priorSqliteBindings.get(binding.name)?.qualifiedName === binding.qualifiedName &&
+        priorSqliteBindings.get(binding.name)?.filePath === binding.filePath
+      const resultCall = (
+        name: string
+      ): NonNullable<typeof facts.receiverCalls>[number] | undefined => {
+        const calls = (facts.receiverCalls ?? []).filter((call) => call.resultNames?.includes(name))
+        const call = calls.length === 1 ? calls[0] : undefined
+        return call?.kind === 'receiver' &&
+          !call.conditional &&
+          call.receiverChain?.length === 0 &&
+          call.resultNames?.length === 1 &&
+          call.argumentNames?.length === 0
+          ? call
+          : undefined
+      }
+      // A fresh name is not provenance: cached calls can depend on a prior context
+      // that has since lost its path or static URI. Keep only closed constructors.
+      for (const binding of candidates.filter(
+        ({ qualifiedName }) => qualifiedName === 'sqlite3.Connection'
+      )) {
+        const call = definedNames.has(binding.name) ? resultCall(binding.name) : undefined
+        const origin =
+          call &&
+          (definedNames.has(call.receiver)
+            ? outgoingBindings.get(call.receiver)
+            : pythonBindings.get(call.receiver))
+        if (
+          keepsPriorPath(binding) ||
+          (call?.member === 'connect' &&
+            origin?.kind === 'import' &&
+            origin.qualifiedName === 'sqlite3' &&
+            !conditionalNames.has(call.receiver) &&
+            !mutatedNames.has(call.receiver) &&
+            call.positionalArgumentNames !== undefined &&
+            call.positionalArgumentNames.length <= 1 &&
+            call.positionalArgumentNames.every((names) => names.length === 0) &&
+            call.keywordArguments !== undefined &&
+            call.keywordArguments.every(
+              (argument) =>
+                ['database', 'uri'].includes(argument.name) &&
+                argument.argumentNames.length === 0 &&
+                !argument.possibleArgumentNames?.length
+            ) &&
+            call.keywordArguments.filter(
+              ({ name, staticBoolean }) => name === 'uri' && staticBoolean === true
+            ).length === 1)
+        )
+          sqlitePaths.set(binding.name, binding.filePath!)
+      }
+      // Validate receivers before cursors, independent of outgoing binding order.
+      for (const binding of candidates.filter(
+        ({ qualifiedName }) => qualifiedName === 'sqlite3.Cursor'
+      )) {
+        const call = definedNames.has(binding.name) ? resultCall(binding.name) : undefined
+        if (
+          keepsPriorPath(binding) ||
+          (call?.member === 'cursor' &&
+            call.positionalArgumentNames?.length === 0 &&
+            call.keywordArguments?.length === 0 &&
+            sqlitePaths.get(call.receiver) === binding.filePath &&
+            outgoingBindings.get(call.receiver)?.qualifiedName === 'sqlite3.Connection')
+        )
+          sqlitePaths.set(binding.name, binding.filePath!)
+      }
     }
+    for (const binding of outgoingBindings.values())
+      if (!conditionalNames.has(binding.name))
+        pythonBindings.set(
+          binding.name,
+          language === 'python' && isSqliteBinding(binding) && !sqlitePaths.has(binding.name)
+            ? withoutFilePath(binding)
+            : binding
+        )
     if (language === 'python') {
       for (const binding of facts.typeBindings ?? []) {
         if (
@@ -304,6 +434,14 @@ const projectNotebookFileContext = (
     }
     boundPythonState()
   }
+  if (language === 'python' && options.sqliteRelativePathBarrier)
+    for (const [name, binding] of pythonBindings)
+      if (
+        isSqliteBinding(binding) &&
+        binding.filePath !== undefined &&
+        isRelativeSqlitePath(binding.filePath)
+      )
+        pythonBindings.set(name, withoutFilePath(binding))
   if (!available && !pythonTaintedNamespaces.size && !replNamespaceUncertain) return undefined
   const specializedNames = new Set([
     ...staticStrings.keys(),

@@ -5,9 +5,15 @@ import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { classifyChanges, parseNameStatus } from './classify-pr-changes.mjs'
+import {
+  classifyChanges,
+  fixtureTestPatterns,
+  matchesPath,
+  parseNameStatus
+} from './classify-pr-changes.mjs'
 import { loadModuleImpactManifest } from './load-module-impact.mjs'
 import { validateModuleImpactManifest } from './validate-module-impact.mjs'
+import { resolveModuleImpactInputs } from './module-impact-inputs.mjs'
 
 const defaultManifest = loadModuleImpactManifest()
 const testKinds = ['owner', 'contract', 'consumer']
@@ -96,9 +102,15 @@ export function createModuleTestPlan(moduleId, manifest = defaultManifest) {
   })
 }
 
-export function createAffectedTestPlan(changes, graph, manifest = defaultManifest) {
+export function createAffectedTestPlan(
+  changes,
+  graph,
+  manifest = defaultManifest,
+  registrationModules = []
+) {
   validateModuleImpactManifest(manifest)
-  const changePlan = classifyChanges(changes)
+  const classification = { moduleManifest: manifest, registrationModules }
+  const changePlan = classifyChanges(changes, undefined, classification)
   if (changePlan.mode === 'full') {
     const decisiveReasons = changePlan.reasonChains.filter((reason) => reason.endsWith('-> full'))
     return fullPlan(
@@ -106,12 +118,15 @@ export function createAffectedTestPlan(changes, graph, manifest = defaultManifes
     )
   }
 
-  const seeds = new Set()
+  const seeds = new Set(registrationModules)
   const directTests = new Set()
   const testModules = new Set()
-  const reasons = []
+  const reasons = registrationModules.map(
+    (id) => `${id} -> validated additive registration -> declared tests`
+  )
   for (const change of changes) {
-    const pathPlan = classifyChanges([change])
+    const pathPlan = classifyChanges([change], undefined, classification)
+    if (pathPlan.roots.includes('module_registration')) continue
     if (pathPlan.roots.includes('ci_workflow_contract_test')) {
       directTests.add(change.path)
       reasons.push(`${change.path} -> workflow contract -> direct execution`)
@@ -128,6 +143,19 @@ export function createAffectedTestPlan(changes, graph, manifest = defaultManifes
       continue
     }
     for (const path of [change.path, change.previousPath].filter(Boolean)) {
+      const fixturePatterns = fixtureTestPatterns(path)
+      if (fixturePatterns.length > 0) {
+        const tests = Object.values(manifest.modules).flatMap(declaredTests)
+        for (const pattern of fixturePatterns) {
+          const matches = pattern.includes('*')
+            ? tests.filter((test) => matchesPath(test, pattern))
+            : [pattern]
+          if (matches.length === 0) return fullPlan(`${path} -> empty fixture test suite -> full`)
+          for (const test of matches) directTests.add(test)
+        }
+        reasons.push(`${path} -> regression fixture -> direct test suites`)
+        continue
+      }
       const matchedModules = modulesForPath(manifest, path)
       if (matchedModules.length === 0) return fullPlan(`${path} -> unknown module owner -> full`)
       // Some test files also export shared certification helpers. Their explicit interface
@@ -135,7 +163,12 @@ export function createAffectedTestPlan(changes, graph, manifest = defaultManifes
       const sharedTest = matchedModules.some((moduleId) =>
         manifest.modules[moduleId].interfacePaths.includes(path)
       )
-      if (/\.(test|spec)\.[cm]?[jt]sx?$/.test(path) && !sharedTest) {
+      // Some owned tests use another runner (e.g. native node:test). Only portable
+      // tests declared as evidence can take the direct-Vitest shortcut.
+      const declaredTest = matchedModules.some((moduleId) =>
+        declaredTests(manifest.modules[moduleId]).includes(path)
+      )
+      if (/\.(test|spec)\.[cm]?[jt]sx?$/.test(path) && !sharedTest && declaredTest) {
         directTests.add(path)
         for (const moduleId of matchedModules) testModules.add(moduleId)
         reasons.push(`${path} -> registered test -> direct execution`)
@@ -149,7 +182,9 @@ export function createAffectedTestPlan(changes, graph, manifest = defaultManifes
   }
 
   const modules = expandConsumers(manifest, [...seeds])
-  const fullModule = [...modules, ...testModules].find(
+  // A consumer's full marker describes edits to its own contract, not selecting
+  // its tests as evidence for another owner. Retain the entire consumer closure.
+  const fullModule = [...seeds, ...testModules].find(
     (moduleId) => manifest.modules[moduleId].fullTestReason
   )
   if (fullModule) {
@@ -329,7 +364,12 @@ export function runModuleTestCli(arguments_ = process.argv.slice(2), options = {
     changes.flatMap(({ path, previousPath }) => [path, previousPath].filter(Boolean))
   )
   const graph = collectCodeGraphTests(paths, options)
-  const plan = createAffectedTestPlan(changes, graph)
+  const { manifest, registrationModules } = resolveModuleImpactInputs(changes, {
+    base,
+    head,
+    ...options
+  })
+  const plan = createAffectedTestPlan(changes, graph, manifest, registrationModules)
   if (arguments_.includes('--explain')) {
     process.stdout.write(formatModuleTestPlan(plan))
     return 0

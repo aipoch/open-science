@@ -8729,6 +8729,115 @@ const analyzeRFileAccessTree = (
         : []
     })
   )
+  // These candidates retain one known read, not a complete helper effect. They are
+  // established in statement order and never exported into the wrapper context.
+  const firstReadParameters = (
+    value: RExpr | undefined
+  ): { names: string[]; file: Extract<RExpr, { kind: 'symbol' | 'character' }> } | undefined => {
+    if (!isCall(value) || value.operator !== 'function' || value.staticBuiltinShadowed)
+      return undefined
+    const [formals, body] = value.args
+    if (
+      formals?.kind !== 'formals' ||
+      formals.names.includes('...') ||
+      new Set(formals.names).size !== formals.names.length ||
+      formals.values.some((defaultValue) => defaultValue !== null) ||
+      !isCall(body) ||
+      body.operator !== '{' ||
+      body.args.length < 2
+    )
+      return undefined
+    let first = body.args[0]
+    if (isCall(first) && ['<-', '='].includes(first.operator ?? '')) {
+      const [target, right] = first.args
+      if (!isSymbol(target) || formals.names.includes(target.name)) return undefined
+      first = right
+    }
+    if (!isCall(first)) return undefined
+    const qualified = rQualifiedCall(first)
+    if (
+      qualified?.package !== 'utils' ||
+      !['read.csv', 'read.table'].includes(qualified.name) ||
+      !isCall(first.callee) ||
+      first.callee.operator !== '::'
+    )
+      return undefined
+    const effect = rFileCallEffect(qualified.name, qualified.package)
+    const file = effect && rFileCallArgument(first, effect)
+    if (formals.names.length === 0) {
+      if (!isCharacter(file) || !file.value) return undefined
+    } else if (!isSymbol(file) || !formals.names.includes(file.name)) return undefined
+    const namedOptions = first.names.filter((name): name is string => Boolean(name))
+    const fixedOptions = new Set([
+      'header',
+      'sep',
+      'quote',
+      'dec',
+      'na.strings',
+      'check.names',
+      'stringsAsFactors'
+    ])
+    if (
+      new Set(namedOptions).size !== namedOptions.length ||
+      first.args.some((argument, index) =>
+        argument === file
+          ? Boolean(first.names[index] && first.names[index] !== 'file')
+          : !first.names[index] ||
+            !fixedOptions.has(first.names[index]!) ||
+            !['character', 'atomic', 'null'].includes(argument.kind)
+      )
+    )
+      return undefined
+    return { names: formals.names, file }
+  }
+  const firstReadCandidates = new Map<string, NonNullable<ReturnType<typeof firstReadParameters>>>()
+  const firstReadPrimitives = new Set(['function', '{', '<-', '=', '->', '::'])
+  let firstReadNamespaceUncertain = [
+    ...(context?.resolvedKernelNames ?? []),
+    ...(context?.staticStrings.map(({ name }) => name) ?? []),
+    ...(context?.staticCollections.map(({ name }) => name) ?? []),
+    ...(context?.rFunctions?.map(({ name }) => name) ?? []),
+    ...(context?.localFileWrappers.map(({ name }) => name) ?? [])
+  ].some((name) => firstReadPrimitives.has(name))
+  const topLevelExpressions = new Set(expressions)
+  const literalArgument = (argument: RExpr): boolean => {
+    if (['character', 'atomic', 'null'].includes(argument.kind)) return true
+    if (!isCall(argument) || argument.staticBuiltinShadowed) return false
+    const qualified = rQualifiedCall(argument)
+    return (
+      rCalledName(argument) === 'c' &&
+      (!qualified ||
+        (qualified.package === 'base' &&
+          isCall(argument.callee) &&
+          argument.callee.operator === '::')) &&
+      argument.args.every((item) => ['character', 'atomic', 'null'].includes(item.kind))
+    )
+  }
+  const firstReadPath = (
+    invocation: Extract<RExpr, { kind: 'call' }>,
+    parameters: NonNullable<ReturnType<typeof firstReadParameters>>
+  ): string | undefined => {
+    // A fixed-file zero-argument helper accepts no promises or unexpected arguments.
+    if (isCharacter(parameters.file))
+      return invocation.args.length === 0 ? parameters.file.value : undefined
+    if (!invocation.args.every(literalArgument)) return undefined
+    const matched = new Map<string, RExpr>()
+    for (const [index, name] of invocation.names.entries()) {
+      if (!name) continue
+      if (!parameters.names.includes(name) || matched.has(name)) return undefined
+      matched.set(name, invocation.args[index]!)
+    }
+    const remaining = parameters.names.filter((name) => !matched.has(name))
+    for (const [index, argument] of invocation.args.entries()) {
+      if (invocation.names[index]) continue
+      const name = remaining.shift()
+      if (!name) return undefined
+      matched.set(name, argument)
+    }
+    if (matched.size !== parameters.names.length) return undefined
+    const file = matched.get(parameters.file.name)
+    return isCharacter(file) && file.value ? file.value : undefined
+  }
   for (const expression of expressions) {
     if (!isCall(expression) || !['<-', '='].includes(expression.operator ?? '')) continue
     const [target, value] = expression.args
@@ -8876,8 +8985,23 @@ const analyzeRFileAccessTree = (
     fileConnection(expr)?.path
 
   const visit = (expr: RExpr, valueUsed = true): void => {
-    if (packageInspections.has(expr)) return
     if (!isCall(expr)) return
+    if (!['{', '<-', '=', '->'].includes(expr.operator ?? '')) {
+      const candidate = isSymbol(expr.callee)
+        ? firstReadCandidates.get(expr.callee.name)
+        : undefined
+      // The tail is opaque, even after a known first read. Other calls can also
+      // replace a helper without receiving it as an explicit argument.
+      firstReadCandidates.clear()
+      if (candidate && conditionalDepth === 0) {
+        const path = firstReadPath(expr, candidate)
+        unresolvedReads = true
+        if (path && !definitelyWritten.has(path)) reads.add(path)
+        if (path && isExternalNotebookPath(path)) unsupportedExternalState = true
+      }
+      firstReadNamespaceUncertain = true
+    }
+    if (packageInspections.has(expr)) return
     if (expr.operator === '|>' || expr.operator === '%>%') {
       unresolvedReads = true
       unresolvedWrites = true
@@ -9039,6 +9163,8 @@ const analyzeRFileAccessTree = (
       const left = expr.operator === '->' ? expr.args[1] : expr.args[0]
       const right = expr.operator === '->' ? expr.args[0] : expr.args[1]
       if (isCall(left)) {
+        firstReadCandidates.clear()
+        firstReadNamespaceUncertain = true
         // R replacement assignment updates its root binding (ordinary vectors/lists copy on
         // modify). The old static value cannot describe the result of an arbitrary replacement.
         let receiver: RExpr | undefined = left
@@ -9052,6 +9178,22 @@ const analyzeRFileAccessTree = (
         }
       }
       if (isSymbol(left)) {
+        if (firstReadPrimitives.has(left.name)) {
+          firstReadCandidates.clear()
+          firstReadNamespaceUncertain = true
+        }
+        firstReadCandidates.delete(left.name)
+        if (isSymbol(right) && firstReadCandidates.has(right.name)) firstReadCandidates.clear()
+        const candidate =
+          topLevelExpressions.has(expr) &&
+          ['<-', '='].includes(expr.operator ?? '') &&
+          conditionalDepth === 0 &&
+          !firstReadNamespaceUncertain &&
+          !expr.staticBuiltinShadowed
+            ? firstReadParameters(right)
+            : undefined
+        if (candidate && !localWrappers.effects.has(left.name))
+          firstReadCandidates.set(left.name, candidate)
         shadowedQuotationNames.add(left.name)
         const value = rStaticString(right, bindings, collections)
         const namedValues =

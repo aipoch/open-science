@@ -106,6 +106,8 @@ import {
   PackageTextScanner,
   type PackageSensitiveContentSource
 } from './sensitive-content'
+import type { PublishedSessionHandoff } from '../session-persistence/coordinator'
+import { isSessionPackagePending } from '../storage/session-package-state'
 import { SessionRepository, loadSessionMutationAuthority } from '../session-persistence/repository'
 import { defaultFileDurability } from '../storage/file-durability'
 import { writeDurableJsonFile } from '../storage/durable-json-file'
@@ -132,10 +134,6 @@ import { createManagedSessionWorkspaceCapability } from '../acp/managed-session-
 import { createForkSession, nextForkTitle, ForkRecoveryRequiredError } from './fork-session'
 import { writePackageRoCrateMetadata } from './ro-crate'
 import { PACKAGE_RO_CRATE_METADATA } from '../../shared/session-package'
-import {
-  withSessionPackagePublication,
-  type SessionPackagePublication
-} from '../storage/session-package-state'
 
 const importJournalSchema = sessionPackageRequestSchema
   .extend({
@@ -171,10 +169,7 @@ type PackageOptions = {
   getClient: () => Promise<PrismaClient>
   isSessionActive?: (projectId: string, sessionId: string) => boolean
   inspectPackage?: typeof inspectSessionPackage
-  onSessionPublished?: (
-    identity: SessionPackageRequest,
-    publication: SessionPackagePublication
-  ) => Promise<void>
+  onSessionPublished?: (publication: PublishedSessionHandoff) => Promise<void>
 }
 
 type PackageExportOptions = {
@@ -1923,77 +1918,81 @@ export class SessionPackageService {
       throw new Error('Import publication Session identity mismatch.')
     // A cleanup retry cannot revive a Session deleted after successful publication.
     if (projected?.deletedAtMs != null) return
-    const committed = await client.fileOriginSession.findUnique({
-      where: {
-        projectId_sessionId: { projectId: identity.projectId, sessionId: identity.sessionId }
-      }
-    })
-    const origin = await this.readOrigin({
-      projectId: identity.projectId,
-      sessionId: identity.sessionId
-    })
-    if (!committed || origin.receiptIdentity.importId !== operation)
-      throw new Error('Session package publication has no matching committed receipt.')
-    return withSessionPackagePublication(
-      { ...identity, importId: operation },
-      async (publication) => {
-        const repository = new SessionRepository(
-          this.configRoot,
-          {},
-          new SessionProjectionRepository(this.options.getClient)
-        )
-        const current = await repository.loadSessionWithDiagnostics(
-          identity.projectId,
-          identity.sessionId,
-          { mode: 'read-only', packagePublication: publication }
-        )
-        if (current.status === 'unreadable')
-          throw new Error('Import publication Session cannot be read safely.')
-        if (current.status === 'found') {
-          if ((current.session.packageOrigin ?? current.session.forkOrigin)?.importId !== operation)
-            throw new Error('Import publication Session identity mismatch.')
-          // Resume with live authority, preserving later preferences and completing any interrupted
-          // JSON-to-SQLite projection through the repository that owns that publication.
-          await repository.saveSession(current.session)
-          await this.options.onSessionPublished?.(identity, publication)
-          return
-        }
-        let session = await new SessionRepository(join(operationRoot, 'session-stage')).loadSession(
-          identity.projectId,
-          identity.sessionId
-        )
-        if (!session || (session.packageOrigin ?? session.forkOrigin)?.importId !== operation)
-          throw new Error('Import publication Session is missing or invalid.')
-        // A failed workspace ownership commit may have released the staged directory. Recovery
-        // allocates a fresh workspace instead of publishing the now-missing provisional path.
-        const missingForkWorkspace =
-          session.forkOrigin &&
-          session.cwd.startsWith(join(this.options.storageRoot, 'workspaces') + sep)
-            ? !(await stat(session.cwd).catch((error: NodeJS.ErrnoException) => {
-                if (error.code === 'ENOENT') return undefined
-                throw error
-              }))
-            : false
-        if (session.forkOrigin && (!session.cwd || missingForkWorkspace)) {
-          const workspace = await createManagedSessionWorkspaceCapability({
-            resolveRoot: () => this.options.storageRoot
-          }).acquire({ projectId: session.projectId })
-          try {
-            session = { ...session, cwd: workspace.cwd }
-            await new SessionRepository(join(operationRoot, 'session-stage')).saveSession(session)
-            await workspace.commit(session.id)
-          } finally {
-            await workspace.release()
-          }
-        }
-        // Live Session authority appears only after native records commit. Recovery repeats the
-        // same repository publication; it never republishes records or replaces another Session.
-        await repository.saveSession(session)
-        await this.options.onSessionPublished?.(identity, publication)
-        // Keep the directory claims after publication. Startup package deletion requires these exact
-        // import identities before it can retire any native scope, including retained upstream scopes.
-      }
+    const repository = new SessionRepository(
+      this.configRoot,
+      {},
+      new SessionProjectionRepository(this.options.getClient)
     )
+    const publish = async (saved: PersistedChatSession): Promise<void> => {
+      if (
+        saved.id !== identity.sessionId ||
+        saved.projectId !== identity.projectId ||
+        (saved.packageOrigin ?? saved.forkOrigin)?.importId !== operation
+      )
+        throw new Error('Import publication Session identity mismatch.')
+      const pendingProjectImport =
+        identity.projectId === `import-${operation}` &&
+        saved.packageOrigin?.importId === operation &&
+        (await isSessionPackagePending(this.configRoot, identity.projectId))
+          ? { operationId: operation }
+          : undefined
+      await this.options.onSessionPublished?.({
+        projectId: identity.projectId,
+        sessionId: identity.sessionId,
+        session: saved,
+        ...(pendingProjectImport ? { pendingProjectImport } : {})
+      })
+    }
+    const current = await repository.loadSessionWithDiagnostics(
+      identity.projectId,
+      identity.sessionId,
+      { mode: 'read-only' }
+    )
+    if (current.status === 'unreadable')
+      throw new Error('Import publication Session cannot be read safely.')
+    if (current.status === 'found') {
+      if ((current.session.packageOrigin ?? current.session.forkOrigin)?.importId !== operation)
+        throw new Error('Import publication Session identity mismatch.')
+      // Resume with live authority, preserving later preferences and completing any interrupted
+      // JSON-to-SQLite projection through the repository that owns that publication.
+      const saved = await repository.saveSession(current.session)
+      await publish(saved)
+      return
+    }
+    let session = await new SessionRepository(join(operationRoot, 'session-stage')).loadSession(
+      identity.projectId,
+      identity.sessionId
+    )
+    if (!session || (session.packageOrigin ?? session.forkOrigin)?.importId !== operation)
+      throw new Error('Import publication Session is missing or invalid.')
+    // A failed workspace ownership commit may have released the staged directory. Recovery
+    // allocates a fresh workspace instead of publishing the now-missing provisional path.
+    const missingForkWorkspace =
+      session.forkOrigin &&
+      session.cwd.startsWith(join(this.options.storageRoot, 'workspaces') + sep)
+        ? !(await stat(session.cwd).catch((error: NodeJS.ErrnoException) => {
+            if (error.code === 'ENOENT') return undefined
+            throw error
+          }))
+        : false
+    if (session.forkOrigin && (!session.cwd || missingForkWorkspace)) {
+      const workspace = await createManagedSessionWorkspaceCapability({
+        resolveRoot: () => this.options.storageRoot
+      }).acquire({ projectId: session.projectId })
+      try {
+        session = { ...session, cwd: workspace.cwd }
+        await new SessionRepository(join(operationRoot, 'session-stage')).saveSession(session)
+        await workspace.commit(session.id)
+      } finally {
+        await workspace.release()
+      }
+    }
+    // Live Session authority appears only after native records commit. Recovery repeats the
+    // same repository publication; it never republishes records or replaces another Session.
+    const saved = await repository.saveSession(session)
+    await publish(saved)
+    // Keep the directory claims after publication. Startup package deletion requires these exact
+    // import identities before it can retire any native scope, including retained upstream scopes.
   }
   private async syncTree(directory: string): Promise<void> {
     for (const entry of await readdir(directory, { withFileTypes: true })) {

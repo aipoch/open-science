@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { within } from '@testing-library/dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { JobSummary } from '../../../../shared/compute'
@@ -873,9 +874,9 @@ describe('HomePage activity overview', () => {
 
     const settings = container.querySelector('[aria-label="Settings"]')
     const update = container.querySelector('[data-testid="home-update-capsule"]')
-    const newProject = Array.from(container.querySelectorAll('button')).find((button) =>
-      button.textContent?.includes('New project')
-    )
+    const newProject = within(container.querySelector('header')!).getByRole('button', {
+      name: 'New project'
+    })
 
     expect(settings).not.toBeNull()
     expect(update).not.toBeNull()
@@ -1791,16 +1792,69 @@ describe('HomePage activity overview', () => {
         <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
       )
     )
-    const section = container.querySelector('[aria-label="Projects"]')!
-    expect.soft(section.textContent).not.toContain('No projects yet.')
+    const section = container.querySelector<HTMLElement>('[aria-label="Projects"]')!
+    expect.soft(section.textContent).not.toContain('Create a project, start a conversation')
+    expect
+      .soft(section.textContent)
+      .not.toContain('Keep your files and conversations together in a project.')
+    expect.soft(within(section).queryByRole('button', { name: 'Create project' })).toBeNull()
     expect.soft(section.querySelector('[role="status"]')?.textContent).toBe('Loading…')
     await act(async () => {
       resolve([])
       await load
     })
-    expect(section.textContent).toContain('No projects yet. Create one to get started.')
+    expect(section.textContent).toContain('Create a project, start a conversation')
+    expect(section.textContent).toContain(
+      'Keep your files and conversations together in a project.'
+    )
+    expect(within(section).getByRole('button', { name: 'Create project' })).toBeDefined()
     expect(section.querySelector('[role="status"]')).toBeNull()
+
+    await act(async () => useProjectStore.setState({ projects: [project] }))
+
+    expect(section.textContent).toContain(project.name)
+    expect(section.textContent).not.toContain('Create a project, start a conversation')
+    expect(section.textContent).not.toContain(
+      'Keep your files and conversations together in a project.'
+    )
+    expect(within(section).queryByRole('button', { name: 'Create project' })).toBeNull()
   })
+
+  it.each(['project empty state', 'header'] as const)(
+    'opens the existing project form from the %s creation button',
+    async (entry) => {
+      useProjectStore.setState({ ...createInitialProjectState(), isLoaded: true })
+
+      await act(async () =>
+        root.render(
+          <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+        )
+      )
+
+      const projectSection = container.querySelector<HTMLElement>('[aria-label="Projects"]')!
+      const scope =
+        entry === 'project empty state' ? projectSection : container.querySelector('header')!
+      const createButton = within(scope).getByRole('button', {
+        name: entry === 'project empty state' ? 'Create project' : 'New project'
+      })
+
+      await act(async () =>
+        within(projectSection).getByText('Create a project, start a conversation').click()
+      )
+      expect(within(document.body).queryByRole('dialog')).toBeNull()
+
+      await act(async () => createButton.click())
+
+      const dialog = within(document.body).getByRole('dialog', { name: 'New project' })
+      expect(within(dialog).getByText(/Group related sessions under a project\./)).toBeDefined()
+      expect(within(dialog).getByRole('textbox', { name: 'Name' })).toBeDefined()
+
+      await act(async () => within(dialog).getByRole('button', { name: 'Cancel' }).click())
+
+      expect(within(document.body).queryByRole('dialog')).toBeNull()
+      expect(within(projectSection).getByRole('button', { name: 'Create project' })).toBeDefined()
+    }
+  )
 
   it('offers a Retry action when loading Projects fails', async () => {
     const loadProjects = vi.fn().mockResolvedValue(undefined)
@@ -1825,6 +1879,9 @@ describe('HomePage activity overview', () => {
       'Open-Science could not load projects. Retry to continue.'
     )
     expect(container.textContent).not.toContain('database is locked')
+    const section = container.querySelector<HTMLElement>('[aria-label="Projects"]')!
+    expect(section.textContent).not.toContain('Create a project, start a conversation')
+    expect(within(section).queryByRole('button', { name: 'Create project' })).toBeNull()
 
     await act(async () => retry?.click())
     expect(loadProjects).toHaveBeenCalledOnce()

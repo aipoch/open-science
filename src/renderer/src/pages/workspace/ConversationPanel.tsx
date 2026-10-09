@@ -146,6 +146,7 @@ import { normalizeRunFailureError, type SessionReportSubject } from './error-rep
 import { isClaudeCliCompatibilityError } from '../../../../shared/claude-runtime'
 import { ReportErrorDialog } from './ReportErrorDialog'
 import { SessionInterruptedBanner } from './SessionInterruptedBanner'
+import { resolveSessionRecoveryPresentation } from './workspace-session-recovery'
 import { TurnOutcomeNotice, type TurnOutcomeActions } from './TurnOutcomeNotice'
 import { resolveCurrentTurnOutcomeItem } from './workspace-conversation-timeline'
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
@@ -942,14 +943,6 @@ const ConversationPanel = ({
   const latestTurnAnchor = activeSession ? latestOutcomePrompt(activeSession) : undefined
   const currentTurnOutcome = resolveCurrentTurnOutcomeItem(activeSession)
   const preparationNoticeBaseline = activeSession && resolvePreparationNoticeBaseline(activeSession)
-  const preparedRecoveryPromptMessageId =
-    preparationNoticeBaseline?.state.resumeRecovery?.promptMessageId ??
-    activeSession?.promptPreparation?.previousState.resumeRecovery?.promptMessageId
-  const resumePromptMessageId =
-    activeSession?.resumeRecovery?.promptMessageId ??
-    (currentTurnOutcome?.promptMessageId === preparedRecoveryPromptMessageId
-      ? preparedRecoveryPromptMessageId
-      : undefined)
   const latestTurnIsUnadmittedPreparation = Boolean(
     latestTurnAnchor &&
     !latestTurnAnchor.turnOutcome &&
@@ -964,9 +957,20 @@ const ConversationPanel = ({
     !preparationNoticeBaseline.promptMessageId
       ? preparationNoticeBaseline.state
       : activeSession
-  const legacyInterrupted = Boolean(
-    activeSession?.interrupted || legacyDisplayState?.resumeRecovery
-  )
+  const sessionRecovery = resolveSessionRecoveryPresentation(activeSession)
+  const showSessionRecovery = Boolean(sessionRecovery || isResuming)
+  let recoveryMessage: string
+  if (sessionRecovery?.error) {
+    recoveryMessage = resolveRunError(sessionRecovery.error)
+  } else if (sessionRecovery?.cause === 'cancelled') {
+    recoveryMessage = t('This turn was interrupted. Resume to continue.')
+  } else if (sessionRecovery?.cause === 'connection-lost') {
+    recoveryMessage = t('Connection lost — Resume to reconnect and continue.')
+  } else if (sessionRecovery?.cause === 'app-restart') {
+    recoveryMessage = t('Session was interrupted before the app closed.')
+  } else {
+    recoveryMessage = t('This session was interrupted.')
+  }
   const resolvedRunError = resolveRunError(legacyDisplayState?.error)
   // Anchorless legacy diagnostics remain readable. A hidden or historical turn is still an anchor,
   // so neither its failure nor the live terminal-write exception returns to the composer. A newly
@@ -997,7 +1001,7 @@ const ConversationPanel = ({
     isUnsupportedCodexAcpVersionError(legacyDisplayState?.error) ||
     isCodexCliCompatibilityError(legacyDisplayState?.error)
   const showLegacyRunErrorRow =
-    showLegacyRunError && (!legacyInterrupted || hasUnsupportedCodexRunError)
+    showLegacyRunError && (!showSessionRecovery || hasUnsupportedCodexRunError)
   const showCodexSettings =
     isUnsupportedCodexAcpVersionError(actionError) ||
     isCodexCliCompatibilityError(actionError) ||
@@ -1190,7 +1194,6 @@ const ConversationPanel = ({
   // The scroller memo compares this object by identity, so keep it stable across draft edits:
   // callbacks read the latest render's handlers through a ref instead of being recreated.
   const turnOutcomeHandlers = {
-    resume: handleResume,
     retryArtifact: (promptMessageId: string): void => {
       if (activeSession) workflows.artifactFinalization.request(activeSession.id, promptMessageId)
     },
@@ -1200,7 +1203,6 @@ const ConversationPanel = ({
   useLayoutEffect(() => {
     turnOutcomeHandlersRef.current = turnOutcomeHandlers
   })
-  const isTurnOutcomeDisabled = isStopping || rootTurnBusy
   const artifactRetryingPromptMessageId = workflows.artifactFinalization.retryingPromptMessageId
   const artifactRetryDisabled = isImported || workflows.artifactFinalization.running
   const settingsAction = useCallback(
@@ -1218,11 +1220,6 @@ const ConversationPanel = ({
   )
   const turnOutcomeActions = useMemo<TurnOutcomeActions>(
     () => ({
-      resumePromptMessageId,
-      canResume: canResumeSession,
-      isResuming,
-      isDisabled: isTurnOutcomeDisabled,
-      onResume: () => void turnOutcomeHandlersRef.current.resume(),
       artifactRetryingPromptMessageId,
       artifactRetryDisabled,
       onRetryArtifact: (promptMessageId) =>
@@ -1231,16 +1228,7 @@ const ConversationPanel = ({
       onReportError: (error) => turnOutcomeHandlersRef.current.reportError(error),
       settingsAction
     }),
-    [
-      artifactRetryDisabled,
-      artifactRetryingPromptMessageId,
-      canResumeSession,
-      isResuming,
-      isTurnOutcomeDisabled,
-      resolveRunError,
-      resumePromptMessageId,
-      settingsAction
-    ]
+    [artifactRetryDisabled, artifactRetryingPromptMessageId, resolveRunError, settingsAction]
   )
 
   // Submits the current doc, passing the ids of any skills picked as inline chips.
@@ -1682,12 +1670,12 @@ const ConversationPanel = ({
                 {composerError && composerErrorDetail ? (
                   <DiagnosticDetails detail={composerErrorDetail} />
                 ) : null}
-                {legacyInterrupted && !hasCurrentTurnAnchor ? (
+                {showSessionRecovery ? (
                   <SessionInterruptedBanner
                     message={
                       hasUnsupportedCodexRunError
                         ? t('This session was interrupted.')
-                        : (legacyDisplayState?.error ?? t('This session was interrupted.'))
+                        : recoveryMessage
                     }
                     isDisabled={!canResumeSession || isStopping || rootTurnBusy}
                     isResuming={isResuming}

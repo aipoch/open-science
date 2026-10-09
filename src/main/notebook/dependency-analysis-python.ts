@@ -2694,13 +2694,114 @@ class MethodNameVisitor extends NodeVisitor {
   globals = new Set<string>()
   loaded = new Set<string>()
   safeCalls = new Set<string>()
+  private readonly classBindings: Array<Set<string> | undefined> = []
+  private readonly classLoads = new Set<string>()
 
-  visit_FunctionDef(_node: PyNode): void {
-    void _node
+  private get classDepth(): number {
+    return this.classBindings.length
+  }
+
+  private visitHeaderExpression(value: PyNode): void {
+    // Comprehensions have their own bindings; generator bodies are deferred.
+    // Keep the entire expression opaque without polluting the enclosing locals.
+    if (
+      walkPy(value).some((item) =>
+        ['ListComp', 'SetComp', 'DictComp', 'GeneratorExp'].includes(item.type)
+      )
+    ) {
+      this.classBindings.at(-1)?.clear()
+      return
+    }
+    this.visit(value)
+  }
+
+  capturedNames(receiver?: string): string[] {
+    return [...this.loaded]
+      .filter(
+        (name) =>
+          this.classLoads.has(name) ||
+          (name !== receiver && !(this.locals.has(name) && !this.globals.has(name)))
+      )
+      .sort()
+  }
+
+  visit_FunctionDef(node: PyNode): void {
+    if (node.name && this.classDepth === 0) this.locals.add(node.name)
+    // Creating a nested function executes its header in the enclosing scope.
+    // Its parameters and body still belong to the deferred inner function.
+    const fnArgs = node.args as PyArguments | undefined
+    for (const value of [
+      ...(node.decorator_list ?? []),
+      ...(fnArgs?.defaults ?? []),
+      ...(fnArgs?.kw_defaults ?? []).filter((item): item is PyNode => Boolean(item))
+    ]) {
+      this.visitHeaderExpression(value)
+    }
   }
   visit_AsyncFunctionDef = this.visit_FunctionDef
-  visit_Lambda(_node: PyNode): void {
-    void _node
+  visit_ClassDef(node: PyNode): void {
+    if (node.name && this.classDepth === 0) this.locals.add(node.name)
+    // Headers execute in the enclosing scope; body bindings belong to the class.
+    // Visit header children, not ClassDef again.
+    for (const value of [
+      ...(node.bases ?? []),
+      ...(node.decorator_list ?? []),
+      ...(node.classKeywords ?? []).map((keyword) => keyword.value)
+    ]) {
+      if (isPyNode(value)) this.visitHeaderExpression(value)
+    }
+    const body = Array.isArray(node.body) ? node.body : []
+    // Custom class namespaces and explicit scope declarations need fallback.
+    const bindings =
+      !(node.bases?.length || node.classKeywords?.length || node.decorator_list?.length) &&
+      !body.some((statement) =>
+        walkPy(statement).some((item) => ['Global', 'Nonlocal'].includes(item.type))
+      )
+        ? new Set<string>()
+        : undefined
+    this.classBindings.push(bindings)
+    try {
+      for (const statement of body) {
+        const targets =
+          statement.type === 'Assign'
+            ? statement.targets
+            : ['AnnAssign', 'AugAssign'].includes(statement.type) && statement.value
+              ? [statement.target]
+              : undefined
+        const names = targets?.every((target) => target?.type === 'Name' && target.id)
+          ? targets.map((target) => target!.id!)
+          : ['FunctionDef', 'AsyncFunctionDef', 'ClassDef'].includes(statement.type) &&
+              statement.name
+            ? [statement.name]
+            : undefined
+        if (
+          (!names && !['Pass', 'Delete'].includes(statement.type)) ||
+          walkPy(statement).some((item) =>
+            ['ListComp', 'SetComp', 'DictComp', 'GeneratorExp', 'NamedExpr'].includes(item.type)
+          )
+        )
+          bindings?.clear()
+        this.visit(statement)
+        // RHS/header evaluation precedes binding. Branches never establish names.
+        for (const name of names ?? []) bindings?.add(name)
+        if (statement.type === 'Delete')
+          for (const target of statement.targets ?? [])
+            if (target.type === 'Name' && target.id) bindings?.delete(target.id)
+      }
+    } finally {
+      this.classBindings.pop()
+    }
+  }
+  visit_Lambda(node: PyNode): void {
+    // Creating a lambda executes defaults in the enclosing scope. Its
+    // parameters and body remain deferred and never bind this visitor's locals.
+    const fnArgs = node.args as PyArguments | undefined
+    for (const value of [
+      ...(fnArgs?.defaults ?? []),
+      ...(fnArgs?.kw_defaults ?? []).filter((item): item is PyNode => Boolean(item))
+    ]) {
+      this.visitHeaderExpression(value)
+    }
   }
   visit_Global(node: PyNode): void {
     for (const name of node.names ?? []) if (typeof name === 'string') this.globals.add(name)
@@ -2710,14 +2811,30 @@ class MethodNameVisitor extends NodeVisitor {
   }
   visit_Name(node: PyNode): void {
     if (!node.id) return
-    if (node.ctx === 'Load') this.loaded.add(node.id)
-    else if (node.ctx === 'Store' || node.ctx === 'Del') this.locals.add(node.id)
+    if (node.ctx === 'Load') {
+      if (this.classBindings.at(-1)?.has(node.id)) return
+      this.loaded.add(node.id)
+      // Class-local reads can fall back to globals even beside enclosing locals.
+      if (this.classDepth > 0) this.classLoads.add(node.id)
+    } else if (this.classDepth === 0 && (node.ctx === 'Store' || node.ctx === 'Del')) {
+      this.locals.add(node.id)
+    }
+  }
+  visit_AugAssign(node: PyNode): void {
+    // AugAssign stores its target in the AST but also reads its prior value.
+    if (this.classDepth > 0 && node.target?.type === 'Name') {
+      this.visit_Name({ ...node.target, ctx: 'Load' })
+    }
+    this.genericVisit(node)
   }
   visit_Call(node: PyNode): void {
     if (isPyNode(node.func) && node.func.type === 'Name' && SAFE_CALLS.has(node.func.id ?? '')) {
       this.safeCalls.add(node.func.id ?? '')
     }
     this.genericVisit(node)
+    // Opaque calls can modify the executing class namespace. Only subsequent
+    // explicit bindings may suppress later fallback reads.
+    this.classBindings.at(-1)?.clear()
   }
 }
 
@@ -2764,11 +2881,7 @@ const summarizeClass = (node: PyNode): NotebookDependencyTypeSummary | undefined
         [...names.safeCalls].filter((name) => names.locals.has(name) && !names.globals.has(name))
       )
       if (shadowedSafeCalls.size) visitor.unknown(true)
-      const usedNames = [...names.loaded]
-        .filter(
-          (name) => !(names.locals.has(name) && !names.globals.has(name)) && name !== receiver
-        )
-        .sort()
+      const usedNames = names.capturedNames(receiver)
       methods.push({
         name: item.name ?? '',
         effect: visitor.effect,
@@ -2828,9 +2941,7 @@ const summarizeFunction = (node: PyNode): NotebookDependencyTypeSummary | undefi
       {
         name: '__call__',
         effect: visitor.effect,
-        usedNames: [...names.loaded]
-          .filter((name) => !(names.locals.has(name) && !names.globals.has(name)))
-          .sort(),
+        usedNames: names.capturedNames(),
         safeCallNames: [...names.safeCalls].filter((name) => !shadowedSafeCalls.has(name)).sort(),
         unknownScope: visitor.namespaceUnknown ? 'namespace' : 'receiver'
       }
@@ -2871,9 +2982,7 @@ const summarizeLambda = (
       {
         name: '__call__',
         effect: 'read',
-        usedNames: [...names.loaded]
-          .filter((name) => !(names.locals.has(name) && !names.globals.has(name)))
-          .sort(),
+        usedNames: names.capturedNames(),
         safeCallNames: [...names.safeCalls].filter((name) => !shadowedSafeCalls.has(name)).sort(),
         unknownScope: 'receiver'
       }
@@ -6652,6 +6761,97 @@ class Analyzer extends NodeVisitor {
   }
 }
 
+// Literal members identify candidates, not the function objects stored at runtime.
+// Only direct module assignments are retained. Later writes in this same source
+// must discard the old candidate rather than resolve a replacement function name.
+const pythonCallbackContainerSummaries = (
+  tree: PyNode
+): NonNullable<NotebookRunDependencyFacts['pythonCallbackContainerSummaries']> => {
+  const candidates = new Map<string, string[]>()
+  const loadedBeforeAssignment = new Set<string>()
+  const invalidate = (name: string): void => {
+    for (const [container, callbacks] of candidates) {
+      if (container === name || callbacks.includes(name)) candidates.delete(container)
+    }
+  }
+  const executedNodes = (node: PyNode): PyNode[] => {
+    if (node.type === 'FunctionDef' || node.type === 'AsyncFunctionDef') {
+      const args = node.args as PyArguments | undefined
+      const parameters = [
+        ...(args?.posonlyargs ?? []),
+        ...(args?.args ?? []),
+        ...(args?.kwonlyargs ?? []),
+        args?.vararg,
+        args?.kwarg
+      ]
+      const returnAnnotation = (node as Record<string, unknown>).returns
+      return [
+        node,
+        ...(node.decorator_list ?? []).flatMap(executedNodes),
+        ...(args?.defaults ?? []).flatMap(executedNodes),
+        ...(args?.kw_defaults ?? []).flatMap((value) => (value ? executedNodes(value) : [])),
+        ...parameters.flatMap((parameter) =>
+          parameter?.annotation ? executedNodes(parameter.annotation) : []
+        ),
+        ...(isPyNode(returnAnnotation) ? executedNodes(returnAnnotation) : [])
+      ]
+    }
+    return [node, ...pyChildren(node).flatMap(executedNodes)]
+  }
+  for (const statement of Array.isArray(tree.body) ? tree.body : []) {
+    // A class body has its own namespace and may execute arbitrary code.
+    // Do not reinterpret its members as notebook globals.
+    if (statement.type === 'ClassDef') {
+      candidates.clear()
+      continue
+    }
+    for (const node of executedNodes(statement)) {
+      if (node.type === 'Name' && (node.ctx === 'Store' || node.ctx === 'Del')) {
+        invalidate(node.id ?? '')
+      } else if (node.type === 'Name' && node.ctx === 'Load' && node.id) {
+        loadedBeforeAssignment.add(node.id)
+      } else if (['FunctionDef', 'AsyncFunctionDef', 'ClassDef'].includes(node.type) && node.name) {
+        invalidate(node.name)
+      } else if (node.type === 'Import' || node.type === 'ImportFrom') {
+        for (const alias of (node.names as PyAlias[]) ?? []) {
+          invalidate(alias.asname ?? alias.name.split('.')[0]!)
+        }
+      } else if (node.type === 'Call' && node.func?.type === 'Attribute') {
+        const receiver = rootName(node.func.value as PyNode)
+        if (receiver) invalidate(receiver)
+      }
+    }
+    const targets =
+      statement.type === 'Assign'
+        ? statement.targets
+        : statement.type === 'AnnAssign' && statement.target
+          ? [statement.target]
+          : []
+    const value = statement.value
+    if (
+      targets?.length !== 1 ||
+      targets[0]?.type !== 'Name' ||
+      !targets[0].id ||
+      // Facts describe the final source binding, while calls preserve source order.
+      // Never use a later assignment to resolve an earlier load of this name.
+      loadedBeforeAssignment.has(targets[0].id) ||
+      !isPyNode(value) ||
+      !['List', 'Tuple'].includes(value.type) ||
+      !value.elts?.length ||
+      value.elts.length > 128 ||
+      value.elts.some((member) => member.type !== 'Name' || !member.id)
+    )
+      continue
+    candidates.set(targets[0].id, [...new Set(value.elts.map((member) => member.id!))])
+  }
+  if (
+    candidates.size > 512 ||
+    [...candidates.values()].reduce((count, names) => count + names.length, 0) > 1_024
+  )
+    return []
+  return [...candidates].map(([name, callbackNames]) => ({ name, callbackNames }))
+}
+
 const factsFromAnalyzer = (
   analyzer: Analyzer
 ): Omit<Extract<NotebookRunDependencyFacts, { state: 'available' }>, 'state'> => {
@@ -6762,7 +6962,11 @@ const analyzePythonTree = (
   analyzer.consoleRedirected = pythonRedirectsConsole(tree)
   analyzer.namespaceLoads = namespaceLoadLines(tree)
   analyzer.visit(tree)
-  const facts = factsFromAnalyzer(analyzer)
+  const candidates = pythonCallbackContainerSummaries(tree)
+  const facts = {
+    ...factsFromAnalyzer(analyzer),
+    ...(candidates.length ? { pythonCallbackContainerSummaries: candidates } : {})
+  }
   const reasons = new Set(analyzer.unknown)
   const hasRemainingConditionalEffects =
     [...analyzer.conditionallyDefined].some(
@@ -7654,6 +7858,7 @@ const analyzePythonFileAccessTree = (
       }
     }
     for (const affected of affectedNames) {
+      revokeSqlitePaths(affected)
       freshSequenceCollections.delete(affected)
       for (const loop of activeStaticLoops) {
         if (loop.names.has(affected)) loop.invalidated = true
@@ -7702,7 +7907,13 @@ const analyzePythonFileAccessTree = (
   const inMemoryInputs = new Set<string>()
   const fileConnections = new Map<string, string>(
     (context?.pythonBindings ?? []).flatMap((binding) =>
-      binding.kind === 'object' && binding.qualifiedName === 'pandas.ExcelFile' && binding.filePath
+      binding.kind === 'object' &&
+      ['pandas.ExcelFile', 'sqlite3.Connection', 'sqlite3.Cursor'].includes(
+        binding.qualifiedName
+      ) &&
+      binding.filePath &&
+      binding.filePath.length <= 4096 &&
+      !binding.filePath.includes('\0')
         ? [[binding.name, binding.filePath] as const]
         : []
     )
@@ -7731,6 +7942,35 @@ const analyzePythonFileAccessTree = (
   let directoryStateRead = false
   let staticLoopIterations = 0
   let conditionalDepth = 0
+  const sqliteTypes = new Set(['sqlite3.Connection', 'sqlite3.Cursor'])
+  // Even a cwd change followed by restoration invalidates relative handle origins.
+  let sqliteRelativePathsUncertain = walkPy(tree).some(
+    (node) =>
+      node.type === 'Call' && /(?:^|\.)(?:chdir|fchdir)$/u.test(pythonDottedName(node.func) ?? '')
+  )
+  const isRelativeSqlitePath = (path: string): boolean => !/^(?:\/|\\|[a-z]:[\\/])/iu.test(path)
+  const revokeSqlitePaths = (name?: string): void => {
+    if (name && !sqliteTypes.has(scientificObjectTypes.get(name) ?? '')) return
+    const path = name ? fileConnections.get(name) : undefined
+    for (const [candidate, candidatePath] of fileConnections) {
+      if (
+        sqliteTypes.has(scientificObjectTypes.get(candidate) ?? '') &&
+        (path === undefined || candidatePath === path)
+      )
+        fileConnections.delete(candidate)
+    }
+  }
+  for (const [name, path] of fileConnections) {
+    if (
+      sqliteTypes.has(scientificObjectTypes.get(name) ?? '') &&
+      (pythonTaintedNamespaces.has('*') ||
+        pythonTaintedNamespaces.has('sqlite3') ||
+        isExternalNotebookPath(path) ||
+        path.includes('\\') ||
+        (sqliteRelativePathsUncertain && isRelativeSqlitePath(path)))
+    )
+      fileConnections.delete(name)
+  }
   const modeAwareFileConstructors = new Map<
     string,
     { defaultMode: string; modePosition?: number; pathKeyword: string }
@@ -7775,8 +8015,93 @@ const analyzePythonFileAccessTree = (
     )
   }
 
+  const readonlySqlitePath = (node: PyNode): string | undefined => {
+    const root = pythonDottedName(node.func)?.split('.')[0]
+    const args = Array.isArray(node.args) ? node.args : []
+    const keywords = node.keywords ?? []
+    if (
+      canonicalCallName(node) !== 'sqlite3.connect' ||
+      !root ||
+      importedNames.get(root)?.split('.')[0] !== 'sqlite3' ||
+      pythonTaintedNamespaces.has('*') ||
+      pythonTaintedNamespaces.has('sqlite3') ||
+      args.length > 1 ||
+      args.some((arg) => arg.type === 'Starred') ||
+      keywords.some((keyword) => !['database', 'uri'].includes(keyword.arg ?? '')) ||
+      keywords.filter((keyword) => keyword.arg === 'uri').length !== 1 ||
+      staticBoolean(keywords.find((keyword) => keyword.arg === 'uri')?.value) !== true ||
+      args.length + keywords.filter((keyword) => keyword.arg === 'database').length !== 1
+    )
+      return undefined
+    const target = resolveStaticString(
+      keywords.find((keyword) => keyword.arg === 'database')?.value ?? args[0],
+      bindings
+    )
+    // VFS/options and duplicate URI parameters can change the resource semantics.
+    const match = target && /^file:([^?#]+)\?mode=ro$/u.exec(target)
+    if (!match) return undefined
+    try {
+      const path = decodeURIComponent(match[1]!)
+      return path &&
+        path.length <= 4096 &&
+        !path.includes('\0') &&
+        !path.startsWith('//') &&
+        !path.includes('\\') &&
+        !/^[a-z][a-z\d+.-]*:/iu.test(path) &&
+        !isExternalNotebookPath(path) &&
+        !(sqliteRelativePathsUncertain && isRelativeSqlitePath(path))
+        ? path
+        : undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  const revokeEscapedSqlitePaths = (node: PyNode): void => {
+    if (node.type === 'Name' && node.id) {
+      revokeSqlitePaths(node.id)
+      return
+    }
+    if (node.type === 'Call') {
+      if (
+        node.func?.type === 'Name' &&
+        node.func.id === 'id' &&
+        !shadowedStaticCalls.has('id') &&
+        !context?.resolvedKernelNames?.includes('id') &&
+        !pythonTaintedNamespaces.has('*') &&
+        !pythonTaintedNamespaces.has('builtins') &&
+        Array.isArray(node.args) &&
+        node.args.length === 1 &&
+        !(node.keywords ?? []).length
+      )
+        return
+      for (const argument of [
+        ...(Array.isArray(node.args) ? node.args : []),
+        ...(node.keywords ?? []).map((keyword) => keyword.value)
+      ])
+        revokeEscapedSqlitePaths(argument)
+      return
+    }
+    // Cursor descriptions contain column metadata, not live handle aliases.
+    if (
+      node.type === 'Attribute' &&
+      node.attr === 'description' &&
+      isPyNode(node.value) &&
+      scientificObjectType(node.value) === 'sqlite3.Cursor'
+    )
+      return
+    pyChildren(node).forEach(revokeEscapedSqlitePaths)
+  }
+
   const fileConnectionPath = (node: PyNode | null | undefined): string | undefined => {
-    if (node?.type === 'Name' && node.id) return fileConnections.get(node.id)
+    if (node?.type === 'Name' && node.id) {
+      // We do not persist handle alias families. An alias revokes their path authority.
+      if (sqliteTypes.has(scientificObjectTypes.get(node.id) ?? '')) {
+        revokeSqlitePaths(node.id)
+        return undefined
+      }
+      return fileConnections.get(node.id)
+    }
     if (node?.type !== 'Call') return undefined
     const name = canonicalCallName(node)
     const args = Array.isArray(node.args) ? node.args : []
@@ -7789,23 +8114,18 @@ const analyzePythonFileAccessTree = (
     }
     if (name === 'pathlib.PurePath.open' && node.func?.type === 'Attribute')
       return resolveStaticString(node.func.value as PyNode, bindings)
-    if (name === 'sqlite3.connect') {
-      const targetNode =
-        (node.keywords ?? []).find((keyword) => keyword.arg === 'database')?.value ?? args[0]
-      const uriNode = (node.keywords ?? []).find((keyword) => keyword.arg === 'uri')?.value
-      const target = resolveStaticString(targetNode, bindings)
-      const uri = uriNode ? staticBoolean(uriNode) : false
-      const match = target ? /^file:([^?]+)\?(.*)$/u.exec(target) : undefined
-      const mode = match?.[2] ? new URLSearchParams(match[2]).get('mode') : undefined
-      if (!uri || !match || mode !== 'ro') return undefined
-      try {
-        const path = decodeURIComponent(match[1] ?? '')
-        return path && !path.startsWith('//') && !/^[a-z][a-z\d+.-]*:/iu.test(path)
-          ? path
-          : undefined
-      } catch {
-        return undefined
-      }
+    if (name === 'sqlite3.connect') return readonlySqlitePath(node)
+    if (name?.startsWith('sqlite3.')) {
+      const receiver = node.func?.value
+      if (
+        name === 'sqlite3.Connection.cursor' &&
+        args.length === 0 &&
+        !(node.keywords ?? []).length &&
+        isPyNode(receiver) &&
+        receiver.type === 'Name'
+      )
+        return fileConnections.get(receiver.id!)
+      return undefined
     }
     if (
       node.func?.type === 'Attribute' &&
@@ -7898,6 +8218,46 @@ const analyzePythonFileAccessTree = (
           returnType
         ))
       ? returnType
+      : undefined
+  }
+
+  // This transient check only prevents a known library read from revoking SQL
+  // handle context. It adds no persisted types, file paths or completeness claim.
+  const closedLibraryReadType = (node: PyNode | undefined, depth = 0): string | undefined => {
+    if (!node || depth > 16 || pythonTaintedNamespaces.has('*')) return undefined
+    const known = node.type === 'Name' ? scientificObjectType(node) : undefined
+    if (known) return pythonTaintedNamespaces.has(known.split('.')[0]!) ? undefined : known
+    if (
+      node.type === 'Subscript' &&
+      isPyNode(node.value) &&
+      node.slice?.type === 'Constant' &&
+      node.slice.constKind === 'str' &&
+      closedLibraryReadType(node.value, depth + 1) === 'pandas.DataFrame'
+    )
+      return pythonLibraryMethodEffect('pandas.DataFrame', '@column')?.returnType
+    if (
+      node.type !== 'Call' ||
+      node.func?.type !== 'Attribute' ||
+      !isPyNode(node.func.value) ||
+      (Array.isArray(node.args) && node.args.length > 0) ||
+      (node.keywords ?? []).length > 0
+    )
+      return undefined
+    const owner = closedLibraryReadType(node.func.value, depth + 1)
+    const effect = owner && pythonLibraryMethodEffect(owner, node.func.attr ?? '')
+    return effect &&
+      effect.effect === 'read' &&
+      !effect.file &&
+      !effect.externalState &&
+      !effect.scopedOpaque &&
+      !effect.unsafeNamespace &&
+      !effect.callbackKeywords?.length &&
+      !effect.callbackPositionalKeywords &&
+      !effect.callbackContainerKeywords?.length &&
+      !effect.callbackAllKeywords &&
+      effect.returnType &&
+      !pythonTaintedNamespaces.has(effect.returnType.split('.')[0]!)
+      ? effect.returnType
       : undefined
   }
 
@@ -8450,6 +8810,10 @@ const analyzePythonFileAccessTree = (
         return
       }
       replayedHelperNames.add(rawName)
+      // Helper replay uses isolated snapshots. Do not restore handle authority
+      // after a helper that could close or reconfigure a caller's connection.
+      revokeSqlitePaths()
+      sqliteRelativePathsUncertain = true
       invokeHelper(helper, node)
       return
     }
@@ -8532,44 +8896,57 @@ const analyzePythonFileAccessTree = (
         unsupportedExternalState = true
         return
       }
-      const match = target ? /^file:([^?]+)\?(.*)$/u.exec(target) : undefined
-      const query = match?.[2]
-      const mode = query ? new URLSearchParams(query).get('mode') : undefined
-      if (!uri || !match || mode !== 'ro') {
-        unresolvedReads = true
-        unresolvedWrites = true
-        unsupportedExternalState = true
-        return
-      }
-      let path: string
-      try {
-        path = decodeURIComponent(match[1] ?? '')
-      } catch {
-        unresolvedReads = true
-        unsupportedExternalState = true
-        return
-      }
-      if (!path || path.startsWith('//') || /^[a-z][a-z\d+.-]*:/iu.test(path)) {
-        unresolvedReads = true
-        unsupportedExternalState = true
-        return
-      }
-      recordFileAccess('read', {
-        type: 'Constant',
-        constKind: 'str',
-        value: path,
-        _fields: []
-      })
+      const path = readonlySqlitePath(node)
+      if (path)
+        recordFileAccess('read', {
+          type: 'Constant',
+          constKind: 'str',
+          value: path,
+          _fields: []
+        })
+      unresolvedReads = true
+      unresolvedWrites = true
+      unsupportedExternalState = true
       return
     }
-    if (canonicalName === 'sqlite3.Connection.cursor') return
-    if (['sqlite3.Connection.execute', 'sqlite3.Cursor.execute'].includes(canonicalName)) {
+    if (sqliteTypes.has(canonicalName.slice(0, -(member.length + 1)))) {
       const args = Array.isArray(node.args) ? node.args : []
-      const query = resolveStaticString(args[0], bindings)?.trim().toLocaleUpperCase('en-US')
-      if (!query || !/^SELECT\b/u.test(query) || query.includes(';') || /\bATTACH\b/u.test(query)) {
-        unsupportedExternalState = true
-        return
+      const receiver = node.func?.value
+      const name = isPyNode(receiver) && receiver.type === 'Name' ? receiver.id : undefined
+      const query =
+        member === 'execute' ? resolveStaticString(args[0], bindings)?.trim() : undefined
+      const parameters = args[1]
+      const closedParameters =
+        !parameters ||
+        (['Tuple', 'List'].includes(parameters.type) &&
+          (parameters.elts ?? []).every((value) => value.type === 'Constant'))
+      const knownSelect =
+        query &&
+        /^SELECT\b/iu.test(query) &&
+        !query.includes(';') &&
+        !/\bATTACH\b/iu.test(query) &&
+        args.length <= 2 &&
+        closedParameters &&
+        !(node.keywords ?? []).length &&
+        !args.some((arg) => arg.type === 'Starred')
+      const closedMethod =
+        ['cursor', 'fetchall'].includes(member) &&
+        args.length === 0 &&
+        !(node.keywords ?? []).length
+      if (knownSelect && name && fileConnections.has(name)) {
+        recordFileAccess('read', {
+          type: 'Constant',
+          constKind: 'str',
+          value: fileConnections.get(name)!,
+          _fields: []
+        })
+      } else if (!closedMethod) {
+        revokeSqlitePaths(name)
       }
+      // Known input is a potential database read, never complete SQL/file capture.
+      unresolvedReads = true
+      unresolvedWrites = true
+      unsupportedExternalState = true
       return
     }
     if (
@@ -8617,6 +8994,9 @@ const analyzePythonFileAccessTree = (
           return !summary || summary.effect !== 'read' || Boolean(summary.usedNames?.length)
         })
       ) {
+        // An unclosed callback can rebind or close captured SQLite handles.
+        revokeSqlitePaths()
+        sqliteRelativePathsUncertain = true
         unresolvedReads = true
         unresolvedWrites = true
         unsupportedExternalState = true
@@ -9739,6 +10119,10 @@ const analyzePythonFileAccessTree = (
           shadowedStaticCalls.has(rawName) ||
           context?.resolvedKernelNames?.includes(rawName))
       ) {
+        if (!closedLibraryReadType(node)) {
+          revokeSqlitePaths()
+          sqliteRelativePathsUncertain = true
+        }
         // An opaque callback can monkeypatch a module passed by reference.
         // Preserve that uncertainty across re-imports, including failed cells.
         const argumentsToCheck = [
@@ -9992,6 +10376,7 @@ const analyzePythonFileAccessTree = (
         (node.ctx === 'Del' || (node.type !== 'Name' && node.ctx === 'Store')))
     ) {
       if (node.type === 'Name' && node.ctx === 'Del' && node.id) {
+        revokeSqlitePaths(node.id)
         importedNames.delete(node.id)
         scientificObjectTypes.delete(node.id)
       }
@@ -10434,6 +10819,7 @@ const analyzePythonFileAccessTree = (
         }
       }
       for (const target of targets) unpack(target, isPyNode(node.value) ? node.value : undefined)
+      if (isPyNode(node.value)) revokeEscapedSqlitePaths(node.value)
       // Python evaluates the entire RHS before rebinding any target (including swaps).
       const resolvedValues = new Map(
         [...new Set(assignments.map(({ valueNode }) => valueNode))].map((valueNode) => {
@@ -10514,6 +10900,25 @@ const analyzePythonFileAccessTree = (
           archiveAlias
         } = resolvedValues.get(valueNode)!
         if (target.type !== 'Name' || !target.id) continue
+        revokeSqlitePaths(target.id)
+        if (
+          objectType &&
+          sqliteTypes.has(objectType) &&
+          valueNode?.type === 'Call' &&
+          !['sqlite3.connect', 'sqlite3.Connection.cursor'].includes(
+            canonicalCallName(valueNode) ?? ''
+          )
+        )
+          revokeSqlitePaths()
+        const trustedConnectionPath =
+          objectType && sqliteTypes.has(objectType)
+            ? assignments.length === 1 &&
+              valueNode?.type === 'Call' &&
+              conditionalDepth === 0 &&
+              helperScopeDepth === 0
+              ? fileConnectionPath(valueNode)
+              : undefined
+            : connectionPath
         const inheritedFreshSequence =
           collection?.kind === 'sequence' &&
           [...freshSequenceCollections].some((name) => collections.get(name) === collection)
@@ -10592,13 +10997,14 @@ const analyzePythonFileAccessTree = (
           inMemoryInputs.add(target.id)
           fileConnections.delete(target.id)
           scientificObjectTypes.delete(target.id)
-        } else if (connectionPath) {
+        } else if (trustedConnectionPath) {
           bindings.delete(target.id)
           collections.delete(target.id)
           inMemoryInputs.delete(target.id)
-          fileConnections.set(target.id, connectionPath)
+          fileConnections.set(target.id, trustedConnectionPath)
           scientificObjectTypes.delete(target.id)
-          if (objectType === 'pandas.ExcelFile') scientificObjectTypes.set(target.id, objectType)
+          if (objectType === 'pandas.ExcelFile' || (objectType && sqliteTypes.has(objectType)))
+            scientificObjectTypes.set(target.id, objectType)
         } else if (objectType) {
           bindings.delete(target.id)
           collections.delete(target.id)
@@ -10615,6 +11021,7 @@ const analyzePythonFileAccessTree = (
       }
       return
     } else if (node.type === 'Call') {
+      revokeEscapedSqlitePaths(node)
       analyzeCall(node, awaitedCall)
     }
     pyChildren(node).forEach((child) => visit(child))
@@ -10647,7 +11054,11 @@ const analyzePythonFileAccessTree = (
             name,
             qualifiedName,
             kind: 'object' as const,
-            ...(qualifiedName === 'pandas.ExcelFile' && fileConnections.has(name)
+            ...((qualifiedName === 'pandas.ExcelFile' ||
+              (sqliteTypes.has(qualifiedName) &&
+                !pythonTaintedNamespaces.has('*') &&
+                !pythonTaintedNamespaces.has('sqlite3'))) &&
+            fileConnections.has(name)
               ? { filePath: fileConnections.get(name)! }
               : {})
           }))

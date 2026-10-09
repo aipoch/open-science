@@ -2,55 +2,6 @@ import { lstat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { sessionPackageRequestSchema } from '../../shared/session-package'
 
-const publicationBrand = Symbol('session-package-publication')
-export type SessionPackagePublication = Readonly<{ [publicationBrand]: true }>
-type PublicationIdentity = Readonly<{ projectId: string; sessionId: string; importId: string }>
-const publications = new WeakMap<SessionPackagePublication, PublicationIdentity>()
-
-// Main only: the package owner has checked the committed native witness and retained receipt.
-// This lease allows its exact durable Session to be adopted while the public catalog stays fenced.
-export async function withSessionPackagePublication<Result>(
-  identity: PublicationIdentity,
-  work: (publication: SessionPackagePublication) => Promise<Result>
-): Promise<Result> {
-  sessionPackageRequestSchema.parse({
-    projectId: identity.projectId,
-    sessionId: identity.sessionId
-  })
-  if (!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(identity.importId))
-    throw new Error('Invalid Session package publication identity.')
-  const publication: SessionPackagePublication = Object.freeze({ [publicationBrand]: true })
-  publications.set(
-    publication,
-    Object.freeze({
-      projectId: identity.projectId,
-      sessionId: identity.sessionId,
-      importId: identity.importId
-    })
-  )
-  try {
-    return await work(publication)
-  } finally {
-    publications.delete(publication)
-  }
-}
-
-export function resolveSessionPackagePublication(
-  publication: SessionPackagePublication,
-  identity: { projectId: string; sessionId: string }
-): PublicationIdentity {
-  const granted = publications.get(publication)
-  if (
-    !granted ||
-    granted.projectId !== identity.projectId ||
-    granted.sessionId !== identity.sessionId
-  )
-    throw new Error(
-      'Session package publication authority is unavailable or belongs to another Session.'
-    )
-  return granted
-}
-
 export const isImportedResearchSession = async (
   dataRoot: string,
   projectId: string,

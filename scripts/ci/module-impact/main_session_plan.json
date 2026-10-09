@@ -17,7 +17,8 @@
     "src/main/session-plan/plan-context-file.test.ts",
     "src/main/session-plan/plan-context-file.ts",
     "src/main/session-plan/plan-context-guidance.ts",
-    "src/main/session-plan/plan-legacy-compatibility.test.ts"
+    "src/main/session-plan/plan-legacy-compatibility.test.ts",
+    "src/main/session-plan/session-plan-turn-outcome.test.ts"
   ],
   "interfacePaths": [
     "src/main/session-plan/guidance.ts",
@@ -40,7 +41,8 @@
       "src/main/session-plan/session-plan-interaction-owner.test.ts",
       "src/main/session-plan/plan-context-file.shell.integration.test.ts",
       "src/main/session-plan/plan-context-file.test.ts",
-      "src/main/session-plan/plan-legacy-compatibility.test.ts"
+      "src/main/session-plan/plan-legacy-compatibility.test.ts",
+      "src/main/session-plan/session-plan-turn-outcome.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

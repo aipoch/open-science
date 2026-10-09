@@ -126,6 +126,23 @@ describe('Turn Outcome persistence and legacy reads', () => {
     }
   )
 
+  it.each(['cancelled', 'connection-lost', 'app-restart'] as const)(
+    'does not borrow %s session recovery for a different message',
+    (cause) => {
+      const session = fixture()
+      session.status = 'error'
+      session.error = 'Feedback execution interrupted'
+      session.resumeRecovery = {
+        kind: 'resume-required',
+        promptMessageId: 'feedback',
+        cause
+      }
+      expect(resolveTurnOutcome(session, 'prompt')).toBeUndefined()
+      session.resumeRecovery = { kind: 'resume-required', cause }
+      expect(resolveTurnOutcome(session, 'prompt')).toBeUndefined()
+    }
+  )
+
   it.each(outcomes)('keeps routed user messages inside their owning $kind turn', (outcome) => {
     for (const withGraph of [false, true]) {
       const original = fixture()

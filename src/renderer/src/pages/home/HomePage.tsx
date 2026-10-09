@@ -147,6 +147,9 @@ const sectionHeadingClassName =
 
 const listCardClassName = 'rounded-2xl bg-bg-000 p-1.5 shadow-card'
 
+const emptyStateClassName =
+  'flex min-h-[180px] flex-col items-center justify-center rounded-2xl border border-dashed border-border p-6 text-center'
+
 const rowClassName =
   'group flex w-full items-center gap-2 rounded-xl px-2.5 py-2.5 text-left hover:bg-bg-300 sm:px-3'
 
@@ -421,6 +424,9 @@ const HomePage = ({
     persistedSessions,
     isProjectsLoaded && !loadError && hasCompleteSessionCatalog
   )
+
+  const bothListsEmpty =
+    isProjectsLoaded && !loadError && projectSummaries.length === 0 && recentSessions.length === 0
 
   const showArtifactCounts = hasCompleteSessionCatalog && recentSessions.length === 0
 
@@ -945,7 +951,10 @@ const HomePage = ({
               sessionUpdates.length > 0 ? 'mt-8' : 'mt-8 sm:mt-10'
             )}
           >
-            <section className="min-w-0" aria-label={t('Projects')}>
+            <section
+              className={cn('min-w-0', bothListsEmpty && 'lg:flex lg:flex-col')}
+              aria-label={t('Projects')}
+            >
               <h2 className={sectionHeadingClassName}>
                 <GalleryVerticalEnd
                   className="size-4 text-text-100"
@@ -978,8 +987,23 @@ const HomePage = ({
                   {t('Loading…')}
                 </div>
               ) : projectSummaries.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-border-200/70 px-4 py-10 text-center text-sm text-muted-foreground">
-                  {t('No projects yet. Create one to get started.')}
+                <div className={cn(emptyStateClassName, bothListsEmpty && 'lg:flex-1')}>
+                  <h3 className="text-[15px] font-medium leading-5 text-foreground">
+                    {t('Create a project, start a conversation')}
+                  </h3>
+                  <p className="mt-2 text-[13px] leading-5 text-muted-foreground">
+                    {t('Keep your files and conversations together in a project.')}
+                  </p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="mt-5 h-auto min-h-8 max-w-full gap-1.5 rounded-md px-3 py-1.5 text-xs whitespace-normal"
+                    onClick={openCreateDialog}
+                  >
+                    <Plus className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                    {t('Create project')}
+                  </Button>
                 </div>
               ) : (
                 <div className={listCardClassName}>
@@ -1152,13 +1176,22 @@ const HomePage = ({
               )}
             </section>
 
-            <section className="min-w-0" aria-label={t('Recent sessions')}>
+            <section
+              className={cn('min-w-0', bothListsEmpty && 'lg:flex lg:flex-col')}
+              aria-label={t('Recent sessions')}
+            >
               <h2 className={sectionHeadingClassName}>
                 <Clock className="size-4 text-text-100" strokeWidth={2} aria-hidden="true" />
                 {t('Recent sessions')}
               </h2>
               {recentSessions.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-border-200/70 px-4 py-10 text-center text-sm text-muted-foreground">
+                <div
+                  className={cn(
+                    emptyStateClassName,
+                    'text-[13px] leading-5 text-muted-foreground',
+                    bothListsEmpty && 'lg:flex-1'
+                  )}
+                >
                   {t('Sessions you start will appear here.')}
                 </div>
               ) : (

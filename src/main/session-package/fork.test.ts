@@ -1,6 +1,10 @@
 import { createFrameNotebookLane } from '../notebook/lane-identity'
 import { BookmarkRepository } from '../bookmarks/repository'
-import { SessionPersistenceCoordinator } from '../session-persistence/coordinator'
+import { SessionPackageDesktop } from './desktop'
+import {
+  SessionPersistenceCoordinator,
+  type PublishedSessionHandoff
+} from '../session-persistence/coordinator'
 import { SessionProjectionRepository } from '../session-persistence/projection'
 import { ArchiveCoordinator } from '../archive/coordinator'
 import { ProjectRepository } from '../projects/repository'
@@ -423,8 +427,7 @@ it.each(['local', 'imported'] as const)(
     const service = new SessionPackageService({
       storageRoot: fixture.storageRoot,
       getClient,
-      onSessionPublished: ({ projectId, sessionId }) =>
-        persistence.adoptPublishedSession(projectId, sessionId)
+      onSessionPublished: (publication) => persistence.adoptPublishedSession(publication)
     })
     const initial = { projectId: 'project-1', sessionId: 'session-1' }
     let source = initial
@@ -964,3 +967,390 @@ it('persists distinct bounded titles for queued forks of a long Unicode title', 
   expect(titles).toEqual(['文'.repeat(76) + '(2)', '文'.repeat(76) + '(3)'])
   expect((await repository.loadSession(source.projectId, source.id))?.title).toBe(title)
 })
+
+// Exercise desktop selection/confirmation with the real SQLite, JSON and live publication owners.
+const setupImportPublication = async (
+  roots: 'shared' | 'separate'
+): Promise<{
+  fixture: Awaited<ReturnType<typeof createProvenanceTestFixture>>
+  repository: SessionRepository
+  files: ManagedFileIndexRepository
+  persistence: SessionPersistenceCoordinator
+  projects: ProjectRepository
+  serviceOptions: {
+    configRoot: string
+    storageRoot: string
+    getClient: () => Promise<Awaited<ReturnType<typeof createProvenanceTestFixture>>['client']>
+  }
+  service: SessionPackageService
+  publications: PublishedSessionHandoff[]
+  desktop: SessionPackageDesktop
+  afterImport: (identity: { projectId: string; sessionId: string }) => Promise<void>
+  archive: string
+  select: (destination: 'new' | 'existing') => Promise<void>
+  confirm: () => Promise<void>
+}> => {
+  const fixture = await createProvenanceTestFixture()
+  fixtures.push(fixture)
+  const dataRoot = roots === 'shared' ? fixture.storageRoot : join(fixture.storageRoot, 'data')
+  await mkdir(dataRoot, { recursive: true })
+  storageRoots.initDataRoot(dataRoot)
+  const getClient = async (): Promise<typeof fixture.client> => fixture.client
+  await fixture.client.project.create({ data: { id: 'source', name: 'Source' } })
+  const repository = new SessionRepository(
+    fixture.storageRoot,
+    {},
+    new SessionProjectionRepository(getClient)
+  )
+  await repository.saveSession({
+    id: 'source-session',
+    projectId: 'source',
+    title: 'Imported research',
+    cwd: '',
+    status: 'idle',
+    messages: [
+      {
+        id: 'question',
+        role: 'user',
+        content: 'Study the sample',
+        status: 'complete',
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ],
+    createdAt: 1,
+    updatedAt: 2
+  })
+  const files = new ManagedFileIndexRepository(
+    getClient,
+    dataRoot,
+    new ManagedFileVersionService({ storageRoot: dataRoot, getClient }),
+    new UploadRepository(dataRoot, { getClient })
+  )
+  const persistence = new SessionPersistenceCoordinator(repository, files)
+  await persistence.loadAll()
+  const projects = new ProjectRepository(getClient, fixture.storageRoot)
+  const publications: PublishedSessionHandoff[] = []
+  const serviceOptions = { configRoot: fixture.storageRoot, storageRoot: dataRoot, getClient }
+  const service = new SessionPackageService({
+    ...serviceOptions,
+    onSessionPublished: async (publication) => {
+      publications.push(structuredClone(publication))
+      if (publication.pendingProjectImport) {
+        // Only the internal handoff can see a new Project while the journal is still held.
+        expect(
+          await repository.loadSession(publication.projectId, publication.sessionId)
+        ).toBeUndefined()
+        expect((await projects.list()).map((project) => project.id)).not.toContain(
+          publication.projectId
+        )
+      }
+      await persistence.adoptPublishedSession(publication)
+    }
+  })
+  const afterImport = vi.fn(async (identity: { projectId: string; sessionId: string }) => {
+    expect(await repository.loadSession(identity.projectId, identity.sessionId)).toBeDefined()
+    expect(await persistence.sessionProjectId(identity.sessionId)).toBe(identity.projectId)
+    expect(await fileSystem.readdir(join(fixture.storageRoot, 'session-package-imports'))).toEqual(
+      []
+    )
+  })
+  const desktop = new SessionPackageDesktop({
+    service,
+    translate: englishNativeTranslator,
+    withDataRootWrite: async (work) => work(),
+    afterImport
+  })
+  const archive = join(fixture.storageRoot, 'research.science')
+  await service.exportTo({ projectId: 'source', sessionId: 'source-session' }, archive)
+  const select = async (destination: 'new' | 'existing'): Promise<void> => {
+    desktop.enqueueFile(archive)
+    await vi.waitFor(() => expect(desktop.operations.snapshot?.state).toBe('awaiting-selection'))
+    desktop.respond({
+      action: 'select-project',
+      operationId: desktop.operations.snapshot!.id,
+      target: destination === 'new' ? { projectName: 'Imported project' } : { projectId: 'source' }
+    })
+    await vi.waitFor(() => expect(desktop.operations.snapshot?.importPreview).toBeDefined())
+    expect(await fixture.client.project.count()).toBe(1)
+    expect(await fixture.client.session.count()).toBe(1)
+    expect(publications).toEqual([])
+  }
+  const confirm = async (): Promise<void> => {
+    desktop.respond({ action: 'confirm-import', operationId: desktop.operations.snapshot!.id })
+    await vi.waitFor(() => expect(desktop.operations.active).toBe(false))
+  }
+  return {
+    fixture,
+    repository,
+    files,
+    persistence,
+    projects,
+    serviceOptions,
+    service,
+    publications,
+    desktop,
+    afterImport,
+    archive,
+    select,
+    confirm
+  }
+}
+
+it.each([
+  ['new', 'shared'],
+  ['existing', 'shared'],
+  ['new', 'separate'],
+  ['existing', 'separate']
+] as const)(
+  'imports into a %s Project with %s roots and immediately adopts its durable Session',
+  async (destination, roots) => {
+    const owner = await setupImportPublication(roots)
+    try {
+      await owner.select(destination)
+      await owner.confirm()
+      expect(owner.desktop.operations.snapshot?.state).toBe('succeeded')
+      expect(owner.publications).toHaveLength(1)
+      const [publication] = owner.publications
+      const saved = await owner.repository.loadSession(publication.projectId, publication.sessionId)
+      expect(saved).toEqual(publication.session)
+      expect(saved).toMatchObject({
+        number: expect.any(Number),
+        revision: expect.any(Number),
+        title: 'Imported research'
+      })
+      expect(saved?.messages[0].content).toBe('Study the sample')
+      expect(saved?.packageOrigin).toBeDefined()
+      expect(publication.pendingProjectImport).toEqual(
+        destination === 'new' ? { operationId: saved?.packageOrigin?.importId } : undefined
+      )
+      expect((await owner.projects.get(publication.projectId))?.name).toBe(
+        destination === 'new' ? 'Imported project' : 'Source'
+      )
+      expect(await owner.persistence.sessionProjectId(publication.sessionId)).toBe(
+        publication.projectId
+      )
+      // This catalog was hydrated before import and has not been reloaded.
+      expect((await owner.persistence.sessionMetadataSnapshot()).sessions).toContainEqual({
+        id: publication.sessionId,
+        projectId: publication.projectId,
+        title: saved?.title
+      })
+      expect(
+        await owner.persistence.loadSessionForContinuation(
+          publication.projectId,
+          publication.sessionId
+        )
+      ).toEqual(saved)
+      expect(owner.afterImport).toHaveBeenCalledOnce()
+      expect(await owner.fixture.client.project.count()).toBe(destination === 'new' ? 2 : 1)
+      expect(await owner.fixture.client.session.count()).toBe(2)
+      expect(
+        await fileSystem.readdir(join(owner.fixture.storageRoot, 'session-package-imports'))
+      ).toEqual([])
+    } finally {
+      await owner.desktop.close()
+      await owner.service.close()
+    }
+  }
+)
+
+it.each([
+  ['save', 'shared', 'runtime'],
+  ['save', 'separate', 'runtime'],
+  ['adopt', 'shared', 'runtime'],
+  ['adopt', 'separate', 'runtime'],
+  ['save', 'shared', 'startup'],
+  ['save', 'separate', 'startup'],
+  ['adopt', 'shared', 'startup'],
+  ['adopt', 'separate', 'startup']
+] as const)(
+  'retains a committed new Project after %s failure with %s roots, then recovers the same journal at %s',
+  async (failure, roots, recoveryMode) => {
+    const owner = await setupImportPublication(roots)
+    let recovery: SessionPackageService | undefined
+    try {
+      await owner.select('new')
+      const injected =
+        failure === 'save'
+          ? vi
+              .spyOn(SessionProjectionRepository.prototype, 'commitSave')
+              .mockRejectedValueOnce(new Error('Projection commit interrupted'))
+          : vi
+              .spyOn(owner.persistence, 'adoptPublishedSession')
+              .mockRejectedValueOnce(new Error('Catalog adoption unavailable'))
+      await owner.confirm()
+      expect(owner.desktop.operations.snapshot?.state).toBe('failed')
+      expect(owner.afterImport).not.toHaveBeenCalled()
+      if (failure === 'save') expect(owner.publications).toEqual([])
+      else expect(owner.publications).toHaveLength(1)
+      const stages = await fileSystem.readdir(
+        join(owner.fixture.storageRoot, 'session-package-imports')
+      )
+      expect(stages).toHaveLength(1)
+      const journal = JSON.parse(
+        await readFile(
+          join(owner.fixture.storageRoot, 'session-package-imports', stages[0], 'journal.json'),
+          'utf8'
+        )
+      ) as { projectId: string; sessionId: string }
+      expect(
+        await owner.repository.loadSession(journal.projectId, journal.sessionId)
+      ).toBeUndefined()
+      expect(await owner.persistence.sessionProjectId(journal.sessionId)).toBeUndefined()
+      expect(await owner.fixture.client.project.count()).toBe(2)
+      expect(await owner.fixture.client.session.count()).toBe(2)
+      injected.mockRestore()
+      recovery =
+        recoveryMode === 'startup' ? new SessionPackageService(owner.serviceOptions) : owner.service
+      await recovery.recover()
+      await recovery.recover()
+      const saved = await owner.repository.loadSession(journal.projectId, journal.sessionId)
+      expect(saved).toMatchObject({
+        id: journal.sessionId,
+        projectId: journal.projectId,
+        title: 'Imported research',
+        number: expect.any(Number),
+        revision: expect.any(Number)
+      })
+      const persistence =
+        recoveryMode === 'startup'
+          ? new SessionPersistenceCoordinator(owner.repository, owner.files)
+          : owner.persistence
+      if (recoveryMode === 'startup') await persistence.loadAll()
+      expect(await persistence.sessionProjectId(journal.sessionId)).toBe(journal.projectId)
+      expect(
+        await persistence.loadSessionForContinuation(journal.projectId, journal.sessionId)
+      ).toEqual(saved)
+      if (recoveryMode === 'runtime') expect(owner.publications.at(-1)?.session).toEqual(saved)
+      expect(await owner.fixture.client.project.count()).toBe(2)
+      expect(await owner.fixture.client.session.count()).toBe(2)
+      expect(
+        await fileSystem.readdir(join(owner.fixture.storageRoot, 'session-package-imports'))
+      ).toEqual([])
+      expect(
+        await new SessionProjectionRepository(owner.serviceOptions.getClient).pending()
+      ).toEqual([])
+    } finally {
+      if (recovery && recovery !== owner.service) await recovery.close()
+      await owner.desktop.close()
+      await owner.service.close()
+    }
+  }
+)
+
+it.each([
+  ['organized', 'shared'],
+  ['organized', 'separate'],
+  ['deleted', 'shared'],
+  ['deleted', 'separate']
+] as const)(
+  'preserves %s existing-Project publication through live cleanup recovery with %s roots',
+  async (state, roots) => {
+    const owner = await setupImportPublication(roots)
+    try {
+      const remove = fileSystem.rm
+      const cleanup = vi.spyOn(fileSystem, 'rm').mockImplementation(async (path, ...args) => {
+        if (
+          String(path).startsWith(join(owner.fixture.storageRoot, 'session-package-imports') + sep)
+        ) {
+          cleanup.mockRestore()
+          throw new Error('Staging cleanup interrupted')
+        }
+        return remove(path, ...args)
+      })
+      await expect(
+        owner.service.importFrom(owner.archive, undefined, undefined, undefined, {
+          projectId: 'source'
+        })
+      ).rejects.toThrow('Staging cleanup interrupted')
+      expect(owner.afterImport).not.toHaveBeenCalled()
+      const first = owner.publications[0]
+      const initial = await owner.repository.loadSession(first.projectId, first.sessionId)
+      expect(initial).toEqual(first.session)
+      expect(first.pendingProjectImport).toBeUndefined()
+      if (state === 'organized') {
+        const organized = await owner.repository.saveSession({
+          ...initial!,
+          title: 'My organized research',
+          pinned: true
+        })
+        await owner.service.recover()
+        const saved = await owner.repository.loadSession(first.projectId, first.sessionId)
+        expect(saved).toEqual(owner.publications[1].session)
+        expect(saved).toMatchObject({
+          title: 'My organized research',
+          pinned: true,
+          number: organized.number,
+          revision: organized.revision! + 1
+        })
+        expect(
+          (await owner.persistence.sessionMetadataSnapshot()).sessions.find(
+            (session) => session.id === first.sessionId
+          )?.title
+        ).toBe('My organized research')
+      } else {
+        await owner.persistence.deleteSession(first.projectId, first.sessionId)
+        await owner.service.recover()
+        expect(await owner.repository.loadSession(first.projectId, first.sessionId)).toBeUndefined()
+        expect(await owner.persistence.sessionProjectId(first.sessionId)).toBeUndefined()
+        expect(owner.publications).toHaveLength(1)
+      }
+      await owner.service.recover()
+      expect(await owner.fixture.client.project.count()).toBe(1)
+      expect(
+        await fileSystem.readdir(join(owner.fixture.storageRoot, 'session-package-imports'))
+      ).toEqual([])
+    } finally {
+      await owner.desktop.close()
+      await owner.service.close()
+    }
+  }
+)
+
+it.each(['session', 'project', 'origin'] as const)(
+  'rejects a saved publication result with mismatched %s instead of handing it to live adoption',
+  async (mismatch) => {
+    const owner = await setupImportPublication('shared')
+    try {
+      await owner.select('new')
+      const save = SessionRepository.prototype.saveSession
+      let importedSaves = 0
+      const injected = vi
+        .spyOn(SessionRepository.prototype, 'saveSession')
+        .mockImplementation(async function (this: SessionRepository, ...args) {
+          const saved = await save.apply(this, args)
+          // The first save is the private stage; the second is the successful live publication.
+          if (!saved.packageOrigin || ++importedSaves !== 2) return saved
+          if (mismatch === 'session') return { ...saved, id: 'other-session' }
+          if (mismatch === 'project') return { ...saved, projectId: 'other-project' }
+          return {
+            ...saved,
+            packageOrigin: { ...saved.packageOrigin, importId: 'other-operation' }
+          }
+        })
+      await owner.confirm()
+      expect(owner.desktop.operations.snapshot?.state).toBe('failed')
+      expect(owner.publications).toEqual([])
+      expect(owner.afterImport).not.toHaveBeenCalled()
+      const stages = await fileSystem.readdir(
+        join(owner.fixture.storageRoot, 'session-package-imports')
+      )
+      expect(stages).toHaveLength(1)
+      injected.mockRestore()
+      await owner.service.recover()
+      await owner.service.recover()
+      expect(owner.publications).toHaveLength(1)
+      const [recovered] = owner.publications
+      expect(await owner.persistence.sessionProjectId(recovered.sessionId)).toBe(
+        recovered.projectId
+      )
+      expect(await owner.fixture.client.project.count()).toBe(2)
+      expect(await owner.fixture.client.session.count()).toBe(2)
+    } finally {
+      await owner.desktop.close()
+      await owner.service.close()
+    }
+  }
+)

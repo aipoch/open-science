@@ -4,7 +4,14 @@ import { access, realpath } from 'node:fs/promises'
 import { delimiter, join } from 'node:path'
 import { promisify } from 'node:util'
 
+import { redactSensitiveText } from '../diagnostic-redaction'
+import { createLogger } from '../logger'
+
 const execFileAsync = promisify(execFile)
+const log = createLogger('notebook:python-command')
+const PROBE_TIMEOUT_MS = 10_000
+const PROBE_MAX_BUFFER = 64 * 1024
+const DIAGNOSTIC_OUTPUT_LIMIT = 2048
 
 const isPython3Version = (output: string): boolean => /\bPython\s+3(?:\.|\s|$)/i.test(output)
 
@@ -37,7 +44,7 @@ const pythonCandidates = (platform: NodeJS.Platform): PythonCommand[] =>
 
 export type ResolvePythonDeps = {
   platform: NodeJS.Platform
-  // Returns true when `<command> <baseArgs...> --version` runs successfully.
+  // Returns true when the invocation reports Python 3.
   probe: (candidate: PythonCommand) => Promise<boolean>
   resolveExecutables: (command: string) => Promise<string[]>
 }
@@ -61,25 +68,15 @@ const defaultResolveExecutables = async (command: string): Promise<string[]> => 
   return matches
 }
 
-// Real `<command> --version` probe. On Windows the check runs through a shell so a shimmed launcher
-// still resolves; the `py`/`python` executables run fine without one.
+// Match the direct spawn used to run Python. Shell execution splits unquoted Windows paths with
+// spaces, and can accept batch shims that the actual kernel/helper process cannot launch.
 const defaultProbe =
   (platform: NodeJS.Platform) =>
   async ({ command, baseArgs }: PythonCommand): Promise<boolean> => {
-    try {
-      const { stdout, stderr } = await execFileAsync(command, [...baseArgs, '--version'], {
-        timeout: 10_000,
-        shell: platform === 'win32',
-        windowsHide: true
-      })
-
-      return isPython3Version(`${stdout}\n${stderr}`)
-    } catch {
-      return false
-    }
+    return (await probeInterpreterVersion(command, baseArgs, { platform })) !== undefined
   }
 
-// Finds the first Python interpreter that answers `--version`. Environment setup uses this optional
+// Finds the first Python interpreter that executes a version probe. Environment setup uses this optional
 // result to report Notebook availability without making Python a core startup requirement.
 export const findPythonCommand = async (
   deps: Partial<ResolvePythonDeps> = {}
@@ -105,27 +102,103 @@ export const findPythonCommand = async (
   return undefined
 }
 
-// Probes a SPECIFIC interpreter invocation (`<command> <baseArgs...> --version`) and returns its
+// Executes a version probe through a SPECIFIC interpreter invocation and returns its
 // Python-3 version string, or undefined if it is not a runnable Python 3. Used to VALIDATE a
 // user-selected interpreter path before reporting it runnable — existence on disk is not enough
 // (it could be python2, or not python at all).
+export type PythonProbeExec = (
+  command: string,
+  args: readonly string[],
+  options: {
+    timeout: number
+    maxBuffer: number
+    shell: false
+    windowsHide: boolean
+    env?: NodeJS.ProcessEnv
+  }
+) => Promise<{ stdout: string; stderr: string }>
+
+const boundedOutput = (output: unknown): string => {
+  // Redact complete credential patterns before truncation can make them unrecognizable.
+  const text = redactSensitiveText(output === undefined ? '' : String(output))
+  return text.length <= DIAGNOSTIC_OUTPUT_LIMIT
+    ? text
+    : `${text.slice(0, DIAGNOSTIC_OUTPUT_LIMIT)} [truncated]`
+}
+
 export const probeInterpreterVersion = async (
   command: string,
   baseArgs: string[] = [],
-  deps: { platform?: NodeJS.Platform } = {}
+  deps: { platform?: NodeJS.Platform; env?: NodeJS.ProcessEnv; exec?: PythonProbeExec } = {}
 ): Promise<string | undefined> => {
-  const platform = deps.platform ?? process.platform
-  try {
-    const { stdout, stderr } = await execFileAsync(command, [...baseArgs, '--version'], {
-      timeout: 10_000,
-      shell: platform === 'win32',
-      windowsHide: true
+  const exec: PythonProbeExec =
+    deps.exec ??
+    (async (file, args, options) => {
+      const { stdout, stderr } = await execFileAsync(file, [...args], options)
+      return { stdout: String(stdout), stderr: String(stderr) }
     })
+  let attempts = 0
+  try {
+    const deadline = Date.now() + PROBE_TIMEOUT_MS
+    const maxAttempts = (deps.platform ?? process.platform) === 'win32' ? 5 : 1
+    let timeout = PROBE_TIMEOUT_MS
+    let stdout = ''
+    let stderr = ''
+    do {
+      attempts++
+      const result = await exec(command, [...baseArgs, '--version'], {
+        timeout,
+        maxBuffer: PROBE_MAX_BUFFER,
+        shell: false,
+        windowsHide: true,
+        ...(deps.env ? { env: deps.env } : {})
+      })
+      stdout = result.stdout
+      stderr = result.stderr
+      // Real Windows interpreters occasionally exit successfully with both streams empty.
+      // Retry only that observed anomaly, within the original probe deadline.
+      if (stdout !== '' || stderr !== '') break
+      timeout = deadline - Date.now()
+    } while (attempts < maxAttempts && timeout > 0)
     const output = `${stdout}\n${stderr}`
-    return isPython3Version(output) ? output.trim().replace(/^Python\s+/i, '') : undefined
-  } catch {
+    // Dots already belong to the suffix: repeating that group causes exponential backtracking
+    // on malformed version lines, blocking the main thread after the subprocess has exited.
+    const version = /^Python\s+(3(?:\.[\w.+-]+)?)(?:\s|$)/m.exec(output)?.[1]
+    if (version) return version
+    log.warn('Python interpreter probe failed', {
+      command,
+      baseArgs,
+      phase: 'version',
+      attempts,
+      code: 'INVALID_PYTHON3_VERSION',
+      timedOut: false,
+      stdout: boundedOutput(stdout),
+      stderr: boundedOutput(stderr)
+    })
+  } catch (error) {
+    const failure = error as Error & {
+      code?: string | number
+      signal?: string
+      killed?: boolean
+      stdout?: string | Buffer
+      stderr?: string | Buffer
+    }
+    log.warn('Python interpreter probe failed', {
+      command,
+      baseArgs,
+      phase: 'version',
+      attempts,
+      code: failure.code,
+      signal: failure.signal,
+      timedOut: failure.killed === true && failure.code !== 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER',
+      timeoutMs: PROBE_TIMEOUT_MS,
+      message: boundedOutput(failure.message),
+      stdout: boundedOutput(failure.stdout),
+      stderr: boundedOutput(failure.stderr)
+    })
     return undefined
   }
+  return undefined
 }
 
 export { isPython3Version }

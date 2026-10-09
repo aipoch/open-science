@@ -105,6 +105,9 @@ export const resolveTurnOutcome = (
     return undefined
   const settledAt = session.updatedAt
   const recovery = session.resumeRecovery
+  // Session recovery may belong to an independently admitted routed reply. Never borrow its
+  // terminal state for a different message merely because that message is the latest turn anchor.
+  if (recovery && recovery.promptMessageId !== promptMessageId) return undefined
   if (recovery?.cause === 'cancelled') return { kind: 'cancelled', settledAt, recovery: 'resume' }
   if (recovery)
     return {

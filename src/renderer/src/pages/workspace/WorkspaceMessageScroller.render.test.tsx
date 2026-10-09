@@ -234,10 +234,6 @@ const renderScroller = async (
 }
 
 const turnOutcomeActions: TurnOutcomeActions = {
-  canResume: false,
-  isResuming: false,
-  isDisabled: false,
-  onResume: vi.fn(),
   artifactRetryDisabled: false,
   onRetryArtifact: vi.fn(),
   onReportError: vi.fn(),
@@ -1241,9 +1237,7 @@ describe('WorkspaceMessageScroller loading render', () => {
       }),
       {
         turnOutcomeActions: {
-          ...turnOutcomeActions,
-          resumePromptMessageId: 'prompt-failed',
-          canResume: true
+          ...turnOutcomeActions
         }
       }
     )

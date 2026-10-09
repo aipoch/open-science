@@ -1,4 +1,3 @@
-import type { SessionPackagePublication } from '../storage/session-package-state'
 import { assertLiteratureAttachmentsUnreferenced } from './literature-attachment-removal'
 import { ProjectFilesReconciliationError } from '../project-files/repository'
 import type { ProjectFileSource, ProjectFilesChangedEvent } from '../../shared/project-files'
@@ -97,6 +96,16 @@ import {
 } from './session-update-publication'
 import { sanitizeRendererSaveSessionOptions } from './renderer-save-options'
 import { mutateSessionDetailsAuthority } from './session-details-authority'
+
+// Main-process package publisher supplies only a successfully persisted Session. The optional
+// context certifies that this operation's new Project is still hidden by its staging barrier.
+export type PublishedSessionHandoff = {
+  projectId: string
+  sessionId: string
+  session: PersistedChatSession
+  pendingProjectImport?: { operationId: string }
+}
+
 const SESSION_CPU_TRACE_ENABLED = process.env.OPEN_SCIENCE_PERF_SESSION_TRACE === '1'
 type SessionMutationRepository = {
   loadAllWithDiagnostics(options?: {
@@ -127,7 +136,6 @@ type SessionMutationRepository = {
     options?: {
       mode?: 'repair' | 'read-only'
       preserveRuntimeState?: boolean
-      packagePublication?: SessionPackagePublication
     }
   ): Promise<
     | { status: 'found'; session: PersistedChatSession }
@@ -507,23 +515,27 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
 
   // Package publication commits through its own recovery journal. Adopt only durable authority
   // into this live catalog before the new Session is exposed to runtime admission or renderers.
-  adoptPublishedSession(
-    projectId: string,
-    sessionId: string,
-    publication?: SessionPackagePublication
-  ): Promise<void> {
+  adoptPublishedSession(publication: PublishedSessionHandoff): Promise<void> {
+    // Capture before enqueueing: the publisher and this owner have independent schedulers.
+    const { projectId, sessionId, session, pendingProjectImport } = structuredClone(publication)
     return this.operationScheduler.runSession(projectId, sessionId, async () => {
       this.assertMutable(projectId, sessionId, 'mutate')
-      const loaded = await this.repository.loadSessionWithDiagnostics(projectId, sessionId, {
-        mode: 'read-only',
-        ...(publication ? { packagePublication: publication } : {})
-      })
-      if (loaded.status !== 'found') {
+      if (session.id !== sessionId || session.projectId !== projectId)
+        throw new Error('Import publication Session identity mismatch.')
+      const loaded = await this.repository.loadSessionWithDiagnostics(projectId, sessionId)
+      const pendingOperation = pendingProjectImport?.operationId
+      const hiddenByImport =
+        pendingOperation !== undefined &&
+        projectId === `import-${pendingOperation}` &&
+        session.packageOrigin?.importId === pendingOperation
+      if (loaded.status !== 'found' && !(loaded.status === 'missing' && hiddenByImport)) {
         throw new Error(`Cannot adopt a published ${loaded.status} Session.`)
       }
-      await assertSessionIdentityOwnership(this.repository, this.stateOwner, loaded.session)
+      // Ordinary reads remain authoritative whenever they can see the Session.
+      const durable = loaded.status === 'found' ? loaded.session : session
+      await assertSessionIdentityOwnership(this.repository, this.stateOwner, durable)
       this.stateOwner.invalidateBindingTopology(projectId, sessionId)
-      this.stateOwner.recordSession(loaded.session)
+      this.stateOwner.recordSession(durable)
     })
   }
 

@@ -1157,6 +1157,15 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
   'scipy.stats': {
     kind: 'module',
     methods: {
+      binned_statistic: {
+        // A statistic callback can read files or mutate inputs/captures.
+        // Retain known captures without certifying result ownership or complete file coverage.
+        effect: 'unknown',
+        scopedOpaque: true,
+        externalState: true,
+        callbackKeywords: ['statistic'],
+        callbackPositionalKeywords: { 2: 'statistic' }
+      },
       bootstrap: {
         // Statistic callbacks can perform arbitrary I/O or mutate inputs/captures.
         effect: 'unknown',
@@ -1177,6 +1186,15 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
   'scipy.integrate': {
     kind: 'module',
     methods: {
+      quad: {
+        // The integrand can read files or mutate inputs and captured state.
+        // Preserve known captures without certifying outputs or complete callback I/O.
+        effect: 'unknown',
+        scopedOpaque: true,
+        externalState: true,
+        callbackKeywords: ['func'],
+        callbackPositionalKeywords: { 0: 'func' }
+      },
       solve_ivp: {
         // RHS, event and Jacobian callbacks can perform arbitrary I/O.
         // Preserve every known event capture without certifying solver outputs.
@@ -1228,6 +1246,15 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
   'scipy.optimize': {
     kind: 'module',
     methods: {
+      root_scalar: {
+        // The objective can read files or mutate arguments and captured state.
+        // Preserve known captures without certifying results or complete callback I/O.
+        effect: 'unknown',
+        scopedOpaque: true,
+        externalState: true,
+        callbackKeywords: ['f'],
+        callbackPositionalKeywords: { 0: 'f' }
+      },
       curve_fit: {
         // Model and Jacobian callbacks may perform I/O or mutate captures.
         // Preserve their dependencies without certifying solver purity or

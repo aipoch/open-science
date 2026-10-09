@@ -61,7 +61,12 @@
       "src/main/application-command-client.test.ts",
       "src/main/application-command-composition.test.ts",
       "src/main/application-command-electron-adapter.test.ts",
+      "src/main/composition/artifact-surfaces.test.ts",
+      "src/main/composition/handoff.test.ts",
+      "src/main/composition/managed-execution.integration.test.ts",
+      "src/main/composition/session-packages.test.ts",
       "src/main/compute/application-commands.test.ts",
+      "src/main/compute/cancellation-runtime.integration.test.ts",
       "src/main/compute/compute-password-auth.real-ssh.integration.test.ts",
       "src/main/compute/compute-password-auth.release.test.ts",
       "src/main/compute/concurrency-integration.test.ts",
@@ -95,6 +100,8 @@
       "src/main/remote-access/service.test.ts",
       "src/main/runtime-electron-wiring.test.ts",
       "src/main/runtime-state-ownership.architecture.test.ts",
+      "src/main/session-package/fork.test.ts",
+      "src/main/session-persistence/ipc.test.ts",
       "src/main/session-persistence/runtime-session-owner.test.ts",
       "src/main/settings/bootstrap.integration.test.ts",
       "src/main/web-service/artifact-download.integration.test.ts",
@@ -102,18 +109,16 @@
       "src/main/web-service/http-server.test.ts",
       "src/main/web-service/task-api.test.ts",
       "src/main/window-find-ipc.test.ts",
-      "src/shared/renderer-surface-inventory.test.ts",
-      "src/shared/renderer-surface-matrix.test.ts",
-      "src/main/session-package/fork.test.ts",
       "src/renderer/src/lib/acp/workspace-runtime-interrupted-recovery.test.ts",
-      "src/main/compute/cancellation-runtime.integration.test.ts",
-      "src/main/session-persistence/ipc.test.ts",
-      "src/main/composition/artifact-surfaces.test.ts",
-      "src/main/composition/session-packages.test.ts",
-      "src/main/composition/handoff.test.ts",
-      "src/main/composition/managed-execution.integration.test.ts"
+      "src/renderer/src/pages/workspace/session-plan/session-plan-resume.test.tsx",
+      "src/shared/renderer-surface-inventory.test.ts",
+      "src/shared/renderer-surface-matrix.test.ts"
     ]
   },
-  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
+  "capabilityOverlays": [
+    "e2e_delegation",
+    "e2e_regressions",
+    "windows_sensitive"
+  ],
   "fallbackCapability": "main_runtime"
 }
