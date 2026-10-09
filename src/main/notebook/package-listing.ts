@@ -43,9 +43,10 @@ export const condaPrefixFromInterpreter = (
   return dir(binDir)
 }
 
-// Parses `micromamba list --json`: an array of {name, version, build, channel} objects. Throws on
-// invalid JSON or a non-array payload; entries without string name/version are skipped rather than
-// failing the whole listing.
+// Parses `micromamba list --json`: a package array (2.8.1) or an object with a packages array
+// (2.9.0). Other envelope fields such as log_history are ignored. Maps build_string to the shared
+// build field, with legacy build as a fallback. Invalid JSON/shapes throw; entries without string
+// name/version are skipped rather than failing the whole listing.
 export const parseMicromambaListJson = (stdout: string): EnvPackage[] => {
   let parsed: unknown
   try {
@@ -53,16 +54,21 @@ export const parseMicromambaListJson = (stdout: string): EnvPackage[] => {
   } catch {
     throw new Error('micromamba list did not return valid JSON.')
   }
-  if (!Array.isArray(parsed)) {
-    throw new Error('micromamba list returned an unexpected shape (expected a JSON array).')
+  const entries =
+    parsed && typeof parsed === 'object' && 'packages' in parsed ? parsed.packages : parsed
+  if (!Array.isArray(entries)) {
+    throw new Error(
+      'micromamba list returned an unexpected shape (expected a JSON array or an object with a packages array).'
+    )
   }
   const packages: EnvPackage[] = []
-  for (const entry of parsed as Array<Record<string, unknown>>) {
+  for (const entry of entries as Array<Record<string, unknown>>) {
     if (typeof entry?.name !== 'string' || typeof entry?.version !== 'string') continue
+    const build = typeof entry.build_string === 'string' ? entry.build_string : entry.build
     packages.push({
       name: entry.name,
       version: entry.version,
-      ...(typeof entry.build === 'string' ? { build: entry.build } : {}),
+      ...(typeof build === 'string' ? { build } : {}),
       ...(typeof entry.channel === 'string' ? { channel: entry.channel } : {})
     })
   }
@@ -116,7 +122,8 @@ export const rListPackagesArgs = (): string[] => [
 ]
 
 // Same shape as environment-discovery's DiscoveryExec: bounded timeout + windowsHide on every
-// subprocess, execFile (no shell) so paths with spaces/metacharacters are safe.
+// subprocess, execFile with argv (including the fixed macOS limit shim) so paths with
+// spaces/metacharacters are never interpolated into shell source.
 export type ListPackagesExec = (
   file: string,
   args: readonly string[],
@@ -162,6 +169,17 @@ const failureMessage = (tool: string, env: DiscoveredInterpreter, error: unknown
   return new Error(`Could not list packages in ${env.label} (${tool} failed: ${detail})`)
 }
 
+// Older macOS reproc builds reject very large inherited descriptor limits before starting pip.
+// Bound only the micromamba child's soft limit; preserve lower limits and the parent's settings.
+// The fixed script receives the executable and every argument positionally, never as shell source.
+const macMicromambaListScript = [
+  'limit=$(ulimit -S -n) || exit',
+  'if [ "$limit" = unlimited ] || [ "$limit" -gt 1048576 ]; then',
+  '  ulimit -S -n 65536 || exit',
+  'fi',
+  'exec "$@"'
+].join('\n')
+
 // Lists the installed packages of one discovered environment, dispatching on packageListingVia.
 // Throws (never partial-lists) when the tool fails or its output can't be parsed.
 export const listEnvPackages = async (
@@ -188,7 +206,11 @@ export const listEnvPackages = async (
             ? await deps.micromambaRunner.resolve()
             : resolveMicromamba()
       if (!mm) throw new Error('micromamba not found.')
-      const argv = listArgv(mm, deps.runtimeRoot, prefix)
+      const listCommand = listArgv(mm, deps.runtimeRoot, prefix)
+      const argv =
+        platform === 'darwin'
+          ? ['/bin/sh', '-c', macMicromambaListScript, 'micromamba-package-list', ...listCommand]
+          : listCommand
       ;({ stdout } = await exec(argv[0], argv.slice(1), {
         ...options,
         env: micromambaSpawnEnv(deps.runtimeRoot)
