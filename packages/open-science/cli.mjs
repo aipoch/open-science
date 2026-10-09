@@ -267,7 +267,7 @@ export const parseCliArgs = (argv) => {
   const args = [...argv]
   const command = args.shift()
   const subcommand =
-    GROUP_COMMANDS.has(command) ||
+    (GROUP_COMMANDS.has(command) && args[0] && !args[0].startsWith('-')) ||
     (command === 'run' && (args[0] === 'status' || args[0] === 'cancel'))
       ? args.shift()
       : undefined
@@ -352,6 +352,14 @@ export const parseCliArgs = (argv) => {
       positionals.push(arg)
     }
   }
+  const parsed = {
+    command,
+    ...(subcommand ? { subcommand } : {}),
+    ...(positionals.length ? { positionals } : {}),
+    options
+  }
+  // Help is local: it must not require execution-only options or a running backend.
+  if (options.help) return parsed
   if (options.port !== undefined) {
     options.port = parsePortOption(options.port)
   }
@@ -596,12 +604,7 @@ export const parseCliArgs = (argv) => {
     throw new CliUsageError('Plan response options require a plan command.')
   }
   assertPositionalLimit(command, subcommand, positionals)
-  return {
-    command,
-    ...(subcommand ? { subcommand } : {}),
-    ...(positionals.length ? { positionals } : {}),
-    options
-  }
+  return parsed
 }
 
 export const isProcessAlive = (pid) => {
@@ -2012,11 +2015,28 @@ export const reportCliError = (error, argv = process.argv.slice(2), dependencies
   return exitCode
 }
 
+const commandHelp = (command) => {
+  if (!command || command === '-h' || command === '--help') return usage
+  // Reuse the published command inventory rather than maintaining a second list.
+  const commands = usage
+    .split('Commands:\n')[1]
+    .split('\n\nOptions:')[0]
+    .split('\n')
+    .filter((line) => line.trimStart().startsWith(`${command} `))
+  if (!commands.length) throw new CliUsageError(`Unknown command: ${command}`)
+  return `Usage: open-science ${command}${GROUP_COMMANDS.has(command) ? ' <subcommand>' : ''} [options]
+
+Commands:
+${commands.join('\n')}
+
+Run "open-science --help" for the complete option reference.`
+}
+
 export const runCli = async (argv = process.argv.slice(2), dependencies = {}) => {
   const parsed = parseCliArgs(argv)
   const { command, options } = parsed
   if (options.help || !command || command === '-h' || command === '--help') {
-    console.log(usage)
+    console.log(commandHelp(command))
     return
   }
   if (command === 'init') await initCommand(options)

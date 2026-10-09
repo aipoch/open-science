@@ -29,6 +29,72 @@ const listProjects = async (): Promise<Array<{ id: string; name: string }>> => [
   { id: 'project-1', name: 'Research' }
 ]
 
+describe('CLI help', () => {
+  it.each([
+    'project',
+    'runtime',
+    'provider',
+    'connector',
+    'credential',
+    'cli',
+    'codex',
+    'session',
+    'settings',
+    'plan',
+    'artifacts'
+  ])(
+    'recognizes help flags for the %s group without consuming them as subcommands',
+    async (command) => {
+      const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+      try {
+        for (const flag of ['--help', '-h']) {
+          expect(parseCliArgs([command, flag])).toMatchObject({ command, options: { help: true } })
+          expect(parseCliArgs([command, flag]).subcommand).toBeUndefined()
+          await runCli([command, flag])
+          expect(log).toHaveBeenLastCalledWith(
+            expect.stringContaining(`Usage: open-science ${command} <subcommand>`)
+          )
+        }
+      } finally {
+        log.mockRestore()
+      }
+    }
+  )
+
+  it.each([
+    ['doctor', '--help'],
+    ['project', 'create', '--help'],
+    ['project', 'session-defaults', 'update', '--help'],
+    ['session', 'config', 'update', '--help'],
+    ['provider', 'add', '--help'],
+    ['run', '--help']
+  ])('prints help for %j without execution arguments or backend access', async (...argv) => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    try {
+      await runCli(argv)
+      expect(log).toHaveBeenCalledWith(expect.stringContaining(`Usage: open-science ${argv[0]}`))
+    } finally {
+      log.mockRestore()
+    }
+  })
+
+  it('limits project help to project commands and retains errors for unknown input', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    try {
+      await runCli(['project', '--help'])
+      const output = String(log.mock.calls[0][0])
+      expect(output).toContain('project create <name>')
+      expect(output).toContain('project session-defaults update')
+      expect(output).not.toContain('rollback-to-0.7.3')
+      await expect(runCli(['unknown-command', '--help'])).rejects.toThrow('Unknown command')
+      expect(() => parseCliArgs(['project', '--typo'])).toThrow('Unknown option')
+      expect(() => parseCliArgs(['doctor'])).toThrow('doctor requires --json.')
+    } finally {
+      log.mockRestore()
+    }
+  })
+})
+
 describe('task CLI', () => {
   it('prepares Codex through the public task client', async () => {
     const bootstrap = vi.fn().mockResolvedValue({ ok: true })
