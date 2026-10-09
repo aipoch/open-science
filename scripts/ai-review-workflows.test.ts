@@ -48,7 +48,15 @@ type Workflow = {
 }
 
 const mainText = readFileSync(join(process.cwd(), '.github/workflows/ai-review-single.yml'), 'utf8')
-const codexText = readFileSync(join(process.cwd(), '.github/workflows/ai-codex-review.yml'), 'utf8')
+const orchestrationText = readFileSync(
+  join(process.cwd(), '.github/workflows/ai-codex-review.yml'),
+  'utf8'
+)
+const orchestrationWorkflow = load(orchestrationText) as Workflow
+const codexText = readFileSync(
+  join(process.cwd(), '.github/workflows/ai-codex-review-attempt.yml'),
+  'utf8'
+)
 const publisherText = readFileSync(
   join(process.cwd(), '.github/workflows/ai-post-review.yml'),
   'utf8'
@@ -445,6 +453,7 @@ describe('single Codex workflow contract', () => {
   it('parses all review workflows as YAML', () => {
     expect(() => load(mainText)).not.toThrow()
     expect(() => load(codexText)).not.toThrow()
+    expect(() => load(orchestrationText)).not.toThrow()
     expect(() => load(publisherText)).not.toThrow()
   })
 
@@ -648,6 +657,11 @@ describe('single Codex workflow contract', () => {
     const config = readFileSync(result.configFile, 'utf8')
     expect(config).toContain('default_permissions = "ai_review"')
     expect(config).toContain('project_doc_max_bytes = 0')
+    expect(config).toContain('model_provider = "review_subscription"')
+    expect(config).toContain('request_max_retries = 3')
+    expect(config).toContain('stream_max_retries = 0')
+    expect(config).toContain('supports_websockets = false')
+    expect(config).toContain('requires_openai_auth = true')
     expect(config).toContain(`[projects.${JSON.stringify(dirname(result.codexHome))}]`)
     expect(config).toContain('trust_level = "untrusted"')
     expect(config).toContain('extends = ":read-only"')
@@ -658,6 +672,7 @@ describe('single Codex workflow contract', () => {
     const result = runAuth({ authMode: 'api-key' })
     expect(result.status, result.stderr).toBe(0)
     const config = readFileSync(result.configFile, 'utf8')
+    expect(config).not.toContain('review_subscription')
     expect(config).toContain('default_permissions = ":read-only"')
     expect(config).toContain('project_doc_max_bytes = 0')
     expect(config).toContain('trust_level = "untrusted"')
@@ -926,6 +941,68 @@ printf '%s\n' \\
     expect(readFileSync(output, 'utf8')).toContain('"verdict":"mergeable"')
   })
 
+  pit.each([
+    ['subscription', 1, 'unexpected status 503 Service Unavailable', true],
+    ['api-key', 1, 'unexpected status 503 Service Unavailable', false],
+    ['subscription', 1, 'unexpected status 401 Unauthorized', false],
+    ['subscription', 1, 'unexpected status 429 Too Many Requests', false],
+    ['subscription', 1, 'context window exceeded after an earlier 503', false],
+    ['subscription', 130, 'unexpected status 503 Service Unavailable', false],
+    ['subscription', 143, 'unexpected status 503 Service Unavailable', false],
+    ['subscription', 0, 'unexpected status 503 Service Unavailable', false],
+    ['subscription', 0, '', false]
+  ])(
+    'routes only exhausted subscription 503 to API (%s, %s, %s)',
+    (auth, exitCode, message, fallback) => {
+      const root = fixtureRoot('codex-review-fallback-')
+      const bin = join(root, 'bin')
+      const output = join(root, 'output')
+      mkdirSync(bin)
+      for (const file of ['instructions', 'prompt', 'schema']) writeFileSync(join(root, file), '{}')
+      executable(
+        join(bin, 'codex'),
+        `#!/usr/bin/env bash
+printf '%s\\n' "$TEST_EVENTS"
+exit "$TEST_EXIT"
+`
+      )
+      const events = [
+        { type: 'error', message: 'unexpected status 503 secret-value' },
+        {
+          type: 'item.completed',
+          item: { type: 'command_execution', aggregated_output: 'unexpected status 503' }
+        },
+        message ? { type: 'turn.failed', error: { message } } : { type: 'turn.completed' }
+      ]
+      const result = spawnSync(
+        'bash',
+        ['-c', getRun(codexWorkflow, 'review', 'Run Codex review')],
+        {
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            PATH: `${bin}:${process.env.PATH}`,
+            CODEX_AUTH_MODE: String(auth),
+            TEST_EVENTS: events.map((event) => JSON.stringify(event)).join('\n'),
+            TEST_EXIT: String(exitCode),
+            CODEX_EFFORT: 'high',
+            CODEX_MODEL: 'codex-auto-review',
+            CODEX_PERMISSION_PROFILE: 'ai_review',
+            CODEX_INSTRUCTIONS_FILE: join(root, 'instructions'),
+            CODEX_PROMPT_FILE: join(root, 'prompt'),
+            CODEX_SCHEMA_FILE: join(root, 'schema'),
+            GITHUB_OUTPUT: output,
+            GITHUB_WORKSPACE: root,
+            RUNNER_TEMP: root
+          }
+        }
+      )
+      expect(result.status, result.stderr).toBe(fallback ? 0 : exitCode)
+      expect(simpleOutputs(output).retry_api).toBe(String(fallback))
+      expect(result.stdout + result.stderr).not.toContain('secret-value')
+    }
+  )
+
   it('reports turns, tokens, and unique tool calls to the step summary', () => {
     const root = fixtureRoot('dual-codex-telemetry-')
     const execution = join(root, 'execution.jsonl')
@@ -1030,11 +1107,64 @@ printf '%s\n' \\
     expect(mainWorkflow.jobs.post_codex_feedback.if).toContain('!inputs.dry_run')
     expect(mainWorkflow.jobs.apply_review_outcome.if).toContain('!inputs.dry_run')
     expect(mainWorkflow.concurrency?.group).toContain("inputs.dry_run && '-dry-run' || ''")
-    expect(codexWorkflow.jobs.review.concurrency?.group).toContain(
-      "inputs.dry_run && '-dry-run' || ''"
-    )
+    expect(orchestrationWorkflow.concurrency?.group).toContain("inputs.dry_run && '-dry-run' || ''")
     expect(mainWorkflow.jobs.codex_review.with?.dry_run).toBe('${{ inputs.dry_run || false }}')
   })
+
+  it('runs API fallback on a fresh runner with identical review inputs and no subscription credential', () => {
+    const primary = orchestrationWorkflow.jobs.review
+    const fallback = orchestrationWorkflow.jobs.api_fallback
+    expect(primary.uses).toBe('./.github/workflows/ai-codex-review-attempt.yml')
+    expect(fallback.uses).toBe(primary.uses)
+    expect(fallback.needs).toBe('review')
+    expect(fallback.if).toBe("${{ needs.review.outputs.retry_api == 'true' }}")
+    expect(fallback.with).toEqual({ ...primary.with, auth_mode: 'api-key' })
+    expect(fallback.secrets).toEqual({
+      OPENAI_API_KEY: '${{ secrets.OPENAI_API_KEY }}',
+      CODEX_BASE_URL: '${{ secrets.CODEX_BASE_URL }}'
+    })
+    expect(codexWorkflow.jobs.review.concurrency).toBeUndefined()
+    expect(getStep(codexWorkflow, 'review', 'Normalize Codex review').if).toBe(
+      "${{ steps.run_codex.outputs.retry_api != 'true' }}"
+    )
+    expect(orchestrationWorkflow.jobs.result.needs).toEqual(['review', 'api_fallback'])
+    expect(orchestrationWorkflow.jobs.result.if).toBe('${{ !cancelled() }}')
+  })
+
+  it.each([
+    ['success', 'false', 'skipped', 'primary', '', 'primary'],
+    ['success', 'true', 'success', 'partial-primary', 'api', 'api'],
+    ['success', 'true', 'failure', 'partial-primary', '', null],
+    ['success', 'true', 'cancelled', 'partial-primary', '', null],
+    ['failure', 'false', 'skipped', 'partial-primary', '', null],
+    ['success', 'false', 'skipped', '', '', null],
+    ['success', 'true', 'success', 'partial-primary', '', null]
+  ])(
+    'selects only a completed validated review (%s, %s, %s)',
+    async (primaryResult, retryApi, apiResult, primaryBody, apiBody, expected) => {
+      const script = getStep(orchestrationWorkflow, 'result', 'Select validated review').with
+        ?.script
+      if (!script) throw new Error('Missing result selection script')
+      const core = { setOutput: vi.fn() }
+      const run = new Function('core', 'process', `return (async () => {\n${script}\n})()`)
+      const result = run(core, {
+        env: {
+          PRIMARY_RESULT: primaryResult,
+          RETRY_API: retryApi,
+          API_RESULT: apiResult,
+          PRIMARY_BODY: primaryBody,
+          API_BODY: apiBody
+        }
+      })
+      if (expected === null) {
+        await expect(result).rejects.toThrow('did not produce a validated result')
+        expect(core.setOutput).not.toHaveBeenCalled()
+      } else {
+        await result
+        expect(core.setOutput).toHaveBeenCalledWith('review_body', expected)
+      }
+    }
+  )
 
   it('normalizes schema-valid results for the combined Codex header', async () => {
     await expect(
@@ -1134,7 +1264,7 @@ printf '%s\n' \\
         "ai-pr-review-${{ github.event.inputs.pull_request_number || github.event.pull_request.number }}${{ inputs.dry_run && '-dry-run' || '' }}",
       'cancel-in-progress': true
     })
-    expect(codexWorkflow.jobs.review.concurrency).toEqual({
+    expect(orchestrationWorkflow.concurrency).toEqual({
       group:
         "${{ format('codex-review-{0}{1}', inputs.pull_request_number, inputs.dry_run && '-dry-run' || '') }}",
       'cancel-in-progress': true

@@ -122,34 +122,6 @@ workflow. The single reviewer checks correctness, security, regressions, reposit
 architecture, and integration in one Codex turn. If the subscription credential is unavailable,
 the same job selects the configured API-key runtime before checkout and review execution.
 
-### Diagnostic dry run
-
-Dispatch `AI PR Review (Single)` with `dry_run=true` and a small existing PR number to run the
-same reusable reviewer, authentication, sandbox, model, and output validation without posting
-comments or changing labels. Select the branch containing the workflow changes when testing an
-unmerged fix:
-
-```bash
-gh workflow run ai-review-single.yml --ref ci/codex-review-dry-run \
-  -f pull_request_number=3372 -F dry_run=true
-```
-
-Dry runs use separate concurrency groups so they cannot cancel production reviews. Existing
-enablement, fork policy, and round limits still apply; verify that the review job actually ran.
-For an authentication comparison, add `-f dry_run_auth_mode=api-key` or select `subscription`.
-The default `repository-default` preserves repository configuration. The override applies only
-to manual dry runs; automatic and publishing runs ignore it. Subscription preflight can still
-fall back, so check the effective authentication mode in telemetry.
-Merged PRs are supported and compare the merge commit with its first parent. A successful workflow
-with a skipped review is not evidence that the CLI or model works.
-
-The telemetry reports the effective authentication mode (after fallback), allowlisted error categories
-and HTTP status codes from error events, failed
-turns, and error items. It never publishes raw server messages, prompts, tool output, or the JSONL
-stream. Zero token totals on a failed turn mean completed-turn usage was unavailable, not that the
-model made no requests. Keep CLI, model, and effort unchanged for the baseline, then change one
-variable at a time if the observed error calls for a version or model comparison.
-
 ### Credential refresh limitation
 
 GitHub-hosted runners are ephemeral. Codex may refresh `auth.json` during a job, but the updated file
