@@ -158,7 +158,8 @@
       "src/main/browser-recordings/external-port.test.ts",
       "src/main/runtime-view/browser-host.integration.test.ts",
       "src/main/replay-viewer/http-host.integration.test.ts",
-      "src/main/run-observation/capture-package.integration.test.ts"
+      "src/main/run-observation/capture-package.integration.test.ts",
+      "src/main/managed-runtime-views.integration.test.ts"
     ]
   },
   "capabilityOverlays": [],

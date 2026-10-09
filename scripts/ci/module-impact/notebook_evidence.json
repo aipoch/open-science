@@ -209,7 +209,8 @@
       "src/main/run-observation/managed-port.test.ts",
       "src/main/run-observation/recorded-reader.test.ts",
       "src/main/run-observation/managed-status.test.ts",
-      "src/main/project-recordings/recorder.test.ts"
+      "src/main/project-recordings/recorder.test.ts",
+      "src/main/managed-runtime-views.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],
