@@ -943,8 +943,11 @@ jobs:
           src/main/literature/smart-collections.test.ts
           src/main/literature/pdf-structure/owner.test.ts
           src/main/notebook/kernel-startup-retry.integration.test.ts
+          src/main/notebook/code-risk-analysis.test.ts
+          src/main/notebook/code-risk-admission.test.ts
+          src/main/local-models/owner.test.ts
           --testNamePattern
-          "cannot be written|table output fails|all content writes fail|reads bounded run outcomes|drains paid requests|recovers retained cleanup|retries only a proven reaped R lane"
+          "cannot be written|table output fails|all content writes fail|reads bounded run outcomes|drains paid requests|recovers retained cleanup|retries only a proven reaped R lane|Python visible dictionary unions|Python fixed text concatenation|Python subprocess literal shell flags|Python visible sequence concatenation|checks forwarded ordinary special signatures|does not reuse a shell verdict|native symlink-parent|reviews escaped process executable|resets uncertain cwd|runs real nested process forwarding|batch preserves one-shot admission|isolates flat translation"
           --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000
       - name: Test Windows wheel evidence recovery
         id: windows_wheel_evidence

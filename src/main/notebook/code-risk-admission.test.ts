@@ -5933,7 +5933,7 @@ print(reader("."))`)
           : ['--version']
         return nestedProcessSource(
           route,
-          JSON.stringify(process.execPath) + ',' + JSON.stringify(args)
+          JSON.stringify(process.execPath.replaceAll('\\', '/')) + ',' + JSON.stringify(args)
         )
       }
       const approve = vi.fn(async () => false)
@@ -7729,7 +7729,10 @@ print(reader("."))`)
     ['r', 'f <- NULL; tapply(1:3, 1:3, f)', 'f <- NULL; f <- unlink; tapply("x", 1, f)'],
     ['r', 'f <- NULL; tapply(1:3, 1:3, f)', 'unlink <- NULL; unlink("x")']
   ] as const)('batch preserves one-shot admission for %s: %s', async (language, safe, risky) => {
-    const { service, execute, shell, request } = await harness()
+    const { service, execute, shell, request } = await harness(
+      0,
+      language === 'bash' ? { kind: 'native-posix', shell: '/bin/bash' } : undefined
+    )
     const approve = vi.fn(async () => false)
     service.setExecutionApproval(approve)
     const run = async (code: string): Promise<void> => {

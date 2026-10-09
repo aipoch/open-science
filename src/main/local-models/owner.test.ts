@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { net } from 'electron'
 import { DownloadChecksumError } from '../net/resilient-download'
@@ -962,8 +962,10 @@ it('isolates flat translation assets and receipts from parser model management',
   await waitForIdle(owner)
   const use = await owner.acquireUse()
   expect(
-    use.assets.every((asset) =>
-      asset.path.includes('models/pdf-translation/revisions/translation-v1/')
+    use.assets.every(
+      (asset) =>
+        dirname(asset.path) ===
+        join(root, 'models', 'pdf-translation', 'revisions', 'translation-v1')
     )
   ).toBe(true)
   expect((await owner.remove()).inUse).toBe(true)

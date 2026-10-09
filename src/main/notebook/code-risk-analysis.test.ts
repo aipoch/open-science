@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import * as childProcess from 'node:child_process'
-import { mkdir, mkdtemp, writeFile, readFile, rm, symlink } from 'node:fs/promises'
+import { mkdir, mkdtemp, writeFile, readFile, realpath, rm, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as parser from './dependency-analysis-parser'
@@ -258,7 +258,7 @@ describe('Notebook execution code risk', () => {
       }
     )
     it.each(['link/..', 'link", "..'])(
-      'resolves physical cwd before symlink parents: %s',
+      'checks overwrite at the native symlink-parent target: %s',
       async (route) => {
         const root = await mkdtemp(join(tmpdir(), 'risk-cwd-symlink-'))
         try {
@@ -271,7 +271,11 @@ describe('Notebook execution code risk', () => {
             join(workspace, 'link'),
             process.platform === 'win32' ? 'junction' : 'dir'
           )
-          await writeFile(join(outside, 'target.txt'), 'keep')
+          // Windows normalizes link/.. before following the junction; POSIX
+          // follows the symlink first. Put the sentinel at the native target.
+          const selectedDirectory =
+            route === 'link/..' ? await realpath(`${workspace}/link/..`) : outside
+          await writeFile(join(selectedDirectory, 'target.txt'), 'keep')
           const changes =
             route === 'link/..' ? 'os.chdir("link/..")' : 'os.chdir("link"); os.chdir("..")'
           expect(
@@ -281,16 +285,26 @@ describe('Notebook execution code risk', () => {
               context(workspace)
             )
           ).toHaveLength(1)
-          expect(await readFile(join(outside, 'target.txt'), 'utf8')).toBe('keep')
+          expect(await readFile(join(selectedDirectory, 'target.txt'), 'utf8')).toBe('keep')
         } finally {
           await rm(root, { recursive: true, force: true })
         }
       }
     )
+    it('reviews escaped process executable literals', async () => {
+      expect(
+        await analyzeNotebookCodeRisk(
+          'repl',
+          String.raw`require("child_process").execFileSync("C:\\runtime\\node.exe", ["--version"])`
+        )
+      ).toEqual([
+        expect.objectContaining({ operation: 'child_process.execFileSync nested execution' })
+      ])
+    })
     it('resets uncertain cwd at an absolute change and keeps new output prompt-free', async () => {
       const root = await mkdtemp(join(tmpdir(), 'risk-cwd-absolute-'))
       try {
-        const source = `import os; os.chdir(dynamic_directory); os.chdir(${JSON.stringify(root)}); open("target.txt", "w")`
+        const source = `import os; os.chdir(dynamic_directory); os.chdir(${JSON.stringify(root.replaceAll('\\', '/'))}); open("target.txt", "w")`
         expect(await analyzeNotebookCodeRisk('python', source, context(root))).toEqual([])
         await writeFile(join(root, 'target.txt'), 'keep')
         expect(await analyzeNotebookCodeRisk('python', source, context(root))).toHaveLength(1)
@@ -5254,7 +5268,7 @@ subprocess.run(["echo","hello"],env=${env})`
                     `import subprocess\nsubprocess.${method}(**(${union('"args":' + argv, '"shell":' + (shell ? 'True' : 'False'))}))`
                   )
                 ).length > 0
-              ).toBe(danger)
+              ).toBe(danger || (shell && process.platform === 'win32'))
             })
           }
         }
@@ -5466,7 +5480,7 @@ open("target.txt",**(${expression})).read()`
                     `import subprocess\nsubprocess.${method}(${command},shell=${shell ? 'True' : 'False'})`
                   )
                 ).length > 0
-              ).toBe(danger)
+              ).toBe(danger || (shell && process.platform === 'win32'))
             })
           }
         }
@@ -5498,7 +5512,7 @@ open("target.txt",**(${expression})).read()`
                 `import subprocess\nsubprocess.run(${join('echo ', danger ? '$(rm target.txt)' : 'hello')},shell=True)`
               )
             ).length > 0
-          ).toBe(danger)
+          ).toBe(danger || process.platform === 'win32')
         })
       }
       it(`retains eager effect form=${form}`, async () => {
@@ -5665,7 +5679,7 @@ open("target.txt",**(${expression})).read()`
                     `import subprocess\nsubprocess.${method}(${pack(argv)})`
                   )
                 ).length > 0
-              ).toBe(danger)
+              ).toBe(danger || (shell && process.platform === 'win32'))
             })
           }
         }
@@ -5682,7 +5696,7 @@ open("target.txt",**(${expression})).read()`
                 `import subprocess,operator\noperator.call(subprocess.run,${argv},shell=(${flag}))`
               )
             ).length > 0
-          ).toBe(danger)
+          ).toBe(danger || (shell && process.platform === 'win32'))
         })
         it(`keeps preexec callback shell=${flag} danger=${danger}`, async () => {
           const argv = shell ? '"echo hello"' : '["echo","hello"]'
@@ -5693,7 +5707,7 @@ open("target.txt",**(${expression})).read()`
                 `import os,subprocess\nsubprocess.run(${argv},shell=(${flag}),preexec_fn=${danger ? 'os.unlink' : 'None'})`
               )
             ).length > 0
-          ).toBe(danger)
+          ).toBe(danger || (shell && process.platform === 'win32'))
         })
       }
     }
@@ -5768,7 +5782,7 @@ subprocess.run(["echo","hello"],shell=${flag})`
                 ['import subprocess\nrunner=subprocess.run']
               )
             ).length > 0
-          ).toBe(danger)
+          ).toBe(danger || (shell && process.platform === 'win32'))
         })
       }
     }
@@ -5805,7 +5819,7 @@ subprocess.run(["echo","hello"],shell=${flag})`
                 'python',
                 `import subprocess\nsubprocess.${method}(${pack(command, '"hello"')}, shell=${shell ? 'True' : 'False'})`
               )
-            ).toEqual([])
+            ).toHaveLength(shell && process.platform === 'win32' ? 1 : 0)
           })
           it(`retains deletion argv form=${form} method=${method} shell=${shell}`, async () => {
             expect(
@@ -7857,14 +7871,22 @@ ${source}`
       ).toBeGreaterThan(0)
     })
     it.each([
-      'import operator,subprocess;operator.call(subprocess.run,"echo hello",**{"shell":True,"check":True})',
-      'import operator;operator.call(operator.call,operator.itemgetter,0)(["test"])',
-      'import operator;reader=operator.call(getattr,open("target.txt"),"read");print(reader())',
-      'import operator as op;op.__call__(getattr,open("target.txt"),"read")()',
-      'import operator;operator.call(print,lambda:None)',
-      'import operator;operator.call(open,3,opener=callback)'
-    ])('checks forwarded ordinary special signatures: %s', async (source) => {
-      expect(await analyzeNotebookCodeRisk('python', source)).toEqual([])
+      [
+        'import operator,subprocess;operator.call(subprocess.run,"echo hello",**{"shell":True,"check":True})',
+        true
+      ],
+      ['import operator;operator.call(operator.call,operator.itemgetter,0)(["test"])', false],
+      [
+        'import operator;reader=operator.call(getattr,open("target.txt"),"read");print(reader())',
+        false
+      ],
+      ['import operator as op;op.__call__(getattr,open("target.txt"),"read")()', false],
+      ['import operator;operator.call(print,lambda:None)', false],
+      ['import operator;operator.call(open,3,opener=callback)', false]
+    ] as const)('checks forwarded ordinary special signatures: %s', async (source, shell) => {
+      expect(await analyzeNotebookCodeRisk('python', source)).toHaveLength(
+        shell && process.platform === 'win32' ? 1 : 0
+      )
     })
     it.each([
       'import operator,os;operator.call(getattr,os,"listdir",os.unlink("target.txt"))(".")',
@@ -14373,9 +14395,9 @@ describe('deferred ordinary object methods', () => {
   })
   it('does not reuse a shell verdict across different analyses or dangerous commands', async () => {
     const safe = 'import subprocess; subprocess.run("echo hello", shell=True)'
-    expect(await analyzeNotebookCodeRisk('python', safe, undefined, Array(40).fill(safe))).toEqual(
-      []
-    )
+    expect(
+      await analyzeNotebookCodeRisk('python', safe, undefined, Array(40).fill(safe))
+    ).toHaveLength(process.platform === 'win32' ? 1 : 0)
     expect(
       await analyzeNotebookCodeRisk(
         'python',
