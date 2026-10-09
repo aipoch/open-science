@@ -161,6 +161,8 @@ jobs:
           scripts/credential-helper-signing.test.ts
           src/main/credential-identity/sqlite-snapshot.test.ts
           src/main/local-models/owner.test.ts
+          src/main/notebook/code-risk-analysis.test.ts
+          src/main/notebook/code-risk-admission.test.ts
           src/main/notebook/input-registry.test.ts
           src/main/session-package/literature.test.ts
           src/main/session-plan/plan-context-file.test.ts
