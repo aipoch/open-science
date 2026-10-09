@@ -875,22 +875,24 @@ describe('single Codex workflow contract', () => {
     expect(run).not.toContain('tee "$execution_file"')
   })
 
-  it('runs the real workflow shell against a fake Codex CLI', () => {
-    const root = fixtureRoot('dual-codex-exec-')
-    const bin = join(root, 'bin')
-    const argsFile = join(root, 'args.json')
-    const stdinFile = join(root, 'stdin.txt')
-    const output = join(root, 'github-output')
-    const instructions = join(root, 'instructions.txt')
-    const prompt = join(root, 'prompt.txt')
-    const schema = join(root, 'schema.json')
-    mkdirSync(bin)
-    writeFileSync(instructions, 'Review safely.\n')
-    writeFileSync(prompt, 'Review this pull request.\n')
-    writeFileSync(schema, '{}\n')
-    executable(
-      join(bin, 'codex'),
-      `#!/usr/bin/env bash
+  pit.each(['subscription', 'api-key'])(
+    'runs the real workflow shell with the selected retry policy (%s)',
+    (authMode) => {
+      const root = fixtureRoot('dual-codex-exec-')
+      const bin = join(root, 'bin')
+      const argsFile = join(root, 'args.json')
+      const stdinFile = join(root, 'stdin.txt')
+      const output = join(root, 'github-output')
+      const instructions = join(root, 'instructions.txt')
+      const prompt = join(root, 'prompt.txt')
+      const schema = join(root, 'schema.json')
+      mkdirSync(bin)
+      writeFileSync(instructions, 'Review safely.\n')
+      writeFileSync(prompt, 'Review this pull request.\n')
+      writeFileSync(schema, '{}\n')
+      executable(
+        join(bin, 'codex'),
+        `#!/usr/bin/env bash
 set -euo pipefail
 jq -cn --args '$ARGS.positional' -- "$@" > "$CAPTURE_ARGS"
 args=("$@")
@@ -907,39 +909,54 @@ printf '%s\n' \\
   '{"type":"turn.started"}' \\
   '{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":8,"output_tokens":2,"reasoning_output_tokens":1}}'
 `
-    )
-    const result = spawnSync('bash', ['-c', getRun(codexWorkflow, 'review', 'Run Codex review')], {
-      cwd: root,
-      encoding: 'utf8',
-      env: {
-        ...process.env,
-        PATH: `${bin}:${process.env.PATH}`,
-        CAPTURE_ARGS: argsFile,
-        CAPTURE_STDIN: stdinFile,
-        CODEX_EFFORT: 'high',
-        CODEX_HOME: join(root, 'codex-home'),
-        CODEX_INSTRUCTIONS_FILE: instructions,
-        CODEX_MODEL: 'codex-auto-review',
-        CODEX_PERMISSION_PROFILE: ':read-only',
-        CODEX_PROMPT_FILE: prompt,
-        CODEX_SCHEMA_FILE: schema,
-        GITHUB_OUTPUT: output,
-        GITHUB_WORKSPACE: root,
-        RUNNER_TEMP: root
-      }
-    })
-    expect(result.status, result.stderr).toBe(0)
-    expect(result.stdout).not.toContain('thread.started')
-    expect(readFileSync(join(root, 'codex-execution.jsonl'), 'utf8')).toContain(
-      '"type":"turn.completed"'
-    )
-    const args = JSON.parse(readFileSync(argsFile, 'utf8')) as string[]
-    expect(args).toContain('--json')
-    expect(args).toContain('--strict-config')
-    expect(args).toContain('default_permissions=":read-only"')
-    expect(readFileSync(stdinFile, 'utf8')).toBe('Review this pull request.\n')
-    expect(readFileSync(output, 'utf8')).toContain('"verdict":"mergeable"')
-  })
+      )
+      const result = spawnSync(
+        'bash',
+        ['-c', getRun(codexWorkflow, 'review', 'Run Codex review')],
+        {
+          cwd: root,
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            PATH: `${bin}:${process.env.PATH}`,
+            CAPTURE_ARGS: argsFile,
+            CAPTURE_STDIN: stdinFile,
+            CODEX_AUTH_MODE: authMode,
+            CODEX_EFFORT: 'high',
+            CODEX_HOME: join(root, 'codex-home'),
+            CODEX_INSTRUCTIONS_FILE: instructions,
+            CODEX_MODEL: 'codex-auto-review',
+            CODEX_PERMISSION_PROFILE: ':read-only',
+            CODEX_PROMPT_FILE: prompt,
+            CODEX_SCHEMA_FILE: schema,
+            GITHUB_OUTPUT: output,
+            GITHUB_WORKSPACE: root,
+            RUNNER_TEMP: root
+          }
+        }
+      )
+      expect(result.status, result.stderr).toBe(0)
+      expect(result.stdout).not.toContain('thread.started')
+      expect(readFileSync(join(root, 'codex-execution.jsonl'), 'utf8')).toContain(
+        '"type":"turn.completed"'
+      )
+      const args = JSON.parse(readFileSync(argsFile, 'utf8')) as string[]
+      expect(args).toContain('--json')
+      expect(args).toContain('--strict-config')
+      expect(args).toContain('default_permissions=":read-only"')
+      const retryArgs = args.filter((arg) => arg.startsWith('model_providers.'))
+      expect(retryArgs).toEqual(
+        authMode === 'api-key'
+          ? [
+              'model_providers.codex-action-responses-proxy.request_max_retries=3',
+              'model_providers.codex-action-responses-proxy.stream_max_retries=0'
+            ]
+          : []
+      )
+      expect(readFileSync(stdinFile, 'utf8')).toBe('Review this pull request.\n')
+      expect(readFileSync(output, 'utf8')).toContain('"verdict":"mergeable"')
+    }
+  )
 
   pit.each([
     ['subscription', 1, 'unexpected status 503 Service Unavailable', true],
@@ -1000,6 +1017,59 @@ exit "$TEST_EXIT"
       expect(result.status, result.stderr).toBe(fallback ? 0 : exitCode)
       expect(simpleOutputs(output).retry_api).toBe(String(fallback))
       expect(result.stdout + result.stderr).not.toContain('secret-value')
+    }
+  )
+
+  pit.each([false, true])(
+    'ends a hung review and preserves safe progress (ignore TERM=%s)',
+    (ignoreTerm) => {
+      const root = fixtureRoot('codex-review-deadline-')
+      const bin = join(root, 'bin')
+      const output = join(root, 'output')
+      mkdirSync(bin)
+      for (const file of ['instructions', 'prompt', 'schema']) writeFileSync(join(root, file), '{}')
+      executable(
+        join(bin, 'codex'),
+        `#!/usr/bin/env bash
+printf '%s\n' '{"type":"error","message":"unexpected status 503 secret-value"}'
+if [[ "$TEST_IGNORE_TERM" == 'true' ]]; then trap '' TERM; fi
+exec sleep 30
+`
+      )
+      const result = spawnSync(
+        'bash',
+        ['-c', getRun(codexWorkflow, 'review', 'Run Codex review')],
+        {
+          encoding: 'utf8',
+          timeout: 5000,
+          env: {
+            ...process.env,
+            PATH: `${bin}:${process.env.PATH}`,
+            CODEX_AUTH_MODE: 'api-key',
+            TEST_IGNORE_TERM: String(ignoreTerm),
+            CODEX_REVIEW_TIMEOUT_SECONDS: '1',
+            CODEX_PROGRESS_INTERVAL_SECONDS: '0.2',
+            CODEX_TERMINATE_GRACE_SECONDS: '0.1',
+            CODEX_EFFORT: 'high',
+            CODEX_MODEL: 'codex-auto-review',
+            CODEX_PERMISSION_PROFILE: ':read-only',
+            CODEX_INSTRUCTIONS_FILE: join(root, 'instructions'),
+            CODEX_PROMPT_FILE: join(root, 'prompt'),
+            CODEX_SCHEMA_FILE: join(root, 'schema'),
+            GITHUB_OUTPUT: output,
+            GITHUB_WORKSPACE: root,
+            RUNNER_TEMP: root
+          }
+        }
+      )
+      expect(result.error).toBeUndefined()
+      expect(result.status, result.stderr).toBe(124)
+      expect(simpleOutputs(output).retry_api).toBe('false')
+      expect(result.stderr).toContain('Codex progress:')
+      expect(result.stderr).toContain('http=503')
+      expect(result.stderr).toContain('Codex execution deadline exceeded')
+      expect(result.stdout + result.stderr).not.toContain('secret-value')
+      expect(readFileSync(join(root, 'codex-execution.jsonl'), 'utf8')).toContain('secret-value')
     }
   )
 

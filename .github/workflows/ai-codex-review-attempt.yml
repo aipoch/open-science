@@ -583,9 +583,100 @@ jobs:
           : > "$final_message_file"
           echo "retry_api=false" >> "$GITHUB_OUTPUT"
 
+          # Keep the action's credential-isolating proxy; only bound its retry budget.
+          retry_args=(--strict-config)
+          if [[ "${CODEX_AUTH_MODE:-}" == "api-key" ]]; then
+            retry_args+=(
+              --config model_providers.codex-action-responses-proxy.request_max_retries=3
+              --config model_providers.codex-action-responses-proxy.stream_max_retries=0
+            )
+          fi
+
+          # End the CLI before the job limit so final diagnostics can finish and upload.
+          cat > "$RUNNER_TEMP/supervise-codex.py" <<'PYTHON'
+          import json
+          import os
+          import re
+          import signal
+          import subprocess
+          import sys
+          import time
+
+          budget = float(os.environ.get('CODEX_REVIEW_TIMEOUT_SECONDS', '1500'))
+          interval = float(os.environ.get('CODEX_PROGRESS_INTERVAL_SECONDS', '60'))
+          grace = float(os.environ.get('CODEX_TERMINATE_GRACE_SECONDS', '10'))
+          execution_file = os.path.join(os.environ['RUNNER_TEMP'], 'codex-execution.jsonl')
+          started = time.monotonic()
+          process = subprocess.Popen(sys.argv[1:], start_new_session=True)
+
+
+          def progress():
+              events = errors = completed = tools_started = 0
+              statuses = set()
+              with open(execution_file) as stream:
+                  for line in stream:
+                      try:
+                          event = json.loads(line)
+                      except json.JSONDecodeError:
+                          continue
+                      if not isinstance(event, dict):
+                          continue
+                      events += 1
+                      kind = event.get('type')
+                      errors += kind == 'error'
+                      completed += kind == 'turn.completed'
+                      item = event.get('item') or {}
+                      tools_started += kind == 'item.started' and isinstance(item, dict) and item.get('type') in ('command_execution', 'mcp_tool_call', 'web_search')
+                      message = event.get('message') if kind == 'error' else None
+                      if isinstance(message, str):
+                          statuses.update(re.findall(r'(?:status(?: code)?[ :]+|http[ /]+)([45][0-9]{2})\b', message, re.I))
+              elapsed = int(time.monotonic() - started)
+              idle = max(0, int(time.time() - os.path.getmtime(execution_file)))
+              print(f'Codex progress: elapsed={elapsed}s, event_idle={idle}s, events={events}, tools_started={tools_started}, completed_turns={completed}, errors={errors}, http={",".join(sorted(statuses)) or "none"}', file=sys.stderr, flush=True)
+
+
+          def terminate():
+              try:
+                  os.killpg(process.pid, signal.SIGTERM)
+                  try:
+                      process.wait(timeout=grace)
+                  except subprocess.TimeoutExpired:
+                      pass
+                  # Also clean up descendants if the CLI exits before its children.
+                  os.killpg(process.pid, signal.SIGKILL)
+              except ProcessLookupError:
+                  pass
+              process.wait()
+
+
+          def cancelled(signum, frame):
+              terminate()
+              sys.exit(128 + signum)
+
+
+          signal.signal(signal.SIGTERM, cancelled)
+          signal.signal(signal.SIGINT, cancelled)
+          try:
+              while True:
+                  remaining = budget - (time.monotonic() - started)
+                  if remaining <= 0:
+                      terminate()
+                      progress()
+                      print('Codex execution deadline exceeded; final telemetry will follow.', file=sys.stderr, flush=True)
+                      sys.exit(124)
+                  try:
+                      code = process.wait(timeout=min(interval, remaining))
+                      progress()
+                      sys.exit(code if code >= 0 else 128 - code)
+                  except subprocess.TimeoutExpired:
+                      progress()
+          finally:
+              if process.poll() is None:
+                  terminate()
+          PYTHON
           set +e
-          codex exec \
-            --strict-config \
+          python3 "$RUNNER_TEMP/supervise-codex.py" codex exec \
+            "${retry_args[@]}" \
             --skip-git-repo-check \
             --cd "$GITHUB_WORKSPACE" \
             --output-last-message "$final_message_file" \
