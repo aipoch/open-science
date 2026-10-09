@@ -224,54 +224,60 @@ It is not a live-provider test.
 
 ## Validation record and remaining platform work
 
-Pre-rebase evidence from 2026-10-09, macOS arm64 and Linux arm64:
+The macOS arm64 and Linux arm64 follow-up on 2026-10-09 used application code at
+`8803dc229` (0.36.0), after merging the Windows fixes in
+[PR #3365](https://github.com/aipoch/open-science/pull/3365).
 
-- Linux ordinary Node 24.21.0, offline npm tarball installation, no Electron/display, network disabled,
-  real temporary Secret Service: all eight installed-fixture phases passed (concurrent starts, Web,
-  task + sandboxed stateful Python, ordered SDK events, cancellation, child cleanup, persisted recovery,
-  abnormal-exit/stale-record recovery). Open-Science bubblewrap remained enabled.
-- macOS source desktop uses bundled ordinary Node 22.23.3 and isolated mock-Keychain fixtures.
-  Ten real desktop journeys passed: Python research/restart, project persistence, locale errors,
-  owned/borrowed lifetime, Office spreadsheet search, real preview context menus at non-default
-  zoom and Specialist redirect installation.
-- Backend import/dependency guard, standalone staging, Node/sandbox/Web typechecks and Electron
-  main/preload/renderer builds passed. macOS unpacked desktop built and was ad-hoc signed; this host
-  lacks Xcode 26, so local packaging used existing `build/icon.icns` via a command-line override.
-  Formal release configuration still uses Icon Composer. No Developer ID/notarization was performed.
-- Final focused regression covered 56 Vitest files: 1,700 passed and 8 platform skips after fixing
-  three stale fixture assertions and rerunning their two files (14/14). Separately, 53 real
-  socket/ownership/network checks and 36 ownership/consumer guards passed. Locale guards are included. Earlier
-  refactoring also checked resource/parser consumers and all supported Agent command wiring. Test
-  counts across these runs overlap and must not be summed as full-suite coverage.
-- The affected-test planner selects full fallback because packaging/module manifests changed.
-  Per maintainer instruction only focused/module tests ran locally; no full `npm test` ran.
-  These results predate PR preparation; final-head checks are reported separately in the PR.
+| Surface                                           | Final-code evidence                                                                                                                                                            | Result                                                                                             |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------- |
+| Shared CLI, transport, packaging and architecture | 17 focused Vitest files                                                                                                                                                        | 337 passed                                                                                         |
+| Module registration                               | Three guards and ownership audit                                                                                                                                               | 44 passed; 6587/6587 files owned                                                                   |
+| Types and builds                                  | Node/sandbox/Web typechecks, Node backend and three workers, Electron build                                                                                                    | Passed                                                                                             |
+| macOS packaged desktop lifetime                   | Actual ad-hoc `.app`, bundled Node 22.23.3, real Keychain, isolated profiles                                                                                                   | Desktop exit stops its own backend; borrowed CLI backend retains its PID and survives desktop exit |
+| macOS packaged PDF                                | Standard and direct-api translation/reading journeys                                                                                                                           | Two passed; standard restart preserves cached PDF hashes and modification times                    |
+| macOS packaged foundation                         | Real Python research/report restart, locale bridge, project create/rename/delete persistence                                                                                   | Five passed                                                                                        |
+| Linux installed CLI                               | Fresh source build, generated tarball installed offline into Debian 12 / Node 22.23.3                                                                                          | Passed without Electron, a display, or a source checkout in the runtime container                  |
+| Linux execution and recovery                      | Real ACP/MCP with a deterministic Agent fixture, sandboxed stateful Python, SDK events, cancellation, encrypted credential/session/Notebook restart and abnormal-exit recovery | Passed; no owned business processes remained after shutdown                                        |
 
-Additional installed-artifact checks at pre-rebase commit `782b36ca5`:
+The Linux runtime container ran as UID 1000 with networking disabled and a real disposable
+Secret Service vault. The builder used the exact lockfile, repository patches and native/Prisma
+builds; missing cached dependencies were downloaded during the build. Installation of the resulting
+self-contained tarball was offline with normal npm lifecycle handling. Its SHA256 was
+`1a42de7ce0d54ae3e303a8975522fb8b44de683acfb8ae5fc09b2f1c4419a61a`.
+Nested Notebook bubblewrap required `--security-opt systempaths=unconfined` to mount its private
+`/proc`; default seccomp, non-root execution and application sandboxing remained enabled, with no
+extra capabilities or privileged mode. This is an explicit container prerequisite, not a claim
+that nested Notebook execution works with every default Docker configuration.
 
-- A fresh Linux arm64 build reinstalled the exact lockfile offline, applied repository patches,
-  generated Prisma/native resources and built Node/Web after removing the Electron package.
-  The tarball installed offline with normal npm lifecycle handling into clean Debian 12 / Node
-  22.23.3. Non-root, network-disabled tests passed CLI setup/discovery/lifetime, authenticated Web,
-  deterministic Agent/MCP execution, real stateful Python, events, cancellation, encrypted credential
-  recovery and crash recovery. No owned business processes remained. Missing Secret Service rejected
-  startup rather than selecting plaintext storage.
-- Basic CLI checks passed with Docker's default security settings. Nested Notebook bubblewrap
-  required `--security-opt systempaths=unconfined` to mount its private `/proc`; default seccomp,
-  non-root execution and application sandboxing remained enabled, without extra capabilities or
-  privileged mode. This is an explicit container prerequisite, not default-Docker certification.
-- The macOS arm64 standalone CLI and packaged desktop attachment reached the first-run UI using
-  real Keychain access. Packaged desktop-owned backend startup still failed when the packaged
-  credential helper timed out reading Keychain (`native-secret-operation-failed`). This remains
-  unresolved; source tests with mock Keychain fixtures do not certify that path. Local packaging
-  needed electron-builder's traversal collector for linked worktree dependencies.
+The macOS test package used `build/icon.icns` because this host lacks Xcode 26 Icon Composer,
+a cached Electron 43.7.5 distribution, and electron-builder's traversal collector for the
+worktree's linked dependencies. The default npm collector omitted `graceful-fs` in that local
+layout; the resulting startup failure was retained as evidence before rebuilding. The temporary
+`packageManager` override was restored after packaging. Formal release configuration is unchanged.
+`codesign --verify --deep --strict` passed, but this was ad-hoc signing, not Developer ID signing,
+notarization, or a downloaded-installer Gatekeeper certification.
 
-These checks predate rebasing onto newer application/permission changes; final-head validation is
-reported separately in the pull request. The npm publishing workflow still packages the lightweight
-CLI/SDK only. Platform-specific standalone package publication is not wired up; do not publish the
-same package name/version separately for multiple platform tarballs.
+The earlier macOS credential-helper timeout was reproduced as a wait inside
+`SecKeychainFindGenericPassword`; securityd recorded a native authorization prompt. Subsequent
+packaged launches and the lifetime/PDF/foundation checks passed using the real Keychain, without a
+mock, a plaintext fallback, or scripted changes to Keychain ACLs/search lists. This resolves the
+previous local packaged-startup blocker for this host; unattended first access on a new account
+and release-signed authorization behavior remain unverified. A preliminary lifecycle harness also
+queried readiness too early; its final run waited for the database and settings UI to be ready.
+First failures are retained and are not counted as passes.
 
-Not certified here: Windows native DPAPI/named-pipe desktop startup, Windows package/WSL/AppContainer,
-Linux graphical desktop/KWallet/AppImage, x64 targets, macOS production Keychain prompts and
-notarized installation, real updater replacement/data-root relaunch, live external provider matrix.
-These require their actual platform/release lanes; passing typechecks is not native certification.
+Windows installed-artifact evidence is recorded separately in PR #3365: actual CLI/desktop
+lifetime, DPAPI interoperability, PDF cache recovery and native dialogs passed on Windows x64.
+AppContainer/WSL2 protection and tests blocked by symlink permissions still need their native
+validation environment. These Windows results were not rerun on the macOS host.
+
+No persistent formats, historical records, credential formats or state enums changed in this
+follow-up. Real historical user-profile migration, live external Providers across all supported
+Agent paths, Linux graphical desktop/KWallet/AppImage, Linux/macOS x64, clean-machine installers,
+formal signing/notarization, and updater replacement/data-root relaunch remain outside this record.
+
+Only focused/module tests ran locally as requested; no full `npm test` ran. Counts across earlier
+runs overlap and must not be summed as full-suite coverage. Required PR CI remains the merge gate.
+The npm publishing workflow still packages the lightweight CLI/SDK only. Platform-specific
+standalone publication is not wired up; do not publish the same package name/version separately
+for multiple platform tarballs.
