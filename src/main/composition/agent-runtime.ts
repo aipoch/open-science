@@ -59,6 +59,8 @@ export async function composeAgentRuntime({
   permissionGrantRegistry,
   artifactReproducibilityAttemptOwnerRef,
   sessionPersistenceCoordinator,
+  runtimeSessionOwner,
+  stopManagedSession,
   pdfElementReader,
   literatureDocumentReader,
   mainPromptSideChatRelay,
@@ -106,6 +108,8 @@ export async function composeAgentRuntime({
     SessionMutation &
     SessionRuntimeContextCommands &
     Pick<SessionPersistenceCommands, 'sessionProjectId'>
+  runtimeSessionOwner?: import('../session-persistence/runtime-session-owner').RuntimeSessionOwner
+  stopManagedSession?: (projectId: string, sessionId: string) => Promise<void>
   pdfElementReader: PdfElementAgentReader
   literatureDocumentReader: LiteratureDocumentReader
   mainPromptSideChatRelay: ReturnType<typeof createMainPromptSideChatRelay>
@@ -179,6 +183,7 @@ export async function composeAgentRuntime({
       beforeSessionDelete: async (sessionId) => {
         await sideChatOwnerRef.current?.invalidateParents([sessionId])
         const projectId = await sessionPersistenceCoordinator.sessionProjectId(sessionId)
+        if (projectId) await stopManagedSession?.(projectId, sessionId)
         const operation = async (): Promise<void> => {
           await notebookService.shutdownSession(sessionId)
           if (projectId) await notebookService.deleteSessionInputs(projectId, sessionId)
@@ -192,6 +197,7 @@ export async function composeAgentRuntime({
       initializationBarrier: initialConnectorSkillsReady,
       specialistService,
       sessionPersistenceCoordinator,
+      runtimeSessionOwner,
       finalizeRuntimeArtifacts: async (request) => {
         const handlers = artifactHandlersRef.current
         if (!handlers) throw new Error('Artifact finalization is not initialized.')

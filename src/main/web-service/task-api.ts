@@ -50,6 +50,16 @@ import type {
 import { createApplicationCommandClient } from '../application-command-client'
 import type { ApplicationCommandByNameDispatcher } from '../application-command-composition'
 import { createTaskCallerContext, type CallerContext } from '../caller-context'
+import {
+  ManagedExecutionExternalError,
+  type ManagedExecutionExternalMethod,
+  type ManagedExecutionExternalPort
+} from '../managed-execution-external-port'
+import {
+  SessionPackageExternalError,
+  type SessionPackageExternalMethod,
+  type SessionPackageExternalPort
+} from '../session-package-external-port'
 import type { PlanResponseResult } from '../session-plan/plan-service'
 import type { TaskControlPorts } from '../tasks/task-control-ports'
 import type { TaskRunJournal } from '../tasks/task-run-journal'
@@ -67,6 +77,8 @@ const TASK_CALLER_CONTEXT = createTaskCallerContext()
 type TaskApiPorts = {
   commands: ApplicationCommandByNameDispatcher
   agent: TaskAgentPort
+  managedExecution?: ManagedExecutionExternalPort
+  sessionPackages?: SessionPackageExternalPort
   controls?: TaskControlPorts
   computePreferences?: TaskComputePreferencePort
   detectActiveSessions?: () => ReadonlyArray<{ projectId: string; sessionId: string }>
@@ -238,6 +250,62 @@ class HeadlessTaskApi {
 
   runWithCallerContext<Result>(context: CallerContext, operation: () => Result): Result {
     return this.callerContexts.run(context, operation)
+  }
+
+  async callManagedExecution(
+    method: ManagedExecutionExternalMethod,
+    payload: unknown
+  ): Promise<unknown> {
+    const context = this.currentCallerContext()
+    const assertCaller = (): void => {
+      if (!context.isAuthorizationCurrent()) {
+        throw new ManagedExecutionExternalError(
+          'unauthorized',
+          'Caller authorization is no longer current.'
+        )
+      }
+      if (context.location !== 'local') {
+        throw new ManagedExecutionExternalError(
+          'unsupported_location',
+          'Managed execution is only available on the receiving local device.'
+        )
+      }
+    }
+    assertCaller()
+    if (!this.ports.managedExecution) {
+      throw new ManagedExecutionExternalError('unavailable', 'Managed execution is unavailable.')
+    }
+    const result = await this.ports.managedExecution.call(method, payload, context)
+    assertCaller()
+    return result
+  }
+
+  async callSessionPackages(
+    method: SessionPackageExternalMethod,
+    payload: unknown
+  ): Promise<unknown> {
+    const context = this.currentCallerContext()
+    const assertCaller = (): void => {
+      if (!context.isAuthorizationCurrent()) {
+        throw new SessionPackageExternalError(
+          'unauthorized',
+          'Caller authorization is no longer current.'
+        )
+      }
+      if (context.location !== 'local') {
+        throw new SessionPackageExternalError(
+          'unsupported_location',
+          'Package paths are only available on the receiving local device.'
+        )
+      }
+    }
+    assertCaller()
+    if (!this.ports.sessionPackages) {
+      throw new SessionPackageExternalError('unavailable', 'Package transfers are unavailable.')
+    }
+    const result = await this.ports.sessionPackages.call(method, payload, context)
+    assertCaller()
+    return result
   }
 
   listProjects(): Promise<TaskProject[]> {

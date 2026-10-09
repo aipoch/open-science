@@ -100,7 +100,11 @@
       "src/main/web-service/controller.test.ts",
       "src/main/web-service/task-api.test.ts",
       "src/main/literature/smart-collections.test.ts",
-      "src/main/session-persistence/ipc.test.ts"
+      "src/main/session-persistence/ipc.test.ts",
+      "src/main/composition/artifact-surfaces.test.ts",
+      "src/main/composition/managed-execution.integration.test.ts",
+      "src/main/composition/session-packages.test.ts",
+      "src/main/composition/handoff.test.ts"
     ]
   },
   "capabilityOverlays": [

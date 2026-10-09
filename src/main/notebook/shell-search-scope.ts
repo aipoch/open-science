@@ -3,6 +3,11 @@ import { parsePowerShellSearchCommands } from './powershell-search-parser'
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { fieldChildren, withParsedNotebookSource, type Node } from './dependency-analysis-parser'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
+import {
+  resolveManagedShellExecutionCapability,
+  type ManagedShellExecutionCapability,
+  type ManagedShellExecutionScope
+} from './managed-shell-execution'
 
 // Maps WSL2 guest paths (e.g. /mnt/c/data) to Windows host paths (e.g. C:\data).
 // Returns the input path unchanged if not a WSL2 /mnt mount.
@@ -285,8 +290,23 @@ export const assertShellSearchScope = async (
   grantedRoots: readonly GrantedLocalRoot[],
   platform: NodeJS.Platform = process.platform,
   signal?: AbortSignal,
-  runtimeBinding?: { kind: 'wsl2-bash' | 'powershell' | 'native-posix'; version?: '5.1' | '7.6' }
+  runtimeBinding?: { kind: 'wsl2-bash' | 'powershell' | 'native-posix'; version?: '5.1' | '7.6' },
+  managedExecution?: ManagedShellExecutionScope & { capability: ManagedShellExecutionCapability }
 ): Promise<void> => {
+  const initialVariables = new Map<string, string>()
+  if (managedExecution) {
+    const policy = resolveManagedShellExecutionCapability(
+      managedExecution.capability,
+      managedExecution
+    )
+    // Only immutable Main-owned runtime paths participate in static admission. Ordinary
+    // request/host environments and private research bindings confer no parser authority.
+    // Resolving these values does not grant access to any additional search directory.
+    for (const key of ['OPEN_SCIENCE_NODE', 'OPEN_SCIENCE_INPUT_DIR', 'OPEN_SCIENCE_OUTPUT_DIR']) {
+      const value = policy.environment[key]
+      if (value !== undefined) initialVariables.set(key, value)
+    }
+  }
   const root = await physicalPath(resolve(cwd))
   if (dirname(root) === root) return denied('the session cwd must not be a filesystem root')
   const check = async (path: string, state: State): Promise<void> => {
@@ -352,6 +372,14 @@ export const assertShellSearchScope = async (
           )
             return denied('shell startup files cannot be inspected')
           if (!name) return denied('the command name cannot be resolved')
+          // Prefix assignments apply to a child command after the parent expands its
+          // arguments. Do not reuse the parent's known values inside a nested shell.
+          for (const child of node.namedChildren) {
+            if (child.type !== 'variable_assignment') continue
+            const variable = child.childForFieldName('name')?.text
+            if (variable) context.variables.delete(variable)
+            else context.variables.clear()
+          }
           let tool: string | undefined = commandName(name)
           let values = args
           while (
@@ -391,6 +419,9 @@ export const assertShellSearchScope = async (
             ) {
               if (/^(BASH_ENV|ENV)=/.test(values[offset] ?? ''))
                 return denied('shell startup files cannot be inspected')
+              if (tool === 'env' && values[offset] === '-i') context.variables.clear()
+              const assignment = /^([A-Za-z_][A-Za-z0-9_]*)=/.exec(values[offset] ?? '')
+              if (assignment) context.variables.delete(assignment[1])
               offset++
             }
             if (!values[offset] || values[offset]?.startsWith('-'))
@@ -715,5 +746,5 @@ export const assertShellSearchScope = async (
     }
     return
   }
-  await analyze(command, { cwd: root, variables: new Map() })
+  await analyze(command, { cwd: root, variables: initialVariables })
 }

@@ -13,6 +13,7 @@ import {
 } from '../projects/ipc'
 import { getProjectDbClient } from '../projects/prisma-client'
 import { createSessionPackageDesktop } from '../session-package/desktop-composition'
+import { SessionPackageHeadless } from '../session-package/headless'
 import { createPackageInspector } from '../session-package/inspection-worker'
 import createInspectionWorker from '../session-package/inspection-worker-entry?nodeWorker'
 import { installSessionPackageQuitGuard } from '../session-package/quit-guard'
@@ -28,7 +29,12 @@ import { SettingsRepository } from '../settings/repository'
 import { SettingsService } from '../settings/service'
 import { resolveConfigRoot, resolveDataRoot } from '../storage-root'
 import { detectActiveSessions } from '../storage/detect-active'
-import { runDataRootStartupRecovery } from '../storage/migration-state'
+import {
+  runDataRootStartupRecovery,
+  withDataRootWrite,
+  isMigrationInProgress,
+  isMigrationPending
+} from '../storage/migration-state'
 import { normalizeLegacyDataPaths } from '../storage/normalize-legacy-paths'
 import { createDefaultUploadRepository } from '../uploads/ipc'
 
@@ -91,7 +97,9 @@ export async function composeSessionPackages({
       name: 'session-package',
       capability: service,
       dispose: async () => {
-        await Promise.all([service.close(), sessionPackageDesktopLifecycle.close()])
+        // Surface owners cancel and drain transfers before their backing service is closed.
+        await sessionPackageDesktopLifecycle.close()
+        await service.close()
       }
     }
   })
@@ -177,6 +185,7 @@ export function composeSessionPackageSurfaces({
 }): {
   conversationExportService: ReturnType<typeof createConversationExportService>
   sessionPackageDesktop: ReturnType<typeof createSessionPackageDesktop>
+  sessionPackageHeadless: SessionPackageHeadless
 } {
   const conversationExportService = createConversationExportService({
     translate,
@@ -222,10 +231,59 @@ export function composeSessionPackageSurfaces({
     applicationEvents,
     projectRepository,
     sessionRepository,
-    isPackageHandoffHeld: () => packageHandoffHeld.current,
+    isPackageHandoffHeld: () =>
+      packageHandoffHeld.current || sessionPackageHeadless.hasActiveTransfer(),
     onSensitiveContentFailure: rememberSensitiveContentFailure
   })
-  sessionPackageDesktopLifecycle.isActive = () => sessionPackageDesktop.operations.active
+  const sessionPackageHeadless = new SessionPackageHeadless({
+    service: sessionPackageService,
+    withDataRootWrite,
+    assertCanStart: () => {
+      if (
+        packageHandoffHeld.current ||
+        isMigrationInProgress() ||
+        isMigrationPending() ||
+        sessionPackageDesktop.hasActiveTransfer()
+      )
+        throw new Error('Wait for the current package transfer or application handoff to finish.')
+    },
+    reserveImport: (projectId, signal) =>
+      archiveCoordinator.reserveProjectImport(projectId, signal),
+    reserveExport: async (request, signal) => {
+      let releasePersistence: (() => void) | undefined
+      try {
+        const releaseAdmission = await archiveCoordinator.reserveSessionExport(
+          request.projectId,
+          request.sessionId,
+          async () => {
+            releasePersistence = await sessionPersistenceCoordinator.reserveSessionExport(
+              request.projectId,
+              request.sessionId
+            )
+            await sessionPackageService.assertExportIdle(request)
+          },
+          signal
+        )
+        return () => {
+          releasePersistence?.()
+          releaseAdmission()
+        }
+      } catch (error) {
+        releasePersistence?.()
+        throw error
+      }
+    },
+    afterImport: async (identity, originClientId, projectCreated) => {
+      const [project, session] = await Promise.all([
+        projectRepository.get(identity.projectId),
+        sessionRepository.loadSession(identity.projectId, identity.sessionId)
+      ])
+      if (project && projectCreated) applicationEvents.publish('project:created', project)
+      if (session) applicationEvents.publish('session:created', { session, originClientId })
+    }
+  })
+  sessionPackageDesktopLifecycle.isActive = () =>
+    sessionPackageDesktop.operations.active || sessionPackageHeadless.hasActiveTransfer()
   const removePackageQuitGuard = installSessionPackageQuitGuard(
     app,
     () => sessionPackageDesktop.hasActiveTransfer(),
@@ -242,7 +300,16 @@ export function composeSessionPackageSurfaces({
   )
   sessionPackageDesktopLifecycle.close = async () => {
     removePackageQuitGuard()
-    await sessionPackageDesktop.close()
+    const results = await Promise.allSettled([
+      sessionPackageHeadless.close(),
+      sessionPackageDesktop.close()
+    ])
+    const failures = results.filter((result) => result.status === 'rejected')
+    if (failures.length)
+      throw new AggregateError(
+        failures.map((result) => result.reason),
+        'Session package transfers did not finish closing.'
+      )
   }
-  return { conversationExportService, sessionPackageDesktop }
+  return { conversationExportService, sessionPackageDesktop, sessionPackageHeadless }
 }

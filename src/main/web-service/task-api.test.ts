@@ -1800,3 +1800,125 @@ it('preserves the safe saved-but-refresh-failed outcome for credential updates',
   })
   await expect(api.updateCredential('credential', { secret: 'private' })).rejects.toThrow(message)
 })
+
+describe('managed execution Task API adapter', () => {
+  it('passes the actual local automation caller without using Agent commands', async () => {
+    const call = vi.fn().mockResolvedValue({ state: 'ready' })
+    const commands = vi.fn()
+    const agent = createAgent()
+    const api = new HeadlessTaskApi({
+      commands: commandsFrom(commands),
+      agent,
+      managedExecution: { call }
+    })
+    const caller = createTaskCallerContext({ clientId: 'codex-cli' })
+    const body = { projectId: 'project-1', sessionId: 'session-1' }
+    await expect(
+      api.runWithCallerContext(caller, () => api.callManagedExecution('prepare', body))
+    ).resolves.toEqual({ state: 'ready' })
+    expect(call).toHaveBeenCalledWith('prepare', body, caller)
+    expect(commands).not.toHaveBeenCalled()
+    expect(agent.createSession).not.toHaveBeenCalled()
+    expect(agent.prompt).not.toHaveBeenCalled()
+    await api.dispose()
+  })
+
+  it('rejects remote and stale callers before dispatch, and rechecks after a delayed reply', async () => {
+    let current = true
+    const call = vi.fn(async () => {
+      current = false
+      return { state: 'ready' }
+    })
+    const api = new HeadlessTaskApi({
+      commands: commandsFrom(vi.fn()),
+      agent: createAgent(),
+      managedExecution: { call }
+    })
+    await expect(
+      api.runWithCallerContext(createTaskCallerContext({ location: 'remote' }), () =>
+        api.callManagedExecution('runtimes', {})
+      )
+    ).rejects.toMatchObject({ code: 'unsupported_location' })
+    await expect(
+      api.runWithCallerContext(
+        createTaskCallerContext({ isAuthorizationCurrent: () => false }),
+        () => api.callManagedExecution('runtimes', {})
+      )
+    ).rejects.toMatchObject({ code: 'unauthorized' })
+    expect(call).not.toHaveBeenCalled()
+    await expect(
+      api.runWithCallerContext(
+        createTaskCallerContext({ isAuthorizationCurrent: () => current }),
+        () => api.callManagedExecution('runtimes', {})
+      )
+    ).rejects.toMatchObject({ code: 'unauthorized' })
+    expect(call).toHaveBeenCalledOnce()
+    await api.dispose()
+  })
+
+  it('keeps managed execution optional for existing installations', async () => {
+    const api = new HeadlessTaskApi({ commands: commandsFrom(vi.fn()), agent: createAgent() })
+    await expect(api.callManagedExecution('runtimes', {})).rejects.toMatchObject({
+      code: 'unavailable'
+    })
+    await api.dispose()
+  })
+})
+
+describe('headless package Task API adapter', () => {
+  it('keeps explicit file transfer separate from desktop dialog and Agent commands', async () => {
+    const call = vi.fn().mockResolvedValue({ preflightId: 'review' })
+    const commands = vi.fn()
+    const agent = createAgent()
+    const api = new HeadlessTaskApi({
+      commands: commandsFrom(commands),
+      agent,
+      sessionPackages: { call }
+    })
+    const caller = createTaskCallerContext({ clientId: 'package-cli' })
+    const request = { filePath: '/research.science', target: { projectId: 'project' } }
+    await expect(
+      api.runWithCallerContext(caller, () => api.callSessionPackages('preflightImport', request))
+    ).resolves.toEqual({ preflightId: 'review' })
+    expect(call).toHaveBeenCalledWith('preflightImport', request, caller)
+    expect(commands).not.toHaveBeenCalled()
+    expect(agent.prompt).not.toHaveBeenCalled()
+    await api.dispose()
+  })
+
+  it('rejects remote and revoked callers, including revocation while publishing', async () => {
+    let current = true
+    const call = vi.fn(async () => {
+      current = false
+      return {}
+    })
+    const api = new HeadlessTaskApi({
+      commands: commandsFrom(vi.fn()),
+      agent: createAgent(),
+      sessionPackages: { call }
+    })
+    for (const caller of [
+      createTaskCallerContext({ location: 'remote' }),
+      createTaskCallerContext({ isAuthorizationCurrent: () => false })
+    ]) {
+      await expect(
+        api.runWithCallerContext(caller, () => api.callSessionPackages('export', {}))
+      ).rejects.toMatchObject({
+        code: caller.location === 'remote' ? 'unsupported_location' : 'unauthorized'
+      })
+    }
+    expect(call).not.toHaveBeenCalled()
+    await expect(
+      api.runWithCallerContext(
+        createTaskCallerContext({ isAuthorizationCurrent: () => current }),
+        () => api.callSessionPackages('export', {})
+      )
+    ).rejects.toMatchObject({ code: 'unauthorized' })
+    await api.dispose()
+    const missing = new HeadlessTaskApi({ commands: commandsFrom(vi.fn()), agent: createAgent() })
+    await expect(missing.callSessionPackages('export', {})).rejects.toMatchObject({
+      code: 'unavailable'
+    })
+    await missing.dispose()
+  })
+})

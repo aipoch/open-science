@@ -2,12 +2,16 @@ import { createArtifactHandlers } from './ipc'
 import { ArtifactRunRegistry } from './run-registry'
 import { createLinearConversationGraph } from '../../shared/conversation-graph'
 import type { PersistedChatSession } from '../../shared/session-persistence'
+import type {
+  ArtifactRpcCapabilityBinding,
+  SaveArtifactVersionRequest
+} from '../../shared/artifact-provenance'
 import { strToU8, zipSync } from 'fflate'
 import { ARTIFACT_LITERATURE_SIDECAR_SUFFIX } from '../../shared/artifact-literature'
 import * as boundedIo from '../bounded-file-io'
 import { defaultArtifactDurability } from './durability'
 import { createHash } from 'node:crypto'
-import { mkdir, readFile, rm, truncate, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rm, stat, truncate, utimes, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createArtifactSaveFixture } from './save-test-fixtures'
@@ -33,6 +37,317 @@ afterEach(async () => {
   await Promise.all(fixtures.splice(0).map((f) => f.dispose()))
 })
 const hash = (data: string): string => createHash('sha256').update(data).digest('hex')
+const saveBinding = (
+  binding: ArtifactRpcCapabilityBinding
+): Omit<SaveArtifactVersionRequest, 'writeOperationId' | 'filename' | 'source'> => ({
+  ...binding,
+  messageBranchAncestry: binding.messageBranchAncestry
+    ? [...binding.messageBranchAncestry]
+    : undefined,
+  messageAncestry: binding.messageAncestry ? [...binding.messageAncestry] : undefined
+})
+
+describe('Main-issued Artifact expected content', () => {
+  it.each(['changed-size', 'same-size-restored-mtime'] as const)(
+    'rejects a real local source race (%s) without pending or database residue',
+    async (change) => {
+      const f = await setup()
+      const workspace = join(f.storageRoot, 'workspace')
+      await mkdir(workspace)
+      const path = join(workspace, 'source.txt')
+      const original = 'old bytes'
+      const replacement = change === 'changed-size' ? 'replacement is longer' : 'new bytes'
+      const modifiedAt = new Date('2026-01-01T00:00:00.000Z')
+      await writeFile(path, original)
+      await utimes(path, modifiedAt, modifiedAt)
+      const before = await stat(path)
+      const expectedContent = { checksum: hash(original), sizeBytes: before.size }
+      const replace = async (): Promise<void> => {
+        await writeFile(path, replacement)
+        await utimes(path, modifiedAt, modifiedAt)
+      }
+      const copy = boundedIo.copyOpenFileWithinBudget
+      const copied = vi.spyOn(boundedIo, 'copyOpenFileWithinBudget')
+      if (change === 'changed-size') {
+        await replace()
+      } else {
+        // The source has already passed its original stat check when copying starts.
+        copied.mockImplementationOnce(async (...args) => {
+          await replace()
+          expect(await stat(path)).toMatchObject({ size: before.size, mtimeMs: before.mtimeMs })
+          return copy(...args)
+        })
+      }
+      const release = vi.spyOn(ArtifactWriteBudgetOwner.prototype, 'release')
+      const request = {
+        ...saveBinding(f.binding),
+        writeOperationId: 'expected-content-race',
+        filename: 'result.txt',
+        source: { kind: 'localPath' as const, path }
+      }
+      const scope = { allowedImportRoots: [workspace], expectedContent }
+      await expect(f.repository.saveVersion(request, scope)).rejects.toThrow(
+        'Artifact source content does not match the expected content.'
+      )
+      expect(await copied.mock.results[0].value).toMatchObject({
+        checksum: hash(replacement),
+        sizeBytes: Buffer.byteLength(replacement)
+      })
+      expect(release).toHaveBeenCalledTimes(1)
+      expect(await f.client.artifactVersion.count()).toBe(0)
+      expect(await f.client.artifactLineage.count()).toBe(0)
+      expect(await f.client.contentBlob.count()).toBe(0)
+      const pendingDirectory = join(
+        f.storageRoot,
+        'artifacts/project-1/artifact-session-1/.pending/artifact-run-1'
+      )
+      expect(
+        (await readdir(pendingDirectory, { recursive: true, withFileTypes: true })).filter(
+          (entry) => entry.isFile()
+        )
+      ).toEqual([])
+      // The failed write operation and budget can be reused once Main supplies current evidence.
+      const result = await f.repository.saveVersion(request, {
+        ...scope,
+        expectedContent: { checksum: hash(replacement), sizeBytes: Buffer.byteLength(replacement) }
+      })
+      expect(await readFile(result.path, 'utf8')).toBe(replacement)
+      expect(await f.client.artifactVersion.count()).toBe(1)
+    }
+  )
+
+  it('captures the expected content before the session lock can delay a save', async () => {
+    const f = await setup()
+    const workspace = join(f.storageRoot, 'workspace')
+    await mkdir(workspace)
+    const path = join(workspace, 'source.txt')
+    await writeFile(path, 'old')
+    const entered = deferred()
+    const proceed = deferred()
+    const reserve = ArtifactWriteBudgetOwner.prototype.reserve
+    vi.spyOn(ArtifactWriteBudgetOwner.prototype, 'reserve').mockImplementationOnce(async function (
+      this: ArtifactWriteBudgetOwner,
+      request
+    ) {
+      entered.resolve()
+      await proceed.promise
+      return reserve.call(this, request)
+    })
+    const first = f.repository.saveVersion(
+      {
+        ...saveBinding(f.binding),
+        writeOperationId: 'blocking-write',
+        filename: 'first.txt',
+        source: {
+          kind: 'inline',
+          content: Buffer.from('first').toString('base64'),
+          encoding: 'base64'
+        }
+      },
+      { allowedImportRoots: [] }
+    )
+    await entered.promise
+    const expectedContent = { checksum: hash('old'), sizeBytes: 3 }
+    const scope = { allowedImportRoots: [workspace], expectedContent }
+    const queued = f.repository.saveVersion(
+      {
+        ...saveBinding(f.binding),
+        writeOperationId: 'queued-write',
+        filename: 'result.txt',
+        source: { kind: 'localPath', path }
+      },
+      scope
+    )
+    const rejection = expect(queued).rejects.toThrow('does not match the expected content')
+    try {
+      await writeFile(path, 'replacement')
+      expectedContent.checksum = hash('replacement')
+      expectedContent.sizeBytes = Buffer.byteLength('replacement')
+      scope.expectedContent = { ...expectedContent }
+    } finally {
+      proceed.resolve()
+    }
+    await Promise.all([first, rejection])
+    expect(await f.client.artifactVersion.count()).toBe(1)
+    expect(
+      await f.compatibilityRepository.listPendingRunFiles({
+        projectId: f.binding.projectId,
+        sessionId: f.binding.artifactStorageSessionId,
+        runId: f.binding.artifactRunId
+      })
+    ).toEqual([expect.objectContaining({ name: 'first.txt' })])
+  })
+
+  it.each(['checksum', 'size'] as const)(
+    'enforces the expected inline %s on decoded bytes',
+    async (field) => {
+      const f = await setup()
+      const content = 'inline content'
+      const request = {
+        ...saveBinding(f.binding),
+        writeOperationId: 'expected-inline',
+        filename: 'result.txt',
+        source: {
+          kind: 'inline' as const,
+          content: Buffer.from(content).toString('base64'),
+          encoding: 'base64' as const
+        }
+      }
+      const expectedContent = { checksum: hash(content), sizeBytes: Buffer.byteLength(content) }
+      await expect(
+        f.repository.saveVersion(request, {
+          allowedImportRoots: [],
+          expectedContent: {
+            checksum: field === 'checksum' ? hash('other') : expectedContent.checksum,
+            sizeBytes: field === 'size' ? expectedContent.sizeBytes + 1 : expectedContent.sizeBytes
+          }
+        })
+      ).rejects.toThrow('does not match the expected content')
+      expect(await f.client.artifactVersion.count()).toBe(0)
+      const result = await f.repository.saveVersion(request, {
+        allowedImportRoots: [],
+        expectedContent
+      })
+      expect(result).toMatchObject({
+        checksum: expectedContent.checksum,
+        size: expectedContent.sizeBytes
+      })
+      expect(await readFile(result.path, 'utf8')).toBe(content)
+    }
+  )
+
+  it.each(['localPath', 'inline'] as const)(
+    'checks expected content during %s idempotent replay',
+    async (kind) => {
+      const f = await setup()
+      const workspace = join(f.storageRoot, 'workspace')
+      await mkdir(workspace)
+      const path = join(workspace, 'source.txt')
+      const content = 'original'
+      await writeFile(path, content)
+      const request = {
+        ...saveBinding(f.binding),
+        writeOperationId: 'expected-replay',
+        filename: 'result.txt',
+        source:
+          kind === 'localPath'
+            ? { kind, path }
+            : {
+                kind,
+                content: Buffer.from(content).toString('base64'),
+                encoding: 'base64' as const
+              }
+      }
+      const scope = {
+        allowedImportRoots: [workspace],
+        expectedContent: { checksum: hash(content), sizeBytes: Buffer.byteLength(content) }
+      }
+      const first = await f.repository.saveVersion(request, scope)
+      await rm(path)
+      for (const expectedContent of [
+        { ...scope.expectedContent, checksum: hash('other') },
+        { ...scope.expectedContent, sizeBytes: scope.expectedContent.sizeBytes + 1 }
+      ]) {
+        await expect(
+          f.repository.saveVersion(request, { ...scope, expectedContent })
+        ).rejects.toThrow('does not match the expected content')
+      }
+      expect(await f.repository.saveVersion(request, scope)).toEqual(first)
+      expect(await f.client.artifactVersion.count()).toBe(1)
+      expect(await readFile(first.path, 'utf8')).toBe(content)
+    }
+  )
+
+  it.each([true, false])(
+    'does not accept a public expectedContent override (trusted constraint: %s)',
+    async (constrained) => {
+      const f = await setup()
+      const content = 'actual bytes'
+      const expectedContent = {
+        checksum: hash('old bytes'),
+        sizeBytes: Buffer.byteLength('old bytes')
+      }
+      const env = await f.environment({
+        allowedImportRoots: [],
+        ...(constrained ? { expectedContent } : {})
+      })
+      const context = JSON.parse(await readFile(env.currentRunFile, 'utf8'))
+      const forged = constrained
+        ? { checksum: hash(content), sizeBytes: Buffer.byteLength(content) }
+        : expectedContent
+      const save = vi.spyOn(f.repository, 'saveVersion')
+      const response = await fetch(env.rpcEndpoint!, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${context.rpcCapabilityToken}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          method: 'artifactSaveVersion',
+          params: {
+            ...saveBinding(f.binding),
+            writeOperationId: 'public-override',
+            filename: 'result.txt',
+            source: {
+              kind: 'inline',
+              content: Buffer.from(content).toString('base64'),
+              encoding: 'base64'
+            },
+            expectedContent: forged,
+            sourceScope: { allowedImportRoots: [], expectedContent: forged }
+          }
+        })
+      })
+      expect(save).toHaveBeenCalledTimes(1)
+      expect(save.mock.calls[0][0]).not.toHaveProperty('expectedContent')
+      expect(save.mock.calls[0][0]).not.toHaveProperty('sourceScope')
+      expect(save.mock.calls[0][1].expectedContent).toEqual(
+        constrained ? expectedContent : undefined
+      )
+      if (constrained) {
+        expect(response.ok).toBe(false)
+        expect(await response.text()).toContain('does not match the expected content')
+        expect(await f.client.artifactVersion.count()).toBe(0)
+      } else {
+        expect(response.ok).toBe(true)
+        expect(await f.client.artifactVersion.count()).toBe(1)
+      }
+    }
+  )
+
+  it.each([
+    null,
+    { checksum: 'invalid', sizeBytes: 1 },
+    { checksum: 'A'.repeat(64), sizeBytes: 1 },
+    { checksum: hash('x'), sizeBytes: -1 },
+    { checksum: hash('x'), sizeBytes: 0.5 },
+    { checksum: hash('x'), sizeBytes: Number.NaN },
+    { checksum: hash('x'), sizeBytes: 1024 ** 3 + 1 }
+  ])(
+    'rejects malformed Main expected content before pending writes: %j',
+    async (expectedContent) => {
+      const f = await setup()
+      const pending = vi.spyOn(f.compatibilityRepository, 'withPendingFileTransaction')
+      await expect(
+        f.repository.saveVersion(
+          {
+            ...saveBinding(f.binding),
+            writeOperationId: 'invalid-expected',
+            filename: 'result.txt',
+            source: {
+              kind: 'inline',
+              content: Buffer.from('x').toString('base64'),
+              encoding: 'base64'
+            }
+          },
+          { allowedImportRoots: [], expectedContent: expectedContent as never }
+        )
+      ).rejects.toThrow('requires a SHA-256 checksum and a bounded size')
+      expect(pending).not.toHaveBeenCalled()
+      expect(await f.client.artifactVersion.count()).toBe(0)
+    }
+  )
+})
 
 describe('complete Artifact save over the production local RPC', () => {
   it('delivers bounded redacted diagnostics with the committed Version identity over RPC and MCP', async () => {

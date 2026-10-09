@@ -129,6 +129,14 @@ it.each(['identical versions', 'identical evidence', 'small edit'] as const)(
       }
       const imported = await importer.importFrom(archive)
       const origin = await importer.readOrigin(imported)
+      const importedSession = await new SessionRepository(target.storageRoot).loadSession(
+        imported.projectId,
+        imported.sessionId
+      )
+      expect(origin.receiptIdentity).toEqual({
+        importId: importedSession!.packageOrigin!.importId,
+        manifestChecksum: importedSession!.packageOrigin!.manifestChecksum
+      })
       const importedRows = await target.client.artifactVersion.findMany({
         where: { artifactId: origin.identities[first.artifactId] },
         orderBy: { versionNumber: 'asc' }

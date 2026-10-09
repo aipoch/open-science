@@ -979,6 +979,7 @@ describe('Artifact Provenance repository architecture', () => {
       'src/main/acp/approved-handoff-outcome.integration.test.ts',
       'src/main/acp/approved-handoff-outcome.test.ts',
       'src/main/literature/pdf-translation/checkpoints.test.ts',
+      'src/main/session-package/research-reproduction.integration.test.ts',
       'src/main/session-plan/session-plan-turn-outcome.test.ts'
     ])
     expect(module.capabilityOverlays).toEqual([

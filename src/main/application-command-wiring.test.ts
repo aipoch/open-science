@@ -94,21 +94,23 @@ describe('production application command wiring', () => {
     callBefore('await composeSessionAuthority({', 'composeSessionPackageSurfaces({')
   })
 
-  it('constructs Session package desktop once with shared owners and retains lifecycle bindings', () => {
+  it('constructs desktop and headless Session package surfaces once with shared owners and drains both before the service', () => {
     const source = domainCompact('session-packages')
     expect(source).toContain(
-      'const sessionPackageDesktop = createSessionPackageDesktop({ sessionPackageService, translate, archiveCoordinator, sessionPersistenceCoordinator, applicationEvents, projectRepository, sessionRepository, isPackageHandoffHeld: () => packageHandoffHeld.current, onSensitiveContentFailure: rememberSensitiveContentFailure })'
+      'const sessionPackageDesktop = createSessionPackageDesktop({ sessionPackageService, translate, archiveCoordinator, sessionPersistenceCoordinator, applicationEvents, projectRepository, sessionRepository, isPackageHandoffHeld: () => packageHandoffHeld.current || sessionPackageHeadless.hasActiveTransfer(), onSensitiveContentFailure: rememberSensitiveContentFailure })'
     )
     expect(occurrences(source, 'createSessionPackageDesktop(')).toBe(1)
+    expect(occurrences(source, 'new SessionPackageHeadless(')).toBe(1)
     expect(source).toContain(
-      'sessionPackageDesktopLifecycle.isActive = () => sessionPackageDesktop.operations.active'
+      'const sessionPackageHeadless = new SessionPackageHeadless({ service: sessionPackageService, withDataRootWrite, assertCanStart: () => { if ( packageHandoffHeld.current || isMigrationInProgress() || isMigrationPending() || sessionPackageDesktop.hasActiveTransfer() )'
     )
     expect(source).toContain(
-      'sessionPackageDesktopLifecycle.close = async () => { removePackageQuitGuard() await sessionPackageDesktop.close() }'
+      'sessionPackageDesktopLifecycle.isActive = () => sessionPackageDesktop.operations.active || sessionPackageHeadless.hasActiveTransfer()'
     )
     expect(source).toContain(
-      'await Promise.all([service.close(), sessionPackageDesktopLifecycle.close()])'
+      "sessionPackageDesktopLifecycle.close = async () => { removePackageQuitGuard() const results = await Promise.allSettled([ sessionPackageHeadless.close(), sessionPackageDesktop.close() ]) const failures = results.filter((result) => result.status === 'rejected') if (failures.length) throw new AggregateError( failures.map((result) => result.reason), 'Session package transfers did not finish closing.' ) }"
     )
+    expect(source).toContain('await sessionPackageDesktopLifecycle.close() await service.close()')
     for (const call of [
       'sessionPackageDesktop.respond(',
       'sessionPackageDesktop.export(',
@@ -546,7 +548,12 @@ describe('production application command wiring', () => {
     expect(occurrences(ipcSource, 'applicationCommands')).toBe(2)
     expect(indexSource).toContain('applicationCommands,')
     expect(startup).toContain('applicationCommands,')
-    expect(startup).toContain('taskControls, computePreferences, detectActiveSessions }')
+    expect(startup).toContain(
+      'taskControls, managedExecution, sessionPackageTransfer, computePreferences, detectActiveSessions }'
+    )
+    expect(compact(ipcSource)).toContain(
+      'managedExecution: managedExecution.external, sessionPackageTransfer: sessionPackageSurfaces.sessionPackageHeadless,'
+    )
     expect(compact(ipcSource)).toContain(
       "computePreferences: Pick<SessionEnabledComputeHostsOwner, 'withReservation' | 'set'>"
     )
@@ -561,7 +568,7 @@ describe('production application command wiring', () => {
       "Pick<ApplicationCommandComposition, 'localWeb' | 'remoteWeb' | 'task'>"
     )
     expect(compact(webServiceSource)).toContain(
-      '{ commands: applicationCommands.task, agent: taskAgent, controls: taskControls, computePreferences, detectActiveSessions }'
+      '{ commands: applicationCommands.task, agent: taskAgent, controls: taskControls, managedExecution, sessionPackages: sessionPackageTransfer, computePreferences, detectActiveSessions }'
     )
     expect(webServiceSource).toContain('localWeb: applicationCommands.localWeb')
     expect(webServiceSource).toContain('remoteWeb: applicationCommands.remoteWeb')

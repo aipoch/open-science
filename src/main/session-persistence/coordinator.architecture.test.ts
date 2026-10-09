@@ -1834,6 +1834,9 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/literature/pdf-translation/checkpoints.test.ts',
       'src/main/literature/pdf-translation/usage.test.ts',
       'src/main/notebook/code-risk-admission.test.ts',
+      'src/main/session-package/research-reproduction.integration.test.ts',
+      'src/main/notebook/research-service.macos.integration.test.ts',
+      'src/main/notebook/local-service.macos.integration.test.ts',
       'src/main/session-plan/session-plan-turn-outcome.test.ts',
       'src/main/notebook/runtime-repair.windows.integration.test.ts'
     ])
