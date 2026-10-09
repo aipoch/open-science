@@ -5647,7 +5647,7 @@ it('keeps all accepted text marked unfilled when first PDF generation fails', as
   expect(f.results.units[0].translation).toBe('细胞')
 })
 
-it.each([false, true, 'automatic'] as const)(
+it.each([false, true, 'automatic', 'automatic-cache'] as const)(
   'retries one retained paragraph page with new pending results: %s',
   async (pendingResults) => {
     const fixtures = Array.from({ length: 3 }, () => fixture())
@@ -5687,10 +5687,19 @@ it.each([false, true, 'automatic'] as const)(
       promise: Promise.resolve(target),
       destroy: vi.fn(async () => {})
     })
-    const generatePdf = vi.fn(async (input: PdfTranslationPdfRequest) => {
-      void input
-      return new Uint8Array([4, 5])
-    })
+    const failure = {
+      code: 'annotations' as const,
+      phase: 'planning' as const,
+      pageNumbers: [1],
+      fragmentCount: 1
+    }
+    const generatePdf = vi.fn(async (input: PdfTranslationPdfRequest) => ({
+      data: new Uint8Array([4, 5]),
+      layoutFailures: input.incremental ? [] : [{ unitIndex: 0, ...failure }],
+      ...(pendingResults === 'automatic-cache' && input.cache
+        ? { cacheToken: '00000000-0000-4000-8000-000000000001' }
+        : {})
+    }))
     const recordLayout = vi.fn(async () => {})
     vi.stubGlobal('api', {
       pdfTranslation: { generatePdf, recordLayout, cancelPdf: vi.fn(async () => {}) }
@@ -5709,7 +5718,7 @@ it.each([false, true, 'automatic'] as const)(
     )
     fixtures[1].targetPage.getTextContent.mockResolvedValue({ items: [fixtures[1].item] })
     if (pendingResults) hook.rerender({ current: results })
-    if (pendingResults === 'automatic') {
+    if (pendingResults === 'automatic' || pendingResults === 'automatic-cache') {
       await waitFor(() => expect(generatePdf).toHaveBeenCalledTimes(2))
       await waitFor(() => expect(hook.result.current.state.status).toBe('ready'))
       expect(generatePdf.mock.calls[1][0]).toMatchObject({ incremental: { pageNumbers: [3] } })
@@ -5717,9 +5726,18 @@ it.each([false, true, 'automatic'] as const)(
       // so their first manual retry must remain available.
       expect(hook.result.current.unchangedLayoutUnitIds).toEqual([])
       expect(hook.result.current.unfilledUnitIds).toEqual(['page-1', 'page-2', 'page-3'])
+      expect(hook.result.current.layoutFailures['page-1']).toEqual(failure)
+      if (pendingResults === 'automatic-cache') {
+        expect(recordLayout).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            pdfCacheToken: '00000000-0000-4000-8000-000000000001',
+            units: [expect.objectContaining({ sourceIndex: 2 })]
+          })
+        )
+      }
     }
     act(() => hook.result.current.refresh('page-2'))
-    const expectedCalls = pendingResults === 'automatic' ? 3 : 2
+    const expectedCalls = typeof pendingResults === 'string' ? 3 : 2
     await waitFor(() => expect(generatePdf).toHaveBeenCalledTimes(expectedCalls))
     await waitFor(() => expect(hook.result.current.state.status).toBe('ready'))
     expect(generatePdf.mock.calls[expectedCalls - 1][0]).toMatchObject({
@@ -5736,7 +5754,7 @@ it.each([false, true, 'automatic'] as const)(
             : [expect.objectContaining({ sourceIndex: 1 })]
       })
     )
-    expect(hook.result.current.layoutFailures['page-1']).toBeDefined()
+    expect(hook.result.current.layoutFailures['page-1']).toEqual(failure)
     expect(hook.result.current.layoutFailures['page-2']).toBeUndefined()
     expect(hook.result.current.unfilledUnitIds).toEqual(['page-1', 'page-3'])
     expect(hook.result.current.unchangedLayoutUnitIds).toEqual([])

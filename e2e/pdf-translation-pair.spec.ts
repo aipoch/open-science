@@ -473,9 +473,7 @@ for (const variant of [
       await details.scrollIntoViewIfNeeded()
       await page.screenshot({ path: testInfo.outputPath('provider-error-details.png') })
       await panel.getByRole('button', { name: 'Retry', exact: true }).click()
-      await expect(
-        panel.getByRole('button', { name: 'New translation', exact: true })
-      ).toBeVisible()
+      await expect(panel.getByRole('button', { name: '4 Translated', exact: true })).toBeVisible()
       expect(paragraphRequests).toBe(5)
       await expect(panel.getByText('Translation paused', { exact: true })).toBeHidden()
       await expect(details).toHaveCount(0)
@@ -574,7 +572,7 @@ for (const variant of [
         if (done < 5) await expect(panel).toContainText(`${done} / 5`)
         else
           await expect(
-            panel.getByRole('button', { name: 'New translation', exact: true })
+            panel.getByRole('button', { name: '5 Translated', exact: true })
           ).toBeVisible()
         // Progress must not destroy, clear or replace the displayed canvas.
         await expect(
@@ -742,9 +740,7 @@ for (const variant of [
       holdTranslation = false
       for (const release of heldTranslations) release()
       await expect(confirmation).toBeHidden({ timeout: 60000 })
-      await expect(
-        panel.getByRole('button', { name: 'New translation', exact: true })
-      ).toBeVisible()
+      await expect(panel.getByRole('button', { name: '4 Translated', exact: true })).toBeVisible()
       await closePreview.click()
       await expect(page.locator('[data-slot="file-preview-dialog"]')).toBeHidden()
       await expect(confirmation).toBeHidden()
@@ -776,11 +772,8 @@ for (const variant of [
       await restoredPage.screenshot({ path: testInfo.outputPath('restored-partial.png') })
       await restoredPanel.getByRole('button', { name: 'Continue translation', exact: true }).click()
       await expect(
-        restoredPanel.getByRole('button', { name: 'New translation', exact: true })
-      ).toBeVisible({ timeout: 60000 })
-      await expect(
         restoredPanel.getByRole('button', { name: '4 Translated', exact: true })
-      ).toBeVisible()
+      ).toBeVisible({ timeout: 60000 })
       await expect(
         restoredPanel.getByRole('button', { name: 'View translated PDF', exact: true })
       ).toBeEnabled()
@@ -825,7 +818,7 @@ for (const variant of [
           Promise.allSettled(requests)
       }, bytes)
     }
-    await expect(panel.getByRole('button', { name: 'New translation', exact: true })).toBeVisible({
+    await expect(panel.getByRole('button', { name: '4 Translated', exact: true })).toBeVisible({
       timeout: 60000
     })
     await expect(panel.getByText('Preparing translated PDF…', { exact: true })).toBeHidden({
@@ -835,10 +828,15 @@ for (const variant of [
       timeout: 60000
     })
     const updatePreview = panel.getByRole('button', { name: 'Update PDF preview', exact: true })
-    // Automatic generation may consume the update between observation and click.
-    await expect(async () => {
-      if (await updatePreview.isVisible()) await updatePreview.click({ timeout: 1000 })
-    }).toPass({ timeout: 5000 })
+    if (variant === 'busy') {
+      await expect(async () => {
+        if (await updatePreview.isVisible()) await updatePreview.click({ timeout: 1000 })
+      }).toPass({ timeout: 5000 })
+    } else {
+      // Completing the page automatically publishes the PDF. Wait for publication
+      // before using the reader or requesting an explicit layout retry.
+      await expect(updatePreview).toBeHidden({ timeout: 60000 })
+    }
     const failure = panel.getByRole('alert')
     let promptsBeforeRetry: Awaited<ReturnType<typeof app.readFakeAgentPrompts>> | undefined
     if (variant === 'busy') {
@@ -897,6 +895,8 @@ for (const variant of [
       await expect(panel).not.toContainText('PRIVATE_')
       await expect(panel).not.toContainText('<think>')
       await page.screenshot({ path: testInfo.outputPath('clean-translation-sidebar.png') })
+      const settings = panel.getByRole('button', { name: /^Translation settings(?: |$)/ })
+      if ((await settings.getAttribute('aria-expanded')) !== 'true') await settings.click()
       await panel.getByRole('button', { name: 'New translation', exact: true }).click()
       const newTranslation = page.getByRole('dialog', { name: 'New translation', exact: true })
       await newTranslation.getByRole('combobox', { name: 'Translation method' }).click()
@@ -993,6 +993,8 @@ for (const variant of [
       const currentSettings = await page.evaluate(() => window.api.settings.getSettings())
       expect(currentSettings.activeProviderId).toBe(settingsBefore.activeProviderId)
       expect(currentSettings.activeModel).toBe(settingsBefore.activeModel)
+      const settings = panel.getByRole('button', { name: /^Translation settings(?: |$)/ })
+      if ((await settings.getAttribute('aria-expanded')) !== 'true') await settings.click()
       await panel.getByRole('button', { name: 'New translation', exact: true }).click()
       const dialog = page.getByRole('dialog', { name: 'New translation', exact: true })
       await expect(dialog.getByRole('combobox', { name: 'Model', exact: true })).toContainText(
@@ -1432,6 +1434,8 @@ for (const variant of [
         .getByRole('textbox', { name: 'Search translation', exact: true })
         .fill('previous translation only')
       await expect(panel.getByText('No translation matches', { exact: true })).toBeVisible()
+      const settings = panel.getByRole('button', { name: /^Translation settings(?: |$)/ })
+      if ((await settings.getAttribute('aria-expanded')) !== 'true') await settings.click()
       await panel.getByRole('button', { name: 'New translation', exact: true }).click()
       const dialog = page.getByRole('dialog', { name: 'New translation', exact: true })
       await expect(
@@ -1444,9 +1448,9 @@ for (const variant of [
       ).toHaveLength(5)
       await page.screenshot({ path: testInfo.outputPath('new-translation-ready.png') })
       await dialog.getByRole('button', { name: 'Translate document', exact: true }).click()
-      await expect(panel.getByRole('button', { name: 'New translation', exact: true })).toBeVisible(
-        { timeout: 60000 }
-      )
+      await expect(panel.getByRole('button', { name: '4 Translated', exact: true })).toBeVisible({
+        timeout: 60000
+      })
       await panel.getByRole('button', { name: 'Search translation', exact: true }).click()
       await expect(
         panel.getByRole('textbox', { name: 'Search translation', exact: true })
@@ -1503,7 +1507,11 @@ for (const variant of [
           })
         )
         .toBe(true)
-      await page.getByRole('searchbox', { name: 'Search document', exact: true }).press('Enter')
+      const search = page.getByRole('searchbox', { name: 'Search document', exact: true })
+      // The find bar publishes the first match before all pages finish searching.
+      await expect(search.locator('..').getByText('1/4', { exact: true })).toBeVisible()
+      await search.press('Enter')
+      await expect(search.locator('..').getByText('2/4', { exact: true })).toBeVisible()
       await expect(page.getByRole('button', { name: 'Page 2 of 4', exact: true })).toBeVisible()
       await page.screenshot({ path: testInfo.outputPath('translated-search.png') })
       await page.keyboard.press('Escape')
