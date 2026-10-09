@@ -208,7 +208,8 @@
     "src/main/notebook/fixtures/lineage/r-save-promises.R",
     "src/main/notebook/windows-notebook-runtime.ts",
     "src/main/notebook/windows-notebook-runtime.test.ts",
-    "src/main/notebook/code-risk-admission.test.ts"
+    "src/main/notebook/code-risk-admission.test.ts",
+    "test/fixtures/fake_loop.py"
   ],
   "interfacePaths": [
     "src/main/notebook/configured-shell-runtime.ts",

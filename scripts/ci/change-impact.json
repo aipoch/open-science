@@ -70,6 +70,7 @@
       "role": "global",
       "paths": [
         "package*.json",
+        "patches/**",
         ".nvmrc",
         "tsconfig*.json",
         "vitest.config.*",
@@ -549,5 +550,30 @@
       "consumers": [],
       "lanes": ["docs", "format"]
     }
-  }
+  },
+  "testFixtureSuites": [
+    {
+      "paths": ["test/fixtures/pdf-translation/*.json", "test/fixtures/pdf-translation/*.jsonl"],
+      "tests": [
+        "src/main/literature/pdf-translation/*.test.ts",
+        "src/main/settings/provider-text-generation.test.ts",
+        "src/renderer/src/pages/workspace/previews/renderers/*pdf-translation*.test.ts",
+        "src/renderer/src/pages/workspace/previews/renderers/*pdf-translation*.test.tsx",
+        "src/shared/pdf-translation*.test.ts",
+        "test/pdf-translation-native-verification.test.ts"
+      ]
+    },
+    {
+      "paths": ["test/fixtures/nbformat.v4.5.schema.json"],
+      "tests": ["src/main/notebook/ipynb-export.test.ts"]
+    },
+    {
+      "paths": ["test/fixtures/reviewer-model-evaluation.json"],
+      "tests": ["scripts/reviewer-model-evaluation.test.mjs"]
+    },
+    {
+      "paths": ["test/fixtures/shadcn-patch-history.json"],
+      "tests": ["scripts/dependency-patches.test.ts"]
+    }
+  ]
 }
