@@ -283,7 +283,8 @@ it.skipIf(process.env.RUN_REPLAY_VIEWER_BROWSER !== '1')(
       await page.waitForTimeout(250)
       expect(await page.getByRole('slider').inputValue()).toBe(heldTime)
       expect(await surface.boundingBox()).toEqual(viewportBeforeTransition)
-      await expect(page.getByRole('button', { name: 'Ask about this moment' })).toBeDisabled()
+      // The retained canvas is real evidence; the action stays available during decoder handoff.
+      await expect(page.getByRole('button', { name: 'Ask about this moment' })).toBeEnabled()
       if (process.env.BROWSER_RECORDING_VIEWER_EVIDENCE)
         await page.screenshot({
           path: process.env.BROWSER_RECORDING_VIEWER_EVIDENCE.replace(
@@ -844,7 +845,7 @@ createRoot(document.getElementById('root')).render(<App/> )`
         .poll(() => video.evaluate((element: HTMLVideoElement) => element.paused))
         .toBe(false)
       await clock(3010, true)
-      await expect(child.getByTestId('recorded-segment-gap')).toBeVisible()
+      await expect(child.getByTestId('recorded-segment-gap')).toHaveCount(0)
       const held = child.getByTestId('held-recorded-frame')
       await expect(held).toBeVisible()
       const heldPixels = await held.evaluate((canvas: HTMLCanvasElement) => ({
@@ -862,7 +863,7 @@ createRoot(document.getElementById('root')).render(<App/> )`
       expect(heldPixels.rgba[2] - heldPixels.rgba[0]).toBeGreaterThan(40)
       expect(await surface.boundingBox()).toEqual(beforeHole)
       await expect(video).toHaveCount(0)
-      await expect(page.getByLabel('Research reference state')).toHaveText('disabled')
+      await expect(page.getByLabel('Research reference state')).toHaveText('enabled')
       await clock(3130 + 20, true)
       await expect(video).toBeVisible()
       expect(await video.evaluate((element, preloaded) => element === preloaded, nextDecoder)).toBe(

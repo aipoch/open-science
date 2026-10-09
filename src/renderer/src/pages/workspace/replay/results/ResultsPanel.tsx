@@ -130,7 +130,13 @@ export function ResultsPanel({
           : t('Archived observation')))
     : undefined
   return (
-    <section aria-label={t('Results')} className="flex h-full min-h-0 min-w-0 flex-col">
+    <section
+      aria-label={t('Results')}
+      // This independent catalog owns its selection and controls. Parent playback must not
+      // insert inspection chrome during pointerdown and move a result before its click lands.
+      data-replay-layout-control
+      className="flex h-full min-h-0 min-w-0 flex-col"
+    >
       {recordedAt !== undefined || sources.length > 1 ? (
         <div
           className={

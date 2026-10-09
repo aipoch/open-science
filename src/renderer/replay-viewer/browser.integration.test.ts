@@ -775,7 +775,21 @@ it
           )
         ).toBeVisible()
       } else {
-        await page.getByRole('button', { name: /^project.html Step result/ }).click({ delay: 80 })
+        const result = page.getByRole('button', { name: /^project.html Step result/ })
+        const before = await result.boundingBox()
+        expect(before).not.toBeNull()
+        await result.hover()
+        await page.mouse.down()
+        // The enclosing clock must not insert an inspection banner and move the result
+        // between pointerdown and pointerup. Selection still uses the normal real click.
+        await expect(page.getByText('Inspecting recorded evidence', { exact: true })).toHaveCount(0)
+        const pressed = await result.boundingBox()
+        expect(pressed).not.toBeNull()
+        expect({ ...pressed, y: before!.y }).toEqual(before)
+        // Shared buttons intentionally move one CSS pixel while pressed.
+        expect(Math.abs(pressed!.y - before!.y)).toBeLessThanOrEqual(1)
+        await page.mouse.up()
+        await expect(result).toHaveAttribute('aria-pressed', 'true')
         await expect(
           page
             .frameLocator('iframe[title="project.html"]')

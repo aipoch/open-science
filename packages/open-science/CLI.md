@@ -916,7 +916,6 @@ Keep `--idempotency-key` unchanged when retrying a request whose response was lo
 for a new transfer. The same key with different input is rejected. A restarted service requires a
 new preflight and review. `cancel-import` explicitly discards an uncommitted staged preview.
 
-
 Recorded observations use a receiving Artifact Version, not an author-machine Run ID:
 
 ```bash
