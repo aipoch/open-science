@@ -2285,6 +2285,9 @@ if (process.argv.includes('--version')) {
           }
 
           await streamSegment(1, 12)
+          // Let scroll-intent tests release the remaining stream after real reader input.
+          if (prompt.includes('Release file: '))
+            await waitForReleaseFile(JSON.parse(prompt.split('Release file: ')[1]))
           await context.client.notify(acp.methods.client.session.update, {
             sessionId: context.params.sessionId,
             update: {
