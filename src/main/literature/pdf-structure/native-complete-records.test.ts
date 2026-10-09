@@ -1233,6 +1233,144 @@ it('proves the full source continuation partition using a readonly local seriali
   expect(f).toEqual(before)
 })
 
+const nativeFixtureOrigins = (
+  items: ReturnType<typeof JSON.parse>[],
+  tokens: ReturnType<typeof JSON.parse>[]
+): ReturnType<typeof JSON.parse>[] => {
+  const origins = tokens.map((token) => {
+    const matches = items.filter(
+      (item) =>
+        item.text === token.text &&
+        item.rect.every((v: number, n: number) => Math.abs(v - token.rect[n]) < 0.02)
+    )
+    expect(matches).toHaveLength(1)
+    return matches[0].sourceItem
+  })
+  return [
+    ...new Map(origins.map((origin) => [`${origin.pageNumber}:${origin.index}`, origin])).values()
+  ].sort((a, b) => a.pageNumber - b.pageNumber || a.index - b.index)
+}
+
+it.each([
+  'native-calibrated-wrapped-leaf-owners',
+  'native-fenced-merged-records',
+  'fenced-two-line-native-stubs',
+  'terminal-complete-ordinary-peer-records',
+  'single-ordinary-record',
+  'terminal-literal-peers',
+  'fenced-multiline-stub-owners',
+  'fenced-paired-native-records'
+])('retains exact native origins after changing complete record owners: %s', (kind) => {
+  const f =
+    kind === 'single-ordinary-record'
+      ? singleOrdinaryLeafRecord()
+      : kind === 'terminal-literal-peers'
+        ? terminalLiteralPeers()
+        : fixture(kind)
+  const baseline = refineTable(
+    f.table,
+    f.items,
+    f.captions,
+    f.notes ?? [],
+    f.rules,
+    f.runs,
+    undefined,
+    f.paint ? new Map(f.paint) : undefined
+  )
+  for (const [index, item] of f.items.entries())
+    item.sourceItem = { pageNumber: 1, index, text: item.text }
+  const before = structuredClone(f)
+  const result = refineTable(
+    f.table,
+    f.items,
+    f.captions,
+    f.notes ?? [],
+    f.rules,
+    f.runs,
+    undefined,
+    f.paint ? new Map(f.paint) : undefined
+  )
+  const expectedGrid =
+    kind === 'single-ordinary-record'
+      ? f.expectedGrid
+      : kind === 'terminal-complete-ordinary-peer-records'
+        ? middleOrdinarySourceOracle(f).expected.grid
+        : kind === 'fenced-two-line-native-stubs'
+          ? undefined
+          : [
+                'terminal-literal-peers',
+                'fenced-multiline-stub-owners',
+                'fenced-paired-native-records'
+              ].includes(kind)
+            ? f.expectedGrid
+            : f.expectedResult.grid
+  if (expectedGrid) expect(result.grid).toEqual(expectedGrid)
+  if (kind === 'fenced-two-line-native-stubs')
+    expect(result.repairs).toContain('native-fenced-two-line-stub-owners-recovered')
+  for (const cell of result.cells)
+    if (cell.sourceTokens.length)
+      expect(cell.sourceItems).toEqual(nativeFixtureOrigins(f.items, cell.sourceTokens))
+    else expect(cell.sourceItems).toBeUndefined()
+  const withoutOrigins = (value: ReturnType<typeof JSON.parse>): ReturnType<typeof JSON.parse> =>
+    JSON.parse(
+      JSON.stringify(value, (key, data) =>
+        ['sourceItem', 'sourceItems'].includes(key) ? undefined : data
+      )
+    )
+  expect(withoutOrigins(result)).toEqual(withoutOrigins(baseline))
+  expect(f).toEqual(before)
+})
+
+it.each(['conflicting origin', 'duplicate origin', 'opaque origin', 'missing continuation origin'])(
+  'refuses changing complete owners with %s',
+  (kind) => {
+    const f = fixture('native-calibrated-wrapped-leaf-owners')
+    for (const [index, item] of f.items.entries())
+      item.sourceItem = { pageNumber: 1, index, text: item.text }
+    const table = structuredClone(f.expectedBefore)
+    for (const cell of table.cells)
+      if (cell.sourceTokens.length)
+        cell.sourceItems = nativeFixtureOrigins(f.items, cell.sourceTokens)
+    const [row, column] = f.changedSlots[0]
+    const donor = table.cells.find(
+      (c: ReturnType<typeof JSON.parse>) => c.row === row && c.column === column
+    )
+    if (kind === 'conflicting origin')
+      donor.sourceItems[0] = { ...donor.sourceItems[0], text: 'Another original item' }
+    if (kind === 'duplicate origin') donor.sourceItems.push({ ...donor.sourceItems[0] })
+    if (kind === 'opaque origin')
+      donor.sourceItems[0] = { ...donor.sourceItems[0], unprovedOpaque: true }
+    if (kind === 'missing continuation origin') {
+      const expected = f.expectedResult.cells.find(
+        (c: ReturnType<typeof JSON.parse>) => c.row === row && c.column === column
+      )
+      const absent = expected.sourceTokens.find(
+        (token: ReturnType<typeof JSON.parse>) =>
+          !donor.sourceTokens.some(
+            (t: ReturnType<typeof JSON.parse>) =>
+              t.text === token.text && JSON.stringify(t.rect) === JSON.stringify(token.rect)
+          )
+      )
+      delete f.items.find(
+        (item: ReturnType<typeof JSON.parse>) =>
+          item.text === absent.text && JSON.stringify(item.rect) === JSON.stringify(absent.rect)
+      ).sourceItem
+    }
+    const before = structuredClone({ f, table })
+    expect(
+      proveNativeCalibratedWrappedLeafOwners(
+        table,
+        f.items,
+        f.captions,
+        f.rules,
+        f.runs,
+        wrappedRecordText(f)
+      )
+    ).toBeUndefined()
+    expect({ f, table }).toEqual(before)
+  }
+)
+
 const wrappedSourceRefusals = [
   'missing-caption',
   'competing-caption',
@@ -1925,7 +2063,9 @@ it('recovers complete native script records and removes only the proved empty pr
   expect(result.cells).toHaveLength(56)
   expect(result.unassigned).toEqual([])
   for (const expected of f.expectedCells) {
-    const cell = result.cells.find((c) => c.row === expected.row && c.column === expected.column)
+    const cell = result.cells.find(
+      (c: ReturnType<typeof JSON.parse>) => c.row === expected.row && c.column === expected.column
+    )
     expect(cell).toMatchObject(expected)
   }
   expect(result.cropRect).toEqual(f.table.cropRect)
@@ -1944,7 +2084,11 @@ for (const [scale, dx, dy] of [
       seen.add(rect)
       for (let n = 0; n < 4; n++) rect[n] = rect[n] * scale + (n % 2 ? dy : dx)
     }
-    for (const font of [...f.items, ...f.runs, ...f.expectedCells.flatMap((c) => c.sourceTokens)]) {
+    for (const font of [
+      ...f.items,
+      ...f.runs,
+      ...f.expectedCells.flatMap((c: ReturnType<typeof JSON.parse>) => c.sourceTokens)
+    ]) {
       transform(font.rect)
       font.baseline = font.baseline * scale + dy
       font.height *= scale
@@ -1954,12 +2098,16 @@ for (const [scale, dx, dy] of [
     for (const caption of f.captions) transform(caption.rect)
     transform(f.table.cropRect)
     transform(f.table.detection.rect)
-    for (const object of f.table.structure.objects) object.rect = object.rect.map((v) => v * scale)
+    for (const object of f.table.structure.objects)
+      object.rect = object.rect.map((v: number) => v * scale)
     const result = refineTable(f.table, f.items, f.captions, [], f.rules, f.runs, null)
     expect(result.grid).toEqual(f.expectedGrid)
     for (const expected of f.expectedCells)
       expect(
-        result.cells.find((c) => c.row === expected.row && c.column === expected.column)
+        result.cells.find(
+          (c: ReturnType<typeof JSON.parse>) =>
+            c.row === expected.row && c.column === expected.column
+        )
       ).toMatchObject(expected)
     expect(result.cropRect).toEqual(f.table.cropRect)
     expect(result.unassigned).toEqual([])
@@ -1971,8 +2119,12 @@ const misownedScriptRecords = (): ReturnType<typeof JSON.parse> => {
   const table = structuredClone(
     refineTable(f.table, f.items, f.captions, [], f.rules, f.runs, null)
   )
-  const first = table.cells.find((c) => c.row === 1 && c.column === 0)
-  const second = table.cells.find((c) => c.row === 2 && c.column === 0)
+  const first = table.cells.find(
+    (c: ReturnType<typeof JSON.parse>) => c.row === 1 && c.column === 0
+  )
+  const second = table.cells.find(
+    (c: ReturnType<typeof JSON.parse>) => c.row === 2 && c.column === 0
+  )
   first.row = 2
   second.row = 1
   return { ...f, table }
@@ -2024,26 +2176,31 @@ for (const mode of [
 ]) {
   it(`refuses complete script record projection with ${mode}`, () => {
     const f = misownedScriptRecords()
-    const base = f.items.find((i) => i.text === '1.10')
-    const upper = f.items.filter((i) => i.baseline === 164 && i.rect[0] < 180)
+    const base = f.items.find((i: ReturnType<typeof JSON.parse>) => i.text === '1.10')
+    const upper = f.items.filter(
+      (i: ReturnType<typeof JSON.parse>) => i.baseline === 164 && i.rect[0] < 180
+    )
     const sync = (
       font: ReturnType<typeof JSON.parse>,
       mutate: (target: ReturnType<typeof JSON.parse>) => void
     ): void => {
       const before = structuredClone(font)
       const program = f.runs.find(
-        (p) => p.text === before.text && JSON.stringify(p.rect) === JSON.stringify(before.rect)
+        (p: ReturnType<typeof JSON.parse>) =>
+          p.text === before.text && JSON.stringify(p.rect) === JSON.stringify(before.rect)
       )
-      const cell = f.table.cells.find((c) =>
+      const cell = f.table.cells.find((c: ReturnType<typeof JSON.parse>) =>
         c.sourceTokens.some(
-          (t) => t.text === before.text && JSON.stringify(t.rect) === JSON.stringify(before.rect)
+          (t: ReturnType<typeof JSON.parse>) =>
+            t.text === before.text && JSON.stringify(t.rect) === JSON.stringify(before.rect)
         )
       )
       const token = cell.sourceTokens.find(
-        (t) => t.text === before.text && JSON.stringify(t.rect) === JSON.stringify(before.rect)
+        (t: ReturnType<typeof JSON.parse>) =>
+          t.text === before.text && JSON.stringify(t.rect) === JSON.stringify(before.rect)
       )
       const rectIndex = cell.sourceRects.findIndex(
-        (r) => JSON.stringify(r) === JSON.stringify(before.rect)
+        (r: ReturnType<typeof JSON.parse>) => JSON.stringify(r) === JSON.stringify(before.rect)
       )
       mutate(font)
       Object.assign(program, {
@@ -2064,15 +2221,25 @@ for (const mode of [
     }
     if (mode === 'missing-program')
       f.runs.splice(
-        f.runs.findIndex((p) => p.text === base.text && p.baseline === base.baseline),
+        f.runs.findIndex(
+          (p: ReturnType<typeof JSON.parse>) => p.text === base.text && p.baseline === base.baseline
+        ),
         1
       )
     if (mode === 'incomplete-program')
-      f.runs.find((p) => p.text === base.text && p.baseline === base.baseline).literalGlyphs.pop()
+      f.runs
+        .find(
+          (p: ReturnType<typeof JSON.parse>) => p.text === base.text && p.baseline === base.baseline
+        )
+        .literalGlyphs.pop()
     if (mode === 'wrong-program-baseline')
-      f.runs.find((p) => p.text === base.text && p.baseline === base.baseline).baseline += 1
+      f.runs.find(
+        (p: ReturnType<typeof JSON.parse>) => p.text === base.text && p.baseline === base.baseline
+      ).baseline += 1
     if (mode === 'nonfinite-program-height')
-      f.runs.find((p) => p.text === base.text && p.baseline === base.baseline).height = NaN
+      f.runs.find(
+        (p: ReturnType<typeof JSON.parse>) => p.text === base.text && p.baseline === base.baseline
+      ).height = NaN
     if (mode === 'missing-closing') f.rules.pop()
     if (mode === 'missing-double-opening') f.rules.splice(1, 1)
     if (mode === 'missing-middle-fence') f.rules.splice(3, 1)
@@ -2080,12 +2247,17 @@ for (const mode of [
     if (mode === 'competing-caption') f.captions.push(structuredClone(f.captions[0]))
     if (mode === 'rotation') f.table.readingRotation = 90
     if (mode === 'incomplete-header-owner') {
-      const head = f.table.cells.find((c) => c.row === 0 && c.column === 0)
+      const head = f.table.cells.find(
+        (c: ReturnType<typeof JSON.parse>) => c.row === 0 && c.column === 0
+      )
       head.sourceTokens = []
       head.sourceRects = []
       f.table.unassigned.push('Leaf1')
     }
-    if (mode === 'header-span') f.table.cells.find((c) => c.row === 0 && c.column === 0).colSpan = 2
+    if (mode === 'header-span')
+      f.table.cells.find(
+        (c: ReturnType<typeof JSON.parse>) => c.row === 0 && c.column === 0
+      ).colSpan = 2
     if (mode === 'crossing-whole-font')
       sync(base, (i) => {
         i.rect[2] = 241
@@ -2094,7 +2266,7 @@ for (const mode of [
       const alternate = {
         ...structuredClone(base),
         text: '9.99',
-        rect: base.rect.map((v, n) => (n % 2 === 0 ? v + 0.02 : v))
+        rect: base.rect.map((v: number, n: number) => (n % 2 === 0 ? v + 0.02 : v))
       }
       f.items.push(alternate)
       f.runs.push({
@@ -2103,24 +2275,35 @@ for (const mode of [
         glyphRuns: [...alternate.text].map(() => 100),
         gaps: []
       })
-      const owner = f.table.cells.find((c) =>
+      const owner = f.table.cells.find((c: ReturnType<typeof JSON.parse>) =>
         c.sourceTokens.some(
-          (t) => t.text === base.text && JSON.stringify(t.rect) === JSON.stringify(base.rect)
+          (t: ReturnType<typeof JSON.parse>) =>
+            t.text === base.text && JSON.stringify(t.rect) === JSON.stringify(base.rect)
         )
       )
       owner.sourceTokens.push(alternate)
       owner.sourceRects.push(alternate.rect)
     }
     if (mode === 'nonterminal-native-script-parent') {
-      const lower = f.items.filter((i) => i.baseline === 173 && i.rect[0] < 180)
+      const lower = f.items.filter(
+        (i: ReturnType<typeof JSON.parse>) => i.baseline === 173 && i.rect[0] < 180
+      )
       const excluded = (t: ReturnType<typeof JSON.parse>): boolean =>
-        lower.some((i) => i.text === t.text && JSON.stringify(i.rect) === JSON.stringify(t.rect))
-      f.items = f.items.filter((i) => !lower.includes(i))
-      f.runs = f.runs.filter((p) => !excluded(p))
+        lower.some(
+          (i: ReturnType<typeof JSON.parse>) =>
+            i.text === t.text && JSON.stringify(i.rect) === JSON.stringify(t.rect)
+        )
+      f.items = f.items.filter((i: ReturnType<typeof JSON.parse>) => !lower.includes(i))
+      f.runs = f.runs.filter((p: ReturnType<typeof JSON.parse>) => !excluded(p))
       for (const cell of f.table.cells) {
-        cell.sourceTokens = cell.sourceTokens.filter((t) => !excluded(t))
+        cell.sourceTokens = cell.sourceTokens.filter(
+          (t: ReturnType<typeof JSON.parse>) => !excluded(t)
+        )
         cell.sourceRects = cell.sourceRects.filter(
-          (r) => !lower.some((i) => JSON.stringify(i.rect) === JSON.stringify(r))
+          (r: ReturnType<typeof JSON.parse>) =>
+            !lower.some(
+              (i: ReturnType<typeof JSON.parse>) => JSON.stringify(i.rect) === JSON.stringify(r)
+            )
         )
       }
       for (const font of upper)
@@ -2138,9 +2321,10 @@ for (const mode of [
       }
       f.items.push(suffix)
       f.runs.push({ ...suffix, literalGlyphs: [...suffix.text], glyphRuns: [100, 100], gaps: [] })
-      const owner = f.table.cells.find((c) =>
+      const owner = f.table.cells.find((c: ReturnType<typeof JSON.parse>) =>
         c.sourceTokens.some(
-          (t) => t.text === base.text && JSON.stringify(t.rect) === JSON.stringify(base.rect)
+          (t: ReturnType<typeof JSON.parse>) =>
+            t.text === base.text && JSON.stringify(t.rect) === JSON.stringify(base.rect)
         )
       )
       owner.sourceTokens.push(suffix)
@@ -2149,22 +2333,27 @@ for (const mode of [
     if (mode === 'nonadjacent-script')
       for (const font of upper)
         sync(font, (i) => {
-          i.rect = i.rect.map((v, n) => (n % 2 === 0 ? v + 8 : v))
+          i.rect = i.rect.map((v: number, n: number) => (n % 2 === 0 ? v + 8 : v))
         })
     if (mode === 'leading-isotope-script') {
       const removed = f.items.filter(
-          (i) => (i.baseline === 173 && i.rect[0] < 180) || i === upper[1]
+          (i: ReturnType<typeof JSON.parse>) =>
+            (i.baseline === 173 && i.rect[0] < 180) || i === upper[1]
         ),
         has = (i: ReturnType<typeof JSON.parse>): boolean =>
           removed.some(
-            (r) => r.text === i.text && JSON.stringify(r.rect) === JSON.stringify(i.rect)
+            (r: ReturnType<typeof JSON.parse>) =>
+              r.text === i.text && JSON.stringify(r.rect) === JSON.stringify(i.rect)
           )
-      f.items = f.items.filter((i) => !removed.includes(i))
-      f.runs = f.runs.filter((i) => !has(i))
+      f.items = f.items.filter((i: ReturnType<typeof JSON.parse>) => !removed.includes(i))
+      f.runs = f.runs.filter((i: ReturnType<typeof JSON.parse>) => !has(i))
       for (const cell of f.table.cells) {
-        cell.sourceTokens = cell.sourceTokens.filter((i) => !has(i))
+        cell.sourceTokens = cell.sourceTokens.filter((i: ReturnType<typeof JSON.parse>) => !has(i))
         cell.sourceRects = cell.sourceRects.filter(
-          (r) => !removed.some((i) => JSON.stringify(i.rect) === JSON.stringify(r))
+          (r: ReturnType<typeof JSON.parse>) =>
+            !removed.some(
+              (i: ReturnType<typeof JSON.parse>) => JSON.stringify(i.rect) === JSON.stringify(r)
+            )
         )
       }
       sync(base, (i) => {
@@ -2183,7 +2372,7 @@ for (const mode of [
         const extra = {
           ...structuredClone(font),
           baseline: font.baseline - 1,
-          rect: font.rect.map((v, n) => (n % 2 === 1 ? v - 1 : v))
+          rect: font.rect.map((v: number, n: number) => (n % 2 === 1 ? v - 1 : v))
         }
         f.items.push(extra)
         f.runs.push({
@@ -2192,9 +2381,10 @@ for (const mode of [
           glyphRuns: [...extra.text].map(() => 100),
           gaps: []
         })
-        const owner = f.table.cells.find((c) =>
+        const owner = f.table.cells.find((c: ReturnType<typeof JSON.parse>) =>
           c.sourceTokens.some(
-            (t) => t.text === font.text && JSON.stringify(t.rect) === JSON.stringify(font.rect)
+            (t: ReturnType<typeof JSON.parse>) =>
+              t.text === font.text && JSON.stringify(t.rect) === JSON.stringify(font.rect)
           )
         )
         owner.sourceTokens.push(extra)
@@ -2464,7 +2654,10 @@ it('recovers variable native fenced groups while preserving every complete peer 
   expect(repaired.cells).toHaveLength(23)
   for (const peer of f.expectedWholePeers) {
     expect(
-      repaired.cells.find((cell) => cell.row === peer.row && cell.column === peer.column)
+      repaired.cells.find(
+        (cell: ReturnType<typeof JSON.parse>) =>
+          cell.row === peer.row && cell.column === peer.column
+      )
     ).toEqual(peer)
   }
   expect(f).toEqual(original)
@@ -2558,7 +2751,9 @@ it.each([
   [
     'unknown blank cell payload',
     (f: ReturnType<typeof fixture>) => {
-      f.table.cells.find((cell) => cell.column === 0 && cell.row === 1).opaque = 'retain me'
+      f.table.cells.find(
+        (cell: ReturnType<typeof JSON.parse>) => cell.column === 0 && cell.row === 1
+      ).opaque = 'retain me'
     }
   ]
 ])('leaves variable native fenced groups unchanged with %s', (_name, mutate) => {
@@ -11050,7 +11245,7 @@ it.each([
 ])('refuses blank first leaf recovery with %s', (control) => {
   const f = blankFirstNativeLeaf()
   if (['clip', 'eoClip', 'setGState'].includes(control)) {
-    f.operatorContext.operators.fnArray.push(OPS[control])
+    f.operatorContext.operators.fnArray.push(OPS[control as keyof typeof OPS])
     f.operatorContext.operators.argsArray.push(
       control === 'setGState' ? [[['Font', ['unknown', 10]]]] : null
     )
@@ -11368,7 +11563,9 @@ it.each([
   if (control === 'unknown glyph') raw[0].isInFont = false
   if (control === 'zero glyph width') raw[0].width = 0
   if (['clip', 'eoClip', 'gState'].includes(control)) {
-    f.operatorContext.operators.fnArray.push(OPS[control === 'gState' ? 'setGState' : control])
+    f.operatorContext.operators.fnArray.push(
+      OPS[(control === 'gState' ? 'setGState' : control) as keyof typeof OPS]
+    )
     f.operatorContext.operators.argsArray.push(control === 'gState' ? [[['ca', 0]]] : null)
   }
   if (control === 'white text') {
@@ -11426,7 +11623,7 @@ const anonymousStackedParts = (): ReturnType<typeof JSON.parse> => {
       argsArray: []
     },
     content = {
-      items: [],
+      items: [] as ReturnType<typeof JSON.parse>[],
       styles: {
         'neutral-font': { fontFamily: 'sans-serif', ascent: 0.7, descent: -0.2, vertical: false }
       }

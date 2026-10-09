@@ -401,7 +401,10 @@ it.each([
   expect(
     associateTableNotes(f.page, f.tables, f.rules)
       .flat()
-      .some((n) => n.text.includes('Estimated totals are') && n.text.startsWith('† ')),
+      .some(
+        (n: ReturnType<typeof JSON.parse>) =>
+          n.text.includes('Estimated totals are') && n.text.startsWith('† ')
+      ),
     mutation
   ).toBe(false)
   expect(f).toEqual(before)

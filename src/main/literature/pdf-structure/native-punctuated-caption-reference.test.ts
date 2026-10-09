@@ -20,8 +20,10 @@ it('recognizes a punctuated full figure keyword while preserving source text', (
   ])
 })
 
-it('recognizes an adjacent supplementary pipe only as an explicit figure title delimiter', () => {
-  const text = 'Fig. S5| Independent native panels with a complete descriptor.'
+it.each([
+  'Fig. S5| Independent native panels with a complete descriptor.',
+  'Fig. S5| Independent panels for |x| and |y| with an unchanged descriptor.'
+])('recognizes an adjacent supplementary pipe while preserving the source: %s', (text) => {
   const page = {
     pageNumber: 1,
     width: 600,

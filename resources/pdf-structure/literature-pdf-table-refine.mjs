@@ -49,7 +49,9 @@ import {
   recoverNativeUnownedFirstRecord,
   recoverNativeFourFieldOrdinaryOwners,
   nativeWholeFontOrigins,
-  nativeCellOriginsMatch
+  nativeCellOriginsMatch,
+  nativeChangedCellOrigins,
+  nativeRecoveredCellOrigins
 } from './literature-pdf-native-leaf-record-repair.mjs'
 import { recoverNativeScalarRecordPlan } from './literature-pdf-native-scalar-record-grid.mjs'
 import { recoverNativeTextRecordGrid } from './literature-pdf-native-text-record-grid.mjs'
@@ -12333,69 +12335,77 @@ export function refineTable(
         }
       }
     }
-    rows.splice(0, rows.length, ...nativeRows)
-    columns.splice(
-      0,
-      columns.length,
-      ...cuts.slice(1).map((right, index) => ({
-        rect: [cuts[index], table.cropRect[1], right, table.cropRect[3]]
-      }))
-    )
-    cells.splice(0, cells.length, ...nativeCells)
-    outputCells = cells
-    for (const cell of outputCells) {
-      const runs = nativeRecordRuns(cell.sourceTokens, {
-        baselineHeight: nativeRecordPlan.baselineHeight,
-        scriptParents: nativeRecordPlan.scriptParents,
-        sourceCell: cell,
-        sourcePrograms:
-          nativeRecordPlan.repair === 'native-closed-leaf-complete-records-recovered'
-            ? observedRuns
-            : undefined
-      })
-      if (nativeRecordPlan === fencedPairedNativeRecords) {
-        for (let n = runs.length - 1; n > 0; n--) {
-          if (runs[n].position === 'normal' && runs[n - 1].position === 'normal') {
-            runs[n - 1].text += runs[n].text
-            runs.splice(n, 1)
+    // The source proof can rebuild ordinary headers as well as body cells.
+    // Repartition existing origins before committing any of that new plan.
+    const conservedNativeCells = nativeRecoveredCellOrigins(outputCells, nativeCells, pageItems)
+    if (conservedNativeCells) {
+      rows.splice(0, rows.length, ...nativeRows)
+      columns.splice(
+        0,
+        columns.length,
+        ...cuts.slice(1).map((right, index) => ({
+          rect: [cuts[index], table.cropRect[1], right, table.cropRect[3]]
+        }))
+      )
+      cells.splice(0, cells.length, ...conservedNativeCells)
+      outputCells = cells
+      for (const cell of outputCells) {
+        const runs = nativeRecordRuns(cell.sourceTokens, {
+          baselineHeight: nativeRecordPlan.baselineHeight,
+          scriptParents: nativeRecordPlan.scriptParents,
+          sourceCell: cell,
+          sourcePrograms:
+            nativeRecordPlan.repair === 'native-closed-leaf-complete-records-recovered'
+              ? observedRuns
+              : undefined
+        })
+        if (nativeRecordPlan === fencedPairedNativeRecords) {
+          for (let n = runs.length - 1; n > 0; n--) {
+            if (runs[n].position === 'normal' && runs[n - 1].position === 'normal') {
+              runs[n - 1].text += runs[n].text
+              runs.splice(n, 1)
+            }
           }
         }
+        if (!cell.textRuns && runs.some((run) => run.position !== 'normal')) cell.textRuns = runs
       }
-      if (!cell.textRuns && runs.some((run) => run.position !== 'normal')) cell.textRuns = runs
-    }
-    for (const item of nativeRecordPlan.consumed ?? groups.flat()) {
-      const index = unassigned.indexOf(item.text)
-      if (index >= 0) unassigned.splice(index, 1)
-    }
-    for (const issue of closedSingleNativeRecord === nativeRecordPlan
-      ? ['missing-row-or-column']
-      : [
-          'ambiguous-cell-assignment',
-          'unresolved-spanning-cells',
-          'overlapping-predicted-columns',
-          'span-conflicts-with-source-rows',
-          'span-conflicts-with-source-columns',
-          'conflicting-spanning-cells'
-        ])
-      issues.delete(issue)
-    if (!unassigned.length) issues.delete('unassigned-source-text')
-    if (rowlessNativeRecords === nativeRecordPlan || fencedPairedNativeRecords === nativeRecordPlan)
-      issues.delete('missing-row-or-column')
-    if (nativeRecordPlan.cropRect) {
-      outputCrop =
-        closedSingleNativeRecord === nativeRecordPlan
-          ? nativeRecordPlan.cropRect
-          : (nativeCompleteFrameMargin(nativeRecordPlan, outputCells, pageItems, captions) ??
-            nativeRecordPlan.cropRect)
-      outputClipped = outputClipped.filter((item) => !inside(outputCrop, item))
+      for (const item of nativeRecordPlan.consumed ?? groups.flat()) {
+        const index = unassigned.indexOf(item.text)
+        if (index >= 0) unassigned.splice(index, 1)
+      }
+      for (const issue of closedSingleNativeRecord === nativeRecordPlan
+        ? ['missing-row-or-column']
+        : [
+            'ambiguous-cell-assignment',
+            'unresolved-spanning-cells',
+            'overlapping-predicted-columns',
+            'span-conflicts-with-source-rows',
+            'span-conflicts-with-source-columns',
+            'conflicting-spanning-cells'
+          ])
+        issues.delete(issue)
+      if (!unassigned.length) issues.delete('unassigned-source-text')
       if (
         rowlessNativeRecords === nativeRecordPlan ||
-        closedSingleNativeRecord === nativeRecordPlan
+        fencedPairedNativeRecords === nativeRecordPlan
       )
-        outputClipped = outputClipped.filter((item) => intersect(item.rect, outputCrop) > 0)
-      if (!outputClipped.length) issues.delete('text-crosses-crop-boundary')
+        issues.delete('missing-row-or-column')
+      if (nativeRecordPlan.cropRect) {
+        outputCrop =
+          closedSingleNativeRecord === nativeRecordPlan
+            ? nativeRecordPlan.cropRect
+            : (nativeCompleteFrameMargin(nativeRecordPlan, outputCells, pageItems, captions) ??
+              nativeRecordPlan.cropRect)
+        outputClipped = outputClipped.filter((item) => !inside(outputCrop, item))
+        if (
+          rowlessNativeRecords === nativeRecordPlan ||
+          closedSingleNativeRecord === nativeRecordPlan
+        )
+          outputClipped = outputClipped.filter((item) => intersect(item.rect, outputCrop) > 0)
+        if (!outputClipped.length) issues.delete('text-crosses-crop-boundary')
+      }
+      repairs.push(repair)
     }
-    repairs.push(repair)
   }
   reconcileNativeRepeatedMeasureOwners(outputCells, rows, repairs)
   reconcileNativeWrappedReferenceTail(
@@ -12552,13 +12562,51 @@ export function refineTable(
     if (!outputClipped.length) issues.delete('text-crosses-crop-boundary')
     repairs.push('native-closing-rule-crop-trimmed')
   }
-  const isolatedHeader = recoverNativeIsolatedPrintedHeader(
+  let isolatedHeader = recoverNativeIsolatedPrintedHeader(
     table,
     pageItems,
     sourceRules,
     outputCells,
     rows
   )
+  const isolatedCellOrigins = new Map(),
+    isolatedHeaderOrigins = new Map()
+  if (isolatedHeader) {
+    const plan = isolatedHeader,
+      same = (a, b) => a.text === b.text && a.rect.every((v, n) => Math.abs(v - b.rect[n]) < 0.02),
+      isHeader = (token) => plan.header.some((font) => same(font, token)),
+      trackOrigins = outputCells.some((cell) => Object.hasOwn(cell, 'sourceItems'))
+    if (plan.mode === 'leading-index' || plan.mode === 'insert') {
+      for (const cell of outputCells) {
+        if (!(cell.sourceTokens ?? []).some(isHeader)) continue
+        const origins = nativeChangedCellOrigins(
+          [cell],
+          pageItems,
+          cell.sourceTokens.filter((token) => !isHeader(token))
+        )
+        if (!origins) {
+          isolatedHeader = undefined
+          break
+        }
+        isolatedCellOrigins.set(cell, origins)
+      }
+    }
+    if (isolatedHeader) {
+      const groups =
+        plan.mode === 'leading-index' ? plan.header.map((token) => [token]) : plan.groups
+      for (const group of groups ?? []) {
+        const donors = outputCells.filter((cell) =>
+            (cell.sourceTokens ?? []).some((token) => group.some((font) => same(font, token)))
+          ),
+          origins = nativeChangedCellOrigins(donors, pageItems, group, trackOrigins)
+        if (!origins) {
+          isolatedHeader = undefined
+          break
+        }
+        isolatedHeaderOrigins.set(plan.mode === 'leading-index' ? group[0] : group, origins)
+      }
+    }
+  }
   if (isolatedHeader) {
     const { header, groups, cuts, opening, divider, h, mode } = isolatedHeader
     const isHeader = (i) =>
@@ -12583,7 +12631,10 @@ export function refineTable(
           cell.sourceRects = cell.sourceRects.filter(
             (r) => !token.rect.every((v, n) => Math.abs(v - r[n]) < 0.02)
           )
+          Object.assign(cell, isolatedCellOrigins.get(cell))
+          if (cell.sourceItems === undefined) delete cell.sourceItems
           indexedCells.push({
+            ...isolatedHeaderOrigins.get(token),
             row: cell.row,
             column: 0,
             rowSpan: 1,
@@ -12623,6 +12674,8 @@ export function refineTable(
           cell.sourceRects = cell.sourceRects.filter(
             (r) => !removed.some((i) => i.rect.every((v, n) => Math.abs(v - r[n]) < 0.02))
           )
+          Object.assign(cell, isolatedCellOrigins.get(cell))
+          if (cell.sourceItems === undefined) delete cell.sourceItems
           cell.rect[1] = Math.min(...cell.sourceTokens.map((i) => i.rect[1]))
         }
         cell.row++
@@ -12668,6 +12721,7 @@ export function refineTable(
         ? textRuns.map((r) => r.text).join('')
         : nativeRecordText(group)
       return {
+        ...isolatedHeaderOrigins.get(group),
         row: 0,
         column,
         rowSpan: 1,
@@ -12749,9 +12803,21 @@ export function refineTable(
   if (closingGlyphOwners) {
     const { moves, cuts, baselineHeight } = closingGlyphOwners
     for (const { donor, target, glyph } of moves) {
+      const donorOrigins = nativeChangedCellOrigins(
+          [donor],
+          pageItems,
+          donor.sourceTokens.filter((i) => i !== glyph)
+        ),
+        targetOrigins = nativeChangedCellOrigins([donor, target], pageItems, [
+          ...target.sourceTokens,
+          glyph
+        ])
       donor.sourceTokens = donor.sourceTokens.filter((i) => i !== glyph)
       target.sourceTokens = [...target.sourceTokens, glyph]
+      Object.assign(donor, donorOrigins)
+      Object.assign(target, targetOrigins)
       for (const cell of [donor, target]) {
+        if (cell.sourceItems === undefined) delete cell.sourceItems
         cell.sourceRects = cell.sourceTokens.map((i) => i.rect)
         cell.text = nativeRecordText(cell.sourceTokens, { baselineHeight })
         const runs = nativeRecordRuns(cell.sourceTokens, { baselineHeight })
@@ -12914,6 +12980,7 @@ export function refineTable(
         const runs = nativeRecordRuns(sourceTokens, { baselineHeight }),
           cell = {
             ...donor,
+            ...nativeChangedCellOrigins([donor], pageItems, sourceTokens),
             column: 4 + n,
             rect: [n ? cut : donor.rect[0], donor.rect[1], n ? donor.rect[2] : cut, donor.rect[3]],
             text: nativeRecordText(sourceTokens, { baselineHeight }),
@@ -12949,17 +13016,20 @@ export function refineTable(
         sourceRects: sourceTokens.map((i) => i.rect),
         origin: 'source-printed-header'
       }))
-    outputCells = [...headers, ...outputCells.filter((c) => c.row > 0)]
-    grid[0] = headers.map((c) => c.text)
-    for (const i of original) {
-      const n = unassigned.indexOf(i.text)
-      if (n >= 0) unassigned.splice(n, 1)
+    const conservedHeaders = nativeRecoveredCellOrigins(outputCells, headers, pageItems)
+    if (conservedHeaders) {
+      outputCells = [...conservedHeaders, ...outputCells.filter((c) => c.row > 0)]
+      grid[0] = conservedHeaders.map((c) => c.text)
+      for (const i of original) {
+        const n = unassigned.indexOf(i.text)
+        if (n >= 0) unassigned.splice(n, 1)
+      }
+      if (!unassigned.length) issues.delete('unassigned-source-text')
+      // The complete body owners and this unique, fully contained six-heading
+      // partition specifically replace the conflicting old header ownership.
+      issues.delete('span-conflicts-with-source-columns')
+      repairs.push('native-unique-centered-literal-headings-recovered')
     }
-    if (!unassigned.length) issues.delete('unassigned-source-text')
-    // The complete body owners and this unique, fully contained six-heading
-    // partition specifically replace the conflicting old header ownership.
-    issues.delete('span-conflicts-with-source-columns')
-    repairs.push('native-unique-centered-literal-headings-recovered')
   }
   const wrappedDescriptionOwners = proveNativeWrappedLiteralDescriptionOwners(
     { ...literalOwnerTable, cells: outputCells },
@@ -13114,6 +13184,7 @@ export function refineTable(
       }
       const replacement = {
         ...donor,
+        ...nativeChangedCellOrigins(donors, pageItems, sourceTokens),
         row,
         rowSpan,
         rect,
@@ -13160,14 +13231,17 @@ export function refineTable(
           const donor = p.donors[column],
             rect = [...donor.rect]
           rect[peer ? 1 : 3] = p.split
-          return {
+          const cell = {
             ...donor,
+            ...nativeChangedCellOrigins([donor], pageItems, sourceTokens),
             row: p.newRow + peer,
             rect,
             text: nativeRecordText(sourceTokens, { baselineHeight }),
             sourceTokens,
             sourceRects: sourceTokens.map((i) => i.rect)
           }
+          if (cell.sourceItems === undefined) delete cell.sourceItems
+          return cell
         })
         projected.push(...cells)
         newGrid.push(cells.map((c) => c.text))
@@ -13195,7 +13269,7 @@ export function refineTable(
   )
   if (tjAnchorLeaves) {
     const { cuts, groups, rowRects } = tjAnchorLeaves
-    outputCells = groups.flatMap((group, row) =>
+    const projectedCells = groups.flatMap((group, row) =>
       group.map((token, column) => ({
         row,
         column,
@@ -13207,16 +13281,20 @@ export function refineTable(
         sourceTokens: [token]
       }))
     )
-    rows.splice(
-      0,
-      rows.length,
-      ...rowRects.map((rect) => ({ rect, origin: 'source-native-record' }))
-    )
-    grid.splice(0, grid.length, ...groups.map((group) => group.map((token) => token.text)))
-    // The complete native column partition resolves only the old overlapping
-    // model columns; other diagnostics and crop ownership remain unchanged.
-    issues.delete('overlapping-predicted-columns')
-    repairs.push('native-tj-anchor-literal-leaves-recovered')
+    const conservedCells = nativeRecoveredCellOrigins(outputCells, projectedCells, pageItems)
+    if (conservedCells) {
+      outputCells = conservedCells
+      rows.splice(
+        0,
+        rows.length,
+        ...rowRects.map((rect) => ({ rect, origin: 'source-native-record' }))
+      )
+      grid.splice(0, grid.length, ...groups.map((group) => group.map((token) => token.text)))
+      // The complete native column partition resolves only the old overlapping
+      // model columns; other diagnostics and crop ownership remain unchanged.
+      issues.delete('overlapping-predicted-columns')
+      repairs.push('native-tj-anchor-literal-leaves-recovered')
+    }
   }
   if (pairedLiteralRows) repairs.push('native-paired-literal-row-bands-recovered')
   const completeOrdinaryRecords = proveNativeCompleteOrdinaryRecordOwners(
@@ -13228,7 +13306,7 @@ export function refineTable(
   )
   if (completeOrdinaryRecords) {
     const { cuts, groups, rowRects } = completeOrdinaryRecords
-    outputCells = groups.flatMap((group, row) =>
+    const projectedCells = groups.flatMap((group, row) =>
       group.map((token, column) =>
         token.sourceTokens
           ? token
@@ -13244,15 +13322,19 @@ export function refineTable(
             }
       )
     )
-    rows.splice(
-      0,
-      rows.length,
-      ...rowRects.map((rect) => ({ rect, origin: 'source-native-record' }))
-    )
-    grid.splice(0, grid.length, ...groups.map((group) => group.map((token) => token.text)))
-    unassigned.splice(0, unassigned.length)
-    issues.delete('unassigned-source-text')
-    repairs.push('native-complete-ordinary-record-owners-recovered')
+    const conservedCells = nativeRecoveredCellOrigins(outputCells, projectedCells, pageItems)
+    if (conservedCells) {
+      outputCells = conservedCells
+      rows.splice(
+        0,
+        rows.length,
+        ...rowRects.map((rect) => ({ rect, origin: 'source-native-record' }))
+      )
+      grid.splice(0, grid.length, ...groups.map((group) => group.map((token) => token.text)))
+      unassigned.splice(0, unassigned.length)
+      issues.delete('unassigned-source-text')
+      repairs.push('native-complete-ordinary-record-owners-recovered')
+    }
   }
   const fencedTwoLineStubs = proveNativeFencedTwoLineStubOwners(
     { ...literalOwnerTable, cells: outputCells, grid, unassigned },
@@ -13271,6 +13353,7 @@ export function refineTable(
     } of fencedTwoLineStubs.replacements) {
       const replacement = {
         ...donors[0],
+        ...nativeChangedCellOrigins(donors, pageItems, sourceTokens),
         row,
         rowSpan,
         rect,
@@ -13330,6 +13413,7 @@ export function refineTable(
           const donor = donors[column],
             cell = {
               ...donor,
+              ...nativeChangedCellOrigins([donor], pageItems, [token]),
               row: row + n,
               rect: [donor.rect[0], n ? split : top, donor.rect[2], n ? bottom : split],
               text: token.text,
@@ -13373,6 +13457,7 @@ export function refineTable(
           const donor = donors[column],
             cell = {
               ...donor,
+              ...nativeChangedCellOrigins([donor], pageItems, tokens),
               row: row + n,
               rect: [donor.rect[0], edges[n], donor.rect[2], edges[n + 1]],
               text: nativeRecordText(tokens),
@@ -13432,6 +13517,7 @@ export function refineTable(
           ? [{ ...donor, row: next, rowSpan: group.records.length }]
           : group.records.map((record, n) => ({
               ...donor,
+              ...nativeChangedCellOrigins([donor], pageItems, [record[column - 1]]),
               row: next + n,
               rect: [donor.rect[0], group.ys[n], donor.rect[2], group.ys[n + 1]],
               text: record[column - 1].text,
@@ -13487,6 +13573,7 @@ export function refineTable(
     outputCells = donors.flatMap(({ cell, matches }) =>
       matches.map(({ token, column }) => ({
         ...cell,
+        ...nativeChangedCellOrigins([cell], pageItems, [token]),
         column,
         rect: [cuts[column], ys[cell.row], cuts[column + 1], ys[cell.row + 1]],
         text: token.text,

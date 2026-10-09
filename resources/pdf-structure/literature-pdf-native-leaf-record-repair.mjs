@@ -47,6 +47,88 @@ export function nativeCellOriginsMatch(cell, fonts) {
   const origins = nativeWholeFontOrigins(fonts)
   return origins !== undefined && fencedGroupOpaqueEqual(cell.sourceItems, origins)
 }
+
+// A geometry-qualified projection must also conserve the existing native-item
+// references. Match sanitized cell tokens back to whole source fonts; a TJ
+// fragment retains its complete sourceToken owner rather than inventing an item.
+export function nativeChangedCellOrigins(donors, items, nextTokens, establish = false) {
+  if (!establish && !donors.some((cell) => Object.hasOwn(cell, 'sourceItems'))) return {}
+  const wholeFonts = (tokens) => {
+    if (!Array.isArray(tokens)) return
+    const fonts = []
+    for (const token of tokens) {
+      const owner = token?.sourceToken ?? token
+      if (
+        !owner ||
+        !Array.isArray(owner.rect) ||
+        owner.rect.length !== 4 ||
+        !owner.rect.every(Number.isFinite) ||
+        !Number.isFinite(owner.baseline) ||
+        !Number.isFinite(owner.height)
+      )
+        return
+      const matches = items.filter(
+        (font) =>
+          font.text === owner.text &&
+          font.baseline === owner.baseline &&
+          font.height === owner.height &&
+          Array.isArray(font.rect) &&
+          font.rect.length === 4 &&
+          sameRect(font.rect, owner.rect)
+      )
+      if (matches.length !== 1) return
+      fonts.push(matches[0])
+    }
+    return fonts
+  }
+  const previous = donors.map((cell) => wholeFonts(cell.sourceTokens)),
+    next = wholeFonts(nextTokens)
+  if (
+    previous.some((fonts, n) => !fonts || !nativeCellOriginsMatch(donors[n], fonts)) ||
+    !next ||
+    !nativeWholeFontOrigins([...previous.flat(), ...next])
+  )
+    return
+  const sourceItems = nativeWholeFontOrigins(next)
+  return sourceItems ? { sourceItems: sourceItems.length ? sourceItems : undefined } : undefined
+}
+
+// Rebuilding a source-qualified grid must not discard ordinary header origins.
+// Preflight every existing reference before projecting any row or diagnostic.
+export function nativeRecoveredCellOrigins(previousCells, nextCells, items) {
+  if (!previousCells.some((cell) => Object.hasOwn(cell, 'sourceItems'))) return nextCells
+  if ([...previousCells, ...nextCells].some((cell) => !Array.isArray(cell.sourceTokens ?? [])))
+    return
+  if (
+    previousCells.some((cell) => !nativeChangedCellOrigins([cell], items, cell.sourceTokens ?? []))
+  )
+    return
+  const whole = (token) => token?.sourceToken ?? token,
+    same = (a, b) =>
+      a &&
+      b &&
+      Array.isArray(a.rect) &&
+      Array.isArray(b.rect) &&
+      a.rect.length === 4 &&
+      b.rect.length === 4 &&
+      a.text === b.text &&
+      a.baseline === b.baseline &&
+      a.height === b.height &&
+      sameRect(a.rect, b.rect),
+    projected = []
+  for (const cell of nextCells) {
+    const fonts = (cell.sourceTokens ?? []).map(whole),
+      donors = previousCells.filter((old) =>
+        (old.sourceTokens ?? []).some((token) => fonts.some((font) => same(whole(token), font)))
+      ),
+      origins = nativeChangedCellOrigins(donors, items, cell.sourceTokens ?? [], true)
+    if (!origins) return
+    const next = { ...cell, ...origins }
+    if (next.sourceItems === undefined) delete next.sourceItems
+    projected.push(next)
+  }
+  return projected
+}
 const box = (items) => [
   Math.min(...items.map((i) => i.rect[0])),
   Math.min(...items.map((i) => i.rect[1])),
@@ -450,11 +532,14 @@ export function proveNativeCalibratedWrappedLeafOwners(
         height: absent[0].height
       }
       const tokens = [...cell.sourceTokens, added]
+      const origins = nativeChangedCellOrigins([cell], items, tokens)
+      if (!origins) return
       replacements.push({
         cell,
         fonts: field,
         replacement: {
           ...cell,
+          ...origins,
           rect: [
             cell.rect[0],
             Math.min(cell.rect[1], ...field.map((i) => i.rect[1])),
@@ -767,6 +852,20 @@ export function proveNativeFencedMergedRecordOwners(table, items, captions, rule
     groups.flatMap((g) => [...owned.get(g.stubCell), ...g.records.flat(2)]).length !== body.length
   )
     return
+  if (
+    groups.some(
+      (group) =>
+        group.merged &&
+        group.donors
+          .slice(1)
+          .some((donor, column) =>
+            group.records.some(
+              (record) => !nativeChangedCellOrigins([donor], items, [record[column][0]])
+            )
+          )
+    )
+  )
+    return
   return {
     groups: groups.map((g) => ({
       ...g,
@@ -1000,6 +1099,12 @@ export function proveNativeSingleOrdinaryRecordOwners(
   if (
     items.some((i) => i.text?.trim() && overlap(i.rect, cropRect) && !source.includes(i)) ||
     paint.some((p) => !contains(cropRect, p))
+  )
+    return
+  if (
+    donors.some(({ cell, matches }) =>
+      matches.some(({ token }) => !nativeChangedCellOrigins([cell], items, [token]))
+    )
   )
     return
   return { cuts, ys: edges.map((r) => r[1]), cropRect, donors }
@@ -1734,12 +1839,14 @@ export function proveNativeFencedTwoLineStubOwners(table, items, captions, rules
     )
       return
     shapes.push(shape)
+    const sourceTokens = ordered.map((i) => original.get(i))
+    if (!nativeChangedCellOrigins(donors, items, sourceTokens)) return
     replacements.push({
       row,
       rowSpan,
       donors,
       rect: union,
-      sourceTokens: ordered.map((i) => original.get(i)),
+      sourceTokens,
       text: donors.map((c) => c.text).join(' ')
     })
     covered += rowSpan
@@ -4255,6 +4362,17 @@ export function proveNativeStubClosingGlyphOwners(table, items, captions, rules,
     )
   )
     return
+  if (
+    moves.some(
+      ({ donor, target, glyph }) =>
+        !nativeChangedCellOrigins(
+          [donor],
+          items,
+          donor.sourceTokens.filter((i) => i !== glyph)
+        ) || !nativeChangedCellOrigins([donor, target], items, [...target.sourceTokens, glyph])
+    )
+  )
+    return
   return { moves, cuts, baselineHeight: h }
 }
 
@@ -5006,7 +5124,11 @@ export function proveNativeFencedPairedRecordOwners(table, items, captions, rule
         for (const [column, field] of records[index].fields.entries()) {
           const rect = [...p.donors[column].rect]
           rect[peer ? 1 : 3] = p.split
-          if (field.some((i) => !fullInside(i, rect))) return
+          if (
+            field.some((i) => !fullInside(i, rect)) ||
+            !nativeChangedCellOrigins([p.donors[column]], items, field)
+          )
+            return
         }
   return {
     headerRows,
@@ -5753,7 +5875,10 @@ export function proveNativeFencedMultilineStubOwners(table, items, captions, rul
     )
       return
     const correct = donors.length === 1 && donors[0].row === row && donors[0].rowSpan === rowSpan
-    if (!correct) replacements.push({ row, rowSpan, donors, sourceTokens: ordered, rect })
+    if (!correct) {
+      if (!nativeChangedCellOrigins(donors, items, ordered)) return
+      replacements.push({ row, rowSpan, donors, sourceTokens: ordered, rect })
+    }
   }
   if (!replacements.length) return
   return { replacements, baselineHeight: h, scriptParents }
@@ -6190,6 +6315,12 @@ export function proveNativeTerminalOrdinaryPeerRecords(table, items, captions, r
       left = Math.min(...all.map((g) => g[c].rect[0]))
     if (left - right <= h * 0.2 || donors[c - 1].rect[2] > left || donors[c].rect[0] < right) return
   }
+  if (
+    donors.some((donor, column) =>
+      native[column].some((font) => !nativeChangedCellOrigins([donor], items, [font]))
+    )
+  )
+    return
   return {
     row,
     donors,
@@ -6488,6 +6619,14 @@ export function proveNativeMiddleOrdinaryPeerRecords(
       )
     )
       return
+    if (
+      donors.some((donor, column) =>
+        [...groups, residual].some(
+          (fields) => !nativeChangedCellOrigins([donor], items, fields[column])
+        )
+      )
+    )
+      return
     candidates.push({
       row,
       donors,
@@ -6539,6 +6678,12 @@ export function proveNativeTerminalLiteralOwners(table, items, captions, rules) 
   if (
     donors.some(
       (c, row) => c.rect[0] >= box(groups[row][4])[0] || c.rect[2] < box(groups[row][5])[2]
+    )
+  )
+    return
+  if (
+    donors.some((donor, row) =>
+      groups[row].slice(4).some((fonts) => !nativeChangedCellOrigins([donor], items, fonts))
     )
   )
     return

@@ -748,8 +748,9 @@ export function captionKind(text) {
     return 'figure'
   // An adjacent pipe is an explicit supplementary title delimiter, not an
   // arithmetic bar or a second ordinal. Keep the ordinary prose guards above.
-  if (/^(?:Fig\.?|Figure)\s+S\d+\|\s+\p{Lu}\p{L}/u.test(text ?? ''))
-    return captionKind(text.replace('|', ':'))
+  const supplementaryPipe = /^((?:Fig\.?|Figure)\s+S\d+)\|(?=\s+\p{Lu}\p{L})/u.exec(text ?? '')
+  if (supplementaryPipe)
+    return captionKind(`${supplementaryPipe[1]}:${text.slice(supplementaryPipe[0].length)}`)
   if (/^(?:Table|Tab\.)\s+[IVXLCDM]+(?=[\s.:：．、]|$)/i.test(text ?? '')) return 'table'
   // Czech and Slovak publishers use this explicit abbreviation for figures.
   if (/^Obr\.\s*\d+(?=[\s.:]|$)/i.test(text)) return 'figure'

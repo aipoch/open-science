@@ -1415,7 +1415,8 @@ it('conserves a dense native vector plate beyond the runtime argument limit', ()
 it.each([30, 700])(
   'keeps dense listing paths rejected at caption position %s without a runtime overflow',
   (top) => {
-    const page = denseVectorPage(300_000)
+    // Retain the argument-overflow regression without repeating the 300k positive stress case.
+    const page = denseVectorPage(160_000)
     page.graphicsBounds.pop()
     page.lines = Array.from({ length: 60 }, (_, index) => ({
       text: `Instruction ${index} contains enough ordinary words to prove a continuous prose listing.`,

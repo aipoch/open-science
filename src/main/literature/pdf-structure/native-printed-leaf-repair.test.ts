@@ -2577,6 +2577,99 @@ it('moves only an already owned ordinary closing stub glyph across a proved nati
   expect(p.cuts[1]).toBeLessThan(160)
   expect(f).toEqual(before)
 })
+it('retains exact native origins across the indexed leading leaf projection', () => {
+  const f = indexedDirectory()
+  const crop = f.table.cropRect
+  const cuts = [0, 100, 200, 300]
+  const rows = f.rows.map((r: { rect: number[] }) => r.rect)
+  const relative = (rect: number[]): number[] => rect.map((v, n) => v - crop[n % 2])
+  f.table.id = 'p1-table-neutral-source-owner'
+  f.table.structure = {
+    objects: [
+      ...rows.map((rect: number[]) => ({ label: 'table row', score: 1, rect: relative(rect) })),
+      ...cuts.slice(0, -1).map((left, n) => ({
+        label: 'table column',
+        score: 1,
+        rect: [left - crop[0], 0, cuts[n + 1] - crop[0], crop[3] - crop[1]]
+      })),
+      { label: 'table column header', score: 1, rect: relative(rows[0]) }
+    ]
+  }
+  const baseline = refine(f)
+  for (const [index, token] of f.tokens.entries())
+    token.sourceItem = { pageNumber: 1, index, text: token.text }
+  const before = structuredClone(f)
+  const result = refine(f)
+  expect(result.repairs).toContain('native-isolated-printed-header-recovered')
+  for (const cell of result.cells) {
+    if (!cell.sourceTokens.length) {
+      expect(cell.sourceItems).toBeUndefined()
+      continue
+    }
+    const origins = cell.sourceTokens.map((token: ReturnType<typeof JSON.parse>) => {
+      const matches = f.tokens.filter(
+        (font: ReturnType<typeof JSON.parse>) =>
+          font.text === token.text &&
+          font.rect.every((v: number, n: number) => Math.abs(v - token.rect[n]) < 0.02)
+      )
+      expect(matches).toHaveLength(1)
+      return matches[0].sourceItem
+    })
+    expect(cell.sourceItems).toEqual(
+      [
+        ...new Map(
+          origins.map((origin: ReturnType<typeof JSON.parse>) => [origin.index, origin])
+        ).values()
+      ].sort(
+        (a: ReturnType<typeof JSON.parse>, b: ReturnType<typeof JSON.parse>) => a.index - b.index
+      )
+    )
+  }
+  const withoutOrigins = (value: ReturnType<typeof JSON.parse>): ReturnType<typeof JSON.parse> =>
+    JSON.parse(JSON.stringify(value, (key, data) => (key === 'sourceItems' ? undefined : data)))
+  expect(withoutOrigins(result)).toEqual(withoutOrigins(baseline))
+  expect(f).toEqual(before)
+})
+
+it.each(['complete', 'conflicting', 'duplicate', 'opaque'])(
+  'checks native origins before transferring a closing glyph: %s',
+  (kind) => {
+    const f = nativeClosingStubOwner()
+    for (const [index, font] of f.tokens.entries())
+      font.sourceItem = { pageNumber: 1, index, text: font.text }
+    for (const cell of f.cells)
+      cell.sourceItems = cell.sourceTokens
+        .map(
+          (item: ReturnType<typeof JSON.parse>) =>
+            f.tokens.find(
+              (font: ReturnType<typeof JSON.parse>) =>
+                font.text === item.text &&
+                font.rect.every((v: number, n: number) => v === item.rect[n])
+            ).sourceItem
+        )
+        .sort((a: { index: number }, b: { index: number }) => a.index - b.index)
+    const target = f.cells.find(
+      (cell: { row: number; column: number }) => cell.row === 1 && cell.column === 0
+    )
+    if (kind === 'conflicting')
+      target.sourceItems[0] = { ...target.sourceItems[0], text: 'Another original item' }
+    if (kind === 'duplicate') target.sourceItems.push({ ...target.sourceItems[0] })
+    if (kind === 'opaque')
+      target.sourceItems[0] = { ...target.sourceItems[0], unprovedOpaque: true }
+    const before = structuredClone(f)
+    const result = proveNativeStubClosingGlyphOwners(
+      f.table,
+      f.tokens,
+      f.captions,
+      f.rules,
+      f.cells
+    )
+    if (kind === 'complete') expect(result?.moves).toHaveLength(4)
+    else expect(result).toBeUndefined()
+    expect(f).toEqual(before)
+  }
+)
+
 it.each([
   'scalar-parenthesis',
   'different-baseline',
