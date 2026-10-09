@@ -423,9 +423,7 @@ for (const locale of ['en', 'de']) {
     const materialButton = panel.getByRole('tab', { name: copy.materials, exact: true })
     await materialButton.focus()
     await page.keyboard.press('Enter')
-    const catalog = panel.getByRole('region', {
-      name: locale === 'de' ? 'Forschungsmaterialien' : 'Research materials'
-    })
+    const catalog = panel.getByRole('region', { name: 'Notebook', exact: true })
     await expect(materialButton).toBeFocused()
     await expect(materialButton).toHaveAttribute('aria-selected', 'true')
     await expect(catalog).toBeVisible()

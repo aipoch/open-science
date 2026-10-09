@@ -405,10 +405,16 @@ test('renders archived research with shared workspace messages, grouped tools an
   await page.setViewportSize({ width: 1280, height: 960 })
   await replay.getByRole('button', { name: 'Expand preview', exact: true }).click()
   const conversationPane = replay.getByRole('region', { name: 'Historical conversation' })
-  const notebookPane = replay.getByRole('region', { name: 'Research materials' })
+  const notebookPane = replay.getByRole('region', { name: 'Notebook', exact: true })
   const filesPane = replay.getByRole('complementary', { name: 'Files' })
   await expect(conversationPane).toBeVisible()
-  await expect(notebookPane).not.toBeVisible()
+  await expect(notebookPane).toBeVisible()
+  await expect(
+    replay.getByRole('separator', {
+      name: 'Resize Original conversation and Notebook',
+      exact: true
+    })
+  ).toBeVisible()
   await expect(filesPane).not.toBeVisible()
   await replay.evaluate(async (element) => {
     const animations: Animation[] = []
@@ -418,33 +424,41 @@ test('renders archived research with shared workspace messages, grouped tools an
   })
   const conversationBox = (await conversationPane.boundingBox())!
   await replay.getByRole('tab', { name: 'Notebook', exact: true }).click()
-  await expect(conversationPane).not.toBeVisible()
+  await expect(conversationPane).toBeVisible()
   await expect(notebookPane).toBeVisible()
   const notebookBox = (await notebookPane.boundingBox())!
-  expect(notebookBox.x).toBeCloseTo(conversationBox.x, 0)
-  expect(notebookBox.width).toBeCloseTo(conversationBox.width, 0)
+  expect(notebookBox.x).toBeGreaterThanOrEqual(conversationBox.x + conversationBox.width)
   await openReplayFiles(replay)
   await expect(filesPane).toBeVisible()
   const filesBox = (await filesPane.boundingBox())!
-  expect(filesBox.x).toBeGreaterThanOrEqual(notebookBox.x)
-  expect(filesBox.x + filesBox.width).toBeLessThanOrEqual(notebookBox.x + notebookBox.width)
+  const expandedBox = (await replay.boundingBox())!
+  expect(filesBox.x).toBeGreaterThanOrEqual(expandedBox.x)
+  expect(filesBox.x + filesBox.width).toBeLessThanOrEqual(expandedBox.x + expandedBox.width)
+  await expect(conversationPane).toBeVisible()
+  await expect(notebookPane).toBeVisible()
   await replay.screenshot({
     path: testInfo.outputPath('replay-expanded-notebook-files-inspector.png')
   })
   await replay.getByRole('button', { name: 'Close files', exact: true }).click()
   await expect(notebookPane).toBeVisible()
-  await replay.getByRole('tab', { name: 'Original conversation', exact: true }).click()
   await expect(conversationPane).toBeVisible()
   await replay.getByRole('button', { name: 'Collapse preview', exact: true }).click()
   await replay.evaluate((element) => {
     element.style.width = '1000px'
   })
   await replay.getByRole('button', { name: 'Expand preview', exact: true }).click()
+  await expect(replay).toHaveAttribute('data-replay-layout-mode', 'split')
+  await expect(notebookPane).toBeVisible()
   await expect(
-    replay.getByRole('tab', { name: 'Original conversation', exact: true })
-  ).toHaveAttribute('aria-selected', 'true')
-  await expect(notebookPane).not.toBeVisible()
+    replay.getByRole('separator', {
+      name: 'Resize Original conversation and Notebook',
+      exact: true
+    })
+  ).toBeVisible()
   await expect(filesPane).not.toBeVisible()
+  // Expanded replay owns independent panes; collapse before exercising narrow single-tab layout.
+  await replay.getByRole('button', { name: 'Collapse preview', exact: true }).click()
+  await replay.getByRole('tab', { name: 'Original conversation', exact: true }).click()
   const expectCompleteGroup = async (): Promise<void> => {
     await expect
       .poll(() =>
@@ -460,7 +474,7 @@ test('renders archived research with shared workspace messages, grouped tools an
       element.style.width = `${width}px`
     }, width)
     const conversation = replay.getByRole('region', { name: 'Historical conversation' })
-    const results = replay.getByRole('region', { name: 'Research materials' })
+    const results = replay.getByRole('region', { name: 'Notebook', exact: true })
     await expect(conversation).toBeVisible()
     await expect(results).not.toBeVisible()
     await replay.getByRole('tab', { name: 'Notebook', exact: true }).click()
@@ -497,7 +511,6 @@ test('renders archived research with shared workspace messages, grouped tools an
   await replay.evaluate((element) => {
     element.style.removeProperty('width')
   })
-  await replay.getByRole('button', { name: 'Collapse preview', exact: true }).click()
   await record.getByTestId('tool-chip').click()
   await expect(record.getByTestId('tool-summary-card')).toContainText('49 KB')
   await expect(record).not.toContainText('archived-version-id')

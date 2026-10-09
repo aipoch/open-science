@@ -359,12 +359,9 @@ test('replaces the discussion Session without replacing the draft or changing so
     if (source.id === sourceB.id) {
       // Opening another source retains a reference deliberately opened for the previous study.
       await expect(replayTab(page, sourceA.id)).toHaveAttribute('aria-selected', 'true')
-      await expect(page.locator('[data-testid="replay-source-bar"]:visible')).toContainText(
-        `Source: ${sourceA.title}`
-      )
-      await expect(page.locator('[data-testid="replay-source-bar"]:visible')).toContainText(
-        'Reference from another conversation'
-      )
+      await expect(
+        page.locator('[data-testid="replay-information-trigger"]:visible')
+      ).toHaveAccessibleName(`Session information: ${sourceA.title}`)
     }
     await header.getByRole('button', { name: 'View replay', exact: true }).click()
     await expect(replay).toBeVisible()
@@ -564,24 +561,18 @@ test('keeps ordinary and two research drafts independent, persists research owne
     ).toHaveAttribute('aria-current', 'page')
     if (retainedSource) {
       await expect(replayTab(page, retainedSource.id)).toHaveAttribute('aria-selected', 'true')
-      await expect(page.locator('[data-testid="replay-source-bar"]:visible')).toContainText(
-        `Source: ${retainedSource.title}`
-      )
-      await expect(page.locator('[data-testid="replay-source-bar"]:visible')).toContainText(
-        'Reference from another conversation'
-      )
+      await expect(
+        page.locator('[data-testid="replay-information-trigger"]:visible')
+      ).toHaveAccessibleName(`Session information: ${retainedSource.title}`)
     }
     // Opening the original transcript does not replace a deliberate viewer selection.
     // Explicitly viewing this source must preserve its inline question draft.
     await header().getByRole('button', { name: 'View replay', exact: true }).click()
     await expect(header()).toContainText(source.title)
     await expect(replayTab(page, source.id)).toHaveAttribute('aria-selected', 'true')
-    await expect(page.locator('[data-testid="replay-source-bar"]:visible')).toContainText(
-      `Source: ${source.title}`
-    )
-    await expect(page.locator('[data-testid="replay-source-bar"]:visible')).toContainText(
-      'From this conversation'
-    )
+    await expect(
+      page.locator('[data-testid="replay-information-trigger"]:visible')
+    ).toHaveAccessibleName(`Session information: ${source.title}`)
   }
   const openDiscussion = async (
     source: PersistedChatSession,
