@@ -52,11 +52,11 @@
     "src/renderer/src/pages/workspace/pdf-annotations/use-pdf-export.ts"
   ],
   "consumerModules": [
+    "workspace_previews",
     "desktop_composition",
-    "main_literature",
     "main_tags",
-    "project_lifecycle",
-    "workspace_previews"
+    "main_literature",
+    "project_lifecycle"
   ],
   "testFiles": {
     "owner": [

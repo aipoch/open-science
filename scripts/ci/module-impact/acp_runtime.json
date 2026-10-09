@@ -270,10 +270,10 @@
     "src/main/acp/workspace-path.ts"
   ],
   "consumerModules": [
-    "artifact_provenance",
-    "project_lifecycle",
     "reviewer_orchestrator",
-    "workspace_runtime"
+    "workspace_runtime",
+    "artifact_provenance",
+    "project_lifecycle"
   ],
   "testFiles": {
     "owner": [

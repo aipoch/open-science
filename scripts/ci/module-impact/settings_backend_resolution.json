@@ -73,9 +73,9 @@
     "src/main/settings/xai-protocol.ts"
   ],
   "consumerModules": [
-    "artifact_provenance",
+    "settings_service_facade",
     "reviewer_orchestrator",
-    "settings_service_facade"
+    "artifact_provenance"
   ],
   "testFiles": {
     "owner": [

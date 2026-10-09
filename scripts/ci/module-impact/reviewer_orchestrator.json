@@ -87,10 +87,10 @@
     "src/shared/reviewer.ts"
   ],
   "consumerModules": [
-    "artifact_provenance",
-    "session_replay",
+    "workspace_runtime",
     "workspace_page",
-    "workspace_runtime"
+    "artifact_provenance",
+    "session_replay"
   ],
   "testFiles": {
     "owner": [

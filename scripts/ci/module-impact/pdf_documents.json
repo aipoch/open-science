@@ -6,8 +6,8 @@
     "src/main/pdf-documents/identity.ts"
   ],
   "consumerModules": [
-    "main_storage",
-    "pdf_annotations"
+    "pdf_annotations",
+    "main_storage"
   ],
   "testFiles": {
     "owner": [],
