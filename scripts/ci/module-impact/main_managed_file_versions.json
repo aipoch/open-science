@@ -388,7 +388,8 @@
       "src/main/research-runs/inspection.test.ts",
       "src/main/research-runs/ipc.test.ts",
       "src/main/replay-viewer/desktop-embed.integration.test.ts",
-      "src/main/notebook/managed-execution-service.macos.integration.test.ts"
+      "src/main/notebook/managed-execution-service.macos.integration.test.ts",
+      "src/main/managed-runtime-views.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

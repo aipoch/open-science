@@ -14,7 +14,8 @@
     "src/main/replay-viewer/desktop-frame-registry.ts",
     "src/main/replay-viewer/desktop-frame-registry.test.ts",
     "src/main/replay-viewer/desktop-embed.integration.test.ts",
-    "src/main/replay-viewer/recorded-resource-context-menu.integration.test.ts"
+    "src/main/replay-viewer/recorded-resource-context-menu.integration.test.ts",
+    "src/main/managed-runtime-views.integration.test.ts"
   ],
   "interfacePaths": [
     "src/shared/runtime-view.ts",
@@ -35,7 +36,8 @@
       "src/main/runtime-view/owner.integration.test.ts",
       "src/main/replay-viewer/desktop-frame-registry.test.ts",
       "src/main/replay-viewer/desktop-embed.integration.test.ts",
-      "src/main/replay-viewer/recorded-resource-context-menu.integration.test.ts"
+      "src/main/replay-viewer/recorded-resource-context-menu.integration.test.ts",
+      "src/main/managed-runtime-views.integration.test.ts"
     ],
     "contract": ["src/main/notebook/managed-execution-service.test.ts"],
     "consumer": [

@@ -722,7 +722,8 @@
       "src/renderer/src/pages/workspace/previews/renderers/PlanJsonPreview.recorded.test.tsx",
       "src/main/replay-viewer/assets.test.ts",
       "src/main/replay-viewer/desktop-embed.integration.test.ts",
-      "src/main/notebook/managed-execution-service.macos.integration.test.ts"
+      "src/main/notebook/managed-execution-service.macos.integration.test.ts",
+      "src/main/managed-runtime-views.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions"],

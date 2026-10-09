@@ -1192,7 +1192,8 @@ describe('Compute service architecture', () => {
       'src/renderer/replay-viewer/browser-recording-transport.integration.test.ts',
       'src/main/research-demos/inspection.test.ts',
       'src/main/replay-viewer/desktop-embed.integration.test.ts',
-      'src/main/notebook/managed-execution-service.macos.integration.test.ts'
+      'src/main/notebook/managed-execution-service.macos.integration.test.ts',
+      'src/main/managed-runtime-views.integration.test.ts'
     ])
   })
 

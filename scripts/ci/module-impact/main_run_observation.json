@@ -1697,7 +1697,8 @@
       "src/main/literature/pdf-translation/scientific-scripts.test.ts",
       "src/main/literature/pdf-translation/local.test.ts",
       "src/main/literature/pdf-translation/agent-target.test.ts",
-      "src/main/notebook/managed-execution-service.macos.integration.test.ts"
+      "src/main/notebook/managed-execution-service.macos.integration.test.ts",
+      "src/main/managed-runtime-views.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "windows_sensitive"],

@@ -437,7 +437,8 @@
       "src/main/research-replay/service-timing.test.ts",
       "src/main/research-replay/service.test.ts",
       "src/main/replay-viewer/desktop-embed.integration.test.ts",
-      "src/main/notebook/managed-execution-service.macos.integration.test.ts"
+      "src/main/notebook/managed-execution-service.macos.integration.test.ts",
+      "src/main/managed-runtime-views.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],
