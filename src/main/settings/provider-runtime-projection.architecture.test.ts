@@ -152,8 +152,7 @@ describe('Provider runtime projection ownership', () => {
       'src/main/settings/xai-oauth.test.ts',
       'src/main/settings/xai-provider-account-owner.test.ts',
       'src/main/settings/provider-text-generation.ts',
-      'src/main/settings/provider-text-generation.test.ts',
-      'test/fixtures/pdf-translation/provider-error-diagnostics.jsonl'
+      'src/main/settings/provider-text-generation.test.ts'
     ])
     expect(manifest.modules.settings_provider_accounts.testFiles.owner).toEqual([
       'src/main/settings/settings-backend.architecture.test.ts',

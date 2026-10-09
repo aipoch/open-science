@@ -5,7 +5,12 @@ import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { classifyChanges, parseNameStatus } from './classify-pr-changes.mjs'
+import {
+  classifyChanges,
+  fixtureTestPatterns,
+  matchesPath,
+  parseNameStatus
+} from './classify-pr-changes.mjs'
 import { loadModuleImpactManifest } from './load-module-impact.mjs'
 import { validateModuleImpactManifest } from './validate-module-impact.mjs'
 import { resolveModuleImpactInputs } from './module-impact-inputs.mjs'
@@ -138,6 +143,19 @@ export function createAffectedTestPlan(
       continue
     }
     for (const path of [change.path, change.previousPath].filter(Boolean)) {
+      const fixturePatterns = fixtureTestPatterns(path)
+      if (fixturePatterns.length > 0) {
+        const tests = Object.values(manifest.modules).flatMap(declaredTests)
+        for (const pattern of fixturePatterns) {
+          const matches = pattern.includes('*')
+            ? tests.filter((test) => matchesPath(test, pattern))
+            : [pattern]
+          if (matches.length === 0) return fullPlan(`${path} -> empty fixture test suite -> full`)
+          for (const test of matches) directTests.add(test)
+        }
+        reasons.push(`${path} -> regression fixture -> direct test suites`)
+        continue
+      }
       const matchedModules = modulesForPath(manifest, path)
       if (matchedModules.length === 0) return fullPlan(`${path} -> unknown module owner -> full`)
       // Some test files also export shared certification helpers. Their explicit interface

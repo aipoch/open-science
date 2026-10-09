@@ -20,7 +20,7 @@ export function auditModuleOwnership(manifest, files) {
   const missing = scoped.filter((path) => !owners.has(path))
   const full = scoped.filter((path) => manifest.modules[owners.get(path)]?.fullTestReason)
   const unregisteredResources = files.filter(
-    (path) => /^(resources|test\/fixtures)\//.test(path) && !owners.has(path)
+    (path) => path.startsWith('resources/') && !owners.has(path)
   )
   return {
     ok: missing.length === 0,
@@ -37,7 +37,7 @@ export function auditModuleOwnership(manifest, files) {
 }
 
 export function auditModuleRouting(manifest) {
-  // Audit every registered path, including resources/fixtures outside the mandatory
+  // Audit every registered path, including runtime resources outside the mandatory
   // source inventory. Ownership must not be silently discarded by path routing.
   return Object.entries(manifest.modules)
     .flatMap(([moduleId, module]) => module.ownerPaths.map((path) => [path, moduleId]))
@@ -84,7 +84,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     for (const { path, moduleId } of result.routingGaps)
       console.error(`Registered path falls back to full: ${moduleId}: ${path}`)
     console.log(
-      `Unregistered resources/fixtures (no selective exemption): ${result.unregisteredResources.length}`
+      `Unregistered runtime resources (no selective exemption): ${result.unregisteredResources.length}`
     )
   }
   if (!result.ok) process.exitCode = 1

@@ -13,7 +13,7 @@ const defaultManifest = JSON.parse(
   readFileSync(new URL('./change-impact.json', import.meta.url), 'utf8')
 )
 
-function matchesPath(path, pattern) {
+export function matchesPath(path, pattern) {
   const source = pattern
     .replace(/[.+^${}()|[\]\\]/g, '\\$&')
     .replaceAll('**/', '\u0000')
@@ -22,6 +22,13 @@ function matchesPath(path, pattern) {
     .replaceAll('\u0000', '(?:.*/)?')
     .replaceAll('\u0001', '.*')
   return new RegExp(`^${source}$`).test(path)
+}
+
+// Regression data belongs to test suites, not the production dependency graph.
+export function fixtureTestPatterns(path, manifest = defaultManifest) {
+  return (manifest.testFixtureSuites ?? [])
+    .filter((suite) => suite.paths.some((pattern) => matchesPath(path, pattern)))
+    .flatMap((suite) => suite.tests)
 }
 
 const statusNames = {
@@ -120,8 +127,14 @@ export function classifyChanges(
     )
       ? [...paths].find(
           (path) =>
-            !documentationRule?.paths.some((pattern) => matchesPath(path, pattern)) ||
-            Object.values(moduleManifest.modules).some((module) => module.ownerPaths.includes(path))
+            !(
+              ['deleted', 'renamed'].includes(change.status) &&
+              fixtureTestPatterns(path, manifest).length > 0
+            ) &&
+            (!documentationRule?.paths.some((pattern) => matchesPath(path, pattern)) ||
+              Object.values(moduleManifest.modules).some((module) =>
+                module.ownerPaths.includes(path)
+              ))
         )
       : undefined
     if (destructivePath) {
@@ -149,14 +162,18 @@ export function classifyChanges(
         rule.paths.some((pattern) => matchesPath(path, pattern))
       )
       // Directory placement is not risk evidence: exact registered owners can bound
-      // resources, fixtures and packages, while global rules always take precedence.
+      // resources and packages, while global rules always take precedence.
       const owners =
         /^(resources|test|packages)\//.test(path) || /\.(test|spec)\.[cm]?[jt]sx?$/.test(path)
           ? Object.entries(moduleManifest.modules).filter(([, module]) =>
               module.ownerPaths.includes(path)
             )
           : []
-      if (rules.length === 0 && owners.length === 0) {
+      if (
+        rules.length === 0 &&
+        owners.length === 0 &&
+        fixtureTestPatterns(path, manifest).length === 0
+      ) {
         selectFullPlan('unknown', `${path} -> unknown -> full`)
         continue
       }
@@ -172,6 +189,13 @@ export function classifyChanges(
         for (const rule of globalRules) {
           selectFullPlan(rule.id, `${path} -> ${rule.id} -> full`)
         }
+        continue
+      }
+
+      if (fixtureTestPatterns(path, manifest).length > 0) {
+        roots.add('test_fixture')
+        reasonChains.add(`${path} -> regression fixture -> direct test suites`)
+        for (const lane of ['format', 'lint', 'unit_macos']) lanes.add(lane)
         continue
       }
 

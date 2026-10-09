@@ -318,7 +318,6 @@
     "resources/tree-sitter/tree-sitter-python.wasm",
     "resources/tree-sitter/tree-sitter-r.wasm",
     "resources/tree-sitter/web-tree-sitter.wasm",
-    "test/fixtures/nbformat.v4.5.schema.json",
     "scripts/windows-runtime-cache-uninstall.test.ts"
   ],
   "interfacePaths": [

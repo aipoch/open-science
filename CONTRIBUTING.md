@@ -204,8 +204,16 @@ These checks validate registration, not the changed product behavior. Also run
 [Verification Policy](#verification-policy). After committing, inspect
 `npm run test:affected:explain -- --base origin/main --head HEAD`; this compares committed revisions
 and does not include staged or unstaged edits. Unknown ownership and directly changed full-validation
-owners retain the full fallback; registration does not waive required CI. Exact registered resource,
-fixture and package owners use their module evidence and platform overlays, regardless of directory.
+owners retain the full fallback; registration does not waive required CI. Exact registered runtime-resource
+and package owners use their module evidence and platform overlays, regardless of directory.
+
+Regression data under `test/fixtures/` does not need per-file module ownership or runtime-consumer
+edges. `testFixtureSuites` in `scripts/ci/change-impact.json` maps bounded data paths to test-suite
+patterns; adding a PDF JSON/JSONL case within the existing directory needs no manifest edit. Fixture
+changes run those tests directly, without expanding production consumers. Mixed source changes keep
+their normal module coverage. Unknown fixture directories and executable helpers retain conservative
+routing until their test scope is established. Existing fixture ownership entries from older commits
+are retained for the trusted Integrity preservation check; fixture selection no longer relies on them.
 
 See [CI control-plane approval](#ci-control-plane-approval) for additive registration exemptions,
 coverage-preservation rules and changes that require CI owner approval.
@@ -588,8 +596,8 @@ inline modules and shards. The reader retains old-format Git history support.
 The historical inventory is complete. Run `node scripts/ci/audit-module-ownership.mjs` (or `--json`)
 to check every tracked file in these roots, including files untouched by a PR. The inventory test
 rejects gaps and duplicate owners, and audits every registered path for unexplained full routing,
-including resources and fixtures outside the mandatory source roots. The audit also lists unregistered
-resources/fixtures; those have no module-based exemption. The consumer-coverage test checks transitive static imports and
+including runtime resources outside the mandatory source roots. The audit also lists unregistered
+runtime resources; those have no module-based exemption. The consumer-coverage test checks transitive static imports and
 explicit native/worker loading edges in `scripts/ci/module-runtime-consumers.json`. Keep IPC,
 event, filesystem and other dynamic consumer contracts explicit in module test evidence; static
 analysis alone cannot prove those relationships.

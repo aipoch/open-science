@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { basename, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { loadModuleImpactManifest } from './load-module-impact.mjs'
@@ -26,6 +26,32 @@ const files = [
 const graph = { status: 'unavailable-manifest-only', testFiles: [] }
 
 describe('complete module ownership', () => {
+  it('covers existing JSONL regression readers without registering individual fixtures', () => {
+    const fixtures = files.filter(
+      (path) => path.startsWith('test/fixtures/pdf-translation/') && path.endsWith('.jsonl')
+    )
+    const plan = createAffectedTestPlan(
+      [{ path: 'test/fixtures/pdf-translation/new-case.jsonl', status: 'added' }],
+      graph
+    )
+    const readers = files.filter((path) => {
+      if (!/\.(test|spec)\.[cm]?[jt]sx?$/.test(path) || path.startsWith('scripts/ci/')) return false
+      const source = readFileSync(path, 'utf8')
+      return fixtures.some(
+        (fixture) =>
+          source.includes(`'${basename(fixture)}'`) || source.includes(`"${basename(fixture)}"`)
+      )
+    })
+    expect(readers.length).toBeGreaterThan(20)
+    expect(plan.testFiles).toEqual(expect.arrayContaining(readers))
+    expect(plan.modules).toEqual([])
+    expect(classifyChanges([{ path: fixtures[0], status: 'modified' }]).bundles).toEqual([
+      'policy',
+      'static',
+      'unit'
+    ])
+  })
+
   it('routes every declared portable test without an unknown-path fallback', () => {
     const tests = new Set(
       Object.values(manifest.modules).flatMap((module) => Object.values(module.testFiles).flat())
