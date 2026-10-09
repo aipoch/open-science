@@ -200,7 +200,10 @@
     "src/main/process-tree-windows.ts",
     "src/main/process-tree.windows.integration.test.ts",
     "src/main/windows-titlebar.ts",
-    "src/main/windows-titlebar.test.ts"
+    "src/main/windows-titlebar.test.ts",
+    "scripts/electron-app-fixture.test.ts",
+    "scripts/electron-builder-config.test.ts",
+    "scripts/electron-fixture-teardown.test.ts"
   ],
   "interfacePaths": [
     "src/main/app-lifecycle.ts",

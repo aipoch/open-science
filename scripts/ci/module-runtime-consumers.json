@@ -21,5 +21,1074 @@
   "src/main/pdf-annotations/native-import-worker-entry.ts": [
     "src/main/pdf-annotations/native-import.ts"
   ],
-  "src/main/session-diagnostics/worker-entry.ts": ["src/main/ipc.ts"]
+  "src/main/session-diagnostics/worker-entry.ts": ["src/main/ipc.ts"],
+  "resources/citation/NOTICE.md": ["src/main/literature/citation-style-library.ts"],
+  "resources/citation/american-medical-association.csl": [
+    "src/main/literature/citation-style-library.ts"
+  ],
+  "resources/citation/apa.csl": ["src/main/literature/citation-style-library.ts"],
+  "resources/citation/chicago-author-date.csl": ["src/main/literature/citation-style-library.ts"],
+  "resources/citation/harvard-cite-them-right.csl": [
+    "src/main/literature/citation-style-library.ts"
+  ],
+  "resources/citation/ieee.csl": ["src/main/literature/citation-style-library.ts"],
+  "resources/citation/locales-en-US.xml": ["src/main/literature/citation-style-library.ts"],
+  "resources/citation/locales-zh-CN.xml": ["src/main/literature/citation-style-library.ts"],
+  "resources/citation/mla.csl": ["src/main/literature/citation-style-library.ts"],
+  "resources/citation/nature.csl": ["src/main/literature/citation-style-library.ts"],
+  "resources/citation/vancouver.csl": ["src/main/literature/citation-style-library.ts"],
+  "resources/compute-askpass-win.cjs": ["src/main/compute/connection-adapters.ts"],
+  "resources/compute-askpass.cjs": ["src/main/compute/connection-adapters.ts"],
+  "resources/compute-askpass.sh": ["src/main/compute/connection-adapters.ts"],
+  "resources/pdf-translation-local/worker.mjs": ["src/main/literature/pdf-translation/local.ts"],
+  "resources/tree-sitter/tree-sitter-bash.LICENSE": [
+    "src/main/notebook/dependency-analysis-parser.ts"
+  ],
+  "resources/tree-sitter/tree-sitter-bash.provenance.json": [
+    "src/main/notebook/dependency-analysis-parser.ts"
+  ],
+  "resources/tree-sitter/tree-sitter-bash.wasm": [
+    "src/main/notebook/dependency-analysis-parser.ts"
+  ],
+  "resources/tree-sitter/tree-sitter-javascript.LICENSE": [
+    "src/main/notebook/dependency-analysis-parser.ts"
+  ],
+  "resources/tree-sitter/tree-sitter-javascript.provenance.json": [
+    "src/main/notebook/dependency-analysis-parser.ts"
+  ],
+  "resources/tree-sitter/tree-sitter-javascript.wasm": [
+    "src/main/notebook/dependency-analysis-parser.ts"
+  ],
+  "resources/tree-sitter/tree-sitter-python.wasm": [
+    "src/main/notebook/dependency-analysis-parser.ts"
+  ],
+  "resources/tree-sitter/tree-sitter-r.wasm": ["src/main/notebook/dependency-analysis-parser.ts"],
+  "resources/tree-sitter/web-tree-sitter.wasm": ["src/main/notebook/dependency-analysis-parser.ts"],
+  "resources/notebook/python_loop.py": [
+    "src/main/notebook/kernel-executor.ts",
+    "src/main/notebook/runtime-service.ts"
+  ],
+  "resources/notebook/r_loop.R": [
+    "src/main/notebook/kernel-executor.ts",
+    "src/main/notebook/runtime-service.ts"
+  ],
+  "resources/notebook/repl_loop.js": [
+    "src/main/notebook/kernel-executor.ts",
+    "src/main/notebook/runtime-service.ts"
+  ],
+  "resources/notebook/kernel_process_host.js": [
+    "src/main/notebook/kernel-executor.ts",
+    "src/main/notebook/runtime-service.ts",
+    "src/main/notebook/shell-process-ownership.windows-posix.ts"
+  ],
+  "resources/notebook/package.json": [
+    "src/main/notebook/kernel-executor.ts",
+    "src/main/notebook/runtime-service.ts"
+  ],
+  "resources/notebook/file_evidence_worker.js": ["src/main/notebook/working-file-observer.ts"],
+  "resources/pdf-translation/worker.mjs": [
+    "src/main/literature/pdf-translation/ipc.ts",
+    "src/main/literature/pdf-translation/writer.ts"
+  ],
+  "resources/pdf-structure/host.mjs": ["src/main/literature/pdf-structure/engine.ts"],
+  "resources/find-overlay/index.html": [
+    "resources/find-overlay/findOverlay.js",
+    "src/main/windows.ts"
+  ],
+  "resources/find-overlay/findOverlay.js": ["src/main/find-overlay.ts"],
+  "test/fixtures/pdf-translation/checkpoint-pending-write-lifecycle.jsonl": [
+    "src/main/literature/pdf-translation/checkpoints.test.ts"
+  ],
+  "test/fixtures/pdf-translation/checkpoint-reflow-resume-and-reopen.jsonl": [
+    "src/main/literature/pdf-translation/checkpoints.test.ts"
+  ],
+  "test/fixtures/pdf-translation/checkpoint-corruption-rejected-without-rewriting.jsonl": [
+    "src/main/literature/pdf-translation/checkpoints.test.ts"
+  ],
+  "test/fixtures/pdf-translation/raster-run-in-label-roundtrip.jsonl": [
+    "src/main/literature/pdf-translation/decoration-roundtrip.test.ts"
+  ],
+  "test/fixtures/pdf-translation/wide-caption-native-roundtrip.jsonl": [
+    "src/main/literature/pdf-translation/float-footnote-roundtrip.test.ts"
+  ],
+  "test/fixtures/pdf-translation/symbolic-footnote-native-roundtrip.jsonl": [
+    "src/main/literature/pdf-translation/float-footnote-roundtrip.test.ts"
+  ],
+  "test/fixtures/pdf-translation/caption-number-reused-as-quantity.jsonl": [
+    "src/main/literature/pdf-translation/index.test.ts",
+    "src/shared/pdf-translation-recovery.test.ts"
+  ],
+  "test/fixtures/pdf-translation/unexpected-numeric-literals.jsonl": [
+    "src/main/literature/pdf-translation/index.test.ts",
+    "src/shared/pdf-translation-recovery.test.ts"
+  ],
+  "test/fixtures/pdf-translation/chinese-numeric-equivalence-and-omissions.jsonl": [
+    "src/main/literature/pdf-translation/index.test.ts"
+  ],
+  "test/fixtures/pdf-translation/reasoning-wrappers-and-truncated-output.jsonl": [
+    "src/main/literature/pdf-translation/index.test.ts"
+  ],
+  "test/fixtures/pdf-translation/distant-abbreviation-definitions.jsonl": [
+    "src/main/literature/pdf-translation/index.test.ts"
+  ],
+  "test/fixtures/pdf-translation/literal-clinical-table-cells.jsonl": [
+    "src/main/literature/pdf-translation/index.test.ts"
+  ],
+  "test/fixtures/pdf-translation/untranslated-body-and-protected-labels.jsonl": [
+    "src/main/literature/pdf-translation/index.test.ts",
+    "src/shared/pdf-translation-recovery.test.ts"
+  ],
+  "test/fixtures/pdf-translation/untranslated-scientific-table-labels.jsonl": [
+    "src/main/literature/pdf-translation/index.test.ts",
+    "src/shared/pdf-translation-recovery.test.ts"
+  ],
+  "test/fixtures/pdf-translation/clinical-section-headings-not-proper-names.jsonl": [
+    "src/main/literature/pdf-translation/index.test.ts",
+    "src/shared/pdf-translation-recovery.test.ts"
+  ],
+  "test/fixtures/pdf-translation/scientific-statement-title-not-proper-name.jsonl": [
+    "src/main/literature/pdf-translation/index.test.ts",
+    "src/shared/pdf-translation-recovery.test.ts"
+  ],
+  "test/fixtures/pdf-translation/training-and-statistical-column-labels.jsonl": [
+    "src/main/literature/pdf-translation/index.test.ts",
+    "src/shared/pdf-translation-recovery.test.ts"
+  ],
+  "test/fixtures/pdf-translation/accented-names-not-inline-math.jsonl": [
+    "src/main/literature/pdf-translation/index.test.ts",
+    "src/shared/pdf-translation-recovery.test.ts"
+  ],
+  "test/fixtures/pdf-translation/scientific-axis-label-identities.jsonl": [
+    "src/main/literature/pdf-translation/index.test.ts",
+    "src/shared/pdf-translation-recovery.test.ts"
+  ],
+  "test/fixtures/pdf-translation/footnote-marker-caption-confusion.jsonl": [
+    "src/main/literature/pdf-translation/index.test.ts",
+    "src/shared/pdf-translation-recovery.test.ts"
+  ],
+  "test/fixtures/pdf-translation/source-proven-script-markup.jsonl": [
+    "src/main/literature/pdf-translation/index.test.ts",
+    "src/shared/pdf-translation-recovery.test.ts"
+  ],
+  "test/fixtures/pdf-translation/redundant-bilingual-scientific-labels.jsonl": [
+    "src/main/literature/pdf-translation/index.test.ts",
+    "src/shared/pdf-translation-recovery.test.ts"
+  ],
+  "test/fixtures/pdf-translation/source-proven-supplementary-appendix-label.jsonl": [
+    "src/main/literature/pdf-translation/index.test.ts",
+    "src/shared/pdf-translation-recovery.test.ts"
+  ],
+  "test/fixtures/pdf-translation/cited-original-name-display.jsonl": [
+    "src/main/literature/pdf-translation/index.test.ts",
+    "src/shared/pdf-translation-recovery.test.ts"
+  ],
+  "test/fixtures/pdf-translation/source-proven-numeric-citation-markers.jsonl": [
+    "src/main/literature/pdf-translation/index.test.ts",
+    "src/shared/pdf-translation-recovery.test.ts"
+  ],
+  "test/fixtures/pdf-translation/unwrapped-translation-commentary.jsonl": [
+    "src/main/literature/pdf-translation/index.test.ts",
+    "src/shared/pdf-translation-recovery.test.ts"
+  ],
+  "test/fixtures/pdf-translation/marked-author-byline-identity.jsonl": [
+    "src/main/literature/pdf-translation/index.test.ts",
+    "src/shared/pdf-translation-recovery.test.ts"
+  ],
+  "test/fixtures/pdf-translation/unrequested-latex-math-output.jsonl": [
+    "src/main/literature/pdf-translation/index.test.ts",
+    "src/shared/pdf-translation-recovery.test.ts"
+  ],
+  "test/fixtures/pdf-translation/opening-citation-raised-footnote.jsonl": [
+    "src/main/literature/pdf-translation/link-labels.test.ts"
+  ],
+  "test/fixtures/pdf-translation/citation-stop-footnote.jsonl": [
+    "src/main/literature/pdf-translation/link-labels.test.ts"
+  ],
+  "test/fixtures/pdf-translation/terminal-numbered-link.jsonl": [
+    "src/main/literature/pdf-translation/link-labels.test.ts"
+  ],
+  "test/fixtures/pdf-translation/spacing-grave-linked-identity.jsonl": [
+    "src/main/literature/pdf-translation/link-labels.test.ts",
+    "src/main/literature/pdf-translation/linked-prose-roundtrip.test.ts"
+  ],
+  "test/fixtures/pdf-translation/localized-cross-reference-identities.jsonl": [
+    "src/main/literature/pdf-translation/link-labels.test.ts",
+    "src/renderer/src/pages/workspace/previews/renderers/use-pdf-translation-document.test.tsx"
+  ],
+  "test/fixtures/pdf-translation/partial-prose-object-link-labels.jsonl": [
+    "src/main/literature/pdf-translation/link-labels.test.ts"
+  ],
+  "test/fixtures/pdf-translation/shared-citation-object-distinct-links.jsonl": [
+    "src/main/literature/pdf-translation/link-labels.test.ts"
+  ],
+  "test/fixtures/pdf-translation/shared-citation-object-invalid-target.jsonl": [
+    "src/main/literature/pdf-translation/link-labels.test.ts"
+  ],
+  "test/fixtures/pdf-translation/hyphenated-author-link-fragments.jsonl": [
+    "src/main/literature/pdf-translation/link-labels.test.ts"
+  ],
+  "test/fixtures/pdf-translation/mixed-abbreviated-reference-hit-areas.jsonl": [
+    "src/main/literature/pdf-translation/link-labels.test.ts"
+  ],
+  "test/fixtures/pdf-translation/compound-year-suffix-link.jsonl": [
+    "src/main/literature/pdf-translation/link-labels.test.ts"
+  ],
+  "test/fixtures/pdf-translation/dense-linked-cross-page-prose.jsonl": [
+    "src/main/literature/pdf-translation/linked-prose-roundtrip.test.ts"
+  ],
+  "test/fixtures/pdf-translation/native-math-accent-geometry.jsonl": [
+    "src/main/literature/pdf-translation/math-accents.test.ts"
+  ],
+  "test/fixtures/pdf-translation/native-short-macron.jsonl": [
+    "src/main/literature/pdf-translation/math-accents.test.ts"
+  ],
+  "test/fixtures/pdf-translation/native-math-delimiter-encoding.jsonl": [
+    "src/main/literature/pdf-translation/math-accents.test.ts"
+  ],
+  "test/fixtures/pdf-translation/wrapped-parameter-native-roundtrip.jsonl": [
+    "src/main/literature/pdf-translation/parameter-prose-roundtrip.test.ts"
+  ],
+  "test/fixtures/pdf-translation/spaced-native-script-groups.jsonl": [
+    "src/main/literature/pdf-translation/scientific-scripts.test.ts"
+  ],
+  "test/fixtures/pdf-translation/native-perpendicular-script-token.jsonl": [
+    "src/main/literature/pdf-translation/scientific-scripts.test.ts"
+  ],
+  "test/fixtures/pdf-translation/scientific-script-identity-and-ambiguity.jsonl": [
+    "src/main/literature/pdf-translation/scientific-scripts.test.ts"
+  ],
+  "test/fixtures/pdf-translation/native-ordinal-suffixes.jsonl": [
+    "src/main/literature/pdf-translation/scientific-scripts.test.ts"
+  ],
+  "test/fixtures/pdf-translation/native-transpose-caret-representation.jsonl": [
+    "src/main/literature/pdf-translation/scientific-scripts.test.ts"
+  ],
+  "test/fixtures/pdf-translation/indexed-set-bound-anchor-ownership.jsonl": [
+    "src/main/literature/pdf-translation/scientific-scripts.test.ts"
+  ],
+  "test/fixtures/pdf-translation/native-explicit-negative-power.jsonl": [
+    "src/main/literature/pdf-translation/scientific-scripts.test.ts"
+  ],
+  "test/fixtures/pdf-translation/nested-script-native-compound.jsonl": [
+    "src/main/literature/pdf-translation/scientific-scripts.test.ts"
+  ],
+  "test/fixtures/pdf-translation/native-paired-script-reflow.jsonl": [
+    "src/main/literature/pdf-translation/scientific-scripts.test.ts"
+  ],
+  "test/fixtures/pdf-translation/native-asymptotic-power-notation.jsonl": [
+    "src/main/literature/pdf-translation/scientific-scripts.test.ts"
+  ],
+  "test/fixtures/pdf-translation/compact-slashed-derivative.jsonl": [
+    "src/main/literature/pdf-translation/scientific-scripts.test.ts"
+  ],
+  "test/fixtures/pdf-translation/native-signed-unit-power-reflow.jsonl": [
+    "src/main/literature/pdf-translation/scientific-scripts.test.ts"
+  ],
+  "test/fixtures/pdf-translation/norm-script-native-body.jsonl": [
+    "src/main/literature/pdf-translation/scientific-scripts.test.ts",
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/native-unicode-negative-power.jsonl": [
+    "src/main/literature/pdf-translation/scientific-scripts.test.ts"
+  ],
+  "test/fixtures/pdf-translation/shared-prose-negative-power.jsonl": [
+    "src/main/literature/pdf-translation/scientific-scripts.test.ts"
+  ],
+  "test/fixtures/pdf-translation/spaced-script-native-roundtrip.jsonl": [
+    "src/main/literature/pdf-translation/spaced-script-roundtrip.test.ts"
+  ],
+  "test/fixtures/pdf-translation/spacing-circumflex-native-roundtrip.jsonl": [
+    "src/main/literature/pdf-translation/structural-roundtrip.test.ts"
+  ],
+  "test/fixtures/pdf-translation/spacing-grave-native-prose.jsonl": [
+    "src/main/literature/pdf-translation/structural-roundtrip.test.ts",
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/sentence-footnote-native-roundtrip.jsonl": [
+    "src/main/literature/pdf-translation/structural-roundtrip.test.ts"
+  ],
+  "test/fixtures/pdf-translation/styled-name-floating-page-roundtrip.jsonl": [
+    "src/main/literature/pdf-translation/styled-float-roundtrip.test.ts"
+  ],
+  "test/fixtures/pdf-translation/leading-greek-body-roundtrip.jsonl": [
+    "src/main/literature/pdf-translation/styled-float-roundtrip.test.ts"
+  ],
+  "test/fixtures/pdf-translation/paired-definition-native-roundtrip.jsonl": [
+    "src/main/literature/pdf-translation/styled-float-roundtrip.test.ts"
+  ],
+  "test/fixtures/pdf-translation/baseline-comma-definition-roundtrip.jsonl": [
+    "src/main/literature/pdf-translation/styled-float-roundtrip.test.ts"
+  ],
+  "test/fixtures/pdf-translation/column-terminal-punctuation-roundtrip.jsonl": [
+    "src/main/literature/pdf-translation/styled-float-roundtrip.test.ts"
+  ],
+  "test/fixtures/pdf-translation/unicode-negative-power-native-roundtrip.jsonl": [
+    "src/main/literature/pdf-translation/styled-float-roundtrip.test.ts"
+  ],
+  "test/fixtures/pdf-translation/shared-prose-negative-power-roundtrip.jsonl": [
+    "src/main/literature/pdf-translation/styled-float-roundtrip.test.ts"
+  ],
+  "test/fixtures/pdf-translation/wrapped-inline-identifier-roundtrip.jsonl": [
+    "src/main/literature/pdf-translation/styled-float-roundtrip.test.ts"
+  ],
+  "test/fixtures/pdf-translation/wide-numbered-heading-roundtrip.jsonl": [
+    "src/main/literature/pdf-translation/styled-float-roundtrip.test.ts"
+  ],
+  "test/fixtures/pdf-translation/wrapped-citation-float-column-roundtrip.jsonl": [
+    "src/main/literature/pdf-translation/styled-float-roundtrip.test.ts"
+  ],
+  "test/fixtures/pdf-translation/inline-sequence-numbered-tail-roundtrip.jsonl": [
+    "src/main/literature/pdf-translation/styled-float-roundtrip.test.ts"
+  ],
+  "test/fixtures/pdf-translation/wrapped-chained-parameter-roundtrip.jsonl": [
+    "src/main/literature/pdf-translation/styled-float-roundtrip.test.ts"
+  ],
+  "test/fixtures/pdf-translation/side-float-page-native-roundtrip.jsonl": [
+    "src/main/literature/pdf-translation/styled-float-roundtrip.test.ts"
+  ],
+  "test/fixtures/pdf-translation/citation-footnote-native-roundtrip.jsonl": [
+    "src/main/literature/pdf-translation/terminal-link-roundtrip.test.ts"
+  ],
+  "test/fixtures/pdf-translation/citation-stop-footnote-native-roundtrip.jsonl": [
+    "src/main/literature/pdf-translation/terminal-link-roundtrip.test.ts"
+  ],
+  "test/fixtures/pdf-translation/terminal-numbered-link-native-roundtrip.jsonl": [
+    "src/main/literature/pdf-translation/terminal-link-roundtrip.test.ts"
+  ],
+  "test/fixtures/pdf-translation/shortened-paragraph-anchor-spacing.jsonl": [
+    "src/main/literature/pdf-translation/writer.test.ts"
+  ],
+  "test/fixtures/pdf-translation/orthogonal-text-scaling.jsonl": [
+    "src/main/literature/pdf-translation/writer.test.ts"
+  ],
+  "test/fixtures/pdf-translation/partial-native-table-cells.jsonl": [
+    "src/main/literature/pdf-translation/writer.test.ts"
+  ],
+  "test/fixtures/pdf-translation/overlapping-table-region-preservation.jsonl": [
+    "src/main/literature/pdf-translation/writer.test.ts"
+  ],
+  "test/fixtures/pdf-translation/merged-table-label-context.jsonl": [
+    "src/main/literature/pdf-translation/writer.test.ts"
+  ],
+  "test/fixtures/pdf-translation/numeric-column-graphic-separation.jsonl": [
+    "src/main/literature/pdf-translation/writer.test.ts"
+  ],
+  "test/fixtures/pdf-translation/page-sized-form-containers.jsonl": [
+    "src/main/literature/pdf-translation/writer.test.ts"
+  ],
+  "test/fixtures/pdf-translation/native-power-base-adjacency.jsonl": [
+    "src/main/literature/pdf-translation/writer.test.ts"
+  ],
+  "test/fixtures/pdf-translation/caption-native-footnote-symbols.jsonl": [
+    "src/main/literature/pdf-translation/writer.test.ts"
+  ],
+  "test/fixtures/pdf-translation/native-math-symbol-font-coverage.jsonl": [
+    "src/main/literature/pdf-translation/writer.test.ts"
+  ],
+  "test/fixtures/pdf-translation/embedded-figure-region-preflight.jsonl": [
+    "src/main/literature/pdf-translation/writer.test.ts"
+  ],
+  "test/fixtures/pdf-translation/scientific-count-native-reflow.jsonl": [
+    "src/main/literature/pdf-translation/writer.test.ts"
+  ],
+  "test/fixtures/pdf-translation/native-math-source-mismatch.jsonl": [
+    "src/main/literature/pdf-translation/writer.test.ts"
+  ],
+  "test/fixtures/pdf-translation/neighbor-link-hit-area-boundaries.jsonl": [
+    "src/main/literature/pdf-translation/writer.test.ts"
+  ],
+  "test/fixtures/pdf-translation/native-fraction-prose-reflow.jsonl": [
+    "src/main/literature/pdf-translation/writer.test.ts"
+  ],
+  "test/fixtures/pdf-translation/partial-neighbor-text-edge-trim.jsonl": [
+    "src/main/literature/pdf-translation/writer.test.ts"
+  ],
+  "test/fixtures/pdf-translation/native-link-hitbox-versus-glyph-ink.jsonl": [
+    "src/main/literature/pdf-translation/writer.test.ts"
+  ],
+  "test/fixtures/pdf-translation/shared-glyph-distinct-unicode.jsonl": [
+    "src/main/literature/pdf-translation/writer.test.ts"
+  ],
+  "test/fixtures/pdf-translation/native-citation-separator-wrap.jsonl": [
+    "src/main/literature/pdf-translation/writer.test.ts"
+  ],
+  "test/fixtures/pdf-translation/native-raised-footnote-spelling.jsonl": [
+    "src/main/literature/pdf-translation/writer.test.ts"
+  ],
+  "test/fixtures/pdf-translation/embedded-figure-adjacent-region.jsonl": [
+    "src/main/literature/pdf-translation/writer.test.ts"
+  ],
+  "test/fixtures/pdf-translation/native-cjk-line-ink-spacing.jsonl": [
+    "src/main/literature/pdf-translation/writer.test.ts"
+  ],
+  "test/fixtures/pdf-translation/footnote-link-baseline-fit.jsonl": [
+    "src/main/literature/pdf-translation/writer.test.ts"
+  ],
+  "test/fixtures/pdf-translation/oversized-link-hit-area.jsonl": [
+    "src/main/literature/pdf-translation/writer.test.ts"
+  ],
+  "test/fixtures/pdf-translation/verified-ink-versus-region-margins.jsonl": [
+    "src/main/literature/pdf-translation/writer.test.ts"
+  ],
+  "test/fixtures/pdf-translation/native-font-fit-floor.jsonl": [
+    "src/main/literature/pdf-translation/writer.test.ts"
+  ],
+  "test/fixtures/pdf-translation/native-planning-page-reuse.jsonl": [
+    "src/main/literature/pdf-translation/writer.test.ts"
+  ],
+  "test/fixtures/pdf-translation/generated-link-fragment-reflow.jsonl": [
+    "src/main/literature/pdf-translation/writer.test.ts"
+  ],
+  "test/fixtures/pdf-translation/tall-footnote-hit-area-prose.jsonl": [
+    "src/main/literature/pdf-translation/writer.test.ts"
+  ],
+  "test/fixtures/pdf-translation/small-chart-label-font-floor.jsonl": [
+    "src/main/literature/pdf-translation/writer.test.ts"
+  ],
+  "test/fixtures/pdf-translation/native-citation-punctuation-descenders.jsonl": [
+    "src/main/literature/pdf-translation/writer.test.ts"
+  ],
+  "test/fixtures/pdf-translation/raster-rule-grazing-header.jsonl": [
+    "src/main/literature/pdf-translation/writer.test.ts"
+  ],
+  "test/fixtures/pdf-translation/shared-native-table-run-replacement.jsonl": [
+    "src/main/literature/pdf-translation/writer.test.ts"
+  ],
+  "test/fixtures/pdf-translation/cross-column-word-hyphen-linked-citation.jsonl": [
+    "src/main/literature/pdf-translation/writer.test.ts"
+  ],
+  "test/fixtures/pdf-translation/compact-cjk-table-header-fit.jsonl": [
+    "src/main/literature/pdf-translation/writer.test.ts"
+  ],
+  "test/fixtures/pdf-translation/native-prefix-positive-side-bearing.jsonl": [
+    "src/main/literature/pdf-translation/writer.test.ts"
+  ],
+  "test/fixtures/pdf-translation/compact-cjk-linked-label-fit.jsonl": [
+    "src/main/literature/pdf-translation/writer.test.ts"
+  ],
+  "test/fixtures/pdf-translation/wrapped-prose-operator-prefix.jsonl": [
+    "src/main/literature/pdf-translation/writer.test.ts",
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/decimal-prose-boundary.jsonl": [
+    "src/main/literature/pdf-translation/writer.test.ts",
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/parenthesized-statistics-prose.jsonl": [
+    "src/main/literature/pdf-translation/writer.test.ts",
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/anchored-fragment-collision-font-retry.jsonl": [
+    "src/main/literature/pdf-translation/writer.test.ts"
+  ],
+  "test/fixtures/pdf-translation/nested-form-label-preservation.jsonl": [
+    "src/main/literature/pdf-translation/writer.test.ts"
+  ],
+  "test/fixtures/pdf-translation/merged-table-row-cell-boundaries.jsonl": [
+    "src/main/literature/pdf-translation/writer.test.ts"
+  ],
+  "test/fixtures/pdf-translation/raised-degree-table-label.jsonl": [
+    "src/main/literature/pdf-translation/writer.test.ts"
+  ],
+  "test/fixtures/pdf-translation/cjk-caption-baseline-clearance.jsonl": [
+    "src/main/literature/pdf-translation/writer.test.ts"
+  ],
+  "test/fixtures/pdf-translation/provider-error-diagnostics.jsonl": [
+    "src/main/settings/provider-text-generation.test.ts"
+  ],
+  "test/fixtures/pdf-translation/legacy-dingbats-text-encoding.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-extraction.test.ts"
+  ],
+  "test/fixtures/pdf-translation/txsys-multiplication-native-abstract.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-extraction.test.ts"
+  ],
+  "test/fixtures/pdf-translation/wrapped-dose-native-body.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-extraction.test.ts",
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/observed-time-and-numeric-tail.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-extraction.test.ts",
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/reference-script-native-seam.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-extraction.test.ts",
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/short-formula-prose-native.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-extraction.test.ts",
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/wide-caption-cross-page-native.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout-float-footnote.test.ts"
+  ],
+  "test/fixtures/pdf-translation/symbolic-footnote-native-wrap.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout-float-footnote.test.ts"
+  ],
+  "test/fixtures/pdf-translation/paired-copular-definition-native.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout-paired-definition.test.ts"
+  ],
+  "test/fixtures/pdf-translation/native-column-terminal-punctuation.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout-paired-definition.test.ts"
+  ],
+  "test/fixtures/pdf-translation/wrapped-numeric-parameter-prose.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout-parameter-prose.test.ts"
+  ],
+  "test/fixtures/pdf-translation/adjacent-plot-axis-native.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout-plot-axis.test.ts"
+  ],
+  "test/fixtures/pdf-translation/side-float-page-native.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout-plot-axis.test.ts"
+  ],
+  "test/fixtures/pdf-translation/inline-sequence-numbered-tail.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/wrapped-chained-parameter.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/baseline-comma-definition.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/wrapped-citation-float-column.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/wrapped-inline-identifier.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/wide-numbered-heading.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/numeric-table-with-trailing-description.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/raised-formula-prose-continuation.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/formula-where-explanation-boundary.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/leading-alphabetic-footnotes.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/named-extremum-attached-index.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/short-equation-lead-continuation.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/stacked-inline-math-prose-boundaries.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/inline-radical-fraction-boundaries.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/inline-radical-source-ownership.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/adjacent-scripts-and-wrapped-list-boundaries.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/short-terminal-prose-wrap.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/closed-citation-and-count-prose.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/hanging-caption-prose-boundaries.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/wrapped-numeric-citation-prose.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/prose-does-not-bridge-equation-operands.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/standalone-symbolic-expressions-and-prose.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/indexed-named-function-expressions.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/descending-math-operator-body-boundaries.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/inline-fraction-source-order.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/inline-floor-fraction-prose-order.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/stacked-fraction-source-boundaries.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/raised-power-of-ten-source.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/cross-page-continuations-and-preserved-boundaries.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/bibliography-boundaries-and-numbered-body.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/narrow-column-bibliography-reading-order.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/numbered-affiliation-row-boundaries.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/inline-fraction-body-boundaries.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/hanging-hyphenated-heading-boundaries.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/algorithm-comment-row-ownership.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/named-math-operators-preserve-source.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/centered-wrapped-paper-title.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/indented-python-listing-preserves-source.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/numeric-citation-before-prose.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/citation-lead-in-is-not-formula.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/wrapped-caption-numeric-parameter.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/formula-prose-short-wrap.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/hyphenated-prose-before-formula.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/aligned-numeric-table-cells.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/signed-two-column-table.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/scientific-notation-table-columns.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/sparse-score-table-columns.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/rotated-margin-stamp-column-order.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/cited-model-conjunction-prose.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/dimension-table-blank-label-rows.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/author-rows-and-roman-list-boundaries.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/numbered-definition-paragraph-boundaries.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/legacy-extension-bracket-source-ownership.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/tall-inline-delimiter-prose-ownership.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/named-operator-lower-limit-ownership.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/unmapped-control-glyph-prose-boundaries.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/standalone-letter-index-not-unit-name.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/lowercase-list-hanging-continuation.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/raised-operator-reading-order-barrier.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/inline-formula-wrapped-reading-order.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/multiple-label-table-columns.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/technical-numeric-table-cells.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/kernel-size-parameter-preservation.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/standalone-numeric-symbol-preservation.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/statistical-table-row-boundaries.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/first-column-label-whitespace.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/parenthesized-numbered-prose.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/staggered-adjacent-captions.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/isolated-letter-subscript-variable.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/decimal-aligned-duration-table.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/wrapped-citation-native-body.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/inline-reference-native-caption.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/closed-parenthetical-native-body.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/inline-letter-numeric-fraction-native-body.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/native-margin-appendix-heading.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/short-native-prose-continuations.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/adam-parenthetical-native-body.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/wrapped-citation-prose-boundaries.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/citation-native-body-continuations.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/resnet-floating-caption-native.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/numeric-compound-bullet-native-body.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/year-prose-tail-native-body.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/wrapped-literal-quantity-native-body.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/wrapped-numeric-sentence-native-body.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/parenthetical-terminal-word-native-body.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/colon-tail-native-body-continuations.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/run-in-field-native-body.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/fraction-neighbor-native-body.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/fraction-symbol-suffix-native-body.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/numbered-title-wrap-native.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/question-title-wrap-native.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/standalone-heading-native-body.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/version-citation-metric-tail.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/version-page-continuation-native.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/lettered-period-appendix-native.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/rounded-formula-tail-native.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/quoted-label-native-body.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/interleaved-formula-prose-native.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/wrapped-styled-example-native.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/numbered-native-fields.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/detached-prose-native-wrap.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/word-script-formula-native.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/radical-native-row-ownership.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/styled-numeric-citation-native.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/numbered-sentence-prose-native.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/named-acronym-native.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/caption-capacity-native.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/closed-citation-list-native.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/scripted-column-native.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/caption-parenthetical-native.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/styled-bullet-terminal-native.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/floating-table-native-ownership.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/styled-section-reference-native.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/smallcaps-year-citation-native.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/cited-name-example-native.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/paired-footnote-native.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/paired-prose-footnote-native.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/paired-url-footnote-native.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/hanging-bibliography-native.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/hanging-bibliography-additional-native.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/cross-column-reference-native.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/short-page-column-native.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/nested-script-native.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/run-in-heading-native-body.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/native-prose-wrap-boundaries.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/prose-column-table-boundaries.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/caption-example-reference-boundaries.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/narrow-gutter-prose-ownership.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/terminal-numbered-references.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/hanging-numbered-continuations.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/hanging-statement-body.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/paragraph-spacing-and-reference-flow.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/wrapped-inline-definition-and-modifier.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/parenthetical-styled-variables-native.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/leading-greek-prose-wrap.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/top-floating-figures-native.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/numbered-bibliography-native-wraps.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/page-start-numbered-prose-wrap.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/serial-multiline-subfigure-captions.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/wrapped-styled-paragraph-start.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/wrapped-abbreviation-styled-body.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout.test.ts"
+  ],
+  "test/fixtures/pdf-translation/fraction-height-paragraph-fragments.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/use-pdf-translation-document.test.tsx"
+  ],
+  "test/fixtures/pdf-translation/short-caption-terminal-fragments.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/use-pdf-translation-document.test.tsx"
+  ],
+  "test/fixtures/pdf-translation/caption-whitespace-neighbor-boundaries.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/use-pdf-translation-document.test.tsx"
+  ],
+  "test/fixtures/pdf-translation/retained-formula-overlap-verification.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/use-pdf-translation-document.test.tsx"
+  ],
+  "test/fixtures/pdf-translation/repeated-numeric-link-hit-areas.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/use-pdf-translation-document.test.tsx"
+  ],
+  "test/fixtures/pdf-translation/repeated-author-link-verification.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/use-pdf-translation-document.test.tsx"
+  ],
+  "test/fixtures/pdf-translation/native-fraction-reading-verification.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/use-pdf-translation-document.test.tsx"
+  ],
+  "test/fixtures/pdf-translation/footnote-digit-beside-numeric-prose.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/use-pdf-translation-document.test.tsx"
+  ],
+  "test/fixtures/pdf-translation/retained-neighbor-glyph-verification.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/use-pdf-translation-document.test.tsx"
+  ],
+  "test/fixtures/pdf-translation/native-accent-reading-verification.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/use-pdf-translation-document.test.tsx"
+  ],
+  "test/fixtures/pdf-translation/exact-region-glyph-ownership.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/use-pdf-translation-document.test.tsx"
+  ],
+  "test/fixtures/pdf-translation/moved-neighbor-source-ownership.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/use-pdf-translation-document.test.tsx"
+  ],
+  "test/fixtures/pdf-translation/typed-appendix-letter-verification.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/use-pdf-translation-document.test.tsx"
+  ],
+  "test/fixtures/pdf-translation/paragraph-width-transition-regions.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/use-pdf-translation-document.test.tsx"
+  ],
+  "test/fixtures/pdf-translation/native-raised-footnote-verification.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/use-pdf-translation-document.test.tsx"
+  ],
+  "test/fixtures/pdf-translation/existing-citation-hit-padding.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/use-pdf-translation-document.test.tsx"
+  ],
+  "test/fixtures/pdf-translation/reflowed-script-region-ownership.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/use-pdf-translation-document.test.tsx"
+  ],
+  "test/fixtures/pdf-translation/same-paragraph-link-reordering.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/use-pdf-translation-document.test.tsx"
+  ],
+  "test/fixtures/pdf-translation/unicode-power-native-geometry.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/use-pdf-translation-document.test.tsx"
+  ],
+  "test/fixtures/pdf-translation/same-paragraph-fragment-read-padding.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/use-pdf-translation-document.test.tsx"
+  ],
+  "test/fixtures/pdf-translation/script-line-box-neighbor-overlap.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/use-pdf-translation-document.test.tsx"
+  ],
+  "test/fixtures/pdf-translation/definition-borrowed-top-whitespace.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/use-pdf-translation-document.test.tsx"
+  ],
+  "test/fixtures/pdf-translation/short-connective-inline-whitespace.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/use-pdf-translation-document.test.tsx"
+  ],
+  "test/fixtures/pdf-translation/parenthesized-acronym-inline-whitespace.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/use-pdf-translation-document.test.tsx"
+  ],
+  "test/fixtures/pdf-translation/partially-contained-author-link-runs.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/use-pdf-translation-document.test.tsx"
+  ],
+  "test/fixtures/pdf-translation/table-caption-footnote-verification.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/use-pdf-translation-document.test.tsx"
+  ],
+  "test/fixtures/pdf-translation/bracketed-citation-narrow-hit-area.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/use-pdf-translation-document.test.tsx"
+  ],
+  "test/fixtures/pdf-translation/cancelled-job-late-settlement.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/use-pdf-translation-job.test.tsx"
+  ],
+  "test/fixtures/pdf-translation/paragraph-retry-limits-and-failure-classes.jsonl": [
+    "src/renderer/src/pages/workspace/previews/renderers/use-pdf-translation-job.test.tsx"
+  ],
+  "test/fixtures/pdf-translation/checkpoint-layout-change-and-sparse-recovery.jsonl": [
+    "src/shared/pdf-translation-recovery.test.ts"
+  ],
+  "test/fixtures/pdf-translation/unchanged-table-label-split-recovery.jsonl": [
+    "src/shared/pdf-translation-recovery.test.ts"
+  ],
+  "test/fixtures/pdf-translation/local-anchor-reorder-recovery.jsonl": [
+    "src/shared/pdf-translation-recovery.test.ts"
+  ],
+  "test/fixtures/pdf-translation/repeated-model-identity-recovery.jsonl": [
+    "src/shared/pdf-translation-recovery.test.ts"
+  ],
+  "test/fixtures/pdf-translation/translated-heading-copied-body.jsonl": [
+    "src/shared/pdf-translation-recovery.test.ts"
+  ],
+  "test/fixtures/pdf-translation/missing-citation-identities.jsonl": [
+    "src/shared/pdf-translation-recovery.test.ts"
+  ],
+  "test/fixtures/pdf-translation/statistical-header-footnote-identities.jsonl": [
+    "src/shared/pdf-translation-recovery.test.ts"
+  ],
+  "test/fixtures/pdf-translation/neighbor-formula-leakage.jsonl": [
+    "src/shared/pdf-translation-recovery.test.ts"
+  ],
+  "test/fixtures/pdf-translation/complete-greek-script-identifiers.jsonl": [
+    "src/shared/pdf-translation-recovery.test.ts"
+  ],
+  "test/fixtures/pdf-translation/numeric-sign-preservation.jsonl": [
+    "src/shared/pdf-translation-recovery.test.ts"
+  ],
+  "test/fixtures/pdf-translation/native-macron-position-verification.jsonl": [
+    "test/pdf-translation-native-verification.test.ts"
+  ],
+  "test/fixtures/pdf-translation/native-fraction-verification-roundtrip.jsonl": [
+    "test/pdf-translation-native-verification.test.ts"
+  ],
+  "test/fixtures/pdf-translation/native-fraction-placement-proof.jsonl": [
+    "test/pdf-translation-native-verification.test.ts"
+  ],
+  "test/fixtures/literature-pdf.ts": ["src/main/literature/pdf-importer.test.ts"],
+  "test/fixtures/fake_loop.py": ["src/main/notebook/kernel-executor.test.ts"],
+  "test/fixtures/nbformat.v4.5.schema.json": ["src/main/notebook/ipynb-export.test.ts"]
 }

@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 
 import { parseNameStatus } from './classify-pr-changes.mjs'
 import { createAffectedTestPlan } from './module-test-impact.mjs'
+import { resolveModuleImpactInputs } from './module-impact-inputs.mjs'
 
 const defaultChangeImpactManifest = JSON.parse(
   readFileSync(new URL('./change-impact.json', import.meta.url), 'utf8')
@@ -296,7 +297,18 @@ export function runModuleImpactShadowCli(
       environment.PR_GATE_PLAN
   )
   const changes = changesFromGit(base, head, { cwd, execute })
-  const modulePlan = createAffectedTestPlan(changes, manifestOnlyGraph)
+  const { manifest, registrationModules } = resolveModuleImpactInputs(changes, {
+    base,
+    head,
+    cwd,
+    execute
+  })
+  const modulePlan = createAffectedTestPlan(
+    changes,
+    manifestOnlyGraph,
+    manifest,
+    registrationModules
+  )
   const report = createModuleImpactShadowReport(authoritativePlan, modulePlan)
   const output = `${JSON.stringify(report)}\n`
 

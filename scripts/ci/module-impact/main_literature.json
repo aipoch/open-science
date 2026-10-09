@@ -1780,7 +1780,20 @@
     "src/main/literature/pdf-structure/source-grouped-header-recovery.test.ts",
     "src/main/literature/pdf-structure/source-hierdro-record-recovery.test.ts",
     "src/main/literature/pdf-structure/source-native-record-recovery.test.ts",
-    "src/main/literature/pdf-structure/user-study-paired-percentages.test.ts"
+    "src/main/literature/pdf-structure/user-study-paired-percentages.test.ts",
+    "resources/citation/NOTICE.md",
+    "resources/citation/american-medical-association.csl",
+    "resources/citation/apa.csl",
+    "resources/citation/chicago-author-date.csl",
+    "resources/citation/harvard-cite-them-right.csl",
+    "resources/citation/ieee.csl",
+    "resources/citation/locales-en-US.xml",
+    "resources/citation/locales-zh-CN.xml",
+    "resources/citation/mla.csl",
+    "resources/citation/nature.csl",
+    "resources/citation/vancouver.csl",
+    "resources/pdf-structure/literature-pdf-reading-order.mjs",
+    "test/fixtures/literature-pdf.ts"
   ],
   "interfacePaths": [
     "src/main/literature/command-owner.ts",

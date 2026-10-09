@@ -4,8 +4,10 @@ import { execFileSync } from 'node:child_process'
 import { appendFileSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { loadModuleImpactManifest } from './load-module-impact.mjs'
 
 const workflowContractTest = 'scripts/ci/pr-gate-workflow.test.ts'
+const defaultModuleManifest = loadModuleImpactManifest()
 
 const defaultManifest = JSON.parse(
   readFileSync(new URL('./change-impact.json', import.meta.url), 'utf8')
@@ -72,7 +74,11 @@ function visitCapability(manifest, capabilityId, path, lanes, reasonChains, visi
   }
 }
 
-export function classifyChanges(changes, manifest = defaultManifest) {
+export function classifyChanges(
+  changes,
+  manifest = defaultManifest,
+  { moduleManifest = defaultModuleManifest, registrationModules = [] } = {}
+) {
   const lanes = new Set(manifest.alwaysLanes)
   const reasonChains = new Set()
   const roots = new Set()
@@ -94,13 +100,28 @@ export function classifyChanges(changes, manifest = defaultManifest) {
     }
   }
 
+  const visitModule = (id, path) => {
+    const module = moduleManifest.modules[id]
+    visitRule(
+      {
+        id: `module:${id}`,
+        capabilities: [module.fallbackCapability, ...module.capabilityOverlays]
+      },
+      path
+    )
+    // Even modules whose fallback capability is static-only must execute their evidence.
+    lanes.add('unit_macos')
+  }
+
   for (const change of changes) {
     const paths = new Set([change.path, change.previousPath].filter(Boolean))
     const destructivePath = ['deleted', 'renamed', 'type-changed', 'unmerged', 'unknown'].includes(
       change.status
     )
       ? [...paths].find(
-          (path) => !documentationRule?.paths.some((pattern) => matchesPath(path, pattern))
+          (path) =>
+            !documentationRule?.paths.some((pattern) => matchesPath(path, pattern)) ||
+            Object.values(moduleManifest.modules).some((module) => module.ownerPaths.includes(path))
         )
       : undefined
     if (destructivePath) {
@@ -109,6 +130,14 @@ export function classifyChanges(changes, manifest = defaultManifest) {
     }
 
     for (const path of paths) {
+      // Only the revision reader can approve additive registration data. Unvalidated
+      // registrations, the root manifest and executable CI policy retain global routing.
+      const registration = /^scripts\/ci\/module-impact\/([a-z][a-z0-9_]*)\.json$/.exec(path)
+      if (registration && registrationModules.includes(registration[1])) {
+        roots.add('module_registration')
+        visitModule(registration[1], path)
+        continue
+      }
       // This Vitest contract verifies the workflow; it is not an executable CI input.
       if (path === workflowContractTest) {
         roots.add('ci_workflow_contract_test')
@@ -119,7 +148,15 @@ export function classifyChanges(changes, manifest = defaultManifest) {
       const rules = manifest.rules.filter((rule) =>
         rule.paths.some((pattern) => matchesPath(path, pattern))
       )
-      if (rules.length === 0) {
+      // Directory placement is not risk evidence: exact registered owners can bound
+      // resources, fixtures and packages, while global rules always take precedence.
+      const owners =
+        /^(resources|test|packages)\//.test(path) || /\.(test|spec)\.[cm]?[jt]sx?$/.test(path)
+          ? Object.entries(moduleManifest.modules).filter(([, module]) =>
+              module.ownerPaths.includes(path)
+            )
+          : []
+      if (rules.length === 0 && owners.length === 0) {
         selectFullPlan('unknown', `${path} -> unknown -> full`)
         continue
       }
@@ -135,6 +172,20 @@ export function classifyChanges(changes, manifest = defaultManifest) {
         for (const rule of globalRules) {
           selectFullPlan(rule.id, `${path} -> ${rule.id} -> full`)
         }
+        continue
+      }
+
+      if (owners.length > 1) {
+        selectFullPlan('owner_ambiguity', `${path} -> multiple module owners -> full`)
+        continue
+      }
+      if (
+        owners.length === 1 &&
+        !rules.some((rule) => rule.role === 'owner' && rule !== documentationRule)
+      ) {
+        visitModule(owners[0][0], path)
+        // Keep every existing platform/domain requirement as well as the exact owner.
+        for (const rule of rules) visitRule(rule, path)
         continue
       }
 

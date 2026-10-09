@@ -191,7 +191,14 @@
     "src/shared/pdf-translation-numeric-units.test.ts",
     "src/shared/pdf-translation-snapshot.ts",
     "src/shared/pdf-translation-models.ts",
-    "src/shared/pdf-translation-models.test.ts"
+    "src/shared/pdf-translation-models.test.ts",
+    "test/fixtures/pdf-translation/complete-greek-script-identifiers.jsonl",
+    "test/fixtures/pdf-translation/local-anchor-reorder-recovery.jsonl",
+    "test/fixtures/pdf-translation/missing-citation-identities.jsonl",
+    "test/fixtures/pdf-translation/repeated-model-identity-recovery.jsonl",
+    "test/fixtures/pdf-translation/statistical-header-footnote-identities.jsonl",
+    "test/fixtures/pdf-translation/translated-heading-copied-body.jsonl",
+    "test/fixtures/pdf-translation/unchanged-table-label-split-recovery.jsonl"
   ],
   "interfacePaths": [
     "src/shared/interface-scale.ts",

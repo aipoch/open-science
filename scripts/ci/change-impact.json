@@ -70,6 +70,7 @@
       "role": "global",
       "paths": [
         "package*.json",
+        "patches/**",
         ".nvmrc",
         "tsconfig*.json",
         "vitest.config.*",
