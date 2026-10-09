@@ -455,7 +455,7 @@ describe('research replay layout', () => {
       const stage = screen.getByTestId('replay-stage')
       const originalPane = pane('conversation')
       fireEvent.click(screen.getByTestId('replay-information-trigger'))
-      fireEvent.click(screen.getByRole('button', { name: 'View files', exact: true }))
+      fireEvent.click(screen.getByRole('button', { name: 'View files' }))
       await tick(2)
       const files = screen.getByRole('complementary', { name: 'Files' })
       expect(files.hidden).toBe(false)
