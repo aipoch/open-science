@@ -26,6 +26,9 @@ import { NotebookNetworkSandboxOwner } from './network-sandbox-owner'
 import { DEFAULT_NOTEBOOK_NETWORK_SETTINGS } from '../../shared/notebook-network'
 import { NotebookNetworkSandbox } from '@aipoch/notebook-network-sandbox'
 import { createRootNotebookLane } from './lane-identity'
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
+
+configureTestRuntimeMetadata()
 
 vi.mock('node:child_process', async (original) => {
   const actual = await original<typeof import('node:child_process')>()
@@ -169,9 +172,8 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
         command
       })
       try {
-        expect(
-          await adapter.execute(request(second, '[Console]::Write("SESSION_READY")'))
-        ).toMatchObject({
+        const ready = await adapter.execute(request(second, '[Console]::Write("SESSION_READY")'))
+        expect(ready, JSON.stringify(ready)).toMatchObject({
           exitCode: 0,
           stdout: 'SESSION_READY'
         })
@@ -938,7 +940,7 @@ Write-Output "__OPEN_SCIENCE_INTERNAL__=[$env:OPEN_SCIENCE_PSMODULEPATH]"
         version === '7.6' ? version : undefined
       )
 
-      expect(result).toMatchObject({ exitCode: 0 })
+      expect(result, JSON.stringify(result)).toMatchObject({ exitCode: 0 })
       expect(result.stdout).toContain('分析完成')
       expect(result.stdout).toContain(`__OPEN_SCIENCE_VERSION__=${version}`)
       const modules =
