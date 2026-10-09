@@ -292,17 +292,57 @@ class AcpPromptTurnWorkflow {
     if (!activeSession) throw new Error(`ACP session not found: ${request.sessionId}`)
     this.assertSessionIdle(request.sessionId)
 
-    if (this.options.assertRuntimeSessionAdmissionAvailable) {
-      await this.options.assertRuntimeSessionAdmissionAvailable(request.sessionId)
-    }
+    // Reserve before any preparation await so Stop always captures this request's ownership.
+    // Until durable admission succeeds, cancellation releases preparation without inventing a
+    // terminal event for a turn that never began. Afterwards executeTurn owns real finalization.
     let reservation = this.reserve(request)
     let plan: AcpPromptTurnPlanContext
-    let skill: TurnSkillHandle
+    let skill: TurnSkillHandle | undefined
+    let planAdmissionStarted = false
+    const cancelBeforeAdmission = async (): Promise<boolean> => {
+      if (
+        !cancellation.cancelled &&
+        (!reservation.signal.aborted || (await this.checkpoint(reservation)) !== 'cancelled')
+      )
+        return false
+      try {
+        skill?.close('cancelled', { reload: false })
+      } finally {
+        if (
+          planAdmissionStarted &&
+          this.options.interactions.current(request.sessionId) === reservation
+        )
+          this.safeCallback('Plan preparation cleanup failed', () =>
+            this.options.plan.beforeRelease(request.sessionId, reservation)
+          )
+        this.options.interactions.release(reservation)
+      }
+      if (planAdmissionStarted) {
+        try {
+          await this.options.plan.afterRelease(request.sessionId)
+        } catch (error) {
+          log.error('Plan preparation post-release failed', errorLogFields(error))
+        }
+      }
+      return true
+    }
     try {
+      if (this.options.assertRuntimeSessionAdmissionAvailable) {
+        await this.options.assertRuntimeSessionAdmissionAvailable(request.sessionId)
+        if (
+          (reservation.signal.aborted || cancellation.cancelled) &&
+          (await cancelBeforeAdmission())
+        )
+          return { stopReason: 'cancelled' }
+      }
       const preemption = this.options.finalization.preemptCompaction(request.sessionId)
       if (preemption) await preemption
+      if ((reservation.signal.aborted || cancellation.cancelled) && (await cancelBeforeAdmission()))
+        return { stopReason: 'cancelled' }
       const planPreflight = this.options.plan.preflight(request, mode)
       plan = planPreflight instanceof Promise ? await planPreflight : planPreflight
+      if ((reservation.signal.aborted || cancellation.cancelled) && (await cancelBeforeAdmission()))
+        return { stopReason: 'cancelled' }
       const authorization = this.options.skills.authorize({
         role: this.options.environment.role?.(),
         specialistId: this.options.registry.lookup(request.sessionId)?.aggregate.snapshot()
@@ -311,7 +351,11 @@ class AcpPromptTurnWorkflow {
         signal: reservation.signal
       })
       skill = authorization instanceof Promise ? await authorization : authorization
+      if ((reservation.signal.aborted || cancellation.cancelled) && (await cancelBeforeAdmission()))
+        return { stopReason: 'cancelled' }
     } catch (error) {
+      if ((reservation.signal.aborted || cancellation.cancelled) && (await cancelBeforeAdmission()))
+        return { stopReason: 'cancelled' }
       this.options.interactions.release(reservation)
       throw error
     }
@@ -394,11 +438,16 @@ class AcpPromptTurnWorkflow {
     let admittedRequest = request
     try {
       interaction = this.options.interactions.activatePrompt(reservation)
+      planAdmissionStarted = true
       const admittedPlan = this.options.plan.admit(request, interaction, plan)
       plan = admittedPlan instanceof Promise ? await admittedPlan : admittedPlan
+      if ((reservation.signal.aborted || cancellation.cancelled) && (await cancelBeforeAdmission()))
+        return { stopReason: 'cancelled' }
       // Admission-dependent state may commit only while this interaction owns the Session. A
       // rejected commit releases ownership below without publishing prompt start or dispatching.
       const admittedProvenanceContext = await onPromptAdmitted?.()
+      if ((reservation.signal.aborted || cancellation.cancelled) && (await cancelBeforeAdmission()))
+        return { stopReason: 'cancelled' }
       if (admittedProvenanceContext) {
         this.options.interactions.updatePromptProvenance(interaction, admittedProvenanceContext)
         admittedRequest = { ...request, provenanceContext: admittedProvenanceContext }

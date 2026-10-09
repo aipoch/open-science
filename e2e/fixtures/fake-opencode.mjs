@@ -16,6 +16,7 @@ const planRecoveryScenarios = new Set()
 const PLAN_DISMISS_PROMPT = 'Create the live dismissal regression Plan.'
 const PLAN_RECOVERY_PROMPT = 'Create the feedback Stop Resume regression Plan.'
 const PLAN_RECOVERY_FEEDBACK = 'Revise this Plan for the feedback Stop Resume regression.'
+const silentStopDirectories = new Map()
 const VERSION = '1.0.0'
 const WSL_SETUP_DIAGNOSTICS_PROMPT = 'Verify WSL setup diagnostic tools.'
 const WSL_SETUP_UNAVAILABLE_PROMPT = 'Verify WSL setup tools are unavailable.'
@@ -1476,6 +1477,34 @@ if (process.argv.includes('--version')) {
       }
       if (planRecoveryScenarios.has(context.params.sessionId)) {
         return planRecoveryJourney(context, prompt)
+      }
+      if (prompt.includes('Hold silent thinking until one Stop.')) {
+        const directory = JSON.parse(prompt.match(/^Stop fixture directory: (.+)$/mu)[1])
+        const cancellation = waitForSessionCancellation(context.params.sessionId)
+        silentStopDirectories.set(context.params.sessionId, directory)
+        const thoughtOnly = prompt.includes('Stop fixture output: thought-only')
+        if (thoughtOnly)
+          await context.client.notify(acp.methods.client.session.update, {
+            sessionId: context.params.sessionId,
+            update: {
+              sessionUpdate: 'agent_thought_chunk',
+              content: { type: 'text', text: 'Synthetic stop reasoning checkpoint.' }
+            }
+          })
+        await writeFile(
+          join(directory, 'provider-ready.json'),
+          JSON.stringify({ at: Date.now(), thoughtOnly })
+        )
+        // Publish no assistant message: exercise both initial silent Thinking and thought-only
+        // streaming. Register cancellation before ready, so Stop cannot race this waiter.
+        await cancellation
+        await waitForReleaseFile(join(directory, 'release-terminal'))
+        await writeFile(
+          join(directory, 'provider-terminal.json'),
+          JSON.stringify({ at: Date.now() })
+        )
+        silentStopDirectories.delete(context.params.sessionId)
+        return { stopReason: 'cancelled' }
       }
       if (prompt.includes('Cold recovery held child.')) {
         await waitForSessionCancellation(context.params.sessionId)
@@ -3126,7 +3155,13 @@ if (process.argv.includes('--version')) {
 
       return { stopReason: 'end_turn' }
     })
-    .onNotification(acp.methods.agent.session.cancel, (context) => {
+    .onNotification(acp.methods.agent.session.cancel, async (context) => {
+      const stopDirectory = silentStopDirectories.get(context.params.sessionId)
+      if (stopDirectory)
+        await appendFile(
+          join(stopDirectory, 'provider-cancellations.jsonl'),
+          JSON.stringify({ at: Date.now() }) + '\n'
+        )
       const resolve = sessionCancellationResolvers.get(context.params.sessionId)
       sessionCancellationResolvers.delete(context.params.sessionId)
       resolve?.()

@@ -806,3 +806,108 @@ describe('AcpSessionInteractionOwner', () => {
     await compaction
   })
 })
+
+it('retains the first accepted Stop notification and deadline until its scope releases', async () => {
+  const timers: Array<{ active: boolean; fire: () => void }> = []
+  const owner = new AcpSessionInteractionOwner({
+    setTimer: (callback) => {
+      const timer = {
+        active: true,
+        fire: () => {
+          if (timer.active) callback()
+        }
+      }
+      timers.push(timer)
+      return timer as unknown as ReturnType<typeof setTimeout>
+    },
+    clearTimer: (handle) => {
+      ;(handle as unknown as { active: boolean }).active = false
+    }
+  })
+  const scope = owner.claim({ sessionId: 'session-1', kind: 'prompt' })
+  const notify = vi.fn(async () => undefined)
+  const onTimeout = vi.fn()
+  const request = { sessionId: 'session-1', notify, onTimeout, onAccepted: vi.fn() }
+  await owner.cancelPrompt(request)
+  await owner.cancelPrompt(request)
+  expect(notify).toHaveBeenCalledOnce()
+  expect(timers).toHaveLength(1)
+  await expect(owner.cancellationCheckpoint(scope)).resolves.toBe('cancelled')
+  timers[0].fire()
+  expect(onTimeout).toHaveBeenCalledOnce()
+  owner.release(scope)
+})
+
+it('recognizes accepted Stop on a reservation and clears its deadline on release', async () => {
+  const setTimer = vi.fn(() => 1 as never)
+  const clearTimer = vi.fn()
+  const owner = new AcpSessionInteractionOwner({ setTimer, clearTimer })
+  const scope = owner.reservePrompt({ sessionId: 'session-1', kind: 'prompt' })
+  await owner.cancelPrompt({
+    sessionId: 'session-1',
+    notify: async () => undefined,
+    onTimeout: vi.fn(),
+    onAccepted: vi.fn()
+  })
+  await expect(owner.cancellationCheckpoint(scope)).resolves.toBe('cancelled')
+  owner.release(scope)
+  expect(clearTimer).toHaveBeenCalledOnce()
+  const next = owner.activatePrompt(owner.reservePrompt({ sessionId: 'session-1', kind: 'prompt' }))
+  await expect(owner.cancellationCheckpoint(next)).resolves.toBe('active')
+  owner.release(next)
+})
+
+it('does not let a compaction obscure cancellation of its queued prompt reservation', async () => {
+  const owner = new AcpSessionInteractionOwner()
+  const compact = owner.claim({ sessionId: 'session-1', kind: 'compaction' })
+  const prompt = owner.reservePrompt({ sessionId: 'session-1', kind: 'prompt' })
+  await owner.cancelPrompt({
+    sessionId: 'session-1',
+    notify: async () => undefined,
+    onTimeout: vi.fn(),
+    onAccepted: vi.fn()
+  })
+  expect(owner.isCancellationAccepted(prompt)).toBe(true)
+  expect(owner.isCancellationAccepted(compact)).toBe(false)
+  owner.release(prompt)
+  owner.release(compact)
+})
+
+it('allows a failed cancellation write to retry without retaining its error on the scope', async () => {
+  const owner = new AcpSessionInteractionOwner()
+  const scope = owner.claim({ sessionId: 'session-1', kind: 'prompt' })
+  const notify = vi.fn(async () => undefined).mockRejectedValueOnce(new Error('write failed'))
+  const request = { sessionId: 'session-1', notify, onTimeout: vi.fn(), onAccepted: vi.fn() }
+  await expect(owner.cancelPrompt(request)).rejects.toThrow('write failed')
+  await expect(owner.cancellationCheckpoint(scope)).resolves.toBe('active')
+  await owner.cancelPrompt(request)
+  await expect(owner.cancellationCheckpoint(scope)).resolves.toBe('cancelled')
+  expect(notify).toHaveBeenCalledTimes(2)
+  owner.release(scope)
+})
+
+it('bounds a blocked cancellation write for a reservation draining compaction', async () => {
+  let fire!: () => void
+  const owner = new AcpSessionInteractionOwner({
+    setTimer: (callback) => {
+      fire = callback
+      return 1 as never
+    },
+    clearTimer: () => undefined
+  })
+  const compact = owner.claim({ sessionId: 'session-1', kind: 'compaction' })
+  const prompt = owner.reservePrompt({ sessionId: 'session-1', kind: 'prompt' })
+  const onTimeout = vi.fn()
+  const pending = owner.cancelPrompt({
+    sessionId: 'session-1',
+    notify: () => new Promise(() => {}),
+    onTimeout,
+    onAccepted: vi.fn()
+  })
+  const rejected = expect(pending).rejects.toThrow('deadline')
+  fire()
+  await rejected
+  expect(onTimeout).toHaveBeenCalledOnce()
+  owner.release(prompt)
+  owner.release(compact)
+})

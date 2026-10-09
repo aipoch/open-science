@@ -122,6 +122,7 @@ interface CancellationAttempt {
   readonly scope: AcpSessionInteractionScope | undefined
   readonly rejectUnconfirmed: (error: Error) => void
   readonly confirmTerminal: () => void
+  accepted?: boolean
   error?: unknown
   readonly promise: Promise<void>
   readonly settle: () => void
@@ -274,7 +275,9 @@ export class AcpSessionInteractionOwner {
 
   isCancellationAccepted(scope: AcpSessionInteractionScope): boolean {
     const active = this.activeInteractions.get(scope.sessionId)
-    return active?.scope === scope && active.cancelled
+    if (active?.scope === scope) return active.cancelled
+    const reservation = this.pendingPromptReservations.get(scope.sessionId)
+    return reservation?.scope === scope && reservation.cancelled
   }
 
   async cancellationCheckpoint(scope: AcpSessionInteractionScope): Promise<'active' | 'cancelled'> {
@@ -282,6 +285,7 @@ export class AcpSessionInteractionOwner {
       const attempt = this.pendingCancellations.get(scope.sessionId)
       if (!attempt || attempt.scope !== scope)
         return this.isCancellationAccepted(scope) ? 'cancelled' : 'active'
+      if (attempt.accepted) return 'cancelled'
       await attempt.promise
     }
   }
@@ -332,7 +336,12 @@ export class AcpSessionInteractionOwner {
       if (this.cancellationTimers.get(request.sessionId) !== timer) return
       this.cancellationTimers.delete(request.sessionId)
       rejectUnconfirmed(new Error('Prompt cancellation was not confirmed before the deadline.'))
-      if (scope && this.current(request.sessionId) === scope) request.onTimeout()
+      if (
+        scope &&
+        (this.activeInteractions.get(request.sessionId)?.scope === scope ||
+          this.pendingPromptReservations.get(request.sessionId)?.scope === scope)
+      )
+        request.onTimeout()
     }, this.cancelTimeoutMs)
     this.cancellationTimers.set(request.sessionId, timer)
 
@@ -356,6 +365,7 @@ export class AcpSessionInteractionOwner {
         active.cancelled = true
       }
       accepted = true
+      attempt.accepted = true
     } catch (error) {
       if (terminalConfirmed) return
       attempt.error = error
@@ -363,7 +373,9 @@ export class AcpSessionInteractionOwner {
       throw error
     } finally {
       attempt.settle()
-      if (this.pendingCancellations.get(request.sessionId) === attempt) {
+      // An acknowledged write is still waiting for this captured interaction to stop. Retain
+      // its notification/deadline until release; checkpoints may proceed through accepted above.
+      if ((!accepted || !scope) && this.pendingCancellations.get(request.sessionId) === attempt) {
         this.pendingCancellations.delete(request.sessionId)
       }
     }
@@ -516,19 +528,18 @@ export class AcpSessionInteractionOwner {
     const cancellation = this.pendingCancellations.get(scope.sessionId)
     if (cancellation?.scope === scope) {
       const terminal = scope.kind === 'prompt' ? this.terminalSettlements.get(scope) : undefined
-      if (terminal?.kind === 'stop' || terminal?.kind === 'cancelled') {
+      if (cancellation.accepted || terminal?.kind === 'stop' || terminal?.kind === 'cancelled') {
         cancellation.confirmTerminal()
       } else {
         cancellation.rejectUnconfirmed(
           new Error('Prompt cancellation was not confirmed before the interaction ended.')
         )
       }
+      this.pendingCancellations.delete(scope.sessionId)
     }
+    const timer = this.cancellationTimers.get(scope.sessionId)
+    if (timer?.scope === scope) this.clearCancellationTimer(scope.sessionId, timer)
     if (this.activeInteractions.get(scope.sessionId)?.scope === scope) {
-      const timer = this.cancellationTimers.get(scope.sessionId)
-      if (!timer?.scope || timer.scope === scope) {
-        this.clearCancellationTimer(scope.sessionId, timer)
-      }
       this.activeInteractions.delete(scope.sessionId)
       return
     }

@@ -866,6 +866,13 @@ const PanelHarness = (props: PanelProps): React.JSX.Element => {
 const renderPanel = (props: DeepPartial<PanelProps> = {}): void => {
   const panelProps = mergePanelProps(createPanelDefaults(), props)
   act(() => {
+    const session = panelProps.view.activeSession
+    if (session) {
+      // The real workspace and Stop lifecycle read the same store-owned execution facts.
+      useSessionStore.setState(({ sessions }) => ({
+        sessions: [...sessions.filter(({ id }) => id !== session.id), session]
+      }))
+    }
     root.render(<PanelHarness {...panelProps} />)
   })
 }
@@ -7587,6 +7594,46 @@ describe('ConversationPanel fix loop lock', () => {
       )
     })
     expect(onSendMessage).not.toHaveBeenCalled()
+  })
+
+  it('keeps Thinking Stop disabled after cancellation acknowledgement until actual settlement', async () => {
+    const cancel = vi.fn(async () => {})
+    const running: ChatSession = {
+      ...idleSession,
+      status: 'running',
+      agentPromptInFlight: true,
+      awaitingFirstAgentOutput: true,
+      activeRun: { promptMessageId: 'msg-1', startedAt: 1 }
+    }
+    const show = (activeSession: ChatSession): void =>
+      renderPanel({
+        view: { activeSession },
+        conversation: { availability: { submit: false }, actions: { cancel } }
+      })
+    show(running)
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label="Cancel run"]')!.click()
+    )
+    const pending = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Stopping run and subagents"]'
+    )
+    expect(pending?.disabled).toBe(true)
+    act(() => pending?.click())
+    expect(cancel).toHaveBeenCalledOnce()
+    show({ ...running, status: 'idle' })
+    expect(
+      container.querySelector<HTMLButtonElement>('[aria-label="Stopping run and subagents"]')
+        ?.disabled
+    ).toBe(true)
+    show({
+      ...running,
+      status: 'idle',
+      activeRun: undefined,
+      agentPromptInFlight: false,
+      awaitingFirstAgentOutput: false
+    })
+    expect(container.querySelector('[aria-label="Stopping run and subagents"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Cancel run"]')).toBeNull()
   })
 
   it('shows cascade progress, prevents duplicate Stop, and restores the control after failure', async () => {

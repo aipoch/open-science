@@ -6367,3 +6367,59 @@ it('queries Side chat interaction authority on the session owner after framework
   oldPrompt.resolve({ stopReason: 'end_turn' })
   await turn
 })
+
+it('fences Stop while user admission is waiting and permits a fresh request afterwards', async () => {
+  const gate = createDeferred<void>()
+  let created!: ReturnType<typeof createFakeRuntime>
+  const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+    created = createFakeRuntime({ frameworkId: 'opencode', sessionIds: ['session-1'], callbacks })
+    return created.runtime
+  })
+  const session = await coordinator.createSession()
+  coordinator.setPromptAdmissionGuard(
+    vi.fn(async (): Promise<void> => undefined).mockImplementationOnce(() => gate.promise)
+  )
+  const stale = coordinator.startPrompt({ sessionId: session.sessionId, text: 'stopped admission' })
+  const rejected = expect(stale).rejects.toMatchObject({
+    name: 'DelegateMessagePreAcceptanceError'
+  })
+  await coordinator.cancelPrompt({ sessionId: session.sessionId })
+  await rejected
+  expect(created.sendPrompt).not.toHaveBeenCalled()
+  await coordinator.startPrompt({ sessionId: session.sessionId, text: 'fresh admission' })
+  gate.resolve()
+  await Promise.resolve()
+  expect(created.sendPrompt).toHaveBeenCalledOnce()
+})
+
+it('rejects Stop during root dispatch admission before the guard releases', async () => {
+  const gate = createDeferred<void>()
+  const entered = createDeferred<void>()
+  let created!: ReturnType<typeof createFakeRuntime>
+  const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+    created = createFakeRuntime({ frameworkId: 'opencode', sessionIds: ['session-1'], callbacks })
+    return created.runtime
+  })
+  const session = await coordinator.createSession()
+  coordinator.setPromptDispatchAdmissionGuard(async (_sessionId, dispatch) => {
+    entered.resolve()
+    await gate.promise
+    return dispatch()
+  })
+  const stale = coordinator.startPrompt({
+    sessionId: session.sessionId,
+    text: 'stopped dispatch admission'
+  })
+  const rejected = expect(stale).rejects.toMatchObject({
+    name: 'DelegateMessagePreAcceptanceError'
+  })
+  await entered.promise
+  await coordinator.cancelPrompt({ sessionId: session.sessionId })
+  await rejected
+  expect(created.sendPrompt).not.toHaveBeenCalled()
+  coordinator.setPromptDispatchAdmissionGuard(async (_sessionId, dispatch) => dispatch())
+  await coordinator.startPrompt({ sessionId: session.sessionId, text: 'fresh dispatch admission' })
+  gate.resolve()
+  await Promise.resolve()
+  expect(created.sendPrompt).toHaveBeenCalledOnce()
+})

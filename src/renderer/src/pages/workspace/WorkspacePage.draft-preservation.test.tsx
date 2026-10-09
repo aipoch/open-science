@@ -898,6 +898,18 @@ describe('WorkspacePage draft preservation', () => {
   })
 
   it('keeps pending Stop and Resume guards across a Session round trip', async () => {
+    useSessionStore.setState(({ sessions }) => ({
+      sessions: sessions.map((session) =>
+        session.id === 'sess-a'
+          ? {
+              ...session,
+              status: 'running',
+              activeRun: { promptMessageId: 'prompt-a', startedAt: 1 },
+              agentPromptInFlight: true
+            }
+          : session
+      )
+    }))
     await renderPage()
     let finishStop: (() => void) | undefined
     let finishResume: (() => void) | undefined
@@ -934,6 +946,24 @@ describe('WorkspacePage draft preservation', () => {
       finishStop!()
       finishResume!()
     })
+    expect(conversationProps.submissions.stopBySessionId.get('sess-a')?.pending).toBe(true)
+    expect(conversationProps.submissions.resumePendingSessionIds.has('sess-a')).toBe(false)
+    await openSession('sess-b')
+    await act(async () => {
+      useSessionStore.setState(({ sessions }) => ({
+        sessions: sessions.map((session) =>
+          session.id === 'sess-a'
+            ? {
+                ...session,
+                status: 'idle',
+                activeRun: undefined,
+                agentPromptInFlight: false
+              }
+            : session
+        )
+      }))
+    })
+    await openSession('sess-a')
     expect(conversationProps.submissions.stopBySessionId.has('sess-a')).toBe(false)
     expect(conversationProps.submissions.resumePendingSessionIds.has('sess-a')).toBe(false)
   })
