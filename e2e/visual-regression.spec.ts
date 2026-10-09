@@ -151,7 +151,7 @@ test('keeps core desktop surfaces visually stable', async ({ app }) => {
 
   await expectStableScreenshot(page, 'home-empty.png')
 
-  await page.getByRole('button', { name: 'New project' }).click()
+  await page.locator('header').getByRole('button', { name: 'New project' }).click()
   const projectDialog = page.getByRole('dialog', { name: 'New project' })
   await expect(projectDialog).toBeVisible()
   await expectStableScreenshot(page, 'project-create-dialog.png')

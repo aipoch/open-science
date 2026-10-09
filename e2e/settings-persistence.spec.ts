@@ -142,7 +142,7 @@ test('shows project-scoped memory and opens its project from Settings', async ({
   await page.reload({ waitUntil: 'domcontentloaded' })
 
   const projectName = 'Memory project scope'
-  await page.getByRole('button', { name: 'New project' }).click()
+  await page.locator('header').getByRole('button', { name: 'New project' }).click()
   const createProject = page.getByRole('dialog', { name: 'New project' })
   await createProject.getByLabel('Name').fill(projectName)
   await createProject.getByRole('button', { name: 'Create project' }).click()
@@ -209,7 +209,7 @@ test('injects recent auto-recall memory after reopen into an unrelated Agent tur
   })
   page = await app.restart()
 
-  await page.getByRole('button', { name: 'New project' }).click()
+  await page.locator('header').getByRole('button', { name: 'New project' }).click()
   const dialog = page.getByRole('dialog', { name: 'New project' })
   await dialog.getByLabel('Name').fill('Memory recall project')
   await dialog.getByRole('button', { name: 'Create project' }).click()

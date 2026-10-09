@@ -10,7 +10,7 @@ test('forks local and imported research and immediately continues through the re
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
   await app.configureSessionPackageDialogs()
-  await page.getByRole('button', { name: 'New project', exact: true }).click()
+  await page.locator('header').getByRole('button', { name: 'New project', exact: true }).click()
   const project = page.getByRole('dialog', { name: 'New project' })
   await project.getByLabel('Name').fill('Fork lifecycle')
   await project.getByRole('button', { name: 'Create project' }).click()
@@ -125,7 +125,7 @@ test('changes branch permissions before the first follow-up without changing sou
 }) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
-  await page.getByRole('button', { name: 'New project', exact: true }).click()
+  await page.locator('header').getByRole('button', { name: 'New project', exact: true }).click()
   const project = page.getByRole('dialog', { name: 'New project' })
   await project.getByLabel('Name').fill('Branch permissions')
   await project.getByRole('button', { name: 'Create project' }).click()

@@ -390,7 +390,7 @@ test('opens uploaded files from search using the existing file preview dialog', 
 }, testInfo) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
-  await page.getByRole('button', { name: 'New project', exact: true }).click()
+  await page.locator('header').getByRole('button', { name: 'New project', exact: true }).click()
   const create = page.getByRole('dialog', { name: 'New project' })
   await create.getByLabel('Name').fill('Search files')
   await create.getByRole('button', { name: 'Create project' }).click()
@@ -497,7 +497,7 @@ test('keeps saved Notebook output and structured file previews visible inside se
 }, testInfo) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
-  await page.getByRole('button', { name: 'New project', exact: true }).click()
+  await page.locator('header').getByRole('button', { name: 'New project', exact: true }).click()
   const create = page.getByRole('dialog', { name: 'New project' })
   await create.getByLabel('Name').fill('Search preview formats')
   await create.getByRole('button', { name: 'Create project' }).click()
@@ -694,7 +694,7 @@ test('uses the same preview and information tabs for generated files', async ({
 }, testInfo) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
-  await page.getByRole('button', { name: 'New project', exact: true }).click()
+  await page.locator('header').getByRole('button', { name: 'New project', exact: true }).click()
   const create = page.getByRole('dialog', { name: 'New project' })
   await create.getByLabel('Name').fill('Generated search previews')
   await create.getByRole('button', { name: 'Create project' }).click()

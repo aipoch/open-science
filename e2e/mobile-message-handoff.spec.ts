@@ -13,7 +13,9 @@ for (const queued of [false, true]) {
   }, testInfo) => {
     test.setTimeout(180_000)
     const initial = await app.completeOnboarding()
-    await expect(initial.getByRole('button', { name: /^(New project|新建项目)$/ })).toBeVisible()
+    await expect(
+      initial.locator('header').getByRole('button', { name: /^(New project|新建项目)$/ })
+    ).toBeVisible()
     const desktop = await app.configureFakeAgent()
     await desktop.evaluate(() =>
       window.api.settings.setSessionDetailsModel({ configuration: { mode: 'disabled' } })

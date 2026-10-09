@@ -11,7 +11,7 @@ test('releases follow-output when the reader scrolls up mid-stream', async ({ ap
   let page = await app.completeOnboarding()
   page = await app.configureFakeAgent()
 
-  await page.getByRole('button', { name: 'New project' }).click()
+  await page.locator('header').getByRole('button', { name: 'New project' }).click()
   const dialog = page.getByRole('dialog', { name: 'New project' })
   await dialog.getByLabel('Name').fill(PROJECT_NAME)
   await dialog.getByRole('button', { name: 'Create project' }).click()

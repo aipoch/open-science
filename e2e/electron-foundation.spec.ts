@@ -99,7 +99,7 @@ test('localizes CSL validation failures across the desktop bridge', async ({ app
 })
 
 const createProject = async (page: Page, name: string): Promise<void> => {
-  await page.getByRole('button', { name: 'New project' }).click()
+  await page.locator('header').getByRole('button', { name: 'New project' }).click()
   const dialog = page.getByRole('dialog', { name: 'New project' })
   await dialog.getByLabel('Name').fill(name)
   await dialog.getByLabel('Description').fill('Created through the real Electron IPC boundary.')
@@ -179,7 +179,9 @@ test('deletes a project through confirmation and keeps it absent after relaunch'
 
   const projects = page.getByRole('region', { name: 'Projects' })
   await expect(projects.getByRole('button', { name: PROJECT_NAME, exact: true })).toHaveCount(0)
-  await expect(projects).toContainText('No projects yet. Create one to get started.')
+  await expect(
+    projects.getByRole('heading', { name: 'Create a project, start a conversation' })
+  ).toBeVisible()
 
   page = await app.restart()
   await expect(
