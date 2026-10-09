@@ -1,6 +1,5 @@
 {
   "ownerPaths": [
-    "docs/encori-connector.md",
     "src/main/connectors/descriptors/encori.ts",
     "src/main/connectors/descriptors/encori.test.ts",
     "src/main/connectors/encori/client.ts",
