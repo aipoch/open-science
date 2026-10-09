@@ -4,16 +4,13 @@ import { join } from 'node:path'
 import { zipSync, strToU8 } from 'fflate'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ParserEngine } from '../engine'
-import { ENCORI_DEGRADOME_TOOL, ENCORI_TOOLS } from './encori'
+import { ENCORI_TOOLS } from './encori'
 import { defaultFileDurability } from '../../storage/file-durability'
 const fetchMock = vi.hoisted(() => vi.fn())
 vi.mock('../../skills/net-fetch', () => ({ netFetchStandard: fetchMock }))
 let directory: string
 const call = (id: string, args: Record<string, unknown>): Promise<Record<string, unknown>> => {
-  const descriptor =
-    id === ENCORI_DEGRADOME_TOOL.id
-      ? ENCORI_DEGRADOME_TOOL
-      : ENCORI_TOOLS.find((tool) => tool.id === id)!
+  const descriptor = ENCORI_TOOLS.find((tool) => tool.id === id)!
   return new ParserEngine({ retries: 0 }).call(descriptor, args, {}) as Promise<
     Record<string, unknown>
   >
@@ -174,48 +171,6 @@ describe('ENCORI official response contracts', () => {
     })
     expect(fetchMock).not.toHaveBeenCalled()
   })
-  it('maps degradome hg19 unchanged in one official query', async () => {
-    fetchMock.mockResolvedValue(new Response('geneName\tdegraExpNum\nTP53\t1\n'))
-    const args = {
-      assembly: 'hg19',
-      gene_type: 'mRNA',
-      mirna: 'all',
-      degra_exp_num: 1,
-      target: 'TP53',
-      cell_type: 'all',
-      output_dir: directory
-    }
-    await call('query_degradome_events', args)
-    const url = new URL(fetchMock.mock.calls[0][0])
-    expect(url.pathname).toBe('/encori/api/degradomeRNA/')
-    expect(url.searchParams.get('assembly')).toBe('hg19')
-    expect(url.searchParams.get('miRNA')).toBe('all')
-    expect(fetchMock).toHaveBeenCalledTimes(1)
-  })
-  it.each(['hg19', 'mm10'])(
-    'retains the internal degradome %s provider failure without saving data',
-    async (assembly) => {
-      fetchMock.mockResolvedValue(
-        new Response('<br />\n<b>Warning</b>: fopen(): missing file\nUnable to open file!')
-      )
-      const result = await call('query_degradome_events', {
-        assembly,
-        gene_type: 'mRNA',
-        mirna: 'all',
-        degra_exp_num: 1,
-        target: assembly === 'hg19' ? 'TP53' : 'Trp53',
-        cell_type: 'all',
-        output_dir: directory
-      })
-      expect(result).toMatchObject({
-        ok: false,
-        error: { code: 'upstream_response_error', status_code: 200, retryable: false }
-      })
-      expect(fetchMock).toHaveBeenCalledOnce()
-      expect(new URL(fetchMock.mock.calls[0][0]).searchParams.get('assembly')).toBe(assembly)
-      expect(await readdir(directory)).toEqual([])
-    }
-  )
   it('retains official motif order and independent sequence fields', async () => {
     fetchMock.mockResolvedValue(
       new Response('Rank\tQueryMotif\tIdentifiedMotif\n2\tUGCAUG\tTGCATG\n1\tUGCAUG\tOTHER\n')

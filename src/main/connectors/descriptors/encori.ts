@@ -49,31 +49,6 @@ const targetMapping = {
   target: 'target',
   cell_type: 'cellType'
 }
-// Retained for provider-contract tests only. Restore public registration after
-// a successful official response; current hg19/mm10 requests fail upstream.
-export const ENCORI_DEGRADOME_TOOL: ToolDescriptor = table(
-  'query_degradome_events',
-  'degradomeRNA',
-  'Query official degradome cleavage evidence. Human assembly is hg19 as supported by the supplied connector; hg38 is never silently converted. Use mirna=all rather than enumerating miRNAs.',
-  {
-    assembly: choice('hg19', 'mm10'),
-    gene_type: choice('mRNA', 'ncRNA'),
-    mirna: text,
-    degra_exp_num: integer(1),
-    target: text,
-    cell_type: text
-  },
-  { ...targetMapping, mirna: 'miRNA', degra_exp_num: 'degraExpNum' },
-  {
-    assembly: 'hg19',
-    gene_type: 'mRNA',
-    mirna: 'all',
-    degra_exp_num: 1,
-    target: 'TP53',
-    cell_type: 'all'
-  }
-)
-
 export const ENCORI_TOOLS: ToolDescriptor[] = [
   table(
     'query_mirna_targets',
