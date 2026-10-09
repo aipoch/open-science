@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -9,7 +9,7 @@ import {
   NotebookDependencyAnalyzer,
   type NotebookDependencyInterpreter
 } from './dependency-analysis'
-import { analyzePythonSources } from './dependency-analysis-python'
+import { analyzePythonNotebookSource, analyzePythonSources } from './dependency-analysis-python'
 import { analyzeRNotebookSource, analyzeRSources } from './dependency-analysis-r'
 import { projectNotebookDependencies } from './dependency-projection'
 import { projectNotebookFileContext, type FileContextEntry } from './dependency-file-context'
@@ -367,6 +367,266 @@ it.each([
   expect(projection.stalenessByRunId['run-3'].state).toBe('unknown')
   expect(projection.dependenciesByRunId?.['run-3']).toBeUndefined()
 })
+
+describe('Python lexical callback helper bindings', () => {
+  const prelude =
+    'import numpy as np\nfrom scipy.ndimage import generic_filter\nvalues = np.array([1., 2., 3.])\nPENALTY_PATH = "penalty-a.txt"\nFROZEN_SCALE = 1.0'
+  const globalHelper = 'def penalty_helper(value):\n    return float(open(PENALTY_PATH).read())'
+
+  it.each([
+    ['local definition', '    def penalty_helper(value):\n        return value'],
+    [
+      'conditional definition',
+      '    if True:\n        def penalty_helper(value):\n            return value'
+    ],
+    [
+      'local alias',
+      '    def penalty_helper(value):\n        return value\n    local_helper = penalty_helper'
+    ]
+  ])('excludes the unrelated global path for a lexical %s', async (label, local) => {
+    const target = label === 'local alias' ? 'local_helper' : 'penalty_helper'
+    const callback = `def callback(window):\n${local}\n    return ${target}(FROZEN_SCALE)`
+    const [facts] = await analyzePythonSources([callback])
+    const method = facts.typeSummaries?.find((item) => item.name === 'python-function:callback')
+      ?.methods[0]
+    expect(method?.usedNames).toContain('FROZEN_SCALE')
+    expect(method?.usedNames ?? []).not.toContain('penalty_helper')
+    expect(method?.effect).toBe('unknown')
+
+    const projection = await projectScripts(
+      'python',
+      [
+        prelude,
+        `${globalHelper}\n${callback}`,
+        'result = generic_filter(values, function=callback, size=3)',
+        'PENALTY_PATH = "penalty-b.txt"',
+        'FROZEN_SCALE = 2.0'
+      ],
+      'notebook-lexical-local-helper-'
+    )
+    const pathChange = projection.invalidatedByRunId['run-4']?.find(
+      (item) => item.runId === 'run-3'
+    )
+    expect(pathChange?.names ?? []).not.toContain('PENALTY_PATH')
+    expect(projection.invalidatedByRunId['run-5']).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          runId: 'run-3',
+          state: 'unknown',
+          names: expect.arrayContaining(['FROZEN_SCALE'])
+        })
+      ])
+    )
+    expect(projection.stalenessByRunId['run-3'].state).toBe('unknown')
+    expect(projection.dependenciesByRunId?.['run-3']).toBeUndefined()
+  })
+
+  it.each([
+    ['ordinary global helper', ''],
+    [
+      'nested class method',
+      '    class Inner:\n        def penalty_helper(self):\n            return 1.0\n'
+    ],
+    [
+      'nested class async method',
+      '    class Inner:\n        async def penalty_helper(self):\n            return 1.0\n'
+    ],
+    ['nested class attribute', '    class Inner:\n        penalty_helper = 1.0\n'],
+    [
+      'class load beside an enclosing local helper',
+      '    def penalty_helper(value):\n        return value\n    class Inner:\n        penalty_helper = penalty_helper(1.0)\n'
+    ]
+  ])('retains the real global path beside a lexical %s', async (_, declaration) => {
+    const projection = await projectScripts(
+      'python',
+      [
+        prelude,
+        `${globalHelper}\ndef callback(window):\n${declaration}    return penalty_helper(window)`,
+        'result = generic_filter(values, function=callback, size=3)',
+        'PENALTY_PATH = "penalty-b.txt"'
+      ],
+      'notebook-lexical-global-helper-'
+    )
+    expect(projection.invalidatedByRunId['run-4']).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          runId: 'run-3',
+          state: 'unknown',
+          names: expect.arrayContaining(['PENALTY_PATH'])
+        })
+      ])
+    )
+    expect(projection.stalenessByRunId['run-3'].state).toBe('unknown')
+    expect(projection.dependenciesByRunId?.['run-3']).toBeUndefined()
+  })
+})
+
+it('retains a kinetic model gain without capturing its shadowed global reader', async () => {
+  const callback =
+    'def model(x, Vm, K):\n    def substrate_fraction(x, k):\n        return x / (k + x)\n    return enzyme_gain * Vm * substrate_fraction(x, K)'
+  const [facts] = await analyzePythonSources([callback])
+  const method = facts.typeSummaries?.find((item) => item.name === 'python-function:model')
+    ?.methods[0]
+  expect(method?.usedNames).toContain('enzyme_gain')
+  expect(method?.usedNames ?? []).not.toContain('substrate_fraction')
+
+  const projection = await projectScripts(
+    'python',
+    [
+      'import numpy as np\nfrom scipy.optimize import curve_fit\nx = np.array([0.1, 0.2, 1.])\ny = np.array([1., 2., 3.])\nenzyme_gain = 1.0\nUNRELATED_PATH = "unused-a.txt"',
+      `def substrate_fraction(x, k):\n    return float(open(UNRELATED_PATH).read())\n${callback}`,
+      'parameters, covariance = curve_fit(model, x, y)',
+      'UNRELATED_PATH = "unused-b.txt"',
+      'enzyme_gain = 2.0'
+    ],
+    'notebook-lexical-kinetic-model-'
+  )
+  const pathChange = projection.invalidatedByRunId['run-4']?.find((item) => item.runId === 'run-3')
+  expect(pathChange?.names ?? []).not.toContain('UNRELATED_PATH')
+  expect(projection.invalidatedByRunId['run-5']).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ runId: 'run-3', state: 'unknown', names: ['enzyme_gain'] })
+    ])
+  )
+  expect(projection.stalenessByRunId['run-3']).toMatchObject({
+    state: 'unknown',
+    reasons: expect.arrayContaining([
+      'opaque-call',
+      'scoped-opaque-call',
+      'opaque-mutation',
+      'external-state'
+    ])
+  })
+  expect(projection.dependenciesByRunId?.['run-3']).toBeUndefined()
+})
+
+it('keeps a robust loss local class separate from its calibration dependency', async () => {
+  const callback = [
+    'def custom_loss(z):',
+    '    class LossMetadata:',
+    '        def calibrate(self):',
+    '            return 1.0',
+    '    _ = LossMetadata',
+    '    c = robust_scale * calibrate()',
+    '    def normalize(value):',
+    '        return value / (c * c)',
+    '    t = 1.0 + normalize(z)',
+    '    return np.array([2 * c * c * (np.sqrt(t) - 1), t ** -0.5, -0.5 / (c * c) * t ** -1.5])'
+  ].join('\n')
+  const [facts] = await analyzePythonSources([callback])
+  const method = facts.typeSummaries?.find((item) => item.name === 'python-function:custom_loss')
+    ?.methods[0]
+  expect(method?.effect).toBe('unknown')
+  expect(method?.usedNames).toEqual(['calibrate', 'np', 'robust_scale'])
+
+  const projection = await projectScripts(
+    'python',
+    [
+      'import numpy as np\nfrom scipy.optimize import least_squares\nx = np.array([1., 2.])\ny = np.array([2., 4.])\np0 = np.array([0.])\nrobust_scale = 0.25\nLossMetadata = 1.0\nCALIBRATION_PATH = "calibration-a.txt"\nUNRELATED_PATH = "unused-a.txt"',
+      `def calibrate():\n    return float(open(CALIBRATION_PATH).read())\ndef normalize(value):\n    return float(open(UNRELATED_PATH).read())\ndef residuals(p):\n    return p[0] * x - y\n${callback}`,
+      'fit = least_squares(residuals, p0, loss=custom_loss)',
+      'LossMetadata = object',
+      'UNRELATED_PATH = "unused-b.txt"',
+      'CALIBRATION_PATH = "calibration-b.txt"',
+      'robust_scale = 1.0'
+    ],
+    'notebook-lexical-robust-loss-'
+  )
+  for (const [runId, name] of [
+    ['run-4', 'LossMetadata'],
+    ['run-5', 'UNRELATED_PATH']
+  ]) {
+    const invalidation = projection.invalidatedByRunId[runId]?.find(
+      (item) => item.runId === 'run-3'
+    )
+    expect(invalidation?.names ?? []).not.toContain(name)
+  }
+  for (const [runId, name] of [
+    ['run-6', 'CALIBRATION_PATH'],
+    ['run-7', 'robust_scale']
+  ]) {
+    expect(projection.invalidatedByRunId[runId]).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          runId: 'run-3',
+          state: 'unknown',
+          names: expect.arrayContaining([name])
+        })
+      ])
+    )
+  }
+  expect(projection.stalenessByRunId['run-3']).toMatchObject({
+    state: 'unknown',
+    reasons: expect.arrayContaining(['opaque-call', 'scoped-opaque-call', 'external-state'])
+  })
+  expect(projection.dependenciesByRunId?.['run-3']).toBeUndefined()
+})
+
+it.each(['nested definition', 'lambda'])(
+  'retains volcano roughness calibration from a callback local %s default',
+  async (shape) => {
+    const callback = [
+      'def relief_callback(window):',
+      '    class Metadata:',
+      '        def calibrate(self):',
+      '            return 1',
+      ...(shape === 'lambda'
+        ? ['    normalize = lambda value, scale=calibrate(): value * scale']
+        : ['    def normalize(value, scale=calibrate()):', '        return value * scale']),
+      '    w = np.asarray(window, dtype=np.float64)',
+      '    mu = float(np.mean(w))',
+      '    M = float(np.mean(np.abs(w - mu)))',
+      '    return float(normalize(M) * GAIN)'
+    ].join('\n')
+    const projection = await projectScripts(
+      'python',
+      [
+        'import numpy as np\nfrom scipy.ndimage import generic_filter\nterrain = np.array([[100., 101.], [99., 102.]])\nGAIN = 1.0\nCALIBRATION_PATH = "inputs/calibration-low.txt"\nUNRELATED_PATH = "inputs/unrelated.txt"\ncalibration_events = []',
+        [
+          'def calibrate():',
+          '    with open(CALIBRATION_PATH, "r") as f:',
+          '        cal_val = float(f.read().strip())',
+          '    calibration_events.append((CALIBRATION_PATH, float(cal_val)))',
+          '    return float(cal_val)',
+          'def normalize(*values):',
+          '    with open(UNRELATED_PATH, "r") as f:',
+          '        _ = f.read()',
+          '    return None',
+          callback
+        ].join('\n'),
+        'roughness = generic_filter(terrain, function=relief_callback, size=3, mode="reflect", origin=0, output=np.float64)',
+        'GAIN = 1.5',
+        'CALIBRATION_PATH = "inputs/calibration-high.txt"',
+        'UNRELATED_PATH = "inputs/another-unrelated.txt"'
+      ],
+      'notebook-volcano-default-calibration-'
+    )
+
+    const unrelatedChange = projection.invalidatedByRunId['run-6']?.find(
+      (item) => item.runId === 'run-3'
+    )
+    expect(unrelatedChange?.names ?? []).not.toContain('UNRELATED_PATH')
+    expect(projection.stalenessByRunId['run-3']).toMatchObject({
+      state: 'unknown',
+      reasons: expect.arrayContaining(['opaque-call', 'scoped-opaque-call', 'external-state'])
+    })
+    expect(projection.dependenciesByRunId?.['run-3']).toBeUndefined()
+    for (const [runId, name] of [
+      ['run-4', 'GAIN'],
+      ['run-5', 'CALIBRATION_PATH']
+    ]) {
+      expect(projection.invalidatedByRunId[runId]).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            runId: 'run-3',
+            state: 'unknown',
+            names: expect.arrayContaining([name])
+          })
+        ])
+      )
+    }
+  }
+)
 
 it('propagates nonlinear least-squares parameters without certifying callback purity', async () => {
   const scripts = [
@@ -1387,6 +1647,229 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
     )
 
     expect(projection?.stalenessByRunId['run-1']).toMatchObject({ state: 'unknown' })
+  })
+
+  it('retains a readonly SQLite input through scientific cursor continuation and cache reload', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'notebook-sqlite-scientific-'))
+    temporaryRoots.push(storageRoot)
+    const scripts = [
+      'reference <- utils::read.csv("inputs/observations.csv")',
+      [
+        'import sqlite3',
+        'import pandas as pd',
+        'conn = sqlite3.connect("file:inputs/observations.sqlite?mode=ro", uri=True)',
+        'cur = conn.cursor()',
+        'cur.execute("SELECT row_id, Plant, uptake FROM observations ORDER BY row_id")',
+        'baseline_fetched = cur.fetchall()',
+        'baseline = pd.DataFrame(baseline_fetched, columns=["row_id", "Plant", "uptake"])',
+        'baseline.to_csv("outputs/baseline.csv", index=False)',
+        'cur.execute("SELECT Plant, COUNT(*), SUM(uptake), AVG(uptake) FROM observations GROUP BY Plant ORDER BY Plant")',
+        'baseline_summary = pd.DataFrame(cur.fetchall(), columns=["Plant", "n", "sum", "mean"])',
+        'baseline_summary.to_csv("outputs/baseline-summary.csv", index=False)',
+        'print("LIVE_IDS", id(conn), id(cur))',
+        'print(sorted(baseline_summary["n"].unique().tolist()))'
+      ].join('\n'),
+      [
+        'cur.execute("SELECT row_id, Plant, uptake FROM observations WHERE conc >= ? ORDER BY row_id", (500,))',
+        'changed_fetched = cur.fetchall()',
+        'changed = pd.DataFrame(changed_fetched, columns=["row_id", "Plant", "uptake"])',
+        'changed.to_csv("outputs/changed.csv", index=False)',
+        'cur.execute("SELECT Plant, COUNT(*), SUM(uptake), AVG(uptake) FROM observations WHERE conc >= ? GROUP BY Plant ORDER BY Plant", (500,))',
+        'changed_summary = pd.DataFrame(cur.fetchall(), columns=["Plant", "n", "sum", "mean"])',
+        'changed_summary.to_csv("outputs/changed-summary.csv", index=False)',
+        'print("LIVE_IDS", id(conn), id(cur))',
+        'print(sorted(changed_summary["n"].unique().tolist()))'
+      ].join('\n')
+    ]
+    const runs = scripts.map((script, index) => ({
+      ...completedRun(
+        `run-${index + 1}`,
+        `cell-${index + 1}`,
+        index === 0 ? 'r' : 'python',
+        script
+      ),
+      cwdBefore: storageRoot,
+      cwdAfter: storageRoot,
+      startedAt: index + 1,
+      endedAt: index + 1,
+      executionCount: index + 1
+    }))
+    const options = { storageRoot, repository: { readSessionRuns: async () => runs } }
+    const request = { projectId: 'default-project', sessionId: 'session-1' }
+    const analyzer = new NotebookDependencyAnalyzer(options)
+    const projection = await analyzer.project(request)
+    const contextRequest = {
+      ...request,
+      currentRunId: 'run-3',
+      language: 'python' as const,
+      environment: 'default-python',
+      kernelEpochId: 'epoch-1'
+    }
+    const beforeReload = await analyzer.sourceFileAccessContext(contextRequest)
+    const reloaded = new NotebookDependencyAnalyzer(options)
+    const context = await reloaded.sourceFileAccessContext(contextRequest)
+    const result = await analyzePythonNotebookSource(scripts[2]!, context)
+
+    expect(projection.dependenciesByRunId?.['run-3']).toContain('run-2')
+    expect(await reloaded.project(request)).toEqual(projection)
+    expect(context).toEqual(beforeReload)
+    expect(context?.pythonBindings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'conn',
+          qualifiedName: 'sqlite3.Connection',
+          filePath: 'inputs/observations.sqlite'
+        }),
+        expect.objectContaining({
+          name: 'cur',
+          qualifiedName: 'sqlite3.Cursor',
+          filePath: 'inputs/observations.sqlite'
+        })
+      ])
+    )
+    expect(
+      normalizeNotebookSourceFileAccess('python', result.facts, result.fileAccess, context)
+    ).toMatchObject({
+      reads: ['inputs/observations.sqlite'],
+      writes: ['outputs/changed-summary.csv', 'outputs/changed.csv'],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+    expect(result.facts).toMatchObject({
+      state: 'unknown',
+      reasons: expect.arrayContaining(['external-state'])
+    })
+  })
+
+  describe('SQLite scientific context boundaries', () => {
+    const setup = [
+      'import sqlite3',
+      'conn = sqlite3.connect("file:inputs/observations.sqlite?mode=ro", uri=True)',
+      'cur = conn.cursor()',
+      'cur.execute("SELECT Plant, COUNT(*), SUM(uptake), AVG(uptake) FROM observations GROUP BY Plant ORDER BY Plant")',
+      'baseline_rows = cur.fetchall()',
+      'import pandas as pd',
+      'summary = pd.DataFrame(baseline_rows, columns=["Plant", "n", "uptake_sum", "uptake_mean"])',
+      'print(sorted(summary["n"].unique().tolist()))'
+    ].join('\n')
+    const select =
+      'cur.execute("SELECT row_id, uptake FROM observations WHERE conc >= ? ORDER BY row_id", (500,))\nchanged_rows = cur.fetchall()'
+    const owner = async (
+      producer = setup
+    ): Promise<{
+      storageRoot: string
+      runs: NotebookRunRecord[]
+      options: ConstructorParameters<typeof NotebookDependencyAnalyzer>[0]
+      contextRequest: Parameters<NotebookDependencyAnalyzer['sourceFileAccessContext']>[0]
+      analyzer: NotebookDependencyAnalyzer
+    }> => {
+      const storageRoot = await mkdtemp(join(tmpdir(), 'notebook-sqlite-context-boundary-'))
+      temporaryRoots.push(storageRoot)
+      const runs: NotebookRunRecord[] = [producer, select].map((script, index) => ({
+        ...completedRun(`run-${index + 1}`, `cell-${index + 1}`, 'python', script),
+        cwdBefore: storageRoot,
+        cwdAfter: storageRoot,
+        startedAt: index + 1,
+        endedAt: index + 1,
+        executionCount: index + 1
+      }))
+      const options = { storageRoot, repository: { readSessionRuns: async () => runs } }
+      const request = { projectId: 'default-project', sessionId: 'session-1' }
+      const contextRequest = {
+        ...request,
+        currentRunId: 'run-2',
+        language: 'python' as const,
+        environment: 'default-python',
+        kernelEpochId: 'epoch-1'
+      }
+      const analyzer = new NotebookDependencyAnalyzer(options)
+      await analyzer.project(request)
+      return { storageRoot, runs, options, contextRequest, analyzer }
+    }
+
+    it.each(['missing current run', 'missing current cwd', 'opaque snapshot helper'])(
+      'discards the relative SQLite input after %s',
+      async (barrier) => {
+        const source =
+          barrier === 'opaque snapshot helper'
+            ? `${setup}\ndef snapshot():\n    return inspect_runtime()\nbaseline_state = snapshot()`
+            : setup
+        const { runs, options, contextRequest } = await owner(source)
+        if (barrier === 'missing current run') runs.pop()
+        if (barrier === 'missing current cwd') runs[1]!.cwdBefore = undefined
+        const context = await new NotebookDependencyAnalyzer(options).sourceFileAccessContext(
+          contextRequest
+        )
+        const result = await analyzePythonNotebookSource(select, context)
+
+        expect(
+          context?.pythonBindings?.some(({ filePath }) => filePath !== undefined) ?? false
+        ).toBe(false)
+        expect(
+          normalizeNotebookSourceFileAccess('python', result.facts, result.fileAccess, context)
+        ).toMatchObject({
+          reads: [],
+          readState: 'partial'
+        })
+      }
+    )
+
+    it.each(['malformed SQLite path', 'obsolete analyzer version'])(
+      'rebuilds the scientific context after a cached %s',
+      async (corruption) => {
+        const { storageRoot, options, contextRequest, analyzer } = await owner()
+        const expected = await analyzer.sourceFileAccessContext(contextRequest)
+        const cachePath = join(
+          storageRoot,
+          'notebooks/default-project/session-1/cache/dependency-analysis.json'
+        )
+        const cache = JSON.parse(await readFile(cachePath, 'utf8')) as {
+          analyzerVersion: number
+          runs: Record<
+            string,
+            {
+              fileContext: {
+                staticStrings: Array<{ name: string; value: string }>
+                pythonBindings: Array<{
+                  name: string
+                  qualifiedName: string
+                  kind: string
+                  filePath?: unknown
+                }>
+              }
+            }
+          >
+        }
+        const cachedContext = cache.runs['run-1'].fileContext
+        // This otherwise valid marker exposes silent acceptance of the corrupted cache.
+        cachedContext.staticStrings.push({ name: 'cache_only', value: 'poison.csv' })
+        if (corruption === 'malformed SQLite path') {
+          cachedContext.pythonBindings.push({
+            name: 'cache_cursor',
+            qualifiedName: 'sqlite3.Cursor',
+            kind: 'object',
+            filePath: []
+          })
+        } else {
+          cache.analyzerVersion -= 1
+        }
+        await writeFile(cachePath, JSON.stringify(cache))
+
+        const context = await new NotebookDependencyAnalyzer(options).sourceFileAccessContext(
+          contextRequest
+        )
+        expect(context).toEqual(expected)
+        const result = await analyzePythonNotebookSource(select, context)
+        expect(
+          normalizeNotebookSourceFileAccess('python', result.facts, result.fileAccess, context)
+        ).toMatchObject({
+          reads: ['inputs/observations.sqlite'],
+          readState: 'partial',
+          externalState: 'partial'
+        })
+      }
+    )
   })
 
   it('classifies common pandas value-file readers as data frame reads', async () => {

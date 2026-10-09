@@ -688,6 +688,247 @@ describe('SciPy Welch callback lineage', () => {
   })
 })
 
+describe('SciPy named callback container candidates', () => {
+  // Reduced from the executed LakeHuron callback list; no scientific execution.
+  const setup = [
+    'from scipy.integrate import solve_ivp',
+    'THRESHOLD_PATH = "inputs/threshold-low.txt"',
+    'def rhs(t, y):',
+    '    return [1.0]',
+    'def threshold():',
+    '    with open(THRESHOLD_PATH) as handle:',
+    '        return float(handle.read())',
+    'def terminal_event(t, y):',
+    '    class EventMetadata:',
+    '        def threshold(self, dummy):',
+    '            return dummy',
+    '    _ = EventMetadata',
+    '    return y[0] - threshold()',
+    'terminal_event.terminal = True',
+    'terminal_event.direction = 1'
+  ].join('\n')
+  const solve = 'solution = solve_ivp(rhs, (0, 97), [0.0], events=event_callbacks)'
+  const rebindPath = 'THRESHOLD_PATH = "inputs/threshold-high.txt"'
+  const capturesPath = (
+    projection: Awaited<ReturnType<typeof projectPythonScripts>>,
+    solverRunId: string,
+    lastRunId: string
+  ): boolean =>
+    (projection.invalidatedByRunId[lastRunId] ?? []).some(
+      (item) => item.runId === solverRunId && item.names.includes('THRESHOLD_PATH')
+    )
+
+  it.each(['[terminal_event]', '(terminal_event,)'])(
+    'retains nested helper captures from a named literal %s without certification',
+    async (members) => {
+      const binding = 'event_callbacks = ' + members
+      const projection = await projectPythonScripts([setup, binding, solve, rebindPath])
+      expect(capturesPath(projection, 'run-3', 'run-4')).toBe(true)
+      expect(projection.stalenessByRunId['run-3']).toMatchObject({ state: 'unknown' })
+      const combined = [setup, binding, solve].join('\n')
+      const [facts] = await analyzePythonSources([combined])
+      expect(facts.typeBindings ?? []).not.toEqual(
+        expect.arrayContaining([expect.objectContaining({ target: 'solution' })])
+      )
+      expect(await analyzeNotebookSourceFileAccess('python', combined)).toMatchObject({
+        readState: 'partial',
+        writeState: 'partial',
+        externalState: 'partial'
+      })
+    }
+  )
+
+  it('supports a fresh function and container in one source', async () => {
+    const projection = await projectPythonScripts([
+      setup + '\nevent_callbacks = [terminal_event]',
+      solve,
+      rebindPath
+    ])
+    expect(capturesPath(projection, 'run-2', 'run-3')).toBe(true)
+  })
+
+  it.each(['terminal_event.terminal = False', 'terminal_event.direction = -1'])(
+    'preserves function captures through metadata write %s',
+    async (metadata) => {
+      const projection = await projectPythonScripts([
+        setup,
+        'event_callbacks = [terminal_event]',
+        metadata,
+        solve,
+        rebindPath
+      ])
+      expect(capturesPath(projection, 'run-4', 'run-5')).toBe(true)
+      expect(projection.stalenessByRunId['run-4']).toMatchObject({ state: 'unknown' })
+    }
+  )
+
+  it.each([
+    'event_callbacks.append(rhs)',
+    'alias = event_callbacks\nalias.append(rhs)',
+    'event_callbacks = other_events',
+    'terminal_event = rhs',
+    'alias = terminal_event',
+    'terminal_event.__code__ = rhs.__code__',
+    'terminal_event.__defaults__ = (0,)',
+    'unknown_mutator(event_callbacks)',
+    'unknown_mutator(terminal_event)',
+    'exec(source)',
+    'if flag:\n    event_callbacks = [rhs]'
+  ])('discards untrustworthy candidate history after %s', async (operation) => {
+    const projection = await projectPythonScripts([
+      setup,
+      'event_callbacks = [terminal_event]',
+      operation,
+      solve,
+      rebindPath
+    ])
+    expect(capturesPath(projection, 'run-4', 'run-5')).toBe(false)
+    expect(projection.stalenessByRunId['run-4']).toMatchObject({ state: 'unknown' })
+  })
+
+  it.each([
+    ['list opaque call', '[terminal_event]', '', 'unknown_mutator(event_callbacks)'],
+    ['tuple opaque call', '(terminal_event,)', '', 'unknown_mutator(event_callbacks)'],
+    [
+      'list mutating helper',
+      '[terminal_event]',
+      '\ndef replace_event(events):\n    events[0] = rhs',
+      'replace_event(event_callbacks)'
+    ],
+    [
+      'list zero-argument mutating helper',
+      '[terminal_event]',
+      '\ndef replace_event():\n    event_callbacks[0] = rhs',
+      'replace_event()'
+    ]
+  ])(
+    'discards a named candidate after same-cell exposure: %s',
+    async (_description, members, helper, operation) => {
+      const projection = await projectPythonScripts([
+        setup + helper,
+        'event_callbacks = ' + members,
+        operation + '\n' + solve,
+        rebindPath
+      ])
+      expect(capturesPath(projection, 'run-3', 'run-4')).toBe(false)
+      expect(projection.stalenessByRunId['run-3']).toMatchObject({ state: 'unknown' })
+    }
+  )
+
+  it.each(['same', 'prior'])(
+    'discards a candidate after a %s-cell dynamic namespace helper',
+    async (boundary) => {
+      const scripts = [
+        setup + '\nSOURCE = "event_callbacks.clear()"\ndef replace_event():\n    exec(SOURCE)',
+        'event_callbacks = [terminal_event]',
+        ...(boundary === 'same' ? ['replace_event()\n' + solve] : ['replace_event()', solve]),
+        rebindPath
+      ]
+      const projection = await projectPythonScripts(scripts)
+      expect(capturesPath(projection, 'run-' + (scripts.length - 1), 'run-' + scripts.length)).toBe(
+        false
+      )
+      expect(projection.stalenessByRunId['run-' + (scripts.length - 1)]).toMatchObject({
+        state: 'unknown'
+      })
+    }
+  )
+
+  it('discards a candidate when a nested solver argument helper mutates its global list', async () => {
+    const projection = await projectPythonScripts([
+      setup + '\ndef replace_event():\n    event_callbacks[0] = rhs\n    return [0.0]',
+      'event_callbacks = [terminal_event]',
+      solve.replace('[0.0]', 'replace_event()'),
+      rebindPath
+    ])
+    expect(capturesPath(projection, 'run-3', 'run-4')).toBe(false)
+    expect(projection.stalenessByRunId['run-3']).toMatchObject({ state: 'unknown' })
+  })
+
+  it('discards a candidate when a nested solver argument helper changes its namespace', async () => {
+    const projection = await projectPythonScripts([
+      setup +
+        '\nSOURCE = "event_callbacks.clear()"\ndef replace_event():\n    exec(SOURCE)\n    return [0.0]',
+      'event_callbacks = [terminal_event]',
+      solve.replace('[0.0]', 'replace_event()'),
+      rebindPath
+    ])
+    expect(capturesPath(projection, 'run-3', 'run-4')).toBe(false)
+    expect(projection.stalenessByRunId['run-3']).toMatchObject({ state: 'unknown' })
+  })
+
+  it.each([
+    'event_callbacks = [terminal_event]\nterminal_event = rhs',
+    'if flag:\n    event_callbacks = [terminal_event]',
+    'event_callbacks = [entry for entry in (terminal_event,)]',
+    'event_callbacks = {"event": terminal_event}'
+  ])('does not invent a captured identity for %s', async (binding) => {
+    const projection = await projectPythonScripts([setup, binding, solve, rebindPath])
+    expect(capturesPath(projection, 'run-3', 'run-4')).toBe(false)
+  })
+
+  it.each([
+    'event_callbacks = [terminal_event]',
+    'def late_event(t, y):\n    return y[0] - threshold()\nevent_callbacks = [late_event]'
+  ])('does not use a later container assignment for an earlier solver call: %s', async (later) => {
+    for (const earlier of [
+      solve,
+      'def preview(dummy=solve_ivp(rhs, (0, 97), [0.0], events=event_callbacks)):\n    pass',
+      'if flag:\n    ' + solve
+    ]) {
+      const projection = await projectPythonScripts([
+        setup,
+        'event_callbacks = [rhs]',
+        earlier + '\n' + later,
+        rebindPath
+      ])
+      expect(capturesPath(projection, 'run-3', 'run-4')).toBe(false)
+    }
+    const firstSource = await projectPythonScripts([
+      setup + '\n' + solve + '\n' + later,
+      rebindPath
+    ])
+    expect(capturesPath(firstSource, 'run-1', 'run-2')).toBe(false)
+  })
+
+  it('expands only a bare named container, preserving direct inline callback handling', async () => {
+    for (const argument of ['event_callbacks.pop', '[event_callbacks]']) {
+      const projection = await projectPythonScripts([
+        setup,
+        'event_callbacks = [terminal_event]',
+        solve.replace('events=event_callbacks', 'events=' + argument),
+        rebindPath
+      ])
+      expect(capturesPath(projection, 'run-3', 'run-4')).toBe(false)
+    }
+    const inline = await projectPythonScripts([
+      setup,
+      solve.replace('events=event_callbacks', 'events=[terminal_event]'),
+      rebindPath
+    ])
+    expect(capturesPath(inline, 'run-2', 'run-3')).toBe(true)
+  })
+
+  it.each(['failed', 'epoch', 'environment'] as const)(
+    'does not carry a candidate across an %s boundary',
+    async (boundary) => {
+      const scripts = [setup, 'event_callbacks = [terminal_event]', solve, rebindPath]
+      const facts = await analyzePythonSources(scripts)
+      const runs = scripts.map((script, index) => ({
+        run: {
+          ...run(script, index + 1),
+          ...(boundary === 'failed' && index === 1 ? { status: 'failed' as const } : {}),
+          ...(boundary === 'epoch' && index >= 2 ? { kernelEpochId: 'other-epoch' } : {}),
+          ...(boundary === 'environment' && index >= 2 ? { environment: 'other-python' } : {})
+        },
+        facts: facts[index]
+      }))
+      const projection = projectNotebookDependencies(runs)
+      expect(capturesPath(projection, 'run-3', 'run-4')).toBe(false)
+    }
+  )
+})
+
 // Reduced from an executed six-subject Indometh elimination workflow.
 // Original source SHA256: 3b8c16ad5e1374f28b3af10b7c98bd8664960f297599f8cbb491448900fe8e56.
 // https://docs.scipy.org/doc/scipy/reference/generated/scipy.integrate.solve_ivp.html
@@ -1291,4 +1532,606 @@ fraction_reader = _read_fraction`
       expect(after.dependenciesByRunId?.['run-4']).toBeUndefined()
     }
   })
+})
+
+describe('lambda creation default captures', () => {
+  const callback = (header: string): string =>
+    [
+      'def callback(window):',
+      '    normalizer = ' + header,
+      '    return normalizer(window[0])'
+    ].join('\n')
+
+  it.each([
+    ['positional', 'lambda value, scale=calibrate(): value * scale + DEFERRED_BODY'],
+    ['keyword-only', 'lambda value, *, scale=calibrate(): value * scale + DEFERRED_BODY']
+  ])(
+    'retains %s defaults without traversing deferred parameters or body',
+    async (_name, header) => {
+      const [facts] = await analyzePythonSources([callback(header)])
+      const method = facts.typeSummaries?.find((item) => item.name === 'python-function:callback')
+        ?.methods[0]
+      expect(method?.effect).toBe('unknown')
+      expect(method?.usedNames).toEqual(['calibrate'])
+    }
+  )
+
+  it('retains the enclosing load when a lambda parameter has the same name', async () => {
+    const [facts] = await analyzePythonSources([callback('lambda GAIN=GAIN: GAIN + DEFERRED_BODY')])
+    const method = facts.typeSummaries?.find((item) => item.name === 'python-function:callback')
+      ?.methods[0]
+    expect(method?.effect).toBe('unknown')
+    expect(method?.usedNames).toEqual(['GAIN'])
+  })
+
+  it('keeps lambda-local normalization separate from the unrelated global decoy', async () => {
+    const [facts] = await analyzePythonSources([
+      [
+        'def normalize(value):',
+        '    return DECOY_FILE',
+        'def callback(window):',
+        '    normalize = lambda value, scale=calibrate(): value * scale',
+        '    return normalize(window[0])'
+      ].join('\n')
+    ])
+    const method = facts.typeSummaries?.find((item) => item.name === 'python-function:callback')
+      ?.methods[0]
+    expect(method?.effect).toBe('unknown')
+    expect(method?.usedNames).toEqual(['calibrate'])
+  })
+
+  it.each([
+    [
+      'parameter',
+      'def callback(calibrate, window):\n    normalizer = lambda value, scale=calibrate(): value * scale\n    return normalizer(window[0])'
+    ],
+    [
+      'local helper',
+      'def callback(window):\n    def calibrate():\n        return DEFERRED_HELPER_BODY\n    normalizer = lambda value, scale=calibrate(): value * scale\n    return normalizer(window[0])'
+    ]
+  ])('respects an enclosing %s that shadows a global helper', async (_name, source) => {
+    const [facts] = await analyzePythonSources([source])
+    const method = facts.typeSummaries?.find((item) => item.name === 'python-function:callback')
+      ?.methods[0]
+    expect(method?.effect).toBe('unknown')
+    expect(method?.usedNames).toEqual([])
+  })
+
+  it('does not certify a shadowed builtin invoked by a lambda default', async () => {
+    const [facts] = await analyzePythonSources([
+      [
+        'def callback(window):',
+        '    float = replacement',
+        '    normalizer = lambda value, scale=float(GAIN): value * scale',
+        '    return normalizer(window[0])'
+      ].join('\n')
+    ])
+    const method = facts.typeSummaries?.find((item) => item.name === 'python-function:callback')
+      ?.methods[0]
+    expect(method?.effect).toBe('unknown')
+    expect(method?.usedNames).toEqual(['GAIN', 'replacement'])
+    expect(method?.safeCallNames).not.toContain('float')
+  })
+
+  it('retains default captures in a class method without its receiver or deferred lambda body', async () => {
+    const [facts] = await analyzePythonSources([
+      'class Sensor:\n    def apply(self, window):\n        normalizer = lambda value, scale=calibrate(): value * scale + DEFERRED_BODY\n        return normalizer(window[0])'
+    ])
+    const method = facts.typeSummaries
+      ?.find((item) => item.name === 'Sensor')
+      ?.methods.find((item) => item.name === 'apply')
+    expect(method?.effect).toBe('unknown')
+    expect(method?.usedNames).toEqual(['calibrate'])
+  })
+
+  it('keeps a lambda body deferred when no default executes it', async () => {
+    const [facts] = await analyzePythonSources([
+      'def callback(window):\n    deferred = lambda value: HIDDEN_BODY + value\n    return OUTER_CAPTURE'
+    ])
+    const method = facts.typeSummaries?.find((item) => item.name === 'python-function:callback')
+      ?.methods[0]
+    expect(method?.effect).toBe('unknown')
+    expect(method?.usedNames).toEqual(['OUTER_CAPTURE'])
+  })
+
+  it.each([
+    ['list', '[DEFERRED_READER() for calibrate in values]'],
+    ['set', '{DEFERRED_READER() for calibrate in values}'],
+    ['dict', '{calibrate: DEFERRED_READER() for calibrate in values}'],
+    ['generator', '(DEFERRED_READER() for calibrate in values)'],
+    ['nested', 'tuple([DEFERRED_READER() for calibrate in values])']
+  ])('leaves a %s default unmodeled without erasing other captures', async (_name, value) => {
+    const [facts] = await analyzePythonSources([
+      [
+        'def callback(window):',
+        '    scale = calibrate()',
+        '    normalizer = lambda value=' + value + ', gain=GAIN: value',
+        '    return scale * window[0]'
+      ].join('\n')
+    ])
+    const method = facts.typeSummaries?.find((item) => item.name === 'python-function:callback')
+      ?.methods[0]
+    expect(method?.effect).toBe('unknown')
+    expect(method?.usedNames).toEqual(['GAIN', 'calibrate'])
+  })
+
+  // The unchanged callback excerpt from the real four-cell map workflow.
+  it('retains the calibration helper in the observed map callback', async () => {
+    const [facts] = await analyzePythonSources([
+      [
+        'def relief_callback(window):',
+        '    call_counts["relief"] += 1',
+        '    normalize = lambda value, scale=calibrate(): value * scale',
+        '    return normalize(GAIN * np.mean(np.abs(window - np.mean(window))))'
+      ].join('\n')
+    ])
+    const method = facts.typeSummaries?.find(
+      (item) => item.name === 'python-function:relief_callback'
+    )?.methods[0]
+    expect(method?.effect).toBe('unknown')
+    expect(method?.usedNames).toEqual(['GAIN', 'calibrate', 'call_counts', 'np'])
+  })
+})
+
+// Reduced from an executed four-cell R/Python quakes notebook. These histories
+// test static capture semantics, not native callback counts or per-open lineage.
+// https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.binned_statistic.html
+describe('SciPy binned_statistic callback lineage', () => {
+  const setup = [
+    'import numpy as np',
+    'from scipy.stats import binned_statistic',
+    'CALIBRATION_PATH = "inputs/offset-low.txt"',
+    'DECOY_PATH = "inputs/unrelated.txt"',
+    'depth_arr = np.array([40., 100., 680.])',
+    'mag_arr = np.array([4., 5., 6.])',
+    'edges = np.array([0., 40., 100., 680.])'
+  ].join('\n')
+  const helpers = String.raw`def calibrate():
+    with open(CALIBRATION_PATH, "r") as handle:
+        return float(handle.read().strip())
+def bin_reducer(values):
+    return float(np.median(values) + calibrate())
+def unused_reader():
+    with open(DECOY_PATH, "r") as handle:
+        return handle.read()`
+  const calls = [
+    'result = binned_statistic(depth_arr, mag_arr, statistic=bin_reducer, bins=edges)',
+    'result = binned_statistic(depth_arr, mag_arr, bin_reducer, edges)'
+  ]
+  const rebind = 'CALIBRATION_PATH = "inputs/offset-high.txt"\nDECOY_PATH = "inputs/other.txt"'
+  const capturedNames = (
+    projection: Awaited<ReturnType<typeof projectPythonScripts>>,
+    callId: string,
+    rebindId: string
+  ): string[] =>
+    (projection.invalidatedByRunId[rebindId] ?? [])
+      .filter((item) => item.runId === callId)
+      .flatMap((item) => item.names)
+
+  it.each(calls)(
+    'retains the late-bound helper input without certifying the call: %s',
+    async (call) => {
+      const scripts = [setup, helpers, call, rebind]
+      const projection = await projectPythonScripts(scripts)
+      expect(projection.stalenessByRunId['run-3']).toMatchObject({ state: 'unknown' })
+      expect(projection.dependenciesByRunId?.['run-3']).toBeUndefined()
+      expect(capturedNames(projection, 'run-3', 'run-4')).toContain('CALIBRATION_PATH')
+      expect(capturedNames(projection, 'run-3', 'run-4')).not.toContain('DECOY_PATH')
+      const facts = await analyzePythonSources(scripts)
+      expect(facts[2]?.priorUsedNames ?? []).not.toContain('CALIBRATION_PATH')
+    }
+  )
+
+  it('retains possible input mutation without claiming result type or a definite alias', async () => {
+    const projection = await projectPythonScripts([setup, helpers + '\nprint(mag_arr)', calls[0]])
+    expect(projection.invalidatedByRunId['run-3']).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          runId: 'run-2',
+          state: 'unknown',
+          names: expect.arrayContaining(['mag_arr'])
+        })
+      ])
+    )
+    const [facts] = await analyzePythonSources([[setup, helpers, calls[0]].join('\n')])
+    expect(facts?.typeBindings ?? []).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ target: 'result' })])
+    )
+    expect(facts?.aliases ?? []).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ target: 'result', kind: 'reference' })])
+    )
+  })
+
+  it('rebuilds the same opaque captures from cached facts after projection snapshots are removed', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'binned-statistic-cache-'))
+    const runs = [setup, helpers, calls[1], rebind].map(run)
+    const repository = { readSessionRuns: async () => runs }
+    const request = {
+      projectId: 'project',
+      sessionId: 'session',
+      interpreter: { command: 'unused' }
+    }
+    try {
+      const initial = await new NotebookDependencyAnalyzer({
+        storageRoot: root,
+        repository
+      }).project(request)
+      expect(initial.stalenessByRunId['run-2']).toMatchObject({ state: 'unknown' })
+      expect(capturedNames(initial, 'run-2', 'run-3')).toContain('CALIBRATION_PATH')
+      expect(capturedNames(initial, 'run-2', 'run-3')).not.toContain('DECOY_PATH')
+      const cache = join(root, 'notebooks/project/session/cache/dependency-analysis.json')
+      const sidecar = JSON.parse(await readFile(cache, 'utf8'))
+      delete sidecar.projectionSnapshots
+      await writeFile(cache, JSON.stringify(sidecar))
+      const analyze = vi.fn(async () => {
+        throw new Error('valid cached facts must remain reusable')
+      })
+      const reloaded = await new NotebookDependencyAnalyzer({
+        storageRoot: root,
+        repository,
+        analyze
+      }).project(request)
+      expect(reloaded).toEqual(initial)
+      expect(analyze).not.toHaveBeenCalled()
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('does not reinterpret position one as the statistic callback', async () => {
+    const projection = await projectPythonScripts([
+      setup,
+      helpers,
+      'result = binned_statistic(depth_arr, bin_reducer, statistic="mean", bins=edges)',
+      rebind
+    ])
+    expect(projection.stalenessByRunId['run-3']).toMatchObject({ state: 'unknown' })
+    expect(capturedNames(projection, 'run-3', 'run-4')).not.toContain('CALIBRATION_PATH')
+  })
+
+  it('does not inherit callback effects after a pure local replacement', async () => {
+    const source = [
+      setup,
+      helpers,
+      'binned_statistic = lambda *args, **kwargs: mag_arr',
+      calls[0]
+    ].join('\n')
+    const projection = await projectPythonScripts([source, rebind])
+    expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+    expect(capturedNames(projection, 'run-1', 'run-2')).not.toContain('CALIBRATION_PATH')
+  })
+
+  it.each([
+    ['opaque replacement', 'binned_statistic = replacement', calls[0]],
+    [
+      'module monkeypatch',
+      'import scipy.stats as stats\nstats.binned_statistic = replacement',
+      'result = stats.binned_statistic(depth_arr, mag_arr, statistic=bin_reducer, bins=edges)'
+    ]
+  ])('does not recover callback captures from an uncertain %s', async (_name, shadow, call) => {
+    const projection = await projectPythonScripts([setup, helpers, shadow + '\n' + call, rebind])
+    expect(projection.stalenessByRunId['run-3']).toMatchObject({ state: 'unknown' })
+    expect(capturedNames(projection, 'run-3', 'run-4')).not.toContain('CALIBRATION_PATH')
+  })
+})
+
+// Reduced from an executed Indometh R/Python notebook: the same integrand calls
+// calibrate() again after its global input path changes in the warm Python kernel.
+// https://docs.scipy.org/doc/scipy/reference/generated/scipy.integrate.quad.html
+describe('SciPy quad callback lineage', () => {
+  const setup = [
+    'import numpy as np',
+    'from scipy.integrate import quad',
+    'CALIBRATION_PATH = "inputs/offset-low.txt"',
+    'DECOY_PATH = "inputs/unrelated.txt"',
+    'times = np.array([0., 1., 2.])',
+    'concentrations = np.array([3., 2., 1.])',
+    'subject_data = {"subject": (times, concentrations)}',
+    'active_subject = "subject"',
+    'callback_entries = 0',
+    'calibration_entries = 0',
+    'a = 0.0',
+    'b = 2.0',
+    'points = [1.0]'
+  ].join('\n')
+  const helpers = String.raw`def calibrate():
+    global calibration_entries
+    calibration_entries += 1
+    with open(CALIBRATION_PATH, "r", encoding="utf-8") as f:
+        return float(f.read().strip())
+def integrand(t):
+    global callback_entries
+    callback_entries += 1
+    ts, cs = subject_data[active_subject]
+    return float(np.interp(t, ts, cs)) + calibrate()
+def unused_reader():
+    with open(DECOY_PATH, "r") as f:
+        return f.read()`
+  const calls = [
+    'result = quad(integrand, a, b, points=points)',
+    'result = quad(func=integrand, a=a, b=b, points=points)',
+    'import scipy.integrate as integrate\nresult = integrate.quad(integrand, a, b, points=points)'
+  ]
+  const rebind = 'CALIBRATION_PATH = "inputs/offset-high.txt"\nDECOY_PATH = "inputs/other.txt"'
+  const capturedNames = (
+    projection: Awaited<ReturnType<typeof projectPythonScripts>>,
+    callId: string,
+    rebindId: string
+  ): string[] =>
+    (projection.invalidatedByRunId[rebindId] ?? [])
+      .filter((item) => item.runId === callId)
+      .flatMap((item) => item.names)
+
+  it.each(calls)(
+    'retains the late-bound helper input without certifying quad: %s',
+    async (call) => {
+      const scripts = [setup, helpers, call, rebind]
+      const projection = await projectPythonScripts(scripts)
+      expect(projection.stalenessByRunId['run-3']).toMatchObject({ state: 'unknown' })
+      expect(projection.dependenciesByRunId?.['run-3']).toBeUndefined()
+      expect(capturedNames(projection, 'run-3', 'run-4')).toContain('CALIBRATION_PATH')
+      expect(capturedNames(projection, 'run-3', 'run-4')).not.toContain('DECOY_PATH')
+      const facts = await analyzePythonSources(scripts)
+      expect(facts[2]?.priorUsedNames ?? []).not.toContain('CALIBRATION_PATH')
+    }
+  )
+
+  it('retains possible argument mutation without claiming a quad result type or definite alias', async () => {
+    const projection = await projectPythonScripts([setup, helpers + '\nprint(points)', calls[0]])
+    expect(projection.invalidatedByRunId['run-3']).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          runId: 'run-2',
+          state: 'unknown',
+          names: expect.arrayContaining(['points'])
+        })
+      ])
+    )
+    const [facts] = await analyzePythonSources([[setup, helpers, calls[0]].join('\n')])
+    expect(facts?.typeBindings ?? []).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ target: 'result' })])
+    )
+    expect(facts?.aliases ?? []).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ target: 'result', kind: 'reference' })])
+    )
+  })
+
+  it('rebuilds quad helper captures from cached facts without projection snapshots or reparsing', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'quad-callback-cache-'))
+    const runs = [setup, helpers, calls[1], rebind].map(run)
+    const repository = { readSessionRuns: async () => runs }
+    const request = {
+      projectId: 'project',
+      sessionId: 'session',
+      interpreter: { command: 'unused' }
+    }
+    try {
+      const initial = await new NotebookDependencyAnalyzer({
+        storageRoot: root,
+        repository
+      }).project(request)
+      expect(initial.stalenessByRunId['run-2']).toMatchObject({ state: 'unknown' })
+      expect(capturedNames(initial, 'run-2', 'run-3')).toContain('CALIBRATION_PATH')
+      expect(capturedNames(initial, 'run-2', 'run-3')).not.toContain('DECOY_PATH')
+      const cache = join(root, 'notebooks/project/session/cache/dependency-analysis.json')
+      const sidecar = JSON.parse(await readFile(cache, 'utf8'))
+      delete sidecar.projectionSnapshots
+      await writeFile(cache, JSON.stringify(sidecar))
+      const analyze = vi.fn(async () => {
+        throw new Error('valid cached facts must remain reusable')
+      })
+      const reloaded = await new NotebookDependencyAnalyzer({
+        storageRoot: root,
+        repository,
+        analyze
+      }).project(request)
+      expect(reloaded).toEqual(initial)
+      expect(analyze).not.toHaveBeenCalled()
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it.each([
+    'result = quad(lambda t: t, integrand, b)',
+    'result = quad(lambda t: t, a, integrand)',
+    'result = quad(lambda t: t, a, b, fun=integrand)'
+  ])('does not reinterpret a wrong quad callback position or keyword: %s', async (call) => {
+    const projection = await projectPythonScripts([setup, helpers, call, rebind])
+    expect(projection.stalenessByRunId['run-3']).toMatchObject({ state: 'unknown' })
+    expect(capturedNames(projection, 'run-3', 'run-4')).not.toContain('CALIBRATION_PATH')
+  })
+
+  it('does not inherit quad callback effects after a pure local replacement', async () => {
+    const source = [setup, helpers, 'quad = lambda *args, **kwargs: a', calls[0]].join('\n')
+    const projection = await projectPythonScripts([source, rebind])
+    expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+    expect(capturedNames(projection, 'run-1', 'run-2')).not.toContain('CALIBRATION_PATH')
+  })
+
+  it.each([
+    ['opaque replacement', 'quad = replacement', calls[0]],
+    [
+      'module monkeypatch',
+      'import scipy.integrate as integrate\nintegrate.quad = replacement',
+      'result = integrate.quad(integrand, a, b, points=points)'
+    ]
+  ])('does not recover quad helper captures from an uncertain %s', async (_name, shadow, call) => {
+    const projection = await projectPythonScripts([setup, helpers, shadow + '\n' + call, rebind])
+    expect(projection.stalenessByRunId['run-3']).toMatchObject({ state: 'unknown' })
+    expect(capturedNames(projection, 'run-3', 'run-4')).not.toContain('CALIBRATION_PATH')
+  })
+
+  // Replaying a call cell restores its own literal path before invoking quad.
+  // That binding must not become a dependency on a later cell's replacement.
+  it.each([
+    ['prior-cell calibration path', false],
+    ['call-cell literal calibration path', true]
+  ] as const)('distinguishes quad callbacks with a %s', async (_description, ownsPath) => {
+    const call = ownsPath ? 'CALIBRATION_PATH = "inputs/offset-low.txt"\n' + calls[0] : calls[0]
+    const scripts = [setup, helpers, call, rebind]
+    const projection = await projectPythonScripts(scripts)
+    expect(projection.stalenessByRunId['run-3']).toMatchObject({ state: 'unknown' })
+    const names = capturedNames(projection, 'run-3', 'run-4')
+    expect(names.includes('CALIBRATION_PATH')).toBe(!ownsPath)
+    expect(names).not.toContain('DECOY_PATH')
+    const facts = await analyzePythonSources(scripts)
+    expect(facts[2]?.priorUsedNames ?? []).not.toContain('CALIBRATION_PATH')
+    expect((facts[2]?.definedNames ?? []).includes('CALIBRATION_PATH')).toBe(ownsPath)
+  })
+})
+
+// Reduced from an executed pressure R/Python notebook. The original objective
+// reads its current calibration path through a helper during every solver call.
+// https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.root_scalar.html
+describe('SciPy root_scalar callback lineage', () => {
+  const setup = [
+    'import numpy as np',
+    'from scipy.optimize import root_scalar',
+    'OFFSET_PATH = "inputs/offset-low.txt"',
+    'DECOY_PATH = "inputs/unrelated.txt"',
+    'temperatures = np.array([0., 180., 360.])',
+    'pressures = np.array([0.0002, 10., 806.])',
+    'args = (50.0,)',
+    'bracket = [0.0, 360.0]'
+  ].join('\n')
+  const helpers = String.raw`def calibrated_pressure(t):
+    with open(OFFSET_PATH, "r") as f:
+        offset = float(f.read().strip())
+    return float(np.interp(t, temperatures, pressures)) + offset
+
+def objective(t, target):
+    return calibrated_pressure(t) - target
+
+def unused_reader():
+    with open(DECOY_PATH, "r") as f:
+        return f.read()`
+  const calls = [
+    'result = root_scalar(objective, args=args, bracket=bracket, method="brentq")',
+    'result = root_scalar(f=objective, args=args, bracket=bracket, method="brentq")',
+    'from scipy import optimize\nresult = optimize.root_scalar(objective, args=args, bracket=bracket, method="brentq")'
+  ]
+  const rebind = 'OFFSET_PATH = "inputs/offset-high.txt"\nDECOY_PATH = "inputs/other.txt"'
+  const capturedNames = (
+    projection: Awaited<ReturnType<typeof projectPythonScripts>>,
+    callId: string,
+    rebindId: string
+  ): string[] =>
+    (projection.invalidatedByRunId[rebindId] ?? [])
+      .filter((item) => item.runId === callId)
+      .flatMap((item) => item.names)
+
+  it.each(calls)(
+    'retains root_scalar helper captures without certifying the call: %s',
+    async (call) => {
+      const scripts = [setup, helpers, call, rebind]
+      const projection = await projectPythonScripts(scripts)
+      expect(capturedNames(projection, 'run-3', 'run-4')).toContain('OFFSET_PATH')
+      expect(capturedNames(projection, 'run-3', 'run-4')).not.toContain('DECOY_PATH')
+      expect(projection.stalenessByRunId['run-3']).toMatchObject({ state: 'unknown' })
+      expect(projection.dependenciesByRunId?.['run-3']).toBeUndefined()
+      const facts = await analyzePythonSources(scripts)
+      expect(facts[2]?.priorUsedNames ?? []).not.toContain('OFFSET_PATH')
+    }
+  )
+
+  it('does not make a root_scalar call-owned literal path depend on a later replacement', async () => {
+    const scripts = [setup, helpers, 'OFFSET_PATH = "inputs/offset-low.txt"\n' + calls[0], rebind]
+    const projection = await projectPythonScripts(scripts)
+    expect(projection.stalenessByRunId['run-3']).toMatchObject({ state: 'unknown' })
+    expect(capturedNames(projection, 'run-3', 'run-4')).not.toContain('OFFSET_PATH')
+    expect(capturedNames(projection, 'run-3', 'run-4')).not.toContain('DECOY_PATH')
+  })
+
+  it('keeps root_scalar argument mutation possible without assigning result types or aliases', async () => {
+    const projection = await projectPythonScripts([
+      setup,
+      helpers + '\nprint(args, bracket)',
+      calls[0]
+    ])
+    expect(projection.invalidatedByRunId['run-3']).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          runId: 'run-2',
+          state: 'unknown',
+          names: expect.arrayContaining(['args', 'bracket'])
+        })
+      ])
+    )
+    const [facts] = await analyzePythonSources([[setup, helpers, calls[0]].join('\n')])
+    expect(facts?.typeBindings ?? []).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ target: 'result' })])
+    )
+    expect(facts?.aliases ?? []).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ target: 'result', kind: 'reference' })])
+    )
+  })
+
+  it('rebuilds root_scalar helper captures from cached facts without snapshots or reparsing', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'root-scalar-callback-cache-'))
+    const runs = [setup, helpers, calls[1], rebind].map(run)
+    const repository = { readSessionRuns: async () => runs }
+    const request = {
+      projectId: 'project',
+      sessionId: 'session',
+      interpreter: { command: 'unused' }
+    }
+    try {
+      const initial = await new NotebookDependencyAnalyzer({
+        storageRoot: root,
+        repository
+      }).project(request)
+      expect(capturedNames(initial, 'run-2', 'run-3')).toContain('OFFSET_PATH')
+      const cache = join(root, 'notebooks/project/session/cache/dependency-analysis.json')
+      const sidecar = JSON.parse(await readFile(cache, 'utf8'))
+      delete sidecar.projectionSnapshots
+      await writeFile(cache, JSON.stringify(sidecar))
+      const analyze = vi.fn(async () => {
+        throw new Error('valid cached facts must remain reusable')
+      })
+      const reloaded = await new NotebookDependencyAnalyzer({
+        storageRoot: root,
+        repository,
+        analyze
+      }).project(request)
+      expect(reloaded).toEqual(initial)
+      expect(analyze).not.toHaveBeenCalled()
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it.each([
+    'result = root_scalar(lambda t: t, objective, bracket=bracket)',
+    'result = root_scalar(lambda t: t, args=args, bracket=bracket, fun=objective)'
+  ])('does not reinterpret a wrong root_scalar callback slot: %s', async (call) => {
+    const projection = await projectPythonScripts([setup, helpers, call, rebind])
+    expect(projection.stalenessByRunId['run-3']).toMatchObject({ state: 'unknown' })
+    expect(capturedNames(projection, 'run-3', 'run-4')).not.toContain('OFFSET_PATH')
+  })
+
+  it('does not inherit root_scalar callback effects after a pure local replacement', async () => {
+    const source = [setup, helpers, 'root_scalar = lambda *args, **kwargs: 0.0', calls[0]].join(
+      '\n'
+    )
+    const projection = await projectPythonScripts([source, rebind])
+    expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+    expect(capturedNames(projection, 'run-1', 'run-2')).not.toContain('OFFSET_PATH')
+  })
+
+  it.each([
+    ['opaque replacement', 'root_scalar = replacement', calls[0]],
+    [
+      'module monkeypatch',
+      'from scipy import optimize\noptimize.root_scalar = replacement',
+      'result = optimize.root_scalar(objective, args=args, bracket=bracket, method="brentq")'
+    ]
+  ])(
+    'does not recover root_scalar helper captures from an uncertain %s',
+    async (_name, shadow, call) => {
+      const projection = await projectPythonScripts([setup, helpers, shadow + '\n' + call, rebind])
+      expect(projection.stalenessByRunId['run-3']).toMatchObject({ state: 'unknown' })
+      expect(capturedNames(projection, 'run-3', 'run-4')).not.toContain('OFFSET_PATH')
+    }
+  )
 })
