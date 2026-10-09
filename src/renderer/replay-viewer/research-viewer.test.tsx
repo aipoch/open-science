@@ -659,6 +659,27 @@ it('follows the verified browser recording at the master time and resumes after 
   await screen.findByRole('button', { name: 'Follow replay' })
   seek(14000)
   expect(chooser.value).toBe('index-version')
+  // Control only the playback clock, after the initial scene has finished preparing.
+  // Otherwise real animation frames can advance while the source selection resolves.
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'Play replay' }).hasAttribute('disabled')).toBe(false)
+  )
+  let sequence = 0,
+    timestamp = 0
+  const frames = new Map<number, FrameRequestCallback>()
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+    frames.set(++sequence, callback)
+    return sequence
+  })
+  vi.stubGlobal('cancelAnimationFrame', (id: number) => frames.delete(id))
+  const tick = async (): Promise<void> => {
+    await act(async () => {
+      timestamp += 100
+      const pending = [...frames.values()]
+      frames.clear()
+      pending.forEach((callback) => callback(timestamp))
+    })
+  }
   fireEvent.click(screen.getByRole('button', { name: 'Play replay' }))
   await screen.findByRole('button', { name: 'Pause replay' })
   fireEvent.click(screen.getByRole('button', { name: 'Follow replay' }))
@@ -667,6 +688,13 @@ it('follows the verified browser recording at the master time and resumes after 
   expect(
     screen.getByRole('slider', { name: 'Replay progress' }).getAttribute('aria-valuenow')
   ).toBe('14000')
+  await tick()
+  await tick()
+  expect(
+    screen.getByRole('slider', { name: 'Replay progress' }).getAttribute('aria-valuenow')
+  ).toBe('14200')
+  expect(screen.getByRole('button', { name: 'Pause replay' })).toBeTruthy()
+  expect(chooser.value).toBe('second-v1')
   seek(4000)
   await waitFor(() => expect(chooser.value).toBe('index-version'))
 })
