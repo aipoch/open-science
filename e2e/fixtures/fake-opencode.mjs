@@ -12,6 +12,10 @@ import { Readable, Writable } from 'node:stream'
 import { researchPrompt, runResearchAnalysis } from './research-analysis.mjs'
 
 const autoReviewResumeCounts = new Map()
+const planRecoveryScenarios = new Set()
+const PLAN_DISMISS_PROMPT = 'Create the live dismissal regression Plan.'
+const PLAN_RECOVERY_PROMPT = 'Create the feedback Stop Resume regression Plan.'
+const PLAN_RECOVERY_FEEDBACK = 'Revise this Plan for the feedback Stop Resume regression.'
 const VERSION = '1.0.0'
 const WSL_SETUP_DIAGNOSTICS_PROMPT = 'Verify WSL setup diagnostic tools.'
 const WSL_SETUP_UNAVAILABLE_PROMPT = 'Verify WSL setup tools are unavailable.'
@@ -473,6 +477,123 @@ const waitForSessionCancellation = (sessionId) =>
   new Promise((resolve) => {
     sessionCancellationResolvers.set(sessionId, resolve)
   })
+
+const planRecoveryJourney = async (context, prompt) => {
+  const sessionId = context.params.sessionId
+  const notify = async (update) =>
+    context.client.notify(acp.methods.client.session.update, { sessionId, update })
+  const say = async (text) =>
+    notify({
+      sessionUpdate: 'agent_message_chunk',
+      messageId: `e2e-plan-lifecycle-message-${randomUUID()}`,
+      content: { type: 'text', text }
+    })
+  if (prompt.includes('Continue the interrupted turn from where it stopped.')) {
+    await notify({
+      sessionUpdate: 'tool_call',
+      toolCallId: 'e2e-plan-recovery-continued',
+      title: 'Finish pending approved Plan work',
+      kind: 'other',
+      status: 'in_progress',
+      rawInput: { checkpoint: 'after-completed-tool' }
+    })
+    await notify({
+      sessionUpdate: 'tool_call_update',
+      toolCallId: 'e2e-plan-recovery-continued',
+      status: 'completed'
+    })
+    await say('Plan recovery: continued the pending execution without repeating the checkpoint.')
+    return { stopReason: 'end_turn' }
+  }
+  if (prompt.includes('The user rejected the pending Session Plan.')) {
+    await say('Plan dismissal acknowledged; the rejected Plan was not executed.')
+    return { stopReason: 'end_turn' }
+  }
+  if (prompt.includes('The user approved the pending Session Plan.')) {
+    await notify({
+      sessionUpdate: 'tool_call',
+      toolCallId: 'e2e-plan-recovery-checkpoint',
+      title: 'Read approved Plan checkpoint',
+      kind: 'read',
+      status: 'in_progress',
+      rawInput: { checkpoint: 'approved-plan' }
+    })
+    await notify({
+      sessionUpdate: 'tool_call_update',
+      toolCallId: 'e2e-plan-recovery-checkpoint',
+      status: 'completed'
+    })
+    await notify({
+      sessionUpdate: 'tool_call',
+      toolCallId: 'e2e-plan-recovery-pending',
+      title: 'Continue approved Plan execution',
+      kind: 'other',
+      status: 'in_progress',
+      rawInput: { checkpoint: 'after-completed-tool' }
+    })
+    await say('Plan recovery: the checkpoint is complete and execution is running; ready for Stop.')
+    await waitForSessionCancellation(sessionId)
+    return { stopReason: 'cancelled' }
+  }
+
+  const revised = prompt.includes(PLAN_RECOVERY_FEEDBACK)
+  const argumentsForPlan = {
+    task_summary: revised ? 'Revised feedback recovery Plan' : 'Session Plan lifecycle regression',
+    phases: [
+      {
+        name: 'Verification',
+        delegations: [
+          {
+            name: 'Main',
+            steps: [
+              {
+                title: 'Verify approved execution',
+                description: 'Complete a checkpoint, then continue the pending execution.'
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    desired_outputs: ['Plan lifecycle confirmation'],
+    feasibility: { confidence: 'high', rationale: 'Deterministic local regression fixture.' }
+  }
+  const toolCallId = revised ? 'e2e-plan-recovery-revised' : 'e2e-plan-recovery-initial'
+  await notify({
+    sessionUpdate: 'tool_call',
+    toolCallId,
+    title: 'open_science_plan_generate_plan',
+    kind: 'other',
+    status: 'in_progress',
+    rawInput: argumentsForPlan
+  })
+  // A healthy MCP wait stays live. Initial cancellation leaves a durable pending Plan so
+  // feedback can start independently; Approve/Dismiss can also return through this live wait.
+  const outcome = await Promise.race([
+    withMcpClient(sessionId, 'open-science-plan', async (client) =>
+      toolResult(
+        'generate_plan',
+        await client.callTool({ name: 'generate_plan', arguments: argumentsForPlan })
+      )
+    ).then((result) => ({ kind: 'reviewed', result })),
+    waitForSessionCancellation(sessionId).then(() => ({ kind: 'cancelled' }))
+  ])
+  sessionCancellationResolvers.delete(sessionId)
+  await notify({
+    sessionUpdate: 'tool_call_update',
+    toolCallId,
+    status: outcome.kind === 'cancelled' ? 'failed' : 'completed'
+  })
+  if (outcome.kind === 'cancelled') return { stopReason: 'cancelled' }
+  if (outcome.result.decision === 'rejected') {
+    await say('Plan dismissal acknowledged; the rejected Plan was not executed.')
+    return { stopReason: 'end_turn' }
+  }
+  if (outcome.result.decision === 'approved') {
+    return planRecoveryJourney(context, 'The user approved the pending Session Plan.')
+  }
+  throw new Error('The Plan regression fixture expected an explicit review decision.')
+}
 
 const captureDelegatedHandoff = async (sessionId, task) => {
   const captureRoot = process.env.OPEN_SCIENCE_E2E_HANDOFF_CAPTURE_ROOT
@@ -1347,6 +1468,15 @@ if (process.argv.includes('--version')) {
       )
       const prompt = controlStart >= 0 ? rawPrompt.slice(controlStart) : rawPrompt
       await captureProviderPrompt(context.params.sessionId, prompt)
+      if (
+        !prompt.includes('Generate Session metadata only from the following JSON data:') &&
+        (prompt.includes(PLAN_DISMISS_PROMPT) || prompt.includes(PLAN_RECOVERY_PROMPT))
+      ) {
+        planRecoveryScenarios.add(context.params.sessionId)
+      }
+      if (planRecoveryScenarios.has(context.params.sessionId)) {
+        return planRecoveryJourney(context, prompt)
+      }
       if (prompt.includes('Cold recovery held child.')) {
         await waitForSessionCancellation(context.params.sessionId)
         return { stopReason: 'cancelled' }

@@ -107,7 +107,8 @@
       "src/main/session-package/fork.test.ts",
       "src/renderer/src/lib/acp/workspace-runtime-interrupted-recovery.test.ts",
       "src/main/compute/cancellation-runtime.integration.test.ts",
-      "src/main/session-persistence/ipc.test.ts"
+      "src/main/session-persistence/ipc.test.ts",
+      "src/renderer/src/pages/workspace/session-plan/session-plan-resume.test.tsx"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
