@@ -14,6 +14,31 @@ import {
 import { DEFAULT_PY_ENV, DEFAULT_R_ENV, envPrefix, rBin, rScriptBin } from './runtime-paths'
 
 describe('defaultDiscoveryDeps Windows conda probes', () => {
+  it('probes a selected Windows Python path literally without shell interpretation', async () => {
+    const interpreter = 'C:\\Program Files\\科学 & analysis\\python.exe'
+    const exec = vi.fn(
+      async (_file: string, _args: readonly string[], options: { shell?: boolean }) => {
+        if (options.shell) throw new Error('shell split the selected interpreter path')
+        return { stdout: 'Python 3.12.10', stderr: '' }
+      }
+    )
+    const defaults = defaultDiscoveryDeps('C:\\runtime', undefined, { platform: 'win32', exec })
+    const [found] = await discoverInterpreters('python', {
+      ...defaults,
+      candidatePaths: async () => [interpreter]
+    })
+    expect(found).toMatchObject({
+      interpreterPath: interpreter,
+      runnable: true,
+      version: '3.12.10'
+    })
+    expect(exec).toHaveBeenCalledExactlyOnceWith(
+      interpreter,
+      ['--version'],
+      expect.objectContaining({ windowsHide: true })
+    )
+  })
+
   it.each(['TRUE', 'FALSE'])(
     'reads R version and jsonlite=%s in one activated, bounded process',
     async (jsonlite) => {
