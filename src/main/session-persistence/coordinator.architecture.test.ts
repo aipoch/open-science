@@ -546,6 +546,7 @@ describe('Session persistence coordinator architecture', () => {
         'DelegatedWorkRecordCommands',
         'PatchSessionRuntimeContextCommand',
         'ProjectSessionDeletionResult',
+        'PublishedSessionHandoff',
         'SessionCatalog',
         'SessionPersistenceCommands',
         'SessionDeletion',
@@ -831,8 +832,20 @@ describe('Session persistence coordinator architecture', () => {
         expect(calls).toEqual(['this.operationScheduler.runSession'])
         continue
       }
-      expect(method.body?.statements, name).toHaveLength(1)
-      const statement = method.body?.statements[0]
+      const statements = method.body?.statements
+      if (name === 'adoptPublishedSession') {
+        // The package publisher has a different scheduler. Snapshot its handoff synchronously
+        // before this owner queues the ordinary read and catalog mutation in the Session lane.
+        expect(statements, name).toHaveLength(2)
+        const capture = statements?.[0]
+        expect(capture && isVariableStatement(capture)).toBe(true)
+        expect(capture?.getText(facadeFile)).toBe(
+          'const { projectId, sessionId, session, pendingProjectImport } = structuredClone(publication)'
+        )
+      } else {
+        expect(statements, name).toHaveLength(1)
+      }
+      const statement = statements?.[name === 'adoptPublishedSession' ? 1 : 0]
       expect(statement, name).toBeDefined()
       if (!statement) continue
       expect(isReturnStatement(statement), name).toBe(true)
