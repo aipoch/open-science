@@ -984,3 +984,36 @@ describe('Cellosaurus registration', () => {
     }
   })
 })
+
+describe('ClinVar submissions / registered contract', () => {
+  const descriptor = getDescriptor('variants', 'clinvar_get_submissions')!
+
+  it('registers a discoverable tool with its versioned pagination contract', () => {
+    expect(descriptor).toBe(
+      getConnectorTools('variants').find((tool) => tool.id === 'clinvar_get_submissions')
+    )
+    const doc = renderSkillDoc('variants')
+    expect(doc).toContain('### clinvar_get_submissions')
+    expect(doc).toContain('next_page')
+    expect(doc).toContain('direct_evidence_available')
+  })
+
+  it.each([
+    { accession: 'VCV000045122' },
+    { accession: 'VCV000045122.20', offset: 200, max_submissions: 200 }
+  ])('accepts registered arguments %#', (args) => {
+    expect(() => validateToolArguments(descriptor, args)).not.toThrow()
+  })
+
+  it.each([
+    {},
+    { accession: 45122 },
+    { accession: '45122', offset: -1 },
+    { accession: '45122', offset: 0.5 },
+    { accession: '45122', max_submissions: 0 },
+    { accession: '45122', max_submissions: 201 },
+    { accession: '45122', max_submissions: '10' }
+  ])('rejects invalid arguments through the registered validator %#', (args) => {
+    expect(() => validateToolArguments(descriptor, args)).toThrow('invalid_arguments')
+  })
+})
