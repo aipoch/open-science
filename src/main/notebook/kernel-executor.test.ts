@@ -4768,6 +4768,69 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
     }
   )
 
+  it('retains Windows ownership until the native supervisor host has exited', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-supervisor-exit-'))
+    const lifecycle = new KernelProcessLifecycleOwner({ storageRoot: cwdDir })
+    await lifecycle.ensureReady()
+    const complete = vi.spyOn(lifecycle, 'complete')
+    const confirm = vi.fn(async () => true)
+    const cleanup = vi.fn(async () => ({
+      processesTerminated: true,
+      networkClosed: true,
+      temporaryResourcesRemoved: true
+    }))
+    const terminateTree = vi.fn(terminateProcessTree)
+    const executor = new NotebookKernelExecutor({
+      replLoopPath: REPL_LOOP,
+      platform: 'win32',
+      processLifecycle: lifecycle,
+      laneKey: '["project","session","root",null,null]',
+      terminateTree,
+      processSandbox: {
+        resolveWindowsRuntime: async () => null,
+        wrap: async (invocation) => ({
+          ...invocation,
+          confirmProcessTreeTermination: confirm,
+          confirmProcessState: async () => 'started-and-reaped',
+          requestProcessTreeTermination: async () => true,
+          annotateStderr: (stderr) => stderr,
+          cleanup
+        })
+      }
+    })
+    let child: ChildProcessWithoutNullStreams | undefined
+    let shutdown: Promise<unknown> | undefined
+    try {
+      await executor.execute({
+        ...baseRequest(cwdDir),
+        kind: 'repl',
+        code: 'return 1',
+        sessionId: 'session',
+        projectId: 'project'
+      })
+      child = procFor(executor, 'repl')!.child
+      shutdown = executor.shutdown()
+      await vi.waitFor(() => expect(confirm).toHaveBeenCalled())
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      // Job containment can already be empty while its native supervisor is restoring ACLs.
+      // Neither filesystem cleanup nor durable ownership settlement may outrun that host.
+      expect(child.exitCode).toBeNull()
+      expect(complete).not.toHaveBeenCalled()
+      expect(cleanup).not.toHaveBeenCalled()
+      expect(terminateTree).not.toHaveBeenCalled()
+      expect((await readdir(join(cwdDir, 'runtime', 'kernel-processes'))).length).toBeGreaterThan(0)
+      await terminateProcessTree(child)
+      await expect(shutdown).resolves.toEqual({ reaped: true })
+      expect(complete).toHaveBeenCalledWith(expect.anything(), true)
+      expect(cleanup).toHaveBeenCalled()
+      expect(await readdir(join(cwdDir, 'runtime', 'kernel-processes'))).toEqual([])
+    } finally {
+      if (child) await terminateProcessTree(child)
+      await shutdown
+      await executor.shutdown()
+    }
+  })
+
   it('retains native termination proof when durable receipt settlement must retry', async () => {
     cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-native-receipt-retry-'))
     const lifecycle = new KernelProcessLifecycleOwner({ storageRoot: cwdDir })
