@@ -1,3 +1,4 @@
+import { DelegateMessagePreAcceptanceError } from '../delegation/execution-port'
 import type { PrepareSessionReading } from './replay-reference-prompt'
 import * as acp from '@agentclientprotocol/sdk'
 import type {
@@ -763,6 +764,10 @@ class AcpRuntime {
     { revision: number; tail: Promise<void> }
   >()
   private cancellationTeardown: Promise<AcpStateSnapshot> | undefined
+  private readonly pendingPromptPreparations = new Map<
+    string,
+    Set<{ cancelled: boolean; cancel: () => void }>
+  >()
   private readonly repeatedToolFailureGuard = new RepeatedToolFailureGuard()
 
   // Wires runtime dependencies and forwards permission prompts into the event stream.
@@ -1831,24 +1836,32 @@ class AcpRuntime {
     onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>,
     runtimeReviewOwner: 'task' | 'renderer' = 'renderer'
   ): Promise<PromptResponse> {
-    if (
-      request.referencedArtifacts?.some(
-        (reference) =>
-          'pdfReadingPosition' in reference && reference.pdfReadingPosition !== undefined
-      )
-    ) {
-      await this.enableLiteratureContext(request.sessionId)
-    }
-    return this.withOperationLease(() =>
-      this.runPromptTurn(
-        request,
-        {
-          kind: 'user',
-          ...(promptAttemptId === undefined ? {} : { promptAttemptId }),
-          runtimeReviewOwner
-        },
-        onPromptAdmitted
-      )
+    return this.withPromptPreparationCancellation(
+      request.sessionId,
+      async (assertCurrent, enterWorkflow) => {
+        if (
+          request.referencedArtifacts?.some(
+            (reference) =>
+              'pdfReadingPosition' in reference && reference.pdfReadingPosition !== undefined
+          )
+        ) {
+          await this.enableLiteratureContext(request.sessionId)
+          assertCurrent()
+        }
+        return this.withOperationLease(() => {
+          assertCurrent()
+          return this.runPromptTurn(
+            request,
+            {
+              kind: 'user',
+              ...(promptAttemptId === undefined ? {} : { promptAttemptId }),
+              runtimeReviewOwner
+            },
+            onPromptAdmitted,
+            enterWorkflow
+          )
+        })
+      }
     )
   }
 
@@ -1862,19 +1875,70 @@ class AcpRuntime {
       onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>
     }
   ): Promise<PromptResponse> {
-    return this.withOperationLease(() =>
-      this.runPromptTurn(
-        request,
-        {
-          kind: 'application',
-          attribution,
-          ...(options?.promptAttemptId === undefined
-            ? {}
-            : { promptAttemptId: options.promptAttemptId })
-        },
-        options?.onPromptAdmitted
-      )
+    return this.withPromptPreparationCancellation(
+      request.sessionId,
+      (assertCurrent, enterWorkflow) =>
+        this.withOperationLease(() => {
+          assertCurrent()
+          return this.runPromptTurn(
+            request,
+            {
+              kind: 'application',
+              attribution,
+              ...(options?.promptAttemptId === undefined
+                ? {}
+                : { promptAttemptId: options.promptAttemptId })
+            },
+            options?.onPromptAdmitted,
+            enterWorkflow
+          )
+        })
     )
+  }
+
+  private async withPromptPreparationCancellation(
+    sessionId: string,
+    prepare: (assertCurrent: () => void, enterWorkflow: () => void) => Promise<PromptResponse>
+  ): Promise<PromptResponse> {
+    let workflowEntered = false
+    let rejectCancellation!: (error: Error) => void
+    const cancelledPreparation = new Promise<never>((_, reject) => {
+      rejectCancellation = reject
+    })
+    const request = {
+      cancelled: false,
+      cancel: () => {
+        request.cancelled = true
+        if (!workflowEntered)
+          rejectCancellation(
+            new DelegateMessagePreAcceptanceError(
+              'ACP prompt preparation was cancelled before admission'
+            )
+          )
+      }
+    }
+    const pending = this.pendingPromptPreparations.get(sessionId) ?? new Set()
+    pending.add(request)
+    this.pendingPromptPreparations.set(sessionId, pending)
+    const assertCurrent = (): void => {
+      if (request.cancelled)
+        throw new DelegateMessagePreAcceptanceError(
+          'ACP prompt preparation was cancelled before admission'
+        )
+    }
+    try {
+      return await Promise.race([
+        prepare(assertCurrent, () => {
+          assertCurrent()
+          workflowEntered = true
+        }),
+        cancelledPreparation
+      ])
+    } finally {
+      pending.delete(request)
+      if (pending.size === 0 && this.pendingPromptPreparations.get(sessionId) === pending)
+        this.pendingPromptPreparations.delete(sessionId)
+    }
   }
 
   // App-owned continuations participate in the same prompt ownership, cancellation, provenance, and
@@ -1889,39 +1953,46 @@ class AcpRuntime {
   ): Promise<PromptResponse> {
     // A parked continuation itself blocks reconnect. Enter the generation directly so it can finish
     // before that barrier is released instead of waiting on the barrier it intentionally holds.
-    return this.generationActivity.withOperation(() =>
-      this.runPromptTurn(
-        request,
-        {
-          kind: 'app-continuation',
-          ...(promptAttemptId === undefined ? {} : { promptAttemptId }),
-          ...(planDelivery ? { planDelivery } : {}),
-          ...(delegatedMessageId ? { delegatedMessageId } : {})
-        },
-        permissionContinuation
-          ? async () => {
-              const interaction = this.sessionInteractions.current(request.sessionId)
-              if (
-                !interaction ||
-                interaction.kind !== 'prompt' ||
-                this.durablePermissionContinuations?.get(request.sessionId) !==
-                  permissionContinuation
-              )
-                throw new Error('The restored permission continuation is no longer active.')
-              permissionContinuation.interactionSequence = interaction.sequence
-              permissionContinuation.agentFrameId = request.provenanceContext?.agentFrameId
-              permissionContinuation.messageBranchId = request.provenanceContext?.messageBranchId
-              permissionContinuation.isCurrent = () =>
-                this.durablePermissionContinuations?.get(request.sessionId) ===
-                  permissionContinuation &&
-                this.sessionInteractions.current(request.sessionId)?.sequence ===
-                  interaction.sequence &&
-                !this.sessionInteractions.isCancellationAccepted(interaction) &&
-                !permissionContinuation.cancellationRequested
-              return request.provenanceContext
-            }
-          : undefined
-      )
+    return this.withPromptPreparationCancellation(
+      request.sessionId,
+      (assertCurrent, enterWorkflow) =>
+        this.generationActivity.withOperation(() => {
+          assertCurrent()
+          return this.runPromptTurn(
+            request,
+            {
+              kind: 'app-continuation',
+              ...(promptAttemptId === undefined ? {} : { promptAttemptId }),
+              ...(planDelivery ? { planDelivery } : {}),
+              ...(delegatedMessageId ? { delegatedMessageId } : {})
+            },
+            permissionContinuation
+              ? async () => {
+                  const interaction = this.sessionInteractions.current(request.sessionId)
+                  if (
+                    !interaction ||
+                    interaction.kind !== 'prompt' ||
+                    this.durablePermissionContinuations?.get(request.sessionId) !==
+                      permissionContinuation
+                  )
+                    throw new Error('The restored permission continuation is no longer active.')
+                  permissionContinuation.interactionSequence = interaction.sequence
+                  permissionContinuation.agentFrameId = request.provenanceContext?.agentFrameId
+                  permissionContinuation.messageBranchId =
+                    request.provenanceContext?.messageBranchId
+                  permissionContinuation.isCurrent = () =>
+                    this.durablePermissionContinuations?.get(request.sessionId) ===
+                      permissionContinuation &&
+                    this.sessionInteractions.current(request.sessionId)?.sequence ===
+                      interaction.sequence &&
+                    !this.sessionInteractions.isCancellationAccepted(interaction) &&
+                    !permissionContinuation.cancellationRequested
+                  return request.provenanceContext
+                }
+              : undefined,
+            enterWorkflow
+          )
+        })
     )
   }
 
@@ -1944,9 +2015,11 @@ class AcpRuntime {
           planDelivery?: Readonly<{ projectId: string; commandId: string }>
           delegatedMessageId?: string
         }>,
-    onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>
+    onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>,
+    assertPreparationCurrent?: () => void
   ): Promise<PromptResponse> {
     return withDataRootWrite(async () => {
+      assertPreparationCurrent?.()
       let response: PromptResponse | undefined
       try {
         response = await this.promptTurnWorkflow.run(request, intent, onPromptAdmitted)
@@ -1960,10 +2033,19 @@ class AcpRuntime {
 
   // Requests cancellation without clearing in-flight state before the agent stops.
   async cancelPrompt(request: AcpCancelPromptRequest): Promise<AcpStateSnapshot> {
+    // Capture existing preparations before teardown awaits; a later request has its own authority.
+    const preparations = [...(this.pendingPromptPreparations.get(request.sessionId) ?? [])]
+    const preparationOnly =
+      preparations.length > 0 &&
+      !this.sessionInteractions.has(request.sessionId) &&
+      !this.promptTurnWorkflow.captureCancellation(request.sessionId) &&
+      !this.durablePermissionContinuations?.has(request.sessionId)
+    for (const preparation of preparations) preparation.cancel()
     // A timed-out cancellation may already be closing the shared connection. Wait before taking
     // any early permission/continuation path so every caller observes the same teardown boundary.
     const pendingCancellationTeardown = this.cancellationTeardown
     if (pendingCancellationTeardown) await pendingCancellationTeardown.catch(() => undefined)
+    if (preparationOnly) return this.getSnapshot()
     const cancelPromptRequest = this.promptTurnWorkflow.captureCancellation(request.sessionId)
     const connection = this.connection
     const activeSession = this.activeSessionFor(request.sessionId)

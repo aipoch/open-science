@@ -135,6 +135,7 @@ const planProjection = (): ActivePlanProjection => ({
 
 const createHarness = (
   input: {
+    assertRuntimeSessionAdmissionAvailable?: AcpPromptTurnWorkflowOptions['assertRuntimeSessionAdmissionAvailable']
     serialization?: AcpPromptTurnWorkflowOptions['serialization']
     planPause?: Partial<AcpPromptTurnWorkflowOptions['plan']>
     admitPlan?: AcpPromptTurnWorkflowOptions['plan']['admit']
@@ -321,6 +322,7 @@ const createHarness = (
     contextReset: false
   }))
   const workflowOptions = {
+    assertRuntimeSessionAdmissionAvailable: input.assertRuntimeSessionAdmissionAvailable,
     registry: {
       lookup,
       select: vi.fn(() => journal.push('select'))
@@ -1523,4 +1525,98 @@ it('does not dispatch after cancellation is accepted during framework preparatio
     await run
     harness.owner.supersedeAll()
   }
+})
+
+it.each(['completion', 'compaction', 'plan', 'skills', 'plan-admission'] as const)(
+  'settles Stop during %s preparation before admitting or dispatching a new turn',
+  async (stage) => {
+    const gate = deferred<void>()
+    const entered = deferred<void>()
+    const wait = async (): Promise<void> => {
+      entered.resolve()
+      await gate.promise
+    }
+    const begin = vi.fn(async () => undefined)
+    const onPromptAdmitted = vi.fn(async () => undefined)
+    const skill = skillHandle()
+    const harness = createHarness({
+      ...(stage === 'completion' ? { assertRuntimeSessionAdmissionAvailable: wait } : {}),
+      ...(stage === 'compaction' ? { preemptCompaction: wait } : {}),
+      ...(stage === 'plan'
+        ? {
+            preflightPlan: async () => {
+              await wait()
+              return {}
+            }
+          }
+        : {}),
+      ...(stage === 'skills'
+        ? {
+            authorize: async () => {
+              await wait()
+              return skill
+            }
+          }
+        : {}),
+      ...(stage === 'plan-admission'
+        ? {
+            admitPlan: async () => {
+              await wait()
+              return {}
+            }
+          }
+        : {}),
+      beginRuntimeSessionTurn: begin
+    })
+    const run = harness.workflow.run(request(), { kind: 'user' }, onPromptAdmitted)
+    await entered.promise
+    const cancel = harness.workflow.captureCancellation('s1')
+    await harness.owner.cancelPrompt({
+      sessionId: 's1',
+      notify: async () => undefined,
+      onAccepted: () => cancel?.(),
+      onTimeout: () => undefined
+    })
+    gate.resolve()
+    await expect(run).resolves.toEqual({ stopReason: 'cancelled' })
+    expect(harness.executor).not.toHaveBeenCalled()
+    expect(harness.finalizer).not.toHaveBeenCalled()
+    expect(begin).not.toHaveBeenCalled()
+    expect(onPromptAdmitted).not.toHaveBeenCalled()
+    expect(harness.owner.has('s1')).toBe(false)
+    if (stage === 'plan-admission') {
+      expect(harness.planLifecycle.beforeRelease).toHaveBeenCalledOnce()
+      expect(harness.planLifecycle.afterRelease).toHaveBeenCalledOnce()
+    }
+    if (stage === 'skills') expect(skill.close).toHaveBeenCalledWith('cancelled', { reload: false })
+  }
+)
+
+it('finalizes Stop during durable turn admission through its admitted owner', async () => {
+  const gate = deferred<void>()
+  const entered = deferred<void>()
+  const harness = createHarness({
+    beginRuntimeSessionTurn: async () => {
+      entered.resolve()
+      await gate.promise
+    },
+    finalize: (handles, outcome) => new AcpPromptOutcomeFinalizer().finalize(handles, outcome)
+  })
+  const run = harness.workflow.run(request(), { kind: 'user' })
+  await entered.promise
+  const cancel = harness.workflow.captureCancellation('s1')
+  await harness.owner.cancelPrompt({
+    sessionId: 's1',
+    notify: async () => undefined,
+    onAccepted: () => cancel?.(),
+    onTimeout: () => undefined
+  })
+  gate.resolve()
+  await expect(run).resolves.toEqual({ stopReason: 'cancelled' })
+  expect(harness.executor).not.toHaveBeenCalled()
+  expect(harness.finalizer).toHaveBeenCalledOnce()
+  expect(harness.finalization.pushEvent).toHaveBeenCalledWith(
+    expect.objectContaining({ kind: 'stop', text: 'cancelled' })
+  )
+  expect(harness.owner.has('s1')).toBe(false)
 })

@@ -129,11 +129,13 @@ type PendingResumeReconciliation = {
 }
 
 type RootAdmissionLease = {
+  cancelPreparation: () => void
   release: () => void
 }
 
 type RootAdmissionCancellation = {
   cancelled: boolean
+  dispatched?: boolean
   promise: Promise<never>
   reject?: (error: unknown) => void
   throwIfCancelled: () => void
@@ -176,6 +178,10 @@ class AcpRuntimeCoordinator {
   private promptAttemptSequence = 0
   private readonly pendingPromptStarts = new Map<string, PendingPromptStart[]>()
   private readonly activePromptRequests = new Map<string, ActivePromptRequest>()
+  private readonly pendingPromptAdmissionPreparations = new Map<
+    string,
+    Set<{ cancelled: boolean; cancel: () => void }>
+  >()
   private readonly activePromptCounts = new Map<string, number>()
   private readonly interactionReleaseWaiters = new Map<string, Set<() => void>>()
   private readonly rootAdmissionTails = new Map<string, Promise<void>>()
@@ -1016,9 +1022,34 @@ class AcpRuntimeCoordinator {
     startAdmission?: PromptAcceptance
   ): ReturnType<AcpRuntime['sendPrompt']> {
     if (this.promptAdmissionClosedForQuit) return this.rejectPromptForQuit()
+    let rootOwned = false
+    let rejectPreparation!: (error: Error) => void
+    const cancelledPreparation = new Promise<never>((_, reject) => {
+      rejectPreparation = reject
+    })
+    const preparation = {
+      cancelled: false,
+      cancel: () => {
+        preparation.cancelled = true
+        if (!rootOwned)
+          rejectPreparation(
+            new DelegateMessagePreAcceptanceError(
+              'ACP prompt preparation was cancelled before admission'
+            )
+          )
+      }
+    }
+    const pending = this.pendingPromptAdmissionPreparations.get(request.sessionId) ?? new Set()
+    pending.add(preparation)
+    this.pendingPromptAdmissionPreparations.set(request.sessionId, pending)
     const dispatch = (): ReturnType<AcpRuntime['sendPrompt']> =>
-      this.linearizeRootAdmission(request.sessionId, (cancellation) =>
-        this.dispatchPrompt(
+      this.linearizeRootAdmission(request.sessionId, (cancellation) => {
+        if (preparation.cancelled)
+          throw new DelegateMessagePreAcceptanceError(
+            'ACP prompt preparation was cancelled before admission'
+          )
+        rootOwned = true
+        return this.dispatchPrompt(
           request,
           acceptance,
           'sendPrompt',
@@ -1031,9 +1062,19 @@ class AcpRuntimeCoordinator {
           startAdmission,
           cancellation
         ).finally(() => this.delegatedWork?.wakeMessages?.(request.sessionId))
-      )
+      })
     const admission = this.promptAdmissionGuard?.(request.sessionId)
-    return admission ? admission.then(dispatch) : dispatch()
+    return Promise.race([
+      admission ? admission.then(dispatch) : dispatch(),
+      cancelledPreparation
+    ]).finally(() => {
+      pending.delete(preparation)
+      if (
+        pending.size === 0 &&
+        this.pendingPromptAdmissionPreparations.get(request.sessionId) === pending
+      )
+        this.pendingPromptAdmissionPreparations.delete(request.sessionId)
+    })
   }
 
   sendAppContinuation(request: AcpPromptRequest): ReturnType<AcpRuntime['sendAppContinuation']> {
@@ -1105,6 +1146,18 @@ class AcpRuntimeCoordinator {
     })
     let released = false
     const lease: RootAdmissionLease = {
+      cancelPreparation: () => {
+        if (cancellation.dispatched) return
+        cancellation.cancelled = true
+        // A captured pending start already rejects its admission RPC and still owns settlement
+        // cleanup. Only a request waiting before that ownership exists needs early rejection here.
+        if (!this.pendingPromptStarts.has(sessionId))
+          rejectCancellation(
+            new DelegateMessagePreAcceptanceError(
+              'ACP prompt preparation was cancelled before admission'
+            )
+          )
+      },
       release: () => {
         if (released) return
         released = true
@@ -1454,6 +1507,7 @@ class AcpRuntimeCoordinator {
           'ACP prompt start was superseded before provider dispatch'
         )
       }
+      if (cancellation) cancellation.dispatched = true
       if (operation === 'sendApplicationPrompt') {
         return runtime.sendApplicationPrompt(taskRequest, attribution!, {
           promptAttemptId: attempt.id,
@@ -1551,9 +1605,12 @@ class AcpRuntimeCoordinator {
       await this.delegatedWork?.stopActiveBranch?.(request.sessionId)
       return this.getState()
     }
+    for (const preparation of this.pendingPromptAdmissionPreparations.get(request.sessionId) ?? [])
+      preparation.cancel()
     const initiatingTurnMessageId = this.activePromptRequests.get(request.sessionId)?.request
       .provenanceContext?.promptMessageId
     const cancelledAdmission = this.activeRootAdmissions.get(request.sessionId)
+    cancelledAdmission?.cancelPreparation()
     // Production delegated-work establishes its admission fence synchronously before this call
     // returns a Promise. Keep the pinned child stops in flight so a cleanup failure cannot prevent
     // the root Attempt from being invalidated and cancelled.

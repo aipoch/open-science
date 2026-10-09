@@ -24846,7 +24846,7 @@ describe('ACP runtime skill force-load + nudge', () => {
     await newerPromptEntered.promise
     releaseSkillCheck.resolve()
 
-    await expect(delayedPrompt).rejects.toThrow(/already running/)
+    await expect(delayedPrompt).resolves.toMatchObject({ stopReason: 'cancelled' })
     expect(onPromptStarted).toHaveBeenCalledOnce()
     expect(process.killed).toBe(false)
 
@@ -29442,3 +29442,104 @@ it('protects disposable OpenCode homes at the ACP read boundary while allowing w
     await rm(workspaceRoot, { recursive: true, force: true })
   }
 })
+
+it.each(['user', 'application', 'continuation'] as const)(
+  'keeps Stop authority while a %s request waits for runtime storage admission',
+  async (kind) => {
+    const { initializeDataRootWriteAvailability } = await import('../storage/migration-state')
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['stop-storage-session'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.36.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    initializeDataRootWriteAvailability(true)
+    const request = { sessionId: session.sessionId, text: 'cancel before storage admission' }
+    const pending =
+      kind === 'user'
+        ? runtime.sendPrompt(request)
+        : kind === 'application'
+          ? runtime.sendApplicationPrompt(request, {
+              kind: 'application',
+              feature: 'reviewer',
+              purpose: 'correction',
+              causeReviewId: 'review-1'
+            })
+          : runtime.sendAppContinuation(request)
+    const rejected = expect(pending).rejects.toMatchObject({
+      name: 'DelegateMessagePreAcceptanceError'
+    })
+    try {
+      const cancellation = runtime.cancelPrompt({ sessionId: session.sessionId })
+      await cancellation
+      await rejected
+      initializeDataRootWriteAvailability(false)
+      expect(fakeAgent.prompts).toHaveLength(0)
+      expect(runtime.getSnapshot().promptInFlight).toBe(false)
+      await runtime.sendPrompt({ sessionId: session.sessionId, text: 'fresh request' })
+      expect(fakeAgent.prompts).toHaveLength(1)
+    } finally {
+      initializeDataRootWriteAvailability(false)
+      await runtime.disconnect()
+    }
+  }
+)
+
+it.each(['reconnect', 'model-change', 'literature'] as const)(
+  'does not dispatch a request cancelled while waiting for %s preparation',
+  async (stage) => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['stop-preparation-session'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.36.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    const gate = createDeferred()
+    const pendingOwner = runtime as unknown as {
+      reconnectBarrier?: Promise<void>
+      modelChanges: { barrier?: Promise<void> }
+    }
+    const restorePreparation =
+      stage === 'reconnect'
+        ? vi.spyOn(pendingOwner, 'reconnectBarrier', 'get').mockReturnValue(gate.promise)
+        : stage === 'model-change'
+          ? vi.spyOn(pendingOwner.modelChanges, 'barrier', 'get').mockReturnValue(gate.promise)
+          : vi.spyOn(runtime, 'enableLiteratureContext').mockImplementationOnce(() => gate.promise)
+    const request = {
+      sessionId: session.sessionId,
+      text: 'stopped preparation',
+      ...(stage === 'literature'
+        ? {
+            referencedArtifacts: [
+              {
+                id: 'pdf-1',
+                name: 'paper.pdf',
+                source: 'upload' as const,
+                path: '/paper.pdf',
+                mimeType: 'application/pdf',
+                pdfReadingPosition: { pageNumber: 1, pageCount: 2 }
+              }
+            ]
+          }
+        : {})
+    }
+    const pending = runtime.sendPrompt(request)
+    const rejected = expect(pending).rejects.toMatchObject({
+      name: 'DelegateMessagePreAcceptanceError'
+    })
+    await runtime.cancelPrompt({ sessionId: session.sessionId })
+    await rejected
+    restorePreparation.mockRestore()
+    expect(fakeAgent.prompts).toHaveLength(0)
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'fresh preparation' })
+    gate.resolve()
+    await Promise.resolve()
+    expect(fakeAgent.prompts).toHaveLength(1)
+    expect(fakeAgent.cancelledSessions).toHaveLength(0)
+    await runtime.disconnect()
+  }
+)
