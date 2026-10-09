@@ -147,6 +147,7 @@ type FakePdfTextItem =
       width: number
       height: number
       dir?: string
+      hasEOL?: boolean
     }>
 let fakePdf: { numPages: number; pages: FakePdfTextItem[][] }
 type FakePdfDocument = {
@@ -756,6 +757,27 @@ describe('extractPdfText', () => {
 
     await expect(extractPdfText(filePath)).resolves.toMatchObject({
       text: '--- Page 1 ---\nHello'
+    })
+  })
+
+  it('preserves explicit empty PDF line ends in full and targeted extraction', async () => {
+    fakePdf = {
+      numPages: 1,
+      pages: [
+        [
+          'Closed paragraph.',
+          { str: '', hasEOL: true, transform: [10, 0, 0, 10, 0, 20], width: 0, height: 10 },
+          'References'
+        ]
+      ]
+    }
+    const filePath = join(root, 'native-line-end.pdf')
+    await writeFile(filePath, Buffer.from('%PDF-1.4 fake'))
+    await expect(extractPdfText(filePath)).resolves.toMatchObject({
+      text: '--- Page 1 ---\nClosed paragraph.\nReferences'
+    })
+    await expect(extractPdfTextPages(filePath, [1])).resolves.toMatchObject({
+      pages: [{ pageNumber: 1, text: 'Closed paragraph.\nReferences' }]
     })
   })
 

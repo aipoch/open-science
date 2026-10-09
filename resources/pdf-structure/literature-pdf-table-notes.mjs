@@ -823,11 +823,600 @@ export function tableNoteOwnershipRect(table, contentRect, scale, pageItems, obs
 
 // A note must begin with a footnote marker or explicit notes label and have one
 // nearest preceding table. Continuations retain their original source region.
+function recoverCitedRaisedFlagDefinitions(page, tables, rules) {
+  return tables.map(({ rect }) => {
+    const cited = page.lines.filter(
+      (mark) =>
+        /^[a-z]$/u.test(mark.text) &&
+        mark.y >= rect[1] - 0.02 &&
+        mark.y + mark.height <= rect[3] + 0.02 &&
+        mark.y - rect[1] < mark.fontSize * 6 &&
+        mark.x >= rect[0] - 0.02 &&
+        mark.x + mark.width <= rect[2] + 0.02 &&
+        page.lines.some(
+          (body) =>
+            body !== mark &&
+            /\p{L}{2,}/u.test(body.text) &&
+            body.fontSize > mark.fontSize * 1.2 &&
+            Math.abs(body.x + body.width - mark.x) < body.fontSize * 0.4 &&
+            body.y + body.height - mark.y - mark.height > body.fontSize * 0.2 &&
+            body.y + body.height - mark.y - mark.height < body.fontSize * 0.8
+        )
+    )
+    const keys = [...new Set(cited.map((l) => l.text))].sort()
+    if (
+      keys.length < 2 ||
+      keys.length > 5 ||
+      keys.some((s, n) => s !== String.fromCharCode(97 + n))
+    )
+      return
+    const definitions = keys.map((key) => {
+      const pairs = page.lines.flatMap((marker) => {
+        if (
+          marker.text !== key ||
+          marker.y < rect[3] ||
+          marker.x < rect[0] - 1 ||
+          marker.x + marker.width > rect[2]
+        )
+          return []
+        return page.lines.flatMap((body) => {
+          const rise = body.y + body.height - marker.y - marker.height
+          if (
+            body === marker ||
+            marker.fontSize >= body.fontSize * 0.8 ||
+            body.x < marker.x + marker.width ||
+            body.x - marker.x - marker.width > body.fontSize * 0.6 ||
+            Math.abs(body.y - marker.y) > body.fontSize * 0.2 ||
+            rise < body.fontSize * 0.2 ||
+            rise > body.fontSize * 0.8 ||
+            body.x + body.width > rect[2] ||
+            !/^(?:\d{1,2}:\s*[\p{L}-]+(?:\s+[\p{L}-]+)*,\s*){1,5}\d{1,2}:\s*[\p{L}-]+(?:\s+[\p{L}-]+)*\.?$/u.test(
+              body.text
+            )
+          )
+            return []
+          const ordinals = [...body.text.matchAll(/(?:^|,\s*)(\d{1,2}):/gu)].map((m) =>
+            Number(m[1])
+          )
+          return ordinals.every((v, n) => v === n) ? [{ marker, body }] : []
+        })
+      })
+      return pairs.length === 1 ? pairs[0] : undefined
+    })
+    if (definitions.some((d) => !d)) return
+    const h = definitions[0].body.fontSize
+    if (
+      definitions[0].marker.y - rect[3] > h * 2 ||
+      definitions.at(-1).body.y - rect[3] > h * 5.5 ||
+      definitions.some(
+        (d, n) =>
+          Math.abs(d.marker.x - definitions[0].marker.x) > 0.1 ||
+          Math.abs(d.body.fontSize - h) > h * 0.05 ||
+          (n &&
+            (d.body.y - definitions[n - 1].body.y < h ||
+              d.body.y - definitions[n - 1].body.y > h * 1.5))
+      )
+    )
+      return
+    if (
+      !rules.some(
+        (r) =>
+          r[1] === r[3] &&
+          Math.abs(r[1] - rect[3]) < h &&
+          r[1] < definitions[0].marker.y &&
+          Math.abs(r[0] - rect[0]) < h &&
+          Math.abs(r[2] - rect[2]) < h
+      )
+    )
+      return
+    const first = definitions[0],
+      last = definitions.at(-1)
+    const owners = tables.filter(
+      ({ rect: other }) =>
+        first.marker.y >= other[3] &&
+        first.marker.y - other[3] < h * 2 &&
+        first.marker.x >= other[0] - 1 &&
+        last.body.x + last.body.width <= other[2]
+    )
+    if (owners.length !== 1) return
+    const allowed = new Set(definitions.flatMap((d) => [d.marker, d.body]))
+    if (
+      page.lines.some(
+        (l) =>
+          l.y >= rect[3] &&
+          l.y <= last.body.y &&
+          l.x < rect[2] &&
+          l.x + l.width > rect[0] &&
+          !allowed.has(l) &&
+          !/^Notes?\.?$/iu.test(l.text)
+      )
+    )
+      return
+    return definitions.map(({ marker, body }) => ({
+      text: marker.text + ' ' + body.text,
+      rect: union([lineRect(marker), lineRect(body)])
+    }))
+  })
+}
+
+// A complete repeated paragraph series may use full-size raised footer letters
+// while its table citations are smaller. Baseline, citation and whole-font
+// ownership are local proofs; ordinary prose/letters retain the existing gates.
+function recoverCitedRaisedParagraphs(page, tables, rules, lines) {
+  return tables.map(({ rect }, index) => {
+    const citations = page.lines.filter(
+        (mark) =>
+          /^[a-z]$/u.test(mark.text) &&
+          mark.y >= rect[1] - 1e-8 &&
+          mark.y + mark.height <= rect[3] + 1e-8 &&
+          mark.x >= rect[0] &&
+          mark.x + mark.width <= rect[2] &&
+          page.lines.some((body) => {
+            const rise = body.y + body.height - mark.y - mark.height
+            return (
+              body !== mark &&
+              /\p{L}{2,}/u.test(body.text) &&
+              body.y >= rect[1] &&
+              body.y + body.height <= rect[3] &&
+              body.x >= rect[0] &&
+              body.x + body.width <= rect[2] &&
+              mark.fontSize < body.fontSize * 0.8 &&
+              Math.abs(body.x + body.width - mark.x) < body.fontSize * 0.4 &&
+              rise > body.fontSize * 0.2 &&
+              rise < body.fontSize * 0.8
+            )
+          })
+      ),
+      keys = [...new Set(citations.map((l) => l.text))].sort()
+    if (
+      keys.length < 2 ||
+      keys.length > 5 ||
+      keys.some((s, n) => s !== String.fromCharCode(97 + n))
+    )
+      return
+    const pairs = keys.map((key) => {
+      const candidates = page.lines.flatMap((marker) => {
+        if (
+          marker.text !== key ||
+          marker.y < rect[3] ||
+          marker.x < rect[0] ||
+          marker.x + marker.width > rect[2]
+        )
+          return []
+        return lines.flatMap((first) => {
+          const gap = first.x - marker.x - marker.width,
+            rise = first.bottom - marker.y - marker.height
+          return /^\p{L}/u.test(first.text) &&
+            Math.abs(marker.fontSize - first.fontSize) < 1e-8 &&
+            gap >= 0 &&
+            gap < first.fontSize * 0.6 &&
+            rise > first.fontSize * 0.2 &&
+            rise < first.fontSize * 0.8 &&
+            first.right <= rect[2] &&
+            first.y > marker.y
+            ? [{ marker, first }]
+            : []
+        })
+      })
+      return candidates.length === 1 ? candidates[0] : undefined
+    })
+    if (pairs.some((p) => !p)) return
+    const h = pairs[0].first.fontSize,
+      closing = rules.filter(
+        (r) =>
+          r.every(Number.isFinite) &&
+          r[1] === r[3] &&
+          r[1] >= rect[3] &&
+          r[1] <= pairs[0].marker.y &&
+          pairs[0].marker.y - r[1] < h &&
+          r[1] - rect[3] < h &&
+          Math.abs(r[0] - rect[0]) < h &&
+          Math.abs(r[2] - rect[2]) < h
+      )
+    if (
+      closing.length !== 1 ||
+      pairs.some(
+        (p, n) =>
+          Math.abs(p.marker.x - pairs[0].marker.x) > h * 0.1 ||
+          Math.abs(p.first.x - pairs[0].first.x) > h * 0.1 ||
+          Math.abs(p.first.fontSize - h) > h * 0.05 ||
+          (n && p.marker.y <= pairs[n - 1].first.bottom)
+      )
+    )
+      return
+    const blocks = pairs.map(({ marker, first }, n) => {
+      const body = [first],
+        nextMarker = pairs[n + 1]?.marker
+      for (const next of lines.filter(
+        (l) => l.y > first.y + 2 && l.y < (nextMarker?.y ?? page.height ?? Infinity)
+      )) {
+        if (next.x >= rect[2] || next.right <= rect[0]) continue
+        const gap = next.y - body.at(-1).y
+        if (
+          body.length >= 12 ||
+          startsNote(next.text) ||
+          captionKind(next.text) ||
+          gap < h * 0.8 ||
+          gap > h * 1.8 ||
+          Math.abs(next.fontSize - h) > h * 0.05 ||
+          Math.abs(next.x - first.x) > h * 0.1 ||
+          next.right > rect[2]
+        )
+          break
+        body.push(next)
+        if (/[.!?]$/.test(next.text) && next.width < first.width * 0.95) break
+      }
+      if (
+        body.length < 2 ||
+        !/[.!?]$/.test(body.at(-1).text) ||
+        body.at(-1).width >= first.width * 0.95 ||
+        (nextMarker &&
+          (nextMarker.y < body.at(-1).bottom || nextMarker.y - body.at(-1).bottom > h * 1.5))
+      )
+        return
+      return {
+        body,
+        marker,
+        text: marker.text + ' ' + joinCaptionLines(body.map((l) => l.text)),
+        rect: union([lineRect(marker), ...body.map(lineRect)])
+      }
+    })
+    if (blocks.some((b) => !b)) return
+    const bounds = union(blocks.map((b) => b.rect)),
+      owned = blocks.flatMap((b) => [lineRect(b.marker), ...b.body.map(lineRect)]),
+      corridor = [rect[0], closing[0][1], rect[2], bounds[3]],
+      fonts = page.lines.filter((l) => l.text.trim() && intersection(corridor, lineRect(l)) > 0)
+    if (
+      tables.some((t, n) => n !== index && intersection(t.rect, bounds) > 0) ||
+      tables.filter(
+        (t) =>
+          pairs[0].marker.y >= t.rect[3] &&
+          pairs[0].marker.y - t.rect[3] < h * 2 &&
+          pairs[0].marker.x >= t.rect[0] &&
+          pairs[0].marker.x < t.rect[2]
+      ).length !== 1 ||
+      new Set(fonts.map((l) => JSON.stringify(lineRect(l)))).size !== fonts.length ||
+      fonts.some(
+        (l) =>
+          ![l.x, l.y, l.width, l.height, l.fontSize].every(Number.isFinite) ||
+          l.width <= 0 ||
+          l.height <= 0 ||
+          l.fontSize <= 0 ||
+          owned.filter(
+            (r) =>
+              l.x >= r[0] - 1e-8 &&
+              l.y >= r[1] - 1e-8 &&
+              l.x + l.width <= r[2] + 1e-8 &&
+              l.y + l.height <= r[3] + 1e-8
+          ).length !== 1
+      )
+    )
+      return
+    return blocks.map(({ text, rect }) => ({ text, rect }))
+  })
+}
+
+// Complete only already-owned notes. A shared page center, native closing
+// rule, uniform prose leading and a short terminal line prove the paragraph;
+// the normal indentation gates remain unchanged for other continuations.
+function completeCenteredRuledNotes(page, tables, rules, lines, notes) {
+  if (!Number.isFinite(page.width)) return
+  for (const [index, { rect }] of tables.entries()) {
+    for (const note of notes[index]) {
+      const first = lines.find(
+        (l) => Math.abs(l.y - note.rect[1]) < 0.1 && note.text.startsWith(l.text)
+      )
+      if (!first || first.width < first.fontSize * 20) continue
+      const h = first.fontSize,
+        center = (first.x + first.right) / 2,
+        key = /^([a-z])\s+\p{L}/u.exec(first.text)?.[1]
+      if (
+        Math.abs(center - page.width / 2) > h * 0.2 ||
+        (!startsNote(first.text) &&
+          (!key ||
+            !page.lines.some(
+              (l) =>
+                l.text === key &&
+                l.y >= rect[1] - 0.02 &&
+                l.y + l.height <= rect[3] + 0.02 &&
+                l.x >= rect[0] &&
+                l.x + l.width <= rect[2] &&
+                page.lines.some(
+                  (body) =>
+                    body !== l &&
+                    body.fontSize > l.fontSize * 1.2 &&
+                    Math.abs(body.x + body.width - l.x) < body.fontSize * 0.4 &&
+                    body.y + body.height - l.y - l.height > body.fontSize * 0.15 &&
+                    body.y + body.height - l.y - l.height < body.fontSize * 0.8
+                )
+            )))
+      )
+        continue
+      const closing = rules.filter(
+        (r) =>
+          r[1] === r[3] &&
+          Math.abs(r[1] - rect[3]) < h * 2 &&
+          r[1] < first.y &&
+          first.y - r[1] < h * 6 &&
+          Math.abs(r[0] - rect[0]) < h * 2 &&
+          Math.abs(r[2] - rect[2]) < h * 2
+      )
+      if (closing.length !== 1) continue
+      const block = [first]
+      let spacing
+      for (const next of lines.filter((l) => l.y > first.y + 2)) {
+        if (next.x >= rect[2] || next.right <= rect[0]) continue
+        const gap = next.y - block.at(-1).y
+        if (
+          block.length >= 12 ||
+          startsNote(next.text) ||
+          /^[a-z]\s+\p{L}/u.test(next.text) ||
+          captionKind(next.text) ||
+          gap < h * 0.8 ||
+          gap > h * 1.8 ||
+          (spacing !== undefined && Math.abs(gap - spacing) > h * 0.25) ||
+          Math.abs(next.fontSize - h) > h * 0.05 ||
+          Math.abs((next.x + next.right) / 2 - center) > h * 0.05 ||
+          tables.some(({ rect: other }) => intersection(other, lineRect(next)) > 0)
+        )
+          break
+        spacing ??= gap
+        block.push(next)
+        if (next.width < first.width * 0.6 && /[.!?]$/.test(next.text)) break
+        if (next.width < first.width * 0.75) break
+      }
+      const last = block.at(-1),
+        text = joinCaptionLines(block.map((l) => l.text)),
+        bounds = union(block.map(lineRect))
+      if (
+        block.length < 3 ||
+        last.width >= first.width * 0.6 ||
+        !/[.!?]$/.test(last.text) ||
+        !text.startsWith(note.text) ||
+        bounds[3] <= note.rect[3] ||
+        tables.some((t, n) => n !== index && intersection(t.rect, bounds) > 0) ||
+        tables.filter(
+          (t) =>
+            first.y >= t.rect[3] &&
+            first.y - t.rect[3] < h * 6 &&
+            center > t.rect[0] &&
+            center < t.rect[2]
+        ).length !== 1 ||
+        lines.some(
+          (l) =>
+            l.y >= closing[0][1] &&
+            l.y < first.y - 0.1 &&
+            l.x < rect[2] &&
+            l.right > rect[0] &&
+            !notes[index].some(
+              (prior) => l.y >= prior.rect[1] - 0.1 && l.bottom <= prior.rect[3] + 0.1
+            )
+        )
+      )
+        continue
+      Object.assign(note, { text, rect: bounds })
+    }
+  }
+}
+
+// A complete centered totals sentence belongs to its already accepted symbolic
+// note only through a raised in-table citation and an uninterrupted native
+// closing-rule corridor. This does not change ordinary indentation limits.
+function completeCenteredReferencedTotals(page, tables, rules, lines, notes) {
+  if (!Number.isFinite(page.width) || page.width <= 0) return
+  for (const [index, { rect }] of tables.entries()) {
+    if (!rect.every(Number.isFinite)) continue
+    for (const note of notes[index]) {
+      const key = /^([*†‡])\s+\p{L}/u.exec(note.text)?.[1],
+        first = lines.find((l) => l.text === note.text && Math.abs(l.y - note.rect[1]) < 1e-8)
+      if (!key || !first || !/[.!?]$/.test(first.text)) continue
+      const h = first.fontSize,
+        center = (first.x + first.right) / 2,
+        cited = page.lines.some(
+          (mark) =>
+            mark.text === key &&
+            mark.x >= rect[0] &&
+            mark.x + mark.width <= rect[2] &&
+            mark.y >= rect[1] &&
+            mark.y + mark.height <= rect[3] &&
+            page.lines.some((body) => {
+              const rise = body.y + body.height - mark.y - mark.height
+              return (
+                body !== mark &&
+                /\p{L}{2,}/u.test(body.text) &&
+                body.x >= rect[0] &&
+                body.x + body.width <= rect[2] &&
+                body.y >= rect[1] &&
+                body.y + body.height <= rect[3] &&
+                mark.fontSize < body.fontSize * 0.8 &&
+                Math.abs(body.x + body.width - mark.x) < body.fontSize * 0.4 &&
+                rise > body.fontSize * 0.2 &&
+                rise < body.fontSize * 0.8
+              )
+            })
+        ),
+        closing = rules.filter(
+          (r) =>
+            r.every(Number.isFinite) &&
+            r[1] === r[3] &&
+            r[1] >= rect[3] &&
+            r[1] <= first.y &&
+            first.y - r[1] < h &&
+            r[1] - rect[3] < h &&
+            Math.abs(r[0] - rect[0]) < h &&
+            Math.abs(r[2] - rect[2]) < h
+        )
+      if (
+        !cited ||
+        closing.length !== 1 ||
+        first.width < h * 20 ||
+        Math.abs(center - page.width / 2) > h * 0.2
+      )
+        continue
+      const next = lines.find((l) => l.y > first.y + 2 && l.x < first.right && l.right > first.x)
+      if (
+        !next ||
+        !/^Estimated totals are\s+\p{L}.+[.!?]$/u.test(next.text) ||
+        Math.abs(next.fontSize - h) > h * 0.05 ||
+        next.y - first.y < h * 0.8 ||
+        next.y - first.y > h * 1.8 ||
+        next.width < first.width * 0.5 ||
+        next.width >= first.width * 0.9 ||
+        Math.abs((next.x + next.right) / 2 - center) > h * 0.05
+      )
+        continue
+      const bounds = union([lineRect(first), lineRect(next)]),
+        owned = [lineRect(first), lineRect(next)],
+        corridor = [bounds[0], closing[0][1], bounds[2], bounds[3]],
+        fonts = page.lines.filter((l) => l.text.trim() && intersection(corridor, lineRect(l)) > 0)
+      if (
+        tables.some((t, n) => n !== index && intersection(t.rect, bounds) > 0) ||
+        tables.filter(
+          (t) =>
+            first.y >= t.rect[3] &&
+            first.y - t.rect[3] < h * 2 &&
+            center > t.rect[0] &&
+            center < t.rect[2]
+        ).length !== 1 ||
+        new Set(fonts.map((l) => JSON.stringify(lineRect(l)))).size !== fonts.length ||
+        fonts.some(
+          (l) =>
+            ![l.x, l.y, l.width, l.height, l.fontSize].every(Number.isFinite) ||
+            l.width <= 0 ||
+            l.height <= 0 ||
+            l.fontSize <= 0 ||
+            owned.filter(
+              (r) =>
+                l.x >= r[0] - 1e-8 &&
+                l.y >= r[1] - 1e-8 &&
+                l.x + l.width <= r[2] + 1e-8 &&
+                l.y + l.height <= r[3] + 1e-8
+            ).length !== 1
+        )
+      )
+        continue
+      Object.assign(note, { text: joinCaptionLines([first.text, next.text]), rect: bounds })
+    }
+  }
+}
+
+// A physically raised Ref. citation links this numbered bibliography to one
+// closed table. References headings alone cannot start table-note ownership.
+function recoverCitedReferenceFooters(page, tables, rules, lines) {
+  const blocks = tables.map(() => [])
+  for (const first of lines.filter((l) => /^References[:.]\s*\(1\)\s+\p{L}/u.test(l.text))) {
+    const h = first.fontSize,
+      markers = page.lines.filter(
+        (mark) =>
+          /^[a-z]$/.test(mark.text) &&
+          mark.fontSize <= h &&
+          first.x - mark.x - mark.width >= -0.02 &&
+          first.x - mark.x - mark.width < h * 0.4 &&
+          first.bottom - mark.y - mark.height > h * 0.2 &&
+          first.bottom - mark.y - mark.height < h * 0.8
+      )
+    if (markers.length !== 1) continue
+    const marker = markers[0],
+      owners = tables.flatMap(({ rect }, index) => {
+        const closing = rules.filter(
+          (r) =>
+            r[1] === r[3] &&
+            Math.abs(r[1] - rect[3]) < h &&
+            r[1] <= marker.y &&
+            marker.y - r[1] < h &&
+            Math.abs(r[0] - rect[0]) < h &&
+            Math.abs(r[2] - rect[2]) < h
+        )
+        const headers = page.lines.filter(
+          (l) =>
+            /\bRef\.$/u.test(l.text.trim()) &&
+            l.y >= rect[1] &&
+            l.y - rect[1] < h * 4 &&
+            l.y + l.height <= rect[3] &&
+            l.x >= rect[0] &&
+            l.x + l.width <= rect[2] &&
+            page.lines.some(
+              (mark) =>
+                mark.text === marker.text &&
+                mark.y >= rect[1] - 0.02 &&
+                mark.x + mark.width <= rect[2] &&
+                mark.fontSize <= l.fontSize &&
+                Math.abs(l.x + l.width - mark.x) < h * 0.4 &&
+                l.y + l.height - mark.y - mark.height > h * 0.2 &&
+                l.y + l.height - mark.y - mark.height < h * 0.8
+            )
+        )
+        return closing.length === 1 &&
+          headers.length === 1 &&
+          first.width >= (rect[2] - rect[0]) * 0.85 &&
+          first.x >= rect[0] - h * 2 &&
+          first.right <= rect[2] + h * 2
+          ? [{ index, rect, closing: closing[0] }]
+          : []
+      })
+    if (owners.length !== 1) continue
+    const { index, rect, closing } = owners[0],
+      body = [first]
+    let spacing
+    for (const next of lines.filter((l) => l.y > first.y + 2)) {
+      if (next.x >= rect[2] || next.right <= rect[0]) continue
+      const gap = next.y - body.at(-1).y
+      if (
+        body.length >= 12 ||
+        gap < h * 0.8 ||
+        gap > h * 1.8 ||
+        (spacing !== undefined && Math.abs(gap - spacing) > h * 0.15) ||
+        Math.abs(next.fontSize - h) > h * 0.05 ||
+        Math.abs(next.x - first.x) > h * 0.1 ||
+        next.right > first.right + h * 0.1 ||
+        startsNote(next.text) ||
+        captionKind(next.text) ||
+        tables.some((t) => intersection(t.rect, lineRect(next)) > 0)
+      )
+        break
+      spacing ??= gap
+      body.push(next)
+      if (next.width < first.width * 0.6 && /\(\d{4}\)\.$/u.test(next.text)) break
+      if (next.width < first.width * 0.75) break
+    }
+    const text = joinCaptionLines(body.map((l) => l.text)),
+      citations = [...text.matchAll(/\((\d{1,2})\)/gu)].map((m) => Number(m[1])),
+      bounds = union([lineRect(marker), ...body.map(lineRect)])
+    if (
+      body.length < 3 ||
+      body.at(-1).width >= first.width * 0.6 ||
+      !/\(\d{4}\)\.$/u.test(body.at(-1).text) ||
+      citations.length < 3 ||
+      citations.length > 32 ||
+      citations.some((key, n) => key !== n + 1) ||
+      (text.match(/\(\d{4}\)/gu) ?? []).length !== citations.length ||
+      tables.some((t, n) => n !== index && intersection(t.rect, bounds) > 0) ||
+      lines.some(
+        (l) =>
+          l.y >= closing[1] &&
+          l.y <= body.at(-1).y &&
+          l.x < rect[2] &&
+          l.right > rect[0] &&
+          !body.includes(l) &&
+          !(
+            l.text === marker.text &&
+            Math.abs(l.x - marker.x) < 0.1 &&
+            Math.abs(l.y - marker.y) < 0.1
+          )
+      )
+    )
+      continue
+    blocks[index].push({ text: marker.text + ' ' + text, rect: bounds })
+  }
+  return blocks
+}
+
 export function associateTableNotes(page, tables, rules = []) {
   const manuscriptBlocks = findDoubleSpacedNoteBlocks(page)
   const horizontal = joinHorizontalTableRules(rules)
   rules = [...rules.filter((r) => r[1] !== r[3]), ...horizontal]
-  const notes = tables.map(() => [])
+  const flags = recoverCitedRaisedFlagDefinitions(page, tables, rules)
+  const notes = tables.map((_, index) => flags[index] ?? [])
   const lines = groupPageLines(page)
     // Diagonal publication watermarks have tall rotated bounds; they are not
     // intervening prose. Ordinary horizontal occurrences remain untouched.
@@ -943,7 +1532,19 @@ export function associateTableNotes(page, tables, rules = []) {
     first.items = [...(first.items ?? []), ...(next.items ?? [])]
     lines.splice(lines.indexOf(next), 1)
   }
-  const used = new Set()
+  const used = new Set(
+    lines.filter((line) =>
+      flags.some((block) =>
+        block?.some(
+          (note) =>
+            line.x >= note.rect[0] - 0.1 &&
+            line.right <= note.rect[2] + 0.1 &&
+            line.y >= note.rect[1] - 0.1 &&
+            line.bottom <= note.rect[3] + 0.1
+        )
+      )
+    )
+  )
   const numberedFooters = recoverNativeNumberedDefinitionFooter(page, tables)
   for (const [index, block] of numberedFooters.entries())
     if (block) {
@@ -2267,7 +2868,12 @@ export function associateTableNotes(page, tables, rules = []) {
       break
     }
   }
+  completeCenteredRuledNotes(page, tables, rules, lines, notes)
   const footers = recoverRuledFooterNotes(page, tables, rules, lines)
+  const raisedParagraphs = recoverCitedRaisedParagraphs(page, tables, rules, lines)
+  for (const [index, block] of raisedParagraphs.entries()) if (block) footers[index].push(...block)
+  const citedReferences = recoverCitedReferenceFooters(page, tables, rules, lines)
+  for (const [index, blocks] of citedReferences.entries()) footers[index].push(...blocks)
   const references = recoverRuledReferenceNotes(page, tables, rules, lines, notes)
   for (const [index, blocks] of references.entries()) footers[index].push(...blocks)
   const centered = recoverCenteredRuledGlossaries(page, tables, rules, lines)
@@ -2285,6 +2891,7 @@ export function associateTableNotes(page, tables, rules = []) {
     }
     notes[index].sort((a, b) => a.rect[1] - b.rect[1] || a.rect[0] - b.rect[0])
   }
+  completeCenteredReferencedTotals(page, tables, rules, lines, notes)
   reconcileInlineNoteFragments(page, notes.flat())
   const definitionParagraphs = recoverExplicitDefinitionParagraphs(page, tables, notes)
   for (const [index, block] of definitionParagraphs.entries()) {
