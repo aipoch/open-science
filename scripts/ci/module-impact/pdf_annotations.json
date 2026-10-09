@@ -683,8 +683,6 @@
       "src/main/session-package/headless.test.ts"
     ]
   },
-  "capabilityOverlays": [
-    "e2e_regressions"
-  ],
+  "capabilityOverlays": ["e2e_regressions"],
   "fallbackCapability": "main_runtime"
 }
