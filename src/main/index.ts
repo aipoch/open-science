@@ -467,6 +467,7 @@ async function startDesktop(): Promise<void> {
   startupDiagnostics?.phase('launch-node-runtime')
   const launch = await startOrAttachDesktopBackend({
     configRoot,
+    profilePath,
     version: app.getVersion(),
     ...desktopBackendPaths({
       applicationPath: app.getAppPath(),
