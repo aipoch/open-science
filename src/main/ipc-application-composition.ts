@@ -883,8 +883,18 @@ export const createApplicationModules = async (
       handoff.reviewerModelRuntimeShutdown.current?.hasActiveWork() ?? false,
     getActiveSettingsInstallId: () => settingsBootstrap.settingsService.getActiveInstallId(),
     holdSettingsInstallAdmission: () => settingsBootstrap.settingsService.holdInstallAdmission(),
-    prepareForQuit: () => agentRuntime.runtime.prepareForQuit(),
-    abortQuitPreparation: () => agentRuntime.runtime.abortQuitPreparation(),
+    prepareForQuit: async () => {
+      const outcome = await agentRuntime.runtime.prepareForQuit()
+      if (outcome !== 'completed') return outcome
+      return handoff.shutdownCoordinator.runForQuitPreparation()
+    },
+    abortQuitPreparation: () => {
+      try {
+        agentRuntime.runtime.abortQuitPreparation()
+      } finally {
+        sideChat.sideChatRuntime.resumeAfterHandoff()
+      }
+    },
     electronAdapters: {
       beforeCompute: beforeComputeAdapters,
       compute: {

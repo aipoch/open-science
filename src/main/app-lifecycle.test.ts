@@ -1835,6 +1835,32 @@ describe('installAppLifecycle', () => {
 })
 
 // A desktop client cannot treat remote preparation errors as a successful local best-effort quit.
+it.each(['timeout', 'failed', 'degraded'] as const)(
+  'keeps the remote backend connected after %s preparation and allows a clean retry',
+  async (outcome) => {
+    const onQuitError = vi.fn()
+    const prepareForQuit = vi
+      .fn<() => Promise<ShutdownStepOutcome>>()
+      .mockResolvedValueOnce(outcome)
+      .mockResolvedValueOnce('completed')
+    const h = setup({ requireCleanBackendShutdown: true, onQuitError, prepareForQuit })
+    h.closeOpts[0].requestQuit(true)
+    h.app.emit('before-quit')
+    await vi.waitFor(() => expect(onQuitError).toHaveBeenCalledOnce())
+    expect(h.abortQuitPreparation).toHaveBeenCalledOnce()
+    expect(h.shutdownBackends).not.toHaveBeenCalled()
+    expect(h.app.exit).not.toHaveBeenCalled()
+    // Only preflight ran: no final flush may depend on a disconnected backend.
+    expect(h.flushSessionPersistence).toHaveBeenCalledTimes(1)
+
+    h.closeOpts[0].requestQuit(true)
+    h.app.emit('before-quit')
+    await vi.waitFor(() => expect(h.app.exit).toHaveBeenCalledOnce())
+    expect(h.shutdownBackends).toHaveBeenCalledOnce()
+    expect(h.flushSessionPersistence).toHaveBeenCalledTimes(3)
+  }
+)
+
 it.each(['prepare', 'shutdown'] as const)(
   'retains the desktop and rolls back admission after remote %s failure',
   async (kind) => {

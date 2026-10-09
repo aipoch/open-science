@@ -6,7 +6,7 @@ import {
   rendererSessionPersistenceFlushBlocksShutdown,
   type RendererSessionPersistenceFlushOutcome
 } from './session-persistence/renderer-flush'
-import type { ShutdownStepOutcome } from './lifecycle-shutdown'
+import { BackendShutdownOutcomeError, type ShutdownStepOutcome } from './lifecycle-shutdown'
 import { flushDiagnosticsWithTimeout, type DiagnosticFlush } from './diagnostics/flush'
 import { diagnosticErrorFields, type Logger } from './logger'
 import { startDiagnosticOperation } from './diagnostics/operation'
@@ -530,6 +530,11 @@ export const installAppLifecycle = (
         try {
           usageDrainResult = normalizeStepOutcome(await deps.prepareForQuit())
           diagnostics?.phase('usage-drain', { result: usageDrainResult })
+          if (deps.requireCleanBackendShutdown && usageDrainResult !== 'completed') {
+            throw new BackendShutdownOutcomeError(
+              usageDrainResult === 'timeout' ? 'timeout' : 'degraded'
+            )
+          }
         } catch (error) {
           usageDrainResult = 'failed'
           if (deps.requireCleanBackendShutdown) {
