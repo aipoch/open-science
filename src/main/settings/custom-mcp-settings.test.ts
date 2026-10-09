@@ -301,7 +301,7 @@ describe('sanitizeConnectors customMcpServers', () => {
     expect(result).toMatchObject({
       autoAllowIds: ['chemistry', 'srv-1'],
       blockedToolIds: ['chemistry/search', 'srv-1/write'],
-      askToolIds: ['chemistry/lookup', 'srv-1/read']
+      askToolIds: ['chemistry/lookup', 'srv-1/read', 'encori/download_bulk_dataset']
     })
   })
 })

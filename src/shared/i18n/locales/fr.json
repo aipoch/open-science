@@ -137,6 +137,18 @@
     "More items": "Plus de sessions"
   },
   "renderer": {
+    "RNA interactions, regulatory evidence and bulk datasets from ENCORI.": "Interactions ARN, preuves de régulation et jeux de données en masse d’ENCORI.",
+    "Query miRNA target evidence.": "Rechercher les preuves de cibles de miRNA.",
+    "Query RNA–RNA interaction evidence.": "Rechercher les preuves d’interactions ARN–ARN.",
+    "Query RBP target evidence.": "Rechercher les preuves de cibles de RBP.",
+    "Query ceRNA networks.": "Rechercher les réseaux de ceRNA.",
+    "Query RBP disease associations.": "Rechercher les associations entre RBP et maladies.",
+    "Search RBP motif rankings.": "Rechercher les classements de motifs de RBP.",
+    "Retrieve dataset binding sites.": "Obtenir les sites de liaison d’un jeu de données.",
+    "List or read official reference tables.": "Lister ou lire les tables de référence officielles.",
+    "List bulk datasets without downloading.": "Lister les jeux de données en masse sans téléchargement.",
+    "Download and verify one bulk dataset.": "Télécharger et vérifier un jeu de données en masse.",
+
     "Cancer proteomics studies, sample and aliquot mappings, and file discovery from PDC.": "Études de protéomique du cancer, correspondances des échantillons et aliquotes, et recherche de fichiers dans PDC.",
     "Search PDC studies and versions by name or identifier.": "Rechercher des études et versions PDC par nom ou identifiant.",
     "Retrieve PDC study metadata and available versions.": "Récupérer les métadonnées et les versions disponibles des études PDC.",

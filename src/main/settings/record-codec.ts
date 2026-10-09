@@ -399,7 +399,17 @@ export const sanitizeConnectors = (value: unknown): StoredConnectors | undefined
   const blockedToolIds = asStringArray(value.blockedToolIds)
   if (blockedToolIds.length) connectors.blockedToolIds = blockedToolIds
   const askToolIds = asStringArray(value.askToolIds)
+  // Seed only this new built-in tool. Do not overwrite Block or reapply Ask after
+  // a saved user choice; reading settings remains free of filesystem writes.
+  const downloadId = 'encori/download_bulk_dataset'
+  if (
+    value.encoriDownloadPolicyInitialized !== true &&
+    !blockedToolIds.includes(downloadId) &&
+    !askToolIds.includes(downloadId)
+  )
+    askToolIds.push(downloadId)
   if (askToolIds.length) connectors.askToolIds = askToolIds
+  connectors.encoriDownloadPolicyInitialized = true
   const disabledConnectorIds = asStringArray(value.disabledConnectorIds)
   if (disabledConnectorIds.length) {
     connectors.disabledConnectorIds = [...new Set(disabledConnectorIds)]

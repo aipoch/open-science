@@ -138,6 +138,18 @@
     "More items": "Другие сеансы"
   },
   "renderer": {
+    "RNA interactions, regulatory evidence and bulk datasets from ENCORI.": "Взаимодействия РНК, регуляторные данные и массовые наборы данных ENCORI.",
+    "Query miRNA target evidence.": "Запросить данные о мишенях miRNA.",
+    "Query RNA–RNA interaction evidence.": "Запросить данные о взаимодействиях РНК–РНК.",
+    "Query RBP target evidence.": "Запросить данные о мишенях RBP.",
+    "Query ceRNA networks.": "Запросить сети ceRNA.",
+    "Query RBP disease associations.": "Запросить связи RBP с заболеваниями.",
+    "Search RBP motif rankings.": "Найти рейтинги мотивов RBP.",
+    "Retrieve dataset binding sites.": "Получить сайты связывания набора данных.",
+    "List or read official reference tables.": "Вывести список или прочитать официальные справочные таблицы.",
+    "List bulk datasets without downloading.": "Вывести список массовых наборов данных без скачивания.",
+    "Download and verify one bulk dataset.": "Скачать и проверить один массовый набор данных.",
+
     "Cancer proteomics studies, sample and aliquot mappings, and file discovery from PDC.": "Исследования протеомики рака, сопоставление образцов и аликвот и поиск файлов в PDC.",
     "Search PDC studies and versions by name or identifier.": "Поиск исследований и версий PDC по названию или идентификатору.",
     "Retrieve PDC study metadata and available versions.": "Получение метаданных исследований PDC и доступных версий.",

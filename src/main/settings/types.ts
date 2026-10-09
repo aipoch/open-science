@@ -217,9 +217,11 @@ export type StoredConnectors = {
   openAlexApiKeyRef?: string
   // Fully-qualified "<connector>/<method>" ids denied by policy; allow by default otherwise.
   blockedToolIds?: string[]
-  // Fully-qualified "<connector>/<method>" ids that require per-call approval (opt-in). Tools default
-  // to allow (no prompt); this is the set the user switched to "Require approval".
+  // Fully-qualified "<connector>/<method>" ids that require per-call approval. Tools default to
+  // Allow except ENCORI bulk downloads, which are seeded as Ask until the user selects a policy.
   askToolIds?: string[]
+  // Once initialized, an absent download policy can be the user's explicit Allow choice.
+  encoriDownloadPolicyInitialized?: true
   // Ids of bundled connectors the user turned OFF. Absent/empty means every bundled connector is
   // enabled (default-on), mirroring disabledSkillIds. This is the authoritative bundled gate.
   disabledConnectorIds?: string[]
@@ -353,5 +355,11 @@ export type StoredComputeGrant = {
 // Canonical empty settings used for a first run or an unreadable file.
 export const createEmptySettings = (): StoredSettings => ({
   version: SETTINGS_FILE_VERSION,
-  providers: []
+  providers: [],
+  connectors: {
+    enabledIds: [],
+    autoAllowIds: [],
+    askToolIds: ['encori/download_bulk_dataset'],
+    encoriDownloadPolicyInitialized: true
+  }
 })

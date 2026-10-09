@@ -4,11 +4,52 @@ import {
   sanitizeClaudeInfo,
   sanitizeCodexInfo,
   sanitizeComputeGrant,
+  sanitizeConnectors,
   sanitizeProvider
 } from './record-codec'
 import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
 
 describe('settings record codec', () => {
+  it('seeds ENCORI download Ask once without mutating legacy policy or other tools', () => {
+    const legacy = {
+      enabledIds: ['chemistry'],
+      autoAllowIds: ['chemistry'],
+      askToolIds: ['pubmed/search_articles'],
+      blockedToolIds: ['chemistry/lookup']
+    }
+    const before = structuredClone(legacy)
+    const result = sanitizeConnectors(legacy)!
+    expect(result.askToolIds).toEqual(['pubmed/search_articles', 'encori/download_bulk_dataset'])
+    expect(result.encoriDownloadPolicyInitialized).toBe(true)
+    expect(result.blockedToolIds).toEqual(legacy.blockedToolIds)
+    expect(result.autoAllowIds).toEqual(legacy.autoAllowIds)
+    expect(legacy).toEqual(before)
+    expect(sanitizeConnectors(result)).toEqual(result)
+  })
+  it.each(['allow', 'ask', 'block'])(
+    'preserves an initialized ENCORI download %s choice on reload',
+    (policy) => {
+      const id = 'encori/download_bulk_dataset'
+      const saved = {
+        enabledIds: [],
+        autoAllowIds: [],
+        encoriDownloadPolicyInitialized: true,
+        ...(policy === 'ask' ? { askToolIds: [id] } : {}),
+        ...(policy === 'block' ? { blockedToolIds: [id] } : {})
+      }
+      expect(sanitizeConnectors(JSON.parse(JSON.stringify(saved)))).toEqual(saved)
+    }
+  )
+  it('preserves legacy download Block and ignores a malformed initialization marker', () => {
+    const id = 'encori/download_bulk_dataset'
+    const blocked = sanitizeConnectors({ blockedToolIds: [id] })!
+    expect(blocked.blockedToolIds).toEqual([id])
+    expect(blocked.askToolIds).toBeUndefined()
+    expect(blocked.encoriDownloadPolicyInitialized).toBe(true)
+    expect(sanitizeConnectors({ encoriDownloadPolicyInitialized: 'true' })?.askToolIds).toEqual([
+      id
+    ])
+  })
   it('keeps the private owner interface explicit', async () => {
     expect(Object.keys(await import('./record-codec')).sort()).toEqual([
       'sanitizeClaudeInfo',

@@ -6,6 +6,9 @@ import { ParserEngine } from './engine'
 import { McpClientManager, McpToolCallError } from './custom-mcp'
 import type { SpecialistView } from '../../shared/specialist'
 import type { CustomMcpServerConfig } from './custom-mcp'
+import * as connectorNetwork from '../skills/net-fetch'
+import * as encoriFiles from './encori/client'
+import { createEmptySettings } from '../settings/types'
 
 const internal = { origin: 'internal' as const }
 
@@ -2770,4 +2773,110 @@ describe('ConnectorService specialist capability gate', () => {
       'connector call rejected: connector_runtime_unavailable. The Connector runtime is unavailable. Wait briefly and retry the same call once. If it fails again, ask the user to restart Open-Science before retrying.'
     )
   })
+})
+
+it('enforces ENCORI enablement and download policy before network or filesystem work', async () => {
+  const fetchImpl = vi.fn()
+  const network = vi.spyOn(connectorNetwork, 'netFetchStandard')
+  const directory = vi.spyOn(encoriFiles, 'outputDirectory')
+  try {
+    const settings = {
+      enabledIds: [],
+      autoAllowIds: [],
+      disabledConnectorIds: [] as string[],
+      blockedToolIds: ['encori/download_bulk_dataset']
+    }
+    const service = new ConnectorService({
+      engine: new ParserEngine({ fetchImpl }),
+      getConnectors: () => settings,
+      resolveApiKey: () => undefined
+    })
+    await expect(
+      service.call(
+        'encori',
+        'download_bulk_dataset',
+        { filename: 'hg38.miRNA_sncRNA.tar.gz', destination_dir: '/unused/encori-gate-test' },
+        internal
+      )
+    ).rejects.toThrow('tool blocked by policy')
+    await expect(service.call('encori', 'query_degradome_events', {}, internal)).rejects.toThrow(
+      'unknown tool: encori/query_degradome_events'
+    )
+    settings.disabledConnectorIds.push('encori')
+    await expect(service.call('encori', 'get_reference_tables', {}, internal)).rejects.toThrow(
+      'disabled'
+    )
+    expect(service.isEnabled('rna')).toBe(true)
+    expect(fetchImpl).not.toHaveBeenCalled()
+    expect(network).not.toHaveBeenCalled()
+    expect(directory).not.toHaveBeenCalled()
+  } finally {
+    network.mockRestore()
+    directory.mockRestore()
+  }
+})
+
+it('requires the default download approval and rejects denial before network or filesystem work', async () => {
+  const network = vi.spyOn(connectorNetwork, 'netFetchStandard')
+  const directory = vi.spyOn(encoriFiles, 'outputDirectory')
+  const approvalPrompt = vi.fn().mockResolvedValue('deny')
+  try {
+    const service = new ConnectorService({
+      getConnectors: () => createEmptySettings().connectors,
+      resolveApiKey: () => undefined,
+      requestApproval: approvalPrompt
+    })
+    await expect(
+      service.call(
+        'encori',
+        'download_bulk_dataset',
+        {
+          filename: 'hg38.miRNA_sncRNA.tar.gz',
+          destination_dir: '/unused/encori-approval-test'
+        },
+        internal
+      )
+    ).rejects.toThrow('tool call denied by user')
+    expect(approvalPrompt).toHaveBeenCalledOnce()
+    expect(approvalPrompt.mock.calls[0][0]).toMatchObject({
+      connector: 'encori',
+      method: 'download_bulk_dataset',
+      args: {
+        filename: 'hg38.miRNA_sncRNA.tar.gz',
+        destination_dir: '/unused/encori-approval-test'
+      }
+    })
+    expect(network).not.toHaveBeenCalled()
+    expect(directory).not.toHaveBeenCalled()
+  } finally {
+    network.mockRestore()
+    directory.mockRestore()
+  }
+})
+
+it('keeps a legacy ENCORI configuration intact while rejecting its old method on the bundled route', async () => {
+  const legacy = {
+    id: 'legacy-encori',
+    name: 'encori',
+    displayName: 'ENCORI',
+    transport: 'stdio' as const,
+    command: '/legacy/.venv/Scripts/encori-mcp.exe',
+    args: [],
+    enabled: true
+  }
+  const settings = { enabledIds: [], autoAllowIds: [], customMcpServers: [legacy] }
+  const before = structuredClone(settings)
+  const listTools = vi.fn(),
+    call = vi.fn()
+  const service = new ConnectorService({
+    getConnectors: () => settings,
+    resolveApiKey: () => undefined,
+    mcpClientManager: { listTools, call }
+  })
+  await expect(service.call('encori', 'encori_query_mirna_targets', {}, internal)).rejects.toThrow(
+    'unknown tool: encori/encori_query_mirna_targets'
+  )
+  expect(listTools).not.toHaveBeenCalled()
+  expect(call).not.toHaveBeenCalled()
+  expect(settings).toEqual(before)
 })

@@ -135,6 +135,18 @@
     "More items": "더 많은 세션"
   },
   "renderer": {
+    "RNA interactions, regulatory evidence and bulk datasets from ENCORI.": "ENCORI의 RNA 상호작용, 조절 근거 및 일괄 데이터셋.",
+    "Query miRNA target evidence.": "miRNA 표적 근거 조회.",
+    "Query RNA–RNA interaction evidence.": "RNA–RNA 상호작용 근거 조회.",
+    "Query RBP target evidence.": "RBP 표적 근거 조회.",
+    "Query ceRNA networks.": "ceRNA 네트워크 조회.",
+    "Query RBP disease associations.": "RBP 질병 연관성 조회.",
+    "Search RBP motif rankings.": "RBP motif 순위 검색.",
+    "Retrieve dataset binding sites.": "데이터셋 결합 부위 가져오기.",
+    "List or read official reference tables.": "공식 참조 표 목록 조회 또는 읽기.",
+    "List bulk datasets without downloading.": "다운로드 없이 일괄 데이터셋 목록 조회.",
+    "Download and verify one bulk dataset.": "일괄 데이터셋 하나를 다운로드하고 검증.",
+
     "Cancer proteomics studies, sample and aliquot mappings, and file discovery from PDC.": "PDC 암 단백질체 연구, 검체 및 분주 검체 매핑과 파일 검색.",
     "Search PDC studies and versions by name or identifier.": "이름 또는 식별자로 PDC 연구와 버전 검색.",
     "Retrieve PDC study metadata and available versions.": "PDC 연구 메타데이터와 사용 가능한 버전 조회.",
