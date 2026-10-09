@@ -232,7 +232,7 @@ export const installArgv = (
 ]
 
 // micromamba list --root-prefix <root> --prefix <prefix> --json
-// Read-only inventory of one env: a JSON array of {name, version, build, channel} objects. Same
+// Read-only inventory of one env: a JSON array of name/version/build_string/channel records. Same
 // argv shape as installArgv so the Settings package listing reuses the install path's conventions.
 export const listArgv = (mm: string, root: string, prefix: string): string[] => [
   mm,
