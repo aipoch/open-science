@@ -1313,7 +1313,11 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/session-persistence/record-facts.ts',
       'src/main/session-persistence/attention-projection.test.ts',
       'src/main/session-persistence/turn-outcome-authority.test.ts',
-      'src/main/session-persistence/research-membership.ts'
+      'src/main/session-persistence/research-membership.ts',
+      'src/main/session-persistence/create-local-session.test.ts',
+      'src/main/session-persistence/create-local-session.ts',
+      'src/main/session-persistence/create-managed-session.test.ts',
+      'src/main/session-persistence/create-managed-session.ts'
     ])
     expect(sessionPersistence.interfacePaths).toEqual([
       'src/main/session-persistence/coordinator.ts',
@@ -1341,7 +1345,9 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/session-persistence/task-admission.ts',
       'src/main/session-persistence/runtime-session-owner.ts',
       'src/main/session-persistence/runtime-writer.ts',
-      'src/main/session-persistence/research-membership.ts'
+      'src/main/session-persistence/research-membership.ts',
+      'src/main/session-persistence/create-local-session.ts',
+      'src/main/session-persistence/create-managed-session.ts'
     ])
     expect(sessionPersistence.consumerModules).toEqual(['project_lifecycle'])
     expect(sessionPersistence.testFiles.owner).toEqual([
@@ -1385,7 +1391,9 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/session-persistence/terminal-live-projection.test.ts',
       'src/main/session-persistence/turn-outcome-reconciliation.test.ts',
       'src/main/session-persistence/attention-projection.test.ts',
-      'src/main/session-persistence/turn-outcome-authority.test.ts'
+      'src/main/session-persistence/turn-outcome-authority.test.ts',
+      'src/main/session-persistence/create-local-session.test.ts',
+      'src/main/session-persistence/create-managed-session.test.ts'
     ])
     expect(sessionPersistence.testFiles.contract).toEqual([
       'src/shared/session-persistence.test.ts',
@@ -1834,11 +1842,60 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/literature/pdf-translation/checkpoints.test.ts',
       'src/main/literature/pdf-translation/usage.test.ts',
       'src/main/notebook/code-risk-admission.test.ts',
+      'src/main/session-plan/session-plan-turn-outcome.test.ts',
+      'src/main/notebook/runtime-repair.windows.integration.test.ts',
       'src/main/session-package/research-reproduction.integration.test.ts',
       'src/main/notebook/research-service.macos.integration.test.ts',
       'src/main/notebook/local-service.macos.integration.test.ts',
-      'src/main/session-plan/session-plan-turn-outcome.test.ts',
-      'src/main/notebook/runtime-repair.windows.integration.test.ts'
+      'src/main/composition/artifact-surfaces.test.ts',
+      'src/main/composition/handoff.test.ts',
+      'src/main/composition/managed-execution.integration.test.ts',
+      'src/main/composition/session-packages.test.ts',
+      'src/main/notebook/local-rpc-server.managed-execution.test.ts',
+      'src/main/notebook/managed-auxiliary-output.test.ts',
+      'src/main/notebook/managed-confinement.macos.integration.test.ts',
+      'src/main/notebook/managed-execution-collection.integration.test.ts',
+      'src/main/notebook/managed-execution-entrypoints.integration.test.ts',
+      'src/main/notebook/managed-execution-output.test.ts',
+      'src/main/notebook/managed-execution-service.test.ts',
+      'src/main/notebook/managed-nested-generation.integration.test.ts',
+      'src/main/notebook/managed-output-publication.integration.test.ts',
+      'src/main/notebook/managed-shell-runtime.test.ts',
+      'src/main/notebook/managed-shell.macos.integration.test.ts',
+      'src/main/notebook/research-material-authority.test.ts',
+      'src/main/notebook/screened-auxiliary-output.test.ts',
+      'src/main/notebook/session-operation-owner.integration.test.ts',
+      'src/main/research-execution-profiles/ipc.test.ts',
+      'src/main/session-package/headless.test.ts',
+      'src/main/run-observation/capture-package.integration.test.ts',
+      'src/main/run-observation/recorded-reader.test.ts',
+      'src/main/run-observation/managed-coordinator.test.ts',
+      'src/main/project-recordings/managed-adapter.test.ts',
+      'src/main/run-observation-external-port.test.ts',
+      'src/main/browser-recordings/external-port.test.ts',
+      'src/main/runtime-view/browser-host.integration.test.ts',
+      'src/main/replay-viewer/http-host.integration.test.ts',
+      'src/main/run-observation/managed-port.test.ts',
+      'src/main/run-observation/managed-status.test.ts',
+      'src/main/browser-recordings/owner.test.ts',
+      'src/main/run-observation/media-collector.test.ts',
+      'src/main/project-recordings/recorder.test.ts',
+      'src/main/research-demos/owner.macos.integration.test.ts',
+      'src/main/research-demos/ipc.test.ts',
+      'src/main/research-demos/owner.test.ts',
+      'src/main/notebook/offline-plan-admission.test.ts',
+      'src/renderer/replay-viewer/browser-recording.integration.test.ts',
+      'src/renderer/replay-viewer/browser.integration.test.ts',
+      'src/renderer/replay-viewer/browser-recording-transport.integration.test.ts',
+      'src/main/research-demos/inspection.test.ts',
+      'src/renderer/replay-viewer/research-browser.integration.test.ts',
+      'src/main/research-replay/http-host.integration.test.ts',
+      'src/main/research-replay/observation-association.test.ts',
+      'src/main/research-replay/observation-selection.test.ts',
+      'src/main/research-replay/service-timing.test.ts',
+      'src/main/research-replay/service.test.ts',
+      'src/main/research-runs/inspection.test.ts',
+      'src/main/research-runs/ipc.test.ts'
     ])
     expect(sessionPersistence.capabilityOverlays).toEqual([
       'windows_sensitive',
