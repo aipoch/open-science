@@ -446,6 +446,47 @@ it('disposes acquired application surfaces when explicit web startup fails befor
   expect.soft(fixture.shutdownRemote).toHaveBeenCalledOnce()
 })
 
+it('flushes the startup failure before shell rollback can terminate the process', async () => {
+  let finishFlush!: () => void
+  const flushing = new Promise<void>((resolve) => {
+    finishFlush = resolve
+  })
+  fixture.startupFailure.mockImplementationOnce(() => flushing)
+  await import('./index')
+  await vi.waitFor(() => expect(fixture.startupFailure).toHaveBeenCalled())
+  expect.soft(fixture.electron.app.quit).not.toHaveBeenCalled()
+  expect.soft(startupWindow.destroy).not.toHaveBeenCalled()
+  expect(fixture.log.error).toHaveBeenCalledWith(
+    'application runtime startup failed',
+    expect.objectContaining({
+      code: 'EADDRINUSE',
+      error: 'listen EADDRINUSE',
+      stack: expect.any(String)
+    })
+  )
+  finishFlush()
+  await fixture.exited
+  expect(fixture.startupFailure).toHaveBeenCalledWith(
+    expect.objectContaining({ error: fixture.failure })
+  )
+  expect(fixture.startupFailure.mock.invocationCallOrder[0]).toBeLessThan(
+    fixture.electron.app.quit.mock.invocationCallOrder[0]
+  )
+  expect(fixture.electron.app.exit).toHaveBeenCalledWith(1)
+})
+
+it('keeps shell rollback and the original error when early diagnostic flushing rejects', async () => {
+  fixture.startupFailure.mockRejectedValueOnce(new Error('diagnostic sink unavailable'))
+  await import('./index')
+  await fixture.exited
+  expect(fixture.electron.app.quit).toHaveBeenCalledOnce()
+  expect(fixture.disposeDatabaseGuard).toHaveBeenCalledOnce()
+  expect(fixture.startupFailure).toHaveBeenLastCalledWith(
+    expect.objectContaining({ error: fixture.failure })
+  )
+  expect(fixture.electron.app.exit).toHaveBeenCalledWith(1)
+})
+
 it('reports the original startup failure when shell IPC cleanup throws', async () => {
   const cleanupFailure = new Error('locale IPC cleanup failed')
   fixture.disposeLocaleIpc.mockImplementation(() => {

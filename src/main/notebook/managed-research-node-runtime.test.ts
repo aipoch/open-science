@@ -13,10 +13,12 @@ vi.mock('node:child_process', async (original) => {
 })
 const actual = await vi.importActual<typeof import('node:child_process')>('node:child_process')
 const directories: string[] = []
+const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')!
 beforeEach(() => {
   vi.mocked(execFile).mockImplementation(actual.execFile)
 })
 afterEach(async () => {
+  Object.defineProperty(process, 'platform', platformDescriptor)
   vi.clearAllMocks()
   await Promise.all(
     directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true }))
@@ -278,6 +280,69 @@ describe('independent research Node discovery', () => {
       (await createManagedResearchNodeRuntimeRegistry({ trustedCandidates: [node] }).discover())
         .runtimes
     ).toEqual([])
+  })
+
+  it.each(
+    ['linux', 'darwin', 'win32'].flatMap((platform) =>
+      ['linux-vdso.so.1', 'linux-gate.so.1', 'linux-vdso32.so.1', 'linux-vdso64.so.1'].map(
+        (library) => ({ platform, library })
+      )
+    )
+  )('omits the kernel virtual object $library only on $platform', async ({ platform, library }) => {
+    const node = await fakeBinary()
+    Object.defineProperty(process, 'platform', { ...platformDescriptor, value: platform })
+    mockProbe((file) => response(file, { sharedObjects: [library] }))
+    const registry = createManagedResearchNodeRuntimeRegistry({ trustedCandidates: [node] })
+    const discovery = await registry.discover()
+    if (platform === 'linux') {
+      expect(discovery.unavailable).toEqual([])
+      expect(discovery.runtimes).toHaveLength(1)
+      const { runtime, runtimeId } = discovery.runtimes[0]
+      expect(runtime.readOnlyRoots).toEqual([node])
+      await expect(registry.resolve(runtimeId)).resolves.toEqual(runtime)
+    } else {
+      expect(discovery.runtimes).toEqual([])
+      expect(discovery.unavailable).toEqual([
+        expect.objectContaining({
+          code: 'node_unusable',
+          reason: expect.stringContaining('non-absolute')
+        })
+      ])
+    }
+  })
+
+  it.each([
+    'libnode.so',
+    './linux-vdso.so.1',
+    '../linux-gate.so.1',
+    'linux-vdso.so.1/other',
+    'linux-vdso999.so.1'
+  ])('still rejects a relative library on Linux: %s', async (library) => {
+    const node = await fakeBinary()
+    Object.defineProperty(process, 'platform', { ...platformDescriptor, value: 'linux' })
+    mockProbe((file) => response(file, { sharedObjects: [library] }))
+    const discovery = await createManagedResearchNodeRuntimeRegistry({
+      trustedCandidates: [node]
+    }).discover()
+    expect(discovery.runtimes).toEqual([])
+    expect(discovery.unavailable).toEqual([
+      expect.objectContaining({
+        code: 'node_unusable',
+        reason: expect.stringContaining('non-absolute')
+      })
+    ])
+  })
+
+  it('verifies absolute library files even when their basename resembles a virtual object', async () => {
+    const node = await fakeBinary()
+    const library = join(dirname(node), 'linux-vdso.so.1')
+    await writeFile(library, 'file-backed library')
+    Object.defineProperty(process, 'platform', { ...platformDescriptor, value: 'linux' })
+    mockProbe((file) => response(file, { sharedObjects: [library] }))
+    const { registry, runtime } = await select(node)
+    expect(runtime.readOnlyRoots).toEqual([library, node].sort())
+    await rm(library)
+    await expect(registry.verify(runtime)).rejects.toThrow()
   })
 })
 

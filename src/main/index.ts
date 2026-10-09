@@ -1048,10 +1048,25 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
             throw error
           }
         },
-        rollbackShell: async () => {
+        rollbackShell: async (_shell, error) => {
           // Module loading can fail while verification is actively migrating. Keep the quit guard
           // installed until that attempt settles so app.quit cannot interrupt database writes.
           await databaseStartupOwner.whenAttemptSettled()
+          // Windows can exit as soon as shell rollback calls app.quit(). Persist the original
+          // failure before that point; the outer startup catch remains authoritative.
+          try {
+            log.error('application runtime startup failed', {
+              ...diagnosticErrorFields(error),
+              ...errorLogFields(error)
+            })
+            await reportApplicationStartupFailure({
+              operation: startupDiagnostics,
+              error,
+              flush: startupFlush
+            })
+          } catch {
+            // Diagnostic failure must not prevent rollback or replace the startup error.
+          }
           for (const cleanup of [
             disposeLocalePreferenceIpc,
             () => databaseStartupQuitGuard.dispose(),
