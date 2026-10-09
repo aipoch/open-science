@@ -1797,7 +1797,7 @@ describe('HomePage activity overview', () => {
     expect
       .soft(section.textContent)
       .not.toContain('Keep your files and conversations together in a project.')
-    expect.soft(within(section).queryByRole('button', { name: 'New project' })).toBeNull()
+    expect.soft(within(section).queryByRole('button', { name: 'Create project' })).toBeNull()
     expect.soft(section.querySelector('[role="status"]')?.textContent).toBe('Loading…')
     await act(async () => {
       resolve([])
@@ -1807,7 +1807,7 @@ describe('HomePage activity overview', () => {
     expect(section.textContent).toContain(
       'Keep your files and conversations together in a project.'
     )
-    expect(within(section).getByRole('button', { name: 'New project' })).toBeDefined()
+    expect(within(section).getByRole('button', { name: 'Create project' })).toBeDefined()
     expect(section.querySelector('[role="status"]')).toBeNull()
 
     await act(async () => useProjectStore.setState({ projects: [project] }))
@@ -1817,7 +1817,7 @@ describe('HomePage activity overview', () => {
     expect(section.textContent).not.toContain(
       'Keep your files and conversations together in a project.'
     )
-    expect(within(section).queryByRole('button', { name: 'New project' })).toBeNull()
+    expect(within(section).queryByRole('button', { name: 'Create project' })).toBeNull()
   })
 
   it.each(['project empty state', 'header'] as const)(
@@ -1834,7 +1834,9 @@ describe('HomePage activity overview', () => {
       const projectSection = container.querySelector<HTMLElement>('[aria-label="Projects"]')!
       const scope =
         entry === 'project empty state' ? projectSection : container.querySelector('header')!
-      const createButton = within(scope).getByRole('button', { name: 'New project' })
+      const createButton = within(scope).getByRole('button', {
+        name: entry === 'project empty state' ? 'Create project' : 'New project'
+      })
 
       await act(async () =>
         within(projectSection).getByText('Create a project, start a conversation').click()
@@ -1850,7 +1852,7 @@ describe('HomePage activity overview', () => {
       await act(async () => within(dialog).getByRole('button', { name: 'Cancel' }).click())
 
       expect(within(document.body).queryByRole('dialog')).toBeNull()
-      expect(within(projectSection).getByRole('button', { name: 'New project' })).toBeDefined()
+      expect(within(projectSection).getByRole('button', { name: 'Create project' })).toBeDefined()
     }
   )
 
@@ -1879,7 +1881,7 @@ describe('HomePage activity overview', () => {
     expect(container.textContent).not.toContain('database is locked')
     const section = container.querySelector<HTMLElement>('[aria-label="Projects"]')!
     expect(section.textContent).not.toContain('Create a project, start a conversation')
-    expect(within(section).queryByRole('button', { name: 'New project' })).toBeNull()
+    expect(within(section).queryByRole('button', { name: 'Create project' })).toBeNull()
 
     await act(async () => retry?.click())
     expect(loadProjects).toHaveBeenCalledOnce()

@@ -21,7 +21,7 @@ test('flushes a large completed reply before releasing the queued message', asyn
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
 
-  await page.locator('header').getByRole('button', { name: 'New project' }).click()
+  await page.getByRole('button', { name: 'New project' }).click()
   const dialog = page.getByRole('dialog', { name: 'New project' })
   await dialog.getByLabel('Name').fill(PROJECT_NAME)
   await dialog.getByRole('button', { name: 'Create project' }).click()
@@ -90,7 +90,7 @@ test('Send now returns to a usable queue when the provider cannot inject into th
 }) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
-  await page.locator('header').getByRole('button', { name: 'New project' }).click()
+  await page.getByRole('button', { name: 'New project' }).click()
   const dialog = page.getByRole('dialog', { name: 'New project' })
   await dialog.getByLabel('Name').fill('Send now lifecycle project')
   await dialog.getByRole('button', { name: 'Create project' }).click()
@@ -160,7 +160,7 @@ test('renders expensive streamed output through the native parser Worker and com
       }
     })
   })
-  await page.locator('header').getByRole('button', { name: 'New project' }).click()
+  await page.getByRole('button', { name: 'New project' }).click()
   const dialog = page.getByRole('dialog', { name: 'New project' })
   await dialog.getByLabel('Name').fill('Native Markdown streaming')
   await dialog.getByRole('button', { name: 'Create project' }).click()

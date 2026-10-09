@@ -8,7 +8,7 @@ for (const scenario of ['control', 'resume', 'continue-child'] as const) {
     test.setTimeout(180_000)
     await app.completeOnboarding()
     const page = await app.configureFakeAgent()
-    await page.locator('header').getByRole('button', { name: 'New project' }).click()
+    await page.getByRole('button', { name: 'New project' }).click()
     const dialog = page.getByRole('dialog', { name: 'New project' })
     await dialog.getByLabel('Name').fill(`Delegation resume audit ${stop}`)
     await dialog.getByRole('button', { name: 'Create project' }).click()

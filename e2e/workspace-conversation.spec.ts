@@ -151,7 +151,7 @@ const persistedMemoryState = async (
   }, USER_MESSAGE)
 
 const createProject = async (page: Page): Promise<void> => {
-  await page.locator('header').getByRole('button', { name: 'New project' }).click()
+  await page.getByRole('button', { name: 'New project' }).click()
   const dialog = page.getByRole('dialog', { name: 'New project' })
   await dialog.getByLabel('Name').fill(PROJECT_NAME)
   await dialog.getByRole('button', { name: 'Create project' }).click()
@@ -214,9 +214,7 @@ test('returns from Library to the originating conversation and New Conversation 
   await page.getByRole('button', { name: 'All projects', exact: true }).click()
   await page.getByRole('button', { name: 'Library', exact: true }).click()
   await page.getByRole('button', { name: 'Back to Home', exact: true }).click()
-  await expect(
-    page.locator('header').getByRole('button', { name: 'New project', exact: true })
-  ).toBeVisible()
+  await expect(page.getByRole('button', { name: 'New project', exact: true })).toBeVisible()
 })
 
 const allowCitationPreviewDomain = async (page: Page): Promise<void> => {

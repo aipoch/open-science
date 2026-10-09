@@ -100,7 +100,7 @@ test('dirty Home project drafts survive each dismissal until discard is confirme
   page
 }) => {
   await page.goto('/row-hit-targets.html?surface=home')
-  const trigger = page.locator('header').getByRole('button', { name: 'New project', exact: true })
+  const trigger = page.getByRole('button', { name: 'New project', exact: true })
   await trigger.click()
   const name = page.getByRole('textbox', { name: 'Name', exact: true })
   const context = page.getByRole('textbox', { name: 'Agent Context', exact: true })

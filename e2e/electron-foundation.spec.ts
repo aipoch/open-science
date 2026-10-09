@@ -99,7 +99,7 @@ test('localizes CSL validation failures across the desktop bridge', async ({ app
 })
 
 const createProject = async (page: Page, name: string): Promise<void> => {
-  await page.locator('header').getByRole('button', { name: 'New project' }).click()
+  await page.getByRole('button', { name: 'New project' }).click()
   const dialog = page.getByRole('dialog', { name: 'New project' })
   await dialog.getByLabel('Name').fill(name)
   await dialog.getByLabel('Description').fill('Created through the real Electron IPC boundary.')

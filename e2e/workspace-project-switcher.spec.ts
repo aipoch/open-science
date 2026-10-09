@@ -19,7 +19,7 @@ const createProject = async (
       .getByRole('menuitem', { name: 'New project', exact: true })
       .click()
   } else {
-    await page.locator('header').getByRole('button', { name: 'New project', exact: true }).click()
+    await page.getByRole('button', { name: 'New project', exact: true }).click()
   }
 
   const dialog = page.getByRole('dialog', { name: 'New project' })

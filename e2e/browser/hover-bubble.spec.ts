@@ -257,7 +257,7 @@ test('shows shared hints for every Home header icon action', async ({ page }) =>
     ['Settings', 'Settings'],
     ['New project', 'New project']
   ]) {
-    const trigger = page.locator('header').getByRole('button', { name: label, exact: true })
+    const trigger = page.getByRole('button', { name: label, exact: true })
     await expect(trigger).not.toHaveAttribute('title')
     await trigger.hover()
     await expect(page.getByRole('tooltip')).toHaveText(hint)
@@ -280,7 +280,7 @@ test('shares Home hover intent without replaying entry motion across header comp
     page.getByRole('button', { name: 'Messages, no unread messages', exact: true }),
     page.getByRole('button', { name: 'Settings', exact: true }),
     page.locator('.update-reminder[data-variant="home"]'),
-    page.locator('header').getByRole('button', { name: 'New project', exact: true })
+    page.getByRole('button', { name: 'New project', exact: true })
   ]
   await expect(actions[0]).toBeVisible()
   await page.clock.install()

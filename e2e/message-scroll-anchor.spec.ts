@@ -14,7 +14,7 @@ test('anchors a newly sent user message near the top of the viewport', async ({
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
 
-  await page.locator('header').getByRole('button', { name: 'New project' }).click()
+  await page.getByRole('button', { name: 'New project' }).click()
   const dialog = page.getByRole('dialog', { name: 'New project' })
   await dialog.getByLabel('Name').fill(PROJECT_NAME)
   await dialog.getByRole('button', { name: 'Create project' }).click()
@@ -57,7 +57,7 @@ test('keeps the prompt fixed while a blocking panel covers and leaves the transc
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
 
-  await page.locator('header').getByRole('button', { name: 'New project' }).click()
+  await page.getByRole('button', { name: 'New project' }).click()
   const dialog = page.getByRole('dialog', { name: 'New project' })
   await dialog.getByLabel('Name').fill(`${PROJECT_NAME} permission`)
   await dialog.getByRole('button', { name: 'Create project' }).click()

@@ -10,7 +10,7 @@ for (const mode of ['fresh', 'legacy', 'custom'] as const) {
     if (mode !== 'fresh') {
       await app.page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
       const priorPage = await app.completeOnboarding()
-      await priorPage.locator('header').getByRole('button', { name: 'New project' }).click()
+      await priorPage.getByRole('button', { name: 'New project' }).click()
       const priorDialog = priorPage.getByRole('dialog', { name: 'New project' })
       await priorDialog.getByLabel('Name').fill('Historical research')
       await priorDialog.getByRole('button', { name: 'Create project' }).click()
@@ -44,7 +44,7 @@ for (const mode of ['fresh', 'legacy', 'custom'] as const) {
           .getByRole('button', { name: 'Historical research', exact: true })
       ).toBeVisible()
     const projectName = `${mode} retained research`
-    await page.locator('header').getByRole('button', { name: 'New project' }).click()
+    await page.getByRole('button', { name: 'New project' }).click()
     const dialog = page.getByRole('dialog', { name: 'New project' })
     await dialog.getByLabel('Name').fill(projectName)
     await dialog.getByRole('button', { name: 'Create project' }).click()
@@ -113,7 +113,7 @@ test('upgrades a completed client with research in config root and no saved data
   await migration.getByRole('button', { name: 'Keep it in the current folder' }).click()
   await expect(migration).toBeHidden()
   // The client reaches the workspace without repeating onboarding or manually editing settings.
-  await app.page.locator('header').getByRole('button', { name: 'New project' }).click()
+  await app.page.getByRole('button', { name: 'New project' }).click()
   const dialog = app.page.getByRole('dialog', { name: 'New project' })
   await dialog.getByLabel('Name').fill('Upgraded research')
   await dialog.getByRole('button', { name: 'Create project' }).click()

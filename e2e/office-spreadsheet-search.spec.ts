@@ -9,7 +9,7 @@ test.use({ windowMode: 'normal' })
 test('finds offscreen cells across XLSX and XLS worksheets', async ({ app }, testInfo) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
-  await page.locator('header').getByRole('button', { name: 'New project' }).click()
+  await page.getByRole('button', { name: 'New project' }).click()
   const projectDialog = page.getByRole('dialog', { name: 'New project' })
   await projectDialog.getByLabel('Name').fill('Spreadsheet search feasibility')
   await projectDialog.getByRole('button', { name: 'Create project' }).click()

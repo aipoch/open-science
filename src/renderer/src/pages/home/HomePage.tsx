@@ -1002,7 +1002,7 @@ const HomePage = ({
                     onClick={openCreateDialog}
                   >
                     <Plus className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                    {t('New project')}
+                    {t('Create project')}
                   </Button>
                 </div>
               ) : (

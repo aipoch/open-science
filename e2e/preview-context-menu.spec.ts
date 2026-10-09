@@ -30,7 +30,7 @@ const blankPdf = (): Buffer => {
 }
 
 const createProject = async (page: Page): Promise<void> => {
-  await page.locator('header').getByRole('button', { name: 'New project' }).click()
+  await page.getByRole('button', { name: 'New project' }).click()
   const dialog = page.getByRole('dialog', { name: 'New project' })
   await dialog.getByLabel('Name').fill(PROJECT_NAME)
   await dialog.getByRole('button', { name: 'Create project' }).click()

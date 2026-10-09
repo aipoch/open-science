@@ -35,7 +35,7 @@ for (const mode of ['shell', 'python', 'ssh'] as const) {
         await window.api.runtime.setEnvironmentEnabled('python', external.envId, true)
       }, process.env.OPEN_SCIENCE_E2E_PYTHON!)
     }
-    await page.locator('header').getByRole('button', { name: 'New project' }).click()
+    await page.getByRole('button', { name: 'New project' }).click()
     const dialog = page.getByRole('dialog', { name: 'New project' })
     await dialog.getByLabel('Name').fill('Background completion regression')
     await dialog.getByRole('button', { name: 'Create project' }).click()

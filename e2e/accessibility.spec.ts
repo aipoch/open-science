@@ -148,7 +148,7 @@ test('reports accessibility violations in startup and home surfaces', async ({ a
 test('reports accessibility violations in core dialog and workspace surfaces', async ({ app }) => {
   const page = await app.completeOnboarding()
 
-  await page.locator('header').getByRole('button', { name: 'New project' }).click()
+  await page.getByRole('button', { name: 'New project' }).click()
   const projectDialog = page.getByRole('dialog', { name: 'New project' })
   await expect(projectDialog).toBeVisible()
   await scanAccessibility(page, 'New project dialog')
@@ -172,7 +172,7 @@ test('reports accessibility violations in permission and file preview states', a
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
 
-  await page.locator('header').getByRole('button', { name: 'New project' }).click()
+  await page.getByRole('button', { name: 'New project' }).click()
   const projectDialog = page.getByRole('dialog', { name: 'New project' })
   await projectDialog.getByLabel('Name').fill('Accessible dynamic states')
   await projectDialog.getByRole('button', { name: 'Create project' }).click()
@@ -334,7 +334,7 @@ test('supports the core project journey with keyboard input only', async ({ app 
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
 
-  const newProject = page.locator('header').getByRole('button', { name: 'New project' })
+  const newProject = page.getByRole('button', { name: 'New project' })
   if (!(await focusWithTab(page, newProject))) return
   await page.keyboard.press('Enter')
   const projectDialog = page.getByRole('dialog', { name: 'New project' })
@@ -478,9 +478,7 @@ for (const width of [375, 767] as const) {
       const surface = `Home (${width}px, ${theme === 'Light' ? 'light' : 'dark'})` as const
       await scanAccessibility(page, surface)
       await expectKeyboardOutcome(page, surface, async () => {
-        const action = page
-          .locator('header')
-          .getByRole('button', { name: 'New project', exact: true })
+        const action = page.getByRole('button', { name: 'New project', exact: true }).first()
         await expect(action).toBeVisible()
         await action.click()
         await expect(page.getByRole('dialog', { name: 'New project' })).toBeVisible()

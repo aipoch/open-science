@@ -16,12 +16,12 @@ test('measures representative local workloads and verifies 200 percent project c
   }
   for (let i = 0; i < 3; i++) {
     page = await app.restart()
-    await expect(page.locator('header').getByRole('button', { name: 'New project' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'New project' })).toBeVisible()
     sample('navigationToHomeActionMs', await page.evaluate(() => performance.now()))
   }
   await app.setMainWindowZoomFactor(2)
   try {
-    await page.locator('header').getByRole('button', { name: 'New project' }).press('Enter')
+    await page.getByRole('button', { name: 'New project' }).press('Enter')
     const dialog = page.getByRole('dialog', { name: 'New project' })
     await dialog.getByLabel('Name').fill('Zoom acceptance')
     const create = dialog.getByRole('button', { name: 'Create project' })
