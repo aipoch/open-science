@@ -1,8 +1,10 @@
 import { readFileSync, statSync } from 'node:fs'
 import type { Stats } from 'node:fs'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { FileMatcher } from 'app-builder-lib/out/fileMatcher'
+import { copyFiles, FileMatcher } from 'app-builder-lib/out/fileMatcher'
 import { load } from 'js-yaml'
 import { describe, expect, it } from 'vitest'
 
@@ -34,6 +36,43 @@ describe('macOS native privacy purpose descriptions', () => {
 })
 
 describe('electron-builder local evidence exclusion', () => {
+  it('copies the ordinary Node backend dependency tree through the real builder filter', async () => {
+    const config = load(readFileSync('electron-builder.yml', 'utf8')) as {
+      extraResources: Array<{ from: string; to: string; filter?: string[] }>
+    }
+    const root = await mkdtemp(join(tmpdir(), 'desktop-backend-package-'))
+    const files = [
+      'out/backend/index.cjs',
+      'node_modules/zod/package.json',
+      'node_modules/.prisma/client/default.js',
+      'node_modules/@aipoch/process-tree-native/build/Release/process_tree.node',
+      'node_modules/parent/node_modules/child/package.json'
+    ]
+    try {
+      for (const file of files) {
+        const path = join(root, 'out/standalone', file)
+        await mkdir(join(path, '..'), { recursive: true })
+        await writeFile(path, file)
+      }
+      const matchers = config.extraResources
+        .filter((entry) => entry.to === 'backend' || entry.to.startsWith('backend/'))
+        .map(
+          (entry) =>
+            new FileMatcher(
+              join(root, entry.from),
+              join(root, 'resources', entry.to),
+              (value) => value,
+              entry.filter
+            )
+        )
+      await copyFiles(matchers)
+      for (const file of files)
+        expect(await readFile(join(root, 'resources/backend', file), 'utf8')).toBe(file)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('declares the native PDF worker imports as production dependencies', () => {
     const manifest = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8'))
     for (const dependency of [

@@ -242,7 +242,7 @@ export class CliUsageError extends Error {
 const parsePortOption = (value) => {
   const normalized = value.trim()
   const port = Number(normalized)
-  if (!/^\d+$/.test(normalized) || !Number.isInteger(port) || port < 1 || port > 65535) {
+  if (!/^\d+$/.test(normalized) || !Number.isInteger(port) || port < 0 || port > 65535) {
     throw new CliUsageError(`Invalid port: ${value}`)
   }
   return port
@@ -813,7 +813,8 @@ export const startCommand = async (options, deps = DEFAULT_DEPS) => {
   await mkdir(configRoot, { recursive: true, mode: 0o700 })
   const logPath = join(configRoot, `cli-daemon-${randomUUID()}.log`)
   const logFd = openLaunchLog(logPath)
-  const port = options.port ?? DEFAULT_PORT
+  const environmentPort = process.env.OPEN_SCIENCE_WEB_PORT?.trim()
+  const port = options.port ?? (environmentPort ? parsePortOption(environmentPort) : DEFAULT_PORT)
   const childEnv = {
     ...process.env,
     OPEN_SCIENCE_CONFIG_ROOT: configRoot,

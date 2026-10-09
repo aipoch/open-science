@@ -399,6 +399,26 @@ describe('desktop projection of application commands and events', () => {
     expect(value.invoke).toHaveBeenCalledTimes(2)
   })
 
+  it('preserves cached PDF Buffer results over the desktop binary transport', async () => {
+    const bytes = Uint8Array.from([37, 80, 68, 70, 45, 0, 128, 255])
+    const pooled = Buffer.concat([Buffer.from('prefix'), Buffer.from(bytes), Buffer.from('suffix')])
+    const value = await setup(async () => ({
+      data: pooled.subarray(6, 6 + bytes.length),
+      cacheHit: true,
+      layoutFailures: []
+    }))
+    value.request()
+    expect(await value.received.next()).toMatchObject({
+      ok: true,
+      result: { data: bytes, cacheHit: true, layoutFailures: [] }
+    })
+    // A JSON object that resembles Buffer.toJSON is still ordinary application data.
+    const object = { type: 'Buffer', data: [1, 2] }
+    expect(parseRpcJson(stringifyRpcJson(object))).toEqual(object)
+    expect(parseRpcJson(stringifyRpcJson(Buffer.from(bytes)))).toEqual(bytes)
+    expect(parseRpcJson(stringifyRpcJson([Buffer.from(bytes)]))).toEqual([bytes])
+  })
+
   it('reuses domain error envelopes and never dispatches channels outside the desktop projection', async () => {
     const value = await setup(async () => {
       throw new ApplicationCommandError('session-revision-conflict', 'Save conflict')

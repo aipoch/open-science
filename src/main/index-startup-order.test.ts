@@ -8,6 +8,11 @@ const before = (first: string, second: string): void => {
   expect(mainSource.indexOf(second), second).toBeGreaterThan(mainSource.indexOf(first))
 }
 describe('single Node runtime production startup', () => {
+  it('hands a second shell to its owner before reading Chromium-locked credentials', () => {
+    before("app.setPath('userData', profilePath)", 'app.requestSingleInstanceLock()')
+    before('app.requestSingleInstanceLock()', 'prepareCredentialValidation(identity,')
+    before('prepareCredentialValidation(identity,', 'initializeNodeWindowsProfileKey(profilePath)')
+  })
   it('installs native shutdown listeners before launching Node and protects a quit during startup', () => {
     before('await app.whenReady()', 'system.installPowerMonitorListeners()')
     before('system.installPowerMonitorListeners()', 'await startOrAttachDesktopBackend(')
@@ -15,6 +20,8 @@ describe('single Node runtime production startup', () => {
     before('if (startupQuitRequested)', "app.removeListener('before-quit', holdStartupQuit)")
   })
   it('installs preview handlers in both native sessions before a first window can exist', () => {
+    before('await startOrAttachDesktopBackend(', 'session.defaultSession')
+    before('await startOrAttachDesktopBackend(', "session.fromPartition('reviewer-paged-preview')")
     before(
       "session.fromPartition('reviewer-paged-preview')",
       'const lifecycle = installAppLifecycle('

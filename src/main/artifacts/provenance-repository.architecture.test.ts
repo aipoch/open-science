@@ -516,7 +516,9 @@ describe('Artifact Provenance repository architecture', () => {
       'src/renderer/src/pages/workspace/ArtifactReproducibilityPanel.test.tsx',
       'src/main/notebook/dependency-analysis.stdlib-replay.test.ts',
       'src/main/artifacts/resumed-finalization-ownership.test.ts',
-      'src/main/artifacts/export-filename.ts'
+      'src/main/artifacts/export-filename.ts',
+      'src/main/artifacts/artifact-reproducibility-commands.test.ts',
+      'src/main/artifacts/artifact-reproducibility-commands.ts'
     ])
     expect(module.interfacePaths).toEqual([
       'src/main/artifacts/provenance-message-snapshot.ts',
@@ -554,7 +556,8 @@ describe('Artifact Provenance repository architecture', () => {
       'src/main/artifacts/session-reproducibility-store.ts',
       'src/main/notebook/reproduction-runtime.ts',
       'src/renderer/src/pages/workspace/ArtifactReproducibilityPanel.tsx',
-      'src/main/artifacts/ro-crate-export.ts'
+      'src/main/artifacts/ro-crate-export.ts',
+      'src/main/artifacts/artifact-reproducibility-commands.ts'
     ])
     expect(module.consumerModules).toEqual(['session_persistence'])
     expect(module.testFiles.owner).toEqual([
@@ -598,7 +601,8 @@ describe('Artifact Provenance repository architecture', () => {
       'src/main/artifacts/session-reproducibility-store.test.ts',
       'src/main/artifacts/session-reproducibility.test.ts',
       'src/main/artifacts/storage-access.context.test.ts',
-      'src/main/artifacts/resumed-finalization-ownership.test.ts'
+      'src/main/artifacts/resumed-finalization-ownership.test.ts',
+      'src/main/artifacts/artifact-reproducibility-commands.test.ts'
     ])
     expect(module.testFiles.contract).toEqual([
       'src/main/artifacts/artifact-reproducibility-ipc.test.ts',
@@ -978,7 +982,15 @@ describe('Artifact Provenance repository architecture', () => {
       'src/renderer/src/lib/compute/useJobAnalysisEffect.render.test.tsx',
       'src/main/acp/approved-handoff-outcome.integration.test.ts',
       'src/main/acp/approved-handoff-outcome.test.ts',
-      'src/main/literature/pdf-translation/checkpoints.test.ts'
+      'src/main/literature/pdf-translation/checkpoints.test.ts',
+      'src/main/node-process-host.test.ts',
+      'src/main/desktop-runtime-electron-adapter.test.ts',
+      'src/main/desktop-runtime-transport.integration.test.ts',
+      'src/main/side-chat/application-commands.test.ts',
+      'src/main/settings/file-commands.test.ts',
+      'src/main/office-preview/application-commands.test.ts',
+      'src/main/reviewer/paged-preview-host.test.ts',
+      'src/main/desktop-native-electron.test.ts'
     ])
     expect(module.capabilityOverlays).toEqual([
       'windows_sensitive',

@@ -30,6 +30,19 @@ if (process.platform === 'win32')
     join(root, 'resources/bin/win', process.arch, 'micromamba-compat.exe'),
     join(stage, 'resources/micromamba-compat.exe')
   )
+// The bundled sandbox code resolves its native helpers from the backend's own resource root.
+if (process.platform === 'win32') {
+  await cp(
+    join(root, 'packages/notebook-network-sandbox/vendor/windows', process.arch),
+    join(stage, 'resources/notebook-network-sandbox/windows', process.arch),
+    { recursive: true }
+  )
+  await cp(
+    join(root, 'packages/notebook-network-sandbox/vendor/wsl2/manifest.json'),
+    join(stage, 'resources/notebook-network-sandbox/wsl2/manifest.json'),
+    { recursive: true }
+  )
+}
 for (const file of await readdir(join(root, 'packages/open-science'))) {
   if (/\.(?:mjs|d\.ts|d\.mts)$/.test(file) && !file.includes('.test.'))
     await cp(join(root, 'packages/open-science', file), join(stage, file))

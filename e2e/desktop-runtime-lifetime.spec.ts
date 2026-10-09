@@ -63,7 +63,31 @@ for (const borrowed of [false, true]) {
       }
     }
     try {
-      if (borrowed) await expect.poll(alive, { timeout: 60000 }).toBe(true)
+      if (borrowed) {
+        await expect.poll(alive, { timeout: 60000 }).toBe(true)
+        // The owner endpoint precedes database migration. Match CLI start's readiness boundary
+        // before opening Chromium: this scenario certifies attachment to an already started server.
+        await expect
+          .poll(
+            async () => {
+              try {
+                const state = JSON.parse(
+                  await readFile(join(roots.storageRoot, 'web-service.json'), 'utf8')
+                ) as { port: number }
+                const token = (await readFile(join(roots.storageRoot, 'web-token'), 'utf8')).trim()
+                const response = await fetch(`http://127.0.0.1:${state.port}/api/bootstrap`, {
+                  headers: { authorization: `Bearer ${token}` },
+                  signal: AbortSignal.timeout(1000)
+                })
+                return response.ok
+              } catch {
+                return false
+              }
+            },
+            { timeout: 60000 }
+          )
+          .toBe(true)
+      }
       app = await launchOpenScience(roots, false, false, roots.fakeRemoteItRoot, 'hidden', false)
       const page = await app.firstWindow()
       await page.waitForFunction(() => Boolean(window.api?.databaseStartup))

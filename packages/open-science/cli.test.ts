@@ -276,7 +276,8 @@ describe('task CLI', () => {
 
   it('rejects ports that are not complete decimal values', () => {
     expect(() => parseCliArgs(['start', '--port', '44100xyz'])).toThrow('Invalid port: 44100xyz')
-    expect(() => parseCliArgs(['start', '--port', '0'])).toThrow('Invalid port: 0')
+    expect(parseCliArgs(['start', '--port', '0']).options.port).toBe(0)
+    expect(() => parseCliArgs(['start', '--port', '-1'])).toThrow('Invalid port: -1')
   })
 
   it.each([

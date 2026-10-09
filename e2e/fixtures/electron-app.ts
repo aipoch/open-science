@@ -648,6 +648,9 @@ class ElectronAppHarness implements ElectronApp {
       await writeFakeAgentLauncher(harness.roots.fakeAgentBinRoot)
       await writeFakeRemoteItCommands(harness.roots.fakeRemoteItRoot)
       await harness.launch()
+      // Specs start from English copy regardless of the Windows account's language. Set this
+      // only for a fresh fixture; relaunches must retain locale choices made by the test.
+      await harness.page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
       return harness
     } catch (error) {
       await harness
@@ -1747,7 +1750,11 @@ class ElectronAppHarness implements ElectronApp {
 }
 
 const test = base.extend<{ app: ElectronApp; windowMode: E2eWindowMode }>({
-  windowMode: ['hidden', { option: true }],
+  // Packaged Windows windows need a presented surface for screenshots and native clipboard focus.
+  windowMode: [
+    process.platform === 'win32' && process.env.OPEN_SCIENCE_E2E_EXECUTABLE ? 'normal' : 'hidden',
+    { option: true }
+  ],
   // Playwright fixture callbacks require an object pattern even when no base fixture is needed.
   app: [
     async ({ windowMode }, install, testInfo) => {

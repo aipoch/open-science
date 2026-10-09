@@ -114,6 +114,10 @@ asarUnpack:
 extraResources:
   - from: out/standalone
     to: backend
+  # electron-builder excludes a source root's node_modules even for extraResources.
+  # Copy that directory explicitly so ordinary Node can resolve its staged dependencies.
+  - from: out/standalone/node_modules
+    to: backend/node_modules
   - from: out/node-runtime/${platform}-${arch}
     to: node-runtime
   # Keep the project license readable outside app.asar on every platform.
