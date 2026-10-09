@@ -3460,7 +3460,7 @@ export function usePdfTranslationDocument(
           generatedUnits.flatMap(({ unit, sourceIndex, snapshot }) => {
             if (
               incremental &&
-              !cacheToken &&
+              (!cacheToken || retainedUnitIds.includes(unit.id)) &&
               !unit.fragments.some((fragment) =>
                 incremental?.pageNumbers.includes(fragment.pageNumber)
               )

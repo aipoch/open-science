@@ -86,6 +86,14 @@ for (const mode of ['shell', 'python', 'ssh'] as const) {
               : 'Verify background completion delivery.'
         )
       await page.getByRole('button', { name: 'Send message' }).click()
+      if (mode === 'shell') {
+        const review = page.getByRole('group', {
+          name: 'Permission request: Review potentially destructive code',
+          exact: true
+        })
+        await expect(review).toContainText('background-completion-e2e')
+        await review.getByRole('button', { name: 'Allow once', exact: true }).click()
+      }
       await expect(page.getByText('Background execution submitted.', { exact: true })).toBeVisible()
       try {
         await expect(
