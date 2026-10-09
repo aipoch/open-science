@@ -1,5 +1,7 @@
 import { createServer, type Server } from 'node:http'
-import { readFile } from 'node:fs/promises'
+import { readFile, readdir, stat } from 'node:fs/promises'
+import { join } from 'node:path'
+import { createHash } from 'node:crypto'
 import type { ElectronApplication, Page } from 'playwright'
 import { expect } from '@playwright/test'
 import {
@@ -1575,6 +1577,25 @@ for (const variant of [
       await usagePage.screenshot({ path: testInfo.outputPath('translation-usage-accounting.png') })
     }
     if (variant === 'standard') {
+      const dataRoot = await page.evaluate(
+        async () => (await window.api.storage.getInfo()).dataRoot
+      )
+      const cacheRoot = join(dataRoot, 'literature', 'pdf-translation-cache')
+      const cacheSnapshot = async (): Promise<unknown[]> =>
+        Promise.all(
+          (await readdir(cacheRoot))
+            .filter((name) => name.endsWith('.pdfcache'))
+            .sort()
+            .map(async (name) => ({
+              name,
+              digest: createHash('sha256')
+                .update(await readFile(join(cacheRoot, name)))
+                .digest('hex'),
+              modified: (await stat(join(cacheRoot, name))).mtimeMs
+            }))
+        )
+      const savedPdfs = await cacheSnapshot()
+      expect(savedPdfs.length).toBeGreaterThan(0)
       const resumedPage = await app.restart()
       await resumedPage.getByRole('button', { name: 'Library', exact: true }).click()
       await resumedPage.getByRole('button', { name: 'All references', exact: true }).click()
@@ -1598,6 +1619,8 @@ for (const variant of [
       ).toHaveLength(10)
       await selectRendition(resumedPage, 'Compare')
       await expect(resumedPage.locator('[data-page-number="1"] canvas')).toHaveCount(2)
+      // Restore the already-published PDF; neither translating nor regenerating is recovery.
+      expect(await cacheSnapshot()).toEqual(savedPdfs)
       await resumedPage.screenshot({ path: testInfo.outputPath('restored-translation.png') })
     }
   })

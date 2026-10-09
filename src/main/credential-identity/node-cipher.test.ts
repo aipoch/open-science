@@ -3,8 +3,13 @@ import { createCipheriv } from 'node:crypto'
 import { mkdtemp, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createNodeSecureStorageCipher } from './node-cipher'
+import { createNodeSecureStorageCipher, initializeNodeWindowsProfileKey } from './node-cipher'
+import { spawnSync } from 'node:child_process'
+import { createRequire } from 'node:module'
 import type { CredentialIdentity } from './selection'
+
+vi.mock('node:child_process', { spy: true })
+vi.mock('node:module', { spy: true })
 
 // Vectors independently generated with OpenSSL AES-128-CBC and the pinned Chromium KDF.
 const fixtures: Array<{ identity: CredentialIdentity; prefix: string; hex: string }> = [
@@ -32,6 +37,29 @@ const fixtures: Array<{ identity: CredentialIdentity; prefix: string; hex: strin
 ]
 
 describe('Node OSCrypt-compatible cipher', () => {
+  it('launches the packaged DPAPI helper outside app.asar', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'node-cipher-packaged-'))
+    const executable = join(directory, 'app.asar', 'native', 'credential_secret.exe')
+    vi.mocked(createRequire).mockReturnValue((() => ({
+      secretExecutablePath: executable
+    })) as unknown as NodeJS.Require)
+    vi.mocked(spawnSync).mockReturnValue({
+      status: 0,
+      stdout: Buffer.from('protected-key')
+    } as ReturnType<typeof spawnSync>)
+    try {
+      initializeNodeWindowsProfileKey(directory)
+      expect(spawnSync).toHaveBeenCalledWith(
+        join(directory, 'app.asar.unpacked', 'native', 'credential_secret.exe'),
+        ['protect'],
+        expect.objectContaining({ windowsHide: true })
+      )
+    } finally {
+      vi.mocked(createRequire).mockRestore()
+      vi.mocked(spawnSync).mockRestore()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
   it.each(fixtures)(
     'reads and writes the existing $identity.backend format',
     ({ identity, prefix, hex }) => {

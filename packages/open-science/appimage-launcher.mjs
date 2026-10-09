@@ -49,7 +49,10 @@ export async function stageAppImageCli(image, backend, nodeRuntime, cache) {
     try {
       await rename(temporary, destination)
     } catch (error) {
-      if (!['EEXIST', 'ENOTEMPTY'].includes(error.code) || !(await valid())) throw error
+      const exists =
+        ['EEXIST', 'ENOTEMPTY'].includes(error.code) ||
+        (process.platform === 'win32' && error.code === 'EPERM')
+      if (!exists || !(await valid())) throw error
     }
     return destination
   } finally {

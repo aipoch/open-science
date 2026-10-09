@@ -181,17 +181,18 @@ async function startDesktop(): Promise<void> {
     app.setName(identity.appName)
     app.setPath('userData', profilePath)
     app.setPath('sessionData', profilePath)
+    // A second shell must notify the owner before inspecting its Chromium-locked files.
+    if (
+      !(!app.isPackaged && process.env.OPEN_SCIENCE_ALLOW_MULTI_INSTANCE === '1') &&
+      !app.requestSingleInstanceLock()
+    ) {
+      app.quit()
+      return
+    }
     prepareCredentialValidation(identity, { configRoot, profilePath })
     if (identity.backend === 'windows-dpapi') initializeNodeWindowsProfileKey(profilePath)
   } finally {
     bootstrapLease.release()
-  }
-  if (
-    !(!app.isPackaged && process.env.OPEN_SCIENCE_ALLOW_MULTI_INSTANCE === '1') &&
-    !app.requestSingleInstanceLock()
-  ) {
-    app.quit()
-    return
   }
   let startupQuitRequested = false
   const holdStartupQuit = (event: Electron.Event): void => {
@@ -463,7 +464,23 @@ async function startDesktop(): Promise<void> {
       })
       .catch(reportError)
   }
-  // Install both sessions before any preview window; Reviewer deliberately uses an isolated partition.
+  startupDiagnostics?.phase('launch-node-runtime')
+  const launch = await startOrAttachDesktopBackend({
+    configRoot,
+    version: app.getVersion(),
+    ...desktopBackendPaths({
+      applicationPath: app.getAppPath(),
+      resourcesPath: process.resourcesPath,
+      packaged: app.isPackaged
+    }),
+    packaged: app.isPackaged,
+    args: process.argv.filter(
+      (arg) => arg.startsWith('--credential-store=') || arg.startsWith('--password-store=')
+    )
+  })
+  // Let Node finish credential validation before Chromium opens its cookie databases. On Windows
+  // native sessions lock those files, preventing the backend's fail-closed inventory snapshot.
+  // Both protocol handlers must still be installed before the first preview window can exist.
   startupDiagnostics?.phase('preview-protocols')
   for (const target of [session.defaultSession, session.fromPartition('reviewer-paged-preview')]) {
     target.protocol.handle(MANAGED_PREVIEW_SCHEME.scheme, (request) =>
@@ -480,20 +497,6 @@ async function startDesktop(): Promise<void> {
       target.protocol
     )
   }
-  startupDiagnostics?.phase('launch-node-runtime')
-  const launch = await startOrAttachDesktopBackend({
-    configRoot,
-    version: app.getVersion(),
-    ...desktopBackendPaths({
-      applicationPath: app.getAppPath(),
-      resourcesPath: process.resourcesPath,
-      packaged: app.isPackaged
-    }),
-    packaged: app.isPackaged,
-    args: process.argv.filter(
-      (arg) => arg.startsWith('--credential-store=') || arg.startsWith('--password-store=')
-    )
-  })
   startupDiagnostics?.phase('connect-node-runtime')
   client = await connectDesktopRuntime({
     ...launch,

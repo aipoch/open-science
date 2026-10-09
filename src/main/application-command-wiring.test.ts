@@ -29,6 +29,7 @@ const commandRegistrationSource = compact(
 const literatureOwnerSource = compact(readSource('src/main/literature/command-owner.ts'))
 const coreSurfaceSource = compact(readSource('src/main/ipc-surfaces/core.ts'))
 const indexSource = readSource('src/main/index.ts')
+const nodeEntrySource = readSource('src/main/node-entry.ts')
 const runtimeSource = readSource('src/main/application-runtime.ts')
 const compositionSource = readSource('src/main/application-command-composition.ts')
 const ipcRegistrySource = readSource('src/main/ipc-handler-registry.ts')
@@ -518,36 +519,50 @@ describe('production application command wiring', () => {
     expect(runtimeSource).toContain("await modules.dispose('rollback')")
   })
 
-  it('registers startup network IPC before creating the first renderer window', () => {
+  it('exposes startup network commands before attaching the desktop transport', () => {
     const preWindowStartup = compact(
-      between(indexSource, 'await app.whenReady()', 'const startupWindow = webMode.headless')
+      between(
+        nodeEntrySource,
+        'const earlyChannels =',
+        'desktop = await startDesktopRuntimeTransport('
+      )
     )
-
-    expect(preWindowStartup).toContain('registerNetworkIpcHandlers()')
+    expect(preWindowStartup).toContain("'network:get-info'")
+    expect(preWindowStartup).toContain("'network:check-connectivity'")
+    expect(preWindowStartup).toContain('requireDesktopCaller(invocation.callerContext)')
+    expect(preWindowStartup).toContain('return networkCommands.getInfo()')
+    expect(preWindowStartup).toContain('return networkCommands.checkConnectivity()')
     expect(legacyAdapterBlock).not.toContain('registerNetworkIpcHandlers()')
-    expect(occurrences(indexSource + ipcSource, 'registerNetworkIpcHandlers()')).toBe(1)
+    expect(occurrences(nodeEntrySource, 'createNetworkCommandOwner()')).toBe(1)
+    const desktopStartup = between(
+      indexSource,
+      'await app.whenReady()',
+      'const lifecycle = installAppLifecycle('
+    )
+    expect(desktopStartup).toContain('installElectronNetwork()')
+    expect(desktopStartup).toContain('installDesktopRuntimeElectronAdapter(')
   })
 
   it('late-binds the unique Remote Access owner and passes only narrow views to Web and Task', () => {
     const startup = compact(
       between(
-        indexSource,
-        'const remoteAccess = await RemoteAccessService.create()',
-        '// A launch that itself requested serving'
+        nodeEntrySource,
+        'remoteAccess = await RemoteAccessService.create()',
+        'void remoteAccess.restore()'
       )
     )
-    expect(occurrences(indexSource, 'RemoteAccessService.create()')).toBe(1)
+    expect(occurrences(nodeEntrySource, 'RemoteAccessService.create()')).toBe(1)
+    expect(indexSource).not.toContain('RemoteAccessService.create()')
     // Ownership bookkeeping may sit between acquisition and binding; preserve their order.
     expect(startup).toMatch(
-      /const remoteAccess = await RemoteAccessService\.create\(\).*?bindRemoteAccess\(remoteAccess\) const webController = createWebServiceController\(\{[^}]*externalAccess: remoteAccess\.webAccess/
+      /remoteAccess = await RemoteAccessService\.create\(\).*?runtime\.bindRemoteAccess\(remoteAccess\) web = createWebServiceController\(\{[^}]*externalAccess: remoteAccess\.webAccess/
     )
-    expect(startup).toContain('remoteAccess.attachWebController(webController)')
-    expect(startup).toContain('registerRemoteAccessIpcHandlers(remoteAccess)')
+    expect(startup).toContain('remoteAccess.attachWebController(web)')
+    expect(startup).toContain('...runtime,')
 
     expect(occurrences(ipcSource, 'applicationCommands')).toBe(2)
-    expect(indexSource).toContain('applicationCommands,')
-    expect(startup).toContain('applicationCommands,')
-    expect(startup).toContain('taskControls, computePreferences, detectActiveSessions }')
+    expect(nodeEntrySource).toContain('runtime.applicationCommands.desktop')
+    expect(compact(ipcSource)).toContain('taskControls: {')
     expect(compact(ipcSource)).toContain(
       "computePreferences: Pick<SessionEnabledComputeHostsOwner, 'withReservation' | 'set'>"
     )

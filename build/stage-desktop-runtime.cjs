@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-require-imports -- electron-builder CommonJS hook. */
 const { spawnSync } = require('node:child_process')
 const path = require('node:path')
+const { pathToFileURL } = require('node:url')
 
 // Native backend resources are target artifacts, not Electron-rebuilt addons. Refuse accidental
 // cross packaging instead of silently shipping the build host's incompatible executables.
@@ -26,7 +27,9 @@ module.exports = async (context) => {
     if (result.error || result.status !== 0)
       throw result.error || new Error('Desktop backend build failed.')
   }
-  const { stageNodeRuntime } = await import(path.join(root, 'scripts/stage-node-runtime.mjs'))
+  const { stageNodeRuntime } = await import(
+    pathToFileURL(path.join(root, 'scripts/stage-node-runtime.mjs')).href
+  )
   await stageNodeRuntime({ platform: process.platform, arch })
   const result = spawnSync(process.execPath, [path.join(root, 'scripts/stage-backend.mjs')], {
     cwd: root,

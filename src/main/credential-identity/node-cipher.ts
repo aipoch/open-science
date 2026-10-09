@@ -31,7 +31,8 @@ const nativeSecret = (
   const { secretExecutablePath } = createRequire(import.meta.url)(
     '@aipoch/credential-identity-probe-native'
   ) as { secretExecutablePath: string }
-  const result = spawnSync(secretExecutablePath, [operation, ...args], {
+  const executable = secretExecutablePath.replace(/app\.asar([/\\])/u, 'app.asar.unpacked$1')
+  const result = spawnSync(executable, [operation, ...args], {
     input,
     timeout: 30_000,
     maxBuffer: 65536,
