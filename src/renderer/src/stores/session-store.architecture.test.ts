@@ -1400,7 +1400,8 @@ describe('Session Store architecture', () => {
           'src/renderer/src/lib/acp/workspace-runtime-overflow-recovery-failures.test.ts',
           'src/renderer/src/pages/workspace/SessionHeaderMenu.test.tsx',
           'src/renderer/src/pages/workspace/previews/renderers/PdfTranslationControls.test.tsx',
-          'src/renderer/src/pages/workspace/previews/renderers/PdfTranslationEditions.test.tsx'
+          'src/renderer/src/pages/workspace/previews/renderers/PdfTranslationEditions.test.tsx',
+          'src/renderer/src/pages/workspace/session-plan/session-plan-resume.test.tsx'
         ]
       },
       capabilityOverlays: ['renderer_state'],

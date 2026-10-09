@@ -705,11 +705,7 @@ export class RuntimeSessionOwner {
       }
       if (next.promptPreparation?.promptMessageId === scope.promptMessageId)
         delete next.promptPreparation
-      const rejectedPlanDelivery =
-        admission.planDeliveryCommandId &&
-        next.runtimeContext?.plan?.approval === 'rejected' &&
-        next.runtimeContext.plan.originatingPromptMessageId === scope.promptMessageId
-      if (!rejectedPlanDelivery) next = setTurnOutcome(next, scope.promptMessageId, undefined)
+      next = setTurnOutcome(next, scope.promptMessageId, undefined)
       if (next.resumeRecovery?.promptMessageId === scope.promptMessageId) {
         delete next.resumeRecovery
       }

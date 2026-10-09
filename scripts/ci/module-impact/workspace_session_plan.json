@@ -15,7 +15,8 @@
     "src/renderer/src/pages/workspace/session-plan/plan-progress.ts",
     "src/renderer/src/pages/workspace/session-plan/plan-test-fixtures.ts",
     "src/renderer/src/pages/workspace/session-plan/respond-to-session-plan.test.ts",
-    "src/renderer/src/pages/workspace/session-plan/respond-to-session-plan.ts"
+    "src/renderer/src/pages/workspace/session-plan/respond-to-session-plan.ts",
+    "src/renderer/src/pages/workspace/session-plan/session-plan-resume.test.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/workspace/session-plan/SessionPlanSurfaces.tsx",
@@ -37,7 +38,8 @@
       "src/renderer/src/pages/workspace/session-plan/plan-document-sniff.test.ts",
       "src/renderer/src/pages/workspace/session-plan/plan-file-projection.test.ts",
       "src/renderer/src/pages/workspace/session-plan/plan-preview-i18n.render.test.tsx",
-      "src/renderer/src/pages/workspace/session-plan/respond-to-session-plan.test.ts"
+      "src/renderer/src/pages/workspace/session-plan/respond-to-session-plan.test.ts",
+      "src/renderer/src/pages/workspace/session-plan/session-plan-resume.test.tsx"
     ],
     "contract": [],
     "consumer": [

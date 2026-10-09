@@ -851,7 +851,8 @@ describe('Reviewer orchestrator architecture', () => {
           'src/main/session-persistence/attention-projection.test.ts',
           'src/main/acp/approved-handoff-outcome.integration.test.ts',
           'src/main/acp/approved-handoff-outcome.test.ts',
-          'src/main/literature/pdf-translation/checkpoints.test.ts'
+          'src/main/literature/pdf-translation/checkpoints.test.ts',
+          'src/main/session-plan/session-plan-turn-outcome.test.ts'
         ]
       },
       capabilityOverlays: ['windows_sensitive', 'e2e_regressions', 'e2e_delegation'],
