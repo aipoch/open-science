@@ -603,6 +603,7 @@ jobs:
       - name: Report Codex review telemetry
         if: ${{ always() }}
         env:
+          CODEX_AUTH_MODE: ${{ steps.codex_auth.outputs.auth_mode }}
           CODEX_EFFORT: ${{ inputs.effort }}
           CODEX_MODEL: ${{ inputs.model }}
           DURATION_SECONDS: ${{ steps.run_codex.outputs.duration_seconds }}
@@ -692,6 +693,7 @@ jobs:
           ' "$EXECUTION_FILE")"
 
           echo "::group::${summary_title}"
+          echo "Codex authentication: ${CODEX_AUTH_MODE:-unknown}"
           echo "Codex model: ${CODEX_MODEL}; effort: ${CODEX_EFFORT}"
           echo "Codex turns: started=${started_turns}, completed=${completed_turns}, failed=${failed_turns}"
           echo "Codex duration: wall=${DURATION_SECONDS:-unknown}s"
@@ -711,6 +713,7 @@ jobs:
           {
             echo "### ${summary_title}"
             echo
+            echo "- Authentication: ${CODEX_AUTH_MODE:-unknown}"
             echo "- Model: \`${CODEX_MODEL}\`; effort: \`${CODEX_EFFORT}\`"
             echo "- Turns: ${started_turns} started, ${completed_turns} completed, ${failed_turns} failed"
             echo "- Duration: ${DURATION_SECONDS:-unknown}s wall"

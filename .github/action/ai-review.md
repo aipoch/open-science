@@ -139,7 +139,8 @@ enablement, fork policy, and round limits still apply; verify that the review jo
 Merged PRs are supported and compare the merge commit with its first parent. A successful workflow
 with a skipped review is not evidence that the CLI or model works.
 
-The telemetry reports allowlisted error categories and HTTP status codes from error events, failed
+The telemetry reports the effective authentication mode (after fallback), allowlisted error categories
+and HTTP status codes from error events, failed
 turns, and error items. It never publishes raw server messages, prompts, tool output, or the JSONL
 stream. Zero token totals on a failed turn mean completed-turn usage was unavailable, not that the
 model made no requests. Keep CLI, model, and effort unchanged for the baseline, then change one

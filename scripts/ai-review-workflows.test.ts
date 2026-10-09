@@ -941,6 +941,7 @@ printf '%s\n' \\
         encoding: 'utf8',
         env: {
           ...process.env,
+          CODEX_AUTH_MODE: 'api-key',
           CODEX_EFFORT: 'high',
           CODEX_MODEL: 'codex-auto-review',
           DURATION_SECONDS: '7',
@@ -954,6 +955,7 @@ printf '%s\n' \\
     expect(result.stdout).toContain('Codex tokens: input=100, cached_input=80')
     const summaryText = readFileSync(summary, 'utf8')
     expect(summaryText).toContain('### Codex review telemetry')
+    expect(summaryText).toContain('- Authentication: api-key')
     expect(summaryText).toContain('| 1 | 100 | 80 | 20 | 5 |')
     expect(summaryText).toContain('| `command_execution` | 1 |')
   })
