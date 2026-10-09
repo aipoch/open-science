@@ -1,4 +1,3 @@
-import { createEmptySettings } from './types'
 import { resolve } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
@@ -35,8 +34,11 @@ describe('settings document codec', () => {
   })
 
   it('fails closed for corrupt input', () => {
-    expect(sanitizeSettings(null)).toEqual(createEmptySettings())
-    expect(sanitizeSettings(['not', 'a', 'document'])).toEqual(createEmptySettings())
+    expect(sanitizeSettings(null)).toEqual({ version: SETTINGS_FILE_VERSION, providers: [] })
+    expect(sanitizeSettings(['not', 'a', 'document'])).toEqual({
+      version: SETTINGS_FILE_VERSION,
+      providers: []
+    })
   })
 
   it('bounds providers and keeps the first valid record for duplicate IDs', () => {

@@ -4,10 +4,10 @@ import { join } from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
+import { SETTINGS_FILE_VERSION } from '../../shared/settings'
 import { NotebookRuntimeSettingsModule } from './notebook-runtime-settings'
 import { SettingsPreferencesModule } from './preferences'
 import { SettingsRepository } from './repository'
-import { createEmptySettings } from './types'
 
 const roots: string[] = []
 
@@ -31,7 +31,8 @@ describe('Settings capabilities', () => {
     ])
 
     expect(JSON.parse(await readFile(join(root, 'settings.json'), 'utf8'))).toEqual({
-      ...createEmptySettings(),
+      version: SETTINGS_FILE_VERSION,
+      providers: [],
       notificationsEnabled: false,
       showNotificationContent: true,
       closePreference: 'minimize',

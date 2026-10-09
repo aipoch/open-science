@@ -1,4 +1,3 @@
-import { createEmptySettings } from './types'
 import {
   mkdtemp,
   open as openFile,
@@ -88,7 +87,7 @@ describe('settings document store', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-settings-store-'))
     const store = new SettingsDocumentStore(storageRoot)
 
-    await expect(store.read()).resolves.toEqual(createEmptySettings())
+    await expect(store.read()).resolves.toEqual({ version: 2, providers: [] })
     await expect(
       store.mutate((settings) => ({ ...settings, notificationsEnabled: false }))
     ).resolves.toMatchObject({ providers: [], notificationsEnabled: false })

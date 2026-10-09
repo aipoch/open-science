@@ -860,33 +860,32 @@ describe('ConnectorSettingsModule', () => {
     snapshot = await service.setConnectorEnabled({ id: 'chemistry', enabled: true })
     expect(snapshot.connectors.find((c) => c.id === 'chemistry')?.enabled).toBe(true)
   })
-  it('shows only ten ENCORI tools and defaults downloads to Ask without writing settings on read', async () => {
+  it('shows only ten ENCORI tools with the existing default Allow policy without writing settings on read', async () => {
     const detail = await service.getConnectorDetail('encori')
     expect(detail.tools).toHaveLength(10)
     expect(detail.tools.some((tool) => tool.method === 'query_degradome_events')).toBe(false)
     expect(detail.tools.find((tool) => tool.method === 'download_bulk_dataset')?.permission).toBe(
-      'ask'
+      'allow'
     )
-    expect(detail.tools.filter((tool) => tool.permission === 'ask')).toHaveLength(1)
+    expect(detail.tools.filter((tool) => tool.permission === 'ask')).toHaveLength(0)
     await expect(readFile(join(dir, 'settings.json'))).rejects.toMatchObject({ code: 'ENOENT' })
   })
-  it('reads old connector settings as download Ask without rewriting the original document', async () => {
+  it('reads old connector settings without injecting download Ask or rewriting the document', async () => {
     const original =
       '{"version":2,"providers":[],"connectors":{"enabledIds":[],"autoAllowIds":[],"blockedToolIds":["chemistry/lookup"]}}\n'
     await writeFile(join(dir, 'settings.json'), original)
     const detail = await service.getConnectorDetail('encori')
     expect(detail.tools.find((tool) => tool.method === 'download_bulk_dataset')?.permission).toBe(
-      'ask'
+      'allow'
     )
     expect(await readFile(join(dir, 'settings.json'), 'utf8')).toBe(original)
     expect((await service.getConnectors())?.blockedToolIds).toEqual(['chemistry/lookup'])
+    expect((await service.getConnectors())?.askToolIds).toBeUndefined()
   })
   it('persists explicit download Allow, Ask and Block across settings and service reloads', async () => {
     const toolId = 'encori/download_bulk_dataset'
     for (const permission of ['allow', 'ask', 'block'] as const) {
       await service.setToolPermission({ toolId, permission })
-      const stored = JSON.parse(await readFile(join(dir, 'settings.json'), 'utf8'))
-      expect(stored.connectors.encoriDownloadPolicyInitialized).toBe(true)
       const reloaded = new ConnectorSettingsModule(new SettingsRepository(dir))
       const detail = await reloaded.getConnectorDetail('encori')
       expect(detail.tools.find((tool) => tool.id === toolId)?.permission).toBe(permission)

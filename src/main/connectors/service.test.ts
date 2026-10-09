@@ -8,7 +8,6 @@ import type { SpecialistView } from '../../shared/specialist'
 import type { CustomMcpServerConfig } from './custom-mcp'
 import * as connectorNetwork from '../skills/net-fetch'
 import * as encoriFiles from './encori/client'
-import { createEmptySettings } from '../settings/types'
 
 const internal = { origin: 'internal' as const }
 
@@ -2816,13 +2815,17 @@ it('enforces ENCORI enablement and download policy before network or filesystem 
   }
 })
 
-it('requires the default download approval and rejects denial before network or filesystem work', async () => {
+it('honors explicit download Ask and rejects denial before network or filesystem work', async () => {
   const network = vi.spyOn(connectorNetwork, 'netFetchStandard')
   const directory = vi.spyOn(encoriFiles, 'outputDirectory')
   const approvalPrompt = vi.fn().mockResolvedValue('deny')
   try {
     const service = new ConnectorService({
-      getConnectors: () => createEmptySettings().connectors,
+      getConnectors: () => ({
+        enabledIds: [],
+        autoAllowIds: [],
+        askToolIds: ['encori/download_bulk_dataset']
+      }),
       resolveApiKey: () => undefined,
       requestApproval: approvalPrompt
     })

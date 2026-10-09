@@ -8,7 +8,7 @@ import { providerValidationFailed } from '../../shared/settings'
 import { CONNECTOR_RESOURCE_LIMITS } from './connector-resource-limits'
 import { SettingsDocumentStore } from './document-store'
 import { SettingsRepository } from './repository'
-import { createEmptySettings, type StoredCustomMcpServer, type StoredProvider } from './types'
+import type { StoredCustomMcpServer, StoredProvider } from './types'
 import { skillMutationOwnerFor } from '../skills/skill-mutation-owner'
 import { envDirectoryName } from '../notebook/runtime-paths'
 
@@ -610,7 +610,7 @@ describe('settings repository', () => {
   it('returns empty settings when nothing is stored yet', async () => {
     const repository = new SettingsRepository(await createStorageRoot())
 
-    await expect(repository.getSettings()).resolves.toEqual(createEmptySettings())
+    await expect(repository.getSettings()).resolves.toEqual({ version: 2, providers: [] })
   })
 
   it('writes settings.json atomically and reads it back', async () => {

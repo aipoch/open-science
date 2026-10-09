@@ -24,8 +24,6 @@ describe('sanitizeConnectors', () => {
       ncbiApiKeyRef: 'ref1',
       openAlexApiKeyRef: 'ref2',
       blockedToolIds: ['chemistry/pubchem_get_properties'],
-      askToolIds: ['encori/download_bulk_dataset'],
-      encoriDownloadPolicyInitialized: true,
       disabledConnectorIds: ['zinc', 'rna']
     })
   })
