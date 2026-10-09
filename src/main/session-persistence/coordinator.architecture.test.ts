@@ -1815,7 +1815,8 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/literature/pdf-translation/checkpoints.test.ts',
       'src/main/literature/pdf-translation/usage.test.ts',
       'src/main/notebook/code-risk-admission.test.ts',
-      'src/main/session-plan/session-plan-turn-outcome.test.ts'
+      'src/main/session-plan/session-plan-turn-outcome.test.ts',
+      'src/main/notebook/runtime-repair.windows.integration.test.ts'
     ])
     expect(sessionPersistence.capabilityOverlays).toEqual([
       'windows_sensitive',

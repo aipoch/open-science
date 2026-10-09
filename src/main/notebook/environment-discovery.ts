@@ -12,7 +12,7 @@ import type {
   RuntimeEnablement
 } from '../../shared/notebook-runtime'
 import { createLogger } from '../logger'
-import { isMacOSDeveloperToolsPythonStub, isPython3Version } from './python-command'
+import { isMacOSDeveloperToolsPythonStub, probeInterpreterVersion } from './python-command'
 import { parseRVersion, rHasJsonlite } from './r-command'
 import {
   condaActivatedPath,
@@ -51,7 +51,7 @@ export type DiscoveryDeps = {
   // Absolute candidate interpreter paths for a language, across all sources (may contain dupes/misses;
   // the orchestrator realpath-dedupes and drops non-existent ones).
   candidatePaths: (language: NotebookLanguage) => Promise<string[]>
-  // `<interp> --version` → version string (e.g. "3.12.4" / "4.4.1"), or undefined if it doesn't run.
+  // Execute a language's version probe → version string, or undefined if it doesn't run.
   probeVersion: (interpreterPath: string, language: NotebookLanguage) => Promise<string | undefined>
   // Whether an R interpreter can actually back the kernel loop (jsonlite + protocol). Python
   // runnability is derived from a valid Python-3 version instead.
@@ -175,14 +175,16 @@ const listCondaPrefixes = async (
 }
 
 // Windows `py -0p`: the launcher lists installed pythons; each line ends with the interpreter path.
-// Best-effort (parsing is loose; on-device verification pending).
-const pyLauncherPaths = async (env: NodeJS.ProcessEnv): Promise<string[]> => {
+const pyLauncherPaths = async (
+  env: NodeJS.ProcessEnv,
+  exec: DiscoveryExec = execFileAsync
+): Promise<string[]> => {
   try {
-    const { stdout } = await execFileAsync('py', ['-0p'], { ...PROBE_EXEC_OPTS, env })
+    const { stdout } = await exec('py', ['-0p'], { ...PROBE_EXEC_OPTS, env })
     return stdout
       .split('\n')
       .map((line) => {
-        const match = line.match(/([A-Za-z]:\\[^\s*]+python\.exe)\s*$/i)
+        const match = line.match(/([A-Za-z]:\\[^\r\n]*python\.exe)\s*$/i)
         return match ? match[1] : undefined
       })
       .filter((p): p is string => p !== undefined && existsSync(p))
@@ -315,7 +317,7 @@ export const defaultCandidatePaths = (
 
     // Windows Python launcher: `py -0p` lists installed interpreters' paths.
     if (language === 'python' && platform === 'win32')
-      for (const p of await pyLauncherPaths(env)) found.add(p)
+      for (const p of await pyLauncherPaths(env, runtimeDeps.exec)) found.add(p)
 
     // Windows CRAN R standard installations: check Program Files and user-local directories for versioned
     // R installs (R-x.y.z). CRAN R doesn't register with a launcher like Python's `py`, so we enumerate
@@ -445,7 +447,7 @@ export const discoverInterpreters = async (
   enablement?: RuntimeEnablement
 ): Promise<DiscoveredInterpreter[]> => {
   // Dedup by real path FIRST, then probe unique candidates with BOUNDED concurrency. Each probe spawns
-  // subprocesses (a `--version` probe, plus a jsonlite probe for R); serial made discovery scale with
+  // subprocesses (a version probe, plus a jsonlite probe for R); serial made discovery scale with
   // the number of interpreters (slow with many conda envs), but an unbounded Promise.all over dozens of
   // candidates would fan out too many processes/file descriptors at once. A small worker pool keeps it
   // fast without a spawn storm. Order is preserved (results written back at each candidate's index).
@@ -457,6 +459,14 @@ export const discoverInterpreters = async (
     // repair callers omit enablement so they can still inspect disabled or broken environments.
     if (enablement?.enabled[envId] === false) continue
     if (language === 'python' && isMacOSDeveloperToolsPythonStub(envId, deps.platform)) continue
+    // CPython ships this internal venv launcher template; it is not an installed interpreter.
+    // Match the resolved path so aliases cannot promote it to a selectable managed runtime.
+    if (
+      language === 'python' &&
+      (deps.platform ?? process.platform) === 'win32' &&
+      win32.normalize(envId).toLowerCase().endsWith('\\lib\\venv\\scripts\\nt\\python.exe')
+    )
+      continue
     if (seen.has(envId)) continue
     seen.add(envId)
     unique.push({ path, envId })
@@ -526,6 +536,7 @@ type DiscoveryExec = (
     windowsHide: boolean
     env?: NodeJS.ProcessEnv
     shell?: boolean
+    maxBuffer?: number
   }
 ) => Promise<{ stdout: string; stderr: string }>
 
@@ -569,15 +580,14 @@ export const defaultDiscoveryDeps = (
   return {
     candidatePaths: defaultCandidatePaths(runtimeRoot, manualPaths, runtimeDeps),
     probeVersion: async (interpreterPath, language) => {
+      if (language === 'python') {
+        return probeInterpreterVersion(interpreterPath, [], {
+          platform,
+          env: probeOptions(interpreterPath, language).env,
+          exec
+        })
+      }
       try {
-        if (language === 'python') {
-          const { stdout, stderr } = await exec(interpreterPath, ['--version'], {
-            ...probeOptions(interpreterPath, language),
-            shell: platform === 'win32'
-          })
-          const output = `${stdout}\n${stderr}`
-          return isPython3Version(output) ? output.trim().replace(/^Python\s+/i, '') : undefined
-        }
         // Probe through Rscript rather than R.exe. On Windows R.exe may create its own visible
         // frontend even when the child process has windowsHide set; Rscript is the headless CLI we
         // already use for readiness checks and kernel launches. No shell means paths with spaces or

@@ -1035,7 +1035,9 @@
       "src/main/notebook/dependency-analysis.scipy-sparse.test.ts",
       "src/main/literature/pdf-translation/checkpoints.test.ts",
       "src/main/notebook/code-risk-admission.test.ts",
-      "src/main/session-plan/session-plan-turn-outcome.test.ts"
+      "src/main/session-plan/session-plan-turn-outcome.test.ts",
+      "src/main/notebook/runtime-repair.windows.integration.test.ts",
+      "src/main/notebook/windows-python-probe.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],
