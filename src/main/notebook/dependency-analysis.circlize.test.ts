@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { readFileSync } from 'node:fs'
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -481,3 +482,5 @@ it
   },
   240000
 )
+
+configureTestRuntimeMetadata()

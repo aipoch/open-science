@@ -3011,3 +3011,7 @@ describe('installComputeIpcHandlers — remoteFsError serialization', () => {
     expect(decodeRemoteFsError(err.message)).toBeNull()
   })
 })
+
+await (
+  await import('../../../test/runtime-host')
+).configureTestElectronHost(await import('electron'))

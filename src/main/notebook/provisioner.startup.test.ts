@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -409,3 +410,5 @@ describe('createProductionProvisioner', () => {
     })
   })
 })
+
+configureTestRuntimeMetadata()

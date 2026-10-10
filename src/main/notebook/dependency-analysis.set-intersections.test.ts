@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { expect, it } from 'vitest'
 import { analyzeRNotebookSource } from './dependency-analysis-r'
 import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
@@ -102,3 +103,5 @@ it('links a later cell to the workbook analysis through the established set resu
   expect(projection.stalenessByRunId['1']).toEqual({ state: 'clear' })
   expect(projection.dependenciesByRunId?.['1']).toContain('0')
 })
+
+configureTestRuntimeMetadata()

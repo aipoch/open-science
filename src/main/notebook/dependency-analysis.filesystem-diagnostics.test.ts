@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { execFile } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -256,3 +257,5 @@ it.skipIf(process.env.RUN_KERNEL !== '1').each(['python', 'r'] as const)(
     }
   }
 )
+
+configureTestRuntimeMetadata()

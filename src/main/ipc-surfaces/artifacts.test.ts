@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { EventEmitter } from 'node:events'
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -12,6 +13,7 @@ const native = vi.hoisted(() => ({
   root: '',
   getPath: vi.fn(),
   fromWebContents: vi.fn(),
+  fromId: vi.fn(),
   openDialog: vi.fn(),
   saveDialog: vi.fn()
 }))
@@ -24,6 +26,7 @@ vi.mock('electron', () => ({
     },
     removeHandler: (channel: string) => native.handlers.delete(channel)
   },
+  webContents: { fromId: native.fromId },
   app: { getPath: native.getPath },
   BrowserWindow: { fromWebContents: native.fromWebContents },
   dialog: { showOpenDialog: native.openDialog, showSaveDialog: native.saveDialog }
@@ -157,6 +160,7 @@ const fixtures = (): {
     isDestroyed: vi.fn(() => false),
     send: vi.fn()
   })
+  native.fromId.mockReturnValue(sender)
   const owners: Owners = {
     // Shared owner identities are controlled; real registrars, exporter, receipt store and registry run.
     artifactRepository: {} as Owners['artifactRepository'],
@@ -196,7 +200,7 @@ beforeEach(async () => {
   native.failAt = undefined
   native.root = await mkdtemp(join(tmpdir(), 'artifact-surface-'))
   native.getPath.mockReturnValue(native.root)
-  native.fromWebContents.mockReturnValue({ id: 'sender-window' })
+  native.fromWebContents.mockReturnValue({ id: 'sender-window', isDestroyed: () => false })
   native.openDialog.mockResolvedValue({ canceled: true, filePaths: [] })
   native.saveDialog.mockResolvedValue({ canceled: true })
   const locks = join(native.root, 'runtime', 'provenance', 'environment-locks')
@@ -329,11 +333,23 @@ describe('Artifact Electron surface', () => {
     'exports a lock and imports its bytes with parent window = %s',
     async (hasParent) => {
       const { owners, event, sender, importEnvironmentLock } = fixtures()
-      const parent = hasParent ? { id: 'sender-window' } : null
+      const parent = hasParent ? { id: 'sender-window', isDestroyed: () => false } : null
       native.fromWebContents.mockReturnValue(parent)
       const destination = join(native.root, 'environment')
       native.saveDialog.mockResolvedValue({ canceled: false, filePath: destination })
       await install(owners)
+      if (!hasParent) {
+        await expect(
+          invoke('artifacts:export-environment-lock', event, lockRequest)
+        ).rejects.toThrow('calling window')
+        await expect(
+          invoke('artifacts:import-environment-lock', event, { projectId: scope.projectId })
+        ).rejects.toThrow('no longer available')
+        expect(native.saveDialog).not.toHaveBeenCalled()
+        expect(native.openDialog).not.toHaveBeenCalled()
+        expect(importEnvironmentLock).not.toHaveBeenCalled()
+        return
+      }
       await expect(
         invoke('artifacts:export-environment-lock', event, lockRequest)
       ).resolves.toEqual({ saved: true })
@@ -421,3 +437,5 @@ describe('Artifact Electron surface', () => {
     }
   )
 })
+
+await configureTestElectronHost(await import('electron'))

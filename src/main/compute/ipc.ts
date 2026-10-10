@@ -1,8 +1,7 @@
+import { desktopShellInteraction } from '../desktop-interaction'
 import { randomUUID } from 'node:crypto'
 import { readdir } from 'node:fs/promises'
 import { join } from 'node:path'
-
-import { BrowserWindow, shell } from 'electron'
 
 import type {
   ChangeComputeHostAuthenticationRequest,
@@ -203,7 +202,7 @@ type ComputeHandlers = {
   }>
   listDir: (providerId: string, path: string) => Promise<DirListing>
   download: (providerId: string, remotePath: string, dest: DownloadDest) => Promise<LocalFile>
-  revealInFolder: (filePath: string) => void
+  revealInFolder: (filePath: string) => Promise<void>
   // The compute service instance, exposed so the notebook RPC server can wire computeCall.
   computeService: ComputeService
   connectionBroker: ComputeConnectionBroker
@@ -287,12 +286,10 @@ const createComputeHandlers = (
           })
         : (request: ComputeApprovalRequest, context?: ComputeApprovalContext) => {
             // Tests and isolated registrations without the notification service still receive cards.
-            for (const win of BrowserWindow.getAllWindows()) {
-              win.webContents.send('compute:approval-request', {
-                ...request,
-                ...(context?.sessionId ? { session_id: context.sessionId } : {})
-              })
-            }
+            broadcastToRenderers('compute:approval-request', {
+              ...request,
+              ...(context?.sessionId ? { session_id: context.sessionId } : {})
+            })
           },
       replay: (request, context) =>
         broadcastToRenderers('compute:approval-request', {
@@ -560,8 +557,8 @@ const createComputeHandlers = (
     getSessionConcurrencyStatus: (sessionId) => service.getSessionConcurrencyStatus(sessionId),
     listDir: (providerId, path) => service.listDir(providerId, path),
     download: (providerId, remotePath, dest) => service.download(providerId, remotePath, dest),
-    revealInFolder: (filePath) => {
-      shell.showItemInFolder(filePath)
+    revealInFolder: async (filePath) => {
+      await desktopShellInteraction().revealPath(filePath)
     },
     computeService: service,
     connectionBroker,

@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { EventEmitter } from 'node:events'
 import { createElectronSurfaceAdapter } from '../ipc-surfaces/adapter'
 import { disposeIpcHandlerRegistry } from '../ipc-handler-registry'
@@ -214,3 +215,5 @@ describe('Office host navigation', () => {
     expect(s.listenerCount('did-start-navigation')).toBe(0)
   })
 })
+
+await configureTestElectronHost(await import('electron'))

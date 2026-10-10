@@ -1,4 +1,4 @@
-import { app } from 'electron'
+import { runtimeMetadata } from '../runtime-metadata'
 import { dirname } from 'node:path'
 import { DEFAULT_ARTIFACT_PROJECT_ID } from '../../shared/artifacts'
 import type { ApplicationEvents } from '../application-events'
@@ -71,10 +71,10 @@ export async function composeNotebookRuntime({
   // One runner owns Windows integrity/preflight/fallback state for every production micromamba
   // consumer in this main-process generation. Each consumer receives only its narrow resolve seam.
   const micromambaRunner = createProductionMicromambaRunner({
-    packaged: app.isPackaged,
-    configHome: app.getPath('home'),
+    packaged: runtimeMetadata().packaged,
+    configHome: runtimeMetadata().homePath,
     home: dirname(dirname(provisioningRoot)),
-    resourcesPath: process.resourcesPath
+    resourcesPath: runtimeMetadata().resourcesPath
   })
   const notebookRuntimeSettings: Pick<
     NotebookRuntimeSettings,
@@ -110,8 +110,8 @@ export async function composeNotebookRuntime({
         settingsService.getAgentEnvironmentCreationEnabled(),
       notebookRuntimeSettings,
       micromambaRunner,
-      locale: app.getLocale(),
-      appVersion: app.getVersion(),
+      locale: runtimeMetadata().locale,
+      appVersion: runtimeMetadata().version,
       translate,
       helperModuleCatalog: settingsService.registeredHelperCatalog(),
       processSandbox: notebookNetworkSandbox,

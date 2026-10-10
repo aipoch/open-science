@@ -81,8 +81,8 @@ import {
 export const getRuntimeVersionsContracts = {
   getRuntimeVersions: callable<
     () => {
-      electron: string
-      chrome: string
+      electron?: string
+      chrome?: string
       node: string
     }
   >()('platform-file-save', [null, NATIVE])

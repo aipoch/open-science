@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -216,3 +217,5 @@ describe('device credential recovery', () => {
     }
   )
 })
+
+await configureTestElectronHost(await import('electron'))

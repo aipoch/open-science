@@ -385,7 +385,8 @@ const describePermissionRequest = (request: AcpPermissionRequest): PermissionPre
     return {
       actionTitle: 'Confirm Notebook kernel and environment',
       categoryLabel: 'Notebook',
-      description: 'This selects an environment. It does not approve future destructive code.',
+      description:
+        'Later Notebook runs use this environment. Approval does not cover package changes or code execution.',
       hideToolIdentity: true
     }
   }

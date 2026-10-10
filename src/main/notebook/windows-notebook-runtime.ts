@@ -1,3 +1,4 @@
+import { runtimeMetadata } from '../runtime-metadata'
 import { existsSync } from 'node:fs'
 import { join, win32 } from 'node:path'
 
@@ -23,7 +24,7 @@ export const configureWindowsNotebookRuntime = (
 // Production resolves only a prepared, verified selection. The vendor path below is retained for
 // source-build/native CI fixtures; arbitrary host runtimes are never a protected-mode fallback.
 export const resolveWindowsNotebookRuntime = (
-  resourcesPath: string | undefined = process.resourcesPath,
+  resourcesPath: string | undefined = runtimeMetadata().resourcesPath,
   moduleDirectory: string = __dirname,
   architecture: string = process.arch
 ): WindowsNotebookRuntime => {

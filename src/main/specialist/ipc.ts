@@ -1,3 +1,12 @@
+import {
+  createApplicationCommandRouter,
+  type ApplicationCommand
+} from '../application-command-router'
+import {
+  registerSpecialistApplicationCommands,
+  specialistApplicationCommandGroup
+} from './application-commands'
+import { specialistDesktopCommandGroup } from './desktop-commands'
 import type { SpecialistApplicationOwner } from './application-commands'
 import { callerContextForEvent } from '../caller-context'
 import { callerLeaseForEvent } from '../caller-lifecycle'
@@ -259,6 +268,26 @@ export const registerSpecialistIpcHandlers = (
   marketplace?: MarketplaceIpc,
   applicationOwner?: SpecialistApplicationOwner
 ): void => {
+  if (applicationOwner?.desktop) {
+    const router = createApplicationCommandRouter()
+    registerSpecialistApplicationCommands(router.registrar, applicationOwner)
+    for (const command of [
+      ...specialistApplicationCommandGroup.commands,
+      ...specialistDesktopCommandGroup.commands
+    ]) {
+      ipcMainHandle(command.name, (event, ...args) =>
+        router.dispatcher.invoke(
+          command as ApplicationCommand<string, readonly unknown[], unknown>,
+          {
+            callerContext: callerContextForEvent(event),
+            callerLease: callerLeaseForEvent(event),
+            args
+          }
+        )
+      )
+    }
+    return
+  }
   if (applicationOwner) {
     for (const [channel, method] of [
       ['specialist:package-upload-begin', 'beginUpload'],

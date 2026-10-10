@@ -55,7 +55,7 @@ export type ClaudeCodeCompletionGateDependencies = {
     sessionId: string,
     targetName: string | null
   ): Promise<ApprovedSwitchReadBack>
-  prepareReplayContext(input: ClaudeCodeReplayInput): Promise<void>
+  prepareReplayContext(input: ClaudeCodeReplayInput, isCurrent?: () => boolean): Promise<void>
   discardReplayContext(sessionId: string): Promise<void>
   switchSpecialist(
     sessionId: string,
@@ -74,6 +74,7 @@ export type ClaudeCodeCompletionGateDependencies = {
 
 export class ClaudeCodeCompletionGateRuntime implements CompletionGateRuntime {
   private readonly switchReadBacks = new Map<string, ApprovedSwitchReadBack>()
+  private readonly replayOwners = new Map<string, { key: string }>()
 
   constructor(private readonly dependencies: ClaudeCodeCompletionGateDependencies) {}
 
@@ -91,9 +92,18 @@ export class ClaudeCodeCompletionGateRuntime implements CompletionGateRuntime {
 
   async reconfigure(
     handoff: CapturedHandoff,
-    context: TrustedToolCompletionContext
+    context: TrustedToolCompletionContext,
+    isCurrentAttempt: () => boolean = () => true
   ): Promise<void> {
-    const specialistId = this.dependencies.resolveSpecialistId(context.sessionId)
+    if (!isCurrentAttempt()) throw new Error('The Claude Code handoff was superseded.')
+    const owner = { key: completionContextKey(context) }
+    this.replayOwners.set(context.sessionId, owner)
+    const isCurrent = (): boolean =>
+      isCurrentAttempt() && this.replayOwners.get(context.sessionId) === owner
+    const specialistId =
+      handoff.targetName === null
+        ? undefined
+        : (handoff.approvedSpecialistId ?? this.dependencies.resolveSpecialistId(context.sessionId))
     const switchReadBack = await this.dependencies.resolveSwitchReadBack(
       context.sessionId,
       handoff.targetName
@@ -105,11 +115,16 @@ export class ClaudeCodeCompletionGateRuntime implements CompletionGateRuntime {
     ) {
       throw new Error('Claude Code handoff read-back does not match the approved binding.')
     }
-    await this.dependencies.prepareReplayContext({
-      sessionId: context.sessionId,
-      capturedCompletion: handoff.envelope,
-      switchReadBack
-    })
+    if (!isCurrent()) throw new Error('The Claude Code handoff was superseded.')
+    await this.dependencies.prepareReplayContext(
+      {
+        sessionId: context.sessionId,
+        capturedCompletion: handoff.envelope,
+        switchReadBack
+      },
+      isCurrent
+    )
+    if (!isCurrent()) throw new Error('The Claude Code handoff was superseded.')
     this.switchReadBacks.set(completionContextKey(context), switchReadBack)
     const replacement = await this.dependencies.switchSpecialist(context.sessionId, specialistId)
     if (!replacement.contextReset) {
@@ -132,6 +147,8 @@ export class ClaudeCodeCompletionGateRuntime implements CompletionGateRuntime {
     })
     try {
       await this.dependencies.sendAppContinuation(request)
+      if (this.replayOwners.get(context.sessionId)?.key === key)
+        this.replayOwners.delete(context.sessionId)
     } finally {
       this.switchReadBacks.delete(key)
     }
@@ -143,9 +160,16 @@ export class ClaudeCodeCompletionGateRuntime implements CompletionGateRuntime {
     handoff: CapturedHandoff,
     context: TrustedToolCompletionContext
   ): Promise<void> {
-    this.switchReadBacks.delete(completionContextKey(context))
-    await this.dependencies.discardReplayContext(context.sessionId)
+    await this.cleanupCancelledHandoff(context)
     await this.dependencies.reportHandoffFailure?.(error, handoff, context)
+  }
+
+  async cleanupCancelledHandoff(context: TrustedToolCompletionContext): Promise<void> {
+    const key = completionContextKey(context)
+    this.switchReadBacks.delete(key)
+    if (this.replayOwners.get(context.sessionId)?.key !== key) return
+    this.replayOwners.delete(context.sessionId)
+    await this.dependencies.discardReplayContext(context.sessionId)
   }
 }
 

@@ -1,3 +1,4 @@
+import { desktopShellInteraction, desktopFileInteraction } from '../desktop-interaction'
 import { PACKAGE_REQUIRES_UPDATE } from './archive'
 import {
   PackageSensitiveContentError,
@@ -7,7 +8,6 @@ import { ForkRecoveryRequiredError } from './fork-session'
 import { redactSensitiveText } from '../../shared/diagnostic-redaction'
 import { formatPackageBytes } from '../../shared/session-package'
 import { randomUUID } from 'node:crypto'
-import { dialog, shell, type BrowserWindow } from 'electron'
 import { mkdtemp, realpath, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, extname, isAbsolute, join } from 'node:path'
@@ -239,8 +239,9 @@ export class SessionPackageDesktop {
       !snapshot.result?.filePath
     )
       throw new Error('No completed export is available.')
-    shell.showItemInFolder(snapshot.result.filePath)
-    return snapshot
+    return desktopShellInteraction()
+      .revealPath(snapshot.result.filePath)
+      .then(() => snapshot)
   }
 
   hasActiveTransfer(): boolean {
@@ -534,16 +535,13 @@ export class SessionPackageDesktop {
       })
   }
 
-  export(
-    request: SessionPackageRequest,
-    parent?: BrowserWindow
-  ): Promise<SessionPackageExportResult> {
-    return this.exportWithPolicy(request, parent)
+  export(request: SessionPackageRequest, callerId?: string): Promise<SessionPackageExportResult> {
+    return this.exportWithPolicy(request, callerId)
   }
 
   private exportWithPolicy(
     request: SessionPackageRequest,
-    parent?: BrowserWindow,
+    callerId?: string,
     allowSensitiveContent = false
   ): Promise<SessionPackageExportResult> {
     let operationSignal: AbortSignal | undefined
@@ -579,9 +577,7 @@ export class SessionPackageDesktop {
                       filters: [{ name: 'Open-Science Session', extensions: ['science'] }]
                     }
                     const selected = await this.nativeDialog(
-                      parent
-                        ? dialog.showSaveDialog(parent, options)
-                        : dialog.showSaveDialog(options),
+                      desktopFileInteraction().chooseSavePath(options, callerId),
                       AbortSignal.any([signal, budgetSignal])
                     )
                     if (selected.canceled || !selected.filePath) {
@@ -618,7 +614,7 @@ export class SessionPackageDesktop {
   }
 
   import(
-    parent?: BrowserWindow,
+    callerId?: string,
     originClientId?: string,
     target: import('../../shared/session-package').SessionPackageImportRequest = {},
     sourcePath?: string
@@ -671,9 +667,7 @@ export class SessionPackageDesktop {
               const selected = sourcePath
                 ? { canceled: false, filePaths: [sourcePath] }
                 : await this.nativeDialog(
-                    parent
-                      ? dialog.showOpenDialog(parent, options)
-                      : dialog.showOpenDialog(options),
+                    desktopFileInteraction().chooseFiles(options, callerId),
                     signal
                   )
               if (selected.canceled || !selected.filePaths[0]) {

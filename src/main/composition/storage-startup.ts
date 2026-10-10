@@ -1,4 +1,4 @@
-import { app } from 'electron'
+import { runtimeMetadata } from '../runtime-metadata'
 import { join } from 'node:path'
 import type { ApplicationEvents } from '../application-events'
 import { type DiagnosticOperation } from '../diagnostics/operation'
@@ -54,14 +54,14 @@ export async function composeStorageStartup({
   const storageLog = createLogger('storage')
   await networkProxyRuntime.apply(storedSettings.networkProxy)
   await certifyNativeShell({
-    appPackaged: app.isPackaged,
+    appPackaged: runtimeMetadata().packaged,
     headless,
     storageRoot: resolveConfigRoot(),
     environment: process.env,
     processSandbox: notebookNetworkSandbox
   })
   await runPackagedWsl2RestartCertification({
-    appPackaged: app.isPackaged,
+    appPackaged: runtimeMetadata().packaged,
     headless,
     platform: process.platform,
     arch: process.arch,
@@ -109,7 +109,6 @@ export async function composeStorageStartup({
     }
   )
   const notificationInbox = createNotificationInboxController({
-    headless,
     repository: new NotificationInboxDbRepository(() => getProjectDbClient(resolveConfigRoot())),
     onChanged: (event) => applicationEvents.publish('notifications:changed', event),
     onError: (error) =>

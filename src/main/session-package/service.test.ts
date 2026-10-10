@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { PdfAnnotationRepository } from '../pdf-annotations/repository'
 import { replayAnnotationId } from '../../shared/replay-reference'
 import { writePackageRoCrateMetadata } from './ro-crate'
@@ -4691,3 +4692,5 @@ it.each(['upload', 'artifact'] as const)(
   // Match the other multi-import tests' hosted Windows I/O budget without relaxing other tests.
   process.platform === 'win32' ? 120_000 : 60_000
 )
+
+await configureTestElectronHost(await import('electron'))

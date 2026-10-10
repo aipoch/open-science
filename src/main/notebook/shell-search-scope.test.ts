@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { mkdtemp, mkdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -280,3 +281,5 @@ describe('assertShellSearchScope with granted roots', () => {
     }
   )
 })
+
+configureTestRuntimeMetadata()

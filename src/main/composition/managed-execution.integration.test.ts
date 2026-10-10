@@ -568,6 +568,8 @@ it.each(['quiesce', 'close'] as const)(
   }
 )
 
+const { configureTestElectronHost } = await import('../../../test/runtime-host')
+await configureTestElectronHost(await import('electron'))
 it('opens a real imported recording through production composition without granting write admission', async () => {
   const {
     h,

@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Parser } from 'web-tree-sitter'
 
@@ -26,3 +27,5 @@ describe('shared Notebook source parsing', () => {
     }
   )
 })
+
+configureTestRuntimeMetadata()

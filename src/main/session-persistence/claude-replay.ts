@@ -16,9 +16,10 @@ export const createPersistedClaudeReplayPreparer =
     >
     coordinator: Pick<SessionCatalog, 'sessionProjectId'>
     prepareReplay(input: ClaudeCodeReplayInput): void
-  }): ((input: ClaudeCodeReplayInput) => Promise<void>) =>
-  async (input) => {
+  }): ((input: ClaudeCodeReplayInput, isCurrent?: () => boolean) => Promise<void>) =>
+  async (input, isCurrent) => {
     const persisted = (await createSessionRuntimeLookup(options)(input.sessionId))[0]
+    if (isCurrent && !isCurrent()) return
     options.prepareReplay({
       ...input,
       supportedTaskContext: selectPersistedUserTaskContext(persisted?.messages ?? [])

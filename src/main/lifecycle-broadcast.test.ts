@@ -35,3 +35,6 @@ describe('lifecycle broadcast IPC', () => {
     )
   })
 })
+
+const { configureIpcHandlerRegistry } = await import('./ipc-handler-registry')
+configureIpcHandlerRegistry((await import('electron')).ipcMain)

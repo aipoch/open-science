@@ -5,6 +5,8 @@ import type {
   TrustedToolCompletionContext
 } from '../agents/completion-gate'
 import { withApprovedHandoffOutcome } from './approved-handoff-outcome'
+import { withApprovedSpecialistBinding } from '../agents/production-completion-handoff'
+import { CompletionGateRuntimeRegistry } from '../agents/completion-gate'
 
 const context = (sessionId = 'session-1', generation = 1): TrustedToolCompletionContext => ({
   sessionId,
@@ -27,6 +29,26 @@ const adapter = (): CompletionGateRuntime => ({
 })
 
 describe('approved Handoff outcome boundary', () => {
+  it('forwards cancellation cleanup through production wrappers without publishing failure', async () => {
+    const cleanupCancelledHandoff = vi.fn(async () => undefined)
+    const report = vi.fn(async () => undefined)
+    const inner = { ...adapter(), cleanupCancelledHandoff }
+    const registry = new CompletionGateRuntimeRegistry()
+    registry.register(
+      withApprovedHandoffOutcome(
+        { captureApprovedHandoffFailure: () => report },
+        withApprovedSpecialistBinding(inner, {
+          getSpecialistBinding: () => undefined,
+          getSpecialist: () => undefined
+        })
+      )
+    )
+    await registry.stopOldPrompt(context())
+    await registry.cleanupCancelledHandoff(context())
+    expect(cleanupCancelledHandoff).toHaveBeenCalledWith(context())
+    expect(report).not.toHaveBeenCalled()
+    expect(inner.reportHandoffFailure).not.toHaveBeenCalled()
+  })
   it('captures admitted ownership before stopping and reports even if adapter cleanup fails', async () => {
     const order: string[] = []
     const report = vi.fn(async () => {

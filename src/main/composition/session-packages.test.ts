@@ -101,7 +101,8 @@ it('cancels both transfer surfaces and waits for their drain before closing the 
       })
   )
   const closing = dispose()
-  expect(mocks.removeQuitGuard).toHaveBeenCalledOnce()
+  // Node transfer disposal does not install or own an Electron quit guard.
+  expect(mocks.removeQuitGuard).not.toHaveBeenCalled()
   expect(mocks.closeHeadless).toHaveBeenCalledOnce()
   expect(mocks.closeDesktop).toHaveBeenCalledOnce()
   expect(mocks.closeService).not.toHaveBeenCalled()

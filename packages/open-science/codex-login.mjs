@@ -5,7 +5,7 @@ import { access, mkdir, readFile } from 'node:fs/promises'
 import { isAbsolute, join, normalize } from 'node:path'
 
 import { resolveConfigRoot } from './config-root.mjs'
-import { locateApp } from './locate-app.mjs'
+import { locateBackend } from './locate-backend.mjs'
 import { connectToOpenScience } from './index.mjs'
 
 const CODEX_CONFIG_OVERRIDE = 'cli_auth_credentials_store="file"'
@@ -200,7 +200,7 @@ export const runCodexProcess = (codexPath, args, options = {}) =>
 
 const DEFAULT_DEPS = {
   connect: connectToOpenScience,
-  locateApp: (options) => locateApp(options),
+  locateBackend: () => locateBackend({ required: false }),
   resolveConfigRoot: (options) => resolveConfigRoot(options),
   resolveConfiguration: (configRoot) => resolveCodexLoginConfiguration(configRoot),
   mkdir: (path) => mkdir(path, { recursive: true }),
@@ -210,18 +210,10 @@ const DEFAULT_DEPS = {
 
 export const codexLoginCommand = async (options, dependencies = {}) => {
   const deps = { ...DEFAULT_DEPS, ...dependencies }
-  const app = await deps.locateApp({ appPath: options.appPath })
-  if (app.packaged && options.configRoot) {
-    throw new CodexLoginError(
-      '--config-root is only supported for development builds.',
-      'invalid_cli_usage',
-      2
-    )
-  }
+  const backend = await deps.locateBackend()
   const configRoot = deps.resolveConfigRoot({
-    packaged: app.packaged,
-    override: options.configRoot,
-    env: app.packaged ? {} : process.env
+    packaged: !backend.development,
+    override: options.configRoot
   })
   let client
   try {

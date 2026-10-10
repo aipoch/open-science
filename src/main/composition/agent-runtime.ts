@@ -1,4 +1,4 @@
-import { app } from 'electron'
+import { runtimeMetadata } from '../runtime-metadata'
 import { ImageInputCompatibilityOwner } from '../acp/image-input-compatibility-owner'
 import { createAcpRuntime } from '../acp/runtime-composition'
 import { type ApplicationModuleBuilder } from '../application-runtime'
@@ -151,7 +151,7 @@ export async function composeAgentRuntime({
   )
   const runtime = await modules.add(
     {
-      appVersion: app.getVersion(),
+      appVersion: runtimeMetadata().version,
       mcpEntryPath: mainEntryPath,
       repository: artifactRepository,
       runRegistry: artifactRunRegistry,
@@ -161,6 +161,8 @@ export async function composeAgentRuntime({
       notebookRpcServer,
       wslSetupSessions,
       getShellRuntimeBinding: getAvailableShellRuntimeBinding,
+      canOwnRuntimeBindingDecision: (request) =>
+        notebookService.canOwnRuntimeBindingDecision(request),
       peekNotebookHandoffContext: (sessionId) => notebookService.peekHandoffContext(sessionId),
       authorizeSkillImportReferencedUploads: (projectId, sessionId, paths) =>
         conversationSkillImporter.authorizeReferencedUploads(projectId, sessionId, paths),

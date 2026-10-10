@@ -162,3 +162,5 @@ describe.skipIf(process.platform !== 'darwin')(
     )
   }
 )
+
+;(await import('../../../test/runtime-metadata')).configureTestRuntimeMetadata()

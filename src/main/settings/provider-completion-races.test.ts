@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -263,3 +264,5 @@ describe('provider completion races', () => {
     expect(stored.fetchedModels).toEqual(['grok-audit-new'])
   })
 })
+
+await configureTestElectronHost(await import('electron'))

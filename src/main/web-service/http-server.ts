@@ -1,3 +1,4 @@
+import { parseRpcJson, stringifyRpcJson } from '../rpc-json'
 import { RESEARCH_REPLAY_METHODS, type ResearchReplayMethod } from '../../shared/research-replay'
 import { createHash } from 'node:crypto'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
@@ -10,7 +11,6 @@ import type { ReadableStream as NodeReadableStream } from 'node:stream/web'
 import { promisify } from 'node:util'
 import { gzip } from 'node:zlib'
 
-import { net } from 'electron'
 import { WebSocket, WebSocketServer } from 'ws'
 
 import {
@@ -136,6 +136,7 @@ const MIME_TYPES: Record<string, string> = {
 const COMPRESSIBLE_EXTENSIONS = new Set(['.css', '.html', '.js', '.mjs', '.json', '.svg'])
 
 type WebServerOptions = {
+  fetchPreview?: (request: Request) => Promise<Response>
   host: string
   port: number
   token: string
@@ -206,7 +207,7 @@ type WebServerOptions = {
     appVersion: string
     configRoot: string
     platform: string
-    versions: { electron: string; chrome: string; node: string }
+    versions: { electron?: string; chrome?: string; node: string }
   }
 }
 
@@ -533,16 +534,7 @@ const json = (
   value: unknown,
   maxBytes = Number.POSITIVE_INFINITY
 ): void => {
-  const content = JSON.stringify(value ?? null, (_key, child) => {
-    if (child instanceof ArrayBuffer || ArrayBuffer.isView(child)) {
-      const bytes =
-        child instanceof ArrayBuffer
-          ? new Uint8Array(child)
-          : new Uint8Array(child.buffer, child.byteOffset, child.byteLength)
-      return { $binary: Buffer.from(bytes).toString('base64') }
-    }
-    return child
-  })
+  const content = stringifyRpcJson(value)
   const contentBytes = Buffer.byteLength(content)
   if (contentBytes > maxBytes) throw new WebRpcResponseBudgetExceededError()
   response.writeHead(status, {
@@ -642,17 +634,7 @@ const readJsonBody = async (
     throw error
   }
   if (chunks.length === 0) return {}
-  return JSON.parse(Buffer.concat(chunks, size).toString('utf8'), (_key, child) => {
-    if (
-      child &&
-      typeof child === 'object' &&
-      '$binary' in child &&
-      typeof child.$binary === 'string'
-    ) {
-      return Uint8Array.from(Buffer.from(child.$binary, 'base64'))
-    }
-    return child
-  })
+  return parseRpcJson(Buffer.concat(chunks, size).toString('utf8'))
 }
 
 const taskErrorStatus = (error: TaskApiError): number => {
@@ -954,7 +936,8 @@ const taskError = (response: ServerResponse, error: unknown): void => {
 const streamPreview = async (
   request: IncomingMessage,
   response: ServerResponse,
-  url: URL
+  url: URL,
+  fetchPreview: WebServerOptions['fetchPreview']
 ): Promise<void> => {
   const previewPath = url.pathname.slice('/preview/'.length)
   const slash = previewPath.indexOf('/')
@@ -968,6 +951,7 @@ const streamPreview = async (
   await streamPreviewResource(
     request,
     response,
+    fetchPreview,
     `open-science-preview://${encodeURIComponent(resourceId)}${suffix}`
   )
 }
@@ -975,6 +959,7 @@ const streamPreview = async (
 const streamPreviewResource = async (
   request: IncomingMessage,
   response: ServerResponse,
+  fetchPreview: WebServerOptions['fetchPreview'],
   resourceUrl: string,
   responseOverrides: Record<string, string> = {}
 ): Promise<void> => {
@@ -987,11 +972,14 @@ const streamPreviewResource = async (
   const headers = new Headers()
   if (request.headers.range) headers.set('range', request.headers.range)
   try {
-    const upstream = await net.fetch(resourceUrl, {
-      method: request.method,
-      headers,
-      signal: abortController.signal
-    })
+    if (!fetchPreview) throw new Error('Managed preview serving is not configured.')
+    const upstream = await fetchPreview(
+      new Request(resourceUrl, {
+        method: request.method,
+        headers,
+        signal: abortController.signal
+      })
+    )
     if (abortController.signal.aborted) return
     const responseHeaders: Record<string, string> = {}
     upstream.headers.forEach((value, key) => {
@@ -1027,7 +1015,8 @@ const handleTaskApiRequest = async (
   requestBodyBudgetRegistry: RequestBodyBudgetRegistry,
   idempotencyRegistry: TaskIdempotencyRegistry,
   externalAuthorization?: ExternalWebAccessAuthorization,
-  waitUntilTasksReady?: () => Promise<void>
+  waitUntilTasksReady?: () => Promise<void>,
+  fetchPreview?: WebServerOptions['fetchPreview']
 ): Promise<boolean> =>
   tasks.runWithCallerContext(callerContext, async () => {
     try {
@@ -1578,7 +1567,7 @@ const handleTaskApiRequest = async (
         assertExternalAuthorizationCurrent(externalAuthorization)
         const artifact = await tasks.acquireArtifact(decodeURIComponent(artifactMatch[1]))
         try {
-          await streamPreviewResource(request, response, artifact.url, {
+          await streamPreviewResource(request, response, fetchPreview, artifact.url, {
             'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(artifact.name)}`
           })
         } finally {
@@ -1837,7 +1826,8 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
           requestBodyBudgetRegistry,
           taskIdempotencyRegistry,
           externalAuthorization,
-          options.waitUntilTasksReady
+          options.waitUntilTasksReady,
+          options.fetchPreview
         ))
       ) {
         return
@@ -2005,7 +1995,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
         url.pathname.startsWith('/preview/') &&
         (request.method === 'GET' || request.method === 'HEAD')
       ) {
-        await streamPreview(request, response, url)
+        await streamPreview(request, response, url, options.fetchPreview)
         return
       }
 

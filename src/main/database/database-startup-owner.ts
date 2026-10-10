@@ -134,3 +134,30 @@ const createDatabaseStartupOwner = (deps: DatabaseStartupOwnerDeps): DatabaseSta
 
 export { createDatabaseStartupOwner }
 export type { DatabaseStartupOwner, DatabaseStartupOwnerDeps }
+
+// An explicit shutdown may leave a blocked startup, but never closes the database underneath an
+// active migration/retry. Keep this ordering shared by the ordinary Node startup path and tests.
+export async function waitForVerifiedDatabaseStartup(
+  owner: Pick<DatabaseStartupOwner, 'whenVerified' | 'whenAttemptSettled'>,
+  signal: AbortSignal
+): Promise<void> {
+  let rejectAbort!: (error: Error) => void
+  const aborted = new Promise<never>((_, reject) => {
+    rejectAbort = reject
+  })
+  const onAbort = (): void => {
+    void owner.whenAttemptSettled().then(
+      () => rejectAbort(new Error('Node runtime startup was cancelled.')),
+      (error) => rejectAbort(error)
+    )
+  }
+  signal.addEventListener('abort', onAbort, { once: true })
+  if (signal.aborted) onAbort()
+  try {
+    await Promise.race([owner.whenVerified(), aborted])
+    await owner.whenAttemptSettled()
+    signal.throwIfAborted()
+  } finally {
+    signal.removeEventListener('abort', onAbort)
+  }
+}

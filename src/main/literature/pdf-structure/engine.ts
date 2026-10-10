@@ -1,3 +1,4 @@
+import { nodeRuntimeEnvironment } from '../../node-process-host'
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { readFile, readdir } from 'node:fs/promises'
@@ -42,7 +43,7 @@ export const createPdfStructureEngine = (resources: string): PdfStructureEngine 
       }
     }
     const child = spawn(process.execPath, [join(resources, 'host.mjs')], {
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      env: { ...process.env, ...nodeRuntimeEnvironment() },
       stdio: ['pipe', 'pipe', 'pipe'],
       detached: process.platform !== 'win32',
       windowsHide: true

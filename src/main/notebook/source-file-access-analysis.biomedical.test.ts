@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { describe, expect, it } from 'vitest'
 import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
 
@@ -368,3 +369,5 @@ it('preserves file-owning object aliases and forgets a replaced object', async (
     )
   ).toMatchObject({ reads: [] })
 })
+
+configureTestRuntimeMetadata()

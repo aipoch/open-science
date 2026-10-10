@@ -10,6 +10,9 @@ import type { ComputeConnectionBrokerAcquirer } from './connection-broker'
 import { dispatchJob } from './job-dispatcher'
 import { ComputeJobRepository } from './job-repository'
 import { ComputeHostRepository } from './repository'
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
+
+configureTestRuntimeMetadata()
 
 // Keep the submission owner, SQLite persistence and evidence worker real. The remote dispatch
 // boundary is observed without starting a remote process.
@@ -84,7 +87,15 @@ describe.skipIf(process.platform !== 'win32')('Compute submission evidence recov
       await writeFile(scriptPath, readerScript)
       reader = spawn(
         'powershell.exe',
-        ['-NoProfile', '-NonInteractive', '-File', scriptPath, receiptPath, releasePath],
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-EncodedCommand',
+          Buffer.from(
+            `$ProgressPreference = 'SilentlyContinue'; & ([scriptblock]::Create([IO.File]::ReadAllText('${scriptPath.replaceAll("'", "''")}'))) '${receiptPath.replaceAll("'", "''")}' '${releasePath.replaceAll("'", "''")}'`,
+            'utf16le'
+          ).toString('base64')
+        ],
         { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }
       )
       let stderr = ''

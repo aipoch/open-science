@@ -21,7 +21,9 @@
     "src/main/settings/classification-settings.ts",
     "src/main/settings/classification-settings.test.ts",
     "src/main/settings/classification-usage.ts",
-    "src/main/settings/classification-usage.test.ts"
+    "src/main/settings/classification-usage.test.ts",
+    "src/main/settings/file-commands.ts",
+    "src/main/settings/file-commands.test.ts"
   ],
   "interfacePaths": [
     "src/main/settings/service.ts",
@@ -32,7 +34,8 @@
     "src/main/settings/reviewer-model-owner.ts",
     "src/main/settings/settings-snapshot-commit-owner.ts",
     "src/main/settings/subagent-model-owner.ts",
-    "src/main/settings/vision-model-owner.ts"
+    "src/main/settings/vision-model-owner.ts",
+    "src/main/settings/file-commands.ts"
   ],
   "consumerModules": ["workspace_runtime"],
   "testFiles": {
@@ -44,7 +47,8 @@
       "src/main/settings/service.providers.test.ts",
       "src/main/settings/service.connectors.test.ts",
       "src/main/settings/classification-settings.test.ts",
-      "src/main/settings/classification-usage.test.ts"
+      "src/main/settings/classification-usage.test.ts",
+      "src/main/settings/file-commands.test.ts"
     ],
     "contract": [
       "src/main/settings/application-commands.test.ts",
@@ -101,6 +105,8 @@
       "src/main/web-service/task-api.test.ts",
       "src/main/literature/smart-collections.test.ts",
       "src/main/session-persistence/ipc.test.ts",
+      "src/main/composition/reviewer.test.ts",
+      "src/main/desktop-runtime-transport.integration.test.ts",
       "src/main/composition/artifact-surfaces.test.ts",
       "src/main/composition/managed-execution.integration.test.ts",
       "src/main/composition/session-packages.test.ts",

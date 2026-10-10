@@ -1,3 +1,4 @@
+import { nodeRuntimeEnvironment } from '../node-process-host'
 import { createManagedOutputRedactor, redactManagedOutput } from './managed-output-redaction'
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { ShellCellSession } from './shell-cell-session'
@@ -817,7 +818,7 @@ const runShellCommand = (
         {
           cwd: options.cwd,
           env: ownershipHost
-            ? { ...processTreeOwnership.env, ELECTRON_RUN_AS_NODE: '1' }
+            ? { ...processTreeOwnership.env, ...nodeRuntimeEnvironment() }
             : processTreeOwnership.env,
           windowsHide: true,
           // On POSIX this makes the shell the leader of a private process group/session. Keep its handle

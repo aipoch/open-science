@@ -224,23 +224,26 @@ describe('Web RPC contract', () => {
     ).toBe(true)
   })
 
-  it('accepts the versioned CLI update capability in bootstrap data', () => {
-    expect(
-      webRpcBootstrapSchema.safeParse({
-        platform: 'test',
-        webCallerLocation: 'local',
-        versions: { electron: '1', chrome: '1', node: '1' },
-        rpcProtocolVersion: WEB_RPC_PROTOCOL_VERSION,
-        rpcCapabilities: [WEB_RPC_CAPABILITY_UPDATE_CLI_V1],
-        rpcChannels: [],
-        eventStream: {
-          protocolVersion: WEB_EVENT_STREAM_PROTOCOL_VERSION,
-          streamId: 'stream-1',
-          latestSequence: 0
-        }
-      }).success
-    ).toBe(true)
-  })
+  it.each([{ electron: '1', chrome: '1', node: '1' }, { node: '24.21.0' }])(
+    'accepts desktop and Node host versions in bootstrap data: %j',
+    (versions) => {
+      expect(
+        webRpcBootstrapSchema.safeParse({
+          platform: 'test',
+          webCallerLocation: 'local',
+          versions,
+          rpcProtocolVersion: WEB_RPC_PROTOCOL_VERSION,
+          rpcCapabilities: [WEB_RPC_CAPABILITY_UPDATE_CLI_V1],
+          rpcChannels: [],
+          eventStream: {
+            protocolVersion: WEB_EVENT_STREAM_PROTOCOL_VERSION,
+            streamId: 'stream-1',
+            latestSequence: 0
+          }
+        }).success
+      ).toBe(true)
+    }
+  )
 
   it('accepts bootstrap data from an older protocol-v1 Main without caller location', () => {
     expect(

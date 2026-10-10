@@ -3,7 +3,7 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 
 import { randomUUID } from 'node:crypto'
-import { closeSync, createWriteStream, openSync } from 'node:fs'
+import { closeSync, createWriteStream, existsSync, openSync, realpathSync } from 'node:fs'
 import { chmod, lstat, mkdir, readFile, readlink, rename, rm, stat } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { Readable } from 'node:stream'
@@ -12,10 +12,11 @@ import { text as readStreamText } from 'node:stream/consumers'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
-import { findServiceState, readWebToken, resolveConfigRoot, STATE_FILE } from './config-root.mjs'
+import { findServiceState, readWebToken, resolveConfigRoot } from './config-root.mjs'
 import { codexLoginCommand } from './codex-login.mjs'
 import { connectToOpenScience, OpenScienceApiError } from './index.mjs'
-import { locateApp } from './locate-app.mjs'
+import { locateBackend } from './locate-backend.mjs'
+import { requestExistingRuntimeWeb } from './runtime-control.mjs'
 
 const DEFAULT_PORT = 44100
 const START_TIMEOUT_MS = 30_000
@@ -79,14 +80,12 @@ Commands:
                           Read package JSON from stdin, --input-json, or --input-file
   artifacts list <session-id>
   artifacts download <artifact-id> --output <path>
-  rollback-to-0.7.3 --yes [--output <path>]
 
 Options:
   --port <port>          Web service port (default: 44100)
-  --app-path <path>      Installed Open-Science executable
+  --password-store <name>  Linux OS vault (gnome-libsecret, kwallet5, kwallet6)
   --config-root <path>   Config directory override
   --profile <path>       Alias for --config-root (portable CLI profile)
-  --data-root <path>     Current Data Root override (rollback only)
   --project <id-or-name> Project id or exact name
   --session <id>         Resume an existing session
   --cwd <path>           Working directory for a new or matching existing session
@@ -126,7 +125,6 @@ Options:
   --input-json <json>    Execution, observation or package request as a JSON object
   --input-file <path>    Read an execution, observation or package JSON object from a UTF-8 file
   --output <path>        Artifact download destination
-  --yes                  Confirm the offline rollback conversion
   --credential-store <os|file>  Settings credential storage (Linux headless; start only)
   --no-open              Do not open the browser after start
   --no-sandbox           Disable Chromium's process sandbox (security risk; start/update only)
@@ -140,13 +138,13 @@ const VALUE_OPTIONS = {
   '--credential-store': 'credentialStore',
   '--port': 'port',
   '--app-path': 'appPath',
+  '--password-store': 'passwordStore',
   '--config-root': 'configRoot',
   '--profile': 'configRoot',
   '--type': 'providerType',
   '--vendor': 'vendor',
   '--api-key-env': 'apiKeyEnv',
   '--openalex-key-env': 'openAlexKeyEnv',
-  '--data-root': 'dataRoot',
   '--project': 'project',
   '--session': 'session',
   '--cwd': 'cwd',
@@ -293,7 +291,6 @@ const POSITIONAL_LIMITS = new Map([
   ['status', 0],
   ['url', 0],
   ['update', 0],
-  ['rollback-to-0.7.3', 0],
   ['codex login', 0],
   ['project list', 0],
   ['run', 0],
@@ -322,7 +319,7 @@ export class CliUsageError extends Error {
 const parsePortOption = (value) => {
   const normalized = value.trim()
   const port = Number(normalized)
-  if (!/^\d+$/.test(normalized) || !Number.isInteger(port) || port < 1 || port > 65535) {
+  if (!/^\d+$/.test(normalized) || !Number.isInteger(port) || port < 0 || port > 65535) {
     throw new CliUsageError(`Invalid port: ${value}`)
   }
   return port
@@ -342,11 +339,7 @@ export const parseCliArgs = (argv) => {
   const args = [...argv]
   const command = args.shift()
   const subcommand =
-    (GROUP_COMMANDS.has(command) &&
-      !(
-        ['execution', 'observations', 'package'].includes(command) &&
-        ['--help', '-h'].includes(args[0])
-      )) ||
+    (GROUP_COMMANDS.has(command) && args[0] && !args[0].startsWith('-')) ||
     (command === 'run' && (args[0] === 'status' || args[0] === 'cancel'))
       ? args.shift()
       : undefined
@@ -364,9 +357,10 @@ export const parseCliArgs = (argv) => {
         throw new CliUsageError('Specify --credential-store only once.')
       options.credentialStore = arg.slice('--credential-store='.length)
     } else if (arg === '--no-open') options.open = false
+    else if (arg.startsWith('--password-store='))
+      options.passwordStore = arg.slice('--password-store='.length)
     else if (arg === '--no-sandbox') options.noSandbox = true
     else if (arg === '--json') options.json = true
-    else if (arg === '--yes') options.yes = true
     else if (arg === '--force') options.force = true
     else if (arg === '--jsonl') options.jsonl = true
     else if (arg === '--wait') options.wait = true
@@ -429,6 +423,14 @@ export const parseCliArgs = (argv) => {
       positionals.push(arg)
     }
   }
+  const parsed = {
+    command,
+    ...(subcommand ? { subcommand } : {}),
+    ...(positionals.length ? { positionals } : {}),
+    options
+  }
+  // Help is local: it must not require execution-only options or a running backend.
+  if (options.help) return parsed
   if (options.port !== undefined) {
     options.port = parsePortOption(options.port)
   }
@@ -576,17 +578,17 @@ export const parseCliArgs = (argv) => {
   ) {
     throw new CliUsageError('--credential-store requires start and a value of os or file.')
   }
+  if (
+    options.passwordStore !== undefined &&
+    (command !== 'start' ||
+      !['gnome-libsecret', 'kwallet', 'kwallet5', 'kwallet6'].includes(options.passwordStore))
+  )
+    throw new CliUsageError('--password-store requires start and a supported Linux OS vault.')
   if (options.credentialStore === 'file' && process.platform !== 'linux') {
     throw new CliUsageError('--credential-store=file is supported only on Linux.')
   }
   if (options.noSandbox && command !== 'start' && command !== 'update') {
     throw new CliUsageError('--no-sandbox requires start or update.')
-  }
-  if (options.yes && command !== 'rollback-to-0.7.3') {
-    throw new CliUsageError('--yes requires rollback-to-0.7.3.')
-  }
-  if (options.dataRoot && command !== 'rollback-to-0.7.3') {
-    throw new CliUsageError('--data-root requires rollback-to-0.7.3.')
   }
   if (options.force && (command !== 'codex' || subcommand !== 'login')) {
     throw new CliUsageError('--force requires codex login.')
@@ -713,12 +715,7 @@ export const parseCliArgs = (argv) => {
     throw new CliUsageError('Plan response options require a plan command.')
   }
   assertPositionalLimit(command, subcommand, positionals)
-  return {
-    command,
-    ...(subcommand ? { subcommand } : {}),
-    ...(positionals.length ? { positionals } : {}),
-    options
-  }
+  return parsed
 }
 
 export const isProcessAlive = (pid) => {
@@ -732,14 +729,10 @@ export const isProcessAlive = (pid) => {
 }
 
 export const initCommand = async (options, deps = DEFAULT_DEPS) => {
-  const app = await (deps.locateApp ?? locateApp)({ appPath: options.appPath })
-  if (app.packaged && options.configRoot) {
-    throw new Error('--config-root is only supported for development builds.')
-  }
+  const backend = await (deps.locateBackend ?? locateBackend)({ required: false })
   const configRoot = resolveConfigRoot({
     override: options.configRoot,
-    packaged: app.packaged,
-    env: app.packaged ? {} : process.env
+    packaged: !backend.development
   })
   await mkdir(configRoot, { recursive: true, mode: 0o700 })
   const result = { configRoot, initialized: true }
@@ -780,13 +773,15 @@ const waitForState = async (
     const state = await deps.findServiceState({ override: configRoot })
     if (signal?.aborted) return undefined
     if (await healthCheck(state, deps)) return state
+    if (deps.requestExistingRuntimeWeb)
+      await deps.requestExistingRuntimeWeb({ configRoot }, deps.fetch)
     if (signal?.aborted) return undefined
     await deps.sleep(250)
   }
   return undefined
 }
 
-// Keep the health poll and child-process lifecycle coupled: a fatal Electron startup error must not
+// Keep the health poll and child-process lifecycle coupled: a fatal Node startup error must not
 // look like a slow service startup and consume the full CLI timeout.
 export const waitForStartup = async (
   configRoot,
@@ -798,9 +793,8 @@ export const waitForStartup = async (
   let cleanup = () => {}
   const childFailure = new Promise((resolveFailure) => {
     const onExit = (code, signal) => {
-      // An already-running desktop app receives --serve through Electron's second-instance relay.
-      // The relay exits successfully before the primary app has necessarily written service state.
-      if (code === 0 && signal === null) return
+      // EX_TEMPFAIL means another entry won directory ownership. Wait for that owner to serve.
+      if ((code === 0 || code === 75) && signal === null) return
       abortController.abort()
       resolveFailure({ kind: 'exit', code, signal })
     }
@@ -837,18 +831,14 @@ const openBrowser = (url) => {
   child.unref()
 }
 
-const removeStateFiles = async (configRoot) => {
-  await rm(join(configRoot, STATE_FILE), { force: true })
-}
-
 // The real I/O the commands use, bundled so tests can substitute fakes. Declared after the helpers it
 // references so its initializer sees them; commands take `deps = DEFAULT_DEPS`, so production callers
 // pass nothing and get these.
 const DEFAULT_DEPS = {
+  requestExistingRuntimeWeb,
   findServiceState: (options) => findServiceState(options),
   readWebToken: (configRoot) => readWebToken(configRoot),
   isAlive: isProcessAlive,
-  removeState: (configRoot) => removeStateFiles(configRoot),
   fetch: (input, init) => fetch(input, init),
   sleep,
   now: () => Date.now(),
@@ -887,42 +877,17 @@ const readLogTail = async (logPath) => {
   }
 }
 
-export const openLaunchLog = (logPath) => openSync(logPath, 'w')
+export const openLaunchLog = (logPath) => openSync(logPath, 'wx', 0o600)
 
-export const buildAppLaunchArgs = (
-  appArgs,
-  options,
-  port,
-  { platform = process.platform, env = process.env } = {}
-) => [
-  ...(options.noSandbox ? ['--no-sandbox'] : []),
-  // No-window mode alone still initializes X11. Select Ozone's display-free backend on servers.
-  ...(platform === 'linux' && !env.DISPLAY && !env.WAYLAND_DISPLAY
-    ? ['--ozone-platform=headless']
-    : []),
-  ...appArgs,
+export const buildBackendLaunchArgs = (backend, options, port) => [
+  backend.entry,
+  ...(backend.development ? ['--development'] : []),
   ...(options.credentialStore ? [`--credential-store=${options.credentialStore}`] : []),
-  // `--open-science-headless` instead of `--headless`: Chromium consumes `--headless` and renders
-  // native menus (like the tray context menu) invisibly on Windows (electron/electron#48982).
-  '--open-science-headless',
+  ...(options.passwordStore ? [`--password-store=${options.passwordStore}`] : []),
   `--serve=${port}`
 ]
 
-const sandboxFailurePattern =
-  /SUID sandbox helper binary.*not configured correctly|No usable sandbox|The setuid sandbox is not running/i
-
-export const formatStartupFailure = (outcome, logTail, options) => {
-  if (!options.noSandbox && sandboxFailurePattern.test(logTail)) {
-    return [
-      'Open-Science could not start because Chromium sandboxing is unavailable on this host.',
-      logTail,
-      'This can occur when an AppImage mount cannot provide the SUID permissions required by Chromium; some Linux hosts also restrict unprivileged user namespaces.',
-      'For an explicit rootless fallback, run "open-science start --no-sandbox" or retry an update with "open-science update --no-sandbox".',
-      "Warning: --no-sandbox disables Chromium's process sandbox and reduces security. Prefer the Debian package or a host configuration that supports sandboxed startup."
-    ]
-      .filter(Boolean)
-      .join('\n\n')
-  }
+export const formatStartupFailure = (outcome, logTail) => {
   if (outcome.kind === 'error') return `Could not start Open-Science: ${outcome.error.message}`
 
   const exitStatus = outcome.signal
@@ -945,37 +910,45 @@ export const startCommand = async (options, deps = DEFAULT_DEPS) => {
     return { state: existing, started: false }
   }
 
-  const app = await locateApp({ appPath: options.appPath })
-  if (app.packaged && options.configRoot) {
-    throw new Error('--config-root is only supported for development builds.')
+  if (options.noSandbox)
+    throw new Error(
+      '--no-sandbox does not apply to the Node backend. Notebook and process sandbox protections remain enabled.'
+    )
+  const reusedRoot = await requestExistingRuntimeWeb(options, deps.fetch)
+  if (reusedRoot) {
+    const state = await findCurrentState({ ...options, configRoot: reusedRoot }, deps)
+    if (await healthCheck(state, deps)) {
+      deps.log(`Open-Science is already running (PID ${state.pid}).`)
+      if (options.open) openBrowser(await authenticatedUrl(state, deps))
+      else deps.log('Run "open-science url" to print a browser login URL.')
+      return { state, started: false }
+    }
   }
+  if (options.appPath)
+    throw new CliUsageError(
+      '--app-path is no longer used for Node startup. Install the standalone backend package.'
+    )
+  const backend = await (deps.locateBackend ?? locateBackend)()
   const configRoot = resolveConfigRoot({
-    packaged: app.packaged,
-    override: options.configRoot,
-    env: app.packaged ? {} : process.env
+    packaged: !backend.development,
+    override: options.configRoot
   })
-  await mkdir(configRoot, { recursive: true })
-  await deps.removeState(configRoot)
-
-  const logPath = join(configRoot, 'cli-daemon.log')
+  await mkdir(configRoot, { recursive: true, mode: 0o700 })
+  const logPath = join(configRoot, `cli-daemon-${randomUUID()}.log`)
   const logFd = openLaunchLog(logPath)
-  const port = options.port ?? DEFAULT_PORT
+  const environmentPort = process.env.OPEN_SCIENCE_WEB_PORT?.trim()
+  const port = options.port ?? (environmentPort ? parsePortOption(environmentPort) : DEFAULT_PORT)
   const childEnv = {
     ...process.env,
-    ...(app.packaged ? {} : { OPEN_SCIENCE_STORAGE_ROOT: configRoot }),
+    OPEN_SCIENCE_CONFIG_ROOT: configRoot,
     OPEN_SCIENCE_WEB_PORT: String(port)
   }
-  // The installed launcher runs this CLI via the app's Electron in Node mode (ELECTRON_RUN_AS_NODE=1).
-  // Drop it here so the daemon we spawn starts as the normal Electron app, not another Node process.
   delete childEnv.ELECTRON_RUN_AS_NODE
-  if (options.noSandbox) {
-    deps.warn("Warning: --no-sandbox disables Chromium's process sandbox and reduces security.")
-  }
   if (options.credentialStore === 'file')
     deps.warn(
       'Settings credentials will be stored unencrypted in local files. Use this option at every start; existing encrypted credentials are not migrated. Compute credentials still require OS secure storage.'
     )
-  const child = spawn(app.command, buildAppLaunchArgs(app.args, options, port), {
+  const child = spawn(backend.command, buildBackendLaunchArgs(backend, options, port), {
     detached: true,
     stdio: ['ignore', logFd, logFd],
     windowsHide: true,
@@ -1009,7 +982,6 @@ const findCurrentState = async (options, deps = DEFAULT_DEPS) => {
     override: options.configRoot,
     accept: async (candidate) => {
       if (!deps.isAlive(candidate.pid)) {
-        await deps.removeState(candidate.configRoot)
         return false
       }
       firstLiveState ??= candidate
@@ -1059,7 +1031,6 @@ export const stopCommand = async (options, deps = DEFAULT_DEPS) => {
         `Could not stop the Open-Science web service (PID ${state.pid}); the app is still serving.`
       )
     }
-    await deps.removeState(state.configRoot)
     deps.log(
       options.json
         ? JSON.stringify({ result: 'web-service-stopped' })
@@ -1081,7 +1052,6 @@ export const stopCommand = async (options, deps = DEFAULT_DEPS) => {
       `Could not stop Open-Science (PID ${state.pid}); it is still running, so no process signal was sent.`
     )
   }
-  await deps.removeState(state.configRoot)
   deps.log(options.json ? JSON.stringify({ result: 'daemon-stopped' }) : 'Open-Science stopped.')
 }
 
@@ -1176,37 +1146,6 @@ const outputValue = (value, options, deps) => {
             .join('\t') || JSON.stringify(value)
     )
   }
-}
-
-export const rollbackCommand = async (options, dependencies = {}) => {
-  const defaultRunRollback = async (rollbackOptions) => {
-    const { runRollbackToV073 } = await import('./rollback-to-0.7.3.mjs')
-    return runRollbackToV073(rollbackOptions)
-  }
-  const deps = {
-    runRollback: defaultRunRollback,
-    log: (...args) => console.log(...args),
-    ...dependencies
-  }
-  if (!options.json) {
-    deps.log('Validating and copying rollback data. Keep this terminal open until it completes...')
-  }
-  const manifest = await deps.runRollback({
-    configRoot: options.configRoot,
-    dataRoot: options.dataRoot,
-    output: options.output,
-    confirm: options.yes === true
-  })
-  if (options.json) {
-    deps.log(JSON.stringify(manifest))
-    return
-  }
-  deps.log(`Prepared an isolated Open-Science ${manifest.targetVersion} rollback.`)
-  deps.log(`Rollback Data Root: ${manifest.rollbackDataRoot}`)
-  deps.log(`Preserved newer Config Root: ${manifest.preservedConfigRoot}`)
-  deps.log(`Preserved newer Data Root: ${manifest.preservedDataRoot}`)
-  deps.log(`Converted Sessions: ${manifest.sessionsConverted}`)
-  deps.log(`You can now install and start Open-Science ${manifest.targetVersion}.`)
 }
 
 const UPDATE_DOWNLOAD_PAGE = 'https://www.aipoch.com/open-science'
@@ -2262,11 +2201,28 @@ export const reportCliError = (error, argv = process.argv.slice(2), dependencies
   return exitCode
 }
 
+const commandHelp = (command) => {
+  if (!command || command === '-h' || command === '--help') return usage
+  // Reuse the published command inventory rather than maintaining a second list.
+  const commands = usage
+    .split('Commands:\n')[1]
+    .split('\n\nOptions:')[0]
+    .split('\n')
+    .filter((line) => line.trimStart().startsWith(`${command} `))
+  if (!commands.length) throw new CliUsageError(`Unknown command: ${command}`)
+  return `Usage: open-science ${command}${GROUP_COMMANDS.has(command) ? ' <subcommand>' : ''} [options]
+
+Commands:
+${commands.join('\n')}
+
+Run "open-science --help" for the complete option reference.`
+}
+
 export const runCli = async (argv = process.argv.slice(2), dependencies = {}) => {
   const parsed = parseCliArgs(argv)
   const { command, options } = parsed
   if (options.help || !command || command === '-h' || command === '--help') {
-    console.log(usage)
+    console.log(commandHelp(command))
     return
   }
   if (command === 'init') await initCommand(options)
@@ -2276,13 +2232,14 @@ export const runCli = async (argv = process.argv.slice(2), dependencies = {}) =>
   else if (command === 'url') await urlCommand(options)
   else if (command === 'update') await updateCommand(options, dependencies.update)
   else if (command === 'codex' && parsed.subcommand === 'login') await codexLoginCommand(options)
-  else if (command === 'rollback-to-0.7.3') await rollbackCommand(options)
   else if (TASK_COMMANDS.has(command)) await runTaskCommand(parsed)
   else throw new CliUsageError(`Unknown command: ${command}\n\n${usage}`)
 }
 
 const isEntryPoint =
-  process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))
+  process.argv[1] &&
+  existsSync(process.argv[1]) &&
+  realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))
 if (isEntryPoint) {
   runCli().catch((error) => reportCliError(error))
 }

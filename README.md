@@ -49,7 +49,7 @@ AIPOCH Open-Science supports computational and data-intensive research across di
 
 Completed research sessions can also be exported as portable `.science` packages for review, handoff, and archiving, with selected conversation branches, file versions, Notebook records, and verification evidence.
 
-> 💡 **[AIPOCH Open-Science v0.36.0 released](https://github.com/aipoch/open-science/releases/latest)** _(last updated October 2026)_. AIPOCH Open-Science v0.36.0 adds reviewable Notebook execution with per-run risk review, resumable shared PDF translation with original, translation and side-by-side compare reading modes, and new scientific reach — a PDC connector for cancer proteomics studies and population-specific linkage-disequilibrium queries in the Genomes connector — plus Claude Haiku 5.5 support. Fixes preserve native layouts in scientific PDFs, clean up official model catalogs, restore find in empty conversations, and harden file mentions, Remote Web marketplace browsing, and composer chips. See the [latest release notes](https://github.com/aipoch/open-science/releases/latest) for full details.
+> 💡 **[AIPOCH Open-Science v0.37.0 released](https://github.com/aipoch/open-science/releases/latest)** _(last updated October 2026)_. AIPOCH Open-Science v0.37.0 runs the shared backend as a standalone Node service — the command line and headless mode no longer need a windowless Electron host, and the desktop app connects as a native client. The connector catalog grows a built-in ENCORI connector, ChEMBL assay details with bioactivity pagination, and ClinVar submission evidence; PDF translation preserves native reading order, and structure extraction keeps source-owned figures and tables. Notebook runtimes report environments more accurately behind streamlined approval cards. Fixes cover Windows Python discovery, desktop backend ports and profiles, `.science` imports into new projects, smart-collection retries, and Codex streamed tool arguments. See the [latest release notes](https://github.com/aipoch/open-science/releases/latest) for full details.
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science banner: Science, Open to All — an open-source, model-agnostic, self-hosted scientific AI research workbench" src="docs/images/readme/open-science-banner.png" />
@@ -234,7 +234,7 @@ Review connector parameters and tool activity before approving them. Never inclu
 
 ## Development & Packaging
 
-AIPOCH Open-Science is an Electron application built with React, TypeScript, Prisma/SQLite, and an ACP-based agent runtime.
+AIPOCH Open-Science has an ordinary Node backend and an Electron desktop client, built with React, TypeScript, Prisma/SQLite, and an ACP-based agent runtime.
 
 Prerequisites for source development:
 
@@ -251,20 +251,20 @@ npm run dev
 
 See the [development command and packaging reference](docs/development-quick-reference.md) and [contribution guide](CONTRIBUTING.md) for build commands and the development workflow.
 
-### Localhost web and headless modes
+### Localhost Web and standalone Node runtime
 
-The desktop backend can optionally serve the same renderer to a browser on the local computer. This
-feature is off by default and binds only to `127.0.0.1`.
+The same Web UI can run on an ordinary Node backend without Electron or a graphical display.
+Electron starts or attaches to that same Node service. One runtime owns each data directory.
 
 ```bash
-npm run build:web
-npm run dev:web
+npm run dev:web       # Build and run the Node backend + Web UI
+npm run pack:backend  # Build a target-specific standalone npm tarball
 ```
 
-Open the authenticated URL printed by the application. Use `npm run dev:headless` to start the
-backend, tray, agent runtime, and localhost web service without opening an Electron window.
-Set `OPEN_SCIENCE_WEB_PORT` to choose a port (default `44100`). Explicitly quitting the
-application still shuts down agent and Notebook processes normally.
+Install the tarball, then run `open-science start --no-open` and `open-science url` to open the
+existing UI. See the [standalone runtime guide](docs/standalone-runtime.md) for installation,
+secure credential storage, host capability boundaries and data compatibility. The desktop app and browser share that service. Quitting a desktop stops a server it started;
+quitting a desktop attached to a CLI-started server only disconnects the desktop.
 
 ### Mobile remote access
 
@@ -299,7 +299,7 @@ A: **Remote Compute (SSH)** is always enabled and does not need to be enabled in
 
 ### Is there a command-line interface?
 
-A: Yes. Install it in one click from **Settings → General → Command line tool → Install command** (adds `open-science` to your PATH; no separate Node.js needed). Initialize the local profile, then control the service and submit research tasks without opening a browser:
+A: Yes. Install the standalone Node package, or use **Settings → General → Command line tool → Install command** to control an already running desktop instance. Starting an independent backend requires the standalone package and ordinary Node. Initialize the local profile, then control the service and submit research tasks without opening a browser:
 
 ```bash
 # Initialize the local CLI profile and start the service in the background

@@ -1,3 +1,4 @@
+import { configureTestRuntimeNetwork } from '../../../../test/runtime-host'
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { ParserEngine } from '../engine'
 import { REGULATION_TOOLS } from './regulation'
@@ -598,3 +599,5 @@ describe('regulation / unibind', () => {
     expect(fetchImpl).not.toHaveBeenCalled()
   })
 })
+
+configureTestRuntimeNetwork()

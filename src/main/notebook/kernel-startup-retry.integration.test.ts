@@ -10,6 +10,9 @@ import { windowsLaunch } from '../../../packages/notebook-network-sandbox/runtim
 import { NotebookKernelExecutor } from './kernel-executor'
 import { KernelProcessLifecycleOwner } from './kernel-process-lifecycle.windows-posix'
 import type { NotebookProcessSandbox } from './process-sandbox'
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
+
+configureTestRuntimeMetadata()
 
 it.skipIf(process.platform !== 'win32').each([
   { protectedMode: false, crashAdmission: false },

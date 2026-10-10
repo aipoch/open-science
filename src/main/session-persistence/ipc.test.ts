@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { RuntimeWriterOwner } from './runtime-writer'
 import { ELECTRON_APPLICATION_COMMAND_CHANNELS } from '../../shared/renderer-contract-catalog'
 import { registerApplicationCommandElectronAdapter } from '../application-command-electron-adapter'
@@ -1410,3 +1411,5 @@ describe('session persistence IPC handlers', () => {
     expect(broadcastLifecycleEvent).toHaveBeenCalledOnce()
   })
 })
+
+await configureTestElectronHost(await import('electron'))

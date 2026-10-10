@@ -6,9 +6,11 @@ directories:
 # Apply a valid deep ad-hoc signature on macOS (no Developer ID available). Without this,
 # electron-builder ships an incompletely-signed bundle that Gatekeeper flags as "damaged"
 # on downloaded/quarantined copies, so the app won't launch on other machines. See the hook.
+beforePack: build/stage-desktop-runtime.cjs
 afterPack: build/adhoc-sign.cjs
 afterSign: build/sign-windows.cjs
 files:
+  - '!out/{backend,standalone,node-runtime}{,/**/*}'
   - '!**/.vscode/*'
   # Agent/AI tooling state lives in the project (.claude holds git worktrees — full nested repo
   # copies, easily >1GB — plus memory/logs; .codex is similar). electron-builder sweeps in everything
@@ -112,6 +114,14 @@ asarUnpack:
 # The micromamba binary is added per-platform below (mac/win/linux extraResources), not here, so
 # the two extraResources lists don't collide.
 extraResources:
+  - from: out/standalone
+    to: backend
+  # electron-builder excludes a source root's node_modules even for extraResources.
+  # Copy that directory explicitly so ordinary Node can resolve its staged dependencies.
+  - from: out/standalone/node_modules
+    to: backend/node_modules
+  - from: out/node-runtime/${platform}-${arch}
+    to: node-runtime
   # Keep the project license readable outside app.asar on every platform.
   - from: LICENSE
     to: LICENSE.txt

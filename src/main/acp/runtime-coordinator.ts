@@ -159,6 +159,7 @@ class AcpRuntimeCoordinator {
   private readonly runtimeTargetKeys = new WeakMap<AcpRuntime, string>()
   private readonly runtimeTargets = new WeakMap<AcpRuntime, AcpSessionAgentTarget>()
   private readonly runtimeActivityCounts = new WeakMap<AcpRuntime, number>()
+  private readonly runtimeAdmissions = new WeakMap<AcpRuntime, object>()
   private readonly isolatedRuntimes = new WeakSet<AcpRuntime>()
   private readonly targetedRuntimes = new Map<string, AcpRuntime>()
   private readonly publishedRuntimeEventIds = new WeakMap<AcpRuntime, Set<string>>()
@@ -457,7 +458,7 @@ class AcpRuntimeCoordinator {
 
   async connect(request: AcpConnectRequest = {}): Promise<AcpRuntimeState> {
     await this.waitForInitialization()
-    const runtime = this.getActiveRuntime()
+    const runtime = this.claimRuntimeAdmission(this.getActiveRuntime())
     await runtime.connect(request)
     return this.getState()
   }
@@ -665,6 +666,7 @@ class AcpRuntimeCoordinator {
         ? owner
         : await this.runtimeForTarget(undefined, request.sessionId, request.cwd))
     const transfersOwnership = runtime !== owner
+    this.claimRuntimeAdmission(runtime)
 
     // Keep the prior owner authoritative until adoption finishes. The renderer does not create the
     // incoming optimistic run until this promise resolves, so terminal events emitted while the old
@@ -761,6 +763,7 @@ class AcpRuntimeCoordinator {
         : await this.runtimeForTarget(request.agentTarget, request.sessionId, request.cwd)
     // A cold reset has no attached Session yet. Keep background workflow completion from
     // retiring its generation before reset commits ownership, and release failed allocations.
+    this.claimRuntimeAdmission(runtime)
     this.runtimeActivityCounts.set(runtime, (this.runtimeActivityCounts.get(runtime) ?? 0) + 1)
     try {
       const response = await runtime.resetSessionContext(request)
@@ -868,12 +871,41 @@ class AcpRuntimeCoordinator {
   // Captures the app-owned original user request while its provider prompt still owns this session.
   // The framework adapter calls this before requesting cancellation, so the continuation can retain
   // the same text, attachments, and provenance without fabricating another user action.
-  capturePromptForHandoff(
-    sessionId: string
-  ): { prompt: AcpPromptRequest; originatingTurnToken: string } | undefined {
+  capturePromptForHandoff(sessionId: string):
+    | {
+        prompt: AcpPromptRequest
+        originatingTurnToken: string
+        restoreSession: (specialistId: string | undefined) => Promise<void>
+      }
+    | undefined {
     const active = this.activePromptRequests.get(sessionId)
     if (!active?.turnToken) return undefined
-    return { prompt: active.request, originatingTurnToken: active.turnToken }
+    const runtime = active.runtime
+    const resume = runtime.captureHandoffSessionResume(sessionId)
+    return {
+      prompt: active.request,
+      originatingTurnToken: active.turnToken,
+      restoreSession: async (specialistId) => {
+        const owner = this.findRuntimeForSession(sessionId)
+        if (
+          !this.runtimes.has(runtime) ||
+          this.retiredRuntimes.has(runtime) ||
+          (owner && owner !== runtime)
+        ) {
+          throw new Error('The approved handoff runtime was superseded.')
+        }
+        await resume(specialistId)
+        const restoredOwner = this.findRuntimeForSession(sessionId)
+        if (
+          !this.runtimes.has(runtime) ||
+          this.retiredRuntimes.has(runtime) ||
+          (restoredOwner && restoredOwner !== runtime)
+        ) {
+          throw new Error('The approved handoff runtime was superseded.')
+        }
+        this.bindSessionRuntime(sessionId, runtime)
+      }
+    }
   }
 
   // Publishes only sanitized lifecycle metadata. The captured completion and original prompt remain
@@ -1442,7 +1474,7 @@ class AcpRuntimeCoordinator {
       return Promise.reject(new Error('ACP session must resume before sending a prompt'))
     }
 
-    const runtime = owner ?? this.getActiveRuntime()
+    const runtime = this.claimRuntimeAdmission(owner ?? this.getActiveRuntime())
     const attempt: PendingPromptStart = {
       id: `prompt-attempt-${++this.promptAttemptSequence}`,
       runtime,
@@ -1905,7 +1937,10 @@ class AcpRuntimeCoordinator {
   async buildReviewerSession(
     request: Parameters<AcpRuntime['buildReviewerSession']>[0]
   ): ReturnType<AcpRuntime['buildReviewerSession']> {
-    return this.buildReviewerSessionOnRuntime(this.getActiveRuntime(), request)
+    return this.buildReviewerSessionOnRuntime(
+      this.claimRuntimeAdmission(this.getActiveRuntime()),
+      request
+    )
   }
 
   disposeReviewerSession(session: ActiveSession): ReturnType<AcpRuntime['disposeReviewerSession']> {
@@ -2201,6 +2236,13 @@ class AcpRuntimeCoordinator {
     this.targetedRuntimes.set(key, runtime)
   }
 
+  private claimRuntimeAdmission(runtime: AcpRuntime): AcpRuntime {
+    // A runtime object can reconnect after abandoned teardown. New work owns a new admission
+    // even before its Session is published, so an older cleanup cannot release its routing.
+    this.runtimeAdmissions.set(runtime, {})
+    return runtime
+  }
+
   private async runtimeForTarget(
     target: AcpSessionAgentTarget | undefined,
     sessionId?: string,
@@ -2208,11 +2250,13 @@ class AcpRuntimeCoordinator {
   ): Promise<AcpRuntime> {
     if (!target && sessionId) {
       const owner = this.findRuntimeForSession(sessionId)
-      if (owner && !this.retiredRuntimes.has(owner)) return owner
+      if (owner && !this.retiredRuntimes.has(owner)) return this.claimRuntimeAdmission(owner)
       const scoped = this.targetedRuntimes.get(this.targetRuntimeKey(undefined, sessionId))
-      if (scoped && this.runtimes.has(scoped) && !this.retiredRuntimes.has(scoped)) return scoped
+      if (scoped && this.runtimes.has(scoped) && !this.retiredRuntimes.has(scoped))
+        return this.claimRuntimeAdmission(scoped)
     }
     const active = target ? undefined : this.getActiveRuntime()
+    if (active) this.claimRuntimeAdmission(active)
     // Resolve the default framework before allocating a Session: the initial backend can still
     // be the placeholder Claude configuration until the first connection completes.
     if (active && active.getSnapshot().status !== 'connected') await active.connect({ cwd })
@@ -2226,7 +2270,7 @@ class AcpRuntimeCoordinator {
     const key = this.targetRuntimeKey(target, isolate ? (sessionId ?? randomUUID()) : undefined)
     const existing = this.targetedRuntimes.get(key)
     if (existing && this.runtimes.has(existing) && !this.retiredRuntimes.has(existing)) {
-      return existing
+      return this.claimRuntimeAdmission(existing)
     }
     const runtime = active ?? this.addRuntime(target)
     // Consume the resolved default process exactly once, including concurrent first Sessions.
@@ -2234,7 +2278,7 @@ class AcpRuntimeCoordinator {
     if (isolate) this.isolatedRuntimes.add(runtime)
     this.runtimeTargetKeys.set(runtime, key)
     this.targetedRuntimes.set(key, runtime)
-    return runtime
+    return this.claimRuntimeAdmission(runtime)
   }
 
   private addRuntime(target?: AcpSessionAgentTarget): AcpRuntime {
@@ -2562,6 +2606,7 @@ class AcpRuntimeCoordinator {
     stopDelegatedWork: () => Promise<void> | undefined
   ): Promise<{ reaped: boolean }> {
     const runtimes = Array.from(this.runtimes)
+    const admissions = runtimes.map((runtime) => this.runtimeAdmissions.get(runtime))
     const [delegatedOutcome, ...outcomes] = await Promise.allSettled([
       stopDelegatedWork() ?? Promise.resolve(),
       ...runtimes.map(shutdown)
@@ -2575,16 +2620,29 @@ class AcpRuntimeCoordinator {
       // Rejected teardowns may nevertheless have cleared their session maps before the failing step.
       outcomes.forEach((outcome, index) => {
         const runtime = runtimes[index]
-        if (outcome.status === 'fulfilled') this.releaseRuntimeOwnership(runtime)
+        if (this.runtimeAdmissions.get(runtime) !== admissions[index]) return
+        if (outcome.status === 'fulfilled' && outcome.value.reaped)
+          this.releaseRuntimeOwnership(runtime)
         else this.releaseMissingRuntimeSessions(runtime, runtime.getSnapshot())
       })
       this.emitState()
       throw failure.reason
     }
-    this.clearRuntimeOwnership()
-    this.onDisconnected?.()
+    // A refused quit can reopen admission while this snapshot is still stopping. Never clear
+    // runtimes or session routing acquired after teardown began, including on a degraded stop.
+    outcomes.forEach((outcome, index) => {
+      const runtime = runtimes[index]
+      if (this.runtimeAdmissions.get(runtime) !== admissions[index]) return
+      if (outcome.status === 'fulfilled' && outcome.value.reaped)
+        this.releaseRuntimeOwnership(runtime)
+      else this.releaseMissingRuntimeSessions(runtime, runtime.getSnapshot())
+    })
+    this.emitState()
+    if (this.runtimes.size === 0) this.onDisconnected?.()
     return {
-      reaped: outcomes.every((outcome) => outcome.status === 'fulfilled' && outcome.value.reaped)
+      reaped:
+        this.runtimes.size === 0 &&
+        outcomes.every((outcome) => outcome.status === 'fulfilled' && outcome.value.reaped)
     }
   }
 

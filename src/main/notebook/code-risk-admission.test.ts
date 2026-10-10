@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { execFile, spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { createInterface } from 'node:readline'
@@ -9,7 +10,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { NotebookRuntimeService, type NotebookExecutionRequest } from './runtime-service'
 import { analyzeNotebookCodeRisk } from './code-risk-analysis'
 import * as riskAnalysis from './code-risk-analysis'
-import type { ShellRuntimeBinding } from '../../shared/notebook'
+import type { ShellRuntimeBinding, NotebookRunSummary } from '../../shared/notebook'
 import type { DiscoveredInterpreter } from '../../shared/notebook-runtime'
 
 const roots: string[] = []
@@ -153,14 +154,17 @@ async function harness(
     kernelDispatched: true
   }))
   const shell = vi.fn(async () => ({ stdout: '', stderr: '', exitCode: 0 }))
-  const runtimes = Array.from({ length: environmentCount }, (_, index) => ({
-    language: 'python' as const,
-    provenance: 'user-own' as const,
-    envId: join(root, `python-${index}`),
-    interpreterPath: join(root, `python-${index}`),
-    label: `Python ${index}`,
-    runnable: true
-  }))
+  const runtimes: DiscoveredInterpreter[] = Array.from(
+    { length: environmentCount },
+    (_, index) => ({
+      language: 'python' as const,
+      provenance: 'user-own' as const,
+      envId: join(root, `python-${index}`),
+      interpreterPath: join(root, `python-${index}`),
+      label: `Python ${index}`,
+      runnable: true
+    })
+  )
   const service = new NotebookRuntimeService({
     notebookRuntimeSettings: {
       getSnapshot: async (language) => ({
@@ -176,7 +180,8 @@ async function harness(
     configRoot: root,
     dataRoot: root,
     projectId: 'project',
-    discoverRuntimes: async (language) => (language === 'python' ? runtimes : []),
+    discoverRuntimes: async (language) =>
+      runtimes.filter((runtime) => runtime.language === language),
     executorFactory: () => ({ execute, shutdown: async () => ({ reaped: true }) }),
     shellRuntimeBinding,
     shellProcess: { execute: shell }
@@ -192,6 +197,58 @@ async function harness(
 }
 
 describe('host-owned one-shot execution admission', () => {
+  it.each(['python', 'r'] as const)(
+    'keeps %s default binding admission separate from every later destructive Cell',
+    async (language) => {
+      const { service, execute, request, runtimes } = await harness()
+      const environment = language === 'r' ? 'default-r' : 'default-python'
+      const interpreter = join(
+        request.workspaceCwd,
+        'runtime',
+        'envs',
+        environment,
+        'bin',
+        language === 'r' ? 'R' : 'python'
+      )
+      runtimes.push({
+        language,
+        provenance: 'app-managed',
+        envId: interpreter,
+        interpreterPath: interpreter,
+        label: environment,
+        condaEnv: environment,
+        runnable: true
+      })
+      const environmentApproval = vi.fn(async (decision) => decision.defaultManagedFirstBinding)
+      const codeApproval = vi.fn(async () => false)
+      service.setRuntimeBindingApproval(environmentApproval)
+      service.setExecutionApproval(codeApproval)
+      const run = async (code: string): Promise<NotebookRunSummary> => {
+        const cell = await service.beginCodeCell({ ...request, language })
+        await service.appendCodeCell({ ...request, ...cell, delta: code })
+        await service.finishCodeCell({ ...request, ...cell })
+        return service.runCell({ ...request, cellId: cell.cellId })
+      }
+      await run('print(1)')
+      expect(environmentApproval).toHaveBeenCalledTimes(1)
+      expect(codeApproval).not.toHaveBeenCalled()
+      const dangerous =
+        language === 'r' ? 'unlink("sentinel.txt")' : 'import os\nos.unlink("sentinel.txt")'
+      await expect(run(dangerous)).rejects.toThrow('one-time approval')
+      await expect(run(dangerous)).rejects.toThrow('one-time approval')
+      expect(environmentApproval).toHaveBeenCalledTimes(1)
+      expect(codeApproval).toHaveBeenCalledTimes(2)
+      expect(execute).toHaveBeenCalledTimes(1)
+      expect(codeApproval).toHaveBeenCalledWith(
+        expect.objectContaining({
+          rawInput: expect.objectContaining({
+            notebookCodeRisk: expect.objectContaining({ language, environment })
+          })
+        })
+      )
+    }
+  )
+
   it('carries PowerShell dialect from the actual runtime into approval evidence', async () => {
     const analyze = vi
       .spyOn(riskAnalysis, 'analyzePowerShellCodeRisk')
@@ -7891,3 +7948,5 @@ print(reader("."))`)
     )
   })
 })
+
+configureTestRuntimeMetadata()

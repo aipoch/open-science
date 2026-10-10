@@ -7,7 +7,7 @@ import {
   type ApplicationCommand,
   type ApplicationInvocation
 } from '../application-command-router'
-import { createWebCallerContext } from '../caller-context'
+import { createWebCallerContext, createElectronCallerContext } from '../caller-context'
 import {
   registerCoreSettingsApplicationCommands,
   settingsCoreApplicationCommandGroup,
@@ -50,6 +50,9 @@ const expectedChannels = [
   'settings:get-wsl-setup-status',
   'settings:get-preflight',
   'settings:get-settings',
+  'settings:resolve-skill-document',
+  'settings:list-agent-home-skills',
+  'settings:preview-custom-server-template-export',
   'settings:get-skill-detail',
   'settings:install-claude',
   'settings:install-codebuddy',
@@ -725,4 +728,38 @@ describe('Settings core application commands', () => {
     expect(serviceMethod('setNotificationsEnabled')).not.toHaveBeenCalled()
     expect(serviceMethod('setShowNotificationContent')).not.toHaveBeenCalled()
   })
+})
+
+it('keeps native Skill sources and Connector export previews behind desktop authority', async () => {
+  const { dependencies, serviceMethod } = createDependencies()
+  const router = createApplicationCommandRouter()
+  registerCoreSettingsApplicationCommands(router.registrar, dependencies)
+  const cases = [
+    [
+      settingsCoreApplicationCommands.resolveSkillDocument,
+      [{ name: 'demo' }],
+      'resolveSkillDocument'
+    ],
+    [settingsCoreApplicationCommands.listAgentHomeSkills, [], 'listAgentHomeSkills'],
+    [
+      settingsCoreApplicationCommands.previewCustomServerTemplateExport,
+      ['server-1'],
+      'previewCustomServerTemplateExport'
+    ]
+  ] as const
+  for (const [command, args, method] of cases) {
+    // The heterogeneous table deliberately erases tuple inference only at dispatch.
+    const descriptor = command as ApplicationCommand<string, readonly unknown[], unknown>
+    for (const location of ['local', 'remote'] as const) {
+      await expect(
+        router.dispatcher.invoke(descriptor, invocation(args, location))
+      ).rejects.toThrow('desktop app')
+    }
+    await router.dispatcher.invoke(descriptor, {
+      ...invocation(args),
+      callerContext: createElectronCallerContext(1),
+      callerLease: { ...callerLease(), leaseId: createElectronCallerContext(1).leaseId }
+    })
+    expect(serviceMethod(method)).toHaveBeenCalledExactlyOnceWith(...args)
+  }
 })

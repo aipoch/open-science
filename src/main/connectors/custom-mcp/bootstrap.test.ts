@@ -109,6 +109,21 @@ describe('toCustomMcpConfig', () => {
 })
 
 describe('selectEnabledCustomServers', () => {
+  it('excludes the legacy encori route without deleting or renaming its stored configuration', () => {
+    const legacy: StoredCustomMcpServer = {
+      id: 'legacy-encori',
+      name: 'encori',
+      displayName: 'ENCORI',
+      transport: 'stdio',
+      command: '/legacy/.venv/Scripts/encori-mcp.exe',
+      args: [],
+      enabled: true
+    }
+    const connectors = { enabledIds: [], autoAllowIds: [], customMcpServers: [legacy] }
+    const before = structuredClone(connectors)
+    expect(selectEnabledCustomServers(connectors)).toEqual([])
+    expect(connectors).toEqual(before)
+  })
   const stdioServer: StoredCustomMcpServer = {
     id: 'srv-stdio',
     name: 'stdio-server',

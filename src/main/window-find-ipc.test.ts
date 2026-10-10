@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../test/runtime-host'
 import { EventEmitter } from 'node:events'
 import { ipcMain } from 'electron'
 import { afterEach, describe, expect, it, type Mock, vi } from 'vitest'
@@ -321,3 +322,5 @@ describe('window find installation lifecycle', () => {
     for (const channel of channels) expect(ipcMain.listenerCount(channel)).toBe(0)
   })
 })
+
+await configureTestElectronHost(await import('electron'))

@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ProvisionProgress, RuntimeProvisioner } from './provisioner'
@@ -171,3 +172,5 @@ describe('registerNotebookEnvIpcHandlers', () => {
     await operation
   })
 })
+
+await configureTestElectronHost(await import('electron'))

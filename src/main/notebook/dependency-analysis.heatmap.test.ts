@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { expect, it } from 'vitest'
 import { analyzeRNotebookSource } from './dependency-analysis-r'
 import { analyzePythonNotebookSource } from './dependency-analysis-python'
@@ -142,3 +143,5 @@ it.each([false, true])(
     expect(result.dependenciesByRunId?.['1']).toEqual(['0'])
   }
 )
+
+configureTestRuntimeMetadata()

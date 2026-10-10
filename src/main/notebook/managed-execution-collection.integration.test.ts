@@ -729,3 +729,6 @@ it
   },
   30000
 )
+
+const { configureTestElectronHost } = await import('../../../test/runtime-host')
+await configureTestElectronHost(await import('electron'))

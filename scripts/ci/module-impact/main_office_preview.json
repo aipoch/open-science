@@ -9,13 +9,16 @@
     "src/main/office-preview/office-preview-oopif-supervisor.test.ts",
     "src/main/office-preview/office-preview-runtime-protocol.test.ts",
     "src/main/office-preview/office-preview-runtime-protocol.ts",
-    "src/main/office-preview/office-preview-supervisor.ts"
+    "src/main/office-preview/office-preview-supervisor.ts",
+    "src/main/office-preview/application-commands.ts",
+    "src/main/office-preview/application-commands.test.ts"
   ],
   "interfacePaths": [
     "src/main/office-preview/office-preview-electron.ts",
     "src/main/office-preview/office-preview-ipc.ts",
     "src/main/office-preview/office-preview-runtime-protocol.ts",
-    "src/main/office-preview/office-preview-supervisor.ts"
+    "src/main/office-preview/office-preview-supervisor.ts",
+    "src/main/office-preview/application-commands.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -25,7 +28,8 @@
       "src/main/office-preview/office-preview-ipc.test.ts",
       "src/main/office-preview/office-preview-navigation.test.ts",
       "src/main/office-preview/office-preview-oopif-supervisor.test.ts",
-      "src/main/office-preview/office-preview-runtime-protocol.test.ts"
+      "src/main/office-preview/office-preview-runtime-protocol.test.ts",
+      "src/main/office-preview/application-commands.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -44,7 +48,32 @@
       "src/main/source-preview-webview.test.ts",
       "src/main/window-find-ipc.test.ts",
       "src/main/ipc-surfaces/desktop-utilities.test.ts",
+      "src/main/composition/notebook-environment.test.ts",
+      "src/main/artifacts/artifact-reproducibility-commands.test.ts",
+      "src/main/data-content-application-commands.test.ts",
+      "src/main/runtime-state-ownership.architecture.test.ts",
+      "src/main/uploads/command-owner.test.ts",
+      "src/main/application-command-client.test.ts",
+      "src/main/application-command-composition.test.ts",
+      "src/main/application-command-electron-adapter.test.ts",
+      "src/main/settings/bootstrap.integration.test.ts",
+      "src/main/web-service/controller.test.ts",
+      "src/main/web-service/http-server.test.ts",
+      "src/main/web-service/task-api.test.ts",
+      "src/main/acp/runtime.test.ts",
+      "src/main/web-service/artifact-download.integration.test.ts",
+      "src/main/remote-access/service.test.ts",
+      "src/main/remote-access/ipc.test.ts",
+      "src/main/host-application-commands.test.ts",
+      "src/main/literature/scale-regressions.test.ts",
+      "src/shared/renderer-surface-inventory.test.ts",
+      "src/main/remote-access/pairing.test.ts",
+      "src/main/desktop-runtime-transport.integration.test.ts",
+      "src/main/session-persistence/ipc.test.ts",
+      "src/main/desktop-native-electron.test.ts",
       "src/main/composition/handoff.test.ts",
+      "src/main/composition/managed-execution.integration.test.ts",
+      "src/main/composition/artifact-surfaces.test.ts",
       "src/main/replay-viewer/desktop-embed.integration.test.ts",
       "src/main/replay-viewer/recorded-resource-context-menu.integration.test.ts"
     ]

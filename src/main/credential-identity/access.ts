@@ -84,9 +84,9 @@ export const createCredentialAccess = (options: {
       check(false)
       try {
         if (!options.cipher.isEncryptionAvailable()) return fail('credential-access-unavailable')
-        checked =
-          options.identity.backend !== 'linux-secret-service' &&
-          options.identity.backend !== 'linux-kwallet'
+        // OSCrypt derives and caches the process key here, so later metadata probes cannot change
+        // the key in use; repeating them only turns a transient keyring error into a fatal one.
+        checked = true
         return true
       } catch {
         return fail('credential-access-unavailable')

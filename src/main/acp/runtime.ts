@@ -481,6 +481,8 @@ type AcpRuntimeUploadOptions = {
 }
 
 type AcpRuntimeNotebookOptions = {
+  authorizeRuntimeBindingAdmission?: import('../notebook/local-rpc-server').NotebookLocalRpcServer['authorizeRuntimeBindingAdmission']
+  canOwnRuntimeBindingDecision?: import('../notebook/runtime-service').NotebookRuntimeService['canOwnRuntimeBindingDecision']
   projectId: string
   mcpEntryPath: string
   mcpCommand?: string
@@ -845,6 +847,9 @@ class AcpRuntime {
       plan: this.sessionPlanWorkflow.prompt,
       reload: {
         prepareContinuationReplay: async (request) => {
+          // Approved Claude replay already owns the prior task and committed switch result. A
+          // generic transcript fallback would reintroduce the old provider's cancellation denial.
+          if (this.handoffContinuity.peekClaudeReplay(request.sessionId)) return {}
           const promptMessageId = request.provenanceContext?.promptMessageId
           if (!promptMessageId) {
             throw new Error('App continuation history requires its originating Message.')
@@ -1133,6 +1138,42 @@ class AcpRuntime {
   // coordinator generation rotation.
   isSessionUsingFramework(sessionId: string, frameworkId: AgentFrameworkId): boolean {
     return this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().frameworkId === frameworkId
+  }
+
+  captureHandoffSessionResume(
+    sessionId: string
+  ): (specialistId: string | undefined) => Promise<void> {
+    const entry = this.sessionRegistry.lookup(sessionId)
+    const snapshot = entry?.aggregate.snapshot()
+    if (!entry?.attachment || !snapshot?.cwd) {
+      throw new Error(`ACP session not found: ${sessionId}`)
+    }
+    const providerSessionId = entry.attachment.providerSessionId
+    return (specialistId) =>
+      this.withOperationLease(async () => {
+        const current = this.sessionRegistry.lookup(sessionId)
+        if (current?.aggregate !== entry.aggregate) {
+          throw new Error('The approved handoff Session was superseded.')
+        }
+        if (current.attachment) return
+        current.aggregate.setSpecialistId(specialistId)
+        current.aggregate.setSpecialistPrefix(undefined)
+        // Forced Specialist Skills are unloaded when the old prompt ends. Reattach the same provider
+        // history only after that teardown, using the newly approved scope and the captured affinity.
+        const resumed = await this.providerSessionResumer.reconfigure({
+          sessionId,
+          providerSessionId,
+          cwd: snapshot.cwd!,
+          projectId: snapshot.projectId,
+          previousFrameworkId: snapshot.frameworkId,
+          previousBackendId: snapshot.backendId,
+          permissionProfile: snapshot.permissionProfile?.selectedProfile,
+          memoryEnabled: snapshot.memoryEnabled,
+          specialistId
+        })
+        if (resumed.contextReset)
+          throw new Error('The approved handoff provider history could not be restored.')
+      })
   }
 
   prepareClaudeCodeHandoffReplay(input: ClaudeCodeReplayInput): void {

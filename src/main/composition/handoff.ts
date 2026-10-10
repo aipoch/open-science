@@ -1,3 +1,7 @@
+import {
+  registerStorageIpcHandlers,
+  registerUpdateIpcHandlers
+} from '../desktop-surface-declarations'
 import type { UpdateBlocker } from '../../shared/update'
 import { createAcpRuntime } from '../acp/runtime-composition'
 import { type ApplicationModuleBuilder } from '../application-runtime'
@@ -9,16 +13,16 @@ import {
   createWebSessionPersistenceFlush,
   rendererSessionPersistenceFlushBlocksShutdown,
   type RendererSessionPersistenceTarget
-} from '../session-persistence/renderer-flush'
+} from '../session-persistence/flush-protocol'
 import { SettingsService } from '../settings/service'
 import { SideChatRuntimeOwner } from '../side-chat/runtime-owner'
 import { createStorageCommandOwner } from '../storage/command-owner'
 import { DataRootCleanupJournal, createDataRootSourceCleanup } from '../storage/data-root-cleanup'
 import { detectActiveSessions } from '../storage/detect-active'
-import { registerStorageIpcHandlers } from '../storage/ipc'
+
 import { isMigrationInProgress, isMigrationPending } from '../storage/migration-state'
-import { createUpdateStrategy } from '../update/create-strategy'
-import { createUpdateCommandOwner, registerUpdateIpcHandlers } from '../update/ipc'
+import { createRuntimeUpdateStrategy } from '../update/runtime-strategy'
+import { createUpdateCommandOwner } from '../update/command-owner'
 import { startUpdateScheduler } from '../update/scheduler'
 import {
   createActiveResearchSafeInstallGate,
@@ -59,10 +63,10 @@ export async function composeHandoff({
   translate: import('../locale/main-process-messages').NativeTranslator
   confirmRendererDurability: (
     policy?:
-      | import('../session-persistence/renderer-flush').RendererSessionPersistenceFlushPolicy
+      | import('../session-persistence/flush-protocol').RendererSessionPersistenceFlushPolicy
       | undefined,
     surface?:
-      import('../session-persistence/renderer-flush').RendererSessionPersistenceSurface | undefined
+      import('../session-persistence/flush-protocol').RendererSessionPersistenceSurface | undefined
   ) => Promise<boolean>
   notifyRendererDurabilityAborted: () => void
   modules: ApplicationModuleBuilder
@@ -74,6 +78,8 @@ export async function composeHandoff({
     confirmedInterruption: boolean
   ) => Promise<InstallReadiness>
   updateCommandOwner: ReturnType<typeof createUpdateCommandOwner>
+  prepareDesktopUpdate: import('../update/strategy').InstallGate
+  abortDesktopUpdate: () => void
 }> {
   // Single shared teardown owner for both the before-quit handler (index.ts) and the pre-update-install
   // gate. Update handling is deliberately constructed below, after this dependency is complete.
@@ -174,15 +180,16 @@ export async function composeHandoff({
     durableBackendHandoffGate,
     () => isMigrationInProgress() || isMigrationPending()
   )
-  const updateStrategy = createUpdateStrategy(process.platform, {
+  const prepareDesktopUpdate: import('../update/strategy').InstallGate = async (options) => {
+    packageHandoffHeld.current = true
+    if (sessionPackageDesktopLifecycle.isActive())
+      throw new Error('Wait for the Session package operation to finish before updating.')
+    releaseSettingsInstallAdmission ??= settingsService.holdInstallAdmission()
+    return updateInstallGate(options)
+  }
+  const updateStrategy = createRuntimeUpdateStrategy(process.platform, {
     translate,
-    installGate: async (options) => {
-      packageHandoffHeld.current = true
-      if (sessionPackageDesktopLifecycle.isActive())
-        throw new Error('Wait for the Session package operation to finish before updating.')
-      releaseSettingsInstallAdmission = settingsService.holdInstallAdmission()
-      return updateInstallGate(options)
-    },
+    installGate: prepareDesktopUpdate,
     releaseInstallHandoff: abortUpdateHandoff
   })
   const updateCommandOwner = createUpdateCommandOwner(updateStrategy)
@@ -200,7 +207,9 @@ export async function composeHandoff({
     reviewerModelRuntimeShutdown,
     shutdownCoordinator,
     durableDataRootHandoffGate,
-    updateCommandOwner
+    updateCommandOwner,
+    prepareDesktopUpdate,
+    abortDesktopUpdate: abortUpdateHandoff
   }
 }
 

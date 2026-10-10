@@ -1329,7 +1329,7 @@ describe('codexFramework', () => {
       expect.objectContaining({
         env: expect.objectContaining({
           CODEX_HOME: '/data/codex',
-          ELECTRON_RUN_AS_NODE: '1'
+          ELECTRON_RUN_AS_NODE: process.versions.electron ? '1' : undefined
         }),
         detached: true,
         shell: false,

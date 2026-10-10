@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -277,3 +278,5 @@ it('retains both data and path dependencies for piped file exports', async () =>
   const after = await project([...scripts, 'data <- data.frame(n=2)'])
   expect(after.stalenessByRunId['run-2']).toMatchObject({ state: 'stale' })
 })
+
+configureTestRuntimeMetadata()

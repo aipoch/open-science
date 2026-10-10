@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -574,6 +575,7 @@ it.each(['waiting-permission', 'waiting-for-user', 'waiting-plan-approval'] as c
   }
 )
 
+await configureTestElectronHost(await import('electron'))
 describe('Main-owned stable research membership', () => {
   const membership = {
     sourceProjectId: 'p',

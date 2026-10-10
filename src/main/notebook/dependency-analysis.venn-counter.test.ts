@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { expect, it } from 'vitest'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -140,3 +141,5 @@ it('analyzes Counter aggregation when the worksheet is selected explicitly', asy
     JSON.stringify(facts)
   ).toMatchObject({ readState: 'complete', writeState: 'complete', externalState: 'complete' })
 })
+
+configureTestRuntimeMetadata()

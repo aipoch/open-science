@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { handlers, registrationFailure } = vi.hoisted(() => ({
@@ -281,3 +282,5 @@ describe('permission grant IPC', () => {
     })
   })
 })
+
+await configureTestElectronHost(await import('electron'))

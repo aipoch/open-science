@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { EventEmitter } from 'node:events'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -179,7 +180,7 @@ describe('ClaudeSharedAuthController.loginShared', () => {
     expect(spawnCalls[0]).toMatchObject({
       command: process.execPath,
       args: ['/resolved/cli.js', 'auth', 'login', '--claudeai'],
-      env: { ELECTRON_RUN_AS_NODE: '1' }
+      env: { ELECTRON_RUN_AS_NODE: process.versions.electron ? '1' : undefined }
     })
   })
 })
@@ -201,3 +202,5 @@ describe('ClaudeSharedAuthController.cancelLogin', () => {
     expect(() => ctrl.cancelLogin()).not.toThrow()
   })
 })
+
+configureTestRuntimeMetadata()

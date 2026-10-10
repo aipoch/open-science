@@ -16,8 +16,8 @@ vi.mock('../reviewer/ipc', () => ({
   createReviewerCommandOwner: mocks.createOwner,
   registerReviewerIpcHandlers: mocks.register
 }))
-vi.mock('../reviewer/paged-preview-electron', () => ({
-  createReviewerElectronPagedContentResolver: mocks.preview
+vi.mock('../reviewer/paged-preview-host', () => ({
+  createReviewerHostPagedContentResolver: mocks.preview
 }))
 import { registerReviewerComposition } from './reviewer'
 
@@ -28,7 +28,14 @@ const fixture = (): Dependencies => ({
     acpRuntime: {} as never,
     sessionReader: { loadSession: vi.fn(), findSessionById: vi.fn() }
   },
-  previewResources: { acquireResolvedFile: vi.fn(), release: vi.fn() },
+  previewResources: {
+    acquireResolvedFile: vi.fn(),
+    release: vi.fn(),
+    inspect: vi.fn(),
+    acquire: vi.fn(),
+    readRange: vi.fn(),
+    releaseOwner: vi.fn()
+  },
   runtimeShutdownOwner: { current: undefined },
   declareElectronAdapter: vi.fn()
 })
@@ -94,3 +101,5 @@ describe('Reviewer composition lifecycle', () => {
     }
   )
 })
+
+vi.mock('../desktop-surface-declarations', () => ({ registerReviewerIpcHandlers: mocks.register }))

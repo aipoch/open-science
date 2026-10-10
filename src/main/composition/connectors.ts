@@ -1,4 +1,4 @@
-import { BrowserWindow, shell } from 'electron'
+import { desktopShellInteraction, desktopInteraction } from '../desktop-interaction'
 import { createAcpRuntime } from '../acp/runtime-composition'
 import { type ApplicationModuleBuilder } from '../application-runtime'
 import { waitForInitialConnectorRefresh } from '../connector-reload'
@@ -32,6 +32,7 @@ import { createDefaultUploadRepository } from '../uploads/ipc'
 const permissionGrantsLog = createLogger('permission-grants')
 
 export async function composeConnectors({
+  canRequestDesktopCredential,
   settingsService,
   uploadRepository,
   managedFileVersionService,
@@ -45,6 +46,7 @@ export async function composeConnectors({
   modules,
   composition
 }: {
+  canRequestDesktopCredential?: () => boolean
   settingsService: SettingsService
   uploadRepository: ReturnType<typeof createDefaultUploadRepository>
   managedFileVersionService: ManagedFileVersionService
@@ -78,7 +80,7 @@ export async function composeConnectors({
     {
       settings: settingsService,
       skillsDir: connectorSkillSourceDir(resolveConfigRoot()),
-      openExternal: (url) => shell.openExternal(url),
+      openExternal: (url) => desktopShellInteraction().openExternal(url),
       notifyStatusChanged: () =>
         broadcastToRenderers('settings:connector-runtime-changed', undefined),
       broadcastConnectorApproval: buildConnectorApprovalBroadcast({
@@ -124,7 +126,9 @@ export async function composeConnectors({
       managedFileVersions: managedFileVersionService,
       fetchImpl: netFetchStandard,
       resolveApiKey: (ref) => tryDecryptKey(ref),
-      canRequestCredential: () => !headless && BrowserWindow.getAllWindows().length > 0,
+      canRequestCredential:
+        canRequestDesktopCredential ??
+        (() => !headless && desktopInteraction('Connector credential dialog').hasWindow()),
       permissionGrantRegistry,
       resolveSpecialistProfile: async (specialistId) => {
         try {

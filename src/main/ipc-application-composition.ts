@@ -1,3 +1,13 @@
+import type { ArtifactReproducibilityCheckState } from '../shared/artifact-reproducibility'
+import type { UploadTransferProgress } from '../shared/uploads'
+import { LocalePreferenceOwner } from './locale/owner'
+import { createManagedPreviewProtocolHandler } from './managed-preview-handler'
+import {
+  createElectronSurfaceAdapter,
+  createConnectorApprovalElectronSurface,
+  createCoreElectronSurfaces
+} from './desktop-surface-declarations'
+import { runtimeMetadata } from './runtime-metadata'
 import { composeAgentActivation } from './composition/agent-activation'
 import { composeAgentCompletion, composeAgentWorkflows } from './composition/agent-completion'
 import { composeAgentControls } from './composition/agent-controls'
@@ -15,11 +25,6 @@ import { composeDocumentReading } from './composition/document-reading'
 import { composeHandoff, composeStorageHandoff } from './composition/handoff'
 import { composeManagedFiles } from './composition/managed-files'
 import { composeManagedExecution } from './composition/managed-execution'
-import { registerRunObservationIpc } from './run-observation/ipc'
-import { registerBrowserRecordingIpc } from './browser-recordings/ipc'
-import { registerResearchRunInspectionIpc } from './research-runs/ipc'
-import { registerResearchDemoIpc } from './research-demos/ipc'
-import { registerResearchExecutionProfileIpc } from './research-execution-profiles/ipc'
 import { composeNotebookBridge } from './composition/notebook-bridge'
 import { composeNotebookRuntime } from './composition/notebook-runtime'
 import { composeNotebookSurfaces } from './composition/notebook-surfaces'
@@ -45,8 +50,6 @@ import {
 import { composeStorageStartup } from './composition/storage-startup'
 import { composeUploadStorage } from './composition/upload-storage'
 
-import { app } from 'electron'
-
 import { type ApplicationCommandComposition } from './application-command-composition'
 import { createApplicationEventModule, type ApplicationEventSource } from './application-events'
 import { type ApplicationModuleBuilder } from './application-runtime'
@@ -61,11 +64,8 @@ import { type AppIconPreview, type AppIconVariant } from '../shared/settings'
 import { registerReviewerComposition } from './composition/reviewer'
 import { type DiagnosticOperation } from './diagnostics/operation'
 import { createLogger, diagnosticErrorFields } from './logger'
-import { createElectronSurfaceAdapter } from './ipc-surfaces/adapter'
-import { createConnectorApprovalElectronSurface } from './ipc-surfaces/connector-approvals'
-import { createCoreElectronSurfaces } from './ipc-surfaces/core'
 import { type ShutdownStepOutcome } from './lifecycle-shutdown'
-import { englishNativeTranslator, type NativeTranslator } from './locale/main-process-messages'
+import { type NativeTranslator } from './locale/main-process-messages'
 import type { PreviewProtocolRegistrar } from './managed-preview-protocol'
 import { TaskNotificationService } from './notifications/task-notifications'
 import { PermissionApprovalPresence } from './permission-approval-presence'
@@ -79,7 +79,7 @@ import {
   createWebSessionPersistenceFlush,
   type RendererSessionPersistenceFlushPolicy,
   type RendererSessionPersistenceSurface
-} from './session-persistence/renderer-flush'
+} from './session-persistence/flush-protocol'
 import type { SettingsDocumentStore } from './settings/document-store'
 import type { WindowSettingsCapabilities } from './settings/service-capabilities'
 import { detectActiveSessions } from './storage/detect-active'
@@ -94,13 +94,28 @@ import type { TaskAgentPort } from './tasks/task-runner'
 import type { TrayNavigationSession } from './tray-navigation'
 
 export type IpcRegistrationOptions = {
+  notificationDelivery?: (
+    translate: NativeTranslator
+  ) => import('./notifications/desktop-delivery').DesktopNotificationDelivery
   mainEntryPath: string
   // Startup and the application runtime share one settings.json transaction owner. Tests and
   // non-desktop compositions may omit it and receive the existing default store.
   settingsStore?: SettingsDocumentStore
   translate?: NativeTranslator
-  desktopLocale?: () => import('../shared/locale').Locale
-  managedPreviewProtocol: PreviewProtocolRegistrar
+  localeOwner?: LocalePreferenceOwner
+  systemLanguageTags?: readonly string[]
+  reportOfficePreviewState?: (
+    clientId: string,
+    state: import('../shared/office-preview').OfficePreviewRuntimeState
+  ) => void
+  canRequestDesktopCredential?: () => boolean
+  reportMarketplaceProgress?: (
+    clientId: string,
+    progress: import('../shared/specialist-marketplace').MarketplaceDownloadProgress
+  ) => void
+  reportReproducibilityCheck?: (clientId: string, state: ArtifactReproducibilityCheckState) => void
+  reportUploadProgress?: (clientId: string, progress: UploadTransferProgress) => void
+  managedPreviewProtocol?: PreviewProtocolRegistrar
   // Headless web-serve launches (--serve) have no local desktop user; task notifications are
   // disabled there by contract, not just incidentally via Notification.isSupported().
   headless?: boolean
@@ -121,8 +136,12 @@ export type IpcRegistrationOptions = {
 }
 
 export type ApplicationRuntimeInterfaces = {
+  fetchPreview: (request: Request) => Promise<Response>
   openSessionPackageFile: (path: string | null) => void
-  applicationCommands: Pick<ApplicationCommandComposition, 'localWeb' | 'remoteWeb' | 'task'>
+  applicationCommands: Pick<
+    ApplicationCommandComposition,
+    'localWeb' | 'remoteWeb' | 'task' | 'desktop'
+  >
   applicationEvents: ApplicationEventSource
   permissionApprovalPresence: PermissionApprovalPresence
   bindRemoteAccess: ApplicationCommandComposition['bindRemoteAccess']
@@ -147,6 +166,9 @@ export type ApplicationRuntimeInterfaces = {
   archiveCapability: Pick<ArchiveCoordinator, 'isSessionAvailableById' | 'setMarkReadSessions'>
   detectActiveSessions: () => ReturnType<typeof detectActiveSessions>
   listTrayNavigationSessions: () => Promise<readonly TrayNavigationSession[]>
+  prepareDesktopUpdate: import('./update/strategy').InstallGate
+  abortDesktopUpdate: () => void
+  hasActivePackageTransfer: () => boolean
   hasActiveReviewerWork: () => boolean
   getActiveSettingsInstallId: () => string | undefined
   holdSettingsInstallAdmission: () => () => void
@@ -170,8 +192,15 @@ export const createApplicationModules = async (
     settingsStore,
     managedPreviewProtocol,
     headless = false,
-    translate = englishNativeTranslator,
-    desktopLocale,
+    translate: suppliedTranslator,
+    localeOwner: suppliedLocaleOwner,
+    systemLanguageTags,
+    reportUploadProgress,
+    reportOfficePreviewState,
+    canRequestDesktopCredential,
+    reportMarketplaceProgress,
+    reportReproducibilityCheck,
+    notificationDelivery,
     onAppIconVariantChanged,
     listAppIconPreviews,
     confirmRendererDurability = () => Promise.resolve(true),
@@ -204,6 +233,29 @@ export const createApplicationModules = async (
     headless,
     modules
   })
+  // The temporary in-process desktop path supplies its early startup owner. Node creates the
+  // same owner against the existing serialized settings store; never introduce another writer.
+  const localeOwner =
+    suppliedLocaleOwner ??
+    new LocalePreferenceOwner(
+      systemLanguageTags ?? [runtimeMetadata().locale],
+      settingsBootstrap.settingsRepository,
+      (await settingsBootstrap.settingsRepository.getSettings()).localePreference
+    )
+  const translate = suppliedTranslator ?? localeOwner.t.bind(localeOwner)
+  if (!suppliedLocaleOwner) {
+    await modules.add(undefined, () => {
+      const unsubscribe = localeOwner.subscribe((snapshot) =>
+        applicationEvents.publish('locale:changed', snapshot)
+      )
+      return {
+        name: 'locale-events',
+        capability: undefined,
+        rollback: unsubscribe,
+        dispose: unsubscribe
+      }
+    })
+  }
   const storageStartup = await composeStorageStartup({
     applicationEvents,
     ...settingsBootstrap,
@@ -304,7 +356,7 @@ export const createApplicationModules = async (
   })
   const specialistCatalog = await composeSpecialistCatalog({ ...settingsBootstrap, composition })
   const managedExecution = await composeManagedExecution({
-    desktopLocale,
+    desktopLocale: () => localeOwner.snapshot().locale,
     applicationEvents,
     managedFiles,
     sessionAuthority,
@@ -315,21 +367,6 @@ export const createApplicationModules = async (
     modules
   })
   notebookRuntime.notebookLifecycle = managedExecution.notebookLifecycle
-  declareElectronAdapter('research-runs', () =>
-    registerResearchRunInspectionIpc(managedExecution.researchRuns)
-  )
-  declareElectronAdapter('research-demos', () =>
-    registerResearchDemoIpc(managedExecution.researchDemos)
-  )
-  declareElectronAdapter('research-execution-profiles', () =>
-    registerResearchExecutionProfileIpc(managedExecution.service)
-  )
-  declareElectronAdapter('run-observation', () => {
-    if (managedExecution.external.observation)
-      registerRunObservationIpc(managedExecution.external.observation)
-    if (managedExecution.external.projectRecordings)
-      registerBrowserRecordingIpc(managedExecution.external.projectRecordings)
-  })
   sessionAuthority.notebookActivityRef.current = managedExecution.notebookLifecycle
   const researchCatalog = await composeResearchCatalog({
     applicationEvents,
@@ -356,6 +393,7 @@ export const createApplicationModules = async (
     ...specialistCatalog
   })
   const agentCompletion = await composeAgentCompletion({
+    declareElectronAdapter,
     ...notebookRuntime,
     ...specialistCatalog,
     modules
@@ -365,10 +403,12 @@ export const createApplicationModules = async (
     settingsBootstrap,
     storageStartup,
     sessionAuthority,
+    notificationDelivery,
     headless,
     translate
   })
   const connectors = await composeConnectors({
+    canRequestDesktopCredential,
     ...settingsBootstrap,
     uploadRepository: uploadStorage.uploadRepository,
     managedFileVersionService: uploadStorage.managedFileVersionService,
@@ -529,7 +569,7 @@ export const createApplicationModules = async (
     modules,
     composition
   })
-  await composeProjectRecovery({
+  const sideChatCommands = await composeProjectRecovery({
     declareElectronAdapter,
     applicationEvents,
     ...sessionFoundation,
@@ -590,6 +630,7 @@ export const createApplicationModules = async (
     modules
   })
   const sessionSurfaces = await composeSessionSurfaces({
+    reportMarketplaceProgress,
     surfaceAdapters,
     applicationEvents,
     ...settingsBootstrap,
@@ -606,6 +647,8 @@ export const createApplicationModules = async (
     composition
   })
   const notebookSurfaces = await composeNotebookSurfaces({
+    modules,
+    reportOfficePreviewState,
     surfaceAdapters,
     declareElectronAdapter,
     settingsBootstrap,
@@ -630,6 +673,7 @@ export const createApplicationModules = async (
     notifyRendererDurabilityAborted
   })
   const artifactSurfaces = composeArtifactSurfaces({
+    reportReproducibilityCheck,
     onArtifactsPublished: async (artifacts) => {
       const scopes = new Map<string, { projectId: string; sessionId: string }>()
       for (const artifact of artifacts) {
@@ -699,7 +743,7 @@ export const createApplicationModules = async (
   const reviewerCommandOwner = await registerReviewerComposition(modules, {
     applicationEvents,
     modelRuntime: {
-      appVersion: app.getVersion(),
+      appVersion: runtimeMetadata().version,
       isDataRootHandoffActive: () => isMigrationInProgress() || isMigrationPending(),
       captureModel: () => settingsBootstrap.settingsService.admitReviewerExecutionModel(),
       resolveTarget: (target, context) =>
@@ -749,6 +793,10 @@ export const createApplicationModules = async (
   })
   sessionAuthority.reviewerCommandOwnerRef.current = reviewerCommandOwner
   const commandDependencies = composeCommandDependencies({
+    researchExecutionProfiles: managedExecution.service,
+    localeOwner,
+    reportUploadProgress,
+    sideChatCommands,
     applicationEvents,
     readObservationBindings: managedExecution.readObservationBindings,
     settingsBootstrap,
@@ -770,6 +818,7 @@ export const createApplicationModules = async (
     delegation,
     ...desktopUtilities,
     agentRuntime,
+    agentCompletion,
     agentWorkflows,
     handoff,
     settingsEffects,
@@ -797,6 +846,7 @@ export const createApplicationModules = async (
   composition.phase('commands')
 
   return {
+    fetchPreview: createManagedPreviewProtocolHandler(managedFiles.previewResources),
     openSessionPackageFile: (path) => {
       if (path === null) sessionPackageSurfaces.sessionPackageDesktop.reportOpenOverflow()
       else sessionPackageSurfaces.sessionPackageDesktop.enqueueFile(path)
@@ -804,7 +854,8 @@ export const createApplicationModules = async (
     applicationCommands: {
       localWeb: applicationCommandComposition.localWeb,
       remoteWeb: applicationCommandComposition.remoteWeb,
-      task: applicationCommandComposition.task
+      task: applicationCommandComposition.task,
+      desktop: applicationCommandComposition.desktop
     },
     applicationEvents,
     permissionApprovalPresence,
@@ -870,12 +921,26 @@ export const createApplicationModules = async (
           ]
         })
       }),
+    prepareDesktopUpdate: handoff.prepareDesktopUpdate,
+    abortDesktopUpdate: handoff.abortDesktopUpdate,
+    hasActivePackageTransfer: () =>
+      sessionPackageSurfaces.sessionPackageDesktop.hasActiveTransfer(),
     hasActiveReviewerWork: () =>
       handoff.reviewerModelRuntimeShutdown.current?.hasActiveWork() ?? false,
     getActiveSettingsInstallId: () => settingsBootstrap.settingsService.getActiveInstallId(),
     holdSettingsInstallAdmission: () => settingsBootstrap.settingsService.holdInstallAdmission(),
-    prepareForQuit: () => agentRuntime.runtime.prepareForQuit(),
-    abortQuitPreparation: () => agentRuntime.runtime.abortQuitPreparation(),
+    prepareForQuit: async () => {
+      const outcome = await agentRuntime.runtime.prepareForQuit()
+      if (outcome !== 'completed') return outcome
+      return handoff.shutdownCoordinator.runForQuitPreparation()
+    },
+    abortQuitPreparation: () => {
+      try {
+        agentRuntime.runtime.abortQuitPreparation()
+      } finally {
+        sideChat.sideChatRuntime.resumeAfterHandoff()
+      }
+    },
     electronAdapters: {
       beforeCompute: beforeComputeAdapters,
       compute: {

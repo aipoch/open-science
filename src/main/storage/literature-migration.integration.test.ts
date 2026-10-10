@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -403,3 +404,5 @@ describe('literature migration authority validation', () => {
     }
   )
 })
+
+await configureTestElectronHost(await import('electron'))

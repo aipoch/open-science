@@ -1,3 +1,5 @@
+import { nodeRuntimeEnvironment } from '../node-process-host'
+import { runtimeMetadata } from '../runtime-metadata'
 import { createLogger } from '../logger'
 import { prepareReplCellBindings, type ReplCellBindings } from './repl-cell-bindings'
 import {
@@ -387,27 +389,30 @@ class NotebookExecutionCancelledError extends Error {
 // packaged resources dir, then the repo-relative dev path.
 const defaultPythonLoopPath = (): string => {
   if (process.env.OPEN_SCIENCE_PYTHON_LOOP) return process.env.OPEN_SCIENCE_PYTHON_LOOP
-  if (process.resourcesPath) return join(process.resourcesPath, 'notebook', 'python_loop.py')
+  if (runtimeMetadata().resourcesPath)
+    return join(runtimeMetadata().resourcesPath, 'notebook', 'python_loop.py')
   return join(__dirname, '../../../resources/notebook/python_loop.py')
 }
 
 // Resolves the packaged/dev location of r_loop.R, mirroring defaultPythonLoopPath.
 const defaultRLoopPath = (): string => {
   if (process.env.OPEN_SCIENCE_R_LOOP) return process.env.OPEN_SCIENCE_R_LOOP
-  if (process.resourcesPath) return join(process.resourcesPath, 'notebook', 'r_loop.R')
+  if (runtimeMetadata().resourcesPath)
+    return join(runtimeMetadata().resourcesPath, 'notebook', 'r_loop.R')
   return join(__dirname, '../../../resources/notebook/r_loop.R')
 }
 
 // Resolves the packaged/dev location of repl_loop.js, mirroring defaultPythonLoopPath.
 const defaultReplLoopPath = (): string => {
   if (process.env.OPEN_SCIENCE_REPL_LOOP) return process.env.OPEN_SCIENCE_REPL_LOOP
-  if (process.resourcesPath) return join(process.resourcesPath, 'notebook', 'repl_loop.js')
+  if (runtimeMetadata().resourcesPath)
+    return join(runtimeMetadata().resourcesPath, 'notebook', 'repl_loop.js')
   return join(__dirname, '../../../resources/notebook/repl_loop.js')
 }
 
 const defaultProcessHostPath = (): string => {
-  if (process.resourcesPath)
-    return join(process.resourcesPath, 'notebook', 'kernel_process_host.js')
+  if (runtimeMetadata().resourcesPath)
+    return join(runtimeMetadata().resourcesPath, 'notebook', 'kernel_process_host.js')
   return join(__dirname, '../../../resources/notebook/kernel_process_host.js')
 }
 
@@ -1266,6 +1271,20 @@ class NotebookKernelExecutor implements NotebookExecutor {
           } else if (!result.reaped && (await nativeTerminationProof?.().catch(() => false))) {
             result = { reaped: true }
           }
+          if (
+            result.reaped &&
+            this.platform === 'win32' &&
+            nativeTerminationProof &&
+            child.pid !== undefined &&
+            child.exitCode === null &&
+            child.signalCode === null
+          ) {
+            // The native Job proof covers the workload, but precedes ACL restoration and the
+            // supervisor's exit. Keep this exact ChildProcess and its ownership receipt until the
+            // host exits; killing it here could interrupt ACL restoration. The caller's existing
+            // shutdown budget still applies and must not turn an unfinished drain into success.
+            await new Promise<void>((resolve) => child.once('exit', () => resolve()))
+          }
           log.info('kernel process termination proof', {
             sessionId: request.sessionId,
             projectId: request.projectId,
@@ -1380,7 +1399,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
       ...processTreeOwnership.env,
       ...(ownershipIntent
         ? {
-            ELECTRON_RUN_AS_NODE: '1',
+            ...nodeRuntimeEnvironment(),
             OPEN_SCIENCE_KERNEL_INHERITED_FDS: rpcTokenFileDescriptor ? '1' : '0'
           }
         : {})
@@ -1558,7 +1577,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
       ...(kind === 'repl' && request.workspaceCwd
         ? { OPEN_SCIENCE_NOTEBOOK_WORKSPACE_CWD: request.workspaceCwd }
         : {}),
-      ...(kind === 'repl' ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
+      ...(kind === 'repl' ? { ...nodeRuntimeEnvironment() } : {}),
       ...(rEnvPrefix ? { OPEN_SCIENCE_R_ENV_PREFIX: rEnvPrefix } : {})
     }
 

@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { describe, expect, it, vi } from 'vitest'
 
 import { getAgentFramework } from '../agent-framework'
@@ -895,3 +896,5 @@ it('rejects a persisted remote HTTP provider before projecting credentials into 
   expect(() => owner.resolveProvider(provider)).toThrow(/HTTPS/)
   expect(owner.toProviderView(provider).baseUrl).toBe(provider.baseUrl)
 })
+
+await configureTestElectronHost(await import('electron'))

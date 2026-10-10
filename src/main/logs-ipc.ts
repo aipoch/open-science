@@ -1,4 +1,4 @@
-import { shell } from 'electron'
+import { desktopShellInteraction } from './desktop-interaction'
 
 import { ipcMainHandle } from './ipc-handler-registry'
 
@@ -20,8 +20,8 @@ const createLogsCommandOwner = (): LogsCommandOwner => ({
       return { opened: false, error: 'No log file is available yet.' }
     }
 
-    // shell.openPath resolves to '' on success or an error string on failure.
-    const error = await shell.openPath(status.path)
+    // desktopShellInteraction().openPath resolves to '' on success or an error string on failure.
+    const error = await desktopShellInteraction().openPath(status.path)
 
     return error ? { opened: false, error } : { opened: true }
   },
@@ -34,7 +34,7 @@ const createLogsCommandOwner = (): LogsCommandOwner => ({
 
     // Electron returns void here, so the only observable guarantee is that the file existed
     // immediately before the shell request.
-    shell.showItemInFolder(status.path)
+    await desktopShellInteraction().revealPath(status.path)
 
     return { revealed: true }
   }

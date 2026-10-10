@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, normalize } from 'node:path'
@@ -79,3 +80,5 @@ it('resolves Path.cwd into portable input and output lineage', async () => {
     await rm(storageRoot, { recursive: true, force: true })
   }
 })
+
+configureTestRuntimeMetadata()
