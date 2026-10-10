@@ -9,11 +9,15 @@ import type {
 } from 'electron'
 import type { CallerContext } from '../caller-context'
 import {
+  projectSurfaceIdentityDiagnostic,
   projectSurfaceMeasurementSchema,
   projectSurfaceMeasurementScript
 } from '../run-observation/electron-capture'
 import { createWebmEncoder, type RecordingMask, type WebmSegment } from './webm-encoder'
 import { recordingDeadline } from './driver-deadline'
+import { createLogger } from '../logger'
+
+const log = createLogger('browser-recording')
 
 export type BrowserSurfaceEvent = Readonly<{
   offsetMs: number
@@ -229,16 +233,20 @@ export async function startElectronSurfaceRecording(
       )
     )
     assertSurface()
-    if (
-      outer.documentUrl !== root.url ||
-      inner.documentUrl !== viewer.url ||
-      new URL(outer.sourceUrl).origin !== options.viewerOrigin ||
-      new URL(inner.sourceUrl).origin !== options.projectOrigin ||
-      outer.devicePixelRatio !== inner.devicePixelRatio ||
-      Math.abs(outer.rect.width - inner.viewportWidth) > 1 ||
-      Math.abs(outer.rect.height - inner.viewportHeight) > 1
+    const mismatch = projectSurfaceIdentityDiagnostic(
+      { outer, inner },
+      {
+        rootUrl: root.url,
+        viewerUrl: viewer.url,
+        viewerOrigin: options.viewerOrigin,
+        projectOrigin: options.projectOrigin
+      },
+      false
     )
+    if (mismatch) {
+      log.warn('Project recording measurement rejected', mismatch)
       throw new Error('surface-changed')
+    }
     return { outer, inner }
   }
   contents.on('did-start-navigation', onNavigation)

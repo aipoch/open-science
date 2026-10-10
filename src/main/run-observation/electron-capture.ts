@@ -63,6 +63,57 @@ export const projectSurfaceMeasurementSchema = z
   })
   .strict()
 type Measurement = z.infer<typeof projectSurfaceMeasurementSchema>
+type MeasurementIdentityDetail = Readonly<{
+  identityCheck:
+    | 'root-document'
+    | 'viewer-document'
+    | 'viewer-origin'
+    | 'project-origin'
+    | 'pixel-ratio'
+    | 'viewport-width'
+    | 'viewport-height'
+    | 'project-right'
+    | 'project-bottom'
+  expected?: number
+  actual?: number
+}>
+
+/** Fixed identity labels and bounded geometry only; never persist document URLs or DOM content. */
+export function projectSurfaceIdentityDiagnostic(
+  measurements: { outer: Measurement; inner: Measurement },
+  identity: { rootUrl: string; viewerUrl: string; viewerOrigin: string; projectOrigin: string },
+  checkProjectBounds = true
+): MeasurementIdentityDetail | undefined {
+  const { outer, inner } = measurements
+  const mismatch = (
+    identityCheck: MeasurementIdentityDetail['identityCheck'],
+    expected?: number,
+    actual?: number
+  ): MeasurementIdentityDetail => ({
+    identityCheck,
+    ...(expected !== undefined && Number.isFinite(expected) && Math.abs(expected) <= 10_000_000
+      ? { expected }
+      : {}),
+    ...(actual !== undefined && Number.isFinite(actual) && Math.abs(actual) <= 10_000_000
+      ? { actual }
+      : {})
+  })
+  if (outer.documentUrl !== identity.rootUrl) return mismatch('root-document')
+  if (inner.documentUrl !== identity.viewerUrl) return mismatch('viewer-document')
+  if (originOf(outer.sourceUrl) !== identity.viewerOrigin) return mismatch('viewer-origin')
+  if (originOf(inner.sourceUrl) !== identity.projectOrigin) return mismatch('project-origin')
+  if (inner.devicePixelRatio !== outer.devicePixelRatio)
+    return mismatch('pixel-ratio', outer.devicePixelRatio, inner.devicePixelRatio)
+  if (Math.abs(outer.rect.width - inner.viewportWidth) > 1)
+    return mismatch('viewport-width', outer.rect.width, inner.viewportWidth)
+  if (Math.abs(outer.rect.height - inner.viewportHeight) > 1)
+    return mismatch('viewport-height', outer.rect.height, inner.viewportHeight)
+  if (checkProjectBounds && inner.rect.x + inner.rect.width > outer.rect.width)
+    return mismatch('project-right', outer.rect.width, inner.rect.x + inner.rect.width)
+  if (checkProjectBounds && inner.rect.y + inner.rect.height > outer.rect.height)
+    return mismatch('project-bottom', outer.rect.height, inner.rect.y + inner.rect.height)
+  return undefined
+}
 const measurementReasons = [
   'document-hidden',
   'iframe-ambiguous',
@@ -118,11 +169,15 @@ export type ElectronProjectCaptureDiagnostic = Readonly<{
   measurement?: 'initial' | 'confirmed' | 'after'
   ancestorDepth?: number
   excessPx?: number
-}>
+}> &
+  Partial<MeasurementIdentityDetail>
 class CaptureUnavailable extends Error {
   constructor(
     readonly reason: CaptureReason,
-    readonly detail: { ancestorDepth?: number; excessPx?: number } = {}
+    readonly detail: {
+      ancestorDepth?: number
+      excessPx?: number
+    } & Partial<MeasurementIdentityDetail> = {}
   ) {
     super('Visible project frame is unavailable or changed during capture.')
   }
@@ -359,18 +414,11 @@ export function createElectronProjectCapture(
         const inner = await readMeasurement(viewer, projectOrigin)
         assertCurrent()
         stage = 'measure-identity'
-        if (
-          outer.documentUrl !== root.url ||
-          inner.documentUrl !== viewer.url ||
-          originOf(outer.sourceUrl) !== viewerOrigin ||
-          originOf(inner.sourceUrl) !== projectOrigin ||
-          inner.devicePixelRatio !== outer.devicePixelRatio ||
-          Math.abs(outer.rect.width - inner.viewportWidth) > 1 ||
-          Math.abs(outer.rect.height - inner.viewportHeight) > 1 ||
-          inner.rect.x + inner.rect.width > outer.rect.width ||
-          inner.rect.y + inner.rect.height > outer.rect.height
+        const mismatch = projectSurfaceIdentityDiagnostic(
+          { outer, inner },
+          { rootUrl: root.url, viewerUrl: viewer.url, viewerOrigin, projectOrigin }
         )
-          throw unavailable('measurement-identity')
+        if (mismatch) throw new CaptureUnavailable('measurement-identity', mismatch)
         return { outer, inner }
       }
       assertCurrent()
