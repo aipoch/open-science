@@ -91,6 +91,8 @@ const project = (id: string): Project => ({
 const dependencies = (): ApplicationCommandCompositionDependencies =>
   ({
     researchExecutionProfiles: EMPTY_OWNER,
+    researchRuns: EMPTY_OWNER,
+    researchDemos: EMPTY_OWNER,
     pdfTranslation: EMPTY_OWNER,
     acp: EMPTY_OWNER,
     notebook: EMPTY_OWNER,

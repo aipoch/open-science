@@ -1,36 +1,44 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { IpcMainInvokeEvent } from 'electron'
-import { createElectronCallerContext } from '../caller-context'
-import { registerResearchRunInspectionIpc } from './ipc'
+import { describe, expect, it, vi } from 'vitest'
+import { createCallerContext } from '../caller-context'
+import { createApplicationCommandRouter } from '../application-command-router'
+import { registerResearchRunCommands, researchRunCommandGroup } from './ipc'
 
-const seam = vi.hoisted(() => ({ register: vi.fn(), lease: vi.fn(), caller: vi.fn() }))
-vi.mock('../ipc-handler-registry', () => ({ ipcMainHandle: seam.register }))
-vi.mock('../caller-lifecycle', () => ({ callerLeaseForEvent: seam.lease }))
-vi.mock('../caller-context', async (original) => ({
-  ...(await original<typeof import('../caller-context')>()),
-  callerContextForEvent: seam.caller
-}))
-beforeEach(() => vi.clearAllMocks())
-
-describe('research inspection IPC', () => {
-  it('registers only read inspection and forwards the current caller lease with cancellation', async () => {
+describe('research inspection desktop commands', () => {
+  it('registers only read inspection and preserves the document UUID and revocable caller lease', async () => {
     const inspect = vi.fn(async () => ({ status: 'ready' }))
-    registerResearchRunInspectionIpc({ inspect } as never)
-    expect(seam.register).toHaveBeenCalledOnce()
-    expect(seam.register.mock.calls[0][0]).toBe('research-runs:inspect')
+    const router = createApplicationCommandRouter()
+    const installation = registerResearchRunCommands(router.registrar, { inspect } as never)
+    expect(router.dispatcher.commandNames()).toEqual(['research-runs:inspect'])
     const controller = new AbortController()
     let current = true
-    seam.lease.mockReturnValue({ signal: controller.signal, isCurrent: () => current })
-    seam.caller.mockReturnValue(createElectronCallerContext(42))
-    const event = {} as IpcMainInvokeEvent
+    const identity = 'bb495823-e805-4d3b-ab74-887b01e4467e'
+    const callerContext = createCallerContext({
+      clientId: identity,
+      lifecycleClientId: identity,
+      leaseId: identity,
+      surface: 'electron',
+      location: 'local',
+      principalKind: 'human',
+      actionOrigin: 'human'
+    })
     const request = { projectId: 'project', sourceSessionId: 'source', sourceImportId: 'import' }
-    await seam.register.mock.calls[0][1](event, request)
+    await router.dispatcher.invoke(researchRunCommandGroup.commands[0], {
+      callerContext,
+      callerLease: {
+        leaseId: identity,
+        generation: 1,
+        signal: controller.signal,
+        isCurrent: () => current
+      },
+      args: [request]
+    })
     const [forwarded, caller, signal] = inspect.mock.calls[0] as unknown as [
       unknown,
-      { isAuthorizationCurrent(): boolean },
+      { clientId: string; isAuthorizationCurrent(): boolean },
       AbortSignal
     ]
     expect(forwarded).toBe(request)
+    expect(caller.clientId).toBe(identity)
     expect(signal).toBe(controller.signal)
     expect(caller.isAuthorizationCurrent()).toBe(true)
     current = false
@@ -38,5 +46,8 @@ describe('research inspection IPC', () => {
     current = true
     controller.abort()
     expect(caller.isAuthorizationCurrent()).toBe(false)
+    installation.uninstall()
+    expect(router.dispatcher.commandNames()).toEqual([])
+    router.dispose()
   })
 })

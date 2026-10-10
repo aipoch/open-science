@@ -1860,11 +1860,6 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/notebook/runtime-repair.windows.integration.test.ts',
       'src/main/acp/specialist-switch-recovery.integration.test.ts',
       'src/main/agents/production-completion-handoff.test.ts',
-      'src/main/session-plan/session-plan-turn-outcome.test.ts',
-      'src/main/notebook/runtime-repair.windows.integration.test.ts',
-      'src/main/session-package/research-reproduction.integration.test.ts',
-      'src/main/notebook/research-service.macos.integration.test.ts',
-      'src/main/notebook/local-service.macos.integration.test.ts',
       'src/main/composition/artifact-surfaces.test.ts',
       'src/main/composition/handoff.test.ts',
       'src/main/composition/managed-execution.integration.test.ts',
@@ -1898,6 +1893,7 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/browser-recordings/owner.test.ts',
       'src/main/run-observation/media-collector.test.ts',
       'src/main/project-recordings/recorder.test.ts',
+      'src/main/managed-runtime-views.integration.test.ts',
       'src/main/research-demos/owner.macos.integration.test.ts',
       'src/main/research-demos/ipc.test.ts',
       'src/main/research-demos/owner.test.ts',
@@ -1915,8 +1911,7 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/research-runs/inspection.test.ts',
       'src/main/research-runs/ipc.test.ts',
       'src/main/replay-viewer/desktop-embed.integration.test.ts',
-      'src/main/notebook/managed-execution-service.macos.integration.test.ts',
-      'src/main/managed-runtime-views.integration.test.ts'
+      'src/main/notebook/managed-execution-service.macos.integration.test.ts'
     ])
     expect(sessionPersistence.capabilityOverlays).toEqual([
       'windows_sensitive',

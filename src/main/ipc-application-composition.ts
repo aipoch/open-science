@@ -793,6 +793,8 @@ export const createApplicationModules = async (
   })
   sessionAuthority.reviewerCommandOwnerRef.current = reviewerCommandOwner
   const commandDependencies = composeCommandDependencies({
+    researchRuns: managedExecution.researchRuns,
+    researchDemos: managedExecution.researchDemos,
     researchExecutionProfiles: managedExecution.service,
     localeOwner,
     reportUploadProgress,

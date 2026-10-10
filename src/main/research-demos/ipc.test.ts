@@ -1,22 +1,27 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { createElectronCallerContext } from '../caller-context'
+import { describe, expect, it, vi } from 'vitest'
+import { createCallerContext } from '../caller-context'
+import {
+  createApplicationCommandRouter,
+  type ApplicationInvocation
+} from '../application-command-router'
 import type { ResearchDemoOwner } from './owner'
-import { registerResearchDemoIpc } from './ipc'
+import {
+  createResearchDemoHandlers,
+  registerResearchDemoCommands,
+  researchDemoCommandGroup
+} from './ipc'
 
-const seam = vi.hoisted(() => ({ register: vi.fn(), lease: vi.fn(), caller: vi.fn() }))
-vi.mock('../ipc-handler-registry', () => ({ ipcMainHandle: seam.register }))
-vi.mock('../caller-lifecycle', () => ({ callerLeaseForEvent: seam.lease }))
-vi.mock('../caller-context', async (original) => ({
-  ...(await original<typeof import('../caller-context')>()),
-  callerContextForEvent: seam.caller
-}))
-beforeEach(() => {
-  vi.clearAllMocks()
-  seam.caller.mockReturnValue(createElectronCallerContext(1))
-  seam.lease.mockReturnValue({ isCurrent: () => true, signal: new AbortController().signal })
-})
+type MutableInvocation = {
+  -readonly [K in keyof ApplicationInvocation<readonly unknown[]>]: ApplicationInvocation<
+    readonly unknown[]
+  >[K]
+}
 function setup(): {
   owner: Record<string, ReturnType<typeof vi.fn>>
+  invocation: MutableInvocation
+  controller: AbortController
+  revoke(): void
+  restore(): void
   call: (method: string, request?: unknown) => Promise<unknown>
 } {
   const owner = Object.fromEntries(
@@ -32,25 +37,85 @@ function setup(): {
       'question'
     ].map((method) => [method, vi.fn(async () => ({}))])
   )
-  registerResearchDemoIpc(owner as unknown as ResearchDemoOwner)
+  const controller = new AbortController()
+  let current = true
+  const id = 'd1896421-cafb-49e4-9b3a-1f536c13256e'
+  const invocation: MutableInvocation = {
+    callerContext: createCallerContext({
+      clientId: id,
+      lifecycleClientId: id,
+      leaseId: id,
+      surface: 'electron',
+      location: 'local',
+      principalKind: 'human',
+      actionOrigin: 'human'
+    }),
+    callerLease: {
+      leaseId: id,
+      generation: 1,
+      signal: controller.signal,
+      isCurrent: () => current
+    },
+    args: []
+  }
+  const handlers = createResearchDemoHandlers(owner as unknown as ResearchDemoOwner)
   return {
     owner,
-    call: (method: string, request: unknown = {}) =>
-      seam.register.mock.calls.find(([channel]) => channel === 'research-demos:' + method)![1](
-        {},
-        request
-      )
+    invocation,
+    controller,
+    revoke: () => {
+      current = false
+    },
+    restore: () => {
+      current = true
+    },
+    call: async (method, request = {}) =>
+      handlers[('research-demos:' + method) as keyof typeof handlers]({
+        ...invocation,
+        args: [request]
+      })
   }
 }
-describe('Replay demo desktop admission', () => {
+describe('research demo desktop admission', () => {
   it('exposes only the explicit lifecycle and validates a live local desktop caller', async () => {
     const f = setup()
-    expect(seam.register).toHaveBeenCalledTimes(9)
+    const router = createApplicationCommandRouter()
+    const installation = registerResearchDemoCommands(
+      router.registrar,
+      f.owner as unknown as ResearchDemoOwner
+    )
+    expect(router.dispatcher.commandNames()).toEqual(
+      researchDemoCommandGroup.commands.map((command) => command.name).sort()
+    )
+    installation.uninstall()
+    expect(router.dispatcher.commandNames()).toEqual([])
+    router.dispose()
     await f.call('start', { requestId: 'request' })
-    expect(f.owner.start).toHaveBeenCalledWith({ requestId: 'request' }, expect.any(AbortSignal))
-    seam.caller.mockReturnValue({ ...createElectronCallerContext(1), location: 'remote' })
+    expect(f.owner.start).toHaveBeenCalledWith({ requestId: 'request' }, f.controller.signal)
+    f.invocation.callerContext = createCallerContext({
+      ...f.invocation.callerContext,
+      location: 'remote'
+    })
     await expect(f.call('start')).rejects.toThrow('unauthorized')
     expect(f.owner.start).toHaveBeenCalledTimes(1)
+  })
+  it.each(['web', 'task'] as const)(
+    'rejects the %s surface before reaching execution',
+    async (surface) => {
+      const f = setup()
+      f.invocation.callerContext = createCallerContext({ ...f.invocation.callerContext, surface })
+      await expect(f.call('start')).rejects.toThrow('unauthorized')
+      expect(f.owner.start).not.toHaveBeenCalled()
+    }
+  )
+  it('rejects stale and aborted documents before execution', async () => {
+    const f = setup()
+    f.revoke()
+    await expect(f.call('start')).rejects.toThrow('unauthorized')
+    f.restore()
+    f.controller.abort()
+    await expect(f.call('start')).rejects.toThrow('unauthorized')
+    expect(f.owner.start).not.toHaveBeenCalled()
   })
   it('redacts arbitrary errors and retains only fixed actionable status codes', async () => {
     const f = setup()
@@ -60,21 +125,23 @@ describe('Replay demo desktop admission', () => {
     await expect(f.call('start')).rejects.toThrow(/^research-demo-already-running$/)
   })
   it('revalidates the renderer lease after asynchronous access and for question selection', async () => {
-    let current = true
-    seam.lease.mockReturnValue({ isCurrent: () => current, signal: new AbortController().signal })
     const f = setup()
     f.owner.inspect.mockImplementationOnce(async () => {
-      current = false
+      f.revoke()
       return {}
     })
     await expect(f.call('inspect')).rejects.toThrow('operation-failed')
-    current = true
+    f.restore()
     await f.call('question')
     const caller = (
-      f.owner.question.mock.calls[0] as unknown as [unknown, { isAuthorizationCurrent(): boolean }]
+      f.owner.question.mock.calls[0] as unknown as [
+        unknown,
+        { clientId: string; isAuthorizationCurrent(): boolean }
+      ]
     )[1]
+    expect(caller.clientId).toBe(f.invocation.callerContext.clientId)
     expect(caller.isAuthorizationCurrent()).toBe(true)
-    current = false
+    f.revoke()
     expect(caller.isAuthorizationCurrent()).toBe(false)
   })
 })

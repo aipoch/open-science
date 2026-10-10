@@ -1,3 +1,7 @@
+import { researchRunCommandGroup, registerResearchRunCommands } from './research-runs/ipc'
+import type { ResearchRunInspectionPort } from './research-runs/inspection'
+import { researchDemoCommandGroup, registerResearchDemoCommands } from './research-demos/ipc'
+import type { ResearchDemoOwner } from './research-demos/owner'
 import {
   researchExecutionProfileCommandGroup,
   registerResearchExecutionProfileCommands,
@@ -148,6 +152,8 @@ type ApplicationCommandModuleDescriptor = Readonly<{
 }>
 
 type ApplicationCommandCompositionDependencies = Readonly<{
+  researchRuns: ResearchRunInspectionPort
+  researchDemos: ResearchDemoOwner
   researchExecutionProfiles: ResearchExecutionProfileCommands
   pdfTranslation: PdfTranslationOwner
   sideChat: SideChatCommandOwner
@@ -182,6 +188,8 @@ type ApplicationCommandComposition = Readonly<{
 }>
 
 const ELECTRON_NATIVE_COMMAND_NAMES = Object.freeze([
+  ...researchRunCommandGroup.commands.map(({ name }) => name),
+  ...researchDemoCommandGroup.commands.map(({ name }) => name),
   ...researchExecutionProfileCommandGroup.commands.map(({ name }) => name),
   ...pdfTranslationApplicationCommandGroup.commands.map(({ name }) => name),
   'office-preview:open',
@@ -348,6 +356,12 @@ const createApplicationCommandModules = (
   remoteAccess: RemoteAccessOwner
 ): readonly ApplicationCommandModuleDescriptor[] =>
   Object.freeze([
+    defineApplicationCommandModule([researchRunCommandGroup], (registrar) =>
+      registerResearchRunCommands(registrar, dependencies.researchRuns)
+    ),
+    defineApplicationCommandModule([researchDemoCommandGroup], (registrar) =>
+      registerResearchDemoCommands(registrar, dependencies.researchDemos)
+    ),
     defineApplicationCommandModule([researchExecutionProfileCommandGroup], (registrar) =>
       registerResearchExecutionProfileCommands(registrar, dependencies.researchExecutionProfiles)
     ),
