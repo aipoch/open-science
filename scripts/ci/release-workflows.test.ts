@@ -291,7 +291,14 @@ describe('release and scheduled workflow topology', () => {
     expect(build.needs).toEqual(['setup'])
     expect(build.if).toBe("${{ !cancelled() && needs.setup.result == 'success' }}")
     expect(nightly.jobs.prepare.needs).toEqual(['plan', 'build', 'package-smoke'])
-    expect(release.jobs.publish.needs).toEqual(['build', 'package-smoke', 'notarize-mac'])
+    expect(release.jobs.publish.needs).toEqual([
+      'build',
+      'package-smoke',
+      'notarize-mac',
+      'cli-artifacts'
+    ])
+    expect(release.jobs['cli-artifacts'].needs).toEqual(['build', 'package-smoke', 'notarize-mac'])
+    expect(release.jobs['publish-npm']).toBeUndefined()
     expect(release.jobs['notarize-mac'].needs).toEqual(['build', 'package-smoke'])
   })
 

@@ -246,10 +246,6 @@ Geben Sie beim Melden eines Fehlers bitte Folgendes an:
 - Ihr Betriebssystem und die App-Version.
 - Relevante Protokolle oder Screenshots, sofern verfügbar.
 
-## npm-Paket veröffentlichen
-
-Maintainer sollten die [Anleitung zur Veröffentlichung des npm-Pakets](../npm-release.md) befolgen. npm-Paketversionen verwenden Tags im Format `npm-v*` und werden über den geschützten Workflow `Publish npm package` veröffentlicht.
-
 ## Lizenz
 
 Mit Ihrer Mitwirkung erklären Sie sich damit einverstanden, dass Ihre Beiträge unter der [Apache License 2.0](../../LICENSE) lizenziert werden, die auch für dieses Projekt gilt.
