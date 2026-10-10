@@ -14,12 +14,11 @@ type OutputFormat = (typeof OUTPUT_FORMATS)[number]
 type SequenceType = 'protein' | 'dna' | 'rna'
 type JobStatus = 'QUEUED' | 'RUNNING' | 'FINISHED' | 'ERROR' | 'FAILURE' | 'NOT_FOUND'
 
-const CONTACT_EMAIL_GUIDANCE =
-  'Set a contact email in Settings → Privacy → Share contact email with research data services.'
+const CONTACT_EMAIL_GUIDANCE = 'Provide a contact email in credentials.ncbiEmail.'
 const LIFECYCLE_GUIDANCE =
   'EMBL-EBI stores results for a limited provider-controlled period (documented as up to one week); this is not an app-owned deletion guarantee. ' +
   'Keep the job_id to resume after restart. This connector adds no job registry, result cache or automatic resubmission, and cancellation/app exit only stop local requests. ' +
-  'The sequence is sent to EMBL-EBI, and the host may retain tool inputs and returned alignment content in conversation or Notebook persistence. ' +
+  'The sequence is sent to EMBL-EBI. ' +
   'Respect EMBL-EBI fair-use guidance: submit no more than 30 jobs in a batch and wait for processing/results before submitting more; this connector does not enforce cross-call throttling.'
 
 const redactClustalMessage = (message: string, ctx: ToolContext): string => {
@@ -183,8 +182,7 @@ const submitClustal = async (ctx: ToolContext, params: URLSearchParams): Promise
         redirect: 'error',
         headers: {
           accept: 'text/plain, */*',
-          'content-type': 'application/x-www-form-urlencoded',
-          'user-agent': 'Open-Science/1.0 (+https://github.com/aipoch/open-science)'
+          'content-type': 'application/x-www-form-urlencoded'
         },
         body: params.toString(),
         signal
@@ -263,8 +261,7 @@ export const GENOMES_CLUSTAL_TOOLS: ToolDescriptor[] = [
     required: ['sequence', 'stype'],
     returns:
       '{job_id, status:"QUEUED", ready:false, sequence_count, sequence_type, requested_format, poll_after_seconds}. Retain job_id to resume after restart; submission is not completion.',
-    example:
-      'const result = await host.mcp("genomes", "clustalo_submit", {"sequence": ">human\\nMKT\\n>mouse\\nMRT\\n>rat\\nMRT\\n", "stype": "protein"})',
+    exampleArgs: { sequence: '>human\nMKT\n>mouse\nMRT\n>rat\nMRT\n', stype: 'protein' },
     totalTimeoutMs: HTTP_TIMEOUT_MS + 5_000,
     maxResponseBytes: MAX_STATUS_BYTES,
     run: async (ctx, args) => {
@@ -311,8 +308,7 @@ export const GENOMES_CLUSTAL_TOOLS: ToolDescriptor[] = [
     },
     required: ['job_id'],
     returns: '{job_id,status,ready,retry_after_seconds?}',
-    example:
-      'const result = await host.mcp("genomes", "clustalo_status", {"job_id":"clustalo-I20240923-000000-0000-0000000-p1m"})',
+    exampleArgs: { job_id: 'clustalo-I20240923-000000-0000-0000000-p1m' },
     totalTimeoutMs: HTTP_TIMEOUT_MS,
     maxResponseBytes: MAX_STATUS_BYTES,
     run: async (ctx, args) => {
@@ -353,8 +349,7 @@ export const GENOMES_CLUSTAL_TOOLS: ToolDescriptor[] = [
     required: ['job_id', 'outfmt'],
     returns:
       '{job_id,status,ready,format,filename?,size_bytes?,alignment?,retry_after_seconds?} — alignment is the verbatim output file content when ready:true.',
-    example:
-      'const result = await host.mcp("genomes", "clustalo_results", {"job_id":"clustalo-I20240923-000000-0000-0000000-p1m", "outfmt":"clustal_num"})',
+    exampleArgs: { job_id: 'clustalo-I20240923-000000-0000-0000000-p1m', outfmt: 'clustal_num' },
     totalTimeoutMs: HTTP_TIMEOUT_MS,
     maxResponseBytes: MAX_RESULT_BYTES,
     run: async (ctx, args) => {

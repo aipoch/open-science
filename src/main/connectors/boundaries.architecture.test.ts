@@ -38,6 +38,16 @@ it('consumes Connector packages only through exports and keeps packages independ
       )
     }
   })
+  // Only provider distributions and MCP may depend on core; neither may depend on the other.
+  for (const owner of packages) {
+    const declared = { ...owner.manifest.dependencies, ...owner.manifest.peerDependencies }
+    for (const dependency of packages) {
+      if (dependency.manifest.name in declared) {
+        expect(owner.manifest.name).not.toBe('@aipoch/connector-core')
+        expect(dependency.manifest.name).toBe('@aipoch/connector-core')
+      }
+    }
+  }
   expect([...packages[0].entries]).toEqual([
     '@aipoch/connector-core',
     '@aipoch/connector-core/url-admission'
@@ -86,7 +96,9 @@ it('consumes Connector packages only through exports and keeps packages independ
         const declared = {
           ...owner.manifest.dependencies,
           ...owner.manifest.peerDependencies,
-          ...owner.manifest.devDependencies
+          ...(!path.includes('/src/') || /(?:\.test\.[cm]?[jt]sx?$|\/test-helpers\/)/.test(path)
+            ? owner.manifest.devDependencies
+            : {})
         }
         if (!(dependency in declared))
           violations.push(`${path} -> undeclared dependency ${specifier}`)

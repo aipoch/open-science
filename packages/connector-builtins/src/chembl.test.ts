@@ -38,7 +38,7 @@ describe('chembl / registry', () => {
     for (const t of CHEMBL_TOOLS) {
       expect(t.connector).toBe('chembl')
       expect(t.returns).toBeTruthy()
-      expect(t.example).toContain('host.mcp("chembl"')
+      expect(t.exampleArgs).toBeDefined()
     }
   })
 })

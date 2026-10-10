@@ -18,13 +18,13 @@ const MAX_SEQUENCE_LENGTH = 10_000
 const MAX_SEQUENCE_COUNT = 1_000
 const MAX_SUBMISSION_BYTES = 4 * 1024 * 1024
 const CONTACT_EMAIL_GUIDANCE =
-  'Set a contact email in Settings → Credentials → Literature access. This email is sent to EMBL-EBI when submitting a job.'
+  'Provide a contact email in credentials.ncbiEmail. This email is sent to EMBL-EBI when submitting a job.'
 const SUBMISSION_UNKNOWN =
   'InterProScan submission outcome is uncertain; the job may already exist, but no usable job_id was received. Do not resubmit automatically.'
 const LIFECYCLE_GUIDANCE =
   'Keep the exact job_id to resume after restart. This connector adds no job registry, result cache or background polling. ' +
   'Cancellation, app exit and uninstall stop local requests only; this connector cannot cancel or delete remote jobs. Result expiry is controlled by EMBL-EBI. ' +
-  'Sequences and contact email are sent to EMBL-EBI; tool inputs and outputs may be retained in conversation or Notebook persistence. ' +
+  'Sequences and contact email are sent to EMBL-EBI. ' +
   'Submit no more than 30 jobs in a batch and wait for processing/results before submitting more; cross-call throttling is not enforced. ' +
   'The existing results tool returns at most 2 MiB of TSV and rejects larger reports.'
 const submitArgs = z
@@ -146,8 +146,7 @@ async function submitJob(ctx: ToolContext, params: URLSearchParams): Promise<str
         redirect: 'error',
         headers: {
           accept: 'text/plain',
-          'content-type': 'application/x-www-form-urlencoded',
-          'user-agent': 'Open-Science/1.0 (+https://github.com/aipoch/open-science)'
+          'content-type': 'application/x-www-form-urlencoded'
         },
         body,
         signal
@@ -270,8 +269,7 @@ export const INTERPROSCAN_TOOLS: ToolDescriptor[] = [
     required: ['sequence'],
     returns:
       '{job_id,status:"SUBMITTED",ready:false,sequence_count,poll_after_seconds:10}. Submission is not completion; retain job_id and call status/results explicitly.',
-    example:
-      'const result = await host.mcp("interproscan", "submit", {"sequence":">query\\nMKTIIALSYIFCLVFADYKDDDDK"})',
+    exampleArgs: { sequence: '>query\nMKTIIALSYIFCLVFADYKDDDDK' },
     totalTimeoutMs: HTTP_TIMEOUT_MS + 5_000,
     maxResponseBytes: MAX_RECEIPT_BYTES,
     run: async (ctx, args) => {
@@ -311,8 +309,7 @@ export const INTERPROSCAN_TOOLS: ToolDescriptor[] = [
     required: ['job_id'],
     returns:
       '{job_id,status:"PENDING"|"QUEUED"|"RUNNING"|"FINISHED"|"ERROR"|"FAILURE"|"NOT_FOUND",ready,poll_after_seconds:number|null}. ready is true only for FINISHED.',
-    example:
-      'const result = await host.mcp("interproscan", "status", {"job_id":"iprscan5-R20260922-123456-0123-12345678-p1m"})',
+    exampleArgs: { job_id: 'iprscan5-R20260922-123456-0123-12345678-p1m' },
     maxResponseBytes: 1024,
     totalTimeoutMs: 30_000,
     run: async (ctx, args) => {
@@ -331,7 +328,7 @@ export const INTERPROSCAN_TOOLS: ToolDescriptor[] = [
     credentialKeys: ['ncbiEmail'],
     id: 'results',
     description:
-      'Retrieve the complete InterProScan TSV report for a job, capped at 2 MiB (oversized reports fail, never truncate). Checks status once first, then fetches TSV only for FINISHED. No retries, polling, or resubmission. Preserve the report in a Notebook artifact promptly because provider results expire. TSV contains one row per signature match; coordinates are 1-based inclusive and scores are application-specific. Optional columns hold InterPro, GO and pathway annotations. An empty TSV after FINISHED means no reported matches, not evidence that the protein lacks function.',
+      'Retrieve the complete InterProScan TSV report for a job, capped at 2 MiB (oversized reports fail, never truncate). Checks status once first, then fetches TSV only for FINISHED. No retries, polling, or resubmission. Preserve the report promptly because provider results expire. TSV contains one row per signature match; coordinates are 1-based inclusive and scores are application-specific. Optional columns hold InterPro, GO and pathway annotations. An empty TSV after FINISHED means no reported matches, not evidence that the protein lacks function.',
     input: {
       type: 'object',
       additionalProperties: false,
@@ -341,8 +338,7 @@ export const INTERPROSCAN_TOOLS: ToolDescriptor[] = [
     required: ['job_id'],
     returns:
       '{job_id,status,ready:false} when not FINISHED, otherwise {job_id,status:"FINISHED",ready:true,format:"tsv",n_matches,data:string}. data is the complete verbatim TSV (no header); n_matches counts rows, not unique domains or proteins. Failure/expired statuses have no data or match count.',
-    example:
-      'const result = await host.mcp("interproscan", "results", {"job_id":"iprscan5-R20260922-123456-0123-12345678-p1m"})',
+    exampleArgs: { job_id: 'iprscan5-R20260922-123456-0123-12345678-p1m' },
     maxResponseBytes: MAX_RESULT_BYTES,
     totalTimeoutMs: 60_000,
     run: async (ctx, args) => {

@@ -71,7 +71,8 @@ try {
     `
 import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
-import { realpathSync } from 'node:fs'
+import { realpathSync, readFileSync } from 'node:fs'
+import { link, rm } from 'node:fs/promises'
 import { ConnectorArgumentsError, ConnectorHttpError, ParserEngine, createConnectorRegistry } from '@aipoch/connector-core'
 import type { ConnectorCredentials, ToolDescriptor } from '@aipoch/connector-core'
 import { PUBMED_TOOLS } from '@aipoch/connector-builtins/pubmed'
@@ -133,7 +134,60 @@ assert.equal(calls, 2)
 assert.equal(require('@aipoch/connector-mcp-client').McpClientManager, McpClientManager)
 assert.equal(isSecureRemoteUrl('http://example.org/mcp'), false)
 assert.equal(normalizeLoopbackOAuthRedirectUri('http://127.0.0.1/oauth/callback'), 'http://127.0.0.1/oauth/callback')
-assert.ok(createEncoriTools(async () => { throw new Error('No filesystem in this consumer') }).length > 0)
+// Exercise the injected publication contract through a real provider operation.
+const rawResponse = 'geneName\\tcellType\\nPDCD4\\tHeLa\\n'
+let publications = 0
+const encori = createEncoriTools(async (destination, write, signal) => {
+  const temporary = destination + '.tmp'
+  try {
+    await write(temporary)
+    signal?.throwIfAborted()
+    await link(temporary, destination)
+    publications++
+  } finally { await rm(temporary, { force: true }) }
+})
+const encoriTool = encori.find(tool => tool.id === 'query_mirna_targets')!
+const encoriArgs = { ...encoriTool.exampleArgs, output_dir: process.cwd() }
+createConnectorRegistry(encori).validateToolArguments(encoriTool, encoriArgs)
+const receipt = await new ParserEngine({ fetchImpl: async () => new Response(rawResponse) }).call(encoriTool, encoriArgs, {}) as { raw_response_path: string; total_records: number }
+assert.ok(publications > 0)
+assert.equal(receipt.total_records, 1)
+assert.equal(readFileSync(receipt.raw_response_path, 'utf8'), rawResponse)
+
+// Use the actual SDK transport and client, with a deterministic HTTP peer.
+const requests: string[] = []
+const manager = new McpClientManager({
+  clientInfo: { name: 'independent-consumer', version: '1.0.0' },
+  fetchImpl: async (_url, init) => {
+    if (init?.method !== 'POST') return new Response(null, { status: 405 })
+    const request = JSON.parse(String(init.body))
+    requests.push(request.method)
+    if (!('id' in request)) return new Response(null, { status: 202 })
+    let result: unknown
+    switch (request.method) {
+      case 'initialize':
+        assert.equal(request.params.clientInfo.name, 'independent-consumer')
+        result = { protocolVersion: request.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: 'fixture', version: '1' } }
+        break
+      case 'tools/list':
+        result = request.params?.cursor === 'second' ? { tools: [] } : { tools: [{ name: 'echo', inputSchema: { type: 'object' } }], nextCursor: 'second' }
+        break
+      case 'tools/call':
+        assert.equal(request.params.name, 'echo')
+        result = { content: [{ type: 'text', text: JSON.stringify(request.params.arguments) }] }
+        break
+      default: throw new Error('Unexpected MCP method: ' + request.method)
+    }
+    return Response.json({ jsonrpc: '2.0', id: request.id, result })
+  }
+})
+const server = { id: 'fixture', name: 'fixture', transport: 'streamable_http' as const, url: 'https://fixture.example/mcp' }
+try {
+  assert.deepEqual((await manager.listTools(server)).map(tool => tool.name), ['echo'])
+  assert.deepEqual(await manager.call(server, 'echo', { value: 42 }), { value: 42 })
+  assert.equal(requests.filter(method => method === 'initialize').length, 1)
+  assert.equal(requests.filter(method => method === 'tools/list').length, 2)
+} finally { await manager.closeAll() }
 assert.ok(buildTransport({ id: 'custom', name: 'custom', transport: 'stdio', command: 'unused' }))
 const molecule = await renderMoleculeStructure({ smiles: 'CCO' })
 assert.ok(molecule)
@@ -149,14 +203,17 @@ console.log('Independent Connector tarballs: types, exports, CJS/ESM identity an
       'NodeNext',
       '--target',
       'ES2022',
-      '--strict',
-      '--skipLibCheck'
+      '--strict'
     ],
     consumer
   )
   // Remove the copied build/test trees before consuming, so no sibling source is available.
   for (const name of ['connector-core', 'connector-builtins', 'connector-mcp-client'])
     rmSync(join(temporary, name), { recursive: true })
+  npmRun(
+    ['prune', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund', ...offline],
+    consumer
+  )
   run(process.execPath, ['consumer.mjs'], consumer)
 } finally {
   rmSync(temporary, { recursive: true, force: true })

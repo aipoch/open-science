@@ -161,8 +161,7 @@ export const GENES_GPROFILER_TOOLS: ToolDescriptor[] = [
     required: ['organism'],
     returns:
       '{organism, display_name, scientific_name, taxonomy_id, version, gprofiler_version, sources:[{id,name,version}], nonnumeric_namespaces, numeric_namespaces}',
-    example:
-      'const result = await host.mcp("genes", "list_enrichment_sources", {"organism": "hsapiens"})',
+    exampleArgs: { organism: 'hsapiens' },
     run: async (ctx, args) => {
       const organism = organismId(args.organism)
       const organismParams = new URLSearchParams({ organism, extra_data: 'true' })
@@ -234,8 +233,12 @@ export const GENES_GPROFILER_TOOLS: ToolDescriptor[] = [
     required: ['genes', 'organism'],
     returns:
       '{tool, organism, n_input, n_mapped (mapped input identifiers), n_unmapped, input_genes, mapped_genes, unmapped_genes, ambiguous_genes, duplicate_genes, background_size (submitted background length), domain_scope, sources (requested source IDs; [] means all available sources), correction_method, n_results, results:[{source,native,name,p_value,significant,intersection_size,term_size,query_size,effective_domain_size,precision,recall,intersections}], meta (actual sources are in meta.query_metadata.sources)}',
-    example:
-      'const result = await host.mcp("genes", "enrich_gene_set", {"genes": ["TP53", "EGFR", "BRCA1"], "organism": "hsapiens", "sources": ["GO:BP", "REAC"], "correction_method": "fdr"})',
+    exampleArgs: {
+      genes: ['TP53', 'EGFR', 'BRCA1'],
+      organism: 'hsapiens',
+      sources: ['GO:BP', 'REAC'],
+      correction_method: 'fdr'
+    },
     run: async (ctx: ToolContext, args) => {
       const genes = cleanList(args.genes, 'genes', 5000, { allowDuplicates: true })
       const background = optionalList(args.background_genes, 'background_genes', 20000)

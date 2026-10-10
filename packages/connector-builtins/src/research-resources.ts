@@ -223,8 +223,7 @@ export const RESEARCH_RESOURCES_TOOLS: ToolDescriptor[] = [
     },
     returns:
       '`{ hit_count, n_returned, truncated, records: [ { id, number, title, agencyCode, agency, oppStatus, openDate, closeDate, docType, cfdaList } ], facets? }` — records are the raw search2 hits (verbatim, sorted by oppNum). `truncated` is true when `hit_count` exceeds the returned count. `facets` (when include_facets) holds oppStatusOptions/agencies/eligibilities/fundingCategories/fundingInstruments/dateRangeOptions value counts. With `count_only`, records is [] and n_returned 0.',
-    example:
-      'const result = await host.mcp("research-resources", "search_grants", {"keyword": "cancer", "agencies": ["HHS-NIH11"], "max_records": 25})',
+    exampleArgs: { keyword: 'cancer', agencies: ['HHS-NIH11'], max_records: 25 },
     run: async (ctx, a) => {
       const statuses = pipeJoin(a.opportunity_statuses) || DEFAULT_STATUSES
       for (const s of statuses.split('|')) {
@@ -288,8 +287,7 @@ export const RESEARCH_RESOURCES_TOOLS: ToolDescriptor[] = [
     required: ['query'],
     returns:
       'Walk mode (page omitted): `{ query, total_elements, retrieved, unique_ab_ids, complete, truncated_at_max_records, anonymous_limit_hit, items: [ { abId, abName, abTarget, catalogNum, vendorName, cloneId, sourceOrganism, targetSpecies, ... } ] }`. `total_elements` counts index rows (not unique antibodies). Single-page mode (page given): `{ query, page, total_elements, retrieved, complete, items }`.',
-    example:
-      'const result = await host.mcp("research-resources", "search_antibodies", {"query": "CD4", "max_records": 100})',
+    exampleArgs: { query: 'CD4', max_records: 100 },
     run: async (ctx, a) => {
       const q = String(a.query ?? '').trim()
       if (!q) throw new Error('query must be non-empty')
@@ -344,8 +342,7 @@ export const RESEARCH_RESOURCES_TOOLS: ToolDescriptor[] = [
     required: ['antibody_id'],
     returns:
       '`{ ab_id (numeric), rrid ("AB_<id>"), record_count, records: [ full antibody records ] }`. `record_count` is 0 (with records []) when the accession has no records.',
-    example:
-      'const result = await host.mcp("research-resources", "get_antibody", {"antibody_id": "RRID:AB_3643095"})',
+    exampleArgs: { antibody_id: 'RRID:AB_3643095' },
     url: (a) => `${AB_BASE}/antibodies/${parseAbId(a.antibody_id)}`,
     parse: (raw, a) => {
       const num = parseAbId(a.antibody_id)
@@ -376,8 +373,7 @@ export const RESEARCH_RESOURCES_TOOLS: ToolDescriptor[] = [
     required: ['catalog_number'],
     returns:
       '`{ catalog_num, vendor, match_count, search_total_elements, matches: [ full antibody records ] }`. `search_total_elements` is the underlying full-text hit count; `matches` are the exact catalog-number matches.',
-    example:
-      'const result = await host.mcp("research-resources", "find_antibodies_by_catalog", {"catalog_number": "ab32572"})',
+    exampleArgs: { catalog_number: 'ab32572' },
     run: async (ctx, a) => {
       const catalog = String(a.catalog_number ?? '').trim()
       if (!catalog) throw new Error('catalog_number must be non-empty')
@@ -423,8 +419,7 @@ export const RESEARCH_RESOURCES_TOOLS: ToolDescriptor[] = [
     input: { type: 'object', properties: {} },
     returns:
       '`{ total (registry size), lastupdate (YYYY-MM-DD) }` — the upstream /api/datainfo payload.',
-    example:
-      'const result = await host.mcp("research-resources", "get_antibody_registry_stats", {})',
+    exampleArgs: {},
     url: () => `${AB_BASE}/datainfo`,
     parse: (raw) => raw
   }

@@ -175,7 +175,7 @@ export const BIOMART_TOOLS: ToolDescriptor[] = [
     input: { type: 'object', properties: {} },
     returns:
       'CSV string with header `name,display_name,description` — one row per mart (e.g. `ENSEMBL_MART_ENSEMBL,Ensembl Genes 116,...`). Header-only when the registry lists no marts.',
-    example: 'const result = await host.mcp("biomart", "list_marts", {})',
+    exampleArgs: {},
     format: 'text',
     url: () => `${MARTSERVICE}?type=registry`,
     parse: (raw) => {
@@ -206,8 +206,7 @@ export const BIOMART_TOOLS: ToolDescriptor[] = [
     required: ['mart'],
     returns:
       'CSV string with header `name,display_name,description` — one row per dataset (`description` is the assembly/version, e.g. `GRCh38.p14`).',
-    example:
-      'const result = await host.mcp("biomart", "list_datasets", {"mart": "ENSEMBL_MART_ENSEMBL"})',
+    exampleArgs: { mart: 'ENSEMBL_MART_ENSEMBL' },
     format: 'text',
     url: (a) => `${MARTSERVICE}?type=datasets&mart=${encodeURIComponent(String(a.mart))}`,
     parse: (raw) => {
@@ -231,8 +230,7 @@ export const BIOMART_TOOLS: ToolDescriptor[] = [
     required: ['mart', 'dataset'],
     returns:
       'CSV string with header `name,display_name,description` — the subset of the dataset’s attributes that are commonly used identifiers/annotations.',
-    example:
-      'const result = await host.mcp("biomart", "list_common_attributes", {"mart": "ENSEMBL_MART_ENSEMBL", "dataset": "hsapiens_gene_ensembl"})',
+    exampleArgs: { mart: 'ENSEMBL_MART_ENSEMBL', dataset: 'hsapiens_gene_ensembl' },
     format: 'text',
     url: (a) => `${MARTSERVICE}?type=attributes&dataset=${encodeURIComponent(String(a.dataset))}`,
     parse: (raw) => {
@@ -258,8 +256,7 @@ export const BIOMART_TOOLS: ToolDescriptor[] = [
     required: ['mart', 'dataset'],
     returns:
       'CSV string with header `name,display_name,description` — every attribute except the homologs page and microarray-probe attributes.',
-    example:
-      'const result = await host.mcp("biomart", "list_all_attributes", {"mart": "ENSEMBL_MART_ENSEMBL", "dataset": "hsapiens_gene_ensembl"})',
+    exampleArgs: { mart: 'ENSEMBL_MART_ENSEMBL', dataset: 'hsapiens_gene_ensembl' },
     format: 'text',
     url: (a) => `${MARTSERVICE}?type=attributes&dataset=${encodeURIComponent(String(a.dataset))}`,
     parse: (raw) => {
@@ -289,8 +286,7 @@ export const BIOMART_TOOLS: ToolDescriptor[] = [
     required: ['mart', 'dataset'],
     returns:
       'CSV string with header `name,description` — one row per filter name and its human-readable label.',
-    example:
-      'const result = await host.mcp("biomart", "list_filters", {"mart": "ENSEMBL_MART_ENSEMBL", "dataset": "hsapiens_gene_ensembl"})',
+    exampleArgs: { mart: 'ENSEMBL_MART_ENSEMBL', dataset: 'hsapiens_gene_ensembl' },
     format: 'text',
     url: (a) => `${MARTSERVICE}?type=filters&dataset=${encodeURIComponent(String(a.dataset))}`,
     parse: (raw) => {
@@ -317,8 +313,12 @@ export const BIOMART_TOOLS: ToolDescriptor[] = [
     required: ['mart', 'dataset', 'attributes'],
     returns:
       'CSV string whose header row is the requested attributes, followed by one row per matching record (in BioMart order). Header-only when nothing matches.',
-    example:
-      'const result = await host.mcp("biomart", "get_data", {"mart": "ENSEMBL_MART_ENSEMBL", "dataset": "hsapiens_gene_ensembl", "attributes": ["ensembl_gene_id", "external_gene_name", "chromosome_name"], "filters": {"chromosome_name": "Y", "biotype": "protein_coding"}})',
+    exampleArgs: {
+      mart: 'ENSEMBL_MART_ENSEMBL',
+      dataset: 'hsapiens_gene_ensembl',
+      attributes: ['ensembl_gene_id', 'external_gene_name', 'chromosome_name'],
+      filters: { chromosome_name: 'Y', biotype: 'protein_coding' }
+    },
     format: 'text',
     url: (a) =>
       queryUrl(
@@ -352,8 +352,13 @@ export const BIOMART_TOOLS: ToolDescriptor[] = [
     required: ['mart', 'dataset', 'from_attr', 'to_attr', 'target'],
     returns:
       'The translated identifier as a string, or a `No translation found ...` message string when the source id has no mapping.',
-    example:
-      'const result = await host.mcp("biomart", "get_translation", {"mart": "ENSEMBL_MART_ENSEMBL", "dataset": "hsapiens_gene_ensembl", "from_attr": "hgnc_symbol", "to_attr": "ensembl_gene_id", "target": "TP53"})',
+    exampleArgs: {
+      mart: 'ENSEMBL_MART_ENSEMBL',
+      dataset: 'hsapiens_gene_ensembl',
+      from_attr: 'hgnc_symbol',
+      to_attr: 'ensembl_gene_id',
+      target: 'TP53'
+    },
     format: 'text',
     url: (a) =>
       queryUrl(String(a.dataset), [String(a.from_attr), String(a.to_attr)], {
@@ -389,8 +394,13 @@ export const BIOMART_TOOLS: ToolDescriptor[] = [
     required: ['mart', 'dataset', 'from_attr', 'to_attr', 'targets'],
     returns:
       '`{ "translations": { <input>: <translated> }, "not_found": [str], "found_count": int, "not_found_count": int }` — `translations` maps each resolved input id to its target id.',
-    example:
-      'const result = await host.mcp("biomart", "batch_translate", {"mart": "ENSEMBL_MART_ENSEMBL", "dataset": "hsapiens_gene_ensembl", "from_attr": "hgnc_symbol", "to_attr": "ensembl_gene_id", "targets": ["TP53", "BRCA1", "BRCA2"]})',
+    exampleArgs: {
+      mart: 'ENSEMBL_MART_ENSEMBL',
+      dataset: 'hsapiens_gene_ensembl',
+      from_attr: 'hgnc_symbol',
+      to_attr: 'ensembl_gene_id',
+      targets: ['TP53', 'BRCA1', 'BRCA2']
+    },
     format: 'text',
     url: (a) => {
       const targets = (a.targets as unknown[]).map(String)

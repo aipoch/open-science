@@ -89,8 +89,7 @@ export const ZENODO_TOOLS: ToolDescriptor[] = [
     },
     returns:
       '`{ records: [{ record_id, concept_record_id, doi, concept_doi, title, creators, publication_date, resource_type, version, access_right, license, record_url }], page, page_size, count, total, total_relation, next_page, pagination_limited }`. IDs are strings; optional metadata is null when absent. total_relation is eq (exact) or gte (lower bound). next_page is null when no next link is supplied or the next page would exceed the search window. pagination_limited is true when a supplied next page exceeds that window; this does not mean all matches were retrieved. No automatic page walking or cached results.',
-    example:
-      'const result = await host.mcp("zenodo", "search_records", {"query": "title:climate", "page_size": 5})',
+    exampleArgs: { query: 'title:climate', page_size: 5 },
     url: (args) => {
       if ((Number(args.page ?? 1) - 1) * Number(args.page_size ?? 10) >= MAX_SEARCH_RESULTS) {
         throw new Error(
@@ -150,7 +149,7 @@ export const ZENODO_TOOLS: ToolDescriptor[] = [
     },
     returns:
       '`{ requested_record_id, record: { ...search record fields, description_html, keywords, related_identifiers, communities, created, modified }, files: [{ key, size_bytes, checksum, download_url }] | null }`. Missing file inventory is null; an explicitly empty inventory is []. Optional file metadata is null when absent. HTTP, network and malformed-response errors propagate; a missing record is not an empty successful result.',
-    example: 'const result = await host.mcp("zenodo", "get_record", {"record_id": "8435696"})',
+    exampleArgs: { record_id: '8435696' },
     url: (args) => `${BASE}/${args.record_id}`,
     parse: (raw, args) => {
       const payload = object(raw)

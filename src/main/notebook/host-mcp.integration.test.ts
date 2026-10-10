@@ -6,7 +6,6 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ConnectorService } from '../connectors/service'
 import { ParserEngine } from '@aipoch/connector-core'
-import { CLINICAL_TRIALS_TOOLS } from '@aipoch/connector-builtins/clinical-trials'
 import { renderSkillDoc } from '../connectors/skill-doc'
 import { NotebookKernelExecutor } from './kernel-executor'
 import { NotebookLocalRpcServer } from './local-rpc-server'
@@ -162,10 +161,14 @@ describe('clinical trial host.mcp regression', () => {
     )
     const exec = makeExecutor()
     try {
-      const descriptor = CLINICAL_TRIALS_TOOLS.find((tool) => tool.id === 'search_by_eligibility')!
+      const skill = renderSkillDoc('clinical-trials')
+      const example = skill
+        .split('### search_by_eligibility\n')[1]
+        ?.match(/\*\*Example:\*\* `([^`]+)`/)?.[1]
+      expect(example).toBeDefined()
       const execution = await exec.execute(
         baseRequest({
-          code: `${descriptor.example};
+          code: `${example};
             const next = await host.mcp('clinical-trials', 'search_by_eligibility', {
               condition: 'diabetes', min_age: '65 Years', sex: 'FEMALE',
               page_token: result.next_page_token

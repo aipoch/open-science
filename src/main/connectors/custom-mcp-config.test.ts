@@ -22,7 +22,10 @@ describe('toCustomMcpConfig', () => {
     expect(toCustomMcpConfig(server)).toEqual({
       id: 'srv-1',
       name: 'my-server',
-      configurationFingerprint: expect.any(String),
+      persistenceGuard: {
+        configurationFingerprint: expect.any(String),
+        oauthClientSecretRef: undefined
+      },
       transport: 'stdio',
       command: 'npx',
       args: ['-y', 'some-mcp-server'],
@@ -58,7 +61,10 @@ describe('toCustomMcpConfig', () => {
     expect(toCustomMcpConfig(server)).toEqual({
       id: 'srv-remote',
       name: 'remote-server',
-      configurationFingerprint: expect.any(String),
+      persistenceGuard: {
+        configurationFingerprint: expect.any(String),
+        oauthClientSecretRef: undefined
+      },
       transport: 'streamable_http',
       command: '',
       args: undefined,
@@ -89,8 +95,10 @@ describe('toCustomMcpConfig', () => {
     expect(toCustomMcpConfig(server)).toEqual({
       id: 'srv-oauth',
       name: 'oauth-server',
-      configurationFingerprint: expect.any(String),
-      oauthClientSecretRef: 'enc:registered-secret',
+      persistenceGuard: {
+        configurationFingerprint: expect.any(String),
+        oauthClientSecretRef: 'enc:registered-secret'
+      },
       transport: 'streamable_http',
       command: '',
       args: undefined,

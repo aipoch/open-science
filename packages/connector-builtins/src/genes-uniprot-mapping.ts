@@ -104,8 +104,12 @@ export const GENES_UNIPROT_MAPPING_TOOLS: ToolDescriptor[] = [
     required: ['from_db', 'to_db', 'ids'],
     returns:
       '{job_id,from_db,to_db,taxon_id:number|null,n_input,n_submitted,n_duplicates_removed}. Submission is not completion; retain the exact job_id to resume after a restart.',
-    example:
-      'const result = await host.mcp("genes", "submit_uniprot_id_mapping", {"from_db":"Gene_Name","to_db":"UniProtKB","ids":["TP53","BRCA1"],"taxon_id":9606})',
+    exampleArgs: {
+      from_db: 'Gene_Name',
+      to_db: 'UniProtKB',
+      ids: ['TP53', 'BRCA1'],
+      taxon_id: 9606
+    },
     run: async (ctx, args) => {
       const a = submitArgs.parse(args)
       const ids = [...new Set(a.ids)]
@@ -164,8 +168,7 @@ export const GENES_UNIPROT_MAPPING_TOOLS: ToolDescriptor[] = [
     required: ['job_id'],
     returns:
       '{job_id,status:"NEW"|"RUNNING"|"FINISHED"|"FAILED",ready:boolean,messages:string[]}. Upstream errors are preserved in messages as "[code] message"; FAILED may have no details. A completed status response may redirect to a result page; its rows are not returned here. Retrieve results separately to collect mapping pairs and failed_ids.',
-    example:
-      'const result = await host.mcp("genes", "get_uniprot_id_mapping_status", {"job_id":"ecuuh9h0Md"})',
+    exampleArgs: { job_id: 'ecuuh9h0Md' },
     run: async (ctx, args) => {
       const a = statusArgs.parse(args)
       const { body: raw, status: httpStatus } = await ctx.fetchJsonWithHeaders(
@@ -231,8 +234,7 @@ export const GENES_UNIPROT_MAPPING_TOOLS: ToolDescriptor[] = [
     required: ['job_id'],
     returns:
       '{job_id,page_size,n_records,total_results:number|null,has_more,next_cursor:string|null,records:[{from,to}],failed_ids:string[],one_to_many_in_page:[{from,to:string[]}]}. total_results is the upstream count of mapping rows, not matched input IDs; null if absent. failed_ids contains only upstream-reported misses on this page (empty if omitted). one_to_many_in_page lists sources with multiple distinct targets on this page only; an empty list does not establish one-to-one mapping across the job. No automatic traversal or truncation.',
-    example:
-      'const result = await host.mcp("genes", "get_uniprot_id_mapping_results", {"job_id":"ecuuh9h0Md","page_size":100})',
+    exampleArgs: { job_id: 'ecuuh9h0Md', page_size: 100 },
     run: async (ctx, args) => {
       const a = resultsArgs.parse(args)
       const query = new URLSearchParams({ format: 'json', size: String(a.page_size) })

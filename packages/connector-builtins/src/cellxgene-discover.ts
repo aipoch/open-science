@@ -144,9 +144,6 @@ function collectionDetail(raw: unknown, args: Row, version: boolean): Row {
 }
 const currentDatasetPath = (a: Row): string =>
   `/collections/${encodeURIComponent(String(a.collection_id))}/datasets/${encodeURIComponent(String(a.dataset_id))}`
-const example = (method: string, args: Row): string =>
-  `const result = await host.mcp("${CONNECTOR}", "${method}", ${JSON.stringify(args)})`
-
 export const CELLXGENE_DISCOVER_TOOLS: ToolDescriptor[] = [
   {
     id: 'list_collections',
@@ -156,7 +153,7 @@ export const CELLXGENE_DISCOVER_TOOLS: ToolDescriptor[] = [
       PAGE_NOTE,
     input: schema({ query: textFilter, ...pages }),
     returns: `{ ${PAGE_RETURNS}, results: [collection summaries with canonical/version IDs, name, DOI, dates, URL and dataset_count] }`,
-    example: example('list_collections', { query: 'liver', page_size: 10 }),
+    exampleArgs: { query: 'liver', page_size: 10 },
     url: () => `${API}/collections?visibility=PUBLIC`,
     parse: (raw, a) =>
       paginate(
@@ -179,7 +176,7 @@ export const CELLXGENE_DISCOVER_TOOLS: ToolDescriptor[] = [
     input: schema({ collection_id: uuid, ...pages }, ['collection_id']),
     required: ['collection_id'],
     returns: `{ collection_id, collection_version_id, name, description, DOI/links and other API metadata, datasets: { ${PAGE_RETURNS}, results: [dataset summaries] } }`,
-    example: example('get_collection', { collection_id: COLLECTION }),
+    exampleArgs: { collection_id: COLLECTION },
     url: (a) => `${API}/collections/${encodeURIComponent(String(a.collection_id))}`,
     parse: (raw, a) => collectionDetail(raw, a, false)
   },
@@ -206,11 +203,11 @@ export const CELLXGENE_DISCOVER_TOOLS: ToolDescriptor[] = [
       ...pages
     }),
     returns: `{ ${PAGE_RETURNS}, results: [dataset summaries with canonical/version IDs, collection identity, title, cell counts, organism/tissue/disease/assay, schema version and dates] }`,
-    example: example('list_datasets', {
+    exampleArgs: {
       organism: 'NCBITaxon:9606',
       tissue: 'liver',
       page_size: 10
-    }),
+    },
     url: (a) => {
       const query = new URLSearchParams({ visibility: 'PUBLIC' })
       if (a.schema_version != null) query.set('schema_version', String(a.schema_version))
@@ -243,7 +240,7 @@ export const CELLXGENE_DISCOVER_TOOLS: ToolDescriptor[] = [
     required: ['collection_id', 'dataset_id'],
     returns:
       'The API dataset object, including dataset_id, dataset_version_id, title, cell_count, ontology annotations, schema_version, citation and assets [{filetype, filesize (bytes, or -1 when unknown), url}]. Nullable metadata is preserved. No files are downloaded.',
-    example: example('get_dataset', { collection_id: COLLECTION, dataset_id: DATASET }),
+    exampleArgs: { collection_id: COLLECTION, dataset_id: DATASET },
     url: (a) => `${API}${currentDatasetPath(a)}`,
     parse: (raw) => record(raw, 'dataset')
   },
@@ -256,7 +253,7 @@ export const CELLXGENE_DISCOVER_TOOLS: ToolDescriptor[] = [
     input: schema({ collection_id: uuid, ...pages }, ['collection_id']),
     required: ['collection_id'],
     returns: `{ ${PAGE_RETURNS}, results: [collection version summaries] }`,
-    example: example('list_collection_versions', { collection_id: COLLECTION }),
+    exampleArgs: { collection_id: COLLECTION },
     url: (a) => `${API}/collections/${encodeURIComponent(String(a.collection_id))}/versions`,
     parse: (raw, a) =>
       paginate(
@@ -273,7 +270,7 @@ export const CELLXGENE_DISCOVER_TOOLS: ToolDescriptor[] = [
     input: schema({ collection_version_id: uuid, ...pages }, ['collection_version_id']),
     required: ['collection_version_id'],
     returns: `{ collection_id, collection_version_id, name, description and other API metadata, dataset_versions: { ${PAGE_RETURNS}, results: [dataset version summaries] } }`,
-    example: example('get_collection_version', { collection_version_id: COLLECTION_VERSION }),
+    exampleArgs: { collection_version_id: COLLECTION_VERSION },
     url: (a) => `${API}/collection_versions/${encodeURIComponent(String(a.collection_version_id))}`,
     parse: (raw, a) => collectionDetail(raw, a, true)
   },
@@ -286,7 +283,7 @@ export const CELLXGENE_DISCOVER_TOOLS: ToolDescriptor[] = [
     input: schema({ dataset_id: uuid, ...pages }, ['dataset_id']),
     required: ['dataset_id'],
     returns: `{ ${PAGE_RETURNS}, results: [dataset version summaries] }`,
-    example: example('list_dataset_versions', { dataset_id: DATASET }),
+    exampleArgs: { dataset_id: DATASET },
     url: (a) => `${API}/datasets/${encodeURIComponent(String(a.dataset_id))}/versions`,
     parse: (raw, a) =>
       paginate(
@@ -303,7 +300,7 @@ export const CELLXGENE_DISCOVER_TOOLS: ToolDescriptor[] = [
     required: ['dataset_version_id'],
     returns:
       'The API dataset version object, including dataset_id, dataset_version_id, collection_id, collection_version_id (first publication), schema_version, citation, ontology metadata and assets [{filetype, filesize (bytes, or -1 when unknown), url}].',
-    example: example('get_dataset_version', { dataset_version_id: DATASET_VERSION }),
+    exampleArgs: { dataset_version_id: DATASET_VERSION },
     url: (a) => `${API}/dataset_versions/${encodeURIComponent(String(a.dataset_version_id))}`,
     parse: (raw) => record(raw, 'dataset')
   },
@@ -321,7 +318,7 @@ export const CELLXGENE_DISCOVER_TOOLS: ToolDescriptor[] = [
     },
     returns:
       '{ collection_id, dataset_id, dataset_version_id, collection_version_id (when supplied), schema_version, citation, count, files: [{filetype, filesize (bytes, or -1 when unknown), url}] }. URL and format come directly from the API; no checksum is invented. Empty assets return count: 0; malformed responses and HTTP errors propagate.',
-    example: example('list_dataset_files', { dataset_version_id: DATASET_VERSION }),
+    exampleArgs: { dataset_version_id: DATASET_VERSION },
     url: (a) =>
       a.dataset_version_id != null
         ? `${API}/dataset_versions/${encodeURIComponent(String(a.dataset_version_id))}`

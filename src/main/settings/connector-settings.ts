@@ -40,7 +40,7 @@ import {
   customConnectorNameFromSkillName,
   isCustomConnectorName
 } from '../../shared/custom-connector'
-import { CONNECTOR_CATALOG } from '@aipoch/connector-builtins/catalog'
+import { CONNECTOR_CATALOG } from '../connectors/catalog'
 import {
   hasUsableCustomMcpCredentials,
   isCustomMcpServerRouteSafe

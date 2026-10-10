@@ -24,7 +24,7 @@ function contactRequired(): ContactRequired {
     error: 'contact_email_required',
     message:
       'This tool talks to NCBI E-utilities, which require a contact email per their usage policy. ' +
-      "Enable 'Share contact email with research data services' in Settings → Privacy to " +
+      'Provide credentials.ncbiEmail to ' +
       'provide one, then retry (the connector picks up the setting automatically).'
   }
 }
@@ -572,7 +572,7 @@ export const VARIANTS_CLINVAR_TOOLS: ToolDescriptor[] = [
     connector: 'variants',
     credentialKeys: ['ncbiEmail', 'ncbiApiKey'],
     description:
-      'Search ClinVar directly (live NCBI, not gnomAD\'s snapshot) and return matching variation records with clinical significance, review status and gold stars. Requires a contact email (Settings → Privacy → \'Share contact email with research data services\') per NCBI E-utilities usage policy. Args: query (a ClinVar Entrez query — free text like "TP53 R175H" or an HGVS string works, and fielded terms compose with AND/OR/NOT, e.g. BRCA1[gene], pathogenic[CLIN_SIG], "Lynch syndrome"[dis], single_nucleotide_variant[Type of variation]; an rsID also works but clinvar_variant_by_rsid returns fuller records), max_records (page cap 1-200, default 50). The match TOTAL is always reported; when total > max_records the list is a capped prefix (ClinVar relevance/recency order) and truncated is true. NCBI E-utilities intermittently return HTTP 500 under load — retry once a few seconds later if that surfaces.',
+      'Search ClinVar directly (live NCBI, not gnomAD\'s snapshot) and return matching variation records with clinical significance, review status and gold stars. Requires a contact email (credentials.ncbiEmail) per NCBI E-utilities usage policy. Args: query (a ClinVar Entrez query — free text like "TP53 R175H" or an HGVS string works, and fielded terms compose with AND/OR/NOT, e.g. BRCA1[gene], pathogenic[CLIN_SIG], "Lynch syndrome"[dis], single_nucleotide_variant[Type of variation]; an rsID also works but clinvar_variant_by_rsid returns fuller records), max_records (page cap 1-200, default 50). The match TOTAL is always reported; when total > max_records the list is a capped prefix (ClinVar relevance/recency order) and truncated is true. NCBI E-utilities intermittently return HTTP 500 under load — retry once a few seconds later if that surfaces.',
     input: {
       type: 'object',
       properties: {
@@ -584,8 +584,7 @@ export const VARIANTS_CLINVAR_TOOLS: ToolDescriptor[] = [
     required: ['query'],
     returns:
       '`{ term, total, n_returned, truncated, missing_uids, records }` — `total` is the true ClinVar match count (may exceed the returned list); `truncated` flags a capped page; `missing_uids` lists matched IDs whose summary doc NCBI dropped (rare, transient — distinct from truncation; retry to recover). Each record: `{ variation_id, accession (VCV), accession_version, title, obj_type, variant_type, canonical_spdi, cdna_change, protein_change, rsids, other_xrefs, genes, molecular_consequences, locations (GRCh38+GRCh37), allele_frequencies, germline_classification, clinical_impact_classification, oncogenicity_classification (each: description, review_status, gold_stars 0-4, last_evaluated, fda_recognized_database, conditions with ontology xrefs; null when ClinVar has no classification on that axis), n_submissions (SCV count), supporting_submissions }`. When no contact email is set, returns `{ error: "contact_email_required", message }` instead.',
-    example:
-      'const result = await host.mcp("variants", "clinvar_search", {"query": "BRCA1 pathogenic[CLIN_SIG]", "max_records": 50})',
+    exampleArgs: { query: 'BRCA1 pathogenic[CLIN_SIG]', max_records: 50 },
     run: async (ctx, a): Promise<Record<string, unknown> | ContactRequired> => {
       if (!ctx.credentials.ncbiEmail) return contactRequired()
       const q = ncbiEtiquette(ctx.credentials)
@@ -612,7 +611,7 @@ export const VARIANTS_CLINVAR_TOOLS: ToolDescriptor[] = [
     connector: 'variants',
     credentialKeys: ['ncbiEmail', 'ncbiApiKey'],
     description:
-      "Fetch full ClinVar records for a batch of VCV/RCV accessions or bare variation IDs. Requires a contact email (Settings → Privacy → 'Share contact email with research data services') per NCBI E-utilities usage policy. Args: accessions (up to 50 identifiers, mixed forms accepted — VCV000045122 (versioned VCV000045122.3 ok; resolved locally, free), RCV000019428 (each RCV costs one extra esearch), or a bare ClinVar variation ID (45122). rsIDs are rejected — use clinvar_variant_by_rsid. An RCV (one variant-condition pair) resolves to its parent VCV variation record). Never silently drops an input.",
+      'Fetch full ClinVar records for a batch of VCV/RCV accessions or bare variation IDs. Requires a contact email (credentials.ncbiEmail) per NCBI E-utilities usage policy. Args: accessions (up to 50 identifiers, mixed forms accepted — VCV000045122 (versioned VCV000045122.3 ok; resolved locally, free), RCV000019428 (each RCV costs one extra esearch), or a bare ClinVar variation ID (45122). rsIDs are rejected — use clinvar_variant_by_rsid. An RCV (one variant-condition pair) resolves to its parent VCV variation record). Never silently drops an input.',
     input: {
       type: 'object',
       properties: {
@@ -626,8 +625,7 @@ export const VARIANTS_CLINVAR_TOOLS: ToolDescriptor[] = [
     required: ['accessions'],
     returns:
       '`{ n_requested, n_unique, n_duplicate_skipped, records, not_found, missing_uids, not_processed }`. Records carry the full shape documented in `clinvar_search` plus `requested_as` (which input(s) mapped to the record), sorted by variation_id. `not_found` lists unknown accessions (definitive absence — RCVs that esearch proves unknown); `missing_uids` lists inputs whose summary NCBI dropped or error-flagged (for a just-resolved RCV this is a transient drop — the record EXISTS, retry; for a VCV/numeric input it is a transient drop OR a nonexistent id — retry to disambiguate, never conclude absence from one call); `not_processed` lists RCVs skipped because the per-call time budget ran out (re-request just those — VCV/numeric inputs always resolve, they never land there). When no contact email is set, returns `{ error: "contact_email_required", message }` instead.',
-    example:
-      'const result = await host.mcp("variants", "clinvar_get_records", {"accessions": ["VCV000045122", "RCV000019428", "45123"]})',
+    exampleArgs: { accessions: ['VCV000045122', 'RCV000019428', '45123'] },
     run: async (ctx, a): Promise<Record<string, unknown> | ContactRequired> => {
       if (!ctx.credentials.ncbiEmail) return contactRequired()
       const q = ncbiEtiquette(ctx.credentials)
@@ -718,8 +716,7 @@ export const VARIANTS_CLINVAR_TOOLS: ToolDescriptor[] = [
     required: ['accession'],
     returns:
       '`{ requested_as, variation_id, accession, accession_version, record_status, record_type, direct_evidence_available, missing_record, n_submissions, n_duplicate_skipped, n_returned, offset, truncated, next_page, submissions }`. Each submission has `{ accession, version, accession_version, submitter: { name, org_id, category }, record_status, contributes_to_aggregate_classification, last_evaluated, review_status, classifications: [{ type, description, assertion_type, clinical_significance, drug }], conditions: [{ type, names, xrefs }], multiple_condition_explanation, assertion_methods (description, citations, xrefs, comments), classification_explanation, classification_comments, submission_comments, observed_in (origins, methods, descriptions, evidence with source attributes/citations/xrefs/comments, functional_data with effect/consequences/result/external_link), citations }`. Included records return record_type: "included", direct_evidence_available: false, submissions: [], referenced_submissions and classified_variations; submission counts and pagination are omitted because no direct evidence is provided. Classification type no_classification preserves explicit NoClassification values. The aggregate-contribution flag is boolean|null. Comment arrays preserve { type, text }, including FlaggedComment, without inferring its meaning. Missing classification blocks or included-record reference lists throw. Citations preserve source IDs, URLs and text; assertion-method citations are also attached to their method. Empty upstream XML returns `{ requested_as, missing_record: true, submissions: [] }`, not definitive absence. Upstream errors, malformed XML and accession/version mismatches throw. Missing contact email returns `{ error: "contact_email_required", message }`.',
-    example:
-      'const result = await host.mcp("variants", "clinvar_get_submissions", {"accession": "VCV000045122"})',
+    exampleArgs: { accession: 'VCV000045122' },
     run: async (ctx, a): Promise<Record<string, unknown> | ContactRequired> => {
       if (!ctx.credentials.ncbiEmail) return contactRequired()
       const raw = String(a.accession).trim().toUpperCase()
@@ -750,7 +747,7 @@ export const VARIANTS_CLINVAR_TOOLS: ToolDescriptor[] = [
     connector: 'variants',
     credentialKeys: ['ncbiEmail', 'ncbiApiKey'],
     description:
-      "All ClinVar variation records that reference a dbSNP rsID, with full classifications (an rsID can map to several VCVs — one per alternate allele, e.g. rs121913529 covers KRAS G12D/G12V/G12A). Requires a contact email (Settings → Privacy → 'Share contact email with research data services') per NCBI E-utilities usage policy. Args: rsid (dbSNP reference SNP ID, e.g. rs7412; case-insensitive, must match rs<digits>), max_records (cap 1-200, default 50). total always carries the true match count and truncated flags a capped listing; total == 0 means ClinVar has no record for the rsID.",
+      'All ClinVar variation records that reference a dbSNP rsID, with full classifications (an rsID can map to several VCVs — one per alternate allele, e.g. rs121913529 covers KRAS G12D/G12V/G12A). Requires a contact email (credentials.ncbiEmail) per NCBI E-utilities usage policy. Args: rsid (dbSNP reference SNP ID, e.g. rs7412; case-insensitive, must match rs<digits>), max_records (cap 1-200, default 50). total always carries the true match count and truncated flags a capped listing; total == 0 means ClinVar has no record for the rsID.',
     input: {
       type: 'object',
       properties: {
@@ -762,8 +759,7 @@ export const VARIANTS_CLINVAR_TOOLS: ToolDescriptor[] = [
     required: ['rsid'],
     returns:
       '`{ rsid, total, n_returned, truncated, missing_uids, records }` with the full record shape documented in `clinvar_search` (review status, gold stars, last-evaluated dates, SCV counts — the fields gnomAD’s ClinVar mirror lacks). Records come in ClinVar relevance order; `missing_uids` lists matches whose summary NCBI dropped (transient). `total == 0` means ClinVar has no record for the rsID. When no contact email is set, returns `{ error: "contact_email_required", message }` instead.',
-    example:
-      'const result = await host.mcp("variants", "clinvar_variant_by_rsid", {"rsid": "rs121913529", "max_records": 50})',
+    exampleArgs: { rsid: 'rs121913529', max_records: 50 },
     run: async (ctx, a): Promise<Record<string, unknown> | ContactRequired> => {
       if (!ctx.credentials.ncbiEmail) return contactRequired()
       const rsid = String(a.rsid).trim()

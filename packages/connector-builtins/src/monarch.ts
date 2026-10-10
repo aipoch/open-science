@@ -91,7 +91,7 @@ function phenotypeTool(kind: 'disease' | 'gene'): ToolDescriptor {
     required: [field],
     returns:
       '{query:{subject,category,phenotype_id,primary_knowledge_source,direct},limit,offset,total,returned,next_offset,associations:[{id,subject,subject_label,object,object_label,category,predicate,original_predicate,knowledge_level,agent_type,primary_knowledge_source,aggregator_knowledge_source,provided_by,provided_by_link,publications,publications_links,has_evidence,has_evidence_links,evidence_count,negated,frequency_qualifier,onset_qualifier,disease_context_qualifier,...}]}. Optional evidence fields retain upstream nulls; evidence_count is not a confidence score.',
-    example: `const result = await host.mcp("monarch", "monarch_get_${kind}_phenotypes", {"${field}": "${kind === 'disease' ? 'MONDO:0007947' : 'HGNC:3603'}", "limit": 20})`,
+    exampleArgs: { [field]: kind === 'disease' ? 'MONDO:0007947' : 'HGNC:3603', limit: 20 },
     url: (args) => {
       if (args.direct !== undefined && typeof args.direct !== 'boolean') {
         throw new Error('direct must be a boolean')

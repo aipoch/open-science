@@ -997,7 +997,7 @@ describe('ConnectorService', () => {
         {
           id: 'srv-1',
           name: 'example-oauth-e2e',
-          configurationFingerprint: expect.any(String),
+          persistenceGuard: { configurationFingerprint: expect.any(String) },
           transport: 'stdio',
           command: 'npx',
           args: ['-y', '@example/server'],
@@ -1384,7 +1384,7 @@ describe('ConnectorService', () => {
         {
           id: 'srv-remote',
           name: 'remoteserver',
-          configurationFingerprint: expect.any(String),
+          persistenceGuard: { configurationFingerprint: expect.any(String) },
           transport: 'streamable_http',
           command: '',
           args: undefined,

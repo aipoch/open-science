@@ -1,4 +1,4 @@
-import { CONNECTOR_CATALOG } from '@aipoch/connector-builtins/catalog'
+import { CONNECTOR_CATALOG } from '../connectors/catalog'
 import { createSettingsExportFiles, createSettingsFileCommands } from '../settings/file-commands'
 import { createBackgroundResultActivityOwner } from '../background-result-delivery/ipc'
 import {

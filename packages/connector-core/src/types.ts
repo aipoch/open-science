@@ -45,8 +45,8 @@ export type ToolDescriptor = {
   // Human-readable shape of the returned value, shown as a "Returns:" block in the skill doc so an
   // agent knows the result structure without running a probe cell. Free-form (prose or a shape sketch).
   returns?: string
-  // Optional caller-facing example text. Interpreted by documentation adapters, never executed.
-  example?: string
+  // Schema-valid example data. Callers render their own invocation syntax.
+  exampleArgs?: Record<string, unknown>
   required?: string[]
   // Code-only dispatch metadata. It is not part of the generated tool schema or persisted state.
   credentialKeys?: readonly string[]

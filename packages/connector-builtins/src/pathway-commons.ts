@@ -349,8 +349,7 @@ export const PATHWAY_COMMONS_TOOLS: ToolDescriptor[] = [
     required: ['q'],
     returns:
       '{tool, query, page, total_hits, page_size, results:[{uri,biopax_class,name,data_sources,organisms,pathways,excerpt,n_participants,n_processes}]}',
-    example:
-      'const result = await host.mcp("pathway-commons", "pathway_commons_search", {"q": "TP53", "type": "ProteinReference", "organism": ["9606"]})',
+    exampleArgs: { q: 'TP53', type: 'ProteinReference', organism: ['9606'] },
     run: async (ctx, args) => {
       const q = boundedQuery(args.q, 'q')
       const organisms = optionalStringList(args.organism, 'organism')
@@ -394,8 +393,7 @@ export const PATHWAY_COMMONS_TOOLS: ToolDescriptor[] = [
     required: ['q'],
     returns:
       '{tool, query, total_hits, results:[{uri,name,data_sources,organisms,n_participants,n_processes}]}',
-    example:
-      'const result = await host.mcp("pathway-commons", "pathway_commons_top_pathways", {"q": "insulin", "datasource": ["reactome"], "organism": ["9606"]})',
+    exampleArgs: { q: 'insulin', datasource: ['reactome'], organism: ['9606'] },
     run: async (ctx, args) => {
       const q = boundedQuery(args.q, 'q')
       const organisms = optionalStringList(args.organism, 'organism')
@@ -439,8 +437,12 @@ export const PATHWAY_COMMONS_TOOLS: ToolDescriptor[] = [
     maxResponseBytes: MAX_GRAPH_RESPONSE_BYTES,
     returns:
       '{tool,kind,format,source,target?,n_records?,records?,n_nodes?,nodes?,n_gene_sets?,content?}; format SIF/TXT returns normalized records, TXT also returns node attributes, and GSEA/BIOPAX/SBGN returns export content.',
-    example:
-      'const result = await host.mcp("pathway-commons", "pathway_commons_graph", {"kind": "NEIGHBORHOOD", "source": ["TP53"], "format": "SIF", "pattern": ["INTERACTS_WITH"]})',
+    exampleArgs: {
+      kind: 'NEIGHBORHOOD',
+      source: ['TP53'],
+      format: 'SIF',
+      pattern: ['INTERACTS_WITH']
+    },
     run: async (ctx, args) => {
       const source = stringList(args.source, 'source')
       const kind = enumValue(args.kind, 'kind', GRAPH_KINDS) as GraphKind
@@ -524,8 +526,7 @@ export const PATHWAY_COMMONS_TOOLS: ToolDescriptor[] = [
     maxResponseBytes: MAX_GRAPH_RESPONSE_BYTES,
     returns:
       '{tool,format,uri,n_records?,records?,n_nodes?,nodes?,n_gene_sets?,content?}; TXT includes edge and node records, and GSEA content is a GMT export string.',
-    example:
-      'const result = await host.mcp("pathway-commons", "pathway_commons_export", {"uri": ["R-HSA-201451"], "format": "GSEA"})',
+    exampleArgs: { uri: ['R-HSA-201451'], format: 'GSEA' },
     run: async (ctx, args) => {
       const uri = stringList(args.uri, 'uri')
       const format = enumValue(args.format, 'format', FORMATS) as Format

@@ -337,8 +337,11 @@ export const GENOMES_ENSEMBL_TOOLS: ToolDescriptor[] = [
     required: ['variant_id1', 'variant_id2', 'population_name'],
     returns:
       '{variant_id1, variant_id2, species, population_name, reference_data, interpretation, n_pairs, pairs:[{variation1, variation2, population_name, r2, d_prime}]} — r2/d_prime are numbers; n_pairs=0 means unavailable, not zero LD.',
-    example:
-      'const result = await host.mcp("genomes", "ensembl_ld_pairwise", {"variant_id1": "rs6792369", "variant_id2": "rs1042779", "population_name": "1000GENOMES:phase_3:KHV"})',
+    exampleArgs: {
+      variant_id1: 'rs6792369',
+      variant_id2: 'rs1042779',
+      population_name: '1000GENOMES:phase_3:KHV'
+    },
     run: async (ctx, a) => {
       const id1 = ldString(a.variant_id1, 'variant_id1')
       const id2 = ldString(a.variant_id2, 'variant_id2')
@@ -387,8 +390,13 @@ export const GENOMES_ENSEMBL_TOOLS: ToolDescriptor[] = [
     required: ['variant_id', 'population_name'],
     returns:
       '{variant_id, species, population_name, min_r2, min_d_prime, window_size, reference_data, interpretation, n_proxies, returned, truncated, proxies:[{variation, population_name, r2, d_prime, chr, start, end, strand, consequence_type, clinical_significance}]} — n_proxies counts qualifying non-self rows before the output cap, not all variants in the window; coordinates are 1-based inclusive.',
-    example:
-      'const result = await host.mcp("genomes", "ensembl_ld_proxies", {"variant_id": "rs1042779", "population_name": "1000GENOMES:phase_3:KHV", "min_r2": 0.8, "window_size": 500, "max_records": 100})',
+    exampleArgs: {
+      variant_id: 'rs1042779',
+      population_name: '1000GENOMES:phase_3:KHV',
+      min_r2: 0.8,
+      window_size: 500,
+      max_records: 100
+    },
     run: async (ctx, a) => {
       const id = ldString(a.variant_id, 'variant_id')
       const population = ldString(a.population_name, 'population_name')
@@ -464,8 +472,7 @@ export const GENOMES_ENSEMBL_TOOLS: ToolDescriptor[] = [
     required: ['query'],
     returns:
       '{found, query, species, record} — species is the upstream record species on success, otherwise the requested/default species; record is the upstream lookup dict (1-based inclusive coords) or null when nothing matches.',
-    example:
-      'const result = await host.mcp("genomes", "ensembl_lookup", {"query": "BRAF", "query_type": "symbol"})',
+    exampleArgs: { query: 'BRAF', query_type: 'symbol' },
     run: async (ctx, a) => {
       const query = String(a.query).trim()
       const queryType = a.query_type === undefined ? 'auto' : a.query_type
@@ -512,8 +519,7 @@ export const GENOMES_ENSEMBL_TOOLS: ToolDescriptor[] = [
     required: ['stable_id'],
     returns:
       '{stable_id, external_db, n_xrefs, xrefs:[{dbname, db_display_name, primary_id, display_id, description, synonyms, info_type}]} sorted by (dbname, primary_id); unknown id -> n_xrefs:0.',
-    example:
-      'const result = await host.mcp("genomes", "ensembl_xrefs", {"stable_id": "ENSG00000157764", "external_db": "HGNC"})',
+    exampleArgs: { stable_id: 'ENSG00000157764', external_db: 'HGNC' },
     run: async (ctx, a) => {
       const stableId = String(a.stable_id).trim()
       const externalDb = strArg(a.external_db) ?? ''
@@ -560,8 +566,7 @@ export const GENOMES_ENSEMBL_TOOLS: ToolDescriptor[] = [
     },
     returns:
       '{query, n_results, results[], normalization?} — each result the most-severe-first VEP summary. Region calls add normalization: {original:{region,allele,allele_orientation}, forward:{region,allele}, reverse_complemented}; coordinates are not lifted or reversed. query retains the original input; results use forward-strand alleles. ID calls omit normalization.',
-    example:
-      'const result = await host.mcp("genomes", "ensembl_vep_variant", {"variant_id": "rs7412", "max_consequences": 25})',
+    exampleArgs: { variant_id: 'rs7412', max_consequences: 25 },
     run: async (ctx, a) => {
       const species = String(a.species ?? DEFAULT_SPECIES)
       const maxConsequences = clampInt(a.max_consequences, 25, 1, 100000)
@@ -615,8 +620,7 @@ export const GENOMES_ENSEMBL_TOOLS: ToolDescriptor[] = [
     },
     returns:
       '{gene_id, gene_symbol, species, homology_type, target_species, target_taxon, n_total, homologies_truncated, homologies:[{type, species, id, protein_id, taxonomy_level, method_link_type}]} sorted by (species,id).',
-    example:
-      'const result = await host.mcp("genomes", "ensembl_homology", {"gene_symbol": "BRAF", "target_species": "mus_musculus"})',
+    exampleArgs: { gene_symbol: 'BRAF', target_species: 'mus_musculus' },
     run: async (ctx, a) => {
       const species = String(a.species ?? DEFAULT_SPECIES)
       const homologyType = String(a.homology_type ?? 'orthologues')
@@ -685,8 +689,7 @@ export const GENOMES_ENSEMBL_TOOLS: ToolDescriptor[] = [
     },
     returns:
       '{found, query, seq_type, id, description, molecule, length, sha256, seq} — seq replaced by seq_omitted:true when byte length exceeds max_bytes; found:false with null fields only for an explicit upstream ID-not-found response; other failures raise errors.',
-    example:
-      'const result = await host.mcp("genomes", "ensembl_sequence", {"stable_id": "ENSP00000288602", "seq_type": "protein"})',
+    exampleArgs: { stable_id: 'ENSP00000288602', seq_type: 'protein' },
     run: async (ctx, a) => {
       const species = String(a.species ?? DEFAULT_SPECIES)
       const maxBytes = clampInt(a.max_bytes, 400000, 1, 1e9)
@@ -787,8 +790,7 @@ export const GENOMES_ENSEMBL_TOOLS: ToolDescriptor[] = [
     required: ['region'],
     returns:
       '{region, species, feature, n_total, features_truncated, features[]} sorted by (start,id); row shape varies by feature type. Empty regions return n_total:0.',
-    example:
-      'const result = await host.mcp("genomes", "ensembl_overlap_region", {"region": "7:140719327-140925199", "feature": "gene"})',
+    exampleArgs: { region: '7:140719327-140925199', feature: 'gene' },
     run: async (ctx, a) => {
       const region = String(a.region).trim()
       const species = String(a.species ?? DEFAULT_SPECIES)

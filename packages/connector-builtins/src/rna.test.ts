@@ -33,7 +33,7 @@ describe('rna / rfam', () => {
       ].sort()
     )
     expect(RNA_TOOLS.every((t) => t.connector === 'rna')).toBe(true)
-    expect(RNA_TOOLS.every((t) => t.returns && t.example)).toBe(true)
+    expect(RNA_TOOLS.every((t) => t.returns && t.exampleArgs)).toBe(true)
   })
 
   it('get_family flattens the envelope, reads cm.cutoffs, and keeps raw', async () => {

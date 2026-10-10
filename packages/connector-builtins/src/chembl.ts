@@ -677,8 +677,7 @@ export const CHEMBL_TOOLS: ToolDescriptor[] = [
     input: COMPOUND_INPUT,
     returns:
       '`{ count, total (verified upstream total_count), truncated, compounds: [ { molecule_chembl_id, pref_name, molecule_type, max_phase, first_approval, oral, parenteral, topical, black_box_warning, therapeutic_flag, natural_product, withdrawn_flag, molecule_properties: { alogp, aromatic_rings, full_mwt, hba, hbd, heavy_atoms, psa, rtb, ro3_pass, num_ro5_violations, qed_weighted, molecular_formula, mw_freebase, np_likeness_score, med_chem_friendly, molecular_species }, smiles, inchi, inchi_key, synonyms: [str], chirality, score, atc_classifications, molecule_hierarchy, ... } ] }`. Structure searches may add `walk_truncated` + `upstream_total`.',
-    example:
-      'const result = await host.mcp("chembl", "compound_search", {"name": "aspirin", "limit": 5})',
+    exampleArgs: { name: 'aspirin', limit: 5 },
     run: async (ctx, a) => {
       if (!a.name && !a.chembl_id && !a.smiles) {
         throw new Error('compound_search requires at least one of name, chembl_id, or smiles.')
@@ -803,8 +802,7 @@ export const CHEMBL_TOOLS: ToolDescriptor[] = [
     required: ['indication'],
     returns:
       '`{ count, total (distinct parents, or filtered count when a post-filter is set), truncated, indication_query: { term, match_field, only_approved }, total_indication_rows, drugs: [ { molecule_chembl_id, pref_name, molecule_type, max_phase, first_approval, oral, parenteral, therapeutic_flag, black_box_warning (0/1), topical (0/1), withdrawn_flag, molecule_properties, molecule_structures, molecule_synonyms, best_phase_for_ind, efo_terms: [str], indication_rows: [drugind_id], warning_summary: [ { warning_type, warning_class, warning_country, warning_year } ], ... } ] }`.',
-    example:
-      'const result = await host.mcp("chembl", "drug_search", {"indication": "hypertension", "only_approved": true, "limit": 10})',
+    exampleArgs: { indication: 'hypertension', only_approved: true, limit: 10 },
     run: async (ctx, a) => {
       const limit = clampLimit(a.limit)
       // Post-filters need the full parent set joined; otherwise bound the join to the first page.
@@ -869,8 +867,7 @@ export const CHEMBL_TOOLS: ToolDescriptor[] = [
     required: ['molecule_chembl_id'],
     returns:
       '`{ found: bool, properties: { molecule_chembl_id, alogp, molecular_weight, mw_freebase, psa, hba, hbd, rtb, aromatic_rings, heavy_atoms, num_ro5_violations, ro3_pass, qed_weighted, molecular_formula } | null, message? }`. When the id is unknown, `found` is false, `properties` null, and `message` explains.',
-    example:
-      'const result = await host.mcp("chembl", "get_admet", {"molecule_chembl_id": "CHEMBL25"})',
+    exampleArgs: { molecule_chembl_id: 'CHEMBL25' },
     run: async (ctx, a) => {
       const molId = String(a.molecule_chembl_id)
       const { records } = await paginate(
@@ -905,8 +902,7 @@ export const CHEMBL_TOOLS: ToolDescriptor[] = [
     required: ['assay_chembl_id'],
     returns:
       '`{ found: bool, assay: { assay_chembl_id, description, assay_type, assay_type_description, assay_category, assay_test_type, bao_format, bao_label, assay_organism, assay_tax_id, assay_strain, assay_cell_type, cell_chembl_id, assay_tissue, tissue_chembl_id, assay_subcellular_fraction, target_chembl_id, confidence_score, confidence_description, relationship_type, relationship_description, assay_parameters, assay_classifications, variant_sequence, document_chembl_id, src_id, src_assay_id } | null, message? }`. Missing scalar fields are null and missing lists are empty. Unknown IDs return found:false only for a valid empty assay list; request failures and malformed or mismatched responses throw.',
-    example:
-      'const result = await host.mcp("chembl", "get_assay", {"assay_chembl_id": "CHEMBL1217643"})',
+    exampleArgs: { assay_chembl_id: 'CHEMBL1217643' },
     run: async (ctx, a) => {
       const assayId = String(a.assay_chembl_id)
       const raw = await ctx.fetchJson(
@@ -1013,8 +1009,7 @@ export const CHEMBL_TOOLS: ToolDescriptor[] = [
     },
     returns:
       '`{ count, total (upstream total_count, or current-page count when total_count is absent; the fallback is not a verified total), truncated (this page contains fewer records than total, including on later pages), offset, limit, has_more, next_offset (null at the end), summary (this page only), activities: [ { activity_id, molecule_chembl_id, target_chembl_id, target_pref_name, standard_type, standard_relation, standard_value, standard_units, pchembl_value, assay_chembl_id, assay_type, ligand_efficiency, document_chembl_id, ... 45 keys } ] }`. Missing continuation evidence or inconsistent pagination metadata throws rather than reporting completion.',
-    example:
-      'const result = await host.mcp("chembl", "get_bioactivity", {"molecule_chembl_id": "CHEMBL25", "activity_type": "IC50", "limit": 10})',
+    exampleArgs: { molecule_chembl_id: 'CHEMBL25', activity_type: 'IC50', limit: 10 },
     run: async (ctx, a) => {
       const limit = clampLimit(a.limit)
       const offset = a.offset ?? 0
@@ -1070,8 +1065,7 @@ export const CHEMBL_TOOLS: ToolDescriptor[] = [
     },
     returns:
       '`{ count, total, truncated, summary, mechanisms: [ { mec_id, molecule_chembl_id, mechanism_of_action, target_chembl_id, action_type, direct_interaction (bool), disease_efficacy (bool), mechanism_comment, binding_site_comment, selectivity_comment, molecular_mechanism, max_phase, parent_molecule_chembl_id, mechanism_refs, ... } ] }`.',
-    example:
-      'const result = await host.mcp("chembl", "get_mechanism", {"molecule_chembl_id": "CHEMBL25"})',
+    exampleArgs: { molecule_chembl_id: 'CHEMBL25' },
     run: async (ctx, a) => {
       const limit = clampLimit(a.limit)
       const params: Rec = {}
@@ -1129,8 +1123,7 @@ export const CHEMBL_TOOLS: ToolDescriptor[] = [
     },
     returns:
       '`{ count, total (verified upstream total_count), truncated, targets: [ { target_chembl_id, pref_name, target_type, organism, tax_id, species_group_flag, cross_references, score, components: [ { component_id, component_type, accession, component_description, gene_symbol, relationship, target_component_xrefs: [ { xref_id, xref_name, xref_src_db, xref_src_url } ], xrefs_truncated_from? } ] } ] }`.',
-    example:
-      'const result = await host.mcp("chembl", "target_search", {"gene_symbol": "EGFR", "organism": "Homo sapiens", "limit": 5})',
+    exampleArgs: { gene_symbol: 'EGFR', organism: 'Homo sapiens', limit: 5 },
     run: async (ctx, a) => {
       const limit = clampLimit(a.limit)
       const params: Rec = {}

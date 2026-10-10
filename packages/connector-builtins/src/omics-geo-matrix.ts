@@ -137,8 +137,8 @@ async function discover(ctx: ToolContext, accession: string): Promise<unknown> {
         : 'unrecognized',
     next_steps: [
       'Use geo_get_series to obtain sample metadata and submitter supplementary-file URLs.',
-      'Offer the official URL for manual download by the user. This connector does not download or decompress matrices; do not bypass host.mcp with raw HTTP.',
-      'After the user downloads and decompresses the file, read the local text in the REPL and call geo_preflight_matrix with the series samples. Keep separate Series Matrix platform files separate.',
+      'Offer the official URL for manual download by the user. This connector does not download or decompress matrices.',
+      'After the user downloads and decompresses the file, read the local text and call geo_preflight_matrix with the series samples. Keep separate Series Matrix platform files separate.',
       'Set complete only when supplying the entire file. For plain TSV, completeness is caller-declared, not independently verified; a preview cannot establish total dimensions.',
       'Resolve unmatched or ambiguous sample columns, review omitted samples, and align metadata to the returned column order before analysis.',
       'Confirm assay, organism, genome build, processing, replication and design. Series Matrix values and FPKM/TPM are not raw counts; NCBI counts may differ from the publication.'
@@ -453,7 +453,7 @@ export const GEO_MATRIX_TOOLS: ToolDescriptor[] = [
     credentialKeys: [],
     maxResponseBytes: 2 * 1024 * 1024,
     description:
-      'Discover Series Matrix files and NCBI-generated RNA-seq raw counts, FPKM/TPM and gene annotation files for one GSE from live NCBI listings. Returns advertised URLs, not downloaded matrices or verified file contents. Start with geo_get_series for sample metadata. Offer the official URL for manual download by the user, then use geo_preflight_matrix on locally read decompressed text. Do not bypass host.mcp with raw HTTP. Missing or failed listings do not prove absence of data; also inspect the series supplementary files.',
+      'Discover Series Matrix files and NCBI-generated RNA-seq raw counts, FPKM/TPM and gene annotation files for one GSE from live NCBI listings. Returns advertised URLs, not downloaded matrices or verified file contents. Start with geo_get_series for sample metadata. Offer the official URL for manual download by the user, then use geo_preflight_matrix on locally read decompressed text. Missing or failed listings do not prove absence of data; also inspect the series supplementary files.',
     input: {
       type: 'object',
       properties: { accession: { type: 'string', pattern: '^GSE[1-9][0-9]*$' } },
@@ -463,8 +463,7 @@ export const GEO_MATRIX_TOOLS: ToolDescriptor[] = [
     required: ['accession'],
     returns:
       '{accession, files:[{name,url,kind,format,compression,platform_id,source_url}], sources:[{url,status,error?}], status, next_steps}. kind separates series_matrix, raw_counts, normalized_counts and gene_annotation. status is ok when both sources list recognized files, partial when files are found but a source fails or has no recognized links, and unrecognized when no files are recognized. None proves an exhaustive inventory or absence of data. If both sources are unavailable, the call throws with source errors. Never infer matrix dimensions or sample coverage from these filenames.',
-    example:
-      'const result = await host.mcp("omics-archives", "geo_get_matrix_files", {"accession":"GSE164073"})',
+    exampleArgs: { accession: 'GSE164073' },
     run: (ctx, args) => discover(ctx, String(args.accession))
   },
   {
@@ -500,8 +499,12 @@ export const GEO_MATRIX_TOOLS: ToolDescriptor[] = [
     required: ['text'],
     returns:
       '{format,matrix_kind,complete,dimensions:{features:number|null,features_observed,samples},feature_column,sample_mapping:[{column_index,column,accession,matched_by,status}],metadata_samples_not_in_matrix,diagnostics,issues,warnings,structural_checks_passed,analysis_notes}. column_index is one-based among sample columns. features is null for partial input; structural_checks_passed requires complete numeric data and unambiguous sample mapping. Series Matrix platform conflicts are issues; multiple platforms alone are advisory warnings. It is not an analysis-readiness guarantee.',
-    example:
-      'const result = await host.mcp("omics-archives", "geo_preflight_matrix", {"text":"GeneID\\tGSM5000001\\n1\\t12\\n","complete":false,"matrix_kind":"raw_counts","samples":[{"accession":"GSM5000001"}]})',
+    exampleArgs: {
+      text: 'GeneID\tGSM5000001\n1\t12\n',
+      complete: false,
+      matrix_kind: 'raw_counts',
+      samples: [{ accession: 'GSM5000001' }]
+    },
     run: async (_ctx, args) => preflight(args)
   }
 ]

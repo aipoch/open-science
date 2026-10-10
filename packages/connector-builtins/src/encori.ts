@@ -45,7 +45,7 @@ function table(
     },
     returns,
     totalTimeoutMs: 120000,
-    example: `await host.mcp("encori", "${id}", ${JSON.stringify({ ...exampleArgs, max_records: 2 })})`,
+    exampleArgs: { ...exampleArgs, max_records: 2 },
     run: (ctx, args) => encoriCall(ctx, () => query(ctx, args, endpoint, mapping))
   }
 }
@@ -238,8 +238,7 @@ const ENCORI_TOOLS: EncoriTool[] = [
     },
     returns:
       '{ ok, database, source_url, queried_at, files, table_names, returned_files, selected_table, records, total_records, returned_records, is_complete, result_scope, raw_response_path, warnings, error }. Selected tables also include columns, citation_lines, completeness_note and saved_path. Listing reads metadata only and does not save or return table contents; raw_response_path is null. Complete selected tables return all rows without writing a file; raw_response_path and saved_path are null. Only a truncated table saves the full original bytes locally and returns both paths. Counts describe the selected official table; never infer full-result distributions from a preview. On failure: { ok: false, database, source_url, queried_at, error: { code, message, retryable, status_code } }. Caller cancellation and service permission/schema errors propagate. This call has a 120-second total deadline including retries and waits, with a 45-second network idle timeout. The total deadline propagates as an error; increasing an outer execution timeout does not extend it.',
-    example:
-      'await host.mcp("encori", "get_reference_tables", {"table_name":"reference_data/degradome_ref.txt","max_records":2})',
+    exampleArgs: { table_name: 'reference_data/degradome_ref.txt', max_records: 2 },
     totalTimeoutMs: 120000,
     run: (ctx, args) => encoriCall(ctx, () => references(ctx, args))
   },
@@ -260,8 +259,7 @@ const ENCORI_TOOLS: EncoriTool[] = [
     },
     returns:
       '{ ok, files: [{ filename, assembly, data_type, download_url, available, size_bytes, size_mib, etag, last_modified, accept_ranges, error? }], returned_files, warnings, error }. Per-file failures are preserved. size_mib uses 1024² bytes. This call has a 300-second total deadline including all HEAD probes, retries and waits, with a 45-second network idle timeout. The total deadline propagates as an error; increasing an outer execution timeout does not extend it.',
-    example:
-      'await host.mcp("encori", "list_bulk_datasets", {"assembly":"hg38","data_type":"miRNA_mRNA"})',
+    exampleArgs: { assembly: 'hg38', data_type: 'miRNA_mRNA' },
     totalTimeoutMs: 300000,
     run: (ctx, args) => encoriCall(ctx, () => listDatasets(ctx, args))
   },
@@ -270,7 +268,7 @@ const ENCORI_TOOLS: EncoriTool[] = [
     credentialKeys: [],
     id: 'download_bulk_dataset',
     description:
-      'Only when the user requests a download, stream one official bulk file to destination_dir on the computer running Open Science. Never overwrite an existing file. Interrupted .part files resume on the same filename/directory only after identity and HTTP range validation. Validate size and gzip integrity before publication.',
+      'Only when the user requests a download, stream one official bulk file to destination_dir on the computer running the caller. Never overwrite an existing file. Interrupted .part files resume on the same filename/directory only after identity and HTTP range validation. Validate size and gzip integrity before publication.',
     input: {
       type: 'object',
       properties: {
@@ -281,9 +279,11 @@ const ENCORI_TOOLS: EncoriTool[] = [
       additionalProperties: false
     },
     returns:
-      '{ ok, source_url, saved_path, filename, size_bytes, size_mib, resumed, resumed_from_bytes, verified_gzip, warnings }. Success requires verified_gzip=true and an actual published file. This call has a 3600-second total deadline including metadata requests, transfer, retries, verification and publication, with a 45-second network idle timeout. The total deadline propagates as an error; increasing an outer execution timeout does not extend it. Interrupted transfers retain .part and .meta.json; call the same filename and destination_dir to resume after identity and range checks. A timeout before file publication is not success. Downloads follow the existing Connector permission settings; explicit user policies, Skip approvals and remembered grants retain their existing precedence. Specialist capability scopes follow their existing independent policy. Concurrent transfers of the same file in this app process are rejected; process exit releases that guard.',
-    example:
-      'await host.mcp("encori", "download_bulk_dataset", {"filename":"hg38.miRNA_sncRNA.tar.gz","destination_dir":"/absolute/path/to/output"})',
+      '{ ok, source_url, saved_path, filename, size_bytes, size_mib, resumed, resumed_from_bytes, verified_gzip, warnings }. Success requires verified_gzip=true and an actual published file. This call has a 3600-second total deadline including metadata requests, transfer, retries, verification and publication, with a 45-second network idle timeout. The total deadline propagates as an error; increasing an outer execution timeout does not extend it. Interrupted transfers retain .part and .meta.json; call the same filename and destination_dir to resume after identity and range checks. A timeout before file publication is not success. Concurrent transfers of the same file in this process are rejected; process exit releases that guard.',
+    exampleArgs: {
+      filename: 'hg38.miRNA_sncRNA.tar.gz',
+      destination_dir: '/absolute/path/to/output'
+    },
     totalTimeoutMs: 3600000,
     run: (ctx, args) => encoriCall(ctx, () => download(ctx, args))
   }

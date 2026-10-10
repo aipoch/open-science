@@ -1,3 +1,4 @@
+import { MOLECULE_PREVIEW_TOOL } from './molecule-artifact-adapter'
 import { ConnectorArgumentsError, createConnectorRegistry } from '@aipoch/connector-core'
 import { ALLIANCE_TOOLS } from '@aipoch/connector-builtins/alliance'
 import { BIOMART_TOOLS } from '@aipoch/connector-builtins/biomart'
@@ -68,6 +69,7 @@ const ALL_TOOLS: ToolDescriptor[] = [
   ...LITERATURE_TOOLS,
   ...MONARCH_TOOLS,
   ...MOLECULE_TOOLS,
+  MOLECULE_PREVIEW_TOOL,
   ...OMICS_ARCHIVES_TOOLS,
   ...PATHWAY_COMMONS_TOOLS,
   ...PROTEIN_ANNOTATION_TOOLS,

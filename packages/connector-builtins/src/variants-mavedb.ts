@@ -75,8 +75,7 @@ export const VARIANTS_MAVEDB_TOOLS: ToolDescriptor[] = [
     required: ['text'],
     returns:
       '`{ text, offset, limit, total: number|null, next_offset: number|null, score_sets: [...] }`. Score set records retain upstream fields (urn, title, targetGenes, experiment, numVariants and publication metadata). An empty first page returns total=0. An empty page at offset>0 returns total=null (unknown) and next_offset=null: upstream may report the offset instead of the actual total. No extra count request is made.',
-    example:
-      'const result = await host.mcp("variants", "mavedb_search_score_sets", {"text":"BRCA1","limit":20})',
+    exampleArgs: { text: 'BRCA1', limit: 20 },
     run: async (ctx, a) => {
       if (typeof a.text !== 'string' || !a.text.trim() || a.text.length > 1000) {
         throw new Error('text must contain between 1 and 1000 characters')
@@ -117,7 +116,7 @@ export const VARIANTS_MAVEDB_TOOLS: ToolDescriptor[] = [
     connector: 'variants',
     credentialKeys: [],
     description:
-      'Retrieve a published MaveDB score set by URN, including targets, assay metadata, license, publications and experiment relationships. Includes official full CSV and mapped-variant download URLs for manual download by the user; do not fetch these URLs with raw HTTP to bypass host.mcp. Read the assay methods and score calibration before interpreting functional effects.',
+      'Retrieve a published MaveDB score set by URN, including targets, assay metadata, license, publications and experiment relationships. Includes official full CSV and mapped-variant download URLs for manual download by the user. Read the assay methods and score calibration before interpreting functional effects.',
     input: {
       type: 'object',
       properties: { urn: scoreSetUrn },
@@ -127,8 +126,7 @@ export const VARIANTS_MAVEDB_TOOLS: ToolDescriptor[] = [
     required: ['urn'],
     returns:
       '`{ urn, score_set: {...}, scores_download_url, mapped_variants_download_url }`. The complete upstream score set is preserved. Unavailable/private resources and HTTP errors propagate as errors.',
-    example:
-      'const result = await host.mcp("variants", "mavedb_get_score_set", {"urn":"urn:mavedb:00000003-a-1"})',
+    exampleArgs: { urn: 'urn:mavedb:00000003-a-1' },
     run: async (ctx, a) => {
       const id = urn(a.urn)
       const url = scoreSetUrl(id)
@@ -145,7 +143,7 @@ export const VARIANTS_MAVEDB_TOOLS: ToolDescriptor[] = [
     connector: 'variants',
     credentialKeys: [],
     description:
-      'Download a CSV page of MaveDB variant scores (default 1000 rows, maximum 10000). Uses start/limit, not offset. Returns original CSV text, including all score columns and NA values, for saving with Notebook file APIs; this tool does not write a local file. Also returns the unpaginated official download URL for manual download by the user; do not fetch these URLs with raw HTTP to bypass host.mcp. Use numVariants from mavedb_get_score_set to plan pages; a page is not the full dataset.',
+      'Download a CSV page of MaveDB variant scores (default 1000 rows, maximum 10000). Uses start/limit, not offset. Returns original CSV text, including all score columns and NA values, for local storage by the caller; this tool does not write a local file. Also returns the unpaginated official download URL for manual download by the user. Use numVariants from mavedb_get_score_set to plan pages; a page is not the full dataset.',
     input: {
       type: 'object',
       properties: {
@@ -159,8 +157,7 @@ export const VARIANTS_MAVEDB_TOOLS: ToolDescriptor[] = [
     required: ['urn'],
     returns:
       '`{ urn, start, limit, format: "csv", content: string, url, download_url }`. Content is the unchanged upstream CSV page; start/limit describe the request, not an inferred returned row count. No score normalization or clinical interpretation is performed.',
-    example:
-      'const result = await host.mcp("variants", "mavedb_download_scores", {"urn":"urn:mavedb:00000003-a-1","start":0,"limit":1000})',
+    exampleArgs: { urn: 'urn:mavedb:00000003-a-1', start: 0, limit: 1000 },
     run: async (ctx, a) => {
       const id = urn(a.urn)
       const start = integer(a.start, 'start', 0, 0, MAX_OFFSET)
@@ -178,7 +175,7 @@ export const VARIANTS_MAVEDB_TOOLS: ToolDescriptor[] = [
     connector: 'variants',
     credentialKeys: [],
     description:
-      'Retrieve existing MaveDB variant mappings for a published score set, including GA4GH VRS preMapped/postMapped objects, reference sequence identifiers, VRS version and mapping errors. This reads mappings already computed by MaveDB; it does not submit variants or perform liftover. The upstream endpoint is unpaginated and the shared 64 MiB response limit applies. For larger datasets, offer the official URL from mavedb_get_score_set for manual download by the user; do not fetch these URLs with raw HTTP to bypass host.mcp. HTTP 404 can mean no mapping records exist, not only that the score set URN is unavailable. Returned records may include failed mappings.',
+      'Retrieve existing MaveDB variant mappings for a published score set, including GA4GH VRS preMapped/postMapped objects, reference sequence identifiers, VRS version and mapping errors. This reads mappings already computed by MaveDB; it does not submit variants or perform liftover. The upstream endpoint is unpaginated and the shared 64 MiB response limit applies. For larger datasets, offer the official URL from mavedb_get_score_set for manual download by the user. HTTP 404 can mean no mapping records exist, not only that the score set URN is unavailable. Returned records may include failed mappings.',
     input: {
       type: 'object',
       properties: { urn: scoreSetUrn },
@@ -188,8 +185,7 @@ export const VARIANTS_MAVEDB_TOOLS: ToolDescriptor[] = [
     required: ['urn'],
     returns:
       '`{ urn, download_url, mapped_variants: [...] }`. All upstream mapping fields, null mappings, current flags and errorMessage values are preserved. HTTP failures are errors, not empty results.',
-    example:
-      'const result = await host.mcp("variants", "mavedb_get_mapped_variants", {"urn":"urn:mavedb:00000003-a-1"})',
+    exampleArgs: { urn: 'urn:mavedb:00000003-a-1' },
     run: async (ctx, a) => {
       const id = urn(a.urn)
       const url = `${scoreSetUrl(id)}/mapped-variants`
@@ -215,8 +211,7 @@ export const VARIANTS_MAVEDB_TOOLS: ToolDescriptor[] = [
     required: ['urn'],
     returns:
       '`{ urn, experiment: {...} }` with complete upstream experiment metadata. HTTP errors propagate.',
-    example:
-      'const result = await host.mcp("variants", "mavedb_get_experiment", {"urn":"urn:mavedb:00000003-a"})',
+    exampleArgs: { urn: 'urn:mavedb:00000003-a' },
     run: async (ctx, a) => {
       const id = urn(a.urn, true)
       return {
@@ -243,8 +238,7 @@ export const VARIANTS_MAVEDB_TOOLS: ToolDescriptor[] = [
     required: ['urn'],
     returns:
       '`{ urn, score_sets: [...] }` preserving full records from the upstream visible, supersession-filtered list. HTTP failures, including no-associated-score-sets 404 responses, propagate as errors rather than empty lists.',
-    example:
-      'const result = await host.mcp("variants", "mavedb_get_experiment_score_sets", {"urn":"urn:mavedb:00000003-a"})',
+    exampleArgs: { urn: 'urn:mavedb:00000003-a' },
     run: async (ctx, a) => {
       const id = urn(a.urn, true)
       return {

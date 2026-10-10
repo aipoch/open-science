@@ -96,7 +96,7 @@ describe('genes / enrich_gene_set_enrichr', () => {
     const postForm = vi.fn(async (url: string, body: FormData) => {
       expect(url).toBe('https://maayanlab.cloud/Enrichr/addList')
       expect(body.get('list')).toBe('TP53\nEGFR')
-      expect(body.get('description')).toBe('Open-Science gene-set enrichment')
+      expect(body.get('description')).toBe('Gene-set enrichment')
       return { userListId: 42, shortId: 'short-id' }
     })
     const fetchText = vi.fn(async (url: string) => {

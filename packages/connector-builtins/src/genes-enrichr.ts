@@ -244,8 +244,7 @@ export const GENES_ENRICHR_TOOLS: ToolDescriptor[] = [
     required: [],
     returns:
       '{organism, n_libraries, libraries:[{name,gene_coverage,genes_per_term,num_terms,link,category_id,appyter}]}',
-    example:
-      'const result = await host.mcp("genes", "list_enrichr_libraries", {"organism": "human"})',
+    exampleArgs: { organism: 'human' },
     totalTimeoutMs: 30_000,
     run: async (ctx: ToolContext, args) => {
       const organism = organismId(args.organism ?? 'human')
@@ -315,8 +314,10 @@ export const GENES_ENRICHR_TOOLS: ToolDescriptor[] = [
     required: ['genes', 'libraries'],
     returns:
       '{tool, organism, mapping_status, n_input, n_unique_input, duplicate_genes, background_size, user_list_id, short_id, background_id, libraries:[{name,n_results,n_total_results,truncated,results:[{rank,term,p_value,odds_ratio:number|"Infinity"|"-Infinity"|"NaN"|null,combined_score,overlapping_genes,adjusted_p_value,old_p_value,old_adjusted_p_value}]}]}',
-    example:
-      'const result = await host.mcp("genes", "enrich_gene_set_enrichr", {"genes": ["TP53", "EGFR", "BRCA1"], "libraries": ["ChEA_2022", "LINCS_L1000_Chem_Pert_up"]})',
+    exampleArgs: {
+      genes: ['TP53', 'EGFR', 'BRCA1'],
+      libraries: ['ChEA_2022', 'LINCS_L1000_Chem_Pert_up']
+    },
     totalTimeoutMs: 120_000,
     maxResponseBytes: 4_000_000,
     run: async (ctx: ToolContext, args) => {
@@ -333,7 +334,7 @@ export const GENES_ENRICHR_TOOLS: ToolDescriptor[] = [
       const description =
         typeof args.description === 'string' && args.description.trim() !== ''
           ? args.description.trim()
-          : 'Open-Science gene-set enrichment'
+          : 'Gene-set enrichment'
       const maxResults =
         typeof args.max_results === 'number' && Number.isInteger(args.max_results)
           ? args.max_results

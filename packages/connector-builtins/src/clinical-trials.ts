@@ -553,8 +553,13 @@ export const CLINICAL_TRIALS_TOOLS: ToolDescriptor[] = [
     },
     returns:
       '`{ count, total (only when count_total, else null), next_page_token, items: [ { nct_id, title, status, phase (array|null), conditions, interventions, sponsor, enrollment, start_date, primary_completion_date, locations_count, study_type } ] }`.',
-    example:
-      'const result = await host.mcp("clinical-trials", "search_trials", {"condition": "lung cancer", "status": ["RECRUITING"], "phase": ["PHASE3"], "count_total": true, "page_size": 10})',
+    exampleArgs: {
+      condition: 'lung cancer',
+      status: ['RECRUITING'],
+      phase: ['PHASE3'],
+      count_total: true,
+      page_size: 10
+    },
     run: async (ctx, a) => {
       const countTotal = Boolean(a.count_total)
       const page = await fetchPage(
@@ -582,8 +587,7 @@ export const CLINICAL_TRIALS_TOOLS: ToolDescriptor[] = [
     required: ['nct_id'],
     returns:
       'Found: `{ found: true, trial: { nct_id, title, brief_title, acronym, status, phase, study_type, conditions, interventions, sponsor, collaborators, enrollment, start_date, primary_completion_date, completion_date, brief_summary, detailed_description, eligibility_criteria, minimum_age, maximum_age, sex, healthy_volunteers ("Yes"/"No"), primary_outcomes, secondary_outcomes, other_outcomes, locations, url, has_results } }`. Missing/invalid id: `{ found: false, nct_id, error }`.',
-    example:
-      'const result = await host.mcp("clinical-trials", "get_trial_details", {"nct_id": "NCT03661411"})',
+    exampleArgs: { nct_id: 'NCT03661411' },
     run: async (ctx, a) => {
       const nct = normalizeNct(a.nct_id)
       try {
@@ -617,8 +621,7 @@ export const CLINICAL_TRIALS_TOOLS: ToolDescriptor[] = [
     required: ['sponsor_name'],
     returns:
       'Same shape as search_trials: `{ count, total, next_page_token, items: [ trial summaries ] }`.',
-    example:
-      'const result = await host.mcp("clinical-trials", "search_by_sponsor", {"sponsor_name": "Pfizer", "phase": ["PHASE3"], "count_total": true})',
+    exampleArgs: { sponsor_name: 'Pfizer', phase: ['PHASE3'], count_total: true },
     run: async (ctx, a) => {
       const countTotal = Boolean(a.count_total)
       const page = await fetchPage(
@@ -651,8 +654,7 @@ export const CLINICAL_TRIALS_TOOLS: ToolDescriptor[] = [
     },
     returns:
       '`{ count, trials_analyzed, investigators: [ { name, role, affiliation, facility, location, nct_id, study_title, condition } ] }`. Deduplicated per trial by (name, role, nct_id).',
-    example:
-      'const result = await host.mcp("clinical-trials", "search_investigators", {"condition": "Alzheimer", "institution": "Mayo Clinic", "page_size": 20})',
+    exampleArgs: { condition: 'Alzheimer', institution: 'Mayo Clinic', page_size: 20 },
     run: async (ctx, a) => {
       const page = await fetchPage(
         ctx,
@@ -683,8 +685,7 @@ export const CLINICAL_TRIALS_TOOLS: ToolDescriptor[] = [
     },
     returns:
       '`{ trials_analyzed, nct_id (or null), condition (or null), primary_endpoints, secondary_endpoints, other_endpoints, common_measures: [str] }`. Each endpoint is `{ measure, time_frame, description, type }`; common_measures is the 20 most frequent measure names.',
-    example:
-      'const result = await host.mcp("clinical-trials", "analyze_endpoints", {"nct_id": "NCT03661411"})',
+    exampleArgs: { nct_id: 'NCT03661411' },
     run: async (ctx, a) => {
       if (!truthy(a.nct_id) && !truthy(a.condition)) {
         throw new Error('analyze_endpoints needs nct_id or condition')
@@ -726,8 +727,7 @@ export const CLINICAL_TRIALS_TOOLS: ToolDescriptor[] = [
     },
     returns:
       'Same shape as search_trials, with minimum_age, maximum_age and sex (string|null) added to each summary: `{ count, total (always null — count_total is not exposed here), next_page_token, items: [ trial summaries with eligibility bounds ] }`. Null age bounds mean no registered limit on that side. Review get_trial_details for the full eligibility criteria.',
-    example:
-      'const result = await host.mcp("clinical-trials", "search_by_eligibility", {"condition": "diabetes", "min_age": "65 Years", "sex": "FEMALE"})',
+    exampleArgs: { condition: 'diabetes', min_age: '65 Years', sex: 'FEMALE' },
     run: async (ctx, a) => {
       const page = await fetchPage(
         ctx,

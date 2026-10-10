@@ -133,8 +133,7 @@ export const EXPRESSION_TOOLS: ToolDescriptor[] = [
     },
     returns:
       '`{ "total": int, "tissues": [ { "tissue_site_detail_id": str, "tissue_site_detail": str, "tissue_site": str, "abbreviation": str, "color_hex": str, "color_rgb": str, "egene_count": int, "sgene_count": int, "expressed_gene_count": int, "rnaseq_sample_count": int, "eqtl_sample_count": int, "ontology_id": str } ] }` — `total` is the API-verified row count (54 for gtex_v8).',
-    example:
-      'const result = await host.mcp("expression", "gtex_tissue_sites", {"dataset_id": "gtex_v8"})',
+    exampleArgs: { dataset_id: 'gtex_v8' },
     url: (a) =>
       `${GTEX}/dataset/tissueSiteDetail?datasetId=${encodeURIComponent(String(a.dataset_id ?? DEFAULT_DATASET))}&itemsPerPage=${PAGE_SIZE}`,
     parse: (raw) => {
@@ -169,7 +168,7 @@ export const EXPRESSION_TOOLS: ToolDescriptor[] = [
     },
     returns:
       '`[ { "dataset_id": str, "display_name": str, "gencode_version": str, "genome_build": str, "dbsnp_build": int, "organization": str, "rnaseq_sample_count": int, "rnaseq_and_genotype_sample_count": int, "subject_count": int, "eqtl_subject_count": int, "eqtl_tissue_count": int, "tissue_count": int, "description": str } ]` — one row per release (e.g. gtex_v7, gtex_v8).',
-    example: 'const result = await host.mcp("expression", "gtex_dataset_info", {})',
+    exampleArgs: {},
     url: (a) => {
       const params = [
         a.dataset_id ? `datasetId=${encodeURIComponent(String(a.dataset_id))}` : '',
@@ -215,8 +214,7 @@ export const EXPRESSION_TOOLS: ToolDescriptor[] = [
     },
     returns:
       '`{ "total": int, "returned": int, "truncated": bool, "samples": [ { "sample_id": str, "subject_id": str, "tissue_site_detail_id": str, "tissue_site_detail": str, "data_type": str, "sex": str, "age_bracket": str, "hardy_scale": int, "ischemic_time": int, "rin": float, "autolysis_score": int, "pathology_notes": str, "uberon_id": str } ] }` — `total` is the API-verified match count; `truncated` is true when capped by max_samples.',
-    example:
-      'const result = await host.mcp("expression", "gtex_sample_info", {"tissue_site_detail_id": "Liver", "data_type": "RNASEQ", "max_samples": 100})',
+    exampleArgs: { tissue_site_detail_id: 'Liver', data_type: 'RNASEQ', max_samples: 100 },
     run: async (ctx, a) => {
       const cap = a.max_samples != null ? Math.max(1, Number(a.max_samples)) : undefined
       const base =
@@ -264,8 +262,7 @@ export const EXPRESSION_TOOLS: ToolDescriptor[] = [
     required: ['genes'],
     returns:
       '`{ "total": int, "genes": [ { "gene_symbol": str, "gencode_id": str, "ensembl_id": str, "gencode_version": str, "genome_build": str, "chromosome": str, "start": int, "end": int, "strand": str, "entrez_gene_id": int, "gene_type": str, "description": str } ] }` — one record per matched reference gene; unmatched inputs are simply absent.',
-    example:
-      'const result = await host.mcp("expression", "gtex_resolve_genes", {"genes": ["GAPDH", "BRCA2"]})',
+    exampleArgs: { genes: ['GAPDH', 'BRCA2'] },
     run: async (ctx, a) => {
       const { rows, total } = await walkPages(ctx, geneReferenceUrl(a))
       return { total: total || rows.length, genes: rows.map(geneRecord) }
@@ -289,8 +286,7 @@ export const EXPRESSION_TOOLS: ToolDescriptor[] = [
     required: ['gencode_ids'],
     returns:
       '`{ "total": int, "returned": int, "rows": [ { "gencode_id": str, "gene_symbol": str, "tissue_site_detail_id": str, "median_tpm": float, "unit": str } ] }` — one row per (gene, tissue); `total` is the API-verified row count.',
-    example:
-      'const result = await host.mcp("expression", "gtex_median_expression", {"gencode_ids": ["ENSG00000111640.14"]})',
+    exampleArgs: { gencode_ids: ['ENSG00000111640.14'] },
     run: async (ctx, a) => {
       const base =
         `${GTEX}/expression/medianGeneExpression?datasetId=${encodeURIComponent(datasetOf(a))}` +
@@ -327,8 +323,7 @@ export const EXPRESSION_TOOLS: ToolDescriptor[] = [
     required: ['gene'],
     returns:
       '`{ "gene": { gene reference record }, "total_tissues": int, "tissues": [ { "tissue_site_detail_id": str, "median_tpm": float, "unit": str } ] }` — tissues sorted by descending median TPM. Raises if the gene is not in the GTEx reference.',
-    example:
-      'const result = await host.mcp("expression", "gtex_expression_summary", {"gene": "GAPDH"})',
+    exampleArgs: { gene: 'GAPDH' },
     // Multi-step: resolve the symbol, then rank its per-tissue medians.
     run: async (ctx, a) => {
       const version = DATASET_GENCODE_VERSION[datasetOf(a)]
@@ -379,8 +374,7 @@ export const EXPRESSION_TOOLS: ToolDescriptor[] = [
     required: ['gencode_id'],
     returns:
       '`[ { "tissue_site_detail_id": str, "gencode_id": str, "gene_symbol": str, "unit": str, "n_samples": int, "expression": [float] } ]` — one entry per tissue; `expression` is the raw per-sample TPM array.',
-    example:
-      'const result = await host.mcp("expression", "gtex_gene_expression", {"gencode_id": "ENSG00000111640.14", "tissue_site_detail_ids": ["Whole_Blood"]})',
+    exampleArgs: { gencode_id: 'ENSG00000111640.14', tissue_site_detail_ids: ['Whole_Blood'] },
     url: (a) =>
       `${GTEX}/expression/geneExpression?datasetId=${encodeURIComponent(datasetOf(a))}` +
       `&gencodeId=${encodeURIComponent(String(a.gencode_id))}` +
@@ -420,8 +414,7 @@ export const EXPRESSION_TOOLS: ToolDescriptor[] = [
     required: ['tissue_site_detail_id'],
     returns:
       '`{ "tissue_site_detail_id": str, "total_genes_in_ranking": int, "returned": int, "genes": [ { "gencode_id": str, "gene_symbol": str, "median_tpm": float, "unit": str } ] }` — genes in rank order; `total_genes_in_ranking` is the full ranking size (~56k).',
-    example:
-      'const result = await host.mcp("expression", "gtex_top_expressed_genes", {"tissue_site_detail_id": "Whole_Blood", "n": 20})',
+    exampleArgs: { tissue_site_detail_id: 'Whole_Blood', n: 20 },
     run: async (ctx, a) => {
       const n = Math.max(0, Number(a.n ?? 100))
       const filterMt = a.filter_mt_gene ?? true
@@ -461,8 +454,7 @@ export const EXPRESSION_TOOLS: ToolDescriptor[] = [
     required: ['tissue_site_detail_id'],
     returns:
       '`{ "total": int, "returned": int, "truncated": bool, "genes": [ { "gencode_id": str, "gene_symbol": str, "empirical_p_value": float, "p_value": float, "p_value_threshold": float, "q_value": float, "log2_allelic_fold_change": float } ] }` — `total` is exact even when truncated by max_genes.',
-    example:
-      'const result = await host.mcp("expression", "gtex_eqtl_genes", {"tissue_site_detail_id": "Pancreas", "max_genes": 100})',
+    exampleArgs: { tissue_site_detail_id: 'Pancreas', max_genes: 100 },
     run: async (ctx, a) => {
       const cap = a.max_genes != null ? Number(a.max_genes) : undefined
       const base =
@@ -503,8 +495,7 @@ export const EXPRESSION_TOOLS: ToolDescriptor[] = [
     },
     returns:
       '`{ "total": int, "returned": int, "truncated": bool, "eqtls": [ { "gencode_id": str, "gene_symbol": str, "variant_id": str, "snp_id": str, "chromosome": str, "pos": int, "tissue_site_detail_id": str, "p_value": float, "nes": float } ] }` — precomputed significant associations.',
-    example:
-      'const result = await host.mcp("expression", "gtex_single_tissue_eqtls", {"gencode_id": "ENSG00000111640.14"})',
+    exampleArgs: { gencode_id: 'ENSG00000111640.14' },
     run: async (ctx, a) => {
       if (a.gencode_id == null && a.variant_id == null) {
         throw new Error('gtex_single_tissue_eqtls requires gencode_id and/or variant_id')
@@ -554,8 +545,7 @@ export const EXPRESSION_TOOLS: ToolDescriptor[] = [
     required: ['gencode_id'],
     returns:
       '`{ "total": int, "returned": int, "variants": [ { "gencode_id": str, "variant_id": str, "meta_p": float, "tissues": { <tissue_site_detail_id>: { "m_value": float, "nes": float, "p_value": float, "se": float } } } ] }` — one row per variant tested for the gene; `total` is the variant count.',
-    example:
-      'const result = await host.mcp("expression", "gtex_multi_tissue_eqtls", {"gencode_id": "ENSG00000111640.14"})',
+    exampleArgs: { gencode_id: 'ENSG00000111640.14' },
     run: async (ctx, a) => {
       const base =
         `${GTEX}/association/metasoft?datasetId=${encodeURIComponent(datasetOf(a))}` +
@@ -601,8 +591,11 @@ export const EXPRESSION_TOOLS: ToolDescriptor[] = [
     required: ['gencode_id', 'variant_id', 'tissue_site_detail_id'],
     returns:
       '`{ "gencode_id": str, "gene_symbol": str, "variant_id": str, "tissue_site_detail_id": str, "p_value": float, "nes": float, "t_statistic": float, "maf": float, "hom_ref_count": int, "het_count": int, "hom_alt_count": int, "n_samples": int, "samples": [ { "genotype": float, "expression": float } ] }` — `samples` sorted by (genotype, expression).',
-    example:
-      'const result = await host.mcp("expression", "gtex_calculate_eqtl", {"gencode_id": "ENSG00000111640.14", "variant_id": "chr12_6452899_G_A_b38", "tissue_site_detail_id": "Whole_Blood"})',
+    exampleArgs: {
+      gencode_id: 'ENSG00000111640.14',
+      variant_id: 'chr12_6452899_G_A_b38',
+      tissue_site_detail_id: 'Whole_Blood'
+    },
     url: (a) =>
       `${GTEX}/association/dyneqtl?datasetId=${encodeURIComponent(datasetOf(a))}` +
       `&gencodeId=${encodeURIComponent(String(a.gencode_id))}` +
@@ -645,7 +638,7 @@ export const EXPRESSION_TOOLS: ToolDescriptor[] = [
     },
     returns:
       '`{ "species": [ { "taxon_id": int, "name": str, "scientific_name": str, "genome_version": str, "has_expression_data": bool } ] }` — Bgee species metadata from the official JSON API.',
-    example: 'const result = await host.mcp("expression", "bgee_species", {})',
+    exampleArgs: {},
     url: (a) => {
       const params = new URLSearchParams({
         page: 'species',
@@ -700,8 +693,7 @@ export const EXPRESSION_TOOLS: ToolDescriptor[] = [
     required: ['gene_id', 'species_id'],
     returns:
       '`{ "gene": { "id": str, "name": str, "species": object }, "returned": int, "truncated": bool, "calls": [ { "anatomical_entity_id": str, "anatomical_entity_name": str, "expression_state": str, "expression_score": float, "expression_score_confidence": str, "expression_quality": str, "fdr": str, "data_types": [str] } ] }`.',
-    example:
-      'const result = await host.mcp("expression", "bgee_expression_calls", {"gene_id": "ENSG00000130208", "species_id": 9606, "max_calls": 50})',
+    exampleArgs: { gene_id: 'ENSG00000130208', species_id: 9606, max_calls: 50 },
     totalTimeoutMs: 30_000,
     maxResponseBytes: 4 * 1024 * 1024,
     url: (a) => {
@@ -765,8 +757,7 @@ export const EXPRESSION_TOOLS: ToolDescriptor[] = [
     required: ['gene', 'species_id', 'tissue'],
     returns:
       '`{ "returned": int, "truncated": bool, "rows": [ { "gene_name": str, "species_name": str, "anatomical_entity": str, "anatomical_entity_name": str, "expression_score": number } ] }` — score-ranked Bgee SPARQL bindings.',
-    example:
-      'const result = await host.mcp("expression", "bgee_sparql_expression", {"gene": "APOC1", "species_id": 9606, "tissue": "liver", "limit": 25})',
+    exampleArgs: { gene: 'APOC1', species_id: 9606, tissue: 'liver', limit: 25 },
     totalTimeoutMs: BGEE_SPARQL_TIMEOUT_MS + 5_000,
     maxResponseBytes: BGEE_SPARQL_MAX_RESPONSE_BYTES,
     url: (a) => {
@@ -848,8 +839,7 @@ SELECT DISTINCT ?geneName ?speciesName ?anat ?anatName ?score WHERE {
     required: ['species'],
     returns:
       '`{ "species": str, "file_kind": str, "download_url": str, "documentation_url": str }` — stable official Bgee FTP/site URLs.',
-    example:
-      'const result = await host.mcp("expression", "bgee_download_links", {"species": "Homo_sapiens", "file_kind": "calls_simple"})',
+    exampleArgs: { species: 'Homo_sapiens', file_kind: 'calls_simple' },
     run: async (_ctx, args) => {
       const species = String(args.species).trim().replace(/\s+/g, '_')
       if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(species)) {

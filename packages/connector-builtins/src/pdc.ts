@@ -118,8 +118,7 @@ export const PDC_TOOLS: ToolDescriptor[] = [
     returns:
       '{ studies: [{ pdc_study_id, versions: [{ study_id, study_submitter_id, study_shortname, study_version, is_latest_version }] }], total, offset, limit, returned, next_offset, truncated, pagination_mode: "local", usage }. The upstream catalog has no pagination; this call fetches it within an 8 MiB response budget, sorts by PDC ID, filters locally and returns at most 100 studies. total counts matching studies, not versions. ' +
       versionNote,
-    example:
-      'const result = await host.mcp("pdc", "pdc_search_studies", {"query":"CCRCC", "limit":5})',
+    exampleArgs: { query: 'CCRCC', limit: 5 },
     maxResponseBytes: 8 * 1024 * 1024,
     run: async (ctx, args) => {
       const data = await query(ctx, `query { studyCatalog { ${catalogFields} } }`, {})
@@ -162,7 +161,7 @@ export const PDC_TOOLS: ToolDescriptor[] = [
     },
     returns:
       '{ studies: [{ study_id, pdc_study_id, study_submitter_id, study_name, study_description, program_name, project_name, disease_type, primary_site, analytical_fraction, experiment_type, cases_count, aliquots_count, filesCount }], catalog: [{ pdc_study_id, versions }], usage }. A missing study returns empty arrays. study_description may contain upstream HTML. Counts describe the selected version; catalog also includes other versions.',
-    example: 'const result = await host.mcp("pdc", "pdc_get_study", {"pdc_study_id":"PDC000127"})',
+    exampleArgs: { pdc_study_id: 'PDC000127' },
     maxResponseBytes: 8 * 1024 * 1024,
     run: async (ctx, args) => {
       const data = await query(
@@ -207,8 +206,7 @@ export const PDC_TOOLS: ToolDescriptor[] = [
       'Default pagination_mode: local preserves association-row pagination: fetch biospecimenPerStudy within an 8 MiB response budget, sort by aliquot/sample/case IDs and page locally. available counts all received associations. Below the 1000-record upstream cap, total equals available. At or above the cap, total is null, upstream_limit_reached and truncated are true on every page because completeness is unknown, even for exactly 1000 associations. next_offset pages only the received records; null does not establish study completeness. ' +
       'With pagination_mode: upstream, fetch one paginatedCasesSamplesAliquots case page plus one lookahead case and flatten only the selected cases. Additional fields: { pagination_unit: "case", case_total, returned_cases, has_more, unavailable_fields }. offset, limit and next_offset count cases, while returned and available count associations in this page and can exceed limit. total is null because the association total is unknown; case_total is the upstream case count. sample_id and case_id come from parent nodes. case_status, project_name and taxon are null and listed in unavailable_fields because this endpoint does not supply them. No automatic full-study aggregation or data cache is introduced. ' +
       'Each call refetches upstream data; upstream does not guarantee stable ordering or a cross-page snapshot. Pinning study_id fixes the version, not a snapshot or duplicate-free enumeration. A GDC external reference is separate from the PDC case_id; preserve its resource and identifier. No clinical treatment or outcome data is returned.',
-    example:
-      'const result = await host.mcp("pdc", "pdc_list_biospecimens", {"pdc_study_id":"PDC000127", "pagination_mode":"upstream", "limit":5})',
+    exampleArgs: { pdc_study_id: 'PDC000127', pagination_mode: 'upstream', limit: 5 },
     maxResponseBytes: 8 * 1024 * 1024,
     run: async (ctx, args) => {
       if (args.pagination_mode === 'upstream') {
@@ -330,8 +328,7 @@ export const PDC_TOOLS: ToolDescriptor[] = [
     },
     returns:
       '{ files: [{ study_id, pdc_study_id, study_submitter_id, study_name, file_id, file_name, file_submitter_id, file_type, md5sum, file_location, file_size, data_category, file_format }], offset, limit, returned, total: null, has_more, next_offset, truncated, pagination_mode: "upstream", usage }. file_size is the upstream byte-count string. file_location is a storage path, not an authorized download URL. Fetches limit + 1 records to determine has_more; no total is invented. A listed file is not evidence of download permission. Upstream does not guarantee stable ordering or a cross-page snapshot; pinning study_id fixes the version but does not guarantee duplicate-free or complete enumeration across calls.',
-    example:
-      'const result = await host.mcp("pdc", "pdc_list_files", {"pdc_study_id":"PDC000127", "data_category":"Protein Assembly", "limit":10})',
+    exampleArgs: { pdc_study_id: 'PDC000127', data_category: 'Protein Assembly', limit: 10 },
     maxResponseBytes: 8 * 1024 * 1024,
     run: async (ctx, args) => {
       const { offset, limit } = paging(args)

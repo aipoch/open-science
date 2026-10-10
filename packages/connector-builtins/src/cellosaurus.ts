@@ -123,8 +123,7 @@ export const CELLOSAURUS_TOOLS: ToolDescriptor[] = [
     required: ['query'],
     returns:
       '`{ query, offset, limit, returned, next_offset, pagination_limited, cell_lines: [{ accession, rrid, name, synonyms, secondary_accessions, species, category, quality: { status, problems, cautions, registrations, note }, source_url, created, last_updated, entry_version }] }`. One extra row determines next_offset; the API supplies no total. Results are ordered by accession. An empty cell_lines list means the requested page has no records; only an empty page at offset=0 means no name/synonym match. quality.status is problematic_recorded or no_problem_recorded, never a sample certification. HTTP and malformed-response errors propagate.',
-    example:
-      'const result = await host.mcp("cellosaurus", "search_cell_lines", {"query": "HeLa", "limit": 20})',
+    exampleArgs: { query: 'HeLa', limit: 20 },
     run: async (ctx, args) => {
       const query = String(args.query).trim()
       if (!query) throw new Error('query must contain a cell line name or synonym')
@@ -176,8 +175,7 @@ export const CELLOSAURUS_TOOLS: ToolDescriptor[] = [
     required: ['accession'],
     returns:
       '`{ accession, rrid, name, synonyms, secondary_accessions, species, category, sex, age, diseases, derived_from_sites, cell_type, established_by, parent_cell_lines, quality: { status, problems, cautions, registrations, note }, cross_references, source_url, created, last_updated, entry_version }`. Annotations retain upstream objects, evidence text and database identifiers/URLs. Optional uncurated lists are empty; scalar fields are null. No recorded problem is not evidence of authentication or absence of contamination. A detail HTTP 404 triggers one exact primary/secondary accession search; a unique matching record resolves an old CVCL/RRID to its current primary accession and RRID. No match preserves the original HTTP 404; ambiguous/mismatched records fail. Other HTTP, network and malformed-response failures propagate without identity fallback.',
-    example:
-      'const result = await host.mcp("cellosaurus", "get_cell_line", {"accession": "RRID:CVCL_1906"})',
+    exampleArgs: { accession: 'RRID:CVCL_1906' },
     run: async (ctx, args) => {
       const id = accession(args.accession)
       const params = new URLSearchParams({ format: 'json', fields: DETAIL_FIELDS })

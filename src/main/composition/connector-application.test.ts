@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -461,6 +462,10 @@ describe('Connector application composition', () => {
     ).resolves.toMatchObject({ n_records_returned: 0 })
     expect(deps.broadcastCredentialRequest).not.toHaveBeenCalled()
     expect(deps.fetchImpl).toHaveBeenCalledOnce()
+    const headers = new Headers(vi.mocked(deps.fetchImpl).mock.calls[0][1]?.headers)
+    expect(headers.get('user-agent')).toBe(
+      'Mozilla/5.0 (compatible; Open-Science/1.0; +https://github.com/aipoch/open-science)'
+    )
 
     await module.dispose?.()
   })
@@ -476,4 +481,47 @@ describe('Connector application composition', () => {
 
     expect(mcpClientManager.closeAll).toHaveBeenCalledOnce()
   })
+})
+
+it('passes the opaque MCP guard back to the existing Settings compare-before-write contract', async () => {
+  // The installed Connector package uses the SDK's CommonJS client.
+  const { Client } = createRequire(import.meta.url)(
+    '@modelcontextprotocol/sdk/client/index.js'
+  ) as typeof import('@modelcontextprotocol/sdk/client/index.js')
+  const { toCustomMcpConfig } = await import('../connectors/custom-mcp-config')
+  const { settings, deps } = createHarness()
+  const state = { tokens: { access_token: 'fixture', token_type: 'Bearer' } }
+  vi.spyOn(Client.prototype, 'connect').mockImplementation(async (transport) => {
+    const provider = (
+      transport as unknown as {
+        _authProvider: import('@aipoch/connector-mcp-client').PersistentOAuthClientProvider
+      }
+    )._authProvider
+    await provider.saveTokens(state.tokens)
+  })
+  vi.spyOn(Client.prototype, 'listTools').mockResolvedValue({ tools: [] })
+  const module = await createConnectorApplicationModule({ ...deps, mcpClientManager: undefined })
+  const application = module.capability
+  const config = toCustomMcpConfig({
+    id: 'guarded',
+    name: 'guarded',
+    displayName: 'Guarded',
+    enabled: true,
+    transport: 'streamable_http',
+    url: 'https://example.test/mcp',
+    oauth: {},
+    oauthClientSecretRef: 'enc:fixture'
+  })
+  try {
+    await application.mcpClientManager.listTools(config)
+    expect(settings.saveCustomServerOAuthState).toHaveBeenCalledWith(
+      'guarded',
+      state,
+      config.persistenceGuard!.configurationFingerprint,
+      'enc:fixture'
+    )
+  } finally {
+    await module.dispose?.()
+    vi.restoreAllMocks()
+  }
 })

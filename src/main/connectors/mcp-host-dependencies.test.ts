@@ -82,3 +82,31 @@ it('connects the shared credential policy before stderr reaches the host logger'
   expect(output).toContain('HTTP 429')
   expect(output).not.toContain('opaque-secret')
 })
+
+it('supplies application OAuth identity, recovery text and expired callback copy', async () => {
+  const { McpClientManager } = await import('@aipoch/connector-mcp-client')
+  const manager = new McpClientManager({
+    ...mcpHostDependencies,
+    createClient: async (_config, provider) => {
+      expect(provider?.clientMetadata.client_name).toBe('Open-Science')
+      const response = await fetch(`${provider!.redirectUrl}?state=unknown`)
+      expect(response.status).toBe(400)
+      expect(await response.text()).toContain('Open-Science authorization expired')
+      await provider!.redirectToAuthorization(new URL('https://example.test/authorize'))
+      throw new Error('background authorization must reject')
+    }
+  })
+  try {
+    await expect(
+      manager.listTools({
+        id: 'host-identity',
+        name: 'host-identity',
+        transport: 'streamable_http',
+        url: 'https://example.test/mcp',
+        oauth: {}
+      })
+    ).rejects.toThrow('OAuth authentication required. Sign in from Settings > Connectors.')
+  } finally {
+    await manager.closeAll()
+  }
+})

@@ -64,7 +64,7 @@ describe('InterProScan submission', () => {
     const pending = submissionEngine(fetchImpl).call(submit, { sequence: 'MKT' }, auth)
     await expect(pending).rejects.toThrow(message)
     for (const guidance of [
-      'Settings → Credentials → Literature access',
+      'credentials.ncbiEmail',
       'This email is sent to EMBL-EBI when submitting a job.'
     ]) {
       await expect(pending).rejects.toThrow(guidance)

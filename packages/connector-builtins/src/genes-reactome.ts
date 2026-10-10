@@ -14,7 +14,6 @@ import { withTimeoutSignal } from '@aipoch/connector-core'
 // pathway, only notFound groups by identifier), so per-identifier pathway membership is obtained by
 // submitting each found identifier on its own — which also yields that identifier's own statistics.
 const BASE = 'https://reactome.org/AnalysisService'
-const USER_AGENT = 'Open-Science/1.0 (+https://github.com/aipoch/open-science)'
 const HTTP_TIMEOUT_MS = 30_000
 
 const ID_TYPES = new Set(['symbol', 'uniprot'])
@@ -86,7 +85,7 @@ async function reactomeFetch(
   return withTimeoutSignal(HTTP_TIMEOUT_MS, signal, (requestSignal) =>
     fetchImpl(url, {
       ...init,
-      headers: { 'user-agent': USER_AGENT, accept: 'application/json', ...init?.headers },
+      headers: { accept: 'application/json', ...init?.headers },
       signal: requestSignal
     })
   )
@@ -235,8 +234,7 @@ export const GENES_REACTOME_TOOLS: ToolDescriptor[] = [
     required: ['identifiers', 'id_type'],
     returns:
       'compact {tool, reactome_version, id_type, species, resource, include_disease, n_input, genes:{identifier:{found, n_lowlevel_pathways, pathways:[{stId,name,species}]}}}; full replaces each pathways[] with full stats {stId,name,species,low_level,in_disease,entities:{total,found,ratio,p_value,fdr},reactions:{total,found,ratio}} and adds batch_summary {n_input, n_found, n_not_found, identifiers_not_found, distinct_lowlevel_pathways, batch_pathways_found}. found and batch_summary.n_found report identifier recognition, not a guarantee of pathways in the requested species; inspect pathway counts separately.',
-    example:
-      'const result = await host.mcp("genes", "map_reactome_pathways", {"identifiers": ["TP53", "EGFR", "BRCA1"], "id_type": "symbol"})',
+    exampleArgs: { identifiers: ['TP53', 'EGFR', 'BRCA1'], id_type: 'symbol' },
     run: async (ctx: ToolContext, a) => {
       const rawIds = a.identifiers
       if (!Array.isArray(rawIds)) throw new Error('identifiers must be an array of strings')

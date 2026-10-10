@@ -60,7 +60,7 @@ describe('biorxiv / exports', () => {
     for (const t of BIORXIV_TOOLS) {
       expect(t.connector).toBe('biorxiv')
       expect(t.returns).toBeTruthy()
-      expect(t.example).toContain('host.mcp("biorxiv"')
+      expect(t.exampleArgs).toBeDefined()
     }
   })
 })

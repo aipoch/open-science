@@ -238,8 +238,7 @@ export const STRUCTURES_COMPLEXPORTAL_TOOLS: ToolDescriptor[] = [
     required: ['complex_acs'],
     returns:
       '{n_requested, records:[{complex_ac, intact_ac, name, systematic_name, synonyms:[...], species_name, taxid, predicted_complex, evidence:{eco_code, description, confidence_score}, participants:[{identifier, name, description, interactor_type, interactor_type_mi, biological_role, biological_role_mi, stoichiometry_min, stoichiometry_max, stoichiometry_raw}], go_annotations:[{go_id, aspect, term}], cross_references:[{database, identifier, qualifier, description}], functions:[...], complex_assemblies:[...], release_dates:[...]}], not_found:[...]}. Records preserve the de-duplicated input order.',
-    example:
-      'const result = await host.mcp("structures", "complexportal_get_complexes", {"complex_acs": ["CPX-2158", "CPX-2419"]})',
+    exampleArgs: { complex_acs: ['CPX-2158', 'CPX-2419'] },
     run: async (ctx: ToolContext, a: Record<string, unknown>): Promise<unknown> => {
       const input = Array.isArray(a.complex_acs) ? (a.complex_acs as unknown[]) : []
       // De-duplicate while preserving first-seen order (matches the Python reference).
@@ -286,8 +285,7 @@ export const STRUCTURES_COMPLEXPORTAL_TOOLS: ToolDescriptor[] = [
     required: ['accession'],
     returns:
       '{query_accession, solr_query, total_reported, total_retrieved, complexes:[{complex_ac, name, species_name, taxid, predicted_complex, interactors:[{identifier, name, interactor_type, stoichiometry_raw}]}]}. complexes are sorted by CPX accession (numeric); total_reported == total_retrieved is enforced or the call throws.',
-    example:
-      'const result = await host.mcp("structures", "complexportal_search_by_participant", {"accession": "P69905", "participants_only": true})',
+    exampleArgs: { accession: 'P69905', participants_only: true },
     run: async (ctx: ToolContext, a: Record<string, unknown>): Promise<unknown> => {
       const accession = String(a.accession).trim()
       const participantsOnly = a.participants_only !== false

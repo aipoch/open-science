@@ -1,5 +1,3 @@
-type ConnectorGroup = 'featured' | 'directory'
-
 export type ConnectorMeta = {
   id: string
   displayName: string
@@ -12,12 +10,9 @@ export type ConnectorMeta = {
   sources: string[]
   termsUrl?: string
   requiresNcbi: boolean
-  // Settings-list section. Absent = "featured" (Anthropic research connectors); "directory" connectors
-  // mirror entries in the Claude Connectors Directory.
-  group?: ConnectorGroup
 }
 
-// Static connector metadata for the settings UI (tool lists come from the registry).
+// Scientific provider metadata, independent of application navigation and presentation.
 export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   {
     id: 'encori',
@@ -40,8 +35,7 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
       'Use for NCI Proteomic Data Commons (PDC) cancer proteomics and CPTAC study discovery: search study names and versions, inspect assay metadata, map aliquots to samples and cases, and discover quantitative reports and supplementary files. Pin study UUIDs for reproducibility; PDC study accessions select the latest version. Preserve named external references when linking to GDC or TCIA; PDC case UUIDs are not GDC case UUIDs. Public read-only GraphQL requires no credentials for these metadata queries. Follow PDC data use guidelines, cite PDC and the primary study publication, and acknowledge CPTAC. This connector does not accept agreements, download files, or retrieve clinical outcomes or quantitative matrices.',
     sources: ['PDC'],
     termsUrl: 'https://pdc.cancer.gov/pdc/data-use-guidelines',
-    requiresNcbi: false,
-    group: 'directory'
+    requiresNcbi: false
   },
   {
     id: 'iedb',
@@ -53,8 +47,7 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
       'Use for experimental immunology evidence in the Immune Epitope Database (IEDB): search epitopes, T cell responses, B cell antibody assays, MHC binding and ligand elution experiments, TCR/BCR receptor groups and CDR3 sequences, host species, antigen sources and references. Preserve methods, quantitative measurements, units, inequalities and negative results. These are database observations, not predictions. Parent UniProt antigens can differ from the curated antigen sequence. Follow explicit UniProt accessions through Genes & Ontologies and PDB identifiers through Structures & Interactions; follow PMIDs through PubMed. Public read-only IQ-API; no credentials required.',
     sources: ['IEDB'],
     termsUrl: 'https://www.iedb.org/',
-    requiresNcbi: false,
-    group: 'directory'
+    requiresNcbi: false
   },
   {
     id: 'monarch',
@@ -66,8 +59,7 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
       'Use to query disease–phenotype or gene–phenotype associations for Monarch canonical CURIEs and inspect relation types, evidence codes, publications, provenance, negation and qualifiers. Source database IDs and aliases are not automatically converted; a zero total means no match for the supplied identifier and filters, not absence of phenotype evidence. Direct identifier matching is the default, not a claim of experimental evidence; inspect knowledge_level and agent_type. Resolve ontology terms with OLS in Genes & Ontologies and use Alliance for model-organism gene summaries, orthology and annotations. This read-only public API requires no authentication.',
     sources: ['Monarch Initiative'],
     termsUrl: 'https://monarch-app.monarchinitiative.org/Licensing/',
-    requiresNcbi: false,
-    group: 'directory'
+    requiresNcbi: false
   },
   {
     id: 'alliance',
@@ -79,8 +71,7 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
       'Use when you need cross-species model-organism gene knowledge from the Alliance of Genome Resources — search or summarize genes from human, mouse, rat, fly, worm, zebrafish, yeast and frog; retrieve orthologs, disease models, phenotype annotations, alleles/variants, or developmental and anatomical expression; or find genes associated with a Disease Ontology term. The public API is read-only and does not require authentication.',
     sources: ['Alliance of Genome Resources'],
     termsUrl: 'https://www.alliancegenome.org/terms-of-use',
-    requiresNcbi: false,
-    group: 'directory'
+    requiresNcbi: false
   },
   {
     id: 'chemistry',
@@ -105,10 +96,9 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   {
     id: 'molecule',
     displayName: 'Molecule Viewer',
-    description:
-      'Validate and preview 2D molecular structures and reactions (OpenChemLib). Backs the .mol/.sdf/.smi/.smiles/.rxn artifact viewer.',
+    description: 'Validate and normalize molecular structures with OpenChemLib.',
     useWhen:
-      'Use when the user provides or wants to inspect a chemical structure — validating or normalizing a SMILES or MDL molfile, computing a molecular formula / weight / heavy-atom count, or turning a structure into a previewable 2D depiction. The paired viewer also renders MDL reaction (.rxn) files. Self-contained: pass a SMILES or molfile directly, no other connector required. Sourced from OpenChemLib (offline, in-app).',
+      'Use to validate or normalize SMILES and MDL molfiles and compute molecular formula, weight and heavy-atom count with OpenChemLib.',
     sources: ['OpenChemLib'],
     requiresNcbi: false
   },
@@ -122,8 +112,7 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
       'Use to search the biomedical literature and retrieve article metadata (authors, abstract, DOIs, MeSH), find related/similar articles, resolve citations to PMIDs, convert between PMID/PMCID/DOI, fetch open-access full text from PubMed Central, or check copyright/license status. Sourced from PubMed (NCBI), PMC and Europe PMC.',
     sources: ['PubMed', 'PMC', 'Europe PMC'],
     termsUrl: 'https://www.ncbi.nlm.nih.gov/home/about/policies/',
-    requiresNcbi: true,
-    group: 'directory'
+    requiresNcbi: true
   },
   {
     id: 'genes',
@@ -181,8 +170,7 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
       'Use for ClinicalTrials.gov: search trials by condition/intervention/sponsor/location/status/phase, fetch full details by NCT id, find trials by sponsor, discover investigators and sites, analyze trial endpoints, or match patients by eligibility.',
     sources: ['ClinicalTrials.gov'],
     termsUrl: 'https://clinicaltrials.gov/about-site/terms-conditions',
-    requiresNcbi: false,
-    group: 'directory'
+    requiresNcbi: false
   },
   {
     id: 'clinical-genomics',
@@ -216,8 +204,7 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
       'Use for ChEMBL medicinal-chemistry data — search compounds by name, ChEMBL id, or molecular structure (similarity/substructure); find drugs by therapeutic indication with approval and withdrawal flags; get calculated ADMET / drug-likeness properties for a molecule; retrieve bioactivity measurements (IC50, Ki, EC50, pChEMBL) for compound-target pairs; look up mechanism of action; or search biological targets by gene symbol, name, organism, or type. Sourced from ChEMBL (EBI).',
     sources: ['ChEMBL'],
     termsUrl: 'https://chembl.gitbook.io/chembl-interface-documentation/about',
-    requiresNcbi: false,
-    group: 'directory'
+    requiresNcbi: false
   },
   {
     id: 'biorxiv',
@@ -228,8 +215,7 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
       'Use when working with bioRxiv or medRxiv preprints — searching by date range and category (no keyword search), fetching full metadata for a DOI, finding which preprints were published in journals (optionally by publisher DOI prefix), listing preprints by funder (ROR id), or reporting submission/usage statistics over time. Sourced from bioRxiv and medRxiv (funder ids via ROR).',
     sources: ['bioRxiv', 'medRxiv', 'ROR'],
     termsUrl: 'https://www.biorxiv.org/about/FAQ',
-    requiresNcbi: false,
-    group: 'directory'
+    requiresNcbi: false
   },
   {
     id: 'drug-regulatory',
@@ -315,8 +301,7 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
       'Use when you need GDC project, case or file metadata and data inventories — including project summaries, case identifiers, file formats, checksums, access classification and Data Transfer Tool manifests. GDC file discovery distinguishes open-access files from controlled-access files; controlled data requires the user’s GDC authorization, so finding a file or creating a manifest does not guarantee that it can be downloaded. No file bytes are downloaded by this connector.',
     sources: ['Genomic Data Commons (GDC)'],
     termsUrl: 'https://docs.gdc.cancer.gov/API/Users_Guide/Getting_Started/',
-    requiresNcbi: false,
-    group: 'directory'
+    requiresNcbi: false
   },
   {
     id: 'rna',
@@ -369,8 +354,7 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
       'Use for laboratory cell line identity and curated quality information: search names and aliases, resolve CVCL or RRID:CVCL identifiers, inspect species/tissue origin and donor disease, known contamination or misidentification, ICLAC registrations, and external database mappings. Search returns candidates; select an accession before requesting details. No recorded problem does not certify a sample. This read-only API requires no authentication.',
     sources: ['Cellosaurus'],
     termsUrl: 'https://www.cellosaurus.org/description.html',
-    requiresNcbi: false,
-    group: 'directory'
+    requiresNcbi: false
   },
   {
     id: 'cellguide',

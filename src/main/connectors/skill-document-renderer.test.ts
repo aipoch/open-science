@@ -31,3 +31,12 @@ describe('data-only Skill documents', () => {
     expect(renderConnectorInstructions([])).toBe('')
   })
 })
+
+it('renders structured provider arguments as a host call without evaluating argument strings', () => {
+  const exampleArgs = { query: 'literal `code` and "quotes"', limit: 2 }
+  const doc = renderSkillDoc({ id: 'custom', useWhen: 'Search' }, [
+    { id: 'search', description: 'Search', input: {}, exampleArgs }
+  ])
+  expect(doc).toContain(`host.mcp("custom", "search", ${JSON.stringify(exampleArgs)})`)
+  expect(doc).toContain('Do not bypass `host.mcp` with raw HTTP')
+})

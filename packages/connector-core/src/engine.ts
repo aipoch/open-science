@@ -13,8 +13,7 @@ const DEFAULT_RETRIES = 2
 const DEFAULT_BACKOFF_MS = 400
 
 // Some public APIs (e.g. AlphaFold EBI) reject requests without a User-Agent; send a stable one.
-const USER_AGENT =
-  'Mozilla/5.0 (compatible; Open-Science/1.0; +https://github.com/aipoch/open-science)'
+const DEFAULT_USER_AGENT = 'connector-core/0.2.0'
 
 // Strips credential query params (NCBI email/api_key) from a URL before it can land in an error
 // message or log. Falls back to the raw string if it doesn't parse as a URL.
@@ -65,6 +64,7 @@ class ConnectorResponseTooLargeError extends Error {
 export class ParserEngine {
   private readonly redactDiagnosticText: (value: string) => string
   private readonly fetchImpl: typeof fetch
+  private readonly userAgent: string
   private readonly timeoutMs: number
   private readonly totalTimeoutMs: number
   private readonly maxResponseBytes: number
@@ -74,6 +74,7 @@ export class ParserEngine {
   constructor(opts?: {
     redactDiagnosticText?: (value: string) => string
     fetchImpl?: typeof fetch
+    userAgent?: string
     timeoutMs?: number
     totalTimeoutMs?: number
     maxResponseBytes?: number
@@ -88,6 +89,7 @@ export class ParserEngine {
       }
     }
     this.fetchImpl = opts?.fetchImpl ?? fetch
+    this.userAgent = opts?.userAgent ?? DEFAULT_USER_AGENT
     this.timeoutMs = opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS
     this.totalTimeoutMs = opts?.totalTimeoutMs ?? DEFAULT_TOTAL_TIMEOUT_MS
     this.maxResponseBytes = opts?.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES
@@ -193,7 +195,7 @@ export class ParserEngine {
           armTimeout()
           res = await this.fetchImpl(url, {
             ...init,
-            headers: { accept, 'user-agent': USER_AGENT, ...init?.headers },
+            headers: { accept, 'user-agent': this.userAgent, ...init?.headers },
             signal: requestSignal
           })
           if ((res.ok || allowHttpStatuses.includes(res.status)) && res.body) {
@@ -303,7 +305,13 @@ export class ParserEngine {
       return bodyText === undefined ? response.text() : bodyText
     }
     return {
-      rawFetch: this.fetchImpl,
+      rawFetch: (input, init) => {
+        const headers = new Headers(
+          init?.headers ?? (input instanceof Request ? input.headers : undefined)
+        )
+        if (!headers.has('user-agent')) headers.set('user-agent', this.userAgent)
+        return this.fetchImpl(input, { ...init, headers: Object.fromEntries(headers) })
+      },
       redactDiagnosticText: this.redactDiagnosticText,
       ...(signal ? { signal } : {}),
       credentials,

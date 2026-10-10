@@ -40,7 +40,7 @@ describe('clinical-genomics — has exactly the 20 upstream tools', () => {
       ].sort()
     )
     expect(CLINICAL_GENOMICS_TOOLS.every((t) => t.connector === 'clinical-genomics')).toBe(true)
-    expect(CLINICAL_GENOMICS_TOOLS.every((t) => t.returns && t.example)).toBeTruthy()
+    expect(CLINICAL_GENOMICS_TOOLS.every((t) => t.returns && t.exampleArgs)).toBeTruthy()
   })
 })
 

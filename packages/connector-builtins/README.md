@@ -29,9 +29,9 @@ Representative public entries (the full whitelist is in `package.json#exports`):
 - `./ncbi`: `ncbiEtiquette`, shared NCBI URL parameter encoding.
 
 Only the caller resolves credentials; this package has no credential storage,
-application configuration or authorization implementation. Existing descriptor
-example strings are documentation metadata for the application's Skill adapter;
-execution does not require Notebook, Skills or `host.mcp`.
+application configuration or authorization implementation. Descriptors provide schema-valid
+`exampleArgs` data; consumers render their own invocation syntax. Settings groups and
+application Skill policy belong to the host catalog/document adapters.
 
 Install the `@aipoch/connector-core` peer alongside this package. A shared core
 instance preserves transport error identity (including Cellosaurus 404 fallback).
@@ -58,3 +58,6 @@ recovery and its rate limiter. Existing filenames and receipts are unchanged.
 Artifact creation and Provenance remain the host's responsibility. Rendering loads
 OpenChemLib lazily; the host adapter persists the returned molfile through its
 existing writer.
+
+`./molecule` advertises only `render_molecule`. Application preview/Artifact actions
+are registered by the host. See the [boundary and migration guide](../../docs/connector-packages.md).

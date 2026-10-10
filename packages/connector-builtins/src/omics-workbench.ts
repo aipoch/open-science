@@ -123,8 +123,7 @@ export const WORKBENCH_OMICS_TOOLS: ToolDescriptor[] = [
       additionalProperties: false
     },
     required: ['field', 'query'],
-    example:
-      'const result = await host.mcp("omics-archives", "workbench_search_compounds", {"field": "pubchem_cid", "query": "5793"})',
+    exampleArgs: { field: 'pubchem_cid', query: '5793' },
     run: async (ctx, args) => {
       const field = choice(args.field, COMPOUND_FIELDS, 'field')
       const query = queryValue(args.query)
@@ -154,8 +153,7 @@ export const WORKBENCH_OMICS_TOOLS: ToolDescriptor[] = [
       additionalProperties: false
     },
     required: ['query'],
-    example:
-      'const result = await host.mcp("omics-archives", "workbench_search_studies", {"query": "Diabetes", "limit": 20})',
+    exampleArgs: { query: 'Diabetes', limit: 20 },
     run: async (ctx, args) => {
       const field = choice(
         args.field === undefined ? 'study_title' : args.field,
@@ -189,8 +187,7 @@ export const WORKBENCH_OMICS_TOOLS: ToolDescriptor[] = [
       additionalProperties: false
     },
     required: ['study_id'],
-    example:
-      'const result = await host.mcp("omics-archives", "workbench_get_study", {"study_id": "ST000001", "section": "factors"})',
+    exampleArgs: { study_id: 'ST000001', section: 'factors' },
     run: async (ctx, args) => {
       if (typeof args.study_id !== 'string' || !/^ST[0-9]{6}$/.test(args.study_id)) {
         throw new Error('study_id must be ST followed by six digits')

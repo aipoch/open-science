@@ -127,8 +127,7 @@ export const CLINPGX_TOOLS: ToolDescriptor[] = [
     },
     returns:
       '`ClinPGx Chemical` JSON array/object with drug names, identifiers, and cross references.',
-    example:
-      'const result = await host.mcp("clinical-genomics", "clinpgx_search_chemicals", {"name": "warfarin", "view": "max"})',
+    exampleArgs: { name: 'warfarin', view: 'max' },
     run: (ctx, args) =>
       query(ctx, '/data/chemical', args, ['accessionId', 'name', 'view'], ['accessionId', 'name'])
   },
@@ -150,8 +149,7 @@ export const CLINPGX_TOOLS: ToolDescriptor[] = [
     },
     returns:
       '`ClinPGx Gene` JSON array/object with gene symbols, identifiers, and cross references.',
-    example:
-      'const result = await host.mcp("clinical-genomics", "clinpgx_search_genes", {"symbol": "VKORC1", "view": "max"})',
+    exampleArgs: { symbol: 'VKORC1', view: 'max' },
     run: (ctx, args) =>
       query(ctx, '/data/gene', args, ['accessionId', 'symbol', 'view'], ['accessionId', 'symbol'])
   },
@@ -178,8 +176,12 @@ export const CLINPGX_TOOLS: ToolDescriptor[] = [
     },
     returns:
       '`ClinPGx summaryAnnotation` JSON array/object with drug, gene, variant, phenotype, and level-of-evidence fields.',
-    example:
-      'const result = await host.mcp("clinical-genomics", "clinpgx_search_summary_annotations", {"relatedChemicals.name": "warfarin", "location.genes.symbol": "VKORC1", "levelOfEvidence.term": "1A", "view": "max"})',
+    exampleArgs: {
+      'relatedChemicals.name': 'warfarin',
+      'location.genes.symbol': 'VKORC1',
+      'levelOfEvidence.term': '1A',
+      view: 'max'
+    },
     run: (ctx, args) =>
       query(
         ctx,
@@ -217,8 +219,7 @@ export const CLINPGX_TOOLS: ToolDescriptor[] = [
     },
     required: ['id'],
     returns: '`ClinPGx summaryAnnotation` object.',
-    example:
-      'const result = await host.mcp("clinical-genomics", "clinpgx_get_summary_annotation", {"id": 655385012, "view": "max"})',
+    exampleArgs: { id: 655385012, view: 'max' },
     run: getById('/data/summaryAnnotation', 'id', true, 'positiveNumber')
   },
   {
@@ -235,8 +236,7 @@ export const CLINPGX_TOOLS: ToolDescriptor[] = [
     },
     returns:
       '`ClinPGx variantAnnotation` JSON array/object with variant-level pharmacogenomic annotations.',
-    example:
-      'const result = await host.mcp("clinical-genomics", "clinpgx_search_variant_annotations", {"location.fingerprint": "rs1799853", "view": "max"})',
+    exampleArgs: { 'location.fingerprint': 'rs1799853', view: 'max' },
     run: (ctx, args) =>
       query(
         ctx,
@@ -265,8 +265,7 @@ export const CLINPGX_TOOLS: ToolDescriptor[] = [
     },
     returns:
       '`ClinPGx guidelineAnnotation` JSON array/object with source, drug, gene, recommendation, and strength fields.',
-    example:
-      'const result = await host.mcp("clinical-genomics", "clinpgx_search_guideline_annotations", {"source": "cpic", "relatedGenes.accessionId": "PA267", "view": "max"})',
+    exampleArgs: { source: 'cpic', 'relatedGenes.accessionId': 'PA267', view: 'max' },
     run: (ctx, args) =>
       query(
         ctx,
@@ -303,8 +302,7 @@ export const CLINPGX_TOOLS: ToolDescriptor[] = [
     },
     returns:
       '`ClinPGx label` JSON array/object with regulatory label text and linked drug/gene records.',
-    example:
-      'const result = await host.mcp("clinical-genomics", "clinpgx_search_drug_labels", {"source": "fda", "relatedChemicals.name": "clopidogrel", "view": "max"})',
+    exampleArgs: { source: 'fda', 'relatedChemicals.name': 'clopidogrel', view: 'max' },
     run: (ctx, args) =>
       query(
         ctx,
@@ -342,8 +340,7 @@ export const CLINPGX_TOOLS: ToolDescriptor[] = [
     required: ['symbol'],
     returns:
       '`ClinPGx variant` JSON array/object with variant identifiers, fingerprints, genes, and alleles.',
-    example:
-      'const result = await host.mcp("clinical-genomics", "clinpgx_search_variants", {"symbol": "rs1799853", "view": "max"})',
+    exampleArgs: { symbol: 'rs1799853', view: 'max' },
     run: (ctx, args) => query(ctx, '/data/variant/', args, ['symbol', 'view'], ['symbol'])
   },
   {
@@ -360,8 +357,7 @@ export const CLINPGX_TOOLS: ToolDescriptor[] = [
     },
     required: ['fp'],
     returns: '`ClinPGx variantFrequency` JSON array of population/resource frequency records.',
-    example:
-      'const result = await host.mcp("clinical-genomics", "clinpgx_get_variant_frequency", {"fp": "rs1799853"})',
+    exampleArgs: { fp: 'rs1799853' },
     url: (args) => queryUrl('/report/variantFrequency', args, ['fp']),
     parse: unwrap
   },
@@ -390,8 +386,13 @@ export const CLINPGX_TOOLS: ToolDescriptor[] = [
     },
     returns:
       '`ClinPGx connection` JSON array/object containing relationships between two pharmacogenomic objects.',
-    example:
-      'const result = await host.mcp("clinical-genomics", "clinpgx_get_drug_gene_variant", {"object1Name": "warfarin", "object1Type": "chemical", "object2Name": "VKORC1", "object2Type": "gene", "view": "max"})',
+    exampleArgs: {
+      object1Name: 'warfarin',
+      object1Type: 'chemical',
+      object2Name: 'VKORC1',
+      object2Type: 'gene',
+      view: 'max'
+    },
     run: (ctx, args) =>
       queryWithGroups(
         ctx,

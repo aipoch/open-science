@@ -24,8 +24,8 @@ const MCP_REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308])
 export type CustomMcpServerConfig = {
   id: string
   name: string
-  configurationFingerprint?: string
-  oauthClientSecretRef?: string
+  // Opaque compare-before-write context owned and interpreted only by the persistence adapter.
+  persistenceGuard?: Readonly<Record<string, string | undefined>>
   transport: 'stdio' | 'streamable_http' | 'sse'
   // stdio (local command):
   command?: string
@@ -120,7 +120,10 @@ const createCustomMcpFetch = (
     }
   }
 
+const DEFAULT_CLIENT_INFO = { name: 'connector-mcp-client', version: '0.2.0' }
+
 export type McpTransportDependencies = {
+  clientInfo?: { name: string; version: string; title?: string }
   // Host-owned credential policy. Missing/failed policy suppresses stderr text.
   redactDiagnosticText?: (value: string) => string
   fetchImpl?: typeof fetch
@@ -129,6 +132,8 @@ export type McpTransportDependencies = {
 }
 
 export type McpClientManagerDeps = McpTransportDependencies & {
+  authenticationRequiredMessage?: string
+  oauthCallbackExpiredHtml?: string
   createClient?: (
     config: CustomMcpServerConfig,
     authProvider?: PersistentOAuthClientProvider,
@@ -138,8 +143,7 @@ export type McpClientManagerDeps = McpTransportDependencies & {
   saveOAuthState?: (
     serverId: string,
     state: McpOAuthState,
-    expectedConfigurationFingerprint?: string,
-    expectedOAuthClientSecretRef?: string
+    persistenceGuard?: CustomMcpServerConfig['persistenceGuard']
   ) => Promise<void>
 }
 
@@ -426,7 +430,7 @@ async function defaultCreateClient(
   dependencies?: McpTransportDependencies
 ): Promise<Client> {
   const transport = buildTransport(config, authProvider, dependencies)
-  const client = new Client({ name: 'open-science', version: '0.0.0' })
+  const client = new Client(dependencies?.clientInfo ?? DEFAULT_CLIENT_INFO)
   try {
     await client.connect(transport, signal ? { signal } : undefined)
     return client
@@ -452,17 +456,17 @@ export class McpClientManager {
   private readonly oauthCredentialIds = new Map<string, string>()
   private readonly oauthStateWrites = new Map<string, Promise<void>>()
   private readonly oauthCredentialStateWrites = new Map<string, Promise<void>>()
-  private readonly callbackServer = new OAuthCallbackServer()
+  private readonly callbackServer: OAuthCallbackServer
   private readonly openExternal: (url: string) => Promise<void> | void
   private readonly saveOAuthState?: (
     serverId: string,
     state: McpOAuthState,
-    expectedConfigurationFingerprint?: string,
-    expectedOAuthClientSecretRef?: string
+    persistenceGuard?: CustomMcpServerConfig['persistenceGuard']
   ) => Promise<void>
 
   constructor(private readonly dependencies: McpClientManagerDeps = {}) {
     const deps = dependencies
+    this.callbackServer = new OAuthCallbackServer(deps.oauthCallbackExpiredHtml)
     this.createClient =
       deps?.createClient ??
       ((config, authProvider, signal) => defaultCreateClient(config, authProvider, signal, deps))
@@ -602,7 +606,7 @@ export class McpClientManager {
       const provider = this.oauthProvider(config, redirectUrl, generation, true)
       callback = this.callbackServer.waitFor(provider.state())
       const transport = buildTransport(config, provider, this.dependencies)
-      const firstClient = new Client({ name: 'open-science', version: '0.0.0' })
+      const firstClient = new Client(this.dependencies.clientInfo ?? DEFAULT_CLIENT_INFO)
       activeClient = firstClient
       try {
         await firstClient.connect(transport)
@@ -631,7 +635,7 @@ export class McpClientManager {
         await provider.invalidateCredentials('verifier')
       }
       // Recreate the transport/client after the SDK has completed the authorization-code exchange.
-      const client = new Client({ name: 'open-science', version: '0.0.0' })
+      const client = new Client(this.dependencies.clientInfo ?? DEFAULT_CLIENT_INFO)
       activeClient = client
       await client.connect(buildTransport(config, provider, this.dependencies))
       if (generation !== this.generation(config.id)) {
@@ -735,6 +739,11 @@ export class McpClientManager {
     const credentialId = config.oauth?.credentialId
     if (credentialId) this.oauthCredentialIds.set(config.id, credentialId)
     return new PersistentOAuthClientProvider({
+      clientName:
+        this.dependencies.clientInfo?.title ??
+        this.dependencies.clientInfo?.name ??
+        DEFAULT_CLIENT_INFO.name,
+      authenticationRequiredMessage: this.dependencies.authenticationRequiredMessage,
       serverId: config.id,
       redirectUrl,
       config: config.oauth ?? {},
@@ -749,8 +758,7 @@ export class McpClientManager {
               generation,
               credentialId,
               state,
-              config.configurationFingerprint,
-              config.oauthClientSecretRef
+              config.persistenceGuard
             )
           }
         : undefined
@@ -762,8 +770,7 @@ export class McpClientManager {
     generation: number,
     credentialId: string | undefined,
     state: McpOAuthState,
-    configurationFingerprint: string | undefined,
-    oauthClientSecretRef: string | undefined
+    persistenceGuard: CustomMcpServerConfig['persistenceGuard']
   ): Promise<void> {
     // Shared credentials are one persistence stream even when several connector clients emit
     // state. Keep that stream ordered here so sibling invalidation happens before a queued writer
@@ -775,13 +782,8 @@ export class McpClientManager {
     const write = (previous ? previous.catch(() => undefined) : Promise.resolve()).then(
       async () => {
         if (generation !== this.generation(serverId)) return
-        if (configurationFingerprint) {
-          await this.saveOAuthState!(
-            serverId,
-            state,
-            configurationFingerprint,
-            oauthClientSecretRef
-          )
+        if (persistenceGuard) {
+          await this.saveOAuthState!(serverId, state, persistenceGuard)
         } else {
           await this.saveOAuthState!(serverId, state)
         }

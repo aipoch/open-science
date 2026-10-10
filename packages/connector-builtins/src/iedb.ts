@@ -342,7 +342,7 @@ function searchTool(kind: Kind): ToolDescriptor {
       description +
       'At least one biological or evidence filter is required; limit and offset alone are not filters. ' +
       'Database observations, not predictions. Keep negative and missing results distinct. MHC ligand elution is not a binding affinity measurement; interpret response_measured, method and units together. ' +
-      'Parent antigens are representative proteins and may not exactly match the curated antigen or epitope sequence. Use cross_references.parent_uniprot_accessions or curated_uniprot_accessions with host.mcp("genes", "get_uniprot_entries", {accessions:[...]}); use cross_references.pdb_ids with host.mcp("structures", "pdb_get_structures", {pdb_ids:[...]}). These are explicit upstream cross-references, not sequence-derived mappings. Load each matching connector skill before calling it.',
+      'Parent antigens are representative proteins and may not exactly match the curated antigen or epitope sequence. Use cross_references.parent_uniprot_accessions or curated_uniprot_accessions with genes/get_uniprot_entries (accessions); use cross_references.pdb_ids with structures/pdb_get_structures (pdb_ids). These are explicit upstream cross-references, not sequence-derived mappings.',
     input: {
       type: 'object',
       properties: inputProperties,
@@ -356,7 +356,14 @@ function searchTool(kind: Kind): ToolDescriptor {
       }
     },
     returns: `{source,query_url,limit,offset,returned,has_more,next_offset,records:[{...IEDB fields,${assay ? `${kind}_export:[{assay__method,assay__response_measured,assay__quantitative_measurement,assay__measurement_inequality,assay__units,...}],` : receptor ? `${kind}_export:[{receptor__iedb_receptor_id,reference__iedb_iri,epitope__iedb_iri,chain_1__cdr3_curated,chain_2__cdr3_curated,...}],` : ''}cross_references:{parent_uniprot_accessions,curated_uniprot_accessions,pdb_ids}}]}. Upstream nulls and evidence values are preserved; optional fields may be absent. No exact total is requested. Follow next_offset with identical filters; order is by the unique IEDB key. Empty results mean no match for these filters. No automatic page traversal, local cache or external connector calls.${receptor ? ' Pagination fields (limit, offset, returned, has_more and next_offset) describe receptor groups only, not embedded export rows. Embedded export counts and completeness are not reported; has_more=false does not establish a complete evidence export.' : ''}`,
-    example: `const result = await host.mcp("iedb", "search_${labels[kind]}", {"${kind === 'reference' ? 'reference_id' : kind === 'antigen' ? 'uniprot_accession' : 'epitope_id'}": ${kind === 'reference' ? '1023094' : kind === 'antigen' ? '"P01012"' : '25750'}, "limit": 20})`,
+    exampleArgs: {
+      [kind === 'reference'
+        ? 'reference_id'
+        : kind === 'antigen'
+          ? 'uniprot_accession'
+          : 'epitope_id']: kind === 'reference' ? 1023094 : kind === 'antigen' ? 'P01012' : 25750,
+      limit: 20
+    },
     run: async (ctx, args) => {
       const hasFilter = Object.keys(args).some((key) => key !== 'limit' && key !== 'offset')
       if (!hasFilter) {

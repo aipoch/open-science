@@ -22,7 +22,11 @@ import { ParserEngine } from '@aipoch/connector-core'
 import { McpClientManager } from '@aipoch/connector-mcp-client'
 import { hasUsableCustomMcpCredentials, toCustomMcpConfig } from '../connectors/custom-mcp-config'
 import { ConnectorRuntimeSettingsProjection } from '../connectors/runtime-settings-projection'
-import { ConnectorService, type ConnectorCallContext } from '../connectors/service'
+import {
+  ConnectorService,
+  CONNECTOR_USER_AGENT,
+  type ConnectorCallContext
+} from '../connectors/service'
 
 const log = createLogger('connectors:application')
 
@@ -198,6 +202,7 @@ const createConnectorApplication = (
   const connectorService = new ConnectorService({
     registry: builtinConnectorRegistry,
     engine: new ParserEngine({
+      userAgent: CONNECTOR_USER_AGENT,
       fetchImpl: deps.fetchImpl,
       redactDiagnosticText: redactSensitiveText
     }),
@@ -254,17 +259,12 @@ export const createConnectorApplicationModule = async (
     new McpClientManager({
       ...mcpHostDependencies,
       openExternal: deps.openExternal,
-      saveOAuthState: (
-        serverId,
-        state,
-        expectedConfigurationFingerprint,
-        expectedOAuthClientSecretRef
-      ) =>
+      saveOAuthState: (serverId, state, guard) =>
         deps.settings.saveCustomServerOAuthState(
           serverId,
           state,
-          expectedConfigurationFingerprint,
-          expectedOAuthClientSecretRef
+          guard?.configurationFingerprint,
+          guard?.oauthClientSecretRef
         )
     })
 

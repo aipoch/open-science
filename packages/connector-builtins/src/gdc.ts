@@ -308,8 +308,7 @@ export const GDC_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ page, page_size, returned, total, total_relation, next_page, projects: [{ project_id, name, program, disease_type, primary_site, state, dbgap_accession_number, case_count, file_count }] }`. Project/file counts are summaries from GDC metadata; no files are downloaded.' +
       PAGINATION_NOTE,
-    example:
-      'const result = await host.mcp("gdc", "gdc_list_projects", {"project_ids": "TCGA-BRCA", "page_size": 5})',
+    exampleArgs: { project_ids: 'TCGA-BRCA', page_size: 5 },
     run: listProjects
   },
   {
@@ -347,8 +346,7 @@ export const GDC_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ page, page_size, returned, total, total_relation, next_page, cases: [{ case_id, submitter_id, project_id, project_name, disease_type, primary_site, state }] }`. Case metadata is returned without file contents.' +
       PAGINATION_NOTE,
-    example:
-      'const result = await host.mcp("gdc", "gdc_list_cases", {"project_ids": ["TCGA-BRCA"], "page_size": 5})',
+    exampleArgs: { project_ids: ['TCGA-BRCA'], page_size: 5 },
     run: listCases
   },
   {
@@ -379,8 +377,7 @@ export const GDC_TOOLS: ToolDescriptor[] = [
     returns:
       '`{ page, page_size, returned, total, total_relation, next_page, access_summary: { open, controlled, unknown }, controlled_files_require_authorization, files: [{ file_id, file_name, file_size_bytes, md5sum, data_format, data_type, data_category, access, state, project_id, download_url, download_requires_authentication, download_status }], download_note }`. Open files expose a public data URL; controlled files deliberately expose no downloadable URL and are marked `requires_authorization`. No file bytes are downloaded. access_summary and controlled_files_require_authorization describe only the returned page. project_id is a single related-project summary; nested cases use the first case, not a complete list of related projects.' +
       PAGINATION_NOTE,
-    example:
-      'const result = await host.mcp("gdc", "gdc_search_files", {"project_ids": ["TCGA-BRCA"], "access": "open", "page_size": 10})',
+    exampleArgs: { project_ids: ['TCGA-BRCA'], access: 'open', page_size: 10 },
     run: searchFiles
   },
   {
@@ -397,8 +394,7 @@ export const GDC_TOOLS: ToolDescriptor[] = [
     },
     returns:
       '`{ file: { file_id, file_name, file_size_bytes, md5sum, data_format, data_type, data_category, access, state, project_id, download_url, download_requires_authentication, download_status }, download_note }`. `download_url` is only returned for open-access files; controlled-access files require authorization and an `X-Auth-Token` outside this metadata call. project_id is a single related-project summary; nested cases use the first case, not a complete list of related projects.',
-    example:
-      'const result = await host.mcp("gdc", "gdc_get_file", {"file_id": "cb92f61d-041c-4424-a3e9-891b7545f351"})',
+    exampleArgs: { file_id: 'cb92f61d-041c-4424-a3e9-891b7545f351' },
     url: (args) =>
       `${GDC_API}/files/${encodeURIComponent(String(args.file_id))}?fields=${encodeURIComponent(FILE_FIELDS)}`,
     parse: parseFile
@@ -425,8 +421,7 @@ export const GDC_TOOLS: ToolDescriptor[] = [
     },
     returns:
       '`{ file_ids: [str], manifest: str, download_note }`. `manifest` is the GDC Data Transfer Tool inventory text. It does not establish that every entry is downloadable; controlled-access entries still require authorization. Match manifest rows by UUID, not request order. If any requested UUID is not found, the request fails with HTTP 404 rather than returning a partial manifest.',
-    example:
-      'const result = await host.mcp("gdc", "gdc_get_manifest", {"file_ids": ["cb92f61d-041c-4424-a3e9-891b7545f351"]})',
+    exampleArgs: { file_ids: ['cb92f61d-041c-4424-a3e9-891b7545f351'] },
     run: getManifest
   }
 ]

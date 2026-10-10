@@ -199,8 +199,11 @@ export const HMMER_TOOLS: ToolDescriptor[] = [
     required: ['program', 'database', 'input'],
     returns:
       '{job_id,program,database,status:"SUBMITTED"}. Keep job_id and call status until ready=true; this connector does not poll or resubmit automatically.',
-    example:
-      'const result = await host.mcp("hmmer", "search", {"program":"hmmscan","database":"pfam","input":">query\\nMKTIIALSYIFCLVFADYKDDDDK"})',
+    exampleArgs: {
+      program: 'hmmscan',
+      database: 'pfam',
+      input: '>query\nMKTIIALSYIFCLVFADYKDDDDK'
+    },
     totalTimeoutMs: 60_000,
     maxResponseBytes: 16 * 1024,
     run: async (ctx, args) => {
@@ -265,8 +268,7 @@ export const HMMER_TOOLS: ToolDescriptor[] = [
     required: ['job_id'],
     returns:
       '{job_id,status,ready,poll_after_seconds}. ready is true only when status is SUCCESS; unknown provider statuses are preserved for forward compatibility.',
-    example:
-      'const result = await host.mcp("hmmer", "status", {"job_id":"8ebb1d5f-4457-4da8-808c-f811105c3654"})',
+    exampleArgs: { job_id: '8ebb1d5f-4457-4da8-808c-f811105c3654' },
     maxResponseBytes: 16 * 1024,
     totalTimeoutMs: 30_000,
     run: async (ctx, args) => {
@@ -285,7 +287,7 @@ export const HMMER_TOOLS: ToolDescriptor[] = [
     credentialKeys: [],
     id: 'results',
     description:
-      'Retrieve one HMMER job result once. Checks the provider status first and returns no result payload while the job is pending or failed. On SUCCESS, retrieves all result pages, including domain annotations; jackhmmer iteration records are returned in the provider array shape. Preserve the result in a Notebook artifact because provider retention is finite; an empty match list is a completed zero-hit result, distinct from a pending or failed job.',
+      'Retrieve one HMMER job result once. Checks the provider status first and returns no result payload while the job is pending or failed. On SUCCESS, retrieves all result pages, including domain annotations; jackhmmer iteration records are returned in the provider array shape. Preserve the result because provider retention is finite; an empty match list is a completed zero-hit result, distinct from a pending or failed job.',
     input: {
       type: 'object',
       additionalProperties: false,
@@ -295,8 +297,7 @@ export const HMMER_TOOLS: ToolDescriptor[] = [
     required: ['job_id'],
     returns:
       '{job_id,status,ready:false} until SUCCESS; otherwise {job_id,status:"SUCCESS",ready:true,result:object|array}. Result pages are merged into one result object.',
-    example:
-      'const result = await host.mcp("hmmer", "results", {"job_id":"8ebb1d5f-4457-4da8-808c-f811105c3654"})',
+    exampleArgs: { job_id: '8ebb1d5f-4457-4da8-808c-f811105c3654' },
     maxResponseBytes: MAX_RESULT_BYTES,
     totalTimeoutMs: 60_000,
     run: async (ctx, args) => {

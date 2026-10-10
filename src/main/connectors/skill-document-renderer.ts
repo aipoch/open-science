@@ -4,7 +4,7 @@ export type ConnectorSkillTool = {
   description: string
   input: unknown
   returns?: string
-  example?: string
+  exampleArgs?: Record<string, unknown>
 }
 
 const CONVENTIONS = [
@@ -81,12 +81,16 @@ const inlineCode = (value: string): string => {
 }
 
 // Renders one tool's usage example as a copyable repl_execute (JS) cell. Prefers the descriptor's
-// hand-authored `example` (a single `await host.mcp(...)` call with realistic args); otherwise builds a
+// hand-authored argument data; otherwise builds a
 // bare call from the schema. A tool with no concrete args renders as `await host.mcp(server, method)`
 // (no third argument) — passing a literal `...` there would reach the bridge and raise, so it's omitted.
-function renderExample(server: string, tool: string, schema: unknown, example?: string): string {
-  if (example) return `**Example:** ${inlineCode(example)}\n`
-  const args = exampleArgs(schema)
+function renderExample(
+  server: string,
+  tool: string,
+  schema: unknown,
+  authoredArgs?: Record<string, unknown>
+): string {
+  const args = authoredArgs ? JSON.stringify(authoredArgs) : exampleArgs(schema)
   const call = args
     ? `host.mcp("${server}", "${tool}", ${args})`
     : `host.mcp("${server}", "${tool}")`
@@ -98,7 +102,8 @@ function renderExample(server: string, tool: string, schema: unknown, example?: 
 // from a plain user question, without the user naming the connector.
 export function renderSkillDoc(
   meta: ConnectorSkillMetadata,
-  tools: readonly ConnectorSkillTool[]
+  tools: readonly ConnectorSkillTool[],
+  guidance = ''
 ): string {
   const connectorId = meta.id
   const header = `---\nname: mcp-${connectorId}\ndescription: ${JSON.stringify(meta.useWhen)}\nsource: connector\n---\n`
@@ -107,12 +112,12 @@ export function renderSkillDoc(
       (t) =>
         `### ${t.id}\n\n${t.description}\n\n**Input:** ${inlineCode(JSON.stringify(t.input))}\n\n` +
         (t.returns ? `**Returns:** ${t.returns}\n\n` : '') +
-        renderExample(connectorId, t.id, t.input, t.example)
+        renderExample(connectorId, t.id, t.input, t.exampleArgs)
     )
     .join('\n')
   return (
     `${header}\n> This connector is rate-limited at the upstream API.\n\n` +
-    `${SKILL_CONVENTIONS}\n\n## Tools\n\n${methods}`
+    `${CUSTOM_SKILL_CONVENTIONS}${guidance ? ` ${guidance}` : ''}\n\n## Tools\n\n${methods}`
   )
 }
 

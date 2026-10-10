@@ -41,6 +41,10 @@ export class OAuthCallbackServer {
   private readonly pending = new Map<string, PendingCallback>()
   private readonly callbackPaths = new Set([DEFAULT_OAUTH_CALLBACK_PATH])
 
+  constructor(
+    private readonly expiredResponseHtml = '<h1>Authorization expired</h1><p>You can close this window.</p>'
+  ) {}
+
   async ensureStarted(registeredRedirectUri?: string): Promise<string> {
     if (this.redirectUrl) return this.runtimeRedirectUrl(registeredRedirectUri)
 
@@ -78,7 +82,7 @@ export class OAuthCallbackServer {
       const pending = this.pending.get(state)
       if (!pending) {
         response.writeHead(400, { 'content-type': 'text/html; charset=utf-8' })
-        response.end('<h1>Open-Science authorization expired</h1><p>You can close this window.</p>')
+        response.end(this.expiredResponseHtml)
         return
       }
 
@@ -160,6 +164,8 @@ export class OAuthCallbackServer {
 }
 
 export type OAuthClientProviderOptions = {
+  clientName?: string
+  authenticationRequiredMessage?: string
   serverId: string
   redirectUrl: string
   config: McpOAuthConfig
@@ -202,7 +208,7 @@ export class PersistentOAuthClientProvider implements OAuthClientProvider {
 
   get clientMetadata(): OAuthClientMetadata {
     return {
-      client_name: 'Open-Science',
+      client_name: this.options.clientName ?? 'connector-mcp-client',
       redirect_uris: [this.options.redirectUrl],
       grant_types: ['authorization_code', 'refresh_token'],
       response_types: ['code'],
@@ -278,7 +284,10 @@ export class PersistentOAuthClientProvider implements OAuthClientProvider {
       throw new Error('OAuth authorization URL must use HTTPS or loopback HTTP.')
     }
     if (!this.openExternal) {
-      throw new Error('OAuth authentication required. Sign in from Settings > Connectors.')
+      throw new Error(
+        this.options.authenticationRequiredMessage ??
+          'OAuth authentication required. Start an interactive authorization flow.'
+      )
     }
     await this.openExternal(authorizationUrl.toString())
   }

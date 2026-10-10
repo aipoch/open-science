@@ -141,8 +141,13 @@ class ConnectorSettingsWorkflows {
     // A probe must not reset or populate the shared runtime client cache.
     const manager = new McpClientManager({
       ...mcpHostDependencies,
-      saveOAuthState: (id, state, fingerprint, secretRef) =>
-        this.settings.saveCustomServerOAuthState(id, state, fingerprint, secretRef)
+      saveOAuthState: (id, state, guard) =>
+        this.settings.saveCustomServerOAuthState(
+          id,
+          state,
+          guard?.configurationFingerprint,
+          guard?.oauthClientSecretRef
+        )
     })
     const timeout = AbortSignal.timeout(10_000)
     const signal = callerSignal ? AbortSignal.any([callerSignal, timeout]) : timeout

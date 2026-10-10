@@ -476,8 +476,13 @@ const OPENALEX_LITERATURE_TOOL_DEFINITIONS: ToolDescriptor[] = [
     },
     returns:
       '{query, filters (applied filter object), venue_resolved? , sort, api_total (meta.count), n_records_returned, records_truncated (api_total > returned), records[]} — each record the lean work shape.',
-    example:
-      'const result = await host.mcp("literature", "openalex_search_works", {"query": "CRISPR base editing", "year_from": 2020, "open_access_only": true, "sort": "cited_by_count", "max_records": 25})',
+    exampleArgs: {
+      query: 'CRISPR base editing',
+      year_from: 2020,
+      open_access_only: true,
+      sort: 'cited_by_count',
+      max_records: 25
+    },
     run: async (ctx, a) => {
       const query = a.query != null && String(a.query).trim() !== '' ? String(a.query) : null
       const sort = String(a.sort ?? 'relevance')
@@ -551,8 +556,7 @@ const OPENALEX_LITERATURE_TOOL_DEFINITIONS: ToolDescriptor[] = [
     required: ['work_id'],
     returns:
       'The lean work shape plus {abstract, abstract_license?, abstract_policy?, referenced_works (W-ids), counts_by_year, doi_claimants?, doi_resolution_note?}.',
-    example:
-      'const result = await host.mcp("literature", "openalex_get_work", {"work_id": "W2741809807"})',
+    exampleArgs: { work_id: 'W2741809807' },
     run: async (ctx, a) => {
       const select = `${WORK_SELECT},abstract_inverted_index,referenced_works,counts_by_year`
       const ref = normalizeWorkId(String(a.work_id))
@@ -611,8 +615,7 @@ const OPENALEX_LITERATURE_TOOL_DEFINITIONS: ToolDescriptor[] = [
     required: ['work_id'],
     returns:
       '{work_id (resolved W-id), api_total, n_records_returned, records_truncated, records[], doi_claimants?, doi_resolution_note?}.',
-    example:
-      'const result = await host.mcp("literature", "openalex_citations", {"work_id": "W2741809807", "sort": "cited_by_count", "max_records": 50})',
+    exampleArgs: { work_id: 'W2741809807', sort: 'cited_by_count', max_records: 50 },
     run: async (ctx, a) => {
       const sort = String(a.sort ?? 'cited_by_count')
       const maxRecords = clampInt(a.max_records, 50, 1, 500)
@@ -665,8 +668,7 @@ const OPENALEX_LITERATURE_TOOL_DEFINITIONS: ToolDescriptor[] = [
     required: ['work_id'],
     returns:
       '{work_id, n_references, n_records_returned, records_truncated, references_not_hydrated[], reference_ids[] (all outgoing W-ids, order preserved), records[]}.',
-    example:
-      'const result = await host.mcp("literature", "openalex_references", {"work_id": "W2741809807", "max_records": 100})',
+    exampleArgs: { work_id: 'W2741809807', max_records: 100 },
     run: async (ctx, a) => {
       const maxRecords = clampInt(a.max_records, 100, 1, 500)
       const resolved = await resolveWorkIdToWid(ctx, String(a.work_id))
@@ -727,8 +729,7 @@ const OPENALEX_LITERATURE_TOOL_DEFINITIONS: ToolDescriptor[] = [
     required: ['query'],
     returns:
       '{query, api_total, n_records_returned, records_truncated, records[]} — each record the lean author shape.',
-    example:
-      'const result = await host.mcp("literature", "openalex_search_authors", {"query": "Jennifer Doudna", "max_records": 25})',
+    exampleArgs: { query: 'Jennifer Doudna', max_records: 25 },
     run: async (ctx, a) => {
       const query = String(a.query)
       const maxRecords = clampInt(a.max_records, 25, 1, 500)
@@ -763,8 +764,7 @@ const OPENALEX_LITERATURE_TOOL_DEFINITIONS: ToolDescriptor[] = [
     required: ['author_id'],
     returns:
       'The lean author shape plus {counts_by_year, top_works_total, top_works[] (lean work records by citations)}.',
-    example:
-      'const result = await host.mcp("literature", "openalex_get_author", {"author_id": "A5023888391", "works_sample": 10})',
+    exampleArgs: { author_id: 'A5023888391', works_sample: 10 },
     run: async (ctx, a) => {
       const worksSample = clampInt(a.works_sample, 10, 0, 200)
       const idToken = normalizeAuthorId(String(a.author_id))
@@ -810,8 +810,7 @@ const OPENALEX_LITERATURE_TOOL_DEFINITIONS: ToolDescriptor[] = [
     required: ['venue'],
     returns:
       'Exact id -> the lean source shape plus {counts_by_year}. Name search -> {query, api_total, n_records_returned, records_truncated, records[]}.',
-    example:
-      'const result = await host.mcp("literature", "openalex_venue_info", {"venue": "Nature", "max_records": 10})',
+    exampleArgs: { venue: 'Nature', max_records: 10 },
     run: async (ctx, a) => {
       const venue = String(a.venue)
       if (isExactSourceId(venue)) {

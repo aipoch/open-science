@@ -95,8 +95,7 @@ export const DOI_LITERATURE_TOOLS: ToolDescriptor[] = [
     input: DOI_INPUT,
     returns:
       '{ doi, title:string[], authors:[...], publisher:string|null, type:string|null, published:object|null, container_title:string[], url:string|null, license:[...], source_url }. Optional upstream bibliographic fields are null or empty arrays, not inferred.',
-    example:
-      'const result = await host.mcp("literature", "crossref_get_work", {"doi": "10.1038/nature12968"})',
+    exampleArgs: { doi: '10.1038/nature12968' },
     run: async (ctx, args) => {
       const doi = normalizeDoi(args.doi)
       const sourceUrl = `${CROSSREF}${encodeURIComponent(doi)}`
@@ -125,8 +124,7 @@ export const DOI_LITERATURE_TOOLS: ToolDescriptor[] = [
     input: DOI_INPUT,
     returns:
       '{ doi, updated_by:[{DOI,type,source?,label?,updated?,...}], update_to:[{DOI,type,source?,label?,updated?,...}], relation:object, source_url, coverage_note }. Arrays contain only deposited metadata; retain duplicate DOI notices with different sources. Does not assign an inferred retraction status.',
-    example:
-      'const result = await host.mcp("literature", "crossref_get_updates", {"doi": "10.1038/nature12968"})',
+    exampleArgs: { doi: '10.1038/nature12968' },
     run: async (ctx, args) => {
       const doi = normalizeDoi(args.doi)
       const sourceUrl = `${CROSSREF}${encodeURIComponent(doi)}`
@@ -165,8 +163,7 @@ export const DOI_LITERATURE_TOOLS: ToolDescriptor[] = [
       additionalProperties: false
     },
     returns: `{ api_total, n_returned, page, page_size, next_page:number|null, records_truncated, records:[${DATACITE_RETURNS}], source_url }. records_truncated compares this page to the total, including preceding pages. next_page=null at the end or the 10,000-record window; consult api_total and narrow the query if needed.`,
-    example:
-      'const result = await host.mcp("literature", "datacite_search_records", {"query": "climate", "resource_type": "dataset", "page_size": 5})',
+    exampleArgs: { query: 'climate', resource_type: 'dataset', page_size: 5 },
     run: async (ctx, args) => {
       const pageSize = Number(args.page_size ?? 20)
       const page = Number(args.page ?? 1)
@@ -222,8 +219,7 @@ export const DOI_LITERATURE_TOOLS: ToolDescriptor[] = [
       'Retrieve a public DataCite DOI record, including dataset/software identity, creators, rights, version, landing URL and registered publication/data relationships. Accepts a bare DOI, doi: prefix or doi.org URL. No API key required. Metadata does not guarantee access to files; HTTP 404 may mean the DOI is private, unknown or registered elsewhere.',
     input: DOI_INPUT,
     returns: `{ record:${DATACITE_RETURNS}, source_url }. Preserves upstream relatedIdentifierType and relationType; absent optional fields are null or empty arrays.`,
-    example:
-      'const result = await host.mcp("literature", "datacite_get_record", {"doi": "10.14454/qdd3-ps68"})',
+    exampleArgs: { doi: '10.14454/qdd3-ps68' },
     run: async (ctx, args) => {
       const doi = normalizeDoi(args.doi)
       const sourceUrl = `${DATACITE}/${encodeURIComponent(doi)}`

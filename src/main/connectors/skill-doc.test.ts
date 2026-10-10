@@ -151,7 +151,7 @@ describe('renderSkillDoc', () => {
       md.indexOf('### get_article_metadata')
     )
     expect(block).toContain(
-      'const result = await host.mcp("pubmed", "search_articles", {"query": "CRISPR gene editing", "max_results": 10})'
+      'const result = await host.mcp("pubmed", "search_articles", {"query":"CRISPR gene editing","max_results":10})'
     )
     expect(block).not.toContain('```')
   })
@@ -339,7 +339,20 @@ describe('MaveDB generated skill contracts', () => {
     for (const id of ['get_score_set', 'download_scores', 'get_mapped_variants']) {
       const section = doc.split(`### mavedb_${id}\n`)[1]?.split('\n### ')[0]
       expect(section).toContain('manual download by the user')
-      expect(section).toContain('do not fetch these URLs with raw HTTP to bypass host.mcp')
+      expect(doc).toContain('Do not bypass `host.mcp` with raw HTTP')
     }
   })
+})
+
+it('keeps contact-email settings and retention guidance in the host document', () => {
+  const doc = renderSkillDoc('interproscan')
+  expect(doc).toContain('Settings → Credentials → Literature access')
+  expect(doc).toContain('Notebook persistence')
+  expect(doc).toContain('This email is sent to EMBL-EBI')
+})
+
+it('keeps ENCORI approval and Specialist policy in the host Skill', () => {
+  const doc = renderSkillDoc('encori')
+  expect(doc).toContain('Skip approvals and remembered grants retain their existing precedence')
+  expect(doc).toContain('Specialist capability scopes follow their existing independent policy')
 })

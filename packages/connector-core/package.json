@@ -1,6 +1,6 @@
 {
   "name": "@aipoch/connector-core",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Independent Connector execution and schema validation",
   "license": "Apache-2.0",
   "type": "commonjs",

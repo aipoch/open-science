@@ -1,4 +1,4 @@
-import { CONNECTOR_CATALOG, type ConnectorMeta } from '@aipoch/connector-builtins/catalog'
+import { CONNECTOR_CATALOG } from './catalog'
 import {
   hasUsableCustomMcpCredentials,
   isCustomMcpServerRouteSafe,
@@ -27,7 +27,7 @@ export const projectConnectorsFromStored = (
     undefined
 ): ConnectorReadModel[] => {
   const disabled = new Set(stored?.disabledConnectorIds ?? [])
-  const bundled: ConnectorReadModel[] = (CONNECTOR_CATALOG as ConnectorMeta[]).map((meta) => ({
+  const bundled: ConnectorReadModel[] = CONNECTOR_CATALOG.map((meta) => ({
     id: meta.id,
     name: meta.id,
     displayName: meta.displayName,

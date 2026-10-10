@@ -218,8 +218,7 @@ export const ALLIANCE_TOOLS: ToolDescriptor[] = [
     required: ['gene_id'],
     returns:
       '{query_gene_id, gene:{id,symbol,name,species,taxon_id,synopsis,synonyms,gene_type,genomic_location,cross_references}}',
-    example:
-      'const result = await host.mcp("alliance", "alliance_get_gene", {"gene_id": "MGI:97490"})',
+    exampleArgs: { gene_id: 'MGI:97490' },
     url: (args) => `${ALLIANCE_API}${genePath(args)}`,
     parse: (raw, args) => ({ query_gene_id: geneId(args.gene_id), gene: geneSummary(raw) })
   },
@@ -241,8 +240,7 @@ export const ALLIANCE_TOOLS: ToolDescriptor[] = [
     },
     required: ['query'],
     returns: '{query,page,limit,total,genes:[{id,symbol,name,species,...}],returned}',
-    example:
-      'const result = await host.mcp("alliance", "alliance_search_genes", {"query": "pax6", "limit": 10})',
+    exampleArgs: { query: 'pax6', limit: 10 },
     url: (args) => {
       const { page, limit } = pageArgs(args)
       const query = identifier(args.query, 'query')
@@ -290,8 +288,7 @@ export const ALLIANCE_TOOLS: ToolDescriptor[] = [
     },
     required: ['gene_id'],
     returns: '{query_gene_id,stringency,page,limit,total,orthologs:[...],returned}',
-    example:
-      'const result = await host.mcp("alliance", "alliance_get_gene_orthologs", {"gene_id": "HGNC:8620", "stringency": "stringent"})',
+    exampleArgs: { gene_id: 'HGNC:8620', stringency: 'stringent' },
     url: (args) =>
       `${ALLIANCE_API}${genePath(args, '/orthologs')}?${pageQuery(args)}&filter.stringency=${encodeURIComponent(String(args.stringency ?? 'stringent'))}`,
     parse: (raw, args) => {
@@ -342,8 +339,7 @@ export const ALLIANCE_TOOLS: ToolDescriptor[] = [
     required: ['gene_id'],
     returns:
       '{query_gene_id,page,limit,total,disease_models:[{model_id,model_name,diseases:[{disease_id,disease_name,association_type,...}],...}],returned}',
-    example:
-      'const result = await host.mcp("alliance", "alliance_get_gene_disease_models", {"gene_id": "MGI:97490"})',
+    exampleArgs: { gene_id: 'MGI:97490' },
     url: (args) => `${ALLIANCE_API}${genePath(args, '/models')}?${pageQuery(args)}`,
     parse: (raw, args) => {
       const page = pageArgs(args)
@@ -387,8 +383,7 @@ export const ALLIANCE_TOOLS: ToolDescriptor[] = [
     required: ['gene_id'],
     returns:
       '{query_gene_id,page,limit,total,phenotypes:[{gene_id,gene_symbol,phenotype_statement,...}],returned}',
-    example:
-      'const result = await host.mcp("alliance", "alliance_get_gene_phenotypes", {"gene_id": "HGNC:6081", "limit": 20})',
+    exampleArgs: { gene_id: 'HGNC:6081', limit: 20 },
     url: (args) => `${ALLIANCE_API}${genePath(args, '/phenotypes')}?${pageQuery(args)}`,
     parse: (raw, args) => {
       const page = pageArgs(args)
@@ -422,8 +417,7 @@ export const ALLIANCE_TOOLS: ToolDescriptor[] = [
     required: ['gene_id'],
     returns:
       '{query_gene_id,page,limit,total,alleles:[{id,symbol,category,variants,...}],returned}',
-    example:
-      'const result = await host.mcp("alliance", "alliance_get_gene_alleles", {"gene_id": "MGI:97490"})',
+    exampleArgs: { gene_id: 'MGI:97490' },
     url: (args) => `${ALLIANCE_API}${genePath(args, '/alleles')}?${pageQuery(args)}`,
     parse: (raw, args) => {
       const page = pageArgs(args)
@@ -457,8 +451,7 @@ export const ALLIANCE_TOOLS: ToolDescriptor[] = [
     required: ['gene_id'],
     returns:
       '{query_gene_id,page,limit,total,expression:[{stage,location,data_provider,reference,...}],returned}',
-    example:
-      'const result = await host.mcp("alliance", "alliance_get_gene_expression", {"gene_id": "ZFIN:ZDB-GENE-990415-8"})',
+    exampleArgs: { gene_id: 'ZFIN:ZDB-GENE-990415-8' },
     run: async (ctx, args) => {
       const page = pageArgs(args)
       // This POST is a read-only query, with pagination applied by the server.
@@ -495,8 +488,7 @@ export const ALLIANCE_TOOLS: ToolDescriptor[] = [
     required: ['disease_id'],
     returns:
       '{query_disease_id,page,limit,total,genes:[{gene_id,gene_symbol,disease_id,disease_name,...}],returned}',
-    example:
-      'const result = await host.mcp("alliance", "alliance_get_disease_genes", {"disease_id": "DOID:162", "limit": 20})',
+    exampleArgs: { disease_id: 'DOID:162', limit: 20 },
     url: (args) =>
       `${ALLIANCE_API}/disease/${encodeURIComponent(identifier(args.disease_id, 'disease_id'))}/genes?${pageQuery(args)}`,
     parse: (raw, args) => {

@@ -294,8 +294,10 @@ describe('McpClientManager', () => {
       await manager.authenticate({
         id: 'oauth-1',
         name: 'OAuth server',
-        configurationFingerprint: 'security-fingerprint',
-        oauthClientSecretRef: 'enc:client-secret',
+        persistenceGuard: {
+          revision: 'security-fingerprint',
+          secretVersion: 'opaque-secret-version'
+        },
         transport: 'streamable_http',
         url: 'https://mcp.example.test',
         oauth: { redirectUri: 'http://127.0.0.1:8080/callback' }
@@ -309,8 +311,7 @@ describe('McpClientManager', () => {
         expect.objectContaining({
           tokens: { access_token: 'access-1', token_type: 'Bearer' }
         }),
-        'security-fingerprint',
-        'enc:client-secret'
+        { revision: 'security-fingerprint', secretVersion: 'opaque-secret-version' }
       )
     } finally {
       await manager.closeAll()
@@ -783,7 +784,7 @@ describe('McpClientManager', () => {
         url: 'https://mcp.example.test',
         oauth: { state: { tokens: { access_token: 'stale', token_type: 'Bearer' } } }
       })
-    ).rejects.toThrow('OAuth authentication required. Sign in from Settings > Connectors.')
+    ).rejects.toThrow('OAuth authentication required. Start an interactive authorization flow.')
     expect(openExternal).not.toHaveBeenCalled()
     expect(saveOAuthState).toHaveBeenLastCalledWith('oauth-background', {})
     await manager.closeAll()

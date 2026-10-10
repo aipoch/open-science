@@ -623,7 +623,7 @@ describe('ParserEngine declarative path', () => {
     }
     await engine.call(desc, {}, {})
     const headers = (fetchImpl.mock.calls[0][1] as { headers: Record<string, string> }).headers
-    expect(headers['user-agent']).toMatch(/Open-Science/)
+    expect(headers['user-agent']).toBe('connector-core/0.2.0')
   })
 
   it('redacts credentials from the URL in error messages', async () => {
@@ -984,7 +984,7 @@ describe('ParserEngine opt-in HTTP JSON bodies', () => {
   })
 })
 
-it('projects declared credentials and injects the same raw transport into a provider', async () => {
+it('projects declared credentials and routes raw requests through the injected transport', async () => {
   const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ ok: true }))
   const descriptor: ToolDescriptor = {
     connector: 'custom',
@@ -994,7 +994,6 @@ it('projects declared credentials and injects the same raw transport into a prov
     credentialKeys: ['customKey'],
     run: async (ctx) => {
       expect(ctx.credentials).toEqual({ customKey: 'allowed' })
-      expect(ctx.rawFetch).toBe(fetchImpl)
       return (await ctx.rawFetch!('https://example.test', { signal: ctx.signal })).json()
     }
   }
@@ -1033,4 +1032,32 @@ describe('host diagnostic policy', () => {
       '[redacted]'
     )
   })
+})
+
+it('applies caller HTTP identity to managed and raw requests without losing request headers', async () => {
+  const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ ok: true }))
+  const engine = new ParserEngine({ fetchImpl, userAgent: 'IndependentResearch/1.0' })
+  const descriptor: ToolDescriptor = {
+    connector: 'fixture',
+    id: 'identity',
+    description: '',
+    input: {},
+    run: async (ctx) => {
+      await ctx.fetchJson('https://example.test/managed')
+      await ctx.rawFetch!(
+        new Request('https://example.test/raw', { headers: { authorization: 'Bearer caller' } })
+      )
+      await ctx.rawFetch!('https://example.test/override', {
+        headers: { 'user-agent': 'Provider/2.0' }
+      })
+    }
+  }
+  await engine.call(descriptor, {}, {})
+  const headers = fetchImpl.mock.calls.map(([, init]) => new Headers(init?.headers))
+  expect(headers.map((value) => value.get('user-agent'))).toEqual([
+    'IndependentResearch/1.0',
+    'IndependentResearch/1.0',
+    'Provider/2.0'
+  ])
+  expect(headers[1].get('authorization')).toBe('Bearer caller')
 })

@@ -1,4 +1,3 @@
-import { Script } from 'node:vm'
 import { describe, it, expect, vi } from 'vitest'
 import { ParserEngine } from '@aipoch/connector-core'
 import { CLINICAL_TRIALS_TOOLS } from './clinical-trials'
@@ -480,17 +479,11 @@ describe('search_by_eligibility', () => {
         ]
       })
     )
-    const mcp = vi.fn((_connector: string, method: string, args: Record<string, unknown>) =>
-      call(method, args, fetchImpl)
-    )
-    const out = (await new Script(
-      `(async () => { ${tool('search_by_eligibility').example}; return result })()`
-    ).runInNewContext({ host: { mcp } })) as { items: Record<string, unknown>[] }
-    expect(mcp).toHaveBeenCalledWith('clinical-trials', 'search_by_eligibility', {
-      condition: 'diabetes',
-      min_age: '65 Years',
-      sex: 'FEMALE'
-    })
+    const args = tool('search_by_eligibility').exampleArgs!
+    expect(args).toEqual({ condition: 'diabetes', min_age: '65 Years', sex: 'FEMALE' })
+    const out = (await call('search_by_eligibility', args, fetchImpl)) as {
+      items: Record<string, unknown>[]
+    }
     const { params } = parseUrl(fetchImpl.mock.calls[0][0] as string)
     expect(params['filter.advanced']).toBe(
       '(AREA[MinimumAge]RANGE[MIN, 65 Years] OR NOT AREA[MinimumAge]RANGE[MIN, MAX]) AND (AREA[MaximumAge]RANGE[65 Years, MAX] OR NOT AREA[MaximumAge]RANGE[MIN, MAX]) AND (AREA[Sex]FEMALE OR AREA[Sex]"ALL")'

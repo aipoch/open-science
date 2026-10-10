@@ -1,4 +1,3 @@
-import { Script } from 'node:vm'
 import { describe, it, expect, vi } from 'vitest'
 import {
   getConnectorTools,
@@ -18,7 +17,7 @@ const connectorMetadata = (id: string): string =>
       tool.id,
       tool.description,
       tool.returns,
-      tool.example,
+      JSON.stringify(tool.exampleArgs),
       JSON.stringify(tool.input)
     ])
   ].join('\n')
@@ -590,7 +589,7 @@ describe('Metabolomics Workbench registration and input contracts', () => {
     for (const descriptor of WORKBENCH_OMICS_TOOLS) {
       expect(getDescriptor('omics-archives', descriptor.id)).toBe(descriptor)
       expect(doc).toContain(descriptor.id)
-      expect(doc).toContain(descriptor.example!)
+      expect(doc).toContain(JSON.stringify(descriptor.exampleArgs))
     }
   })
 
@@ -740,7 +739,7 @@ describe('ENA discovery input contracts', () => {
   })
 })
 
-// Authored examples are part of the agent-facing contract, not illustrative pseudocode.
+// Authored argument examples are validated data that callers can render in their own syntax.
 describe('bundled tool contracts', () => {
   const tools = ALL_CONNECTOR_IDS.flatMap(getConnectorTools)
   it('keeps every public connector/method identity unique', () => {
@@ -751,27 +750,20 @@ describe('bundled tool contracts', () => {
   })
 
   it.each(tools)(
-    '$connector/$id has a runnable, schema-valid example and return documentation',
+    '$connector/$id has schema-valid example arguments and return documentation',
     async (tool) => {
       expect(tool.id).toMatch(/^[a-z][a-z0-9_]*$/)
       expect(tool.description.trim()).not.toBe('')
       expect(tool.returns?.trim()).toBeTruthy()
-      expect(tool.example?.trim()).toBeTruthy()
+      expect(tool.exampleArgs).toBeDefined()
+      expect(`${tool.description} ${tool.returns}`).not.toMatch(
+        /host\.mcp|Open[ -]Science|Settings [→>]|Notebook persistence|Specialist capability scopes|Skip approvals/
+      )
       expect(
         typeof tool.run === 'function' ||
           (typeof tool.url === 'function' && typeof tool.parse === 'function')
       ).toBe(true)
-      const mcp = vi.fn((connector: string, method: string, args: Record<string, unknown> = {}) => {
-        expect([connector, method]).toEqual([tool.connector, tool.id])
-        validateToolArguments(tool, args)
-        return {}
-      })
-      // Repository-authored code only; the stub never dispatches or accesses credentials/network.
-      await new Script(`(async () => { ${tool.example} })()`).runInNewContext(
-        { host: { mcp } },
-        { timeout: 1000 }
-      )
-      expect(mcp).toHaveBeenCalledTimes(1)
+      expect(() => validateToolArguments(tool, tool.exampleArgs!)).not.toThrow()
     }
   )
 })
@@ -924,7 +916,7 @@ describe('CELLxGENE Discover registration and input contracts', () => {
     for (const t of CELLXGENE_DISCOVER_TOOLS) {
       expect(doc).toContain(t.id)
       expect(t.returns).toBeTruthy()
-      const args = JSON.parse(t.example!.slice(t.example!.lastIndexOf(', {') + 2, -1))
+      const args = t.exampleArgs!
       expect(() => validateToolArguments(t, args)).not.toThrow()
     }
     expect(doc).toContain('client-side')
@@ -990,7 +982,7 @@ describe('Cellosaurus registration', () => {
     expect(doc).toContain('next_offset')
     for (const tool of tools) {
       expect(doc).toContain(`${tool.id}`)
-      const args = JSON.parse(tool.example!.slice(tool.example!.lastIndexOf(', {') + 2, -1))
+      const args = tool.exampleArgs!
       expect(() => validateToolArguments(tool, args)).not.toThrow()
     }
   })
@@ -1040,8 +1032,7 @@ describe('ENCORI registration and input contracts', () => {
     ['get_reference_tables', 'table_name']
   ])('rejects blank and control-containing text through the %s schema', (id, field) => {
     const tool = getDescriptor('encori', id)!
-    const example = tool.example!
-    const args = JSON.parse(example.slice(example.indexOf('{'), example.lastIndexOf('}') + 1))
+    const args = tool.exampleArgs!
     expect(() => validateToolArguments(tool, args)).not.toThrow()
     for (const value of ['valid text', '  valid text  ', '基因 α'])
       expect(() => validateToolArguments(tool, { ...args, [field]: value })).not.toThrow()
@@ -1057,7 +1048,7 @@ describe('ENCORI registration and input contracts', () => {
     for (const tool of tools) {
       expect(getDescriptor('encori', tool.id)).toBe(tool)
       expect(doc).toContain(`${tool.id}`)
-      expect(tool.example).toBeTruthy()
+      expect(tool.exampleArgs).toBeDefined()
     }
     expect(doc).toContain('raw_response_path')
     expect(doc).toContain('verified_gzip')

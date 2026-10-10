@@ -397,8 +397,7 @@ export const CANCER_MODELS_TOOLS: ToolDescriptor[] = [
     },
     returns:
       '`{ "keyword": str|null, "cancer_type_id": str|null, "api_total_for_keyword": int, "count": int, "truncated": bool, "studies": [ { "study_id": str, "name": str, "description": str, "cancer_type_id": str, "cancer_type": str, "reference_genome": str, "pmid": str, "citation": str, "sequenced_sample_count": int, "cna_sample_count": int, "structural_variant_count": int } ] }` — `api_total_for_keyword` is every study the keyword matched (before the `cancer_type_id` filter); `count` is after it; `studies` are sorted by `study_id`, capped at `max_records` (default 500), and `truncated` is true when `count` exceeds the cap.',
-    example:
-      'const result = await host.mcp("cancer-models", "cbioportal_list_studies", {"keyword": "glioma"})',
+    exampleArgs: { keyword: 'glioma' },
     run: async (ctx, a) => {
       const keyword = a.keyword != null ? String(a.keyword) : undefined
       const cancerTypeId = a.cancer_type_id != null ? String(a.cancer_type_id) : undefined
@@ -451,8 +450,7 @@ export const CANCER_MODELS_TOOLS: ToolDescriptor[] = [
     required: ['study_id'],
     returns:
       '`{ "study_id": str, "name": str, "description": str, "cancer_type": str, "cancer_type_id": str, "reference_genome": str, "pmid": str, "citation": str, "public": bool, "groups": str, "import_date": str, "sample_count": int, "patient_count": int, "sequenced_sample_count": int, "cna_sample_count": int, "mrna_rnaseq_v2_sample_count": int, "rppa_sample_count": int, "structural_variant_count": int, "treatment_count": int, ..., "molecular_profiles": [ { "molecular_profile_id": str, "alteration_type": str, "datatype": str, "name": str, "description": str } ] }` — `sample_count`/`patient_count` are the real collection sizes; `molecular_profiles` are sorted by id. Unknown study id throws "Study not found".',
-    example:
-      'const result = await host.mcp("cancer-models", "cbioportal_get_study", {"study_id": "msk_impact_2017"})',
+    exampleArgs: { study_id: 'msk_impact_2017' },
     run: async (ctx, a) => {
       const studyId = String(a.study_id)
       const study = await fetchStudyRecord(ctx, studyId)
@@ -523,8 +521,7 @@ export const CANCER_MODELS_TOOLS: ToolDescriptor[] = [
     required: ['gene_symbol', 'study_id'],
     returns:
       '`{ "gene": { "symbol": str, "entrez_gene_id": int }, "study_id": str, "molecular_profile_id": str, "total_mutations": int, "mutated_sample_count": int, "mutation_type_counts": { str: int }, "distinct_protein_changes": int, "top_protein_changes": { str: int }, "truncated": bool, "mutations": [ { "sample_id": str, "patient_id": str, "protein_change": str, "mutation_type": str, "mutation_status": str, "chromosome": str, "start_position": int, "end_position": int, "reference_allele": str, "variant_allele": str, "variant_type": str, "ncbi_build": str, "protein_pos_start": int, "protein_pos_end": int, "tumor_alt_count": int, "tumor_ref_count": int, "refseq_mrna_id": str } ] }` — aggregates cover every mutation; `mutations` are sorted by genomic position and capped at `max_records` (default 100), with `truncated` set when they exceed it. `top_protein_changes` holds the 25 most recurrent. Unknown gene throws "Gene not found"; a study without mutation data throws, listing the alteration types it does have.',
-    example:
-      'const result = await host.mcp("cancer-models", "cbioportal_mutations_in_gene", {"gene_symbol": "IDH1", "study_id": "difg_msk_2023"})',
+    exampleArgs: { gene_symbol: 'IDH1', study_id: 'difg_msk_2023' },
     run: async (ctx, a) => {
       const symbol = String(a.gene_symbol)
       const studyId = String(a.study_id)
@@ -595,8 +592,7 @@ export const CANCER_MODELS_TOOLS: ToolDescriptor[] = [
     required: ['gene_symbol', 'study_ids'],
     returns:
       '`{ "gene": { "symbol": str, "entrez_gene_id": int }, "count": int, "frequencies": [ { "study_id": str, "study_name": str, "molecular_profile_id": str, "sample_list_id": str, "mutation_count": int, "mutated_samples": int, "sequenced_samples": int, "cohort_samples": int, "profiled_samples": int, "not_profiled_samples": int, "unknown_profile_samples": int, "frequency": float | null, "frequency_status": str } ], "unknown_studies": [ str ], "no_mutation_data": [ str ] }` — `frequency` is an unrounded fraction (0–1), sorted descending with null last. `profiled_samples` is the gene-specific denominator; `cohort_samples` equals profiled + not_profiled + unknown_profile samples in the selected list. `sequenced_samples` is study metadata, not the denominator. `mutation_count` counts returned mutation records and `mutated_samples` counts their unique sample ids, without additional mutation-type filtering. `frequency_status` is `available`, `no_profiled_samples`, `incomplete_coverage`, or `inconsistent_mutation_data` (a mutation lacks a sample id or falls outside the known gene-profiled samples); only `available` has a numeric frequency. Zero means profiled samples with no reported mutation, not an untested gene. Unknown study ids go to `unknown_studies`, studies without a mutation profile / sample list to `no_mutation_data`. At most 12 ids are considered. Unknown gene throws "Gene not found".',
-    example:
-      'const result = await host.mcp("cancer-models", "cbioportal_mutation_frequency", {"gene_symbol": "KRAS", "study_ids": ["msk_impact_2017", "difg_msk_2023"]})',
+    exampleArgs: { gene_symbol: 'KRAS', study_ids: ['msk_impact_2017', 'difg_msk_2023'] },
     run: async (ctx, a) => {
       const symbol = String(a.gene_symbol)
       const studyIds = (Array.isArray(a.study_ids) ? a.study_ids : []).map(String).slice(0, 12)
@@ -727,8 +723,7 @@ export const CANCER_MODELS_TOOLS: ToolDescriptor[] = [
     required: ['gene_symbol', 'study_id'],
     returns:
       '`{ "gene": { "symbol": str, "entrez_gene_id": int }, "study_id": str, "molecular_profile_id": str, "event_type": str, "total_events": int, "altered_sample_count": int, "alteration_counts": { str: int }, "truncated": bool, "events": [ { "sample_id": str, "patient_id": str, "alteration": int, "alteration_label": str } ] }` — `alteration_counts` is the complete per-label distribution over the gene (deep_deletion/shallow_deletion/diploid/gain/amplification); `total_events`/`events` cover only rows matching `event_type` (default HOMDEL_AND_AMP), sorted by sample id and capped at `max_records`. Unknown gene throws "Gene not found"; a study without discrete CNA throws, listing its alteration types.',
-    example:
-      'const result = await host.mcp("cancer-models", "cbioportal_cna_in_gene", {"gene_symbol": "CDKN2A", "study_id": "msk_impact_2017"})',
+    exampleArgs: { gene_symbol: 'CDKN2A', study_id: 'msk_impact_2017' },
     run: async (ctx, a) => {
       const symbol = String(a.gene_symbol)
       const studyId = String(a.study_id)
@@ -801,8 +796,7 @@ export const CANCER_MODELS_TOOLS: ToolDescriptor[] = [
     required: ['study_id'],
     returns:
       '`{ "study_id": str, "total_attributes": int, "patient_level_count": int, "sample_level_count": int, "survival_attributes": [ str ], "has_overall_survival": bool, "truncated": bool, "attributes": [ { "attribute_id": str, "display_name": str, "description": str, "datatype": "STRING"|"NUMBER", "level": "patient"|"sample", "priority": int } ] }` — `survival_attributes` are every OS_/DFS_/PFS_/DSS_ attribute id; `has_overall_survival` is true when both OS_STATUS and OS_MONTHS exist; `attributes` are sorted by id and capped at `max_records` (default 200).',
-    example:
-      'const result = await host.mcp("cancer-models", "cbioportal_clinical_attributes", {"study_id": "brca_tcga_pan_can_atlas_2018"})',
+    exampleArgs: { study_id: 'brca_tcga_pan_can_atlas_2018' },
     run: async (ctx, a) => {
       const studyId = String(a.study_id)
       const maxRecords = Number(a.max_records ?? 200)
@@ -870,8 +864,7 @@ export const CANCER_MODELS_TOOLS: ToolDescriptor[] = [
     required: ['study_id'],
     returns:
       '`{ study_id, total, n_returned, truncated, samples: [{ sample_id, patient_id, study_id, ... }] }` — `total` is the complete study sample count before optional filtering and the output cap.',
-    example:
-      'const result = await host.mcp("cancer-models", "cbioportal_get_samples", {"study_id": "brca_tcga_pan_can_atlas_2018", "max_records": 100})',
+    exampleArgs: { study_id: 'brca_tcga_pan_can_atlas_2018', max_records: 100 },
     run: async (ctx, a) => {
       const studyId = String(a.study_id)
       const requested = normalizeIds(a.sample_ids)
@@ -938,8 +931,7 @@ export const CANCER_MODELS_TOOLS: ToolDescriptor[] = [
     required: ['study_id'],
     returns:
       '`{ study_id, total, n_returned, truncated, patients: [{ patient_id, study_id, ... }] }` — `total` is the complete study patient count before optional filtering and the output cap.',
-    example:
-      'const result = await host.mcp("cancer-models", "cbioportal_get_patients", {"study_id": "brca_tcga_pan_can_atlas_2018", "max_records": 100})',
+    exampleArgs: { study_id: 'brca_tcga_pan_can_atlas_2018', max_records: 100 },
     run: async (ctx, a) => {
       const studyId = String(a.study_id)
       const requested = normalizeIds(a.patient_ids)
@@ -1017,8 +1009,12 @@ export const CANCER_MODELS_TOOLS: ToolDescriptor[] = [
     required: ['study_id'],
     returns:
       '`{ study_id, level, total, n_returned, truncated, clinical_data: [{ clinical_attribute_id, patient_id, sample_id, value, ... }] }`.',
-    example:
-      'const result = await host.mcp("cancer-models", "cbioportal_get_clinical_data", {"study_id": "brca_tcga_pan_can_atlas_2018", "level": "PATIENT", "attribute_ids": ["AGE"], "patient_ids": ["TCGA-A1-A0SB"]})',
+    exampleArgs: {
+      study_id: 'brca_tcga_pan_can_atlas_2018',
+      level: 'PATIENT',
+      attribute_ids: ['AGE'],
+      patient_ids: ['TCGA-A1-A0SB']
+    },
     run: async (ctx, a) => {
       const studyId = String(a.study_id)
       const level = String(a.level ?? 'SAMPLE') === 'PATIENT' ? 'PATIENT' : 'SAMPLE'
@@ -1090,8 +1086,12 @@ export const CANCER_MODELS_TOOLS: ToolDescriptor[] = [
     required: ['study_id', 'molecular_profile_id'],
     returns:
       '`{ study_id, molecular_profile_id, gene_ids, total, n_returned, truncated, molecular_data: [{ entrez_gene_id, sample_id, patient_id, value, ... }] }` — profile metadata describes the measurement and normalization; values are preserved without conversion.',
-    example:
-      'const result = await host.mcp("cancer-models", "cbioportal_get_molecular_data", {"study_id": "brca_tcga_pan_can_atlas_2018", "molecular_profile_id": "brca_tcga_pan_can_atlas_2018_rna_seq_v2_mrna", "gene_symbol": "ESR1", "sample_list_id": "brca_tcga_pan_can_atlas_2018_all"})',
+    exampleArgs: {
+      study_id: 'brca_tcga_pan_can_atlas_2018',
+      molecular_profile_id: 'brca_tcga_pan_can_atlas_2018_rna_seq_v2_mrna',
+      gene_symbol: 'ESR1',
+      sample_list_id: 'brca_tcga_pan_can_atlas_2018_all'
+    },
     run: async (ctx, a) => {
       const studyId = String(a.study_id)
       const sampleIds = normalizeIds(a.sample_ids)

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { CONNECTOR_CATALOG } from '@aipoch/connector-builtins/catalog'
+import { CONNECTOR_CATALOG } from './catalog'
 import {
   getConnectorTools,
   getDescriptor,
@@ -35,9 +35,23 @@ describe('builtin registry host integration', () => {
         expect(doc).toContain(`### ${tool.id}`)
         expect(doc).toContain(tool.description)
         expect(doc).toContain(tool.returns)
-        expect(doc).toContain(tool.example)
+        expect(doc).toContain(JSON.stringify(tool.exampleArgs))
         expect(doc).toContain(JSON.stringify(tool.input))
       }
     }
   )
+})
+
+it('adds the preview capability only in the application registry', async () => {
+  const { MOLECULE_TOOLS } = await import('@aipoch/connector-builtins/molecule')
+  expect(MOLECULE_TOOLS.map((tool) => tool.id)).toEqual(['render_molecule'])
+  expect(getConnectorTools('molecule').map((tool) => tool.id)).toEqual([
+    'render_molecule',
+    'preview_molecule'
+  ])
+  const doc = renderSkillDoc('molecule')
+  expect(doc).toContain('write_artifact_file')
+  expect(doc).toContain('preview_molecule')
+  expect(CONNECTOR_CATALOG.find((entry) => entry.id === 'molecule')?.group).toBe('featured')
+  expect(CONNECTOR_CATALOG.find((entry) => entry.id === 'pubmed')?.group).toBe('directory')
 })

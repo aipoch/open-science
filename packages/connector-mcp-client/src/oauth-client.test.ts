@@ -174,7 +174,7 @@ describe('PersistentOAuthClientProvider', () => {
     })
 
     expect(provider.clientMetadata).toMatchObject({
-      client_name: 'Open-Science',
+      client_name: 'connector-mcp-client',
       token_endpoint_auth_method: 'none',
       scope: 'openid profile'
     })
@@ -198,7 +198,7 @@ describe('PersistentOAuthClientProvider', () => {
 
     await expect(
       provider.redirectToAuthorization(new URL('https://auth.example.test/authorize'))
-    ).rejects.toThrow('OAuth authentication required. Sign in from Settings > Connectors.')
+    ).rejects.toThrow('OAuth authentication required. Start an interactive authorization flow.')
     expect(provider.tokens()).toBeUndefined()
     expect(saveState).toHaveBeenLastCalledWith({})
   })

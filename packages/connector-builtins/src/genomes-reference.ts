@@ -279,7 +279,7 @@ export const GENOMES_REFERENCE_TOOLS: ToolDescriptor[] = [
     },
     returns:
       '{query, n_matches, ambiguous, matches_truncated, matches:[{tax_id, scientific_name, common_name, rank}]}',
-    example: 'const result = await host.mcp("genomes", "ncbi_resolve_taxon", {"query": "human"})',
+    exampleArgs: { query: 'human' },
     run: async (ctx, args) => {
       const query = String(args.query ?? '').trim()
       if (!query) throw new Error('query must not be empty')
@@ -333,8 +333,7 @@ export const GENOMES_REFERENCE_TOOLS: ToolDescriptor[] = [
     },
     returns:
       '{accession, current_accession, paired_accession, tax_id, organism_name, common_name, assembly_name, synonym, assembly_level, assembly_status, assembly_type, refseq_category, release_date, paired_assembly}',
-    example:
-      'const result = await host.mcp("genomes", "ncbi_get_assembly_info", {"assembly_accession": "GCF_000001405.40"})',
+    exampleArgs: { assembly_accession: 'GCF_000001405.40' },
     run: async (ctx, args) => getAssemblyInfo(ctx, args.assembly_accession)
   },
   {
@@ -355,8 +354,7 @@ export const GENOMES_REFERENCE_TOOLS: ToolDescriptor[] = [
     },
     returns:
       '{assembly_accession, n_sequences, upstream_total_count, n_matches, n_returned, matches_truncated, sequences:[{assembly_accession, chr_name, ucsc_style_name, sequence_name, refseq_accession, genbank_accession, length, assembly_unit, assigned_molecule_location_type, role}]}',
-    example:
-      'const result = await host.mcp("genomes", "ncbi_get_sequence_aliases", {"assembly_accession": "GCF_000001405.40", "sequence": "chr1"})',
+    exampleArgs: { assembly_accession: 'GCF_000001405.40', sequence: 'chr1' },
     run: async (ctx, args) => {
       const requestedMax = Number(args.max_sequences ?? 200)
       const max = Number.isFinite(requestedMax) ? Math.max(1, Math.min(5000, requestedMax)) : 200

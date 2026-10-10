@@ -1,6 +1,6 @@
 {
   "name": "@aipoch/connector-builtins",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Independent Connector implementations",
   "license": "Apache-2.0",
   "type": "commonjs",
@@ -314,6 +314,6 @@
     "fflate": "0.8.3"
   },
   "peerDependencies": {
-    "@aipoch/connector-core": "^0.1.0"
+    "@aipoch/connector-core": "^0.2.0"
   }
 }

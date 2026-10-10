@@ -19,7 +19,7 @@ const DEADLINE_MS = 40_000
 // structured contact_email_required result (never thrown), so the message reaches the agent cleanly.
 const CONTACT_REQUIRED_MESSAGE =
   'This tool talks to NCBI E-utilities, which require a contact email per their usage policy. ' +
-  "Enable 'Share contact email with research data services' in Settings → Privacy to provide one."
+  'Provide one in credentials.ncbiEmail.'
 
 type ContactRequired = { error: 'contact_email_required'; message: string }
 const contactRequired = (): ContactRequired => ({
@@ -352,7 +352,7 @@ export const VARIANTS_DBSNP_TOOLS: ToolDescriptor[] = [
     connector: 'variants',
     credentialKeys: ['ncbiEmail', 'ncbiApiKey'],
     description:
-      "Canonical dbSNP RefSNP records for a batch of rsIDs: GRCh38+GRCh37 placements, alleles, gene context, per-study allele frequencies, and ClinVar cross-references. Requires a contact email (Settings → Privacy → 'Share contact email with research data services') per NCBI E-utilities usage policy; without one the tool returns {error: 'contact_email_required', message}. Args: rsids (up to 20 rs<digits>, case-insensitive) — each costs one paced NCBI Variation Services request, so large batches take ~1 s per rsID. Returns {n_requested, records, not_found (rs numbers dbSNP doesn't know), not_processed (rsIDs skipped when the wall-clock budget ran out — re-request just those)}. Each record: {rsid, status, create_date, last_update_date, last_update_build_id, n_citations, citations_pmids (capped at 20; citations_truncated flags the cap), variant_type, mane_select_ids, placements, alleles}. status is 'live', 'merged' (record instead carries merged_into — re-query those rsIDs) or 'no_data' (withdrawn/unsupported). placements give 1-based chromosome coordinates with ref/alts per assembly (GRCh38 first, is_primary true); an empty string in alts denotes a deletion allele. Each alt-allele entry: {allele, ref, spdi (0-based interbase), hgvs, frequencies: [{study, study_version, allele_count, total_count, af}] (ALFA, 1000Genomes, TOPMED, gnomAD...), clinvar: [{rcv_accession, clinical_significances, review_status, last_evaluated_date, disease_names}], genes: [{symbol, gene_id, name, orientation, consequences (SO terms), mane_select: [{transcript_hgvs, protein_spdi}]}]}.",
+      "Canonical dbSNP RefSNP records for a batch of rsIDs: GRCh38+GRCh37 placements, alleles, gene context, per-study allele frequencies, and ClinVar cross-references. Requires a contact email (credentials.ncbiEmail) per NCBI E-utilities usage policy; without one the tool returns {error: 'contact_email_required', message}. Args: rsids (up to 20 rs<digits>, case-insensitive) — each costs one paced NCBI Variation Services request, so large batches take ~1 s per rsID. Returns {n_requested, records, not_found (rs numbers dbSNP doesn't know), not_processed (rsIDs skipped when the wall-clock budget ran out — re-request just those)}. Each record: {rsid, status, create_date, last_update_date, last_update_build_id, n_citations, citations_pmids (capped at 20; citations_truncated flags the cap), variant_type, mane_select_ids, placements, alleles}. status is 'live', 'merged' (record instead carries merged_into — re-query those rsIDs) or 'no_data' (withdrawn/unsupported). placements give 1-based chromosome coordinates with ref/alts per assembly (GRCh38 first, is_primary true); an empty string in alts denotes a deletion allele. Each alt-allele entry: {allele, ref, spdi (0-based interbase), hgvs, frequencies: [{study, study_version, allele_count, total_count, af}] (ALFA, 1000Genomes, TOPMED, gnomAD...), clinvar: [{rcv_accession, clinical_significances, review_status, last_evaluated_date, disease_names}], genes: [{symbol, gene_id, name, orientation, consequences (SO terms), mane_select: [{transcript_hgvs, protein_spdi}]}]}.",
     input: {
       type: 'object',
       properties: {
@@ -367,8 +367,7 @@ export const VARIANTS_DBSNP_TOOLS: ToolDescriptor[] = [
     required: ['rsids'],
     returns:
       "`{ n_requested: int, records: [ { rsid, status ('live'|'merged'|'no_data'), create_date, last_update_date, last_update_build_id, n_citations, citations_pmids, citations_truncated, merged_into?, variant_type?, mane_select_ids?, placements?: [{assembly, assembly_full, seq_id, chrom, position, ref, alts, is_primary}], alleles?: [{allele, ref, spdi, hgvs, frequencies, clinvar, genes}] } ], not_found: [str], not_processed: [str] }` — not_found are rs numbers dbSNP doesn't know; not_processed are rsIDs skipped when the time budget ran out. Empty/blank input yields all-empty lists (never an error).",
-    example:
-      'const result = await host.mcp("variants", "dbsnp_get_rsids", {"rsids": ["rs7412", "rs429358"]})',
+    exampleArgs: { rsids: ['rs7412', 'rs429358'] },
     run: async (ctx, a) => {
       if (!ctx.credentials.ncbiEmail) return contactRequired()
       const q = ncbiEtiquette(ctx.credentials)
@@ -422,7 +421,7 @@ export const VARIANTS_DBSNP_TOOLS: ToolDescriptor[] = [
     connector: 'variants',
     credentialKeys: ['ncbiEmail', 'ncbiApiKey'],
     description:
-      "List dbSNP rsIDs in a genomic window (esearch db=snp positional index — NCBI Variation Services has no region endpoint). Requires a contact email (Settings → Privacy → 'Share contact email with research data services') per NCBI E-utilities usage policy; without one the tool returns {error: 'contact_email_required', message}. Args: chrom (1-22, X, Y or MT; 'chr' prefix tolerated), start (1-based inclusive), stop (inclusive; span capped at 1 Mb — split larger regions into consecutive windows; dense regions hold many thousands of rsIDs per kb, so keep windows small or raise max_rsids), assembly (which positional index — 'GRCh38' default -> [CPOS], or 'GRCh37' -> [CPOS_GRCH37]; coordinates must be on the chosen assembly), max_rsids (listing cap 1-1000, default 200). Returns {chrom, start, stop, assembly, term (the exact Entrez query used), total (the API's own count), n_returned, truncated, rsids}. truncated is true when total > n_returned — the list is then a prefix in Entrez default order (descending rs number), never a silent truncation. Feed rsIDs (<= 20 at a time) to dbsnp_get_rsids for full records.",
+      "List dbSNP rsIDs in a genomic window (esearch db=snp positional index — NCBI Variation Services has no region endpoint). Requires a contact email (credentials.ncbiEmail) per NCBI E-utilities usage policy; without one the tool returns {error: 'contact_email_required', message}. Args: chrom (1-22, X, Y or MT; 'chr' prefix tolerated), start (1-based inclusive), stop (inclusive; span capped at 1 Mb — split larger regions into consecutive windows; dense regions hold many thousands of rsIDs per kb, so keep windows small or raise max_rsids), assembly (which positional index — 'GRCh38' default -> [CPOS], or 'GRCh37' -> [CPOS_GRCH37]; coordinates must be on the chosen assembly), max_rsids (listing cap 1-1000, default 200). Returns {chrom, start, stop, assembly, term (the exact Entrez query used), total (the API's own count), n_returned, truncated, rsids}. truncated is true when total > n_returned — the list is then a prefix in Entrez default order (descending rs number), never a silent truncation. Feed rsIDs (<= 20 at a time) to dbsnp_get_rsids for full records.",
     input: {
       type: 'object',
       properties: {
@@ -440,8 +439,7 @@ export const VARIANTS_DBSNP_TOOLS: ToolDescriptor[] = [
     required: ['chrom', 'start', 'stop'],
     returns:
       "`{ chrom: str, start: int, stop: int, assembly: str, term: str, total: int, n_returned: int, truncated: bool, rsids: [str] }` — total is esearch's own match count; truncated is true when total > n_returned (rsids is then a capped prefix in descending-rs-number order).",
-    example:
-      'const result = await host.mcp("variants", "dbsnp_search_by_region", {"chrom": "19", "start": 44905000, "stop": 44910000, "assembly": "GRCh38"})',
+    exampleArgs: { chrom: '19', start: 44905000, stop: 44910000, assembly: 'GRCh38' },
     run: async (ctx, a) => {
       if (!ctx.credentials.ncbiEmail) return contactRequired()
 

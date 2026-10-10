@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module'
 import { configureTestRuntimeNetwork } from '../../../../test/runtime-host'
 import { createServer } from 'node:http'
 import { randomUUID } from 'node:crypto'
@@ -216,3 +217,55 @@ it('accepts an empty tool catalog without claiming tool execution', async () => 
 })
 
 configureTestRuntimeNetwork()
+
+it('retains the original OAuth write guard during a diagnostic refresh', async () => {
+  // The installed Connector package uses the SDK's CommonJS client.
+  const { Client } = createRequire(import.meta.url)(
+    '@modelcontextprotocol/sdk/client/index.js'
+  ) as typeof import('@modelcontextprotocol/sdk/client/index.js')
+  const { customServerSecurityFingerprint } = await import('../custom-server-identity')
+  const server = {
+    id: 'guarded',
+    name: 'guarded',
+    displayName: 'Guarded',
+    enabled: false,
+    transport: 'streamable_http' as const,
+    url: 'https://example.test/mcp',
+    oauth: {},
+    oauthClientSecretRef: 'enc:original',
+    oauthClientSecret: 'fixture-secret'
+  }
+  const fingerprint = customServerSecurityFingerprint(server)
+  const saveCustomServerOAuthState = vi.fn(async () => undefined)
+  const tokens = { access_token: 'refreshed', token_type: 'Bearer' }
+  const workflow = new ConnectorSettingsWorkflows(
+    {
+      getConnectors: async () => ({ customMcpServers: [server] }),
+      saveCustomServerOAuthState
+    } as unknown as ConnectorSettingsWorkflowStore,
+    {} as ConnectorSettingsWorkflowEffects
+  )
+  vi.spyOn(Client.prototype, 'connect').mockImplementation(async (transport) => {
+    // A concurrent settings change must not replace the guard captured by this diagnostic.
+    server.url = 'https://changed.example/mcp'
+    server.oauthClientSecretRef = 'enc:changed'
+    const provider = (
+      transport as unknown as {
+        _authProvider: import('@aipoch/connector-mcp-client').PersistentOAuthClientProvider
+      }
+    )._authProvider
+    await provider.saveTokens(tokens)
+  })
+  vi.spyOn(Client.prototype, 'listTools').mockResolvedValue({ tools: [] })
+  try {
+    expect(await workflow.testCustomServer({ id: server.id })).toMatchObject({ success: true })
+    expect(saveCustomServerOAuthState).toHaveBeenCalledWith(
+      server.id,
+      { tokens },
+      fingerprint,
+      'enc:original'
+    )
+  } finally {
+    vi.restoreAllMocks()
+  }
+})

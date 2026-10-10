@@ -311,7 +311,7 @@ describe('regulation / all 16 tools are registered', () => {
     for (const t of REGULATION_TOOLS) {
       expect(t.connector).toBe('regulation')
       expect(t.returns).toBeTruthy()
-      expect(t.example).toBeTruthy()
+      expect(t.exampleArgs).toBeTruthy()
     }
   })
 })

@@ -107,7 +107,6 @@ async function submitBlast(
         redirect: 'error', // Never replay a submission through an HTTP redirect.
         headers: {
           accept: 'text/plain, */*',
-          'user-agent': 'Open-Science/1.0 (+https://github.com/aipoch/open-science)',
           'content-type': 'application/x-www-form-urlencoded'
         },
         body: body.toString(),
@@ -263,8 +262,7 @@ export const GENOMES_BLAST_TOOLS: ToolDescriptor[] = [
     required: ['sequence', 'molecule_type'],
     returns:
       '{rid, rtoe_seconds, poll_after_seconds, program, requested_database, molecule_type, sequence_length} — requested_database is the submitted value; NCBI may switch nt to core_nt. The completed report identifies the actual database. Keep rid and wait at least 60 seconds before checking status. Throws blast_submission_unknown if dispatch may have succeeded without a usable receipt.',
-    example:
-      'const result = await host.mcp("genomes", "blast_submit", {"sequence": "ATGCGTACGTAGCTAG", "molecule_type": "nucleotide", "database": "nt"})',
+    exampleArgs: { sequence: 'ATGCGTACGTAGCTAG', molecule_type: 'nucleotide', database: 'nt' },
     // Leave headroom for the POST-specific timeout to surface its uncertainty diagnosis.
     totalTimeoutMs: HTTP_TIMEOUT_MS + 5_000,
     maxResponseBytes: MAX_STATUS_BYTES,
@@ -318,7 +316,7 @@ export const GENOMES_BLAST_TOOLS: ToolDescriptor[] = [
     },
     required: ['rid'],
     returns: '{rid, status, ready, retry_after_seconds?}',
-    example: 'const result = await host.mcp("genomes", "blast_status", {"rid": "AYEFB4DT014"})',
+    exampleArgs: { rid: 'AYEFB4DT014' },
     totalTimeoutMs: HTTP_TIMEOUT_MS,
     maxResponseBytes: MAX_STATUS_BYTES,
     run: async (ctx, a) => {
@@ -352,8 +350,7 @@ export const GENOMES_BLAST_TOOLS: ToolDescriptor[] = [
     required: ['rid'],
     returns:
       '{rid, status, ready, format, results?} — results is a bounded verbatim string; tabular is an NCBI text report, not pure TSV/CSV.',
-    example:
-      'const result = await host.mcp("genomes", "blast_results", {"rid": "AYEFB4DT014", "format": "json2"})',
+    exampleArgs: { rid: 'AYEFB4DT014', format: 'json2' },
     totalTimeoutMs: HTTP_TIMEOUT_MS,
     maxResponseBytes: MAX_RESULT_BYTES,
     run: async (ctx, a) => {

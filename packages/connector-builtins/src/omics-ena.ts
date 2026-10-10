@@ -201,8 +201,7 @@ export const ENA_OMICS_TOOLS: ToolDescriptor[] = [
     },
     returns:
       '{ filters:{tax_id:number|null, library_strategy:string|null, keyword:string|null}, query, n_runs_returned, truncated, runs:[{run_accession, study_accession, secondary_study_accession, sample_accession, experiment_accession, tax_id, scientific_name, instrument_platform, instrument_model, library_layout, library_strategy, library_source, study_title, experiment_title, sample_title, description}] }. Run metadata values are strings or null. query is the generated ENA expression. Requests limit+1 rows to detect truncation; n_runs_returned is not a total. ENA chooses the subset in unspecified order; returned rows are sorted by run_accession. No offset or continuation token and no local result cache. Pass a run_accession to ena_get_run_files for generated FASTQ or ena_get_submitted_files for original submissions.',
-    example:
-      'const result = await host.mcp("omics-archives", "ena_query_runs", {"tax_id": 6239, "library_strategy": "RNA-Seq", "keyword": "transcriptome", "limit": 20})',
+    exampleArgs: { tax_id: 6239, library_strategy: 'RNA-Seq', keyword: 'transcriptome', limit: 20 },
     run: async (ctx, args) => {
       const limit = args.limit ?? 100
       if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > 1000)
@@ -281,8 +280,7 @@ export const ENA_OMICS_TOOLS: ToolDescriptor[] = [
     required: ['run_accession'],
     returns:
       '{run_accession, found, library_layout:string|null, submitted_available, n_files, submitted_files:[{file_index, ftp_location, format:string|null, size_bytes:number|null, md5:string|null}]}. found means a public run report was returned; found:true with submitted_available:false means no submitted FTP files are listed, not that the run is missing. file_index is 1-based report order, not read/mate identity. Locations, formats, sizes and checksums are aligned by position; inconsistent lists fail, missing metadata values are null. ftp_location preserves the upstream address, often a scheme-less FTP path: filenames may contain literal # or other URI-reserved characters, so it must not be parsed as an already encoded URL. MD5s are validated as hexadecimal and normalized to lowercase. Metadata comes from ENA cache and may lag updates; no local cache is added.',
-    example:
-      'const result = await host.mcp("omics-archives", "ena_get_submitted_files", {"run_accession": "ERR10015065"})',
+    exampleArgs: { run_accession: 'ERR10015065' },
     run: async (ctx, args) => {
       const runAccession = accession(args.run_accession, true)
       const rows = await report(
@@ -344,8 +342,7 @@ export const ENA_OMICS_TOOLS: ToolDescriptor[] = [
     required: ['accession'],
     returns:
       '{ accession, n_runs_returned, truncated, runs: [{ run_accession, study_accession, secondary_study_accession, sample_accession, experiment_accession, tax_id, scientific_name, instrument_platform, instrument_model, library_layout, library_strategy, library_source }] }. Metadata values are strings or null, including tax_id. Requests limit+1 rows to detect truncation; n_runs_returned is not a total. ENA selects the subset in unspecified order; returned rows are sorted by run_accession. No public matches yields runs:[]; this does not distinguish an unknown/private accession from a study without public runs. No offset or next-page token. Pass run_accession to ena_get_run_files.',
-    example:
-      'const result = await host.mcp("omics-archives", "ena_search_runs", {"accession": "PRJNA123835", "limit": 100})',
+    exampleArgs: { accession: 'PRJNA123835', limit: 100 },
     run: async (ctx, args) => {
       const queryAccession = accession(args.accession)
       const limit = args.limit ?? 100
@@ -382,8 +379,7 @@ export const ENA_OMICS_TOOLS: ToolDescriptor[] = [
     required: ['run_accession'],
     returns:
       '{ run_accession, found, library_layout:string|null, fastq_available, n_files, fastq_files:[{ file_index, url, size_bytes:number|null, md5:string|null }] }. found means a public run report was returned; found:true with fastq_available:false is a run without listed archive-generated FASTQ, not a missing run. file_index is 1-based report order, not read/mate identity. URLs, sizes and MD5s are paired by position; unknown sizes/checksums are null, inconsistent lists fail. Scheme-less ENA FTP paths receive ftp://; sizes/checksums describe the downloadable files (typically .fastq.gz), not decompressed content. Reports come from ENA cache and may lag updates; no local result cache is added.',
-    example:
-      'const result = await host.mcp("omics-archives", "ena_get_run_files", {"run_accession": "SRR037073"})',
+    exampleArgs: { run_accession: 'SRR037073' },
     run: async (ctx, args) => {
       const runAccession = accession(args.run_accession, true)
       const rows = await report(

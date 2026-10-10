@@ -27,7 +27,8 @@
     "src/main/connectors/mcp-host-dependencies.ts",
     "src/main/connectors/molecule-artifact-adapter.test.ts",
     "src/main/connectors/molecule-artifact-adapter.ts",
-    "src/main/composition/connector-application.test.ts"
+    "src/main/composition/connector-application.test.ts",
+    "src/main/connectors/catalog.ts"
   ],
   "interfacePaths": [
     "src/main/composition/connector-application.ts",
@@ -39,7 +40,8 @@
     "src/main/connectors/skill-doc.ts",
     "src/main/connectors/read-model.ts",
     "src/main/connectors/skill-document-renderer.ts",
-    "src/main/connectors/molecule-artifact-adapter.ts"
+    "src/main/connectors/molecule-artifact-adapter.ts",
+    "src/main/connectors/catalog.ts"
   ],
   "consumerModules": [],
   "testFiles": {
