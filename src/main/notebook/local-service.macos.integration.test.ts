@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { createServer, type Server } from 'node:net'
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -8,6 +9,8 @@ import { NotebookNetworkSandboxOwner } from './network-sandbox-owner'
 import type { NotebookLocalService, NotebookProcessSandbox } from './process-sandbox'
 import { runShellCommand } from './shell-process'
 import { ShellProcessOwnershipRegistry } from './shell-process-ownership.windows-posix'
+
+configureTestRuntimeMetadata()
 
 const quote = (value: string): string => `'${value.replaceAll("'", `'"'"'`)}'`
 const close = (server: Server): Promise<void> =>
