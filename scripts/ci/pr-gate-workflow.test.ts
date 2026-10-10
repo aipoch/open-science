@@ -1068,6 +1068,8 @@ describe('PR Gate workflow', () => {
   it('shards full portable tests on Ubuntu and merges coverage into the stable unit bundle', () => {
     const unit = workflow.jobs.unit
     const shards = workflow.jobs.unit_shard
+    const build = load(readFileSync('.github/workflows/build.yml', 'utf8')) as Workflow
+    expect(shards['timeout-minutes']).toBe(build.jobs.verify_tests['timeout-minutes'])
     const checkout = unit.steps?.find(({ name }) => name === 'Checkout')
     const related = unit.steps?.find(({ name }) => name === 'Test affected Modules')
     const download = unit.steps?.find(({ name }) => name === 'Download full-suite blob reports')
