@@ -1,4 +1,4 @@
-import type { ToolContext, ToolDescriptor } from '../types'
+import type { ToolContext, ToolDescriptor } from '../../connector-core/types'
 
 // gnomAD is GraphQL-only: every call is a POST of {query, variables} to a single endpoint. Ported
 // from the upstream gnomad_variants library (client/queries/records/tool) — the 10 mirrored MCP

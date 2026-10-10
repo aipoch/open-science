@@ -1,4 +1,4 @@
-import type { ToolContext, ToolDescriptor } from '../types'
+import type { ToolContext, ToolDescriptor } from '../../connector-core/types'
 
 const ENDPOINT = 'https://pdc.cancer.gov/graphql'
 const MAX_OFFSET = 1_000_000

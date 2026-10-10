@@ -1,4 +1,4 @@
-import type { ToolContext, ToolDescriptor } from '../types'
+import type { ToolContext, ToolDescriptor } from '../../connector-core/types'
 
 // AlphaFold DB public prediction API (alphafold.ebi.ac.uk). Ported from the upstream
 // `alphafold_structures` client/records. Verified live against P04637 (canonical + isoforms):

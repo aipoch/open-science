@@ -4,6 +4,7 @@ import type {
   ArtifactRpcCapabilityBinding,
   ArtifactWriteSourceScope
 } from '../../shared/artifact-provenance'
+import type { ReadArtifactLiteratureItems } from './literature-manifest'
 import { NotebookLocalRpcServer } from '../notebook/local-rpc-server'
 import { NotebookRuntimeService } from '../notebook/runtime-service'
 import { createProvenanceTestFixture, provenanceGraph } from './provenance-test-fixtures'
@@ -11,8 +12,8 @@ import { type ArtifactMcpEnvironment } from './mcp-server'
 
 // The fixture exposes the exact composed production services to barrier-based integration tests.
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
-export const createArtifactSaveFixture = async () => {
-  const fixture = await createProvenanceTestFixture()
+export const createArtifactSaveFixture = async (readItems?: ReadArtifactLiteratureItems) => {
+  const fixture = await createProvenanceTestFixture({ readLiteratureItems: readItems })
   const service = new NotebookRuntimeService({
     configRoot: fixture.storageRoot,
     dataRoot: fixture.storageRoot,

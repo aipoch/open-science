@@ -1,5 +1,5 @@
 import { parse, type DefaultTreeAdapterMap } from 'parse5'
-import type { ToolContext, ToolDescriptor } from '../types'
+import type { ToolContext, ToolDescriptor } from '../../connector-core/types'
 
 // NCBI contracts: /geo/info/download.html and /geo/info/rnaseqcounts.html.
 // Discover advertised files; never guess an assembly or promise that a file exists.

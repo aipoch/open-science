@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import type { ToolContext, ToolDescriptor } from '../types'
+import type { ToolContext, ToolDescriptor } from '../../connector-core/types'
 
 // Ensembl REST — keyless GETs; the engine already sends Accept: application/json for fetchJson, so
 // plain paths return JSON without the ?content-type suffix.

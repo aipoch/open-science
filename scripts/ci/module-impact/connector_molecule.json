@@ -1,9 +1,13 @@
 {
   "ownerPaths": [
     "src/main/connectors/descriptors/molecule.test.ts",
-    "src/main/connectors/descriptors/molecule.ts"
+    "src/main/connectors/descriptors/molecule.ts",
+    "src/main/connectors/molecule/render.ts"
   ],
-  "interfacePaths": ["src/main/connectors/descriptors/molecule.ts"],
+  "interfacePaths": [
+    "src/main/connectors/descriptors/molecule.ts",
+    "src/main/connectors/molecule/render.ts"
+  ],
   "consumerModules": [],
   "testFiles": {
     "owner": ["src/main/connectors/descriptors/molecule.test.ts"],

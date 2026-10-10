@@ -1,5 +1,5 @@
-import type { ToolContext, ToolDescriptor } from '../types'
-import { ConnectorHttpError } from '../engine'
+import type { ToolContext, ToolDescriptor } from '../../connector-core/types'
+import { ConnectorHttpError } from '../../connector-core/engine'
 
 // eQTL Catalogue REST API v2 (molecular-QTL summary statistics; ~760 datasets). The API publishes
 // NO total count and NO pagination link headers, so exhaustion is inferred from the page fill: a

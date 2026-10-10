@@ -1,3 +1,4 @@
+import { builtinConnectorRegistry } from './registry'
 import { randomUUID } from 'node:crypto'
 
 import type { ApplicationModule } from '../application-runtime'
@@ -193,6 +194,7 @@ const createConnectorApplication = (
   })
 
   const connectorService = new ConnectorService({
+    registry: builtinConnectorRegistry,
     engine: new ParserEngine({ fetchImpl: deps.fetchImpl }),
     getConnectors: () => runtimeSettings.current(),
     getConnectorsFresh: () => deps.settings.getConnectors(),

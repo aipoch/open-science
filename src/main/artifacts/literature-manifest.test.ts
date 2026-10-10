@@ -1,63 +1,63 @@
-import type { PrismaClient } from '@prisma/client'
 import { describe, expect, it, vi } from 'vitest'
 
-import { ArtifactLiteratureManifestOwner } from './literature-manifest'
+import {
+  ArtifactLiteratureManifestOwner,
+  type ArtifactLiteratureItemSnapshot
+} from './literature-manifest'
+import { literatureItemInputSchema } from '../../shared/literature'
 import type { ArtifactLiteratureRequest } from '../../shared/artifact-literature'
 
-const literatureRow = (metadataRevision = 3): Record<string, unknown> => ({
+const literatureSnapshot = (metadataRevision = 3): ArtifactLiteratureItemSnapshot => ({
   id: 'item-1',
-  itemType: 'journalArticle',
-  title: 'A cited paper',
-  abstract: '',
-  issuedText: '2026',
-  issuedYear: 2026,
-  containerTitle: 'Journal',
-  shortTitle: '',
-  language: 'en',
-  rights: '',
-  url: 'https://example.test/paper',
-  accessedAt: null,
-  citationKey: 'Doe2026',
-  extra: '',
-  typeFieldsJson: '{}',
   metadataRevision,
-  createdAt: new Date('2026-01-01T00:00:00.000Z'),
-  updatedAt: new Date('2026-01-02T00:00:00.000Z'),
-  deletedAt: null,
-  creators: [
-    {
-      itemId: 'item-1',
-      creatorId: 'creator-1',
-      creatorType: 'author',
-      ordinal: 0,
-      creator: {
-        id: 'creator-1',
-        nameMode: 'person',
-        givenName: 'Jane',
-        familyName: 'Doe',
-        literalName: '',
-        normalizedName: 'doe jane',
-        createdAt: new Date('2026-01-01T00:00:00.000Z'),
-        updatedAt: new Date('2026-01-01T00:00:00.000Z')
-      }
-    }
-  ],
-  identifiers: [],
-  projects: [],
-  collections: [],
-  attachments: []
+  item: literatureItemInputSchema.parse({
+    itemType: 'journalArticle',
+    title: 'A cited paper',
+    issuedText: '2026',
+    issuedYear: 2026,
+    containerTitle: 'Journal',
+    language: 'en',
+    url: 'https://example.test/paper',
+    citationKey: 'Doe2026',
+    creators: [{ nameMode: 'person', givenName: 'Jane', familyName: 'Doe', creatorType: 'author' }]
+  })
 })
 
 const owner = (metadataRevision = 3): ArtifactLiteratureManifestOwner =>
-  new ArtifactLiteratureManifestOwner(
-    async () =>
-      ({
-        projectDeletionIntent: { findMany: vi.fn(async () => []) },
-        literatureItem: { findMany: vi.fn(async () => [literatureRow(metadataRevision)]) }
-      }) as unknown as PrismaClient
-  )
+  new ArtifactLiteratureManifestOwner(async () => [literatureSnapshot(metadataRevision)])
 
 describe('ArtifactLiteratureManifestOwner', () => {
+  it('supports citation-free artifacts without a catalog and rejects unconfigured citation capture', async () => {
+    const manifestOwner = new ArtifactLiteratureManifestOwner()
+    await expect(manifestOwner.prepare(undefined)).resolves.toBeUndefined()
+    await expect(
+      manifestOwner.prepare({
+        styleId: 'apa',
+        locale: 'en-US',
+        citations: [{ citationId: 'cite-1', itemId: 'item-1' }]
+      })
+    ).rejects.toThrow('Artifact Literature reader is unavailable.')
+  })
+
+  it('reads requested identities through the injected snapshot capability and rejects missing items', async () => {
+    const readItems = vi.fn(async () => [literatureSnapshot()])
+    const manifestOwner = new ArtifactLiteratureManifestOwner(readItems)
+    const request = {
+      styleId: 'apa',
+      locale: 'en-US',
+      citations: [
+        { citationId: 'cite-1', itemId: 'item-1' },
+        { citationId: 'cite-2', itemId: 'item-1' }
+      ]
+    }
+    await manifestOwner.prepare(request)
+    expect(readItems).toHaveBeenCalledExactlyOnceWith(['item-1'])
+    readItems.mockResolvedValueOnce([])
+    await expect(manifestOwner.prepare(request)).rejects.toThrow(
+      'Literature Item is unavailable: item-1'
+    )
+  })
+
   it('freezes current Library metadata and locator semantics', async () => {
     const manifestOwner = owner()
     const context = {
@@ -260,27 +260,22 @@ describe('Literature evidence delivered to a review', () => {
   })
 
   it('retains bibliographic content for included papers that are not cited', async () => {
-    const uncited = {
-      ...literatureRow(),
-      id: 'item-2',
-      title: 'Uncited included study',
-      abstract: 'Frozen uncited findings.'
-    }
-    const manifestOwner = new ArtifactLiteratureManifestOwner(
-      async () =>
-        ({
-          projectDeletionIntent: { findMany: vi.fn(async () => []) },
-          literatureItem: { findMany: vi.fn(async () => [literatureRow(), uncited]) }
-        }) as unknown as PrismaClient
-    )
+    const uncited = literatureSnapshot()
+    uncited.id = 'item-2'
+    uncited.item.title = 'Uncited included study'
+    uncited.item.abstract = 'Frozen uncited findings.'
+    const manifestOwner = new ArtifactLiteratureManifestOwner(async () => [
+      literatureSnapshot(),
+      uncited
+    ])
     recordResults(manifestOwner, ['item-1', 'item-2'])
     const prepared = await manifestOwner.prepare(
       corpusRequest(['item-1', 'item-2']),
       evidenceContext
     )
     // Observe the serialized artifact boundary, without prescribing where snapshots are stored.
-    uncited.title = 'Later catalog title'
-    uncited.abstract = 'Later catalog findings.'
+    uncited.item.title = 'Later catalog title'
+    uncited.item.abstract = 'Later catalog findings.'
     expect(prepared!.manifestJson).toContain('Uncited included study')
     expect(prepared!.manifestJson).toContain('Frozen uncited findings.')
   })

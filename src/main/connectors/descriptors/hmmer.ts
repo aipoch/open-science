@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { ToolContext, ToolDescriptor } from '../types'
+import type { ToolContext, ToolDescriptor } from '../../connector-core/types'
 
 // EMBL-EBI's asynchronous HMMER web API. The service runs HMMER3 against curated
 // sequence/profile databases and returns a provider-owned job receipt.

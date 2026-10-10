@@ -9,7 +9,8 @@ import type { LiteratureCitationFormatter } from './citation-formatter'
 import type { LiteratureReferenceResolver } from './reference-resolver'
 import type { LiteratureMetadataEnricher } from './metadata-enricher'
 import type { LiteratureFullTextFinder } from './full-text-finder'
-import type { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
+import type { GetArtifactVersionProvenanceRequest } from '../../shared/artifact-provenance'
+import type { ArtifactLiteratureManifest } from '../../shared/artifact-literature'
 import type { ManagedFileVersionService } from '../managed-file-versions/service'
 import type { LiteratureCitationDocument } from './citation-document'
 import type { LiteratureCatalog } from './catalog'
@@ -31,7 +32,11 @@ type LiteratureCommandServices = Readonly<{
   literatureReferenceResolver: Pick<LiteratureReferenceResolver, 'resolve'>
   literatureMetadataEnricher: Pick<LiteratureMetadataEnricher, 'complete'>
   literatureFullTextFinder: Pick<LiteratureFullTextFinder, 'run'>
-  artifactProvenanceRepository: Pick<ArtifactProvenanceRepository, 'getVersionLiterature'>
+  artifactProvenanceRepository: {
+    getVersionLiterature(
+      request: GetArtifactVersionProvenanceRequest
+    ): Promise<ArtifactLiteratureManifest | undefined>
+  }
   managedFileVersionService: Pick<
     ManagedFileVersionService,
     'openVersion' | 'saveDerivedArtifactEdit'

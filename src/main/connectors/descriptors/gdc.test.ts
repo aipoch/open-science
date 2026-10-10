@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, type Mock } from 'vitest'
 import Ajv2020 from 'ajv/dist/2020.js'
-import type { ToolDescriptor } from '../types'
+import type { ToolDescriptor } from '../../connector-core/types'
 import { ParserEngine } from '../engine'
 import { GDC_TOOLS } from './gdc'
 

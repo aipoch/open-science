@@ -3,7 +3,7 @@ import { mkdtemp, readFile, readdir, realpath, rm, writeFile, symlink } from 'no
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ToolContext } from '../types'
+import type { ToolContext } from '../../connector-core/types'
 import { download, listDatasets, DATASETS } from './download'
 import * as downloadRuntime from './download'
 import { defaultFileDurability } from '../../storage/file-durability'

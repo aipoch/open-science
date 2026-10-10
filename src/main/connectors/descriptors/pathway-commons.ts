@@ -1,4 +1,4 @@
-import type { ToolContext, ToolDescriptor } from '../types'
+import type { ToolContext, ToolDescriptor } from '../../connector-core/types'
 
 // Pathway Commons PC2 v14. The legacy GET routes remain the most useful transport here because
 // graph and export queries can return BioPAX/GSEA/SIF text rather than JSON.

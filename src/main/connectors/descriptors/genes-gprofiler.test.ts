@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { ToolContext } from '../types'
+import type { ToolContext } from '../../connector-core/types'
 import { GENES_GPROFILER_TOOLS } from './genes-gprofiler'
 
 const listTool = GENES_GPROFILER_TOOLS.find((tool) => tool.id === 'list_enrichment_sources')!
