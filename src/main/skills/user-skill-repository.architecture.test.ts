@@ -324,7 +324,8 @@ describe('User Skill repository architecture', () => {
         'src/main/skills/user-skill-repository.atomic.test.ts',
         'src/main/skills/user-skill-repository.test.ts',
         'src/main/skills/zip-extract.test.ts',
-        'src/main/skills/zip-extract.ts'
+        'src/main/skills/zip-extract.ts',
+        'src/main/skills/net-fetch-electron.ts'
       ],
       interfacePaths: [
         'src/main/skills/user-skill-repository.ts',
@@ -350,7 +351,8 @@ describe('User Skill repository architecture', () => {
         'src/main/skills/skill-files.ts',
         'src/main/skills/skill-mutation-owner.ts',
         'src/main/skills/skill-name.ts',
-        'src/main/skills/specialist-package-adapter.ts'
+        'src/main/skills/specialist-package-adapter.ts',
+        'src/main/skills/net-fetch-electron.ts'
       ],
       consumerModules: ['settings_service_facade'],
       testFiles: {
@@ -389,6 +391,9 @@ describe('User Skill repository architecture', () => {
           'src/shared/renderer-contract-catalog.test.ts'
         ],
         consumer: [
+          'src/main/connectors/descriptors/encori.test.ts',
+          'src/main/connectors/encori/download.test.ts',
+          'src/main/connectors/encori/runtime.test.ts',
           'src/main/notebook/windows-runtime-manager.test.ts',
           'src/main/storage/wsl-npm-migration.integration.test.ts',
           'src/main/composition/notebook-environment.test.ts',
@@ -955,8 +960,18 @@ describe('User Skill repository architecture', () => {
           'src/main/local-models/ipc.test.ts',
           'src/main/literature/pdf-translation/pdf-cache.test.ts',
           'src/main/notebook/code-risk-admission.test.ts',
+          'src/main/node-process-host.test.ts',
+          'src/main/desktop-runtime-transport.integration.test.ts',
+          'src/main/side-chat/application-commands.test.ts',
+          'src/main/artifacts/artifact-reproducibility-commands.test.ts',
+          'src/main/settings/file-commands.test.ts',
+          'src/main/office-preview/application-commands.test.ts',
+          'src/main/reviewer/paged-preview-host.test.ts',
+          'src/main/desktop-native-electron.test.ts',
           'src/main/session-plan/session-plan-turn-outcome.test.ts',
-          'src/main/notebook/runtime-repair.windows.integration.test.ts'
+          'src/main/notebook/runtime-repair.windows.integration.test.ts',
+          'src/main/acp/specialist-switch-recovery.integration.test.ts',
+          'src/main/agents/production-completion-handoff.test.ts'
         ]
       },
       capabilityOverlays: ['windows_sensitive', 'e2e_regressions', 'e2e_delegation'],

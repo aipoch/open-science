@@ -240,7 +240,12 @@
       "src/main/session-diagnostics/export-evidence.integration.test.ts",
       "src/main/session-persistence/ipc.test.ts",
       "src/main/acp/approved-handoff-outcome.integration.test.ts",
-      "src/main/acp/approved-handoff-outcome.test.ts"
+      "src/main/acp/approved-handoff-outcome.test.ts",
+      "src/main/composition/notebook-environment.test.ts",
+      "src/main/desktop-runtime-transport.integration.test.ts",
+      "src/main/side-chat/application-commands.test.ts",
+      "src/main/acp/specialist-switch-recovery.integration.test.ts",
+      "src/main/agents/production-completion-handoff.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

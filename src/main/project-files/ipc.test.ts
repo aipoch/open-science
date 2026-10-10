@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -542,3 +543,5 @@ describe('registerProjectFilesIpcHandlers', () => {
 })
 
 export {}
+
+await configureTestElectronHost(await import('electron'))

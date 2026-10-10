@@ -1,7 +1,14 @@
-import { BrowserWindow, Notification } from 'electron'
-import { createNotificationElectronSurface } from '../ipc-surfaces/notifications'
+import type { DesktopNotificationDelivery } from '../notifications/desktop-delivery'
+import { createNotificationElectronSurface } from '../desktop-surface-declarations'
+import type { Notification } from 'electron'
+import { desktopInteraction, hasDesktopInteraction } from '../desktop-interaction'
+
 import { createLogger, errorLogFields } from '../logger'
-import { buildTaskNotificationShow } from '../notifications/electron-wiring'
+import {
+  buildTaskNotificationShow,
+  getTaskNotificationAvailability,
+  showTestTaskNotification
+} from '../notifications/electron-wiring'
 import { TaskNotificationService } from '../notifications/task-notifications'
 import type { composeSessionAuthority } from './session-authority'
 import type { composeSettingsBootstrap } from './settings-bootstrap'
@@ -13,17 +20,22 @@ export function composeNotifications({
   storageStartup,
   sessionAuthority,
   headless,
-  translate
+  translate,
+  notificationDelivery
 }: {
   surfaceAdapters: import('../runtime-electron-wiring').NamedElectronSurfaceAdapter[]
   settingsBootstrap: Awaited<ReturnType<typeof composeSettingsBootstrap>>
   storageStartup: Awaited<ReturnType<typeof composeStorageStartup>>
   sessionAuthority: Awaited<ReturnType<typeof composeSessionAuthority>>
+  notificationDelivery?: (
+    translate: import('../locale/main-process-messages').NativeTranslator
+  ) => DesktopNotificationDelivery
   headless: boolean
   translate: import('../locale/main-process-messages').NativeTranslator
 }): {
   notificationsLog: ReturnType<typeof createLogger>
   taskNotifications: TaskNotificationService
+  notificationDelivery: DesktopNotificationDelivery
 } {
   // Desktop notifications for finished/failed agent tasks and approval waits. Delivery is
   // Electron's Notification (Notification Center on macOS, toasts on Windows, libnotify on Linux);
@@ -37,18 +49,27 @@ export function composeNotifications({
   const notificationsLog = createLogger('notifications')
   const liveNotifications = new Set<Notification>()
   const taskNotificationDeliveryDeps = {
-    notificationCtor: Notification,
+    notificationCtor: hasDesktopInteraction()
+      ? desktopInteraction('Desktop notifications').notificationCtor
+      : undefined,
     liveNotifications,
     log: notificationsLog,
     headless,
     translate
   }
+  const delivery: DesktopNotificationDelivery = notificationDelivery?.(translate) ?? {
+    isAppFocused: () =>
+      hasDesktopInteraction() && desktopInteraction('Desktop notifications').hasFocusedWindow(),
+    show: buildTaskNotificationShow(taskNotificationDeliveryDeps),
+    getAvailability: () => getTaskNotificationAvailability(taskNotificationDeliveryDeps),
+    sendTest: () => showTestTaskNotification(taskNotificationDeliveryDeps)
+  }
   const taskNotifications = new TaskNotificationService({
     isEnabled: () => settingsBootstrap.settingsService.getNotificationsEnabled(),
     showContent: () => settingsBootstrap.settingsService.getShowNotificationContent(),
-    isAppFocused: () => BrowserWindow.getAllWindows().some((window) => window.isFocused()),
+    isAppFocused: delivery.isAppFocused,
     translate,
-    show: buildTaskNotificationShow(taskNotificationDeliveryDeps),
+    show: delivery.show,
     onDeliveryError: (error) =>
       notificationsLog.warn('task notification delivery failed', errorLogFields(error)),
     onAttentionError: (error) =>
@@ -66,8 +87,9 @@ export function composeNotifications({
     createNotificationElectronSurface(
       storageStartup.notificationInbox,
       taskNotifications,
-      taskNotificationDeliveryDeps
+      taskNotificationDeliveryDeps,
+      delivery
     )
   )
-  return { notificationsLog, taskNotifications }
+  return { notificationsLog, taskNotifications, notificationDelivery: delivery }
 }

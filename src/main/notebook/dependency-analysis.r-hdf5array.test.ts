@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { expect, it } from 'vitest'
 import type { NotebookRunRecord } from '../../shared/notebook'
 import { analyzeRNotebookSource } from './dependency-analysis-r'
@@ -113,3 +114,5 @@ it('does not apply the HDF5Array contract to another namespace', async () => {
     (await analyzeRNotebookSource('x <- custom::HDF5Array("secret.h5", "counts")')).facts.state
   ).toBe('unknown')
 })
+
+configureTestRuntimeMetadata()

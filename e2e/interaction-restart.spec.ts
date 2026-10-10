@@ -282,7 +282,7 @@ for (const secondDecision of ['allow', 'deny'] as const) {
     expect((await readSession()).runtimeContext?.permission?.request.requestId).toBe(firstRequestId)
     const allowOnce = async (): Promise<void> => {
       const approval = page.getByTestId('permission-actions').getByTestId('allow-primary')
-      await expect(approval).toHaveText('Allow once')
+      await expect(approval).toHaveText('Allow')
       await approval.click()
     }
     await allowOnce()

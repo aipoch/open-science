@@ -1035,9 +1035,19 @@
       "src/main/notebook/dependency-analysis.scipy-sparse.test.ts",
       "src/main/literature/pdf-translation/checkpoints.test.ts",
       "src/main/notebook/code-risk-admission.test.ts",
+      "src/main/node-process-host.test.ts",
+      "src/main/desktop-runtime-transport.integration.test.ts",
+      "src/main/side-chat/application-commands.test.ts",
+      "src/main/artifacts/artifact-reproducibility-commands.test.ts",
+      "src/main/settings/file-commands.test.ts",
+      "src/main/office-preview/application-commands.test.ts",
+      "src/main/reviewer/paged-preview-host.test.ts",
+      "src/main/desktop-native-electron.test.ts",
       "src/main/session-plan/session-plan-turn-outcome.test.ts",
       "src/main/notebook/runtime-repair.windows.integration.test.ts",
-      "src/main/notebook/windows-python-probe.integration.test.ts"
+      "src/main/notebook/windows-python-probe.integration.test.ts",
+      "src/main/acp/specialist-switch-recovery.integration.test.ts",
+      "src/main/agents/production-completion-handoff.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

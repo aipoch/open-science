@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import {
   chmod,
   mkdir,
@@ -2761,3 +2762,5 @@ describe('runtime preservation + old-runtime cleanup', () => {
     expect(deleteSources).toHaveBeenCalledWith(currentDataRoot, [...MIGRATED_DIRS])
   })
 })
+
+await configureTestElectronHost(await import('electron'))

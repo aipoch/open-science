@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { configureCredentialStore } from './credential-store-mode'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -294,3 +295,5 @@ describe('shared credential recovery', () => {
     }
   )
 })
+
+await configureTestElectronHost(await import('electron'))

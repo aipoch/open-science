@@ -1,6 +1,8 @@
 import type { RuntimeWriterOwner } from '../session-persistence/runtime-writer'
-import { shell } from 'electron'
-import { registerSessionPersistenceIpcHandlers } from '../session-persistence/ipc'
+import {
+  registerSessionPersistenceIpcHandlers,
+  createSessionRecoveryFolderCommand
+} from '../session-persistence/ipc'
 import type { SessionRepository } from '../session-persistence/repository'
 import type { SessionDetailsOwner } from '../session-details/owner'
 import type { RootDelegatedWorkControl } from '../delegation/production-composition'
@@ -44,10 +46,7 @@ export const createSessionPersistenceElectronSurface = ({
           )
         }
       },
-      async (request) => {
-        const error = await shell.openPath(sessionRepository.recoveryFolderPath(request.projectId))
-        if (error) throw new Error('Session recovery folder could not be opened.')
-      },
+      createSessionRecoveryFolderCommand(sessionRepository),
       runtimeWriter
     )
   })

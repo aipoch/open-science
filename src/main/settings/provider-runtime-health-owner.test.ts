@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -393,3 +394,5 @@ describe('ProviderRuntimeHealthOwner', () => {
     expect(await repository.getSettings()).toEqual(before)
   })
 })
+
+await configureTestElectronHost(await import('electron'))

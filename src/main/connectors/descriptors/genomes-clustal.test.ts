@@ -1,3 +1,4 @@
+import { configureTestRuntimeNetwork } from '../../../../test/runtime-host'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ToolContext } from '../types'
 import { GENOMES_CLUSTAL_TOOLS } from './genomes-clustal'
@@ -153,3 +154,5 @@ describe('Clustal Omega status and alignment results', () => {
     ).rejects.toThrow('status FAILURE')
   })
 })
+
+configureTestRuntimeNetwork()

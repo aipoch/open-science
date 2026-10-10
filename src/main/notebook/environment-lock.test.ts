@@ -74,6 +74,41 @@ const condaInventory = (...names: string[]): string =>
   )
 
 describe('captureNotebookEnvironmentLock', () => {
+  it('captures equivalent certifi release spellings with the exact Conda lock', async () => {
+    const result = await captureNotebookEnvironmentLock(
+      {
+        language: 'python',
+        environmentName: 'default-python',
+        runtimeSource: 'managed',
+        condaPrefix: '/runtime/envs/default-python'
+      },
+      manifest({
+        packages: ['2026.07.22', '2026.7.22'].map((version) => ({
+          name: 'certifi',
+          version,
+          versionStatus: 'known',
+          ecosystem: 'python',
+          loadedState: 'loaded',
+          evidenceSources: ['python-importlib-metadata', 'python-kernel-modules']
+        }))
+      }),
+      {
+        micromamba: '/runtime/micromamba',
+        execute: async () =>
+          JSON.stringify([
+            {
+              name: 'certifi',
+              version: '2026.7.22',
+              url: 'https://conda.example/noarch/certifi-2026.7.22-0.conda',
+              md5: 'a'.repeat(32)
+            }
+          ])
+      }
+    )
+    expect(result).toMatchObject({ state: 'captured', captureStatus: 'complete' })
+    if (result.state === 'captured') expect(result.lock.untrackedPackages).toBeUndefined()
+  })
+
   it.each(['array', 'envelope'] as const)(
     'captures a restorable lock from the micromamba %s inventory format',
     async (format) => {
@@ -2458,10 +2493,11 @@ describe('conflicting installed Conda package metadata', () => {
         state: 'captured',
         captureStatus: 'partial',
         partialReasons: ['non-conda-package-detected'],
-        diagnostics: packages.map(([packageName, observedVersion]) => ({
-          reason: 'package-lock-missing',
+        diagnostics: packages.map(([packageName, first, second, lockedVersion]) => ({
+          reason: 'package-version-mismatch',
           packageName,
-          observedVersion
+          observedVersion: first === lockedVersion ? second : first,
+          lockedVersion
         }))
       })
     } finally {

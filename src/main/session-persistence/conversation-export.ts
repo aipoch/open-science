@@ -1,4 +1,7 @@
-import { app, BrowserWindow, dialog, type SaveDialogOptions } from 'electron'
+import { callerContextForEvent } from '../caller-context'
+import { desktopFileInteraction, type DesktopInteraction } from '../desktop-interaction'
+import { tmpdir } from 'node:os'
+import { runtimeMetadata } from '../runtime-metadata'
 
 import { ipcMainHandle } from '../ipc-handler-registry'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
@@ -22,15 +25,6 @@ import { createLogger, diagnosticErrorFields } from '../logger'
 
 const log = createLogger('conversation-export')
 
-type ConversationExportPrintWindow = {
-  loadFile(path: string): Promise<void>
-  webContents: {
-    executeJavaScript(code: string): Promise<unknown>
-    printToPDF(options: Electron.PrintToPDFOptions): Promise<Buffer>
-  }
-  destroy(): void
-}
-
 type ConversationExportLimits = {
   maxMessages: number
   maxImageBase64Bytes: number
@@ -49,15 +43,16 @@ type ConversationExportDependencies = {
   reserveExport(projectId: string, sessionId: string): Promise<() => void>
   loadSession(projectId: string, sessionId: string): Promise<PersistedChatSession | undefined>
   isSessionActive(projectId: string, sessionId: string): boolean
-  showSaveDialog(
-    parentWindow: Electron.BrowserWindow | undefined,
-    options: SaveDialogOptions
-  ): Promise<Electron.SaveDialogReturnValue>
+  showSaveDialog: DesktopInteraction['chooseSavePathForCaller']
   writeFile(path: string, data: string | Buffer): Promise<void>
   publishUserFile: typeof publishUserFile
   createTempDirectory(prefix: string): Promise<string>
   removeDirectory(path: string): Promise<void>
-  createPrintWindow(): ConversationExportPrintWindow
+  printPdf(request: {
+    htmlPath: string
+    timeoutMs: number
+    timeoutMessage: string
+  }): Promise<Buffer>
   getDownloadsPath(): string
   getTempPath(): string
   now(): number
@@ -78,7 +73,7 @@ type ConversationExportDefaultDependencies = Omit<
 type ConversationExportService = {
   exportConversation(
     request: ExportConversationRequest,
-    parentWindow?: Electron.BrowserWindow
+    callerId?: string
   ): Promise<ExportConversationResult>
 }
 
@@ -111,50 +106,20 @@ const assertExportConversationRequest = (
   return request
 }
 
-const createDefaultPrintWindow = (): ConversationExportPrintWindow =>
-  new BrowserWindow({
-    show: false,
-    webPreferences: {
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true
-    }
-  })
-
 const defaultDependencies: ConversationExportDefaultDependencies = {
   reserveExport: async () => () => {},
-  showSaveDialog: (parentWindow, options) =>
-    parentWindow ? dialog.showSaveDialog(parentWindow, options) : dialog.showSaveDialog(options),
+  showSaveDialog: (callerId, options) => desktopFileInteraction().chooseSavePath(options, callerId),
   writeFile,
   publishUserFile,
   createTempDirectory: mkdtemp,
   removeDirectory: (path) => rm(path, { recursive: true, force: true }),
-  createPrintWindow: createDefaultPrintWindow,
-  getDownloadsPath: () => app.getPath('downloads'),
-  getTempPath: () => app.getPath('temp'),
+  printPdf: (request) => desktopFileInteraction().printConversationPdf(request),
+  getDownloadsPath: () => runtimeMetadata().downloadsPath,
+  getTempPath: () => tmpdir(),
   now: Date.now,
   translate: englishNativeTranslator,
   exportLimits: DEFAULT_CONVERSATION_EXPORT_LIMITS
 }
-
-const printToPdfWithTimeout = (
-  print: Promise<Buffer>,
-  timeoutMs: number,
-  timeoutError: () => Error
-): Promise<Buffer> =>
-  new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(timeoutError()), timeoutMs)
-    void print.then(
-      (pdf) => {
-        clearTimeout(timeout)
-        resolve(pdf)
-      },
-      (error: unknown) => {
-        clearTimeout(timeout)
-        reject(error)
-      }
-    )
-  })
 
 const createConversationExportService = (
   dependencies: ConversationExportRequiredDependencies &
@@ -164,7 +129,7 @@ const createConversationExportService = (
 
   const performExport: ConversationExportService['exportConversation'] = async (
     rawRequest,
-    parentWindow
+    callerId
   ) => {
     const request = assertExportConversationRequest(rawRequest)
     const session = await deps.loadSession(request.projectId, request.sessionId)
@@ -234,7 +199,7 @@ const createConversationExportService = (
       deps.getDownloadsPath(),
       `${sanitizeExportFilename(document.title)}.${extension}`
     )
-    const dialogResult = await deps.showSaveDialog(parentWindow, {
+    const dialogResult = await deps.showSaveDialog(callerId, {
       title: deps.translate('Export conversation'),
       defaultPath,
       filters: [
@@ -266,43 +231,17 @@ const createConversationExportService = (
       const htmlPath = join(tempDirectory, 'conversation.html')
       await deps.writeFile(htmlPath, html)
 
-      const printWindow = deps.createPrintWindow()
-      try {
-        let generationFinished = false
-        const pdf = await printToPdfWithTimeout(
-          (async () => {
-            await printWindow.loadFile(htmlPath)
-            if (generationFinished) throw new Error('PDF generation already ended.')
-            await printWindow.webContents.executeJavaScript(
-              'document.fonts ? document.fonts.ready.then(() => true) : true'
-            )
-            if (generationFinished) throw new Error('PDF generation already ended.')
-            return printWindow.webContents.printToPDF({
-              pageSize: 'A4',
-              printBackground: true,
-              margins: {
-                top: 0.2,
-                bottom: 0.2,
-                left: 0.2,
-                right: 0.2
-              }
-            })
-          })(),
-          deps.exportLimits.pdfPrintTimeoutMs,
-          () =>
-            new Error(
-              deps.translate('Conversation PDF export timed out. Select fewer conversation turns.')
-            )
-        ).finally(() => {
-          generationFinished = true
-        })
-        await deps.publishUserFile(dialogResult.filePath, (temporaryPath) =>
-          deps.writeFile(temporaryPath, pdf)
+      const pdf = await deps.printPdf({
+        htmlPath,
+        timeoutMs: deps.exportLimits.pdfPrintTimeoutMs,
+        timeoutMessage: deps.translate(
+          'Conversation PDF export timed out. Select fewer conversation turns.'
         )
-        return { saved: true, filePath: dialogResult.filePath }
-      } finally {
-        printWindow.destroy()
-      }
+      })
+      await deps.publishUserFile(dialogResult.filePath, (temporaryPath) =>
+        deps.writeFile(temporaryPath, pdf)
+      )
+      return { saved: true, filePath: dialogResult.filePath }
     } finally {
       try {
         await deps.removeDirectory(tempDirectory)
@@ -315,11 +254,11 @@ const createConversationExportService = (
     }
   }
   return {
-    exportConversation: async (rawRequest, parentWindow) => {
+    exportConversation: async (rawRequest, callerId) => {
       const request = assertExportConversationRequest(rawRequest)
       const release = await deps.reserveExport(request.projectId, request.sessionId)
       try {
-        return await performExport(request, parentWindow)
+        return await performExport(request, callerId)
       } finally {
         release()
       }
@@ -331,14 +270,9 @@ const registerConversationExportIpcHandler = (service: ConversationExportService
   ipcMainHandle(
     'sessions:export-conversation',
     (event, request: ExportConversationRequest): Promise<ExportConversationResult> =>
-      service.exportConversation(request, BrowserWindow.fromWebContents(event.sender) ?? undefined)
+      service.exportConversation(request, callerContextForEvent(event).clientId)
   )
 }
 
 export { createConversationExportService, registerConversationExportIpcHandler }
-export type {
-  ConversationExportDependencies,
-  ConversationExportLimits,
-  ConversationExportPrintWindow,
-  ConversationExportService
-}
+export type { ConversationExportDependencies, ConversationExportLimits, ConversationExportService }

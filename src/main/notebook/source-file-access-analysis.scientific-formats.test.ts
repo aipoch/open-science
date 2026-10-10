@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { describe, expect, it } from 'vitest'
 
 import type { NotebookLanguage } from '../../shared/notebook'
@@ -402,3 +403,5 @@ describe('DropletUtils single-cell matrix inputs', () => {
     })
   })
 })
+
+configureTestRuntimeMetadata()

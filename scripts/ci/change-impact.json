@@ -84,7 +84,15 @@
         "e2e/vite.browser-test.config.ts",
         "test/config/**",
         ".github/actions/source-regression/**",
-        ".github/workflows/source-regression.yml"
+        ".github/workflows/source-regression.yml",
+        "scripts/backend-dependencies.mjs",
+        "scripts/build-backend.mjs",
+        "scripts/wsl2-build-flags.mjs",
+        "scripts/wsl2-build-flags.d.mts",
+        "scripts/stage-backend.mjs",
+        "scripts/test-backend-installed.mjs",
+        "scripts/stage-node-runtime.mjs",
+        "build/node-runtime.json"
       ],
       "mode": "full",
       "capabilities": []
@@ -284,7 +292,10 @@
         "src/shared/update.ts",
         "src/shared/web-api-map.generated.ts",
         "src/shared/wsl-setup.ts",
-        "src/main/delegation/production-framework-runtime.ts"
+        "src/main/delegation/production-framework-runtime.ts",
+        "src/main/desktop-connection.ts",
+        "src/main/desktop-runtime-launcher.ts",
+        "src/main/node-entry.ts"
       ],
       "capabilities": ["windows_sensitive"]
     },
@@ -401,9 +412,26 @@
         "src/main/wsl/**"
       ],
       "capabilities": ["e2e_regressions", "e2e_delegation"]
+    },
+    {
+      "id": "specialist_recovery",
+      "role": "overlay",
+      "paths": [
+        "src/main/acp/**",
+        "src/main/agents/**",
+        "src/main/specialist/**",
+        "src/main/agent-framework/claude-code.ts",
+        "src/main/composition/agent-completion.ts",
+        "src/main/session-persistence/claude-replay.ts"
+      ],
+      "capabilities": ["specialist_recovery"]
     }
   ],
   "capabilities": {
+    "specialist_recovery": {
+      "consumers": [],
+      "lanes": ["windows_runtime"]
+    },
     "ci_integrity_surface": {
       "consumers": [],
       "lanes": []

@@ -7,6 +7,9 @@ import * as parser from './dependency-analysis-parser'
 import * as powerShellParser from './powershell-search-parser'
 import { analyzeNotebookCodeRisk, analyzePowerShellCodeRisk } from './code-risk-analysis'
 import type { NotebookSourceFileAccessContext } from './dependency-analysis-types'
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
+
+configureTestRuntimeMetadata()
 
 vi.mock('node:child_process', { spy: true })
 

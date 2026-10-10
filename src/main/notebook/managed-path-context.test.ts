@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { managedEnvironmentIsReadOnly } from './managed-path-context'
@@ -57,3 +58,5 @@ rows = json.load(open(os.path.join(h, 'rows.json')))
     expect(await managedEnvironmentIsReadOnly(language, source)).toBe(false)
   })
 })
+
+configureTestRuntimeMetadata()

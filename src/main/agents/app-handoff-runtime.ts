@@ -59,7 +59,7 @@ class AppHandoffRuntime implements CompletionGateRuntime {
     if (!handoff.continuationContext) {
       throw new Error('The approved handoff continuation context is unavailable.')
     }
-    await this.reconfigureContext(handoff.continuationContext)
+    await this.reconfigureContext(handoff.continuationContext, handoff.approvedSpecialistId)
   }
 
   async continueAsApproved(
@@ -96,8 +96,13 @@ class AppHandoffRuntime implements CompletionGateRuntime {
     onPhase('continued')
   }
 
-  private async reconfigureContext(context: HandoffContinuationContext): Promise<void> {
-    const specialistId = await this.deps.resolveSpecialistId(context.sessionId, context.target)
+  private async reconfigureContext(
+    context: HandoffContinuationContext,
+    approvedSpecialistId?: string
+  ): Promise<void> {
+    const specialistId =
+      approvedSpecialistId ??
+      (await this.deps.resolveSpecialistId(context.sessionId, context.target))
     await this.deps.switchSpecialist(context.sessionId, specialistId)
   }
 

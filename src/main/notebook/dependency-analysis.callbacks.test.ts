@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -141,3 +142,5 @@ it('uses the same closure summary for a named formatter function', async () => {
     state: 'stale'
   })
 })
+
+configureTestRuntimeMetadata()

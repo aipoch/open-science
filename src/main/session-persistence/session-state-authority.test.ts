@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -703,3 +704,5 @@ describe('Main-owned stable research membership', () => {
     expect(writes).not.toHaveBeenCalled()
   })
 })
+
+await configureTestElectronHost(await import('electron'))

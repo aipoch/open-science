@@ -20,6 +20,17 @@ export type ConnectorMeta = {
 // Static connector metadata for the settings UI (tool lists come from the registry).
 export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   {
+    id: 'encori',
+    displayName: 'ENCORI',
+    aliases: ['starBase', 'RNA interactome'],
+    description: 'RNA interactions, regulatory evidence and bulk datasets from ENCORI.',
+    useWhen:
+      'Use for official ENCORI (starBase) miRNA targets, RNA–RNA interactions, RBP targets and disease associations, ceRNA networks, RBP motif rankings, dataset binding sites, online reference tables and bulk dataset discovery or explicitly requested downloads. Preserve assembly, cell, tissue and evidence filters exactly; never widen zero-result queries. Full official query responses are saved locally; previews must not be treated as complete data.',
+    sources: ['ENCORI'],
+    termsUrl: 'https://rnasysu.com/encori/',
+    requiresNcbi: false
+  },
+  {
     id: 'pdc',
     displayName: 'PDC',
     aliases: ['Proteomic Data Commons', 'CPTAC proteomics'],

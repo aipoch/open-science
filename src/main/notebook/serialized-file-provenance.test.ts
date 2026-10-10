@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { expect, it } from 'vitest'
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -51,3 +52,5 @@ it.each([true, false])(
   },
   30000
 )
+
+configureTestRuntimeMetadata()

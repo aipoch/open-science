@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { expect, it } from 'vitest'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { readdirSync, readFileSync } from 'node:fs'
@@ -125,3 +126,5 @@ it('keeps reported regression fixtures free of original host paths and source-la
     expect(source, name).not.toMatch(/\p{Script=Han}/u)
   }
 })
+
+configureTestRuntimeMetadata()

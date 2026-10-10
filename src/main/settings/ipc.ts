@@ -1,6 +1,8 @@
+import type { SettingsFileCommands } from './file-commands'
+import { callerContextForEvent } from '../caller-context'
+import { callerLeaseForEvent } from '../caller-lifecycle'
 import type { PrivateDestinationRequest } from '../../shared/notebook-network'
 import { ipcMainHandle } from '../ipc-handler-registry'
-import type { WebContents } from 'electron'
 
 import {
   type AppIconPreview,
@@ -9,7 +11,6 @@ import {
   type DeleteProviderRequest,
   type DeleteSkillRequest,
   type ExportSkillRequest,
-  type ExportSkillResult,
   type ImportAgentHomeSkillsRequest,
   type ImportSkillRequest,
   type ImportSkillZipRequest,
@@ -32,9 +33,7 @@ import {
   type DeviceCredentialAuthenticationRequest,
   type AuthenticateCustomServerRequest,
   type DisconnectCustomServerRequest,
-  type ConnectorTemplateSelectionResult,
   type ExportCustomServerTemplateRequest,
-  type ExportCustomServerTemplateResult,
   type RemoveCustomServerRequest,
   type RemoveDeviceCredentialRequest,
   type ResolveSkillDocumentRequest,
@@ -81,10 +80,8 @@ import type {
   SkillMarketplaceBatchRequest,
   SkillMarketplaceInstallRequest
 } from '../../shared/skill-marketplace'
-import { connectorTemplateExportSelection } from './connector-template'
 import type { SettingsWorkflows } from './workflows'
 import { createLogger } from '../logger'
-import type { SkillExportArchive } from '../skills/export'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import type { SettingsSnapshotCommitOwner } from './settings-snapshot-commit-owner'
 import {
@@ -116,16 +113,8 @@ export type SettingsIpcOptions = {
   snapshotCommits: SettingsSnapshotCommitOwner
   // Renders the built-in icon variants to preview data URLs for the Appearance picker. Absent means
   // the picker gets an empty list (no bundled assets available, e.g. an environment without them).
+  fileCommands: SettingsFileCommands
   listAppIconPreviews?: () => AppIconPreview[]
-  connectorTemplateFiles?: {
-    select(): Promise<
-      { cancelled: true } | { cancelled: false; fileName: string; contents: string }
-    >
-    save(suggestedFileName: string, contents: string, sender: WebContents): Promise<boolean>
-  }
-  skillExportFiles?: {
-    save(archive: SkillExportArchive, sender: WebContents): Promise<ExportSkillResult>
-  }
 }
 
 // Streams one install event (log line or progress tick) to every open renderer window.
@@ -140,8 +129,7 @@ const registerSettingsIpcHandlers = ({
   workflows,
   snapshotCommits,
   listAppIconPreviews,
-  connectorTemplateFiles,
-  skillExportFiles
+  fileCommands
 }: SettingsIpcOptions): void => {
   ipcMainHandle('settings:get-preflight', () => service.getPreflight())
   ipcMainHandle('settings:get-settings', () => snapshotCommits.readCurrentSnapshot())
@@ -438,10 +426,13 @@ const registerSettingsIpcHandlers = ({
   ipcMainHandle('settings:resolve-skill-document', (_event, request: ResolveSkillDocumentRequest) =>
     service.resolveSkillDocument(request)
   )
-  ipcMainHandle('settings:export-skill', async (event, request: ExportSkillRequest) => {
-    if (!skillExportFiles) throw new Error('Skill export is unavailable')
-    return skillExportFiles.save(await service.buildSkillExport(request.id), event.sender)
-  })
+  ipcMainHandle('settings:export-skill', (event, request: ExportSkillRequest) =>
+    fileCommands.exportSkill({
+      callerContext: callerContextForEvent(event),
+      callerLease: callerLeaseForEvent(event),
+      args: [request]
+    })
+  )
   ipcMainHandle('settings:set-skill-enabled', (_event, request: SetSkillEnabledRequest) =>
     workflows.skills.setSkillEnabled(request)
   )
@@ -500,55 +491,21 @@ const registerSettingsIpcHandlers = ({
   )
   ipcMainHandle(
     'settings:select-custom-server-template',
-    async (
-      _event,
-      request?: SelectCustomServerTemplateRequest
-    ): Promise<ConnectorTemplateSelectionResult> => {
-      if (request) {
-        return {
-          cancelled: false,
-          fileName: request.fileName,
-          preview: await service.previewCustomServerTemplateImport(request.contents)
-        }
-      }
-      if (!connectorTemplateFiles) throw new Error('Connector configuration files are unavailable')
-      const selected = await connectorTemplateFiles.select()
-      if (selected.cancelled) return selected
-      return {
-        cancelled: false,
-        fileName: selected.fileName,
-        preview: await service.previewCustomServerTemplateImport(selected.contents)
-      }
-    }
+    (event, request?: SelectCustomServerTemplateRequest) =>
+      fileCommands.selectTemplate({
+        callerContext: callerContextForEvent(event),
+        callerLease: callerLeaseForEvent(event),
+        args: [request]
+      })
   )
   ipcMainHandle(
     'settings:export-custom-server-template',
-    async (
-      event,
-      request: ExportCustomServerTemplateRequest
-    ): Promise<ExportCustomServerTemplateResult> => {
-      if (!connectorTemplateFiles) throw new Error('Connector configuration files are unavailable')
-      const result = await service.buildCustomServerTemplateExport(request.id)
-      const selected = connectorTemplateExportSelection(result, request.format ?? 'open-science')
-      if (
-        !result.preview.ready ||
-        !selected.digest ||
-        !selected.suggestedFileName ||
-        !selected.contents
-      ) {
-        throw new Error('Connector configuration is not safe to export')
-      }
-      if (selected.digest !== request.expectedDigest) {
-        throw new Error('Connector configuration changed after preview; review it again')
-      }
-      return {
-        saved: await connectorTemplateFiles.save(
-          selected.suggestedFileName,
-          selected.contents,
-          event.sender
-        )
-      }
-    }
+    (event, request: ExportCustomServerTemplateRequest) =>
+      fileCommands.exportTemplate({
+        callerContext: callerContextForEvent(event),
+        callerLease: callerLeaseForEvent(event),
+        args: [request]
+      })
   )
   ipcMainHandle('settings:get-connector-detail', (_event, id: string) =>
     service.getConnectorDetail(id)

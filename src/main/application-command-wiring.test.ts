@@ -29,6 +29,7 @@ const commandRegistrationSource = compact(
 const literatureOwnerSource = compact(readSource('src/main/literature/command-owner.ts'))
 const coreSurfaceSource = compact(readSource('src/main/ipc-surfaces/core.ts'))
 const indexSource = readSource('src/main/index.ts')
+const nodeEntrySource = readSource('src/main/node-entry.ts')
 const runtimeSource = readSource('src/main/application-runtime.ts')
 const compositionSource = readSource('src/main/application-command-composition.ts')
 const ipcRegistrySource = readSource('src/main/ipc-handler-registry.ts')
@@ -104,7 +105,7 @@ describe('production application command wiring', () => {
       'sessionPackageDesktopLifecycle.isActive = () => sessionPackageDesktop.operations.active'
     )
     expect(source).toContain(
-      'sessionPackageDesktopLifecycle.close = async () => { removePackageQuitGuard() await sessionPackageDesktop.close() }'
+      'sessionPackageDesktopLifecycle.close = async () => { await sessionPackageDesktop.close() }'
     )
     expect(source).toContain(
       'await Promise.all([service.close(), sessionPackageDesktopLifecycle.close()])'
@@ -153,7 +154,7 @@ describe('production application command wiring', () => {
   it('installs Office preview once with shared resources between managed preview and environment', () => {
     const source = domainCompact('notebook-surfaces')
     expect(source).toContain(
-      "...createOfficePreviewElectronSurfaces({ previewResources: managedFiles.previewResources, runtimeHtmlPath: join(__dirname, '../renderer/office-preview.html') })"
+      "...createOfficePreviewElectronSurfaces({ commands: officePreviewCommands, previewResources: managedFiles.previewResources, runtimeHtmlPath: join(__dirname, '../renderer/office-preview.html') })"
     )
     const preview = source.indexOf("declareElectronAdapter('managed-preview'")
     const office = source.indexOf('...createOfficePreviewElectronSurfaces(')
@@ -168,7 +169,7 @@ describe('production application command wiring', () => {
   it('installs Settings once with shared owners before Notebook in afterAcp', () => {
     const source = domainCompact('settings-effects')
     expect(source).toContain(
-      'createSettingsElectronSurface({ service: settingsService, workflows: settingsWorkflows, snapshotCommits: settingsSnapshotCommits, listAppIconPreviews, translate })'
+      'createSettingsElectronSurface({ fileCommands: settingsFileCommands, service: settingsService, workflows: settingsWorkflows, snapshotCommits: settingsSnapshotCommits, listAppIconPreviews, translate })'
     )
     const settings = source.indexOf('createSettingsElectronSurface(')
     expect(settings).toBeGreaterThan(-1)
@@ -307,7 +308,7 @@ describe('production application command wiring', () => {
   it('installs the Artifact surface in its existing phase with the shared owners', () => {
     const source = domainCompact('artifact-surfaces')
     expect(source).toContain(
-      'surfaceAdapters.push( createArtifactElectronSurface({ artifactRepository, artifactRunRegistry, artifactProvenanceRepository, artifactHandlers, artifactReproducibilityAttemptOwnerRef, archiveCoordinator, sessionPersistenceCoordinator, notebookService, translate }) )'
+      'surfaceAdapters.push( createArtifactElectronSurface({ reproducibilityCommands, artifactRepository, artifactRunRegistry, artifactProvenanceRepository, artifactHandlers, artifactReproducibilityAttemptOwnerRef, archiveCoordinator, sessionPersistenceCoordinator, notebookService, translate }) )'
     )
     expect(source.indexOf('createArtifactElectronSurface(')).toBeLessThan(
       source.indexOf('createUploadElectronSurface(uploadCommandOwner)')
@@ -446,7 +447,8 @@ describe('production application command wiring', () => {
     expect(returnedViews).toContain('localWeb: applicationCommandComposition.localWeb')
     expect(returnedViews).toContain('remoteWeb: applicationCommandComposition.remoteWeb')
     expect(returnedViews).toContain('task: applicationCommandComposition.task')
-    expect(occurrences(returnedViews, 'applicationCommandComposition.')).toBe(3)
+    expect(returnedViews).toContain('desktop: applicationCommandComposition.desktop')
+    expect(occurrences(returnedViews, 'applicationCommandComposition.')).toBe(4)
   })
 
   it('shares one Electron page preview resolver with the production Reviewer owner', () => {
@@ -457,11 +459,11 @@ describe('production application command wiring', () => {
       'previewResources: managedFiles.previewResources, runtimeShutdownOwner: handoff.reviewerModelRuntimeShutdown, declareElectronAdapter'
     )
     expect(reviewerCompositionSource).toContain(
-      'pagedContentResolver: createReviewerElectronPagedContentResolver(previewResources)'
+      'pagedContentResolver: createReviewerHostPagedContentResolver(previewResources)'
     )
-    expect(
-      occurrences(reviewerCompositionSource, 'createReviewerElectronPagedContentResolver(')
-    ).toBe(1)
+    expect(occurrences(reviewerCompositionSource, 'createReviewerHostPagedContentResolver(')).toBe(
+      1
+    )
     expect(reviewerCompositionSource).toContain('createReviewerCommandOwner(reviewerOptions)')
     expect(reviewerCompositionSource).toContain(
       'registerReviewerIpcHandlers(reviewerOptions, reviewerCommandOwner)'
@@ -473,7 +475,7 @@ describe('production application command wiring', () => {
   it('installs every notification inbox request on the Electron adapter', () => {
     callBefore('composeNotifications({', 'composeComputeServices({')
     expect(domainCompact('notifications')).toContain(
-      'surfaceAdapters.push( createNotificationElectronSurface( storageStartup.notificationInbox, taskNotifications, taskNotificationDeliveryDeps ) )'
+      'surfaceAdapters.push( createNotificationElectronSurface( storageStartup.notificationInbox, taskNotifications, taskNotificationDeliveryDeps, delivery ) )'
     )
     expect(occurrences(domain('notifications'), 'createNotificationElectronSurface(')).toBe(1)
     expect(notificationAdapterBlock).toContain(
@@ -517,36 +519,50 @@ describe('production application command wiring', () => {
     expect(runtimeSource).toContain("await modules.dispose('rollback')")
   })
 
-  it('registers startup network IPC before creating the first renderer window', () => {
+  it('exposes startup network commands before attaching the desktop transport', () => {
     const preWindowStartup = compact(
-      between(indexSource, 'await app.whenReady()', 'const startupWindow = webMode.headless')
+      between(
+        nodeEntrySource,
+        'const earlyChannels =',
+        'desktop = await startDesktopRuntimeTransport('
+      )
     )
-
-    expect(preWindowStartup).toContain('registerNetworkIpcHandlers()')
+    expect(preWindowStartup).toContain("'network:get-info'")
+    expect(preWindowStartup).toContain("'network:check-connectivity'")
+    expect(preWindowStartup).toContain('requireDesktopCaller(invocation.callerContext)')
+    expect(preWindowStartup).toContain('return networkCommands.getInfo()')
+    expect(preWindowStartup).toContain('return networkCommands.checkConnectivity()')
     expect(legacyAdapterBlock).not.toContain('registerNetworkIpcHandlers()')
-    expect(occurrences(indexSource + ipcSource, 'registerNetworkIpcHandlers()')).toBe(1)
+    expect(occurrences(nodeEntrySource, 'createNetworkCommandOwner()')).toBe(1)
+    const desktopStartup = between(
+      indexSource,
+      'await app.whenReady()',
+      'const lifecycle = installAppLifecycle('
+    )
+    expect(desktopStartup).toContain('installElectronNetwork()')
+    expect(desktopStartup).toContain('installDesktopRuntimeElectronAdapter(')
   })
 
   it('late-binds the unique Remote Access owner and passes only narrow views to Web and Task', () => {
     const startup = compact(
       between(
-        indexSource,
-        'const remoteAccess = await RemoteAccessService.create()',
-        '// A launch that itself requested serving'
+        nodeEntrySource,
+        'remoteAccess = await RemoteAccessService.create()',
+        'void remoteAccess.restore()'
       )
     )
-    expect(occurrences(indexSource, 'RemoteAccessService.create()')).toBe(1)
+    expect(occurrences(nodeEntrySource, 'RemoteAccessService.create()')).toBe(1)
+    expect(indexSource).not.toContain('RemoteAccessService.create()')
     // Ownership bookkeeping may sit between acquisition and binding; preserve their order.
     expect(startup).toMatch(
-      /const remoteAccess = await RemoteAccessService\.create\(\).*?bindRemoteAccess\(remoteAccess\) const webController = createWebServiceController\(\{[^}]*externalAccess: remoteAccess\.webAccess/
+      /remoteAccess = await RemoteAccessService\.create\(\).*?runtime\.bindRemoteAccess\(remoteAccess\) web = createWebServiceController\(\{[^}]*externalAccess: remoteAccess\.webAccess/
     )
-    expect(startup).toContain('remoteAccess.attachWebController(webController)')
-    expect(startup).toContain('registerRemoteAccessIpcHandlers(remoteAccess)')
+    expect(startup).toContain('remoteAccess.attachWebController(web)')
+    expect(startup).toContain('...runtime,')
 
     expect(occurrences(ipcSource, 'applicationCommands')).toBe(2)
-    expect(indexSource).toContain('applicationCommands,')
-    expect(startup).toContain('applicationCommands,')
-    expect(startup).toContain('taskControls, computePreferences, detectActiveSessions }')
+    expect(nodeEntrySource).toContain('runtime.applicationCommands.desktop')
+    expect(compact(ipcSource)).toContain('taskControls: {')
     expect(compact(ipcSource)).toContain(
       "computePreferences: Pick<SessionEnabledComputeHostsOwner, 'withReservation' | 'set'>"
     )

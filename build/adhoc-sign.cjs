@@ -69,7 +69,11 @@ exports.default = async function adhocSign(context) {
     'build',
     'Release'
   )
-  for (const name of ['credential_identity_probe', 'credential_key_validator']) {
+  for (const name of [
+    'credential_identity_probe',
+    'credential_key_validator',
+    'credential_secret'
+  ]) {
     const executable = path.join(credentialHelperDirectory, name)
     if (fs.existsSync(executable)) {
       execFileSync('codesign', ['--force', '--options', 'runtime', '--sign', '-', executable], {
@@ -77,6 +81,35 @@ exports.default = async function adhocSign(context) {
       })
     }
   }
+
+  const macho = new Set(['feedface', 'feedfacf', 'cefaedfe', 'cffaedfe', 'cafebabe', 'bebafeca'])
+  // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+  const signLoose = (directory) => {
+    if (!fs.existsSync(directory)) return
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const file = path.join(directory, entry.name)
+      if (entry.isDirectory()) {
+        signLoose(file)
+        continue
+      }
+      if (!entry.isFile()) continue
+      const fd = fs.openSync(file, 'r')
+      const magic = Buffer.alloc(4)
+      try {
+        fs.readSync(fd, magic, 0, 4, 0)
+      } finally {
+        fs.closeSync(fd)
+      }
+      if (macho.has(magic.toString('hex')))
+        execFileSync(
+          'codesign',
+          ['--force', '--options', 'runtime', '--sign', '-', '--entitlements', entitlements, file],
+          { stdio: 'inherit' }
+        )
+    }
+  }
+  signLoose(path.join(appPath, 'Contents/Resources/node-runtime'))
+  signLoose(path.join(appPath, 'Contents/Resources/backend'))
 
   // --deep signs nested frameworks, helpers and the bundled native `claude` binary.
   execFileSync(

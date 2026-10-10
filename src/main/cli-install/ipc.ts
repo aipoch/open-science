@@ -1,7 +1,4 @@
-import { homedir } from 'node:os'
-import { join } from 'node:path'
-
-import { app } from 'electron'
+import { desktopInteraction } from '../desktop-interaction'
 
 import { ipcMainHandle } from '../ipc-handler-registry'
 
@@ -28,25 +25,15 @@ type CliCommandOwnerWithLifecycle = CliCommandOwner &
     ensureCurrent: () => Promise<void>
   }>
 
-// Resolves the launcher environment from Electron at call time. Packaged builds ship the CLI under
-// resources/cli (see electron-builder.yml extraResources); in dev it lives in the repo's cli/ dir.
-const resolveCliLauncherEnv = (): CliLauncherEnv => ({
-  platform: process.platform,
-  appExecPath: process.execPath,
-  cliEntryPath: app.isPackaged
-    ? join(process.resourcesPath, 'cli', 'index.mjs')
-    : join(app.getAppPath(), 'cli', 'index.mjs'),
-  appImagePath: process.env.APPIMAGE,
-  packaged: app.isPackaged,
-  homeDir: app.getPath('home') ?? homedir(),
-  userDataDir: app.getPath('userData'),
-  pathVar: process.env.PATH ?? ''
-})
+const resolveCliLauncherEnv = (): CliLauncherEnv =>
+  desktopInteraction('Desktop CLI launcher installation').cliLauncherEnvironment()
 
-const createCliCommandOwner = (): CliCommandOwnerWithLifecycle => ({
+const createCliCommandOwner = (
+  environment: () => CliLauncherEnv = resolveCliLauncherEnv
+): CliCommandOwnerWithLifecycle => ({
   ensureCurrent: async (): Promise<void> => {
     try {
-      const status = await ensureCliLauncherCurrent(resolveCliLauncherEnv())
+      const status = await ensureCliLauncherCurrent(environment())
       if (status) logger.info('updated cli launcher', { target: status.target })
     } catch (error) {
       logger.error('cli launcher reconciliation failed', error)
@@ -54,19 +41,19 @@ const createCliCommandOwner = (): CliCommandOwnerWithLifecycle => ({
   },
   getStatus: async (): Promise<CliLauncherStatus> => {
     try {
-      return await getCliLauncherStatus(resolveCliLauncherEnv())
+      return await getCliLauncherStatus(environment())
     } catch (error) {
       logger.error('cli get-status failed', error)
       throw error
     }
   },
   install: async (): Promise<CliLauncherStatus> => {
-    const status = await installCliLauncher(resolveCliLauncherEnv())
+    const status = await installCliLauncher(environment())
     logger.info('installed cli launcher', { target: status.target, onPath: status.onPath })
     return status
   },
   uninstall: async (): Promise<CliLauncherStatus> => {
-    const status = await uninstallCliLauncher(resolveCliLauncherEnv())
+    const status = await uninstallCliLauncher(environment())
     logger.info('uninstalled cli launcher', { target: status.target })
     return status
   }

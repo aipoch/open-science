@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { expect, it } from 'vitest'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -206,3 +207,5 @@ it('recognizes explicit heatmap package setup even when the package was already 
   ])
   expect(result.stalenessByRunId['run-0']).toEqual({ state: 'clear' })
 })
+
+configureTestRuntimeMetadata()

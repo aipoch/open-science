@@ -1,6 +1,7 @@
 // Integration tests for ConcurrencyManager + ComputeService (issue 03).
 // Tests the full submit→queue→auto-dispatch flow with real repositories and mocked SSH.
 
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -861,3 +862,5 @@ describe('ConcurrencyManager integration with ComputeService', () => {
     }
   })
 })
+
+configureTestRuntimeMetadata()

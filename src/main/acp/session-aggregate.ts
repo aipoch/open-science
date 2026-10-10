@@ -190,8 +190,9 @@ class AcpSessionAggregate {
     this.session = undefined
     this.appliedModel = undefined
     this.configOptions = undefined
-    this.cwd = undefined
-    this.projectId = undefined
+    // Project and workspace belong to the App Session, not its provider connection. A drained
+    // Skill reload can detach before an approved handoff replaces the provider; retain this
+    // affinity so replacement cannot silently adopt the default Project or another workspace.
     this.refreshSnapshot()
   }
 }

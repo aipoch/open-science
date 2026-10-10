@@ -146,3 +146,8 @@ describe('application event flow', () => {
     hub.dispose()
   })
 })
+
+const { installElectronBroadcast } = await import('./renderer-broadcast-electron')
+const removeElectronBroadcast = installElectronBroadcast()
+const { afterAll } = await import('vitest')
+afterAll(removeElectronBroadcast)

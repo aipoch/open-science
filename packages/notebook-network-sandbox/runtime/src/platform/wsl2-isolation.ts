@@ -824,8 +824,18 @@ const buildBubblewrapArguments = (
   for (const mount of allowedMounts) {
     args.push(mount.kind === 'readOnly' ? '--ro-bind' : '--bind', mount.path, mount.path)
   }
-  for (const root of explicitDeniedWriteRoots) args.push('--ro-bind', root, root)
-  for (const root of explicitDeniedReadRoots) args.push('--tmpfs', root)
+  for (const root of explicitDeniedWriteRoots) {
+    // A hidden root needs no host source: it may not exist in a fresh profile.
+    if (!explicitDeniedReadRoots.includes(root)) args.push('--ro-bind', root, root)
+  }
+  for (const root of explicitDeniedReadRoots) {
+    args.push('--tmpfs', root)
+    // The masking mount replaces prior bind permissions. Keep combined read/write
+    // denials read-only instead of exposing a writable temporary replacement.
+    if (deniedWriteRoots.some((denied) => containsPosixPath(denied, root))) {
+      args.push('--remount-ro', root)
+    }
+  }
   // This remount is non-recursive: explicit writable child mounts remain writable while ungranted
   // siblings under the sensitive scaffolding become read-only.
   for (const root of sensitiveRoots) args.push('--remount-ro', root)

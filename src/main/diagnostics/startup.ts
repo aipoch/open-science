@@ -14,7 +14,7 @@ type ApplicationDiagnosticMetadata = {
   isPackaged: boolean
   platform: NodeJS.Platform
   arch: string
-  electronVersion: string
+  electronVersion?: string
   nodeVersion: string
   cpuUsage?: () => { user: number; system: number }
 }

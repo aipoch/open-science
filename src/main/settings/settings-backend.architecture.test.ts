@@ -628,6 +628,7 @@ describe('Settings backend ownership architecture', () => {
       'src/main/composition/storage-startup.ts',
       'src/main/settings/application-commands.ts',
       'src/main/settings/bootstrap-application-commands.ts',
+      'src/main/settings/file-commands.ts',
       'src/main/settings/ipc.ts',
       'src/main/settings/service-capabilities.ts',
       'src/main/settings/workflows/appearance.ts',
@@ -807,11 +808,15 @@ describe('Settings backend ownership architecture', () => {
     const specialists = readSource(resolve(projectRoot, 'src/main/composition/specialists.ts'))
     const handoff = readSource(resolve(projectRoot, 'src/main/composition/handoff.ts'))
     const compute = readSource(resolve(projectRoot, 'src/main/composition/compute.ts'))
-    const mainIndex = readSource(resolve(projectRoot, 'src/main/index.ts'))
-    expect(mainIndex).toContain('const settingsStore = bootstrapLocations.settingsStore')
-    expect(mainIndex).toContain('const startupSettingsRepository = bootstrapLocations.repository')
-    expect(mainIndex).toMatch(
-      /registerIpcHandlers\(\{\s+mainEntryPath,\s+settingsStore,\s+translate,/u
+    const nodeEntry = readSource(resolve(projectRoot, 'src/main/node-entry.ts'))
+    expect(nodeEntry).toContain(
+      'const { settingsStore, repository } = await prepareApplicationLocations(configRoot)'
+    )
+    expect(nodeEntry).toContain('const startupSettings = await repository.getSettings()')
+    expect(nodeEntry).toMatch(/createCoreRuntime\(\{[\s\S]*?\bsettingsStore,/u)
+    const desktopEntry = readSource(resolve(projectRoot, 'src/main/index.ts'))
+    expect(desktopEntry).not.toMatch(
+      /\b(?:new SettingsRepository|prepareApplicationLocations|createCoreRuntime)\s*\(/u
     )
     expect(settingsBootstrap).toContain('settingsStore ?? resolveConfigRoot()')
     // Package transactions use the shared production repository; their fallback supports standalone use.
@@ -843,7 +848,7 @@ describe('Settings backend ownership architecture', () => {
       handoff.indexOf('const updateCommandOwner')
     )
     expect(updateInstallHandoff).toContain(
-      'releaseSettingsInstallAdmission = settingsService.holdInstallAdmission()'
+      'releaseSettingsInstallAdmission ??= settingsService.holdInstallAdmission()'
     )
     expect(updateInstallHandoff).toContain('releaseAdmission?.()')
     const dataRootInstallHandoff = handoff.slice(
@@ -1031,7 +1036,9 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/classification-settings.ts',
       'src/main/settings/classification-settings.test.ts',
       'src/main/settings/classification-usage.ts',
-      'src/main/settings/classification-usage.test.ts'
+      'src/main/settings/classification-usage.test.ts',
+      'src/main/settings/file-commands.ts',
+      'src/main/settings/file-commands.test.ts'
     ])
     expect(manifest.modules.settings_service_facade.interfacePaths).toEqual([
       'src/main/settings/service.ts',
@@ -1042,7 +1049,8 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/reviewer-model-owner.ts',
       'src/main/settings/settings-snapshot-commit-owner.ts',
       'src/main/settings/subagent-model-owner.ts',
-      'src/main/settings/vision-model-owner.ts'
+      'src/main/settings/vision-model-owner.ts',
+      'src/main/settings/file-commands.ts'
     ])
     expect(manifest.modules.settings_repository.consumerModules).toEqual([
       'settings_provider_accounts',
@@ -1113,7 +1121,9 @@ describe('Settings backend ownership architecture', () => {
       'src/main/web-service/controller.test.ts',
       'src/main/web-service/task-api.test.ts',
       'src/main/literature/smart-collections.test.ts',
-      'src/main/session-persistence/ipc.test.ts'
+      'src/main/session-persistence/ipc.test.ts',
+      'src/main/composition/reviewer.test.ts',
+      'src/main/desktop-runtime-transport.integration.test.ts'
     ])
     expect(manifest.modules.settings_backend_resolution.testFiles.consumer).toEqual([
       'src/main/storage/wsl-npm-migration.integration.test.ts',
@@ -1572,7 +1582,16 @@ describe('Settings backend ownership architecture', () => {
       'src/main/literature/pdf-translation/pdf-cache.test.ts',
       'src/main/literature/pdf-translation/api-target.test.ts',
       'src/main/literature/pdf-translation/agent-target.test.ts',
-      'src/main/session-plan/session-plan-turn-outcome.test.ts'
+      'src/main/desktop-runtime-transport.integration.test.ts',
+      'src/main/side-chat/application-commands.test.ts',
+      'src/main/artifacts/artifact-reproducibility-commands.test.ts',
+      'src/main/settings/file-commands.test.ts',
+      'src/main/office-preview/application-commands.test.ts',
+      'src/main/reviewer/paged-preview-host.test.ts',
+      'src/main/desktop-native-electron.test.ts',
+      'src/main/session-plan/session-plan-turn-outcome.test.ts',
+      'src/main/acp/specialist-switch-recovery.integration.test.ts',
+      'src/main/agents/production-completion-handoff.test.ts'
     ])
     expect(
       [

@@ -1,3 +1,4 @@
+import { specialistDesktopCommandGroup } from './specialist/desktop-commands'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -89,6 +90,7 @@ const project = (id: string): Project => ({
 
 const dependencies = (): ApplicationCommandCompositionDependencies =>
   ({
+    pdfTranslation: EMPTY_OWNER,
     acp: EMPTY_OWNER,
     notebook: EMPTY_OWNER,
     notebookEnvironment: EMPTY_OWNER,
@@ -100,6 +102,9 @@ const dependencies = (): ApplicationCommandCompositionDependencies =>
     permissionGrants: EMPTY_OWNER,
     tags: EMPTY_OWNER,
     specialist: {
+      desktop: Object.fromEntries(
+        specialistDesktopCommandGroup.commands.map((command) => [command.name, vi.fn()])
+      ),
       dispose: vi.fn()
     } as unknown as ApplicationCommandCompositionDependencies['specialist'],
     memory: EMPTY_OWNER,
@@ -830,4 +835,35 @@ describe('TB-01 remote preview admission', () => {
       await rm(directory, { recursive: true, force: true })
     }
   })
+})
+
+it('keeps PDF translation on the desktop view and passes its document lease to the shared owner', async () => {
+  const begin = vi.fn().mockResolvedValue({ operationId: 'translation' })
+  const composition = createApplicationCommandComposition({
+    ...dependencies(),
+    pdfTranslation: {
+      begin
+    } as unknown as ApplicationCommandCompositionDependencies['pdfTranslation']
+  })
+  const request = {
+    resourceRequestKey: 'paper',
+    fingerprint: 'sha',
+    language: '中文',
+    glossary: [],
+    sources: ['cell']
+  }
+  const base = invocation()
+  const caller = {
+    ...base,
+    callerContext: createCallerContext({ ...base.callerContext, surface: 'electron' }),
+    args: [request]
+  }
+  await expect(composition.desktop.invoke('pdf-translation:begin', caller)).resolves.toEqual({
+    operationId: 'translation'
+  })
+  expect(begin).toHaveBeenCalledWith(request, caller.callerLease)
+  expect(composition.localWeb.commandNames()).not.toContain('pdf-translation:begin')
+  expect(composition.remoteWeb.commandNames()).not.toContain('pdf-translation:begin')
+  expect(composition.task.commandNames()).not.toContain('pdf-translation:begin')
+  composition.dispose()
 })

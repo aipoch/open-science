@@ -185,9 +185,10 @@ export class AcpSessionReplacementWorkflow {
         })
       }
 
-      const requiresContextReset =
-        this.deps.currentFrameworkId() === 'claude-code' &&
-        this.deps.registry.lookup(sessionId)?.attachment !== undefined
+      // A drained/reconnected Claude runtime may retain the App Session without a provider
+      // attachment. Its approved handoff still needs a fresh session with the new identity and
+      // staged replay; treating the missing attachment as a successful no-op strands continuation.
+      const requiresContextReset = this.deps.currentFrameworkId() === 'claude-code'
       if (requiresContextReset) {
         const snapshot = aggregate.snapshot()
         await this.reset({

@@ -66,6 +66,7 @@ export class OpenCodeHandoffFailureStore {
 }
 
 export type OpenCodeCapturedPrompt = {
+  restoreSession?: (specialistId: string | undefined) => Promise<void>
   prompt: AcpPromptRequest
   originatingTurnToken: string
 }
@@ -98,6 +99,7 @@ type OpenCodeImmediateHandoffRuntimeOptions = {
 }
 
 type CapturedContinuation = {
+  restoreSession?: (specialistId: string | undefined) => Promise<void>
   prompt: AcpPromptRequest
   originatingTurnToken: string
   reconfigured: boolean
@@ -112,7 +114,10 @@ export class OpenCodeImmediateHandoffRuntime implements CompletionGateRuntime {
   constructor(private readonly deps: OpenCodeImmediateHandoffDeps) {}
 
   canHandle(context: TrustedToolCompletionContext): boolean {
-    return this.deps.isOpenCodeSession(context.sessionId)
+    return (
+      this.capturedByInvocation.has(keyFor(context)) ||
+      this.deps.isOpenCodeSession(context.sessionId)
+    )
   }
 
   async stopOldPrompt(context: TrustedToolCompletionContext): Promise<void> {
@@ -123,6 +128,7 @@ export class OpenCodeImmediateHandoffRuntime implements CompletionGateRuntime {
       // The completion envelope is assigned in continueAsApproved after the shared coordinator has
       // atomically claimed it. The originating user-turn request is already app-owned before the old
       // prompt is cancelled, preserving attachments and provenance for the automatic continuation.
+      restoreSession: prompt.restoreSession,
       prompt: prompt.prompt,
       originatingTurnToken: prompt.originatingTurnToken,
       reconfigured: false
@@ -135,11 +141,18 @@ export class OpenCodeImmediateHandoffRuntime implements CompletionGateRuntime {
   }
 
   async reconfigure(
-    _handoff: Pick<Extract<CompletionDisposition, { kind: 'capture-for-handoff' }>, 'targetName'>,
+    handoff: Pick<
+      Extract<CompletionDisposition, { kind: 'capture-for-handoff' }>,
+      'targetName' | 'approvedSpecialistId'
+    >,
     context: TrustedToolCompletionContext
   ): Promise<void> {
     const captured = this.requireCaptured(context)
-    const specialistId = await this.deps.resolveSpecialistId(context.sessionId)
+    const specialistId =
+      handoff.targetName === null
+        ? undefined
+        : (handoff.approvedSpecialistId ?? (await this.deps.resolveSpecialistId(context.sessionId)))
+    await captured.restoreSession?.(specialistId)
     await this.deps.applySpecialistProjection(context.sessionId, specialistId)
     captured.reconfigured = true
   }

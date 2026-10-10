@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { expect, it } from 'vitest'
 import { createHash } from 'node:crypto'
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
@@ -218,3 +219,5 @@ it('rebuilds producer evidence before the first live read in a new R epoch', asy
     await rm(root, { recursive: true, force: true })
   }
 })
+
+configureTestRuntimeMetadata()

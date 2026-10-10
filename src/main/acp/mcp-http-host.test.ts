@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { createArtifactSaveFixture } from '../artifacts/save-test-fixtures'
 import { rm } from 'node:fs/promises'
 import { createServer, request as httpRequest, type Server } from 'node:http'
@@ -844,3 +845,5 @@ describe('AgentMcpHttpHost', () => {
     await client.close()
   })
 })
+
+configureTestRuntimeMetadata()

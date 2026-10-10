@@ -1739,3 +1739,5 @@ describe('notebook shell process behavior', () => {
     })
   })
 })
+
+;(await import('../../../test/runtime-metadata')).configureTestRuntimeMetadata()

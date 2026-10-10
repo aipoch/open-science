@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { expect, it } from 'vitest'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -126,3 +127,5 @@ it.each([
 ])('retains metadata dependencies consumed by output or unknown code: %s', async (script) => {
   expect((await analyzeNotebookSourceFileAccess('r', script)).externalState).toBe('partial')
 })
+
+configureTestRuntimeMetadata()

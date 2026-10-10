@@ -1,3 +1,4 @@
+import { nodeRuntimeEnvironment } from '../node-process-host'
 import { execFile } from 'node:child_process'
 import { constants } from 'node:fs'
 import { access, mkdir } from 'node:fs/promises'
@@ -160,7 +161,7 @@ const runCodexAdapterVersion = async (
 
   try {
     const { stdout } = await execFileAsync(process.execPath, [adapterPath, '--version'], {
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', NO_BROWSER: '1' },
+      env: { ...process.env, ...nodeRuntimeEnvironment(), NO_BROWSER: '1' },
       timeout: 5_000,
       windowsHide: true,
       signal

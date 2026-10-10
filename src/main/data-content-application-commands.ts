@@ -1,4 +1,9 @@
+import type { OfficePreviewCommands } from './office-preview/application-commands'
+import type { FileSaveCommands } from './file-save'
+import type { ArtifactReproducibilityCommands } from './artifacts/artifact-reproducibility-commands'
+import type { ManagedFileVersionCommandOwner } from './managed-file-versions/ipc'
 import { RuntimeWriterOwner } from './session-persistence/runtime-writer'
+import { sanitizeRendererSaveSessionOptions } from './session-persistence/renderer-save-options'
 import { runtimeWriterClaimContract, type RuntimeWriterLease } from '../shared/runtime-writer'
 import {
   defineApplicationCommand,
@@ -140,6 +145,9 @@ type InvocationOwner<Owner> = Readonly<{
 // T2h0 injects this adapter; it resolves native window/progress targets without putting Electron
 // objects in transport-neutral application invocations.
 type ElectronDataContentApplicationCommandAdapter = InvocationOwner<{
+  openRecoveryFolder: (
+    request: SessionPersistence.OpenSessionRecoveryFolderRequest
+  ) => Promise<void>
   inspectSessionDiagnostics: (
     request: SessionDiagnostics.SessionDiagnosticRequest
   ) => Promise<SessionDiagnostics.SessionDiagnosticInspection>
@@ -199,10 +207,14 @@ type UploadApplicationCommandOwner = InvocationOwner<{
 type DataRootWrite = <Result>(operation: () => Promise<Result>) => Promise<Result>
 
 type DataContentApplicationCommandDependencies = Readonly<{
+  officePreviewCommands: OfficePreviewCommands
+  fileSaveCommands: FileSaveCommands
+  reproducibility: ArtifactReproducibilityCommands
   runtimeWriter?: RuntimeWriterOwner
   artifacts: ArtifactHandlers
   electron: ElectronDataContentApplicationCommandAdapter
   events: ApplicationEventPublisher
+  managedFileVersions: ManagedFileVersionCommandOwner
   managedPreview: ManagedPreviewApplicationCommandOwner
   preview: PreviewApplicationCommandOwner
   projectFiles: ProjectFilesHandlers
@@ -211,6 +223,11 @@ type DataContentApplicationCommandDependencies = Readonly<{
   uploads: UploadApplicationCommandOwner
   withDataRootWrite: DataRootWrite
 }>
+
+const managedFileCommand = commandFor<ManagedFileVersionCommandOwner>()
+const managedFileInvocationCommand = invocationCommandFor<ManagedFileVersionCommandOwner>()
+
+const reproducibilityCommand = invocationCommandFor<ArtifactReproducibilityCommands>()
 
 const artifactCommand = commandFor<ArtifactHandlers>()
 const previewCommand = commandFor<PreviewApplicationCommandOwner>()
@@ -221,6 +238,86 @@ const electronCommand = invocationCommandFor<ElectronDataContentApplicationComma
 const uploadCommand = invocationCommandFor<UploadApplicationCommandOwner>()
 
 const dataContentApplicationCommands = Object.freeze({
+  officePreviewOpen: invocationCommandFor<OfficePreviewCommands>()('office-preview:open', 'open'),
+  officePreviewAttachFrame: invocationCommandFor<OfficePreviewCommands>()(
+    'office-preview:attach-frame',
+    'attachFrame'
+  ),
+  officePreviewClose: invocationCommandFor<OfficePreviewCommands>()(
+    'office-preview:close',
+    'close'
+  ),
+  officePreviewReportState: invocationCommandFor<OfficePreviewCommands>()(
+    'office-preview:report-state',
+    'reportState'
+  ),
+
+  sessionOpenRecoveryFolder: electronCommand('sessions:open-recovery-folder', 'openRecoveryFolder'),
+  fileSaveBlob: invocationCommandFor<FileSaveCommands>()('file:save-blob', 'file:save-blob'),
+  fileSaveManaged: invocationCommandFor<FileSaveCommands>()(
+    'file:save-managed',
+    'file:save-managed'
+  ),
+  fileSaveSessionArtifacts: invocationCommandFor<FileSaveCommands>()(
+    'file:save-session-artifacts',
+    'file:save-session-artifacts'
+  ),
+  fileSaveProjectArtifacts: invocationCommandFor<FileSaveCommands>()(
+    'file:save-project-artifacts',
+    'file:save-project-artifacts'
+  ),
+
+  reproducibilitySessionCommand: reproducibilityCommand(
+    'artifacts:session-reproducibility',
+    'sessionCommand'
+  ),
+  reproducibilityOutputStorage: reproducibilityCommand(
+    'artifacts:get-reproducibility-output-storage',
+    'outputStorage'
+  ),
+  reproducibilityClearOutputs: reproducibilityCommand(
+    'artifacts:clear-reproducibility-outputs',
+    'clearOutputs'
+  ),
+  reproducibilityPreviewOutput: reproducibilityCommand(
+    'artifacts:read-reproducibility-output',
+    'previewOutput'
+  ),
+  reproducibilityDescribeEnvironmentLock: reproducibilityCommand(
+    'artifacts:describe-environment-lock',
+    'describeEnvironmentLock'
+  ),
+  reproducibilityCreateEnvironmentFromLock: reproducibilityCommand(
+    'artifacts:create-environment-from-lock',
+    'createEnvironmentFromLock'
+  ),
+  reproducibilityExportEnvironmentLock: reproducibilityCommand(
+    'artifacts:export-environment-lock',
+    'exportEnvironmentLock'
+  ),
+  reproducibilityExportReceipt: reproducibilityCommand(
+    'artifacts:export-reproducibility-receipt',
+    'exportReceipt'
+  ),
+  reproducibilityImportEnvironmentLock: reproducibilityCommand(
+    'artifacts:import-environment-lock',
+    'importEnvironmentLock'
+  ),
+  reproducibilityGetCheck: reproducibilityCommand(
+    'artifacts:get-reproducibility-check',
+    'getCheck'
+  ),
+  reproducibilityGetCheckLog: reproducibilityCommand(
+    'artifacts:get-reproducibility-check-log',
+    'getCheckLog'
+  ),
+  reproducibilityListReceipts: reproducibilityCommand(
+    'artifacts:list-reproducibility-receipts',
+    'listReceipts'
+  ),
+  reproducibilityStart: reproducibilityCommand('artifacts:start-reproducibility-check', 'start'),
+  reproducibilityCancel: reproducibilityCommand('artifacts:cancel-reproducibility-check', 'cancel'),
+
   artifactFinalizeRun: defineApplicationCommand<
     'artifacts:finalize-run',
     readonly [request: Artifacts.FinalizeRunArtifactsRequest],
@@ -261,6 +358,16 @@ const dataContentApplicationCommands = Object.freeze({
   artifactResolveVersionDescriptors: artifactCommand(
     'artifacts:resolve-version-descriptors',
     'resolveVersionDescriptors'
+  ),
+  managedFileInspect: managedFileCommand('managed-file-versions:inspect', 'inspect'),
+  managedFileSaveTextEdit: managedFileCommand(
+    'managed-file-versions:save-text-edit',
+    'saveTextEdit'
+  ),
+  managedFileDiffText: managedFileInvocationCommand('managed-file-versions:diff-text', 'diffText'),
+  managedFileCancelDiff: managedFileInvocationCommand(
+    'managed-file-versions:cancel-diff',
+    'cancelDiff'
   ),
   runtimeWriterClaim: defineApplicationCommand<
     'lifecycle:claim-runtime-writer',
@@ -559,6 +666,7 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.projectUpdateSessionDefaults
   ] as const),
   defineApplicationCommandGroup('sessions', [
+    dataContentApplicationCommands.sessionOpenRecoveryFolder,
     dataContentApplicationCommands.sessionDelete,
     dataContentApplicationCommands.sessionEditDetails,
     dataContentApplicationCommands.sessionExportConversation,
@@ -603,7 +711,41 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.uploadStageLocalFile,
     dataContentApplicationCommands.uploadStageLocalPath,
     dataContentApplicationCommands.uploadTransferStatus
-  ] as const)
+  ] as const),
+  defineApplicationCommandGroup('managed-file-versions', [
+    dataContentApplicationCommands.managedFileInspect,
+    dataContentApplicationCommands.managedFileSaveTextEdit,
+    dataContentApplicationCommands.managedFileDiffText,
+    dataContentApplicationCommands.managedFileCancelDiff
+  ] as const),
+  defineApplicationCommandGroup('artifact-reproducibility', [
+    dataContentApplicationCommands.reproducibilitySessionCommand,
+    dataContentApplicationCommands.reproducibilityOutputStorage,
+    dataContentApplicationCommands.reproducibilityClearOutputs,
+    dataContentApplicationCommands.reproducibilityPreviewOutput,
+    dataContentApplicationCommands.reproducibilityDescribeEnvironmentLock,
+    dataContentApplicationCommands.reproducibilityCreateEnvironmentFromLock,
+    dataContentApplicationCommands.reproducibilityExportEnvironmentLock,
+    dataContentApplicationCommands.reproducibilityExportReceipt,
+    dataContentApplicationCommands.reproducibilityImportEnvironmentLock,
+    dataContentApplicationCommands.reproducibilityGetCheck,
+    dataContentApplicationCommands.reproducibilityGetCheckLog,
+    dataContentApplicationCommands.reproducibilityListReceipts,
+    dataContentApplicationCommands.reproducibilityStart,
+    dataContentApplicationCommands.reproducibilityCancel
+  ]),
+  defineApplicationCommandGroup('native-file-save', [
+    dataContentApplicationCommands.fileSaveBlob,
+    dataContentApplicationCommands.fileSaveManaged,
+    dataContentApplicationCommands.fileSaveSessionArtifacts,
+    dataContentApplicationCommands.fileSaveProjectArtifacts
+  ] as const),
+  defineApplicationCommandGroup('office-preview', [
+    dataContentApplicationCommands.officePreviewOpen,
+    dataContentApplicationCommands.officePreviewAttachFrame,
+    dataContentApplicationCommands.officePreviewClose,
+    dataContentApplicationCommands.officePreviewReportState
+  ])
 ] as const)
 
 const assertLocalCaller = (
@@ -719,8 +861,13 @@ const registerDataContentApplicationCommands = (
         dependencies.artifacts.resolveVersionDescriptors(args[0])
     })
     scope.registerGroup(dataContentApplicationCommandGroups[1], {
-      'lifecycle:claim-runtime-writer': ({ callerContext }) =>
-        runtimeWriter.claim(callerContext.lifecycleClientId),
+      'lifecycle:claim-runtime-writer': ({ callerContext, callerLease }) =>
+        runtimeWriter.claim(
+          callerContext.lifecycleClientId,
+          callerContext.surface === 'electron'
+            ? () => callerLease.isCurrent() && callerContext.isAuthorizationCurrent()
+            : undefined
+        ),
       'lifecycle:client-id': ({ callerContext }) => callerContext.lifecycleClientId
     })
     scope.registerGroup(dataContentApplicationCommandGroups[2], {
@@ -799,6 +946,13 @@ const registerDataContentApplicationCommands = (
       }
     })
     scope.registerGroup(dataContentApplicationCommandGroups[6], {
+      'sessions:open-recovery-folder': (invocation) => {
+        assertElectronCaller(
+          invocation,
+          dataContentApplicationCommands.sessionOpenRecoveryFolder.name
+        )
+        return dependencies.electron.openRecoveryFolder(invocation)
+      },
       'sessions:delete-session': async ({ args }) => {
         const result = await dependencies.sessions.deleteSession(args[0])
         if (result.status === 'deleted') {
@@ -955,6 +1109,13 @@ const registerDataContentApplicationCommands = (
           preserveSessionSizeLimitCode(async () => {
             let result: Awaited<ReturnType<SessionPersistenceHandlers['saveSession']>>
             try {
+              const rendererOptions =
+                invocation.callerContext.surface === 'task'
+                  ? undefined
+                  : sanitizeRendererSaveSessionOptions(invocation.args[1], invocation.args[0])
+              const preparesPrompt = rendererOptions?.conversationCommands?.some(
+                ({ kind }) => kind === 'prepare-prompt'
+              )
               result =
                 invocation.callerContext.surface === 'task'
                   ? await dependencies.sessions.saveSession(
@@ -964,7 +1125,12 @@ const registerDataContentApplicationCommands = (
                         taskRunCommit: true
                       }
                     )
-                  : await dependencies.sessions.saveSession(invocation.args[0], invocation.args[1])
+                  : preparesPrompt
+                    ? await dependencies.sessions.saveSession(invocation.args[0], rendererOptions, {
+                        taskRunCommit: false,
+                        callerSignal: invocation.callerLease.signal
+                      })
+                    : await dependencies.sessions.saveSession(invocation.args[0], rendererOptions)
             } catch (error) {
               if (SessionPersistence.isSessionRevisionConflictError(error)) {
                 throw new ApplicationCommandError(
@@ -1126,7 +1292,64 @@ const registerDataContentApplicationCommands = (
       },
       'uploads:transfer-status': (invocation) => dependencies.uploads.transferStatus(invocation)
     })
-    return scope.complete()
+    scope.registerGroup(dataContentApplicationCommandGroups[8], {
+      'managed-file-versions:inspect': ({ args }) =>
+        dependencies.managedFileVersions.inspect(args[0]),
+      'managed-file-versions:save-text-edit': ({ args }) =>
+        dependencies.managedFileVersions.saveTextEdit(args[0]),
+      'managed-file-versions:diff-text': (invocation) =>
+        dependencies.managedFileVersions.diffText(invocation),
+      'managed-file-versions:cancel-diff': (invocation) =>
+        dependencies.managedFileVersions.cancelDiff(invocation)
+    })
+    scope.registerGroup(dataContentApplicationCommandGroups[9], {
+      'artifacts:session-reproducibility': (invocation) =>
+        dependencies.reproducibility.sessionCommand(invocation),
+      'artifacts:get-reproducibility-output-storage': (invocation) =>
+        dependencies.reproducibility.outputStorage(invocation),
+      'artifacts:clear-reproducibility-outputs': (invocation) =>
+        dependencies.reproducibility.clearOutputs(invocation),
+      'artifacts:read-reproducibility-output': (invocation) =>
+        dependencies.reproducibility.previewOutput(invocation),
+      'artifacts:describe-environment-lock': (invocation) =>
+        dependencies.reproducibility.describeEnvironmentLock(invocation),
+      'artifacts:create-environment-from-lock': (invocation) =>
+        dependencies.reproducibility.createEnvironmentFromLock(invocation),
+      'artifacts:export-environment-lock': (invocation) =>
+        dependencies.reproducibility.exportEnvironmentLock(invocation),
+      'artifacts:export-reproducibility-receipt': (invocation) =>
+        dependencies.reproducibility.exportReceipt(invocation),
+      'artifacts:import-environment-lock': (invocation) =>
+        dependencies.reproducibility.importEnvironmentLock(invocation),
+      'artifacts:get-reproducibility-check': (invocation) =>
+        dependencies.reproducibility.getCheck(invocation),
+      'artifacts:get-reproducibility-check-log': (invocation) =>
+        dependencies.reproducibility.getCheckLog(invocation),
+      'artifacts:list-reproducibility-receipts': (invocation) =>
+        dependencies.reproducibility.listReceipts(invocation),
+      'artifacts:start-reproducibility-check': (invocation) =>
+        dependencies.reproducibility.start(invocation),
+      'artifacts:cancel-reproducibility-check': (invocation) =>
+        dependencies.reproducibility.cancel(invocation)
+    })
+    scope.registerGroup(dataContentApplicationCommandGroups[10], {
+      'file:save-blob': (invocation) => dependencies.fileSaveCommands['file:save-blob'](invocation),
+      'file:save-managed': (invocation) =>
+        dependencies.fileSaveCommands['file:save-managed'](invocation),
+      'file:save-session-artifacts': (invocation) =>
+        dependencies.fileSaveCommands['file:save-session-artifacts'](invocation),
+      'file:save-project-artifacts': (invocation) =>
+        dependencies.fileSaveCommands['file:save-project-artifacts'](invocation)
+    })
+    scope.registerGroup(dataContentApplicationCommandGroups[11], {
+      'office-preview:open': (invocation) => dependencies.officePreviewCommands.open(invocation),
+      'office-preview:attach-frame': (invocation) =>
+        dependencies.officePreviewCommands.attachFrame(invocation),
+      'office-preview:close': (invocation) => dependencies.officePreviewCommands.close(invocation),
+      'office-preview:report-state': (invocation) =>
+        dependencies.officePreviewCommands.reportState(invocation)
+    })
+    return scope.complete(() => dependencies.reproducibility?.dispose())
   } catch (error) {
     scope.rollback()
     throw error

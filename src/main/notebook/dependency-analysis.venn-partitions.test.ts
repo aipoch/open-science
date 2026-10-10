@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { expect, it } from 'vitest'
 import { analyzeRNotebookSource } from './dependency-analysis-r'
 import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
@@ -105,3 +106,5 @@ it.each(['sapply(data,class)', 'sapply(data,base::typeof)', 'lapply(data,functio
     expect(facts.state === 'unknown' ? facts.reasons : []).toEqual([])
   }
 )
+
+configureTestRuntimeMetadata()

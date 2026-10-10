@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { join } from 'node:path'
 import { expect, it } from 'vitest'
 import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
@@ -799,3 +800,5 @@ connection.close()`
     ])
   })
 })
+
+configureTestRuntimeMetadata()

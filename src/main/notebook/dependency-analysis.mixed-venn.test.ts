@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { expect, it } from 'vitest'
 import { analyzePythonNotebookSource } from './dependency-analysis-python'
 import { analyzeRNotebookSource } from './dependency-analysis-r'
@@ -161,3 +162,5 @@ it.each([0, 1, 2])('captures mixed Venn cell %s', async (index) => {
     reads: ['inputs/set-membership-111111111111.xlsx']
   })
 })
+
+configureTestRuntimeMetadata()

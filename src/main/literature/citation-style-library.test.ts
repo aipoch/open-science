@@ -245,3 +245,5 @@ it.each([
   })
   await expect(readdir(stylesDirectory)).rejects.toMatchObject({ code: 'ENOENT' })
 })
+
+;(await import('../../../test/runtime-metadata')).configureTestRuntimeMetadata()

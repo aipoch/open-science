@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { expect, it } from 'vitest'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -132,3 +133,5 @@ it.each(['c("b")', '2'])(
     })
   }
 )
+
+configureTestRuntimeMetadata()

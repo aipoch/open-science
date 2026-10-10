@@ -513,7 +513,16 @@
       "src/main/pdf-annotations/sharing.integration.test.ts",
       "src/main/literature/pdf-translation/checkpoints.test.ts",
       "src/main/literature/pdf-translation/usage.test.ts",
-      "src/main/session-plan/session-plan-turn-outcome.test.ts"
+      "src/main/desktop-runtime-transport.integration.test.ts",
+      "src/main/side-chat/application-commands.test.ts",
+      "src/main/artifacts/artifact-reproducibility-commands.test.ts",
+      "src/main/settings/file-commands.test.ts",
+      "src/main/office-preview/application-commands.test.ts",
+      "src/main/reviewer/paged-preview-host.test.ts",
+      "src/main/desktop-native-electron.test.ts",
+      "src/main/session-plan/session-plan-turn-outcome.test.ts",
+      "src/main/acp/specialist-switch-recovery.integration.test.ts",
+      "src/main/agents/production-completion-handoff.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

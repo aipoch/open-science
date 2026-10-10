@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { expect, it } from 'vitest'
 import type { NotebookRunRecord } from '../../shared/notebook'
 import { analyzeRNotebookSource } from './dependency-analysis-r'
@@ -81,3 +82,5 @@ it('keeps dynamic Arrow Dataset sources conservative', async () => {
   expect(access.readState).toBe('partial')
   expect(access.reasonCodes).toEqual(expect.arrayContaining(['dynamic-path-unresolved']))
 })
+
+configureTestRuntimeMetadata()

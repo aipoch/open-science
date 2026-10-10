@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { access, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -518,3 +519,5 @@ describe('ComputeService job workflow facade', () => {
     }
   })
 })
+
+configureTestRuntimeMetadata()

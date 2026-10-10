@@ -1,6 +1,6 @@
 import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { access, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -86,7 +86,11 @@ describe.runIf(enabled)('WSL2 sandbox real profile', () => {
     await rm(root, { recursive: true, force: true })
   })
 
-  const launch = (command: string, readOnlyRoots: string[] = []): Promise<Wsl2Launch> =>
+  const launch = (
+    command: string,
+    readOnlyRoots: string[] = [],
+    protectedRoot?: string
+  ): Promise<Wsl2Launch> =>
     wsl2Launch({
       target: {
         kind: 'wsl2',
@@ -107,13 +111,59 @@ describe.runIf(enabled)('WSL2 sandbox real profile', () => {
         ...notebookWorkloadCacheEnv(join(root, 'runtime'))
       },
       filesystem: {
-        privateRoot: root,
+        // Application credential roots sit outside the Notebook's explicit grants.
+        ...(protectedRoot ? {} : { privateRoot: root }),
         readOnlyRoots,
         readWriteRoots: [workspace, handoff, cache],
-        deniedReadRoots: [unauthorized],
-        deniedWriteRoots: []
+        deniedReadRoots: [unauthorized, ...(protectedRoot ? [protectedRoot] : [])],
+        deniedWriteRoots: protectedRoot ? [protectedRoot] : []
       }
     })
+
+  it.each(['missing', 'existing'])(
+    'keeps a %s protected root hidden and unwritable without requiring a source bind',
+    async (state) => {
+      const protectedRoot = join(root, `protected-${state}`)
+      if (state === 'existing') {
+        await mkdir(protectedRoot)
+        await writeFile(join(protectedRoot, 'secret.txt'), 'host-secret')
+      }
+      const guestRoot = execFileSync(
+        'wsl.exe',
+        ['-d', distro!, '-u', user!, '--exec', 'wslpath', '-a', '-u', protectedRoot],
+        { encoding: 'utf8', windowsHide: true }
+      ).trim()
+      const prepared = await launch(
+        `set -eu\n[ ! -e '${guestRoot}/secret.txt' ]\nif touch '${guestRoot}/changed' 2>/dev/null; then exit 41; fi\nprintf protected-ok`,
+        [],
+        protectedRoot
+      )
+      try {
+        const admission = prepared.beginSpawn()
+        const execution = execute(prepared.argv, prepared.env, workspace)
+        admission.started()
+        await expect(execution).resolves.toEqual({
+          exitCode: 0,
+          stdout: 'protected-ok',
+          stderr: ''
+        })
+        await expect(access(join(protectedRoot, 'changed'))).rejects.toMatchObject({
+          code: 'ENOENT'
+        })
+        if (state === 'existing') {
+          expect(await readFile(join(protectedRoot, 'secret.txt'), 'utf8')).toBe('host-secret')
+        } else {
+          await expect(access(protectedRoot)).rejects.toMatchObject({ code: 'ENOENT' })
+        }
+      } finally {
+        expect(await prepared.release()).toEqual({
+          processesTerminated: true,
+          networkClosed: true,
+          temporaryResourcesRemoved: true
+        })
+      }
+    }
+  )
 
   it('reconciles only exact valid receipt identities and preserves malformed receipts', async () => {
     const invalidId = randomUUID()

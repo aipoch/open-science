@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -83,3 +84,5 @@ describe('SettingsService connector facade', () => {
     expect(stored).toContain('enc:')
   })
 })
+
+await configureTestElectronHost(await import('electron'))

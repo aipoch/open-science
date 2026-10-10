@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { describe, expect, it } from 'vitest'
 import { exportRisFields, importRisFields } from './citation-exchange'
 import { LiteratureCitationFormatter } from './citation-formatter'
@@ -90,3 +91,5 @@ describe('RIS literal creator compatibility', () => {
     ).toEqual([{ family: 'Department', given: 'University' }])
   })
 })
+
+configureTestRuntimeMetadata()

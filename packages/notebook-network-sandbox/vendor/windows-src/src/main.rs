@@ -2306,7 +2306,11 @@ mod windows_host {
         }
         let current = capture_acl_snapshot(&snapshot.path)?;
         restore_acl_snapshot_if_needed(snapshot, &current, || {
-            restore_acl_snapshot_unchecked(snapshot)
+            restore_acl_snapshot_unchecked(snapshot)?;
+            if capture_acl_snapshot(&snapshot.path)? != *snapshot {
+                bail!("WINDOWS_ACL_OPERATION_FAILED: exact ACL restoration could not be verified");
+            }
+            Ok(())
         })
     }
 
@@ -2319,6 +2323,33 @@ mod windows_host {
             return Ok(());
         }
         restore()
+    }
+
+    fn acl_entries(dacl: *const ACL) -> Result<Vec<Vec<u8>>> {
+        if dacl.is_null() {
+            bail!("WINDOWS_ACL_OPERATION_FAILED: filesystem ACL has no concrete DACL");
+        }
+        let mut information = ACL_SIZE_INFORMATION::default();
+        unsafe {
+            GetAclInformation(
+                dacl,
+                (&mut information as *mut ACL_SIZE_INFORMATION).cast(),
+                size_of::<ACL_SIZE_INFORMATION>() as u32,
+                AclSizeInformation,
+            )
+        }
+        .context("inspect restoration ACL")?;
+        let mut entries = Vec::new();
+        for index in 0..information.AceCount {
+            let mut ace = std::ptr::null_mut();
+            unsafe { GetAce(dacl, index, &mut ace) }.context("read restoration ACE")?;
+            let header = unsafe { &*ace.cast::<ACE_HEADER>() };
+            entries.push(
+                unsafe { std::slice::from_raw_parts(ace.cast::<u8>(), header.AceSize as usize) }
+                    .to_vec(),
+            );
+        }
+        Ok(entries)
     }
 
     fn restore_acl_snapshot_unchecked(snapshot: &AclSnapshot) -> Result<()> {
@@ -2347,28 +2378,10 @@ mod windows_host {
             )
         }
         .context("read saved filesystem ACL")?;
-        let inheritance = if snapshot.dacl_protected {
-            PROTECTED_DACL_SECURITY_INFORMATION
-        } else {
-            UNPROTECTED_DACL_SECURITY_INFORMATION
-        };
-        let information = OBJECT_SECURITY_INFORMATION(DACL_SECURITY_INFORMATION.0 | inheritance.0);
+        let saved_entries = acl_entries(dacl)?;
         let path = wide(&snapshot.path);
-        unsafe {
-            SetNamedSecurityInfoW(
-                PCWSTR(path.as_ptr()),
-                SE_FILE_OBJECT,
-                information,
-                None,
-                None,
-                dacl_present.as_bool().then_some(dacl.cast_const()),
-                None,
-            )
-        }
-        .ok()
-        .context("restore filesystem ACL")?;
-
-        let mut restored_descriptor = PSECURITY_DESCRIPTOR::default();
+        let mut current_descriptor = PSECURITY_DESCRIPTOR::default();
+        let mut current_dacl = std::ptr::null_mut();
         unsafe {
             GetNamedSecurityInfoW(
                 PCWSTR(path.as_ptr()),
@@ -2376,7 +2389,67 @@ mod windows_host {
                 DACL_SECURITY_INFORMATION,
                 None,
                 None,
+                Some(&mut current_dacl),
                 None,
+                &mut current_descriptor,
+            )
+        }
+        .ok()
+        .context("read current restoration ACL")?;
+        let _current_descriptor = LocalAllocation(current_descriptor.0);
+        let current_entries = acl_entries(current_dacl)?;
+        // Ancestor traversal changes only non-inheriting ACEs. Re-propagating an unchanged
+        // inheritable ACL visits unrelated descendants and rewrites their inheritance controls.
+        let inheritable = |entries: &[Vec<u8>], include_inherited: bool| -> Vec<Vec<u8>> {
+            entries
+                .iter()
+                .filter(|entry| {
+                    entry[1] & (OBJECT_INHERIT_ACE.0 | CONTAINER_INHERIT_ACE.0) as u8 != 0
+                        && (include_inherited || entry[1] & INHERITED_ACE.0 as u8 == 0)
+                })
+                .map(|entry| {
+                    let mut inherited = entry.clone();
+                    // This comparison selects propagation only. The original ACE bytes, including
+                    // INHERITED_ACE, are restored below without normalization.
+                    inherited[1] &= !(INHERITED_ACE.0 as u8);
+                    inherited
+                })
+                .collect()
+        };
+        let propagate =
+            inheritable(&saved_entries, true) != inheritable(&current_entries, snapshot.dacl_protected);
+        let inheritance = if snapshot.dacl_protected {
+            PROTECTED_DACL_SECURITY_INFORMATION
+        } else {
+            UNPROTECTED_DACL_SECURITY_INFORMATION
+        };
+        let information = OBJECT_SECURITY_INFORMATION(DACL_SECURITY_INFORMATION.0 | inheritance.0);
+        if propagate {
+            unsafe {
+                SetNamedSecurityInfoW(
+                    PCWSTR(path.as_ptr()),
+                    SE_FILE_OBJECT,
+                    information,
+                    None,
+                    None,
+                    dacl_present.as_bool().then_some(dacl.cast_const()),
+                    None,
+                )
+            }
+            .ok()
+            .context("restore filesystem ACL")?;
+        }
+
+        let mut restored_descriptor = PSECURITY_DESCRIPTOR::default();
+        let mut restored_dacl = std::ptr::null_mut();
+        unsafe {
+            GetNamedSecurityInfoW(
+                PCWSTR(path.as_ptr()),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION,
+                None,
+                None,
+                Some(&mut restored_dacl),
                 None,
                 &mut restored_descriptor,
             )
@@ -2384,9 +2457,55 @@ mod windows_host {
         .ok()
         .context("read restored filesystem ACL")?;
         let _restored_descriptor = LocalAllocation(restored_descriptor.0);
-        let auto_inherit_mask =
-            SECURITY_DESCRIPTOR_CONTROL(SE_DACL_AUTO_INHERITED.0 | SE_DACL_AUTO_INHERIT_REQ.0);
-        let mut auto_inherit_bits = 0u16;
+        // Protected snapshots contain the full DACL, including inherited ACE markers. For an
+        // unprotected snapshot retain the current inherited entries and restore its saved explicit
+        // entries. SetNamedSecurityInfoW can erase inherited markers on protected DACLs, so never
+        // use its normalized output as the source for those saved entries.
+        let mut entries = saved_entries;
+        if !snapshot.dacl_protected {
+            entries.extend(
+                acl_entries(restored_dacl)?
+                    .into_iter()
+                    .filter(|entry| entry[1] & INHERITED_ACE.0 as u8 != 0),
+            );
+        }
+        let length = size_of::<ACL>() + entries.iter().map(Vec::len).sum::<usize>();
+        let mut storage = vec![0usize; length.div_ceil(size_of::<usize>())];
+        let target = storage.as_mut_ptr().cast::<ACL>();
+        unsafe {
+            InitializeAcl(
+                target,
+                (storage.len() * size_of::<usize>()) as u32,
+                ACL_REVISION_DS,
+            )
+        }
+        .context("initialize restored ACL")?;
+        for entry in entries {
+            unsafe {
+                AddAce(
+                    target,
+                    ACL_REVISION_DS,
+                    u32::MAX,
+                    entry.as_ptr().cast(),
+                    entry.len() as u32,
+                )
+            }
+            .context("restore saved ACE")?;
+        }
+        let mut updated = SECURITY_DESCRIPTOR::default();
+        let updated_ptr = PSECURITY_DESCRIPTOR((&mut updated as *mut SECURITY_DESCRIPTOR).cast());
+        unsafe {
+            InitializeSecurityDescriptor(updated_ptr, SECURITY_DESCRIPTOR_REVISION)?;
+            SetSecurityDescriptorDacl(updated_ptr, true, Some(target), false)?;
+        }
+        let auto_inherit_mask = SECURITY_DESCRIPTOR_CONTROL(
+            SE_DACL_AUTO_INHERITED.0 | SE_DACL_AUTO_INHERIT_REQ.0 | SE_DACL_PROTECTED.0,
+        );
+        let mut auto_inherit_bits = if snapshot.dacl_protected {
+            SE_DACL_PROTECTED.0
+        } else {
+            0
+        };
         if snapshot.dacl_auto_inherited {
             // SetFileSecurityW consumes the request bit to retain AUTO_INHERITED, including
             // on protected DACLs where /inheritancelevel:e would change the protection policy.
@@ -2397,7 +2516,7 @@ mod windows_host {
         }
         unsafe {
             SetSecurityDescriptorControl(
-                restored_descriptor,
+                updated_ptr,
                 auto_inherit_mask,
                 SECURITY_DESCRIPTOR_CONTROL(auto_inherit_bits),
             )
@@ -2407,7 +2526,7 @@ mod windows_host {
             SetFileSecurityW(
                 PCWSTR(path.as_ptr()),
                 DACL_SECURITY_INFORMATION,
-                restored_descriptor,
+                updated_ptr,
             )
         }
         .ok()
@@ -5137,6 +5256,153 @@ mod windows_host {
             fs::remove_dir_all(&root).unwrap();
 
             assert_eq!(restored, original);
+        }
+
+        #[test]
+        fn acl_restore_preserves_inherited_aces_on_a_protected_directory() {
+            let root = unique_test_root("protected-inherited-restore");
+            fs::create_dir_all(&root).unwrap();
+            let path = root.to_string_lossy().into_owned();
+            let capability =
+                CommandCapability::new(format!("open-science.test.{}", new_resource_key().unwrap()))
+                    .unwrap();
+            let identity = sid_text(capability.sid()).unwrap();
+            update_command_acl_native(&path, &identity, None, true).unwrap();
+            let original = capture_acl_snapshot(&path).unwrap();
+            assert!(original.dacl_protected);
+            assert!(
+                original.dacl_sddl.contains("ID;"),
+                "fixture must retain inherited ACEs"
+            );
+            fs::write(
+                root.join("original-acl.json"),
+                serde_json::to_vec_pretty(&original).unwrap(),
+            )
+            .unwrap();
+            apply_acl_grant(&path, &identity, AclGrant::ReadOnlyDirectory).unwrap();
+            let started = std::time::Instant::now();
+            restore_acl_snapshot(&original).unwrap();
+            eprintln!(
+                "[acl-probe] protected restore {:?}; evidence {}",
+                started.elapsed(),
+                path
+            );
+            let restored = capture_acl_snapshot(&path).unwrap();
+            fs::write(
+                root.join("restored-acl.json"),
+                serde_json::to_vec_pretty(&restored).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(restored, original, "retain failed ACL evidence in {}", path);
+            fs::remove_dir_all(&root).unwrap();
+        }
+
+        #[test]
+        fn acl_restore_revokes_inheritable_grants_from_descendants() {
+            fn full_dacl(path: &str) -> String {
+                let name = wide(path);
+                let mut descriptor = PSECURITY_DESCRIPTOR::default();
+                let mut dacl = std::ptr::null_mut();
+                unsafe {
+                    GetNamedSecurityInfoW(
+                        PCWSTR(name.as_ptr()),
+                        SE_FILE_OBJECT,
+                        DACL_SECURITY_INFORMATION,
+                        None,
+                        None,
+                        Some(&mut dacl),
+                        None,
+                        &mut descriptor,
+                    )
+                }
+                .ok()
+                .unwrap();
+                let _descriptor = LocalAllocation(descriptor.0);
+                serialize_dacl(dacl).unwrap()
+            }
+            for protected in [false, true] {
+                let root = unique_test_root("restore-inheritable-grant");
+                let child = root.join("child");
+                fs::create_dir_all(&child).unwrap();
+                let path = root.to_string_lossy().into_owned();
+                let child_path = child.to_string_lossy().into_owned();
+                let capability =
+                    CommandCapability::new(format!("open-science.test.{}", new_resource_key().unwrap()))
+                        .unwrap();
+                let identity = sid_text(capability.sid()).unwrap();
+                if protected {
+                    update_command_acl_native(&path, &identity, None, true).unwrap();
+                }
+                let original = capture_acl_snapshot(&path).unwrap();
+                let child_original = full_dacl(&child_path);
+                fs::write(
+                    root.join("original-acl.json"),
+                    serde_json::to_vec_pretty(&original).unwrap(),
+                )
+                .unwrap();
+                apply_acl_grant(&path, &identity, AclGrant::ReadOnlyTree).unwrap();
+                assert!(full_dacl(&child_path).contains(&identity));
+                restore_acl_snapshot(&original).unwrap();
+                assert_eq!(capture_acl_snapshot(&path).unwrap(), original);
+                let child_restored = full_dacl(&child_path);
+                assert!(
+                    !child_restored.contains(&identity),
+                    "child must lose the revoked capability"
+                );
+                assert_eq!(child_restored, child_original);
+                fs::remove_dir_all(&root).unwrap();
+            }
+        }
+
+        #[test]
+        fn acl_restore_of_traversal_does_not_rewrite_unrelated_descendants() {
+            let root = unique_test_root("restore-traversal-descendants");
+            let child = root.join("unrelated-child");
+            fs::create_dir_all(&child).unwrap();
+            let path = root.to_string_lossy().into_owned();
+            let child_path = child.to_string_lossy().into_owned();
+            let original = capture_acl_snapshot(&path).unwrap();
+            let mut child_legacy = capture_acl_snapshot(&child_path).unwrap();
+            child_legacy.dacl_auto_inherited = false;
+            child_legacy.dacl_auto_inherit_requested = false;
+            restore_acl_snapshot(&child_legacy).unwrap();
+            let child_original = capture_acl_snapshot(&child_path).unwrap();
+            let capability =
+                CommandCapability::new(format!("open-science.test.{}", new_resource_key().unwrap()))
+                    .unwrap();
+            let identity = sid_text(capability.sid()).unwrap();
+            fs::write(
+                root.join("original-acl.json"),
+                serde_json::to_vec_pretty(&original).unwrap(),
+            )
+            .unwrap();
+            fs::write(
+                root.join("child-original-acl.json"),
+                serde_json::to_vec_pretty(&child_original).unwrap(),
+            )
+            .unwrap();
+            apply_acl_grant(&path, &identity, AclGrant::ReadOnlyDirectory).unwrap();
+            assert_eq!(capture_acl_snapshot(&child_path).unwrap(), child_original);
+            let started = std::time::Instant::now();
+            restore_acl_snapshot(&original).unwrap();
+            eprintln!(
+                "[acl-probe] traversal restore {:?}; evidence {}",
+                started.elapsed(),
+                path
+            );
+            let child_restored = capture_acl_snapshot(&child_path).unwrap();
+            fs::write(
+                root.join("child-restored-acl.json"),
+                serde_json::to_vec_pretty(&child_restored).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(capture_acl_snapshot(&path).unwrap(), original);
+            assert_eq!(
+                child_restored, child_original,
+                "retain failed ACL evidence in {}",
+                path
+            );
+            fs::remove_dir_all(&root).unwrap();
         }
 
         #[test]

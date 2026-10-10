@@ -53,7 +53,6 @@ type AdopterHarness = {
     specialistBindingPending?: true
   ) => Promise<AcpCreateSessionResponse>
   commit: ReturnType<typeof vi.fn>
-  commitClaudeReplay: ReturnType<typeof vi.fn>
   configure: ReturnType<typeof vi.fn>
   connection: ClientConnection
   order: string[]
@@ -141,7 +140,6 @@ const createHarness = (
   const release = vi.fn(() => {
     order.push('capability release')
   })
-  const commitClaudeReplay = vi.fn(() => order.push('handoff commit'))
   const configure = vi.fn(
     options.configure ??
       (async () => {
@@ -201,7 +199,6 @@ const createHarness = (
         ? vi.fn(async () => options.projectAgentContext)
         : undefined,
     peekClaudeReplay: () => options.handoffAppend,
-    commitClaudeReplay,
     updateCwd: () => order.push('cwd callback'),
     emitState: () => {
       order.push('state callback')
@@ -224,7 +221,6 @@ const createHarness = (
   return {
     adopt,
     commit,
-    commitClaudeReplay,
     configure,
     connection,
     order,
@@ -400,7 +396,6 @@ describe('AcpProviderSessionAdopter', () => {
       'registry publish',
       'cwd callback',
       'capability commit',
-      'handoff commit',
       'state callback'
     ])
   })
@@ -449,7 +444,6 @@ describe('AcpProviderSessionAdopter', () => {
     expect(harness.providerSession.dispose).toHaveBeenCalledOnce()
     expect(harness.release).toHaveBeenCalledWith({ ownsStableIdentity: true })
     expect(harness.registry.lookup('stable-app-session')).toBeUndefined()
-    expect(harness.commitClaudeReplay).not.toHaveBeenCalled()
     expect(harness.registry.isIdentityClaimed('stable-app-session')).toBe(false)
     expect(loggerSpies.error).toHaveBeenCalledWith(
       'operation failed',
@@ -474,7 +468,6 @@ describe('AcpProviderSessionAdopter', () => {
     expect(harness.providerSession.dispose).toHaveBeenCalledOnce()
     expect(harness.release).toHaveBeenCalledWith({ ownsStableIdentity: true })
     expect(harness.registry.lookup('stable-app-session')).toBeUndefined()
-    expect(harness.commitClaudeReplay).not.toHaveBeenCalled()
     expect(harness.registry.isIdentityClaimed('stable-app-session')).toBe(false)
   })
 
@@ -493,7 +486,6 @@ describe('AcpProviderSessionAdopter', () => {
     expect(harness.providerSession.dispose).toHaveBeenCalledOnce()
     expect(harness.release).toHaveBeenCalledWith({ ownsStableIdentity: false })
     expect(harness.registry.lookup('stable-app-session')).toBeUndefined()
-    expect(harness.commitClaudeReplay).not.toHaveBeenCalled()
     expect(harness.registry.isIdentityClaimed('stable-app-session')).toBe(false)
   })
 
@@ -521,9 +513,6 @@ describe('AcpProviderSessionAdopter', () => {
       specialistId: 'specialist-1',
       specialistPrefix: 'specialist turn prefix'
     })
-    expect(harness.order.indexOf('handoff commit')).toBeGreaterThan(
-      harness.order.indexOf('registry publish')
-    )
   })
 
   it('rejects an authoritative Specialist adoption when its identity cannot be resolved', async () => {

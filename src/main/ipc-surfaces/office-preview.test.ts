@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { EventEmitter } from 'node:events'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -406,3 +407,5 @@ describe('Office preview Electron surfaces', () => {
     }
   )
 })
+
+await configureTestElectronHost(await import('electron'))

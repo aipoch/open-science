@@ -157,59 +157,70 @@ describe('AcpSessionReplacementWorkflow', () => {
     })
   })
 
-  it('replaces a live Claude provider Session after projecting a Specialist switch', async () => {
-    const registry = new AcpSessionRegistry()
-    publishSession(registry, 'app-session', attachedSession('provider-session'))
-    const connection = {} as ClientConnection
-    const registerSessionSpecialist = vi.fn()
-    const adopt = vi.fn(async () => ({
-      sessionId: 'app-session',
-      cwd: '/old-workspace',
-      frameworkId: 'claude-code' as const,
-      contextReset: true as const
-    }))
-    const workflow = new AcpSessionReplacementWorkflow({
-      defaultCwd: '/default-workspace',
-      defaultProjectId: 'default-project',
-      currentCwd: () => '/current-workspace',
-      currentFrameworkId: () => 'claude-code',
-      assertSkillScopeRefreshSupported: vi.fn(),
-      ensureConnected: vi.fn(async () => connection),
-      assertCurrentConnection: vi.fn(),
-      registry,
-      reserveIdentity: (sessionId, publishedAppSessionId) =>
-        registry.reserve({ sessionIds: [sessionId], publishedAppSessionId }),
-      adopter: { adopt },
-      reconfigureSession: vi.fn(),
-      permission: { cancelForSession: vi.fn(), clearLivePermissionProfile: vi.fn() },
-      elicitation: { cancelForSession: vi.fn() },
-      clearUserChoiceProvenanceForSession: vi.fn(),
-      appContinuations: { delete: vi.fn() },
-      promptContent: { resetSession: vi.fn() },
-      releasePromptResourcesForSession: vi.fn(),
-      contextUsage: { deleteSession: vi.fn() },
-      interactions: { current: vi.fn(), supersedeCurrent: vi.fn() },
-      resolveSpecialistIdentity: vi.fn(async () => ({
-        append: 'New Specialist append',
-        prefix: 'New Specialist prefix'
-      })),
-      registerSessionSpecialist
-    })
+  it.each(['attached', 'connection-detached'] as const)(
+    'replaces a %s Claude provider Session in its original Project',
+    async (state) => {
+      const registry = new AcpSessionRegistry()
+      publishSession(registry, 'app-session', attachedSession('provider-session'))
+      if (state === 'connection-detached') {
+        registry.detach(registry.lookup('app-session')!.attachment!, 'connection')
+        expect(registry.entries(true)).toEqual([])
+      }
+      const connection = {} as ClientConnection
+      const registerSessionSpecialist = vi.fn()
+      const adopt = vi.fn(async () => ({
+        sessionId: 'app-session',
+        cwd: '/old-workspace',
+        frameworkId: 'claude-code' as const,
+        contextReset: true as const
+      }))
+      const workflow = new AcpSessionReplacementWorkflow({
+        defaultCwd: '/default-workspace',
+        defaultProjectId: 'default-project',
+        currentCwd: () => '/current-workspace',
+        currentFrameworkId: () => 'claude-code',
+        assertSkillScopeRefreshSupported: vi.fn(),
+        ensureConnected: vi.fn(async () => connection),
+        assertCurrentConnection: vi.fn(),
+        registry,
+        reserveIdentity: (sessionId, publishedAppSessionId) =>
+          registry.reserve({ sessionIds: [sessionId], publishedAppSessionId }),
+        adopter: { adopt },
+        reconfigureSession: vi.fn(),
+        permission: { cancelForSession: vi.fn(), clearLivePermissionProfile: vi.fn() },
+        elicitation: { cancelForSession: vi.fn() },
+        clearUserChoiceProvenanceForSession: vi.fn(),
+        appContinuations: { delete: vi.fn() },
+        promptContent: { resetSession: vi.fn() },
+        releasePromptResourcesForSession: vi.fn(),
+        contextUsage: { deleteSession: vi.fn() },
+        interactions: { current: vi.fn(), supersedeCurrent: vi.fn() },
+        resolveSpecialistIdentity: vi.fn(async () => ({
+          append: 'New Specialist append',
+          prefix: 'New Specialist prefix'
+        })),
+        registerSessionSpecialist
+      })
 
-    await expect(workflow.switchSpecialist('app-session', 'new-specialist')).resolves.toEqual({
-      contextReset: true
-    })
+      await expect(workflow.switchSpecialist('app-session', 'new-specialist')).resolves.toEqual({
+        contextReset: true
+      })
 
-    expect(registry.lookup('app-session')?.aggregate.snapshot()).toMatchObject({
-      specialistId: 'new-specialist',
-      specialistPrefix: 'New Specialist prefix'
-    })
-    expect(registerSessionSpecialist).toHaveBeenCalledWith('app-session', 'new-specialist')
-    expect(adopt).toHaveBeenCalledWith(
-      'app-session',
-      expect.objectContaining({ specialistId: undefined })
-    )
-  })
+      expect(registry.lookup('app-session')?.aggregate.snapshot()).toMatchObject({
+        specialistId: 'new-specialist',
+        specialistPrefix: 'New Specialist prefix'
+      })
+      expect(registerSessionSpecialist).toHaveBeenCalledWith('app-session', 'new-specialist')
+      expect(adopt).toHaveBeenCalledWith(
+        'app-session',
+        expect.objectContaining({
+          specialistId: undefined,
+          projectId: 'old-project',
+          cwd: resolve('/old-workspace')
+        })
+      )
+    }
+  )
 
   it.each(['codex', 'opencode', 'codebuddy'] as const)(
     'projects a live %s Specialist switch without replacing provider history',

@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -1107,3 +1108,5 @@ gate('repl kernel host.mcp', () => {
     }
   })
 })
+
+configureTestRuntimeMetadata()

@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -315,3 +316,5 @@ describe('notebook RPC agentsCall route', () => {
     }
   })
 })
+
+configureTestRuntimeMetadata()

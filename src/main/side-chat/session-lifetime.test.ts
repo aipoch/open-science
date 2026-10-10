@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -219,3 +220,5 @@ describe('process-local Side chat delivery', () => {
     expect(source).not.toMatch(/await sideChatRuntime\.sweepStaleProfiles/)
   })
 })
+
+await configureTestElectronHost(await import('electron'))

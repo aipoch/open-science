@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { promisify } from 'node:util'
@@ -1147,3 +1148,5 @@ it('captures scalar defaults before a later rebinding', async () => {
   ])
   expect(result.stalenessByRunId['run-0']).toEqual({ state: 'clear' })
 })
+
+configureTestRuntimeMetadata()

@@ -1,3 +1,4 @@
+import { nodeRuntimeEnvironment } from '../node-process-host'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
@@ -62,7 +63,7 @@ const buildAgentSpawnEnv = (
     ...base,
     ...envOverrides,
     CLAUDE_CODE_EXECUTABLE: executablePath,
-    ELECTRON_RUN_AS_NODE: '1'
+    ...nodeRuntimeEnvironment()
   }
 }
 

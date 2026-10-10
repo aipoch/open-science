@@ -89,7 +89,13 @@ export class SessionSpecialistReconfiguration {
   ): Promise<{ contextReset: boolean }> {
     return this.enqueue(sessionId, async () => {
       await this.validateTarget(sessionId, specialistId)
-      await this.assertDesiredBinding(sessionId, specialistId)
+      const persisted = await this.assertDesiredBinding(sessionId, specialistId, false)
+      // Runtime application can finish before a later handoff step fails. Retry the still-current
+      // approved target even if that application cleared pending, and restore the admission barrier
+      // before attempting another provider replacement. A different durable target still rejects.
+      if (persisted && persisted.specialistBindingPending !== true) {
+        await this.commitDesiredUnlocked(sessionId, specialistId)
+      }
       const result = await this.applyUnlocked(sessionId, specialistId, true)
       if (result.status === 'pending') throw new Error(SPECIALIST_RECONFIGURATION_PENDING_ERROR)
       return { contextReset: result.contextReset }
@@ -199,21 +205,24 @@ export class SessionSpecialistReconfiguration {
 
   private async assertDesiredBinding(
     sessionId: string,
-    specialistId: string | undefined
-  ): Promise<void> {
+    specialistId: string | undefined,
+    requirePending = true
+  ): Promise<PersistedSessionSpecialistBinding | undefined> {
     const persisted = await this.deps.loadBinding(sessionId)
     this.assertSessionActive(sessionId)
     const processPendingMatches =
       this.processPending.has(sessionId) && this.processPending.get(sessionId) === specialistId
     if (
       persisted &&
-      (persisted.specialistId !== specialistId || persisted.specialistBindingPending !== true)
+      (persisted.specialistId !== specialistId ||
+        (requirePending && persisted.specialistBindingPending !== true))
     ) {
       throw new Error('The persisted Specialist binding changed before runtime application.')
     }
     if (!persisted && !processPendingMatches) {
       throw new Error('The pending Specialist binding is unavailable.')
     }
+    return persisted
   }
 
   private enqueue<Result>(sessionId: string, operation: () => Promise<Result>): Promise<Result> {

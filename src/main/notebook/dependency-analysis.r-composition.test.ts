@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { describe, expect, it } from 'vitest'
 import { analyzeRSources } from './dependency-analysis-r'
 import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
@@ -72,3 +73,5 @@ describe('reported R plot composition', () => {
     )
   })
 })
+
+configureTestRuntimeMetadata()

@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { describe, expect, it } from 'vitest'
 import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
 import { analyzeRNotebookSource } from './dependency-analysis-r'
@@ -366,3 +367,5 @@ describe('scientific input contracts through wrappers', () => {
     expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['inputs/a.csv'])
   })
 })
+
+configureTestRuntimeMetadata()

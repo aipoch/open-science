@@ -11,6 +11,7 @@ import { registerWindowCloseIpcHandler } from '../window-ipc'
 import { createElectronSurfaceAdapter } from './adapter'
 
 type DesktopUtilitiesOwners = {
+  fileSaveCommands?: import('../file-save').FileSaveCommands
   resolveManagedFilePath: NonNullable<RegisterFileSaveHandlersOptions['resolveManagedFilePath']>
   managedFileVersions: Pick<ManagedFileVersionService, 'openLatest' | 'openVersion'>
   notebookInputs: Pick<NotebookInputRegistry, 'openPreviewKey'>
@@ -21,6 +22,7 @@ type DesktopUtilitiesOwners = {
 }
 
 export const createDesktopUtilitiesElectronSurface = ({
+  fileSaveCommands,
   resolveManagedFilePath,
   managedFileVersions,
   notebookInputs,
@@ -30,18 +32,21 @@ export const createDesktopUtilitiesElectronSurface = ({
   cli
 }: DesktopUtilitiesOwners): NamedElectronSurfaceAdapter =>
   createElectronSurfaceAdapter('desktop-utilities', () => {
-    registerFileSaveHandlers({
-      resolveManagedFilePath,
-      openLatestManagedFile: (source, request) =>
-        managedFileVersions.openLatest({ source, ...request }),
-      openManagedFileVersion: (source, request) =>
-        managedFileVersions.openVersion(
-          { source, projectId: request.projectId, fileId: request.fileId },
-          request.versionId
-        ),
-      openNotebookInput: (request) => notebookInputs.openPreviewKey(request.path),
-      translate
-    })
+    registerFileSaveHandlers(
+      {
+        resolveManagedFilePath,
+        openLatestManagedFile: (source, request) =>
+          managedFileVersions.openLatest({ source, ...request }),
+        openManagedFileVersion: (source, request) =>
+          managedFileVersions.openVersion(
+            { source, projectId: request.projectId, fileId: request.fileId },
+            request.versionId
+          ),
+        openNotebookInput: (request) => notebookInputs.openPreviewKey(request.path),
+        translate
+      },
+      fileSaveCommands
+    )
     registerLogsIpcHandlers(logs)
     registerGithubIpcHandlers({}, github)
     registerCliInstallIpcHandlers(cli)

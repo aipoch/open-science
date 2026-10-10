@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -596,3 +597,5 @@ describe('RegisteredSkillHelperCatalog', () => {
     await expect(inspectSkillPackage(root)).rejects.toThrow('callable export')
   })
 })
+
+configureTestRuntimeMetadata()
