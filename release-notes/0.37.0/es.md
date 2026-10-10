@@ -18,6 +18,7 @@
 - Entornos del Notebook: captura precisa de entornos mixtos de Conda/pip, metadatos de compilación de micromamba conservados en la tabla de paquetes, y dependencias de devoluciones de llamada y linaje de archivos de entrada endurecidos (#3398, #3385, #3369)
 - Las credenciales de Linux dejan de sondear el backend Secret Service tras la primera operación de secreto, evitando salidas de recuperación fatales espurias (#3389)
 - La aprobación y el descarte del plan de sesión ya no interfieren con la recuperación de la ejecución (#3366)
+- Las publicaciones de GitHub ahora incluyen archivos independientes de la CLI (macOS y Linux arm64/x64, Windows x64) junto a los instaladores de escritorio, por lo que instalar la CLI ya no requiere un toolchain local de Node.js (#3394)
 
 ## 🐛 Correcciones
 
@@ -28,3 +29,7 @@
 - Las colecciones inteligentes reanudan y reintentan el lote fallido en lugar de empezar de nuevo (#3351)
 - Codex recupera los argumentos de herramientas MCP transmitidos que llegan vacíos en la llamada completada (#3349)
 - Cambiar de Especialistas en Windows ya no deja un traspaso aprobado pendiente y bloqueando peticiones posteriores (#3388)
+- El conector PDB rechaza respuestas de búsqueda con formato incorrecto en lugar de informar cero resultados, y la paginación incompleta ya no se marca como finalizada (#3399)
+- El modo automático deja de pedir aprobaciones de herramientas redundantes al inspeccionar o cancelar una ejecución en segundo plano, enumerar entornos, revisar un plan o previsualizar una importación de habilidades (#3408)
+- Las celdas de Notebook que fallan antes de ejecutar código fuente ya no permanecen en el historial de riesgos del mismo kernel ni exigen aprobaciones repetidas en celdas posteriores (#3410)
+- Los hosts sin interfaz y los consumidores del SDK vuelven a resolver los recursos incluidos del runtime de Notebook: bucles de ejecución, captura de evidencia y gramáticas de análisis de código fuente (#3406)

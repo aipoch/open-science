@@ -18,6 +18,7 @@
 - Notebook environments: accurate mixed Conda/pip capture, preserved micromamba build metadata in the package table, and hardened callback dependencies and file-input lineage (#3398, #3385, #3369)
 - Linux credentials stop probing the Secret Service backend after the first secret operation, preventing spurious fatal recovery exits (#3389)
 - Session plan approval and dismissal no longer interfere with execution recovery (#3366)
+- GitHub releases now ship standalone CLI archives (macOS and Linux arm64/x64, Windows x64) alongside the desktop installers, so the CLI no longer requires a local Node.js toolchain (#3394)
 
 ## 🐛 Bug Fixes
 
@@ -28,3 +29,7 @@
 - Smart collections resume and retry the failed batch instead of starting over (#3351)
 - Codex recovers streamed MCP tool arguments that arrive empty in the completed call (#3349)
 - Switching Specialists on Windows no longer leaves an approved handoff pending and blocking later prompts (#3388)
+- The PDB connector rejects malformed search responses instead of reporting zero hits, and incomplete pagination is no longer marked as finished (#3399)
+- Auto mode stops asking for redundant tool approvals when inspecting or cancelling a background run, listing environments, reviewing a plan, or previewing a skill import (#3408)
+- Notebook cells that fail before any source executes no longer linger in same-kernel risk history and force repeated approvals on follow-up cells (#3410)
+- Headless hosts and SDK consumers again resolve the notebook runtime's bundled resources — execution loops, evidence capture, and source-analysis grammars (#3406)

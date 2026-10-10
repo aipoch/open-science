@@ -18,6 +18,7 @@
 - Environnements du Notebook : capture précise des environnements mixtes Conda/pip, métadonnées de construction micromamba préservées dans le tableau des packages, et dépendances de rappels et filiation des entrées de fichiers renforcées (#3398, #3385, #3369)
 - Sur Linux, les identifiants cessent de sonder le backend Secret Service après la première opération de secret, évitant les sorties de récupération fatales intempestives (#3389)
 - L'approbation et le rejet du plan de session n'interfèrent plus avec la récupération de l'exécution (#3366)
+- Les publications GitHub incluent désormais des archives CLI autonomes (macOS et Linux arm64/x64, Windows x64) aux côtés des installateurs de bureau ; l'installation de la CLI ne requiert plus de chaîne d'outils Node.js locale (#3394)
 
 ## 🐛 Corrections
 
@@ -28,3 +29,7 @@
 - Les collections intelligentes reprennent et réessaient le lot en échec au lieu de recommencer depuis le début (#3351)
 - Codex récupère les arguments d'outils MCP diffusés en continu qui arrivent vides dans l'appel terminé (#3349)
 - Le changement de spécialiste sous Windows ne laisse plus un passage de relais approuvé en attente et bloquant les invites ultérieures (#3388)
+- Le connecteur PDB rejette les réponses de recherche mal formées au lieu de les rapporter comme zéro résultat, et la pagination incomplète n'est plus marquée comme terminée (#3399)
+- Le mode automatique cesse de demander des approbations d'outils redondantes pour inspecter ou annuler une exécution en arrière-plan, énumérer les environnements, examiner un plan ou prévisualiser l'importation d'une compétence (#3408)
+- Les cellules Notebook qui échouent avant toute exécution du code source ne persistent plus dans l'historique des risques du même noyau et n'imposent plus d'approbations répétées sur les cellules suivantes (#3410)
+- Les hôtes sans interface et les consommateurs du SDK résolvent à nouveau les ressources groupées du runtime Notebook (boucles d'exécution, capture de preuves et grammaires d'analyse de code source) (#3406)
