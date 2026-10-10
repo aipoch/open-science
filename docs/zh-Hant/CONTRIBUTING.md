@@ -261,10 +261,6 @@ ci(review): unify automated AI reviews
 - 作業系統與應用程式版本。
 - 相關記錄檔或螢幕擷取畫面（若有）。
 
-## 發佈 npm 套件
-
-維護者應遵循 [npm 套件發佈指南](../npm-release.md)。npm 套件版本使用 `npm-v*` 標籤，並透過受保護的 `Publish npm package` 工作流程發佈。
-
 ## 授權條款
 
 參與貢獻即表示你同意，你的貢獻會依與本專案相同的 [Apache License 2.0](../../LICENSE) 授權。

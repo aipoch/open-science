@@ -1,0 +1,203 @@
+name: Verify standalone runtime distributions
+
+on:
+  workflow_call:
+    inputs:
+      distribution:
+        type: string
+        default: archive
+        description: archive for standalone Release downloads, npm for the deferred npm dry-run.
+      desktop_run_id:
+        type: string
+        default: ''
+        description: Repack signed desktop artifacts from this run instead of rebuilding.
+      target:
+        type: string
+        default: all
+        description: Native target, or all for release verification.
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - id: plan
+        env:
+          DISTRIBUTION: ${{ inputs.distribution }}
+          TARGET: ${{ inputs.target }}
+          DESKTOP_RUN: ${{ inputs.desktop_run_id }}
+        run: |
+          node <<'JS'
+          const fs = require('node:fs');
+          if (process.env.DESKTOP_RUN && process.env.DESKTOP_RUN !== process.env.GITHUB_RUN_ID) throw new Error('Desktop inputs must belong to this release run');
+          if (!['archive', 'npm'].includes(process.env.DISTRIBUTION)) throw new Error('Unsupported distribution');
+          if (process.env.DESKTOP_RUN && process.env.DISTRIBUTION !== 'archive') throw new Error('Only archives are published with Release');
+          const targets = [
+            {id:'linux-x64-gnu',runner:'ubuntu-24.04',subdir:'linux-64',bin:'linux/x64'},
+            {id:'linux-arm64-gnu',runner:'ubuntu-24.04-arm',subdir:'linux-aarch64',bin:'linux/arm64'},
+            {id:'darwin-arm64',runner:'macos-15',subdir:'osx-arm64',bin:'mac/arm64'},
+            {id:'darwin-x64',runner:'macos-15-intel',subdir:'osx-64',bin:'mac/x64'},
+            {id:'win32-x64',runner:'windows-latest',subdir:'win-64',bin:'win/x64'}
+          ];
+          const selected = process.env.TARGET === 'all' ? targets : targets.filter(t => t.id === process.env.TARGET);
+          if (!selected.length) throw new Error('Unsupported runtime target');
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `matrix=${JSON.stringify({include:selected})}\n`);
+          JS
+  verify:
+    needs: plan
+    name: Runtime ${{ inputs.distribution }} ${{ matrix.id }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '12.0'
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+      - name: Linux native and test prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsecret-1-dev libdbus-1-dev pkg-config gnome-keyring dbus-user-session bubblewrap python3-venv
+      - name: Install build dependencies without Electron setup
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          node scripts/prepare-shadcn-patch.mjs
+          node node_modules/patch-package/index.js --error-on-fail
+          node scripts/check-claude-acp-patch.mjs
+          node node_modules/prisma/build/index.js generate
+          npm rebuild @aipoch/process-tree-native @aipoch/safe-file-publisher-native
+      - name: Build Windows protection helper
+        if: inputs.desktop_run_id == '' && runner.os == 'Windows'
+        run: node packages/notebook-network-sandbox/vendor/windows/build.mjs x64
+      - name: Stage verified micromamba resources
+        if: inputs.desktop_run_id == ''
+        env:
+          SUBDIR: ${{ matrix.subdir }}
+          BIN_DIRECTORY: ${{ matrix.bin }}
+        run: |
+          name=micromamba
+          [ "$RUNNER_OS" != Windows ] || name=micromamba.exe
+          node scripts/fetch-micromamba.mjs "$SUBDIR" "resources/bin/$BIN_DIRECTORY/$name"
+          if [ "$RUNNER_OS" = Windows ]; then
+            node scripts/fetch-micromamba.mjs "$SUBDIR" "resources/bin/$BIN_DIRECTORY/micromamba-compat.exe" compatibility
+          fi
+      - name: Download certified desktop payload
+        if: inputs.desktop_run_id != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: ${{ matrix.id == 'darwin-arm64' && 'macos-arm64' || matrix.id == 'darwin-x64' && 'macos-x64' || matrix.id == 'linux-arm64-gnu' && 'linux-arm64' || matrix.id == 'linux-x64-gnu' && 'linux-x64' || 'windows-x64' }}
+          path: out/runtime-desktop
+          run-id: ${{ inputs.desktop_run_id }}
+          github-token: ${{ github.token }}
+      - name: Extract and verify signed backend
+        if: inputs.desktop_run_id != ''
+        run: node scripts/extract-runtime-desktop.mjs
+      - name: Build ordinary Node runtime without Electron
+        if: inputs.desktop_run_id == ''
+        run: npm run stage:backend
+      - name: Stage pinned Node for independent archives
+        if: inputs.desktop_run_id == '' && inputs.distribution == 'archive'
+        run: npm run stage:node-runtime
+      - name: Pack standalone archive
+        if: inputs.distribution == 'archive'
+        run: npm run pack:runtime-archive
+      - name: Pack ordinary Node runtime
+        if: inputs.distribution == 'npm'
+        run: npm run pack:npm-release
+      - name: Verify npm publish input without publication
+        if: inputs.distribution == 'npm'
+        run: |
+          for package in out/npm-artifacts/*.tgz; do
+            npm publish "$package" --dry-run --access public --ignore-scripts
+          done
+      - name: Verify native npm installation
+        if: runner.os != 'Linux' && inputs.distribution == 'npm'
+        run: npm run test:npm-installed
+      - name: Verify extracted standalone archive
+        if: runner.os != 'Linux' && inputs.distribution == 'archive'
+        run: npm run test:runtime-archive-installed
+      - name: Verify headless Linux install and real Notebook lifecycle
+        if: runner.os == 'Linux'
+        env:
+          DISTRIBUTION: ${{ inputs.distribution }}
+        run: |
+          # This disposable CI runner needs user namespaces for the real process sandbox.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          python3 -m venv "$RUNNER_TEMP/npm-notebook-python"
+          "$RUNNER_TEMP/npm-notebook-python/bin/pip" install ipykernel
+          export OPEN_SCIENCE_TEST_PYTHON="$RUNNER_TEMP/npm-notebook-python/bin/python"
+          export OPEN_SCIENCE_NPM_LIVE_TEST=1
+          export OPEN_SCIENCE_ARCHIVE_LIVE_TEST=1
+          dbus-run-session -- bash -euo pipefail -c '
+            printf "npm-ci-vault\n" | gnome-keyring-daemon --unlock --components=secrets
+            if [ "$DISTRIBUTION" = archive ]; then
+              npm run test:runtime-archive-installed
+            else
+              npm run test:npm-installed
+            fi
+          '
+      - name: Setup minimum supported Node
+        if: inputs.distribution == 'npm'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22.13.0
+      - name: Verify installed native ABI on minimum Node
+        if: inputs.distribution == 'npm'
+        run: npm run test:npm-installed
+      - name: Upload verified native npm tarballs
+        if: inputs.distribution == 'npm'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: npm-${{ matrix.id }}
+          path: out/npm-artifacts/
+          if-no-files-found: error
+          retention-days: 5
+
+      - name: Upload verified CLI archive
+        if: inputs.distribution == 'archive'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: cli-${{ matrix.id }}
+          path: out/cli-artifacts/
+          if-no-files-found: error
+          retention-days: 5
+
+  publication-check:
+    if: inputs.target == 'all'
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: ${{ inputs.distribution == 'archive' && 'cli-*' || 'npm-*' }}
+          path: out/distributions
+          merge-multiple: ${{ inputs.distribution == 'archive' }}
+      - name: Verify complete npm version and integrity set without publication
+        if: inputs.distribution == 'npm'
+        run: npm run publish:npm-release -- out/distributions --dry-run
+      - name: Verify all five standalone archives
+        if: inputs.distribution == 'archive'
+        run: npm run verify:runtime-archives -- out/distributions

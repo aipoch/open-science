@@ -34,7 +34,7 @@
     "perf:compare": "node scripts/performance/compare-runtime-profile.mjs",
     "test:e2e:p0": "playwright test e2e/certification",
     "test:cli": "vitest run packages/open-science",
-    "test:npm-release": "vitest run scripts/validate-npm-release.test.ts",
+    "test:npm-release": "vitest run scripts/stage-npm-release.test.ts scripts/pack-npm-release.test.ts scripts/publish-npm-release.test.ts scripts/npm-runtime-workflow.test.ts",
     "test:session-isolation:live": "node scripts/test-session-isolation-live.mjs",
     "test:coverage": "vitest run --coverage",
     "eval:reviewer": "node scripts/reviewer-model-evaluation.mjs",
@@ -72,7 +72,15 @@
     "pack:backend": "npm run stage:backend && npm pack ./out/standalone --pack-destination out",
     "build:backend-native": "node-gyp rebuild --directory packages/credential-identity-probe-native -- -Dbuild_node_secret=1",
     "stage:node-runtime": "node scripts/stage-node-runtime.mjs",
-    "build:replay-viewer": "vite build --config vite.replay-viewer.config.ts"
+    "build:replay-viewer": "vite build --config vite.replay-viewer.config.ts",
+    "publish:npm-release": "node scripts/publish-npm-release.mjs",
+    "stage:npm-release": "node scripts/stage-npm-release.mjs",
+    "test:npm-installed": "node scripts/test-npm-installed.mjs",
+    "pack:npm-release": "npm run stage:npm-release && node scripts/pack-npm-release.mjs",
+    "pack:runtime-archive": "node scripts/runtime-archives.mjs",
+    "verify:runtime-archives": "node scripts/runtime-archives.mjs verify",
+    "test:runtime-archive-installed": "node scripts/test-runtime-archive.mjs",
+    "test:runtime-archives": "vitest run scripts/runtime-archives.test.ts scripts/npm-runtime-workflow.test.ts"
   },
   "dependencies": {
     "@agentclientprotocol/claude-agent-acp": "^0.70.0",

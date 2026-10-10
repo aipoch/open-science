@@ -16,9 +16,72 @@ contracts, caller leases, permission prompts and navigation revocation remain in
 requests travel back to Electron for dialogs, notifications and rendering. This is one business
 implementation, with transport and native adapters, rather than two server implementations.
 
+## Install the standalone Release archive
+
+Stable Releases attach `open-science-<version>-<target>.tar.gz` for `darwin-arm64`,
+`darwin-x64`, `linux-x64-gnu` and `linux-arm64-gnu`, and
+`open-science-<version>-win32-x64.zip` for Windows x64. These are separate from the desktop
+installers and GitHub's automatically generated source archives. Linux musl, Windows ARM64
+and older glibc distributions are not certified.
+
+Download the matching archive and `SHA256SUMS.txt` from the same GitHub Release. Verify its
+SHA-256, then extract the entire directory. The archive includes the pinned Node executable,
+CLI, backend, Web UI, native dependencies and resources; no installed Node, npm or Electron
+is required. Python/R, Linux secret-service and sandbox prerequisites below still apply.
+
+```bash
+# macOS/Linux, from the extracted directory
+./open-science start --no-open
+./open-science status --json
+./open-science url
+./open-science run --help
+./open-science stop
+```
+
+```powershell
+# Windows PowerShell, from the extracted directory
+.\open-science.cmd start --no-open
+.\open-science.cmd status --json
+.\open-science.cmd stop
+```
+
+Add the extracted directory to PATH for `open-science` usage from other directories. Keep
+`backend/` and `node-runtime/` beside the launcher. On macOS/Linux the launcher also supports a
+symlink in a user-owned bin directory. `--no-open` suppresses opening a browser; the local Web
+service still runs and the same CLI/SDK command protocol is available.
+
+Stop the runtime owning the profile before upgrading. Extract each new release to a new directory
+and update PATH/the symlink; do not overwrite a running backend. Existing profiles and credentials
+retain their normal OS locations and formats. Remove the extracted directory and PATH entry to
+uninstall, leaving research data intact. Moving signed credential helpers to a new location may
+require macOS Keychain authorization; historical installation-path upgrades still need acceptance.
+Do not disable Gatekeeper or credential protection to bypass a failed verification.
+
+Release archives reuse the final signed desktop backend and its sibling Node executable, without
+rebuilding or re-signing them. Native signatures are checked before packing and after extraction.
+All five archives must pass version/source/integrity checks before the GitHub Release is published.
+They are included in Release SHA256SUMS and build-provenance attestations. npm registry publication
+is deferred and requires no token for this archive release flow.
+
+For a local unsigned archive, build on its target OS/architecture:
+
+```bash
+npm run stage:backend
+npm run stage:node-runtime
+npm run pack:runtime-archive
+npm run test:runtime-archive-installed
+```
+
+Artifacts appear in `out/cli-artifacts/`. The manual **Runtime distribution dry-run** workflow
+(`publish-npm.yml`, filename retained for dispatch compatibility) defaults to `distribution=archive`.
+Start with one target, then use `target=all` to verify the complete set. It uploads Actions artifacts
+only; it never publishes a Release, npm package or tag. Unsigned dry-runs do not certify production
+signing, notarization or historical Keychain access. Linux CI additionally exercises the real installed
+Web/Notebook, cancellation, recovery and shutdown paths; the model is a deterministic Agent fixture.
+
 ## Build and start
 
-Use Node 24 for source development. Installed standalone artifacts require ordinary Node >=22.13.0.
+Use Node 24 for source development. The local npm tarball requires ordinary Node >=22.13.0; Release archives carry their own Node.
 Build on the target OS and architecture; native artifacts are not cross-platform npm packages.
 
 ```bash

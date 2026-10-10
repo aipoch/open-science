@@ -3,6 +3,7 @@ import { runInNewContext } from 'node:vm'
 import { createElectronCallerContext } from '../caller-context'
 import {
   createElectronProjectCapture,
+  projectSurfaceIdentityDiagnostic,
   type CaptureContents,
   type CaptureFrame,
   type ElectronProjectCaptureDependencies,
@@ -403,6 +404,54 @@ describe('visible Electron project capture', () => {
       measurement: 'initial'
     })
     expect(JSON.stringify(h.reportDiagnostic.mock.calls)).not.toMatch(/private|secret|https/)
+  })
+  it.each([
+    ['pixel-ratio', { devicePixelRatio: 2 }, 1.25, 2],
+    ['viewport-width', { viewportWidth: 620 }, 600, 620],
+    ['viewport-height', { viewportHeight: 410 }, 400, 410],
+    ['project-right', { rect: { x: 400, y: 70, width: 320, height: 180 } }, 600, 720],
+    ['project-bottom', { rect: { x: 40, y: 300, width: 320, height: 180 } }, 400, 480]
+  ] as const)(
+    'identifies %s geometry failures without weakening capture admission',
+    async (identityCheck, patch, expected, actual) => {
+      const h = setup()
+      h.viewerQuery.mockResolvedValue({ ...(await h.viewerQuery('')), ...patch })
+      await expect(h.capture(h.input)).rejects.toThrow(
+        'Visible project frame is unavailable or changed during capture.'
+      )
+      expect(h.reportDiagnostic).toHaveBeenCalledExactlyOnceWith({
+        stage: 'measure-identity',
+        reason: 'measurement-identity',
+        measurement: 'initial',
+        identityCheck,
+        expected,
+        actual
+      })
+      expect(h.capturePage).not.toHaveBeenCalled()
+    }
+  )
+  it('does not include document identities or out-of-budget geometry in identity diagnostics', async () => {
+    const h = setup()
+    const outer = await h.rootQuery('')
+    const inner = await h.viewerQuery('')
+    const identity = {
+      rootUrl: h.root.url,
+      viewerUrl: h.viewer.url,
+      viewerOrigin: h.input.viewerOrigin,
+      projectOrigin: h.input.projectOrigin
+    }
+    expect(
+      projectSurfaceIdentityDiagnostic(
+        { outer: { ...outer, documentUrl: 'file:///private?grant=secret' }, inner },
+        identity
+      )
+    ).toEqual({ identityCheck: 'root-document' })
+    expect(
+      projectSurfaceIdentityDiagnostic(
+        { outer, inner: { ...inner, viewportWidth: Number.MAX_VALUE } },
+        identity
+      )
+    ).toEqual({ identityCheck: 'viewport-width', expected: 600 })
   })
   it('distinguishes a focus failure from pixel acquisition and survives diagnostic sink failure', async () => {
     const h = setup()
