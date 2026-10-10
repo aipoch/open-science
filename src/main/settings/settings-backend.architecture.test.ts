@@ -1123,7 +1123,9 @@ describe('Settings backend ownership architecture', () => {
       'src/main/literature/smart-collections.test.ts',
       'src/main/session-persistence/ipc.test.ts',
       'src/main/composition/reviewer.test.ts',
-      'src/main/desktop-runtime-transport.integration.test.ts'
+      'src/main/desktop-runtime-transport.integration.test.ts',
+      'src/main/desktop-runtime-backpressure.integration.test.ts',
+      'src/main/desktop-runtime-transport-diagnostics.test.ts'
     ])
     expect(manifest.modules.settings_backend_resolution.testFiles.consumer).toEqual([
       'src/main/storage/wsl-npm-migration.integration.test.ts',
@@ -1594,7 +1596,9 @@ describe('Settings backend ownership architecture', () => {
       'src/main/agents/production-completion-handoff.test.ts',
       'src/main/acp/auto-operation-adapter.test.ts',
       'src/main/acp/auto-operation-broker.test.ts',
-      'src/main/acp/auto-operation-policy.test.ts'
+      'src/main/acp/auto-operation-policy.test.ts',
+      'src/main/desktop-runtime-backpressure.integration.test.ts',
+      'src/main/desktop-runtime-transport-diagnostics.test.ts'
     ])
     expect(
       [

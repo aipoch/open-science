@@ -25,6 +25,45 @@ import {
 import { parseApplicationCommandError } from '../shared/application-command-contract'
 import { connectToDesktopEndpoint, type DesktopEndpoint } from './desktop-connection'
 import { parseRpcJson, stringifyRpcJson } from './rpc-json'
+import { createLogger } from './logger'
+
+const logger = createLogger('desktop-runtime-client')
+type DisconnectReason =
+  | 'bootstrap-timeout'
+  | 'invalid-frame'
+  | 'invalid-bootstrap'
+  | 'invalid-event'
+  | 'callback-failure'
+  | 'invalid-native-request'
+  | 'native-capacity'
+  | 'invalid-response'
+  | 'response-identity'
+  | 'event-history'
+  | 'send-failure'
+  | 'transport-close'
+  | 'socket-error'
+  | 'client-close'
+
+type DisconnectPolicyReason =
+  | 'invalid-request'
+  | 'request-order-or-capacity'
+  | 'document-capacity'
+  | 'retired-document-capacity'
+
+function classifyPolicyReason(reason: string): DisconnectPolicyReason | undefined {
+  switch (reason) {
+    case 'Invalid desktop request.':
+      return 'invalid-request'
+    case 'Invalid or excessive desktop requests.':
+      return 'request-order-or-capacity'
+    case 'Too many renderer documents.':
+      return 'document-capacity'
+    case 'Reconnect desktop attachment.':
+      return 'retired-document-capacity'
+    default:
+      return undefined
+  }
+}
 
 const bootstrapSchema = webRpcBootstrapSchema
   .pick({
@@ -87,6 +126,7 @@ export async function connectDesktopRuntime(options: {
   let quitting = false
   let quitPromise: Promise<void> | undefined
   let closed = false
+  let disconnectCause: Error | undefined
   let initialized = false
   let resolveReady!: () => void
   let rejectReady!: (error: Error) => void
@@ -94,9 +134,36 @@ export async function connectDesktopRuntime(options: {
     resolveReady = resolve
     rejectReady = reject
   })
-  const fail = (error: Error): void => {
+  const fail = (
+    error: Error,
+    reason: DisconnectReason,
+    closeCode?: number,
+    policyReason?: DisconnectPolicyReason
+  ): void => {
     if (closed) return
     closed = true
+    disconnectCause = error
+    if (reason !== 'client-close')
+      logger[
+        quitting &&
+        reason === 'transport-close' &&
+        pending.size === 0 &&
+        (closeCode === 1000 || closeCode === 1001 || closeCode === 1006)
+          ? 'info'
+          : 'warn'
+      ]('desktop runtime disconnected', {
+        phase: quitting ? 'shutdown' : initialized ? 'connected' : 'bootstrap',
+        reason,
+        pendingRequests: Math.min(pending.size, 256),
+        pendingNativeOperations: Math.min(native.size, 32),
+        ...(policyReason ? { policyReason } : {}),
+        ...(typeof closeCode === 'number' &&
+        Number.isInteger(closeCode) &&
+        closeCode >= 1000 &&
+        closeCode <= 4999
+          ? { closeCode }
+          : {})
+      })
     clearTimeout(timer)
     rejectReady(error)
     for (const request of pending.values()) request.reject(error)
@@ -106,11 +173,14 @@ export async function connectDesktopRuntime(options: {
     socket.terminate()
     if (initialized && !quitting) options.onDisconnect(error)
   }
-  const timer = setTimeout(() => fail(new Error('Desktop runtime bootstrap timed out.')), 5_000)
+  const timer = setTimeout(
+    () => fail(new Error('Desktop runtime bootstrap timed out.'), 'bootstrap-timeout'),
+    5_000
+  )
   timer.unref()
   const send = (message: unknown): void => {
     if (closed || socket.readyState !== WebSocket.OPEN)
-      throw new Error('Desktop runtime is disconnected.')
+      throw new Error('Desktop runtime is disconnected.', { cause: disconnectCause })
     const serialized = stringifyRpcJson(message)
     if (socket.bufferedAmount + Buffer.byteLength(serialized) > 16 * 1024 * 1024) {
       throw new Error('Desktop runtime request exceeds the transport byte budget.')
@@ -118,10 +188,13 @@ export async function connectDesktopRuntime(options: {
     socket.send(serialized)
   }
   socket.on('message', (bytes, binary) => {
+    if (closed) return
+    let failureReason: DisconnectReason = 'invalid-frame'
     try {
       if (binary) throw new Error('Unexpected binary desktop frame.')
       const frame = parseRpcJson(bytes.toString())
       if (!initialized) {
+        failureReason = 'invalid-bootstrap'
         const bootstrap = bootstrapSchema.parse(frame)
         startupState = bootstrap.startup ?? { phase: 'ready' }
         runtimePid = bootstrap.pid
@@ -135,10 +208,12 @@ export async function connectDesktopRuntime(options: {
         resolveReady()
         return
       }
+      failureReason = 'invalid-event'
       if (frame && typeof frame === 'object' && 'kind' in frame && frame.kind === 'startup-state') {
         const event = desktopStartupEventSchema.parse(frame)
         channels = Object.freeze([...event.rpcChannels])
         startupState = event.state
+        failureReason = 'callback-failure'
         options.onStartupState?.(event.state)
         return
       }
@@ -149,6 +224,7 @@ export async function connectDesktopRuntime(options: {
         frame.kind === 'upload-progress'
       ) {
         const event = desktopUploadProgressSchema.parse(frame)
+        failureReason = 'callback-failure'
         options.onUploadProgress?.(event.clientId, event.progress)
         return
       }
@@ -159,12 +235,16 @@ export async function connectDesktopRuntime(options: {
         frame.kind === 'document-event'
       ) {
         const event = desktopDocumentEventSchema.parse(frame)
+        failureReason = 'callback-failure'
         options.onDocumentEvent?.(event)
         return
       }
       if (frame && typeof frame === 'object' && 'kind' in frame && frame.kind === 'native-cancel') {
         const cancelled = desktopNativeCancelSchema.parse(frame)
-        native.get(cancelled.id)?.abort()
+        const controller = native.get(cancelled.id)
+        // Some native dialogs settle only after user interaction; cancelled work owns no slot.
+        native.delete(cancelled.id)
+        controller?.abort()
         return
       }
       if (
@@ -173,7 +253,9 @@ export async function connectDesktopRuntime(options: {
         'kind' in frame &&
         frame.kind === 'native-request'
       ) {
+        failureReason = 'invalid-native-request'
         const request = desktopNativeRequestSchema.parse(frame)
+        failureReason = native.size >= 32 ? 'native-capacity' : 'invalid-native-request'
         if (request.id <= highestNativeId || native.size >= 32)
           throw new Error('Invalid or excessive native desktop requests.')
         highestNativeId = request.id
@@ -199,13 +281,17 @@ export async function connectDesktopRuntime(options: {
           } finally {
             native.delete(request.id)
           }
-        })().catch((error) => fail(error instanceof Error ? error : new Error(String(error))))
+        })().catch((error) =>
+          fail(error instanceof Error ? error : new Error(String(error)), 'send-failure')
+        )
         return
       }
       if (frame && typeof frame === 'object' && 'kind' in frame && frame.kind === 'response') {
         const { id, kind: _kind, ...body } = frame as Record<string, unknown>
         void _kind
+        failureReason = 'invalid-response'
         const response = webRpcResponseSchema.parse(body)
+        failureReason = 'response-identity'
         if (typeof id !== 'number' || !pending.has(id))
           throw new Error('Unexpected desktop response identity.')
         const request = pending.get(id)!
@@ -218,30 +304,41 @@ export async function connectDesktopRuntime(options: {
         return
       }
       const event = eventSchema.parse(frame)
+      failureReason = 'event-history'
       if (event.kind === 'resync-required' || event.streamId !== cursor!.streamId) {
         throw new Error('Desktop runtime event history changed; reload required.')
       }
       if (event.kind === 'event') {
         if (event.sequence <= cursor!.latestSequence) return
         if (event.sequence !== cursor!.latestSequence + 1) {
+          failureReason = 'send-failure'
           send({ kind: 'resume', streamId: cursor!.streamId, after: cursor!.latestSequence })
           return
         }
+        failureReason = 'callback-failure'
         options.onEvent({ channel: event.channel, payload: event.payload })
         cursor = { streamId: event.streamId, latestSequence: event.sequence }
       } else if (event.latestSequence > cursor!.latestSequence) {
+        failureReason = 'send-failure'
         send({ kind: 'resume', streamId: cursor!.streamId, after: cursor!.latestSequence })
       }
     } catch (error) {
-      fail(error instanceof Error ? error : new Error(String(error)))
+      fail(error instanceof Error ? error : new Error(String(error)), failureReason)
     }
   })
-  socket.once('close', () => fail(new Error('Desktop runtime connection closed.')))
-  socket.once('error', fail)
+  socket.once('close', (code, reason) =>
+    fail(
+      new Error('Desktop runtime connection closed.'),
+      'transport-close',
+      code,
+      code === 1008 ? classifyPolicyReason(reason.toString()) : undefined
+    )
+  )
+  socket.once('error', (error) => fail(error, 'socket-error'))
   try {
     send({ kind: 'bootstrap' })
   } catch (error) {
-    fail(error instanceof Error ? error : new Error(String(error)))
+    fail(error instanceof Error ? error : new Error(String(error)), 'send-failure')
   }
   await ready
   const request = (frame: Record<string, unknown>): { id: number; response: Promise<unknown> } => {
@@ -260,7 +357,7 @@ export async function connectDesktopRuntime(options: {
   }
   const close = (): void => {
     initialized = false
-    fail(new Error('Desktop runtime client closed.'))
+    fail(new Error('Desktop runtime client closed.'), 'client-close')
   }
   const quit = async (): Promise<void> => {
     const child = ownedChild
@@ -355,7 +452,7 @@ export async function connectDesktopRuntime(options: {
         send({ kind: 'release', clientId })
       } catch (error) {
         // If one document cannot be revoked reliably, revoke the entire attachment.
-        fail(error instanceof Error ? error : new Error(String(error)))
+        fail(error instanceof Error ? error : new Error(String(error)), 'send-failure')
       }
     },
     close,

@@ -1024,7 +1024,9 @@
       "src/main/acp/auto-operation-inventory.test.ts",
       "src/main/acp/auto-operation-policy.test.ts",
       "src/main/acp/permission-broker.test.ts",
-      "src/main/acp/permission-policy.test.ts"
+      "src/main/acp/permission-policy.test.ts",
+      "src/main/desktop-runtime-backpressure.integration.test.ts",
+      "src/main/desktop-runtime-transport-diagnostics.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],
