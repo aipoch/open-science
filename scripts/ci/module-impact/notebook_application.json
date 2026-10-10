@@ -319,7 +319,10 @@
     "resources/tree-sitter/tree-sitter-python.wasm",
     "resources/tree-sitter/tree-sitter-r.wasm",
     "resources/tree-sitter/web-tree-sitter.wasm",
-    "scripts/windows-runtime-cache-uninstall.test.ts"
+    "scripts/windows-runtime-cache-uninstall.test.ts",
+    "src/main/notebook/code-risk-analysis.object-budget.test.ts",
+    "src/main/notebook/code-risk-budget-fixtures.ts",
+    "src/main/notebook/auto-mode-budget.integration.test.ts"
   ],
   "interfacePaths": [
     "src/main/notebook/analysis-version.ts",
@@ -404,7 +407,8 @@
     "src/main/notebook/dependency-analysis.rdkit.test.ts",
     "src/main/notebook/dependency-analysis.scipy-sparse-composition.test.ts",
     "src/main/notebook/dependency-analysis.scipy-sparse.test.ts",
-    "src/main/notebook/code-risk-analysis.ts"
+    "src/main/notebook/code-risk-analysis.ts",
+    "src/main/notebook/code-risk-budget-fixtures.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -604,7 +608,9 @@
       "src/main/notebook/dependency-analysis.lineage-regressions.test.ts",
       "src/main/notebook/dependency-analysis.r-deseq2.test.ts",
       "src/main/notebook/notebook-path-utils.test.ts",
-      "src/main/notebook/code-risk-analysis.test.ts"
+      "src/main/notebook/code-risk-analysis.test.ts",
+      "src/main/notebook/code-risk-analysis.object-budget.test.ts",
+      "src/main/notebook/auto-mode-budget.integration.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

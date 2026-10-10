@@ -1446,7 +1446,9 @@
       "src/main/acp/auto-operation-adapter.test.ts",
       "src/main/acp/auto-operation-broker.test.ts",
       "src/main/acp/auto-operation-inventory.test.ts",
-      "src/main/acp/auto-operation-policy.test.ts"
+      "src/main/acp/auto-operation-policy.test.ts",
+      "src/main/notebook/auto-mode-budget.integration.test.ts",
+      "src/main/notebook/code-risk-analysis.object-budget.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
