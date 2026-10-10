@@ -69,7 +69,7 @@
     "build:backend": "npm run build:backend-native && node scripts/build-backend.mjs",
     "stage:backend": "npm run build:backend && npm run build:web && node scripts/stage-backend.mjs",
     "pack:backend": "npm run stage:backend && npm pack ./out/standalone --pack-destination out",
-    "build:backend-native": "node-gyp rebuild --directory packages/credential-identity-probe-native -- -Dbuild_node_secret=1",
+    "build:backend-native": "node-gyp configure --directory packages/credential-identity-probe-native -- -Dbuild_node_secret=1 && node-gyp build --directory packages/credential-identity-probe-native",
     "stage:node-runtime": "node scripts/stage-node-runtime.mjs"
   },
   "dependencies": {
