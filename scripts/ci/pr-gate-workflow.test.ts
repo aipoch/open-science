@@ -288,6 +288,7 @@ describe('PR Gate workflow', () => {
           'module-test-impact.mjs',
           'module-impact.json',
           'load-module-impact.mjs',
+          'package-test-impact.mjs',
           'validate-module-impact.mjs',
           'classify-pr-changes.mjs',
           'change-impact.json'
@@ -562,6 +563,7 @@ describe('PR Gate workflow', () => {
   it('fans semantic lanes into the declared runner bundles', () => {
     expect(workflow.jobs.preflight.outputs).toEqual({
       base: '${{ steps.revisions.outputs.base }}',
+      trusted_base: '${{ steps.revisions.outputs.trusted-base }}',
       head: '${{ steps.revisions.outputs.head }}',
       lanes: '${{ steps.classify.outputs.lanes }}',
       plan: '${{ steps.classify.outputs.plan }}',
@@ -804,6 +806,7 @@ describe('PR Gate workflow', () => {
 
     expect(workflow.jobs.preflight.outputs).toEqual({
       base: '${{ steps.revisions.outputs.base }}',
+      trusted_base: '${{ steps.revisions.outputs.trusted-base }}',
       head: '${{ steps.revisions.outputs.head }}',
       lanes: '${{ steps.classify.outputs.lanes }}',
       plan: '${{ steps.classify.outputs.plan }}',
@@ -2022,4 +2025,23 @@ it('keeps the platform policy explicit and keeps automated portable tests off ma
     expect(workflow.jobs.unit['runs-on']).toContain(`github.event_name == '${event}'`)
     expect(related?.env?.VITEST_PORTABLE_CI).toContain(`github.event_name == '${event}'`)
   }
+})
+
+it('derives Ubuntu package exclusions from trusted policy before either test mode', () => {
+  const steps = workflow.jobs.unit_shard.steps!
+  const policy = steps.find(
+    (step) => step.name === 'Select independent package tests from trusted policy'
+  )!
+  expect(policy.uses).toBe('./.github/actions/select-package-tests')
+  expect(policy.with).toMatchObject({
+    'trusted-base': '${{ needs.preflight.outputs.trusted_base }}',
+    enabled: "${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}"
+  })
+  expect(policy['continue-on-error']).toBeUndefined()
+  expect(steps.indexOf(policy)).toBeLessThan(
+    steps.findIndex((step) => step.name === 'Test complete suite shard')
+  )
+  expect(steps.indexOf(policy)).toBeLessThan(
+    steps.findIndex((step) => step.name === 'Test affected Module shard')
+  )
 })
