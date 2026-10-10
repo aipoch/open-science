@@ -1315,11 +1315,11 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/session-persistence/turn-outcome-authority.test.ts',
       'src/main/session-persistence/flush-protocol.ts',
       'src/main/session-persistence/conversation-pdf-electron.ts',
-      'src/main/session-persistence/research-membership.ts',
       'src/main/session-persistence/create-local-session.test.ts',
       'src/main/session-persistence/create-local-session.ts',
       'src/main/session-persistence/create-managed-session.test.ts',
-      'src/main/session-persistence/create-managed-session.ts'
+      'src/main/session-persistence/create-managed-session.ts',
+      'src/main/session-persistence/research-membership.ts'
     ])
     expect(sessionPersistence.interfacePaths).toEqual([
       'src/main/session-persistence/coordinator.ts',
@@ -1349,9 +1349,9 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/session-persistence/runtime-writer.ts',
       'src/main/session-persistence/flush-protocol.ts',
       'src/main/session-persistence/conversation-pdf-electron.ts',
-      'src/main/session-persistence/research-membership.ts',
       'src/main/session-persistence/create-local-session.ts',
-      'src/main/session-persistence/create-managed-session.ts'
+      'src/main/session-persistence/create-managed-session.ts',
+      'src/main/session-persistence/research-membership.ts'
     ])
     expect(sessionPersistence.consumerModules).toEqual(['project_lifecycle'])
     expect(sessionPersistence.testFiles.owner).toEqual([
