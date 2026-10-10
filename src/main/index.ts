@@ -37,6 +37,7 @@ import { startOrAttachDesktopBackend, desktopBackendPaths } from './desktop-runt
 import { connectDesktopRuntime, type DesktopRuntimeClient } from './desktop-runtime-client'
 import { installDesktopRuntimeElectronAdapter } from './desktop-runtime-electron-adapter'
 import { createDesktopNativeHandler } from './desktop-native-electron'
+import { handleOwnedBackendDisconnect } from './desktop-backend-exit'
 import { createDesktopPreviewProxy } from './desktop-preview-proxy'
 import type { DesktopShutdownWork } from './desktop-runtime-lifecycle'
 import { PackageFileOpenRelay, packagePathsFromArgv } from './session-package/file-open'
@@ -564,6 +565,14 @@ async function startDesktop(): Promise<void> {
         if (launch.startedProcess && launch.startedProcess.exitCode === null)
           launch.startedProcess.once('exit', restart)
         else restart()
+      } else if (launch.startedProcess) {
+        handleOwnedBackendDisconnect({
+          child: launch.startedProcess,
+          error,
+          updateCommitted,
+          onCleanExit: () => app.quit(),
+          onFailure: reportError
+        })
       } else if (!updateCommitted) reportError(error)
     }
   })
