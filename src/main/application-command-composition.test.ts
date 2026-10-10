@@ -91,6 +91,8 @@ const project = (id: string): Project => ({
 const dependencies = (): ApplicationCommandCompositionDependencies =>
   ({
     researchExecutionProfiles: EMPTY_OWNER,
+    runObservation: EMPTY_OWNER,
+    browserRecording: EMPTY_OWNER,
     researchRuns: EMPTY_OWNER,
     researchDemos: EMPTY_OWNER,
     pdfTranslation: EMPTY_OWNER,
@@ -240,7 +242,7 @@ const invocation = (
 }
 
 describe('application command composition', () => {
-  it('leaves local observation methods with their scoped IPC owner instead of installing another command router', async () => {
+  it('routes local observation methods through the desktop Node dispatcher without exposing web or task writers', async () => {
     const composition = createApplicationCommandComposition(dependencies())
     const observations = RENDERER_CONTRACT_CATALOG.filter(
       (contract) => contract.capability === 'run-observation'
@@ -275,12 +277,11 @@ describe('application command composition', () => {
         localWeb: 'unavailable',
         remoteWeb: 'unavailable'
       })
-      for (const view of [
-        composition.electron,
-        composition.localWeb,
-        composition.remoteWeb,
-        composition.task
-      ]) {
+      expect(composition.desktop.commandNames()).toContain(contract.channel)
+      // Native-only channels are carried by the Node desktop transport, not the legacy
+      // in-process application-command adapter.
+      expect(composition.electron.commandNames()).not.toContain(contract.channel)
+      for (const view of [composition.localWeb, composition.remoteWeb, composition.task]) {
         expect(view.commandNames()).not.toContain(contract.channel)
         await expect(view.invoke(contract.channel!, invocation())).rejects.toMatchObject({
           code: 'command-unavailable'

@@ -62,12 +62,13 @@ import {
 import { createLogger } from '../logger'
 import { readObservationProjectExport } from '../run-observation/project-export-reader'
 import { startManagedProjectRecording } from '../project-recordings/managed-adapter'
-import { captureElectronObservationView } from '../run-observation/electron-capture'
+import { createDesktopObservationBridge } from '../observation-desktop/bridge'
+import type { ObservationNativeInvoke } from '../observation-desktop/contract'
+import { RuntimeViewOwner } from '../runtime-view/owner'
 import { ReplayViewerHttpHost } from '../replay-viewer/http-host'
 import { createReplayViewerAssetReader } from '../replay-viewer/assets'
 import { createRunObservationExternalPort } from '../run-observation-external-port'
 import { BrowserRecordingOwner } from '../browser-recordings/owner'
-import { startElectronSurfaceRecording } from '../browser-recordings/electron-surface-driver'
 import { createBrowserRecordingExternalPort } from '../browser-recordings/external-port'
 import type { composeManagedFiles } from './managed-files'
 import type { composeNotebookRuntime } from './notebook-runtime'
@@ -110,6 +111,7 @@ export async function composeManagedExecution({
   notebookRuntime,
   runtimeRef,
   desktopLocale,
+  invokeObservationNative,
   modules
 }: {
   applicationEvents: ApplicationEventPublisher
@@ -120,6 +122,7 @@ export async function composeManagedExecution({
   notebookRuntime: Awaited<ReturnType<typeof composeNotebookRuntime>>
   runtimeRef: { current: ReturnType<typeof createAcpRuntime> | undefined }
   desktopLocale?: () => import('../../shared/locale').Locale
+  invokeObservationNative?: ObservationNativeInvoke
   modules: ApplicationModuleBuilder
 }): Promise<ManagedExecutionComposition> {
   const dataRoot = await realpath(resolveDataRoot()).catch((error: NodeJS.ErrnoException) => {
@@ -246,11 +249,17 @@ export async function composeManagedExecution({
     withProjectAvailable: (projectId, operation) =>
       archive.withProjectAvailable(projectId, operation)
   })
-  const projectViews = new ManagedRuntimeViews()
+  const observationDesktop = createDesktopObservationBridge(
+    invokeObservationNative ??
+      (async () => {
+        throw new Error('Desktop observation is unavailable.')
+      })
+  )
+  const projectViews = new ManagedRuntimeViews(new RuntimeViewOwner({}, observationDesktop.frames))
   const observationMedia = new ObservationMediaCollector()
   const browserRecordings = new BrowserRecordingOwner({
     dataRoot,
-    startDriver: startElectronSurfaceRecording
+    startDriver: observationDesktop.startDriver
   })
   const observationCoordinator = new ManagedRunObservationCoordinator({
     dataRoot,
@@ -545,6 +554,7 @@ export async function composeManagedExecution({
   }
   const viewerHost: ReplayViewerHttpHost = new ReplayViewerHttpHost({
     desktopLocale,
+    desktopFrames: observationDesktop.frames,
     browserRecording: async (method, input) => {
       input.assertAuthorized()
       if (method === 'status') return browserRecordings.status(input.viewerId)
@@ -627,7 +637,7 @@ export async function composeManagedExecution({
             ? {
                 captureHostView: async (captureSignal: AbortSignal) => {
                   stage = 'host-capture'
-                  const image = await captureElectronObservationView({
+                  const image = await observationDesktop.capture({
                     ...host,
                     signal: captureSignal
                   })
@@ -925,6 +935,7 @@ export async function composeManagedExecution({
     researchReplayHost.close()
     observation.close()
     projectViews.close()
+    observationDesktop.close()
   }
   const getActiveSessions = (): SessionScope[] => [
     ...new Map(

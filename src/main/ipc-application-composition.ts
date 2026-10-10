@@ -94,6 +94,7 @@ import type { TaskAgentPort } from './tasks/task-runner'
 import type { TrayNavigationSession } from './tray-navigation'
 
 export type IpcRegistrationOptions = {
+  invokeObservationNative?: import('./observation-desktop/contract').ObservationNativeInvoke
   notificationDelivery?: (
     translate: NativeTranslator
   ) => import('./notifications/desktop-delivery').DesktopNotificationDelivery
@@ -189,6 +190,7 @@ export type IpcRegistration = ApplicationRuntimeInterfaces & {
 export const createApplicationModules = async (
   {
     mainEntryPath,
+    invokeObservationNative,
     settingsStore,
     managedPreviewProtocol,
     headless = false,
@@ -356,6 +358,7 @@ export const createApplicationModules = async (
   })
   const specialistCatalog = await composeSpecialistCatalog({ ...settingsBootstrap, composition })
   const managedExecution = await composeManagedExecution({
+    invokeObservationNative,
     desktopLocale: () => localeOwner.snapshot().locale,
     applicationEvents,
     managedFiles,
@@ -793,6 +796,8 @@ export const createApplicationModules = async (
   })
   sessionAuthority.reviewerCommandOwnerRef.current = reviewerCommandOwner
   const commandDependencies = composeCommandDependencies({
+    runObservation: managedExecution.external.observation!,
+    browserRecording: managedExecution.external.projectRecordings!,
     researchRuns: managedExecution.researchRuns,
     researchDemos: managedExecution.researchDemos,
     researchExecutionProfiles: managedExecution.service,

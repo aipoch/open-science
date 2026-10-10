@@ -50,6 +50,8 @@ import type { composeSettingsEffects } from './settings-effects'
 import type { composeStorageStartup } from './storage-startup'
 
 export function composeCommandDependencies({
+  runObservation,
+  browserRecording,
   researchRuns,
   researchDemos,
   researchExecutionProfiles,
@@ -96,6 +98,8 @@ export function composeCommandDependencies({
   listAppIconPreviews
 }: {
   researchExecutionProfiles: ApplicationCommandCompositionDependencies['researchExecutionProfiles']
+  runObservation: ApplicationCommandCompositionDependencies['runObservation']
+  browserRecording: ApplicationCommandCompositionDependencies['browserRecording']
   researchRuns: ApplicationCommandCompositionDependencies['researchRuns']
   researchDemos: ApplicationCommandCompositionDependencies['researchDemos']
   reportUploadProgress: ((clientId: string, progress: UploadTransferProgress) => void) | undefined
@@ -164,6 +168,8 @@ export function composeCommandDependencies({
   )
   const openRecoveryFolder = createSessionRecoveryFolderCommand(sessionFoundation.sessionRepository)
   const applicationCommandDependencies: ApplicationCommandCompositionDependencies = {
+    runObservation,
+    browserRecording,
     researchRuns,
     researchDemos,
     researchExecutionProfiles,
