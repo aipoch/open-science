@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { expect, it } from 'vitest'
 import { groupPdfFigureSelections } from './pdf-figure-selections'
 import { copyPdfTable } from '../../../../../../shared/pdf-table-copy'
@@ -290,10 +291,8 @@ it('joins numeric records with native superscript footnotes while preserving the
 
 it('joins source-backed multilevel continuations while preserving sections and source regions', async () => {
   const { resolve } = await import('node:path')
-  const { readPdfFixture } =
-    await import('../../../../../../main/literature/pdf-structure/read-fixture')
   const f = readPdfFixture(
-    resolve('src/main/literature/pdf-structure/fixtures/rotated-outcome-table-continuation.jsonl')
+    resolve('test/fixtures/pdf-figure-selections/rotated-outcome-table-continuation.json')
   )
   const a = batch(5),
     b = batch(6)
@@ -334,11 +333,9 @@ it('joins source-backed multilevel continuations while preserving sections and s
 })
 
 it('joins native assessment schedules and unheaded quotations without dropping body rows', async () => {
-  const { readPdfFixture } =
-    await import('../../../../../../main/literature/pdf-structure/read-fixture')
   const { resolve } = await import('node:path')
   const cases = readPdfFixture(
-    resolve('src/main/literature/pdf-structure/fixtures/native-table-continuations.jsonl')
+    resolve('test/fixtures/pdf-figure-selections/native-table-continuations.json')
   )
   for (const [name, rows] of [
     ['schedules', 30],
@@ -368,11 +365,9 @@ it.each([
   'different-source',
   'nonadjacent'
 ])('leaves a narrative continuation separate with %s evidence', async (variant) => {
-  const { readPdfFixture } =
-    await import('../../../../../../main/literature/pdf-structure/read-fixture')
   const { resolve } = await import('node:path')
   const { quotations } = readPdfFixture(
-    resolve('src/main/literature/pdf-structure/fixtures/native-table-continuations.jsonl')
+    resolve('test/fixtures/pdf-figure-selections/native-table-continuations.json')
   )
   const next = quotations[1] as PdfStructureResult,
     element = next.elements[0],
@@ -396,3 +391,6 @@ it.each([
   if (variant === 'nonadjacent') element.regions[0].page += 1
   expect(groupPdfFigureSelections(quotations)).toHaveLength(2)
 })
+
+const readPdfFixture = (path: string): ReturnType<typeof JSON.parse> =>
+  JSON.parse(readFileSync(path, 'utf8'))

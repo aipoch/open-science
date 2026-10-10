@@ -1,13 +1,11 @@
 import { mkdtemp, mkdir, writeFile, rm, symlink, unlink, truncate } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { resolve } from 'node:path'
-import { pathToFileURL } from 'node:url'
 import sharp from 'sharp'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { PdfStructureCache } from './cache'
 import { checkPdfStructureDecodingBudget } from '../../../shared/pdf-structure'
-import { readWorkerResult } from './worker-result'
+import { readWorkerResult } from '@aipoch/pdf-structure'
 import { parsePdfStructureResult, type PdfStructureIdentity } from './result'
 
 const identity: PdfStructureIdentity = {
@@ -20,9 +18,6 @@ const identity: PdfStructureIdentity = {
 const png = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADElEQVQImWP4//8/AAX+Av5Y8msOAAAAAElFTkSuQmCC',
   'base64'
-)
-const { inspectScratch, serializeWorkerResult } = await import(
-  pathToFileURL(resolve('resources/pdf-structure/scratch.mjs')).href
 )
 const raw = (): Record<string, unknown> => ({
   sourceSha256: identity.sourceChecksum,
@@ -155,28 +150,6 @@ describe('worker result boundary', () => {
       await expect(readWorkerResult(root, identity, new Map())).rejects.toThrow('budget')
     }
   )
-
-  it('omits all origins before writing an oversized UTF-8 manifest', async () => {
-    const table = rawTable()
-    Object.assign(table.cells[0], { sourceTokens: [{ text: 'temporary token geometry' }] })
-    const value = { ...raw(), figures: [], tables: [table] }
-    const small = serializeWorkerResult(value)
-    expect(small).toContain('sourceItems')
-    expect(small).not.toContain('sourceTokens')
-    table.cells[0].sourceItems = Array.from({ length: 16 }, (_, index) => ({
-      pageNumber: 1,
-      index: index + 10,
-      text: '中'.repeat(200000)
-    }))
-    const text = serializeWorkerResult(value)
-    expect(Buffer.byteLength(text)).toBeLessThan(8 * 1024 ** 2)
-    expect(text).not.toContain('sourceItems')
-    expect(text).not.toContain('sourceTokens')
-    await writeFile(join(root, 'structure.json'), text)
-    expect(
-      (await readWorkerResult(root, identity, new Map())).elements[0].table!.cells[0].text
-    ).toBe('=')
-  })
 
   it('rejects source items on another processed page even when that page exists', async () => {
     const table = rawTable()
@@ -320,19 +293,6 @@ describe('worker result boundary', () => {
     })
     await expect(readWorkerResult(root, identity, new Map())).rejects.toThrow()
   })
-  it.each(['algorithm', 'graphical-table'])(
-    'accounts for and cleans %s thumbnails while retaining unexpected scratch files',
-    async (kind) => {
-      const originalBytes = await inspectScratch(root)
-      await writeFile(join(root, `thumbnails/p1-${kind}-1.png`), png)
-      expect(await inspectScratch(root)).toBe(originalBytes + png.length)
-      await writeFile(join(root, 'thumbnails/unowned.png'), png)
-      await expect(inspectScratch(root)).rejects.toThrow('Unexpected PDF scratch')
-      await unlink(join(root, 'thumbnails/unowned.png'))
-      expect(await inspectScratch(root, true)).toBe(originalBytes + png.length)
-      expect(await inspectScratch(root)).toBe(0)
-    }
-  )
   it('persists algorithms as image regions without manufacturing table cells', async () => {
     await save({
       ...raw(),

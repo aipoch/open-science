@@ -7,14 +7,22 @@
     },
     {
       "root": "packages/connector-builtins",
-      "dependencies": ["packages/connector-core"]
+      "dependencies": [
+        "packages/connector-core"
+      ]
     },
     {
       "root": "packages/connector-mcp-client",
-      "dependencies": ["packages/connector-core"]
+      "dependencies": [
+        "packages/connector-core"
+      ]
     },
     {
       "root": "packages/diagnostics",
+      "dependencies": []
+    },
+    {
+      "root": "packages/pdf-structure",
       "dependencies": []
     }
   ]

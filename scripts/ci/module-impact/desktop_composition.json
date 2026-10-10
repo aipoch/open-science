@@ -1429,9 +1429,14 @@
       "src/main/session-diagnostics/detail.test.ts",
       "src/main/session-diagnostics/environment.test.ts",
       "src/main/session-diagnostics/notebook.test.ts",
-      "src/main/session-diagnostics/projection.test.ts"
+      "src/main/session-diagnostics/projection.test.ts",
+      "src/main/literature/pdf-structure/engine-adapter.test.ts"
     ]
   },
-  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
+  "capabilityOverlays": [
+    "e2e_regressions",
+    "e2e_delegation",
+    "windows_sensitive"
+  ],
   "fallbackCapability": "main_runtime"
 }

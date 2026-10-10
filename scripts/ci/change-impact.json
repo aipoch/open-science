@@ -614,6 +614,10 @@
     {
       "paths": ["test/fixtures/shadcn-patch-history.json"],
       "tests": ["scripts/dependency-patches.test.ts"]
+    },
+    {
+      "paths": ["test/fixtures/pdf-figure-selections/*.json"],
+      "tests": ["src/renderer/src/pages/workspace/previews/renderers/pdf-figure-selections.test.ts"]
     }
   ]
 }

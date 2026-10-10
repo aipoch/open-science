@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
-import { isElectronPackage, isShippableDependencyPath } from './backend-dependencies.mjs'
+import { backendDependencyIncludes, isElectronPackage } from './backend-dependencies.mjs'
 import { cp, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { dirname, join, resolve, relative, sep } from 'node:path'
@@ -80,7 +80,7 @@ async function copyDependency(name, from, destinationParent = stage) {
   await cp(source, destination, {
     recursive: true,
     dereference: true,
-    filter: (path) => isShippableDependencyPath(relative(source, path))
+    filter: (path) => backendDependencyIncludes(pkg, relative(source, path))
   })
   // These are prebuilt target artifacts. npm must not reinterpret them as a source installation.
   if (name.startsWith('@aipoch/') || name === '@prisma/client') {

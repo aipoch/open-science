@@ -195,13 +195,7 @@ export async function composeDocumentReading({
   const pdfStructureOwner = createPdfStructureOwner({
     models: localModelOwner,
     sources: pdfStructureSources,
-    engine: createPdfStructureEngine(
-      join(
-        runtimeMetadata().applicationPath.replace(/app\.asar$/, 'app.asar.unpacked'),
-        'resources',
-        'pdf-structure'
-      )
-    )
+    engine: createPdfStructureEngine()
   })
   const pdfStructureReader = new PdfStructureReader(pdfStructureOwner)
   await modules.add({ pdfStructureOwner }, ({ pdfStructureOwner: owner }) => ({

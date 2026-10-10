@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { lstat, mkdir, mkdtemp, rmdir } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import type { LocalModelOwner, LocalModelUse } from '../../local-models/owner'
+import type { LocalModelOwner } from '../../local-models/owner'
 import { acquireDataRootWriter } from '../../storage/migration-state'
 import { resolveDataRoot } from '../../storage-root'
 import type { ResolvedSessionPdfVersion } from '../session-pdf-source-resolver'
@@ -22,22 +22,8 @@ export type PdfStructureProgress = Readonly<{
   processedPages: readonly number[]
 }>
 
-// start must return the handle synchronously, before asynchronous startup. stop resolves only
-// after the owned worker and its descendants are gone; a rejection retains files and model use.
-export type PdfStructureEngine = {
-  describe(): Promise<{ fingerprint: string; modelRevision: string }>
-  start(request: {
-    inputPath: string
-    model: Omit<LocalModelUse, 'release'>
-    identity: PdfStructureIdentity
-    signal: AbortSignal
-    onProgress: (progress: { phase: string; processedPages: number[] }) => void
-  }): {
-    result: Promise<unknown>
-    thumbnails: ReadonlyMap<string, Uint8Array>
-    stop(): Promise<void>
-  }
-}
+import type { PdfStructureEngine } from '@aipoch/pdf-structure'
+export type { PdfStructureEngine } from '@aipoch/pdf-structure'
 
 type Dependencies = {
   sources: PdfStructureSourceAuthority

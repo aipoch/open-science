@@ -42,3 +42,17 @@ export function assertBackendImports(metafiles, dependencies) {
     }
   }
 }
+
+// Local file: dependencies are symlinks in development. Keep the PDF package's source/fixtures
+// out of shipped runtimes, using its deliberately literal top-level npm files allowlist.
+export function backendDependencyIncludes(manifest, relativePath) {
+  const top = relativePath.split(/[\\/]/)[0]
+  if (!isShippableDependencyPath(relativePath)) return false
+  if (manifest.name !== '@aipoch/pdf-structure' || !top) return true
+  if (
+    !Array.isArray(manifest.files) ||
+    manifest.files.some((path) => !/^[a-zA-Z0-9_.-]+$/.test(path))
+  )
+    throw new Error('PDF package staging requires literal top-level files entries.')
+  return top === 'package.json' || manifest.files.includes(top)
+}

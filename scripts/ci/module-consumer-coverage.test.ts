@@ -32,6 +32,8 @@ it('retains every statically reachable consumer test and declared runtime-loadin
     baseUrl: process.cwd(),
     // Resolve the local package inside this checkout, not a shared node_modules symlink.
     paths: {
+      '@aipoch/pdf-structure': ['packages/pdf-structure/src/index.ts'],
+      '@aipoch/pdf-structure/result': ['packages/pdf-structure/src/result.ts'],
       // Graph-only source mapping of the explicit exports; runtime and typechecks use dist.
       ...Object.fromEntries(
         ['connector-core', 'connector-builtins', 'connector-mcp-client', 'diagnostics'].flatMap(

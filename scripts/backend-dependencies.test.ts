@@ -1,7 +1,9 @@
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   assertBackendImports,
+  backendDependencyIncludes,
   isElectronPackage,
   isShippableDependencyPath
 } from './backend-dependencies.mjs'
@@ -73,4 +75,26 @@ describe('standalone dependency boundary', () => {
       expect(isShippableDependencyPath(path)).toBe(false)
     })
   })
+})
+
+const pdfManifest = JSON.parse(readFileSync('packages/pdf-structure/package.json', 'utf8'))
+it.each(['/', '\\'])('stages the PDF npm runtime without source fixtures (%s)', (separator) => {
+  for (const path of [
+    'dist/index.js',
+    'dist/result.d.ts',
+    'resources/host.mjs',
+    'package.json',
+    'LICENSE',
+    'README.md'
+  ])
+    expect(backendDependencyIncludes(pdfManifest, path.split('/').join(separator))).toBe(true)
+  for (const path of [
+    'src/engine.ts',
+    'test/fixtures/case.jsonl',
+    'node_modules/sharp/index.js',
+    '.git/config',
+    'tsconfig.json'
+  ])
+    expect(backendDependencyIncludes(pdfManifest, path.split('/').join(separator))).toBe(false)
+  expect(backendDependencyIncludes(pdfManifest, '')).toBe(true)
 })
