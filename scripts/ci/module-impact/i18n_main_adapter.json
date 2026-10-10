@@ -459,7 +459,9 @@
       "src/main/desktop-native-electron.test.ts",
       "src/main/session-plan/session-plan-turn-outcome.test.ts",
       "src/renderer/src/pages/workspace/session-plan/session-plan-resume.test.tsx",
-      "src/main/notebook/runtime-repair.windows.integration.test.ts"
+      "src/main/notebook/runtime-repair.windows.integration.test.ts",
+      "src/main/acp/specialist-switch-recovery.integration.test.ts",
+      "src/main/agents/production-completion-handoff.test.ts"
     ]
   },
   "capabilityOverlays": ["i18n_catalog"],

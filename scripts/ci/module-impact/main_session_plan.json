@@ -210,7 +210,9 @@
       "src/main/composition/notebook-environment.test.ts",
       "src/main/node-process-host.test.ts",
       "src/main/desktop-runtime-transport.integration.test.ts",
-      "src/main/side-chat/application-commands.test.ts"
+      "src/main/side-chat/application-commands.test.ts",
+      "src/main/acp/specialist-switch-recovery.integration.test.ts",
+      "src/main/agents/production-completion-handoff.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

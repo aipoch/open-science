@@ -933,6 +933,7 @@ jobs:
           src/main/windows-powershell.test.ts
           src/main/delegation/acp-execution.test.ts
           src/main/delegation/production-framework-runtime.test.ts
+          src/main/acp/specialist-switch-recovery.integration.test.ts
           src/main/file-save.test.ts
           src/main/notebook/file-evidence-publication.integration.test.ts
           src/main/compute/compute-submission-evidence-recovery.integration.test.ts

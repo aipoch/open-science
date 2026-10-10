@@ -198,7 +198,9 @@
       "src/main/acp/approved-handoff-outcome.integration.test.ts",
       "src/main/acp/approved-handoff-outcome.test.ts",
       "src/renderer/src/pages/settings/connectors-i18n.render.test.tsx",
-      "src/renderer/src/i18n/resources.test.ts"
+      "src/renderer/src/i18n/resources.test.ts",
+      "src/main/acp/specialist-switch-recovery.integration.test.ts",
+      "src/main/agents/production-completion-handoff.test.ts"
     ]
   },
   "capabilityOverlays": [],

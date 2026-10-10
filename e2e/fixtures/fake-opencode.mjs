@@ -1875,6 +1875,53 @@ if (process.argv.includes('--version')) {
         const handoffReply = await permissionHandoffTask(context, prompt)
         if (handoffReply) {
           reply = handoffReply
+        } else if (
+          prompt.includes('Continue the original user task as ') &&
+          prompt.includes('Run specialist switch regression:')
+        ) {
+          // Execute through the real Notebook bridge after provider reconfiguration. A text-only
+          // continuation would miss a broken replacement runtime.
+          const target = prompt.match(/Continue the original user task as ([^.]+)\./u)?.[1]
+          const executed = controlResultValue(
+            await executeControlCode(
+              context.params.sessionId,
+              `return { marker: "specialist-switch-executed", target: ${JSON.stringify(target)} }`
+            )
+          )
+          if (executed.marker !== 'specialist-switch-executed')
+            throw new Error('Continuation did not execute.')
+          reply = `Specialist switch execution completed: ${executed.target}`
+        } else if (
+          prompt.includes('Run specialist switch regression:') &&
+          !prompt.includes('Generate Session metadata only from the following JSON data:')
+        ) {
+          const target = prompt.match(
+            /Run specialist switch regression: (SPECIALIST_SWITCH_FIXTURE|Main Agent)/u
+          )?.[1]
+          if (!target) throw new Error('Missing specialist switch regression target.')
+          const outcome = await Promise.race([
+            executeControlCode(
+              context.params.sessionId,
+              `return await host.agents.switch(${target === 'Main Agent' ? 'null' : JSON.stringify(target)})`
+            ).then(() => 'completed'),
+            waitForSessionCancellation(context.params.sessionId).then(() => 'cancelled')
+          ])
+          sessionCancellationResolvers.delete(context.params.sessionId)
+          if (outcome === 'cancelled') return { stopReason: 'cancelled' }
+          reply = 'Specialist switch outer tool completed.'
+        } else if (
+          prompt.includes('Verify specialist switch runtime remains usable.') &&
+          !prompt.includes('Generate Session metadata only from the following JSON data:')
+        ) {
+          const executed = controlResultValue(
+            await executeControlCode(
+              context.params.sessionId,
+              'return { marker: "specialist-switch-runtime-usable" }'
+            )
+          )
+          if (executed.marker !== 'specialist-switch-runtime-usable')
+            throw new Error('Final Notebook execution did not complete.')
+          reply = 'Specialist switch runtime remains usable.'
         } else if (prompt.includes('WORKSPACE_TRANSLATION_PDF_BASE64:')) {
           const content = prompt.match(/WORKSPACE_TRANSLATION_PDF_BASE64:([A-Za-z0-9+/=]+)/u)?.[1]
           if (!content) throw new Error('Missing workspace translation PDF fixture.')

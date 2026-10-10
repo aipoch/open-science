@@ -1,5 +1,11 @@
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { RuntimeSessionOwner } from '../session-persistence/runtime-session-owner'
+import { createClaudeCodeCompletionGateRuntime } from '../agents/claude-code-handoff'
+import { AcpRuntimeCoordinator } from './runtime-coordinator'
+import {
+  CompletionHandoffLifecycle,
+  InMemoryCompletionHandoffRepository
+} from '../agents/completion-handoff-lifecycle'
 import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
 import { createFrameNotebookLane } from '../notebook/lane-identity'
 import { createArtifactSaveFixture } from '../artifacts/save-test-fixtures'
@@ -19122,7 +19128,86 @@ describe('ACP runtime session management', () => {
     })
   })
 
-  it('retains staged Claude replay after failed adoption and commits it after success', async () => {
+  it('allows user prompts after a Claude handoff loses its provider attachment', async () => {
+    let providerGeneration = 0
+    let switches = 0
+    let liveRuntime!: AcpRuntime
+    const runtime = new AcpRuntimeCoordinator(
+      (callbacks) =>
+        (liveRuntime = new AcpRuntime({
+          callbacks,
+          appVersion: '0.1.0',
+          defaultCwd: '/workspace',
+          spawnAgent: () => {
+            const process = new FakeAgentProcess()
+            const generation = ++providerGeneration
+            startFakeAgent(process, [`session-${generation}`, `replacement-${generation}`])
+            return asAgentProcess(process)
+          },
+          framework: claudeCodeFramework,
+          resolveSpecialistIdentity: async () => ({ append: 'Specialist', prefix: '' })
+        }))
+    )
+    const { sessionId } = await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({
+      sessionId,
+      text: 'Switch to Specialist',
+      provenanceContext: { promptMessageId: 'message-1' }
+    })
+    const errors: unknown[] = []
+    const adapter = createClaudeCodeCompletionGateRuntime({
+      sessionFramework: () => 'claude-code',
+      cancelPrompt: (request) => runtime.stopPromptForHandoff(request.sessionId),
+      waitForPromptOwnershipRelease: (id) => runtime.waitForPromptOwnershipRelease(id),
+      resolveSpecialistId: () => 'specialist-1',
+      resolveSwitchReadBack: async () => ({
+        status: 'approved',
+        operation: 'switch',
+        binding: { sessionId, specialistId: 'specialist-1', targetName: 'Specialist' }
+      }),
+      prepareReplayContext: async (input) => runtime.prepareClaudeCodeHandoffReplay(input),
+      discardReplayContext: async (id) => runtime.discardClaudeCodeHandoffReplay(id),
+      switchSpecialist: async (id, specialistId) => {
+        if (++switches === 2) await liveRuntime.disconnect(false)
+        return runtime.switchSpecialist(id, specialistId)
+      },
+      createContinuationRequest: async (input) =>
+        runtime.createClaudeCodeContinuationRequest(input),
+      sendAppContinuation: (request) => runtime.sendAppContinuation(request),
+      reportHandoffFailure: async (error) => {
+        errors.push(error)
+      }
+    })
+    const lifecycle = new CompletionHandoffLifecycle(
+      new InMemoryCompletionHandoffRepository(),
+      adapter
+    )
+    runtime.setPromptAdmissionGuard(async (id) => {
+      if (!(await lifecycle.canStartUserPrompt(id))) {
+        throw new Error(
+          'The approved Specialist handoff must finish or be cancelled before sending.'
+        )
+      }
+    })
+    for (let generation = 1; generation <= 2; generation++) {
+      const context = {
+        sessionId,
+        turnId: `turn-${generation}`,
+        toolInvocationId: `tool-${generation}`,
+        controlInvocationGeneration: generation
+      }
+      await lifecycle.approve({ context, targetName: 'Specialist', generation })
+      await lifecycle.capture(context, { kind: 'returned', value: { status: 'approved' } })
+      const result = await lifecycle.run(context)
+      expect(errors).toEqual([])
+      expect(result.stage).toBe('continued')
+      expect(await lifecycle.canStartUserPrompt(sessionId)).toBe(true)
+    }
+    await runtime.sendPrompt({ sessionId, text: 'Continue work' })
+    await runtime.disconnect()
+  })
+
+  it('retains staged Claude replay after adoption until a provider accepts the continuation', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(
       process,
@@ -19170,6 +19255,10 @@ describe('ACP runtime session management', () => {
       'Carry this task through replacement'
     )
 
+    await runtime.sendAppContinuation({
+      sessionId: session.sessionId,
+      text: 'Continue the approved task.'
+    })
     await runtime.switchSpecialist(session.sessionId, 'specialist-1')
     expect(JSON.stringify(fakeAgent.newSessions[3]?._meta)).not.toContain(
       'Carry this task through replacement'
@@ -24716,6 +24805,96 @@ describe('ACP runtime session management', () => {
 })
 
 describe('ACP runtime skill force-load + nudge', () => {
+  it('retains approved Claude replay when an unprompted replacement cannot resume after Skill reload', async () => {
+    const sessionId = '11111111-1111-4111-8111-111111111111'
+    const replacementId = '22222222-2222-4222-8222-222222222222'
+    const fallbackId = '33333333-3333-4333-8333-333333333333'
+    const agents: Array<ReturnType<typeof startFakeAgent>> = []
+    const resumedIds: string[] = []
+    const saved = createRestoredContinuationSession('handoff-origin', sessionId, 'default-project')
+    saved.messages[0].content = 'Continue the approved analysis.'
+    const loadSessionForContinuation = vi.fn(async () => structuredClone(saved))
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      permissionWait: {
+        sessions: {
+          readSessionRuntimeContext: vi.fn(),
+          patchSessionRuntimeContext: vi.fn(),
+          containsMessageOnActiveBranch: vi.fn(),
+          loadSessionForContinuation
+        }
+      },
+      resolveBackend: () => ({
+        framework: {
+          ...claudeCodeFramework,
+          spawn: () => {
+            const process = new FakeAgentProcess()
+            agents.push(
+              startFakeAgent(
+                process,
+                agents.length === 0 ? [sessionId, replacementId] : [fallbackId],
+                {
+                  resumeNotFound: true,
+                  onResumeRequest: ({ sessionId }) => {
+                    resumedIds.push(sessionId)
+                  }
+                }
+              )
+            )
+            return asAgentProcess(process)
+          }
+        },
+        executablePath: '/bin/agent',
+        env: {}
+      }),
+      resolveSpecialistIdentity: resolveForceLoadSpecialistIdentity,
+      resolveSpecialistSkills: resolveForceLoadSpecialistSkills,
+      skills: {
+        needForceLoad: async (ids) => ids.filter((id) => id === 'research'),
+        namesForIds: async (ids) => ids
+      }
+    })
+    try {
+      await runtime.createSession({ cwd: '/workspace', projectId: 'default-project' })
+      await runtime.sendPrompt({
+        sessionId,
+        text: 'Continue the approved analysis.',
+        provenanceContext: { promptMessageId: 'handoff-origin' }
+      })
+      runtime.prepareClaudeCodeHandoffReplay({
+        sessionId,
+        capturedCompletion: { kind: 'returned', value: { status: 'approved' } },
+        switchReadBack: {
+          status: 'approved',
+          operation: 'switch',
+          binding: {
+            sessionId,
+            specialistId: 'force-load-specialist',
+            targetName: 'Research Specialist'
+          }
+        }
+      })
+      await runtime.switchSpecialist(sessionId, 'force-load-specialist')
+      await runtime.sendAppContinuation({
+        sessionId,
+        text: 'Continue the approved handoff.',
+        provenanceContext: { promptMessageId: 'handoff-origin' }
+      })
+      expect(resumedIds).toContain(replacementId)
+      expect(resumedIds).not.toContain(sessionId)
+      expect(JSON.stringify(agents.at(-1)?.newSessions[0]?._meta)).toContain(
+        'Approved switch read-back:'
+      )
+      expect(JSON.stringify(agents.at(-1)?.newSessions[0]?._meta)).toContain(
+        'Continue the approved analysis.'
+      )
+      expect(loadSessionForContinuation).not.toHaveBeenCalled()
+      expect(agents.at(-1)?.prompts[0].text).toContain('Continue the approved handoff.')
+    } finally {
+      await runtime.disconnect()
+    }
+  })
   const resolveForceLoadSpecialistIdentity = async (): Promise<{
     append: string
     prefix: string
@@ -25073,6 +25252,39 @@ describe('ACP runtime skill force-load + nudge', () => {
     }
   )
 
+  it('continues disabled owned Skill prompts inside a reviewer activity lease', async () => {
+    const spawner = createFreshAgentSpawner()
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: { ...opencodeFramework, spawn: spawner.spawn },
+        executablePath: '/bin/agent',
+        env: {}
+      }),
+      resolveSpecialistIdentity: resolveForceLoadSpecialistIdentity,
+      resolveSpecialistSkills: resolveForceLoadSpecialistSkills,
+      skills: {
+        needForceLoad: async (ids) => ids.filter((id) => id === 'research'),
+        namesForIds: async (ids) => ids
+      }
+    })
+    try {
+      const session = await runtime.createSession({
+        cwd: '/workspace',
+        specialistId: 'force-load-specialist'
+      })
+      await runtime.withActivity({}, async () => {
+        await runtime.sendPrompt({ sessionId: session.sessionId, text: 'review the paper' })
+        await runtime.sendPrompt({ sessionId: session.sessionId, text: 'review the fix' })
+      })
+      expect(spawner.agents.flatMap((agent) => agent.prompts)).toHaveLength(2)
+      await vi.waitFor(() => expect(runtime.getSnapshot().status).toBe('idle'))
+    } finally {
+      await runtime.disconnect()
+    }
+  }, 2_000)
+
   it.each([
     ...RESTORED_CONTINUATION_FRAMEWORKS,
     ['CodeBuddy', codeBuddyFramework, undefined, undefined] as const
@@ -25080,6 +25292,7 @@ describe('ACP runtime skill force-load + nudge', () => {
     'preserves app continuation context when bound Skills reload %s',
     async (_name, framework, modelRoute) => {
       const sessionId = '11111111-1111-4111-8111-111111111111'
+      const replacementProviderId = '22222222-2222-4222-8222-222222222222'
       const receivedPrompts: ContentBlock[][] = []
       const agents: Array<ReturnType<typeof startFakeAgent>> = []
       const root = await createTemporaryRoot()
@@ -25134,7 +25347,7 @@ describe('ACP runtime skill force-load + nudge', () => {
             spawn: () => {
               const process = new FakeAgentProcess()
               agents.push(
-                startFakeAgent(process, [sessionId], {
+                startFakeAgent(process, [sessionId, replacementProviderId], {
                   modes: createModes(['read-only', 'agent', 'agent-full-access'], 'read-only'),
                   onPrompt: ({ prompt }) => {
                     receivedPrompts.push(prompt)
@@ -25176,6 +25389,11 @@ describe('ACP runtime skill force-load + nudge', () => {
           )
         } else {
           expect(agents.at(-1)?.resumedSessions.length).toBeGreaterThan(0)
+          if (framework.id === 'claude-code') {
+            const resumedIds = agents.at(-1)?.resumedSessions.map((request) => request.sessionId)
+            expect(resumedIds).toContain(replacementProviderId)
+            expect(resumedIds).not.toContain(sessionId)
+          }
           expect(prompt).not.toContain('Analyze the original experiment before the handoff.')
         }
         expect(prompt).toContain('Continue the original user task')

@@ -104,7 +104,6 @@ const composeAcpRuntimeProviderSessionOwners = (
     resolveSpecialistSkills: options.resolveSpecialistSkills,
     resolveProjectAgentContext: options.resolveProjectAgentContext,
     peekClaudeReplay: (sessionId) => base.handoffContinuity.peekClaudeReplay(sessionId),
-    commitClaudeReplay: (sessionId) => base.handoffContinuity.commitClaudeReplay(sessionId),
     updateCwd,
     emitState,
     diagnosticContext
