@@ -7172,6 +7172,12 @@
     "Restoring desktop connection…": "正在恢復桌面連線…",
     "Your local drafts remain open. Submitted operations may have completed; they will not be retried.": "本機草稿仍保持開啟。已提交的操作可能已經完成，不會自動重試。",
     "The original backend is no longer available. Quit and reopen the app to continue.": "原後端已無法使用。請結束並重新開啟應用程式以繼續。",
-    "Reconnect": "重新連線"
+    "Reconnect": "重新連線",
+    "Standard mode": "標準模式",
+    "Use standard mode": "使用標準模式",
+    "Use protected mode": "使用保護模式",
+    "Switching modes stops running Notebook processes. Installed protection components are kept.": "切換模式會停止正在執行的 Notebook 程序。已安裝的保護元件會保留。",
+    "Could not switch execution mode. Try again.": "無法切換執行模式。請再試一次。",
+    "This selects an environment. It does not approve future destructive code.": "這會選擇一個環境，不會授權後續具有破壞性的程式碼。"
   }
 }

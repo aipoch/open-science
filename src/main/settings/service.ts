@@ -262,6 +262,7 @@ export type SettingsServiceOptions = {
   applyNetworkProxy?: (settings: NetworkProxySettings) => Promise<void>
   // Applies a committed Notebook egress policy to live kernels without requiring a restart.
   applyNotebookNetwork?: (settings: NotebookNetworkSettings) => Promise<void>
+  beforeNotebookProtectionChange?: () => Promise<(() => void) | void>
   validatePackageMirror?: (settings: SetPackageMirrorRequest) => Promise<void>
   applyPackageMirror?: (settings: PackageMirror) => Promise<void>
   beforePackageMirrorCaBundleChange?: () => Promise<void>
@@ -520,7 +521,12 @@ class SettingsService {
     })
     this.notebookNetwork = new NotebookNetworkSettingsOwner({
       repository: this.repository,
-      apply: options.applyNotebookNetwork ?? (async () => undefined)
+      beforeProtectionChange: options.beforeNotebookProtectionChange,
+      apply: async (settings, previous) => {
+        await options.applyNotebookNetwork?.(settings)
+        if (settings.windowsProtectionEnabled !== previous.windowsProtectionEnabled)
+          await this.refreshNotebookShellCapabilities()
+      }
     })
     this.packageMirror = new PackageMirrorSettingsOwner({
       repository: this.repository,
@@ -752,7 +758,11 @@ class SettingsService {
 
   async removeNotebookNetwork(): Promise<NotebookNetworkStatus> {
     const result = await this.removeNotebookNetworkImpl()
-    if (!result.cancelled) await this.refreshNotebookShellCapabilities()
+    if (!result.cancelled) {
+      if ((await this.notebookNetwork.get()).windowsProtectionEnabled === true)
+        await this.notebookNetwork.setWindowsProtectionEnabled(false)
+      else await this.refreshNotebookShellCapabilities()
+    }
     return this.getNotebookNetworkStatusImpl()
   }
 

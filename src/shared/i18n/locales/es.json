@@ -7500,6 +7500,12 @@
     "Restoring desktop connection…": "Restableciendo la conexión del escritorio…",
     "Your local drafts remain open. Submitted operations may have completed; they will not be retried.": "Los borradores locales permanecen abiertos. Es posible que las operaciones enviadas hayan finalizado; no se volverán a ejecutar.",
     "The original backend is no longer available. Quit and reopen the app to continue.": "El backend original ya no está disponible. Cierre y vuelva a abrir la aplicación para continuar.",
-    "Reconnect": "Volver a conectar"
+    "Reconnect": "Volver a conectar",
+    "Standard mode": "Modo estándar",
+    "Use standard mode": "Usar el modo estándar",
+    "Use protected mode": "Usar el modo protegido",
+    "Switching modes stops running Notebook processes. Installed protection components are kept.": "Al cambiar de modo se detienen los procesos de Notebook en ejecución. Los componentes de protección instalados se conservan.",
+    "Could not switch execution mode. Try again.": "No se pudo cambiar el modo de ejecución. Inténtelo de nuevo.",
+    "This selects an environment. It does not approve future destructive code.": "Esto selecciona un entorno. No autoriza código destructivo futuro."
   }
 }

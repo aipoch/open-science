@@ -53,6 +53,25 @@ afterEach(() => {
 })
 
 describe('NotebookNetworkDomainsForm', () => {
+  it('switches broken protection to standard mode without setup or removal', async () => {
+    Object.assign(window.api, { platform: 'win32' })
+    vi.mocked(window.api.settings.getNotebookNetworkStatus)
+      .mockResolvedValueOnce({ kind: 'error', reason: 'windowsNetworkFenceMissing' })
+      .mockResolvedValue({ kind: 'standard' })
+    const save = vi.fn(async (settings, _domains, _private, enabled) => ({
+      ...settings,
+      windowsProtectionEnabled: enabled
+    }))
+    useSettingsStore.setState({ setNotebookNetwork: save })
+    await act(async () => root.render(<NotebookNetworkDomainsForm />))
+    await act(async () => button('Use standard mode').click())
+    expect(save).toHaveBeenCalledWith(DEFAULT_NOTEBOOK_NETWORK_SETTINGS, [], [], false)
+    expect(window.api.settings.installNotebookNetwork).not.toHaveBeenCalled()
+    expect(window.api.settings.removeNotebookNetwork).not.toHaveBeenCalled()
+    expect(container.textContent).toContain('Standard mode')
+    expect(button('Use protected mode')).toBeDefined()
+  })
+
   it('does not discard domain edits when a pending save completes', async () => {
     let finish!: (value: typeof DEFAULT_NOTEBOOK_NETWORK_SETTINGS) => void
     const save = vi.fn(

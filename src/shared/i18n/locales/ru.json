@@ -7639,6 +7639,12 @@
     "Restoring desktop connection…": "Восстановление соединения рабочего стола…",
     "Your local drafts remain open. Submitted operations may have completed; they will not be retried.": "Локальные черновики остаются открытыми. Отправленные операции могли завершиться; повторно они выполняться не будут.",
     "The original backend is no longer available. Quit and reopen the app to continue.": "Исходный сервер больше недоступен. Закройте и снова откройте приложение, чтобы продолжить.",
-    "Reconnect": "Подключиться снова"
+    "Reconnect": "Подключиться снова",
+    "Standard mode": "Стандартный режим",
+    "Use standard mode": "Использовать стандартный режим",
+    "Use protected mode": "Использовать защищённый режим",
+    "Switching modes stops running Notebook processes. Installed protection components are kept.": "При смене режима работающие процессы Notebook останавливаются. Установленные компоненты защиты сохраняются.",
+    "Could not switch execution mode. Try again.": "Не удалось переключить режим выполнения. Повторите попытку.",
+    "This selects an environment. It does not approve future destructive code.": "Это выбор окружения. Он не разрешает последующее выполнение разрушительного кода."
   }
 }

@@ -330,6 +330,7 @@ class NotebookNetworkSandbox {
   updateConfiguration(
     update: Readonly<{
       policy?: NotebookNetworkPolicy
+      windowsProtectionEnabled?: boolean
       parentProxy?: NotebookNetworkParentProxy | null
       trustBundle?: NotebookNetworkSandboxOptions['trustBundle'] | null
     }>
@@ -337,15 +338,17 @@ class NotebookNetworkSandbox {
     if (!this.#initialized) throw new Error('Notebook network sandbox is not initialized.')
     let nextOptions: NotebookNetworkSandboxOptions = {
       ...this.#options,
+      ...('windowsProtectionEnabled' in update
+        ? { windowsProtectionEnabled: update.windowsProtectionEnabled }
+        : {}),
       ...(update.policy ? { policy: normalizePolicy(update.policy) } : {})
     }
     if ('parentProxy' in update) {
       if (update.parentProxy) nextOptions = { ...nextOptions, parentProxy: update.parentProxy }
       else {
         nextOptions = {
-          policy: nextOptions.policy,
-          resources: nextOptions.resources,
-          ...(nextOptions.trustBundle ? { trustBundle: nextOptions.trustBundle } : {})
+          ...nextOptions,
+          parentProxy: undefined
         }
       }
     }
@@ -353,9 +356,8 @@ class NotebookNetworkSandbox {
       if (update.trustBundle) nextOptions = { ...nextOptions, trustBundle: update.trustBundle }
       else {
         nextOptions = {
-          policy: nextOptions.policy,
-          resources: nextOptions.resources,
-          ...(nextOptions.parentProxy ? { parentProxy: nextOptions.parentProxy } : {})
+          ...nextOptions,
+          trustBundle: undefined
         }
       }
     }
@@ -363,12 +365,17 @@ class NotebookNetworkSandbox {
     this.#backend.updateConfig(createRuntimeConfig(nextOptions))
   }
 
+  private windowsManagementConfig(): ReturnType<typeof createRuntimeConfig> {
+    // Management still resolves installed receipts, even when execution is explicitly standard.
+    return createRuntimeConfig({ ...this.#options, windowsProtectionEnabled: undefined })
+  }
+
   async installWindows(): Promise<{ cancelled: boolean }> {
     if (process.platform !== 'win32') {
       throw new Error('Windows sandbox installation is only available on Windows.')
     }
     if (this.#initializing) await this.#initializing
-    const config = createRuntimeConfig(this.#options)
+    const config = this.windowsManagementConfig()
     const result = await installWindows(config)
     if (!result.cancelled && this.#initialized) await this.#backend.refreshWindowsProtection()
     return { cancelled: result.cancelled === true }
@@ -378,7 +385,7 @@ class NotebookNetworkSandbox {
     if (process.platform !== 'win32')
       throw new Error('Windows protection is only available on Windows.')
     if (this.#initializing) await this.#initializing
-    return isWindowsProtectionConfigured(createRuntimeConfig(this.#options))
+    return isWindowsProtectionConfigured(this.windowsManagementConfig())
   }
 
   async getWindowsRuntimeAccess(
@@ -387,7 +394,7 @@ class NotebookNetworkSandbox {
     if (process.platform !== 'win32')
       throw new Error('R runtime access is only available on Windows.')
     if (this.#initializing) await this.#initializing
-    return getWindowsRuntimeAccess(createRuntimeConfig(this.#options), executable)
+    return getWindowsRuntimeAccess(this.windowsManagementConfig(), executable)
   }
 
   async setWindowsRuntimeAccess(
@@ -399,7 +406,7 @@ class NotebookNetworkSandbox {
       throw new Error('R runtime access is only available on Windows.')
     if (this.#initializing) await this.#initializing
     return setWindowsRuntimeAccess(
-      createRuntimeConfig(this.#options),
+      this.windowsManagementConfig(),
       executable,
       authorized,
       verification
@@ -411,7 +418,7 @@ class NotebookNetworkSandbox {
       throw new Error('Windows sandbox removal is only available on Windows.')
     }
     if (this.#initializing) await this.#initializing
-    const result = await removeWindows(createRuntimeConfig(this.#options))
+    const result = await removeWindows(this.windowsManagementConfig())
     if (!result.cancelled && this.#initialized) await this.#backend.refreshWindowsProtection()
     return result
   }

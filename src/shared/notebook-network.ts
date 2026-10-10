@@ -32,6 +32,7 @@ export type NotebookNetworkStatusReason =
 export type NotebookRuntimeSetupPhase = 'checking' | 'downloading' | 'verifying'
 
 export type NotebookNetworkStatus = Readonly<{
+  windowsProtectionEnabled?: boolean
   windowsRuntimeSetup?: Readonly<{
     downloadBytes: number
     canCancel: boolean
@@ -51,6 +52,7 @@ export type NotebookNetworkStatus = Readonly<{
         }>
       }>
     | Readonly<{ kind: 'ready'; warnings: readonly NotebookNetworkStatusReason[] }>
+    | Readonly<{ kind: 'standard' }>
     | Readonly<{
         kind: 'setupRequired'
         platform: 'linux' | 'win32'
@@ -291,6 +293,9 @@ export const normalizeNotebookNetworkSettings = (value: unknown): NotebookNetwor
     : []
 
   return {
+    ...(typeof record.windowsProtectionEnabled === 'boolean'
+      ? { windowsProtectionEnabled: record.windowsProtectionEnabled }
+      : {}),
     ...(Array.isArray(record.trustedPrivateDestinations)
       ? {
           trustedPrivateDestinations: normalizeTrustedPrivateDestinations(

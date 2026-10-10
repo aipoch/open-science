@@ -8892,6 +8892,52 @@ describe('SettingsService: claude-shared login orchestration', () => {
 })
 
 describe('Notebook protection Shell capability switch', () => {
+  it('holds admission through mode persistence and capability refresh without installing or removing protection', async () => {
+    const calls: string[] = []
+    const install = vi.fn()
+    const remove = vi.fn()
+    const service = new SettingsService({
+      configRoot: storageRoot,
+      repository,
+      beforeNotebookProtectionChange: async () => {
+        calls.push('stop')
+        return () => {
+          calls.push('release')
+        }
+      },
+      applyNotebookNetwork: async (settings) => {
+        expect((await repository.getSettings()).notebookNetwork?.windowsProtectionEnabled).toBe(
+          settings.windowsProtectionEnabled
+        )
+        calls.push(settings.windowsProtectionEnabled ? 'protected' : 'standard')
+      },
+      refreshNotebookShellCapabilities: async () => {
+        calls.push('refresh')
+      },
+      installNotebookNetwork: install,
+      removeNotebookNetwork: remove
+    })
+    const policy = {
+      allowedDomains: [],
+      disabledOpenScienceDomainGroups: [],
+      disabledOpenScienceDomains: []
+    }
+    await service.setNotebookNetwork({ ...policy, windowsProtectionEnabled: false })
+    await service.setNotebookNetwork({ ...policy, windowsProtectionEnabled: true })
+    expect(calls).toEqual([
+      'stop',
+      'standard',
+      'refresh',
+      'release',
+      'stop',
+      'protected',
+      'refresh',
+      'release'
+    ])
+    expect(install).not.toHaveBeenCalled()
+    expect(remove).not.toHaveBeenCalled()
+  })
+
   it('refreshes existing conversations after setup and removal before returning status', async () => {
     const calls: string[] = []
     let protectedMode = false

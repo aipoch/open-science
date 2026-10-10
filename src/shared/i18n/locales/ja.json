@@ -7172,6 +7172,12 @@
     "Restoring desktop connection…": "デスクトップの接続を復元中…",
     "Your local drafts remain open. Submitted operations may have completed; they will not be retried.": "ローカルの下書きは開いたままです。送信済みの操作は完了している可能性があり、再実行されません。",
     "The original backend is no longer available. Quit and reopen the app to continue.": "元のバックエンドは利用できません。アプリを終了して再度開いてください。",
-    "Reconnect": "再接続"
+    "Reconnect": "再接続",
+    "Standard mode": "標準モード",
+    "Use standard mode": "標準モードを使用",
+    "Use protected mode": "保護モードを使用",
+    "Switching modes stops running Notebook processes. Installed protection components are kept.": "モードを切り替えると、実行中の Notebook プロセスが停止します。インストール済みの保護コンポーネントは保持されます。",
+    "Could not switch execution mode. Try again.": "実行モードを切り替えられませんでした。もう一度お試しください。",
+    "This selects an environment. It does not approve future destructive code.": "環境を選択します。今後の破壊的なコードの実行は承認されません。"
   }
 }

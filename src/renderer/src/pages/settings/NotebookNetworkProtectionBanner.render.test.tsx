@@ -32,6 +32,23 @@ afterEach(() => {
 })
 
 describe('NotebookNetworkProtectionBanner', () => {
+  it('does not promise standard execution when the user selected unprepared protection', async () => {
+    await act(async () =>
+      root.render(
+        <NotebookNetworkProtectionBanner
+          onOpen={() => undefined}
+          status={{
+            kind: 'setupRequired',
+            platform: 'win32',
+            reasons: [],
+            windowsProtectionEnabled: true
+          }}
+        />
+      )
+    )
+    expect(container.textContent).not.toContain('continues using standard execution')
+    expect(container.textContent).toContain('needs setup')
+  })
   it('shows the verified protection state and opens the existing settings route', async () => {
     const onOpen = vi.fn()
     await act(async () => root.render(<NotebookNetworkProtectionBanner onOpen={onOpen} />))

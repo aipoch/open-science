@@ -195,6 +195,88 @@ afterEach(async () => {
 })
 
 describe('NotebookNetworkSandboxOwner', () => {
+  it('keeps the initializing sandbox when a domain setting changes concurrently', async () => {
+    let finish!: () => void
+    backend.initialize.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve
+        })
+    )
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: '/resources',
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn(),
+      platform: 'win32'
+    })
+    const pending = owner.initialize()
+    await vi.waitFor(() => expect(finish).toBeDefined())
+    owner.applySettings({
+      ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      allowedDomains: ['changed.example.org']
+    })
+    finish()
+    try {
+      await pending
+      expect(backend.updateConfiguration).toHaveBeenCalledWith(
+        expect.objectContaining({
+          policy: expect.objectContaining({
+            allowedDomains: expect.arrayContaining(['changed.example.org'])
+          })
+        })
+      )
+      owner.applySettings(DEFAULT_NOTEBOOK_NETWORK_SETTINGS)
+      expect(backend.updatePolicy).toHaveBeenCalled()
+    } finally {
+      await owner.dispose()
+    }
+  })
+
+  it('rejects a prepared process and warm execution after switching modes', async () => {
+    const fixture = await mkdtemp(join(tmpdir(), 'os-mode-admission-'))
+    fixtureDirectories.push(fixture)
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: '/resources',
+      temporaryRoot: join(fixture, 'commands'),
+      getSettings: async () => ({
+        ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        windowsProtectionEnabled: false
+      }),
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn(),
+      platform: 'win32'
+    })
+    const wrapped = await owner.wrap({
+      executable: process.execPath,
+      args: ['-e', ''],
+      env: {},
+      cwd: fixture,
+      commandText: '',
+      sessionId: 'session',
+      projectId: 'project',
+      runtime: 'repl',
+      filesystem: {
+        readOnlyRoots: [],
+        readWriteRoots: [fixture],
+        deniedReadRoots: [],
+        deniedWriteRoots: []
+      }
+    })
+    try {
+      const release = owner.beginProtectionChange()
+      release()
+      expect(() => wrapped.beginSpawn?.()).toThrow('execution mode changed')
+      expect(() => wrapped.beginExecution?.()).toThrow('execution mode changed')
+    } finally {
+      await wrapped.cleanup('spawn-failed', {
+        processesTerminated: true,
+        processState: 'never-started'
+      })
+      await owner.dispose()
+    }
+  })
+
   it
     .runIf(process.platform === 'win32')
     .each(['directory', 'receipt', 'persistent-directory'] as const)(
@@ -1037,6 +1119,48 @@ describe('NotebookNetworkSandboxOwner', () => {
     expect(serialized).toContain('"outcome":"cancelled"')
     expect(serialized).not.toContain('C:\\\\private\\\\notebook-sandbox')
     await owner.dispose()
+  })
+
+  it('allows explicitly selected standard execution even when installed protection is broken', async () => {
+    backend.status.mockResolvedValue({
+      kind: 'setupRequired',
+      platform: 'win32',
+      reasons: ['broken']
+    })
+    backend.getWindowsRuntimeAccess.mockRejectedValue(new Error('Protection receipt is damaged'))
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: '/resources',
+      getSettings: async () => ({
+        ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        windowsProtectionEnabled: false
+      }),
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn(),
+      platform: 'win32'
+    })
+    try {
+      await expect(owner.windowsProtectionReady()).resolves.toBe(false)
+      await expect(owner.status()).resolves.toMatchObject({ kind: 'standard' })
+      await expect(
+        owner.ensureRuntimeAccess({
+          runtime: 'r',
+          executable: 'Rscript.exe',
+          sessionId: 'standard'
+        })
+      ).resolves.toEqual({ windowsProtectionRequired: false, windowsRuntimeAccessRequired: false })
+      expect(backend.status).not.toHaveBeenCalled()
+      expect(backend.getWindowsRuntimeAccess).not.toHaveBeenCalled()
+      expect(backend.isWindowsProtectionConfigured).not.toHaveBeenCalled()
+      const release = owner.beginProtectionChange()
+      await expect(owner.windowsProtectionReady()).rejects.toThrow('mode is changing')
+      await expect(owner.setWindowsRuntimeAccess('Rscript.exe', true)).rejects.toThrow(
+        'mode is changing'
+      )
+      release()
+      await expect(owner.windowsProtectionReady()).resolves.toBe(false)
+    } finally {
+      await owner.dispose()
+    }
   })
 
   it('keeps standard execution offline and rejects stale capabilities in either switch direction', async () => {

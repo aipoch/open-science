@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -43,6 +43,46 @@ beforeEach(() => {
 })
 
 describe('NotebookNetworkSandbox', () => {
+  it('retains ownership validation for component management in explicit standard mode', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'standard-management-'))
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+    try {
+      for (const key of [
+        'OPEN_SCIENCE_E2E_STORAGE_ROOT',
+        'OPEN_SCIENCE_CONFIG_ROOT',
+        'OPEN_SCIENCE_STORAGE_ROOT'
+      ])
+        vi.stubEnv(key, '')
+      vi.stubEnv('LOCALAPPDATA', root)
+      for (const brand of ['Open-Science', 'OpenScience']) {
+        const ownership = join(
+          root,
+          'Aipoch',
+          brand,
+          'notebook-sandbox',
+          '0f3cd2a44c3d4e4e9f1e2a5b'
+        )
+        mkdirSync(ownership, { recursive: true })
+        writeFileSync(join(ownership, 'receipt.json'), '{}')
+      }
+      const sandbox = new NotebookNetworkSandbox({
+        ...options(),
+        packaged: true,
+        windowsProtectionEnabled: false
+      })
+      await expect(sandbox.installWindows()).rejects.toThrow('ambiguous')
+      await expect(sandbox.removeWindows()).rejects.toThrow('ambiguous')
+      await expect(sandbox.isWindowsProtectionConfigured()).rejects.toThrow('ambiguous')
+      await expect(sandbox.getWindowsRuntimeAccess('R.exe')).rejects.toThrow('ambiguous')
+      await expect(sandbox.setWindowsRuntimeAccess('R.exe', true)).rejects.toThrow('ambiguous')
+    } finally {
+      vi.unstubAllEnvs()
+      if (platform) Object.defineProperty(process, 'platform', platform)
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it('admits a new command without forgetting independently releasable process debt', async () => {
     const sandbox = new NotebookNetworkSandbox(options())
     vi.spyOn(sandbox, 'status').mockResolvedValue({ kind: 'ready', warnings: [] })

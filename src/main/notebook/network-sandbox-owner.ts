@@ -313,6 +313,8 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
   private runtimeAccessQueue: Promise<void> = Promise.resolve()
   private runtimeAccessRevision = 0
   private pendingRuntimeAccessChanges = 0
+  private protectionChangeInProgress = false
+  private protectionRevision = 0
   private readonly cancelledRuntimeAccess = new Set<string>()
   private readonly windowsRuntime?: WindowsNotebookRuntimeManager
   private readonly releaseWindowsRuntime?: () => void
@@ -340,10 +342,37 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
   }
 
   async windowsProtectionConfigured(): Promise<boolean> {
-    return this.platform === 'win32' && this.getOrCreateSandbox().isWindowsProtectionConfigured()
+    if (this.platform !== 'win32') return false
+    const settings = await this.readSettings()
+    return (
+      settings.windowsProtectionEnabled ?? this.getOrCreateSandbox().isWindowsProtectionConfigured()
+    )
+  }
+
+  private async readSettings(): Promise<NotebookNetworkSettings> {
+    if (this.settings) return this.settings
+    const settings = normalizeNotebookNetworkSettings(await this.options.getSettings())
+    // A concurrent settings mutation wins over an older asynchronous read.
+    return (this.settings ??= settings)
+  }
+
+  beginProtectionChange(): () => void {
+    if (
+      this.protectionChangeInProgress ||
+      this.windowsSetupController ||
+      this.pendingRuntimeAccessChanges > 0
+    )
+      throw new Error('Wait for Notebook protection setup or runtime authorization to finish.')
+    this.protectionChangeInProgress = true
+    this.protectionRevision += 1
+    return () => {
+      this.protectionChangeInProgress = false
+    }
   }
 
   async windowsProtectionReady(): Promise<boolean> {
+    if (this.protectionChangeInProgress)
+      throw new Error('Notebook execution mode is changing. Retry shortly.')
     if (!(await this.windowsProtectionConfigured())) return false
     if ((await this.getOrCreateSandbox().status('win32')).kind !== 'ready')
       throw new Error('Prepare Notebook protection in Settings before protected execution.')
@@ -378,6 +407,8 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         runtimePreparation: this.windowsRuntime?.progress
       })
     if (this.initializePromise) return this.recordStatus({ kind: 'checking' })
+    if (this.platform === 'win32' && (await this.readSettings()).windowsProtectionEnabled === false)
+      return this.recordStatus({ kind: 'standard' })
     try {
       await resolveNotebookTrustBundle(await this.options.getCaBundlePath?.())
     } catch (error) {
@@ -478,6 +509,13 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
   }
 
   private async prepare(invocation: NotebookSandboxInvocation): Promise<NotebookSandboxedSpawn> {
+    if (this.protectionChangeInProgress)
+      throw new Error('Notebook execution mode is changing. Retry shortly.')
+    const protectionRevision = this.protectionRevision
+    const assertProtectionUnchanged = (): void => {
+      if (this.protectionChangeInProgress || protectionRevision !== this.protectionRevision)
+        throw new Error('Notebook execution mode changed before startup. Retry the Notebook cell.')
+    }
     const preparationStartedAt = performance.now()
     assertProcessTreeSupport(this.platform)
     const runtimeAccessRevision = this.runtimeAccessRevision
@@ -805,12 +843,14 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         ? { requestProcessTreeTermination: wrapped.requestProcessTreeTermination }
         : {}),
       ...(wrapped.confirmProcessState ? { confirmProcessState: wrapped.confirmProcessState } : {}),
-      ...(this.platform === 'win32' && invocation.windowsProtectionRequired !== undefined
+      ...(this.platform === 'win32'
         ? {
             beginSpawn: () => {
+              assertProtectionUnchanged()
               if (
-                this.pendingRuntimeAccessChanges > 0 ||
-                this.runtimeAccessRevision !== runtimeAccessRevision
+                invocation.windowsProtectionRequired !== undefined &&
+                (this.pendingRuntimeAccessChanges > 0 ||
+                  this.runtimeAccessRevision !== runtimeAccessRevision)
               ) {
                 throw new Error('R runtime access changed before startup. Retry the Notebook cell.')
               }
@@ -823,6 +863,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           ? { beginSpawn: wrapped.beginSpawn }
           : {}),
       beginExecution: (request) => {
+        assertProtectionUnchanged()
         // Cleanup can be retried, but the command can never execute again.
         if (cleanupReason !== undefined) {
           throw new Error('Notebook sandbox process is already closed.')
@@ -951,9 +992,22 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
   }
 
   applySettings(settings: NotebookNetworkSettings): void {
+    const previousMode = this.settings?.windowsProtectionEnabled
     this.settings = normalizeNotebookNetworkSettings(settings)
     try {
-      if (this.initialized) this.sandbox!.updatePolicy(buildNotebookNetworkPolicy(this.settings))
+      if (this.initialized) {
+        if (previousMode !== this.settings.windowsProtectionEnabled) {
+          this.runtimeAccessRevision += 1
+          this.sandbox!.updateConfiguration({
+            policy: buildNotebookNetworkPolicy(this.settings),
+            windowsProtectionEnabled: this.settings.windowsProtectionEnabled
+          })
+        } else {
+          this.sandbox!.updatePolicy(buildNotebookNetworkPolicy(this.settings))
+        }
+      } else if (!this.initializePromise) {
+        this.sandbox = undefined
+      }
       this.log.info('network policy applied', {
         active: this.initialized,
         customDomainCount: this.settings.allowedDomains.length,
@@ -1020,6 +1074,8 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
   }
 
   async installWindows(): Promise<{ cancelled: boolean }> {
+    if (this.protectionChangeInProgress)
+      throw new Error('Notebook execution mode is changing. Retry shortly.')
     if (this.windowsSetupController)
       throw new Error('Notebook protection setup is already running.')
     const controller = new AbortController()
@@ -1058,6 +1114,8 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
   }
 
   async removeWindows(): Promise<{ cancelled: boolean }> {
+    if (this.protectionChangeInProgress)
+      throw new Error('Notebook execution mode is changing. Retry shortly.')
     if (this.windowsSetupController)
       throw new Error('Wait for Notebook protection setup to finish cancelling.')
     const operation = startDiagnosticOperation(this.log, {
@@ -1083,6 +1141,8 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     request: Pick<NotebookSandboxInvocation, 'runtime' | 'executable' | 'sessionId' | 'signal'>
   ): Promise<NotebookRuntimeAccessAdmission | void> {
     if (this.platform !== 'win32' || request.runtime !== 'r') return
+    if (this.protectionChangeInProgress)
+      throw new Error('Notebook execution mode is changing. Retry shortly.')
     if (request.signal?.aborted)
       throw new NotebookRuntimeAccessCancelledError('R access preparation was cancelled.')
     const key = request.sessionId + '\0' + request.executable.toLowerCase()
@@ -1099,8 +1159,10 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       diagnostic.phase('access-status')
       if (request.signal?.aborted)
         throw new NotebookRuntimeAccessCancelledError('R access preparation was cancelled.')
+      if ((await this.readSettings()).windowsProtectionEnabled === false)
+        return { windowsProtectionRequired: false, windowsRuntimeAccessRequired: false }
       const access = await this.getOrCreateSandbox().getWindowsRuntimeAccess(request.executable)
-      const configured = await this.getOrCreateSandbox().isWindowsProtectionConfigured()
+      const configured = await this.windowsProtectionConfigured()
       if (request.signal?.aborted)
         throw new NotebookRuntimeAccessCancelledError('R access preparation was cancelled.')
       if (!configured)
@@ -1212,6 +1274,8 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     executable: string,
     authorized: boolean
   ): Promise<{ cancelled: boolean }> {
+    if (this.protectionChangeInProgress)
+      throw new Error('Notebook execution mode is changing. Retry shortly.')
     // Invalidate prepared launches at enqueue time, before a preceding UAC operation settles.
     this.runtimeAccessRevision += 1
     this.pendingRuntimeAccessChanges += 1
@@ -1521,8 +1585,15 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       const parentProxy = await this.options.getParentProxy?.()
       this.trustBundle = await resolveNotebookTrustBundle(await this.options.getCaBundlePath?.())
       this.sandbox = this.createSandbox(this.settings, parentProxy)
+      const initialSettings = this.settings
       await this.sandbox.initialize()
       this.initialized = true
+      if (this.settings !== initialSettings) {
+        this.sandbox.updateConfiguration({
+          policy: buildNotebookNetworkPolicy(this.settings),
+          windowsProtectionEnabled: this.settings.windowsProtectionEnabled
+        })
+      }
       operation.complete({
         customDomainCount: this.settings.allowedDomains.length,
         parentProxyConfigured: Boolean(parentProxy),
@@ -1538,6 +1609,8 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     status: NotebookNetworkStatus,
     extraFields: Record<string, unknown> = {}
   ): NotebookNetworkStatus {
+    if (this.platform === 'win32' && this.settings?.windowsProtectionEnabled !== undefined)
+      status = { ...status, windowsProtectionEnabled: this.settings.windowsProtectionEnabled }
     if (this.windowsRuntime)
       status = {
         ...status,
@@ -1917,6 +1990,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     parentProxy: Readonly<{ http?: string; https?: string; noProxy?: string }> | undefined
   ): NotebookNetworkSandbox {
     return new NotebookNetworkSandbox({
+      windowsProtectionEnabled: settings.windowsProtectionEnabled,
       packaged: this.options.packaged,
       policy: buildNotebookNetworkPolicy(settings),
       resources: { root: this.options.resourceRoot },
