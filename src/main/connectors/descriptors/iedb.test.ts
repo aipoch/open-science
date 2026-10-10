@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, type Mock } from 'vitest'
 import { ParserEngine } from '../engine'
-import type { ToolDescriptor } from '../types'
+import type { ToolDescriptor } from '../../connector-core/types'
 import { IEDB_TOOLS } from './iedb'
 
 const tool = (method: string): ToolDescriptor => IEDB_TOOLS.find((t) => t.id === method)!

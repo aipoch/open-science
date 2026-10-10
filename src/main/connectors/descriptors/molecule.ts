@@ -1,5 +1,5 @@
-import type { ToolContext, ToolDescriptor } from '../types'
-import { renderMoleculeStructure } from '../molecule'
+import type { ToolContext, ToolDescriptor } from '../../connector-core/types'
+import { renderMoleculeStructure } from '../molecule/render'
 
 const STRUCTURE_INPUT_SCHEMA = {
   type: 'object',

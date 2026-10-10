@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { Molecule } from 'openchemlib'
 
 import { MOLECULE_TOOLS } from './molecule'
-import type { ToolContext } from '../types'
+import type { ToolContext } from '../../connector-core/types'
 
 const renderMolecule = MOLECULE_TOOLS.find((t) => t.id === 'render_molecule')!
 

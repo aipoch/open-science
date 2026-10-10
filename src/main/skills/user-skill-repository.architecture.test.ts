@@ -1027,7 +1027,10 @@ describe('User Skill repository architecture', () => {
           'src/renderer/replay-viewer/browser-recording-transport.integration.test.ts',
           'src/main/research-demos/inspection.test.ts',
           'src/main/replay-viewer/desktop-embed.integration.test.ts',
-          'src/main/notebook/managed-execution-service.macos.integration.test.ts'
+          'src/main/notebook/managed-execution-service.macos.integration.test.ts',
+          'src/main/acp/auto-operation-adapter.test.ts',
+          'src/main/acp/auto-operation-broker.test.ts',
+          'src/main/acp/auto-operation-policy.test.ts'
         ]
       },
       capabilityOverlays: ['windows_sensitive', 'e2e_regressions', 'e2e_delegation'],

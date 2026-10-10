@@ -1,6 +1,6 @@
 import { isSensitiveDiagnosticKey, redactSensitiveText } from '../diagnostic-redaction'
 import { ConnectorHttpError, ParserEngine } from './engine'
-import { ALL_CONNECTOR_IDS, getDescriptor, validateToolArguments } from './registry'
+import type { ConnectorRegistry } from '../connector-core/registry'
 import {
   classifyCustomMcpFailure,
   hasUsableCustomMcpCredentials,
@@ -34,6 +34,7 @@ type McpClientManagerLike = {
 }
 
 type ConnectorServiceDeps = {
+  registry: ConnectorRegistry
   engine?: ParserEngine
   mcpClientManager?: McpClientManagerLike
   getConnectors: () => StoredConnectors | undefined
@@ -297,8 +298,9 @@ export class ConnectorService {
     signal?: AbortSignal
   ): Promise<unknown> {
     signal?.throwIfAborted()
-    const descriptor = getDescriptor(connector, method)
-    const isBundled = descriptor !== undefined || ALL_CONNECTOR_IDS.includes(connector)
+    const descriptor = this.deps.registry.getDescriptor(connector, method)
+    const isBundled =
+      descriptor !== undefined || this.deps.registry.connectorIds.includes(connector)
     if (isBundled) {
       const access = await this.resolveAccess(connector, method, context, [connector], signal)
       return this.callBundled(connector, method, args, descriptor, context, access, signal)
@@ -402,7 +404,7 @@ export class ConnectorService {
         unknownConnectorToolMessage(connector, method)
       )
 
-    validateToolArguments(descriptor, args)
+    this.deps.registry.validateToolArguments(descriptor, args)
 
     let authorization = access.bypassMainPolicy
       ? undefined

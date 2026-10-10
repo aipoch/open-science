@@ -1,7 +1,7 @@
 import { configureTestRuntimeNetwork } from '../../../../test/runtime-host'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { GENES_REACTOME_TOOLS } from './genes-reactome'
-import type { ToolContext } from '../types'
+import type { ToolContext } from '../../connector-core/types'
 
 const tool = GENES_REACTOME_TOOLS.find((t) => t.id === 'map_reactome_pathways')!
 

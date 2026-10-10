@@ -1,4 +1,4 @@
-import type { ToolDescriptor } from '../types'
+import type { ToolDescriptor } from '../../connector-core/types'
 
 // IQ-API search/export contracts: https://query-api.iedb.org/ (live OpenAPI).
 // https://discuss.iedb.org/t/immune-epitope-database-query-api-iq-api/154

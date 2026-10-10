@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { ToolContext } from '../types'
+import type { ToolContext } from '../../connector-core/types'
 import { GENES_ENRICHR_TOOLS } from './genes-enrichr'
 
 const listTool = GENES_ENRICHR_TOOLS.find((tool) => tool.id === 'list_enrichr_libraries')!

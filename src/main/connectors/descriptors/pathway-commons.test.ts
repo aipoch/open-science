@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { ToolContext, ToolDescriptor } from '../types'
+import type { ToolContext, ToolDescriptor } from '../../connector-core/types'
 import { PATHWAY_COMMONS_TOOLS } from './pathway-commons'
 
 const tool = (id: string): ToolDescriptor => PATHWAY_COMMONS_TOOLS.find((entry) => entry.id === id)!

@@ -1,4 +1,4 @@
-import type { ToolContext, ToolDescriptor } from '../types'
+import type { ToolContext, ToolDescriptor } from '../../connector-core/types'
 
 const CBIOPORTAL = 'https://www.cbioportal.org/api'
 // cBioPortal exposes no total-count in the JSON body (only in a header we can't read), so collection

@@ -1,4 +1,4 @@
-import type { ToolContext, ToolDescriptor } from '../types'
+import type { ToolContext, ToolDescriptor } from '../../connector-core/types'
 
 // EBI Ontology Lookup Service (OLS4) and QuickGO. OLS4 paginates HAL collections with a
 // `page.totalElements` count and `_links.next.href`; QuickGO paginates with `numberOfHits` +

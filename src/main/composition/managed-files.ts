@@ -3,6 +3,7 @@ import type { ManagedPreviewSource } from '../../shared/preview-resources'
 import { createDefaultArtifactRepository } from '../artifacts/ipc'
 import { ProvenanceMessageSnapshotRepository } from '../artifacts/provenance-message-snapshot'
 import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
+import type { ReadArtifactLiteratureItems } from '../artifacts/literature-manifest'
 import { ArtifactRunRegistry } from '../artifacts/run-registry'
 import { BookmarkRepository } from '../bookmarks/repository'
 import { ImmutableInputAuthority } from '../immutable-input-authority'
@@ -29,7 +30,8 @@ export function composeManagedFiles({
   settingsService,
   managedFileVersionService,
   sessionRepository,
-  getNotebookInputRegistry
+  getNotebookInputRegistry,
+  readLiteratureItems
 }: {
   grantedRootsRepositoryRef: { current?: GrantedLocalRootsRepository }
   shutdownNotebooksBeforePolicyChange: (
@@ -39,6 +41,7 @@ export function composeManagedFiles({
   managedFileVersionService: ManagedFileVersionService
   sessionRepository: ReturnType<typeof createDefaultSessionRepository>
   getNotebookInputRegistry: () => NotebookInputRegistry
+  readLiteratureItems: ReadArtifactLiteratureItems
 }): {
   artifactRepository: ReturnType<typeof createDefaultArtifactRepository>
   notebookRepository: NotebookRunRepository
@@ -81,6 +84,7 @@ export function composeManagedFiles({
     storageRoot: resolveDataRoot(),
     getClient: () => getProjectDbClient(resolveConfigRoot()),
     inputAuthority: immutableInputAuthority,
+    readLiteratureItems,
     managedFileVersions: managedFileVersionService,
     compatibilityRepository: artifactRepository,
     notebookRepository,

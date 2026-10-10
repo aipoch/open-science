@@ -1,3 +1,4 @@
+import { LiteratureCatalog } from '../literature/catalog'
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { createArtifactHandlers } from './ipc'
 import { ArtifactRunRegistry } from './run-registry'
@@ -22,7 +23,8 @@ import { ArtifactWriteBudgetOwner } from './write-budget-owner'
 
 const fixtures: Awaited<ReturnType<typeof createArtifactSaveFixture>>[] = []
 const setup = async (): Promise<Awaited<ReturnType<typeof createArtifactSaveFixture>>> => {
-  const f = await createArtifactSaveFixture()
+  const f = await createArtifactSaveFixture((ids) => catalog.getMany(ids))
+  const catalog = new LiteratureCatalog(async () => f.client)
   fixtures.push(f)
   return f
 }
@@ -731,13 +733,22 @@ describe('complete Artifact save over the production local RPC', () => {
     await f.client.literatureItem.create({
       data: { id: 'paper', title: 'A cited paper', itemType: 'journalArticle' }
     })
+    await f.client.literatureItem.create({
+      data: {
+        id: 'paper-alias',
+        title: 'Merged paper',
+        itemType: 'journalArticle',
+        mergedIntoItemId: 'paper',
+        deletedAt: new Date('2026-01-01T00:00:00.000Z')
+      }
+    })
     const bytes = Buffer.from(zipSync({ 'main.tex': strToU8('Scientific report') }))
     const path = join(workspace, 'report.zip')
     await writeFile(path, bytes)
     const literature = {
       styleId: 'apa',
       locale: 'en-US',
-      citations: [{ citationId: 'cite-1', itemId: 'paper' }]
+      citations: [{ citationId: 'cite-1', itemId: 'paper-alias' }]
     }
     const sidecar = {
       schemaVersion: 1,
@@ -752,6 +763,9 @@ describe('complete Artifact save over the production local RPC', () => {
       include: { literatureManifest: true }
     })
     expect(row.literatureManifest?.manifestJson).toContain('A cited paper')
+    expect(JSON.parse(row.literatureManifest!.manifestJson).references[0].itemId).toBe(
+      'paper-alias'
+    )
     await writeFile(
       path + ARTIFACT_LITERATURE_SIDECAR_SUFFIX,
       JSON.stringify({ ...sidecar, contentChecksum: '0'.repeat(64) })

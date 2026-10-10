@@ -1,4 +1,4 @@
-import type { ToolContext, ToolDescriptor } from '../types'
+import type { ToolContext, ToolDescriptor } from '../../connector-core/types'
 
 // mygene.info batch gene resolution + UniProtKB record retrieval. mygene answers a POST /query with a
 // JSON array (one item per query term, misses flagged notfound:true); UniProt is queried with a single

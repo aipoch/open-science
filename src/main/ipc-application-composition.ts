@@ -299,7 +299,9 @@ export const createApplicationModules = async (
     ...settingsBootstrap,
     managedFileVersionService: uploadStorage.managedFileVersionService,
     ...sessionFoundation,
-    getNotebookInputRegistry: () => sessionAuthority.notebookInputRegistry
+    getNotebookInputRegistry: () => sessionAuthority.notebookInputRegistry,
+    // Catalog access begins after composition, sharing the application's sole Literature owner.
+    readLiteratureItems: (itemIds) => researchCatalog.literatureCatalog.getMany(itemIds)
   })
   const sessionAuthority = await composeSessionAuthority({
     uploadRepository: uploadStorage.uploadRepository,

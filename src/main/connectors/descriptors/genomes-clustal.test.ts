@@ -1,6 +1,6 @@
 import { configureTestRuntimeNetwork } from '../../../../test/runtime-host'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { ToolContext } from '../types'
+import type { ToolContext } from '../../connector-core/types'
 import { GENOMES_CLUSTAL_TOOLS } from './genomes-clustal'
 
 const [submit, status, results] = GENOMES_CLUSTAL_TOOLS
