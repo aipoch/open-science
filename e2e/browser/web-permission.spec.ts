@@ -150,7 +150,7 @@ for (const language of ['en', 'zh-Hans']) {
       const optionId = light ? 'allow-once' : 'deny'
       await page
         .getByRole('button', {
-          name: light ? (chinese ? '允许一次' : 'Allow once') : chinese ? '拒绝' : 'Deny',
+          name: light ? (chinese ? '允许' : 'Allow') : chinese ? '拒绝' : 'Deny',
           exact: true
         })
         .click()
@@ -198,7 +198,7 @@ for (const state of ['declined', 'allowed', 'closed']) {
     )
     await expect(page.getByTestId('notebook-code-review-receipt')).toHaveCount(0)
     await expect(page.getByTestId('tool-code-block')).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Allow once', exact: true })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Allow', exact: true })).toHaveCount(0)
     await expect(page.getByRole('button', { name: 'Deny', exact: true })).toHaveCount(0)
   })
 }
@@ -259,7 +259,7 @@ test('presents environment switch and variable loss without raw runtime JSON', a
     path: testInfo.outputPath('kernel-environment-review.png'),
     fullPage: true
   })
-  await page.getByRole('button', { name: 'Allow once', exact: true }).click()
+  await page.getByRole('button', { name: 'Allow', exact: true }).click()
   expect(
     await page.evaluate(
       () => (window as unknown as { webPermissionResponses: unknown[] }).webPermissionResponses

@@ -337,6 +337,11 @@ type ElectronApp = {
   routeMarketplaceRequests: (origin: string) => Promise<void>
   configureFileBrowserFixture: () => Promise<void>
   configureFakeAgent: () => Promise<Page>
+  configureLiveAgent: (
+    settingsPath: string,
+    model: string,
+    credentialProfile?: string
+  ) => Promise<Page>
   createTestDirectory: (name: string) => Promise<string>
   configureSessionPackageDialogs: (options?: { availableBytes?: number }) => Promise<string>
   restartWithPackage: (path: string) => Promise<Page>
@@ -973,6 +978,50 @@ class ElectronAppHarness implements ElectronApp {
       await bridge.api.settings.markOnboardingComplete()
     })
     await this.page.reload({ waitUntil: 'domcontentloaded' })
+    return this.page
+  }
+
+  async configureLiveAgent(
+    settingsPath: string,
+    model: string,
+    credentialProfile?: string
+  ): Promise<Page> {
+    const source = JSON.parse(await readFile(settingsPath, 'utf8'))
+    const provider = source.providers?.find(
+      (candidate: { id: string }) => candidate.id === source.activeProviderId
+    )
+    if (!provider?.keyRef || source.activeModel !== model || !source.opencodePath) {
+      throw new Error('The requested live model and OpenCode must already be configured.')
+    }
+    if (process.platform === 'win32' && provider.keyRef.startsWith('enc:') && !credentialProfile) {
+      throw new Error('Encrypted Windows credentials require the source Electron profile.')
+    }
+    await this.close()
+    if (process.platform === 'win32' && credentialProfile) {
+      // Windows OSCrypt ciphertext belongs to the profile's DPAPI envelope. Copy only that
+      // envelope into the disposable profile, never decrypted keys or the source profile itself.
+      const original = JSON.parse(await readFile(join(credentialProfile, 'Local State'), 'utf8'))
+      if (!original.os_crypt?.encrypted_key) throw new Error('Source profile has no OSCrypt key.')
+      const statePath = join(this.roots.userDataRoot, 'Local State')
+      const state = JSON.parse(await readFile(statePath, 'utf8'))
+      state.os_crypt = original.os_crypt
+      await writeFile(statePath, JSON.stringify(state), 'utf8')
+    }
+    const target = join(this.roots.storageRoot, 'settings.json')
+    const settings = JSON.parse(await readFile(target, 'utf8'))
+    Object.assign(settings, {
+      providers: [provider],
+      activeProviderId: provider.id,
+      activeModel: model,
+      opencodePath: source.opencodePath,
+      opencodeVersion: source.opencodeVersion,
+      agentFramework: 'opencode',
+      localePreference: 'en',
+      sessionDetailsModel: { mode: 'disabled' }
+    })
+    await writeFile(target, `${JSON.stringify(settings, null, 2)}\n`, 'utf8')
+    await this.launch()
+    await this.page.evaluate(() => window.api.settings.setAgentFramework({ id: 'opencode' }))
     return this.page
   }
 

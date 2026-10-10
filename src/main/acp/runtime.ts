@@ -481,6 +481,8 @@ type AcpRuntimeUploadOptions = {
 }
 
 type AcpRuntimeNotebookOptions = {
+  authorizeRuntimeBindingAdmission?: import('../notebook/local-rpc-server').NotebookLocalRpcServer['authorizeRuntimeBindingAdmission']
+  canOwnRuntimeBindingDecision?: import('../notebook/runtime-service').NotebookRuntimeService['canOwnRuntimeBindingDecision']
   projectId: string
   mcpEntryPath: string
   mcpCommand?: string

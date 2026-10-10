@@ -127,6 +127,19 @@ type AcpPermissionContextOptions = {
     currentInteractionSequence: (sessionId: string) => number | undefined
     mcpServerNamesFor: (sessionId: string) => readonly string[]
     shellRuntimeBindingFor?: (sessionId: string) => ShellRuntimeBinding | undefined
+    authorizeRuntimeBindingAdmission?: (admission: {
+      sessionId: string
+      toolCallId: string
+      promptMessageId: string
+      language: import('../../shared/notebook').NotebookLanguage
+      runtimeId: string
+    }) => boolean
+    canOwnRuntimeBindingDecision?: (
+      request: import('../../shared/notebook').NotebookSessionRequest & {
+        language: import('../../shared/notebook').NotebookLanguage
+        runtimeId: string
+      }
+    ) => Promise<boolean>
     reviewerContextFor: (providerSessionId: string) =>
       | {
           frameworkId: AgentFrameworkId
@@ -507,10 +520,42 @@ class AcpPermissionContext {
         executionMethod === 'executeShell'
           ? routing.shellRuntimeBindingFor?.(appSessionId)
           : undefined
+      const bindingIdentity = trustedMcpToolIdentity(normalizedParams)
+      const bindingInput = isRecord(normalizedParams.toolCall.rawInput)
+        ? normalizedParams.toolCall.rawInput
+        : undefined
+      const bindingArguments = isRecord(bindingInput?.arguments)
+        ? bindingInput.arguments
+        : bindingInput
+      const notebookBindingHostAdmission =
+        /^open[-_]science[-_]notebook\/notebook_bind_runtime$/.test(bindingIdentity ?? '') &&
+        (bindingArguments?.language === 'python' || bindingArguments?.language === 'r') &&
+        typeof bindingArguments.runtimeId === 'string' &&
+        aggregateSnapshot?.cwd !== undefined &&
+        promptInteraction?.promptMessageId !== undefined &&
+        (await routing.canOwnRuntimeBindingDecision?.({
+          sessionId: appSessionId,
+          projectId: routing.resolveProjectId(appSessionId),
+          workspaceCwd: aggregateSnapshot.cwd,
+          language: bindingArguments.language,
+          runtimeId: bindingArguments.runtimeId
+        })) === true &&
+        routing.capturePrompt(appSessionId)?.promptMessageId ===
+          promptInteraction.promptMessageId &&
+        promptInteraction.isCancellationAccepted() !== true &&
+        routing.authorizeRuntimeBindingAdmission !== undefined
+      if (
+        promptInteraction?.promptMessageId &&
+        (routing.capturePrompt(appSessionId)?.promptMessageId !==
+          promptInteraction.promptMessageId ||
+          promptInteraction.isCancellationAccepted())
+      )
+        return { outcome: { outcome: 'cancelled' } }
       // The authenticated Notebook host reviews finalized code at dispatch. Do not ask for a
       // language-wide grant here, or create a second approval before the host's one-shot decision.
       const response = await this.requestPermission(routedParams, {
         notebookHostAdmission: Boolean(executionMethod),
+        notebookBindingHostAdmission,
         profile: profileState?.selectedProfile ?? DEFAULT_PERMISSION_PROFILE,
         frameworkId,
         modelRoute: aggregateSnapshot?.modelRoute,
@@ -538,6 +583,28 @@ class AcpPermissionContext {
       const selectedOption = selectedOptionId
         ? routedParams.options.find((option) => option.optionId === selectedOptionId)
         : undefined
+      if (notebookBindingHostAdmission && selectedOption?.kind === 'allow_once') {
+        // Register only a positively released provider call, before returning that response. A
+        // cancelled/no-one-call request must not leave a receipt blocking another Runtime target.
+        const language = bindingArguments?.language
+        const runtimeId = bindingArguments?.runtimeId
+        if (
+          (language !== 'python' && language !== 'r') ||
+          typeof runtimeId !== 'string' ||
+          !promptInteraction?.promptMessageId ||
+          routing.capturePrompt(appSessionId)?.promptMessageId !==
+            promptInteraction.promptMessageId ||
+          promptInteraction.isCancellationAccepted() ||
+          routing.authorizeRuntimeBindingAdmission?.({
+            sessionId: appSessionId,
+            toolCallId: routedParams.toolCall.toolCallId,
+            promptMessageId: promptInteraction.promptMessageId,
+            language,
+            runtimeId
+          }) !== true
+        )
+          return { outcome: { outcome: 'cancelled' } }
+      }
       if (
         selectedOption?.kind.toLowerCase().startsWith('allow_') &&
         promptInteraction?.promptMessageId
@@ -1038,10 +1105,16 @@ class AcpPermissionContext {
       const isNativeSkillCandidate =
         params.toolCall.kind === 'other' && params.toolCall.title?.trim().toLowerCase() === 'skill'
       if (!isMcpRequest && !isNativeSkillCandidate) return restored
+      // A binding handoff requires the matching provider observation, even when the permission
+      // request already has arguments. Notifications and requests may reach their handlers apart.
+      const isNotebookBindingCandidate =
+        resolveCanonicalMcpToolIdentity(params.toolCall.title ?? '', mcpServerNames) ===
+        'open-science-notebook/notebook_bind_runtime'
       if (
         isMcpRequest &&
         isRecord(restored.toolCall.rawInput) &&
-        Object.keys(restored.toolCall.rawInput).length > 0
+        Object.keys(restored.toolCall.rawInput).length > 0 &&
+        (!isNotebookBindingCandidate || trustedMcpToolIdentity(restored) !== undefined)
       ) {
         return restored
       }
