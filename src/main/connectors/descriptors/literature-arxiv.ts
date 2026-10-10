@@ -197,7 +197,8 @@ export const ARXIV_LITERATURE_TOOLS: ToolDescriptor[] = [
       }
       // Assemble the AND-joined search_query from the provided dimensions.
       const terms: string[] = []
-      if (query) terms.push(query)
+      // Group the raw expression so appended filters apply to every branch of an OR query.
+      if (query) terms.push(category || dateFrom || dateTo ? `(${query})` : query)
       if (category) terms.push(`cat:${category}`)
       if (dateFrom || dateTo) {
         const from = dateFrom ? dateFrom.replace(/-/g, '') : '19910101'

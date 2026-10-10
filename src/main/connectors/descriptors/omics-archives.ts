@@ -575,10 +575,20 @@ const parseSampleHeaders = (text: string): Obj[] => {
         ...softAll(attrs, 'Sample_organism_ch2')
       ])
     ].sort()
-    const characteristics = parseCharacteristics([
-      ...softAll(attrs, 'Sample_characteristics_ch1'),
-      ...softAll(attrs, 'Sample_characteristics_ch2')
-    ])
+    // Keep the legacy flat fields scoped to channel 1; never mix reference and test material.
+    const characteristics = parseCharacteristics(softAll(attrs, 'Sample_characteristics_ch1'))
+    const channels = [1, 2]
+      .filter((channel) => Object.keys(attrs).some((key) => key.endsWith(`_ch${channel}`)))
+      .map((channel) => ({
+        channel,
+        source_name: softFirst(attrs, `Sample_source_name_ch${channel}`),
+        organism: softAll(attrs, `Sample_organism_ch${channel}`),
+        characteristics: parseCharacteristics(
+          softAll(attrs, `Sample_characteristics_ch${channel}`)
+        ),
+        molecule: softFirst(attrs, `Sample_molecule_ch${channel}`),
+        label: softFirst(attrs, `Sample_label_ch${channel}`)
+      }))
     const supplementary = [
       ...new Set(
         Object.entries(attrs)
@@ -594,6 +604,7 @@ const parseSampleHeaders = (text: string): Obj[] => {
       source_name: softFirst(attrs, 'Sample_source_name_ch1'),
       organism: organisms,
       characteristics,
+      channels,
       molecule: softFirst(attrs, 'Sample_molecule_ch1'),
       library_strategy: softFirst(attrs, 'Sample_library_strategy'),
       library_source: softFirst(attrs, 'Sample_library_source'),
@@ -1389,7 +1400,7 @@ export const OMICS_ARCHIVES_TOOLS: ToolDescriptor[] = [
     id: 'geo_get_series',
     connector: 'omics-archives',
     description:
-      'Fetch structured metadata for GEO series (GSE accessions) with samples included — series title/summary/design, platforms, samples with characteristics and library info, and supplementary-file URLs. Data tables are never downloaded. Use geo_get_matrix_files next to discover Series Matrix and NCBI-generated RNA-seq count files, then geo_preflight_matrix to check decompressed data against these samples.',
+      'Fetch structured metadata for GEO series (GSE accessions) with samples included — series title/summary/design, platforms, samples with characteristics and library info, and supplementary-file URLs. Sample channels preserve source_name, organism, characteristics, molecule and label separately; flat source_name, characteristics and molecule refer to channel 1. Use channels for dual-channel experiments and dye swaps. Data tables are never downloaded. Use geo_get_matrix_files next to discover Series Matrix and NCBI-generated RNA-seq count files, then geo_preflight_matrix to check decompressed data against these samples.',
     input: {
       type: 'object',
       properties: {

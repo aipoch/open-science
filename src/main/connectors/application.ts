@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
 import type { ApplicationModule } from '../application-runtime'
+import { createLogger, diagnosticErrorFields } from '../logger'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
 import type { ManagedFileVersionService } from '../managed-file-versions/service'
 import type { ConnectorApplicationSettingsCapabilities } from '../settings/service-capabilities'
@@ -19,6 +20,8 @@ import { McpClientManager } from './custom-mcp'
 import { hasUsableCustomMcpCredentials, toCustomMcpConfig } from './custom-mcp'
 import { ConnectorRuntimeSettingsProjection } from './runtime-settings-projection'
 import { ConnectorService, type ConnectorCallContext } from './service'
+
+const log = createLogger('connectors:application')
 
 export type ConnectorApplicationDeps = {
   settings: ConnectorApplicationSettingsCapabilities
@@ -264,7 +267,17 @@ export const createConnectorApplicationModule = async (
       capability,
       dispose: async () => {
         capability.credentialRequests.cancelAll()
-        await mcpClientManager.closeAll()
+        const refreshesStopped = capability.runtimeSettings.dispose()
+        try {
+          await mcpClientManager.closeAll()
+        } catch (error) {
+          // Draining can outlive the outer module budget. Record the known close failure now,
+          // before a later timeout replaces it in the application shutdown outcome.
+          log.error('MCP client shutdown failed', diagnosticErrorFields(error))
+          throw error
+        } finally {
+          await refreshesStopped
+        }
       }
     }
   } catch (error) {

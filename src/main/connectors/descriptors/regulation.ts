@@ -4,6 +4,7 @@ import { abortableDelay } from '../abortable-delay'
 import {
   CONNECTOR_RETRYABLE_STATUS,
   boundedExponentialBackoff,
+  connectorRetryDelay,
   withTimeoutSignal
 } from '../request-policy'
 
@@ -50,6 +51,19 @@ function isNotFound(err: unknown): boolean {
 const ENCODE_UA = 'Open-Science/1.0 (+https://github.com/aipoch/open-science)'
 const ENCODE_TIMEOUT_MS = 60_000
 const ENCODE_RETRIES = 3
+const MAX_TIMER_DELAY_MS = 2_147_483_647
+
+async function encodeRetryDelay(delayMs: number, signal?: AbortSignal): Promise<void> {
+  // Larger delays (including Infinity from very long digit strings) overflow Node's timer range
+  // and otherwise become a 1ms wait. Keep the full wait in cancellable, valid timer segments.
+  let remainingMs = delayMs
+  while (remainingMs > MAX_TIMER_DELAY_MS) {
+    await abortableDelay(MAX_TIMER_DELAY_MS, signal)
+    remainingMs -= MAX_TIMER_DELAY_MS
+  }
+  await abortableDelay(remainingMs, signal)
+}
+
 async function encodeFetchJson(url: string, signal?: AbortSignal): Promise<unknown> {
   for (let attempt = 0; ; attempt++) {
     let res: Response
@@ -72,8 +86,22 @@ async function encodeFetchJson(url: string, signal?: AbortSignal): Promise<unkno
       signal?.throwIfAborted()
       return res.json()
     }
+    // Release discarded error bodies before waiting or failing; cleanup must not mask the error.
+    if (res.body) void res.body.cancel().catch(() => {})
     if (attempt < ENCODE_RETRIES && CONNECTOR_RETRYABLE_STATUS.has(res.status)) {
-      await abortableDelay(boundedExponentialBackoff(attempt), signal)
+      const retryAfter = res.headers?.get('retry-after')?.trim()
+      const validRetryAfter =
+        retryAfter &&
+        (/^\d+$/.test(retryAfter) ||
+          (/[a-z]/i.test(retryAfter) && Number.isFinite(Date.parse(retryAfter))))
+      // The context signal includes the engine's whole-call deadline and cancels long waits.
+      // Preserve ENCODE's original deterministic backoff when no usable server delay is provided.
+      await encodeRetryDelay(
+        validRetryAfter
+          ? connectorRetryDelay(attempt, retryAfter)
+          : boundedExponentialBackoff(attempt),
+        signal
+      )
       continue
     }
     throw new Error(`HTTP ${res.status} for ${url}`)

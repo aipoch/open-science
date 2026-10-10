@@ -1,7 +1,24 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { composeApplicationRuntime } from '../application-runtime'
+import {
+  APPLICATION_MODULE_DISPOSAL_BUDGET_MS,
+  ApplicationModuleDisposalTimeoutError,
+  composeApplicationRuntime
+} from '../application-runtime'
 import { createConnectorApplicationModule, type ConnectorApplicationDeps } from './application'
+
+const { applicationLogError } = vi.hoisted(() => ({ applicationLogError: vi.fn() }))
+
+vi.mock('../logger', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../logger')>()
+  return {
+    ...original,
+    createLogger: (scope: string) => {
+      const logger = original.createLogger(scope)
+      return scope === 'connectors:application' ? { ...logger, error: applicationLogError } : logger
+    }
+  }
+})
 
 type TestDoubles = Record<string, ReturnType<typeof vi.fn>>
 
@@ -90,6 +107,127 @@ const createHarness = (): ConnectorApplicationHarness => {
 }
 
 describe('Connector application composition', () => {
+  beforeEach(() => applicationLogError.mockClear())
+
+  it('records a safe close failure before blocked refresh draining exceeds the runtime budget', async () => {
+    vi.useFakeTimers()
+    const unhandledRejection = vi.fn()
+    process.on('unhandledRejection', unhandledRejection)
+    let finishRead!: () => void
+    let refresh: Promise<void> | undefined
+    let drain: Promise<void> | undefined
+    try {
+      const { settings, mcpClientManager, deps } = createHarness()
+      settings.getConnectors.mockReturnValue(
+        new Promise((resolve) => {
+          finishRead = () => resolve({ enabledIds: [], autoAllowIds: [], customMcpServers: [] })
+        })
+      )
+      const closeError = Object.assign(
+        new Error('Bearer synthetic-secret; private research; /synthetic/private-path'),
+        { code: 'ECONNRESET' }
+      )
+      mcpClientManager.closeAll.mockRejectedValue(closeError)
+      const runtime = await composeApplicationRuntime(async (modules) => ({
+        application: await modules.add(deps, createConnectorApplicationModule)
+      }))
+      const projection = runtime.interfaces.application.runtimeSettings
+      refresh = projection.refresh()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(settings.getConnectors).toHaveBeenCalledOnce()
+      const notificationsBeforeDisposal = vi.mocked(deps.notifyStatusChanged).mock.calls.length
+      let outerSettled = false
+      const disposal = runtime.dispose().catch((error: unknown) => {
+        outerSettled = true
+        return error
+      })
+      await vi.advanceTimersByTimeAsync(0)
+      drain = projection.dispose()
+
+      expect(mcpClientManager.closeAll).toHaveBeenCalledOnce()
+      expect(applicationLogError).toHaveBeenCalledExactlyOnceWith('MCP client shutdown failed', {
+        errorCategory: 'network'
+      })
+      expect(JSON.stringify(applicationLogError.mock.calls)).not.toMatch(
+        /synthetic-secret|private research|private-path|stack|message/
+      )
+
+      await vi.advanceTimersByTimeAsync(APPLICATION_MODULE_DISPOSAL_BUDGET_MS - 1)
+      expect(outerSettled).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
+      const outcome = await disposal
+      expect(outcome).toBeInstanceOf(AggregateError)
+      const errors = (outcome as AggregateError).errors
+      expect(errors).toHaveLength(1)
+      expect(errors[0]).toBeInstanceOf(ApplicationModuleDisposalTimeoutError)
+      expect(errors[0]).toMatchObject({ moduleName: 'connector-application' })
+
+      finishRead()
+      await Promise.all([refresh, drain])
+      await vi.advanceTimersByTimeAsync(0)
+      await projection.refreshCustomServer('after-disposal')
+
+      expect(unhandledRejection).not.toHaveBeenCalled()
+      expect(settings.getConnectors).toHaveBeenCalledOnce()
+      expect(mcpClientManager.listTools).not.toHaveBeenCalled()
+      expect(projection.isRefreshing()).toBe(false)
+      expect(deps.notifyStatusChanged).toHaveBeenCalledTimes(notificationsBeforeDisposal)
+      expect(applicationLogError).toHaveBeenCalledOnce()
+    } finally {
+      finishRead?.()
+      await Promise.all([refresh, drain])
+      process.off('unhandledRejection', unhandledRejection)
+      vi.useRealTimers()
+    }
+  })
+
+  it.each([false, true])(
+    'closes clients immediately and drains refreshes when disposal close fails: %s',
+    async (closeFails) => {
+      const { settings, mcpClientManager, deps } = createHarness()
+      let finishRead!: () => void
+      settings.getConnectors.mockReturnValue(
+        new Promise((resolve) => {
+          finishRead = () => resolve({ enabledIds: [], autoAllowIds: [], customMcpServers: [] })
+        })
+      )
+      const closeError = new Error('client close failed')
+      if (closeFails) mcpClientManager.closeAll.mockRejectedValue(closeError)
+      const module = await createConnectorApplicationModule(deps)
+      const projection = module.capability.runtimeSettings
+      const refresh = projection.refresh()
+      await vi.waitFor(() => expect(settings.getConnectors).toHaveBeenCalledOnce())
+      const queued = projection.refresh()
+      const notificationsBeforeDisposal = vi.mocked(deps.notifyStatusChanged).mock.calls.length
+      let settled = false
+      const disposal = Promise.resolve(module.dispose!()).then(
+        () => {
+          settled = true
+          return undefined
+        },
+        (error: unknown) => {
+          settled = true
+          return error
+        }
+      )
+
+      await vi.waitFor(() => expect(mcpClientManager.closeAll).toHaveBeenCalledOnce())
+      expect(settled).toBe(false)
+      await projection.refreshCustomServer('later-id')
+      finishRead()
+      await Promise.all([refresh, queued])
+
+      expect(await disposal).toBe(closeFails ? closeError : undefined)
+      if (closeFails) expect(applicationLogError).toHaveBeenCalledOnce()
+      else expect(applicationLogError).not.toHaveBeenCalled()
+      expect(settings.getConnectors).toHaveBeenCalledOnce()
+      expect(mcpClientManager.listTools).not.toHaveBeenCalled()
+      expect(projection.current()).toBeUndefined()
+      expect(projection.isRefreshing()).toBe(false)
+      expect(deps.notifyStatusChanged).toHaveBeenCalledTimes(notificationsBeforeDisposal)
+    }
+  )
+
   it('reuses fakes and closes the MCP manager through runtime disposal', async () => {
     const { settings, mcpClientManager, connectorApprovals, skillImportApprovals, deps } =
       createHarness()
