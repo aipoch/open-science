@@ -73,6 +73,31 @@ describe('handleOwnedBackendDisconnect', () => {
     expect(onFailure).toHaveBeenCalledWith(error)
   })
 
+  it('reports the disconnect when the backend keeps running past the settle window', () => {
+    vi.useFakeTimers()
+    const child = childWith(null)
+    const onCleanExit = vi.fn()
+    const onFailure = vi.fn()
+    const error = new Error('disconnect')
+    handleOwnedBackendDisconnect({
+      child: child as never,
+      error,
+      updateCommitted: false,
+      onCleanExit,
+      onFailure,
+      exitSettleTimeoutMs: 1_000
+    })
+    vi.advanceTimersByTime(1_000)
+    expect(onCleanExit).not.toHaveBeenCalled()
+    expect(onFailure).toHaveBeenCalledWith(error)
+    // A late exit after the fallback must not fire a second decision.
+    child.exitCode = 0
+    child.emit('exit', 0, null)
+    expect(onCleanExit).not.toHaveBeenCalled()
+    expect(onFailure).toHaveBeenCalledOnce()
+    vi.useRealTimers()
+  })
+
   it('does nothing when an update commit is in flight', () => {
     const child = childWith(null)
     const onCleanExit = vi.fn()
