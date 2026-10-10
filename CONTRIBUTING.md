@@ -70,6 +70,10 @@ for native build prerequisites, secure-storage requirements and host capability 
 npm run dev
 ```
 
+Native credential helpers build incrementally in development. On macOS, keep
+`packages/credential-identity-probe-native/build/` between launches: a clean rebuild can change
+the helper's identity and require Keychain authorization again.
+
 Windows standard-mode development does not require a separate Notebook runtime.
 Enabling Notebook protection prepares verified Node and PowerShell components on demand:
 compatible official installations are preferred, and missing components are downloaded from
