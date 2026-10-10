@@ -799,6 +799,7 @@ const PermissionApprovalCard = ({
               )
             : t('Approval remains attached to this conversation across restarts.')
   const hasScopePicker = availableScopes.size > 1
+  const isFixedOnce = availableScopes.size === 1 && availableScopes.has('once')
   const isSubmitting = submittingRequestId === request.requestId
   const respondOnce = (optionId?: string, broadScopeConfirmed = false): void => {
     if (submittingRequestIdRef.current === request.requestId) return
@@ -843,8 +844,7 @@ const PermissionApprovalCard = ({
 
   const isMcp = isMcpPermissionRequest(request)
   const isShell = !isMcp && (request.toolKind === 'execute' || request.providerToolName === 'Bash')
-  // Specialist deletes render the primary action as a destructive Delete (prototype scene 8) — the
-  // only request kind that re-words and recolors the Allow control.
+  // Keep the destructive treatment even when a fixed one-time approval reads as Allow.
   const isDeleteRequest = isSpecialistDeleteRequest(request)
 
   // Most identity details stay in the impact tip. When no path or preview exists, retain the only
@@ -1007,6 +1007,7 @@ const PermissionApprovalCard = ({
         <NotebookCodeReviewDetail key={requestId} review={codeReview} />
       ) : selectedLabel ? (
         <div data-testid="notebook-runtime-selection" className="space-y-3 text-sm">
+          <p className="text-muted-foreground">{presentation.description}</p>
           <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2">
             {previousLabel ? (
               <>
@@ -1117,7 +1118,9 @@ const PermissionApprovalCard = ({
                     respondOnce(allowOptionId)
                   }}
                 >
-                  {isDeleteRequest ? (
+                  {isFixedOnce ? (
+                    <span className="font-semibold">{t('Allow')}</span>
+                  ) : isDeleteRequest ? (
                     <span className="font-semibold">{t('Delete')}</span>
                   ) : (
                     <span className="font-semibold">{allowLabel[effectiveScope]}</span>

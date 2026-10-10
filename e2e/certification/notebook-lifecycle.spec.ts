@@ -36,7 +36,7 @@ const sendReviewedPrompt = async (
         const code = review.getByTestId('tool-code-block')
         if (previousCode) await expect(code).not.toHaveText(previousCode)
         previousCode = await code.innerText()
-        await review.getByRole('button', { name: 'Allow once', exact: true }).click()
+        await review.getByRole('button', { name: 'Allow', exact: true }).click()
       }
     })()
   ])

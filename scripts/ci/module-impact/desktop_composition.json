@@ -259,7 +259,8 @@
     "scripts/electron-app-fixture.test.ts",
     "scripts/electron-builder-config.test.ts",
     "scripts/electron-fixture-teardown.test.ts",
-    "scripts/electron-vite-config.test.ts"
+    "scripts/electron-vite-config.test.ts",
+    "src/main/composition/notebook-approvals.ts"
   ],
   "interfacePaths": [
     "src/main/app-lifecycle.ts",
@@ -346,7 +347,8 @@
     "src/main/desktop-runtime-launcher.ts",
     "src/main/desktop-preview-proxy.ts",
     "src/main/desktop-runtime-lifecycle.ts",
-    "src/main/desktop-startup-contract.ts"
+    "src/main/desktop-startup-contract.ts",
+    "src/main/composition/notebook-approvals.ts"
   ],
   "consumerModules": [],
   "testFiles": {

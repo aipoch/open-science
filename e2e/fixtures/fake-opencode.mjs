@@ -359,6 +359,101 @@ const withMcpClient = async (sessionId, serverName, operation) => {
   }
 }
 
+// Deterministic provider; discovery, binding admission and Python/R execution remain production code.
+const verifyRuntimeApproval = async (context, prompt) =>
+  withMcpClient(context.params.sessionId, 'open-science-notebook', async (client) => {
+    const language = prompt.includes(' R ') ? 'r' : 'python'
+    const continued = prompt.includes('continued')
+    const implicit = prompt.includes('implicit')
+    if (prompt.includes('risky')) {
+      try {
+        const result = toolResult(
+          'notebook_execute',
+          await client.callTool(
+            {
+              name: 'notebook_execute',
+              arguments: {
+                language,
+                code:
+                  language === 'python'
+                    ? "import os\nos.remove('runtime-approval-protected.txt')"
+                    : "unlink('runtime-approval-protected.txt')"
+              }
+            },
+            undefined,
+            { timeout: 120_000 }
+          )
+        )
+        if (result.kernelDispatched === false) return 'Risky code denied before execution.'
+        throw new Error(`Unexpected dangerous-code result: ${JSON.stringify(result)}`)
+      } catch (error) {
+        if (String(error).includes('Notebook execution declined'))
+          return 'Risky code denied before execution.'
+        throw error
+      }
+    }
+    const call = async (name, args = {}) =>
+      toolResult(
+        name,
+        await client.callTool({ name, arguments: args }, undefined, { timeout: 120_000 })
+      )
+    const listed = await call('list_notebook_runtimes')
+    const target = listed.runtimes.find(
+      (runtime) =>
+        runtime.language === language && runtime.provenance === 'app-managed' && runtime.runnable
+    )
+    if (!target) throw new Error(`No ready default ${language}: ${JSON.stringify(listed)}`)
+    if (!implicit) {
+      const toolCall = {
+        toolCallId: `runtime-binding-${randomUUID()}`,
+        title: 'open_science_notebook_notebook_bind_runtime',
+        kind: 'other',
+        rawInput: { language, runtimeId: target.runtimeId },
+        _meta: { toolName: 'open_science_notebook_notebook_bind_runtime' }
+      }
+      await context.client.notify(acp.methods.client.session.update, {
+        sessionId: context.params.sessionId,
+        update: { sessionUpdate: 'tool_call', ...toolCall, status: 'pending' }
+      })
+      const permission = await context.client.request(
+        acp.methods.client.session.requestPermission,
+        {
+          sessionId: context.params.sessionId,
+          toolCall,
+          options: [
+            { kind: 'allow_once', name: 'Allow once', optionId: 'allow-once' },
+            { kind: 'allow_always', name: 'Allow for this conversation', optionId: 'allow-always' },
+            { kind: 'reject_once', name: 'Deny', optionId: 'deny-once' }
+          ]
+        }
+      )
+      if (!['allow-once', 'allow-always'].includes(permission.outcome.optionId))
+        return 'Runtime binding denied.'
+      await call('notebook_bind_runtime', toolCall.rawInput)
+      await context.client.notify(acp.methods.client.session.update, {
+        sessionId: context.params.sessionId,
+        update: {
+          sessionUpdate: 'tool_call_update',
+          toolCallId: toolCall.toolCallId,
+          status: 'completed'
+        }
+      })
+    }
+    const code =
+      language === 'python'
+        ? continued
+          ? 'runtime_approval_value += 1\nprint(runtime_approval_value)'
+          : 'runtime_approval_value = 41\nprint(runtime_approval_value)'
+        : continued
+          ? 'runtime_approval_value <- runtime_approval_value + 1; cat(runtime_approval_value)'
+          : 'runtime_approval_value <- 41; cat(runtime_approval_value)'
+    const run = await call('notebook_execute', { language, code })
+    if (run.status !== 'completed' || !run.stdout?.includes(continued ? '42' : '41')) {
+      throw new Error(`Runtime execution failed: ${JSON.stringify(run)}`)
+    }
+    return `Runtime ${language} ${continued ? 'continued' : 'first'} cell verified: ${continued ? '42' : '41'}.`
+  })
+
 const executeControlCode = async (sessionId, code) =>
   withMcpClient(sessionId, 'open-science-notebook', async (client) =>
     toolResult(
@@ -2381,6 +2476,8 @@ if (process.argv.includes('--version')) {
             }
           })
           reply = 'Compaction preview complete.'
+        } else if (prompt.includes('Verify Runtime approval ')) {
+          reply = await verifyRuntimeApproval(context, prompt)
         } else if (prompt.includes(PROVIDER_BRIDGE_PROMPT)) {
           reply = verifyProviderBridge()
         } else if (
