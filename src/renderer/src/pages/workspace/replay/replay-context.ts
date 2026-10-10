@@ -9,15 +9,22 @@ import type { ReplayResourceMap } from './replay-resources'
 import { replayText, replayNotebookText, replayToolOutputs } from './replay-content'
 import { REPLAY_ACTIVITY_LIMIT } from '@/lib/replay/scene'
 import { projectReplayScene } from '@/lib/replay/scene'
+import {
+  projectReplayNotebookInspection,
+  projectReplayStepInspection
+} from '@/lib/replay/inspection'
 
 import {
   REPLAY_CAPTURE_RECORD_LIMIT,
   REPLAY_CAPTURE_TOTAL_LIMIT,
-  type ReplayCapturedRecord
+  type ReplayCapturedRecord,
+  type SessionDiscussionSnapshot
 } from '../../../../../shared/session-replay'
 
 export type SessionDiscussionCapture = {
   scope?: 'step' | 'session'
+  notebookInspection?: { runId: string; timeMs: number }
+  stepInspection?: { timeMs: number; mode: 'visible' | 'saved-history' }
   phase?: ReplayScene['phase']
   stepTitle?: string
   branchIndex?: number
@@ -184,6 +191,72 @@ export const captureDiscussionStep = (
       .join('\n')
       .slice(0, 1800)
   }
+}
+
+export const captureDiscussionInspectedStep = (
+  document: ReplayDocument,
+  scene: ReplayScene,
+  stepId: string,
+  savedHistory = false,
+  recordedTimeOrigin?: number,
+  runDetails: Readonly<Record<string, ReplayNotebookRunDetails>> = {},
+  resources: ReplayResourceMap = {}
+): SessionDiscussionCapture | undefined => {
+  const inspected = projectReplayStepInspection(
+    document,
+    scene.branchId,
+    stepId,
+    scene.positionMs,
+    recordedTimeOrigin,
+    savedHistory
+  )
+  if (!inspected) return undefined
+  return {
+    ...captureDiscussionStep(document, inspected, runDetails, resources),
+    stepInspection: { timeMs: scene.positionMs, mode: savedHistory ? 'saved-history' : 'visible' },
+    ...(recordedTimeOrigin === undefined
+      ? {}
+      : { recordedAt: recordedTimeOrigin + scene.positionMs })
+  }
+}
+
+/** Capture the inspected cell, including only output visible at the current clock. */
+export const captureDiscussionNotebookRun = (
+  document: ReplayDocument,
+  scene: ReplayScene,
+  stepId: string,
+  runId: string,
+  recordedTimeOrigin?: number,
+  runDetails: Readonly<Record<string, ReplayNotebookRunDetails>> = {},
+  resources: ReplayResourceMap = {}
+): SessionDiscussionCapture | undefined => {
+  const inspected = projectReplayNotebookInspection(
+    document,
+    scene.branchId,
+    stepId,
+    runId,
+    scene.positionMs,
+    recordedTimeOrigin
+  )
+  if (!inspected) return undefined
+  return {
+    ...captureDiscussionStep(document, inspected, runDetails, resources),
+    notebookInspection: { runId, timeMs: scene.positionMs },
+    ...(recordedTimeOrigin === undefined
+      ? {}
+      : { recordedAt: recordedTimeOrigin + scene.positionMs })
+  }
+}
+
+/** View-only inspection hints never change the persisted discussion/package schema. */
+export const toSessionDiscussionSnapshot = (
+  context: SessionDiscussionCapture,
+  id: string
+): SessionDiscussionSnapshot => {
+  const captured = structuredClone(context)
+  delete captured.notebookInspection
+  delete captured.stepInspection
+  return { ...captured, id }
 }
 
 export const REPLAY_SEEK_EVENT = 'open-science:replay-seek'

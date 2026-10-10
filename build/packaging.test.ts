@@ -14,6 +14,8 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { finished } from 'node:stream/promises'
+import { load } from 'js-yaml'
+import micromatch from 'micromatch'
 
 import { describe, expect, it } from 'vitest'
 
@@ -25,6 +27,15 @@ const appBuilderLibPath = builderRequire.resolve('app-builder-lib/package.json')
 const appBuilderLibRoot = dirname(appBuilderLibPath)
 const appBuilderRequire = createRequire(appBuilderLibPath)
 const { createPackageWithOptions, listPackage } = appBuilderRequire('@electron/asar')
+
+const readAsarUnpackRules = (): string[] => {
+  const config = load(readFileSync(join(repoRoot, 'electron-builder.yml'), 'utf8')) as {
+    asarUnpack: string[]
+  }
+  expect(Array.isArray(config.asarUnpack)).toBe(true)
+  expect(config.asarUnpack.every((rule) => typeof rule === 'string')).toBe(true)
+  return config.asarUnpack
+}
 
 // Use an existing electron-builder NSIS cache; tests must not download a compiler.
 function findNsisCompiler(): string | undefined {
@@ -296,14 +307,49 @@ process.stdout.write(JSON.stringify({ counts, modulePath: require.resolve('tikto
     expect(existsSync(join(repoRoot, 'resources/notebook/r_loop.R'))).toBe(true)
     expect(existsSync(join(repoRoot, 'resources/notebook/kernel_process_host.js'))).toBe(true)
     expect(existsSync(join(repoRoot, 'resources/notebook/file_evidence_worker.js'))).toBe(true)
-    const yml = readFileSync(join(repoRoot, 'electron-builder.yml'), 'utf8')
-    expect(yml).toMatch(/asarUnpack:\s*\n\s*-\s*resources\/(\*\*|notebook\/\*\*)/)
+    const rules = readAsarUnpackRules()
+    expect(rules.some((rule) => rule === 'resources/**' || rule === 'resources/notebook/**')).toBe(
+      true
+    )
+    const scripts = [
+      'python_loop.py',
+      'r_loop.R',
+      'kernel_process_host.js',
+      'file_evidence_worker.js'
+    ].map((name) => `resources/notebook/${name}`)
+    expect(micromatch(scripts, rules)).toEqual(scripts)
   })
 
   it('ships the versioned Specialist contribution template guidance unpacked from the asar', () => {
     expect(existsSync(join(repoRoot, 'resources/specialists/template/v1/README.txt'))).toBe(true)
-    const yml = readFileSync(join(repoRoot, 'electron-builder.yml'), 'utf8')
-    expect(yml).toMatch(/asarUnpack:\s*\n\s*-\s*resources\/\*\*/)
+    const rules = readAsarUnpackRules()
+    expect(rules).toContain('resources/**')
+    expect(micromatch(['resources/specialists/template/v1/README.txt'], rules)).toEqual([
+      'resources/specialists/template/v1/README.txt'
+    ])
+  })
+
+  it('unpacks the scoped Replay entry and assets alongside existing resources without unpacking staged runtimes', () => {
+    const rules = readAsarUnpackRules()
+    expect(rules).toEqual(
+      expect.arrayContaining(['out/replay-viewer/**', 'resources/**', '!resources/bin{,/**/*}'])
+    )
+    const viewerFiles = [
+      'out/replay-viewer/index.html',
+      'out/replay-viewer/assets/index.js',
+      'out/replay-viewer/assets/index.css',
+      'out/replay-viewer/assets/preview-chunk.js'
+    ]
+    expect(
+      micromatch(
+        [
+          ...viewerFiles,
+          'resources/bin/mac/arm64/micromamba',
+          'resources/bin/win/x64/micromamba.exe'
+        ],
+        rules
+      )
+    ).toEqual(viewerFiles)
   })
 
   it('ships micromamba as a per-platform extraResource to Contents/Resources', () => {

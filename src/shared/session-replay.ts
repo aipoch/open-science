@@ -1,3 +1,8 @@
+import {
+  readObservationBindingsRequestSchema,
+  readObservationBindingsResultSchema
+} from './research-replay-observations'
+import { persistedChatSessionCodec } from './session-persistence'
 import { z } from 'zod'
 import { defineApplicationCommandContract, validationCodec } from './application-command-contract'
 
@@ -14,6 +19,8 @@ export const sessionReplayRequestSchema = z
   })
   .strict()
 export type SessionReplayRequest = z.infer<typeof sessionReplayRequestSchema>
+const sessionDiscussionMatchSchema = z.object({ sessionId: identity }).strict().nullable()
+export type SessionDiscussionMatch = z.infer<typeof sessionDiscussionMatchSchema>
 export const sessionReplayListRequestSchema = z.object({ projectId: identity }).strict()
 export type SessionReplayListRequest = z.infer<typeof sessionReplayListRequestSchema>
 export const replayViewStateSchema = z
@@ -21,6 +28,8 @@ export const replayViewStateSchema = z
     fingerprint: z.string().min(1).max(1024),
     generatorVersion: z.number().int().positive(),
     presentationVersion: z.number().int().positive().optional(),
+    // Local viewing state only. Legacy checkpoints used reconstructed presentation time.
+    clock: z.enum(['presentation', 'recorded']).optional(),
     branchId: z.string().min(1).max(1024),
     stepId: z.string().min(1).max(2048).optional(),
     stepOffsetMs: z.number().finite().nonnegative().optional(),
@@ -44,6 +53,7 @@ export const replayViewStateSchema = z
         z
           .object({
             branchId: z.string().min(1).max(1024),
+            clock: z.enum(['presentation', 'recorded']).optional(),
             stepId: z.string().min(1).max(2048).optional(),
             stepOffsetMs: z.number().finite().nonnegative(),
             timeMs: z.number().finite().nonnegative()
@@ -195,7 +205,29 @@ export const unlinkSessionReadingRequestSchema = z
   .strict()
 export type UnlinkSessionReadingRequest = z.infer<typeof unlinkSessionReadingRequestSchema>
 
+export const setResearchMembershipRequestSchema = z
+  .object({
+    projectId: identity,
+    sessionId: identity,
+    expectedRevision: z.number().int().nonnegative(),
+    source: sessionReplayRequestSchema.extend({ importId: identity }).strict().optional()
+  })
+  .strict()
+export type SetResearchMembershipRequest = z.infer<typeof setResearchMembershipRequestSchema>
+
 export const sessionReplayCommandContracts = {
+  readObservationBindings: defineApplicationCommandContract(
+    validationCodec(z.tuple([readObservationBindingsRequestSchema])),
+    validationCodec(readObservationBindingsResultSchema)
+  ),
+  setResearchMembership: defineApplicationCommandContract(
+    validationCodec(z.tuple([setResearchMembershipRequestSchema])),
+    persistedChatSessionCodec
+  ),
+  findDiscussion: defineApplicationCommandContract(
+    validationCodec(z.tuple([sessionReplayRequestSchema])),
+    validationCodec(sessionDiscussionMatchSchema)
+  ),
   unlinkSession: defineApplicationCommandContract(
     validationCodec(z.tuple([unlinkSessionReadingRequestSchema])),
     validationCodec(z.void())

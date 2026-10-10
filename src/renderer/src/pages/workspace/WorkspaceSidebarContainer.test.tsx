@@ -9,41 +9,48 @@ import { useNavigationStore } from '@/stores/navigation-store'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
 import type { ChatSession } from '@/stores/session-store'
 import { useSessionStore } from '@/stores/session-store'
+import { useResearchDemoStore } from '@/stores/research-demo-store'
 
 const persistenceMocks = vi.hoisted(() => ({
   hydratePersistedSessionIfPresent: vi.fn(),
   loadPersistedSession: vi.fn()
 }))
+const sidebarSessions = vi.hoisted(() => vi.fn())
 
 vi.mock('@/lib/session-persistence/session-persistence', () => persistenceMocks)
 
 vi.mock('./WorkspaceSidebar', () => ({
   WorkspaceSidebar: ({
+    sessions,
     onPreviewSession,
     otherProjects = [],
     onOpenProject
   }: {
+    sessions: ChatSession[]
     onPreviewSession?: (sessionId: string) => Promise<void> | void
     otherProjects?: Array<Pick<Project, 'id' | 'name' | 'description'>>
     onOpenProject?: (projectId: string) => void
-  }) => (
-    <div>
-      <button type="button" onClick={() => void onPreviewSession?.('lazy-session')}>
-        Preview Session
-      </button>
-      {otherProjects.map((project) => (
-        <button
-          key={project.id}
-          type="button"
-          data-project-id={project.id}
-          onClick={() => onOpenProject?.(project.id)}
-        >
-          {project.name}
-          {project.description}
+  }) => {
+    sidebarSessions(sessions)
+    return (
+      <div>
+        <button type="button" onClick={() => void onPreviewSession?.('lazy-session')}>
+          Preview Session
         </button>
-      ))}
-    </div>
-  )
+        {otherProjects.map((project) => (
+          <button
+            key={project.id}
+            type="button"
+            data-project-id={project.id}
+            onClick={() => onOpenProject?.(project.id)}
+          >
+            {project.name}
+            {project.description}
+          </button>
+        ))}
+      </div>
+    )
+  }
 }))
 
 import { WorkspaceSidebarContainer } from './WorkspaceSidebarContainer'
@@ -72,6 +79,12 @@ const createProject = (overrides: Partial<Project>): Project => ({
 })
 
 beforeEach(() => {
+  sidebarSessions.mockClear()
+  useResearchDemoStore.setState({ carriersByProject: {} })
+  Object.defineProperty(window, 'api', {
+    configurable: true,
+    value: { researchDemos: { carriers: vi.fn().mockResolvedValue([]) } }
+  })
   persistenceMocks.hydratePersistedSessionIfPresent.mockReset()
   persistenceMocks.loadPersistedSession.mockReset()
   useSessionStore.setState({ sessions: [lazySession] })
@@ -86,6 +99,51 @@ beforeEach(() => {
 })
 
 describe('WorkspaceSidebarContainer Session previews', () => {
+  it('groups only indexed demo carriers and keeps old discussions plus an explicitly opened carrier accessible', async () => {
+    const carrier = { ...lazySession, id: 'carrier', title: 'Same title' }
+    const oldDiscussion = { ...lazySession, id: 'old-86', title: 'Same title' }
+    useSessionStore.setState({ sessions: [lazySession, carrier, oldDiscussion] })
+    vi.mocked(window.api.researchDemos.carriers).mockResolvedValue([
+      {
+        sessionId: 'carrier',
+        source: { projectId: 'project-1', sourceSessionId: 'source', sourceImportId: 'import' }
+      }
+    ])
+    const root = createRoot(document.createElement('div'))
+    try {
+      await act(async () =>
+        root.render(
+          <WorkspaceSidebarContainer
+            {...({ projectId: 'project-1', isProjectArchived: false } as ComponentProps<
+              typeof WorkspaceSidebarContainer
+            >)}
+          />
+        )
+      )
+      expect(sidebarSessions.mock.lastCall?.[0].map((session: ChatSession) => session.id)).toEqual([
+        'lazy-session',
+        'old-86'
+      ])
+      await act(async () =>
+        root.render(
+          <WorkspaceSidebarContainer
+            {...({
+              projectId: 'project-1',
+              isProjectArchived: false,
+              activeSessionId: 'carrier'
+            } as ComponentProps<typeof WorkspaceSidebarContainer>)}
+          />
+        )
+      )
+      expect(sidebarSessions.mock.lastCall?.[0].map((session: ChatSession) => session.id)).toEqual([
+        'lazy-session',
+        'carrier',
+        'old-86'
+      ])
+    } finally {
+      await act(async () => root.unmount())
+    }
+  })
   it('hides only explicitly bound seeds and reveals them after release', () => {
     const pending = {
       ...lazySession,

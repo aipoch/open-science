@@ -1,4 +1,3 @@
-import { captureDiscussionSendContext } from './discussion-send-context'
 import type { SessionDiscussionCapture } from './replay/replay-context'
 import type { SessionReadingContext } from '../../../../shared/session-reading'
 import { replayAnnotationTarget } from '../../../../shared/replay-reference'
@@ -31,6 +30,7 @@ import {
   isSessionSizeLimitError,
   MAX_SESSION_PDF_CONTEXTS,
   type LiteratureReference,
+  type ResearchMembership,
   type MessagePdfContextSnapshot,
   type PdfReadingPosition,
   type SessionPdfBinding,
@@ -144,6 +144,7 @@ export type ComposerSendSnapshot = {
   doc: ComposerDoc
   annotations: Annotation[]
   discussionFocus?: SessionDiscussionCapture
+  researchMembership?: ResearchMembership
   attachments: UploadedAttachment[]
   automaticReadingEnabled?: boolean
   pdfContext?: MessagePdfContextSnapshot
@@ -159,6 +160,7 @@ export type ComposerSendSnapshot = {
 
 type WorkspaceComposerControllerInput = {
   currentDraftKey: string
+  researchMembership?: ResearchMembership
   newConversationDraftKey: string
   activeProjectId: string | undefined
   pendingCustomizePrefill: CustomizePrefillIntent | undefined
@@ -209,6 +211,7 @@ type WorkspaceComposerController = {
     cancelQueuedEdit?: () => void
     discardWslSetupDraft: () => boolean
     appendLiterature: (draftKey: string, references: readonly LiteratureReference[]) => boolean
+    appendText: (draftKey: string, text: string) => boolean
     changeDoc: (doc: ComposerDoc, caret?: ComposerCaretPosition) => void
     addAnnotation: (annotation: Annotation) => AnnotationValidationError | undefined
     updateAnnotationNote: (id: string, note: string) => AnnotationValidationError | undefined
@@ -286,6 +289,7 @@ const blank = (): ComposerDraft => ({
 
 const useWorkspaceComposerController = ({
   currentDraftKey,
+  researchMembership,
   newConversationDraftKey,
   activeProjectId,
   pendingCustomizePrefill,
@@ -1297,17 +1301,11 @@ const useWorkspaceComposerController = ({
       const snapshot = {
         retrySessionOwner: retrySessionOwnerRef.current,
         setupSessionToken: setupSessionTokenRef.current,
+        ...(researchMembership ? { researchMembership: { ...researchMembership } } : {}),
         draftKey: activeDraftKeyRef.current,
         version: versionsRef.current[activeDraftKeyRef.current] ?? 0,
         doc: docRef.current,
         annotations: [...annotationsRef.current],
-        discussionFocus: captureDiscussionSendContext(
-          annotationsRef.current,
-          includeReadingContext
-            ? activeSession?.runtimeContext?.sessionContext?.bindings.at(-1)
-            : undefined,
-          activeSession?.id
-        ),
         attachments,
         queuedEdit: queuedEditRef.current,
         automaticReadingEnabled: automaticReadingEnabledRef.current,
@@ -1349,7 +1347,7 @@ const useWorkspaceComposerController = ({
     },
     [
       attachments,
-      activeSession,
+      researchMembership,
       activeReadingBinding,
       activePendingReading,
       automaticStagedReadingContexts,
@@ -1676,6 +1674,13 @@ const useWorkspaceComposerController = ({
         return clearDraft(activeDraftKeyRef.current)
       },
       changeDoc,
+      appendText: (draftKey, text): boolean => {
+        if (activeDraftKeyRef.current !== draftKey || !canStageAttachments) return false
+        // A navigation layout effect can restore this draft before callers re-render. Read
+        // its current owner snapshot instead of appending to the previous render's document.
+        changeDoc({ nodes: [...docRef.current.nodes, { type: 'text', text }] })
+        return true
+      },
       appendLiterature: (draftKey, references): boolean => {
         if (activeDraftKeyRef.current !== draftKey || !canStageAttachments) return false
         const next = appendLiteratureMentions(docRef.current, references)

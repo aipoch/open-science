@@ -20,6 +20,8 @@ type FrameNavigationGuard = (
   frame?: NavigationFrame | null
 ) => boolean
 
+type ManagedFrameNavigation = (url: string, frame: NavigationFrame | null) => boolean
+
 const getProtocol = (url: string): string | undefined => {
   try {
     return new URL(url).protocol
@@ -67,11 +69,14 @@ const isAllowedSourceDescendantNavigation = (url: string): boolean => {
 }
 
 const createFrameNavigationGuard =
-  (): FrameNavigationGuard =>
-  (url, isMainFrame, currentUrl = '') => {
+  (managedFrameNavigation?: ManagedFrameNavigation): FrameNavigationGuard =>
+  (url, isMainFrame, currentUrl = '', frame = null) => {
     if (isMainFrame) return isAllowedMainFrameNavigation(url, currentUrl)
     const protocol = getProtocol(url)
-    return protocol !== undefined && ALLOWED_PREVIEW_PROTOCOLS.has(protocol)
+    if (protocol !== undefined && ALLOWED_PREVIEW_PROTOCOLS.has(protocol)) return true
+    // Only the owning Main registry can authorize an additional live embedded origin. The
+    // protocol alone, a localhost hostname, or a renderer-provided iframe name grants nothing.
+    return protocol === 'http:' && !!frame && managedFrameNavigation?.(url, frame) === true
   }
 
 // Decides whether a window-open request (target="_blank" / window.open) may be handed to the OS. It
@@ -87,4 +92,4 @@ export {
   isAllowedExternalUrl,
   isAllowedSourceDescendantNavigation
 }
-export type { FrameNavigationGuard }
+export type { FrameNavigationGuard, ManagedFrameNavigation, NavigationFrame }

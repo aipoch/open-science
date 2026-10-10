@@ -285,7 +285,7 @@ test('shows a recoverable disk-capacity error before copying an import', async (
   await operation.getByRole('button', { name: 'Close', exact: true }).click()
 })
 
-test('exports a Session package and opens the imported Session with replay', async ({
+test('exports a Session package and opens its research workspace and read-only source with replay', async ({
   app
 }, testInfo) => {
   // This journey validates the archive several times and performs two persistence restarts.
@@ -466,14 +466,17 @@ test('exports a Session package and opens the imported Session with replay', asy
     page.getByTestId('replay-panel').getByRole('button', { name: 'Play replay', exact: true })
   ).toBeVisible()
   const replay = page.getByTestId('replay-panel')
-  const imported = page.getByRole('region', { name: 'Imported research history', exact: true })
-  await expect(imported).toBeVisible()
-  await expect(imported.getByText(/^Imported on /)).toBeVisible()
-  const origins = await page.evaluate(async () =>
-    (await window.api.sessions.loadAll()).sessions
-      .filter((session) => session.packageOrigin)
-      .map((session) => session.packageOrigin)
+  await expect(page.getByTestId('research-workspace-header')).toContainText(prompt)
+  await expect(page.getByTestId('research-workspace-header')).toContainText(
+    'Original record · Read-only'
   )
+  await expect(page.getByRole('textbox', { name: 'Ask anything', exact: true })).toBeEditable()
+  await expect(page.getByRole('textbox', { name: 'Ask anything', exact: true })).toBeEmpty()
+  await expect(page.getByTestId('session-discussion-draft')).toContainText(prompt)
+  const importedSessions = await page.evaluate(async () =>
+    (await window.api.sessions.loadAll()).sessions.filter((session) => session.packageOrigin)
+  )
+  const origins = importedSessions.map((session) => session.packageOrigin)
   expect(origins).toEqual([
     expect.objectContaining({
       excludedFiles: expect.arrayContaining([
@@ -481,11 +484,30 @@ test('exports a Session package and opens the imported Session with replay', asy
       ])
     })
   ])
+  const source = importedSessions[0]
+  const sessionRow = page.locator(`[data-research-id="${source.id}"]`)
+  const sessionMenu = sessionRow.getByRole('button', {
+    name: `Open actions for ${prompt}`,
+    exact: true
+  })
+  // The research root shows immutable original messages and a separate question composer.
+  // Opening the original record again must preserve the source and its pending question.
+  await expect(
+    sessionRow.getByRole('img', { name: 'Read-only', exact: true, includeHidden: true })
+  ).toHaveCount(0)
+  await sessionMenu.click()
+  await page.getByRole('menuitem', { name: 'View original record', exact: true }).click()
+  const imported = page.getByTestId('research-question-context')
+  await expect(imported).toBeVisible()
+  await expect(page.getByTestId('research-workspace-header')).toContainText(
+    'Original record · Read-only'
+  )
   await imported.getByText('Package source', { exact: true }).click()
+  await expect(imported.getByText(/^Imported on /)).toBeVisible()
   await expect(imported.getByText(origins[0]!.sourceProjectId, { exact: true })).toBeVisible()
   await expect(imported.getByText(origins[0]!.sourceSessionId, { exact: true })).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('session-package-source.png') })
-  await imported.getByText('Not included in this package', { exact: true }).click()
+  await expect(imported.getByText('Not included in this package', { exact: true })).toBeVisible()
   await expect(imported.getByText('raw-results.csv', { exact: true })).toBeVisible()
   await replay.getByRole('slider', { name: 'Replay progress', exact: true }).focus()
   await page.keyboard.press('End')
@@ -494,40 +516,33 @@ test('exports a Session package and opens the imported Session with replay', asy
       .getByRole('region', { name: 'Conversation', exact: true })
       .getByText(`Deterministic reply: ${prompt}`, { exact: true })
   ).toBeVisible()
-  await expect(page.getByRole('textbox', { name: 'Ask anything' })).toHaveCount(0)
-  const sessionRow = page
-    .getByRole('navigation', { name: 'Sessions', includeHidden: true })
-    .locator('[data-session-id]')
-    .filter({ hasText: prompt })
-    .filter({ has: page.getByRole('img', { name: 'Read-only', exact: true, includeHidden: true }) })
-  const readOnlyBadge = sessionRow.getByRole('img', {
-    name: 'Read-only',
-    exact: true,
-    includeHidden: true
-  })
-  const sessionMenu = sessionRow.getByRole('button', { name: `Open actions for ${prompt}` })
+  await expect(page.getByRole('textbox', { name: 'Ask anything' })).toBeEditable()
+  expect(
+    await page.evaluate(
+      async (sessionId) =>
+        (await window.api.sessions.loadAll()).sessions.find((session) => session.id === sessionId),
+      source.id
+    )
+  ).toEqual(source)
   await imported.hover()
-  await expect(readOnlyBadge).toHaveCSS('opacity', '1')
   await page
     .getByRole('navigation', { name: 'Sessions' })
     .screenshot({ path: testInfo.outputPath('session-package-sidebar.png') })
   await sessionRow.hover()
-  await expect(readOnlyBadge).toHaveCSS('opacity', '0')
   await expect(sessionMenu).toHaveCSS('opacity', '1')
   await page
     .getByRole('navigation', { name: 'Sessions' })
     .screenshot({ path: testInfo.outputPath('session-package-sidebar-hover.png') })
   await sessionMenu.click()
   await expect(page.getByRole('menu', { name: `Open actions for ${prompt}` })).toBeVisible()
-  await expect(readOnlyBadge).toHaveCSS('opacity', '0')
+  await expect(
+    page.getByRole('menuitem', { name: 'View original record', exact: true })
+  ).toBeVisible()
   await page.keyboard.press('Escape')
   await imported.getByText('Package source', { exact: true }).click()
-  await expect(readOnlyBadge).toHaveCSS('opacity', '1')
   await sessionMenu.focus()
-  await expect(readOnlyBadge).toHaveCSS('opacity', '0')
   await expect(sessionMenu).toHaveCSS('opacity', '1')
   await imported.getByText('Package source', { exact: true }).click()
-  await expect(readOnlyBadge).toHaveCSS('opacity', '1')
   await page.screenshot({ path: testInfo.outputPath('session-package-imported.png') })
   await page.getByRole('button', { name: 'New', exact: true }).click()
   await page.getByRole('textbox', { name: 'Ask anything' }).fill('Continue in an ordinary Session.')
@@ -553,15 +568,22 @@ test('exports a Session package and opens the imported Session with replay', asy
     .first()
     .click()
   await app.page
-    .getByRole('navigation', { name: 'Sessions' })
-    .locator('[data-session-id]')
-    .filter({
-      has: app.page.getByRole('img', { name: 'Read-only', exact: true, includeHidden: true })
-    })
-    .getByRole('button', { name: new RegExp(`Session status:.*${prompt}`) })
+    .locator(`[data-research-id="${source.id}"]`)
+    .locator('[data-slot="session-open-button"]')
+    .first()
     .click()
+  await expect(app.page.getByTestId('research-workspace-header')).toContainText(prompt)
+  await expect(app.page.getByRole('textbox', { name: 'Ask anything', exact: true })).toBeEditable()
+  await expect(app.page.getByTestId('replay-panel')).toBeVisible()
   await app.page
-    .getByRole('region', { name: 'Imported research history', exact: true })
+    .locator(`[data-research-id="${source.id}"]`)
+    .getByRole('button', { name: `Open actions for ${prompt}`, exact: true })
+    .click()
+  await app.page.getByRole('menuitem', { name: 'View original record', exact: true }).click()
+  await expect(app.page.getByTestId('research-question-context')).toBeVisible()
+  await expect(app.page.getByRole('textbox', { name: 'Ask anything', exact: true })).toBeEditable()
+  await app.page
+    .getByTestId('research-workspace-header')
     .getByRole('button', { name: 'View replay', exact: true })
     .click()
   await expect(app.page.getByTestId('replay-panel')).toBeVisible()

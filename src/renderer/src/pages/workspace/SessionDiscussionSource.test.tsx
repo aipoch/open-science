@@ -116,7 +116,7 @@ it('opens each selected step rather than silently returning to the latest one', 
       }
     ])
   )
-  await act(async () => button('Discuss').click())
+  await act(async () => button('Question scope').click())
   expect(document.body.textContent).toContain('Selected steps')
   await act(async () => button('Python chart').click())
   expect(mocks.read).toHaveBeenCalledWith({ projectId: 'project', id: 'first' })
@@ -135,16 +135,16 @@ it('shows only the latest source from older multi-Session state', async () => {
   expect(container.textContent).not.toContain('Second')
   expect(container.textContent).not.toContain('Analysis')
   expect(container.querySelectorAll('[data-session-discussion-source]')).toHaveLength(1)
-  expect(container.textContent).toContain('Discuss')
+  expect(container.textContent).toContain('Question scope')
 })
 
-it('keeps the whole-research scope in the menu instead of the source chip', async () => {
+it('shows the whole-research scope on the source chip before opening its details', async () => {
   const value = context()
   value.sessionContext!.bindings[0].scope = 'session'
   await render(value)
-  expect(button('Analysis').textContent).not.toContain('Entire research')
+  expect(button('Analysis').textContent).toContain('Entire research')
   expect(button('Analysis').textContent).not.toContain('steps')
-  await act(async () => button('Discuss').click())
+  await act(async () => button('Question scope').click())
   expect(document.body.textContent).toContain('Entire research')
   expect(document.body.textContent).not.toContain('Selected steps')
 })

@@ -90,6 +90,11 @@ const project = (id: string): Project => ({
 
 const dependencies = (): ApplicationCommandCompositionDependencies =>
   ({
+    researchExecutionProfiles: EMPTY_OWNER,
+    runObservation: EMPTY_OWNER,
+    browserRecording: EMPTY_OWNER,
+    researchRuns: EMPTY_OWNER,
+    researchDemos: EMPTY_OWNER,
     pdfTranslation: EMPTY_OWNER,
     acp: EMPTY_OWNER,
     notebook: EMPTY_OWNER,
@@ -237,6 +242,55 @@ const invocation = (
 }
 
 describe('application command composition', () => {
+  it('routes local observation methods through the desktop Node dispatcher without exposing web or task writers', async () => {
+    const composition = createApplicationCommandComposition(dependencies())
+    const observations = RENDERER_CONTRACT_CATALOG.filter(
+      (contract) => contract.capability === 'run-observation'
+    )
+    expect(observations.map((contract) => contract.channel)).toEqual([
+      'run-observation:open',
+      'run-observation:openRecorded',
+      'run-observation:readProjectRecording',
+      'run-observation:readRecorded',
+      'run-observation:recordingFileSelection',
+      'run-observation:recordingSelection',
+      'run-observation:recordingStatus',
+      'run-observation:revoke',
+      'run-observation:selection',
+      'run-observation:selectRecordedFile',
+      'run-observation:selectRecordingFile',
+      'project-recording:inspect',
+      'project-recording:openRecorded',
+      'project-recording:pause',
+      'project-recording:read',
+      'project-recording:resume',
+      'project-recording:selection',
+      'project-recording:selectMoment',
+      'project-recording:start',
+      'project-recording:status',
+      'project-recording:stop'
+    ])
+    for (const contract of observations) {
+      expect(contract.applicationCommand).toBeUndefined()
+      expect(contract.surfaceInstallation).toEqual({
+        electron: 'preload',
+        localWeb: 'unavailable',
+        remoteWeb: 'unavailable'
+      })
+      expect(composition.desktop.commandNames()).toContain(contract.channel)
+      // Native-only channels are carried by the Node desktop transport, not the legacy
+      // in-process application-command adapter.
+      expect(composition.electron.commandNames()).not.toContain(contract.channel)
+      for (const view of [composition.localWeb, composition.remoteWeb, composition.task]) {
+        expect(view.commandNames()).not.toContain(contract.channel)
+        await expect(view.invoke(contract.channel!, invocation())).rejects.toMatchObject({
+          code: 'command-unavailable'
+        })
+      }
+    }
+    composition.dispose()
+  })
+
   it('joins the runtime-validated contracts into the Electron view', () => {
     const composition = createApplicationCommandComposition(dependencies())
 
@@ -297,12 +351,15 @@ describe('application command composition', () => {
       'projects:retry-deletion-cleanup',
       'projects:update',
       'projects:update-archive',
+      'session-replay:find-discussion',
       'session-replay:get',
       'session-replay:get-selection-snapshot',
       'session-replay:list',
       'session-replay:list-selection-snapshots',
+      'session-replay:read-observation-bindings',
       'session-replay:save-selection-snapshot',
       'session-replay:save-view',
+      'session-replay:set-research-membership',
       'session-replay:unlink-session',
       'sessions:cancel-diagnostics',
       'sessions:delete-session',
@@ -863,5 +920,29 @@ it('keeps PDF translation on the desktop view and passes its document lease to t
   expect(composition.localWeb.commandNames()).not.toContain('pdf-translation:begin')
   expect(composition.remoteWeb.commandNames()).not.toContain('pdf-translation:begin')
   expect(composition.task.commandNames()).not.toContain('pdf-translation:begin')
+  composition.dispose()
+})
+
+it('exposes research configuration through the Node desktop dispatcher without a web or task writer', async () => {
+  const saveExecutionProfile = vi.fn().mockResolvedValue({ profileId: 'public-profile' })
+  const composition = createApplicationCommandComposition({
+    ...dependencies(),
+    researchExecutionProfiles: { saveExecutionProfile } as never
+  })
+  const base = invocation()
+  const caller = {
+    ...base,
+    callerContext: createCallerContext({ ...base.callerContext, surface: 'electron' }),
+    args: [{ credentials: { key: 'private-value' } }]
+  }
+  await expect(
+    composition.desktop.invoke('research-execution-profiles:save', caller)
+  ).resolves.toEqual({ profileId: 'public-profile' })
+  expect(saveExecutionProfile).toHaveBeenCalledWith(caller.args[0], caller.callerLease.signal)
+  for (const dispatcher of [composition.localWeb, composition.remoteWeb, composition.task]) {
+    expect(dispatcher.commandNames()).not.toContain('research-execution-profiles:save')
+    await expect(dispatcher.invoke('research-execution-profiles:save', base)).rejects.toThrow()
+  }
+  expect(saveExecutionProfile).toHaveBeenCalledOnce()
   composition.dispose()
 })

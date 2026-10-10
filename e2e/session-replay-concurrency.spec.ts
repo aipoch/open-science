@@ -2,6 +2,7 @@ import { expect } from '@playwright/test'
 import type { Page } from 'playwright'
 import { test, type ElectronApp } from './fixtures/electron-app'
 import { createProject } from './certification/helpers'
+import { askReplayStep } from './helpers/research-replay'
 import type { PersistedChatSession } from '../src/shared/session-persistence'
 
 // Use real renderer windows, IPC and ordinary composer drafts; no provider is invoked while staging.
@@ -13,13 +14,14 @@ const openResearch = async (page: Page, projectName: string): Promise<void> => {
     .getByRole('button', { name: projectName, exact: true })
     .click()
   await page
-    .getByRole('region', { name: 'Imported research history', exact: true })
+    .getByTestId('research-workspace-header')
     .getByRole('button', { name: 'View replay', exact: true })
     .click()
   await expect(page.getByTestId('replay-panel')).toBeVisible()
-  await expect(
-    page.getByRole('region', { name: 'Imported research history', exact: true })
-  ).toBeVisible()
+  await expect(page.getByTestId('research-workspace-header')).toContainText(
+    'Original record · Read-only'
+  )
+  await expect(page.getByRole('textbox', { name: 'Ask anything', exact: true })).toBeEditable()
 }
 
 const seedResearch = async (
@@ -82,14 +84,8 @@ test('stages the same archive independently in two windows without creating or s
     [first, 'First independent question.'],
     [second, 'Second independent question.']
   ] as const) {
-    await page
-      .getByTestId('replay-panel')
-      .getByRole('button', { name: 'Ask about this step', exact: true })
-      .click()
-    await page
-      .getByRole('dialog', { name: 'Ask in a conversation' })
-      .getByRole('button', { name: 'New conversation', exact: true })
-      .click()
+    await askReplayStep(page.getByTestId('replay-panel'))
+    await expect(page.getByRole('dialog', { name: 'Ask in a conversation' })).toHaveCount(0)
     const editor = page.getByRole('textbox', { name: 'Ask anything', exact: true })
     await expect(page.locator('[data-session-discussion-source]').last()).toContainText(
       source.title

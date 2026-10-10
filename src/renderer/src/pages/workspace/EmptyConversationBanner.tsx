@@ -248,37 +248,72 @@ const EmptyConversationBanner = ({
       className="pointer-events-none absolute inset-x-0 top-[42%] flex -translate-y-1/2 flex-col items-center gap-4 px-6 text-center"
     >
       <FlaskLogo className="size-28 text-text-300 opacity-40 md:size-32 dark:opacity-80" />
-      <div className="flex flex-col gap-2">
+      <div className="flex max-w-xl flex-col gap-2">
         <h2 className="text-balance text-lg font-normal text-text-000 md:text-xl">
           {researchTitle
-            ? t('What would you like to understand about this research?')
+            ? t('Discussing {{title}}', { title: researchTitle })
             : t('What will you research in Open-Science?')}
         </h2>
         <p className="text-xs text-text-100">
           {researchTitle
-            ? t('Play the replay on the right, or ask about the archived methods and results.')
+            ? t(
+                'Ask about the recorded research while watching its replay. Your discussion is saved separately; the original research stays unchanged.'
+              )
             : t('Attach data or papers, then describe what you want to find out.')}
         </p>
       </div>
       {onStartResearch ? (
         <div className="pointer-events-auto flex flex-wrap justify-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => onStartResearch(t('Analyze my data and explain the main findings.'))}
-          >
-            {t('Analyze data')}
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => onStartResearch(t('Compare these papers and summarize their evidence.'))}
-          >
-            {t('Compare papers')}
-          </Button>
+          {researchTitle ? (
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => onStartResearch(t('Summarize this research and its main findings.'))}
+              >
+                {t('Summarize research')}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => onStartResearch(t('What evidence supports the conclusions?'))}
+              >
+                {t('Examine the evidence')}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => onStartResearch(t('What has not been verified yet?'))}
+              >
+                {t('Identify limitations')}
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => onStartResearch(t('Analyze my data and explain the main findings.'))}
+              >
+                {t('Analyze data')}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  onStartResearch(t('Compare these papers and summarize their evidence.'))
+                }
+              >
+                {t('Compare papers')}
+              </Button>
+            </>
+          )}
         </div>
       ) : null}
-      {sessionImport?.canImport && sessionImport.projectId && sessionPackageImportAvailable() ? (
+      {!researchTitle &&
+      sessionImport?.canImport &&
+      sessionImport.projectId &&
+      sessionPackageImportAvailable() ? (
         <SessionPackageEntryRow projectId={sessionImport.projectId} />
       ) : null}
     </div>

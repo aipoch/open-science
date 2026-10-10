@@ -96,12 +96,14 @@ const useHistoricalArtifactDescriptors = (
   projectId: string | undefined,
   messages: ChatSession['messages'] | undefined,
   artifacts: ChatSession['artifacts'],
-  projectedVersionIds: readonly string[]
+  projectedVersionIds: readonly string[],
+  publicationRevision: string
 ): ReadonlyMap<string, MessageArtifact | undefined> => {
   const resolvedRef = useRef<{
     sessionId: string | undefined
+    publicationRevision: string
     artifactsByVersionId: Map<string, MessageArtifact | undefined>
-  }>({ sessionId: undefined, artifactsByVersionId: new Map() })
+  }>({ sessionId: undefined, publicationRevision, artifactsByVersionId: new Map() })
   const [resolved, setResolved] = useState<{
     sessionId: string | undefined
     artifactsByVersionId: ReadonlyMap<string, MessageArtifact | undefined>
@@ -119,7 +121,23 @@ const useHistoricalArtifactDescriptors = (
 
   useEffect(() => {
     if (resolvedRef.current.sessionId !== sessionId) {
-      resolvedRef.current = { sessionId, artifactsByVersionId: new Map() }
+      resolvedRef.current = { sessionId, publicationRevision, artifactsByVersionId: new Map() }
+      retriedVersionIdsRef.current.clear()
+      setResolved(resolvedRef.current)
+    } else if (resolvedRef.current.publicationRevision !== publicationRevision) {
+      // Main may first stage a Version on its owner Message and publish it later. Managed
+      // operations deliver durable Session revisions without an ACP Artifact event. Recheck only
+      // unconfirmed descriptors when that authority advances; published Versions remain cached.
+      // Replacing the map also prevents an older in-flight pending response overwriting this read.
+      resolvedRef.current = {
+        sessionId,
+        publicationRevision,
+        artifactsByVersionId: new Map(
+          [...resolvedRef.current.artifactsByVersionId].filter(
+            ([, artifact]) => artifact?.isPublished === true
+          )
+        )
+      }
       retriedVersionIdsRef.current.clear()
       setResolved(resolvedRef.current)
     }
@@ -165,10 +183,12 @@ const useHistoricalArtifactDescriptors = (
             appSessionId: sessionId,
             versionIds
           })
+          if (resolvedRef.current.artifactsByVersionId !== cache) return
           for (const descriptor of descriptors) {
             cache.set(descriptor.versionId, toResolvedMessageArtifact(descriptor))
           }
         } catch {
+          if (resolvedRef.current.artifactsByVersionId !== cache) return
           let shouldRetry = false
           for (const versionId of versionIds) {
             cache.delete(versionId)
@@ -197,7 +217,15 @@ const useHistoricalArtifactDescriptors = (
         setResolved({ sessionId, artifactsByVersionId: new Map(cache) })
       }
     })()
-  }, [artifacts, messages, projectId, projectedVersionIds, retryToken, sessionId])
+  }, [
+    artifacts,
+    messages,
+    projectId,
+    projectedVersionIds,
+    publicationRevision,
+    retryToken,
+    sessionId
+  ])
 
   return resolved.sessionId === sessionId ? resolved.artifactsByVersionId : new Map()
 }
@@ -247,7 +275,8 @@ const useWorkspaceArtifactVisibility = (
     projectId,
     messages,
     scopedArtifacts,
-    projectedVersionIds
+    projectedVersionIds,
+    JSON.stringify([activeSession?.revision ?? 0, activeSession?.filesRevision ?? 0])
   )
   const artifactsForMessage = useCallback(
     (message: ChatSession['messages'][number]) => {

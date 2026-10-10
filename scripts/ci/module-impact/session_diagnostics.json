@@ -109,7 +109,12 @@
       "src/main/composition/reviewer.test.ts",
       "src/main/desktop-runtime-electron-adapter.test.ts",
       "src/main/desktop-runtime-transport.integration.test.ts",
-      "src/main/artifacts/artifact-reproducibility-commands.test.ts"
+      "src/main/artifacts/artifact-reproducibility-commands.test.ts",
+      "src/main/composition/session-packages.test.ts",
+      "src/main/composition/managed-execution.integration.test.ts",
+      "src/main/composition/handoff.test.ts",
+      "src/main/composition/artifact-surfaces.test.ts",
+      "src/main/research-demos/owner.macos.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "windows_sensitive"],

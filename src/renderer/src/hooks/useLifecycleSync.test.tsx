@@ -139,6 +139,9 @@ describe('useLifecycleSync', () => {
       lifecycle: {
         getClientId: vi.fn().mockResolvedValue('electron:7')
       },
+      researchDemos: {
+        carriers: vi.fn().mockResolvedValue([])
+      },
       projects: {
         onCreated: subscribe<Project>('projectCreated'),
         onUpdated: subscribe<Project>('projectUpdated'),
@@ -160,6 +163,152 @@ describe('useLifecycleSync', () => {
   afterEach(async () => {
     await act(async () => root.unmount())
     container.remove()
+  })
+
+  it('keeps a Main-owned demo Session synchronized without exposing an external-session notice', async () => {
+    vi.mocked(window.api.researchDemos.carriers).mockResolvedValue([
+      {
+        sessionId: session.id,
+        source: { projectId: project.id, sourceSessionId: 'source', sourceImportId: 'import' }
+      }
+    ])
+    await act(async () => {
+      listeners.projectCreated?.(project)
+      listeners.sessionCreated?.({ session, originClientId: 'main:replay-demo' })
+    })
+    expect(window.api.researchDemos.carriers).toHaveBeenCalledWith({ projectId: project.id })
+    expect(useSessionStore.getState().sessions[0]?.id).toBe(session.id)
+    expect(container.querySelector('button')?.dataset.noticeSession).toBe('')
+    expect(useNavigationStore.getState().view).toBe('home')
+    expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
+  })
+
+  it.each(['web:external', 'main:managed-execution', 'main:replay-demo'])(
+    'preserves an ordinary Session notice even with the demo title: %s',
+    async (originClientId) => {
+      await act(async () => {
+        listeners.sessionCreated?.({
+          session: { ...session, title: 'Replay offline demonstrations' },
+          originClientId
+        })
+      })
+      expect(container.querySelector('button')?.dataset.noticeSession).toBe(session.id)
+      expect(window.api.researchDemos.carriers).toHaveBeenCalledTimes(
+        originClientId === 'main:replay-demo' ? 1 : 0
+      )
+    }
+  )
+
+  it('does not flash a carrier notice while Main ownership is still loading', async () => {
+    let resolve!: (value: Awaited<ReturnType<Window['api']['researchDemos']['carriers']>>) => void
+    vi.mocked(window.api.researchDemos.carriers).mockReturnValue(
+      new Promise((done) => {
+        resolve = done
+      })
+    )
+    await act(async () => {
+      listeners.sessionCreated?.({ session, originClientId: 'main:replay-demo' })
+    })
+    expect(container.querySelector('button')?.dataset.noticeSession).toBe('')
+    expect(useSessionStore.getState().sessions[0]?.id).toBe(session.id)
+    await act(async () =>
+      resolve([
+        {
+          sessionId: session.id,
+          source: { projectId: project.id, sourceSessionId: 'source', sourceImportId: 'import' }
+        }
+      ])
+    )
+    expect(container.querySelector('button')?.dataset.noticeSession).toBe('')
+  })
+
+  it('does not overwrite a newer external notice with a late unowned demo-origin result', async () => {
+    let resolve!: (value: []) => void
+    vi.mocked(window.api.researchDemos.carriers).mockReturnValue(
+      new Promise((done) => {
+        resolve = done
+      })
+    )
+    await act(async () => {
+      listeners.sessionCreated?.({ session, originClientId: 'main:replay-demo' })
+      listeners.sessionCreated?.({
+        session: { ...session, id: 'newer-session' },
+        originClientId: 'web:external'
+      })
+      resolve([])
+    })
+    expect(container.querySelector('button')?.dataset.noticeSession).toBe('newer-session')
+  })
+
+  it.each(['deleted', 'archived'] as const)(
+    'does not resurrect a %s Session notice after the ownership query finishes',
+    async (state) => {
+      let resolve!: (value: []) => void
+      vi.mocked(window.api.researchDemos.carriers).mockReturnValue(
+        new Promise((done) => {
+          resolve = done
+        })
+      )
+      await act(async () => {
+        listeners.sessionCreated?.({ session, originClientId: 'main:replay-demo' })
+        if (state === 'deleted')
+          listeners.sessionDeleted?.({ projectId: project.id, sessionId: session.id })
+        else
+          listeners.sessionUpdated?.({
+            session: { ...session, archivedAt: 20, updatedAt: 20 },
+            originClientId: 'web:external'
+          })
+        resolve([])
+      })
+      expect(container.querySelector('button')?.dataset.noticeSession).toBe('')
+    }
+  )
+
+  it('checks the preserved demo origin after creation coalesces with an update during hydration', async () => {
+    vi.mocked(window.api.researchDemos.carriers).mockResolvedValue([
+      {
+        sessionId: session.id,
+        source: { projectId: project.id, sourceSessionId: 'source', sourceImportId: 'import' }
+      }
+    ])
+    await act(async () => root.render(<Harness isSessionPersistenceHydrated={false} />))
+    await act(async () => {
+      listeners.sessionCreated?.({ session, originClientId: 'main:replay-demo' })
+      listeners.sessionUpdated?.({
+        session: { ...session, title: 'Updated demo', updatedAt: 20 },
+        originClientId: 'main:managed-execution'
+      })
+    })
+    await act(async () => root.render(<Harness />))
+    expect(window.api.researchDemos.carriers).toHaveBeenCalledTimes(1)
+    expect(useSessionStore.getState().sessions[0]?.title).toBe('Updated demo')
+    expect(container.querySelector('button')?.dataset.noticeSession).toBe('')
+  })
+
+  it('keeps the external Session discoverable if Main ownership cannot be read', async () => {
+    vi.mocked(window.api.researchDemos.carriers).mockRejectedValue(new Error('unavailable'))
+    await act(async () => {
+      listeners.sessionCreated?.({ session, originClientId: 'main:replay-demo' })
+    })
+    expect(container.querySelector('button')?.dataset.noticeSession).toBe(session.id)
+  })
+
+  it('does not revive a deleted project through a late carrier ownership response', async () => {
+    let resolve!: (value: []) => void
+    vi.mocked(window.api.researchDemos.carriers).mockReturnValue(
+      new Promise((done) => {
+        resolve = done
+      })
+    )
+    await act(async () => {
+      listeners.projectCreated?.(project)
+      listeners.sessionCreated?.({ session, originClientId: 'main:replay-demo' })
+      listeners.projectDeleted?.({ projectId: project.id, status: 'deleted' })
+      resolve([])
+    })
+    expect(useProjectStore.getState().projects).toEqual([])
+    expect(useSessionStore.getState().sessions).toEqual([])
+    expect(container.querySelector('button')?.dataset.noticeSession).toBe('')
   })
 
   it.each(['web:external', 'electron:7'])(

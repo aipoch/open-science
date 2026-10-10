@@ -310,6 +310,47 @@ it('attaches startup diagnostics before disposing a failed renderer launch', asy
   expect(existsSync(root)).toBe(false)
 })
 
+it.each(['darwin', 'linux', 'win32'] as const)(
+  'retains the isolated main log when Electron exits before its log path can be queried on %s',
+  async (platform) => {
+    Object.defineProperty(process, 'platform', { value: platform })
+    let exited = false
+    const startupError = new Error('Electron closed during application initialization')
+    const diagnostic = 'Application composition failed before readiness'
+    const launch = boundary.launch.getMockImplementation()!
+    boundary.launch.mockImplementationOnce(async (options) => {
+      const application = await launch(options)
+      const logs = join(options.env.OPEN_SCIENCE_USER_DATA, 'logs')
+      await mkdir(logs, { recursive: true })
+      await writeFile(join(logs, 'main.log'), diagnostic)
+      application.evaluate = async () => {
+        if (exited) throw new Error('Target page, context or browser has been closed')
+      }
+      return application
+    })
+    boundary.ready.mockImplementationOnce(async () => {
+      exited = true
+      throw startupError
+    })
+    const install = vi.fn(async () => undefined)
+    await expect(
+      boundary.fixture({ windowMode: 'hidden' }, install, {
+        status: 'failed',
+        expectedStatus: 'passed',
+        attach
+      })
+    ).rejects.toBe(startupError)
+    expect(install).not.toHaveBeenCalled()
+    expect(attach).toHaveBeenCalledWith(
+      'startup-main-process-log',
+      expect.objectContaining({ contentType: 'text/plain' })
+    )
+    const attachment = attach.mock.calls.find(([name]) => name === 'startup-main-process-log')!
+    expect(await filesystem.readFile(attachment[1].path, 'utf8')).toBe(diagnostic)
+    expect(existsSync(root)).toBe(false)
+  }
+)
+
 it('allows a fresh profile to finish initialization within its platform budget', async () => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] })
   boundary.realPolling = true

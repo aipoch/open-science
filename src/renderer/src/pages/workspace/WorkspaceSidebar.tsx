@@ -1,12 +1,24 @@
-import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import { useNavigationStore } from '@/stores/navigation-store'
-import { createSessionReplayItem, loadSessionDiscussionContext } from './workspace-session-actions'
-import { SessionDiscussionDialog } from './SessionDiscussionDialog'
-import type { SessionDiscussionCapture } from './replay/replay-context'
+import { showSessionReplay, loadSessionDiscussionContext } from './workspace-session-actions'
+import { openResearchDiscussion, openResearchWorkspace } from './workspace-discussion-navigation'
+import { useResearchWorkspaceStore } from '@/stores/research-workspace-store'
+import { useSessionStore } from '@/stores/session-store'
+import { sameResearch } from './research-draft-identity'
+import { requestComposerFocus } from './composer-focus-events'
+import {
+  buildResearchNavigation,
+  importedResearchSource,
+  visibleResearchNavigationRows,
+  type ResearchNavigationRow,
+  type ResearchNavigationGroup
+} from './research-navigation-model'
+import { ResearchMembershipDialog } from './ResearchMembershipDialog'
+import type { ResearchMembership } from '../../../../shared/session-persistence'
 import { SessionPackageImportMenu } from '@/components/SessionPackageImportMenu'
 import {
   BookOpen,
   ChevronDown,
+  ChevronRight,
   ChevronLeft,
   Download,
   Files,
@@ -20,7 +32,7 @@ import {
   Toolbox,
   X
 } from 'lucide-react'
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   DropdownMenu,
@@ -32,6 +44,7 @@ import {
 import { packageOperationActive, usePackageOperationStore } from '@/stores/package-operation-store'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { ErrorNotice } from '@/components/error-notice'
 
 import { cn } from '@/lib/utils'
 import { GitHubStarBadge } from '@/components/GitHubStarBadge'
@@ -128,11 +141,25 @@ type WorkspaceSidebarProps = {
   mobileMode?: boolean
   isMobileOpen?: boolean
   onMobileClose?: () => void
+  projectEntryFailed?: boolean
+  onDismissProjectEntryError?: () => void
 }
 
 type WorkspaceSidebarViewProps = WorkspaceSidebarProps & {
   onViewReplay?: (session: ChatSession) => void
   onDiscussSession?: (session: ChatSession) => Promise<void>
+  onViewOriginalRecord?: (session: ChatSession) => void
+  onAssignResearch?: (session: ChatSession) => void
+  onRemoveResearch?: (session: ChatSession) => Promise<void>
+  researchGroups?: ResearchNavigationGroup[]
+  ordinarySections?: SidebarSessionSection[]
+  visibleRows?: ResearchNavigationRow[]
+  collapsedResearch?: ReadonlySet<string>
+  onToggleResearch?: (key: string) => void
+  onOpenResearch?: (source: ResearchMembership, newDiscussion?: boolean) => void
+  activeDraftResearch?: ResearchMembership
+  researchNavigationFailed?: boolean
+  onDismissResearchError?: () => void
   rowActions?: SessionRowCallbacks
   now: number
   packageBusy?: boolean
@@ -158,6 +185,9 @@ type SessionRowCallbacks = Pick<
   | 'onViewNotebook'
   | 'onViewReplay'
   | 'onDiscussSession'
+  | 'onViewOriginalRecord'
+  | 'onAssignResearch'
+  | 'onRemoveResearch'
   | 'onExportSession'
   | 'onForkSession'
   | 'onExportPackage'
@@ -178,6 +208,9 @@ const sessionRowCallbacks = ({
   onViewNotebook,
   onViewReplay,
   onDiscussSession,
+  onViewOriginalRecord,
+  onAssignResearch,
+  onRemoveResearch,
   onExportSession,
   onForkSession,
   onExportPackage,
@@ -196,6 +229,9 @@ const sessionRowCallbacks = ({
   onViewNotebook,
   onViewReplay,
   onDiscussSession,
+  onViewOriginalRecord,
+  onAssignResearch,
+  onRemoveResearch,
   onExportSession,
   onForkSession,
   onExportPackage,
@@ -471,7 +507,14 @@ type SessionRowProps = {
   canExportPackage: boolean
   canExportDiagnostics: boolean
   canArchiveAction: boolean
+  canAssignResearch?: boolean
   actions: SessionRowCallbacks
+  researchToggle?: {
+    expanded: boolean
+    onToggle?: () => void
+    activityStatus?: SessionStatus
+  }
+  onOpenResearch?: () => void
 }
 
 // Keep the costly action-menu and hover-preview subtree stable when the page rerenders for a
@@ -502,8 +545,12 @@ const SessionRow = memo(function SessionRow({
   canExportPackage,
   canExportDiagnostics,
   canArchiveAction,
-  actions
+  canAssignResearch = false,
+  actions,
+  researchToggle,
+  onOpenResearch
 }: SessionRowProps): React.JSX.Element {
+  const indicatorStatus = researchToggle?.activityStatus ?? presentedStatus
   const sessionActionInvocation: SessionActionInvocation = { session, presentedStatus }
   const sessionActionBindings = createSessionActionBindings({
     canMutateConversations,
@@ -519,6 +566,9 @@ const SessionRow = memo(function SessionRow({
     onViewNotebook: (target) => actions.onViewNotebook(target),
     onViewReplay: actions.onViewReplay,
     onDiscussSession: actions.onDiscussSession,
+    onViewOriginalRecord: actions.onViewOriginalRecord,
+    onAssignResearch: canAssignResearch ? actions.onAssignResearch : undefined,
+    onRemoveResearch: actions.onRemoveResearch,
     onExportSession: canExportSession ? (target) => actions.onExportSession?.(target) : undefined,
     onForkSession: canForkSession
       ? async (target) => {
@@ -539,8 +589,11 @@ const SessionRow = memo(function SessionRow({
   })
   const sessionActionIdentityKey = JSON.stringify([
     session.id,
+    session.revision,
     session.updatedAt,
     session.pinned ?? false,
+    session.researchMembership,
+    session.importedResearch,
     presentedStatus,
     session.status,
     session.runtimeContext?.permission?.state,
@@ -553,6 +606,7 @@ const SessionRow = memo(function SessionRow({
     canForkSession,
     canExportPackage,
     canExportDiagnostics,
+    canAssignResearch,
     packageBusy,
     archiveAvailable
   ])
@@ -560,9 +614,12 @@ const SessionRow = memo(function SessionRow({
     <button
       type="button"
       data-slot="session-open-button"
-      title={imported ? t('Read-only') : undefined}
+      title={
+        researchToggle ? t('Original record · Read-only') : imported ? t('Read-only') : undefined
+      }
       className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left after:absolute after:inset-0 after:rounded-[inherit]"
       aria-current={isActive ? 'page' : undefined}
+      aria-label={onOpenResearch ? session.title : undefined}
       aria-keyshortcuts={
         [
           shortcutNumber ? `${isMac ? 'Meta' : 'Control'}+${shortcutNumber}` : undefined,
@@ -571,18 +628,35 @@ const SessionRow = memo(function SessionRow({
           .filter(Boolean)
           .join(' ') || undefined
       }
-      onClick={() => actions.onOpenSession(session.id)}
+      onClick={() => (onOpenResearch ? onOpenResearch() : actions.onOpenSession(session.id))}
     >
-      <span className="inline-flex size-3 shrink-0 items-center justify-center" aria-hidden="true">
-        <span
-          className={cn(
-            'size-[7px] shrink-0 rounded-full',
-            sessionStatusDotClassName[presentedStatus]
-          )}
-        />
+      <span
+        className="relative inline-flex size-3 shrink-0 items-center justify-center"
+        aria-hidden="true"
+      >
+        {researchToggle ? (
+          <>
+            <BookOpen className="size-3.5" />
+            {indicatorStatus !== 'idle' ? (
+              <span
+                className={cn(
+                  'absolute -bottom-1 -right-1 size-[6px] rounded-full',
+                  sessionStatusDotClassName[indicatorStatus]
+                )}
+              />
+            ) : null}
+          </>
+        ) : (
+          <span
+            className={cn(
+              'size-[7px] shrink-0 rounded-full',
+              sessionStatusDotClassName[presentedStatus]
+            )}
+          />
+        )}
       </span>
       <span className="sr-only">
-        {t('Session status: {{status}}', { status: t(sessionStatusLabelKeys[presentedStatus]) })}
+        {t('Session status: {{status}}', { status: t(sessionStatusLabelKeys[indicatorStatus]) })}
       </span>
       <span
         className={cn(
@@ -600,7 +674,7 @@ const SessionRow = memo(function SessionRow({
           {isMac ? `⌘${shortcutNumber}` : `Ctrl+${shortcutNumber}`}
         </kbd>
       ) : null}
-      {imported ? (
+      {imported && !researchToggle ? (
         <span
           role="img"
           aria-label={t('Read-only')}
@@ -636,6 +710,21 @@ const SessionRow = memo(function SessionRow({
         title={mobileMode ? session.title : undefined}
       >
         <div className="flex w-full min-w-0 items-center">
+          {researchToggle?.onToggle ? (
+            <button
+              type="button"
+              className="relative z-[2] -ml-1 mr-1 grid size-5 shrink-0 place-items-center rounded hover:bg-bg-400"
+              aria-label={researchToggle.expanded ? t('Collapse research') : t('Expand research')}
+              aria-expanded={researchToggle.expanded}
+              onClick={researchToggle.onToggle}
+            >
+              {researchToggle.expanded ? (
+                <ChevronDown className="size-3.5" aria-hidden="true" />
+              ) : (
+                <ChevronRight className="size-3.5" aria-hidden="true" />
+              )}
+            </button>
+          ) : null}
           {openSessionButton}
           <span
             aria-hidden="true"
@@ -753,12 +842,21 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
   } = props
   const { t } = useTranslation()
   const rowActions = props.rowActions ?? sessionRowCallbacks(props)
-  const sections = getSessionSections(sessions, now, credentialPendingSessionIds)
-  const shortcutNumberBySessionId = new Map(
-    sections
-      .flatMap((section) => section.items)
-      .slice(0, 9)
-      .map((session, index) => [session.id, index + 1])
+  const fallbackNavigation = buildResearchNavigation(sessions)
+  const researchGroups = props.researchGroups ?? fallbackNavigation.research
+  const sections =
+    props.ordinarySections ??
+    getSessionSections(fallbackNavigation.ordinary, now, credentialPendingSessionIds)
+  const collapsedResearch = props.collapsedResearch ?? new Set<string>()
+  const visibleRows =
+    props.visibleRows ??
+    visibleResearchNavigationRows(
+      researchGroups,
+      sections.flatMap((section) => section.items),
+      collapsedResearch
+    )
+  const shortcutNumberByRow = new Map(
+    visibleRows.slice(0, 9).map((row, index) => [`${row.kind}:${row.session.id}`, index + 1])
   )
   const isMac = window.api?.platform === 'darwin'
   const projectMatches = providedProjectMatches ?? matchProjects(otherProjects, projectQuery)
@@ -767,6 +865,67 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
     : projectMatches.slice(0, INITIAL_PROJECT_MENU_LIMIT)
   const remainingProjectCount = Math.max(0, projectMatches.length - INITIAL_PROJECT_MENU_LIMIT)
 
+  const renderSession = (
+    session: ChatSession,
+    sectionLabel: string,
+    group?: ResearchNavigationGroup
+  ): React.JSX.Element => {
+    const presentedStatus = getPresentedSessionStatus(session, credentialPendingSessionIds)
+    const discussionStatuses = group?.discussions.map((discussion) =>
+      getPresentedSessionStatus(discussion, credentialPendingSessionIds)
+    )
+    const researchActivity =
+      discussionStatuses?.find((status) => status.startsWith('waiting-')) ??
+      discussionStatuses?.find((status) => status === 'running') ??
+      discussionStatuses?.find((status) => status === 'error') ??
+      'idle'
+    const sourceActive = Boolean(
+      group &&
+      (activeSessionId === group.session.id ||
+        (!activeSessionId && sameResearch(props.activeDraftResearch, group.source)))
+    )
+    return (
+      <SessionRow
+        key={session.id}
+        t={t}
+        session={session}
+        sectionLabel={sectionLabel}
+        isActive={group ? sourceActive : session.id === activeSessionId}
+        imported={Boolean(importedResearchSource(session))}
+        shortcutNumber={shortcutNumberByRow.get(`${group ? 'research' : 'session'}:${session.id}`)}
+        presentedStatus={presentedStatus}
+        archiveAvailable={canArchiveSession?.(session) ?? false}
+        mobileMode={mobileMode}
+        isMac={isMac}
+        showSessionShortcuts={showSessionShortcuts}
+        previewSuppressed={openSessionActionsId === session.id}
+        canMutateConversations={canMutateConversations}
+        canDeleteConversations={canDeleteConversations}
+        canDownloadArtifacts={canDownloadArtifacts}
+        packageBusy={packageBusy}
+        canPreviewSession={onPreviewSession !== undefined}
+        canRenameTitle={onRenameSessionTitle !== undefined}
+        canCheckArtifacts={onCheckArtifacts !== undefined}
+        canExportSession={onExportSession !== undefined}
+        canForkSession={onForkSession !== undefined}
+        canExportPackage={onExportPackage !== undefined}
+        canExportDiagnostics={onExportDiagnostics !== undefined}
+        canArchiveAction={onArchiveSession !== undefined}
+        canAssignResearch={researchGroups.length > 0}
+        actions={rowActions}
+        researchToggle={
+          group
+            ? {
+                expanded: !collapsedResearch.has(group.key),
+                onToggle: () => props.onToggleResearch?.(group.key),
+                activityStatus: researchActivity
+              }
+            : undefined
+        }
+        onOpenResearch={group ? () => props.onOpenResearch?.(group.source) : undefined}
+      />
+    )
+  }
   return (
     <aside
       aria-label={t('Workspace navigation')}
@@ -1209,6 +1368,28 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
 
           <div className="mx-2 my-1 h-px bg-border-300/15" />
 
+          {props.projectEntryFailed ? (
+            <ErrorNotice
+              className="mx-2 mb-2"
+              title={t('Could not open this project. Please retry.')}
+              secondaryButton={{
+                label: t('Dismiss'),
+                onClick: () => props.onDismissProjectEntryError?.()
+              }}
+            />
+          ) : null}
+
+          {props.researchNavigationFailed ? (
+            <ErrorNotice
+              className="mx-2 mb-2"
+              title={t('Could not open the research discussion. Please retry.')}
+              secondaryButton={{
+                label: t('Dismiss'),
+                onClick: () => props.onDismissResearchError?.()
+              }}
+            />
+          ) : null}
+
           <SessionHoverPreviewProvider>
             <ActionMenuProvider
               testId="session-context-menu"
@@ -1228,51 +1409,46 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
                   sessions.some((session) => session.id === activeSessionId)
                 }
               >
+                {researchGroups.length > 0 ? (
+                  <section aria-label={t('Imported research')}>
+                    <div className="px-2 pb-[5px] pt-3.5 text-[11px] font-medium text-muted-foreground">
+                      {t('Imported research')}
+                    </div>
+                    {researchGroups.map((group) => (
+                      <div key={group.key} data-research-id={group.session.id} className="mb-1">
+                        {renderSession(group.session, 'Research', group)}
+                        {!collapsedResearch.has(group.key) ? (
+                          <div
+                            className="ml-5 border-l border-border-300/30 pl-1"
+                            data-research-discussions={group.session.id}
+                          >
+                            {group.discussions.map((session) => renderSession(session, 'Research'))}
+                            <button
+                              type="button"
+                              className="mx-1.5 flex w-[calc(100%-0.75rem)] items-center gap-1.5 rounded-md px-2.5 py-1.5 text-left text-xs text-muted-foreground hover:bg-bg-300 hover:text-text-000 disabled:opacity-50"
+                              disabled={!canCreateConversation}
+                              onClick={() => props.onOpenResearch?.(group.source, true)}
+                            >
+                              <Plus className="size-3.5" aria-hidden="true" />
+                              {t('New discussion')}
+                            </button>
+                          </div>
+                        ) : null}
+                      </div>
+                    ))}
+                  </section>
+                ) : null}
+                {sections.length > 0 && researchGroups.length > 0 ? (
+                  <div className="mx-2 mb-1 mt-4 border-t border-border-300/15 pt-3 text-[11px] font-semibold text-text-100">
+                    {t('Conversations')}
+                  </div>
+                ) : null}
                 {sections.map((section) => (
                   <div key={section.label}>
                     <div className="px-2 pb-[5px] pt-3.5 text-[11px] font-medium text-muted-foreground">
                       {t(section.label)}
                     </div>
-                    {section.items.map((session) => {
-                      const presentedStatus = getPresentedSessionStatus(
-                        session,
-                        credentialPendingSessionIds
-                      )
-                      return (
-                        <SessionRow
-                          key={session.id}
-                          t={t}
-                          session={session}
-                          sectionLabel={section.label}
-                          isActive={session.id === activeSessionId}
-                          imported={
-                            session.contentLoaded === false
-                              ? session.id.startsWith('import-')
-                              : Boolean(session.packageOrigin)
-                          }
-                          shortcutNumber={shortcutNumberBySessionId.get(session.id)}
-                          presentedStatus={presentedStatus}
-                          archiveAvailable={canArchiveSession?.(session) ?? false}
-                          mobileMode={mobileMode}
-                          isMac={isMac}
-                          showSessionShortcuts={showSessionShortcuts}
-                          previewSuppressed={openSessionActionsId === session.id}
-                          canMutateConversations={canMutateConversations}
-                          canDeleteConversations={canDeleteConversations}
-                          canDownloadArtifacts={canDownloadArtifacts}
-                          packageBusy={packageBusy}
-                          canPreviewSession={onPreviewSession !== undefined}
-                          canRenameTitle={onRenameSessionTitle !== undefined}
-                          canCheckArtifacts={onCheckArtifacts !== undefined}
-                          canExportSession={onExportSession !== undefined}
-                          canForkSession={onForkSession !== undefined}
-                          canExportPackage={onExportPackage !== undefined}
-                          canExportDiagnostics={onExportDiagnostics !== undefined}
-                          canArchiveAction={onArchiveSession !== undefined}
-                          actions={rowActions}
-                        />
-                      )
-                    })}
+                    {section.items.map((session) => renderSession(session, section.label))}
                   </div>
                 ))}
               </SessionList>
@@ -1315,7 +1491,10 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
 
 const WorkspaceSidebarConnectedView = (props: WorkspaceSidebarViewProps): React.JSX.Element => {
   const { t } = useTranslation()
-  const [discussionCapture, setDiscussionCapture] = useState<SessionDiscussionCapture>()
+  const [assigningSession, setAssigningSession] = useState<ChatSession>()
+  if (assigningSession && assigningSession.projectId !== props.importProjectId) {
+    setAssigningSession(undefined)
+  }
   const mounted = useRef(true)
   useEffect(() => {
     mounted.current = true
@@ -1325,17 +1504,25 @@ const WorkspaceSidebarConnectedView = (props: WorkspaceSidebarViewProps): React.
   }, [])
   const callbacks: SessionRowCallbacks = {
     ...sessionRowCallbacks(props),
+    onViewOriginalRecord: (session) => props.onOpenSession(session.id),
+    onAssignResearch: setAssigningSession,
+    onRemoveResearch: async (session) => {
+      const persisted = await window.api.sessionReplay.setResearchMembership({
+        projectId: session.projectId,
+        sessionId: session.id,
+        expectedRevision: session.revision ?? 0
+      })
+      if (useSessionStore.getState().sessions.some((row) => row.id === session.id)) {
+        useSessionStore.getState().upsertPersistedSession(persisted)
+      }
+    },
     onViewReplay: (session) => {
-      usePreviewWorkbenchStore
-        .getState()
-        .upsertAndActivateItem(
-          createSessionReplayItem(
-            session.projectId,
-            session.id,
-            session.title,
-            useNavigationStore.getState().activeProjectId ?? session.projectId
-          )
-        )
+      showSessionReplay(
+        session.projectId,
+        session.id,
+        session.title,
+        useNavigationStore.getState().activeProjectId ?? session.projectId
+      )
     },
     onDiscussSession: async (session) => {
       const navigationRevision = useNavigationStore.getState().explicitNavigationRevision
@@ -1346,7 +1533,8 @@ const WorkspaceSidebarConnectedView = (props: WorkspaceSidebarViewProps): React.
       )
         return
       if (!context) throw new Error(t('No recorded steps are available.'))
-      setDiscussionCapture(context)
+      if (!(await openResearchDiscussion(context)))
+        throw new Error(t('Could not open the research discussion. Please retry.'))
     }
   }
   const latestCallbacks = useRef(callbacks)
@@ -1367,6 +1555,11 @@ const WorkspaceSidebarConnectedView = (props: WorkspaceSidebarViewProps): React.
       onDiscussSession: async (session) => {
         await latestCallbacks.current.onDiscussSession?.(session)
       },
+      onViewOriginalRecord: (session) => latestCallbacks.current.onViewOriginalRecord?.(session),
+      onAssignResearch: (session) => latestCallbacks.current.onAssignResearch?.(session),
+      onRemoveResearch: async (session) => {
+        await latestCallbacks.current.onRemoveResearch?.(session)
+      },
       onExportSession: (session) => latestCallbacks.current.onExportSession?.(session),
       onForkSession: async (session) => {
         await latestCallbacks.current.onForkSession?.(session)
@@ -1386,10 +1579,12 @@ const WorkspaceSidebarConnectedView = (props: WorkspaceSidebarViewProps): React.
   return (
     <>
       <WorkspaceSidebarView {...props} rowActions={rowActions} />
-      {discussionCapture ? (
-        <SessionDiscussionDialog
-          context={discussionCapture}
-          onClose={() => setDiscussionCapture(undefined)}
+      {assigningSession && assigningSession.projectId === props.importProjectId ? (
+        <ResearchMembershipDialog
+          key={assigningSession.id}
+          session={assigningSession}
+          research={props.researchGroups ?? buildResearchNavigation(props.sessions).research}
+          onClose={() => setAssigningSession(undefined)}
         />
       ) : null}
     </>
@@ -1401,6 +1596,7 @@ const WorkspaceSidebar = (props: WorkspaceSidebarProps): React.JSX.Element => {
   const {
     credentialPendingSessionIds = EMPTY_CREDENTIAL_SESSION_IDS,
     onOpenSession,
+    onMobileClose,
     sessions
   } = props
   const [now, setNow] = useState(Date.now)
@@ -1408,6 +1604,88 @@ const WorkspaceSidebar = (props: WorkspaceSidebarProps): React.JSX.Element => {
   const [openSessionActionsId, setOpenSessionActionsId] = useState<string | null>(null)
   const [showAllProjects, setShowAllProjects] = useState(false)
   const [projectQuery, setProjectQuery] = useState('')
+  const [collapsedResearch, setCollapsedResearch] = useState<ReadonlySet<string>>(() => new Set())
+  const [researchNavigationFailed, setResearchNavigationFailed] = useState(false)
+  const activeDraftResearch = useResearchWorkspaceStore((state) =>
+    props.importProjectId ? state.draftResearchByProject[props.importProjectId] : undefined
+  )
+  const explicitNavigationRevision = useNavigationStore((state) => state.explicitNavigationRevision)
+  const researchNavigation = useMemo(
+    () =>
+      buildResearchNavigation(
+        getSessionSections(sessions, now, credentialPendingSessionIds).flatMap(
+          (section) => section.items
+        )
+      ),
+    [sessions, now, credentialPendingSessionIds]
+  )
+  const ordinarySections = useMemo(
+    () => getSessionSections(researchNavigation.ordinary, now, credentialPendingSessionIds),
+    [researchNavigation.ordinary, now, credentialPendingSessionIds]
+  )
+  const visibleRows = useMemo(
+    () =>
+      visibleResearchNavigationRows(
+        researchNavigation.research,
+        ordinarySections.flatMap((section) => section.items),
+        collapsedResearch
+      ),
+    [researchNavigation.research, ordinarySections, collapsedResearch]
+  )
+  const activeGroupKey = researchNavigation.research.find(
+    (group) =>
+      group.session.id === props.activeSessionId ||
+      group.discussions.some((session) => session.id === props.activeSessionId) ||
+      (!props.activeSessionId && sameResearch(group.source, activeDraftResearch))
+  )?.key
+  // Reopening the selected child through search is still a navigation, even when its id is unchanged.
+  const selectionKey = JSON.stringify([
+    props.activeSessionId,
+    activeGroupKey,
+    explicitNavigationRevision
+  ])
+  const [previousSelectionKey, setPreviousSelectionKey] = useState(selectionKey)
+  if (previousSelectionKey !== selectionKey) {
+    setPreviousSelectionKey(selectionKey)
+    if (activeGroupKey && collapsedResearch.has(activeGroupKey)) {
+      const next = new Set(collapsedResearch)
+      next.delete(activeGroupKey)
+      setCollapsedResearch(next)
+    }
+  }
+  const navigationAbort = useRef<AbortController | undefined>(undefined)
+  useEffect(() => () => navigationAbort.current?.abort(), [])
+  const openResearch = useCallback(
+    (source: ResearchMembership, newDiscussion?: boolean): void => {
+      navigationAbort.current?.abort()
+      const controller = new AbortController()
+      navigationAbort.current = controller
+      setResearchNavigationFailed(false)
+      const navigationRevision = useNavigationStore.getState().explicitNavigationRevision
+      void openResearchWorkspace(source, {
+        newDiscussion,
+        signal: controller.signal,
+        afterNavigate: newDiscussion ? requestComposerFocus : undefined
+      })
+        .then((opened) => {
+          if (
+            !opened &&
+            !controller.signal.aborted &&
+            useNavigationStore.getState().explicitNavigationRevision === navigationRevision
+          )
+            setResearchNavigationFailed(true)
+          if (opened && !controller.signal.aborted) onMobileClose?.()
+        })
+        .catch(() => {
+          if (
+            !controller.signal.aborted &&
+            useNavigationStore.getState().explicitNavigationRevision === navigationRevision
+          )
+            setResearchNavigationFailed(true)
+        })
+    },
+    [onMobileClose]
+  )
   const canSearchProjects = (props.otherProjects?.length ?? 0) > INITIAL_PROJECT_MENU_LIMIT
   const effectiveProjectQuery = canSearchProjects ? projectQuery : ''
   if (!canSearchProjects && (projectQuery || showAllProjects)) {
@@ -1457,13 +1735,12 @@ const WorkspaceSidebar = (props: WorkspaceSidebarProps): React.JSX.Element => {
       const shortcutNumber = Number(event.key)
       if (!Number.isInteger(shortcutNumber) || shortcutNumber < 1 || shortcutNumber > 9) return
 
-      const session = getSessionSections(sessions, now, credentialPendingSessionIds)
-        .flatMap((section) => section.items)
-        .at(shortcutNumber - 1)
-      if (!session) return
+      const row = visibleRows.at(shortcutNumber - 1)
+      if (!row) return
 
       event.preventDefault()
-      onOpenSession(session.id)
+      if (row.kind === 'research') openResearch(row.source)
+      else onOpenSession(row.session.id)
     }
 
     const handleKeyUp = (event: KeyboardEvent): void => {
@@ -1480,11 +1757,27 @@ const WorkspaceSidebar = (props: WorkspaceSidebarProps): React.JSX.Element => {
       window.removeEventListener('keyup', handleKeyUp)
       window.removeEventListener('blur', hideSessionShortcuts)
     }
-  }, [credentialPendingSessionIds, isMac, now, onOpenSession, sessions])
+  }, [isMac, onOpenSession, openResearch, visibleRows])
 
   return (
     <WorkspaceSidebarConnectedView
       {...props}
+      researchGroups={researchNavigation.research}
+      ordinarySections={ordinarySections}
+      visibleRows={visibleRows}
+      activeDraftResearch={activeDraftResearch}
+      collapsedResearch={collapsedResearch}
+      onToggleResearch={(key) => {
+        setCollapsedResearch((current) => {
+          const next = new Set(current)
+          if (next.has(key)) next.delete(key)
+          else next.add(key)
+          return next
+        })
+      }}
+      onOpenResearch={openResearch}
+      researchNavigationFailed={researchNavigationFailed}
+      onDismissResearchError={() => setResearchNavigationFailed(false)}
       packageBusy={packageBusy}
       now={now}
       showSessionShortcuts={showSessionShortcuts}

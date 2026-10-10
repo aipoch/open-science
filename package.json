@@ -49,7 +49,7 @@
     "db:schema:check": "node scripts/generate-database-schema.mjs --check",
     "check:cli-package": "npm pack ./packages/open-science --dry-run --json --cache ./node_modules/.cache/npm-pack",
     "check:claude-acp-patch": "node scripts/check-claude-acp-patch.mjs",
-    "build:web": "npm run gen:web-api-map && node --max-old-space-size=8192 node_modules/vite/bin/vite.js build --config vite.web.config.ts",
+    "build:web": "npm run gen:web-api-map && npm run build:replay-viewer && node --max-old-space-size=8192 node_modules/vite/bin/vite.js build --config vite.web.config.ts",
     "start": "electron-vite preview",
     "dev": "npm run build:backend -- --development && npm run stage:node-runtime && electron-vite dev",
     "dev:native-send-now": "node scripts/dev-native-send-now.cjs",
@@ -72,6 +72,7 @@
     "pack:backend": "npm run stage:backend && npm pack ./out/standalone --pack-destination out",
     "build:backend-native": "node-gyp rebuild --directory packages/credential-identity-probe-native -- -Dbuild_node_secret=1",
     "stage:node-runtime": "node scripts/stage-node-runtime.mjs",
+    "build:replay-viewer": "vite build --config vite.replay-viewer.config.ts",
     "publish:npm-release": "node scripts/publish-npm-release.mjs",
     "stage:npm-release": "node scripts/stage-npm-release.mjs",
     "test:npm-installed": "node scripts/test-npm-installed.mjs",
@@ -127,7 +128,8 @@
     "undici": "6.29.0",
     "web-tree-sitter": "^0.26.13",
     "ws": "^8.22.0",
-    "zod": "^4.6.5"
+    "zod": "^4.6.5",
+    "semver": "^7.7.3"
   },
   "overrides": {
     "@huggingface/transformers": {
@@ -216,6 +218,7 @@
     "unified": "^11.0.5",
     "vite": "^7.2.6",
     "vitest": "^4.1.11",
-    "zustand": "^5.0.14"
+    "zustand": "^5.0.14",
+    "@types/semver": "^7.7.0"
   }
 }

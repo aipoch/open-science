@@ -16,6 +16,59 @@ import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { expect, it } from 'vitest'
 
+it('loads the same pure confinement policy through installed CommonJS and ESM exports', () => {
+  const fixture = realpathSync(mkdtempSync(join(tmpdir(), 'installed-confinement-policy-')))
+  try {
+    const installed = join(fixture, 'node_modules', '@aipoch', 'notebook-network-sandbox')
+    const gateway = join(installed, 'runtime', 'src', 'gateway')
+    mkdirSync(gateway, { recursive: true })
+    cpSync(
+      fileURLToPath(new URL('../package.json', import.meta.url)),
+      join(installed, 'package.json')
+    )
+    // No runtime owner or application dependencies are present. The exported pure policy must
+    // load on its own, using only built-ins, without falling through an undeclared deep import.
+    cpSync(
+      fileURLToPath(new URL('../runtime/src/gateway/execution-confinement.cjs', import.meta.url)),
+      join(gateway, 'execution-confinement.cjs')
+    )
+    const script = `
+      const policy = require('@aipoch/notebook-network-sandbox/execution-confinement')
+      import('@aipoch/notebook-network-sandbox/execution-confinement').then((esm) => {
+        const confinement = policy.normalizeExecutionConfinement({
+          mode: 'research', allowedNetworkHosts: [' Example.COM. ', 'example.com']
+        })
+        const offline = policy.normalizeExecutionConfinement({ mode: 'offline-demo' })
+        let invalidRejected = false
+        try { policy.normalizeExecutionConfinement({ mode: 'research', allowedNetworkHosts: ['*.example.com'] }) }
+        catch { invalidRejected = true }
+        console.log(JSON.stringify({
+          same: esm.normalizeExecutionConfinement === policy.normalizeExecutionConfinement,
+          hosts: confinement.allowedNetworkHosts,
+          frozen: Object.isFrozen(confinement) && Object.isFrozen(confinement.allowedNetworkHosts),
+          allowed: policy.executionConfinementAllowsHost(confinement, 'EXAMPLE.com'),
+          denied: policy.executionConfinementAllowsHost(confinement, 'elsewhere.example'),
+          offlineDenied: policy.executionConfinementAllowsHost(offline, 'example.com'),
+          invalidRejected
+        }))
+      })
+    `
+    expect(
+      JSON.parse(execFileSync(process.execPath, ['-e', script], { cwd: fixture, encoding: 'utf8' }))
+    ).toEqual({
+      same: true,
+      hosts: ['example.com'],
+      frozen: true,
+      allowed: true,
+      denied: false,
+      offlineDenied: false,
+      invalidRejected: true
+    })
+  } finally {
+    rmSync(fixture, { recursive: true, force: true })
+  }
+})
+
 it('loads the installed sandbox without reaching outside its package for configuration', () => {
   const fixture = realpathSync(mkdtempSync(join(tmpdir(), 'installed-notebook-sandbox-')))
   try {

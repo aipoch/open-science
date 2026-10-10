@@ -3878,3 +3878,121 @@ gate('repl_loop.js host.mcp', () => {
 })
 
 configureTestRuntimeMetadata()
+gate('managed execution Host SDK bridge', () => {
+  it('carries host.managedExecution through the actual control RPC and freezes returned data', async () => {
+    const requests: { method: string; payload: unknown; sessionId: string; executionId: string }[] =
+      []
+    const rpc = new NotebookLocalRpcServer({} as never, {
+      transport: 'pipe',
+      managedExecution: {
+        call: async (method, payload, context) => {
+          context.assertActive()
+          requests.push({
+            method,
+            payload,
+            sessionId: context.sessionId,
+            executionId: context.ownerExecutionId
+          })
+          return { nested: { state: 'ready' } }
+        }
+      }
+    })
+    rpc.setArtifactTurnBinding('session', {
+      projectId: 'project',
+      ownerExecutionId: 'execution',
+      artifactRunId: 'artifact-run',
+      artifactStorageSessionId: 'artifact-storage-session',
+      provenanceContext: {
+        rootFrameId: 'root-frame-session',
+        agentFrameId: 'root-frame-session',
+        messageBranchId: 'branch',
+        runtimeSegmentId: 'segment',
+        promptMessageId: 'prompt'
+      }
+    })
+    const connection = await rpc.issueControlConnection(
+      'session',
+      'project',
+      'root-frame-session',
+      { role: 'main' },
+      '/workspace'
+    )
+    const end = connection.beginControlInvocation({
+      turnId: 'prompt',
+      toolInvocationId: 'tool-call',
+      controlInvocationGeneration: 1
+    })
+    const { child, send } = startLoop({
+      OPEN_SCIENCE_MCP_RPC_ENDPOINT: connection.endpoint,
+      OPEN_SCIENCE_MCP_RPC_SOCKET_PATH: connection.socketPath,
+      OPEN_SCIENCE_MCP_RPC_TOKEN: connection.token
+    })
+    try {
+      const response = await send(
+        "const managed = await host.managedExecution.inspectMaterials({ sourceSessionId: 'research' }); return { frozen: Object.isFrozen(managed) && Object.isFrozen(managed.nested) && Object.isFrozen(host.managedExecution), value: managed.nested.state }"
+      )
+      expect(response.error).toBeNull()
+      expect(JSON.parse(response.result ?? '{}')).toEqual({ frozen: true, value: 'ready' })
+      expect(requests).toEqual([
+        {
+          method: 'inspectMaterials',
+          payload: { sourceSessionId: 'research' },
+          sessionId: 'session',
+          executionId: 'execution'
+        }
+      ])
+      for (const [method, payload] of [
+        ['inspectOfflinePlans', { sourceSessionId: 'research' }],
+        [
+          'executeOfflinePlan',
+          {
+            sourceSessionId: 'research',
+            sourceIdentity: 'fixed-source',
+            planVersionId: 'offline-plan',
+            requestId: 'offline-run'
+          }
+        ]
+      ] as const) {
+        const reply = await send(
+          `const result = await host.managedExecution.${method}(${JSON.stringify(payload)}); return { frozen: Object.isFrozen(result) && Object.isFrozen(result.nested), state: result.nested.state }`
+        )
+        expect(reply.error).toBeNull()
+        expect(JSON.parse(reply.result ?? '{}')).toEqual({ frozen: true, state: 'ready' })
+        expect(requests.at(-1)).toEqual({
+          method,
+          payload,
+          sessionId: 'session',
+          executionId: 'execution'
+        })
+      }
+      for (const method of ['collectOutputs', 'discardOutputs']) {
+        const payload = {
+          environmentId: 'environment',
+          collectionId: 'collection',
+          ...(method === 'collectOutputs' ? { requestId: 'collect-1' } : {})
+        }
+        const reply = await send(
+          `const result = await host.managedExecution.${method}(${JSON.stringify(payload)}); return { frozen: Object.isFrozen(result) && Object.isFrozen(result.nested), state: result.nested.state }`
+        )
+        expect(reply.error).toBeNull()
+        expect(JSON.parse(reply.result ?? '{}')).toEqual({ frozen: true, state: 'ready' })
+        expect(requests.at(-1)).toEqual({
+          method,
+          payload,
+          sessionId: 'session',
+          executionId: 'execution'
+        })
+        expect((await send(`await host.managedExecution.${method}([])`)).error).toContain('object')
+      }
+      expect((await send('await host.managedExecution.execute([])')).error).toContain('object')
+      end()
+      expect((await send('await host.managedExecution.runtimes()')).error).toContain('active Main')
+      expect(requests).toHaveLength(5)
+    } finally {
+      child.kill()
+      end()
+      connection.release()
+      await rpc.close()
+    }
+  }, 60_000)
+})

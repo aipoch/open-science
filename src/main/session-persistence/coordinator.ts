@@ -1,3 +1,4 @@
+import type { SetResearchMembershipRequest } from '../../shared/session-replay'
 import { assertLiteratureAttachmentsUnreferenced } from './literature-attachment-removal'
 import { ProjectFilesReconciliationError } from '../project-files/repository'
 import type { ProjectFileSource, ProjectFilesChangedEvent } from '../../shared/project-files'
@@ -133,7 +134,10 @@ type SessionMutationRepository = {
   loadSessionWithDiagnostics(
     projectId: string,
     sessionId: string,
-    options?: { mode?: 'repair' | 'read-only'; preserveRuntimeState?: boolean }
+    options?: {
+      mode?: 'repair' | 'read-only'
+      preserveRuntimeState?: boolean
+    }
   ): Promise<
     | { status: 'found'; session: PersistedChatSession }
     | { status: 'missing' }
@@ -484,19 +488,25 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
   // Returns undefined for missing/unreadable instead of throwing, so callers can degrade.
   readSessionSnapshot(
     projectId: string,
-    sessionId: string
+    sessionId: string,
+    options?: { preserveRuntimeState?: boolean }
   ): Promise<PersistedChatSession | undefined> {
     return this.operationScheduler.runSession(projectId, sessionId, async () => {
       const loaded = await this.repository.loadSessionWithDiagnostics(projectId, sessionId, {
-        mode: 'read-only'
+        mode: 'read-only',
+        ...(options?.preserveRuntimeState ? { preserveRuntimeState: true } : {})
       })
       return loaded.status === 'found' ? structuredClone(loaded.session) : undefined
     })
   }
 
-  loadSessionForContinuation(projectId: string, sessionId: string): Promise<PersistedChatSession> {
+  loadSessionForContinuation(
+    projectId: string,
+    sessionId: string,
+    options?: { preserveRuntimeState?: boolean }
+  ): Promise<PersistedChatSession> {
     return this.operationScheduler.runSession(projectId, sessionId, async () => {
-      const loaded = await this.repository.loadSessionWithDiagnostics(projectId, sessionId)
+      const loaded = await this.repository.loadSessionWithDiagnostics(projectId, sessionId, options)
       if (loaded.status !== 'found') {
         throw new Error(`Cannot prepare a durable continuation for a ${loaded.status} Session.`)
       }
@@ -1027,6 +1037,13 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     return this.operationScheduler.runSessionIdentity(sessionId, async () =>
       this.stateOwner.sessionProjectId(sessionId)
     )
+  }
+
+  setResearchMembership(request: SetResearchMembershipRequest): Promise<PersistedChatSession> {
+    return this.operationScheduler.runSession(request.projectId, request.sessionId, async () => {
+      await this.repository.assertSessionIdentityOwnership(request.sessionId, request.projectId)
+      return this.stateOwner.setResearchMembership(request)
+    })
   }
 
   // Dedicated main-owned archive mutation. Unlike full renderer saves it preserves updatedAt and

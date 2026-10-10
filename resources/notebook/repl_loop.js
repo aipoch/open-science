@@ -1067,6 +1067,7 @@ const HOST_CAPABILITY_KNOWN_KEYS = Object.freeze([
   'agents',
   'skills',
   'artifacts',
+  'managedExecution',
   'lineage',
   'frames',
   'sessions',
@@ -1322,6 +1323,55 @@ async function hostLlm(request, options = undefined) {
     })
   )
 }
+
+// This namespace keeps execution inside Open Science. Session/turn authority is injected by RPC.
+const managedExecutionMethods = [
+  'runtimes',
+  'inspectMaterials',
+  'inspectOfflinePlans',
+  'executeOfflinePlan',
+  'preflight',
+  'requestConfiguration',
+  'getConfiguration',
+  'prepare',
+  'execute',
+  'getEnvironment',
+  'releaseEnvironment',
+  'collectOutputs',
+  'discardOutputs'
+]
+const freezeManagedExecutionValue = (value) => {
+  if (value && typeof value === 'object') {
+    for (const nested of Object.values(value)) freezeManagedExecutionValue(nested)
+    Object.freeze(value)
+  }
+  return value
+}
+const hostManagedExecution = Object.freeze(
+  Object.fromEntries(
+    managedExecutionMethods.map((method) => [
+      method,
+      async (payload = {}) => {
+        if (!payload || typeof payload !== 'object' || Array.isArray(payload))
+          throw new TypeError('host.managedExecution requires an options object')
+        if (!RPC_ENDPOINT)
+          throw new Error('host.managedExecution is unavailable: RPC endpoint not set')
+        const response = await capturedRpcFetch(RPC_ENDPOINT, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            authorization: 'Bearer ' + (RPC_TOKEN || '')
+          },
+          body: JSON.stringify({ method: 'managedExecutionCall', params: { method, payload } })
+        })
+        const body = await response.json().catch(() => ({}))
+        if (!response.ok || body.error)
+          throw new Error(body.error || 'host.managedExecution HTTP ' + response.status)
+        return freezeManagedExecutionValue(body.result)
+      }
+    ])
+  )
+)
 
 async function artifactsRpc(op, params) {
   if (!RPC_ENDPOINT)
@@ -3627,6 +3677,7 @@ const sandbox = {
     listModels: hostListModels,
     llm: hostLlm,
     artifacts: hostArtifacts,
+    managedExecution: hostManagedExecution,
     artifactPath: hostArtifactPath,
     viewImage: hostViewImage,
     lineage: hostLineage,

@@ -87,10 +87,11 @@ describe('Project Session defaults migration', () => {
         '0047_session_replay',
         '0048_pdf_annotation_sharing',
         '0049_pascalcase_table_names',
-        '0050_literature_translation'
+        '0050_literature_translation',
+        '0051_session_research_membership'
       ],
       from: '0026_compute_job_remote_cleanup',
-      to: '0050_literature_translation'
+      to: '0051_session_research_membership'
     })
     await expect(
       client.$queryRawUnsafe<Array<{ sessionDefaults: string }>>(

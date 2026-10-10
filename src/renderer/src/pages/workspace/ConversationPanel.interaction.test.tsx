@@ -9,7 +9,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { forkSessionMock, scrollerProps } = vi.hoisted(() => ({
   forkSessionMock: vi.fn(async () => undefined),
-  scrollerProps: { turnOutcomeActions: undefined as unknown }
+  scrollerProps: {
+    turnOutcomeActions: undefined as unknown,
+    activeSession: undefined as unknown,
+    canBranchInNewSession: undefined as unknown
+  }
 }))
 vi.mock('@/lib/session-fork', () => ({
   forkSession: forkSessionMock,
@@ -226,9 +230,11 @@ vi.mock('./WorkspaceMessageScroller', () => ({
     pendingElicitations = [],
     onStartResearch,
     activeSession,
+    canBranchInNewSession,
     turnOutcomeActions
   }: {
     activeSession?: ChatSession
+    canBranchInNewSession?: boolean
     turnOutcomeActions?: TurnOutcomeActions
     forkSourceContent?: React.ReactNode
     credentialPending?: boolean
@@ -238,6 +244,8 @@ vi.mock('./WorkspaceMessageScroller', () => ({
     onStartResearch?: (prompt: string) => void
   }): React.JSX.Element => {
     scrollerProps.turnOutcomeActions = turnOutcomeActions
+    scrollerProps.activeSession = activeSession
+    scrollerProps.canBranchInNewSession = canBranchInNewSession
     return (
       <>
         {forkSourceContent}
@@ -678,6 +686,7 @@ const createPanelDefaults = (): PanelProps => ({
       discardWslSetupDraft: vi.fn(() => false),
       changeDoc: vi.fn(),
       appendLiterature: vi.fn(() => true),
+      appendText: vi.fn(() => true),
       addAnnotation: vi.fn(),
       updateAnnotationNote: vi.fn(),
       removeAnnotation: vi.fn(),
@@ -702,6 +711,7 @@ const createPanelDefaults = (): PanelProps => ({
     planProjectionRecoveryError: false,
     availability: {
       submit: false,
+      researchRun: false,
       submitMode: undefined,
       revise: true,
       resume: true,
@@ -711,6 +721,7 @@ const createPanelDefaults = (): PanelProps => ({
     actions: {
       submit: {
         draft: vi.fn(),
+        researchRun: vi.fn().mockResolvedValue(undefined),
         restoredPlan: vi.fn().mockResolvedValue(undefined)
       },
       revise: vi.fn(),
@@ -8704,7 +8715,62 @@ describe('ConversationPanel error box + report affordance', () => {
   })
 })
 
-it('offers Fork to continue while leaving the imported conversation read-only', async () => {
+it('shows the original transcript beside a new question composer without giving it edit authority', async () => {
+  const source: ChatSession = {
+    id: 'inline-source',
+    projectId: 'project-a',
+    title: 'Imported inline research',
+    cwd: '',
+    status: 'idle',
+    messages: [
+      {
+        id: 'original-message',
+        role: 'user',
+        content: 'Original question',
+        createdAt: 1,
+        updatedAt: 1,
+        status: 'complete',
+        eventIds: []
+      }
+    ],
+    createdAt: 1,
+    updatedAt: 1,
+    packageOrigin: {
+      importId: 'inline-import',
+      sourceProjectId: 'author-project',
+      sourceSessionId: 'author-session',
+      importedAt: 1,
+      manifestChecksum: 'a'.repeat(64)
+    }
+  }
+  const before = structuredClone(source)
+  const send = vi.fn()
+  useSessionStore.setState({ sessions: [source], selectedSessionId: source.id })
+  renderPanel({
+    view: { researchSourceSession: source },
+    composer: { view: { doc: docFromText('My new question') } },
+    conversation: {
+      availability: { submit: true, revise: false, branch: false, resume: false },
+      actions: { submit: { draft: routeDraftSubmit({ send }) } }
+    }
+  })
+  expect(scrollerProps.activeSession).toEqual(source)
+  expect(scrollerProps.canBranchInNewSession).toBe(false)
+  expect(container.querySelector('[data-testid="ordinary-composer-form"]')).not.toBeNull()
+  expect(
+    container.querySelector('[data-testid="research-question-context"]')?.textContent
+  ).toContain('Sending your question creates a discussion. The original record stays unchanged.')
+  expect(container.textContent).toContain('Original record · Read-only')
+  expect(send).not.toHaveBeenCalled()
+  const sendButton = container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')!
+  expect(sendButton).not.toBeNull()
+  await act(async () => sendButton.click())
+  expect(send).toHaveBeenCalledOnce()
+  expect(source).toEqual(before)
+  expect(useSessionStore.getState().selectedSessionId).toBe(source.id)
+})
+
+it('offers a working copy while leaving the imported conversation read-only', async () => {
   forkSessionMock.mockClear()
   const activeSession: ChatSession = {
     id: 'imported-session',
@@ -8725,7 +8791,7 @@ it('offers Fork to continue while leaving the imported conversation read-only', 
   }
   renderPanel({ view: { activeSession } })
   const button = [...container.querySelectorAll('button')].find((button) =>
-    button.textContent?.includes('Fork to continue')
+    button.textContent?.includes('Create a working copy')
   )
   expect(button).toBeDefined()
   expect(container.querySelector('[data-testid="ordinary-composer-form"]')).toBeNull()

@@ -5,7 +5,12 @@ import type {
   ReplayNotebookRunDetails
 } from '../../../../../shared/replay'
 import { projectReplayScene } from '@/lib/replay'
-import { captureDiscussionStep, captureDiscussionSession } from './replay-context'
+import {
+  captureDiscussionStep,
+  captureDiscussionSession,
+  captureDiscussionNotebookRun,
+  captureDiscussionInspectedStep
+} from './replay-context'
 import { createSessionDiscussionAnnotation } from '../session-discussion-annotation'
 
 const execution: ReplayStep = {
@@ -231,4 +236,113 @@ describe('step-scoped captured records', () => {
       captured.records?.find((record) => record.id === 'artifact-version:version')
     ).toMatchObject({ truncated: true })
   })
+})
+
+describe('explicit Notebook inspection at the research clock', () => {
+  const overlapping = (): ReplayDocument => {
+    const source = structuredClone(document)
+    const runStep = source.branches[0].steps[0]
+    runStep.recordedAt = 1000
+    runStep.recordedEndAt = 3000
+    runStep.endMs = 2000
+    runStep.durationMs = 2000
+    runStep.runs[0].startedAt = 1000
+    runStep.runs[0].endedAt = 3000
+    const later = source.branches[0].steps[1]
+    later.recordedAt = 1500
+    later.startMs = 500
+    later.endMs = 2500
+    source.branches[0].durationMs = 2500
+    return source
+  }
+  it.each([
+    [1500, false],
+    [2500, true]
+  ] as const)(
+    'keeps the inspected run instead of the overlapping message at %s ms',
+    (timeMs, completed) => {
+      const source = overlapping()
+      const clock = projectReplayScene(source, 'main', timeMs, 1000)
+      expect(clock.step?.id).toBe('answer')
+      const capture = captureDiscussionNotebookRun(
+        source,
+        clock,
+        'execution',
+        'run',
+        1000,
+        details,
+        resources
+      )!
+      expect(capture).toMatchObject({
+        stepId: 'execution',
+        notebookInspection: { runId: 'run', timeMs },
+        recordedAt: 1000 + timeMs
+      })
+      expect(capture.evidence).toEqual([
+        expect.objectContaining({
+          kind: 'notebook-run',
+          id: 'run',
+          part: completed ? 'record' : 'input'
+        })
+      ])
+      expect(capture.excerpt.includes('Mean = 4.50')).toBe(completed)
+      expect(capture.excerpt).not.toContain('Recorded conclusion')
+    }
+  )
+  it('references only the clicked run in a grouped step and rejects foreign or unreached runs', () => {
+    const source = overlapping()
+    source.branches[0].steps[0].runs.push({
+      ...source.branches[0].steps[0].runs[0],
+      runId: 'other',
+      startedAt: 2900
+    })
+    source.branches[0].steps[0].evidence.push({
+      kind: 'notebook-run',
+      id: 'other',
+      projectId: 'p',
+      sessionId: 's'
+    })
+    const clock = projectReplayScene(source, 'main', 1500, 1000)
+    expect(
+      captureDiscussionNotebookRun(source, clock, 'execution', 'foreign', 1000, details)
+    ).toBeUndefined()
+    expect(
+      captureDiscussionNotebookRun(source, clock, 'execution', 'other', 1000, details)
+    ).toBeUndefined()
+    expect(
+      captureDiscussionNotebookRun(source, clock, 'execution', 'run', 1000, details)?.evidence.map(
+        (item) => item.id
+      )
+    ).toEqual(['run'])
+  })
+})
+
+it('captures an inspected conversation record by identity across overlaps and equal timestamps', () => {
+  const source = structuredClone(document)
+  const earlier = source.branches[0].steps[0]
+  earlier.recordedAt = 1000
+  earlier.recordedEndAt = 3000
+  earlier.endMs = 2000
+  earlier.runs[0].endedAt = 3000
+  const later = source.branches[0].steps[1]
+  later.recordedAt = 1000
+  later.startMs = 0
+  for (const timeMs of [1500, 2000]) {
+    const clock = projectReplayScene(source, 'main', timeMs, 1000)
+    expect(clock.step?.id).toBe('answer')
+    const capture = captureDiscussionInspectedStep(source, clock, earlier.id, false, 1000, details)!
+    expect(capture).toMatchObject({
+      stepId: earlier.id,
+      stepInspection: { timeMs, mode: 'visible' }
+    })
+    expect(capture.excerpt.includes('Mean = 4.50')).toBe(timeMs === 2000)
+    expect(capture.excerpt).not.toContain('Recorded conclusion')
+  }
+  later.startMs = 1000
+  later.recordedAt = 2000
+  const clock = projectReplayScene(source, 'main', 500, 1000)
+  expect(captureDiscussionInspectedStep(source, clock, later.id, false, 1000)).toBeUndefined()
+  const archived = captureDiscussionInspectedStep(source, clock, later.id, true, 1000)!
+  expect(archived.excerpt).toContain('Recorded conclusion')
+  expect(archived.stepInspection).toEqual({ timeMs: 500, mode: 'saved-history' })
 })

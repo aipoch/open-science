@@ -2,12 +2,14 @@ import { Pin, PinOff } from 'lucide-react'
 import { describe, expect, it, vi } from 'vitest'
 
 import { resolveActionMenuEntries } from '@/components/action-menu'
+import type { ResolvedActionMenuAction } from '@/components/action-menu/action-menu-model'
 import type { ChatSession } from '@/stores/session-store'
 
 import {
   SESSION_ACTION_CATALOG,
   SESSION_ACTION_RECIPE,
   createSessionActionBindings,
+  type SessionActionId,
   type SessionActionInvocation
 } from './session-action-menu'
 
@@ -39,6 +41,61 @@ const invocation = (session: ChatSession): SessionActionInvocation => ({
 })
 
 describe('session action menu', () => {
+  it('offers explicit ownership actions only for writable discussions and preserves original record access', async () => {
+    const onAssignResearch = vi.fn()
+    const onRemoveResearch = vi.fn(async () => undefined)
+    const onViewOriginalRecord = vi.fn()
+    const bindings = createSessionActionBindings({
+      canMutateConversations: true,
+      canDeleteConversations: true,
+      canDownloadArtifacts: false,
+      onTogglePin: vi.fn(),
+      onRenameSession: vi.fn(),
+      onAssignResearch,
+      onRemoveResearch,
+      onViewOriginalRecord
+    })
+    const resolve = (session: ChatSession): ResolvedActionMenuAction<SessionActionId>[] =>
+      resolveActionMenuEntries(
+        {
+          identityKey: session.id,
+          catalog: SESSION_ACTION_CATALOG,
+          recipe: SESSION_ACTION_RECIPE,
+          bindings
+        },
+        invocation(session)
+      ).filter((entry) => entry.kind === 'action')
+    const member = createSession({
+      researchMembership: {
+        sourceProjectId: 'project-1',
+        sourceSessionId: 'source',
+        sourceImportId: 'import',
+        sourceTitle: 'Research'
+      }
+    })
+    expect(resolve(member).map((entry) => entry.action)).toContain('assign-research')
+    expect(resolve(member).map((entry) => entry.action)).toContain('remove-research')
+    await bindings['assign-research'].execute(invocation(member))
+    await bindings['remove-research'].execute(invocation(member))
+    expect(onAssignResearch).toHaveBeenCalledWith(member)
+    expect(onRemoveResearch).toHaveBeenCalledWith(member)
+    expect(resolve(createSession()).map((entry) => entry.action)).not.toContain('remove-research')
+    const imported = createSession({
+      contentLoaded: false,
+      importedResearch: { importId: 'import' }
+    })
+    const importedActions = resolve(imported).map((entry) => entry.action)
+    expect(importedActions).toContain('view-original-record')
+    expect(importedActions).not.toContain('assign-research')
+    expect(importedActions).not.toContain('remove-research')
+    await bindings['view-original-record'].execute(invocation(imported))
+    expect(onViewOriginalRecord).toHaveBeenCalledWith(imported)
+    const running = resolve(createSession({ status: 'running' })).find(
+      (entry) => entry.action === 'assign-research'
+    )
+    expect(running?.disabled).toBe(true)
+  })
+
   it('hides capabilities omitted by a menu owner', () => {
     const bindings = createSessionActionBindings({
       canMutateConversations: true,

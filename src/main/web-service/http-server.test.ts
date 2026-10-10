@@ -6,7 +6,7 @@ import { RemoteAccessRepository } from '../remote-access/repository'
 import { requirePairingManager } from '../remote-access/ipc'
 import { remoteAccessApplicationCommandContracts } from '../../shared/remote-access'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { request as httpRequest, IncomingMessage, ServerResponse } from 'node:http'
+import { request as httpRequest, IncomingMessage, ServerResponse, Server } from 'node:http'
 import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -24,6 +24,10 @@ vi.mock('electron', () => ({
 
 import { WEB_INVOKE_CHANNELS } from '../../shared/web-api-map.generated'
 import { ApplicationCommandError } from '../../shared/application-command-contract'
+import {
+  prepareManagedEnvironmentRequestSchema,
+  type PrepareManagedEnvironmentRequest
+} from '../../shared/managed-execution'
 import { TASK_EVENT_STREAM_PROTOCOL_VERSION } from '../../shared/task-api'
 import {
   isWebRpcChannel,
@@ -33,6 +37,17 @@ import {
 } from '../../shared/web-rpc-contract'
 import { ApplicationEventHub } from '../application-events'
 import type { CallerContext } from '../caller-context'
+import {
+  createManagedExecutionExternalPort,
+  type ManagedExecutionExternalMethod
+} from '../managed-execution-external-port'
+import {
+  prepareResearchMaterials,
+  ResearchMaterialUnavailableError,
+  ResearchMaterialVersionSelectionError,
+  RESEARCH_MATERIAL_VERSION_SELECTION_MESSAGE,
+  type ResearchMaterialAuthority
+} from '../notebook/research-materials'
 import { createLogger, flushLogs, initLogger } from '../logger'
 import { PermissionApprovalPresence } from '../permission-approval-presence'
 import {
@@ -4999,5 +5014,864 @@ describe('Agent runtime Task HTTP routes', () => {
       { framework: 'codebuddy', status: 'missing' }
     ])
     await tasks.dispose()
+  })
+})
+
+describe('managed execution HTTP API', () => {
+  const setup = async (
+    options: { remote?: boolean; budget?: boolean; unavailable?: boolean } = {}
+  ): Promise<{
+    base: string
+    call: ReturnType<typeof vi.fn>
+    contexts: CallerContext[]
+  }> => {
+    const call = vi.fn().mockResolvedValue({ status: 'running', requestId: 'run-1' })
+    const contexts: CallerContext[] = []
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'execution-token',
+      staticRoot: '/unused',
+      rpc: { channels: () => [], invoke: vi.fn() },
+      ...(options.budget
+        ? {
+            requestBodyBudgets: {
+              perRequestBytes: 64,
+              perClientInFlightBytes: 128,
+              serverInFlightBytes: 256
+            }
+          }
+        : {}),
+      ...(options.remote
+        ? {
+            externalAccess: {
+              authorizeHttp: vi.fn().mockResolvedValue(accessOnlyExternalAccess()),
+              authorizeWebSocket: vi
+                .fn()
+                .mockResolvedValue({ principalId: 'remote', isCurrent: () => true })
+            }
+          }
+        : {}),
+      tasks: {
+        runWithCallerContext: (context, operation) => {
+          contexts.push(context)
+          return operation()
+        },
+        subscribeProgress: vi.fn(() => vi.fn()),
+        listProjects: vi.fn(),
+        createProject: vi.fn(),
+        updateProject: vi.fn(),
+        listSessions: vi.fn(),
+        getSession: vi.fn(),
+        startRun: vi.fn(),
+        getRun: vi.fn(),
+        cancelRun: vi.fn(),
+        listArtifacts: vi.fn(),
+        acquireArtifact: vi.fn(),
+        releaseArtifact: vi.fn(),
+        ...(options.unavailable
+          ? {}
+          : { callManagedExecution: call, callRunObservation: call, callProjectRecordings: call })
+      },
+      bootstrap: {
+        appName: 'Open-Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+    return { base: `http://127.0.0.1:${server.port}`, call, contexts }
+  }
+  const post = (
+    base: string,
+    method: string,
+    body: unknown,
+    extraHeaders: Record<string, string> = {}
+  ): Promise<Response> =>
+    fetch(`${base}/api/v1/execution/${method}`, {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer execution-token',
+        'content-type': 'application/json',
+        ...extraHeaders
+      },
+      body: JSON.stringify(body)
+    })
+
+  it('dispatches observation requests through the scoped local adapter without execution', async () => {
+    const { base, call, contexts } = await setup()
+    for (const method of [
+      'open',
+      'snapshot',
+      'history',
+      'changes',
+      'select',
+      'selection',
+      'revoke'
+    ]) {
+      const body = { viewerId: 'viewer-fixture' }
+      const response = await fetch(`${base}/api/v1/observations/${method}`, {
+        method: 'POST',
+        headers: { authorization: 'Bearer execution-token', 'content-type': 'application/json' },
+        body: JSON.stringify(body)
+      })
+      expect(response.status).toBe(200)
+      expect(call).toHaveBeenLastCalledWith(method, body)
+    }
+    expect(contexts.every((context) => context.location === 'local')).toBe(true)
+  })
+
+  it('keeps the observation route authenticated, local and budgeted', async () => {
+    const local = await setup({ budget: true })
+    const invoke = (base: string, body: unknown, authenticated = true): Promise<Response> =>
+      fetch(`${base}/api/v1/observations/open`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(authenticated ? { authorization: 'Bearer execution-token' } : {})
+        },
+        body: JSON.stringify(body)
+      })
+    expect((await invoke(local.base, {}, false)).status).toBe(401)
+    expect((await invoke(local.base, [])).status).toBe(400)
+    expect((await invoke(local.base, { payload: 'x'.repeat(200) })).status).toBe(413)
+    expect(local.call).not.toHaveBeenCalled()
+    const remote = await setup({ remote: true })
+    const denied = await fetch(`${remote.base}/api/v1/observations/open`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}'
+    })
+    expect(denied.status).toBe(403)
+    expect(remote.call).not.toHaveBeenCalled()
+    const unavailable = await setup({ unavailable: true })
+    expect((await invoke(unavailable.base, {})).status).toBe(503)
+  })
+
+  it('dispatches project recordings only through authenticated local and budgeted requests', async () => {
+    const local = await setup({ budget: true })
+    const invoke = (
+      base: string,
+      method: string,
+      body: unknown,
+      authenticated = true
+    ): Promise<Response> =>
+      fetch(`${base}/api/v1/project-recordings/${method}`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(authenticated ? { authorization: 'Bearer execution-token' } : {})
+        },
+        body: JSON.stringify(body)
+      })
+    expect((await invoke(local.base, 'inspect', {}, false)).status).toBe(401)
+    expect((await invoke(local.base, 'start', [])).status).toBe(400)
+    expect((await invoke(local.base, 'start', { data: 'x'.repeat(200) })).status).toBe(413)
+    expect(local.call).not.toHaveBeenCalled()
+    for (const method of [
+      'inspect',
+      'start',
+      'status',
+      'pause',
+      'resume',
+      'stop',
+      'read',
+      'openRecorded',
+      'selectMoment',
+      'selection'
+    ]) {
+      expect((await invoke(local.base, method, { viewerId: 'viewer' })).status).toBe(200)
+      expect(local.call).toHaveBeenLastCalledWith(method, { viewerId: 'viewer' })
+    }
+    expect(local.contexts.every((context) => context.location === 'local')).toBe(true)
+    const remote = await setup({ remote: true })
+    expect((await invoke(remote.base, 'inspect', {}, false)).status).toBe(403)
+    expect(remote.call).not.toHaveBeenCalled()
+    const unavailable = await setup({ unavailable: true })
+    expect((await invoke(unavailable.base, 'inspect', {})).status).toBe(503)
+  })
+
+  const materialRequest = (
+    materials: PrepareManagedEnvironmentRequest['materials']
+  ): PrepareManagedEnvironmentRequest =>
+    prepareManagedEnvironmentRequestSchema.parse({
+      projectId: 'project',
+      sessionId: 'discussion',
+      requestId: 'prepare-materials',
+      sourceSessionId: 'research',
+      sourceIdentity: 'source',
+      runtimeId: 'b'.repeat(64),
+      materials
+    })
+  const materialClient = async (
+    prepare: (request: PrepareManagedEnvironmentRequest) => Promise<unknown>
+  ): Promise<OpenScienceClient> => {
+    const { base, call, contexts } = await setup()
+    const adapter = createManagedExecutionExternalPort({
+      service: {
+        runtimes: vi.fn(),
+        createSession: vi.fn(),
+        preflight: vi.fn(),
+        requestConfiguration: vi.fn(),
+        getConfiguration: vi.fn(),
+        inspectMaterials: vi.fn(),
+        inspectOfflinePlans: vi.fn(),
+        executeOfflinePlan: vi.fn(),
+        prepare: (value) => prepare(prepareManagedEnvironmentRequestSchema.parse(value)),
+        execute: vi.fn(),
+        getOperation: vi.fn(),
+        cancelOperation: vi.fn(),
+        waitOperation: vi.fn(),
+        getEnvironment: vi.fn(),
+        releaseEnvironment: vi.fn(),
+        collectOutputs: vi.fn(),
+        discardOutputs: vi.fn()
+      },
+      assertOpen: () => undefined,
+      withDataRootWrite: (work) => work()
+    })
+    call.mockImplementation((method: ManagedExecutionExternalMethod, payload: unknown) =>
+      adapter.call(method, payload, contexts.at(-1))
+    )
+    return new OpenScienceClient({ baseUrl: base, token: 'execution-token' })
+  }
+
+  it.each([
+    [
+      'missing',
+      'The selected research material is unavailable. Inspect the research materials and select an available version.'
+    ],
+    [
+      'withheld',
+      'The selected research material was withheld from the package. Select materials that were shared.'
+    ],
+    [
+      'external',
+      'The selected research material is external to the package and is not available for preparation.'
+    ],
+    [
+      'mismatch',
+      'The available research material does not match the declared version. Inspect the research materials and select a matching version.'
+    ]
+  ] as const)(
+    'reports diagnosed %s materials through the real preparation, adapter, HTTP and SDK',
+    async (reason, message) => {
+      const root = await mkdtemp(join(tmpdir(), 'execution-materials-http-'))
+      roots.push(root)
+      const payload = Buffer.from('original')
+      const sha = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex')
+      const descriptor = Buffer.from(
+        JSON.stringify({
+          format: 'open-science-reproduction-description',
+          descriptionVersion: 1,
+          title: 'Material check',
+          materials: [
+            reason === 'external' || reason === 'withheld'
+              ? {
+                  key: 'source',
+                  role: 'source',
+                  availability: reason,
+                  description: '/private/research/secret'
+                }
+              : {
+                  key: 'source',
+                  role: 'source',
+                  availability: 'included',
+                  filename: 'data.csv',
+                  sha256: sha(payload),
+                  sizeBytes: payload.length,
+                  restorePath: 'data.csv'
+                }
+          ],
+          plans: [
+            {
+              key: 'inspect',
+              title: 'Inspect',
+              scope: 'engineering-check',
+              materialKeys: ['source'],
+              claim: 'Engineering only',
+              limitations: []
+            }
+          ]
+        })
+      )
+      const readVersion = vi.fn(async (id: string) => (id === 'descriptor' ? descriptor : payload))
+      const authority: ResearchMaterialAuthority = {
+        source: { projectId: 'project', sessionId: 'research', identity: 'source' },
+        versions: [
+          {
+            versionId: 'descriptor',
+            sourceIdentity: 'source',
+            filename: 'research-reproduction.json',
+            sha256: sha(descriptor),
+            sizeBytes: descriptor.length
+          },
+          ...(reason === 'mismatch'
+            ? [
+                {
+                  versionId: 'data',
+                  sourceIdentity: 'source',
+                  filename: 'data.csv',
+                  sha256: 'a'.repeat(64),
+                  sizeBytes: payload.length
+                }
+              ]
+            : [])
+        ],
+        readVersion
+      }
+      const request = materialRequest({
+        descriptorVersionId: 'descriptor',
+        materialKeys: ['source']
+      })
+      const client = await materialClient((received) =>
+        prepareResearchMaterials(authority, {
+          stagingDirectory: root,
+          ...received.materials
+        })
+      )
+      await expect(client.execution.prepare(request)).rejects.toMatchObject({
+        status: 409,
+        code: 'conflict',
+        message
+      })
+      expect(readVersion.mock.calls.map(([id]) => id)).toEqual(['descriptor'])
+    }
+  )
+
+  it('requires an explicit matching Version through preparation, HTTP and the SDK without choosing equal bytes', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'execution-material-selection-http-'))
+    roots.push(root)
+    const payload = Buffer.from('fixed experiment input')
+    const sha = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex')
+    const descriptor = Buffer.from(
+      JSON.stringify({
+        format: 'open-science-reproduction-description',
+        descriptionVersion: 1,
+        title: 'Repeated immutable inputs',
+        materials: [
+          {
+            key: 'input',
+            role: 'data',
+            availability: 'included',
+            filename: 'input.txt',
+            sha256: sha(payload),
+            sizeBytes: payload.length,
+            restorePath: 'input.txt'
+          }
+        ],
+        plans: [
+          {
+            key: 'inspect',
+            title: 'Inspect',
+            scope: 'engineering-check',
+            materialKeys: ['input'],
+            claim: 'Engineering only',
+            limitations: []
+          }
+        ]
+      })
+    )
+    const readVersion = vi.fn(async (id: string) => (id === 'descriptor' ? descriptor : payload))
+    const authority: ResearchMaterialAuthority = {
+      source: { projectId: 'project', sessionId: 'research', identity: 'source' },
+      versions: [
+        { versionId: 'descriptor', filename: 'research-reproduction.json', bytes: descriptor },
+        { versionId: 'original-input', filename: 'input.txt', bytes: payload },
+        { versionId: 'recorded-input', filename: 'recorded.txt', bytes: payload }
+      ].map(({ bytes, ...version }) => ({
+        ...version,
+        sourceIdentity: 'source',
+        sha256: sha(bytes),
+        sizeBytes: bytes.length
+      })),
+      readVersion
+    }
+    const client = await materialClient((received) =>
+      prepareResearchMaterials(authority, { stagingDirectory: root, ...received.materials })
+    )
+    const materials = { descriptorVersionId: 'descriptor', materialKeys: ['input'] }
+    for (const selection of [undefined, { input: 'unrelated' }]) {
+      await expect(
+        client.execution.prepare(materialRequest({ ...materials, materialVersions: selection }))
+      ).rejects.toMatchObject({
+        status: 400,
+        code: 'invalid_request',
+        message: RESEARCH_MATERIAL_VERSION_SELECTION_MESSAGE
+      })
+    }
+    expect(readVersion.mock.calls.map(([id]) => id)).toEqual(['descriptor', 'descriptor'])
+    const prepared = await client.execution.prepare(
+      materialRequest({ ...materials, materialVersions: { input: 'recorded-input' } })
+    )
+    expect(prepared).toMatchObject({
+      inputs: [{ versionId: 'descriptor' }, { versionId: 'recorded-input', materialKey: 'input' }]
+    })
+    expect(await readFile(join(root, 'input.txt'), 'utf8')).toBe('fixed experiment input')
+  })
+
+  it.each([
+    'io',
+    'content-verification',
+    'size-verification',
+    'same-name-error',
+    'same-selection-name-error'
+  ] as const)(
+    'keeps %s failures internal without exposing private details as material guidance',
+    async (reason) => {
+      const root = await mkdtemp(join(tmpdir(), 'execution-materials-internal-'))
+      roots.push(root)
+      const bytes = Buffer.from('expected')
+      const failure = new Error('missing /private/research/secret')
+      if (reason === 'same-name-error') failure.name = 'ResearchMaterialUnavailableError'
+      if (reason === 'same-selection-name-error')
+        failure.name = 'ResearchMaterialVersionSelectionError'
+      const authority: ResearchMaterialAuthority = {
+        source: { projectId: 'project', sessionId: 'research', identity: 'source' },
+        versions: [
+          {
+            versionId: 'data',
+            sourceIdentity: 'source',
+            filename: 'data.csv',
+            sha256: createHash('sha256').update(bytes).digest('hex'),
+            sizeBytes: bytes.length
+          }
+        ],
+        readVersion: async () => {
+          if (reason === 'content-verification') return Buffer.from('tampered')
+          if (reason === 'size-verification') return Buffer.from('truncated')
+          throw failure
+        }
+      }
+      const request = materialRequest({ files: [{ versionId: 'data', restorePath: 'data.csv' }] })
+      const client = await materialClient((received) =>
+        prepareResearchMaterials(authority, {
+          stagingDirectory: root,
+          ...received.materials
+        })
+      )
+      await expect(client.execution.prepare(request)).rejects.toMatchObject({
+        status: 500,
+        code: 'internal_error',
+        message: 'Internal server error'
+      })
+    }
+  )
+
+  it('reconstructs material guidance from its known reason rather than forwarding Error text', async () => {
+    const error = new ResearchMaterialUnavailableError('missing')
+    error.message = 'missing /private/research/secret'
+    const client = await materialClient(async () => {
+      throw error
+    })
+    await expect(
+      client.execution.prepare(
+        materialRequest({
+          files: [{ versionId: 'data', restorePath: 'data.csv' }]
+        })
+      )
+    ).rejects.toMatchObject({
+      status: 409,
+      code: 'conflict',
+      message:
+        'The selected research material is unavailable. Inspect the research materials and select an available version.'
+    })
+  })
+
+  it('returns fixed selection guidance without exposing modified internal error text', async () => {
+    const error = new ResearchMaterialVersionSelectionError()
+    error.message = 'select /private/research/secret'
+    const client = await materialClient(async () => {
+      throw error
+    })
+    await expect(
+      client.execution.prepare(
+        materialRequest({ descriptorVersionId: 'descriptor', materialKeys: ['input'] })
+      )
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_request',
+      message: RESEARCH_MATERIAL_VERSION_SELECTION_MESSAGE
+    })
+  })
+
+  it('authenticates all methods and retains a local automation caller', async () => {
+    const { base, call, contexts } = await setup()
+    const denied = await fetch(`${base}/api/v1/execution/runtimes`)
+    expect(denied.status).toBe(401)
+    expect(call).not.toHaveBeenCalled()
+    for (const method of [
+      'runtimes',
+      'createSession',
+      'inspectMaterials',
+      'preflight',
+      'requestConfiguration',
+      'getConfiguration',
+      'inspectOfflinePlans',
+      'executeOfflinePlan',
+      'prepare',
+      'execute',
+      'getOperation',
+      'cancelOperation',
+      'waitOperation',
+      'getEnvironment',
+      'releaseEnvironment',
+      'collectOutputs',
+      'discardOutputs'
+    ]) {
+      const response = await post(base, method, { requestId: 'run-1' })
+      expect(response.status).toBe(
+        ['execute', 'executeOfflinePlan', 'collectOutputs'].includes(method) ? 202 : 200
+      )
+      expect(await response.json()).toMatchObject({ data: { status: 'running' } })
+    }
+    expect(call).toHaveBeenCalledTimes(17)
+    expect(
+      contexts.every(
+        (context) =>
+          context.surface === 'task' &&
+          context.location === 'local' &&
+          context.principalKind === 'automation'
+      )
+    ).toBe(true)
+    expect(
+      (
+        await fetch(`${base}/api/v1/execution/runtimes`, {
+          headers: { authorization: 'Bearer execution-token' }
+        })
+      ).status
+    ).toBe(200)
+    expect((await post(base, 'notAMethod', {})).status).toBe(404)
+  })
+
+  it.each(['execute', 'collectOutputs', 'discardOutputs'])(
+    'rejects remote %s even when web authorization accepts it',
+    async (method) => {
+      const { base, call } = await setup({ remote: true })
+      const response = await fetch(`${base}/api/v1/execution/${method}`, {
+        method: 'POST',
+        headers: {
+          host: 'remote.example.test',
+          origin: 'https://remote.example.test',
+          'content-type': 'application/json'
+        },
+        body: '{}'
+      })
+      expect(response.status).toBe(403)
+      expect(await response.json()).toMatchObject({ error: { code: 'unsupported_location' } })
+      expect(call).not.toHaveBeenCalled()
+    }
+  )
+
+  it('rejects a non-loopback peer even with a local Host header and valid token', async () => {
+    const { base, call } = await setup()
+    const emit = Server.prototype.emit
+    const peer = vi.spyOn(Server.prototype, 'emit').mockImplementation(function (
+      this: Server,
+      event: string | symbol,
+      ...args: unknown[]
+    ): boolean {
+      if (event === 'request')
+        Object.defineProperty((args[0] as IncomingMessage).socket, 'remoteAddress', {
+          configurable: true,
+          value: '203.0.113.10'
+        })
+      return Reflect.apply(emit, this, [event, ...args])
+    })
+    try {
+      const response = await post(base, 'execute', {})
+      expect(response.status).toBe(403)
+      expect(await response.json()).toMatchObject({ error: { code: 'unsupported_location' } })
+      expect(call).not.toHaveBeenCalled()
+    } finally {
+      peer.mockRestore()
+    }
+  })
+
+  it('validates collection identities through the authenticated adapter without accepting caller authority', async () => {
+    const { base, call, contexts } = await setup()
+    const collectOutputs = vi.fn().mockResolvedValue({ status: 'running', requestId: 'collect-1' })
+    const discardOutputs = vi.fn().mockResolvedValue({ state: 'ready' })
+    const execute = vi.fn()
+    const releaseEnvironment = vi.fn()
+    const adapter = createManagedExecutionExternalPort({
+      service: {
+        runtimes: vi.fn(),
+        createSession: vi.fn(),
+        preflight: vi.fn(),
+        requestConfiguration: vi.fn(),
+        getConfiguration: vi.fn(),
+        inspectMaterials: vi.fn(),
+        inspectOfflinePlans: vi.fn(),
+        executeOfflinePlan: vi.fn(),
+        prepare: vi.fn(),
+        execute,
+        getOperation: vi.fn(),
+        cancelOperation: vi.fn(),
+        waitOperation: vi.fn(),
+        getEnvironment: vi.fn(),
+        releaseEnvironment,
+        collectOutputs,
+        discardOutputs
+      },
+      assertOpen: () => undefined,
+      withDataRootWrite: (work) => work()
+    })
+    call.mockImplementation((method: ManagedExecutionExternalMethod, payload: unknown) =>
+      adapter.call(method, payload, contexts.at(-1))
+    )
+    const client = new OpenScienceClient({ baseUrl: base, token: 'execution-token' })
+    const reference = {
+      projectId: 'project',
+      sessionId: 'session',
+      environmentId: 'a'.repeat(64),
+      collectionId: 'b'.repeat(64)
+    }
+    const collect = { ...reference, requestId: 'collect-1' }
+    for (const method of ['collectOutputs', 'discardOutputs']) {
+      const input = method === 'collectOutputs' ? collect : reference
+      const unauthenticated = await fetch(`${base}/api/v1/execution/${method}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(input)
+      })
+      expect(unauthenticated.status).toBe(401)
+      for (const authority of ['provenance', 'recoveryAuthority', 'writeAttempt']) {
+        const response = await post(base, method, { ...input, [authority]: {} })
+        expect(response.status).toBe(400)
+        expect(await response.json()).toMatchObject({ error: { code: 'invalid_request' } })
+      }
+      expect((await post(base, method, { ...input, collectionId: '' })).status).toBe(400)
+    }
+    expect(collectOutputs).not.toHaveBeenCalled()
+    expect(discardOutputs).not.toHaveBeenCalled()
+    const accepted = await post(base, 'collectOutputs', collect)
+    expect(accepted.status).toBe(202)
+    expect(await accepted.json()).toMatchObject({
+      data: { status: 'running', requestId: 'collect-1' }
+    })
+    await expect(client.execution.discardOutputs(reference)).resolves.toEqual({ state: 'ready' })
+    expect(collectOutputs).toHaveBeenCalledExactlyOnceWith(collect)
+    expect(discardOutputs).toHaveBeenCalledExactlyOnceWith(reference)
+    expect(execute).not.toHaveBeenCalled()
+    expect(releaseEnvironment).not.toHaveBeenCalled()
+  })
+
+  it('uses the real SDK over authenticated HTTP for retry-safe managed requests', async () => {
+    const { base, call } = await setup()
+    const client = new OpenScienceClient({ baseUrl: base, token: 'execution-token' })
+    const request = {
+      projectId: 'project',
+      sessionId: 'session',
+      environmentId: 'environment',
+      requestId: 'run-1',
+      command: 'node --version'
+    }
+    await client.execution.execute(request, { idempotencyKey: 'managed-sdk-retry' })
+    await client.execution.execute(request, { idempotencyKey: 'managed-sdk-retry' })
+    expect(call).toHaveBeenCalledOnce()
+    expect(call).toHaveBeenCalledWith('execute', request)
+    await client.execution.waitOperation({
+      projectId: 'project',
+      sessionId: 'session',
+      requestId: 'run-1',
+      timeoutMs: 1
+    })
+    expect(call).toHaveBeenLastCalledWith('waitOperation', {
+      projectId: 'project',
+      sessionId: 'session',
+      requestId: 'run-1',
+      timeoutMs: 1
+    })
+  })
+
+  it('deduplicates mutations while status and wait always observe current state', async () => {
+    const { base, call } = await setup()
+    const headers = { 'idempotency-key': 'retry-1' }
+    const body = { requestId: 'request-1' }
+    for (const method of ['createSession', 'prepare', 'execute', 'collectOutputs']) {
+      const responses = await Promise.all([
+        post(base, method, body, headers),
+        post(base, method, body, headers)
+      ])
+      expect(await responses[0].json()).toEqual(await responses[1].json())
+      expect((await post(base, method, { requestId: 'other' }, headers)).status).toBe(409)
+    }
+    expect(call).toHaveBeenCalledTimes(4)
+    for (const method of ['getOperation', 'waitOperation', 'getEnvironment']) {
+      await post(base, method, body, headers)
+      await post(base, method, body, headers)
+    }
+    expect(call).toHaveBeenCalledTimes(10)
+  })
+
+  it('retains existing request budgets and rejects invalid wait deadlines before dispatch', async () => {
+    const { base, call } = await setup({ budget: true })
+    expect((await post(base, 'prepare', { text: 'x'.repeat(100) })).status).toBe(413)
+    for (const timeoutMs of [0, -1, 60_001, 1.5, '10'])
+      expect((await post(base, 'waitOperation', { timeoutMs })).status).toBe(400)
+    expect((await post(base, 'prepare', [])).status).toBe(400)
+    expect(call).not.toHaveBeenCalled()
+    expect((await post(base, 'waitOperation', { timeoutMs: 60_000 })).status).toBe(200)
+  })
+
+  it('reports an unavailable optional port without routing through Agent work', async () => {
+    const { base, call } = await setup({ unavailable: true })
+    expect((await post(base, 'prepare', {})).status).toBe(503)
+    expect(call).not.toHaveBeenCalled()
+  })
+})
+
+describe('headless package HTTP API', () => {
+  const setup = async (
+    options: { remote?: boolean; unavailable?: boolean } = {}
+  ): Promise<{ base: string; call: ReturnType<typeof vi.fn> }> => {
+    const call = vi.fn().mockResolvedValue({ preflightId: 'preview' })
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'package-token',
+      staticRoot: '/unused',
+      rpc: { channels: () => [], invoke: vi.fn() },
+      requestBodyBudgets: {
+        perRequestBytes: 1024,
+        perClientInFlightBytes: 2048,
+        serverInFlightBytes: 4096
+      },
+      ...(options.remote
+        ? {
+            externalAccess: {
+              authorizeHttp: vi.fn().mockResolvedValue(accessOnlyExternalAccess()),
+              authorizeWebSocket: vi
+                .fn()
+                .mockResolvedValue({ principalId: 'remote', isCurrent: () => true })
+            }
+          }
+        : {}),
+      tasks: {
+        runWithCallerContext: (_context, operation) => operation(),
+        subscribeProgress: vi.fn(() => vi.fn()),
+        listProjects: vi.fn(),
+        createProject: vi.fn(),
+        updateProject: vi.fn(),
+        listSessions: vi.fn(),
+        getSession: vi.fn(),
+        startRun: vi.fn(),
+        getRun: vi.fn(),
+        cancelRun: vi.fn(),
+        listArtifacts: vi.fn(),
+        acquireArtifact: vi.fn(),
+        releaseArtifact: vi.fn(),
+        ...(options.unavailable ? {} : { callSessionPackages: call })
+      },
+      bootstrap: {
+        appName: 'Open-Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+    return { base: `http://127.0.0.1:${server.port}`, call }
+  }
+  const post = (
+    base: string,
+    method: string,
+    body: unknown,
+    headers: Record<string, string> = {}
+  ): Promise<Response> =>
+    fetch(`${base}/api/v1/packages/${method}`, {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer package-token',
+        'content-type': 'application/json',
+        ...headers
+      },
+      body: JSON.stringify(body)
+    })
+
+  it('uses the real SDK for explicit authenticated preflight, commit, cancel and export with retry protection', async () => {
+    const { base, call } = await setup()
+    expect(
+      (await fetch(`${base}/api/v1/packages/preflightImport`, { method: 'POST', body: '{}' }))
+        .status
+    ).toBe(401)
+    expect(call).not.toHaveBeenCalled()
+    const client = new OpenScienceClient({ baseUrl: base, token: 'package-token' })
+    const request = { filePath: '/research.science', target: { projectName: 'Research' } }
+    await client.packages.preflightImport(request, { idempotencyKey: 'preview-retry' })
+    await client.packages.preflightImport(request, { idempotencyKey: 'preview-retry' })
+    expect(call).toHaveBeenCalledExactlyOnceWith('preflightImport', request)
+    await client.packages.commitImport({ preflightId: 'preview' })
+    await client.packages.cancelImport({ preflightId: 'preview' })
+    await client.packages.export({ projectId: 'p', sessionId: 's', filePath: '/output.science' })
+    expect(call.mock.calls.map(([method]) => method)).toEqual([
+      'preflightImport',
+      'commitImport',
+      'cancelImport',
+      'export'
+    ])
+    expect(
+      (
+        await post(
+          base,
+          'preflightImport',
+          { ...request, filePath: '/changed.science' },
+          { 'idempotency-key': 'preview-retry' }
+        )
+      ).status
+    ).toBe(409)
+  })
+
+  it('preserves request budgets and rejects non-object or unknown inputs before dispatch', async () => {
+    const { base, call } = await setup()
+    expect((await post(base, 'export', { text: 'x'.repeat(2000) })).status).toBe(413)
+    expect((await post(base, 'export', [])).status).toBe(400)
+    expect((await post(base, 'importWithoutReview', {})).status).toBe(404)
+    expect(call).not.toHaveBeenCalled()
+    const missing = await setup({ unavailable: true })
+    expect((await post(missing.base, 'export', {})).status).toBe(503)
+  })
+
+  it('rejects paired remote callers even if the established authentication accepts them', async () => {
+    const { base, call } = await setup({ remote: true })
+    const reply = await fetch(`${base}/api/v1/packages/export`, {
+      method: 'POST',
+      headers: {
+        host: 'remote.example.test',
+        origin: 'https://remote.example.test',
+        'content-type': 'application/json'
+      },
+      body: '{}'
+    })
+    expect(reply.status).toBe(403)
+    expect(await reply.json()).toMatchObject({ error: { code: 'unsupported_location' } })
+    expect(call).not.toHaveBeenCalled()
+  })
+
+  it('uses the actual socket peer rather than trusting a local Host header', async () => {
+    const { base, call } = await setup()
+    const emit = Server.prototype.emit
+    const peer = vi.spyOn(Server.prototype, 'emit').mockImplementation(function (
+      this: Server,
+      event: string | symbol,
+      ...args: unknown[]
+    ): boolean {
+      if (event === 'request')
+        Object.defineProperty((args[0] as IncomingMessage).socket, 'remoteAddress', {
+          configurable: true,
+          value: '203.0.113.10'
+        })
+      return Reflect.apply(emit, this, [event, ...args])
+    })
+    try {
+      expect((await post(base, 'export', {})).status).toBe(403)
+      expect(call).not.toHaveBeenCalled()
+    } finally {
+      peer.mockRestore()
+    }
   })
 })

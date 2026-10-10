@@ -296,6 +296,7 @@ describe('authenticated delegatedWorkCall route', () => {
       'host.delegate': 'unavailable',
       'host.listModels': 'unavailable',
       'host.llm': 'unavailable',
+      'host.managedExecution': 'unavailable',
       'host.messageReceipt': 'unavailable',
       'host.resolveMessage': 'unavailable',
       'host.sessions': 'unavailable',

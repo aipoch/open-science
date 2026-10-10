@@ -1199,9 +1199,15 @@ class NotebookRunRepository {
     return null
   }
 
-  async readSessionDocuments(projectId: string, sessionId: string): Promise<NotebookRunDocument[]> {
+  async readSessionDocuments(
+    projectId: string,
+    sessionId: string,
+    options: { strict?: boolean } = {}
+  ): Promise<NotebookRunDocument[]> {
+    if (options.strict) await this.saveQueue
     const documents: NotebookRunDocument[] = []
     const legacy = await this.findExisting(projectId, sessionId).catch((error) => {
+      if (options.strict) throw error
       if (
         error instanceof CorruptNotebookDocumentError ||
         error instanceof UnsupportedNotebookDocumentVersionError
@@ -1234,6 +1240,7 @@ class NotebookRunRepository {
       if (!entry.isDirectory()) continue
       const lane = createFrameNotebookLane(projectId, sessionId, entry.name)
       const document = await this.loadExisting(projectId, sessionId, lane).catch((error) => {
+        if (options.strict && !isMissingFileError(error)) throw error
         if (
           isMissingFileError(error) ||
           error instanceof CorruptNotebookDocumentError ||

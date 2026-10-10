@@ -192,7 +192,8 @@
     "src/shared/pdf-translation-snapshot.ts",
     "src/shared/pdf-translation-models.ts",
     "src/shared/pdf-translation-models.test.ts",
-    "src/shared/pdf-text.test.ts"
+    "src/shared/pdf-text.test.ts",
+    "src/shared/managed-execution.ts"
   ],
   "interfacePaths": [
     "src/shared/interface-scale.ts",
@@ -288,7 +289,8 @@
     "src/shared/provider-text-generation-failure.ts",
     "src/shared/pdf-translation-snapshot.ts",
     "src/shared/pdf-translation-languages.ts",
-    "src/shared/pdf-translation-models.ts"
+    "src/shared/pdf-translation-models.ts",
+    "src/shared/managed-execution.ts"
   ],
   "consumerModules": [],
   "testFiles": {

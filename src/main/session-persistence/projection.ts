@@ -8,6 +8,7 @@ import {
   hasCurrentRunningDelegatedAttempt
 } from '../../shared/delegated-work-projection'
 import {
+  researchMembershipSchema,
   type PersistedChatSession,
   type PersistedSessionStatus,
   type SessionSummary,
@@ -25,7 +26,7 @@ const runProjectionTransaction = <Result>(
 ): Promise<Result> => client.$transaction(operation, { maxWait: 30_000 })
 
 const PROJECTION_STATE_ID = 'session-projection'
-const PROJECTION_VERSION = 7
+const PROJECTION_VERSION = 8
 const SESSION_NUMBER_SEQUENCE_ID = 'global'
 const MAX_SAFE_INTEGER_BIGINT = BigInt(Number.MAX_SAFE_INTEGER)
 const MAX_SQLITE_INT = 2_147_483_647
@@ -429,6 +430,10 @@ export const buildSessionProjection = (session: PersistedChatSession): SessionPr
       id: session.id,
       projectId: session.projectId,
       title: session.title,
+      ...(session.researchMembership ? { researchMembership: session.researchMembership } : {}),
+      ...(session.packageOrigin
+        ? { importedResearch: { importId: session.packageOrigin.importId } }
+        : {}),
       status: session.status,
       presentedStatus: status,
       pinned: session.pinned === true,
@@ -467,6 +472,10 @@ const sessionData = (
   id: projection.summary.id,
   projectId: projection.summary.projectId,
   title: projection.summary.title,
+  researchMembershipJson: projection.summary.researchMembership
+    ? JSON.stringify(projection.summary.researchMembership)
+    : null,
+  importedResearchId: projection.summary.importedResearch?.importId ?? null,
   status: projection.summary.status,
   presentedStatus: projection.summary.presentedStatus,
   pinned: projection.summary.pinned,
@@ -529,6 +538,8 @@ const toSummary = (row: {
   id: string
   projectId: string
   title: string
+  researchMembershipJson: string | null
+  importedResearchId: string | null
   status: string
   presentedStatus: string
   pinned: boolean
@@ -546,6 +557,10 @@ const toSummary = (row: {
   id: row.id,
   projectId: row.projectId,
   title: row.title,
+  ...(row.researchMembershipJson
+    ? { researchMembership: researchMembershipSchema.parse(JSON.parse(row.researchMembershipJson)) }
+    : {}),
+  ...(row.importedResearchId ? { importedResearch: { importId: row.importedResearchId } } : {}),
   status: row.status as PersistedSessionStatus,
   presentedStatus: row.presentedStatus as PersistedSessionStatus,
   pinned: row.pinned,

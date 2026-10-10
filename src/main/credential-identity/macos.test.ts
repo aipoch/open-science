@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
@@ -22,6 +22,86 @@ afterEach(() => {
   vi.unstubAllGlobals()
   rmSync(root, { recursive: true, force: true })
 })
+
+it.each(['legacy-key', 'missing-key', 'wrong-key'])(
+  'preserves research-only credentials during upgrade identity validation: %s',
+  async (scenario) => {
+    const paths = { configRoot: join(root, 'config'), profilePath: join(root, 'profile') }
+    mkdirSync(paths.configRoot)
+    mkdirSync(paths.profilePath)
+    const path = join(paths.configRoot, 'research-execution-profiles.json')
+    const ciphertext = Buffer.from('v10research-ciphertext')
+    const contents = JSON.stringify({
+      version: 1,
+      profiles: [
+        {
+          profileId: '11111111-1111-4111-8111-111111111111',
+          projectId: 'project',
+          sourceSessionId: 'source',
+          sourceIdentity: 'native-source',
+          descriptorVersionId: 'descriptor',
+          descriptorSha256: 'a'.repeat(64),
+          planKey: 'baseline',
+          displayName: 'Research',
+          variables: {},
+          allowedNetworkHosts: [],
+          conditionChanges: [],
+          credentialRefs: { provider: 'enc:' + ciphertext.toString('base64') },
+          updatedAt: 1
+        }
+      ]
+    })
+    writeFileSync(path, contents)
+    native.run.mockImplementation((_file: string, args: string[]) => ({
+      status: 0,
+      signal: null,
+      stdout: JSON.stringify({
+        schemaVersion: 1,
+        platform: 'darwin',
+        identity: args[0],
+        status:
+          scenario === 'missing-key'
+            ? 'not-found'
+            : args[0] === (scenario === 'legacy-key' ? 'Open Science' : 'Open-Science')
+              ? 'exists'
+              : 'not-found',
+        reason: 'fixture',
+        osStatus: 0
+      })
+    }))
+    const { selectStartupCredentialIdentity, prepareCredentialValidation } =
+      await import('./bootstrap')
+    const cipher = {
+      isEncryptionAvailable: vi.fn(() => true),
+      encryptString: vi.fn(() => Buffer.from('must-not-create')),
+      decryptString: vi.fn(() => {
+        if (scenario === 'wrong-key') throw new Error('private-plaintext-must-not-leak')
+        return 'private-plaintext-must-not-leak'
+      })
+    }
+    const identity = selectStartupCredentialIdentity({ platform: 'darwin', packaged: true })
+    const recover = vi.fn()
+    if (scenario === 'legacy-key') {
+      expect(identity.appName).toBe('Open Science')
+      prepareCredentialValidation(identity, paths)(cipher, recover)
+      expect(cipher.decryptString).toHaveBeenCalledExactlyOnceWith(ciphertext)
+      expect(recover).not.toHaveBeenCalled()
+    } else {
+      let failure: unknown
+      try {
+        prepareCredentialValidation(identity, paths)(cipher, recover)
+      } catch (error) {
+        failure = error
+      }
+      expect(failure).toMatchObject({ name: 'CredentialIdentityError' })
+      expect(String(failure)).not.toContain('private-plaintext')
+      expect(cipher.decryptString).toHaveBeenCalledTimes(scenario === 'wrong-key' ? 1 : 0)
+    }
+    expect(cipher.encryptString).not.toHaveBeenCalled()
+    expect(readFileSync(path, 'utf8')).toBe(contents)
+    expect(readdirSync(paths.configRoot)).toEqual(['research-execution-profiles.json'])
+  }
+)
 
 // Execute the real selection, inventory, validation and later-access owners. Only the helper
 // process and Electron cipher are doubles; native query classification has its own injected tests.

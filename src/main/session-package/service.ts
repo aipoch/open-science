@@ -234,6 +234,7 @@ const withoutPrivateAuthority = (session: PersistedChatSession): PersistedChatSe
         messages: session.conversationGraph.messages.map(portableMessage)
       }
     : undefined,
+  researchMembership: undefined,
   promptPreparation: undefined,
   providerSessionId: undefined,
   providerContinuityToken: undefined,
@@ -259,6 +260,7 @@ const requiresPrivateAuthorityRemoval = (envelope: unknown): boolean => {
   const session = hasEnvelopeField ? envelope.session : envelope
   if (!isRecord(session)) return false
   if (
+    Object.hasOwn(session, 'researchMembership') ||
     Object.hasOwn(session, 'promptPreparation') ||
     Object.hasOwn(session, 'providerSessionId') ||
     Object.hasOwn(session, 'providerContinuityToken')
@@ -1801,6 +1803,7 @@ export class SessionPackageService {
   }
 
   async readOrigin(request: SessionPackageRequest): Promise<{
+    receiptIdentity: Pick<SessionPackageReceipt, 'importId' | 'manifestChecksum'>
     sourceManifest: SessionPackageManifest
     identities: Record<string, string>
     files: SessionPackageReceipt['files']
@@ -1808,6 +1811,173 @@ export class SessionPackageService {
     literature?: import('./literature').PackageLiterature
     pdfNotes?: PackagePdfNotes
     originSessionIds: string[]
+  }> {
+    const { receipt, sourceManifest, records } = await this.readOriginRecords(request)
+    return {
+      receiptIdentity: {
+        importId: receipt.importId,
+        manifestChecksum: receipt.manifestChecksum
+      },
+      sourceManifest,
+      identities: receipt.identities,
+      files: receipt.files,
+      history: records.history,
+      literature: records.literature,
+      pdfNotes: records.pdfNotes,
+      originSessionIds: records.tables.FileOriginSession.map(
+        (row) => receipt.identities[String(row.sessionId)]
+      )
+    }
+  }
+
+  /** Main-only projection of retained import evidence. Original Version aliases survive a
+   * working-copy export in the existing reproducibility sourceScope, without editing payloads. */
+  async readArtifactSourceVersionMapping(
+    request: SessionPackageRequest,
+    reference: { artifactId: string; versionId: string; checksum: string; sizeBytes: number }
+  ): Promise<Readonly<Record<string, string>>> {
+    const safe = sessionPackageRequestSchema.parse(request)
+    const identity = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/)
+    const expected = z
+      .object({
+        artifactId: identity,
+        versionId: identity,
+        checksum: z.string().regex(/^[a-f0-9]{64}$/),
+        sizeBytes: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
+      })
+      .strict()
+      .parse(reference)
+    const { receipt, sourceManifest, records } = await this.readOriginRecords(safe)
+    const loaded = await new SessionRepository(this.configRoot).loadSessionWithDiagnostics(
+      safe.projectId,
+      safe.sessionId,
+      { mode: 'read-only', preserveRuntimeState: true }
+    )
+    if (loaded.status !== 'found') throw new Error('The receiving Session is unavailable.')
+    const origin = loaded.session.packageOrigin ?? loaded.session.forkOrigin
+    if (
+      !origin ||
+      origin.importId !== receipt.importId ||
+      origin.manifestChecksum !== receipt.manifestChecksum ||
+      origin.sourceProjectId !== sourceManifest.source.projectId ||
+      origin.sourceSessionId !== sourceManifest.source.sessionId ||
+      receipt.identities[origin.sourceProjectId] !== safe.projectId ||
+      receipt.identities[origin.sourceSessionId] !== safe.sessionId
+    )
+      throw new Error('Artifact source receipt does not belong to the receiving Session.')
+    const sources = records.tables.ArtifactVersion
+    if (sources.length > 10000) throw new Error('Artifact source mapping exceeds its bound.')
+    const archives = sources.filter(
+      (version) =>
+        receipt.identities[String(version.id)] === expected.versionId &&
+        receipt.identities[String(version.artifactId)] === expected.artifactId
+    )
+    if (
+      archives.length !== 1 ||
+      archives[0].checksum !== expected.checksum ||
+      String(archives[0].sizeBytes) !== String(expected.sizeBytes)
+    )
+      throw new Error('Artifact source receipt does not bind the exact archive.')
+    const client = await this.options.getClient()
+    const ids = [
+      ...new Set(sources.flatMap((source) => receipt.identities[String(source.id)] ?? []))
+    ]
+    const published = new Map<
+      string,
+      {
+        id: string
+        artifactId: string
+        checksum: string
+        sizeBytes: bigint
+        contentStorageKey: string
+      }
+    >()
+    for (let start = 0; start < ids.length; start += 100) {
+      const versions = await client.artifactVersion.findMany({
+        where: {
+          id: { in: ids.slice(start, start + 100) },
+          state: 'finalized',
+          managedVisibleAt: { not: null },
+          artifact: { is: safe }
+        },
+        select: {
+          id: true,
+          artifactId: true,
+          checksum: true,
+          sizeBytes: true,
+          contentStorageKey: true
+        }
+      })
+      for (const version of versions) published.set(version.id, version)
+    }
+    const fileReceipts = new Set(
+      receipt.files.map((file) =>
+        JSON.stringify([
+          file.sourceStorageKey,
+          file.localStorageKey,
+          file.sourceChecksum,
+          file.localChecksum
+        ])
+      )
+    )
+    const bound = (source: (typeof sources)[number]): boolean => {
+      const current = published.get(receipt.identities[String(source.id)])
+      return (
+        !!current &&
+        current.artifactId === receipt.identities[String(source.artifactId)] &&
+        current.checksum === source.checksum &&
+        current.sizeBytes.toString() === String(source.sizeBytes) &&
+        fileReceipts.has(
+          JSON.stringify([
+            source.contentStorageKey,
+            current.contentStorageKey,
+            source.checksum,
+            current.checksum
+          ])
+        )
+      )
+    }
+    if (!bound(archives[0]))
+      throw new Error('The receiving archive is not published or content-bound.')
+    const origins = records.reproducibility?.versions ?? []
+    const originsByVersion = new Map<string, typeof origins>()
+    for (const entry of origins) {
+      const values = originsByVersion.get(entry.versionId) ?? []
+      values.push(entry)
+      originsByVersion.set(entry.versionId, values)
+    }
+    const archiveOrigins = originsByVersion.get(String(archives[0].id)) ?? []
+    if (archiveOrigins.length > 1) throw new Error('The archive source lineage is ambiguous.')
+    const archiveOrigin = archiveOrigins[0]?.sourceScope
+    const aliases = new Map<string, Set<string>>()
+    const add = (source: string, current: string): void => {
+      const candidates = aliases.get(source) ?? new Set<string>()
+      candidates.add(current)
+      aliases.set(source, candidates)
+    }
+    for (const source of sources) {
+      if (!bound(source)) continue
+      const current = receipt.identities[String(source.id)]
+      add(String(source.id), current)
+      for (const entry of originsByVersion.get(String(source.id)) ?? []) {
+        if (
+          archiveOrigin &&
+          entry.sourceScope.projectId === archiveOrigin.projectId &&
+          entry.sourceScope.appSessionId === archiveOrigin.appSessionId
+        )
+          add(entry.sourceScope.versionId, current)
+      }
+    }
+    const mapping: Record<string, string> = Object.create(null)
+    for (const [alias, candidates] of aliases)
+      if (candidates.size === 1) mapping[alias] = [...candidates][0]
+    return mapping
+  }
+
+  private async readOriginRecords(request: SessionPackageRequest): Promise<{
+    receipt: SessionPackageReceipt
+    sourceManifest: SessionPackageManifest
+    records: PackageRecords
   }> {
     const safe = sessionPackageRequestSchema.parse(request)
     const root = join(this.options.storageRoot, 'artifacts', safe.projectId, safe.sessionId)
@@ -1841,17 +2011,7 @@ export class SessionPackageService {
     const records = parseNativeRecords(
       await readPackageJson(join(directory, 'source', 'records.json'))
     )
-    return {
-      sourceManifest,
-      identities: receipt.identities,
-      files: receipt.files,
-      history: records.history,
-      literature: records.literature,
-      pdfNotes: records.pdfNotes,
-      originSessionIds: records.tables.FileOriginSession.map(
-        (row) => receipt.identities[String(row.sessionId)]
-      )
-    }
+    return { receipt, sourceManifest, records }
   }
 
   private async assertImportProject(

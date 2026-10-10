@@ -64,6 +64,20 @@ Commands:
   plan approve <session-id> --artifact-version <id> --revision <number>
   plan reject <session-id> --artifact-version <id> --revision <number>
   plan revise <session-id> --feedback <text>
+  execution runtimes      List independent local execution runtimes
+  execution offline-plans | offline-run  Inspect or run a package offline plan
+  execution session-create | materials | prepare | run | status | wait | cancel | environment | release
+                          Read execution JSON from stdin, --input-json, or --input-file
+  execution collect-outputs | discard-outputs
+                          Save retained outputs or explicitly abandon them; never rerun
+  execution run | offline-run | collect-outputs --wait
+                          Wait up to 60 seconds; never cancel implicitly
+  observations open | snapshot | history | changes | select | selection | revoke
+  observations open-recorded | recording | select-recording | recording-selection | recording-status
+  observations capture-options | capture | captures | capture-content
+                          Observe existing work; JSON from stdin, --input-json, or --input-file
+  package preflight-import | commit-import | cancel-import | export
+                          Read package JSON from stdin, --input-json, or --input-file
   artifacts list <session-id>
   artifacts download <artifact-id> --output <path>
 
@@ -104,9 +118,12 @@ Options:
   --permission-prompts none  Deny unresolved human interactions instead of waiting (run only)
   --wait                 Wait for the run to finish
   --return-on-attention  With --wait, return when the Plan needs approval
-  --timeout-ms <ms>      Stop waiting after this many milliseconds
+  --timeout-ms <ms>      Run wait, package or observation request timeout in milliseconds
+  --idempotency-key <id> Retry a package transfer request without repeating it
   --cancel-on-timeout    Cancel the server run when --timeout-ms expires
   --jsonl                With run --wait, stream one machine-readable event per line
+  --input-json <json>    Execution, observation or package request as a JSON object
+  --input-file <path>    Read an execution, observation or package JSON object from a UTF-8 file
   --output <path>        Artifact download destination
   --credential-store <os|file>  Settings credential storage (Linux headless; start only)
   --no-open              Do not open the browser after start
@@ -155,10 +172,64 @@ const VALUE_OPTIONS = {
   '--description': 'description',
   '--agent-context': 'agentContext',
   '--agent-context-file': 'agentContextFile',
+  '--idempotency-key': 'idempotencyKey',
+  '--input-json': 'inputJson',
+  '--input-file': 'inputFile',
   '--output': 'output'
 }
 
+const EXECUTION_COMMANDS = Object.freeze({
+  runtimes: 'runtimes',
+  'session-create': 'createSession',
+  materials: 'inspectMaterials',
+  'offline-plans': 'inspectOfflinePlans',
+  'offline-run': 'executeOfflinePlan',
+  prepare: 'prepare',
+  run: 'execute',
+  status: 'getOperation',
+  wait: 'waitOperation',
+  cancel: 'cancelOperation',
+  environment: 'getEnvironment',
+  release: 'releaseEnvironment',
+  'collect-outputs': 'collectOutputs',
+  'discard-outputs': 'discardOutputs'
+})
+
+const OBSERVATION_COMMANDS = Object.freeze({
+  'open-recorded': 'openRecorded',
+  'read-recorded': 'readRecorded',
+  'read-project-recording': 'readProjectRecording',
+  'select-recorded-file': 'selectRecordedFile',
+  'select-recording-file': 'selectRecordingFile',
+  'recording-file-selection': 'recordingFileSelection',
+  recording: 'recording',
+  'select-recording': 'selectRecording',
+  'recording-selection': 'recordingSelection',
+  'recording-status': 'recordingStatus',
+  'capture-options': 'captureOptions',
+  capture: 'capture',
+  captures: 'captures',
+  'capture-content': 'captureContent',
+  open: 'open',
+  snapshot: 'snapshot',
+  history: 'history',
+  changes: 'changes',
+  select: 'select',
+  selection: 'selection',
+  revoke: 'revoke'
+})
+
+const PACKAGE_COMMANDS = Object.freeze({
+  'preflight-import': 'preflightImport',
+  'commit-import': 'commitImport',
+  'cancel-import': 'cancelImport',
+  export: 'export'
+})
+
 const TASK_COMMANDS = new Set([
+  'observations',
+  'package',
+  'execution',
   'doctor',
   'runtime',
   'project',
@@ -174,6 +245,9 @@ const TASK_COMMANDS = new Set([
   'cli'
 ])
 const GROUP_COMMANDS = new Set([
+  'observations',
+  'package',
+  'execution',
   'codex',
   'runtime',
   'project',
@@ -190,6 +264,9 @@ const GROUP_COMMANDS = new Set([
 // Project create, update, and session-defaults intentionally remain unbounded because their
 // positional Project names may contain multiple unquoted words.
 const POSITIONAL_LIMITS = new Map([
+  ...Object.keys(OBSERVATION_COMMANDS).map((command) => [`observations ${command}`, 0]),
+  ...Object.keys(PACKAGE_COMMANDS).map((command) => [`package ${command}`, 0]),
+  ...Object.keys(EXECUTION_COMMANDS).map((command) => [`execution ${command}`, 0]),
   ['doctor', 0],
   ['runtime list', 0],
   ['runtime install', 1],
@@ -440,8 +517,54 @@ export const parseCliArgs = (argv) => {
   if (options.jsonl && (command !== 'run' || subcommand || !options.wait)) {
     throw new CliUsageError('--jsonl requires run --wait.')
   }
-  if (options.timeoutMs !== undefined && (command !== 'run' || subcommand || !options.wait)) {
-    throw new CliUsageError('--timeout-ms requires run --wait.')
+  const executionWait =
+    command === 'execution' &&
+    (subcommand === 'wait' ||
+      (['run', 'offline-run', 'collect-outputs'].includes(subcommand) && options.wait))
+  if (
+    options.timeoutMs !== undefined &&
+    !['package', 'observations'].includes(command) &&
+    !executionWait &&
+    (command !== 'run' || subcommand || !options.wait)
+  ) {
+    throw new CliUsageError('--timeout-ms requires run --wait, package or observations.')
+  }
+  if (command === 'execution' && !options.help) {
+    if (!Object.hasOwn(EXECUTION_COMMANDS, subcommand))
+      throw new CliUsageError('Unknown execution command.')
+    if (options.wait && !['run', 'offline-run', 'collect-outputs'].includes(subcommand))
+      throw new CliUsageError('--wait requires execution run, offline-run or collect-outputs.')
+    if (options.cancelOnTimeout)
+      throw new CliUsageError('Execution waits never cancel implicitly; use execution cancel.')
+    if (options.timeoutMs > 60_000)
+      throw new CliUsageError('Execution waits are limited to 60000 milliseconds.')
+  }
+  if (
+    options.idempotencyKey !== undefined &&
+    (command !== 'package' || !options.idempotencyKey.trim())
+  )
+    throw new CliUsageError('--idempotency-key requires package and a non-empty value.')
+  if (command === 'package' && !options.help) {
+    if (!Object.hasOwn(PACKAGE_COMMANDS, subcommand))
+      throw new CliUsageError('Unknown package command.')
+    if (options.wait || options.cancelOnTimeout)
+      throw new CliUsageError('Package transfers do not accept execution wait flags.')
+  }
+  if (command === 'observations' && !options.help) {
+    if (!Object.hasOwn(OBSERVATION_COMMANDS, subcommand))
+      throw new CliUsageError('Unknown observations command.')
+    if (options.wait || options.cancelOnTimeout)
+      throw new CliUsageError(
+        'Observation requests do not accept execution wait or cancellation flags.'
+      )
+  }
+  if (options.inputJson !== undefined || options.inputFile !== undefined) {
+    if (!['execution', 'observations', 'package'].includes(command))
+      throw new CliUsageError(
+        '--input-json and --input-file require execution, observations or package.'
+      )
+    if (options.inputJson !== undefined && options.inputFile !== undefined)
+      throw new CliUsageError('Use only one of --input-json or --input-file.')
   }
   if (options.returnOnAttention && (command !== 'run' || subcommand || !options.wait)) {
     throw new CliUsageError('--return-on-attention requires run --wait.')
@@ -1463,6 +1586,111 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
       })
     )
     deps.setExitCode(3)
+    return
+  }
+
+  if (command === 'package') {
+    const method = PACKAGE_COMMANDS[subcommand]
+    if (!method) throw new CliUsageError('Unknown package command.')
+    if (options.inputJson === undefined && options.inputFile === undefined && deps.stdinIsTTY) {
+      throw new CliUsageError('Provide package JSON through stdin, --input-json, or --input-file.')
+    }
+    const source =
+      options.inputJson ??
+      (options.inputFile !== undefined
+        ? await deps.readFile(resolve(options.inputFile))
+        : await deps.readStdin())
+    let input
+    try {
+      input = JSON.parse(source)
+    } catch {
+      throw new CliUsageError('Package input must be valid JSON.')
+    }
+    if (!input || typeof input !== 'object' || Array.isArray(input))
+      throw new CliUsageError('Package input must be a JSON object.')
+    const requestOptions = {
+      ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+      ...(options.idempotencyKey === undefined ? {} : { idempotencyKey: options.idempotencyKey })
+    }
+    const result = Object.keys(requestOptions).length
+      ? await client.packages[method](input, requestOptions)
+      : await client.packages[method](input)
+    outputValue(result, options, deps)
+    return
+  }
+
+  if (command === 'observations') {
+    const method = OBSERVATION_COMMANDS[subcommand]
+    if (!method) throw new CliUsageError('Unknown observations command.')
+    if (options.inputJson === undefined && options.inputFile === undefined && deps.stdinIsTTY)
+      throw new CliUsageError(
+        'Provide observation JSON through stdin, --input-json, or --input-file.'
+      )
+    const source =
+      options.inputJson ??
+      (options.inputFile !== undefined
+        ? await deps.readFile(resolve(options.inputFile))
+        : await deps.readStdin())
+    let input
+    try {
+      input = JSON.parse(source)
+    } catch {
+      throw new CliUsageError('Observation input must be valid JSON.')
+    }
+    if (!input || typeof input !== 'object' || Array.isArray(input))
+      throw new CliUsageError('Observation input must be a JSON object.')
+    const result =
+      options.timeoutMs === undefined
+        ? await client.observations[method](input)
+        : await client.observations[method](input, { timeoutMs: options.timeoutMs })
+    outputValue(result, options, deps)
+    return
+  }
+
+  if (command === 'execution') {
+    const method = EXECUTION_COMMANDS[subcommand]
+    if (!method) throw new CliUsageError('Unknown execution command.')
+    let input = {}
+    if (
+      options.inputJson !== undefined ||
+      options.inputFile !== undefined ||
+      subcommand !== 'runtimes'
+    ) {
+      if (options.inputJson === undefined && options.inputFile === undefined && deps.stdinIsTTY) {
+        throw new CliUsageError(
+          'Provide execution JSON through stdin, --input-json, or --input-file.'
+        )
+      }
+      const source =
+        options.inputJson ??
+        (options.inputFile !== undefined
+          ? await deps.readFile(resolve(options.inputFile))
+          : await deps.readStdin())
+      try {
+        input = JSON.parse(source)
+      } catch {
+        throw new CliUsageError('Execution input must be valid JSON.')
+      }
+      if (!input || typeof input !== 'object' || Array.isArray(input))
+        throw new CliUsageError('Execution input must be a JSON object.')
+    }
+    if (subcommand === 'wait' && options.timeoutMs !== undefined)
+      input = { ...input, timeoutMs: options.timeoutMs }
+    let result = await client.execution[method](input)
+    if (
+      ['run', 'offline-run', 'collect-outputs'].includes(subcommand) &&
+      options.wait &&
+      ['admitting', 'running', 'cancelling'].includes(result.status)
+    ) {
+      result = await client.execution.waitOperation({
+        projectId: input.projectId,
+        sessionId: input.sessionId,
+        requestId: input.requestId,
+        timeoutMs: options.timeoutMs ?? 60_000
+      })
+    }
+    outputValue(result, options, deps)
+    if (['failed', 'cancelled', 'interrupted'].includes(result?.status)) deps.setExitCode(1)
     return
   }
 

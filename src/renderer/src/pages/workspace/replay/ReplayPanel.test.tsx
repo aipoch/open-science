@@ -7,6 +7,7 @@ import { projectReplayScene } from '@/lib/replay'
 import { ReplayPanel } from './ReplayPanel'
 import { ReplayControls } from './ReplayControls'
 import { ReplayStage } from './ReplayStage'
+import { useReplayMaterialAction } from './replay-material-action'
 import * as notebookCell from '../NotebookRecordCell'
 import { createReplayPresentation } from './replay-presentation'
 import type { SessionDiscussionCapture } from './replay-context'
@@ -197,6 +198,64 @@ const openMaterials = (): void => {
 }
 
 describe('research replay interaction', () => {
+  it('owns the material clock, forwards pause/speed/seek, and restores the requested material after a timeline change', async () => {
+    const onMaterialViewChange = vi.fn()
+    const doc = makeDocument()
+    doc.resources = []
+    doc.branches = [
+      { ...doc.branches[0], steps: [step('one', 0, 'First'), step('two', 1000, 'Second')] }
+    ]
+    let playback: import('./ReplayStage').ReplayMaterialPlayback | undefined
+    const views = [
+      {
+        id: 'project',
+        label: 'Project replay',
+        content: (_active: boolean, value?: import('./ReplayStage').ReplayMaterialPlayback) => {
+          playback = value
+          return null
+        }
+      }
+    ]
+    render(
+      <ReplayPanel
+        document={doc}
+        {...callbacks()}
+        materialViews={views}
+        onMaterialViewChange={onMaterialViewChange}
+        materialViewRequest={{ id: 'project', revision: 1 }}
+        recordedTimeOrigins={{ main: 10000 }}
+      />
+    )
+    expect(
+      screen.getByRole('button', { name: 'Project replay' }).getAttribute('aria-pressed')
+    ).toBe('true')
+    expect(playback).toMatchObject({ recordedAt: 10000, continuous: true, playing: false })
+    seekProgress(1500)
+    expect(playback?.recordedAt).toBe(11500)
+    fireEvent.click(screen.getByRole('button', { name: 'Play replay' }))
+    await waitFor(() => expect(playback?.playing).toBe(true))
+    fireEvent.click(screen.getByRole('button', { name: 'Pause replay' }))
+    expect(playback?.playing).toBe(false)
+    fireEvent.keyDown(screen.getByRole('combobox', { name: 'Playback speed' }), { key: 'Enter' })
+    fireEvent.click(screen.getByRole('option', { name: '4×' }))
+    expect(playback?.speed).toBe(4)
+    act(() => playback?.onSeekRecordedAt(10500))
+    expect(
+      screen.getByRole('slider', { name: 'Replay progress' }).getAttribute('aria-valuenow')
+    ).toBe('500')
+    expect(playback).toMatchObject({
+      recordedAt: 10500,
+      playing: false,
+      branchId: 'main',
+      positionMs: 500
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Notebook' }))
+    expect(onMaterialViewChange).toHaveBeenLastCalledWith('notebook')
+    expect(
+      screen.getByRole('slider', { name: 'Replay progress' }).getAttribute('aria-valuenow')
+    ).toBe('500')
+  })
+
   it('exposes the visible playhead during playback and captures its latest position on demand', () => {
     const props = callbacks()
     const document = makeDocument()
@@ -225,7 +284,7 @@ describe('research replay interaction', () => {
   it('starts a whole-research discussion without selecting the current playback step', () => {
     const props = callbacks()
     render(<ReplayPanel document={makeDocument()} {...props} />)
-    fireEvent.click(screen.getByRole('button', { name: 'Ask about this research' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Discuss the entire research' }))
     expect(props.onAskStep).toHaveBeenCalledWith(
       expect.objectContaining({
         scope: 'session',
@@ -884,7 +943,6 @@ describe('replay readiness clock', () => {
     await tick(5200)
     await tick(5300)
     await tick(5400)
-    await tick(5500)
     expect(screen.getByRole('button', { name: 'Pause replay' })).toBe(pauseButton)
     expect(pauseButton.querySelector('.lucide-pause')).toBe(pauseIcon)
     expect(
@@ -894,8 +952,9 @@ describe('replay readiness clock', () => {
       Number(screen.getByLabelText('Replay progress').getAttribute('aria-valuenow'))
     ).toBeLessThan(2000)
     const position = Number(screen.getByLabelText('Replay progress').getAttribute('aria-valuenow'))
-    // Capture readiness is pending as logical time advances; it must not throttle the player.
-    for (const time of [5516, 5532, 5548]) await tick(time)
+    // Stay within this step (the next starts at 2000 ms). Its capture readiness is pending
+    // as logical time advances; the paint barrier must not throttle the player.
+    for (const time of [5416, 5432, 5448]) await tick(time)
     expect(Number(screen.getByLabelText('Replay progress').getAttribute('aria-valuenow'))).toBe(
       position + 48
     )
@@ -1616,4 +1675,949 @@ it('keeps replay following delayed automatic scroll and resumes after manual bro
   )
   expect(returnButton()).toBeNull()
   expect(conversation.scrollTop).toBe(1800)
+})
+
+describe('portable research replay', () => {
+  it('does not publish a desktop playhead or consume desktop navigation in a browser host', async () => {
+    const nativePlayhead = { projectId: 'other', sourceSessionId: 'other', capture: vi.fn() }
+    useSessionReplayStore.setState({ playhead: nativePlayhead })
+    const view = render(<ReplayPanel document={makeDocument()} host={null} {...callbacks()} />)
+    expect(useSessionReplayStore.getState().playhead).toBe(nativePlayhead)
+    act(() =>
+      requestReplaySeek({ projectId: 'p', sourceSessionId: 's', branchId: 'main', stepId: 'three' })
+    )
+    expect(screen.getByLabelText('Replay progress').getAttribute('aria-valuenow')).toBe('0')
+    view.unmount()
+    expect(useSessionReplayStore.getState().playhead).toBe(nativePlayhead)
+    useSessionReplayStore.setState({ playhead: undefined })
+  })
+  it('keeps original context beside narrow materials and allows saved history inspection without seeking', () => {
+    const document = makeDocument()
+    render(
+      <ReplayPanel
+        document={document}
+        host={null}
+        {...callbacks()}
+        materialViews={[
+          { id: 'project', label: 'Project replay', content: <div>Recorded project image</div> }
+        ]}
+        materialViewRequest={{ id: 'project', revision: 1 }}
+      />
+    )
+    expect(screen.getByTestId('replay-current-context').textContent).toContain(
+      'Initial observation'
+    )
+    expect(screen.getByText('Recorded project image')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Browse original conversation' }))
+    expect(screen.getByText('Browsing saved history; playback position is unchanged.')).toBeTruthy()
+    expect(screen.getAllByText('Final result').length).toBeGreaterThan(0)
+    expect(screen.getByLabelText('Replay progress').getAttribute('aria-valuenow')).toBe('0')
+    fireEvent.click(screen.getByRole('button', { name: 'Follow playback' }))
+    expect(screen.queryByText('Browsing saved history; playback position is unchanged.')).toBeNull()
+    expect(screen.getByText('Recorded project image')).toBeTruthy()
+  })
+})
+
+describe('recorded clock checkpoint migration', () => {
+  it.each([
+    { saved: { stepId: 'two', stepOffsetMs: 250 }, expected: 1000 },
+    { saved: { anchor: { kind: 'message' as const, id: 'two' } }, expected: 1000 },
+    { saved: {}, expected: 0 }
+  ])(
+    'uses stable evidence rather than a legacy presentation offset: $saved',
+    ({ saved, expected }) => {
+      render(
+        <ReplayPanel
+          document={makeDocument()}
+          host={null}
+          {...callbacks()}
+          recordedTimeOrigins={{ main: 1000 }}
+          initialView={{
+            fingerprint: 'fp',
+            generatorVersion: 3,
+            presentationVersion: 2,
+            branchId: 'main',
+            timeMs: 1250,
+            rate: 1,
+            ...saved
+          }}
+        />
+      )
+      expect(screen.getByLabelText('Replay progress').getAttribute('aria-valuenow')).toBe(
+        String(expected)
+      )
+      if (!expected)
+        expect(
+          screen.getByText('The saved step is unavailable. Replay starts at the beginning.')
+        ).toBeTruthy()
+    }
+  )
+  it('resumes a recorded checkpoint including its recorded offset and labels new saves', async () => {
+    const onViewChange = vi.fn()
+    render(
+      <ReplayPanel
+        document={makeDocument()}
+        host={null}
+        {...callbacks()}
+        onViewChange={onViewChange}
+        recordedTimeOrigins={{ main: 1000 }}
+        initialView={{
+          fingerprint: 'fp',
+          generatorVersion: 3,
+          branchId: 'main',
+          clock: 'recorded',
+          stepId: 'two',
+          stepOffsetMs: 250,
+          timeMs: 1250,
+          rate: 1
+        }}
+      />
+    )
+    expect(screen.getByLabelText('Replay progress').getAttribute('aria-valuenow')).toBe('1250')
+    await waitFor(() =>
+      expect(onViewChange).toHaveBeenCalledWith(
+        expect.objectContaining({
+          clock: 'recorded',
+          stepOffsetMs: 250,
+          branchPositions: expect.arrayContaining([
+            expect.objectContaining({ branchId: 'main', clock: 'recorded' })
+          ])
+        })
+      )
+    )
+  })
+})
+
+describe('single-material research presentation', () => {
+  it.each([false, true])(
+    'preserves the shared clock across mouse and keyboard material tab changes (playing: %s)',
+    async (playing) => {
+      let sequence = 0
+      let timestamp = 0
+      const frames = new Map<number, FrameRequestCallback>()
+      vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+        frames.set(++sequence, callback)
+        return sequence
+      })
+      vi.stubGlobal('cancelAnimationFrame', (id: number) => frames.delete(id))
+      const tick = async (): Promise<void> => {
+        await act(async () => {
+          timestamp += 100
+          const pending = [...frames.values()]
+          frames.clear()
+          pending.forEach((callback) => callback(timestamp))
+        })
+      }
+      let playback: import('./ReplayStage').ReplayMaterialPlayback | undefined
+      const source = makeDocument()
+      source.resources = []
+      source.branches = [
+        {
+          ...source.branches[0],
+          durationMs: 10000,
+          steps: [{ ...source.branches[0].steps[0], durationMs: 10000, endMs: 10000 }]
+        }
+      ]
+      render(
+        <ReplayPanel
+          document={source}
+          {...callbacks()}
+          host={null}
+          presentationMode="research"
+          initialView={{
+            fingerprint: 'fp',
+            generatorVersion: 3,
+            branchId: 'main',
+            timeMs: 0,
+            rate: 1
+          }}
+          recordedTimeOrigins={{ main: 10000 }}
+          materialViews={[
+            {
+              id: 'project',
+              label: 'Project replay',
+              content: (_active, value) => {
+                playback = value
+                return <p>Saved project pixels</p>
+              }
+            },
+            { id: 'results', label: 'Results', content: <p>Saved results</p> }
+          ]}
+        />
+      )
+      seekProgress(300)
+      // Settle the recorded-material paint barrier before starting the shared clock.
+      for (let frame = 0; frame < 5; frame++) await tick()
+      if (playing) fireEvent.click(screen.getByRole('button', { name: 'Play replay' }))
+      await tick()
+      const position = (): number =>
+        Number(
+          screen.getByRole('slider', { name: 'Replay progress' }).getAttribute('aria-valuenow')
+        )
+      const verifyClock = async (changeTab: () => void): Promise<void> => {
+        const before = position()
+        expect(screen.getByTestId('replay-stage').getAttribute('data-replay-frame-ready')).toBe(
+          'true'
+        )
+        changeTab()
+        expect(position()).toBe(before)
+        expect(
+          screen.getByRole('button', { name: playing ? 'Pause replay' : 'Play replay' })
+        ).toBeTruthy()
+        await tick()
+        await tick()
+        if (playing) {
+          expect(position()).toBeGreaterThan(before)
+          expect(position()).toBeLessThanOrEqual(before + 200)
+        } else expect(position()).toBe(before)
+      }
+      for (const name of [
+        'Project replay',
+        'Original conversation',
+        'Notebook',
+        'Results',
+        'Project replay'
+      ]) {
+        await verifyClock(() => fireEvent.click(screen.getByRole('tab', { name })))
+      }
+      const project = screen.getByRole('tab', { name: 'Project replay' })
+      project.focus()
+      await verifyClock(() => fireEvent.keyDown(project, { key: 'Home' }))
+      expect(document.activeElement).toBe(
+        screen.getByRole('tab', { name: 'Original conversation' })
+      )
+      await verifyClock(() => fireEvent.keyDown(document.activeElement!, { key: 'ArrowRight' }))
+      expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'Notebook' }))
+      await verifyClock(() => fireEvent.keyDown(document.activeElement!, { key: 'ArrowRight' }))
+      expect(playback).toMatchObject({
+        positionMs: position(),
+        recordedAt: 10000 + position(),
+        playing,
+        speed: 1
+      })
+    }
+  )
+
+  it('keeps one primary pane and one clock even when the native preview is expanded', async () => {
+    const cb = callbacks()
+    render(
+      <ReplayPanel
+        document={makeDocument()}
+        {...cb}
+        host={null}
+        presentationMode="research"
+        expanded
+        materialViews={[
+          { id: 'project', label: 'Project replay', content: <p>Saved project pixels</p> },
+          { id: 'results', label: 'Results', content: <p>Saved results</p> }
+        ]}
+      />
+    )
+    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
+      'Original conversation',
+      'Notebook',
+      'Project replay',
+      'Results'
+    ])
+    expect(
+      screen.getByRole('tab', { name: 'Original conversation' }).getAttribute('aria-selected')
+    ).toBe('true')
+    expect(screen.queryByTestId('replay-process-kind')).toBeNull()
+    expect(screen.getByTestId('replay-stage').getAttribute('data-replay-layout')).toBe('research')
+    expect(screen.getAllByRole('slider')).toHaveLength(1)
+    seekProgress(1500)
+    fireEvent.click(screen.getByRole('tab', { name: 'Project replay' }))
+    expect(screen.getByRole('slider').getAttribute('aria-valuenow')).toBe('1500')
+    expect(
+      screen
+        .getByRole('region', { name: 'Historical conversation', hidden: true })
+        .closest('[data-replay-pane]')
+        ?.getAttribute('data-replay-pane-visible')
+    ).toBe('false')
+    expect(screen.getByTestId('replay-question-footer')).toBeTruthy()
+    expect(
+      (screen.getByRole('button', { name: 'Ask about this content' }) as HTMLButtonElement).disabled
+    ).toBe(true)
+    fireEvent.click(screen.getByRole('tab', { name: 'Original conversation' }))
+    expect(screen.getByRole('slider').getAttribute('aria-valuenow')).toBe('1500')
+    const conversation = screen.getByRole('tab', { name: 'Original conversation' })
+    conversation.focus()
+    fireEvent.keyDown(conversation, { key: 'ArrowRight' })
+    expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'Notebook' }))
+    expect(screen.getByRole('tab', { name: 'Notebook' }).getAttribute('aria-selected')).toBe('true')
+    expect(screen.getByRole('tabpanel', { name: 'Notebook' }).id).toBe(
+      screen.getByRole('tab', { name: 'Notebook' }).getAttribute('aria-controls')
+    )
+    fireEvent.keyDown(document.activeElement!, { key: 'End' })
+    expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'Results' }))
+    fireEvent.keyDown(document.activeElement!, { key: 'Home' })
+    expect(document.activeElement).toBe(conversation)
+  })
+
+  it('asks about an inspected older conversation record without changing the research clock', async () => {
+    const cb = callbacks()
+    render(
+      <ReplayPanel document={makeDocument()} {...cb} host={null} presentationMode="research" />
+    )
+    seekProgress(2500)
+    const article = screen.getByTestId('replay-stage').querySelector('[data-replay-step="one"]')!
+    fireEvent.pointerDown(article)
+    expect(article.getAttribute('data-replay-selected')).toBe('true')
+    fireEvent.click(screen.getByRole('button', { name: 'Ask about this record' }))
+    expect(cb.onAskStep).toHaveBeenCalledWith(expect.objectContaining({ stepId: 'one' }))
+    expect(screen.getByRole('slider').getAttribute('aria-valuenow')).toBe('2500')
+    fireEvent.click(screen.getByRole('button', { name: 'Play replay' }))
+    expect(article.getAttribute('data-replay-selected')).toBeNull()
+  })
+
+  it('references the inspected saved Notebook run through its associated step', async () => {
+    const cb = callbacks()
+    const document = makeDocument()
+    document.branches[0].steps.push(step('later', 3000, 'Later interpretation'))
+    document.branches[0].durationMs = 4000
+    render(<ReplayPanel document={document} {...cb} host={null} presentationMode="research" />)
+    seekProgress(3500)
+    fireEvent.click(screen.getByRole('tab', { name: 'Notebook' }))
+    const run = await waitFor(() => {
+      const run = screen.getByTestId('replay-stage').querySelector('[data-replay-run-item="run1"]')
+      expect(run).toBeTruthy()
+      return run!
+    })
+    fireEvent.pointerDown(run)
+    fireEvent.click(screen.getByRole('button', { name: 'Ask about this run' }))
+    expect(cb.onAskStep).toHaveBeenCalledWith(expect.objectContaining({ stepId: 'three' }))
+    expect(screen.getByRole('slider').getAttribute('aria-valuenow')).toBe('3500')
+  })
+
+  it('moves material questions into the footer and retains the action when clicking the active tab again', async () => {
+    const askMoment = vi.fn()
+    function Material({ active }: { active: boolean }): React.JSX.Element {
+      const shared = useReplayMaterialAction(
+        active ? { label: 'Ask about this moment', onAsk: askMoment } : undefined
+      )
+      return <p>{shared ? 'Shared question footer' : 'Independent question action'}</p>
+    }
+    const cb = callbacks()
+    render(
+      <ReplayPanel
+        document={makeDocument()}
+        {...cb}
+        host={null}
+        presentationMode="research"
+        materialViews={[
+          {
+            id: 'project',
+            label: 'Project replay',
+            content: (active) => <Material active={active} />
+          }
+        ]}
+      />
+    )
+    fireEvent.click(screen.getByRole('tab', { name: 'Project replay' }))
+    fireEvent.click(screen.getByRole('tab', { name: 'Project replay' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Play replay' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Ask about this moment' }))
+    expect(askMoment).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('button', { name: 'Play replay' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('tab', { name: 'Original conversation' }))
+    expect(screen.queryByRole('button', { name: 'Ask about this moment' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Ask about this record' })).toBeTruthy()
+  })
+
+  it('shows true footage coverage independently of progress and seeks exact gaps', () => {
+    render(
+      <ReplayPanel
+        document={makeDocument()}
+        {...callbacks()}
+        host={null}
+        presentationMode="research"
+        recordedTimeOrigins={{ main: 1000 }}
+        recordedCoverage={{
+          main: [
+            { startedAt: 1500, endedAt: 2000 },
+            { startedAt: 2500, endedAt: 4000 }
+          ]
+        }}
+      />
+    )
+    const coverage = screen.getByTestId('replay-recording-coverage')
+    const footage = within(coverage).getByRole('button', { name: 'Footage: 0:00.5–0:01' })
+    expect(footage.style.left).toBe(`${(500 / 3000) * 100}%`)
+    fireEvent.click(within(coverage).getByRole('button', { name: 'No footage: 0:01–0:01.5' }))
+    expect(screen.getByRole('slider').getAttribute('aria-valuenow')).toBe('1000')
+    expect(footage.style.left).toBe(`${(500 / 3000) * 100}%`)
+    fireEvent.click(within(coverage).getByRole('button', { name: 'Footage: 0:01.5–0:03' }))
+    expect(screen.getByRole('slider').getAttribute('aria-valuenow')).toBe('1500')
+  })
+
+  it('displays a real subsecond encoder gap distinctly and seeks its exact start', () => {
+    const document = makeDocument()
+    document.branches[0].durationMs = 90000
+    render(
+      <ReplayPanel
+        document={document}
+        {...callbacks()}
+        host={null}
+        presentationMode="research"
+        recordedTimeOrigins={{ main: 100000 }}
+        recordedCoverage={{
+          main: [
+            { startedAt: 183000, endedAt: 185435 },
+            { startedAt: 185551, endedAt: 187000 }
+          ]
+        }}
+      />
+    )
+    const coverage = screen.getByTestId('replay-recording-coverage')
+    const gapLabel = 'No footage: 1:25.435–1:25.551'
+    fireEvent.click(within(coverage).getByRole('button', { name: gapLabel }))
+    expect(screen.getByRole('slider').getAttribute('aria-valuenow')).toBe('85435')
+    fireEvent.click(within(coverage).getByRole('button', { name: 'Recording gaps' }))
+    expect(within(screen.getByRole('dialog')).getByRole('button', { name: gapLabel })).toBeTruthy()
+  })
+
+  it('distinguishes the selected material timestamp from the research playhead and pauses on media failure', async () => {
+    let pauseMedia: (() => void) | undefined
+    function Material({ active }: { active: boolean }): React.JSX.Element {
+      useReplayMaterialAction(
+        active
+          ? {
+              label: 'Ask about this moment',
+              recordedAt: 1700,
+              title: 'Decoded frame',
+              onAsk: vi.fn()
+            }
+          : undefined
+      )
+      return <p>Recorded frame</p>
+    }
+    render(
+      <ReplayPanel
+        document={makeDocument()}
+        {...callbacks()}
+        host={null}
+        presentationMode="research"
+        recordedTimeOrigins={{ main: 1000 }}
+        materialViews={[
+          {
+            id: 'project',
+            label: 'Project replay',
+            content: (active, playback) => {
+              pauseMedia = playback?.onPause
+              return <Material active={active} />
+            }
+          }
+        ]}
+      />
+    )
+    seekProgress(2500)
+    fireEvent.click(screen.getByRole('tab', { name: 'Project replay' }))
+    expect(screen.getByText('Reference time: 0:00.7')).toBeTruthy()
+    expect(screen.getByText('Playback position: 0:02.5')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Play replay' }))
+    expect(screen.getByRole('button', { name: 'Pause replay' })).toBeTruthy()
+    act(() => pauseMedia?.())
+    expect(screen.getByRole('button', { name: 'Play replay' })).toBeTruthy()
+    expect(screen.getByRole('slider').getAttribute('aria-valuenow')).toBe('2500')
+    expect(screen.getByText('Reference time: 0:00.7')).toBeTruthy()
+  })
+
+  it('keeps browser fullscreen distinct from expanding the native preview', async () => {
+    const expand = vi.fn()
+    render(
+      <ReplayPanel
+        document={makeDocument()}
+        {...callbacks()}
+        host={null}
+        presentationMode="research"
+        onToggleExpanded={expand}
+      />
+    )
+    const panel = screen.getByTestId('replay-panel')
+    panel.requestFullscreen = vi.fn().mockResolvedValue(undefined)
+    fireEvent.click(screen.getByRole('button', { name: 'Enter full screen' }))
+    expect(panel.requestFullscreen).toHaveBeenCalledTimes(1)
+    const frame = screen.getByTestId('replay-stage')
+    Object.defineProperty(document, 'fullscreenElement', { configurable: true, value: panel })
+    fireEvent(document, new Event('fullscreenchange'))
+    fireEvent.click(screen.getByTestId('replay-information-trigger'))
+    expect(panel.contains(screen.getByRole('dialog'))).toBe(true)
+    expect(screen.getByTestId('replay-stage')).toBe(frame)
+    Object.defineProperty(document, 'fullscreenElement', { configurable: true, value: null })
+    fireEvent(document, new Event('fullscreenchange'))
+    expect(panel.contains(screen.getByRole('dialog'))).toBe(false)
+    expect(expand).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Expand preview' }))
+    expect(expand).toHaveBeenCalledTimes(1)
+  })
+
+  it('preserves the chosen question destination focus while Escape still returns to the menu trigger', async () => {
+    render(
+      <>
+        <input aria-label="Discussion destination" />
+        <ReplayPanel
+          document={makeDocument()}
+          {...callbacks()}
+          host={null}
+          presentationMode="research"
+          onAskStep={() => screen.getByRole('textbox', { name: 'Discussion destination' }).focus()}
+        />
+      </>
+    )
+    const trigger = screen.getByRole('button', { name: 'Question options' })
+    fireEvent.click(trigger)
+    fireEvent.click(screen.getByRole('button', { name: 'Ask about this step' }))
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole('textbox', { name: 'Discussion destination' })
+      )
+    )
+    fireEvent.click(trigger)
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Ask about this step' }), {
+      key: 'Escape'
+    })
+    await waitFor(() => expect(document.activeElement).toBe(trigger))
+  })
+
+  it('dismisses source details when another inspector takes over without reopening on return', async () => {
+    const props = {
+      document: makeDocument(),
+      ...callbacks(),
+      host: null,
+      presentationMode: 'research' as const
+    }
+    const view = render(<ReplayPanel {...props} />)
+    fireEvent.click(screen.getByTestId('replay-information-trigger'))
+    expect(screen.getByRole('dialog')).toBeTruthy()
+    view.rerender(<ReplayPanel {...props} active={false} />)
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    view.rerender(<ReplayPanel {...props} active />)
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('keeps navigation mounted but disables every research question when the connection is inactive', () => {
+    const cb = callbacks()
+    const replayDocument = makeDocument()
+    const view = render(
+      <ReplayPanel document={replayDocument} {...cb} host={null} presentationMode="research" />
+    )
+    seekProgress(1500)
+    view.rerender(
+      <ReplayPanel
+        document={replayDocument}
+        {...cb}
+        host={null}
+        presentationMode="research"
+        active={false}
+      />
+    )
+    expect(screen.getByRole('button', { name: 'Ask about this record' })).toHaveProperty(
+      'disabled',
+      true
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Ask about this record' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Question options' }))
+    expect(screen.getByRole('button', { name: 'Ask about this step' })).toHaveProperty(
+      'disabled',
+      true
+    )
+    expect(screen.getByRole('button', { name: 'Discuss the entire research' })).toHaveProperty(
+      'disabled',
+      true
+    )
+    expect(screen.getByRole('slider').getAttribute('aria-valuenow')).toBe('1500')
+    expect(cb.onAskStep).not.toHaveBeenCalled()
+  })
+
+  it('preserves the canonical capture layout when research presentation is requested without fitContainer', () => {
+    const document = makeDocument()
+    render(
+      <ReplayStage
+        document={document}
+        scene={projectReplayScene(document, 'main', 0)}
+        presentationMode="research"
+      />
+    )
+    expect(screen.getByTestId('replay-stage').getAttribute('data-replay-layout')).toBe('capture')
+    expect(screen.queryByTestId('replay-current-context')).toBeNull()
+  })
+})
+
+describe('optional research execution observations', () => {
+  const setup = (): {
+    document: ReplayDocument
+    tracks: import('@/lib/replay/recorded-execution').RecordedExecutionTrack[]
+    cb: ReturnType<typeof callbacks>
+  } => {
+    const document = makeDocument()
+    const original = document.branches[0].steps[2]
+    document.branches = [
+      {
+        ...document.branches[0],
+        durationMs: 5000,
+        steps: [
+          {
+            ...original,
+            startMs: 0,
+            endMs: 5000,
+            durationMs: 5000,
+            resourceIds: [],
+            recordedAt: 1000,
+            recordedEndAt: 6000,
+            runs: original.runs.map((run) => ({ ...run, startedAt: 1000, endedAt: 6000 }))
+          }
+        ]
+      }
+    ]
+    const receiving = { projectId: 'p', sessionId: 's', artifactId: 'archive', versionId: 'av' }
+    const snapshots: import('../../../../../shared/run-observation').RunObservationSnapshot[] = [
+      1200, 3000, 5500
+    ].map((observedAt, index) => ({
+      identity: { projectId: 'p', sessionId: 's', runId: 'projection' },
+      cursor: { epoch: 'epoch', sequence: index },
+      stepId: `sample-${index}`,
+      observedAt,
+      phase: 'running',
+      run: {
+        runId: 'projection',
+        kernelKind: 'bash',
+        status: 'running',
+        startedAt: 1000,
+        logs: {
+          stdout: {
+            text: ['recording ready', 'actions completed', 'window ended'][index],
+            truncated: false,
+            redacted: false
+          },
+          stderr: { text: '', truncated: false, redacted: false },
+          traceback: { text: '', truncated: false, redacted: false }
+        }
+      },
+      artifacts: [],
+      artifactsTruncated: false
+    }))
+    const tracks: import('@/lib/replay/recorded-execution').RecordedExecutionTrack[] = [
+      {
+        id: 'track',
+        branchId: 'main',
+        stepId: 'three',
+        runId: 'run1',
+        origin: 1000,
+        snapshots,
+        coverage: {
+          kind: 'sampled-observations',
+          includesPreObservationHistory: false,
+          firstObservedAt: 1200,
+          lastObservedAt: 5500,
+          droppedEarlierObservations: false,
+          terminalRunObserved: false,
+          stopReason: 'manual',
+          logTruncation: false,
+          redactedContent: false,
+          missingMediaKeys: []
+        },
+        select: (snapshot) => ({
+          kind: 'recorded-run-observation',
+          receiving,
+          recordingId: 'archive',
+          stepKey: snapshot.stepId,
+          record: {
+            stepKey: snapshot.stepId,
+            observedAt: snapshot.observedAt,
+            phase: snapshot.phase,
+            sourceEvidence: {
+              identity: { projectId: 'sender', sessionId: 'sender', runId: 'source-run' },
+              cursor: snapshot.cursor,
+              stepId: 'source-step'
+            },
+            run: snapshot.run,
+            artifactEvidence: [],
+            artifactsTruncated: false
+          },
+          mediaKeys: []
+        })
+      }
+    ]
+    const cb = callbacks()
+    cb.readNotebookRun.mockResolvedValue({
+      status: 'ready',
+      bytes: 10,
+      run: {
+        runId: 'run1',
+        cellId: 'c1',
+        source: 'agent',
+        kernelKind: 'python',
+        script: 'print(42)',
+        status: 'completed',
+        startedAt: 1000,
+        endedAt: 6000,
+        text: { stdout: 'final scientific output', stderr: '', traceback: '', plain: [] },
+        outputs: [],
+        workingFiles: []
+      }
+    })
+    return { document, tracks, cb }
+  }
+
+  it('shows only the current snapshot, retracts later logs on rewind, and preserves the final-output gate', async () => {
+    const { document, tracks, cb } = setup()
+    render(
+      <ReplayPanel
+        document={document}
+        {...cb}
+        host={null}
+        presentationMode="research"
+        recordedTimeOrigins={{ main: 1000 }}
+        executionTracks={tracks}
+      />
+    )
+    fireEvent.click(screen.getByRole('tab', { name: 'Notebook' }))
+    expect(
+      screen.getAllByText('No execution status has been recorded at this point.').length
+    ).toBeGreaterThan(0)
+    seekProgress(400)
+    await waitFor(() => expect(screen.getByText('recording ready')).toBeTruthy())
+    expect(screen.queryByText('actions completed')).toBeNull()
+    expect(screen.queryByText('final scientific output')).toBeNull()
+    seekProgress(2200)
+    expect(screen.getByText('actions completed')).toBeTruthy()
+    expect(screen.queryByText('window ended')).toBeNull()
+    seekProgress(400)
+    expect(screen.getByText('recording ready')).toBeTruthy()
+    expect(screen.queryByText('actions completed')).toBeNull()
+    seekProgress(5000)
+    await waitFor(() => expect(screen.getByText('final scientific output')).toBeTruthy())
+    expect(screen.getByText('Saved execution observations')).toBeTruthy()
+  })
+
+  it('seeks the next saved state without adding a research step or another clock', () => {
+    const { document, tracks, cb } = setup()
+    render(
+      <ReplayPanel
+        document={document}
+        {...cb}
+        host={null}
+        presentationMode="research"
+        recordedTimeOrigins={{ main: 1000 }}
+        executionTracks={tracks}
+      />
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Next status record' }))
+    expect(
+      screen.getByRole('slider', { name: 'Replay progress' }).getAttribute('aria-valuenow')
+    ).toBe('200')
+    fireEvent.click(screen.getByRole('button', { name: 'Next status record' }))
+    expect(
+      screen.getByRole('slider', { name: 'Replay progress' }).getAttribute('aria-valuenow')
+    ).toBe('2000')
+    expect(screen.getByRole('button', { name: 'Next step' }).hasAttribute('disabled')).toBe(true)
+    expect(screen.getAllByRole('slider')).toHaveLength(1)
+  })
+
+  it('captures the exact sampled time separately from watching time and retains Ask about this run', async () => {
+    const { document, tracks, cb } = setup()
+    const onAskObservation = vi.fn()
+    render(
+      <ReplayPanel
+        document={document}
+        {...cb}
+        host={null}
+        presentationMode="research"
+        recordedTimeOrigins={{ main: 1000 }}
+        executionTracks={tracks}
+        onAskObservation={onAskObservation}
+      />
+    )
+    seekProgress(2400)
+    fireEvent.click(screen.getByRole('tab', { name: 'Notebook' }))
+    await waitFor(() => expect(screen.getByText('actions completed')).toBeTruthy())
+    expect(screen.getByTestId('replay-reference-time').textContent).toContain(
+      'Reference time: 0:02'
+    )
+    expect(screen.getByTestId('replay-reference-time').textContent).toContain(
+      'Playback position: 0:02.4'
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Ask about this status' }))
+    await waitFor(() => expect(onAskObservation).toHaveBeenCalledOnce())
+    expect(onAskObservation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stepKey: 'sample-1',
+        record: expect.objectContaining({ observedAt: 3000 })
+      }),
+      { branchId: 'main', stepId: 'three', runId: 'run1', timeMs: 2400 }
+    )
+    expect(cb.onAskStep).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Question options' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Ask about this run' }))
+    expect(cb.onAskStep).toHaveBeenCalledOnce()
+  })
+
+  it('keeps failed reference preparation local and permits an explicit retry', async () => {
+    const { document, tracks, cb } = setup()
+    const onAskObservation = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('source gone'))
+      .mockResolvedValue(undefined)
+    render(
+      <ReplayPanel
+        document={document}
+        {...cb}
+        host={null}
+        presentationMode="research"
+        recordedTimeOrigins={{ main: 1000 }}
+        executionTracks={tracks}
+        onAskObservation={onAskObservation}
+      />
+    )
+    seekProgress(2400)
+    fireEvent.click(screen.getByRole('tab', { name: 'Notebook' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Ask about this status' }))
+    expect(await screen.findByText('Could not prepare this observation reference.')).toBeTruthy()
+    expect(screen.getByRole('tab', { name: 'Original conversation' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
+    await waitFor(() => expect(onAskObservation).toHaveBeenCalledTimes(2))
+    expect(screen.queryByText('Could not prepare this observation reference.')).toBeNull()
+  })
+
+  it('explains absent intermediate records only for hosts that opt into execution tracks', async () => {
+    const { document, cb } = setup()
+    const view = render(
+      <ReplayPanel
+        document={document}
+        {...cb}
+        host={null}
+        presentationMode="research"
+        recordedTimeOrigins={{ main: 1000 }}
+      />
+    )
+    fireEvent.click(screen.getByRole('tab', { name: 'Notebook' }))
+    expect(
+      screen.queryByText('No linked intermediate observations are available for this run.')
+    ).toBeNull()
+    view.rerender(
+      <ReplayPanel
+        document={document}
+        {...cb}
+        host={null}
+        presentationMode="research"
+        recordedTimeOrigins={{ main: 1000 }}
+        executionTracks={[]}
+      />
+    )
+    expect(
+      screen.getByText('No linked intermediate observations are available for this run.')
+    ).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Ask about this run' })).toBeTruthy()
+  })
+  it('shows saved observations even when final Notebook details cannot be loaded', async () => {
+    const { document, tracks, cb } = setup()
+    const readNotebookRun = vi
+      .fn()
+      .mockResolvedValue({ status: 'unavailable', reason: 'load-failed' })
+    render(
+      <ReplayPanel
+        document={document}
+        {...cb}
+        readNotebookRun={readNotebookRun}
+        host={null}
+        presentationMode="research"
+        recordedTimeOrigins={{ main: 1000 }}
+        executionTracks={tracks}
+      />
+    )
+    seekProgress(400)
+    fireEvent.click(screen.getByRole('tab', { name: 'Notebook' }))
+    expect(screen.getByText('recording ready')).toBeTruthy()
+    expect(await screen.findByText('Could not read the recorded material.')).toBeTruthy()
+    expect(screen.queryByText('actions completed')).toBeNull()
+  })
+
+  it('does not attribute one run observation to an ambiguous current multi-run step', () => {
+    const { document, tracks, cb } = setup()
+    document.branches[0].steps[0].runs.push({
+      ...document.branches[0].steps[0].runs[0],
+      runId: 'second-run'
+    })
+    render(
+      <ReplayPanel
+        document={document}
+        {...cb}
+        host={null}
+        presentationMode="research"
+        recordedTimeOrigins={{ main: 1000 }}
+        executionTracks={tracks}
+        onAskObservation={vi.fn()}
+      />
+    )
+    seekProgress(400)
+    const context = screen.getByTestId('replay-current-context')
+    expect(within(context).queryByTestId('replay-execution-state')).toBeNull()
+    fireEvent.click(screen.getByRole('tab', { name: 'Notebook' }))
+    expect(screen.getByText('recording ready')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Ask about this status' })).toBeNull()
+    const run = screen.getByTestId('replay-stage').querySelector('[data-replay-run-item="run1"]')!
+    fireEvent.pointerDown(run)
+    expect(screen.getByRole('button', { name: 'Ask about this status' })).toBeTruthy()
+  })
+
+  it('keeps the clock running while switching tabs with observation logs present', async () => {
+    let sequence = 0,
+      timestamp = 0
+    const frames = new Map<number, FrameRequestCallback>()
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      frames.set(++sequence, callback)
+      return sequence
+    })
+    vi.stubGlobal('cancelAnimationFrame', (id: number) => frames.delete(id))
+    const tick = async (): Promise<void> => {
+      await act(async () => {
+        timestamp += 100
+        const pending = [...frames.values()]
+        frames.clear()
+        pending.forEach((callback) => callback(timestamp))
+      })
+    }
+    const { document, tracks, cb } = setup()
+    render(
+      <ReplayPanel
+        document={document}
+        {...cb}
+        host={null}
+        presentationMode="research"
+        recordedTimeOrigins={{ main: 1000 }}
+        executionTracks={tracks}
+        materialViews={[
+          { id: 'project', label: 'Project replay', content: <p>Project pixels</p> },
+          { id: 'results', label: 'Results', content: <p>Saved files</p> }
+        ]}
+      />
+    )
+    seekProgress(400)
+    for (let i = 0; i < 5; i++) await tick()
+    fireEvent.click(screen.getByRole('button', { name: 'Play replay' }))
+    await tick()
+    for (const name of [
+      'Notebook',
+      'Project replay',
+      'Results',
+      'Original conversation',
+      'Notebook'
+    ]) {
+      const before = Number(screen.getByRole('slider').getAttribute('aria-valuenow'))
+      fireEvent.click(screen.getByRole('tab', { name }))
+      expect(screen.getByRole('button', { name: 'Pause replay' })).toBeTruthy()
+      await tick()
+      await tick()
+      expect(Number(screen.getByRole('slider').getAttribute('aria-valuenow'))).toBeGreaterThan(
+        before
+      )
+    }
+    // Stable panes no longer interrupt readiness when switching tabs: ten 100 ms
+    // frames at 2× advance from 400 ms to 2400 ms, past the second saved observation.
+    expect(screen.getByRole('slider').getAttribute('aria-valuenow')).toBe('2400')
+    expect(screen.getByText('actions completed')).toBeTruthy()
+    expect(screen.queryByText('recording ready')).toBeNull()
+    expect(screen.queryByText('window ended')).toBeNull()
+    expect(screen.queryByText('final scientific output')).toBeNull()
+  })
 })

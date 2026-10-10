@@ -342,6 +342,14 @@
       "src/main/settings/file-commands.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/agents/production-completion-handoff.test.ts",
+      "src/main/composition/artifact-surfaces.test.ts",
+      "src/main/composition/managed-execution.integration.test.ts",
+      "src/main/composition/session-packages.test.ts",
+      "src/main/composition/handoff.test.ts",
+      "src/main/notebook/local-rpc-server.managed-execution.test.ts",
+      "src/main/notebook/managed-nested-generation.integration.test.ts",
+      "src/main/notebook/managed-output-publication.integration.test.ts",
+      "src/main/research-demos/owner.macos.integration.test.ts",
       "src/main/acp/auto-operation-adapter.test.ts",
       "src/main/acp/auto-operation-broker.test.ts"
     ]

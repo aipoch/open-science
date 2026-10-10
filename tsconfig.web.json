@@ -5,6 +5,7 @@
     "src/renderer/src/**/*",
     "src/renderer/src/**/*.tsx",
     "src/renderer/web/**/*",
+    "src/renderer/replay-viewer/**/*",
     "src/preload/*.d.ts",
     "src/shared/**/*",
     "e2e/browser/fixture/**/*"

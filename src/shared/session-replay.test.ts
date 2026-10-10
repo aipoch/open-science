@@ -1,10 +1,32 @@
 import { describe, expect, it } from 'vitest'
 import {
   sessionReplayCommandContracts,
-  saveSessionDiscussionSnapshotRequestSchema
+  saveSessionDiscussionSnapshotRequestSchema,
+  replayViewStateSchema
 } from './session-replay'
 
 describe('local research workspace contracts', () => {
+  it('validates explicit membership mutations and does not accept caller titles or negative revisions', () => {
+    const request = {
+      projectId: 'p',
+      sessionId: 'discussion',
+      expectedRevision: 3,
+      source: { projectId: 'p', sourceSessionId: 'source', importId: 'import' }
+    }
+    const codec = sessionReplayCommandContracts.setResearchMembership.args
+    expect(codec.parse([request])).toEqual([request])
+    expect(codec.parse([{ ...request, source: undefined }])).toEqual([
+      { ...request, source: undefined }
+    ])
+    expect(() => codec.parse([{ ...request, expectedRevision: -1 }])).toThrow()
+    expect(() =>
+      codec.parse([{ ...request, source: { ...request.source, sourceTitle: 'spoofed' } }])
+    ).toThrow()
+    expect(() =>
+      codec.parse([{ ...request, source: { ...request.source, importId: '../foreign' } }])
+    ).toThrow()
+  })
+
   it('bounds frozen question context and rejects mismatched research evidence', () => {
     const context = {
       id: 'reference',
@@ -98,4 +120,22 @@ describe('local research workspace contracts', () => {
       sessionReplayCommandContracts.saveView.args.parse([{ ...request, expectedRevision: -1 }])
     ).toThrow()
   })
+})
+
+it('keeps old playback checkpoints readable and validates the explicit clock for each branch', () => {
+  const legacy = { fingerprint: 'fp', generatorVersion: 3, branchId: 'main', timeMs: 1000, rate: 1 }
+  expect(replayViewStateSchema.parse(legacy)).toEqual(legacy)
+  const recorded = {
+    ...legacy,
+    clock: 'recorded',
+    branchPositions: [{ branchId: 'other', clock: 'presentation', timeMs: 10, stepOffsetMs: 10 }]
+  }
+  expect(replayViewStateSchema.parse(recorded)).toEqual(recorded)
+  expect(() => replayViewStateSchema.parse({ ...recorded, clock: 'wall-time' })).toThrow()
+  expect(() =>
+    replayViewStateSchema.parse({
+      ...recorded,
+      branchPositions: [{ ...recorded.branchPositions[0], clock: 'wall-time' }]
+    })
+  ).toThrow()
 })

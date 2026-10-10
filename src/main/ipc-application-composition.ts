@@ -24,6 +24,7 @@ import { composeDesktopUtilities } from './composition/desktop-utilities'
 import { composeDocumentReading } from './composition/document-reading'
 import { composeHandoff, composeStorageHandoff } from './composition/handoff'
 import { composeManagedFiles } from './composition/managed-files'
+import { composeManagedExecution } from './composition/managed-execution'
 import { composeNotebookBridge } from './composition/notebook-bridge'
 import { composeNotebookRuntime } from './composition/notebook-runtime'
 import { composeNotebookSurfaces } from './composition/notebook-surfaces'
@@ -62,7 +63,7 @@ import type { SessionSummary } from '../shared/session-persistence'
 import { type AppIconPreview, type AppIconVariant } from '../shared/settings'
 import { registerReviewerComposition } from './composition/reviewer'
 import { type DiagnosticOperation } from './diagnostics/operation'
-
+import { createLogger, diagnosticErrorFields } from './logger'
 import { type ShutdownStepOutcome } from './lifecycle-shutdown'
 import { type NativeTranslator } from './locale/main-process-messages'
 import type { PreviewProtocolRegistrar } from './managed-preview-protocol'
@@ -85,6 +86,7 @@ import { detectActiveSessions } from './storage/detect-active'
 import {
   isMigrationInProgress,
   isMigrationPending,
+  runDataRootStartupRecovery,
   withDataRootWrite
 } from './storage/migration-state'
 import type { TaskControlPorts } from './tasks/task-control-ports'
@@ -92,6 +94,7 @@ import type { TaskAgentPort } from './tasks/task-runner'
 import type { TrayNavigationSession } from './tray-navigation'
 
 export type IpcRegistrationOptions = {
+  invokeObservationNative?: import('./observation-desktop/contract').ObservationNativeInvoke
   notificationDelivery?: (
     translate: NativeTranslator
   ) => import('./notifications/desktop-delivery').DesktopNotificationDelivery
@@ -156,6 +159,8 @@ export type ApplicationRuntimeInterfaces = {
     preference: Parameters<WindowSettingsCapabilities['setClosePreference']>[0]
   ) => Promise<void>
   taskAgent: TaskAgentPort
+  managedExecution: import('./managed-execution-external-port').ManagedExecutionExternalPort
+  sessionPackageTransfer: import('./session-package-external-port').SessionPackageExternalPort
   taskControls: TaskControlPorts
   computePreferences: Pick<SessionEnabledComputeHostsOwner, 'withReservation' | 'set'>
   sessionDeletionCapability: Pick<SessionDeletion, 'setSessionDeletionHandlers'>
@@ -185,6 +190,7 @@ export type IpcRegistration = ApplicationRuntimeInterfaces & {
 export const createApplicationModules = async (
   {
     mainEntryPath,
+    invokeObservationNative,
     settingsStore,
     managedPreviewProtocol,
     headless = false,
@@ -320,6 +326,7 @@ export const createApplicationModules = async (
     settingsService: settingsBootstrap.settingsService
   })
   const projectLifecycle = composeProjectLifecycle({
+    stopManagedProject: (projectId) => managedExecution.stopProject(projectId),
     applicationEvents,
     ...storageStartup,
     uploadRepository: uploadStorage.uploadRepository,
@@ -352,6 +359,20 @@ export const createApplicationModules = async (
     composition
   })
   const specialistCatalog = await composeSpecialistCatalog({ ...settingsBootstrap, composition })
+  const managedExecution = await composeManagedExecution({
+    invokeObservationNative,
+    desktopLocale: () => localeOwner.snapshot().locale,
+    applicationEvents,
+    managedFiles,
+    sessionAuthority,
+    sessionPackages,
+    projectLifecycle,
+    notebookRuntime,
+    runtimeRef,
+    modules
+  })
+  notebookRuntime.notebookLifecycle = managedExecution.notebookLifecycle
+  sessionAuthority.notebookActivityRef.current = managedExecution.notebookLifecycle
   const researchCatalog = await composeResearchCatalog({
     applicationEvents,
     ...settingsBootstrap,
@@ -453,6 +474,7 @@ export const createApplicationModules = async (
     mainEntryPath
   })
   const notebookBridge = await composeNotebookBridge({
+    managedExecution: managedExecution.internal,
     ...settingsBootstrap,
     managedFileVersionService: uploadStorage.managedFileVersionService,
     runtimeRef,
@@ -495,6 +517,9 @@ export const createApplicationModules = async (
     translate
   })
   const agentRuntime = await composeAgentRuntime({
+    stopManagedSession: (projectId, sessionId) =>
+      managedExecution.stopSession(projectId, sessionId),
+    runtimeSessionOwner: managedExecution.runtimeSessions,
     ...settingsBootstrap,
     ...storageStartup,
     uploadRepository: uploadStorage.uploadRepository,
@@ -576,6 +601,7 @@ export const createApplicationModules = async (
     modules
   })
   const handoff = await composeHandoff({
+    managedExecution,
     declareElectronAdapter,
     webSessionPersistenceFlush,
     ...settingsBootstrap,
@@ -638,6 +664,7 @@ export const createApplicationModules = async (
     composition
   })
   const storageHandoff = composeStorageHandoff({
+    resumeManagedExecution: () => managedExecution.resume(),
     declareElectronAdapter,
     webSessionPersistenceFlush,
     ...settingsBootstrap,
@@ -652,6 +679,17 @@ export const createApplicationModules = async (
   })
   const artifactSurfaces = composeArtifactSurfaces({
     reportReproducibilityCheck,
+    onArtifactsPublished: async (artifacts) => {
+      const scopes = new Map<string, { projectId: string; sessionId: string }>()
+      for (const artifact of artifacts) {
+        if (!artifact.projectId) continue
+        const scope = { projectId: artifact.projectId, sessionId: artifact.sessionId }
+        scopes.set(JSON.stringify([scope.projectId, scope.sessionId]), scope)
+      }
+      await Promise.all(
+        [...scopes.values()].map((scope) => managedExecution.reconcilePublishedOutputs(scope))
+      )
+    },
     surfaceAdapters,
     declareElectronAdapter,
     ...storageStartup,
@@ -679,6 +717,13 @@ export const createApplicationModules = async (
     ...projectLifecycle,
     ...agentRuntime,
     translate
+  })
+  await runDataRootStartupRecovery(() => managedExecution.recover(), {
+    reportFailure: (error) =>
+      createLogger('managed-research-execution').error(
+        'Managed execution recovery remains pending',
+        diagnosticErrorFields(error)
+      )
   })
   surfaceAdapters.push(
     ...createCoreElectronSurfaces({
@@ -753,10 +798,16 @@ export const createApplicationModules = async (
   })
   sessionAuthority.reviewerCommandOwnerRef.current = reviewerCommandOwner
   const commandDependencies = composeCommandDependencies({
+    runObservation: managedExecution.external.observation!,
+    browserRecording: managedExecution.external.projectRecordings!,
+    researchRuns: managedExecution.researchRuns,
+    researchDemos: managedExecution.researchDemos,
+    researchExecutionProfiles: managedExecution.service,
     localeOwner,
     reportUploadProgress,
     sideChatCommands,
     applicationEvents,
+    readObservationBindings: managedExecution.readObservationBindings,
     settingsBootstrap,
     storageStartup,
     ...uploadStorage,
@@ -827,6 +878,8 @@ export const createApplicationModules = async (
       )
     },
     taskAgent: agentWorkflows.taskAgent,
+    managedExecution: managedExecution.external,
+    sessionPackageTransfer: sessionPackageSurfaces.sessionPackageHeadless,
     taskControls: {
       specialists: {
         resolve: (reference) =>

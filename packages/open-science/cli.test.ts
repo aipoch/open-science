@@ -455,7 +455,7 @@ describe('task CLI', () => {
     expect(() => parseCliArgs(['run', '--jsonl'])).toThrow('--jsonl requires run --wait.')
     expect(() => parseCliArgs(['run', '--timeout-ms', '0', '--wait'])).toThrow('Invalid timeout: 0')
     expect(() => parseCliArgs(['run', '--timeout-ms', '1000'])).toThrow(
-      '--timeout-ms requires run --wait.'
+      '--timeout-ms requires run --wait, package or observations.'
     )
     expect(() => parseCliArgs(['run', '--cancel-on-timeout', '--wait'])).toThrow(
       '--cancel-on-timeout requires --timeout-ms.'
@@ -2531,4 +2531,260 @@ describe('task CLI', () => {
       expect(setExitCode).toHaveBeenCalledWith(contract.exitCode)
     }
   })
+})
+
+describe('managed execution CLI', () => {
+  it('prints safe runtime diagnostics without starting or configuring an environment', async () => {
+    const result = {
+      available: false,
+      runtimes: [],
+      diagnostics: {
+        nativeServiceSupported: false,
+        issues: [
+          {
+            code: 'native_service_unsupported',
+            message: 'Managed local HTTP services currently require native macOS.',
+            action: 'Use a supported host for local-service plans.'
+          }
+        ]
+      }
+    }
+    const runtimes = vi.fn().mockResolvedValue(result)
+    const log = vi.fn()
+    await runTaskCommand(parseCliArgs(['execution', 'runtimes', '--json']), {
+      connect: async () => ({ execution: { runtimes } }),
+      log
+    })
+    expect(runtimes).toHaveBeenCalledExactlyOnceWith({})
+    expect(log).toHaveBeenCalledWith(JSON.stringify(result))
+  })
+
+  it('supports execution help without connecting to a service', () => {
+    expect(parseCliArgs(['execution', '--help']).options.help).toBe(true)
+    expect(parseCliArgs(['execution', 'run', '--help']).options.help).toBe(true)
+  })
+
+  it.each([
+    ['runtimes', 'runtimes'],
+    ['session-create', 'createSession'],
+    ['materials', 'inspectMaterials'],
+    ['offline-plans', 'inspectOfflinePlans'],
+    ['offline-run', 'executeOfflinePlan'],
+    ['prepare', 'prepare'],
+    ['run', 'execute'],
+    ['status', 'getOperation'],
+    ['wait', 'waitOperation'],
+    ['cancel', 'cancelOperation'],
+    ['environment', 'getEnvironment'],
+    ['release', 'releaseEnvironment'],
+    ['collect-outputs', 'collectOutputs'],
+    ['discard-outputs', 'discardOutputs']
+  ])('routes execution %s through the managed SDK', async (command, method) => {
+    const call = vi.fn().mockResolvedValue({ status: 'completed' })
+    const log = vi.fn()
+    const input = { projectId: 'project', sessionId: 'session', requestId: 'request' }
+    await runTaskCommand(
+      parseCliArgs(['execution', command, '--input-json', JSON.stringify(input), '--json']),
+      {
+        connect: async () => ({ execution: { [method]: call } }),
+        log
+      }
+    )
+    expect(call).toHaveBeenCalledWith(input)
+    expect(log).toHaveBeenCalledWith(JSON.stringify({ status: 'completed' }))
+  })
+
+  it('reads stdin and bounded wait returns the latest snapshot without cancellation', async () => {
+    const input = { projectId: 'project', sessionId: 'session', requestId: 'request' }
+    const execute = vi.fn().mockResolvedValue({ status: 'running' })
+    const waitOperation = vi.fn().mockResolvedValue({ status: 'running' })
+    const cancelOperation = vi.fn()
+    const log = vi.fn()
+    await runTaskCommand(
+      parseCliArgs(['execution', 'run', '--wait', '--timeout-ms', '10', '--json']),
+      {
+        connect: async () => ({ execution: { execute, waitOperation, cancelOperation } }),
+        readStdin: async () => JSON.stringify(input),
+        stdinIsTTY: false,
+        log
+      }
+    )
+    expect(execute).toHaveBeenCalledWith(input)
+    expect(waitOperation).toHaveBeenCalledWith({ ...input, timeoutMs: 10 })
+    expect(cancelOperation).not.toHaveBeenCalled()
+    expect(log).toHaveBeenCalledWith(JSON.stringify({ status: 'running' }))
+  })
+
+  it('waits for collection by its request identity without executing, cancelling or discarding', async () => {
+    const input = {
+      projectId: 'project',
+      sessionId: 'session',
+      environmentId: 'env',
+      collectionId: 'collection',
+      requestId: 'collect-1'
+    }
+    const collectOutputs = vi.fn().mockResolvedValue({ status: 'running' })
+    const waitOperation = vi.fn().mockResolvedValue({ status: 'running' })
+    const execute = vi.fn()
+    const cancelOperation = vi.fn()
+    const discardOutputs = vi.fn()
+    const log = vi.fn()
+    await runTaskCommand(
+      parseCliArgs([
+        'execution',
+        'collect-outputs',
+        '--input-json',
+        JSON.stringify(input),
+        '--wait',
+        '--timeout-ms',
+        '10',
+        '--json'
+      ]),
+      {
+        connect: async () => ({
+          execution: { collectOutputs, waitOperation, execute, cancelOperation, discardOutputs }
+        }),
+        log
+      }
+    )
+    expect(collectOutputs).toHaveBeenCalledExactlyOnceWith(input)
+    expect(waitOperation).toHaveBeenCalledExactlyOnceWith({
+      projectId: 'project',
+      sessionId: 'session',
+      requestId: 'collect-1',
+      timeoutMs: 10
+    })
+    expect(execute).not.toHaveBeenCalled()
+    expect(cancelOperation).not.toHaveBeenCalled()
+    expect(discardOutputs).not.toHaveBeenCalled()
+    expect(log).toHaveBeenCalledWith(JSON.stringify({ status: 'running' }))
+  })
+
+  it('reads a request file and rejects malformed or non-object inputs before dispatch', async () => {
+    const prepare = vi.fn().mockResolvedValue({ state: 'ready' })
+    const readFile = vi.fn().mockResolvedValue('{}')
+    await runTaskCommand(parseCliArgs(['execution', 'prepare', '--input-file', 'request.json']), {
+      connect: async () => ({ execution: { prepare } }),
+      readFile,
+      log: vi.fn()
+    })
+    expect(readFile).toHaveBeenCalledWith(resolve('request.json'))
+    for (const input of ['not json', '[]', 'null', '1']) {
+      await expect(
+        runTaskCommand(parseCliArgs(['execution', 'prepare', '--input-json', input]), {
+          connect: async () => ({ execution: { prepare } })
+        })
+      ).rejects.toBeInstanceOf(CliUsageError)
+    }
+    expect(prepare).toHaveBeenCalledOnce()
+  })
+
+  it.each([
+    ['execution', 'run', '--wait', '--timeout-ms', '60001'],
+    ['execution', 'run', '--wait', '--timeout-ms', '10', '--cancel-on-timeout'],
+    ['execution', 'prepare', '--wait'],
+    ['execution', 'discard-outputs', '--wait'],
+    ['execution', 'collect-outputs', '--wait', '--timeout-ms', '60001'],
+    ['execution', 'collect-outputs', '--wait', '--cancel-on-timeout'],
+    ['execution', 'unknown'],
+    ['execution', 'run', '--input-json', '{}', '--input-file', 'input.json'],
+    ['project', 'list', '--input-json', '{}'],
+    ['execution', 'prepare', 'extra']
+  ])('rejects incompatible execution arguments %j', (...args) => {
+    expect(() => parseCliArgs(args)).toThrow(CliUsageError)
+  })
+})
+
+describe('package transfer CLI', () => {
+  it.each([
+    ['preflight-import', 'preflightImport'],
+    ['commit-import', 'commitImport'],
+    ['cancel-import', 'cancelImport'],
+    ['export', 'export']
+  ])('dispatches package %s only when explicitly requested', async (command, method) => {
+    const call = vi.fn().mockResolvedValue({ preflightId: 'preview' })
+    const log = vi.fn()
+    const input = { filePath: '/research.science', target: { projectId: 'project' } }
+    await runTaskCommand(
+      parseCliArgs(['package', command, '--input-json', JSON.stringify(input), '--json']),
+      {
+        connect: async () => ({ packages: { [method]: call } }),
+        log
+      }
+    )
+    expect(call).toHaveBeenCalledExactlyOnceWith(input)
+    expect(log).toHaveBeenCalledWith(JSON.stringify({ preflightId: 'preview' }))
+  })
+
+  it('accepts request files and stdin without reading the named archive in the CLI', async () => {
+    const input = { filePath: '/research.science', target: { projectId: 'project' } }
+    const preflightImport = vi.fn().mockResolvedValue({ preflightId: 'preview' })
+    const readFile = vi.fn().mockResolvedValue(JSON.stringify(input))
+    const deps = {
+      connect: async () => ({ packages: { preflightImport } }),
+      readFile,
+      log: vi.fn(),
+      readStdin: async () => JSON.stringify(input),
+      stdinIsTTY: false
+    }
+    await runTaskCommand(
+      parseCliArgs(['package', 'preflight-import', '--input-file', 'request.json']),
+      deps
+    )
+    expect(readFile).toHaveBeenCalledExactlyOnceWith(resolve('request.json'))
+    await runTaskCommand(parseCliArgs(['package', 'preflight-import']), deps)
+    expect(preflightImport).toHaveBeenCalledTimes(2)
+    for (const malformed of ['null', '[]', 'not json'])
+      await expect(
+        runTaskCommand(
+          parseCliArgs(['package', 'preflight-import', '--input-json', malformed]),
+          deps
+        )
+      ).rejects.toBeInstanceOf(CliUsageError)
+    expect(preflightImport).toHaveBeenCalledTimes(2)
+    await expect(
+      runTaskCommand(parseCliArgs(['package', 'preflight-import']), { ...deps, stdinIsTTY: true })
+    ).rejects.toThrow('Provide package JSON')
+  })
+
+  it('shows help and rejects ambiguous or implicit commit arguments', () => {
+    expect(parseCliArgs(['package', '--help']).options.help).toBe(true)
+    for (const args of [
+      ['package', 'import'],
+      ['package', 'commit-import', '--wait'],
+      ['package', 'export', 'file.science'],
+      ['package', 'export', '--input-json', '{}', '--input-file', 'file.json']
+    ])
+      expect(() => parseCliArgs(args)).toThrow(CliUsageError)
+  })
+})
+
+it('forwards package timeout and retry identity without implicitly cancelling a transfer', async () => {
+  const preflightImport = vi.fn().mockResolvedValue({ preflightId: 'review' })
+  await runTaskCommand(
+    parseCliArgs([
+      'package',
+      'preflight-import',
+      '--input-json',
+      '{}',
+      '--timeout-ms',
+      '120000',
+      '--idempotency-key',
+      'inspect-1'
+    ]),
+    {
+      connect: async () => ({ packages: { preflightImport } }),
+      log: vi.fn()
+    }
+  )
+  expect(preflightImport).toHaveBeenCalledExactlyOnceWith(
+    {},
+    { timeoutMs: 120000, idempotencyKey: 'inspect-1' }
+  )
+  expect(() =>
+    parseCliArgs(['package', 'export', '--cancel-on-timeout', '--timeout-ms', '10'])
+  ).toThrow(CliUsageError)
+  expect(() => parseCliArgs(['execution', 'prepare', '--idempotency-key', 'key'])).toThrow(
+    CliUsageError
+  )
 })

@@ -1,4 +1,5 @@
-import { useEffect, useLayoutEffect, useRef } from 'react'
+import { toSessionDiscussionSnapshot } from './replay/replay-context'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useSessionStore } from '@/stores/session-store'
@@ -17,7 +18,10 @@ import {
   replayAnnotationTarget
 } from './session-discussion-annotation'
 import { requestReplaySeek } from './replay/replay-context'
-import { createSessionReplayItem } from './workspace-session-actions'
+import { createSessionReplayItem, loadSessionDiscussionContext } from './workspace-session-actions'
+import type { ResearchMembership } from '../../../../shared/session-persistence'
+import { researchDraftKey, sameResearch } from './research-draft-identity'
+import { researchSourceFromSession } from './workspace-discussion-navigation'
 import { requestComposerFocus } from './composer-focus-events'
 
 type DiscussionComposer = {
@@ -32,13 +36,115 @@ type DiscussionComposer = {
 export const useWorkspaceSessionDiscussion = ({
   composer,
   draftKey,
-  editable
+  editable,
+  source
 }: {
   composer: DiscussionComposer
   draftKey: string
   editable: boolean
-}): void => {
+  source?: ResearchMembership
+}): {
+  sourceContextPending: boolean
+  sourceContextError?: string
+  retrySourceContext(): void
+} => {
   const { t } = useTranslation()
+  const navigationRevision = useNavigationStore((state) => state.explicitNavigationRevision)
+  const sourceKey = source ? researchDraftKey(source) : undefined
+  const preparationKey = sourceKey ? JSON.stringify([sourceKey, navigationRevision]) : undefined
+  const hasSourceContext = Boolean(
+    source &&
+    composer.view.annotations.some((annotation) => {
+      const target = replayAnnotationTarget(annotation)
+      return (
+        target?.projectId === source.sourceProjectId &&
+        target.sourceSessionId === source.sourceSessionId
+      )
+    })
+  )
+  const [preparedSourceKey, setPreparedSourceKey] = useState<string>()
+  const [sourceContextError, setSourceContextError] = useState<{ key: string; message: string }>()
+  const [retryRevision, setRetryRevision] = useState(0)
+  const pendingSourceContext = useSessionReplayStore(
+    (state) =>
+      state.discussionDestination?.draftKey === sourceKey && Boolean(state.pendingDiscussion)
+  )
+  // Exact source links also expose the inline question draft. Prepare the same durable reference
+  // used by explicit Discuss actions without changing selection or creating a Session.
+  useEffect(() => {
+    if (!source || !sourceKey || !editable || hasSourceContext || pendingSourceContext) return
+    if (preparedSourceKey === preparationKey || sourceContextError?.key === sourceKey) return
+    const controller = new AbortController()
+    const navigation = useNavigationStore.getState()
+    const current = (): boolean => {
+      const now = useNavigationStore.getState()
+      const sessions = useSessionStore.getState()
+      const selected = sessions.sessions.find((row) => row.id === sessions.selectedSessionId)
+      return (
+        !controller.signal.aborted &&
+        now.view === 'workspace' &&
+        now.activeProjectId === source.sourceProjectId &&
+        now.explicitNavigationRevision === navigation.explicitNavigationRevision &&
+        sameResearch(researchSourceFromSession(selected), source) &&
+        selected?.archivedAt === undefined
+      )
+    }
+    void loadSessionDiscussionContext(
+      source.sourceProjectId,
+      source.sourceSessionId,
+      controller.signal
+    )
+      .then((context) => {
+        if (!current()) return
+        const replay = useSessionReplayStore.getState()
+        if (
+          context &&
+          (!replay.pendingDiscussion || replay.discussionDestination?.draftKey !== sourceKey)
+        )
+          useSessionReplayStore.getState().ask(context, {
+            projectId: source.sourceProjectId,
+            draftKey: sourceKey,
+            onlyIfUnlinked: true,
+            navigationRevision: navigation.explicitNavigationRevision
+          })
+        setPreparedSourceKey(preparationKey)
+      })
+      .catch((reason: unknown) => {
+        if (!current()) return
+        const message = reason instanceof Error ? reason.message : String(reason)
+        composer.actions.setError(message)
+        setSourceContextError({ key: sourceKey, message })
+      })
+    return () => controller.abort()
+  }, [
+    source,
+    sourceKey,
+    preparationKey,
+    navigationRevision,
+    editable,
+    hasSourceContext,
+    pendingSourceContext,
+    preparedSourceKey,
+    sourceContextError,
+    retryRevision,
+    composer.actions
+  ])
+  const draftSource = composer.view.annotations.map(replayAnnotationTarget).filter(Boolean).at(-1)
+  const draftProjectId = draftSource?.projectId
+  const draftSourceId = draftSource?.sourceSessionId
+  useEffect(() => {
+    if (!editable || !draftProjectId || !draftSourceId) return
+    const draftDiscussion = {
+      projectId: draftProjectId,
+      sourceSessionId: draftSourceId,
+      draftKey
+    }
+    useSessionReplayStore.setState({ draftDiscussion })
+    return () => {
+      if (useSessionReplayStore.getState().draftDiscussion === draftDiscussion)
+        useSessionReplayStore.setState({ draftDiscussion: undefined })
+    }
+  }, [editable, draftKey, draftProjectId, draftSourceId])
   const pending = useSessionReplayStore((state) => state.pendingDiscussion)
   const destination = useSessionReplayStore((state) => state.discussionDestination)
   const targetSession = useSessionStore((state) =>
@@ -61,13 +167,15 @@ export const useWorkspaceSessionDiscussion = ({
   useEffect(() => {
     if (
       !editable ||
+      sourceContextError?.key === draftKey ||
       !pending ||
       !destination ||
       handled.current === pending ||
       targetSession?.contentLoaded === false
     )
       return
-    const targetKey = destination.sessionId ?? `new:${destination.projectId}`
+    const targetKey =
+      destination.sessionId ?? destination.draftKey ?? `new:${destination.projectId}`
     if (draftKey !== targetKey) return
     const selectedFrame = (): string => {
       const graph = useSessionStore
@@ -81,6 +189,14 @@ export const useWorkspaceSessionDiscussion = ({
       const navigation = useNavigationStore.getState()
       const sessions = useSessionStore.getState()
       const session = sessions.sessions.find((row) => row.id === destination.sessionId)
+      const selected = sessions.sessions.find((row) => row.id === sessions.selectedSessionId)
+      const selectedSource = researchSourceFromSession(selected)
+      const inlineSourceDraft =
+        !destination.sessionId &&
+        selectedSource &&
+        selected?.archivedAt === undefined &&
+        destination.projectId === selectedSource.sourceProjectId &&
+        destination.draftKey === researchDraftKey(selectedSource)
       const project = useProjectStore
         .getState()
         .projects.find((row) => row.id === destination.projectId)
@@ -88,7 +204,7 @@ export const useWorkspaceSessionDiscussion = ({
         navigation.view === 'workspace' &&
         navigation.activeProjectId === destination.projectId &&
         navigation.explicitNavigationRevision === destination.navigationRevision &&
-        sessions.selectedSessionId === destination.sessionId &&
+        (sessions.selectedSessionId === destination.sessionId || Boolean(inlineSourceDraft)) &&
         destination.sessionId !== pending.sourceSessionId &&
         Boolean(project && project.archivedAt === undefined) &&
         (!destination.sessionId ||
@@ -102,6 +218,22 @@ export const useWorkspaceSessionDiscussion = ({
       useSessionReplayStore.getState().ask(undefined)
       return
     }
+    if (
+      destination.onlyIfUnlinked &&
+      composer.view.annotations.some((annotation) => {
+        const source = replayAnnotationTarget(annotation)
+        return (
+          source?.projectId === pending.projectId &&
+          source.sourceSessionId === pending.sourceSessionId
+        )
+      })
+    ) {
+      useSessionReplayStore.getState().ask(undefined)
+      // Re-entering an already linked draft still admits an explicit discussion action.
+      // Restore typing focus without replacing its chosen evidence or saving another snapshot.
+      requestComposerFocus()
+      return
+    }
     handled.current = pending
     // Focus at admission, not after IPC: users may navigate the replay while storage finishes.
     requestComposerFocus()
@@ -111,7 +243,7 @@ export const useWorkspaceSessionDiscussion = ({
       .saveSelectionSnapshot({
         projectId: pending.projectId,
         sourceSessionId: pending.sourceSessionId,
-        context: { ...structuredClone(pending), id }
+        context: toSessionDiscussionSnapshot(pending, id)
       })
       .then(() => {
         const current = latest.current
@@ -122,8 +254,9 @@ export const useWorkspaceSessionDiscussion = ({
           current.draftKey !== draftKey ||
           !destinationCurrent()
         ) {
-          if (useSessionReplayStore.getState().pendingDiscussion === pending)
+          if (useSessionReplayStore.getState().pendingDiscussion === pending) {
             useSessionReplayStore.getState().ask(undefined)
+          }
           return
         }
         // Build on the latest draft after storage finishes. Typing during IPC must be retained.
@@ -132,13 +265,17 @@ export const useWorkspaceSessionDiscussion = ({
         if (annotation) {
           const error = current.composer.actions.addAnnotation(annotation)
           if (error) {
-            current.composer.actions.setError(annotationValidationMessage(error, t))
+            const message = annotationValidationMessage(error, t)
+            current.composer.actions.setError(message)
+            if (sourceKey === draftKey) setSourceContextError({ key: sourceKey, message })
             return
           }
           current.composer.actions.changeDoc(doc)
           current.composer.actions.setError(null)
         } else {
-          current.composer.actions.setError(t('The recorded evidence is unavailable.'))
+          const message = t('The recorded evidence is unavailable.')
+          current.composer.actions.setError(message)
+          if (sourceKey === draftKey) setSourceContextError({ key: sourceKey, message })
           useSessionReplayStore.getState().ask(undefined)
           return
         }
@@ -148,20 +285,26 @@ export const useWorkspaceSessionDiscussion = ({
         if (
           latest.current.draftKey === draftKey &&
           useSessionReplayStore.getState().pendingDiscussion === pending
-        )
-          latest.current.composer.actions.setError(
-            reason instanceof Error ? reason.message : String(reason)
-          )
+        ) {
+          const message = reason instanceof Error ? reason.message : String(reason)
+          latest.current.composer.actions.setError(message)
+          if (sourceKey === draftKey) setSourceContextError({ key: sourceKey, message })
+        }
         if (handled.current === pending) handled.current = undefined
       })
   }, [
     composer.actions,
+    composer.view.annotations,
     composer.view.doc,
     draftKey,
     editable,
     pending,
     destination,
+    navigationRevision,
     targetSession,
+    sourceKey,
+    retryRevision,
+    sourceContextError,
     t
   ])
 
@@ -241,4 +384,23 @@ export const useWorkspaceSessionDiscussion = ({
       reveal()
     }
   }, [t])
+  return {
+    sourceContextPending: Boolean(
+      sourceKey &&
+      (pendingSourceContext ||
+        sourceContextError?.key === sourceKey ||
+        (!hasSourceContext && preparedSourceKey !== preparationKey))
+    ),
+    sourceContextError:
+      sourceContextError && sourceContextError.key === sourceKey
+        ? sourceContextError.message
+        : undefined,
+    retrySourceContext: () => {
+      handled.current = undefined
+      setPreparedSourceKey(undefined)
+      setSourceContextError(undefined)
+      composer.actions.setError(null)
+      setRetryRevision((revision) => revision + 1)
+    }
+  }
 }

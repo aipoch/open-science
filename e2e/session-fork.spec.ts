@@ -56,7 +56,44 @@ test('forks local and imported research and immediately continues through the re
       const importing = page.getByRole('dialog', { name: 'Import Session package', exact: true })
       await importing.getByRole('button', { name: 'Import', exact: true }).click()
       await importing.getByRole('button', { name: 'Open imported Session', exact: true }).click()
-      await page.getByRole('button', { name: 'Fork to continue', exact: true }).click()
+      await expect(page.getByTestId('research-workspace-header')).toContainText(title)
+      await expect(page.getByRole('textbox', { name: 'Ask anything', exact: true })).toBeEditable()
+      const importedSourceId = await page.evaluate(
+        async () =>
+          (await window.api.sessions.loadAll()).sessions.find((session) => session.packageOrigin)!
+            .id
+      )
+      await page
+        .locator(`[data-research-id="${importedSourceId}"]`)
+        .getByRole('button', { name: `Open actions for ${title}`, exact: true })
+        .click()
+      await page.getByRole('menuitem', { name: 'View original record', exact: true }).click()
+      await expect(page.getByTestId('research-workspace-header')).toContainText(
+        'Original record · Read-only'
+      )
+      const importedSourceBefore = await page.evaluate(
+        async (sessionId) =>
+          (await window.api.sessions.loadAll()).sessions.find(
+            (session) => session.id === sessionId
+          ),
+        importedSourceId
+      )
+      await expect(page.getByRole('textbox', { name: 'Ask anything', exact: true })).toBeEditable()
+      const sourceContext = page.getByTestId('research-question-context')
+      await expect(sourceContext).toContainText('The original record stays unchanged.')
+      await sourceContext.getByText('Package source', { exact: true }).click()
+      await sourceContext
+        .getByRole('button', { name: 'Create a working copy', exact: true })
+        .click()
+      expect(
+        await page.evaluate(
+          async (sessionId) =>
+            (await window.api.sessions.loadAll()).sessions.find(
+              (session) => session.id === sessionId
+            ),
+          importedSourceId
+        )
+      ).toEqual(importedSourceBefore)
       await expect(
         page.getByRole('region', { name: 'Research discussion', exact: true })
       ).toHaveCount(0)

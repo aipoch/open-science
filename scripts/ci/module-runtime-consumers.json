@@ -106,5 +106,79 @@
     "resources/find-overlay/findOverlay.js",
     "src/main/windows.ts"
   ],
-  "resources/find-overlay/findOverlay.js": ["src/main/find-overlay.ts"]
+  "resources/find-overlay/findOverlay.js": ["src/main/find-overlay.ts"],
+  "src/renderer/replay-viewer/main.tsx": ["src/renderer/replay-viewer/index.html"],
+  "src/renderer/replay-viewer/index.html": ["vite.replay-viewer.config.ts"],
+  "vite.replay-viewer.config.ts": ["src/main/replay-viewer/assets.ts"],
+  "src/main/notebook/node-local-service-preload.mjs": [
+    "src/main/notebook/managed-research-environment.ts"
+  ],
+  "src/main/run-observation/electron-capture.ts": [
+    "src/main/run-observation/electron-capture.integration.test.ts",
+    "src/main/replay-viewer/desktop-embed.integration.test.ts"
+  ],
+  "src/main/navigation-policy.ts": [
+    "src/main/replay-viewer/desktop-embed.integration.test.ts",
+    "src/main/replay-viewer/recorded-resource-context-menu.integration.test.ts"
+  ],
+  "src/main/replay-viewer/desktop-frame-registry.ts": [
+    "src/main/replay-viewer/desktop-embed.integration.test.ts"
+  ],
+  "src/main/replay-viewer/http-host.ts": [
+    "src/main/replay-viewer/desktop-embed.integration.test.ts"
+  ],
+  "src/main/replay-viewer/assets.ts": ["src/main/replay-viewer/desktop-embed.integration.test.ts"],
+  "src/main/managed-runtime-views.ts": ["src/main/replay-viewer/desktop-embed.integration.test.ts"],
+  "src/main/run-observation/owner.ts": ["src/main/replay-viewer/desktop-embed.integration.test.ts"],
+  "src/main/run-observation/viewers.ts": [
+    "src/main/replay-viewer/desktop-embed.integration.test.ts"
+  ],
+  "src/main/caller-context.ts": ["src/main/replay-viewer/desktop-embed.integration.test.ts"],
+  "src/renderer/index.html": [
+    "src/main/replay-viewer/desktop-embed.integration.test.ts",
+    "src/main/replay-viewer/recorded-resource-context-menu.integration.test.ts"
+  ],
+  "src/main/preview-context-menu.ts": [
+    "src/main/replay-viewer/desktop-embed.integration.test.ts",
+    "src/main/replay-viewer/recorded-resource-context-menu.integration.test.ts"
+  ],
+  "src/renderer/src/components/ActionToast.tsx": [
+    "src/main/replay-viewer/desktop-embed.integration.test.ts"
+  ],
+  "src/renderer/src/components/PermissionUndoSnackbar.tsx": [
+    "src/main/replay-viewer/desktop-embed.integration.test.ts"
+  ],
+  "src/renderer/src/components/SessionPersistenceAlert.tsx": [
+    "src/main/replay-viewer/desktop-embed.integration.test.ts"
+  ],
+  "src/renderer/src/components/use-settings-undo-portal.tsx": [
+    "src/main/replay-viewer/desktop-embed.integration.test.ts"
+  ],
+  "src/renderer/src/pages/workspace/EnvStatusBanner.tsx": [
+    "src/main/replay-viewer/desktop-embed.integration.test.ts"
+  ],
+  "src/renderer/src/stores/archive-undo-store.ts": [
+    "src/main/replay-viewer/desktop-embed.integration.test.ts"
+  ],
+  "src/renderer/src/components/ui/resizable.tsx": [
+    "src/main/replay-viewer/desktop-embed.integration.test.ts"
+  ],
+  "src/renderer/src/pages/workspace/workspace-panel-layout.tsx": [
+    "src/main/replay-viewer/desktop-embed.integration.test.ts"
+  ],
+  "src/renderer/src/pages/workspace/RunObservationPreview.tsx": [
+    "src/main/replay-viewer/desktop-embed.integration.test.ts"
+  ],
+  "src/renderer/src/components/action-menu/index.ts": [
+    "src/main/replay-viewer/recorded-resource-context-menu.integration.test.ts"
+  ],
+  "src/renderer/src/pages/workspace/preview-actions/preview-action-adapter.tsx": [
+    "src/main/replay-viewer/recorded-resource-context-menu.integration.test.ts"
+  ],
+  "src/renderer/src/pages/workspace/preview-actions/preview-action-model.ts": [
+    "src/main/replay-viewer/recorded-resource-context-menu.integration.test.ts"
+  ],
+  "src/renderer/src/pages/workspace/replay/results/RecordedResourcePreview.tsx": [
+    "src/main/replay-viewer/recorded-resource-context-menu.integration.test.ts"
+  ]
 }

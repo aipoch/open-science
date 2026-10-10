@@ -363,27 +363,27 @@ for (const locale of ['en', 'de']) {
   test(`right-hand panel remains operable at narrow width and expands with keyboard focus (${locale})`, async ({
     page
   }, info) => {
-    await page.goto(`${url}?panel=1&locale=${locale}`)
+    await page.goto(`${url}?panel=1&research=1&locale=${locale}`)
     const panel = page.getByTestId('replay-panel')
     const copy =
       locale === 'de'
         ? {
             play: 'Wiedergabe starten',
             rewatch: 'Erneut ansehen',
-            expand: 'Vollbildmodus aktivieren',
-            collapse: 'Vollbildmodus beenden',
+            expand: 'Vorschau erweitern',
+            collapse: 'Vorschau verkleinern',
             materials: 'Notebook',
-            close: 'Forschungsmaterial schließen',
-            ask: 'Zu diesem Schritt fragen'
+            close: 'Ursprüngliche Konversation',
+            ask: 'Zu diesem Eintrag fragen'
           }
         : {
             play: 'Play replay',
             rewatch: 'Watch again',
-            expand: 'Enter full screen',
-            collapse: 'Exit full screen',
+            expand: 'Expand preview',
+            collapse: 'Collapse preview',
             materials: 'Notebook',
-            close: 'Close research materials',
-            ask: 'Ask about this step'
+            close: 'Original conversation',
+            ask: 'Ask about this record'
           }
     await expect(panel).toBeVisible()
     expect((await panel.boundingBox())!.width).toBe(419)
@@ -412,7 +412,7 @@ for (const locale of ['en', 'de']) {
     expect(await panel.evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(
       true
     )
-    for (const name of [copy.play, copy.expand, copy.materials, copy.ask]) {
+    for (const name of [copy.play, copy.expand, copy.ask]) {
       const button = panel.getByRole('button', { name, exact: true })
       await expect(button).toBeVisible()
       expect(
@@ -420,18 +420,18 @@ for (const locale of ['en', 'de']) {
       ).toBeGreaterThanOrEqual(12)
       expect((await button.boundingBox())!.width).toBeGreaterThanOrEqual(28)
     }
-    const materialButton = panel.getByRole('button', { name: copy.materials, exact: true })
+    const materialButton = panel.getByRole('tab', { name: copy.materials, exact: true })
     await materialButton.focus()
     await page.keyboard.press('Enter')
-    const catalog = panel.getByRole('region', {
-      name: locale === 'de' ? 'Forschungsmaterialien' : 'Research materials'
-    })
-    await expect(catalog).toBeFocused()
+    const catalog = panel.getByRole('region', { name: 'Notebook', exact: true })
+    await expect(materialButton).toBeFocused()
+    await expect(materialButton).toHaveAttribute('aria-selected', 'true')
+    await expect(catalog).toBeVisible()
     await panel.getByRole('slider').focus()
     await page.keyboard.press('End')
     await expect(catalog.locator('[data-replay-notebook-run]')).toBeVisible()
-    await catalog.getByRole('button', { name: copy.close }).click()
-    await expect(materialButton).toBeFocused()
+    await panel.getByRole('tab', { name: copy.close, exact: true }).click()
+    await expect(panel.getByRole('tab', { name: copy.close, exact: true })).toBeFocused()
     const progress = panel.getByRole('slider')
     await progress.focus()
     await page.keyboard.press('End')
@@ -649,11 +649,11 @@ test('Files floats independently in narrow panels and forms a third column in wi
 test('keeps chrome and conversation width stable through tool and Agent message transitions', async ({
   page
 }) => {
-  await page.goto(`${url}?panel=1&transitions=1`)
+  await page.goto(`${url}?panel=1&research=1&transitions=1`)
   const panel = page.getByTestId('replay-panel')
-  await panel.getByRole('button', { name: 'Enter full screen', exact: true }).click()
+  await panel.getByRole('button', { name: 'Expand preview', exact: true }).click()
   const header = panel.getByTestId('replay-header')
-  const material = panel.getByRole('region', { name: 'Research materials' })
+  const material = panel.getByRole('tabpanel')
   const controls = panel.getByTestId('replay-controls')
   const transcript = panel.getByRole('region', { name: 'Historical conversation' })
   const initial = await Promise.all([
@@ -664,7 +664,7 @@ test('keeps chrome and conversation width stable through tool and Agent message 
   ])
   const stableNodes = await page.evaluateHandle(() => [
     ...document.querySelectorAll(
-      '[data-testid="replay-header"], [aria-label="Research materials"], [data-testid="replay-controls"]'
+      '[data-testid="replay-header"], [role="tabpanel"], [data-testid="replay-controls"]'
     )
   ])
   await panel.getByRole('combobox', { name: 'Playback speed' }).click()
@@ -684,7 +684,7 @@ test('keeps chrome and conversation width stable through tool and Agent message 
       if (!pauseIcon) throw new Error('Playback action changed while advancing between steps')
       const selectors = [
         '[data-testid="replay-header"]',
-        '[aria-label="Research materials"]',
+        '[role="tabpanel"]',
         '[data-testid="replay-controls"]',
         '[aria-label="Historical conversation"]'
       ]
@@ -723,7 +723,7 @@ test('keeps chrome and conversation width stable through tool and Agent message 
 test('completion is a plain status without resizing content and replay can restart', async ({
   page
 }, info) => {
-  await page.goto(`${url}?panel=1&artifacts=1`)
+  await page.goto(`${url}?panel=1&research=1&artifacts=1`)
   const panel = page.getByTestId('replay-panel')
   for (const width of [320, 375, 414, 768]) {
     await page.setViewportSize({ width, height: 850 })
@@ -916,7 +916,7 @@ test('archived branches retain progress and show Reviewer and submitted choices 
   await progress.focus()
   await progress.press('End')
   await expect(
-    page.getByTestId('replay-stage').getByText('Alternative branch uses Python.')
+    page.getByTestId('replay-stage').getByText('Alternative branch uses Python.', { exact: true })
   ).toBeVisible()
   await expect(original).toHaveCount(0)
   await expect(choice).toHaveCount(0)
@@ -1627,4 +1627,50 @@ test('restores Notebook and its code scrollbar after returning from a generated 
   await notebook.click()
   await codeViewport.hover()
   await panel.screenshot({ path: info.outputPath('replay-notebook-generated-preview.png') })
+})
+
+test('research fullscreen retains one clock and all portaled controls without remounting evidence', async ({
+  page,
+  stageApp
+}) => {
+  await stageApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].show())
+  await page.goto(`${url}?panel=1&research=1`)
+  const panel = page.getByTestId('replay-panel')
+  const stage = await panel.getByTestId('replay-stage').elementHandle()
+  const progress = panel.getByRole('slider', { name: 'Replay progress', exact: true })
+  await progress.focus()
+  await page.keyboard.press('End')
+  const position = await progress.getAttribute('aria-valuenow')
+  // On macOS HTML fullscreen enters a native Space asynchronously. Wait for the real
+  // native transition before interacting; exiting mid-transition can leave Chromium pending.
+  const entered = stageApp.evaluate(
+    ({ BrowserWindow }) =>
+      new Promise<void>((resolve) => {
+        const window = BrowserWindow.getAllWindows()[0]
+        window.once('enter-full-screen', () => resolve())
+      })
+  )
+  await panel.getByRole('button', { name: 'Enter full screen', exact: true }).click()
+  await entered
+  await expect
+    .poll(() => panel.evaluate((element) => document.fullscreenElement === element))
+    .toBe(true)
+  await expect(panel.getByRole('button', { name: 'Exit full screen', exact: true })).toBeVisible()
+  await panel.getByRole('combobox', { name: 'Playback speed', exact: true }).click()
+  await expect(panel.getByRole('option', { name: '1×', exact: true })).toBeVisible()
+  await panel.getByRole('option', { name: '1×', exact: true }).click()
+  await panel.getByTestId('replay-information-trigger').click()
+  await expect(
+    panel.getByRole('dialog', { name: 'A reproducible observation study', exact: true })
+  ).toBeVisible()
+  await page.keyboard.press('Escape')
+  await panel.getByRole('button', { name: 'Question options', exact: true }).click()
+  await expect(
+    panel.getByRole('button', { name: 'Ask about this step', exact: true })
+  ).toBeVisible()
+  await page.keyboard.press('Escape')
+  await panel.getByRole('button', { name: 'Exit full screen', exact: true }).click()
+  await expect.poll(() => page.evaluate(() => !document.fullscreenElement)).toBe(true)
+  await expect(progress).toHaveAttribute('aria-valuenow', position!)
+  expect(await stage!.evaluate((element) => element.isConnected)).toBe(true)
 })

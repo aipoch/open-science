@@ -27,7 +27,11 @@
       "src/main/ipc-surfaces/session-persistence.test.ts",
       "src/main/runtime-electron-wiring.test.ts",
       "src/main/composition/notebook-environment.test.ts",
-      "src/main/composition/reviewer.test.ts"
+      "src/main/composition/reviewer.test.ts",
+      "src/main/composition/artifact-surfaces.test.ts",
+      "src/main/composition/managed-execution.integration.test.ts",
+      "src/main/composition/handoff.test.ts",
+      "src/main/research-demos/owner.macos.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

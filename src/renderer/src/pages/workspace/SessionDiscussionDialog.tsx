@@ -20,11 +20,8 @@ import { cn } from '@/lib/utils'
 import { ErrorNotice } from '@/components/error-notice'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useSessionStore } from '@/stores/session-store'
-import { useProjectStore } from '@/stores/project-store'
-import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
-import { useSessionReplayStore } from '@/stores/session-replay-store'
 import { SessionMentionPopup } from './composer/SessionMentionPopup'
-import { createSessionReplayItem } from './workspace-session-actions'
+import { stageSessionDiscussion } from './workspace-discussion-navigation'
 import type { SessionDiscussionCapture } from './replay/replay-context'
 
 export const SessionDiscussionDialog = ({
@@ -45,49 +42,7 @@ export const SessionDiscussionDialog = ({
       ? useSessionStore.getState().sessions.find((row) => row.id === sessionId)
       : undefined
     const projectId = target?.projectId ?? navigation.activeProjectId
-    const project = useProjectStore.getState().projects.find((row) => row.id === projectId)
-    if (
-      !projectId ||
-      !project ||
-      sessionId === context.sourceSessionId ||
-      project.archivedAt !== undefined ||
-      (sessionId &&
-        (!target || target.packageOrigin || target.archivedAt !== undefined || target.isPending))
-    ) {
-      setError(t('This conversation is unavailable. Choose another conversation.'))
-      return
-    }
-    const stage = (): void => {
-      if (!sessionId) useSessionStore.getState().clearSelection()
-      const selected = useSessionStore.getState().sessions.find((row) => row.id === sessionId)
-      // Navigation may be deferred by an unsaved preview. Validate again at admission.
-      if (sessionId && (!selected || selected.packageOrigin || selected.archivedAt !== undefined))
-        return
-      const graph = selected?.conversationGraph
-      const frame = graph?.frames.find((row) => row.id === graph.activeFrameId)
-      useSessionReplayStore.getState().ask(context, {
-        projectId,
-        sessionId,
-        frameId: frame?.id,
-        branchId: frame?.activeBranchId,
-        navigationRevision: useNavigationStore.getState().explicitNavigationRevision
-      })
-      usePreviewWorkbenchStore
-        .getState()
-        .upsertAndActivateItem(
-          createSessionReplayItem(
-            context.projectId,
-            context.sourceSessionId,
-            context.sourceTitle,
-            projectId
-          )
-        )
-      usePreviewWorkbenchStore.getState().setToolItemExpanded(null)
-      onClose()
-    }
-    const accepted = sessionId
-      ? navigation.openSession(projectId, sessionId, 'user', stage)
-      : navigation.openProject(projectId, 'user', stage)
+    const accepted = projectId && stageSessionDiscussion(context, { projectId, sessionId }, onClose)
     if (!accepted) setError(t('This conversation is unavailable. Choose another conversation.'))
   }
   return (

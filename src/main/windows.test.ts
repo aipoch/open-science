@@ -401,6 +401,25 @@ describe('window navigation policy', () => {
     expect(guard('file:///private', false)).toBe(false)
   })
 
+  it('delegates only framed HTTP navigation to the Main-owned registry', async () => {
+    const { createFrameNavigationGuard } = await import('./navigation-policy')
+    const main = { frameTreeNodeId: 1, name: '', url: 'file:///app/index.html', parent: null }
+    const child = { ...main, frameTreeNodeId: 2, url: 'about:blank', parent: main }
+    const registry = vi.fn(() => false)
+    const guard = createFrameNavigationGuard(registry)
+    const viewer = 'http://viewer-example.localhost:43123/'
+    expect(guard(viewer, false, main.url, child)).toBe(false)
+    expect(registry).toHaveBeenLastCalledWith(viewer, child)
+    registry.mockReturnValueOnce(true)
+    expect(guard(viewer, false, main.url, child)).toBe(true)
+    registry.mockClear()
+    expect(guard(viewer, true, main.url, main)).toBe(false)
+    expect(guard(viewer, false, main.url)).toBe(false)
+    expect(guard('https://example.com', false, main.url, child)).toBe(false)
+    expect(guard('file:///private', false, main.url, child)).toBe(false)
+    expect(registry).not.toHaveBeenCalled()
+  })
+
   it('denies sensitive Chromium permissions regardless of frame', () => {
     createMainWindow()
     const window = lastWindow!
@@ -433,55 +452,68 @@ describe('window navigation policy', () => {
     ).toBe(false)
   })
 
-  it('allows sanitized clipboard writes only from the trusted main renderer document', () => {
-    createMainWindow()
-    const window = lastWindow!
+  it.each(['clipboard-sanitized-write', 'fullscreen'])(
+    'allows %s only from the trusted main renderer document',
+    (permission) => {
+      createMainWindow()
+      const window = lastWindow!
 
-    const trustedDecision = vi.fn()
-    permissionRequestHandler?.(window.webContents, 'clipboard-sanitized-write', trustedDecision, {
-      isMainFrame: true,
-      requestingUrl: 'file:///app/index.html'
-    })
-    expect(trustedDecision).toHaveBeenCalledWith(true)
-    expect(
-      permissionCheckHandler?.(window.webContents, 'clipboard-sanitized-write', 'file://', {
+      const trustedDecision = vi.fn()
+      permissionRequestHandler?.(window.webContents, permission, trustedDecision, {
         isMainFrame: true,
         requestingUrl: 'file:///app/index.html'
       })
-    ).toBe(true)
+      expect(trustedDecision).toHaveBeenCalledWith(true)
+      expect(
+        permissionCheckHandler?.(window.webContents, permission, 'file://', {
+          isMainFrame: true,
+          requestingUrl: 'file:///app/index.html'
+        })
+      ).toBe(true)
 
-    const untrustedDecision = vi.fn()
-    permissionRequestHandler?.(window.webContents, 'clipboard-sanitized-write', untrustedDecision, {
-      isMainFrame: true,
-      requestingUrl: 'https://example.com/'
-    })
-    expect(untrustedDecision).toHaveBeenCalledWith(false)
-    expect(
-      permissionCheckHandler?.(
-        window.webContents,
-        'clipboard-sanitized-write',
-        'https://example.com',
-        {
+      const untrustedDecision = vi.fn()
+      permissionRequestHandler?.(window.webContents, permission, untrustedDecision, {
+        isMainFrame: true,
+        requestingUrl: 'https://example.com/'
+      })
+      expect(untrustedDecision).toHaveBeenCalledWith(false)
+      expect(
+        permissionCheckHandler?.(window.webContents, permission, 'https://example.com', {
           isMainFrame: true,
           requestingUrl: 'https://example.com/'
-        }
-      )
-    ).toBe(false)
+        })
+      ).toBe(false)
 
-    const otherWindowDecision = vi.fn()
-    permissionRequestHandler?.({}, 'clipboard-sanitized-write', otherWindowDecision, {
-      isMainFrame: true,
-      requestingUrl: 'file:///app/index.html'
-    })
-    expect(otherWindowDecision).toHaveBeenCalledWith(false)
+      const otherWindowDecision = vi.fn()
+      permissionRequestHandler?.({}, permission, otherWindowDecision, {
+        isMainFrame: true,
+        requestingUrl: 'file:///app/index.html'
+      })
+      expect(otherWindowDecision).toHaveBeenCalledWith(false)
+      expect(
+        permissionCheckHandler?.({}, permission, 'file://', {
+          isMainFrame: true,
+          requestingUrl: 'file:///app/index.html'
+        })
+      ).toBe(false)
 
-    const subframeDecision = vi.fn()
-    permissionRequestHandler?.(window.webContents, 'clipboard-sanitized-write', subframeDecision, {
-      isMainFrame: false,
-      requestingUrl: 'file:///app/index.html'
-    })
-    expect(subframeDecision).toHaveBeenCalledWith(false)
-  })
+      const subframeDecision = vi.fn()
+      permissionRequestHandler?.(window.webContents, permission, subframeDecision, {
+        isMainFrame: false,
+        requestingUrl: 'file:///app/index.html'
+      })
+      expect(subframeDecision).toHaveBeenCalledWith(false)
+      expect(
+        permissionCheckHandler?.(window.webContents, permission, 'file://', {
+          isMainFrame: false,
+          requestingUrl: 'file:///app/index.html'
+        })
+      ).toBe(false)
+      expect(
+        permissionCheckHandler?.(window.webContents, permission, 'file://', { isMainFrame: true })
+      ).toBe(false)
+    }
+  )
 })
 
 describe('window-open external handler', () => {

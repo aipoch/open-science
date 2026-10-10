@@ -1,3 +1,5 @@
+import type { ResearchMembership } from '../../../../shared/session-persistence'
+import { researchDraftKey } from './research-draft-identity'
 import { useSessionReplayStore } from '@/stores/session-replay-store'
 import type { SessionDiscussionCapture } from './replay/replay-context'
 // @vitest-environment jsdom
@@ -31,7 +33,10 @@ import {
 } from './composer/composer-doc'
 import { WorkspaceComposerDraftsProvider } from './workspace-composer-drafts'
 import { useWorkspaceComposerController } from './workspace-composer-controller'
-import { createSessionDiscussionAnnotation } from './session-discussion-annotation'
+import {
+  createSessionDiscussionAnnotation,
+  replayAnnotationTarget
+} from './session-discussion-annotation'
 import type { ComposerHistoryEntry } from './composer/composer-history'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -87,6 +92,7 @@ const uploads = (
 type ControllerHook = {
   result: { current: ReturnType<typeof useWorkspaceComposerController> }
   selectDraft: (draftKey: string) => void
+  selectResearch: (source: ResearchMembership | undefined) => void
   selectSession: (
     session: Parameters<typeof useWorkspaceComposerController>[0]['activeSession']
   ) => void
@@ -115,6 +121,7 @@ const renderController = (
   strictMode = false
 ): ControllerHook => {
   let currentDraftKey = 'session-a'
+  let researchMembership: ResearchMembership | undefined
   let selectedActiveSession = activeSession ?? undefined
   let pendingCustomizePrefill: CustomizePrefillIntent | undefined
   let pendingWslSupportPrefill: WslSupportPrefillIntent | undefined
@@ -126,6 +133,7 @@ const renderController = (
   const Harness = (): null => {
     result.current = useWorkspaceComposerController({
       currentDraftKey,
+      researchMembership,
       newConversationDraftKey: 'new:project',
       activeProjectId: 'project',
       pendingCustomizePrefill,
@@ -167,6 +175,12 @@ const renderController = (
       currentDraftKey = draftKey
       render()
     },
+    selectResearch: (source): void => {
+      researchMembership = source
+      selectedActiveSession = undefined
+      currentDraftKey = source ? researchDraftKey(source) : 'new:project'
+      render()
+    },
     selectSession: (session): void => {
       selectedActiveSession = session
       currentDraftKey = session?.id ?? 'new:project'
@@ -206,6 +220,80 @@ afterEach(() => {
 })
 
 describe('workspace composer controller', () => {
+  it('isolates ordinary and per-research text, annotations and attachments while switching drafts', async () => {
+    const source = {
+      sourceProjectId: 'project',
+      sourceSessionId: 'source-a',
+      sourceImportId: 'import-a',
+      sourceTitle: 'Study A'
+    }
+    const second = { ...source, sourceSessionId: 'source-b', sourceImportId: 'import-b' }
+    const attachment: UploadedAttachment = {
+      id: 'upload-a',
+      sessionId: researchDraftKey(source),
+      name: 'evidence.txt',
+      originalName: 'evidence.txt',
+      path: '/tmp/evidence.txt',
+      mimeType: 'text/plain',
+      size: 5
+    }
+    const hook = renderController(
+      uploads(vi.fn().mockResolvedValue(attachment)),
+      undefined,
+      [],
+      null
+    )
+    mounted.push(hook)
+    hook.selectResearch(undefined)
+    act(() => hook.result.current.actions.changeDoc(textDoc('Ordinary scratch')))
+    hook.selectResearch(source)
+    act(() => {
+      hook.result.current.actions.changeDoc(textDoc('Study A question'))
+      hook.result.current.actions.addAnnotation(annotation('source-a'))
+      hook.result.current.actions.stageFiles([
+        new File(['proof'], 'evidence.txt', { type: 'text/plain' })
+      ])
+    })
+    await flushAsyncWork()
+    const captured = hook.result.current.lifecycle.captureSend()
+    hook.selectResearch(second)
+    act(() => hook.result.current.actions.changeDoc(textDoc('Study B question')))
+    expect(hook.result.current.view.annotations).toEqual([])
+    expect(hook.result.current.view.attachments).toEqual([])
+    expect(hook.result.current.lifecycle.captureSend().researchMembership).toEqual(second)
+    expect(captured.researchMembership).toEqual(source)
+    hook.selectResearch(source)
+    expect(docToText(hook.result.current.view.doc)).toBe('Study A question')
+    expect(hook.result.current.view.annotations).toEqual([annotation('source-a')])
+    expect(hook.result.current.lifecycle.captureSend().attachments).toEqual([attachment])
+    hook.selectResearch(undefined)
+    expect(docToText(hook.result.current.view.doc)).toBe('Ordinary scratch')
+    expect(hook.result.current.lifecycle.captureSend().researchMembership).toBeUndefined()
+  })
+
+  it('restores a rejected research send to its own draft after switching to another research', () => {
+    const source = {
+      sourceProjectId: 'project',
+      sourceSessionId: 'source-a',
+      sourceImportId: 'import-a',
+      sourceTitle: 'Study A'
+    }
+    const second = { ...source, sourceSessionId: 'source-b' }
+    const hook = renderController(uploads(), undefined, [], null)
+    mounted.push(hook)
+    hook.selectResearch(source)
+    act(() => hook.result.current.actions.changeDoc(textDoc('First study question')))
+    const snapshot = hook.result.current.lifecycle.captureSend()
+    act(() => hook.result.current.lifecycle.clearDraft(snapshot.draftKey, snapshot.version))
+    hook.selectResearch(second)
+    act(() => hook.result.current.actions.changeDoc(textDoc('Other study question')))
+    act(() => hook.result.current.lifecycle.restoreFailedSend(snapshot, true))
+    expect(docToText(hook.result.current.view.doc)).toBe('Other study question')
+    hook.selectResearch(source)
+    expect(docToText(hook.result.current.view.doc)).toBe('First study question')
+    expect(hook.result.current.lifecycle.captureSend().researchMembership).toEqual(source)
+  })
+
   it('replaces a discussion source atomically, preserves ordinary annotations, and allows undo', () => {
     const hook = renderController(uploads(), undefined, [], null)
     mounted.push(hook)
@@ -241,56 +329,85 @@ describe('workspace composer controller', () => {
     expect(hook.result.current.view.annotations).toEqual([annotation(), first, second])
   })
 
-  it('captures the linked replay only at Send without changing the draft or an earlier snapshot', () => {
+  it.each(['step', 'session'] as const)(
+    'sends the selected %s scope unchanged after the replay advances',
+    (scope) => {
+      const hook = renderController()
+      mounted.push(hook)
+      const context: SessionDiscussionCapture = {
+        scope,
+        projectId: 'project',
+        sourceSessionId: 'source',
+        sourceTitle: 'Study',
+        fingerprint: 'fp',
+        branchId: 'main',
+        stepId: 'one',
+        stepNumber: scope === 'step' ? 1 : undefined,
+        stepOffsetMs: 50,
+        excerpt: 'Selected evidence',
+        evidence: [{ kind: 'message', id: 'one', projectId: 'project', sessionId: 'source' }]
+      }
+      const selected = createSessionDiscussionAnnotation(context, 'selected')!
+      const capture = vi.fn(() => context)
+      act(() => {
+        hook.result.current.actions.changeDoc(textDoc('Explain this research.'))
+        hook.result.current.actions.addAnnotation(selected)
+        useSessionReplayStore.setState({ playhead: { ...context, capture } })
+      })
+      context.stepId = 'two'
+      context.stepNumber = 2
+      const sent = hook.result.current.lifecycle.captureSend()
+      context.stepId = 'three'
+      context.stepNumber = 3
+      expect(sent.discussionFocus).toBeUndefined()
+      expect(sent.annotations).toEqual([selected])
+      expect(replayAnnotationTarget(sent.annotations[0])).toMatchObject({
+        contextId: 'selected',
+        scope,
+        stepId: 'one',
+        stepOffsetMs: 50
+      })
+      expect(hook.result.current.lifecycle.captureSend().annotations).toEqual([selected])
+      expect(hook.result.current.view.annotations).toEqual([selected])
+      expect(docToText(hook.result.current.view.doc)).toBe('Explain this research.')
+      expect(capture).not.toHaveBeenCalled()
+    }
+  )
+
+  it('keeps ordinary follow-ups on their durable research binding without attaching the playhead', () => {
     const hook = renderController()
     mounted.push(hook)
-    const context: SessionDiscussionCapture = {
+    const binding = {
       projectId: 'project',
-      sourceSessionId: 'source',
-      sourceTitle: 'Study',
-      fingerprint: 'fp',
+      sessionId: 'source',
+      contextId: 'previous-selection',
+      title: 'Study',
+      scope: 'session' as const,
       branchId: 'main',
-      stepId: 'one',
-      stepNumber: 1,
-      stepOffsetMs: 0,
-      excerpt: '',
-      evidence: [{ kind: 'message', id: 'one', projectId: 'project', sessionId: 'source' }]
+      promptMessageId: 'previous'
     }
-    const capture = vi.fn(() => context)
+    const capture = vi.fn()
+    const session = {
+      id: 'session-a',
+      projectId: 'project',
+      runtimeContext: {
+        revision: 1,
+        sessionContext: { version: 1 as const, bindings: [binding] }
+      }
+    }
+    const originalContext = structuredClone(session.runtimeContext.sessionContext)
     act(() => {
-      hook.selectSession({
-        id: 'session-a',
-        projectId: 'project',
-        runtimeContext: {
-          revision: 1,
-          sessionContext: {
-            version: 1,
-            bindings: [
-              {
-                projectId: 'project',
-                sessionId: 'source',
-                contextId: 'old',
-                title: 'Study',
-                branchId: 'main',
-                promptMessageId: 'previous'
-              }
-            ]
-          }
-        }
+      hook.selectSession(session)
+      hook.result.current.actions.changeDoc(textDoc('What are its limitations?'))
+      useSessionReplayStore.setState({
+        playhead: { projectId: 'project', sourceSessionId: 'source', capture }
       })
-      hook.result.current.actions.changeDoc(textDoc('Explain this step.'))
-      useSessionReplayStore.setState({ playhead: { ...context, capture } })
     })
-    context.stepId = 'two'
-    context.stepNumber = 2
-    expect(capture).not.toHaveBeenCalled()
     const sent = hook.result.current.lifecycle.captureSend()
-    context.stepId = 'three'
-    context.stepNumber = 3
-    expect(sent.discussionFocus).toMatchObject({ stepId: 'two', stepNumber: 2 })
-    expect(hook.result.current.view.annotations).toEqual([])
-    expect(docToText(hook.result.current.view.doc)).toBe('Explain this step.')
-    expect(hook.result.current.lifecycle.captureSend().discussionFocus?.stepId).toBe('three')
+    expect(sent.discussionFocus).toBeUndefined()
+    expect(sent.annotations).toEqual([])
+    expect(session.runtimeContext.sessionContext).toEqual(originalContext)
+    expect(capture).not.toHaveBeenCalled()
     expect(hook.result.current.lifecycle.captureSend(false).discussionFocus).toBeUndefined()
   })
 

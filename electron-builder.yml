@@ -66,6 +66,8 @@ files:
   # second, unused copy under app.asar.unpacked/resources/bin.
   - '!resources/bin{,/**/*}'
 asarUnpack:
+  # The scoped Replay server reads bounded real file descriptors, independent of asar's virtual FS.
+  - out/replay-viewer/**
   - resources/**
   - '!resources/bin{,/**/*}'
   # The translation worker runs outside asar and resolves its WASM/font dependencies there.

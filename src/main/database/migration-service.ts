@@ -1,3 +1,4 @@
+import { sessionResearchMembershipMigration } from './migrations/0051-session-research-membership'
 import { pascalcaseTableNamesMigration } from './migrations/0049-pascalcase-table-names'
 import { pdfAnnotationSharingMigration } from './migrations/0048-pdf-annotation-sharing'
 import { journalAttributesMigration } from './migrations/0046-journal-attributes'
@@ -933,6 +934,17 @@ const MIGRATION_MANIFEST = [
       literatureTranslationMigration.statements,
       literatureTranslationMigration.verifiers,
       literatureTranslationMigration.operations
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...sessionResearchMembershipMigration,
+    checksum: checksumMigrationPayload(
+      sessionResearchMembershipMigration.id,
+      sessionResearchMembershipMigration.statements,
+      sessionResearchMembershipMigration.verifiers,
+      sessionResearchMembershipMigration.operations
     ),
     backupOnApply: 'required',
     backupRetention: 'retain'

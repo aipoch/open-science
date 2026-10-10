@@ -1,3 +1,8 @@
+export {
+  normalizeExecutionConfinement,
+  executionConfinementAllowsHost
+} from '../runtime/src/gateway/execution-confinement.js'
+export type { ExecutionConfinement } from '../runtime/src/gateway/execution-confinement.js'
 import { randomUUID } from 'node:crypto'
 
 import {
@@ -14,6 +19,7 @@ import {
 } from '../runtime/src/index.js'
 
 import { createRuntimeConfig, normalizePolicy } from './config.js'
+import { validateLocalService } from '../runtime/src/platform/local-service.js'
 import type {
   NotebookNetworkParentProxy,
   NotebookNetworkPolicy,
@@ -197,6 +203,9 @@ class NotebookNetworkSandbox {
   }
 
   async wrap(command: NotebookSandboxCommand): Promise<NotebookSandboxedProcess> {
+    const localService = command.localService
+      ? validateLocalService(command.localService, process.platform, command.target?.kind)
+      : undefined
     let target: NotebookSandboxTarget
     try {
       if (!this.#initialized) throw new Error('Notebook network sandbox is not initialized.')
@@ -228,6 +237,7 @@ class NotebookNetworkSandbox {
     let wrapped: Awaited<ReturnType<typeof NotebookNetworkRuntime.wrap>>
     try {
       wrapped = await this.#backend.wrap({
+        ...(command.confinement ? { confinement: command.confinement } : {}),
         target,
         command: command.command,
         ...(command.executable ? { executable: command.executable, args: command.args ?? [] } : {}),
@@ -238,6 +248,7 @@ class NotebookNetworkSandbox {
         env: command.env ?? {},
         ...(command.pathEnvironment ? { pathEnvironment: command.pathEnvironment } : {}),
         ...(command.localRpcSocketPath ? { localRpcSocketPath: command.localRpcSocketPath } : {}),
+        ...(localService ? { localService } : {}),
         ...(command.inheritedFileDescriptorCount
           ? { inheritedFileDescriptorCount: command.inheritedFileDescriptorCount }
           : {}),
@@ -532,12 +543,17 @@ class NotebookNetworkSandbox {
 }
 
 export { NotebookNetworkSandbox, NotebookSandboxPreparationError }
+export {
+  validateLocalService,
+  validateLocalServiceLocation
+} from '../runtime/src/platform/local-service.js'
 // Shared transport accepts an already validated numeric destination, preserving DNS pinning.
 export {
   tunnelThroughProxy,
   resolveParentProxyUrl
 } from '../runtime/src/gateway/command-gateway.js'
 export type {
+  NotebookLocalService,
   NotebookNetworkAccessRequest,
   NotebookNetworkDecisionHandler,
   NotebookNetworkParentProxy,

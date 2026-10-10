@@ -115,7 +115,12 @@
       "src/main/composition/notebook-environment.test.ts",
       "src/main/composition/reviewer.test.ts",
       "src/main/desktop-runtime-transport.integration.test.ts",
-      "src/renderer/src/pages/workspace/session-plan/session-plan-resume.test.tsx"
+      "src/renderer/src/pages/workspace/session-plan/session-plan-resume.test.tsx",
+      "src/main/composition/artifact-surfaces.test.ts",
+      "src/main/composition/handoff.test.ts",
+      "src/main/composition/managed-execution.integration.test.ts",
+      "src/main/composition/session-packages.test.ts",
+      "src/main/research-demos/owner.macos.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

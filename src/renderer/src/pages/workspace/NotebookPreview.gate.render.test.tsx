@@ -18,6 +18,13 @@ import { createInitialSessionState, useSessionStore } from '../../stores/session
 import { EnvProvisionOverlay } from './EnvProvisionOverlay'
 import { NotebookPreview, type NotebookPreviewItem } from './NotebookPreview'
 import { deriveProvisionUi } from './provisioning-view'
+import { NotebookRunRepository } from '../../../../main/notebook/repository'
+import { NotebookSessionReadModel } from '../../../../main/notebook/session-read-model'
+import { WEB_CALLER_LOCATION_ATTRIBUTE } from '../../../../shared/web-caller-location'
+import {
+  createInitialPreviewWorkbenchState,
+  usePreviewWorkbenchStore
+} from '@/stores/preview-workbench-store'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -544,6 +551,151 @@ describe('NotebookPreview per-kernel tabs', () => {
       })
     }
   }
+
+  const publicObservationRun = async (
+    overrides: Partial<NotebookRunRecord> = {}
+  ): Promise<NotebookRunRecord> => {
+    const durableRun = makeRun({
+      runId: 'exact-managed-run',
+      kernelKind: 'bash',
+      status: 'running',
+      submissionIdentity: 'managed-private-admission',
+      submissionFingerprint: 'private-fingerprint',
+      executionInvocationId: 'managed-public-invocation',
+      ...overrides
+    })
+    const repository = new NotebookRunRepository('/tmp/proj')
+    vi.spyOn(repository, 'readSessionRunWindow').mockResolvedValue({
+      runs: [durableRun],
+      total: 1,
+      latestRunEnvironments: {}
+    })
+    const model = new NotebookSessionReadModel({
+      storageRoot: '/tmp/proj',
+      defaultProjectId: 'proj',
+      repository,
+      dependencyAnalyzer: {
+        project: async () => ({ stalenessByRunId: {}, invalidatedByRunId: {} })
+      },
+      findSession: () => undefined,
+      runtimeBindings: () => ({}),
+      isRestartRecommended: () => false
+    })
+    // Exercise the production public projection rather than hand-building a DTO that retains
+    // private admission fields. Live state() uses the same toPublicRunRecord projection.
+    const state = await model.importedState(
+      { projectId: 'proj', sessionId: 'session-1', workspaceCwd: '/tmp/proj' },
+      [durableRun.runId],
+      undefined,
+      undefined,
+      1
+    )
+    expect(state.runs[0]).not.toHaveProperty('submissionIdentity')
+    expect(state.runs[0]).not.toHaveProperty('submissionFingerprint')
+    expect(state.runs[0].executionInvocationId).toBe(durableRun.executionInvocationId)
+    return state.runs[0]
+  }
+
+  it.each(['queued', 'running', 'completed'] as const)(
+    'opens the exact %s managed Run from the actual public Notebook DTO',
+    async (status) => {
+      const session = useSessionStore.getState().sessions[0]
+      useSessionStore.setState({ sessions: [{ ...session, projectId: 'proj' }] })
+      usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+      await mountWithRuns([await publicObservationRun({ status })])
+      const label = status === 'completed' ? 'View run record' : 'Observe run'
+      await act(async () => fireEvent.click(screen.getByRole('button', { name: label })))
+      const preview = usePreviewWorkbenchStore.getState()
+      expect(preview.items.find((entry) => entry.id === preview.activeItemId)).toMatchObject({
+        type: 'tool',
+        toolKind: 'replay',
+        projectId: 'proj',
+        sessionId: 'session-1',
+        replayRunTarget: { projectId: 'proj', sessionId: 'session-1', runId: 'exact-managed-run' }
+      })
+      expect(window.api.notebook.execute).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each(['ordinary', 'missing-invocation', 'imported', 'web'] as const)(
+    'does not admit an observation entry for a %s source',
+    async (kind) => {
+      const session = useSessionStore.getState().sessions[0]
+      useSessionStore.setState({
+        sessions: [
+          {
+            ...session,
+            projectId: 'proj',
+            ...(kind === 'imported'
+              ? {
+                  packageOrigin: {
+                    importId: 'fixture-import',
+                    importedAt: 1,
+                    sourceProjectId: 'source-project',
+                    sourceSessionId: 'source-session',
+                    manifestChecksum: 'a'.repeat(64)
+                  }
+                }
+              : {})
+          }
+        ]
+      })
+      if (kind === 'web')
+        document.documentElement.setAttribute(WEB_CALLER_LOCATION_ATTRIBUTE, 'local')
+      try {
+        await mountWithRuns([
+          await publicObservationRun({
+            executionInvocationId:
+              kind === 'ordinary'
+                ? 'acp-invocation'
+                : kind === 'missing-invocation'
+                  ? undefined
+                  : 'managed-public-invocation'
+          })
+        ])
+        expect(screen.queryByRole('button', { name: 'Observe run' })).toBeNull()
+        expect(screen.queryByRole('button', { name: 'View run record' })).toBeNull()
+      } finally {
+        document.documentElement.removeAttribute(WEB_CALLER_LOCATION_ATTRIBUTE)
+      }
+    }
+  )
+
+  it('opens saved recordings for an imported Notebook without treating author Run IDs as local execution', async () => {
+    const session = useSessionStore.getState().sessions[0]
+    useSessionStore.setState({
+      sessions: [
+        {
+          ...session,
+          projectId: 'proj',
+          title: 'Received study',
+          packageOrigin: {
+            importId: 'receiving-import',
+            importedAt: 1,
+            sourceProjectId: 'author-project',
+            sourceSessionId: 'author-session',
+            manifestChecksum: 'a'.repeat(64)
+          }
+        }
+      ]
+    })
+    usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+    await mountWithRuns([await publicObservationRun({ status: 'completed' })])
+    await act(async () =>
+      fireEvent.click(screen.getByRole('button', { name: 'View saved run recordings' }))
+    )
+    const preview = usePreviewWorkbenchStore.getState()
+    const active = preview.items.find((entry) => entry.id === preview.activeItemId)
+    expect(active).toMatchObject({
+      toolKind: 'replay',
+      projectId: 'proj',
+      replaySourceProjectId: 'proj',
+      replaySourceSessionId: 'session-1',
+      replayRevealMode: 'runs'
+    })
+    expect(active).not.toHaveProperty('replayRunTarget')
+    expect(window.api.notebook.execute).not.toHaveBeenCalled()
+  })
 
   it('withholds folder recovery until the session content establishes a live local owner', async () => {
     const session = useSessionStore.getState().sessions[0]

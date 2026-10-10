@@ -68,10 +68,45 @@ test('drops a native package into the current Project without adding an attachme
   await page.screenshot({ path: testInfo.outputPath('project-package-drop-confirm.png') })
   await importing.getByRole('button', { name: 'Import', exact: true }).click()
   await expect(importing.getByText('Package operation completed', { exact: true })).toBeVisible()
+  const sessionsBeforeOpen = await page.evaluate(async () =>
+    (await window.api.sessions.loadAll()).sessions.map((session) => ({
+      id: session.id,
+      imported: Boolean(session.packageOrigin)
+    }))
+  )
+  const importedSource = sessionsBeforeOpen.find((session) => session.imported)!
   await importing.getByRole('button', { name: 'Open imported Session', exact: true }).click()
-  await expect(page.getByRole('region', { name: 'Imported research history' })).toBeVisible()
+  await expect(page.getByTestId('research-workspace-header')).toContainText(prompt)
+  await expect(page.getByTestId('research-workspace-header')).toContainText('Discussion')
+  const editor = page.getByRole('textbox', { name: 'Ask anything', exact: true })
+  await expect(editor).toBeEditable()
+  await expect(editor).toBeEmpty()
+  await expect(page.getByTestId('session-discussion-draft')).toContainText(prompt)
+  await editor.fill('What can I learn from this imported research?')
+  await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled()
+  await expect(page.locator('#right-panel').getByTestId('replay-panel')).toBeVisible()
+  expect(
+    await page.evaluate(async () => (await window.api.sessions.loadAll()).sessions.map((s) => s.id))
+  ).toEqual(sessionsBeforeOpen.map((session) => session.id))
   await expect(page.getByRole('button', { name: 'Research exchange', exact: true })).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('project-package-drop-completed.png') })
+
+  await page
+    .locator(`[data-research-id="${importedSource.id}"]`)
+    .getByRole('button', { name: `Open actions for ${prompt}`, exact: true })
+    .click()
+  await page.getByRole('menuitem', { name: 'View original record', exact: true }).click()
+  await expect(page.getByRole('region', { name: 'Imported research history' })).toBeVisible()
+  await expect(page.getByTestId('research-workspace-header')).toContainText(
+    'Original record · Read-only'
+  )
+  await expect(editor).toHaveCount(0)
+  await expect(
+    page
+      .getByRole('region', { name: 'Conversation', exact: true })
+      .getByText(`Deterministic reply: ${prompt}`, { exact: true })
+  ).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('project-package-drop-original-record.png') })
 })
 
 test('attaches native files across the conversation and excludes both sidebars', async ({
