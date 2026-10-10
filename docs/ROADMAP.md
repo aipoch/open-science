@@ -2,7 +2,7 @@
 
 Open-Science is an open-source, local-first AI research workbench. Researchers can move from literature and data to agent-assisted computation, inspectable results, and portable research records in one workspace, while choosing compatible models and compute infrastructure.
 
-This roadmap separates **available capabilities**, **remaining gaps**, and **possible future work**. It is a capability map, not a release log or a promise of delivery dates. The baseline below was reviewed against `main` on **2026-10-08**, with package version **0.36.0**. Some changes on `main` may not yet be in an installed release; consult the [release notes](https://github.com/aipoch/open-science/releases) for version-specific availability and the [README](../README.md) for setup and a product tour.
+This roadmap separates **available capabilities**, **remaining gaps**, and **possible future work**. It is a capability map, not a release log or a promise of delivery dates. The baseline below was reviewed against `main` on **2026-10-09**, with package version **0.37.0**. Some changes on `main` may not yet be in an installed release; consult the [release notes](https://github.com/aipoch/open-science/releases) for version-specific availability and the [README](../README.md) for setup and a product tour.
 
 ## Table of Contents
 

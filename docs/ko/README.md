@@ -51,7 +51,7 @@ AIPOCH Open-Science는 머신러닝, 통계학, 생명과학, 화학, 재료과�
 
 완료된 연구 세션은 선택한 대화 분기, 파일 버전, Notebook 기록 및 검증 증거를 포함하는 이동 가능한 `.science` 패키지로 내보내 검토, 인계 및 보관에 사용할 수도 있습니다.
 
-> 💡 **[AIPOCH Open-Science v0.36.0 출시](https://github.com/aipoch/open-science/releases/latest)** _(2026년 10월 업데이트)_. AIPOCH Open-Science v0.36.0은 실행할 때마다 위험을 검토할 수 있는 Notebook 실행, 원문·번역문·대조 보기 모드를 갖춘 이어서 재개할 수 있는 공유 PDF 번역, 암 단백질체학 연구용 PDC 커넥터, 집단별 연결불균형 쿼리를 추가한 Genomes 커넥터, Claude Haiku 5.5 지원을 추가합니다. 버그 수정은 과학 PDF의 기본 레이아웃 유지, 공식 모델 카탈로그 정리, 빈 대화에서 검색 복원, 파일 멘션·Remote Web 마켓플레이스·작성기 칩 안정성 강화를 포함합니다. 자세한 내용은 [최신 릴리스 노트](https://github.com/aipoch/open-science/releases/latest)를 참조하세요.
+> 💡 **[AIPOCH Open-Science v0.37.0 출시](https://github.com/aipoch/open-science/releases/latest)** _(2026년 10월 업데이트)_. AIPOCH Open-Science v0.37.0은 공유 백엔드를 독립 실행형 Node 서비스로 실행합니다 — 명령줄과 헤드리스 모드에 창 없는 Electron 호스트가 더 이상 필요 없으며, 데스크톱 앱은 네이티브 클라이언트로 연결됩니다. 커넥터 카탈로그에 ENCORI 커넥터, ChEMBL 어세이 세부 정보와 바이오액티비티 페이지 매기기, ClinVar 제출 증거 조회가 추가되고, PDF 번역은 기본 읽기 순서를 유지하며 구조 추출은 원본이 소유한 그림과 표를 온전히 유지합니다. 노트북 런타임은 간소화된 승인 카드 뒤에서 환경 정보를 더 정확하게 보고합니다. 버그 수정은 Windows Python 검색, 데스크톱 백엔드 포트와 프로필, `.science` 신규 프로젝트 가져오기, 스마트 컬렉션 배치 내 재시도, Codex 스트리밍 도구 인수를 포함합니다. 자세한 내용은 [최신 릴리스 노트](https://github.com/aipoch/open-science/releases/latest)를 참조하세요.
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 히어로 배너: Science, Open to All — 오픈 소스, 모델 독립적, 자체 호스팅 가능한 과학 AI 연구 워크벤치" src="../images/readme/open-science-banner.png" />
