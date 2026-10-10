@@ -639,8 +639,8 @@ jobs:
     env:
       VITEST_DEFER_COVERAGE_THRESHOLDS: '1'
       VITEST_PORTABLE_CI: '1'
-    # Keep the full-suite budget aligned with build.yml; 25m cancels slow shards before reporting.
-    timeout-minutes: 45
+    # 25m cancelled slow full-suite shards before reporting; 30m is a temporary budget.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
