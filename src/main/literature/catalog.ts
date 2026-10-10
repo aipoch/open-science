@@ -402,15 +402,84 @@ const findIdentityItem = async (
 ): Promise<string | undefined> => {
   const identity = identifiers.filter(({ scheme }) => identitySchemes.has(scheme))
   if (identity.length === 0) return undefined
-  const match = await transaction.literatureIdentifier.findFirst({
+  const matches = await transaction.literatureItem.findMany({
     where: {
-      item: { mergedIntoItemId: null },
-      OR: identity.map(({ normalizedValue, scheme }) => ({ scheme, normalizedValue }))
+      mergedIntoItemId: null,
+      identifiers: {
+        some: { OR: identity.map(({ normalizedValue, scheme }) => ({ scheme, normalizedValue })) }
+      }
     },
-    orderBy: [{ item: { deletedAt: 'asc' } }, { item: { createdAt: 'asc' } }, { itemId: 'asc' }],
-    select: { itemId: true }
+    orderBy: [{ deletedAt: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
+    select: { id: true, identifiers: true }
   })
-  return match?.itemId
+  const owners = matches.map((match) =>
+    match.identifiers.filter(({ scheme }) => identitySchemes.has(scheme))
+  )
+  // Multiple values are established aliases only when one stored owner contains them all.
+  if (
+    identity.some(
+      (identifier) =>
+        identity.some(
+          (other) =>
+            other.scheme === identifier.scheme &&
+            other.normalizedValue !== identifier.normalizedValue
+        ) &&
+        !owners.some((owner) =>
+          identity
+            .filter(({ scheme }) => scheme === identifier.scheme)
+            .every((alias) =>
+              owner.some(
+                ({ scheme, normalizedValue }) =>
+                  scheme === alias.scheme && normalizedValue === alias.normalizedValue
+              )
+            )
+        )
+    )
+  )
+    throw new Error(LITERATURE_IMPORT_IDENTITY_CONFLICT)
+  // Explicit copies may lack fields, but must share an identity and agree on populated schemes.
+  const commonIdentity = owners[0]?.filter((identifier) =>
+    owners.every((existing) =>
+      existing.some(
+        ({ scheme, normalizedValue }) =>
+          scheme === identifier.scheme && normalizedValue === identifier.normalizedValue
+      )
+    )
+  )
+  if (
+    (owners.length > 1 && commonIdentity?.length === 0) ||
+    owners.some(
+      (existing) =>
+        identity.some((identifier) => {
+          const sameScheme = existing.filter(({ scheme }) => scheme === identifier.scheme)
+          return (
+            sameScheme.length > 0 &&
+            !owners.some((owner) =>
+              owner.some(
+                ({ scheme, normalizedValue }) =>
+                  scheme === identifier.scheme && normalizedValue === identifier.normalizedValue
+              )
+            )
+          )
+        }) ||
+        owners.some((other) =>
+          existing.some((identifier) => {
+            const sameScheme = other.filter(({ scheme }) => scheme === identifier.scheme)
+            return (
+              sameScheme.length > 0 &&
+              !sameScheme.some(({ normalizedValue }) =>
+                existing.some(
+                  (alias) =>
+                    alias.scheme === identifier.scheme && alias.normalizedValue === normalizedValue
+                )
+              )
+            )
+          })
+        )
+    )
+  )
+    throw new Error(LITERATURE_IMPORT_IDENTITY_CONFLICT)
+  return matches[0]?.id
 }
 
 const restoreExistingItem = (
