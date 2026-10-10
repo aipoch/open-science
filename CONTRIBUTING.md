@@ -70,6 +70,22 @@ for native build prerequisites, secure-storage requirements and host capability 
 npm run dev
 ```
 
+Native credential helpers build incrementally during desktop and Web development. Keep their
+ignored `packages/credential-identity-probe-native/build/` directory between launches: a clean
+rebuild can change an ad-hoc macOS helper's signing identity even when its source is unchanged,
+invalidating previously granted Keychain access. Native source changes still trigger compilation;
+desktop packaging continues to perform a clean native rebuild.
+
+On macOS, the first access to an existing Keychain item may require your login password. Choose
+**Always Allow** to authorize subsequent access by that helper. A locked Keychain, a changed native
+helper, or an ad-hoc application update can require authorization again; ordinary relaunches do not
+need a new application password. See [Apple's Keychain authorization guide](https://support.apple.com/guide/keychain-access/kyca1243/mac).
+Windows uses noninteractive DPAPI under the current user account. Linux uses the selected Secret
+Service or KWallet; its wallet must be unlocked, and KWallet may require an initial application
+grant. Login-time wallet unlocking is managed by the desktop environment. Development retains
+OS-backed encryption on all platforms and never switches an existing encrypted profile to file
+storage to suppress a prompt.
+
 Windows standard-mode development does not require a separate Notebook runtime.
 Enabling Notebook protection prepares verified Node and PowerShell components on demand:
 compatible official installations are preferred, and missing components are downloaded from

@@ -1,4 +1,5 @@
 import { Buffer } from 'node:buffer'
+import { execFileSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import * as fs from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -12,6 +13,66 @@ const { dirname, join, posix } = nodePath
 const require = createRequire(import.meta.url)
 const builderRequire = createRequire(require.resolve('electron-builder/package.json'))
 const appBuilderRequire = createRequire(builderRequire.resolve('app-builder-lib/package.json'))
+
+it.skipIf(process.platform !== 'darwin')(
+  'preserves the authorized native helper on an unchanged development build and recompiles edits',
+  () => {
+    const directory = mkdtempSync(join(tmpdir(), 'credential-incremental-build-'))
+    const nativeDirectory = join(directory, 'packages', 'credential-identity-probe-native')
+    const manifest = JSON.parse(readFileSync('package.json', 'utf8')) as {
+      scripts: Record<string, string>
+    }
+    try {
+      mkdirSync(nativeDirectory, { recursive: true })
+      fs.copyFileSync(
+        'packages/credential-identity-probe-native/binding.gyp',
+        join(nativeDirectory, 'binding.gyp')
+      )
+      fs.cpSync('packages/credential-identity-probe-native/src', join(nativeDirectory, 'src'), {
+        recursive: true
+      })
+      writeFileSync(
+        join(directory, 'package.json'),
+        JSON.stringify({
+          scripts: { 'build:backend-native': manifest.scripts['build:backend-native'] }
+        })
+      )
+      const build = (): void => {
+        execFileSync('npm', ['run', 'build:backend-native'], {
+          cwd: directory,
+          env: {
+            ...process.env,
+            PATH: `${join(process.cwd(), 'node_modules', '.bin')}${nodePath.delimiter}${process.env.PATH}`
+          },
+          stdio: 'pipe',
+          timeout: 60_000
+        })
+      }
+      // Compile actual helpers, but never execute them or access the user's Keychain.
+      build()
+      const executable = join(nativeDirectory, 'build', 'Release', 'credential_secret')
+      const original = readFileSync(executable)
+      const modifiedAt = fs.statSync(executable, { bigint: true }).mtimeNs
+      const requirement = (): string =>
+        execFileSync('codesign', ['-d', '-r-', executable], { encoding: 'utf8', stdio: 'pipe' })
+      const originalRequirement = requirement()
+      build()
+      expect(readFileSync(executable)).toEqual(original)
+      expect(fs.statSync(executable, { bigint: true }).mtimeNs).toBe(modifiedAt)
+      expect(requirement()).toBe(originalRequirement)
+
+      const source = join(nativeDirectory, 'src', 'credential_secret.cc')
+      fs.appendFileSync(source, '\nstatic_assert(false, "native source must be rebuilt");\n')
+      // Advance the fixture timestamp beyond make's filesystem timestamp granularity.
+      const changedAt = new Date(Date.now() + 2_000)
+      fs.utimesSync(source, changedAt, changedAt)
+      expect(build).toThrow(/native source must be rebuilt/)
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  },
+  120_000
+)
 
 it('edits the Windows launcher before signing and signs each bundled PE only once', async () => {
   const { NtExecutable } = appBuilderRequire('resedit')
