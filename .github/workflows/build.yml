@@ -332,6 +332,14 @@ jobs:
           node-version: 24
           cache: npm
 
+      # The Node secret backend compiles against libsecret/dbus headers during packaging
+      # (build:backend-native); Ubuntu images do not ship them.
+      - name: Install Linux secret service headers
+        if: ${{ matrix.platform == 'linux' }}
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install --yes --no-install-recommends libsecret-1-dev libdbus-1-dev
+
       # npm ci runs postinstall: prisma generate + electron-builder install-app-deps.
       - name: Install dependencies
         run: node scripts/ci/npm-ci.mjs
