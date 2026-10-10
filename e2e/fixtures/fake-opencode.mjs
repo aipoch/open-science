@@ -1469,6 +1469,31 @@ if (process.argv.includes('--version')) {
       const prompt = controlStart >= 0 ? rawPrompt.slice(controlStart) : rawPrompt
       await captureProviderPrompt(context.params.sessionId, prompt)
       if (
+        prompt.includes('PDB desktop repro:') &&
+        !prompt.includes('Generate Session metadata only from the following JSON data:')
+      ) {
+        const scenario = /PDB desktop repro: ([a-z-]+)/.exec(prompt)?.[1]
+        if (!scenario) throw new Error('Missing PDB desktop reproduction scenario')
+        const result = controlResultValue(
+          await executeControlCode(
+            context.params.sessionId,
+            'try { return { outcome: "success", result: await host.mcp("structures", "pdb_search_structures", { text: "p53", max_rows: 200 }) }; } catch (error) { return { outcome: "error", message: error.message }; }'
+          )
+        )
+        await context.client.notify(acp.methods.client.session.update, {
+          sessionId: context.params.sessionId,
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
+            content: {
+              type: 'text',
+              text: `PDB desktop result ${scenario}: ${JSON.stringify(result)}`
+            }
+          }
+        })
+        return { stopReason: 'end_turn' }
+      }
+      if (
         !prompt.includes('Generate Session metadata only from the following JSON data:') &&
         (prompt.includes(PLAN_DISMISS_PROMPT) || prompt.includes(PLAN_RECOVERY_PROMPT))
       ) {

@@ -528,17 +528,17 @@ export const STRUCTURES_PDB_TOOLS: ToolDescriptor[] = [
             results_content_type: contentTypes
           }
         }
-        let body: SearchResponse | null
-        try {
-          body = (await ctx.postJson(SEARCH_URL, payload)) as SearchResponse
-        } catch (err) {
-          // Zero hits arrive as HTTP 204 (empty body); postJson's .json() then throws a JSON parse
-          // error. Treat only that as zero hits — re-throw genuine HTTP/transport failures.
-          if (err instanceof SyntaxError) body = null
-          else throw err
-        }
-        if (body == null) {
-          totalCount = 0
+        const body = (await ctx.postJson(SEARCH_URL, payload, {
+          allowNoContent: true
+        })) as SearchResponse | undefined
+        // Only an initial HTTP 204 proves zero hits. A later empty page contradicts the
+        // reported total; malformed JSON must propagate as an error on every page.
+        if (body === undefined) {
+          if (records.length > 0) {
+            throw new Error(
+              'PDB search returned HTTP 204 before all reported results were retrieved.'
+            )
+          }
           break
         }
         totalCount = body.total_count ?? 0
