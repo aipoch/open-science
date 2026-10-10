@@ -861,12 +861,41 @@ class AcpRuntimeCoordinator {
   // Captures the app-owned original user request while its provider prompt still owns this session.
   // The framework adapter calls this before requesting cancellation, so the continuation can retain
   // the same text, attachments, and provenance without fabricating another user action.
-  capturePromptForHandoff(
-    sessionId: string
-  ): { prompt: AcpPromptRequest; originatingTurnToken: string } | undefined {
+  capturePromptForHandoff(sessionId: string):
+    | {
+        prompt: AcpPromptRequest
+        originatingTurnToken: string
+        restoreSession: (specialistId: string | undefined) => Promise<void>
+      }
+    | undefined {
     const active = this.activePromptRequests.get(sessionId)
     if (!active?.turnToken) return undefined
-    return { prompt: active.request, originatingTurnToken: active.turnToken }
+    const runtime = active.runtime
+    const resume = runtime.captureHandoffSessionResume(sessionId)
+    return {
+      prompt: active.request,
+      originatingTurnToken: active.turnToken,
+      restoreSession: async (specialistId) => {
+        const owner = this.findRuntimeForSession(sessionId)
+        if (
+          !this.runtimes.has(runtime) ||
+          this.retiredRuntimes.has(runtime) ||
+          (owner && owner !== runtime)
+        ) {
+          throw new Error('The approved handoff runtime was superseded.')
+        }
+        await resume(specialistId)
+        const restoredOwner = this.findRuntimeForSession(sessionId)
+        if (
+          !this.runtimes.has(runtime) ||
+          this.retiredRuntimes.has(runtime) ||
+          (restoredOwner && restoredOwner !== runtime)
+        ) {
+          throw new Error('The approved handoff runtime was superseded.')
+        }
+        this.bindSessionRuntime(sessionId, runtime)
+      }
+    }
   }
 
   // Publishes only sanitized lifecycle metadata. The captured completion and original prompt remain

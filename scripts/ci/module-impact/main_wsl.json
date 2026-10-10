@@ -244,7 +244,9 @@
       "src/main/artifacts/artifact-reproducibility-commands.test.ts",
       "src/main/data-content-application-commands.test.ts",
       "src/main/uploads/command-owner.test.ts",
-      "src/main/settings/file-commands.test.ts"
+      "src/main/settings/file-commands.test.ts",
+      "src/main/acp/specialist-switch-recovery.integration.test.ts",
+      "src/main/agents/production-completion-handoff.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

@@ -154,7 +154,9 @@
       "src/main/acp/prompt-outcome-finalizer.test.ts",
       "src/main/acp/native-follow-up-workflow.test.ts",
       "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts",
-      "src/main/side-chat/application-commands.test.ts"
+      "src/main/side-chat/application-commands.test.ts",
+      "src/main/acp/specialist-switch-recovery.integration.test.ts",
+      "src/main/agents/production-completion-handoff.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

@@ -1840,7 +1840,9 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/office-preview/application-commands.test.ts',
       'src/main/reviewer/paged-preview-host.test.ts',
       'src/main/session-plan/session-plan-turn-outcome.test.ts',
-      'src/main/notebook/runtime-repair.windows.integration.test.ts'
+      'src/main/notebook/runtime-repair.windows.integration.test.ts',
+      'src/main/acp/specialist-switch-recovery.integration.test.ts',
+      'src/main/agents/production-completion-handoff.test.ts'
     ])
     expect(sessionPersistence.capabilityOverlays).toEqual([
       'windows_sensitive',

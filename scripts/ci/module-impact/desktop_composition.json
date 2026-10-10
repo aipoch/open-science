@@ -1438,7 +1438,10 @@
       "src/main/notebook/python-command.probe.test.ts",
       "src/main/notebook/windows-python-probe.integration.test.ts",
       "src/main/notebook/python-command.test.ts",
-      "src/main/skills/registered-helper-catalog.runtime.test.ts"
+      "src/main/skills/registered-helper-catalog.runtime.test.ts",
+      "src/main/acp/specialist-switch-recovery.integration.test.ts",
+      "src/main/agents/production-completion-handoff.test.ts",
+      "src/main/agents/completion-handoff-lifecycle.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
