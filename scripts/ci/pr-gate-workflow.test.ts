@@ -943,7 +943,7 @@ describe('PR Gate workflow', () => {
       ({ name }) => name === 'Enforce selected static checks'
     )
 
-    expect(workflow.jobs.static['timeout-minutes']).toBe(15)
+    expect(workflow.jobs.static['timeout-minutes']).toBe(20)
     expect(actionlint).toMatchObject({
       id: 'actionlint',
       'continue-on-error': true
@@ -955,6 +955,8 @@ describe('PR Gate workflow', () => {
       '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8'
     )
     expect(actionlint?.run).toContain('-shellcheck= -pyflakes=')
+    // A stalled release download must fail fast and retry instead of consuming the job budget.
+    expect(actionlint?.run).toContain('--connect-timeout 30 --max-time 120 --retry 3')
     expect(zizmor).toMatchObject({
       'continue-on-error': true,
       uses: 'zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482',
@@ -1068,8 +1070,8 @@ describe('PR Gate workflow', () => {
   it('shards full portable tests on Ubuntu and merges coverage into the stable unit bundle', () => {
     const unit = workflow.jobs.unit
     const shards = workflow.jobs.unit_shard
-    const build = load(readFileSync('.github/workflows/build.yml', 'utf8')) as Workflow
-    expect(shards['timeout-minutes']).toBe(build.jobs.verify_tests['timeout-minutes'])
+    // Temporary PR shard budget; build.yml verify_tests keeps its own budget.
+    expect(shards['timeout-minutes']).toBe(30)
     const checkout = unit.steps?.find(({ name }) => name === 'Checkout')
     const related = unit.steps?.find(({ name }) => name === 'Test affected Modules')
     const download = unit.steps?.find(({ name }) => name === 'Download full-suite blob reports')
@@ -1631,7 +1633,7 @@ describe('PR Gate workflow', () => {
 
     expect(workflow.jobs.linux_runtime).toMatchObject({
       'runs-on': 'ubuntu-latest',
-      'timeout-minutes': 10
+      'timeout-minutes': 15
     })
     expect(workflow.jobs.linux_runtime.if).toBe(
       "${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'linux_runtime') }}"
@@ -1639,6 +1641,8 @@ describe('PR Gate workflow', () => {
     const linuxDependencies = workflow.jobs.linux_runtime.steps?.find(
       ({ name }) => name === 'Install Linux sandbox dependency'
     )
+    expect(linuxDependencies?.env?.DEBIAN_FRONTEND).toBe('noninteractive')
+    expect(linuxDependencies?.run).toContain('apt-get install --yes --no-install-recommends')
     expect(linuxDependencies?.run).toContain('apparmor-profiles')
     expect(linuxDependencies?.run).toContain('bwrap-userns-restrict')
     expect(linuxDependencies?.run).toContain('bwrap --unshare-all')
