@@ -246,10 +246,6 @@ Al presentar un informe de error, incluya:
 - Su sistema operativo y versión de la aplicación.
 - Registros o capturas de pantalla relevantes, si están disponibles.
 
-## Publicación del paquete npm
-
-Los responsables del mantenimiento deben seguir la [guía de publicación del paquete npm](../npm-release.md). Las versiones del paquete npm usan etiquetas `npm-v*` y se publican mediante el flujo de trabajo protegido `Publish npm package`.
-
 ## Licencia
 
 Al contribuir, acepta que sus contribuciones tendrán la [Licencia Apache 2.0](../../LICENSE), la misma licencia que cubre este proyecto.

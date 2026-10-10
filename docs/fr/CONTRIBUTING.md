@@ -354,12 +354,6 @@ Lorsque vous déposez un rapport de bogue, incluez :
 - Votre système d'exploitation et la version de l'application.
 - Les journaux ou captures d'écran pertinents, s'ils sont disponibles.
 
-## Publier le paquet npm
-
-Les mainteneurs doivent suivre le [guide de publication du paquet
-npm](../npm-release.md). Les versions du paquet npm utilisent des tags
-`npm-v*` et sont publiées via le workflow protégé `Publish npm package`.
-
 ## Licence
 
 En contribuant, vous acceptez que vos contributions soient concédées sous la

@@ -530,7 +530,7 @@ certified backend and pinned Node bytes, with native signature, extracted-instal
 and complete-set checks before publication. See the [standalone runtime guide](docs/standalone-runtime.md).
 The manual `publish-npm.yml` workflow defaults to archive dry-run; `distribution=npm` retains the
 credential-free npm packaging dry-run. Automatic npm publication is deferred; no npm token is needed
-for a GitHub Release. See the [npm distribution notes](docs/npm-release.md) for future provisioning.
+for a GitHub Release.
 
 ## License
 
