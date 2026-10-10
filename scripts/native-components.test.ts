@@ -1,9 +1,10 @@
-import { mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { spawnSync } from 'node:child_process'
+import { copyFile, mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import { load } from 'js-yaml'
-import { publishNativeFiles } from './produce-native-components.mjs'
+import { publishNativeFiles, verifyNativeSignatures } from './produce-native-components.mjs'
 import { rebuildElectronDependencies } from './install-native-components.mjs'
 import {
   digest,
@@ -172,6 +173,29 @@ it('requires release signatures for both desktop signing platforms', async () =>
     expect(() => validateNativeRelease(release, target, release.source)).toThrow('unsigned')
   }
 })
+it.skipIf(process.platform !== 'darwin')(
+  'parses the literal macOS requirement and rejects a different signer',
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'native-signature-'))
+    directories.push(directory)
+    const binary = join(directory, 'helper')
+    await copyFile('/usr/bin/true', binary)
+    expect(spawnSync('codesign', ['--force', '--sign', '-', binary]).status).toBe(0)
+    verifyNativeSignatures(
+      '/unused',
+      `darwin-${process.arch}`,
+      (command: string, args: string[]) => {
+        // An ad-hoc fixture has a valid signature but must fail our Developer ID requirement.
+        const result = spawnSync(command, [...args.slice(0, -1), binary], {
+          encoding: 'utf8'
+        })
+        expect(result.error).toBeUndefined()
+        expect(result.stderr).not.toContain('invalid requirement specification')
+        expect(result.status).toBe(args.includes('-R') ? 3 : 0)
+      }
+    )
+  }
+)
 it('keeps dry-run compilation on the same producer without signing or publishing', async () => {
   const workflow = load(
     await readFile('.github/workflows/native-components.yml', 'utf8')
