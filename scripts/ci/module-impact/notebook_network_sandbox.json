@@ -515,6 +515,7 @@
       "src/main/artifacts/provenance-snapshot-decoder.test.ts",
       "src/main/notebook/cross-turn-input-repro.integration.test.ts",
       "src/main/notebook/working-file-observer.test.ts",
+      "src/main/notebook/working-file-observer-plain-host.test.ts",
       "src/main/artifacts/provenance-analysis-revision.test.ts",
       "src/renderer/src/pages/workspace/ArtifactProvenancePanel.render.test.tsx",
       "src/main/artifacts/artifact-reproducibility-export.test.ts",
