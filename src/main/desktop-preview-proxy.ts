@@ -10,6 +10,7 @@ export async function createDesktopPreviewProxy(
 ): Promise<{
   fetch(request: Request): Promise<Response>
   dispose(): void
+  port: number
 }> {
   const state = z
     .object({ pid: z.literal(expectedPid), port: z.number().int().min(1).max(65535) })
@@ -18,6 +19,7 @@ export async function createDesktopPreviewProxy(
   if (token.length < 32) throw new Error('Invalid backend preview authentication.')
   const lifetime = new AbortController()
   return {
+    port: state.port,
     dispose: () => lifetime.abort(),
     fetch: async (request) => {
       lifetime.signal.throwIfAborted()
