@@ -837,7 +837,13 @@
       "src/main/compute/cancellation-no-launch.integration.test.ts",
       "src/main/compute/job-cleanup-retry.integration.test.ts",
       "src/main/desktop-runtime-backpressure.integration.test.ts",
-      "src/main/desktop-runtime-transport-diagnostics.test.ts"
+      "src/main/desktop-runtime-transport-diagnostics.test.ts",
+      "src/main/connectors/custom-mcp/bootstrap.test.ts",
+      "src/main/connectors/descriptors/encori.test.ts",
+      "src/main/connectors/descriptors/genomes-ucsc.test.ts",
+      "src/main/connectors/descriptors/literature-doi.test.ts",
+      "src/main/connectors/descriptors/variants-gnomad.test.ts",
+      "src/main/connectors/encori/download.test.ts"
     ]
   },
   "capabilityOverlays": [
@@ -847,3 +853,4 @@
   ],
   "fallbackCapability": "main_runtime"
 }
+
