@@ -1,4 +1,4 @@
-import { redactSensitiveText } from './diagnostic-redaction'
+import { redactSensitiveText } from '@aipoch/diagnostics'
 
 /** Safe provider diagnostics that survive Electron invoke's Error serialization. */
 export type ProviderTextGenerationFailure = Readonly<{

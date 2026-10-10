@@ -3,7 +3,7 @@ import type { ActiveSession, PromptResponse, SessionNotification } from '@agentc
 
 import type { AcpCompactSessionRequest, AcpRuntimeEvent } from '../../shared/acp'
 import type { AgentFramework } from '../agent-framework'
-import { createLogger, errorLogFields } from '../logger'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import type { ContextUsageTracker, SessionEstimateInput } from './context-usage-tracker'
 import type { AcpPromptContentOwner } from './prompt-content-owner'
 import type { AcpProviderPromptSerializationOwner } from './provider-prompt-serialization-owner'

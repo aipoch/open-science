@@ -39,7 +39,7 @@ import {
   MAX_XLSX_ROWS,
   type ArtifactReadTargets
 } from './bounded-artifact-content'
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import { listenForLocalRpc, localRpcServerLogFields } from '../local-rpc-transport'
 import {
   LOCAL_RESOURCE_BUDGETS,

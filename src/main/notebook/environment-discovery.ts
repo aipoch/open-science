@@ -11,7 +11,7 @@ import type {
   EnvProvenance,
   RuntimeEnablement
 } from '../../shared/notebook-runtime'
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import { isMacOSDeveloperToolsPythonStub, probeInterpreterVersion } from './python-command'
 import { parseRVersion, rHasJsonlite } from './r-command'
 import {

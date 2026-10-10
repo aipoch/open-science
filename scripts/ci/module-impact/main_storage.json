@@ -817,7 +817,8 @@
       "src/main/agents/completion-handoff-lifecycle.test.ts",
       "src/main/notebook/auto-mode-budget.integration.test.ts",
       "src/main/connectors/custom-mcp-config.test.ts",
-      "src/main/connectors/mcp-host-dependencies.test.ts"
+      "src/main/connectors/mcp-host-dependencies.test.ts",
+      "src/main/session-diagnostics/schema-compatibility.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

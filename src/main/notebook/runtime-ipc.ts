@@ -1,7 +1,7 @@
 import { dialog } from 'electron'
 
 import { ipcMainHandle } from '../ipc-handler-registry'
-import { createLogger, diagnosticErrorFields } from '../logger'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeWorkflows } from './runtime-workflows'

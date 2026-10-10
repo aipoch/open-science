@@ -1,5 +1,5 @@
-import { errorLogFields, type Logger } from '../logger'
-import { startDiagnosticOperation, type DiagnosticOperation } from '../diagnostics/operation'
+import { errorLogFields, type Logger } from '@aipoch/diagnostics/node'
+import { startDiagnosticOperation, type DiagnosticOperation } from '@aipoch/diagnostics/node'
 import {
   type DatabaseMigrationError,
   type SchemaMigrationOptions,

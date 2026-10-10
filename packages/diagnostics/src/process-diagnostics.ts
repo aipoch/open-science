@@ -1,5 +1,5 @@
-import { redactSensitiveText } from '../../shared/diagnostic-redaction'
-import { errorLogFields, type Logger } from '../logger'
+import { redactSensitiveText } from './diagnostic-redaction'
+import { errorLogFields, type Logger } from './logger'
 
 const MAX_RUNTIME_DIAGNOSTIC_CHARS = 7_800
 const RUNTIME_DIAGNOSTIC_EDGE_CHARS = 3_800

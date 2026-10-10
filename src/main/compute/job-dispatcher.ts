@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 
 import type { ComputeJob } from '../../shared/compute'
 import { hasImmutableExecutionFileEvidenceReference } from '../../shared/execution-file-evidence'
-import { createLogger, errorLogFields } from '../logger'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import { decodeDataPath } from '../storage/data-path'
 import {
   isConnectionStdoutTruncated,

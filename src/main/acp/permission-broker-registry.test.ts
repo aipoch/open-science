@@ -14,7 +14,7 @@ import { seedDefaultPermissionGrants } from '../permission-grants/defaults'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { AcpPermissionBroker, projectRegistrySessionGrants } from './permission-broker'
 import { withTrustedMcpToolIdentity, withTrustedNativeToolIdentity } from './permission-policy'
-import { createLogger, flushLogs, initLogger } from '../logger'
+import { createLogger, flushLogs, initLogger } from '@aipoch/diagnostics/node'
 import { claudeCodeFramework, opencodeFramework } from '../agent-framework'
 import { AcpPermissionContext, HUMAN_PERMISSION_ACTION_ORIGIN } from './permission-context'
 import {

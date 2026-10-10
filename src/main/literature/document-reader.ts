@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 
 import type { MessagePdfContextSnapshot, SessionPdfBinding } from '../../shared/session-persistence'
-import { createLogger, errorLogFields } from '../logger'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import type { SessionCatalog } from '../session-persistence/coordinator'
 import { extractPdfText, MAX_AUTO_EXTRACT_PDF_BYTES } from '../uploads/attachment-media'
 import { LiteratureFullTextIndex, type LiteratureIndexChunk } from './full-text-index'

@@ -14,7 +14,7 @@ import type { ResolvedLiteratureAttachmentVersion } from '../attachment-authorit
 import { PdfTranslationOwner } from './index'
 import { PdfTranslationUsageRecorder } from './usage'
 import { ApplicationCallerLeaseRegistry } from '../../caller-lifecycle'
-import { flushLogs, initLogger } from '../../logger'
+import { flushLogs, initLogger } from '@aipoch/diagnostics/node'
 import {
   nextPdfTranslationSourceIndex,
   pdfTranslationSourceIndices

@@ -7,7 +7,7 @@ import type { ComputeJobRepository } from './job-repository'
 import type { ComputeHostRepository } from './repository'
 import type { ComputeService } from './compute-service'
 import type { ComputeConnectionBroker } from './connection-broker'
-import { createLogger, errorLogFields } from '../logger'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import { ComputeJobCancellationReaper } from './compute-job-cancellation-owner'
 import type { ComputeJobOperationRepository } from './compute-job-operation-repository'
 

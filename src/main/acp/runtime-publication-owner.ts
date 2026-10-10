@@ -10,7 +10,7 @@ import {
   sanitizeToolDetailText,
   sanitizeNotebookCodeReviewPayload
 } from '../../shared/tool-detail-sanitizer'
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import type { AcpSessionInteractionOwner } from './session-interaction-owner'
 import {
   ACP_RUNTIME_EVENT_RETENTION_LIMIT,

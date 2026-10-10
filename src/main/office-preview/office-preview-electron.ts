@@ -1,4 +1,4 @@
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 
 const log = createLogger('office-preview')
 

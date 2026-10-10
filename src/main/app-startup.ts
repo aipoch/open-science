@@ -1,6 +1,6 @@
 import type { BrowserWindow, Event as ElectronEvent } from 'electron'
 
-import type { DiagnosticOperation } from './diagnostics/operation'
+import type { DiagnosticOperation } from '@aipoch/diagnostics/node'
 
 // Startup orchestration for the UI process, kept as a dependency-injected unit (no runtime Electron
 // imports) so

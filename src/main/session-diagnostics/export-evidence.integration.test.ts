@@ -2,10 +2,9 @@ import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
-import * as tar from 'tar'
-import { createLogger, errorLogFields, flushLogs, initLogger } from '../logger'
+import { createLogger, errorLogFields, flushLogs, initLogger } from '@aipoch/diagnostics/node'
 import { logPermissionDiagnostic } from '../permission-grants/diagnostics'
-import { runSessionDiagnosticWorker } from './collector'
+import { exportDiagnosticFiles } from '../diagnostics/integration-test-helpers'
 
 const roots: string[] = []
 afterEach(async () => {
@@ -18,9 +17,7 @@ it('preserves an unfamiliar operation failure through real logging, rotation, re
   roots.push(root)
   const logDir = join(root, 'logs')
   const configRoot = join(root, 'config')
-  const directory = join(root, 'export')
   await mkdir(configRoot)
-  await mkdir(directory)
   initLogger({ logDir, runId: 'before-restart', maxBytes: 4096, mirrorToConsole: false })
   const log = createLogger('new-component-without-export-registration')
   const cause = Object.assign(new Error('disk read failed'), { code: 'EIO', syscall: 'read' })
@@ -68,22 +65,16 @@ it('preserves an unfamiliar operation failure through real logging, rotation, re
   await flushLogs()
   const before = await readFile(join(logDir, 'main.1.log'), 'utf8')
   expect(before).toContain('operation failed')
-  const result = await runSessionDiagnosticWorker({
-    action: 'export',
-    projectId: 'project',
-    sessionId: 'session',
-    configRoot,
-    dataRoot: join(root, 'data'),
-    logPath: join(logDir, 'main.log'),
-    directory,
-    appVersion: 'test',
-    selectedItems: ['log:main.1.log']
-  })
-  expect(result.kind).toBe('archive')
-  const extracted = join(root, 'unpacked')
-  await mkdir(extracted)
-  await tar.x({ file: join(directory, 'archive.tar.gz'), cwd: extracted })
-  const exported = await readFile(join(extracted, 'logs/main.1.log'), 'utf8')
+  const files = await exportDiagnosticFiles(
+    {
+      configRoot,
+      dataRoot: join(root, 'data'),
+      logPath: join(logDir, 'main.log'),
+      appVersion: 'test'
+    },
+    { projectId: 'project', sessionId: 'session', selectedItems: ['log:main.1.log'] }
+  )
+  const exported = files['logs/main.1.log']
   for (const retained of [
     'new-component-without-export-registration',
     'an-unregistered-operation',
@@ -104,7 +95,7 @@ it('preserves an unfamiliar operation failure through real logging, rotation, re
   for (const excluded of ['diagnostic-secret-123', '/opt/private-user', 'normal_permission_canary'])
     expect(exported).not.toContain(excluded)
   expect(await readFile(join(logDir, 'main.1.log'), 'utf8')).toBe(before)
-  const manifest = JSON.parse(await readFile(join(extracted, 'manifest.json'), 'utf8'))
+  const manifest = JSON.parse(files['manifest.json'])
   expect(manifest.items).toEqual(
     expect.arrayContaining([
       expect.objectContaining({ id: 'log:main.log', selected: false }),

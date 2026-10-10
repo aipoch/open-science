@@ -5,7 +5,7 @@ import { join } from 'node:path'
 
 import { afterAll, describe, expect, it, vi } from 'vitest'
 
-import { flushLogs, initLogger } from '../logger'
+import { flushLogs, initLogger } from '@aipoch/diagnostics/node'
 import { NotebookRunRepository } from './repository'
 import { NotebookRuntimeService } from './runtime-service'
 

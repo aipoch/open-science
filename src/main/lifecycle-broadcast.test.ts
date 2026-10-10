@@ -10,7 +10,8 @@ vi.mock('electron', () => ({
       ipcHandlers.set(channel, handler)
   }
 }))
-vi.mock('./logger', () => ({
+vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aipoch/diagnostics/node')>()),
   createLogger: () => ({ warn: vi.fn() })
 }))
 vi.mock('./renderer-broadcast', () => ({

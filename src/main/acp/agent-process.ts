@@ -4,7 +4,7 @@ import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
 import type { AgentProcessSpawner } from '../agent-framework/types'
 
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import { augmentedPathEnv } from '../settings/shell-path'
 import { resolveClaudeExecutableForSpawn } from './claude-executable'
 

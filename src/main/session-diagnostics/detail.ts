@@ -1,6 +1,6 @@
 import { homedir } from 'node:os'
 
-import { redactSensitiveText } from '../../shared/diagnostic-redaction'
+import { redactSensitiveText } from '@aipoch/diagnostics'
 
 export type DiagnosticTextOptions = {
   configRoot?: string

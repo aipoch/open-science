@@ -11,7 +11,7 @@ import {
 import { isMediaOverflowError } from '../../shared/media-overflow'
 import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
 import { isExpectedRunFailure } from '../../shared/run-error-classification'
-import { createLogger, errorLogFields } from '../logger'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import type { ContextWindowTurnHandle } from './context-usage-tracker'
 import type { AcpPermissionContext } from './permission-context'
 import type { PreparedPromptHandle } from './prompt-preparation-owner'

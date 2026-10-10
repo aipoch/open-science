@@ -11,7 +11,7 @@ import type {
 } from '../../shared/compute'
 import { ComputeHostUnavailableError, computeHostSummary } from '../../shared/compute'
 import type { DownloadDest, LocalFile } from '../../shared/remote-fs'
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import type { ComputeService } from './compute-service'
 
 const log = createLogger('compute:agent')

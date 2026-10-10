@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 
-import { createLogger, errorLogFields } from '../logger'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import type { RuntimeOperationJournal, RuntimeOperationRecord } from './operation-journal'
 
 const log = createLogger('notebook:recovery')

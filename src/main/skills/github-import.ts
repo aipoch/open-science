@@ -1,4 +1,4 @@
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import { isSkillPackageIgnoredPath, SKILL_IMPORT_LIMITS } from './import-limits'
 import {
   GITHUB_REPOSITORY_SEARCH_TOO_LONG_MESSAGE,

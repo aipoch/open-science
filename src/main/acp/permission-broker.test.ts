@@ -24,8 +24,8 @@ import {
   withTrustedNativeToolIdentity,
   type PermissionPolicyContext
 } from './permission-policy'
-import { initLogger, flushLogs } from '../logger'
-import * as mainLogger from '../logger'
+import { initLogger, flushLogs } from '@aipoch/diagnostics/node'
+import * as mainLogger from '@aipoch/diagnostics/node'
 import {
   logPermissionDiagnostic,
   type PermissionDiagnostic

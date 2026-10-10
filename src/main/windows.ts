@@ -19,7 +19,7 @@ import iconWindows from '../../resources/icon-light.ico?asset'
 import { createFrameNavigationGuard, isAllowedExternalNavigation } from './navigation-policy'
 import { createFindOverlayManager, type FindOverlayDeps } from './find-overlay'
 import { registerFindOverlayOwner } from './find-overlay-registry'
-import { createLogger, diagnosticErrorFields } from './logger'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import {
   installPreviewContextMenuBridge,
   type PreviewContextMenuWebContents

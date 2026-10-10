@@ -14,7 +14,7 @@ import {
   type IpcRejectionLogger
 } from './diagnostics/ipc-rejection'
 import { ipcMainHandle } from './ipc-handler-registry'
-import { createLogger } from './logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 
 const registerApplicationCommandElectronAdapter = (
   dispatcher: ApplicationCommandByNameDispatcher,

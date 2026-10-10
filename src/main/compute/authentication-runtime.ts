@@ -1,5 +1,5 @@
 import type { ComputeHost } from '../../shared/compute'
-import { createLogger, errorLogFields } from '../logger'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
 import { ComputeAuthOwner } from './compute-auth-owner'
 import type { ComputeApprovalBroker } from './compute-approval-broker'

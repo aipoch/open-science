@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto'
 
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import { consumeBoundedResponseBody, DEFAULT_MAX_PROVIDER_RESPONSE_BYTES } from './bounded-response'
 import type { ResponsesBridgeNamespacedTool } from './responses-protocol-types'
 

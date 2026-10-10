@@ -36,7 +36,7 @@ import {
 import type { ActivePlanProjection } from '../../shared/session-plan/contract'
 import { FinalizedArtifactBindingConflictError } from '../artifacts/provenance-message-snapshot'
 import { sessionComputeHostAccessPolicy } from '../compute/session-compute-host-access'
-import { diagnosticErrorFields, type Logger } from '../logger'
+import { diagnosticErrorFields, type Logger } from '@aipoch/diagnostics/node'
 import {
   rebaseSafeSessionFields,
   resolveRevisionedSessionSave,

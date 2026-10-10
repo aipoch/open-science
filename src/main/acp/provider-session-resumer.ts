@@ -12,7 +12,7 @@ import {
   normalizePermissionProfile
 } from '../../shared/permission-profiles'
 import type { EffectiveSpecialistSkills } from '../../shared/specialist'
-import { createLogger, diagnosticErrorFields, errorLogFields } from '../logger'
+import { createLogger, diagnosticErrorFields, errorLogFields } from '@aipoch/diagnostics/node'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
 import type { AcpProviderSessionAdopter } from './provider-session-adopter'
 import {

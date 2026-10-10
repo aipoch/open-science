@@ -5,8 +5,8 @@ import type { PersistedChatSession } from '../../shared/session-persistence'
 import { BookmarkService, type PdfVersionAuthority } from './service'
 
 const { warn } = vi.hoisted(() => ({ warn: vi.fn() }))
-vi.mock('../logger', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../logger')>()),
+vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aipoch/diagnostics/node')>()),
   createLogger: () => ({ warn })
 }))
 

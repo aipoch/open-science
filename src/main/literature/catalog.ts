@@ -25,7 +25,7 @@ import type { ContentRepository } from '../storage/content-repository'
 import { createHash, randomUUID } from 'node:crypto'
 
 import { Prisma, type PrismaClient } from '@prisma/client'
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import { normalizeLiteratureSearchTextV1 as normalizeSearchText } from '../../shared/literature-search-text'
 import { findLiteratureDuplicateGroups } from './duplicates'
 import { planLiteratureMerge, supplementLiteratureMetadata } from './duplicate-metadata'

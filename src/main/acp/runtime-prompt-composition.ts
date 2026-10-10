@@ -4,7 +4,7 @@ import type { AcpPromptRequest, AcpRuntimeEvent } from '../../shared/acp'
 import type { AgentFramework } from '../agent-framework'
 import type { ArtifactTurnHandle } from './artifact-turn-owner'
 import { AcpContextCompactionWorkflow } from './context-compaction-workflow'
-import { createLogger, errorLogFields } from '../logger'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import { AcpPromptPreparationOwner } from './prompt-preparation-owner'
 import {
   AcpPromptTurnWorkflow,

@@ -1,4 +1,4 @@
-import { createLogger, diagnosticErrorFields } from '../logger'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import { withExclusiveCacheLocks } from './pkgs-cache-lock'
 import { isChildUnconfirmedError } from './provisioner-runtime'
 

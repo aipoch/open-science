@@ -1,11 +1,11 @@
 import type { PackageFileSelection } from '../../shared/session-package'
 import { randomUUID } from 'node:crypto'
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import {
   startDiagnosticOperation,
   type DiagnosticOperation,
   type DiagnosticFields
-} from '../diagnostics/operation'
+} from '@aipoch/diagnostics/node'
 import {
   PACKAGE_DEFAULT_IO_BYTES_PER_SECOND,
   PACKAGE_MAX_IO_BYTES_PER_SECOND,

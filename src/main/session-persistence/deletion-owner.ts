@@ -20,8 +20,8 @@ import { PENDING_UPLOAD_SESSION_ID } from '../../shared/uploads'
 import type { SessionDeletionReceipt } from '../artifacts/provenance-message-snapshot'
 import { ArchiveAvailabilityError } from '../archive/availability-error'
 import type { ManagedFileSoftDeleteToken } from '../project-files/repository'
-import type { Logger } from '../logger'
-import { startDiagnosticOperation } from '../diagnostics/operation'
+import type { Logger } from '@aipoch/diagnostics/node'
+import { startDiagnosticOperation } from '@aipoch/diagnostics/node'
 import {
   OrphanLegacyUploadAuthorityMissingError,
   UnsafeLegacyUploadResidualError

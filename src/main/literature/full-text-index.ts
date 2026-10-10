@@ -10,7 +10,7 @@ import { join } from 'node:path'
 import { PrismaClient } from '@prisma/client'
 
 import { migrationSqlExecutor } from '../database/migration-sql-executor'
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import {
   LITERATURE_INDEX_SCHEMA_VERSION,
   literatureIndexSchemaObjects,

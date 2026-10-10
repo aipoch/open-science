@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
-import { diagnosticErrorFields, type Logger } from '../logger'
+import { diagnosticErrorFields, type Logger } from './logger'
 import { classifyStartupDelay } from './startup-delay'
 
 export type DiagnosticValue = string | number | boolean | null | undefined

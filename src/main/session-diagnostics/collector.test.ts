@@ -468,7 +468,9 @@ describe('session diagnostics isolated collector', () => {
     const db = new DatabaseSync(path)
     try {
       db.exec('PRAGMA journal_mode=WAL')
+      db.exec('BEGIN')
       for (const ddl of RUNTIME_SCHEMA_TABLE_DDLS) db.exec(ddl)
+      db.exec('COMMIT')
       db.exec("INSERT INTO Project(id,name,updatedAt) VALUES ('project','Project',1)")
       db.exec(
         "INSERT INTO Session(id,projectId,number,title,status,presentedStatus,createdAtMs,updatedAtMs) VALUES ('session','project',1,'selected','idle','idle',1,1), ('other','project',2,'exclude','idle','idle',1,1)"

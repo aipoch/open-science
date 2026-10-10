@@ -10,7 +10,7 @@ import {
   type AcpRuntimeEvent,
   type AcpTurnTokenUsage
 } from '../../shared/acp'
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 import {
   DelegateExecutionError,

@@ -7,9 +7,9 @@ import {
   type RendererSessionPersistenceFlushOutcome
 } from './session-persistence/renderer-flush'
 import { BackendShutdownOutcomeError, type ShutdownStepOutcome } from './lifecycle-shutdown'
-import { flushDiagnosticsWithTimeout, type DiagnosticFlush } from './diagnostics/flush'
-import { diagnosticErrorFields, type Logger } from './logger'
-import { startDiagnosticOperation } from './diagnostics/operation'
+import { flushDiagnosticsWithTimeout, type DiagnosticFlush } from '@aipoch/diagnostics/node'
+import { diagnosticErrorFields, type Logger } from '@aipoch/diagnostics/node'
+import { startDiagnosticOperation } from '@aipoch/diagnostics/node'
 import {
   clearApplicationShutdownTrigger,
   currentApplicationShutdownTrigger,

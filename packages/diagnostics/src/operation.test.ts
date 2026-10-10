@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import type { Logger } from '../logger'
+import type { Logger } from './logger'
 import {
   type DiagnosticFields,
   type DiagnosticOperationInput,

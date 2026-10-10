@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest'
 
-import type { Logger } from '../logger'
+import type { Logger } from '@aipoch/diagnostics/node'
 import { DEFAULT_UPLOAD_PROJECT_ID } from '../../shared/uploads'
 import { STAGING_UPLOAD_SESSION_ID, UPLOADS_DIR } from '../uploads/storage-helpers'
 

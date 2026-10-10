@@ -22,7 +22,7 @@ import type { NotebookExecutionRpcMethod } from '../../shared/notebook'
 import type { ShellRuntimeBinding } from '../../shared/notebook'
 import { shellRuntimeDialect } from '../notebook/shell-runtime'
 import { resolveCanonicalMcpToolIdentity } from '../agent-framework/app-mcp-names'
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import { logPermissionDiagnostic } from '../permission-grants/diagnostics'
 import {
   AcpPermissionBroker,

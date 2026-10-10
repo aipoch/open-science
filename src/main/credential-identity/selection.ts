@@ -1,4 +1,4 @@
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import { safeCredentialProbeResult } from './probe'
 import type { LinuxCredentialBackend, LinuxKWalletBackend } from './linux-backend'
 import type { KWalletProbeResult } from './linux-kwallet'

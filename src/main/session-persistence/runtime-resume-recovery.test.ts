@@ -11,8 +11,8 @@ import { initDataRoot } from '../storage-root'
 import { loadSessionMutationAuthority, SessionRepository } from './repository'
 import { SessionPersistenceStateOwner } from './state-owner'
 import { RuntimeSessionOwner } from './runtime-session-owner'
-import { createLogger, flushLogs, initLogger } from '../logger'
-import { projectDiagnosticLog } from '../session-diagnostics/projection'
+import { createLogger, flushLogs, initLogger } from '@aipoch/diagnostics/node'
+import { exportDiagnosticFiles } from '../diagnostics/integration-test-helpers'
 
 const roots: string[] = []
 const scope = { projectId: 'project-1', sessionId: 'session-1' }
@@ -132,10 +132,14 @@ it('exports runtime mutation failure diagnostics without changing the missing Se
   )
   await flushLogs()
   const raw = await readFile(join(logDir, 'main.log'), 'utf8')
-  const exported = raw
+  const files = await exportDiagnosticFiles(
+    { configRoot: h.root, dataRoot: h.root, logPath: join(logDir, 'main.log'), appVersion: 'test' },
+    { ...scope, selectedItems: ['log:main.log'] }
+  )
+  const exported = files['logs/main.log']
     .trim()
     .split('\n')
-    .map((line) => projectDiagnosticLog(JSON.parse(line)))
+    .map((line) => JSON.parse(line))
   expect(exported).toEqual(
     expect.arrayContaining([
       expect.objectContaining({

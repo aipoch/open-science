@@ -52,7 +52,7 @@ import {
   type ManagedFilePreviewReadLease,
   waitForManagedFilePublication
 } from '../managed-file-preview'
-import { createLogger, type Logger } from '../logger'
+import { createLogger, type Logger } from '@aipoch/diagnostics/node'
 import { ArtifactRepository } from './repository'
 import { ArtifactRunRegistry } from './run-registry'
 import {

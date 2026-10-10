@@ -4,13 +4,13 @@ import { randomUUID } from 'node:crypto'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { extname, join } from 'node:path'
 
-import type { LogFileStatus, LogWriteFailureCategory } from '../shared/logs'
+import type { LogFileStatus, LogWriteFailureCategory } from './log-types'
 import {
   REDACTED_MARKER,
   diagnosticKeyWords,
   isSensitiveDiagnosticKey,
   redactSensitiveText
-} from '../shared/diagnostic-redaction'
+} from './diagnostic-redaction'
 
 // Lightweight structured file logger for the main process. Kept free of Electron imports so it stays
 // unit-testable and usable from the MCP-server entry modes; the caller resolves the log directory

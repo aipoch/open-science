@@ -25,7 +25,10 @@ vi.mock('electron', () => ({
   },
   ipcMain: { handle: vi.fn() }
 }))
-vi.mock('../logger', () => ({ createLogger: () => boundary.logger }))
+vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aipoch/diagnostics/node')>()),
+  createLogger: () => boundary.logger
+}))
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>()
   return { ...actual, lstat: vi.fn(actual.lstat), rename: vi.fn(actual.rename) }

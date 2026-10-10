@@ -10,7 +10,7 @@ import { join } from 'node:path'
 
 import { sanitizeSessionPermissionRuntimeContext } from '../../shared/session-persistence'
 import { opencodeFramework } from '../agent-framework'
-import { createLogger, flushLogs, initLogger } from '../logger'
+import { createLogger, flushLogs, initLogger } from '@aipoch/diagnostics/node'
 import {
   AcpPermissionContext,
   AGENT_PERMISSION_ACTION_ORIGIN,

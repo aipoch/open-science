@@ -1,4 +1,4 @@
-import { createLogger, diagnosticErrorFields, errorLogFields } from '../logger'
+import { createLogger, diagnosticErrorFields, errorLogFields } from '@aipoch/diagnostics/node'
 import { sharedDispatchTracker, type DispatchTracker } from './dispatch-tracker'
 import { probeRemoteLaunch } from './remote-launch-recovery'
 import { randomUUID } from 'node:crypto'

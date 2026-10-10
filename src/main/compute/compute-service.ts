@@ -31,7 +31,7 @@ import type { ScpRunner } from './scp-runner'
 import type { SshRunner } from './ssh-runner'
 import { SessionCacheOwner } from './session-cache-owner'
 import { cleanupComputeJobFileEvidence } from '../notebook/working-file-observer'
-import { createLogger, errorLogFields } from '../logger'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import {
   createSshConfigCompatibilityBroker,
   projectComputeCredentialStatus

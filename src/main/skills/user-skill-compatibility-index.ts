@@ -3,7 +3,7 @@ import { createReadStream } from 'node:fs'
 import { lstat, mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
-import { createLogger, diagnosticErrorFields } from '../logger'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 
 const log = createLogger('skills')
 const CACHE_VERSION = 2

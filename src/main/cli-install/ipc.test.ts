@@ -26,7 +26,8 @@ vi.mock('electron', () => ({
   }
 }))
 
-vi.mock('../logger', () => ({
+vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aipoch/diagnostics/node')>()),
   createLogger: () => logger
 }))
 

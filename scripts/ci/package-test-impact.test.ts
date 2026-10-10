@@ -278,3 +278,18 @@ it.each(['dependencies', 'unavailable'] as const)(
     }
   }
 )
+
+it.each([
+  ['src/main/notebook/environment-state-tracker.ts', []],
+  ['src/main/session-diagnostics/notebook.ts', []],
+  ['packages/diagnostics/src/diagnostic-redaction.ts', ['packages/diagnostics']],
+  ['packages/diagnostics/src/node.ts', ['packages/diagnostics']]
+])('applies the real diagnostics registration to %s', (path, selected) => {
+  const registered = JSON.parse(readFileSync('scripts/ci/package-test-boundaries.json', 'utf8'))
+  const plan = createPackageTestPlan([path], registered)
+  expect(plan.selected).toEqual(selected)
+  expect(plan.excluded).toContain('packages/connector-core')
+  expect(plan.excluded).toContain('packages/connector-builtins')
+  expect(plan.excluded).toContain('packages/connector-mcp-client')
+  if (selected.length === 0) expect(plan.excluded).toContain('packages/diagnostics')
+})

@@ -23,7 +23,9 @@ function fixture(): { path: string; db: DatabaseSync } {
   roots.push(root)
   const path = join(root, 'test.db')
   const db = new DatabaseSync(path)
+  db.exec('BEGIN')
   for (const ddl of RUNTIME_SCHEMA_TABLE_DDLS) db.exec(ddl)
+  db.exec('COMMIT')
   db.exec('PRAGMA foreign_keys=OFF')
   return { path, db }
 }

@@ -233,6 +233,7 @@ describe('release and scheduled workflow topology', () => {
       'src/main/artifacts/artifact-reproducibility-export.test.ts',
       'src/main/agent-framework/opencode.test.ts',
       'src/main/logger.test.ts',
+      'packages/diagnostics/src/logger.test.ts',
       'src/main/delegation/production-composition.test.ts',
       'packages/notebook-network-sandbox/src/gateway.test.ts',
       'packages/notebook-network-sandbox/src/public-read-lifecycle.test.ts'

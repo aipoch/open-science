@@ -1,7 +1,7 @@
 import { dirname, isAbsolute, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-import { createLogger, diagnosticErrorFields } from '../logger'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import {
   OFFICE_PREVIEW_RUNTIME_HOST,
   OFFICE_PREVIEW_RUNTIME_ORIGIN,

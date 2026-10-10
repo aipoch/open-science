@@ -20,7 +20,7 @@ import {
   type RuntimeSessionScope
 } from '../../shared/runtime-session-projection'
 import { matchPlanDelivery } from '../session-plan/plan-delivery'
-import { createLogger, diagnosticErrorFields } from '../logger'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import { INTERRUPTED_TURN_ERROR } from '../../shared/session-persistence'
 
 const log = createLogger('session-persistence')

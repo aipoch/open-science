@@ -1,13 +1,10 @@
 import { homedir } from 'node:os'
 
-import { redactSensitiveText } from '../../shared/diagnostic-redaction'
+import { redactSensitiveText } from './diagnostic-redaction'
 
-// Composes the pre-redacted stack block attached to a blocked database startup state. The block is
-// user-shareable by design: credentials and absolute paths are removed before it crosses IPC, with
-// known config/data/home roots replaced by useful stable markers. The budgets below are a generous
-// IPC-safety ceiling; the precise fit to the GitHub issue-URL length limit happens at link-build time
-// (startup-issue.ts). Environment facts travel separately in the typed `environment` field (see
-// shared/database-startup.ts).
+// Builds a bounded, shareable startup error summary. Credentials and absolute paths are removed,
+// with caller-supplied config/data/home roots replaced by stable markers. The caller owns delivery,
+// any tighter transport budget, and separately collected environment metadata.
 
 const MAX_CAUSE_DEPTH = 8
 const MAX_STACK_FRAMES = 32

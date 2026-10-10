@@ -16,7 +16,7 @@ import {
 import { Prisma, type PdfAnnotation as PdfAnnotationRow, type PrismaClient } from '@prisma/client'
 import { isDeepStrictEqual } from 'node:util'
 import { createHash } from 'node:crypto'
-import { createLogger, diagnosticErrorFields } from '../logger'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import {
   pdfAnnotationScope,
   pdfNativeImportReceiptSchema,

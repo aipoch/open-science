@@ -14,7 +14,7 @@ import {
   type PlanLifecycle,
   type PlanCommandErrorCode
 } from '../../shared/session-plan/contract'
-import { redactSensitiveText } from '../../shared/diagnostic-redaction'
+import { redactSensitiveText } from '@aipoch/diagnostics'
 import type { SessionPlanApproval, SessionPlanStepStatus } from '../../shared/session-persistence'
 import { LOCAL_RESOURCE_BUDGETS } from '../resource-budget'
 import {

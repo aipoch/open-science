@@ -67,7 +67,7 @@ import {
   UserSkillRepository,
   isReservedSkillName
 } from '../skills/user-skill-repository'
-import { createLogger, diagnosticErrorFields } from '../logger'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import type { SettingsRepository } from './repository'
 import type { StoredSettings } from './types'
 import { encryptKey, maskKey, tryDecryptKey } from './crypto'

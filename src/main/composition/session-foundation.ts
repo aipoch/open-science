@@ -8,7 +8,7 @@ import type {
 } from '../../shared/session-diagnostics'
 import { createAcpRuntime } from '../acp/runtime-composition'
 import { type ApplicationModuleBuilder } from '../application-runtime'
-import { createLogger, diagnosticErrorFields, getLogFilePath } from '../logger'
+import { createLogger, diagnosticErrorFields, getLogFilePath } from '@aipoch/diagnostics/node'
 import { getProjectDbClient } from '../projects/prisma-client'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import { createSessionDiagnosticsDesktop } from '../session-diagnostics/desktop'

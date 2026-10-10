@@ -69,7 +69,7 @@ import {
 import type { PdfTranslationUsageRecorder } from './usage'
 import { sanitizeAcpTurnTokenUsage, type AcpTurnTokenUsage } from '../../../shared/acp'
 import { isRecord } from '../../value-guards'
-import { createLogger, diagnosticErrorFields } from '../../logger'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 
 const log = createLogger('pdf-translation')
 import { runDataRootStartupRecovery, withDataRootWrite } from '../../storage/migration-state'

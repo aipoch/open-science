@@ -1,4 +1,4 @@
-import { createLogger, diagnosticErrorFields } from '../logger'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import { randomUUID } from 'node:crypto'
 import type { ApplicationCallerLease, ApplicationInvocation } from '../application-command-router'
 import { requireDesktopCaller } from '../caller-context'

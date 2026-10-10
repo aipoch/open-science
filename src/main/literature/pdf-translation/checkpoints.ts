@@ -4,7 +4,7 @@ import {
   pdfTranslationSnapshotMatchesSources
 } from '../../../shared/pdf-translation-snapshot'
 import { createHash, randomUUID } from 'node:crypto'
-import { createLogger } from '../../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 
 const log = createLogger('pdf-translation-checkpoint')
 import {

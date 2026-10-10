@@ -18,7 +18,7 @@ import { type ApplicationCommandCompositionDependencies } from '../application-c
 import { createCliCommandOwner } from '../cli-install/ipc'
 import { createGithubCommandOwner } from '../github-ipc'
 import { createLiteratureCommandOwner } from '../literature/command-owner'
-import { createLogger, diagnosticErrorFields, errorLogFields } from '../logger'
+import { createLogger, diagnosticErrorFields, errorLogFields } from '@aipoch/diagnostics/node'
 import { createLogsCommandOwner } from '../logs-ipc'
 import { ManagedFileVersionService } from '../managed-file-versions/service'
 import { createRuntimeWorkflows } from '../notebook/runtime-workflows'

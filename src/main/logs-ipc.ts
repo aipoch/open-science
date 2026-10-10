@@ -2,7 +2,7 @@ import { desktopShellInteraction } from './desktop-interaction'
 
 import { ipcMainHandle } from './ipc-handler-registry'
 
-import { getLogFileStatus } from './logger'
+import { getLogFileStatus } from '@aipoch/diagnostics/node'
 import type { LogFileStatus, OpenLogFileResult, RevealLogFileResult } from '../shared/logs'
 
 type LogsCommandOwner = Readonly<{

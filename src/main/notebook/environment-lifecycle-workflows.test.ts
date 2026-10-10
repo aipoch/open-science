@@ -8,8 +8,8 @@ const loggerSpies = vi.hoisted(() => ({
   info: vi.fn(),
   error: vi.fn()
 }))
-vi.mock('../logger', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../logger')>()
+vi.mock('@aipoch/diagnostics/node', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@aipoch/diagnostics/node')>()
   return {
     ...actual,
     createLogger: () => ({

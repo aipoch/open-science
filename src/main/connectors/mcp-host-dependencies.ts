@@ -1,8 +1,8 @@
-import { redactSensitiveText } from '../../shared/diagnostic-redaction'
+import { redactSensitiveText } from '@aipoch/diagnostics'
 import type { McpClientManagerDeps } from '@aipoch/connector-mcp-client'
 import { augmentedPathEnv } from '../settings/shell-path'
 import { netFetchStandard } from '../skills/net-fetch'
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 
 // Application capabilities injected into the package; the package owns client lifecycle.
 export const mcpHostDependencies: McpClientManagerDeps = {

@@ -16,7 +16,7 @@ import type {
 import { parseOwnedExecutionFileEvidenceSummary } from '../../shared/execution-file-evidence'
 import { NOTEBOOK_RUN_FILE, NOTEBOOKS_DIR } from '../../shared/notebook'
 import type { NotebookRuntimeBindings } from '../../shared/notebook-runtime'
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import {
   DurableJsonRecoveryBarrierError,
   readDurableJsonFile,

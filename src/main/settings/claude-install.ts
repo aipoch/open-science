@@ -15,7 +15,7 @@ import type {
   NpmAvailability
 } from '../../shared/settings'
 import { terminateProcessTree } from '../process-tree'
-import { createLogger, diagnosticErrorFields } from '../logger'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import { augmentedPathEnv } from './shell-path'
 
 const execFileAsync = promisify(execFile)

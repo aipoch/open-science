@@ -5,7 +5,8 @@ import { join } from 'node:path'
 import type { PrismaClient } from '@prisma/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { formatLine, type Logger } from '../logger'
+import type { Logger } from '@aipoch/diagnostics/node'
+import { captureDiagnosticLogs } from '../diagnostics/integration-test-helpers'
 import { createProjectDbClient } from '../projects/prisma-client'
 import { createDatabaseStartupLogging } from './database-startup-logging'
 import { DatabaseValidationError } from './database-validation-error'
@@ -195,7 +196,7 @@ describe('database startup logging', () => {
     )
   })
 
-  it('records structured validation details through the mandatory redactor', () => {
+  it('records structured validation details through the mandatory redactor', async () => {
     const sensitiveValue = 'customer-secret-value'
     const cause = new DatabaseValidationError('Schema mismatch.', {
       kind: 'test-mismatch',
@@ -217,7 +218,7 @@ describe('database startup logging', () => {
     logging.reportBlocked(error)
 
     const record = records.find(({ message }) => message === 'database startup blocked')!
-    const line = formatLine('error', 'main', record.message, record.data)
+    const [line] = await captureDiagnosticLogs((sink) => sink.error(record.message, record.data))
     expect(line).not.toContain(sensitiveValue)
     expect(JSON.parse(line)).toMatchObject({
       level: 'error',

@@ -6,7 +6,7 @@ import type {
   ListProjectMessageArtifactsRequest,
   OpenArtifactFileRequest
 } from '../../shared/artifacts'
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import type { ArtifactRunMarkerReadResult } from './publication-types'
 import {
   ArtifactStorageAccess,

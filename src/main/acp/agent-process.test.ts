@@ -14,7 +14,8 @@ vi.mock('./claude-executable', () => ({
   resolveClaudeExecutableForSpawn: mocks.resolveExecutable
 }))
 vi.mock('../settings/shell-path', () => ({ augmentedPathEnv: mocks.augmentedPathEnv }))
-vi.mock('../logger', () => ({
+vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aipoch/diagnostics/node')>()),
   createLogger: () => ({ info: mocks.info, warn: mocks.warn, error: mocks.error })
 }))
 

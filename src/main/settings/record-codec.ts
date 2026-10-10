@@ -15,7 +15,7 @@ import {
   isCustomReasoningEffortTransport,
   isReasoningEffortPresetSetting
 } from '../../shared/reasoning-effort'
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import { isPositiveWholeTokenLimit } from './provider-token-limits'
 import type {
   StoredComputeGrant,

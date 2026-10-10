@@ -49,7 +49,7 @@ import type {
   SessionPersistenceFlushAbortedEvent,
   SessionPersistenceFlushRequest
 } from '../shared/session-persistence-flush'
-import { createLogger, errorLogFields } from './logger'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 
 const log = createLogger('application-events')
 

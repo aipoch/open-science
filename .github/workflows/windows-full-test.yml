@@ -211,6 +211,7 @@ jobs:
           src/main/artifacts/artifact-reproducibility-export.test.ts
           src/main/agent-framework/opencode.test.ts
           src/main/logger.test.ts
+          packages/diagnostics/src/logger.test.ts
           src/main/delegation/production-composition.test.ts
           src/main/delegation/opencode-runtime-preparation.test.ts
           packages/notebook-network-sandbox/src/gateway.test.ts

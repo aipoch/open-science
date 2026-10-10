@@ -51,7 +51,12 @@ import {
   registerOfficePreviewRuntimeProtocol
 } from './office-preview/office-preview-runtime-protocol'
 import { createNativeI18n } from './locale/main-process-messages'
-import { createLogger, diagnosticErrorFields, flushLogs, writeFatalLogSync } from './logger'
+import {
+  createLogger,
+  diagnosticErrorFields,
+  flushLogs,
+  writeFatalLogSync
+} from '@aipoch/diagnostics/node'
 import {
   initializeApplicationDiagnostics,
   reportApplicationStartupFailure
@@ -61,7 +66,7 @@ import {
   createRendererFailureReporter,
   registerRendererDiagnosticsIpc
 } from './renderer-diagnostics'
-import type { DiagnosticOperation } from './diagnostics/operation'
+import type { DiagnosticOperation } from '@aipoch/diagnostics/node'
 
 const APP_NAME = 'Open-Science'
 const APP_USER_MODEL_ID = 'com.aipoch.open-science'

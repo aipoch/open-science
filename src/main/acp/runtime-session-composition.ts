@@ -1,7 +1,7 @@
 import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
 import { SESSION_PLAN_SYSTEM_PROMPT_APPEND } from '../session-plan/guidance'
 import { SESSION_PLAN_FILE_SYSTEM_PROMPT_APPEND } from '../session-plan/plan-context-guidance'
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import { AcpAppContinuationOwner } from './app-continuation-owner'
 import { AcpClientInteractionOwner } from './client-interaction-owner'
 import { AcpContextUsagePolicy } from './context-usage-policy'

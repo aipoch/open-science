@@ -4,7 +4,7 @@ import { isAbsolute, join, relative, sep } from 'node:path'
 
 import type { NotebookRecoveryStatus } from '../../shared/notebook-env'
 import { isCurrentInFlight } from '../../shared/in-flight-promise'
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import {
   operationJournalPath,
   readOperationChild,

@@ -8,13 +8,13 @@ import {
   type EnvironmentLeaseMode
 } from './environment-lease-manager'
 import type { NotebookRecoveryCoordinator } from './recovery-coordinator'
-import { errorLogFields } from '../logger'
+import { errorLogFields } from '@aipoch/diagnostics/node'
 import {
   boundedRuntimeDiagnostic,
   redactRuntimeDiagnosticValue,
   runtimeChildProcessErrorFields,
   type RuntimeDiagnosticLogger
-} from './runtime-diagnostics'
+} from '@aipoch/diagnostics/node'
 import {
   DEFAULT_ENV_VERSION,
   DEFAULT_PY_ENV,

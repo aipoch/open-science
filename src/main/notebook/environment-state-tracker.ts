@@ -21,7 +21,10 @@ import {
 import { packageVersionsMatch } from './package-version-comparison'
 import { condaActivatedPath, runtimeRoot } from './runtime-paths'
 import { buildManagedRuntimeProcessEnvironment } from './process-environment'
-import { runtimeChildProcessErrorFields, type RuntimeDiagnosticLogger } from './runtime-diagnostics'
+import {
+  runtimeChildProcessErrorFields,
+  type RuntimeDiagnosticLogger
+} from '@aipoch/diagnostics/node'
 import { EnvironmentLockCaptureOwner, type EnvironmentLockWorkspace } from './environment-lock'
 
 type EnvironmentExecFile = (

@@ -32,7 +32,7 @@ import {
   readBoundedJsonBody
 } from '../resource-budget'
 import { toErrorMessage } from '../error-message'
-import { createLogger, diagnosticErrorFields } from '../logger'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import { extractPdfTextPages } from '../uploads/attachment-media'
 import {
   readBoundedPptx,

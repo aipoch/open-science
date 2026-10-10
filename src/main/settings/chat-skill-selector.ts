@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { SkillSelectorUsageObservation } from '../agent-framework'
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import type { OfficialVendorId } from '../../shared/provider-registry'
 import type { CustomReasoningEffortTransport } from '../../shared/reasoning-effort'
 import { DEFAULT_MAX_PROVIDER_RESPONSE_BYTES, readBoundedResponseText } from './bounded-response'

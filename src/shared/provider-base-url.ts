@@ -1,4 +1,4 @@
-import { isSensitiveUrlQueryKey } from './diagnostic-redaction'
+import { isSensitiveUrlQueryKey } from '@aipoch/diagnostics'
 
 export const PROVIDER_TRANSPORT_ERROR =
   'Remote model URLs must use HTTPS. HTTP is only allowed for localhost or loopback addresses.'

@@ -10,8 +10,8 @@ import { listEnvPackages } from './package-listing'
 import { discoverExternalRLibraries, resolveExternalRLibrary } from './external-r-library'
 import type { MicromambaRunner } from './windows-micromamba-runner'
 import { isMigrationInProgress, withDataRootWrite } from '../storage/migration-state'
-import { createLogger } from '../logger'
-import { startDiagnosticOperation } from '../diagnostics/operation'
+import { createLogger } from '@aipoch/diagnostics/node'
+import { startDiagnosticOperation } from '@aipoch/diagnostics/node'
 
 // Upper bound on concurrent package listings inside listPackageCounts (mirrors the bounded
 // probe concurrency in environment-discovery): enough to fill the Settings badges quickly without

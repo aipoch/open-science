@@ -3,7 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AppIconElectron } from './app-icon'
 import { buildAppIconPreviews, createAppIconController } from './app-icon'
 
-vi.mock('./logger', () => ({
+vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aipoch/diagnostics/node')>()),
   createLogger: () => ({
     debug: () => undefined,
     info: () => undefined,

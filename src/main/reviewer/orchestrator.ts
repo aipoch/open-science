@@ -8,7 +8,7 @@
 // Errors are isolated: reviewer failures set lifecycle='error' and do NOT crash the main session.
 
 import { withReviewerRuntimeActivity, type ReviewerAcpRuntime } from './acp-runtime'
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import type { DelegatedReviewEvidenceScope, ReviewWithChecks } from '../../shared/reviewer'
 import type { ReviewRepository } from './repository'
 import type { PersistedChatSession } from '../../shared/session-persistence'

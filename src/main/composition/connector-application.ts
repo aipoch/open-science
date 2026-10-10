@@ -1,10 +1,10 @@
-import { redactSensitiveText } from '../../shared/diagnostic-redaction'
+import { redactSensitiveText } from '@aipoch/diagnostics'
 import { mcpHostDependencies } from '../connectors/mcp-host-dependencies'
 import { builtinConnectorRegistry } from '../connectors/registry'
 import { randomUUID } from 'node:crypto'
 
 import type { ApplicationModule } from '../application-runtime'
-import { createLogger, diagnosticErrorFields } from '../logger'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
 import type { ManagedFileVersionService } from '../managed-file-versions/service'
 import type { ConnectorApplicationSettingsCapabilities } from '../settings/service-capabilities'

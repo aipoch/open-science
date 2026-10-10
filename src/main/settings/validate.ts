@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { redactSensitiveText } from '../../shared/diagnostic-redaction'
+import { redactSensitiveText } from '@aipoch/diagnostics'
 
 import type {
   ChatApiEndpoint,

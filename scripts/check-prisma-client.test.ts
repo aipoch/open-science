@@ -39,7 +39,7 @@ describe('Prisma Client fingerprint', () => {
       scripts: { predev?: string; pretest?: string }
     }
     expect(pkg.scripts.pretest).toBe(
-      'node scripts/check-prisma-client.mjs && npm run build:connectors'
+      'node scripts/check-prisma-client.mjs && npm run build:packages'
     )
     expect(pkg.scripts.predev).toBe(
       'node scripts/check-prisma-client.mjs && node scripts/dev-app-branding.cjs'

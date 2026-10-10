@@ -4,7 +4,7 @@ import { runtimeMetadata } from '../runtime-metadata'
 import { APP } from '../../shared/app-config'
 
 import type { ApplicationCommandComposition } from '../application-command-composition'
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import type { ApplicationEventSource } from '../application-events'
 import type { PermissionApprovalPresence } from '../permission-approval-presence'
 import type { TaskControlPorts } from '../tasks/task-control-ports'

@@ -13,7 +13,7 @@ import { BackgroundResultDeliveryOwner } from '../background-result-delivery/own
 import { BookmarkRepository } from '../bookmarks/repository'
 import type { ComputeJobOwnerLiveness } from '../compute/job-deletion-owner'
 import { SessionEnabledComputeHostsOwner } from '../compute/session-enabled-hosts-owner'
-import { createLogger, diagnosticErrorFields } from '../logger'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import {
   createManagedFileVersionHandlers,
   createManagedFileVersionCommandOwner

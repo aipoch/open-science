@@ -20,7 +20,7 @@ import type {
   RunNotebookCellRequest
 } from '../../shared/notebook'
 import type { ExecutionFileEvidenceSummary } from '../../shared/execution-file-evidence'
-import type { Logger } from '../logger'
+import type { Logger } from '@aipoch/diagnostics/node'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
 import { NotebookDataExecutionAdmissionOwner } from './data-execution-admission'
 import {

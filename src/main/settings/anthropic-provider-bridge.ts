@@ -6,7 +6,7 @@ import type { ServerResponse } from 'node:http'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 
-import { createLogger, errorLogFields, type Logger } from '../logger'
+import { createLogger, errorLogFields, type Logger } from '@aipoch/diagnostics/node'
 import { normalizeAnthropicBaseUrl } from './base-url'
 import {
   ProviderLoopbackHttpHost,

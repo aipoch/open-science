@@ -12,7 +12,7 @@ import type {
   ConversationSkillImportApprovalRequest
 } from '../../shared/settings'
 import type { ComputeApprovalContext } from '../compute/compute-approval-broker'
-import type { Logger } from '../logger'
+import type { Logger } from '@aipoch/diagnostics/node'
 import type { NativeTranslator } from '../locale/main-process-messages'
 import {
   runTaskNotificationInBackground,

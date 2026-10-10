@@ -3,7 +3,7 @@ import { EventEmitter } from 'node:events'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { Logger } from '../logger'
+import type { Logger } from '@aipoch/diagnostics/node'
 import { ElectronUpdaterStrategy, type ElectronUpdaterDeps } from './electron-updater-strategy'
 import { createActiveResearchSafeInstallGate, createDurableInstallGate } from './strategy'
 import {

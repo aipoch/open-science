@@ -112,16 +112,14 @@ vi.mock('./diagnostics/startup', () => ({
   reportApplicationStartupFailure: mocks.reportApplicationStartupFailure
 }))
 
-vi.mock('./diagnostics/startup-storage-probe', () => ({
+vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
   timedStartupStorageProbe: vi.fn(async () => ({
     sequentialMs: 0,
     syncWriteMs: 0,
     kind: 'unknown'
-  }))
-}))
-
-vi.mock('./logger', async (importOriginal) => ({
-  errorLogFields: (await importOriginal<typeof import('./logger')>()).errorLogFields,
+  })),
+  errorLogFields: (await importOriginal<typeof import('@aipoch/diagnostics/node')>())
+    .errorLogFields,
   createLogger: vi.fn(() => mocks.log),
   diagnosticErrorFields: vi.fn((error: unknown) => ({ error })),
   flushLogs: vi.fn(async () => undefined),

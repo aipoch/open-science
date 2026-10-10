@@ -8,7 +8,8 @@ const { warnLogSpy } = vi.hoisted(() => ({
   warnLogSpy: vi.fn()
 }))
 
-vi.mock('../logger', () => ({
+vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aipoch/diagnostics/node')>()),
   createLogger: () => ({
     debug: vi.fn(),
     info: vi.fn(),

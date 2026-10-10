@@ -6,7 +6,7 @@ import {
   type AcpRuntimeEvent
 } from '../../shared/acp'
 import type { AgentFramework } from '../agent-framework'
-import { createLogger, errorLogFields } from '../logger'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import type { AcpAgentConnectionCandidate } from './agent-connection-adapter'
 import { AcpConnectionCloseWorkflow, type CloseState } from './connection-close-workflow'
 import { AcpConnectionLifecycleWorkflow } from './connection-lifecycle-workflow'

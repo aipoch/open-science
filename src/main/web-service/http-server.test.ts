@@ -33,7 +33,7 @@ import {
 } from '../../shared/web-rpc-contract'
 import { ApplicationEventHub } from '../application-events'
 import type { CallerContext } from '../caller-context'
-import { createLogger, flushLogs, initLogger } from '../logger'
+import { createLogger, flushLogs, initLogger } from '@aipoch/diagnostics/node'
 import { PermissionApprovalPresence } from '../permission-approval-presence'
 import {
   REMOTE_LOCAL_ONLY_RPC_CHANNELS,

@@ -16,7 +16,7 @@ import {
   type PdfTranslationRecordLayoutRequest
 } from '../../../shared/pdf-translation'
 import type { ApplicationCallerLease } from '../../application-command-router'
-import { createLogger } from '../../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import { withDataRootWrite } from '../../storage/migration-state'
 import type { PdfTranslationOwner } from './index'
 import type { PdfTranslationWriter } from './writer'

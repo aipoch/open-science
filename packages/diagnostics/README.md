@@ -1,0 +1,46 @@
+# @aipoch/diagnostics
+
+Common diagnostic logging, credential redaction, operation timing, bounded flush, process error summaries and startup probes. The package builds and tests independently, uses only Node builtins at runtime, and never imports application source or Electron.
+
+## Public entries
+
+| Import                     | Purpose                                                                                         | Environment     |
+| -------------------------- | ----------------------------------------------------------------------------------------------- | --------------- |
+| `@aipoch/diagnostics`      | Credential-key classification, text redaction and log status types                              | Browser or Node |
+| `@aipoch/diagnostics/node` | JSONL logging, correlation, operation timing, flush, process error summaries and startup probes | Node >=22.13    |
+
+```ts
+import { redactSensitiveText } from '@aipoch/diagnostics'
+import { createLogger, initLogger, flushLogs } from '@aipoch/diagnostics/node'
+
+initLogger({ logDir: '/application/logs', mirrorToConsole: false })
+createLogger('example').info('request completed', { durationMs: 12 })
+await flushLogs()
+redactSensitiveText('apiKey=example')
+```
+
+The Node entry owns one log sink per process/module instance, shared by CommonJS and ESM imports. Initialize it once in application composition. A worker has its own isolated module state. Consumers use declared exports; formatting and other implementation details are private. The browser entry loads no Node builtins.
+
+## Ownership
+
+This package owns common diagnostic mechanics and their tests. The host supplies log directories, correlation values, event payloads, lifecycle wiring and startup probe operations. The host remains responsible for selecting appropriate business information before logging it; generic redaction cannot decide which domain fields may be disclosed.
+
+Diagnose inspection, Session export, database queries, Session/Notebook/settings projections, archive creation, cancellation, worker orchestration and their fixtures remain in the application's `session-diagnostics` module. There is no Session package entry, database schema, application storage reader, `tar` dependency or host repository dependency here. Changing a business table or persisted document does not require updating this package.
+
+## Development and acceptance
+
+```sh
+npm install --ignore-scripts
+npm run build
+npm run typecheck
+npm test
+npm pack
+```
+
+Package tests cover logging, privacy budgets, cross-platform text handling, operation timing, bounded flush and startup probe cleanup. Host tests cover application composition and business integration through public exports. The repository's `npm run check:diagnostics-package` builds and tests outside the checkout, installs the tarball in a separate consumer, verifies CJS/ESM singleton identity and private export rejection, compiles the browser entry and exercises logging/redaction after deleting the copied sources.
+
+Host-only CI changes may skip unchanged upstream package unit tests. Package changes retain downstream contract/integration checks; shared build inputs and uncertain impact retain conservative coverage. Test ownership counts are reported separately from actual Ubuntu execution time.
+
+## Compatibility and persistence
+
+Existing log records, filenames, rotation, queue bounds, fatal synchronous writes, redaction markers, operation outcomes and flush behavior are retained. The logger writes only to its configured directory. Storage probes create temporary files only within the explicitly supplied probe directory and clean them up. No application database, migration, persistent setting, storage version or new status value is introduced. Historical Session/document compatibility remains the responsibility of the host Diagnose feature.

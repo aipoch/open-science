@@ -1,5 +1,5 @@
 import type { DatabaseStartupState, StartupEnvironment } from '../../shared/database-startup'
-import { createLogger, errorLogFields } from '../logger'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import { DatabaseMigrationError, type SchemaMigrationProgress } from './migration-service'
 
 const log = createLogger('database-startup-owner')

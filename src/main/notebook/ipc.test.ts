@@ -8,8 +8,8 @@ const { ipcHandlers, log } = vi.hoisted(() => ({
   log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
 }))
 
-vi.mock('../logger', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../logger')>()),
+vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aipoch/diagnostics/node')>()),
   createLogger: () => log
 }))
 

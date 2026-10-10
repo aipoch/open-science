@@ -59,7 +59,7 @@ import {
 import { withDataRootWrite } from '../storage/migration-state'
 import { toErrorMessage } from '../error-message'
 import { getJobHarvestDir, workspaceRelativePath } from './workspace-path'
-import { createLogger, errorLogFields } from '../logger'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import {
   normalizeRemoteMtimeToken,
   parseRemoteFileStat,

@@ -16,7 +16,7 @@ vi.mock('electron', () => ({
 }))
 
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
-import { errorLogFields } from '../logger'
+import { errorLogFields } from '@aipoch/diagnostics/node'
 import { ComputeHostProfileOwner } from './compute-host-profile-owner'
 import { PasswordSshAdapter } from './connection-adapters'
 import { SshConfigComputeConnectionBroker } from './connection-broker'

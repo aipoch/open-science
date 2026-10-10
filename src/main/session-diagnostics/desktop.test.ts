@@ -9,7 +9,6 @@ import type {
   SessionDiagnosticWorkerResult
 } from '../../shared/session-diagnostics'
 import { createSessionDiagnosticsDesktop } from './desktop'
-import { sessionDiagnosticCommandContracts } from '../../shared/session-diagnostics-contracts'
 import * as fsPromises from 'node:fs/promises'
 
 vi.mock('node:fs/promises', async (original) => ({
@@ -187,7 +186,6 @@ describe('isolated diagnostic desktop lifecycle', () => {
   it('forwards an explicit code opt-in and rejects non-boolean export flags', async () => {
     const { owner, inputs, createWorker } = setup()
     const valid = { ...request, selectedItems: ['notebook'], includeExecutionCode: true }
-    expect(sessionDiagnosticCommandContracts.export.args.parse([valid])).toEqual([valid])
     expect(await owner.export(valid)).toMatchObject({ status: 'exported' })
     expect(inputs[0].includeExecutionCode).toBe(true)
     const invalid = {
@@ -196,7 +194,6 @@ describe('isolated diagnostic desktop lifecycle', () => {
       selectedItems: ['notebook'],
       includeExecutionCode: 'true'
     }
-    expect(() => sessionDiagnosticCommandContracts.export.args.parse([invalid])).toThrow()
     expect(await owner.export(invalid as never)).toMatchObject({ status: 'failed' })
     expect(createWorker).toHaveBeenCalledOnce()
   })

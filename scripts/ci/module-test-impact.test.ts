@@ -902,3 +902,46 @@ it.each([
   expect(plan.mode).toBe('selective')
   expect(plan.testFiles).toContain(testFile)
 })
+
+it.each([
+  'src/main/session-diagnostics/notebook.ts',
+  'src/main/session-diagnostics/worker-entry.ts',
+  'src/main/session-diagnostics/desktop.ts'
+])('keeps Session export selective with storage, transport and UI contracts for %s', (path) => {
+  const manifest = loadModuleImpactManifest(resolve('scripts/ci/module-impact.json'))
+  const plan = createAffectedTestPlan(
+    [{ path, status: 'modified' }],
+    {
+      status: 'unavailable-manifest-only',
+      testFiles: []
+    },
+    manifest
+  )
+  expect(plan.mode).toBe('selective')
+  expect(plan.modules).toEqual(['session_diagnostics'])
+  expect(plan.testFiles).toEqual(
+    expect.arrayContaining([
+      ...Object.values(manifest.modules.session_diagnostics.testFiles).flat(),
+      'src/main/session-diagnostics/desktop.test.ts',
+      'src/main/session-diagnostics/collector.test.ts',
+      'src/main/desktop-runtime-transport.integration.test.ts'
+    ])
+  )
+  expect(plan.capabilityOverlays).toEqual(
+    expect.arrayContaining(['e2e_regressions', 'windows_sensitive'])
+  )
+  expect(plan.testFiles.some((file) => file.startsWith('packages/connector-'))).toBe(false)
+})
+
+it.each([
+  'packages/diagnostics/src/logger.ts',
+  'packages/diagnostics/src/diagnostic-redaction.ts',
+  'packages/diagnostics/src/node.ts',
+  'packages/diagnostics/package.json'
+])('retains full host validation for common diagnostic or build input %s', (path) => {
+  const plan = createAffectedTestPlan([{ path, status: 'modified' }], {
+    status: 'unavailable-manifest-only',
+    testFiles: []
+  })
+  expect(plan.mode).toBe('full')
+})

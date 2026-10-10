@@ -8,7 +8,7 @@ import type {
 } from '../../shared/acp'
 import { normalizePermissionProfile } from '../../shared/permission-profiles'
 import type { EffectiveSpecialistSkills } from '../../shared/specialist'
-import { createLogger, diagnosticErrorFields } from '../logger'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
 import {
   type AcpSessionCapabilityOwner,

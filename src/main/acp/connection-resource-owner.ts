@@ -3,7 +3,7 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 
 import type { AgentFramework, ResolvedAgentBackend } from '../agent-framework'
 import type { ResponsesBridgeNamespacedTool } from '../settings/responses-protocol-types'
-import { createLogger, errorLogFields } from '../logger'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import { terminateProcessTree } from '../process-tree'
 
 type ResponsesBridgeLease = ResolvedAgentBackend['responsesBridgeLease']

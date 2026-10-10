@@ -6,7 +6,7 @@ import {
   MANAGED_DIFF_MAX_OUTPUT_LINES,
   type ManagedFileVersionDiffRow
 } from '../../shared/managed-file-versions'
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import { ManagedFileVersionError } from './error'
 
 type DiffTask = { requestId: string; before: string; after: string }

@@ -1,4 +1,4 @@
-import { createLogger, errorLogFields } from '../logger'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
 import type { ComputeHostLifecycle } from './authentication-runtime'
 import type { ComputeApprovalBroker } from './compute-approval-broker'

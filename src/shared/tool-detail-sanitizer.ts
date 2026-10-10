@@ -1,8 +1,4 @@
-import {
-  REDACTED_MARKER,
-  isSensitiveDiagnosticKey,
-  redactSensitiveText
-} from './diagnostic-redaction'
+import { REDACTED_MARKER, isSensitiveDiagnosticKey, redactSensitiveText } from '@aipoch/diagnostics'
 
 const MAX_TOOL_DETAIL_TEXT_CHARS = 16_000
 const MAX_TOOL_DETAIL_CONTENT_CHARS = 32_000

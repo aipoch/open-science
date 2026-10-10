@@ -25,7 +25,7 @@ import {
 } from '../../../shared/specialist'
 import { parseSkillDocument } from '../../../shared/skill-frontmatter'
 import type { SkillSource } from '../../../shared/settings'
-import { createLogger } from '../../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import type { SpecialistOrigin, StoredSpecialist, StoredSpecialists } from '../types'
 import { SpecialistRepository } from '../repository'
 import type { SettingsRepository } from '../../settings/repository'

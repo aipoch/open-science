@@ -9,7 +9,7 @@ import {
   registerRuntimeIpcHandlers
 } from '../desktop-surface-declarations'
 import { join } from 'node:path'
-import { type DiagnosticOperation } from '../diagnostics/operation'
+import { type DiagnosticOperation } from '@aipoch/diagnostics/node'
 
 import { getRuntimeRoot } from '../notebook/repository'
 

@@ -33,7 +33,7 @@ import {
 } from './lane-identity'
 import { resolveProjectId } from '../../shared/project-scope'
 import { reconcileWorkingFileEvidence } from './working-file-observer'
-import { createLogger, diagnosticErrorFields } from '../logger'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import type { KernelProcessLifecycleOwner } from './kernel-process-lifecycle.windows-posix'
 import { assertResearchSessionWritable } from '../storage/session-package-state'
 

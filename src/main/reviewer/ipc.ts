@@ -14,7 +14,7 @@ import type {
 } from '../../shared/reviewer'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { REVIEWER_IPC } from '../../shared/reviewer'
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import type { runReview as RunReview } from './orchestrator'
 import {
   resolveCorrectionResume,

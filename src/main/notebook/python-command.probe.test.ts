@@ -6,7 +6,7 @@ import { promisify } from 'node:util'
 import { build } from 'esbuild'
 import { describe, expect, it, vi } from 'vitest'
 
-import { flushLogs, initLogger } from '../logger'
+import { flushLogs, initLogger } from '@aipoch/diagnostics/node'
 import { probeInterpreterVersion } from './python-command'
 
 describe('Python interpreter probe diagnostics', () => {
@@ -133,6 +133,8 @@ describe('Python interpreter probe diagnostics', () => {
       },
       bundle: true,
       platform: 'node',
+      // Let Node load declared npm packages instead of inlining CommonJS requires into ESM.
+      packages: 'external',
       format: 'esm',
       write: false
     })

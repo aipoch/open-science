@@ -13,7 +13,7 @@ import {
   type PersistedChatSession,
   type LoadAllSessionsResult
 } from '../../shared/session-persistence'
-import type { Logger } from '../logger'
+import type { Logger } from '@aipoch/diagnostics/node'
 import {
   ProjectDeletionCoordinator,
   type ProjectDeletionRepository,

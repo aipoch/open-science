@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { setImmediate } from 'node:timers/promises'
 import { Prisma, type PrismaClient } from '@prisma/client'
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import { searchTitleRank } from '../../shared/search-text'
 import { isCurrentInFlight } from '../../shared/in-flight-promise'
 import {

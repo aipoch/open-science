@@ -7,7 +7,7 @@
 import { randomUUID } from 'node:crypto'
 
 import type { ReviewerAcpRuntime } from './acp-runtime'
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import { ReviewerCorrectionContextChangedError } from './correction-context'
 import type { ReviewCheck } from '../../shared/reviewer'
 import type { AgentTurnProvenanceContext } from '../../shared/elicitation'

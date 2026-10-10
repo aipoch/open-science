@@ -12,7 +12,7 @@ import {
   type PermissionProfileId
 } from '../../shared/permission-profiles'
 import type { AgentFramework } from '../agent-framework'
-import { createLogger, errorLogFields } from '../logger'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import { DelegateMessagePreAcceptanceError } from '../delegation/execution-port'
 import { PLAN_FIRST_TURN_PROMPT_REMINDER } from '../session-plan/guidance'
 import type { ArtifactTurnHandle } from './artifact-turn-owner'

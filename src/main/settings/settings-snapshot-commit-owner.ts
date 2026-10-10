@@ -1,6 +1,6 @@
 import type { SettingsSnapshot } from '../../shared/settings'
 import type { ApplicationEventPublisher } from '../application-events'
-import { createLogger, diagnosticErrorFields } from '../logger'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 
 const log = createLogger('settings')
 

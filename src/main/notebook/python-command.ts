@@ -4,8 +4,8 @@ import { access, realpath } from 'node:fs/promises'
 import { delimiter, join } from 'node:path'
 import { promisify } from 'node:util'
 
-import { redactSensitiveText } from '../../shared/diagnostic-redaction'
-import { createLogger } from '../logger'
+import { redactSensitiveText } from '@aipoch/diagnostics'
+import { createLogger } from '@aipoch/diagnostics/node'
 
 const execFileAsync = promisify(execFile)
 const log = createLogger('notebook:python-command')

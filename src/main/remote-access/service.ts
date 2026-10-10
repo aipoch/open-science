@@ -8,7 +8,7 @@ import type {
 import { REMOTE_ACCESS_CHANGED_CHANNEL } from '../../shared/remote-access'
 import type { ExternalWebAccess } from '../web-service/http-server'
 import { DEFAULT_WEB_PORT, type WebServiceController } from '../web-service'
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import { resolveConfigRoot } from '../storage-root'
 import { RemoteSessionPairingManager } from './pairing'

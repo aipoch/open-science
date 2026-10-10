@@ -3,7 +3,7 @@ import { readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises
 import { basename, dirname, join } from 'node:path'
 
 import type { AgentHomeSkillRef, AgentHomeSkillSource, SkillSource } from '../../shared/settings'
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import { type SkillMutationOwner, skillMutationOwnerFor } from './skill-mutation-owner'
 import { marketplaceReceiptSchema, type MarketplaceReceipt } from './marketplace-package'
 

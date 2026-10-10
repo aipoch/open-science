@@ -5,7 +5,7 @@ import {
 import { randomBytes } from 'node:crypto'
 import type { ServerResponse } from 'node:http'
 
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import { appendChatCompletions } from './base-url'
 import type { OfficialVendorId } from '../../shared/provider-registry'
 import type {

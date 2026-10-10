@@ -1,4 +1,4 @@
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import {
   createSpecialistDesktopCommands,
   specialistDesktopCommandGroup,

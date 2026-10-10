@@ -3,7 +3,7 @@ import { createNotificationElectronSurface } from '../desktop-surface-declaratio
 import type { Notification } from 'electron'
 import { desktopInteraction, hasDesktopInteraction } from '../desktop-interaction'
 
-import { createLogger, errorLogFields } from '../logger'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import {
   buildTaskNotificationShow,
   getTaskNotificationAvailability,

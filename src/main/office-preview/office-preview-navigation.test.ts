@@ -24,7 +24,8 @@ vi.mock('electron', () => ({
   net: { fetch: vi.fn() },
   protocol: { handle: vi.fn(), unhandle: vi.fn() }
 }))
-vi.mock('../logger', () => ({
+vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aipoch/diagnostics/node')>()),
   createLogger: () => ({ warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() }),
   diagnosticErrorFields: () => ({})
 }))

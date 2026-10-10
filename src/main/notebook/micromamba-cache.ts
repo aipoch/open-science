@@ -13,7 +13,7 @@ import {
 import { basename, dirname, join, posix, resolve, win32 } from 'node:path'
 
 import { resolveWindowsPowerShellExecutable } from '../windows-powershell'
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import { DEFAULT_MAX_CACHE_RELATIVE_PATH as MANIFEST_DEFAULT_MAX_CACHE_RELATIVE_PATH } from './bundle-manifest'
 
 export const WINDOWS_MAX_USABLE_PATH = 259

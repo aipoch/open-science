@@ -11,7 +11,7 @@ import { rootCertificates } from 'node:tls'
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { DEFAULT_NOTEBOOK_NETWORK_SETTINGS } from '../../shared/notebook-network'
-import { flushLogs, initLogger, type Logger } from '../logger'
+import { flushLogs, initLogger, type Logger } from '@aipoch/diagnostics/node'
 import type {
   NotebookSandboxCleanupReason,
   NotebookSandboxProcessOutcome,

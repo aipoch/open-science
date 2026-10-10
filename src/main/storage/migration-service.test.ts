@@ -50,7 +50,7 @@ import {
 import { withDataRootWrite } from './migration-state'
 import { operationJournalPath, RuntimeOperationJournal } from '../notebook/operation-journal'
 import { exportRuntimeLocks as exportRuntimeLockBundle } from '../notebook/runtime-relocation'
-import type { Logger } from '../logger'
+import type { Logger } from '@aipoch/diagnostics/node'
 import { DataRootCleanupJournal } from './data-root-cleanup'
 
 // Writes a verified staging marker for `<parent>/Open-Science`, as a completed copy phase would have.

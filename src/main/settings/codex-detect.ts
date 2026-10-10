@@ -7,7 +7,7 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 
 import { isSupportedCodexAcpVersion, isSupportedCodexCliVersion } from '../../shared/codex-runtime'
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import { augmentedPathEnv } from './shell-path'
 import { stripCodexCredentialEnv } from './process-tree'
 import { registerOwnedPosixProcessGroup, terminateProcessTree } from '../process-tree'

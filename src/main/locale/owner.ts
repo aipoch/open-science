@@ -5,7 +5,7 @@ import {
   type LanguagePreference,
   type LocalePreferenceSnapshot
 } from '../../shared/locale'
-import { createLogger, errorLogFields } from '../logger'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import type { SettingsRepository } from '../settings/repository'
 import {
   createNativeI18n,

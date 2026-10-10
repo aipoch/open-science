@@ -10,7 +10,7 @@ import type {
   AcpSaveAsSkillRequest,
   AcpRuntimeState
 } from '../../shared/acp'
-import { createLogger, diagnosticErrorFields, errorLogFields } from '../logger'
+import { createLogger, diagnosticErrorFields, errorLogFields } from '@aipoch/diagnostics/node'
 import type { TaskNotificationService } from '../notifications/task-notifications'
 import type { AcpCreateSessionWorkflow } from './create-session-workflow'
 import { bindResumeRequestToProject } from './session-project-binding'

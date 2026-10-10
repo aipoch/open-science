@@ -1,6 +1,6 @@
 import type { SetSessionSpecialistResponse } from '../../shared/specialist'
-import { startDiagnosticOperation, type DiagnosticOperation } from '../diagnostics/operation'
-import { createLogger, diagnosticErrorFields } from '../logger'
+import { startDiagnosticOperation, type DiagnosticOperation } from '@aipoch/diagnostics/node'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import type { SessionBindingService } from './session-binding'
 
 export type PersistedSessionSpecialistBinding = Readonly<{

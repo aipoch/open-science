@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import type { AgentFrameworkId } from '../../shared/settings'
 import type { EffectiveSpecialistSkills } from '../../shared/specialist'
 import type { ResolvedAgentBackend } from '../agent-framework'
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import type {
   ResponsesBridgeSkillCandidate,
   ResponsesBridgeSkillInput

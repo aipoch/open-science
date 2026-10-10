@@ -12,7 +12,7 @@ import {
   type ApplicationCommandRegistrar
 } from '../application-command-router'
 import type { CallerContext } from '../caller-context'
-import { createLogger, diagnosticErrorFields } from '../logger'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import type { RuntimeWorkflows } from './runtime-workflows'
 
 const log = createLogger('notebook:runtime-commands')

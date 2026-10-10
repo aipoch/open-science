@@ -8,7 +8,7 @@ import type {
 } from '../../shared/session-plan/contract'
 import { formatPlanProtectedContext, PlanCommandError } from '../../shared/session-plan/contract'
 import type { SessionPlanStepStatus } from '../../shared/session-persistence'
-import { createLogger, errorLogFields } from '../logger'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import type { PlanResponseResult } from '../session-plan/plan-service'
 import { matchesPlanDelivery } from '../session-plan/plan-delivery'
 import { PlanContextFileStore } from '../session-plan/plan-context-file'

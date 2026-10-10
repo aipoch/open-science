@@ -2,7 +2,7 @@ import {
   isSensitiveDiagnosticKey,
   isSensitiveUrlQueryKey,
   redactSensitiveText
-} from '../../shared/diagnostic-redaction'
+} from '@aipoch/diagnostics'
 import type { SensitiveContentEvidence } from '../../shared/session-package'
 import { createHash } from 'node:crypto'
 import { PackageJsonSyntax } from './json-syntax'

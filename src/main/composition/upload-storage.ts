@@ -1,4 +1,4 @@
-import { diagnosticErrorFields, errorLogFields } from '../logger'
+import { diagnosticErrorFields, errorLogFields } from '@aipoch/diagnostics/node'
 import { ManagedFileVersionService } from '../managed-file-versions/service'
 import { PdfAnnotationService } from '../pdf-annotations/service'
 import { getProjectDbClient } from '../projects/prisma-client'

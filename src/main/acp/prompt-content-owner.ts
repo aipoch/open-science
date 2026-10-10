@@ -26,7 +26,7 @@ import {
   readBoundedManagedFilePreview,
   readBoundedManagedFilePreviewLease
 } from '../managed-file-preview'
-import { createLogger, errorLogFields } from '../logger'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import {
   buildImageContentData,
   prepareModelImageData,

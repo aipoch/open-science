@@ -1,0 +1,82 @@
+{
+  "ownerPaths": [
+    "packages/diagnostics/LICENSE",
+    "packages/diagnostics/README.md",
+    "packages/diagnostics/package.json",
+    "packages/diagnostics/src/diagnostic-redaction.test.ts",
+    "packages/diagnostics/src/diagnostic-redaction.ts",
+    "packages/diagnostics/src/flush.test.ts",
+    "packages/diagnostics/src/flush.ts",
+    "packages/diagnostics/src/index.ts",
+    "packages/diagnostics/src/log-types.ts",
+    "packages/diagnostics/src/logger.test.ts",
+    "packages/diagnostics/src/logger.ts",
+    "packages/diagnostics/src/node.ts",
+    "packages/diagnostics/src/operation.test.ts",
+    "packages/diagnostics/src/operation.ts",
+    "packages/diagnostics/src/startup-delay.test.ts",
+    "packages/diagnostics/src/startup-delay.ts",
+    "packages/diagnostics/src/startup-storage-probe.test.ts",
+    "packages/diagnostics/src/startup-storage-probe.ts",
+    "packages/diagnostics/tsc.cjs",
+    "packages/diagnostics/tsconfig.json",
+    "packages/diagnostics/tsconfig.test.json",
+    "packages/diagnostics/vitest.config.ts",
+    "packages/diagnostics/src/boundaries.test.ts",
+    "packages/diagnostics/src/process-diagnostics.ts",
+    "packages/diagnostics/src/process-diagnostics.test.ts",
+    "packages/diagnostics/src/startup-error.ts",
+    "packages/diagnostics/src/startup-error.test.ts"
+  ],
+  "interfacePaths": [
+    "packages/diagnostics/package.json",
+    "packages/diagnostics/src/index.ts",
+    "packages/diagnostics/src/node.ts"
+  ],
+  "consumerModules": [],
+  "testFiles": {
+    "owner": [
+      "packages/diagnostics/src/diagnostic-redaction.test.ts",
+      "packages/diagnostics/src/flush.test.ts",
+      "packages/diagnostics/src/logger.test.ts",
+      "packages/diagnostics/src/operation.test.ts",
+      "packages/diagnostics/src/startup-delay.test.ts",
+      "packages/diagnostics/src/startup-storage-probe.test.ts",
+      "packages/diagnostics/src/boundaries.test.ts",
+      "packages/diagnostics/src/process-diagnostics.test.ts",
+      "packages/diagnostics/src/startup-error.test.ts"
+    ],
+    "contract": [
+      "src/main/session-diagnostics/schema-compatibility.integration.test.ts",
+      "src/shared/session-diagnostics-contracts.test.ts"
+    ],
+    "consumer": [
+      "src/main/logger.test.ts",
+      "src/main/diagnostics/startup.test.ts",
+      "src/main/diagnostics/ipc-rejection.test.ts",
+      "src/main/diagnostics/privacy-canary.test.ts",
+      "src/main/index-fatal-errors.test.ts",
+      "src/main/index-startup-failure.test.ts",
+      "src/main/renderer-diagnostics.test.ts",
+      "src/main/session-diagnostics/export-evidence.integration.test.ts",
+      "src/main/session-persistence/runtime-resume-recovery.test.ts",
+      "src/main/connectors/mcp-host-dependencies.test.ts",
+      "src/main/connectors/boundaries.architecture.test.ts",
+      "src/main/composition/connector-application.test.ts",
+      "src/main/session-package/diagnostics.test.ts",
+      "src/main/session-package/recovery-diagnostics.test.ts",
+      "src/shared/tool-detail-sanitizer.test.ts",
+      "src/shared/provider-text-generation-failure.test.ts",
+      "src/renderer/src/pages/workspace/SessionDiagnosticsDialog.interaction.test.tsx",
+      "src/main/session-diagnostics/detail.test.ts",
+      "src/main/session-diagnostics/collector.test.ts",
+      "src/main/session-diagnostics/database.test.ts",
+      "src/main/session-diagnostics/environment.test.ts",
+      "src/main/session-diagnostics/notebook.test.ts",
+      "src/main/session-diagnostics/projection.test.ts"
+    ]
+  },
+  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
+  "fallbackCapability": "shared_contract",
+  "fullTestReason": "Shared logging and redaction have cross-process and dynamic consumers; retain complete validation when common diagnostic implementation changes."
+}

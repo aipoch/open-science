@@ -16,7 +16,7 @@ import {
 } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import type { AgentProcessSpawner } from '../agent-framework/types'
 import {
   capturePosixProcessTreeIdentity,

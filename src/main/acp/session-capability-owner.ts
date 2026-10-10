@@ -13,7 +13,7 @@ import {
   type ArtifactMcpEnvironment
 } from '../artifacts/mcp-server'
 import { getArtifactCurrentRunFilePath } from '../artifacts/repository'
-import { createLogger, diagnosticErrorFields } from '../logger'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import {
   LITERATURE_LIBRARY_MCP_SERVER_NAME,
   type LiteratureLibraryMcpHandler

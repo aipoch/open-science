@@ -11,7 +11,7 @@ import { ProvenanceMessageSnapshotRepository } from '../artifacts/provenance-mes
 import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
 import type { ComputeJobOwnerLiveness } from '../compute/job-deletion-owner'
 import { createProductionDelegatedWorkComposition } from '../delegation/production-composition'
-import { type DiagnosticOperation } from '../diagnostics/operation'
+import { type DiagnosticOperation } from '@aipoch/diagnostics/node'
 import { ImmutableInputAuthority } from '../immutable-input-authority'
 import { ManagedFileVersionService } from '../managed-file-versions/service'
 import { NotebookInputRegistry } from '../notebook/input-registry'

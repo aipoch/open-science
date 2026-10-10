@@ -25,7 +25,7 @@ import { BackgroundResultDeliveryOwner } from '../background-result-delivery/own
 import { createProductionDelegatedWorkComposition } from '../delegation/production-composition'
 import { ipcMainHandle } from '../ipc-handler-registry'
 
-import { createLogger, errorLogFields } from '../logger'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import { ManagedFileVersionService } from '../managed-file-versions/service'
 import { NotebookInputRegistry } from '../notebook/input-registry'
 import type { NotebookRuntimeService } from '../notebook/runtime-service'

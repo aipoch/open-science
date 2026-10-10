@@ -1,5 +1,12 @@
 {
   "ownerPaths": [
+    "src/main/session-diagnostics/export-evidence.integration.test.ts",
+    "src/renderer/src/lib/session-diagnostics.ts",
+    "src/renderer/src/pages/workspace/SessionDiagnosticsDialog.interaction.test.tsx",
+    "src/renderer/src/pages/workspace/SessionDiagnosticsDialog.tsx",
+    "src/shared/session-diagnostics-contracts.ts",
+    "src/main/session-diagnostics/schema-compatibility.integration.test.ts",
+    "src/shared/session-diagnostics-contracts.test.ts",
     "src/main/session-diagnostics/collector.test.ts",
     "src/main/session-diagnostics/collector.ts",
     "src/main/session-diagnostics/database.test.ts",
@@ -10,19 +17,17 @@
     "src/main/session-diagnostics/detail.ts",
     "src/main/session-diagnostics/environment.test.ts",
     "src/main/session-diagnostics/environment.ts",
-    "src/main/session-diagnostics/export-evidence.integration.test.ts",
     "src/main/session-diagnostics/notebook.test.ts",
     "src/main/session-diagnostics/notebook.ts",
     "src/main/session-diagnostics/projection.test.ts",
     "src/main/session-diagnostics/projection.ts",
     "src/main/session-diagnostics/worker-entry.ts",
-    "src/renderer/src/lib/session-diagnostics.ts",
-    "src/renderer/src/pages/workspace/SessionDiagnosticsDialog.interaction.test.tsx",
-    "src/renderer/src/pages/workspace/SessionDiagnosticsDialog.tsx",
-    "src/shared/session-diagnostics-contracts.ts",
     "src/shared/session-diagnostics.ts"
   ],
   "interfacePaths": [
+    "src/renderer/src/lib/session-diagnostics.ts",
+    "src/renderer/src/pages/workspace/SessionDiagnosticsDialog.tsx",
+    "src/shared/session-diagnostics-contracts.ts",
     "src/main/session-diagnostics/collector.ts",
     "src/main/session-diagnostics/database.ts",
     "src/main/session-diagnostics/desktop.ts",
@@ -31,23 +36,22 @@
     "src/main/session-diagnostics/notebook.ts",
     "src/main/session-diagnostics/projection.ts",
     "src/main/session-diagnostics/worker-entry.ts",
-    "src/renderer/src/lib/session-diagnostics.ts",
-    "src/renderer/src/pages/workspace/SessionDiagnosticsDialog.tsx",
-    "src/shared/session-diagnostics-contracts.ts",
     "src/shared/session-diagnostics.ts"
   ],
   "consumerModules": [],
   "testFiles": {
     "owner": [
+      "src/main/session-diagnostics/export-evidence.integration.test.ts",
+      "src/renderer/src/pages/workspace/SessionDiagnosticsDialog.interaction.test.tsx",
+      "src/main/session-diagnostics/schema-compatibility.integration.test.ts",
+      "src/shared/session-diagnostics-contracts.test.ts",
       "src/main/session-diagnostics/collector.test.ts",
       "src/main/session-diagnostics/database.test.ts",
       "src/main/session-diagnostics/desktop.test.ts",
       "src/main/session-diagnostics/detail.test.ts",
       "src/main/session-diagnostics/environment.test.ts",
-      "src/main/session-diagnostics/export-evidence.integration.test.ts",
       "src/main/session-diagnostics/notebook.test.ts",
-      "src/main/session-diagnostics/projection.test.ts",
-      "src/renderer/src/pages/workspace/SessionDiagnosticsDialog.interaction.test.tsx"
+      "src/main/session-diagnostics/projection.test.ts"
     ],
     "contract": [
       "src/main/data-content-application-commands.test.ts",
@@ -109,7 +113,11 @@
       "src/main/composition/reviewer.test.ts",
       "src/main/desktop-runtime-electron-adapter.test.ts",
       "src/main/desktop-runtime-transport.integration.test.ts",
-      "src/main/artifacts/artifact-reproducibility-commands.test.ts"
+      "src/main/artifacts/artifact-reproducibility-commands.test.ts",
+      "src/main/credential-identity/access.test.ts",
+      "src/main/credential-identity/macos.test.ts",
+      "src/main/credential-identity/probe-logging.test.ts",
+      "src/main/database/database-startup-logging.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "windows_sensitive"],

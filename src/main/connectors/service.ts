@@ -1,4 +1,4 @@
-import { isSensitiveDiagnosticKey, redactSensitiveText } from '../../shared/diagnostic-redaction'
+import { isSensitiveDiagnosticKey, redactSensitiveText } from '@aipoch/diagnostics'
 import { ConnectorHttpError, ParserEngine } from '@aipoch/connector-core'
 import type { ConnectorRegistry } from '@aipoch/connector-core'
 import {

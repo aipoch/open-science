@@ -8,7 +8,7 @@ import type {
   SkillMarketplaceResult
 } from '../../shared/skill-marketplace'
 import { netFetchWithManualRedirect } from './net-fetch'
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import {
   marketplaceReceiptSchema,
   verifyMarketplacePackage,

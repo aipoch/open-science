@@ -4,9 +4,9 @@ import { type ApplicationModuleBuilder } from '../application-runtime'
 import { ComputeJobResultDeliveryAdapter } from '../background-result-delivery/compute-adapter'
 import { broadcastJobUpdated, createComputeIpcModule, toJobSummary } from '../compute/ipc'
 import { createComputeJobRuntime } from '../compute/job-runtime'
-import { type DiagnosticOperation } from '../diagnostics/operation'
+import { type DiagnosticOperation } from '@aipoch/diagnostics/node'
 import { QUIT_SHUTDOWN_BUDGET_MS } from '../lifecycle-shutdown'
-import { createLogger, diagnosticErrorFields, errorLogFields } from '../logger'
+import { createLogger, diagnosticErrorFields, errorLogFields } from '@aipoch/diagnostics/node'
 import {
   reconcileComputeJobFileEvidence,
   recoverPublishedComputeJobFileEvidence,

@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { SessionPackageService } from './service'
 import { SessionPackageDeletion } from './deletion'
-import { initLogger, flushLogs } from '../logger'
+import { initLogger, flushLogs } from '@aipoch/diagnostics/node'
 
 const roots: string[] = []
 afterEach(async () => {

@@ -6,7 +6,7 @@ import {
   type SideChatTargetState
 } from '../../shared/side-chat'
 import type { PersistedSideChatRelay } from '../../shared/session-persistence'
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 
 const MAX_SIDE_CHAT_MESSAGE_CHARS = SIDE_CHAT_MESSAGE_LIMIT
 const MAX_PENDING_ADVISORIES = 100

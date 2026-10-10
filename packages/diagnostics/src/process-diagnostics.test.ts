@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { boundedRuntimeDiagnostic, runtimeChildProcessErrorFields } from './runtime-diagnostics'
+import { boundedRuntimeDiagnostic, runtimeChildProcessErrorFields } from './process-diagnostics'
 
 describe('runtime diagnostics', () => {
   it('redacts credentials and preserves both ends of long installer output', () => {

@@ -5,8 +5,8 @@ import { waitForInitialConnectorRefresh } from '../connector-reload'
 import { createConnectorApplicationModule } from './connector-application'
 import { createMoleculePreviewHandler } from '../connectors/molecule-artifact-adapter'
 import { connectorSkillSourceDir } from '../connectors/provision'
-import { type DiagnosticOperation } from '../diagnostics/operation'
-import { createLogger, errorLogFields } from '../logger'
+import { type DiagnosticOperation } from '@aipoch/diagnostics/node'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import { ManagedFileVersionService } from '../managed-file-versions/service'
 import {
   buildConnectorApprovalBroadcast,

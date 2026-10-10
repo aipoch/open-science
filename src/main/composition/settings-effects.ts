@@ -15,7 +15,7 @@ import { BackgroundResultDeliveryRepository } from '../background-result-deliver
 import { type ResolvedBackgroundResultSource } from '../background-result-delivery/source-resolver'
 import { ALL_CONNECTOR_IDS } from '../connectors/registry'
 
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import { createNotebookApplicationModule } from '../notebook/application'
 
 import { createPermissionGrantProjectionController } from '../permission-grants/projection-controller'

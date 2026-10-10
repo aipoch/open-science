@@ -81,7 +81,7 @@ import type {
   SkillMarketplaceInstallRequest
 } from '../../shared/skill-marketplace'
 import type { SettingsWorkflows } from './workflows'
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import type { SettingsSnapshotCommitOwner } from './settings-snapshot-commit-owner'
 import {

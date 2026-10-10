@@ -21,7 +21,8 @@ const loggerMock = vi.hoisted(() => ({
   error: vi.fn()
 }))
 const { warn: warnSpy } = loggerMock
-vi.mock('../logger', () => ({
+vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aipoch/diagnostics/node')>()),
   createLogger: () => loggerMock
 }))
 

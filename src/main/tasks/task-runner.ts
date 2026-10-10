@@ -90,7 +90,7 @@ import type {
 } from '../../shared/task-api'
 import { ArchiveAvailabilityError, archiveAvailabilityMessage } from '../archive/availability-error'
 import { toErrorMessage } from '../error-message'
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import type { TaskRunJournal, TaskRunJournalEntry } from './task-run-journal'
 
 const log = createLogger('task-runner')

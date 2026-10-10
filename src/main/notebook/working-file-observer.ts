@@ -22,7 +22,7 @@ import type {
   NotebookWorkingFile
 } from '../../shared/notebook'
 import { assertDiskReserve, digestFileWithinBudget } from '../bounded-file-io'
-import { createLogger, diagnosticErrorFields } from '../logger'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import { LOCAL_RESOURCE_BUDGETS } from '../resource-budget'
 import { availableBytes } from '../storage/usage'
 import { analyzeScientificOutputs } from './scientific-output-analysis'

@@ -8,8 +8,8 @@ import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 const diagnosticWarn = vi.hoisted(() => vi.fn())
-vi.mock('../logger', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../logger')>()),
+vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aipoch/diagnostics/node')>()),
   createLogger: () => ({ warn: diagnosticWarn })
 }))
 

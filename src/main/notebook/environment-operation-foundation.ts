@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
 import type { NotebookLanguage } from '../../shared/notebook'
-import { createLogger, errorLogFields } from '../logger'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import type { ProvisionProgress, RuntimeProvisioner } from './provisioner'
 
 type LoggedRuntimeOperation = 'provision' | 'repair'

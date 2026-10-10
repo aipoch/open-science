@@ -8,7 +8,7 @@ import { syncConnectorSkillDocs, syncCustomServerSkillDocs } from './provision'
 import { ALL_CONNECTOR_IDS } from './registry'
 import { customConnectorSkillName } from '../../shared/custom-connector'
 import type { McpClientManager } from '@aipoch/connector-mcp-client'
-import { createLogger, errorLogFields } from '../logger'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import type { StoredConnectors, StoredCustomMcpServer } from '../settings/types'
 
 const log = createLogger('connectors:runtime-settings')

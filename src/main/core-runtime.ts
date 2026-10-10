@@ -8,8 +8,8 @@ import type {
   ElectronRuntimeAdapterInterfaces,
   InstalledElectronSurfaceAdapter
 } from './runtime-electron-wiring'
-import { startDiagnosticOperation } from './diagnostics/operation'
-import { createLogger } from './logger'
+import { startDiagnosticOperation } from '@aipoch/diagnostics/node'
+import { createLogger } from '@aipoch/diagnostics/node'
 
 // Both hosts construct this exact owner graph. Only the desktop supplies transport installation.
 export async function createCoreRuntime(

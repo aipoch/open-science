@@ -1064,7 +1064,8 @@
       "src/main/acp/permission-broker.test.ts",
       "src/main/acp/permission-context.test.ts",
       "src/main/acp/permission-frequency.test.ts",
-      "src/main/acp/permission-policy.test.ts"
+      "src/main/acp/permission-policy.test.ts",
+      "src/main/session-diagnostics/schema-compatibility.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

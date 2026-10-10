@@ -123,8 +123,8 @@ const { infoLogSpy, warnLogSpy, errorLogSpy } = vi.hoisted(() => ({
   warnLogSpy: vi.fn(),
   errorLogSpy: vi.fn()
 }))
-vi.mock('../logger', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../logger')>()
+vi.mock('@aipoch/diagnostics/node', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@aipoch/diagnostics/node')>()
   return {
     ...actual,
     createLogger: (scope: string) => ({
@@ -26330,7 +26330,9 @@ describe('ACP runtime — agent process lifecycle logging', () => {
   it.each(PERMISSION_PROJECTION_FRAMEWORKS)(
     'redacts raw %s stderr credentials across chunk and sampling boundaries',
     async (_name, framework, modelRoute, backendId) => {
-      const actualLog = await vi.importActual<typeof import('../logger')>('../logger')
+      const actualLog = await vi.importActual<typeof import('@aipoch/diagnostics/node')>(
+        '@aipoch/diagnostics/node'
+      )
       const dir = await mkdtemp(join(tmpdir(), 'os-stderr-redaction-'))
       const previousRaw = process.env.OPEN_SCIENCE_AGENT_STDERR
       process.env.OPEN_SCIENCE_AGENT_STDERR = 'raw'

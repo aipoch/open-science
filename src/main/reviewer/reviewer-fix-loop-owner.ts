@@ -1,6 +1,6 @@
 // Owns the bounded Reviewer correction loop and its durable re-review lifecycle.
 
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import {
   REVIEW_CORRECTION_CONTEXT_CHANGED,
   type TurnScope,

@@ -10,7 +10,7 @@ import {
   waitForVerifiedDatabaseStartup
 } from './database/database-startup-owner'
 import { createDatabaseStartupLogging } from './database/database-startup-logging'
-import { buildStartupDiagnostics } from './database/startup-diagnostics'
+import { buildStartupDiagnostics } from '@aipoch/diagnostics/node'
 import { createDesktopRuntimeLifecycle } from './desktop-runtime-lifecycle'
 import { isMigrationInProgress, cancelMigrationForQuit } from './storage/migration-state'
 import {
@@ -63,7 +63,12 @@ import { parseWebModeOptions } from './web-service/options'
 import { isRuntimeHelper, runRuntimeHelper } from './runtime-helper'
 import { initializeApplicationDiagnostics } from './diagnostics/startup'
 import { RemoteAccessService } from './remote-access/service'
-import { createLogger, diagnosticErrorFields, errorLogFields, flushLogs } from './logger'
+import {
+  createLogger,
+  diagnosticErrorFields,
+  errorLogFields,
+  flushLogs
+} from '@aipoch/diagnostics/node'
 
 async function main(): Promise<void> {
   const mainEntryPath = fileURLToPath(import.meta.url)

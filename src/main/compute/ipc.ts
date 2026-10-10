@@ -31,7 +31,7 @@ import type {
 import { computeProviderId } from '../../shared/compute'
 import type { DirListing, DownloadDest, LocalFile } from '../../shared/remote-fs'
 import { getProjectDbClient } from '../projects/prisma-client'
-import { createLogger, errorLogFields } from '../logger'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import { resolveConfigRoot, resolveDataRoot } from '../storage-root'
 import { createSettingsComputeGrantPort } from '../settings/compute-grant-port'
 import { broadcastToRenderers } from '../renderer-broadcast'

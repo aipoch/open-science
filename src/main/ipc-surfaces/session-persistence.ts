@@ -6,7 +6,7 @@ import {
 import type { SessionRepository } from '../session-persistence/repository'
 import type { SessionDetailsOwner } from '../session-details/owner'
 import type { RootDelegatedWorkControl } from '../delegation/production-composition'
-import { createLogger, diagnosticErrorFields } from '../logger'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import { createElectronSurfaceAdapter } from './adapter'
 import type { NamedElectronSurfaceAdapter } from '../runtime-electron-wiring'
 

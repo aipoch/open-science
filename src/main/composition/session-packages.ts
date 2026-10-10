@@ -5,8 +5,8 @@ import { createAcpRuntime } from '../acp/runtime-composition'
 import type { ApplicationEvents } from '../application-events'
 import { type ApplicationModuleBuilder } from '../application-runtime'
 import { ArchiveCoordinator } from '../archive/coordinator'
-import { startDiagnosticOperation, type DiagnosticOperation } from '../diagnostics/operation'
-import { createLogger } from '../logger'
+import { startDiagnosticOperation, type DiagnosticOperation } from '@aipoch/diagnostics/node'
+import { createLogger } from '@aipoch/diagnostics/node'
 import {
   createDefaultPreviewStateRepository,
   createDefaultProjectRepository

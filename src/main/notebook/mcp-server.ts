@@ -27,7 +27,7 @@ import {
   shellRuntimeAgentContract,
   shellRuntimeBindingSchema
 } from './shell-runtime'
-import { redactRuntimeDiagnosticText } from './runtime-diagnostics'
+import { redactRuntimeDiagnosticText } from '@aipoch/diagnostics/node'
 import {
   memoryAgentRememberMcpOutputSchema,
   memoryAgentRememberRequestSchema,

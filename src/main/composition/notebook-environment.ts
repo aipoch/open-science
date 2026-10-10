@@ -2,7 +2,7 @@ import { registerNotebookEnvIpcHandlers } from '../desktop-surface-declarations'
 import { runtimeMetadata } from '../runtime-metadata'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { NotebookRunResultDeliveryAdapter } from '../background-result-delivery/notebook-adapter'
-import { createLogger, errorLogFields } from '../logger'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import { installNotebookEnvironmentSurface } from '../notebook/application'
 import { broadcastNotebookEnvProgress } from '../notebook/env-ipc'
 import {

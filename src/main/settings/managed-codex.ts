@@ -44,7 +44,7 @@ import {
   type FetchJson,
   type FetchTarball
 } from './managed-claude'
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import { stripCodexCredentialEnv } from './process-tree'
 import { onProcessTreeReaped, terminateProcessTree } from '../process-tree'
 import { toErrorMessage } from '../error-message'

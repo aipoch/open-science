@@ -3,7 +3,7 @@ import { dirname, resolve } from 'node:path'
 
 import { app } from 'electron'
 
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import { createMacInstallationGuard } from '../mac-installation'
 import { ElectronUpdaterStrategy } from './electron-updater-strategy'
 import { UpdateService } from './service'

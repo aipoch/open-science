@@ -13,7 +13,7 @@ import {
   type RuntimeEnablement
 } from '../../shared/notebook-runtime'
 import type { NotebookRuntimeSettings } from '../settings/capabilities'
-import { createLogger, diagnosticErrorFields } from '../logger'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import {
   defaultDiscoveryDeps,
   discoverInterpreters,

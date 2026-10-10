@@ -13,8 +13,8 @@ import {
 
 const { applicationLogError } = vi.hoisted(() => ({ applicationLogError: vi.fn() }))
 
-vi.mock('../logger', async (importOriginal) => {
-  const original = await importOriginal<typeof import('../logger')>()
+vi.mock('@aipoch/diagnostics/node', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@aipoch/diagnostics/node')>()
   return {
     ...original,
     createLogger: (scope: string) => {

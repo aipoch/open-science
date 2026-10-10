@@ -10,7 +10,7 @@ import {
   invokeWithIpcRejectionDiagnostics,
   type IpcRejectionLogger
 } from './diagnostics/ipc-rejection'
-import { createLogger } from './logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 
 type IpcHandlerInstallation = {
   uninstall(): void

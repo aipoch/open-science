@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import * as redaction from './diagnostic-redaction'
+import * as redaction from '@aipoch/diagnostics'
+
+vi.mock('@aipoch/diagnostics', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aipoch/diagnostics')>())
+}))
 
 import {
   capToolDetailText,

@@ -2,7 +2,7 @@ import { homedir } from 'node:os'
 
 import { describe, expect, it } from 'vitest'
 
-import { buildStartupDiagnostics } from './startup-diagnostics'
+import { buildStartupDiagnostics } from './startup-error'
 
 describe('buildStartupDiagnostics', () => {
   it('includes the error name, message, and stack frames', () => {

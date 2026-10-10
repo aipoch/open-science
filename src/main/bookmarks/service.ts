@@ -15,7 +15,7 @@ import { createLiteratureAttachmentVersionReference } from '../../shared/literat
 import { createUploadVersionReference } from '../../shared/uploads'
 import type { ResolvedSessionPdfVersion } from '../literature/session-pdf-source-resolver'
 import type { BookmarkRepository } from './repository'
-import { createLogger, diagnosticErrorFields } from '../logger'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 
 const log = createLogger('bookmarks')
 

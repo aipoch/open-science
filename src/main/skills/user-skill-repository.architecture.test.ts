@@ -961,7 +961,8 @@ describe('User Skill repository architecture', () => {
           'src/main/notebook/working-file-observer-plain-host.test.ts',
           'src/main/notebook/auto-mode-budget.integration.test.ts',
           'src/main/connectors/custom-mcp-config.test.ts',
-          'src/main/connectors/mcp-host-dependencies.test.ts'
+          'src/main/connectors/mcp-host-dependencies.test.ts',
+          'src/main/session-diagnostics/schema-compatibility.integration.test.ts'
         ]
       },
       capabilityOverlays: ['windows_sensitive', 'e2e_regressions', 'e2e_delegation'],

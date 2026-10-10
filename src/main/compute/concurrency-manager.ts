@@ -2,7 +2,7 @@ import type { SessionComputePolicyAuthority } from '../session-persistence/compu
 import type { ComputeJobOwner, ComputeJobRepository } from './job-repository'
 import type { ComputeHostRepository } from './repository'
 import type { ComputeJob, ComputeQueueBlockedReason } from '../../shared/compute'
-import { createLogger, errorLogFields } from '../logger'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import { ComputeJobLifecycle } from './compute-job-lifecycle'
 import { sharedDispatchTracker, type DispatchTracker } from './dispatch-tracker'
 

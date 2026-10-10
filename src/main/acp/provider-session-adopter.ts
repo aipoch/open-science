@@ -6,8 +6,8 @@ import {
   type PermissionProfileId
 } from '../../shared/permission-profiles'
 import type { EffectiveSpecialistSkills } from '../../shared/specialist'
-import { startDiagnosticOperation } from '../diagnostics/operation'
-import { createLogger, diagnosticErrorFields } from '../logger'
+import { startDiagnosticOperation } from '@aipoch/diagnostics/node'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
 import {
   type AcpSessionCapabilityOwner,

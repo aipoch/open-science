@@ -1,7 +1,7 @@
 import type { ClientConnection, ContentBlock } from '@agentclientprotocol/sdk'
 import { randomUUID } from 'node:crypto'
 
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 
 import type {
   AcpSteerFollowUpRefuseReason,

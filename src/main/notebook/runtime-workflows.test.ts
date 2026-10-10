@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtemp, readFile, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { flushLogs, initLogger } from '../logger'
+import { flushLogs, initLogger } from '@aipoch/diagnostics/node'
 let diagnosticLogRoot: string | undefined
 afterAll(async () => {
   await flushLogs()

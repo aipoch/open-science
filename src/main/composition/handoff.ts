@@ -7,7 +7,7 @@ import { createAcpRuntime } from '../acp/runtime-composition'
 import { type ApplicationModuleBuilder } from '../application-runtime'
 import { withReproducibilityNotebookLifecycle } from '../artifacts/reproducibility-notebook-lifecycle'
 import { BackendShutdownCoordinator, UPDATE_SHUTDOWN_BUDGET_MS } from '../lifecycle-shutdown'
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import { createProductionMicromambaRunner } from '../notebook/windows-micromamba-runner'
 import {
   createWebSessionPersistenceFlush,

@@ -4,7 +4,7 @@
 // backend that refuses to settle, and reports { reaped } so the update-install gate can tell a clean
 // teardown (all process trees gone, file handles released) from a degraded one.
 
-import { diagnosticErrorFields, type Logger } from './logger'
+import { diagnosticErrorFields, type Logger } from '@aipoch/diagnostics/node'
 import type { LegacyShellRecovery } from '../shared/update'
 
 export type NotebookShutdownOptions = { legacyShellRecoveryToken?: string }

@@ -11,9 +11,9 @@ import type { ApplicationEvents } from '../application-events'
 import { type ApplicationModuleBuilder } from '../application-runtime'
 import { ArtifactReproducibilityAttemptOwner } from '../artifacts/artifact-reproducibility-lifecycle'
 import { createComputeIpcModule } from '../compute/ipc'
-import { type DiagnosticOperation } from '../diagnostics/operation'
+import { type DiagnosticOperation } from '@aipoch/diagnostics/node'
 
-import { createLogger, diagnosticErrorFields, errorLogFields } from '../logger'
+import { createLogger, diagnosticErrorFields, errorLogFields } from '@aipoch/diagnostics/node'
 import { buildSessionDetailsUserPrompt, createSessionDetailsOwner } from '../session-details/owner'
 import type { SessionPersistenceCommands } from '../session-persistence/coordinator'
 import {

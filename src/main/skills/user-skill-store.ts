@@ -11,7 +11,7 @@ import {
   frontmatterBlock,
   serializePersonalSkillDocument
 } from '../../shared/personal-skill-document'
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import type { BundledSkill } from './registry'
 import { readSkillFile } from './skill-files'
 import {

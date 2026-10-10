@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { vi } from 'vitest'
 
 import type { ComputeHost, JobStatusResult } from '../../shared/compute'
-import type { Logger } from '../logger'
+import type { Logger } from '@aipoch/diagnostics/node'
 import type { ManagedFileSoftDeleteToken } from '../project-files/repository'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import {

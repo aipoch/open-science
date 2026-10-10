@@ -1,4 +1,4 @@
-import type { LogFlushResult } from '../logger'
+import type { LogFlushResult } from './logger'
 
 export type DiagnosticFlush = () => Promise<LogFlushResult | void>
 

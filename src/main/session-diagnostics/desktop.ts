@@ -21,7 +21,7 @@ type Sources = Pick<
   sensitiveContent?: SensitiveContentFailure
   sensitiveContentSources?: SensitiveContentSource[]
 }
-type Options = {
+export type SessionDiagnosticsOptions = {
   createWorker: (options: WorkerOptions) => Worker
   resolveSources: (identity: SessionDiagnosticRequest) => Sources
   chooseDestination: (defaultName: string) => Promise<string | undefined>
@@ -144,7 +144,9 @@ const abortableDestination = async (
 }
 
 /** A task-local owner. No repository, runtime, logger queue or application write gate is involved. */
-export const createSessionDiagnosticsDesktop = (options: Options): SessionDiagnosticsDesktop => {
+export const createSessionDiagnosticsDesktop = (
+  options: SessionDiagnosticsOptions
+): SessionDiagnosticsDesktop => {
   const operations = new Map<string, Operation>()
   const waiting = new Map<string, AbortController>()
   let closed = false

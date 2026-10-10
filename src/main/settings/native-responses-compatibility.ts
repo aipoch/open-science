@@ -5,7 +5,7 @@ import {
 import { randomUUID } from 'node:crypto'
 import type { ServerResponse } from 'node:http'
 
-import { createLogger, diagnosticErrorFields } from '../logger'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import type { SkillSelectorUsageObservation } from '../agent-framework'
 import type {
   ResponsesBridgeConnection,

@@ -31,7 +31,7 @@ import type {
 } from '../../shared/session-persistence'
 import { broadcastLifecycleEvent, getLifecycleClientId } from '../lifecycle-broadcast'
 import { callerLeaseForEvent } from '../caller-lifecycle'
-import { createLogger, diagnosticErrorFields, type Logger } from '../logger'
+import { createLogger, diagnosticErrorFields, type Logger } from '@aipoch/diagnostics/node'
 import { resolveConfigRoot } from '../storage-root'
 import { SessionRepository } from './repository'
 import { SessionProjectionRepository } from './projection'

@@ -35,8 +35,8 @@ import { z } from 'zod'
 import { withPackageCleanup } from './cleanup'
 import { withPackageTransfer } from './transfer'
 import { paceFileIo } from '../file-io-pacing'
-import { createLogger, diagnosticErrorFields } from '../logger'
-import { startDiagnosticOperation } from '../diagnostics/operation'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
+import { startDiagnosticOperation } from '@aipoch/diagnostics/node'
 import type { PrismaClient } from '@prisma/client'
 import type { NotebookRunDocument } from '../../shared/notebook'
 import { randomUUID } from 'node:crypto'
@@ -97,7 +97,7 @@ import {
   isNotebookInputCopy
 } from './selection'
 import type { PersistedChatSession } from '../../shared/session-persistence'
-import { isSensitiveDiagnosticKey } from '../../shared/diagnostic-redaction'
+import { isSensitiveDiagnosticKey } from '@aipoch/diagnostics'
 import {
   buildSensitiveContentEvidence,
   findSensitivePackageText,

@@ -1,35 +1,22 @@
 {
   "ownerPaths": [
-    "src/main/diagnostics/flush.test.ts",
-    "src/main/diagnostics/flush.ts",
     "src/main/diagnostics/ipc-rejection.test.ts",
     "src/main/diagnostics/ipc-rejection.ts",
-    "src/main/diagnostics/operation.test.ts",
-    "src/main/diagnostics/operation.ts",
     "src/main/diagnostics/privacy-canary.test.ts",
-    "src/main/diagnostics/startup-delay.test.ts",
-    "src/main/diagnostics/startup-delay.ts",
-    "src/main/diagnostics/startup-storage-probe.test.ts",
-    "src/main/diagnostics/startup-storage-probe.ts",
     "src/main/diagnostics/startup.test.ts",
-    "src/main/diagnostics/startup.ts"
+    "src/main/diagnostics/startup.ts",
+    "src/main/diagnostics/integration-test-helpers.ts"
   ],
   "interfacePaths": [
-    "src/main/diagnostics/flush.ts",
     "src/main/diagnostics/ipc-rejection.ts",
-    "src/main/diagnostics/operation.ts",
-    "src/main/diagnostics/startup-storage-probe.ts",
-    "src/main/diagnostics/startup.ts"
+    "src/main/diagnostics/startup.ts",
+    "src/main/diagnostics/integration-test-helpers.ts"
   ],
   "consumerModules": [],
   "testFiles": {
     "owner": [
-      "src/main/diagnostics/flush.test.ts",
       "src/main/diagnostics/ipc-rejection.test.ts",
-      "src/main/diagnostics/operation.test.ts",
       "src/main/diagnostics/privacy-canary.test.ts",
-      "src/main/diagnostics/startup-delay.test.ts",
-      "src/main/diagnostics/startup-storage-probe.test.ts",
       "src/main/diagnostics/startup.test.ts"
     ],
     "contract": [
@@ -450,7 +437,13 @@
       "src/main/session-plan/session-plan-turn-outcome.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/agents/production-completion-handoff.test.ts",
-      "src/main/connectors/mcp-host-dependencies.test.ts"
+      "src/main/connectors/mcp-host-dependencies.test.ts",
+      "src/main/credential-identity/access.test.ts",
+      "src/main/credential-identity/macos.test.ts",
+      "src/main/credential-identity/probe-logging.test.ts",
+      "src/main/session-diagnostics/schema-compatibility.integration.test.ts",
+      "src/main/session-diagnostics/export-evidence.integration.test.ts",
+      "src/main/session-persistence/runtime-resume-recovery.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

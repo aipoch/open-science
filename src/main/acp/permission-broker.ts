@@ -15,7 +15,7 @@ import type {
 } from '../../shared/permission-grants'
 import type { SessionPermissionRuntimeContext } from '../../shared/session-persistence'
 import type { CommandShellDialect } from '../agent-framework/types'
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import {
   logPermissionDiagnostic,
   type PermissionDiagnostic

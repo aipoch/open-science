@@ -12,7 +12,7 @@ import { parseLiteratureAttachmentVersionReference } from '../../shared/literatu
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import { MAX_UPLOAD_FILE_BYTES } from '../../shared/uploads'
 import type { ArtifactRepository } from '../artifacts/repository'
-import { createLogger, errorLogFields } from '../logger'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import type { UploadRepository } from '../uploads/repository'
 import type {
   ManagedFileReadLease,

@@ -6,8 +6,8 @@ const diagnosticLog = vi.hoisted(() => ({
   error: vi.fn(),
   debug: vi.fn()
 }))
-vi.mock('../logger', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../logger')>()),
+vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aipoch/diagnostics/node')>()),
   createLogger: () => diagnosticLog
 }))
 

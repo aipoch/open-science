@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import type { SkillActivationPolicy, SkillSource } from '../../shared/settings'
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import { parseFrontmatter } from './frontmatter'
 import { resolveBundledSkillsRoot } from './resource-path'
 import { skillPackageCompatibility } from './skill-package-compatibility'

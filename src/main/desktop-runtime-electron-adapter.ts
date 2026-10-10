@@ -1,5 +1,5 @@
 import { ipcMain, type IpcMainEvent } from 'electron'
-import { createLogger, errorLogFields } from './logger'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import { randomUUID } from 'node:crypto'
 import type { IpcMainInvokeEvent, WebContents } from 'electron'
 import {

@@ -79,7 +79,7 @@ import {
   localRpcServerLogFields,
   type LocalRpcListenOptions
 } from '../local-rpc-transport'
-import { createLogger, errorLogFields } from '../logger'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import {
   LOCAL_RESOURCE_BUDGETS,
   ResourceBudgetExceededError,

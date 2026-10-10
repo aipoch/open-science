@@ -27,7 +27,7 @@ import {
   createHostMessageMcpServer,
   type HostMessageMcpHandler
 } from '../side-chat/host-message-mcp-server'
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import {
   LOCAL_RESOURCE_BUDGETS,
   ResourceBudgetExceededError,

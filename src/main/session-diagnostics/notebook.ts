@@ -1,5 +1,5 @@
 import { diagnosticText, type DiagnosticTextOptions } from './detail'
-import { redactSensitiveText } from '../../shared/diagnostic-redaction'
+import { redactSensitiveText } from '@aipoch/diagnostics'
 
 type RecordValue = Record<string, unknown>
 const record = (value: unknown): RecordValue | undefined =>

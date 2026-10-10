@@ -25,7 +25,7 @@ import {
   type WslSetupState,
   type WslSupportHandoff
 } from '../../shared/wsl-setup'
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import { SettingsInstallCoordinator } from '../settings/settings-install-coordinator'
 import { resolveWindowsPowerShellExecutable } from '../windows-powershell'
 import type { WindowsVolumeProbeResult } from './windows-volume-probe'

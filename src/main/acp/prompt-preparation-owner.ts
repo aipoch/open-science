@@ -19,7 +19,7 @@ import {
   diagnosticErrorFields,
   errorLogFields,
   runWithDiagnosticCorrelation
-} from '../logger'
+} from '@aipoch/diagnostics/node'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
 import type {
   ContextUsageTracker,

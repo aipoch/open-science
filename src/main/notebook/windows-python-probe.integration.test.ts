@@ -8,7 +8,7 @@ import {
 } from './windows-python.test-support'
 import { defaultDiscoveryDeps, discoverInterpreters } from './environment-discovery'
 import { findPythonCommand, probeInterpreterVersion } from './python-command'
-import { flushLogs, initLogger } from '../logger'
+import { flushLogs, initLogger } from '@aipoch/diagnostics/node'
 
 // Host-only regression: uses production probes, real CPython venvs and real Windows subprocesses.
 // OPEN_SCIENCE_TEST_PYTHON selects a real installation when it is not available through PATH/py.

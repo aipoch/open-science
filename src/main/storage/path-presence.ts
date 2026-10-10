@@ -1,6 +1,6 @@
 import { stat } from 'node:fs/promises'
 
-import { createLogger, diagnosticErrorFields } from '../logger'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 
 // Errno codes that unambiguously mean "the path is not there": the leaf is gone (ENOENT) or a path
 // segment is a file rather than a directory (ENOTDIR). On Windows a genuinely disconnected drive or

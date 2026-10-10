@@ -50,8 +50,8 @@ import type {
   NotebookSandboxedSpawn,
   NotebookSandboxInvocation
 } from './process-sandbox'
-import { startDiagnosticOperation } from '../diagnostics/operation'
-import { createLogger, diagnosticErrorFields, type Logger } from '../logger'
+import { startDiagnosticOperation } from '@aipoch/diagnostics/node'
+import { createLogger, diagnosticErrorFields, type Logger } from '@aipoch/diagnostics/node'
 import {
   buildNotebookKernelEnvironment,
   normalizeRProcessLocale,
@@ -68,7 +68,7 @@ import type { GrantedLocalRoot } from '../../shared/local-fs'
 import { kernelExecutableReadRoot } from './kernel-executor'
 import { windowsCondaPrefixForR } from './environment-discovery'
 import { rKernelProtocolProbe } from './r-command'
-import { runtimeChildProcessErrorFields } from './runtime-diagnostics'
+import { runtimeChildProcessErrorFields } from '@aipoch/diagnostics/node'
 import {
   condaActivatedPath,
   DEFAULT_R_ENV,

@@ -1,7 +1,7 @@
 import { chmod, cp, lstat, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { join, relative } from 'node:path'
 
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import { COMPUTE_SKILL_ID } from '../compute/skill-doc'
 import type { BundledSkill } from './registry'
 import { isSkillPackageIgnoredPath } from '../../shared/skill-import-limits'

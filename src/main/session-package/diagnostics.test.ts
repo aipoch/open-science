@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { initLogger, createLogger, flushLogs } from '../logger'
+import { initLogger, createLogger, flushLogs } from '@aipoch/diagnostics/node'
 import { SessionPackageOperation } from './operation'
 
 let root: string

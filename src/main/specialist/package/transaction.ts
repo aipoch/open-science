@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import type { SpecialistPackageValidationPlan } from '../../../shared/specialist-package'
 import type { SpecialistView } from '../../../shared/specialist'
 import { emptyFullAccessConfig } from '../../../shared/specialist'
-import { createLogger } from '../../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import { SpecialistRepository } from '../repository'
 import { SettingsRepository } from '../../settings/repository'
 import {

@@ -26,7 +26,11 @@ import { createApplicationCommandClient } from '../application-command-client'
 import type { ApplicationCommandComposition } from '../application-command-composition'
 import type { ApplicationEventSource } from '../application-events'
 import type { PermissionApprovalPresence } from '../permission-approval-presence'
-import { createLogger, diagnosticErrorFields, runWithDiagnosticCorrelation } from '../logger'
+import {
+  createLogger,
+  diagnosticErrorFields,
+  runWithDiagnosticCorrelation
+} from '@aipoch/diagnostics/node'
 import {
   WEB_RPC_CAPABILITIES,
   WEB_EVENT_STREAM_PROTOCOL_VERSION,

@@ -13,8 +13,8 @@ const handlers = new Map<string, TestHandler>()
 const listeners = new Map<string, TestHandler>()
 const log = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
 
-vi.mock('../logger', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../logger')>()),
+vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aipoch/diagnostics/node')>()),
   createLogger: () => log
 }))
 

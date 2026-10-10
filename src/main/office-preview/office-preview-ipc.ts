@@ -4,7 +4,7 @@ import type { OfficePreviewCommands } from './application-commands'
 import { ipcMain, type IpcMainEvent } from 'electron'
 
 import { ipcMainHandle } from '../ipc-handler-registry'
-import { createLogger, diagnosticErrorFields } from '../logger'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 
 import type { OfficePreviewOpenRequest } from '../../shared/office-preview'
 import {

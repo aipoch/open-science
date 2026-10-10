@@ -109,8 +109,8 @@ import type {
   SaveValidatedProviderResult,
   ValidateProviderResult
 } from '../../shared/settings'
-import { createLogger, type Logger } from '../logger'
-import { startDiagnosticOperation } from '../diagnostics/operation'
+import { createLogger, type Logger } from '@aipoch/diagnostics/node'
+import { startDiagnosticOperation } from '@aipoch/diagnostics/node'
 import type { PackageMirror } from '../../shared/mirror'
 import type { NetworkProxySettings } from '../../shared/network-proxy'
 import type { NotebookNetworkSettings, NotebookNetworkStatus } from '../../shared/notebook-network'

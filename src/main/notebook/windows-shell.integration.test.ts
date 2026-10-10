@@ -797,7 +797,7 @@ ${ending === 'exit' ? '' : 'setInterval(() => {}, 1000);'}
         await execution
         termination.mockRestore()
         vi.mocked(spawn).mockImplementation(actual.spawn)
-        await rm(root, { recursive: true, force: true })
+        await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
       }
     },
     POWERSHELL_TEST_TIMEOUT_MS

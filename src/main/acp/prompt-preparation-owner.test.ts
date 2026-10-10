@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createLogger, flushLogs, initLogger } from '../logger'
+import { createLogger, flushLogs, initLogger } from '@aipoch/diagnostics/node'
 
 import type { AcpPromptRequest } from '../../shared/acp'
 import type { FileReference } from '../../shared/artifacts'

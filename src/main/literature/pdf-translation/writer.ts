@@ -1,6 +1,6 @@
 import { Worker } from 'node:worker_threads'
 import { z } from 'zod'
-import { createLogger, diagnosticErrorFields } from '../../logger'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 
 const log = createLogger('pdf-translation-pdf')
 const measurement = z.number().finite().nonnegative()

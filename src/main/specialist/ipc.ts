@@ -28,7 +28,7 @@ import type {
 import { SPECIALIST_IPC } from '../../shared/specialist'
 import { SpecialistService } from './service'
 import { SessionBindingService } from './session-binding'
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import type {
   ContributionTemplateExportResult,

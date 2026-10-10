@@ -3,7 +3,7 @@ import { desktopInteraction } from '../desktop-interaction'
 import { ipcMainHandle } from '../ipc-handler-registry'
 
 import type { CliLauncherStatus } from '../../shared/cli'
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import {
   getCliLauncherStatus,
   installCliLauncher,

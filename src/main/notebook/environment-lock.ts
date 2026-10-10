@@ -13,8 +13,8 @@ import type {
   NotebookPackageInstaller,
   NotebookRunEnvironmentLockCapture
 } from '../../shared/notebook'
-import { redactSensitiveText } from '../../shared/diagnostic-redaction'
-import { createLogger, diagnosticErrorFields } from '../logger'
+import { redactSensitiveText } from '@aipoch/diagnostics'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import { normalizeExplicitLock } from './micromamba'
 import { lockedPackageVersions, nativeLockRestoreState } from './native-lock-restoration'
 import { capturePipInstallEvidence, recoverPipInstallEvidence } from './pip-install-evidence'

@@ -1,7 +1,7 @@
 import { AgentsSafeError, agentsPublicError } from '../agents/agents-error'
 import { randomUUID } from 'node:crypto'
 
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import { SpecialistIdConflictError, SpecialistRepository } from './repository'
 import type { StoredSpecialist } from './types'
 import type {

@@ -25,8 +25,8 @@ vi.mock('electron', () => ({
     getAllWindows: () => [{ isDestroyed: () => false, webContents: { send: native.send } }]
   }
 }))
-vi.mock('../logger', async (importOriginal) => {
-  const original = await importOriginal<typeof import('../logger')>()
+vi.mock('@aipoch/diagnostics/node', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@aipoch/diagnostics/node')>()
   return {
     ...original,
     createLogger: () => ({ ...original.createLogger('test'), warn: native.warn })

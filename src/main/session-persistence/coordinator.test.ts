@@ -30,7 +30,7 @@ import {
 } from '../../shared/session-persistence'
 import type { ArtifactProjectReconciliationSnapshot } from '../artifacts/provenance-repository'
 import { FinalizedArtifactBindingConflictError } from '../artifacts/provenance-message-snapshot'
-import type { Logger } from '../logger'
+import type { Logger } from '@aipoch/diagnostics/node'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import {
   OrphanLegacyUploadAuthorityMissingError,

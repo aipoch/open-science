@@ -85,8 +85,8 @@ vi.mock('./desktop-runtime-launcher', () => ({
   startOrAttachDesktopBackend: f.launch
 }))
 vi.mock('./desktop-native-electron', () => ({ createDesktopNativeHandler: vi.fn() }))
-vi.mock('./logger', async (original) => ({
-  ...(await original<typeof import('./logger')>()),
+vi.mock('@aipoch/diagnostics/node', async (original) => ({
+  ...(await original<typeof import('@aipoch/diagnostics/node')>()),
   createLogger: () => f.log,
   flushLogs: vi.fn(async () => {}),
   writeFatalLogSync: vi.fn()

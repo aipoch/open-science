@@ -1,6 +1,6 @@
 import type { NotebookRunRecord } from '../../shared/notebook'
 import type { ExecutionFileEvidenceReason } from '../../shared/execution-file-evidence'
-import { createLogger, type Logger } from '../logger'
+import { createLogger, type Logger } from '@aipoch/diagnostics/node'
 import type { NotebookSourceFileAccessAnalysis } from './dependency-analysis-types'
 
 const log = createLogger('notebook:evidence')

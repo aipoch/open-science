@@ -13,7 +13,8 @@ const mocks = vi.hoisted(() => ({
 vi.mock('electron', () => ({
   app: { getLocale: () => 'en-US', getPath: () => 'home', isPackaged: false }
 }))
-vi.mock('../logger', () => ({
+vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aipoch/diagnostics/node')>()),
   createLogger: () => ({ error: mocks.error, info: vi.fn(), warn: vi.fn() }),
   errorLogFields: (error: unknown) => ({ error })
 }))

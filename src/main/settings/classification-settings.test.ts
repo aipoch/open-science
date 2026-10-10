@@ -9,7 +9,7 @@ import { SettingsRepository } from './repository'
 import { ClassificationSettingsOwner } from './classification-settings'
 import { classificationSettingsSchema } from './classification-config'
 import { SETTINGS_FILE_VERSION } from '../../shared/settings'
-import { flushLogs, initLogger } from '../logger'
+import { flushLogs, initLogger } from '@aipoch/diagnostics/node'
 
 vi.mock('./crypto', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./crypto')>()),

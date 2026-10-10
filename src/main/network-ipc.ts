@@ -1,7 +1,7 @@
 import { ipcMainHandle } from './ipc-handler-registry'
 
-import { startDiagnosticOperation } from './diagnostics/operation'
-import { createLogger, type Logger } from './logger'
+import { startDiagnosticOperation } from '@aipoch/diagnostics/node'
+import { createLogger, type Logger } from '@aipoch/diagnostics/node'
 import { checkInternetReachability, getNetworkInfo } from './net/network-info'
 
 import type { NetworkInfo } from '../shared/network'

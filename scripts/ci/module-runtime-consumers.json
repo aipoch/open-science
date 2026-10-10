@@ -21,7 +21,6 @@
   "src/main/pdf-annotations/native-import-worker-entry.ts": [
     "src/main/pdf-annotations/native-import.ts"
   ],
-  "src/main/session-diagnostics/worker-entry.ts": ["src/main/ipc.ts"],
   "packages/credential-identity-probe-native/src/credential_secret.cc": [
     "packages/credential-identity-probe-native/index.cjs"
   ],
@@ -106,5 +105,6 @@
     "resources/find-overlay/findOverlay.js",
     "src/main/windows.ts"
   ],
-  "resources/find-overlay/findOverlay.js": ["src/main/find-overlay.ts"]
+  "resources/find-overlay/findOverlay.js": ["src/main/find-overlay.ts"],
+  "src/main/session-diagnostics/worker-entry.ts": ["src/main/composition/session-foundation.ts"]
 }

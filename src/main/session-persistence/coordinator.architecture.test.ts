@@ -1844,7 +1844,8 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/notebook/runtime-repair.windows.integration.test.ts',
       'src/main/acp/specialist-switch-recovery.integration.test.ts',
       'src/main/agents/production-completion-handoff.test.ts',
-      'src/main/notebook/auto-mode-budget.integration.test.ts'
+      'src/main/notebook/auto-mode-budget.integration.test.ts',
+      'src/main/session-diagnostics/schema-compatibility.integration.test.ts'
     ])
     expect(sessionPersistence.capabilityOverlays).toEqual([
       'windows_sensitive',

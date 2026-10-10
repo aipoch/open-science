@@ -61,7 +61,7 @@ import { SessionEnabledComputeHostsOwner } from './compute/session-enabled-hosts
 import type { SessionSummary } from '../shared/session-persistence'
 import { type AppIconPreview, type AppIconVariant } from '../shared/settings'
 import { registerReviewerComposition } from './composition/reviewer'
-import { type DiagnosticOperation } from './diagnostics/operation'
+import { type DiagnosticOperation } from '@aipoch/diagnostics/node'
 
 import { type ShutdownStepOutcome } from './lifecycle-shutdown'
 import { type NativeTranslator } from './locale/main-process-messages'

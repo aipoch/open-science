@@ -3,7 +3,7 @@ import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import type { SkillSource } from '../../shared/settings'
-import { createLogger, diagnosticErrorFields } from '../logger'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import type { BundledSkill } from './registry'
 
 const log = createLogger('skills')

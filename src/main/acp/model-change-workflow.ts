@@ -4,7 +4,7 @@ import type { ActiveSession, SessionConfigOption } from '@agentclientprotocol/sd
 import type { AcpStateSnapshot } from '../../shared/acp'
 import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
 import type { AgentModelChangeTarget } from '../agent-framework'
-import { createLogger, diagnosticErrorFields } from '../logger'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import type { AcpBackendGenerationOwner } from './backend-generation-owner'
 import type { AcpConnectionResourceOwner } from './connection-resource-owner'
 import type { ContextUsageTracker, SessionEstimateInput } from './context-usage-tracker'

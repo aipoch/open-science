@@ -8,7 +8,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { UpdateManifest } from '../../shared/update'
-import type { Logger } from '../logger'
+import type { Logger } from '@aipoch/diagnostics/node'
 import { UpdateService } from './service'
 
 const VALID_SHA256 = 'a'.repeat(64)

@@ -86,6 +86,7 @@ describe('complete module ownership', () => {
     expect(auditModuleRouting(manifest)).toEqual([])
     expect(result.owned).toBe(result.files)
     expect(result.fullModules.map(({ id }) => id)).toEqual([
+      'diagnostics_package',
       'shared_application_contracts',
       'shared_conversation_contracts',
       'shared_workspace_contracts'

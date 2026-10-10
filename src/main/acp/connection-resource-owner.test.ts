@@ -15,8 +15,8 @@ const terminateProcessTree = vi.hoisted(() =>
 )
 const ownerErrorLog = vi.hoisted(() => vi.fn())
 vi.mock('../process-tree', () => ({ terminateProcessTree }))
-vi.mock('../logger', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../logger')>()
+vi.mock('@aipoch/diagnostics/node', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@aipoch/diagnostics/node')>()
   return {
     ...actual,
     createLogger: () => ({ ...actual.createLogger('acp'), error: ownerErrorLog })

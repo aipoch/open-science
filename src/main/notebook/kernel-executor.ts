@@ -1,6 +1,6 @@
 import { nodeRuntimeEnvironment } from '../node-process-host'
 import { runtimeMetadataIfConfigured } from '../runtime-metadata'
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import { prepareReplCellBindings, type ReplCellBindings } from './repl-cell-bindings'
 import {
   resolveWindowsNotebookRuntime,
@@ -74,7 +74,7 @@ import {
   rScriptBin,
   resolveEnvName
 } from './runtime-paths'
-import { boundedRuntimeDiagnostic } from './runtime-diagnostics'
+import { boundedRuntimeDiagnostic } from '@aipoch/diagnostics/node'
 import type {
   NotebookSessionNamespaceRequest,
   NotebookSessionNamespaceResult

@@ -1,7 +1,7 @@
 import { AgentsSafeError, agentsPublicError } from '../agents/agents-error'
 import { join } from 'node:path'
 
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import { readDurableJsonFile, writeDurableJsonFile } from '../storage/durable-json-file'
 import {
   createEmptySpecialists,

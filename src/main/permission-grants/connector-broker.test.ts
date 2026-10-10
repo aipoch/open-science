@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { PermissionGrantRecord } from '../../shared/permission-grants'
 import type { PermissionGrantRegistry } from './registry'
 import { ConnectorPermissionBroker, type ConnectorPermissionRequest } from './connector-broker'
-import * as mainLogger from '../logger'
+import * as mainLogger from '@aipoch/diagnostics/node'
 
 const capability = {
   kind: 'mcp_tool' as const,

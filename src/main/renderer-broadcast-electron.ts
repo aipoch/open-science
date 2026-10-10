@@ -1,7 +1,7 @@
 import { BrowserWindow } from 'electron'
 import type { ApplicationEventChannel, ApplicationEventMap } from './application-events'
 import { addRendererBroadcastSink } from './renderer-broadcast'
-import { createLogger, errorLogFields } from './logger'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 const log = createLogger('renderer-broadcast')
 
 const projectToElectron = <Channel extends ApplicationEventChannel>(

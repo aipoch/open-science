@@ -13,7 +13,7 @@ import type {
   TurnScope
 } from '../../shared/reviewer'
 import type { PersistedChatSession } from '../../shared/session-persistence'
-import { createLogger, errorLogFields } from '../logger'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import type { SessionAuxiliaryTurnUsageRecord } from '../session-persistence/auxiliary-turn-usage'
 import type { AcpProviderTurnProbe } from '../acp/provider-turn-adapter'
 import type { ReviewerAcpRuntime } from './acp-runtime'

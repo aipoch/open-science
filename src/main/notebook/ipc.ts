@@ -1,5 +1,5 @@
 import { ipcMainHandle } from '../ipc-handler-registry'
-import { createLogger, diagnosticErrorFields } from '../logger'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 
 import type {
   AppendNotebookCodeCellRequest,
