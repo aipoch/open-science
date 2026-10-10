@@ -61,7 +61,8 @@
       "scripts/stage-npm-release.test.ts",
       "scripts/pack-npm-release.test.ts",
       "scripts/publish-npm-release.test.ts",
-      "scripts/npm-runtime-workflow.test.ts"
+      "scripts/npm-runtime-workflow.test.ts",
+      "scripts/runtime-archives.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

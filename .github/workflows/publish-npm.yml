@@ -1,9 +1,14 @@
-name: Publish npm package
+name: Runtime distribution dry-run
 
 # Manual dispatch never writes to npm, releases, or tags.
 on:
   workflow_dispatch:
     inputs:
+      distribution:
+        type: choice
+        description: Standalone archive (default) or deferred npm package validation.
+        options: [archive, npm]
+        default: archive
       target:
         type: choice
         description: Start with one native leg; all is required before release.
@@ -21,11 +26,12 @@ permissions:
   actions: read
 
 concurrency:
-  group: npm-dry-run-${{ github.ref }}
+  group: runtime-dry-run-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   verify:
-    uses: ./.github/workflows/npm-runtime.yml
+    uses: ./.github/workflows/runtime-packages.yml
     with:
+      distribution: ${{ inputs.distribution }}
       target: ${{ inputs.target }}

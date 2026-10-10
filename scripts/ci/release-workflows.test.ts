@@ -295,10 +295,10 @@ describe('release and scheduled workflow topology', () => {
       'build',
       'package-smoke',
       'notarize-mac',
-      'npm-artifacts'
+      'cli-artifacts'
     ])
-    expect(release.jobs['npm-artifacts'].needs).toEqual(['build', 'package-smoke', 'notarize-mac'])
-    expect(release.jobs['publish-npm'].needs).toEqual(['publish', 'npm-artifacts'])
+    expect(release.jobs['cli-artifacts'].needs).toEqual(['build', 'package-smoke', 'notarize-mac'])
+    expect(release.jobs['publish-npm']).toBeUndefined()
     expect(release.jobs['notarize-mac'].needs).toEqual(['build', 'package-smoke'])
   })
 

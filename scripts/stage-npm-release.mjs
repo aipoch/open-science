@@ -55,4 +55,4 @@ export async function stageNpmRelease(root, source = join(root, 'out/standalone'
   console.log(`Staged npm entry and ${target.id} packages at ${version}`)
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url))
-  await stageNpmRelease(resolve(import.meta.dirname, '..'), process.env.OPEN_SCIENCE_NPM_SOURCE)
+  await stageNpmRelease(resolve(import.meta.dirname, '..'), process.env.OPEN_SCIENCE_RUNTIME_SOURCE)

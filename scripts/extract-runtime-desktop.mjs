@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { mkdir, readdir, appendFile } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
-import { verifyNpmSignatures } from './verify-npm-signatures.mjs'
+import { dirname, join, resolve } from 'node:path'
+import { verifyRuntimeSignatures } from './verify-runtime-signatures.mjs'
 
 const root = resolve(import.meta.dirname, '..')
-const artifacts = join(root, 'out/npm-desktop')
-const destination = join(root, 'out/npm-extracted')
+const artifacts = join(root, 'out/runtime-desktop')
+const destination = join(root, 'out/runtime-extracted')
 await mkdir(destination, { recursive: true })
 const extension = { darwin: '.zip', linux: '.deb', win32: '-setup.exe' }[process.platform]
 const files = (await readdir(artifacts)).filter((file) => file.endsWith(extension))
@@ -29,19 +29,21 @@ if (process.platform === 'darwin') {
       '-Command',
       `
     $ErrorActionPreference = 'Stop'
-    $process = Start-Process -FilePath $env:NPM_INSTALLER -ArgumentList @('/S', "/D=$env:NPM_DESTINATION") -Wait -PassThru
+    $process = Start-Process -FilePath $env:RUNTIME_INSTALLER -ArgumentList @('/S', "/D=$env:RUNTIME_DESTINATION") -Wait -PassThru
     if ($process.ExitCode -ne 0) { throw "Installer failed: $($process.ExitCode)" }
   `
     ],
     {
       stdio: 'inherit',
-      env: { ...process.env, NPM_INSTALLER: archive, NPM_DESTINATION: destination }
+      env: { ...process.env, RUNTIME_INSTALLER: archive, RUNTIME_DESTINATION: destination }
     }
   )
   source = join(destination, 'resources/backend')
 }
-await verifyNpmSignatures(source)
+const nodeSource = join(dirname(source), 'node-runtime')
+await verifyRuntimeSignatures(source)
+await verifyRuntimeSignatures(nodeSource)
 await appendFile(
   process.env.GITHUB_ENV,
-  `OPEN_SCIENCE_NPM_SOURCE=${source}\nOPEN_SCIENCE_NPM_VERIFY_SIGNATURES=1\n`
+  `OPEN_SCIENCE_RUNTIME_SOURCE=${source}\nOPEN_SCIENCE_NODE_SOURCE=${nodeSource}\nOPEN_SCIENCE_RUNTIME_VERIFY_SIGNATURES=1\n`
 )

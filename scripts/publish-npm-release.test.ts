@@ -7,7 +7,7 @@ import { expect, it } from 'vitest'
 import { collectPackages, publishPlan } from './publish-npm-release.mjs'
 import { releaseManifests } from './stage-npm-release.mjs'
 import { runtimeTargets } from '../packages/open-science/runtime-package.mjs'
-import { isMachO } from './verify-npm-signatures.mjs'
+import { isMachO } from './verify-runtime-signatures.mjs'
 
 it('checks actual tarballs, a complete target set, source identity and identical entry bytes', async () => {
   const root = await mkdtemp(join(tmpdir(), 'npm-publication-'))

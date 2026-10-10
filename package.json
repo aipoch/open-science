@@ -3,7 +3,7 @@
   "productName": "Open-Science",
   "desktopName": "open-science.desktop",
   "version": "0.36.0",
-  "description": "Open-Science — an open-source, model-agnostic AI workbench for scientific discovery.",
+  "description": "Open-Science \u2014 an open-source, model-agnostic AI workbench for scientific discovery.",
   "main": "./out/main/index.js",
   "author": "aipoch",
   "license": "Apache-2.0",
@@ -74,7 +74,11 @@
     "publish:npm-release": "node scripts/publish-npm-release.mjs",
     "stage:npm-release": "node scripts/stage-npm-release.mjs",
     "test:npm-installed": "node scripts/test-npm-installed.mjs",
-    "pack:npm-release": "npm run stage:npm-release && node scripts/pack-npm-release.mjs"
+    "pack:npm-release": "npm run stage:npm-release && node scripts/pack-npm-release.mjs",
+    "pack:runtime-archive": "node scripts/runtime-archives.mjs",
+    "verify:runtime-archives": "node scripts/runtime-archives.mjs verify",
+    "test:runtime-archive-installed": "node scripts/test-runtime-archive.mjs",
+    "test:runtime-archives": "vitest run scripts/runtime-archives.test.ts scripts/npm-runtime-workflow.test.ts"
   },
   "dependencies": {
     "@agentclientprotocol/claude-agent-acp": "^0.70.0",

@@ -1,4 +1,9 @@
-# npm runtime releases
+# npm runtime distribution (publication deferred)
+
+GitHub Release standalone CLI archives are the current release channel. See the
+[standalone installation guide](standalone-runtime.md#install-the-standalone-release-archive).
+The stable Release workflow does not publish npm packages and needs no npm token.
+The split npm packaging and credential-free manual dry-run below are retained for later enablement.
 
 Users install `@aipoch/open-science` with npm or npx. The entry package selects an exact-version
 native optional dependency for Darwin arm64/x64, Linux glibc arm64/x64, or Windows x64.
@@ -12,16 +17,16 @@ installed npm dependency tree does not contain Electron.
 
 ## Dry-run
 
-Run **Publish npm package** manually on the candidate branch, initially with `linux-x64-gnu`, then
+Run **Runtime distribution dry-run** with `distribution=npm` manually on the candidate branch, initially with `linux-x64-gnu`, then
 with `all`. Dispatch only builds, installs, verifies, runs `npm publish --dry-run`, and uploads
 artifacts. It cannot publish npm packages, create tags, or modify a Release. `npm-v*` tags no longer
 publish anything.
 
 ```bash
-gh workflow run publish-npm.yml --ref ci/npm-release-pipeline -f target=all
+gh workflow run publish-npm.yml --ref ci/npm-release-pipeline -f distribution=npm -f target=all
 ```
 
-`npm-runtime.yml` builds on native runners with Electron installation disabled. Each leg serves its
+`runtime-packages.yml` builds on native runners with Electron installation disabled. Each leg serves its
 real tarballs through an isolated localhost registry; npm installs the entry and chooses the native
 dependency. The fixture exercises npm exec/npx entry resolution, version matching, native loading,
 and the Electron-free dependency tree on Node 24 and Node 22.13.0. Linux also runs the installed
@@ -32,34 +37,24 @@ A five-platform run additionally checks the full package set, matching source co
 entry tarballs, actual tarball manifests and SHA-512 integrity. Artifacts are named `npm-<target>`.
 Unsigned dry-runs do not prove Developer ID, notarization, Authenticode or npm authentication.
 
-## Stable release
+## Future npm publication
 
-The existing Release workflow builds and certifies desktop packages, then notarizes macOS. Its
-`npm-artifacts` job calls the same native verifier to extract `Resources/backend` from the final
-macOS zip, installed Windows installer, or Linux deb. It packs those exact backend files instead
-of rebuilding or re-signing them. Windows checks every PE signature and timestamp, preserving
-vendor signatures. macOS checks each Mach-O's Developer ID signature and notarization record.
-The checks run again after npm installation. Missing signing or notarization now blocks the npm
-release gate instead of silently publishing an unsigned CLI.
+The five native npm tarballs and entry package use the same backend implementation and version
+source as standalone archives. npm requires its own package manifests and tarballs; it does not
+install the Release zip/tar.gz directly. The manual npm dry-run remains available without credentials.
+No automatic npm publication job is enabled. Adding that job is a later reviewed change after npm
+account provisioning and real signed-artifact/OIDC verification.
 
-Only after all native verification succeeds may the existing GitHub Release publish. The
-`publish-npm` job then publishes all five native packages before the entry package, in protected
-GitHub Environment `npm`. It has OIDC permission only in that publishing job. The caller is
-**`release.yml`**, not `publish-npm.yml`; GitHub-token-created Releases do not trigger another
-release-event workflow.
-
-All local and registry integrity checks finish before publication. Retrying the failed publishing
-job skips an existing version only if its registry SHA-512 matches the retained tarball. Different
-bytes, a different source commit, a missing platform or a downgrade of `latest` fail closed. Re-run
-failed jobs against the retained artifacts; do not rebuild the same published version. npm and
-GitHub Release are separate transactions: an npm outage may leave a successful GitHub Release or
-some native packages published. Fix access/connectivity and retry the failed job, without changing
-the version's bytes. If the artifacts expired, publish a new version rather than overwrite.
+The retained publication validator checks all manifests, versions, source commits and SHA-512 values.
+A future publisher must publish native packages before the entry package, use the protected `npm`
+environment, and retry only identical retained artifacts. Existing registry versions cannot be
+replaced; conflicting bytes or a downgrade of `latest` must fail closed. Keep the version synchronized
+with the desktop Release rather than introducing separate npm tags.
 
 ## Credentials and one-time bootstrap
 
 Ordinary releases should use npm Trusted Publishing with OIDC; no long-lived `NPM_TOKEN` is needed.
-Every package needs its own trust configuration using:
+When the future publishing job is enabled in `release.yml`, every package will need its own trust configuration using:
 
 - GitHub owner: `aipoch`
 - Repository: `open-science`

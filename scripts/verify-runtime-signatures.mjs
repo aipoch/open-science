@@ -19,7 +19,7 @@ export function isMachO(header) {
     ]).has(header.subarray(0, 4).toString('hex'))
   )
 }
-export async function verifyNpmSignatures(directory) {
+export async function verifyRuntimeSignatures(directory) {
   if (process.platform === 'linux') return
   if (process.platform === 'win32') {
     execFileSync(
@@ -27,7 +27,7 @@ export async function verifyNpmSignatures(directory) {
       [
         '-NoProfile',
         '-File',
-        join(import.meta.dirname, 'verify-npm-signatures.ps1'),
+        join(import.meta.dirname, 'verify-runtime-signatures.ps1'),
         '-Directory',
         directory
       ],
