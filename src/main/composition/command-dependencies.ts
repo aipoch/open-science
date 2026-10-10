@@ -50,6 +50,7 @@ import type { composeSettingsEffects } from './settings-effects'
 import type { composeStorageStartup } from './storage-startup'
 
 export function composeCommandDependencies({
+  researchExecutionProfiles,
   localeOwner,
   reportUploadProgress,
   sideChatCommands,
@@ -91,6 +92,7 @@ export function composeCommandDependencies({
   reviewerCommandOwner,
   listAppIconPreviews
 }: {
+  researchExecutionProfiles: ApplicationCommandCompositionDependencies['researchExecutionProfiles']
   reportUploadProgress: ((clientId: string, progress: UploadTransferProgress) => void) | undefined
   localeOwner: LocalePreferenceOwner
   sideChatCommands: SideChatCommandOwner
@@ -150,6 +152,7 @@ export function composeCommandDependencies({
   )
   const openRecoveryFolder = createSessionRecoveryFolderCommand(sessionFoundation.sessionRepository)
   const applicationCommandDependencies: ApplicationCommandCompositionDependencies = {
+    researchExecutionProfiles,
     sideChat: sideChatCommands,
     pdfTranslation: documentReading.pdfTranslationOwner,
     sessionReplay,

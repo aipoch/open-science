@@ -23,6 +23,12 @@ The package provides:
 The implementation contains no generic configuration loader, user credential injection, AWS
 signing, TLS interception, or request-body inspection.
 
+The public `@aipoch/notebook-network-sandbox/execution-confinement` subpath exposes only the pure
+execution-ceiling normalizer and host-membership predicate. CommonJS recovery processes and ESM
+callers share one implementation without loading the sandbox owner. Membership never grants network
+access: the ordinary destination policy must still approve a request, and offline execution denies
+every host. Runtime wrapping and lifecycle operations remain behind the process adapter.
+
 ## Architecture
 
 ```text

@@ -7,6 +7,11 @@
     ".": {
       "types": "./src/index.ts",
       "import": "./src/index.ts"
+    },
+    "./execution-confinement": {
+      "types": "./runtime/src/gateway/execution-confinement.d.cts",
+      "import": "./runtime/src/gateway/execution-confinement.cjs",
+      "require": "./runtime/src/gateway/execution-confinement.cjs"
     }
   },
   "scripts": {

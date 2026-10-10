@@ -1679,6 +1679,9 @@ class ElectronAppHarness implements ElectronApp {
 
   private async launch(packagePath?: string, timingName = 'startup-ready'): Promise<void> {
     const launchStartedAt = performance.now()
+    // Isolated launches use this path before backend composition. Keep it available even when
+    // Electron exits before its inspector can answer app.getPath('logs').
+    this.mainLogDirectory = join(this.roots.userDataRoot, 'logs')
     this.application = await launchOpenScience(
       this.roots,
       this.fakeAgentEnabled,
@@ -1747,9 +1750,10 @@ class ElectronAppHarness implements ElectronApp {
         )
       }
     } finally {
-      this.mainLogDirectory = await this.application
+      const mainLogDirectory = await this.application
         .evaluate(({ app }) => app.getPath('logs'))
         .catch(() => undefined)
+      if (mainLogDirectory) this.mainLogDirectory = mainLogDirectory
     }
   }
 

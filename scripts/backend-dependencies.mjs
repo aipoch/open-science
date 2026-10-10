@@ -1,5 +1,7 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
-import { builtinModules } from 'node:module'
+import { realpathSync } from 'node:fs'
+import { builtinModules, createRequire } from 'node:module'
+import { isAbsolute, join, relative, sep } from 'node:path'
 
 export const isElectronPackage = (name) =>
   /^(?:electron(?:$|\/|-)|@electron(?:-toolkit)?\/)/.test(name)
@@ -32,5 +34,32 @@ export function assertBackendImports(metafiles, dependencies) {
           throw new Error(`Backend dependency must be declared for production: ${name}`)
       }
     }
+  }
+}
+
+// A declared dependency can still be omitted from the staged artifact. Resolve from the actual
+// backend location, and reject ancestor node_modules or symlinks back to the source checkout.
+export function assertStagedBackendImports(stage, metafiles) {
+  const directory = realpathSync(stage)
+  const stagedRequire = createRequire(join(directory, 'out/backend/index.cjs'))
+  const specifiers = new Set()
+  for (const meta of metafiles) {
+    for (const output of Object.values(meta.outputs)) {
+      for (const item of output.imports) {
+        if (
+          item.external &&
+          !item.path.startsWith('node:') &&
+          !builtinModules.includes(item.path) &&
+          !item.path.startsWith('.')
+        )
+          specifiers.add(item.path)
+      }
+    }
+  }
+  for (const specifier of specifiers) {
+    const resolved = realpathSync(stagedRequire.resolve(specifier))
+    const path = relative(directory, resolved)
+    if (path === '..' || path.startsWith(`..${sep}`) || isAbsolute(path))
+      throw new Error(`Backend dependency resolves outside the staged artifact: ${specifier}`)
   }
 }

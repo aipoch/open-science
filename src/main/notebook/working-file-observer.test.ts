@@ -7,6 +7,7 @@ import {
   mkdtemp,
   readFile,
   readdir,
+  realpath,
   rename,
   rm,
   stat,
@@ -282,6 +283,56 @@ describe('working-file evidence', () => {
       { relativePath: 'handoff/transfer.csv', kind: 'other' }
     ])
   })
+
+  it('records a canonical output directory through its Notebook logical storage alias', async () => {
+    const { sessionRoot, dataRoot } = await createRoots()
+    const logicalSessionRoot = join(storageRoot!, 'logical-notebook')
+    await symlink(
+      sessionRoot,
+      logicalSessionRoot,
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+    const observation = await startWorkingFileObservation(
+      {
+        dataRoot: await realpath(dataRoot),
+        logicalDataRoot: join(logicalSessionRoot, 'data'),
+        notebookSessionRoot: logicalSessionRoot
+      },
+      { watchDirectory: watcherUnavailable }
+    )
+    await writeFile(join(dataRoot, 'result.json'), '{"result":1}')
+    const result = await observation.finish()
+    expect(result.workingFiles).toEqual([
+      expect.objectContaining({
+        path: join(logicalSessionRoot, 'data/result.json'),
+        relativePath: 'data/result.json',
+        kind: 'other'
+      })
+    ])
+    expect(result.fileEvidence.fileReads).not.toBe('complete')
+  })
+
+  it.each(['outside', 'different-descendant'] as const)(
+    'rejects a logical projection of a %s physical output root',
+    async (kind) => {
+      const { sessionRoot, dataRoot } = await createRoots()
+      const physicalRoot = join(kind === 'outside' ? storageRoot! : sessionRoot, 'other')
+      await mkdir(physicalRoot)
+      const watchDirectory = vi.fn(watcherUnavailable)
+      const observation = await startWorkingFileObservation(
+        {
+          dataRoot: physicalRoot,
+          logicalDataRoot: dataRoot,
+          notebookSessionRoot: sessionRoot
+        },
+        { watchDirectory }
+      )
+      await writeFile(join(physicalRoot, 'must-not-publish.txt'), 'private')
+      const result = await observation.finish()
+      expect(result.workingFiles).toEqual([])
+      expect(watchDirectory).not.toHaveBeenCalled()
+    }
+  )
 
   it('normalizes persisted paths across operating systems', () => {
     expect(

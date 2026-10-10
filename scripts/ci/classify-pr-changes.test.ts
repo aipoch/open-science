@@ -773,6 +773,7 @@ describe('pull request change classification', () => {
     'src/main/notebook/code-risk-analysis.ts',
     'src/main/notebook/runtime-service.ts',
     'src/shared/tool-detail-sanitizer.ts',
+    'src/shared/research-reproduction.ts',
     'src/shared/renderer-contract-catalog.ts',
     'src/shared/renderer-contracts/settings-preferences.ts'
   ])('adds Windows GUI consumers for Windows-sensitive source %s', (path) => {

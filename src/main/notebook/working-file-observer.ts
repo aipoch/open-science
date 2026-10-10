@@ -32,6 +32,7 @@ import { notebookPromptInputPath } from './prompt-input-materialization'
 import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
 import { verifiedSerializedValues } from './serialized-file-provenance'
 import { reportNotebookFileAnalysis } from './evidence-diagnostics'
+import type { FrozenNestedWorkingFile, NestedWorkingFileReader } from './nested-working-file-owner'
 import type {
   NotebookSourceFileAccessContext,
   NotebookSourceFileWriteScope
@@ -41,6 +42,8 @@ const log = createLogger('notebook:file-evidence')
 
 type WorkingFileObservationRequest = {
   dataRoot: string
+  /** Main-owned logical alias for the same physical root, used only for persisted file identity. */
+  logicalDataRoot?: string
   notebookSessionRoot: string
   cwd?: string
   code?: string
@@ -63,6 +66,8 @@ type WorkingFileObservationRequest = {
   }
   sourceFileAccessContext?: NotebookSourceFileAccessContext
   executionOutcome?: 'completed' | 'incomplete'
+  nestedWorkingFiles?: NestedWorkingFileReader
+  onFrozenWorkingFiles?: (files: readonly FrozenNestedWorkingFile[]) => void
 }
 
 type WorkingFileObservationResult = {
@@ -1262,7 +1267,12 @@ const startRootObservation = async (
       realpath(rootPath),
       realpath(logicalSessionRootPath)
     ])
-    if (!isPathInside(sessionRoot, observedRoot)) {
+    if (
+      !isPathInside(sessionRoot, observedRoot) ||
+      (rootPath !== logicalRootPath &&
+        (!isPathInside(logicalSessionRoot, logicalObservedRoot) ||
+          (await realpath(logicalObservedRoot)) !== observedRoot))
+    ) {
       return {
         initialFiles: [],
         initialAvailable: false,
@@ -1779,6 +1789,79 @@ const corroboratedCoverage = (
   }
 }
 
+// A nested reference is eligible only while the same physical file still contains the exact
+// generation frozen by the child. ctime and inode deliberately reject even same-byte rewrites.
+const matchesNestedFile = async (
+  candidate: FrozenNestedWorkingFile,
+  after: SnapshotEntry,
+  signal?: AbortSignal
+): Promise<boolean> => {
+  const file = candidate.file
+  if (
+    candidate.physicalPath !== after.physicalPath ||
+    file.path !== after.path ||
+    file.relativePath !== after.relativePath ||
+    file.size !== after.size ||
+    file.mtimeMs !== after.mtimeMs ||
+    candidate.dev !== after.dev ||
+    candidate.ino !== after.ino ||
+    candidate.ctimeMs !== after.ctimeMs
+  )
+    return false
+  try {
+    const before = await lstat(after.physicalPath)
+    if (
+      !before.isFile() ||
+      !sameSnapshotEntry(after, { ...after, ...before }) ||
+      (await realpath(after.physicalPath)) !== after.physicalPath
+    )
+      return false
+    const digest = await digestFileWithinBudget(after.physicalPath, after.size, signal)
+    const verified = await lstat(after.physicalPath)
+    return (
+      verified.isFile() &&
+      sameSnapshotEntry(after, { ...after, ...verified }) &&
+      (await realpath(after.physicalPath)) === after.physicalPath &&
+      digest.sizeBytes === file.size &&
+      digest.checksum === file.checksum
+    )
+  } catch {
+    return false
+  }
+}
+
+const nestedFileReferences = async (
+  request: WorkingFileObservationRequest,
+  changes: readonly ObservedFileChange[],
+  capture: ActiveEvidenceCapture
+): Promise<Array<{ candidate: FrozenNestedWorkingFile; after: SnapshotEntry }>> => {
+  const candidates = request.nestedWorkingFiles?.read() ?? []
+  if (candidates.length === 0) return []
+  const references: Array<{ candidate: FrozenNestedWorkingFile; after: SnapshotEntry }> = []
+  let remainingBytes = capture.maxActivityBytes
+  for (const change of changes) {
+    if (!change.after || change.after.size > Math.min(capture.maxGenerationBytes, remainingBytes))
+      continue
+    const matchingIdentity = candidates.filter(
+      (candidate) =>
+        candidate.physicalPath === change.after!.physicalPath &&
+        candidate.dev === change.after!.dev &&
+        candidate.ino === change.after!.ino &&
+        candidate.ctimeMs === change.after!.ctimeMs &&
+        candidate.file.path === change.after!.path &&
+        candidate.file.relativePath === change.after!.relativePath &&
+        candidate.file.size === change.after!.size &&
+        candidate.file.mtimeMs === change.after!.mtimeMs
+    )
+    // Two children observing the same final identity do not establish a unique producer.
+    if (matchingIdentity.length !== 1) continue
+    remainingBytes -= change.after.size
+    if (await matchesNestedFile(matchingIdentity[0], change.after, request.signal))
+      references.push({ candidate: matchingIdentity[0], after: change.after })
+  }
+  return references
+}
+
 const persistEvidence = async (
   request: WorkingFileObservationRequest,
   rootKinds: Array<'data' | 'handoff'>,
@@ -1786,8 +1869,13 @@ const persistEvidence = async (
   capture: ActiveEvidenceCapture | undefined,
   dependencies: WorkingFileObservationDependencies
 ): Promise<WorkingFileObservationResult> => {
-  const changes = rootResults.flatMap((result) => result.changes)
-  const workingFiles = changes.flatMap((change): NotebookWorkingFile[] =>
+  const allChanges = rootResults.flatMap((result) => result.changes)
+  const references = capture ? await nestedFileReferences(request, allChanges, capture) : []
+  const referencePaths = new Set(references.map(({ after }) => after.path))
+  const changes = allChanges.filter(
+    (change) => !change.after || !referencePaths.has(change.after.path)
+  )
+  const workingFiles = allChanges.flatMap((change): NotebookWorkingFile[] =>
     change.after
       ? [
           {
@@ -1814,7 +1902,7 @@ const persistEvidence = async (
     })),
     request.runId
   )
-  for (const change of changes) {
+  for (const change of allChanges) {
     if (change.after) {
       const workingFile = workingFilesByPath.get(change.after.path)
       if (workingFile) {
@@ -1935,8 +2023,39 @@ const persistEvidence = async (
         workingFile.checksum = generation.checksum
       }
     }
+    // A write while the outer sidecar was being published invalidates borrowing. Keep the
+    // ordinary ambiguous observation rather than attributing changed bytes to an old child.
+    for (const { candidate, after } of references) {
+      if (!(await matchesNestedFile(candidate, after, request.signal)))
+        throw new Error('Nested output changed during outer evidence publication.')
+    }
+    if (request.onFrozenWorkingFiles && result.fileEvidence.checksum) {
+      const evidenceChecksum = result.fileEvidence.checksum
+      request.onFrozenWorkingFiles(
+        changes.flatMap((change): FrozenNestedWorkingFile[] => {
+          const after = change.after
+          const file = after && workingFilesByPath.get(after.path)
+          return after && file?.generationId && file.checksum
+            ? [
+                {
+                  activityId: request.runId!,
+                  evidenceChecksum,
+                  file: Object.freeze({ ...file }),
+                  physicalPath: after.physicalPath,
+                  dev: after.dev,
+                  ino: after.ino,
+                  ctimeMs: after.ctimeMs
+                }
+              ]
+            : []
+        })
+      )
+    }
     return {
-      workingFiles,
+      workingFiles: workingFiles.map((file) => {
+        const reference = references.find(({ after }) => after.path === file.path)
+        return reference ? { ...reference.candidate.file } : file
+      }),
       fileEvidence: result.fileEvidence
     }
   } catch (error) {
@@ -1986,7 +2105,11 @@ const startWorkingFileObservation = async (
   const logicalSessionRoot = resolve(request.notebookSessionRoot)
   const handoffRoot = join(logicalSessionRoot, 'handoff')
   const roots: Array<{ kind: 'data' | 'handoff'; path: string; logicalPath: string }> = [
-    { kind: 'data', path: request.dataRoot, logicalPath: request.dataRoot },
+    {
+      kind: 'data',
+      path: request.dataRoot,
+      logicalPath: request.logicalDataRoot ?? request.dataRoot
+    },
     ...(await realpath(handoffRoot).then(
       () => [{ kind: 'handoff' as const, path: handoffRoot, logicalPath: handoffRoot }],
       () => []

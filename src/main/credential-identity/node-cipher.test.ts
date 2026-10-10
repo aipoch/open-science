@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createCipheriv } from 'node:crypto'
+import { createCipheriv, createHash, pbkdf2Sync } from 'node:crypto'
 import { mkdtemp, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -138,3 +138,173 @@ describe('Node OSCrypt-compatible cipher', () => {
     }
   })
 })
+
+// Chromium v24 stores SHA256(host_key) || value before OSCrypt. The digest is arbitrary bytes.
+// https://chromium.googlesource.com/chromium/src/+/refs/tags/131.0.6761.0/net/extras/sqlite/sqlite_persistent_cookie_store.cc
+const cookieCases = [
+  {
+    name: 'macOS CBC',
+    identity: fixtures[0].identity,
+    version: 'v10',
+    password: 'fixture-vault-password'
+  },
+  {
+    name: 'Linux libsecret v11',
+    identity: fixtures[1].identity,
+    version: 'v11',
+    password: 'fixture-vault-password'
+  },
+  {
+    name: 'Linux KWallet v11',
+    identity: fixtures[2].identity,
+    version: 'v11',
+    password: 'fixture-vault-password'
+  },
+  {
+    name: 'Linux historical v10',
+    identity: fixtures[1].identity,
+    version: 'v10',
+    password: 'peanuts'
+  },
+  {
+    name: 'Linux historical empty password',
+    identity: fixtures[1].identity,
+    version: 'v11',
+    password: ''
+  },
+  {
+    name: 'Windows GCM',
+    identity: { backend: 'windows-dpapi', appName: 'Open-Science' } as const,
+    version: 'v10'
+  },
+  {
+    name: 'Windows legacy DPAPI',
+    identity: { backend: 'windows-dpapi', appName: 'Open-Science' } as const,
+    version: 'dpapi'
+  }
+]
+
+it.each(cookieCases)(
+  'validates binary cookie envelopes without relaxing application UTF-8: $name',
+  async ({ identity, version, password }) => {
+    const directory = await mkdtemp(join(tmpdir(), 'node-cookie-'))
+    const windowsKey = Buffer.alloc(32, 0x63)
+    const hostKey = 'viewer-synthetic.localhost'
+    const context = { hostKey, databaseVersion: 24 }
+    const legacyValues = new Map<string, Buffer>()
+    const unprotected: Buffer[] = []
+    const readPassword = vi.fn(() => Buffer.from('fixture-vault-password'))
+    const unprotect = vi.fn((value: Buffer): Buffer => {
+      const result =
+        value.toString() === 'fixture-key' ? windowsKey : legacyValues.get(value.toString('hex'))
+      if (!result) throw new Error('synthetic DPAPI authentication failure')
+      const copy = Buffer.from(result)
+      unprotected.push(copy)
+      return copy
+    })
+    const seal = (plaintext: Buffer): Buffer => {
+      if (version === 'dpapi') {
+        const ciphertext = Buffer.from('DPAPI-cookie-' + legacyValues.size)
+        legacyValues.set(ciphertext.toString('hex'), Buffer.from(plaintext))
+        return ciphertext
+      }
+      if (identity.backend === 'windows-dpapi') {
+        const nonce = Buffer.alloc(12, 0x42)
+        const producer = createCipheriv('aes-256-gcm', windowsKey, nonce)
+        return Buffer.concat([
+          Buffer.from('v10'),
+          nonce,
+          producer.update(plaintext),
+          producer.final(),
+          producer.getAuthTag()
+        ])
+      }
+      const key = pbkdf2Sync(
+        password!,
+        'saltysalt',
+        identity.backend === 'mac-keychain' ? 1003 : 1,
+        16,
+        'sha1'
+      )
+      try {
+        const producer = createCipheriv('aes-128-cbc', key, Buffer.alloc(16, 0x20))
+        return Buffer.concat([Buffer.from(version), producer.update(plaintext), producer.final()])
+      } finally {
+        key.fill(0)
+      }
+    }
+    try {
+      await writeFile(
+        join(directory, 'Local State'),
+        JSON.stringify({
+          os_crypt: { encrypted_key: Buffer.from('DPAPIfixture-key').toString('base64') }
+        })
+      )
+      const cipher = createNodeSecureStorageCipher(identity, directory, { readPassword, unprotect })
+      const plaintext = Buffer.concat([
+        createHash('sha256').update(hostKey).digest(),
+        Buffer.from('cookie-value')
+      ])
+      const valid = seal(plaintext)
+      expect(() => cipher.validateEncryptedCookie!(valid, context)).not.toThrow()
+      expect(() =>
+        cipher.validateEncryptedCookie!(valid, { ...context, databaseVersion: 25 })
+      ).not.toThrow()
+      expect(() =>
+        cipher.validateEncryptedCookie!(valid, { ...context, hostKey: 'different.example' })
+      ).toThrow()
+      expect(() =>
+        cipher.validateEncryptedCookie!(seal(Buffer.from('too-short')), context)
+      ).toThrow()
+      expect(() => cipher.validateEncryptedCookie!(seal(Buffer.alloc(32)), context)).toThrow()
+      expect(() =>
+        cipher.validateEncryptedCookie!(
+          seal(createHash('sha256').update(hostKey).digest()),
+          context
+        )
+      ).not.toThrow()
+      expect(() =>
+        cipher.validateEncryptedCookie!(seal(Buffer.from([0xff, 0xfe])), {
+          ...context,
+          databaseVersion: 23
+        })
+      ).not.toThrow()
+      expect(() =>
+        cipher.validateEncryptedCookie!(valid.subarray(0, valid.length - 1), context)
+      ).toThrow()
+      expect(() =>
+        cipher.validateEncryptedCookie!(valid, { ...context, databaseVersion: NaN })
+      ).toThrow()
+      expect(() => cipher.decryptString(seal(Buffer.from([0xff, 0xfe])))).toThrow()
+      expect(() => cipher.decryptString(valid)).toThrow()
+      if (
+        password === 'fixture-vault-password' ||
+        (identity.backend === 'windows-dpapi' && version === 'v10')
+      ) {
+        const wrongKey = createNodeSecureStorageCipher(identity, directory, {
+          readPassword: () => Buffer.from('different-vault-password'),
+          unprotect: () => Buffer.alloc(32, 0x62)
+        })
+        try {
+          expect(() => wrongKey.validateEncryptedCookie!(valid, context)).toThrow()
+        } finally {
+          wrongKey.dispose()
+        }
+      }
+      expect(cipher.decryptString(seal(Buffer.from('application-secret')))).toBe(
+        'application-secret'
+      )
+      if (version === 'dpapi')
+        expect(unprotected.every((value) => value.every((byte) => byte === 0))).toBe(true)
+      cipher.dispose()
+      const reads = unprotect.mock.calls.length
+      expect(() => cipher.validateEncryptedCookie!(valid, context)).toThrow(/recovery/i)
+      expect(() => cipher.decryptString(Buffer.alloc(0))).toThrow(/recovery/i)
+      expect(unprotect).toHaveBeenCalledTimes(reads)
+    } finally {
+      windowsKey.fill(0)
+      for (const value of legacyValues.values()) value.fill(0)
+      await rm(directory, { recursive: true, force: true })
+    }
+  }
+)
