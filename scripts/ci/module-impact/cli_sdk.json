@@ -20,7 +20,9 @@
     "packages/open-science/runtime-control.mjs",
     "packages/open-science/runtime-control.d.mts",
     "packages/open-science/appimage-launcher.mjs",
-    "packages/open-science/appimage-launcher.test.ts"
+    "packages/open-science/appimage-launcher.test.ts",
+    "packages/open-science/runtime-package.mjs",
+    "packages/open-science/locate-backend.test.ts"
   ],
   "interfacePaths": [
     "packages/open-science/cli.mjs",
@@ -31,7 +33,8 @@
     "packages/open-science/locate-app.mjs",
     "packages/open-science/locate-backend.mjs",
     "packages/open-science/runtime-control.mjs",
-    "packages/open-science/runtime-control.d.mts"
+    "packages/open-science/runtime-control.d.mts",
+    "packages/open-science/runtime-package.mjs"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -42,7 +45,8 @@
       "packages/open-science/codex-login.test.ts",
       "packages/open-science/connector-types.test.ts",
       "packages/open-science/connector.test.ts",
-      "packages/open-science/appimage-launcher.test.ts"
+      "packages/open-science/appimage-launcher.test.ts",
+      "packages/open-science/locate-backend.test.ts"
     ],
     "contract": [],
     "consumer": [
@@ -53,7 +57,12 @@
       "src/main/settings/bootstrap.integration.test.ts",
       "src/main/web-service/artifact-download.integration.test.ts",
       "src/main/web-service/http-server.test.ts",
-      "src/main/runtime-control.integration.test.ts"
+      "src/main/runtime-control.integration.test.ts",
+      "scripts/stage-npm-release.test.ts",
+      "scripts/pack-npm-release.test.ts",
+      "scripts/publish-npm-release.test.ts",
+      "scripts/npm-runtime-workflow.test.ts",
+      "scripts/runtime-archives.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

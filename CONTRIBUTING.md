@@ -18,7 +18,7 @@ project for everyone.
 - Git
 
 Node 24 is the development and CI toolchain. The published CLI continues to support
-Node >=22.5.0; PR Gate checks CLI/SDK compatibility on Node 22 as well. Standalone artifacts require Node >=22.13.0. Desktop packages include a separately pinned ordinary
+Node >=22.5.0; PR Gate checks CLI/SDK compatibility on Node 22 as well. Local standalone npm tarballs require Node >=22.13.0; Release CLI archives include Node. Desktop packages include a separately pinned ordinary
 Node backend executable; Electron remains the native UI host.
 
 The typecheck scripts use the native TypeScript compiler pinned as `typescript-native`.
@@ -523,10 +523,14 @@ first case needs only the original prompt, the generated code, the data source, 
 result, and failed runs are welcome. The [contribution guide](docs/reproducibility-cases/README.md)
 explains the format, the curation follow-ups, and how reviewed examples are indexed.
 
-## Publishing the npm Package
+## Publishing standalone CLI archives
 
-Maintainers should follow the [npm package release guide](docs/npm-release.md). npm package versions
-use `npm-v*` tags and are published through the protected `Publish npm package` workflow.
+Stable Releases include five standalone CLI archives alongside desktop installers. They reuse the
+certified backend and pinned Node bytes, with native signature, extracted-installation, source/version
+and complete-set checks before publication. See the [standalone runtime guide](docs/standalone-runtime.md).
+The manual `publish-npm.yml` workflow defaults to archive dry-run; `distribution=npm` retains the
+credential-free npm packaging dry-run. Automatic npm publication is deferred; no npm token is needed
+for a GitHub Release.
 
 ## License
 
