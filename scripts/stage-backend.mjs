@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
-import { isElectronPackage } from './backend-dependencies.mjs'
+import { assertStagedBackendImports, isElectronPackage } from './backend-dependencies.mjs'
 import { cp, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { dirname, join, resolve, relative, sep } from 'node:path'
@@ -117,7 +117,7 @@ async function copyDependency(name, from, destinationParent = stage) {
 }
 const dependencies = {}
 for (const name of Object.keys(manifest.dependencies)) {
-  if (forbidden(name) || name === '@aipoch/notebook-network-sandbox') continue
+  if (forbidden(name)) continue
   await copyDependency(name, root)
   dependencies[name] = installed.get(join(stage, 'node_modules', name))
 }
@@ -137,7 +137,17 @@ for (const entry of ['index.js', 'default.js']) {
   )
 }
 const nativeRequire = createRequire(join(stage, 'package.json'))
-for (const name of ['@aipoch/process-tree-native', '@aipoch/safe-file-publisher-native'])
+assertStagedBackendImports(
+  stage,
+  JSON.parse(await readFile(join(stage, 'out/backend/dependencies.json'), 'utf8'))
+)
+// The sandbox root is compiled into the backend, but its pure CJS policy is a runtime package
+// export used by managed execution. Keep that public export and its relative files intact.
+for (const name of [
+  '@aipoch/process-tree-native',
+  '@aipoch/safe-file-publisher-native',
+  '@aipoch/notebook-network-sandbox/execution-confinement'
+])
   nativeRequire(name)
 for (const path of Object.values(nativeRequire('@aipoch/credential-identity-probe-native')))
   await stat(path)
