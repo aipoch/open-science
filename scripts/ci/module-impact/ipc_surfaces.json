@@ -207,7 +207,9 @@
       "src/renderer/src/pages/workspace/handoff-lifecycle-source.test.ts",
       "src/renderer/web/bootstrap.test.ts",
       "src/renderer/web/renderer-argument-shape-characterization.test.ts",
-      "src/shared/renderer-surface-inventory.test.ts"
+      "src/shared/renderer-surface-inventory.test.ts",
+      "src/main/desktop-runtime-electron-adapter.test.ts",
+      "src/main/desktop-runtime-transport.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation"],

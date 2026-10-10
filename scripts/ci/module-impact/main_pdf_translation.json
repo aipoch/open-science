@@ -584,7 +584,10 @@
       "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout-paired-definition.test.ts",
       "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout-parameter-prose.test.ts",
       "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout-plot-axis.test.ts",
-      "src/main/desktop-runtime-transport.integration.test.ts"
+      "src/main/desktop-runtime-transport.integration.test.ts",
+      "src/main/composition/managed-execution.integration.test.ts",
+      "src/main/composition/handoff.test.ts",
+      "src/main/composition/artifact-surfaces.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions"],
