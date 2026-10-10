@@ -126,6 +126,8 @@ export type NotebookSandboxedProcess = Readonly<{
 }>
 
 export type NotebookNetworkSandboxOptions = Readonly<{
+  /** Absent retains receipt-derived selection; false explicitly selects standard execution. */
+  windowsProtectionEnabled?: boolean
   /** The application supplies its mode; standalone consumers default to production. */
   packaged?: boolean
   policy: NotebookNetworkPolicy

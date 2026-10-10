@@ -135,6 +135,11 @@
     "More items": "更多會話"
   },
   "renderer": {
+    "Standard mode": "標準模式",
+    "Use standard mode": "使用標準模式",
+    "Use protected mode": "使用保護模式",
+    "Switching modes stops running Notebook processes. Installed protection components are kept.": "切換模式會停止正在執行的 Notebook 程序。已安裝的保護元件會保留。",
+    "Could not switch execution mode. Try again.": "無法切換執行模式。請再試一次。",
     "RNA interactions, regulatory evidence and bulk datasets from ENCORI.": "ENCORI RNA 互作、調控證據與批次資料集。",
     "Query miRNA target evidence.": "查詢 miRNA 標的證據。",
     "Query RNA–RNA interaction evidence.": "查詢 RNA–RNA 互作證據。",

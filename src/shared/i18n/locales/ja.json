@@ -135,6 +135,11 @@
     "More items": "その他のセッション"
   },
   "renderer": {
+    "Standard mode": "標準モード",
+    "Use standard mode": "標準モードを使用",
+    "Use protected mode": "保護モードを使用",
+    "Switching modes stops running Notebook processes. Installed protection components are kept.": "モードを切り替えると、実行中の Notebook プロセスが停止します。インストール済みの保護コンポーネントは保持されます。",
+    "Could not switch execution mode. Try again.": "実行モードを切り替えられませんでした。もう一度お試しください。",
     "RNA interactions, regulatory evidence and bulk datasets from ENCORI.": "ENCORI の RNA 相互作用、制御の証拠と一括データセット。",
     "Query miRNA target evidence.": "miRNA 標的の証拠を検索。",
     "Query RNA–RNA interaction evidence.": "RNA–RNA 相互作用の証拠を検索。",

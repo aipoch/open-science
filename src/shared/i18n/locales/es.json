@@ -137,6 +137,11 @@
     "More items": "Más sesiones"
   },
   "renderer": {
+    "Standard mode": "Modo estándar",
+    "Use standard mode": "Usar el modo estándar",
+    "Use protected mode": "Usar el modo protegido",
+    "Switching modes stops running Notebook processes. Installed protection components are kept.": "Al cambiar de modo se detienen los procesos de Notebook en ejecución. Los componentes de protección instalados se conservan.",
+    "Could not switch execution mode. Try again.": "No se pudo cambiar el modo de ejecución. Inténtelo de nuevo.",
     "RNA interactions, regulatory evidence and bulk datasets from ENCORI.": "Interacciones de ARN, evidencia reguladora y conjuntos de datos masivos de ENCORI.",
     "Query miRNA target evidence.": "Consultar evidencia de dianas de miRNA.",
     "Query RNA–RNA interaction evidence.": "Consultar evidencia de interacciones ARN–ARN.",

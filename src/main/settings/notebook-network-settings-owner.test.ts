@@ -20,10 +20,16 @@ describe('NotebookNetworkSettingsOwner', () => {
   ): Readonly<{
     owner: NotebookNetworkSettingsOwner
     repository: {
-      getSettings: ReturnType<typeof vi.fn>
-      setNotebookNetwork: ReturnType<typeof vi.fn>
+      getSettings: ReturnType<typeof vi.fn<() => Promise<StoredSettings>>>
+      setNotebookNetwork: ReturnType<
+        typeof vi.fn<(settings: NotebookNetworkSettings) => Promise<StoredSettings>>
+      >
     }
-    apply: ReturnType<typeof vi.fn>
+    apply: ReturnType<
+      typeof vi.fn<
+        (settings: NotebookNetworkSettings, previous: NotebookNetworkSettings) => Promise<void>
+      >
+    >
     read: () => NotebookNetworkSettings
   }> => {
     let stored: NotebookNetworkSettings = initial
@@ -39,7 +45,9 @@ describe('NotebookNetworkSettingsOwner', () => {
         return document()
       })
     }
-    const apply = vi.fn().mockResolvedValue(undefined)
+    const apply = vi
+      .fn<(settings: NotebookNetworkSettings, previous: NotebookNetworkSettings) => Promise<void>>()
+      .mockResolvedValue(undefined)
     return {
       owner: new NotebookNetworkSettingsOwner({ repository, apply }),
       repository,
@@ -76,8 +84,33 @@ describe('NotebookNetworkSettingsOwner', () => {
     expect(repository.setNotebookNetwork).toHaveBeenCalledTimes(2)
     expect(apply).toHaveBeenNthCalledWith(
       2,
-      expect.objectContaining(DEFAULT_NOTEBOOK_NETWORK_SETTINGS)
+      expect.objectContaining(DEFAULT_NOTEBOOK_NETWORK_SETTINGS),
+      expect.objectContaining({ allowedDomains: ['data.example.org'] })
     )
+  })
+
+  it('preserves an explicit standard selection across stale domain-only edits', async () => {
+    const { owner, read } = harness()
+    await owner.setWindowsProtectionEnabled(false)
+    await owner.set({ ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS, allowedDomains: ['example.org'] })
+    expect(read()).toMatchObject({
+      windowsProtectionEnabled: false,
+      allowedDomains: ['example.org']
+    })
+  })
+
+  it('stops active execution before persisting a mode change and does not write when stopping fails', async () => {
+    const { repository, apply, read } = harness()
+    const beforeProtectionChange = vi.fn(async () => {
+      expect(read().windowsProtectionEnabled).toBeUndefined()
+      throw new Error('process is still running')
+    })
+    const owner = new NotebookNetworkSettingsOwner({ repository, apply, beforeProtectionChange })
+    await expect(owner.setWindowsProtectionEnabled(false)).rejects.toThrow(
+      'process is still running'
+    )
+    expect(repository.setNotebookNetwork).not.toHaveBeenCalled()
+    expect(apply).not.toHaveBeenCalled()
   })
 
   it('merges a stale form delta with an always-allow write in either queue order', async () => {
@@ -173,7 +206,8 @@ describe('NotebookNetworkSettingsOwner', () => {
     })
     expect(state.read().trustedPrivateDestinations).toEqual([])
     expect(state.apply).toHaveBeenLastCalledWith(
-      expect.objectContaining({ trustedPrivateDestinations: [] })
+      expect.objectContaining({ trustedPrivateDestinations: [] }),
+      expect.any(Object)
     )
   })
   it('restores both private persistence and live policy if application fails', async () => {
@@ -187,7 +221,10 @@ describe('NotebookNetworkSettingsOwner', () => {
       })
     ).rejects.toThrow('apply failed')
     expect(state.read()).toEqual(DEFAULT_NOTEBOOK_NETWORK_SETTINGS)
-    expect(state.apply).toHaveBeenLastCalledWith(DEFAULT_NOTEBOOK_NETWORK_SETTINGS)
+    expect(state.apply).toHaveBeenLastCalledWith(
+      DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      expect.any(Object)
+    )
   })
   it('preserves sibling ports and concurrent public grants while rejecting stale private removals', async () => {
     const otherPort = { ...privateRule, port: 443 }
@@ -227,7 +264,7 @@ describe('NotebookNetworkSettingsOwner', () => {
     expect(removed.trustedPrivateDestinations).toEqual([otherPort])
     expect(removed.allowedDomains).toEqual(['concurrent.example.org'])
     expect(lookup).not.toHaveBeenCalled()
-    expect(state.apply).toHaveBeenLastCalledWith(removed)
+    expect(state.apply).toHaveBeenLastCalledWith(removed, expect.any(Object))
   })
   it('rejects malformed input instead of silently storing a broader or empty rule', async () => {
     const state = harness()

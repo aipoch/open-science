@@ -135,6 +135,11 @@
     "More items": "더 많은 세션"
   },
   "renderer": {
+    "Standard mode": "표준 모드",
+    "Use standard mode": "표준 모드 사용",
+    "Use protected mode": "보호 모드 사용",
+    "Switching modes stops running Notebook processes. Installed protection components are kept.": "모드를 전환하면 실행 중인 Notebook 프로세스가 중지됩니다. 설치된 보호 구성 요소는 유지됩니다.",
+    "Could not switch execution mode. Try again.": "실행 모드를 전환하지 못했습니다. 다시 시도하세요.",
     "RNA interactions, regulatory evidence and bulk datasets from ENCORI.": "ENCORI의 RNA 상호작용, 조절 근거 및 일괄 데이터셋.",
     "Query miRNA target evidence.": "miRNA 표적 근거 조회.",
     "Query RNA–RNA interaction evidence.": "RNA–RNA 상호작용 근거 조회.",

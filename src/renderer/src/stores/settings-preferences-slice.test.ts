@@ -217,6 +217,18 @@ const createHarness = (): {
 }
 
 describe('settings preferences slice', () => {
+  it('sends a mode preference only for an explicit mode change', async () => {
+    const { commands, store } = createHarness()
+    const stale = { ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS, windowsProtectionEnabled: true }
+    await store.getState().setNotebookNetwork(stale)
+    expect(commands.setNotebookNetwork).toHaveBeenLastCalledWith(
+      expect.objectContaining({ windowsProtectionEnabled: undefined })
+    )
+    await store.getState().setNotebookNetwork(stale, [], [], false)
+    expect(commands.setNotebookNetwork).toHaveBeenLastCalledWith(
+      expect.objectContaining({ windowsProtectionEnabled: false })
+    )
+  })
   it('keeps a newer committed proxy snapshot when an older save response arrives last', async () => {
     const { commands, store } = createHarness()
     const older = deferred<NetworkProxySettings>()

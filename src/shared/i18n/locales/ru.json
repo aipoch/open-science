@@ -138,6 +138,11 @@
     "More items": "Другие сеансы"
   },
   "renderer": {
+    "Standard mode": "Стандартный режим",
+    "Use standard mode": "Использовать стандартный режим",
+    "Use protected mode": "Использовать защищённый режим",
+    "Switching modes stops running Notebook processes. Installed protection components are kept.": "При смене режима работающие процессы Notebook останавливаются. Установленные компоненты защиты сохраняются.",
+    "Could not switch execution mode. Try again.": "Не удалось переключить режим выполнения. Повторите попытку.",
     "RNA interactions, regulatory evidence and bulk datasets from ENCORI.": "Взаимодействия РНК, регуляторные данные и массовые наборы данных ENCORI.",
     "Query miRNA target evidence.": "Запросить данные о мишенях miRNA.",
     "Query RNA–RNA interaction evidence.": "Запросить данные о взаимодействиях РНК–РНК.",

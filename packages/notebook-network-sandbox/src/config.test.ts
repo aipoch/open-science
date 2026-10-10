@@ -156,6 +156,12 @@ it('rejects conflicting Windows ownership records instead of choosing a second r
   expect(() => createRuntimeConfig(createOptions(), 'x64', { LOCALAPPDATA: root })).toThrow(
     'ambiguous'
   )
+  // An explicit standard launch does not adopt either receipt and need not repair protection.
+  expect(
+    createRuntimeConfig(createOptions({ windowsProtectionEnabled: false }), 'x64', {
+      LOCALAPPDATA: root
+    }).windowsProtectionEnabled
+  ).toBe(false)
 })
 
 it('uses the real E2E storage override before config without touching shared ownership', () => {
