@@ -1,4 +1,4 @@
-import type { ToolContext, ToolDescriptor } from '../types'
+import type { ToolContext, ToolDescriptor } from '../../connector-core/types'
 
 // CellGuide (CELLxGENE) serves static, snapshot-versioned JSON blobs from this CDN — no live
 // query/search API. Everything is a GET of a snapshot-scoped blob keyed by Cell Ontology (CL) id,

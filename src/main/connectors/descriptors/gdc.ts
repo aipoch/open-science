@@ -1,4 +1,4 @@
-import type { ToolContext, ToolDescriptor } from '../types'
+import type { ToolContext, ToolDescriptor } from '../../connector-core/types'
 
 const GDC_API = 'https://api.gdc.cancer.gov'
 const MAX_PAGE = 10000

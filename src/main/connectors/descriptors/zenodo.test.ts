@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { ParserEngine } from '../engine'
-import type { ToolDescriptor } from '../types'
+import type { ToolDescriptor } from '../../connector-core/types'
 import { ZENODO_TOOLS } from './zenodo'
 
 const getDescriptor = (method: string): ToolDescriptor =>

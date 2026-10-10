@@ -1,4 +1,4 @@
-import type { ToolContext, ToolDescriptor } from '../types'
+import type { ToolContext, ToolDescriptor } from '../../connector-core/types'
 
 const NCBI_DATASETS = 'https://api.ncbi.nlm.nih.gov/datasets/v2'
 const ACCESSION = /^GC[AF]_\d{9}\.\d+$/u

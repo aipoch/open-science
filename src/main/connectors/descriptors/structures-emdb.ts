@@ -1,4 +1,4 @@
-import type { ToolContext, ToolDescriptor } from '../types'
+import type { ToolContext, ToolDescriptor } from '../../connector-core/types'
 
 // EMDB REST API (EBI, cryo-EM 3D maps). Metadata only — map volumes are never downloaded.
 // The /entry document feeds the headline record and every detailed section; /analysis backs the

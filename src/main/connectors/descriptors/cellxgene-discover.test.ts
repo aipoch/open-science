@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { ParserEngine } from '../engine'
-import type { ToolDescriptor } from '../types'
+import type { ToolDescriptor } from '../../connector-core/types'
 import { CELLXGENE_DISCOVER_TOOLS } from './cellxgene-discover'
 
 const C = '9a71db9e-687f-41f0-b88e-544eb1314ef6'

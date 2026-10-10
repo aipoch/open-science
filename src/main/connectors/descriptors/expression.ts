@@ -1,4 +1,4 @@
-import type { ToolContext, ToolDescriptor } from '../types'
+import type { ToolContext, ToolDescriptor } from '../../connector-core/types'
 
 const GTEX = 'https://gtexportal.org/api/v2'
 const DEFAULT_DATASET = 'gtex_v8'

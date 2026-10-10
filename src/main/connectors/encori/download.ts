@@ -5,7 +5,7 @@ import { pipeline } from 'node:stream/promises'
 import { Writable } from 'node:stream'
 import { createGunzip } from 'node:zlib'
 import { publishUserFile } from '../../user-file-publisher'
-import type { ToolContext } from '../types'
+import type { ToolContext } from '../../connector-core/types'
 import { BASE, outputDirectory, publicationOptions } from './client'
 import { abortable, EncoriError, failure, receive, success, type Args } from './runtime'
 

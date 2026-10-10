@@ -1,4 +1,4 @@
-import type { ToolContext, ToolDescriptor } from '../types'
+import type { ToolContext, ToolDescriptor } from '../../connector-core/types'
 
 // EBI Complex Portal web service (IntAct). Curated stable macromolecular complexes: single-record
 // lookup by CPX accession (/complex/{AC}) and Solr search by participant (/search/{query}). The

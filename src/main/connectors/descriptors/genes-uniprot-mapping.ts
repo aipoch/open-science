@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { ToolDescriptor } from '../types'
+import type { ToolDescriptor } from '../../connector-core/types'
 
 // UniProt's generic results endpoint returns identifier pairs, without full protein records.
 // https://www.uniprot.org/help/id_mapping_prog

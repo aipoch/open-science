@@ -1,3 +1,4 @@
+import { builtinConnectorRegistry } from './registry'
 import { describe, expect, it, vi } from 'vitest'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
@@ -70,6 +71,7 @@ describe('MCP protocol regressions', () => {
     })
     const manager = new McpClientManager({ createClient: () => connect(server) })
     const service = new ConnectorService({
+      registry: builtinConnectorRegistry,
       mcpClientManager: manager,
       getConnectors: () => ({
         enabledIds: [],

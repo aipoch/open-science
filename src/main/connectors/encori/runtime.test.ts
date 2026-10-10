@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ToolContext } from '../types'
+import type { ToolContext } from '../../connector-core/types'
 import { encoriCall, readBytes, receive } from './runtime'
 const fetchMock = vi.hoisted(() => vi.fn())
 vi.mock('../../skills/net-fetch', () => ({ netFetchStandard: fetchMock }))

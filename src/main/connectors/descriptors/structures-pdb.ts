@@ -1,4 +1,4 @@
-import type { ToolDescriptor } from '../types'
+import type { ToolDescriptor } from '../../connector-core/types'
 
 // RCSB PDB search + data REST APIs. We POST to search.rcsb.org: attribute
 // and sequence queries return identifiers + relevance scores and optional alignment metadata.

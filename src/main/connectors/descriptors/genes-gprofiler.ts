@@ -1,4 +1,4 @@
-import type { ToolContext, ToolDescriptor } from '../types'
+import type { ToolContext, ToolDescriptor } from '../../connector-core/types'
 
 const BASE = 'https://biit.cs.ut.ee/gprofiler/api'
 const ORGANISM = /^[a-z][a-z0-9_]*$/u

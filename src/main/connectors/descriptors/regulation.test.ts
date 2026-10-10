@@ -2,7 +2,7 @@ import { configureTestRuntimeNetwork } from '../../../../test/runtime-host'
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { ParserEngine } from '../engine'
 import { REGULATION_TOOLS } from './regulation'
-import type { ToolContext, ToolDescriptor } from '../types'
+import type { ToolContext, ToolDescriptor } from '../../connector-core/types'
 
 const tool = (id: string): ToolDescriptor => REGULATION_TOOLS.find((t) => t.id === id)!
 const jsonRes = (body: unknown): Response =>
