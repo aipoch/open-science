@@ -13,6 +13,7 @@ import { CLINICAL_GENOMICS_TOOLS } from './descriptors/clinical-genomics'
 import { CLINPGX_TOOLS } from './descriptors/clinpgx'
 import { CLINICAL_TRIALS_TOOLS } from './descriptors/clinical-trials'
 import { DRUG_REGULATORY_TOOLS } from './descriptors/drug-regulatory'
+import { ENCORI_TOOLS } from './descriptors/encori'
 import { EXPRESSION_TOOLS } from './descriptors/expression'
 import { GENES_TOOLS } from './descriptors/genes'
 import { GENOMES_TOOLS } from './descriptors/genomes'
@@ -52,6 +53,7 @@ const ALL_TOOLS: ToolDescriptor[] = [
   ...CLINPGX_TOOLS,
   ...CLINICAL_TRIALS_TOOLS,
   ...DRUG_REGULATORY_TOOLS,
+  ...ENCORI_TOOLS,
   ...EXPRESSION_TOOLS,
   ...GENES_TOOLS,
   ...GENOMES_TOOLS,

@@ -391,6 +391,9 @@ describe('User Skill repository architecture', () => {
           'src/shared/renderer-contract-catalog.test.ts'
         ],
         consumer: [
+          'src/main/connectors/descriptors/encori.test.ts',
+          'src/main/connectors/encori/download.test.ts',
+          'src/main/connectors/encori/runtime.test.ts',
           'src/main/notebook/windows-runtime-manager.test.ts',
           'src/main/storage/wsl-npm-migration.integration.test.ts',
           'src/main/composition/notebook-environment.test.ts',

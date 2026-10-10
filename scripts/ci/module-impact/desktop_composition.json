@@ -459,6 +459,9 @@
     "consumer": [
       "test/config/electron.vite.config.test.ts",
       "scripts/electron-vite-config.test.ts",
+      "src/main/connectors/descriptors/encori.test.ts",
+      "src/main/connectors/encori/download.test.ts",
+      "src/main/connectors/encori/runtime.test.ts",
       "src/main/notebook/dependency-analysis.r-arrow-dataset.test.ts",
       "src/main/notebook/dependency-analysis.r-deseq2.test.ts",
       "src/main/notebook/dependency-analysis.r-hdf5array.test.ts",
