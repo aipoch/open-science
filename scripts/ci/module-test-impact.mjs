@@ -13,6 +13,7 @@ import {
 } from './classify-pr-changes.mjs'
 import { loadModuleImpactManifest } from './load-module-impact.mjs'
 import { validateModuleImpactManifest } from './validate-module-impact.mjs'
+import { packageTestSelectedRoots } from './package-test-impact.mjs'
 import { resolveModuleImpactInputs } from './module-impact-inputs.mjs'
 
 const defaultManifest = loadModuleImpactManifest()
@@ -305,7 +306,8 @@ export function executeModuleTestPlan(
   const shard = testArguments.some(
     (argument) => argument === '--shard' || argument.startsWith('--shard=')
   )
-  if (!mergeReports && !shard && plan.mode === 'selective' && plan.testFiles.length === 0) return 0
+  const testFilters = sorted([...plan.testFiles, ...packageTestSelectedRoots(environment)])
+  if (!mergeReports && !shard && plan.mode === 'selective' && testFilters.length === 0) return 0
   // Report merging executes no tests and needs no generated Prisma client from npm's pretest.
   const npmArguments = mergeReports
     ? ['exec', '--', 'vitest', 'run', ...testArguments]
@@ -316,8 +318,8 @@ export function executeModuleTestPlan(
         // An empty shard must emit its blob without falling back to unfiltered discovery.
         ...(plan.mode === 'full'
           ? []
-          : plan.testFiles.length
-            ? plan.testFiles
+          : testFilters.length
+            ? testFilters
             : ['__no_selected_module_tests__'])
       ]
   const npmExecPath = environment.npm_execpath
