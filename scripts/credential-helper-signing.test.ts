@@ -13,6 +13,19 @@ const require = createRequire(import.meta.url)
 const builderRequire = createRequire(require.resolve('electron-builder/package.json'))
 const appBuilderRequire = createRequire(builderRequire.resolve('app-builder-lib/package.json'))
 
+function loadHook(file: string): (context: unknown) => Promise<void> {
+  const exports: { default?: (context: unknown) => Promise<void> } = {}
+  runInNewContext(readFileSync(file, 'utf8'), {
+    exports,
+    Buffer,
+    __dirname: dirname(file),
+    console,
+    require: (id: string) =>
+      id === './verify-native-components.cjs' ? async () => new Set() : require(id)
+  })
+  return exports.default!
+}
+
 it('edits the Windows launcher before signing and signs each bundled PE only once', async () => {
   const { NtExecutable } = appBuilderRequire('resedit')
   const { editWindowsResources } = builderRequire('app-builder-lib/out/util/resEdit')
@@ -61,7 +74,7 @@ it('edits the Windows launcher before signing and signs each bundled PE only onc
     }
   }
   try {
-    await require(join(process.cwd(), config.afterPack)).default(context)
+    await loadHook(join(process.cwd(), config.afterPack))(context)
     // electron-builder edits the main EXE, signs it and unpacked helpers, then calls afterSign.
     await editWindowsResources({
       file: main,
@@ -71,7 +84,7 @@ it('edits the Windows launcher before signing and signs each bundled PE only onc
     })
     await signIf(main)
     await signIf(helper)
-    if (config.afterSign) await require(join(process.cwd(), config.afterSign)).default(context)
+    if (config.afterSign) await loadHook(join(process.cwd(), config.afterSign))(context)
     expect(calls.sort()).toEqual([main, helper, dll, addon, extra].sort())
     expect(readFileSync(vendor)).toEqual(vendorBytes)
   } finally {
@@ -79,7 +92,7 @@ it('edits the Windows launcher before signing and signs each bundled PE only onc
   }
 })
 
-it('signs the unpacked credential executables before signing the outer macOS application', async () => {
+it('preserves pinned credential signatures while signing other resources and the outer macOS application', async () => {
   const app = '/fixture/Open-Science.app'
   const calls: string[][] = []
   const exports: { default?: (context: unknown) => Promise<void> } = {}
@@ -89,6 +102,8 @@ it('signs the unpacked credential executables before signing the outer macOS app
     __dirname: '/fixture/build',
     console: { log: vi.fn() },
     require: (id: string) => {
+      if (id === './verify-native-components.cjs') return async () => new Set()
+      if (id === 'builder-util') return { Arch: { 1: 'x64' } }
       if (id === 'node:path') return posix
       if (id === 'node:fs')
         return {
@@ -126,8 +141,7 @@ it('signs the unpacked credential executables before signing the outer macOS app
     const position = calls.findIndex(
       (args) => args.at(-1) === posix.join(packageDirectory, executable)
     )
-    expect(position, executable).toBeGreaterThanOrEqual(0)
-    expect(position).toBeLessThan(calls.findIndex((args) => args.at(-1) === app))
+    expect(position, executable).toBe(-1)
   }
   for (const relative of ['node-runtime/node', 'backend/native.node']) {
     const position = calls.findIndex(
@@ -168,6 +182,8 @@ it('signs every unsigned bundled Windows PE while preserving vendor signatures',
     exports,
     console: { log: vi.fn() },
     require: (id: string) => {
+      if (id === './verify-native-components.cjs') return async () => new Set()
+      if (id === 'builder-util') return { Arch: { 1: 'x64' } }
       if (id === 'node:path') return nodePath
       if (id === 'node:fs') return fs
       if (id === 'node:buffer') return { Buffer }

@@ -155,6 +155,11 @@ win:
       mimeType: application/x-open-science-session
       role: Viewer
       rank: Default
+  # Preserve the exact pre-signed component bytes. The afterPack hook verifies their pinned hashes.
+  signExts:
+    - '!credential_identity_probe.exe'
+    - '!credential_key_validator.exe'
+    - '!credential_secret.exe'
   executableName: open-science
   icon: build/icon.ico
   artifactName: aipoch-${name}-${version}-win-${arch}.${ext}
@@ -210,6 +215,9 @@ mac:
   # Minimum macOS to run the app (written to Info.plist LSMinimumSystemVersion). macOS 12 (Monterey)
   # and up; below this the OS refuses to launch. Independent of the CI build runner's macOS version.
   minimumSystemVersion: '12.0.0'
+  # Loose first-party components already have reviewed Developer ID signatures.
+  signIgnore:
+    - '/node_modules/@aipoch/(credential-identity-probe-native|process-tree-native|safe-file-publisher-native)/build/Release/'
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
     # Electron locates its Helper bundles using this internal name. Keep it aligned with productName.

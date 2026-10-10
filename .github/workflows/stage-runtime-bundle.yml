@@ -28,6 +28,10 @@ on:
         description: Validate and upload workflow artifacts without writing to the CDN
         type: boolean
         default: true
+      native_components:
+        description: Build first-party native components instead of Notebook runtimes
+        type: boolean
+        default: false
       windows_runtime_run:
         description: Optional signed Windows Node/PowerShell run; replaces Python/R staging
         type: string
@@ -48,8 +52,18 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  native_components:
+    if: ${{ inputs.native_components }}
+    uses: ./.github/workflows/native-components.yml
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      dry_run: ${{ inputs.dry_run }}
+    secrets: inherit
+
   windows_components:
-    if: ${{ inputs.windows_runtime_run != '' || inputs.windows_runtime_artifact != '' }}
+    if: ${{ !inputs.native_components && (inputs.windows_runtime_run != '' || inputs.windows_runtime_artifact != '') }}
     uses: ./.github/workflows/windows-runtime-cdn.yml
     with:
       source_run: ${{ inputs.windows_runtime_run }}
@@ -58,7 +72,7 @@ jobs:
     secrets: inherit
 
   setup:
-    if: ${{ inputs.windows_runtime_run == '' && inputs.windows_runtime_artifact == '' }}
+    if: ${{ !inputs.native_components && inputs.windows_runtime_run == '' && inputs.windows_runtime_artifact == '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:

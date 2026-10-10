@@ -57,7 +57,7 @@
     "dev:headless": "npm run dev:web --",
     "cli": "node cli/index.mjs",
     "build": "npm run typecheck && npm run build:backend && electron-vite build && npm run build:web",
-    "postinstall": "node scripts/prepare-shadcn-patch.mjs && patch-package --error-on-fail && node scripts/check-claude-acp-patch.mjs && prisma generate && install-electron && electron-builder install-app-deps && node scripts/fix-electron-path.cjs",
+    "postinstall": "node scripts/prepare-shadcn-patch.mjs && patch-package --error-on-fail && node scripts/check-claude-acp-patch.mjs && prisma generate && install-electron && node scripts/install-native-components.mjs && node scripts/fix-electron-path.cjs",
     "build:unpack": "npm run build && electron-builder --dir",
     "build:mac": "npm run build:backend && npm run build:web && electron-vite build && electron-builder --mac",
     "build:linux": "npm run build:backend && npm run build:web && electron-vite build && electron-builder --linux",
@@ -70,8 +70,9 @@
     "build:backend": "npm run build:backend-native && node scripts/build-backend.mjs",
     "stage:backend": "npm run build:backend && npm run build:web && node scripts/stage-backend.mjs",
     "pack:backend": "npm run stage:backend && npm pack ./out/standalone --pack-destination out",
-    "build:backend-native": "node-gyp rebuild --directory packages/credential-identity-probe-native -- -Dbuild_node_secret=1",
-    "stage:node-runtime": "node scripts/stage-node-runtime.mjs"
+    "build:backend-native": "node scripts/native-components.mjs",
+    "stage:node-runtime": "node scripts/stage-node-runtime.mjs",
+    "build:native-source": "node scripts/produce-native-components.mjs build"
   },
   "dependencies": {
     "@agentclientprotocol/claude-agent-acp": "^0.70.0",
