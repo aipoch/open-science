@@ -1,0 +1,116 @@
+name: Verify native npm packages
+
+on:
+  workflow_call:
+    inputs:
+      target:
+        type: string
+        default: all
+        description: Native target, or all for release verification.
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - id: plan
+        env:
+          TARGET: ${{ inputs.target }}
+        run: |
+          node <<'JS'
+          const fs = require('node:fs');
+          const targets = [
+            {id:'linux-x64-gnu',runner:'ubuntu-24.04',subdir:'linux-64',bin:'linux/x64'},
+            {id:'linux-arm64-gnu',runner:'ubuntu-24.04-arm',subdir:'linux-aarch64',bin:'linux/arm64'},
+            {id:'darwin-arm64',runner:'macos-15',subdir:'osx-arm64',bin:'mac/arm64'},
+            {id:'darwin-x64',runner:'macos-15-intel',subdir:'osx-64',bin:'mac/x64'},
+            {id:'win32-x64',runner:'windows-latest',subdir:'win-64',bin:'win/x64'}
+          ];
+          const selected = process.env.TARGET === 'all' ? targets : targets.filter(t => t.id === process.env.TARGET);
+          if (!selected.length) throw new Error('Unsupported npm target');
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `matrix=${JSON.stringify({include:selected})}\n`);
+          JS
+  verify:
+    needs: plan
+    name: npm ${{ matrix.id }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '12.0'
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+      - name: Linux native and test prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsecret-1-dev libdbus-1-dev pkg-config gnome-keyring dbus-user-session bubblewrap python3-venv
+      - name: Install build dependencies without Electron setup
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          node scripts/prepare-shadcn-patch.mjs
+          node node_modules/patch-package/index.js --error-on-fail
+          node scripts/check-claude-acp-patch.mjs
+          node node_modules/prisma/build/index.js generate
+          npm rebuild @aipoch/process-tree-native @aipoch/safe-file-publisher-native
+      - name: Build Windows protection helper
+        if: runner.os == 'Windows'
+        run: node packages/notebook-network-sandbox/vendor/windows/build.mjs x64
+      - name: Stage verified micromamba resources
+        env:
+          SUBDIR: ${{ matrix.subdir }}
+          BIN_DIRECTORY: ${{ matrix.bin }}
+        run: |
+          name=micromamba
+          [ "$RUNNER_OS" != Windows ] || name=micromamba.exe
+          node scripts/fetch-micromamba.mjs "$SUBDIR" "resources/bin/$BIN_DIRECTORY/$name"
+          if [ "$RUNNER_OS" = Windows ]; then
+            node scripts/fetch-micromamba.mjs "$SUBDIR" "resources/bin/$BIN_DIRECTORY/micromamba-compat.exe" compatibility
+          fi
+      - name: Build and pack ordinary Node runtime
+        run: |
+          npm run stage:backend
+          npm run pack:npm-release
+      - name: Verify npm publish input without publication
+        run: |
+          for package in out/npm-artifacts/*.tgz; do
+            npm publish "$package" --dry-run --access public --ignore-scripts
+          done
+      - name: Verify native npm installation
+        if: runner.os != 'Linux'
+        run: npm run test:npm-installed
+      - name: Verify headless Linux install and real Notebook lifecycle
+        if: runner.os == 'Linux'
+        run: |
+          # This disposable CI runner needs user namespaces for the real process sandbox.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          python3 -m venv "$RUNNER_TEMP/npm-notebook-python"
+          "$RUNNER_TEMP/npm-notebook-python/bin/pip" install ipykernel
+          export OPEN_SCIENCE_TEST_PYTHON="$RUNNER_TEMP/npm-notebook-python/bin/python"
+          export OPEN_SCIENCE_NPM_LIVE_TEST=1
+          dbus-run-session -- bash -euo pipefail -c '
+            printf "npm-ci-vault\n" | gnome-keyring-daemon --unlock --components=secrets
+            npm run test:npm-installed
+          '
+      - name: Upload verified native npm tarballs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: npm-${{ matrix.id }}
+          path: out/npm-artifacts/
+          if-no-files-found: error
+          retention-days: 5

@@ -70,7 +70,10 @@
     "stage:backend": "npm run build:backend && npm run build:web && node scripts/stage-backend.mjs",
     "pack:backend": "npm run stage:backend && npm pack ./out/standalone --pack-destination out",
     "build:backend-native": "node-gyp rebuild --directory packages/credential-identity-probe-native -- -Dbuild_node_secret=1",
-    "stage:node-runtime": "node scripts/stage-node-runtime.mjs"
+    "stage:node-runtime": "node scripts/stage-node-runtime.mjs",
+    "stage:npm-release": "node scripts/stage-npm-release.mjs",
+    "test:npm-installed": "node scripts/test-npm-installed.mjs",
+    "pack:npm-release": "npm run stage:npm-release && node scripts/pack-npm-release.mjs"
   },
   "dependencies": {
     "@agentclientprotocol/claude-agent-acp": "^0.70.0",
