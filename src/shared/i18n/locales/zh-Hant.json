@@ -135,6 +135,18 @@
     "More items": "更多會話"
   },
   "renderer": {
+    "RNA interactions, regulatory evidence and bulk datasets from ENCORI.": "ENCORI RNA 互作、調控證據與批次資料集。",
+    "Query miRNA target evidence.": "查詢 miRNA 標的證據。",
+    "Query RNA–RNA interaction evidence.": "查詢 RNA–RNA 互作證據。",
+    "Query RBP target evidence.": "查詢 RBP 標的證據。",
+    "Query ceRNA networks.": "查詢 ceRNA 網路。",
+    "Query RBP disease associations.": "查詢 RBP 疾病關聯。",
+    "Search RBP motif rankings.": "搜尋 RBP motif 排名。",
+    "Retrieve dataset binding sites.": "取得資料集結合位點。",
+    "List or read official reference tables.": "列出或讀取官方參考表。",
+    "List bulk datasets without downloading.": "列出批次資料集，不下載檔案。",
+    "Download and verify one bulk dataset.": "下載並驗證一個批次資料集。",
+
     "Cancer proteomics studies, sample and aliquot mappings, and file discovery from PDC.": "PDC 癌症蛋白質體研究、樣本和等分試樣對應及檔案探索。",
     "Search PDC studies and versions by name or identifier.": "依名稱或識別碼搜尋 PDC 研究及版本。",
     "Retrieve PDC study metadata and available versions.": "取得 PDC 研究中繼資料和可用版本。",
