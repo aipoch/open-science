@@ -84,6 +84,8 @@ const NotebookNetworkDomainsForm = ({
   const [isInstalling, setIsInstalling] = useState(false)
   const [isRemoving, setIsRemoving] = useState(false)
   const [isCancelling, setIsCancelling] = useState(false)
+  const [isSwitchingMode, setIsSwitchingMode] = useState(false)
+  const [modeError, setModeError] = useState(false)
   const [cancelError, setCancelError] = useState(false)
   useEffect(() => {
     onLeaveStateChange?.({ dirty, busy: isSaving })
@@ -96,7 +98,7 @@ const NotebookNetworkDomainsForm = ({
     }
   }, [onLeaveStateChange])
   const preparing = isInstalling || status.kind === 'checking'
-  const busy = preparing || isRemoving
+  const busy = preparing || isRemoving || isSwitchingMode || isSaving
   const preparation = status.kind === 'checking' ? status.runtimePreparation : undefined
   const failure = status.windowsRuntimeSetup?.failure
   const failureDescription = status.windowsRuntimeSetup?.cancelled
@@ -145,6 +147,34 @@ const NotebookNetworkDomainsForm = ({
       setStatus(await window.api.settings.getNotebookNetworkStatus())
     } catch {
       setStatus({ kind: 'error', reason: 'runtimeFailure' })
+    }
+  }
+
+  const selectProtection = async (enabled: boolean): Promise<void> => {
+    if (busy) return
+    setIsSwitchingMode(true)
+    setModeError(false)
+    try {
+      const next = await setNotebookNetwork(
+        saved,
+        saved.allowedDomains,
+        saved.trustedPrivateDestinations ?? [],
+        enabled
+      )
+      if (!mounted.current) return
+      setDraft((current) => ({
+        ...current,
+        windowsProtectionEnabled: next.windowsProtectionEnabled
+      }))
+      setBaseline((current) => ({
+        ...current,
+        windowsProtectionEnabled: next.windowsProtectionEnabled
+      }))
+      await refreshStatus()
+    } catch {
+      if (mounted.current) setModeError(true)
+    } finally {
+      if (mounted.current) setIsSwitchingMode(false)
     }
   }
 
@@ -302,30 +332,55 @@ const NotebookNetworkDomainsForm = ({
               >
                 {status.kind === 'checking'
                   ? t('Checking…')
-                  : status.kind === 'ready'
-                    ? window.api.platform === 'win32'
-                      ? t('Status: Active')
-                      : t('Notebook network protection is active.')
-                    : status.kind === 'setupRequired'
-                      ? status.platform === 'win32'
-                        ? t('Status: Not set up')
-                        : t('Notebook network protection needs setup before notebooks can run.')
-                      : status.kind === 'unsupported'
-                        ? t('Notebook network protection is not supported on this platform.')
-                        : window.api.platform === 'win32'
-                          ? t('Status: Setup failed')
-                          : statusReasonLabel(status.reason, t)}
+                  : status.kind === 'standard'
+                    ? t('Standard mode')
+                    : status.kind === 'ready'
+                      ? window.api.platform === 'win32'
+                        ? t('Status: Active')
+                        : t('Notebook network protection is active.')
+                      : status.kind === 'setupRequired'
+                        ? status.platform === 'win32'
+                          ? t('Status: Not set up')
+                          : t('Notebook network protection needs setup before notebooks can run.')
+                        : status.kind === 'unsupported'
+                          ? t('Notebook network protection is not supported on this platform.')
+                          : window.api.platform === 'win32'
+                            ? t('Status: Setup failed')
+                            : statusReasonLabel(status.reason, t)}
               </p>
-              {window.api.platform === 'win32' && status.kind === 'ready' ? (
+              {window.api.platform === 'win32' &&
+              (status.kind === 'ready' || status.kind === 'standard') ? (
                 <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
                   {t('Existing conversations use the selected mode on their next turn.')}
                 </p>
               ) : null}
-              {status.kind === 'setupRequired' && status.platform === 'win32' ? (
+              {status.kind === 'standard' ? (
+                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                  {t('Notebook continues using standard execution. No protected mode is active.')}
+                </p>
+              ) : null}
+              {window.api.platform === 'win32' ? (
                 <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
                   {t(
-                    'Route Notebook Python, R, REPL, Bash, and package downloads through network protection with approved domains and restricted public HTTPS reads. Until set up, Notebook continues using standard execution.'
+                    'Switching modes stops running Notebook processes. Installed protection components are kept.'
                   )}
+                </p>
+              ) : null}
+              {modeError ? (
+                <ErrorNotice
+                  inline
+                  className="mt-2"
+                  role="alert"
+                  description={t('Could not switch execution mode. Try again.')}
+                />
+              ) : null}
+              {status.kind === 'setupRequired' && status.platform === 'win32' ? (
+                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                  {status.windowsProtectionEnabled === true
+                    ? t('Notebook network protection needs setup before notebooks can run.')
+                    : t(
+                        'Route Notebook Python, R, REPL, Bash, and package downloads through network protection with approved domains and restricted public HTTPS reads. Until set up, Notebook continues using standard execution.'
+                      )}
                 </p>
               ) : null}
               {window.api.platform === 'win32' && status.kind === 'error' ? (
@@ -374,6 +429,16 @@ const NotebookNetworkDomainsForm = ({
               ) : null}
             </div>
             <div className="flex shrink-0 flex-wrap items-center gap-2">
+              {window.api.platform === 'win32' && !preparing ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => void selectProtection(status.kind === 'standard')}
+                >
+                  {status.kind === 'standard' ? t('Use protected mode') : t('Use standard mode')}
+                </Button>
+              ) : null}
               {preparing && window.api.platform === 'win32' ? (
                 <Button
                   type="button"
@@ -394,7 +459,9 @@ const NotebookNetworkDomainsForm = ({
                   {isInstalling ? t('Setting up…') : t('Set up')}
                 </Button>
               ) : null}
-              {!preparing && window.api.platform === 'win32' && status.kind === 'ready' ? (
+              {!preparing &&
+              window.api.platform === 'win32' &&
+              (status.kind === 'ready' || status.kind === 'standard') ? (
                 <>
                   <Button
                     type="button"

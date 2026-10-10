@@ -672,6 +672,58 @@ describe('R admission launch protection', () => {
     expect(windowsLaunch).not.toHaveBeenCalled()
   })
 
+  it.each([undefined, false])(
+    'honors explicit standard mode despite broken installed protection (R admission: %s)',
+    async (admission) => {
+      NotebookNetworkRuntime.updateConfig({
+        ...config(['example.com']),
+        windowsProtectionEnabled: false
+      })
+      vi.mocked(isWindowsProtectionConfigured).mockRejectedValueOnce(new Error('broken receipt'))
+      vi.mocked(getWindowsRuntimeAccess).mockRejectedValueOnce(new Error('broken grant'))
+      vi.mocked(checkWindowsAppContainer).mockClear()
+      vi.mocked(getWindowsRuntimeAccess).mockClear()
+      vi.mocked(isWindowsProtectionConfigured).mockClear()
+      const wrapped = await NotebookNetworkRuntime.wrap({
+        ...request(false),
+        windowsProtectionRequired: admission
+      })
+      expect(windowsStandardLaunch).toHaveBeenCalledOnce()
+      expect(windowsLaunch).not.toHaveBeenCalled()
+      expect(checkWindowsAppContainer).not.toHaveBeenCalled()
+      expect(getWindowsRuntimeAccess).not.toHaveBeenCalled()
+      expect(isWindowsProtectionConfigured).not.toHaveBeenCalled()
+      expect(CommandGateway.open).toHaveBeenCalledWith(
+        expect.objectContaining({ credentials: expect.any(Object) })
+      )
+      NotebookNetworkRuntime.updateConfig({
+        ...config(['example.com']),
+        windowsProtectionEnabled: true
+      })
+      expect(() => wrapped.beginSpawn?.()).toThrow('protection changed')
+      vi.mocked(isWindowsProtectionConfigured).mockReset().mockResolvedValue(true)
+      vi.mocked(getWindowsRuntimeAccess)
+        .mockReset()
+        .mockResolvedValue({ authorized: true, registered: true })
+    }
+  )
+
+  it('never downgrades an explicitly protected non-R command when setup fails', async () => {
+    NotebookNetworkRuntime.updateConfig({
+      ...config(['example.com']),
+      windowsProtectionEnabled: true
+    })
+    vi.mocked(checkWindowsAppContainer).mockResolvedValue({
+      warnings: [],
+      errors: ['broken fence']
+    })
+    await expect(
+      NotebookNetworkRuntime.wrap({ ...request(true), windowsProtectionRequired: undefined })
+    ).rejects.toThrow('protected mode is not ready')
+    expect(windowsStandardLaunch).not.toHaveBeenCalled()
+    expect(windowsLaunch).not.toHaveBeenCalled()
+  })
+
   it.each([false, true])(
     'rejects a changed protection mode after admission (%s)',
     async (required) => {

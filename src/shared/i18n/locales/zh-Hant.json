@@ -135,6 +135,11 @@
     "More items": "更多會話"
   },
   "renderer": {
+    "Standard mode": "標準模式",
+    "Use standard mode": "使用標準模式",
+    "Use protected mode": "使用保護模式",
+    "Switching modes stops running Notebook processes. Installed protection components are kept.": "切換模式會停止正在執行的 Notebook 程序。已安裝的保護元件會保留。",
+    "Could not switch execution mode. Try again.": "無法切換執行模式。請再試一次。",
     "Cancer proteomics studies, sample and aliquot mappings, and file discovery from PDC.": "PDC 癌症蛋白質體研究、樣本和等分試樣對應及檔案探索。",
     "Search PDC studies and versions by name or identifier.": "依名稱或識別碼搜尋 PDC 研究及版本。",
     "Retrieve PDC study metadata and available versions.": "取得 PDC 研究中繼資料和可用版本。",

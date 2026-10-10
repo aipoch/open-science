@@ -47,6 +47,14 @@ const NotebookNetworkProtectionBanner = ({
 
   const presentation: BannerPresentation = (() => {
     switch (status.kind) {
+      case 'standard':
+        return {
+          title: t('Standard mode'),
+          description: t(
+            'Notebook continues using standard execution. No protected mode is active.'
+          ),
+          level: 'info'
+        }
       case 'ready':
         return {
           title: t('Network protection on'),
@@ -58,11 +66,11 @@ const NotebookNetworkProtectionBanner = ({
       case 'setupRequired':
         return {
           title:
-            status.platform === 'win32'
+            status.platform === 'win32' && status.windowsProtectionEnabled !== true
               ? t('Notebook network protection is not set up.')
               : t('Notebook network protection needs setup before notebooks can run.'),
           description:
-            status.platform === 'win32'
+            status.platform === 'win32' && status.windowsProtectionEnabled !== true
               ? t('Notebook continues using standard execution. No protected mode is active.')
               : t('Open Network settings to review the required setup.'),
           level: 'warning'

@@ -138,6 +138,11 @@
     "More items": "Другие сеансы"
   },
   "renderer": {
+    "Standard mode": "Стандартный режим",
+    "Use standard mode": "Использовать стандартный режим",
+    "Use protected mode": "Использовать защищённый режим",
+    "Switching modes stops running Notebook processes. Installed protection components are kept.": "При смене режима работающие процессы Notebook останавливаются. Установленные компоненты защиты сохраняются.",
+    "Could not switch execution mode. Try again.": "Не удалось переключить режим выполнения. Повторите попытку.",
     "Cancer proteomics studies, sample and aliquot mappings, and file discovery from PDC.": "Исследования протеомики рака, сопоставление образцов и аликвот и поиск файлов в PDC.",
     "Search PDC studies and versions by name or identifier.": "Поиск исследований и версий PDC по названию или идентификатору.",
     "Retrieve PDC study metadata and available versions.": "Получение метаданных исследований PDC и доступных версий.",

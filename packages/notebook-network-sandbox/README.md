@@ -158,8 +158,11 @@ Call `dispose()` during lifecycle shutdown.
   so there is no second host-network path and no `socat` dependency. Debian packages
   declare `bubblewrap`; AppImage users receive an actionable setup message when it is missing.
 - Windows starts in standard mode: Notebook processes receive the authenticated proxy environment,
-  but applications that ignore proxy variables are not a security boundary. An explicit Settings
-  action enables protected mode. Short-lived package installers are additionally contained by the
+  but applications that ignore proxy variables are not a security boundary.
+  Users can explicitly select standard execution in Network settings even when protection is
+  installed or needs repair. Switching modes stops running Notebook processes and refreshes existing
+  conversations for their next turn; it does not uninstall protection components or request elevation.
+  An explicit Settings action enables protected mode. Short-lived package installers are additionally contained by the
   bundled host's kill-on-close Job Object in standard mode, without changing that mode's network or
   filesystem guarantees. Protected mode launches commands in a capability-free AppContainer
   and installs Windows Filtering Platform (WFP) filters scoped to that AppContainer SID. The filters
@@ -201,13 +204,20 @@ and returns future launches to standard mode.
 Managed and external R kernels can start in Windows standard mode without administrator setup.
 Their authenticated gateway remains active, but software that ignores proxy settings is not isolated.
 R admission checks the native ownership receipt and pending operations: an absent setup permits
-standard execution, while incomplete, damaged, or unreadable protection does not. The admission
+standard execution. An explicit standard-mode selection skips protected-mode admission; without
+that choice, incomplete, damaged, or unreadable protection remains blocking. The admission
 decision is checked again before launch; a protected R request never falls back to standard mode.
 Settings mutations in the same owner process invalidate prepared R launches until the executor
 synchronously starts the owned process tree. Already-started trees retain their selected mode;
 this check does not coordinate mutations from other processes.
 Protected mode retains its separate R runtime-access authorization. This decision is transient and
 does not add a setting or change the ownership receipt format.
+
+The independent Windows mode choice is persisted as optional
+`notebookNetwork.windowsProtectionEnabled` in application settings. Missing values retain the
+historical receipt-derived selection until the user chooses a mode. No native receipt, R grant,
+Notebook document or session history format is migrated. The UI's `standard` status is derived,
+not persisted.
 
 Packaged callers pass `join(process.resourcesPath, 'notebook-network-sandbox')` as `resources.root`.
 Development callers point it at this package's `vendor` directory.

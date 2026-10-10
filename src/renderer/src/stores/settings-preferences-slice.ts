@@ -75,7 +75,8 @@ export type SettingsPreferencesActions = {
   setNotebookNetwork: (
     settings: NotebookNetworkSettings,
     baseAllowedDomains?: readonly string[],
-    baseTrustedPrivateDestinations?: NotebookNetworkSettings['trustedPrivateDestinations']
+    baseTrustedPrivateDestinations?: NotebookNetworkSettings['trustedPrivateDestinations'],
+    windowsProtectionEnabled?: boolean
   ) => Promise<NotebookNetworkSettings>
 }
 
@@ -391,12 +392,15 @@ export const createSettingsPreferencesSlice = ({
     setNotebookNetwork: async (
       notebookNetwork,
       baseAllowedDomains,
-      baseTrustedPrivateDestinations
+      baseTrustedPrivateDestinations,
+      windowsProtectionEnabled
     ) => {
       const command = getCommands().setNotebookNetwork
       if (!command) throw new Error('Notebook network settings are unavailable.')
       const request: SetNotebookNetworkRequest = {
         ...notebookNetwork,
+        // Domain-only edits must not restore a mode captured by a stale settings form.
+        windowsProtectionEnabled,
         ...(baseTrustedPrivateDestinations === undefined ? {} : { baseTrustedPrivateDestinations }),
         ...(baseAllowedDomains === undefined ? {} : { baseAllowedDomains })
       }

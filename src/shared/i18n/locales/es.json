@@ -137,6 +137,11 @@
     "More items": "Más sesiones"
   },
   "renderer": {
+    "Standard mode": "Modo estándar",
+    "Use standard mode": "Usar el modo estándar",
+    "Use protected mode": "Usar el modo protegido",
+    "Switching modes stops running Notebook processes. Installed protection components are kept.": "Al cambiar de modo se detienen los procesos de Notebook en ejecución. Los componentes de protección instalados se conservan.",
+    "Could not switch execution mode. Try again.": "No se pudo cambiar el modo de ejecución. Inténtelo de nuevo.",
     "Cancer proteomics studies, sample and aliquot mappings, and file discovery from PDC.": "Estudios de proteómica del cáncer, correspondencias de muestras y alícuotas, y búsqueda de archivos de PDC.",
     "Search PDC studies and versions by name or identifier.": "Buscar estudios y versiones de PDC por nombre o identificador.",
     "Retrieve PDC study metadata and available versions.": "Obtener metadatos y versiones disponibles de estudios de PDC.",

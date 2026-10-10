@@ -108,7 +108,11 @@ const containsOwnershipState = (root: string): boolean => {
   }
 }
 
-const resolveWindowsOwnershipRoot = (environment: NodeJS.ProcessEnv, packaged: boolean): string => {
+const resolveWindowsOwnershipRoot = (
+  environment: NodeJS.ProcessEnv,
+  packaged: boolean,
+  inspectOwnership = true
+): string => {
   const home = environment.USERPROFILE ?? environment.HOME ?? homedir()
   const isolatedRoot =
     resolveConfigRootOverride(packaged, environment) ??
@@ -116,6 +120,8 @@ const resolveWindowsOwnershipRoot = (environment: NodeJS.ProcessEnv, packaged: b
   if (isolatedRoot) return join(isolatedRoot, 'notebook-sandbox', WINDOWS_INSTALLATION_ID)
   const base = environment.LOCALAPPDATA ?? join(home, 'AppData', 'Local')
   const current = join(base, 'Aipoch', 'Open-Science', 'notebook-sandbox', WINDOWS_INSTALLATION_ID)
+  // Explicit standard execution neither adopts nor modifies installed protection resources.
+  if (!inspectOwnership) return current
   const legacy = join(base, 'Aipoch', 'OpenScience', 'notebook-sandbox', WINDOWS_INSTALLATION_ID)
   const hasLegacy = containsOwnershipState(legacy)
   if (hasLegacy && containsOwnershipState(current)) {
@@ -138,8 +144,15 @@ const createRuntimeConfig = (
   for (const domain of policy.deniedDomains) validateDomainPattern(domain, true)
   const resourceRoot = options.resources.root
   const installationId = WINDOWS_INSTALLATION_ID
-  const windowsOwnershipRoot = resolveWindowsOwnershipRoot(environment, options.packaged ?? true)
+  const windowsOwnershipRoot = resolveWindowsOwnershipRoot(
+    environment,
+    options.packaged ?? true,
+    options.windowsProtectionEnabled !== false
+  )
   return {
+    ...(options.windowsProtectionEnabled !== undefined
+      ? { windowsProtectionEnabled: options.windowsProtectionEnabled }
+      : {}),
     trustedPrivateDestinations: policy.trustedPrivateDestinations,
     allowedDomains: [...policy.allowedDomains],
     ...(policy.askDomains ? { askDomains: [...policy.askDomains] } : {}),
