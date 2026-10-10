@@ -159,6 +159,25 @@ position and exact evidence. The SDK can retrieve that selection independently o
 playback. The browser shows a copyable reference; it does not send a message or create a receiving
 discussion session. Native actions continue through the existing discussion draft flow.
 
+## Backend composition and packaging
+
+The standalone Node backend installs research inspection, packaged demos, run observation and
+browser-recording command groups on the existing desktop transport. Their channel names and
+renderer API stay unchanged; remote web and task surfaces do not gain native desktop commands.
+Recorded research readers and the SDK viewer remain usable without Electron.
+
+Desktop frame authorization, screenshots and browser capture use the injected observation bridge
+described in [the observation foundation](research-observation-foundation.md#standalone-backend-and-native-capture).
+The trusted desktop resolves each current document UUID through `documentFor`; only that adapter
+knows its Electron window identity. A desktop detach releases native resources without closing the
+backend bridge or cancelling its experiment. Reattachment creates a new native handler, and a
+replacement document receives a new UUID. Old viewer grants and capture authority do not transfer.
+
+`build:web` builds `out/replay-viewer`; `stage-backend.mjs` copies that complete directory beside
+`out/backend` in the standalone artifact. The asset reader resolves its adjacent packaged bundle,
+so moving the artifact does not require the source checkout. HTTP refresh reuses the scoped cookie
+and caller lease; it does not replay an already consumed bootstrap grant or extend its authority.
+
 ## Validation
 
 Unit and integration coverage includes persisted/native transcript parity, stable clocks and
@@ -170,3 +189,11 @@ The Tuanzi acceptance uses an already exported/imported package with the origina
 Its research duration is 219,399 ms and its first decoded project frame is at 82,367 ms. Browser and
 native checks cover first context, frame seeking, play/pause, speed, material switching and exact
 selected evidence. This validation does not rerun the experiment or call an external provider.
+
+Opt-in desktop checks run with `RUN_OBSERVATION_DESKTOP_EMBED=1` and
+`RUN_RECORDED_RESOURCE_CONTEXT_MENU=1`. They use disposable applications and run-owned sockets:
+an independent Node viewer, current desktop UUIDs, real PNG capture across the binary codec,
+refresh and detach/reattach, and real right-clicks at 125% zoom with native passthrough. Separate
+production WebSocket transport tests verify PNG and bounded video-segment bytes, checksums and
+revocation. `RUN_REPLAY_VIEWER_BROWSER=1` covers the real browser clock, recording gaps and footage
+aspect ratios without starting an experiment.

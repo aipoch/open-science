@@ -11,6 +11,7 @@ import { ObservationViewers } from '../../main/run-observation/viewers'
 import { RunObservationOwner, type RunObservationSource } from '../../main/run-observation/owner'
 import { ManagedRuntimeViews } from '../../main/managed-runtime-views'
 import { ReplayViewerHttpHost } from '../../main/replay-viewer/http-host'
+import { desktopObservationFrameRegistry } from '../../main/replay-viewer/desktop-frame-registry'
 import { createReplayViewerAssetReader } from '../../main/replay-viewer/assets'
 import { createCallerContext } from '../../main/caller-context'
 import {
@@ -165,6 +166,7 @@ it.skipIf(process.env.RUN_REPLAY_VIEWER_BROWSER !== '1')(
         onRevoked: (id) => host?.closeViewer(id)
       })
       host = new ReplayViewerHttpHost({
+        desktopFrames: desktopObservationFrameRegistry,
         viewers,
         projectViews: { open: forbidden, closeViewer: () => undefined },
         readAsset: createReplayViewerAssetReader(resolve('out/replay-viewer')),
@@ -436,6 +438,7 @@ it.skipIf(process.env.RUN_REPLAY_VIEWER_BROWSER !== '1' || process.platform === 
         droppedFrames: 0
       }
       const host: ReplayViewerHttpHost = new ReplayViewerHttpHost({
+        desktopFrames: desktopObservationFrameRegistry,
         viewers,
         projectViews,
         recordingStatus: async () => ({ target, state: 'not-recorded' }),
@@ -640,6 +643,7 @@ it.skipIf(process.env.RUN_REPLAY_VIEWER_BROWSER !== '1')(
         onRevoked: (id) => host?.closeViewer(id)
       })
       host = new ReplayViewerHttpHost({
+        desktopFrames: desktopObservationFrameRegistry,
         viewers,
         projectViews: { open: forbidden, closeViewer: () => undefined },
         readAsset: createReplayViewerAssetReader(resolve('out/replay-viewer')),

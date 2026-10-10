@@ -165,6 +165,7 @@ it.skipIf(process.env.RUN_REPLAY_VIEWER_BROWSER !== '1')(
       })
       const selectionWrites = vi.spyOn(viewers, 'selectBrowserMoment')
       host = new ReplayViewerHttpHost({
+        desktopFrames: desktopObservationFrameRegistry,
         viewers,
         projectViews: { open: forbidden, closeViewer: () => undefined },
         readAsset: createReplayViewerAssetReader(resolve('out/replay-viewer')),
