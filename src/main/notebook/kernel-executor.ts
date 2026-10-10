@@ -719,6 +719,9 @@ class NotebookKernelExecutor implements NotebookExecutor {
       return {
         status,
         kernelDispatched,
+        ...(!timedOut && !cancelled && response.executionStarted !== undefined
+          ? { executionStarted: response.executionStarted }
+          : {}),
         stdout: mapped.stdout,
         stderr: mapped.stderr,
         traceback: cancelled ? '' : mapped.traceback,

@@ -239,6 +239,7 @@ const notebookRunCandidate = (value: unknown): boolean => {
       (!Number.isSafeInteger(value.exitCode) || Number(value.exitCode) < 0)) ||
     (value.kernelEpochId !== undefined &&
       (typeof value.kernelEpochId !== 'string' || value.kernelEpochId.length === 0)) ||
+    (value.executionStarted !== undefined && typeof value.executionStarted !== 'boolean') ||
     (value.kernelDispatched !== undefined && typeof value.kernelDispatched !== 'boolean') ||
     (value.replPersistentBindings !== undefined &&
       (value.replPersistentBindings !== true || value.kernelKind !== 'repl')) ||

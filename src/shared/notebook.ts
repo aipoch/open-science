@@ -662,6 +662,8 @@ export type NotebookRunRecord = {
   // Whether this run's source was handed to the persistent data kernel. Pre-dispatch failures set
   // false so dependency projection never invents mutations; absent legacy evidence stays conservative.
   kernelDispatched?: boolean
+  // False proves no user source began execution; absent evidence remains conservative.
+  executionStarted?: boolean
   // Sticky for the kernel epoch: every later Python run retains the complete loaded-helper set,
   // even when that cell omitted helperModules.
   helperModules?: NotebookHelperModuleEvidence[]

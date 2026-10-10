@@ -673,6 +673,7 @@ class NotebookRuntimeService {
         (previous) =>
           previous.runId !== run.runId &&
           previous.kernelEpochId === run.kernelEpochId &&
+          previous.executionStarted !== false &&
           (previous.kernelDispatched === true || previous.status === 'completed') &&
           // A soft cancellation can preserve assignments in the live kernel, like a timeout.
           ['completed', 'failed', 'timeout', 'cancelled'].includes(previous.status)
