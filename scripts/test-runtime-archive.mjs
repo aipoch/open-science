@@ -83,7 +83,8 @@ console.log('PASS bundled Node and native dependencies');
       return exec(
         process.env.ComSpec ?? 'cmd.exe',
         ['/d', '/s', '/c', `""${launcher}" ${args.join(' ')}"`],
-        { cwd: temporary, env, timeout: 60_000 }
+        // The command string already uses cmd.exe quoting, not the C runtime argv convention.
+        { cwd: temporary, env, timeout: 60_000, windowsVerbatimArguments: true }
       )
     return exec(launcher, args, { cwd: temporary, env, timeout: 60_000 })
   }

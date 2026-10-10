@@ -113,7 +113,7 @@ describe('standalone runtime archives', () => {
         execFileSync(
           process.env.ComSpec ?? 'cmd.exe',
           ['/d', '/s', '/c', `""${launcher}" --prompt "hello world" 中文"`],
-          { cwd: options.root }
+          { cwd: options.root, windowsVerbatimArguments: true }
         )
       else {
         expect((await stat(launcher)).mode & 0o111).not.toBe(0)
