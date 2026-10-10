@@ -6,6 +6,7 @@
 const { Buffer } = require('node:buffer')
 const fs = require('node:fs')
 const path = require('node:path')
+const verifyPackagedNativeComponents = require('./verify-native-components.cjs')
 
 // NSIS includes loose native DLLs and Node addons. electron-builder signs EXEs, but does not
 // discover every PE in extraResources or sign .dll/.node files by default. Store submissions
@@ -46,11 +47,24 @@ function* bundledPeFiles(directory) {
 
 /** @param {import('electron-builder').AfterPackContext} context */
 exports.default = async function signWindows(context) {
-  if (context.electronPlatformName !== 'win32') return
-  if (!context.packager.platformSpecificBuildOptions.azureSignOptions) return
-  for (const file of bundledPeFiles(context.appOutDir)) {
-    if (!isUnsignedPe(file)) continue
-    await context.packager.signIf(file)
-    console.log(`[windows-sign] signed bundled PE: ${path.relative(context.appOutDir, file)}`)
+  const arch = require('builder-util').Arch[context.arch]
+  if (context.electronPlatformName === 'darwin') {
+    await verifyPackagedNativeComponents(
+      path.join(
+        context.appOutDir,
+        `${context.packager.appInfo.productFilename}.app`,
+        'Contents/Resources'
+      ),
+      `darwin-${arch}`
+    )
+    return
   }
+  if (context.electronPlatformName !== 'win32') return
+  if (context.packager.platformSpecificBuildOptions.azureSignOptions)
+    for (const file of bundledPeFiles(context.appOutDir)) {
+      if (!isUnsignedPe(file)) continue
+      await context.packager.signIf(file)
+      console.log(`[windows-sign] signed bundled PE: ${path.relative(context.appOutDir, file)}`)
+    }
+  await verifyPackagedNativeComponents(path.join(context.appOutDir, 'resources'), `win32-${arch}`)
 }

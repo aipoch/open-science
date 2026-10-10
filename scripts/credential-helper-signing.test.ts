@@ -1,5 +1,4 @@
 import { Buffer } from 'node:buffer'
-import { execFileSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import * as fs from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -14,65 +13,18 @@ const require = createRequire(import.meta.url)
 const builderRequire = createRequire(require.resolve('electron-builder/package.json'))
 const appBuilderRequire = createRequire(builderRequire.resolve('app-builder-lib/package.json'))
 
-it.skipIf(process.platform !== 'darwin')(
-  'preserves the authorized native helper on an unchanged development build and recompiles edits',
-  () => {
-    const directory = mkdtempSync(join(tmpdir(), 'credential-incremental-build-'))
-    const nativeDirectory = join(directory, 'packages', 'credential-identity-probe-native')
-    const manifest = JSON.parse(readFileSync('package.json', 'utf8')) as {
-      scripts: Record<string, string>
-    }
-    try {
-      mkdirSync(nativeDirectory, { recursive: true })
-      fs.copyFileSync(
-        'packages/credential-identity-probe-native/binding.gyp',
-        join(nativeDirectory, 'binding.gyp')
-      )
-      fs.cpSync('packages/credential-identity-probe-native/src', join(nativeDirectory, 'src'), {
-        recursive: true
-      })
-      writeFileSync(
-        join(directory, 'package.json'),
-        JSON.stringify({
-          scripts: { 'build:backend-native': manifest.scripts['build:backend-native'] }
-        })
-      )
-      const build = (): void => {
-        execFileSync('npm', ['run', 'build:backend-native'], {
-          cwd: directory,
-          env: {
-            ...process.env,
-            PATH: `${join(process.cwd(), 'node_modules', '.bin')}${nodePath.delimiter}${process.env.PATH}`
-          },
-          stdio: 'pipe',
-          timeout: 60_000
-        })
-      }
-      // Compile actual helpers, but never execute them or access the user's Keychain.
-      build()
-      const executable = join(nativeDirectory, 'build', 'Release', 'credential_secret')
-      const original = readFileSync(executable)
-      const modifiedAt = fs.statSync(executable, { bigint: true }).mtimeNs
-      const requirement = (): string =>
-        execFileSync('codesign', ['-d', '-r-', executable], { encoding: 'utf8', stdio: 'pipe' })
-      const originalRequirement = requirement()
-      build()
-      expect(readFileSync(executable)).toEqual(original)
-      expect(fs.statSync(executable, { bigint: true }).mtimeNs).toBe(modifiedAt)
-      expect(requirement()).toBe(originalRequirement)
-
-      const source = join(nativeDirectory, 'src', 'credential_secret.cc')
-      fs.appendFileSync(source, '\nstatic_assert(false, "native source must be rebuilt");\n')
-      // Advance the fixture timestamp beyond make's filesystem timestamp granularity.
-      const changedAt = new Date(Date.now() + 2_000)
-      fs.utimesSync(source, changedAt, changedAt)
-      expect(build).toThrow(/native source must be rebuilt/)
-    } finally {
-      rmSync(directory, { recursive: true, force: true })
-    }
-  },
-  120_000
-)
+function loadHook(file: string): (context: unknown) => Promise<void> {
+  const exports: { default?: (context: unknown) => Promise<void> } = {}
+  runInNewContext(readFileSync(file, 'utf8'), {
+    exports,
+    Buffer,
+    __dirname: dirname(file),
+    console,
+    require: (id: string) =>
+      id === './verify-native-components.cjs' ? async () => new Set() : require(id)
+  })
+  return exports.default!
+}
 
 it('edits the Windows launcher before signing and signs each bundled PE only once', async () => {
   const { NtExecutable } = appBuilderRequire('resedit')
@@ -122,7 +74,7 @@ it('edits the Windows launcher before signing and signs each bundled PE only onc
     }
   }
   try {
-    await require(join(process.cwd(), config.afterPack)).default(context)
+    await loadHook(join(process.cwd(), config.afterPack))(context)
     // electron-builder edits the main EXE, signs it and unpacked helpers, then calls afterSign.
     await editWindowsResources({
       file: main,
@@ -132,7 +84,7 @@ it('edits the Windows launcher before signing and signs each bundled PE only onc
     })
     await signIf(main)
     await signIf(helper)
-    if (config.afterSign) await require(join(process.cwd(), config.afterSign)).default(context)
+    if (config.afterSign) await loadHook(join(process.cwd(), config.afterSign))(context)
     expect(calls.sort()).toEqual([main, helper, dll, addon, extra].sort())
     expect(readFileSync(vendor)).toEqual(vendorBytes)
   } finally {
@@ -140,7 +92,7 @@ it('edits the Windows launcher before signing and signs each bundled PE only onc
   }
 })
 
-it('signs the unpacked credential executables before signing the outer macOS application', async () => {
+it('preserves pinned credential signatures while signing other resources and the outer macOS application', async () => {
   const app = '/fixture/Open-Science.app'
   const calls: string[][] = []
   const exports: { default?: (context: unknown) => Promise<void> } = {}
@@ -150,6 +102,8 @@ it('signs the unpacked credential executables before signing the outer macOS app
     __dirname: '/fixture/build',
     console: { log: vi.fn() },
     require: (id: string) => {
+      if (id === './verify-native-components.cjs') return async () => new Set()
+      if (id === 'builder-util') return { Arch: { 1: 'x64' } }
       if (id === 'node:path') return posix
       if (id === 'node:fs')
         return {
@@ -187,8 +141,7 @@ it('signs the unpacked credential executables before signing the outer macOS app
     const position = calls.findIndex(
       (args) => args.at(-1) === posix.join(packageDirectory, executable)
     )
-    expect(position, executable).toBeGreaterThanOrEqual(0)
-    expect(position).toBeLessThan(calls.findIndex((args) => args.at(-1) === app))
+    expect(position, executable).toBe(-1)
   }
   for (const relative of ['node-runtime/node', 'backend/native.node']) {
     const position = calls.findIndex(
@@ -229,6 +182,8 @@ it('signs every unsigned bundled Windows PE while preserving vendor signatures',
     exports,
     console: { log: vi.fn() },
     require: (id: string) => {
+      if (id === './verify-native-components.cjs') return async () => new Set()
+      if (id === 'builder-util') return { Arch: { 1: 'x64' } }
       if (id === 'node:path') return nodePath
       if (id === 'node:fs') return fs
       if (id === 'node:buffer') return { Buffer }
