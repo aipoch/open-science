@@ -11,7 +11,7 @@ const enabled = process.env.RUN_OBSERVATION_DESKTOP_EMBED === '1' && process.pla
 it.skipIf(!enabled)(
   'binds an independent Node viewer to the actual desktop document UUID across refresh and revocation',
   async () => {
-    const directory = await realpath(await mkdtemp(join(tmpdir(), 'os-viewer-node-')))
+    const directory = await realpath(await mkdtemp(join(tmpdir(), 'os-service-run-')))
     let electron: ElectronApplication | undefined
     try {
       const html = join(directory, 'index.html')
@@ -20,7 +20,7 @@ it.skipIf(!enabled)(
       expect(csp).toBeDefined()
       await writeFile(
         html,
-        `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="${csp}"></head><body style="margin:0"><iframe id="viewer" title="Node viewer" sandbox="allow-scripts allow-same-origin allow-forms" style="border:0;width:100vw;height:65vh"></iframe><iframe id="trusted" title="Existing preview" src="open-science-preview://fixture/report.html" style="position:absolute;left:30px;top:550px;width:700px;height:100px"></iframe></body></html>`
+        `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="${csp}"></head><body style="margin:0"><iframe id="viewer" title="Node viewer" sandbox="allow-scripts allow-same-origin allow-forms" style="display:block;border:0;margin:2px;width:calc(100% - 4px);height:45vh"></iframe><iframe id="trusted" title="Existing preview" src="open-science-preview://fixture/report.html" style="border:0;position:absolute;left:30px;top:550px;width:700px;height:100px"></iframe></body></html>`
       )
       await writeFile(
         join(directory, 'preload.cjs'),
@@ -37,6 +37,7 @@ import {createServer} from 'node:http'
 import {join} from 'node:path'
 import {randomUUID} from 'node:crypto'
 import {createDesktopObservationBridge} from './src/main/observation-desktop/bridge'
+import {parseRpcJson,stringifyRpcJson} from './src/main/rpc-json'
 import {ReplayViewerHttpHost} from './src/main/replay-viewer/http-host'
 import {createReplayViewerAssetReader} from './src/main/replay-viewer/assets'
 import {ManagedRuntimeViews} from './src/main/managed-runtime-views'
@@ -45,30 +46,34 @@ import {RunObservationOwner} from './src/main/run-observation/owner'
 import {ObservationViewers} from './src/main/run-observation/viewers'
 import {createCallerContext} from './src/main/caller-context'
 let sequence=0
-const pending=new Map(), callers=new Map()
+const pending=new Map(), callers=new Map(), projectOrigins=new Map()
+const send=message=>{if(process.connected)process.send(stringifyRpcJson(message))}
 const bridge=createDesktopObservationBridge((operation,clientId,signal)=>new Promise((resolve,reject)=>{
  const id=++sequence
  const aborted=()=>{pending.delete(id);reject(new Error('native request aborted'))}
  signal?.addEventListener('abort',aborted,{once:true})
  pending.set(id,{resolve:value=>{signal?.removeEventListener('abort',aborted);resolve(value)},reject:error=>{signal?.removeEventListener('abort',aborted);reject(error)}})
- process.send({kind:'native',id,operation,clientId})
+ send({kind:'native',id,operation,clientId})
 }))
 const scope={projectId:'node-project',sessionId:'node-session',runId:'run',environmentId:'environment',generationId:randomUUID()}
 const target={projectId:scope.projectId,sessionId:scope.sessionId,runId:scope.runId}
-const socketPath=join(${JSON.stringify(directory)},'project.sock'), lifetime=new AbortController()
+const socketPath=join(${JSON.stringify(directory)},'service.sock'), lifetime=new AbortController()
 const project=createServer((request,response)=>{
- if(request.url==='/__proof'){response.end('fixture-proof');return}
+ if(request.url==='/__proof'){response.end('a'.repeat(64));return}
  response.setHeader('content-type','text/html')
  response.end('<!doctype html><p id="ready">Independent Node project</p><a id="next" href="/next">Next recorded page</a>')
 })
 const projectViews=new ManagedRuntimeViews(new RuntimeViewOwner({},bridge.frames))
+const openProject=projectViews.open.bind(projectViews)
+projectViews.open=async(...args)=>{try{const result=await openProject(...args);projectOrigins.set(args[1],new URL(result.url).origin);return result}catch(error){send({kind:'error',message:String(error)});throw error}}
 const observation=new RunObservationOwner({authorize:(target,viewer)=>viewers.assertViewer(target,viewer),read:async()=>({identity:target,phase:'running',artifacts:[],run:{runId:'run',cellId:'cell',source:'agent',kernelKind:'bash',script:'printf observed',status:'running',startedAt:1,text:{stdout:'ready',stderr:'',traceback:'',plain:[]},outputs:[],workingFiles:[]}})})
 const viewers=new ObservationViewers({observer:observation,authorizeScope:async()=>undefined,onRevoked:id=>host.closeViewer(id)})
 const host=new ReplayViewerHttpHost({viewers,projectViews,desktopFrames:bridge.frames,desktopLocale:()=> 'en',readAsset:createReplayViewerAssetReader(${JSON.stringify(resolve('out/replay-viewer'))})})
-const ready=new Promise(resolve=>project.listen(socketPath,resolve)).then(()=>projectViews.register({scope,declaration:{title:'Node project',entryPath:'/',adaptFrameAncestors:true},socketPath,proof:{path:'/__proof',value:'fixture-proof'},logicalPort:4173,signal:lifetime.signal}))
+const ready=new Promise(resolve=>project.listen(socketPath,resolve)).then(()=>projectViews.register({scope,declaration:{title:'Node project',entryPath:'/',adaptFrameAncestors:true},socketPath,proof:{path:'/__proof',value:'a'.repeat(64)},logicalPort:4173,signal:lifetime.signal}))
 const close=async()=>{await host.close();await viewers.close();await projectViews.close();observation.close();bridge.close();lifetime.abort();project.closeAllConnections();project.close(()=>process.exit(0))}
 process.once('disconnect',()=>{void close()})
-process.on('message',async message=>{
+process.on('message',async encoded=>{
+ const message=parseRpcJson(encoded)
  try{
   if(message.kind==='native-result'){const request=pending.get(message.id);pending.delete(message.id);if(message.error)request?.reject(new Error(message.error));else request?.resolve(message.result);return}
   if(message.kind==='release'){const state=callers.get(message.clientId);if(state)state.current=false;return}
@@ -76,11 +81,14 @@ process.on('message',async message=>{
    await ready
    const state={current:true};callers.set(message.clientId,state)
    const caller=createCallerContext({clientId:message.clientId,lifecycleClientId:message.clientId,leaseId:message.clientId,surface:'electron',location:'local',principalKind:'human',actionOrigin:'human',isAuthorizationCurrent:()=>state.current})
-   const access=await host.open(target,caller,{allowInteraction:true,desktopParent:'file:'})
-   process.send({kind:'opened',clientId:message.clientId,url:access.url,pid:process.pid});return
+   const access=await host.open(target,caller,{allowInteraction:true,desktopParent:'file:'});state.caller=caller;state.access=access
+   send({kind:'opened',clientId:message.clientId,url:access.url,pid:process.pid});return
+  }
+  if(message.kind==='capture'){
+   try{const state=callers.get(message.clientId);const result=await bridge.capture({caller:state.caller,viewerOrigin:new URL(state.access.url).origin,projectOrigin:projectOrigins.get(state.access.viewerId),signal:new AbortController().signal});if(!(result.bytes instanceof Uint8Array))throw new Error('Binary bytes were not preserved');const bytes=Buffer.from(result.bytes);send({kind:'captured',id:message.id,sizeBytes:bytes.length,signature:bytes.subarray(0,8).toString('hex'),width:bytes.readUInt32BE(16),height:bytes.readUInt32BE(20)})}catch(error){send({kind:'captured',id:message.id,error:String(error)})}
   }
   if(message.kind==='close')await close()
- }catch(error){process.send({kind:'error',message:String(error)})}
+ }catch(error){send({kind:'error',message:String(error)})}
 })
 `
         },
@@ -97,8 +105,11 @@ process.on('message',async message=>{
           sourcefile: 'independent-viewer-desktop.ts',
           loader: 'ts',
           contents: `
-import {app,BrowserWindow,protocol,webFrameMain} from 'electron'
+import {app,BrowserWindow,protocol,webFrameMain,ipcMain} from 'electron'
+import {configureIpcHandlerRegistry} from './src/main/ipc-handler-registry'
+import {initLogger} from './src/main/logger'
 import {fork} from 'node:child_process'
+import {parseRpcJson,stringifyRpcJson} from './src/main/rpc-json'
 import {installDesktopRuntimeElectronAdapter} from './src/main/desktop-runtime-electron-adapter'
 import {createDesktopObservationNativeHandler} from './src/main/observation-desktop/electron'
 import {desktopObservationFrameRegistry} from './src/main/replay-viewer/desktop-frame-registry'
@@ -122,18 +133,23 @@ function createWindow(preload){
  return window
 }
 app.whenReady().then(async()=>{
+ initLogger({logDir:${JSON.stringify(directory)},mirrorToConsole:true})
  protocol.handle('open-science-preview',()=>new Response('<!doctype html><p id="managed">Managed preview</p><p id="passthrough" data-preview-context-menu-passthrough>Native menu area</p>',{headers:{'content-type':'text/html'}}))
  child=fork(${JSON.stringify(backend)},[],{execPath:${JSON.stringify(process.execPath)},stdio:['ignore','pipe','pipe','ipc']})
- child.stderr.on('data',data=>errors.push(String(data)))
+ const send=message=>child.send(stringifyRpcJson(message))
+ child.stderr.on('data',data=>{errors.push(String(data));console.error(String(data))})
  native=createDesktopObservationNativeHandler({documentFor:id=>relay?.documentFor(id)})
- child.on('message',async message=>{
-  if(message.kind==='native'){try{const result=await native.handle({clientId:message.clientId,request:message.operation.request},new AbortController().signal);child.send({kind:'native-result',id:message.id,result})}catch(error){child.send({kind:'native-result',id:message.id,error:String(error)})}return}
+ child.on('message',async encoded=>{
+  const message=parseRpcJson(encoded)
+  if(message.kind==='native'){try{const result=await native.handle({clientId:message.clientId,request:message.operation.request},new AbortController().signal);send({kind:'native-result',id:message.id,result})}catch(error){send({kind:'native-result',id:message.id,error:String(error)})}return}
   if(message.kind==='opened'){opens.push(message);const resolve=waiting.get(message.clientId);waiting.delete(message.clientId);resolve?.(message);return}
-  if(message.kind==='error')errors.push(message.message)
+  if(message.kind==='captured'){const resolve=waiting.get(message.id);waiting.delete(message.id);resolve?.(message);return}
+  if(message.kind==='error'){errors.push(message.message);console.error(message.message)}
  })
- relay=installDesktopRuntimeElectronAdapter({commandNames:()=>['projects:list'],invoke:async(clientId)=>{const opened=new Promise(resolve=>waiting.set(clientId,resolve));child.send({kind:'open',clientId});const access=await opened;const wc=relay.documentFor(clientId);if(wc)await wc.executeJavaScript('document.getElementById("viewer").src='+JSON.stringify(access.url));return []},release:clientId=>{released.push(clientId);child.send({kind:'release',clientId})}},sender=>windows.some(window=>!window.isDestroyed()&&window.webContents===sender))
+ configureIpcHandlerRegistry(ipcMain)
+ relay=installDesktopRuntimeElectronAdapter({commandNames:()=>['projects:list'],invoke:async(clientId)=>{const opened=new Promise(resolve=>waiting.set(clientId,resolve));send({kind:'open',clientId});const access=await opened;const wc=relay.documentFor(clientId);if(wc)await wc.executeJavaScript('document.getElementById("viewer").src='+JSON.stringify(access.url));return []},release:clientId=>{released.push(clientId);send({kind:'release',clientId})}},sender=>windows.some(window=>!window.isDestroyed()&&window.webContents===sender))
  owner=createWindow(true)
- globalThis.fixture={errors,opens,released,decisions,menus,nativeMenus,desktopPid:process.pid,zoom:()=>owner.webContents.setZoomFactor(1.25),other:async()=>{const other=createWindow(false);await other.loadFile(${JSON.stringify(html)});await other.webContents.executeJavaScript('document.getElementById("viewer").src='+JSON.stringify(new URL(opens[opens.length-1].url).origin+'/'));return other.webContents.id},oldDocumentAvailable:id=>!!relay.documentFor(id),close:async()=>{relay.uninstall();await native.close();child.send({kind:'close'});await new Promise(resolve=>{const timer=setTimeout(()=>{child.kill();resolve()},2000);child.once('exit',()=>{clearTimeout(timer);resolve()})});for(const window of windows)if(!window.isDestroyed())window.destroy()}}
+ globalThis.fixture={errors,opens,released,decisions,menus,nativeMenus,desktopPid:process.pid,show:async()=>{await owner.webContents.executeJavaScript('document.getElementById("viewer").style.height="calc(100vh - 4px)";document.getElementById("trusted").style.display="none"');app.setActivationPolicy('regular');owner.show();app.focus({steal:true});owner.focus()},focused:()=>owner.isFocused(),capture:()=>new Promise(resolve=>{const id='capture-'+Date.now();waiting.set(id,resolve);send({kind:'capture',id,clientId:opens[opens.length-1].clientId})}),zoom:async()=>{await owner.webContents.executeJavaScript('document.getElementById("viewer").style.height="45vh";document.getElementById("trusted").style.display="block"');owner.webContents.setZoomFactor(1.25)},other:async()=>{const other=createWindow(false);await other.loadFile(${JSON.stringify(html)});await other.webContents.executeJavaScript('document.getElementById("viewer").src='+JSON.stringify(new URL(opens[opens.length-1].url).origin+'/'));return other.webContents.id},oldDocumentAvailable:id=>!!relay.documentFor(id),reattach:async()=>{await native.close();native=createDesktopObservationNativeHandler({documentFor:id=>relay.documentFor(id)})},captureOld:async id=>{try{await native.handle({clientId:id,request:{method:'capture',viewerOrigin:new URL(opens[0].url).origin,projectOrigin:'http://rv-old.localhost:4173'}},new AbortController().signal);return 'unexpected-success'}catch{return 'rejected'}},close:async()=>{relay.uninstall();await native.close();send({kind:'close'});await new Promise(resolve=>{const timer=setTimeout(()=>{child.kill();resolve()},2000);child.once('exit',()=>{clearTimeout(timer);resolve()})});for(const window of windows)if(!window.isDestroyed())window.destroy()}}
  await owner.loadFile(${JSON.stringify(html)})
 }).catch(error=>{console.error(error);app.exit(1)})
 app.on('window-all-closed',()=>app.quit())
@@ -148,6 +164,7 @@ app.on('window-all-closed',()=>app.quit())
       })
       electron = await _electron.launch({ args: [main], cwd: process.cwd() })
       const page = await electron.firstWindow()
+      page.setDefaultTimeout(10_000)
       type State = {
         errors: string[]
         opens: Array<{ clientId: string; url: string; pid: number }>
@@ -156,9 +173,20 @@ app.on('window-all-closed',()=>app.quit())
         decisions: Array<{ allowed: boolean; windowId: number; url: string }>
         menus: Array<{ frameUrl: string; x: number; y: number }>
         nativeMenus: Array<{ url: string }>
+        show(): void
+        focused(): boolean
+        capture(): Promise<{
+          error?: string
+          signature: string
+          width: number
+          height: number
+          sizeBytes: number
+        }>
         zoom(): void
         other(): Promise<number>
         oldDocumentAvailable(id: string): boolean
+        reattach(): Promise<void>
+        captureOld(id: string): Promise<string>
         close(): Promise<void>
       }
       const state = (): Promise<State> =>
@@ -168,6 +196,12 @@ app.on('window-all-closed',()=>app.quit())
           ).fixture
           return { errors, opens, released, desktopPid, decisions, menus, nativeMenus }
         }) as Promise<State>
+      await expect
+        .poll(async () => ({
+          errors: (await state()).errors,
+          opened: (await state()).opens.length
+        }))
+        .toEqual({ errors: [], opened: 1 })
       const viewer = page.frameLocator('#viewer')
       await viewer.getByRole('button', { name: 'Project interface', exact: true }).click()
       const project = viewer.frameLocator('iframe[title="Node project"]')
@@ -183,6 +217,27 @@ app.on('window-all-closed',()=>app.quit())
       await viewer.getByRole('button', { name: 'Project interface', exact: true }).click()
       await project.locator('#ready').waitFor()
       expect((await state()).opens).toHaveLength(1)
+      await electron.evaluate(() => (globalThis as unknown as { fixture: State }).fixture.show())
+      await expect
+        .poll(() =>
+          electron!.evaluate(() => (globalThis as unknown as { fixture: State }).fixture.focused())
+        )
+        .toBe(true)
+      await page.evaluate(
+        () =>
+          new Promise<void>((resolve) =>
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+          )
+      )
+
+      const capture = await electron.evaluate(() =>
+        (globalThis as unknown as { fixture: State }).fixture.capture()
+      )
+      expect(capture.error).toBeUndefined()
+      expect(capture.signature).toBe('89504e470d0a1a0a')
+      expect(capture.width).toBeGreaterThan(100)
+      expect(capture.height).toBeGreaterThan(50)
+      expect(capture.sizeBytes).toBeGreaterThan(32)
       const other = await electron.evaluate(() =>
         (globalThis as unknown as { fixture: State }).fixture.other()
       )
@@ -192,6 +247,12 @@ app.on('window-all-closed',()=>app.quit())
         )
         .toBe(true)
       await electron.evaluate(() => (globalThis as unknown as { fixture: State }).fixture.zoom())
+      await page.evaluate(
+        () =>
+          new Promise<void>((resolve) =>
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+          )
+      )
       const trusted = page
         .frames()
         .find((frame) => frame.url().startsWith('open-science-preview:'))!
@@ -199,7 +260,7 @@ app.on('window-all-closed',()=>app.quit())
         const rect = document.getElementById('managed')!.getBoundingClientRect()
         return { x: 30 + rect.left + 10, y: 550 + rect.top + 8 }
       })
-      await page.mouse.click(point.x, point.y, { button: 'right' })
+      await trusted.locator('#managed').click({ button: 'right', position: { x: 10, y: 8 } })
       await expect.poll(async () => (await state()).menus.length).toBe(1)
       const menu = (await state()).menus[0]
       expect(menu.frameUrl).toBe('open-science-preview://fixture/report.html')
@@ -209,6 +270,9 @@ app.on('window-all-closed',()=>app.quit())
       await trusted.locator('#passthrough').click({ button: 'right' })
       await expect.poll(async () => (await state()).nativeMenus.length).toBe(nativeCount + 1)
       expect((await state()).menus).toHaveLength(1)
+      await electron.evaluate(() =>
+        (globalThis as unknown as { fixture: State }).fixture.reattach()
+      )
       await page.reload()
       await viewer.getByRole('button', { name: 'Project interface', exact: true }).click()
       await project.locator('#ready').waitFor()
@@ -222,6 +286,12 @@ app.on('window-all-closed',()=>app.quit())
           initial.opens[0].clientId
         )
       ).toBe(false)
+      expect(
+        await electron.evaluate(
+          (_electron, id) => (globalThis as unknown as { fixture: State }).fixture.captureOld(id),
+          initial.opens[0].clientId
+        )
+      ).toBe('rejected')
       expect(refreshed.errors).toEqual([])
       await electron.evaluate(() => (globalThis as unknown as { fixture: State }).fixture.close())
     } finally {
@@ -358,6 +428,7 @@ import { desktopObservationFrameRegistry } from './src/main/replay-viewer/deskto
 import { ReplayViewerHttpHost } from './src/main/replay-viewer/http-host'
 import { createReplayViewerAssetReader } from './src/main/replay-viewer/assets'
 import { ManagedRuntimeViews } from './src/main/managed-runtime-views'
+import { RuntimeViewOwner } from './src/main/runtime-view/owner'
 import { RunObservationOwner } from './src/main/run-observation/owner'
 import { ObservationViewers } from './src/main/run-observation/viewers'
 import { createCallerContext } from './src/main/caller-context'
@@ -441,7 +512,7 @@ app.whenReady().then(async () => {
   await new Promise(resolve=>rogue.listen(0,'127.0.0.1',resolve))
   const rogueOrigin = 'http://unregistered.localhost:'+rogue.address().port
   const lifetime = new AbortController()
-  const projectViews = new ManagedRuntimeViews()
+  const projectViews = new ManagedRuntimeViews(new RuntimeViewOwner({}, desktopObservationFrameRegistry))
   const openProject = projectViews.open.bind(projectViews)
   projectViews.open = async (...args) => {try {return await openProject(...args)} catch(error) {diagnostics.push(String(error));throw error}}
   projectViews.register({scope,declaration:{title:'Bound project',entryPath:'/',adaptFrameAncestors:true},
@@ -456,7 +527,7 @@ app.whenReady().then(async () => {
   const viewers = new ObservationViewers({observer:observation,authorizeScope:async()=>undefined,
     onRevoked:viewerId=>host.closeViewer(viewerId)})
   const readAsset = createReplayViewerAssetReader(join(root,'out/replay-viewer'))
-  const host = new ReplayViewerHttpHost({viewers,projectViews,
+  const host = new ReplayViewerHttpHost({viewers,projectViews,desktopFrames:desktopObservationFrameRegistry,
     desktopLocale:()=> capturePane?'en':'de',
     recordingStatus:async()=>({target,state:'recording'}),
     captureOptions:async(_target,hostViewAvailable)=>({hostView:hostViewAvailable,projectExports:[]}),
