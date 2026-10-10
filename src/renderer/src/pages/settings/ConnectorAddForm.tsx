@@ -38,7 +38,7 @@ import {
   inferResourceId,
   validateResourceId
 } from '../../../../shared/resource-id'
-import { DEFAULT_LOOPBACK_OAUTH_REDIRECT_URI } from '../../../../shared/oauth-redirect'
+import { DEFAULT_LOOPBACK_OAUTH_REDIRECT_URI } from '@aipoch/connector-mcp-client/oauth-redirect'
 
 // Which kind of custom connector is being added: a local stdio command or a remote HTTP/SSE server.
 type ConnectorMode = 'local' | 'remote'

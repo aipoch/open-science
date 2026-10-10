@@ -362,7 +362,7 @@
       "src/main/session-persistence/ipc.test.ts",
       "src/main/settings/runtime-application-commands.test.ts",
       "src/main/settings/workflows/connectors-diagnostic.test.ts",
-      "src/main/connectors/application.test.ts",
+      "src/main/composition/connector-application.test.ts",
       "src/main/ipc-surfaces/settings.test.ts",
       "src/main/settings/application-commands.test.ts",
       "src/main/composition/notebook-environment.test.ts",

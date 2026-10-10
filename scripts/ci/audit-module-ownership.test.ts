@@ -145,7 +145,7 @@ describe('complete module ownership', () => {
 
   it('keeps source consumers in mixed source and test changes', () => {
     const test = 'src/main/reviewer/correction-owner.test.ts'
-    const path = 'src/main/connectors/descriptors/genes-ontology.ts'
+    const path = 'packages/connector-builtins/src/genes-ontology.ts'
     const sourcePlan = createAffectedTestPlan([{ path, status: 'modified' }], graph)
     const mixed = createAffectedTestPlan(
       [

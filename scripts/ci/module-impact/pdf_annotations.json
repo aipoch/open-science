@@ -420,7 +420,7 @@
       "src/main/immutable-input-authority.test.ts",
       "src/main/notebook/host-artifacts-service.test.ts",
       "src/main/artifacts/artifact-provenance-graph.test.ts",
-      "src/main/connectors/application.test.ts",
+      "src/main/composition/connector-application.test.ts",
       "src/main/acp/prompt-image-privacy.test.ts",
       "src/main/acp/context-compaction-workflow.test.ts",
       "src/main/acp/file-reference-resolver.windows-scope.test.ts",

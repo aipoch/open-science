@@ -319,13 +319,6 @@
       "src/main/uploads/ipc.test.ts",
       "src/main/wsl/wsl-setup-guide.test.ts",
       "src/main/compute/connection-broker.test.ts",
-      "src/main/connectors/custom-mcp/client-manager.test.ts",
-      "src/main/connectors/descriptors/genes-reactome.test.ts",
-      "src/main/connectors/descriptors/genomes-blast.test.ts",
-      "src/main/connectors/descriptors/genomes-clustal.test.ts",
-      "src/main/connectors/descriptors/interproscan.test.ts",
-      "src/main/connectors/descriptors/regulation.test.ts",
-      "src/main/connectors/descriptors/zinc.test.ts",
       "src/main/literature/migration-writers.test.ts",
       "src/main/local-fs/ipc.test.ts",
       "src/main/local-models/owner.test.ts",
@@ -363,7 +356,8 @@
       "src/main/desktop-runtime-transport.integration.test.ts",
       "src/main/side-chat/application-commands.test.ts",
       "src/main/artifacts/artifact-reproducibility-commands.test.ts",
-      "src/main/acp/specialist-switch-recovery.integration.test.ts"
+      "src/main/acp/specialist-switch-recovery.integration.test.ts",
+      "src/main/connectors/mcp-host-dependencies.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

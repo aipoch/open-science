@@ -172,7 +172,7 @@
       "src/main/artifacts/code-reconstruction.test.ts",
       "src/main/artifacts/mcp-server.test.ts",
       "src/main/compute/compute-job-workflow-owner.test.ts",
-      "src/main/connectors/application.test.ts",
+      "src/main/composition/connector-application.test.ts",
       "src/main/delegation/durable-delegated-work.test.ts",
       "src/main/delegation/production-composition.test.ts",
       "src/main/delegation/production-framework-runtime.test.ts",

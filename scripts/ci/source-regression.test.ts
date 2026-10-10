@@ -75,7 +75,7 @@ it('checks the reported Windows failures in the blocking PR core job', () => {
 
 describe('trusted supplemental selection', () => {
   it.each([
-    'src/main/connectors/descriptors/genes-ontology.ts',
+    'packages/connector-builtins/src/genes-ontology.ts',
     'src/main/locale/main-process-messages.ts'
   ])(
     'keeps portable and core journey coverage without unrelated supplemental groups: %s',
@@ -116,7 +116,7 @@ describe('trusted supplemental selection', () => {
     expect(modules.modules).toContain('settings_backend_resolution')
     // Even a candidate with no supplemental lanes must gain its consumers' mandatory coverage.
     const candidate = classifyChanges(
-      changesFor(['src/main/connectors/descriptors/genes-ontology.ts'])
+      changesFor(['packages/connector-builtins/src/genes-ontology.ts'])
     )
     expect(macosGroupsForPlan(candidate)).toEqual(['journeys'])
     const plan = resolveAuthoritativePlan(candidate, modules)
@@ -126,14 +126,14 @@ describe('trusted supplemental selection', () => {
 
   it('omits idle presentation jobs but retains runtime and delegation coverage for mixed ontology/Notebook changes', () => {
     const changes = changesFor([
-      'src/main/connectors/descriptors/genes-ontology.ts',
-      'src/main/connectors/descriptors/genes-ontology.test.ts',
+      'packages/connector-builtins/src/genes-ontology.ts',
+      'packages/connector-builtins/src/genes-ontology.test.ts',
       'src/main/notebook/host-mcp.integration.test.ts'
     ])
     const modules = createAffectedTestPlan(changes, graph)
     const plan = resolveAuthoritativePlan(classifyChanges(changes), modules)
     expect(plan.mode).toBe('selective')
-    expect(modules.modules).toEqual(['connector_ontology', 'notebook_application'])
+    expect(modules.modules).toEqual(['connector_builtins', 'notebook_application'])
     expect(modules.testFiles).toEqual(
       expect.arrayContaining([
         'src/main/connectors/registry.test.ts',
@@ -157,7 +157,7 @@ describe('trusted supplemental selection', () => {
     expect(plan.lanes).toContain('e2e_visual_macos')
     const mixed = resolvePlan([
       'e2e/browser/settings-undo.spec.ts',
-      'src/main/connectors/descriptors/genes-ontology.ts'
+      'packages/connector-builtins/src/genes-ontology.ts'
     ])
     expect(mixed.mode).toBe('selective')
     expect(mixed.lanes).toContain('e2e_visual_macos')
@@ -232,7 +232,7 @@ describe('trusted supplemental selection', () => {
 
   it('rejects omitted, extra, reordered or empty group plans even when jobs report success', () => {
     const plan = toGitHubOutputPlan(
-      resolvePlan(['src/main/connectors/descriptors/genes-ontology.ts'])
+      resolvePlan(['packages/connector-builtins/src/genes-ontology.ts'])
     )
     const conclusions = Object.fromEntries(
       ['preflight', ...plan.bundles].map((job) => [job, 'success'])

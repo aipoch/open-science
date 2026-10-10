@@ -150,7 +150,19 @@ export async function syncCustomServerSkillDocs(
     signal?.throwIfAborted()
     await mkdir(dir, { recursive: true })
     signal?.throwIfAborted()
-    await writeFile(join(dir, 'SKILL.md'), renderCustomSkillDoc(server, tools), 'utf8')
+    await writeFile(
+      join(dir, 'SKILL.md'),
+      renderCustomSkillDoc(
+        {
+          name: server.name,
+          displayName: server.displayName,
+          description: server.description,
+          oauth: Boolean(server.oauth)
+        },
+        tools
+      ),
+      'utf8'
+    )
     materializedNames.push(name)
   }
   const enabledNames = new Set(materializedNames)

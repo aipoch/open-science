@@ -271,7 +271,7 @@
       "src/main/settings/integration-application-commands.test.ts",
       "src/main/settings/runtime-application-commands.test.ts",
       "src/main/settings/workflows/connectors-diagnostic.test.ts",
-      "src/main/connectors/application.test.ts",
+      "src/main/composition/connector-application.test.ts",
       "src/main/ipc-surfaces/settings.test.ts",
       "src/main/settings/application-commands.test.ts",
       "src/main/acp/permission-broker-registry.test.ts",
@@ -425,13 +425,6 @@
       "src/main/update/ipc.test.ts",
       "src/main/wsl/wsl-setup-guide.test.ts",
       "src/main/compute/connection-broker.test.ts",
-      "src/main/connectors/custom-mcp/client-manager.test.ts",
-      "src/main/connectors/descriptors/genes-reactome.test.ts",
-      "src/main/connectors/descriptors/genomes-blast.test.ts",
-      "src/main/connectors/descriptors/genomes-clustal.test.ts",
-      "src/main/connectors/descriptors/interproscan.test.ts",
-      "src/main/connectors/descriptors/regulation.test.ts",
-      "src/main/connectors/descriptors/zinc.test.ts",
       "src/main/projects/preview-repository.test.ts",
       "src/main/session-persistence/prompt-preparation-owner.test.ts",
       "src/main/session-persistence/session-state-authority.test.ts",
@@ -467,7 +460,8 @@
       "src/main/session-plan/session-plan-turn-outcome.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/agents/production-completion-handoff.test.ts",
-      "src/main/notebook/auto-mode-budget.integration.test.ts"
+      "src/main/notebook/auto-mode-budget.integration.test.ts",
+      "src/main/connectors/mcp-host-dependencies.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

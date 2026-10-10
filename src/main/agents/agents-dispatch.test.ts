@@ -1,3 +1,4 @@
+import { projectConnectorsFromStored } from '../connectors/read-model'
 import { describe, expect, it, vi } from 'vitest'
 
 import { AgentsService, type AgentsCatalogSource } from './agents-service'
@@ -8,7 +9,9 @@ import type { SessionBindingService } from '../specialist/session-binding'
 
 const noopCatalog = (): AgentsCatalogSource => ({
   listSkillCatalog: vi.fn(async () => []),
-  getConnectors: vi.fn(async () => ({ enabledIds: [], autoAllowIds: [] }))
+  getConnectors: vi.fn(async () =>
+    projectConnectorsFromStored({ enabledIds: [], autoAllowIds: [] })
+  )
 })
 
 const withExplicitResolvers = (service: SpecialistService): SpecialistService => {
@@ -563,7 +566,9 @@ describe('AgentsService.dispatch — mutation routing (privileged delete + ordin
         available: true
       }
     ]),
-    getConnectors: vi.fn(async () => ({ enabledIds: [], autoAllowIds: [] }))
+    getConnectors: vi.fn(async () =>
+      projectConnectorsFromStored({ enabledIds: [], autoAllowIds: [] })
+    )
   })
 
   const buildServiceWithSkills = (opts: {

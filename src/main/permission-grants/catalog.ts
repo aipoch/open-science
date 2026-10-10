@@ -8,7 +8,6 @@ import type {
 } from '../../shared/permission-grants'
 import { missingDefaultGlobalPermissionCapabilities } from './defaults'
 import { approvalSummaryFor } from './approval-summary'
-import { CONNECTOR_CATALOG } from '../connectors/catalog'
 
 type PermissionGrantNames = {
   projects?: ReadonlyMap<string, string>
@@ -23,6 +22,7 @@ type PermissionGrantProjectionMetadata = Pick<
 
 type ConnectorPolicySnapshot = {
   bundledConnectorIds?: readonly string[]
+  bundledConnectorNames?: Readonly<Record<string, string>>
   autoAllowIds?: readonly string[]
   blockedToolIds?: readonly string[]
   askToolIds?: readonly string[]
@@ -33,7 +33,7 @@ type ConnectorPolicySnapshot = {
     displayName: string
     enabled: boolean
     oauth?: unknown
-    oauthState?: { tokens?: { access_token?: string } }
+    oauthAuthenticated?: boolean
   }>
 }
 
@@ -157,7 +157,7 @@ const connectorProjection = (
   const hasToolPolicy = (entries: readonly string[] | undefined): boolean =>
     aliases.some((alias) => entries?.includes(`${alias}/${toolName}`)) ?? false
   const disabled = custom
-    ? !custom.enabled || Boolean(custom.oauth && !custom.oauthState?.tokens?.access_token)
+    ? !custom.enabled || Boolean(custom.oauth && !custom.oauthAuthenticated)
     : (policy?.disabledConnectorIds ?? []).includes(serverId)
   const blocked = disabled || hasToolPolicy(policy?.blockedToolIds)
   const covered =
@@ -167,9 +167,7 @@ const connectorProjection = (
   return {
     connectorServerId: serverId,
     connectorDisplayName:
-      custom?.displayName ||
-      CONNECTOR_CATALOG.find((connector) => connector.id === serverId)?.displayName ||
-      serverId,
+      custom?.displayName || policy?.bundledConnectorNames?.[serverId] || serverId,
     connectorToolName: toolName,
     effectiveState: blocked ? 'blocked_by_policy' : covered ? 'covered_by_policy' : 'active',
     ...(blocked

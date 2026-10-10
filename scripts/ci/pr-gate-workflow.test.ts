@@ -275,8 +275,8 @@ describe('PR Gate workflow', () => {
         mkdirSync(join(root, path, '..'), { recursive: true })
         writeFileSync(join(root, path), contents)
       }
-      const source = 'src/main/connectors/descriptors/cancer-models.ts'
-      const test = 'src/main/connectors/descriptors/cancer-models.test.ts'
+      const source = 'packages/connector-builtins/src/cancer-models.ts'
+      const test = 'packages/connector-builtins/src/cancer-models.test.ts'
       try {
         git('init', '--quiet', '-b', 'main')
         git('config', 'user.email', 'ci@example.com')

@@ -2,8 +2,8 @@ import { desktopShellInteraction, desktopInteraction } from '../desktop-interact
 import { createAcpRuntime } from '../acp/runtime-composition'
 import { type ApplicationModuleBuilder } from '../application-runtime'
 import { waitForInitialConnectorRefresh } from '../connector-reload'
-import { createConnectorApplicationModule } from '../connectors/application'
-import { createMoleculePreviewHandler } from '../connectors/molecule'
+import { createConnectorApplicationModule } from './connector-application'
+import { createMoleculePreviewHandler } from '../connectors/molecule-artifact-adapter'
 import { connectorSkillSourceDir } from '../connectors/provision'
 import { type DiagnosticOperation } from '../diagnostics/operation'
 import { createLogger, errorLogFields } from '../logger'
@@ -62,7 +62,7 @@ export async function composeConnectors({
 }): Promise<{
   connectorService: import('../connectors/service').ConnectorService
   connectorRuntimeSettings: import('../connectors/runtime-settings-projection').ConnectorRuntimeSettingsProjection
-  mcpClientManager: import('../connectors/custom-mcp/client-manager').McpClientManager
+  mcpClientManager: import('@aipoch/connector-mcp-client').McpClientManager
   conversationSkillImporter: import('../skills/conversation-import').ConversationSkillImporter
   approvalBroker: import('../connectors/approval-broker').ApprovalBroker
   credentialRequestBroker: import('../connectors/credential-request-broker').CredentialRequestBroker

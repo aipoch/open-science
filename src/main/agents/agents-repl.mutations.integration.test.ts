@@ -1,3 +1,4 @@
+import { projectConnectorsFromStored } from '../connectors/read-model'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -16,7 +17,6 @@ import {
 } from '../notebook/kernel-protocol'
 import { AgentsService, type AgentsCatalogSource } from './agents-service'
 import { createSpecialistService } from '../specialist/service'
-import type { StoredConnectors } from '../settings/types'
 
 // Run with: RUN_KERNEL=1 npx vitest run src/main/agents/agents-repl.mutations.integration.test.ts
 // Exercises the real resources/notebook/repl_loop.js against a real NotebookLocalRpcServer wired
@@ -78,28 +78,29 @@ const stubCatalog: AgentsCatalogSource = {
       available: true
     }
   ],
-  getConnectors: async (): Promise<StoredConnectors | undefined> => ({
-    enabledIds: [],
-    autoAllowIds: [],
-    disabledConnectorIds: [],
-    customMcpServers: [
-      {
-        id: 'cust-1',
-        name: 'my-server',
-        displayName: 'My Server',
-        transport: 'stdio',
-        enabled: true,
-        command: 'run'
-      },
-      {
-        id: 'cust-dead',
-        name: 'dead-server',
-        displayName: 'Dead Server',
-        transport: 'stdio',
-        enabled: true
-      }
-    ]
-  })
+  getConnectors: async () =>
+    projectConnectorsFromStored({
+      enabledIds: [],
+      autoAllowIds: [],
+      disabledConnectorIds: [],
+      customMcpServers: [
+        {
+          id: 'cust-1',
+          name: 'my-server',
+          displayName: 'My Server',
+          transport: 'stdio',
+          enabled: true,
+          command: 'run'
+        },
+        {
+          id: 'cust-dead',
+          name: 'dead-server',
+          displayName: 'Dead Server',
+          transport: 'stdio',
+          enabled: true
+        }
+      ]
+    })
 }
 
 gate('host.agents repl mutation integration', () => {

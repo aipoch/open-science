@@ -1,6 +1,6 @@
 import { homedir } from 'node:os'
 
-import { redactSensitiveText } from '../diagnostic-redaction'
+import { redactSensitiveText } from '../../shared/diagnostic-redaction'
 
 // Composes the pre-redacted stack block attached to a blocked database startup state. The block is
 // user-shareable by design: credentials and absolute paths are removed before it crosses IPC, with
