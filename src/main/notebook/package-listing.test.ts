@@ -61,6 +61,25 @@ describe('condaPrefixFromInterpreter', () => {
 })
 
 describe('parseMicromambaListJson', () => {
+  it('maps micromamba build_string and falls back to a string build field', () => {
+    const stdout = JSON.stringify([
+      { name: 'current', version: '1', build_string: 'current_0' },
+      { name: 'preferred', version: '1', build_string: 'current_1', build: 'legacy_0' },
+      { name: 'legacy', version: '1', build: 'legacy_1' },
+      { name: 'invalid-current', version: '1', build_string: 123, build: 'legacy_2' },
+      { name: 'invalid-builds', version: '1', build_string: null, build: 123 },
+      { name: 'missing-builds', version: '1' }
+    ])
+    expect(parseMicromambaListJson(stdout)).toEqual([
+      { name: 'current', version: '1', build: 'current_0' },
+      { name: 'preferred', version: '1', build: 'current_1' },
+      { name: 'legacy', version: '1', build: 'legacy_1' },
+      { name: 'invalid-current', version: '1', build: 'legacy_2' },
+      { name: 'invalid-builds', version: '1' },
+      { name: 'missing-builds', version: '1' }
+    ])
+  })
+
   it('parses name/version/build/channel entries', () => {
     const stdout = JSON.stringify([
       { name: 'numpy', version: '2.1.3', build: 'py312hb2f4e1b_0', channel: 'conda-forge' },
