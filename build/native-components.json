@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "node": "22.23.3",
+  "nodeApi": 8,
+  "macosMinimum": "12.0",
+  "linuxBaseline": {
+    "x64": "ubuntu-22.04",
+    "arm64": "ubuntu-24.04"
+  },
+  "cdn": "https://statics.aipoch.com/open-science/native-components",
+  "targets": ["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64", "win32-x64"],
+  "packages": {
+    "credential-identity-probe-native": [
+      "credential_identity_probe",
+      "credential_key_validator",
+      "credential_secret"
+    ],
+    "process-tree-native": ["process_tree_native.node"],
+    "safe-file-publisher-native": ["safe_file_publisher_native.node"]
+  }
+}

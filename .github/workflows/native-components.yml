@@ -1,0 +1,179 @@
+name: Prepare native components
+
+on:
+  workflow_call:
+    inputs:
+      dry_run:
+        type: boolean
+        default: true
+    secrets:
+      MAC_CSC_LINK:
+        required: false
+      MAC_CSC_KEY_PASSWORD:
+        required: false
+      S3_ACCESS_KEY_ID:
+        required: false
+      S3_SECRET_ACCESS_KEY:
+        required: false
+      S3_BUCKET:
+        required: false
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Compile and test without signing or CDN publication
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-components-${{ github.ref }}-${{ inputs.dry_run }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Native ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    environment: ${{ !inputs.dry_run && matrix.target == 'win32-x64' && 'windows-signing' || '' }}
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: darwin-arm64, runner: macos-14 }
+          - { target: darwin-x64, runner: macos-15-intel }
+          - { target: linux-x64, runner: ubuntu-22.04 }
+          - { target: linux-arm64, runner: ubuntu-24.04-arm }
+          - { target: win32-x64, runner: windows-2022 }
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '12.0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '22.23.3'
+          cache: npm
+      - name: Install producer dependencies only
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Install Linux build headers
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends libsecret-1-dev libdbus-1-dev
+      - name: Build and collect native components
+        run: |
+          node scripts/produce-native-components.mjs build
+          node scripts/produce-native-components.mjs collect
+      - name: Test native interfaces
+        shell: bash
+        run: |
+          node --test packages/credential-identity-probe-native/test/*.test.cjs
+          node -e "require('./packages/process-tree-native'); require('./packages/safe-file-publisher-native')"
+      - name: Verify Linux runtime dependencies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for binary in out/native-components/*; do
+            dependencies=$(ldd "$binary")
+            printf '%s\n' "$dependencies"
+            if [[ "$dependencies" == *'not found'* ]]; then exit 1; fi
+          done
+      - name: Prepare macOS signing keychain
+        if: ${{ !inputs.dry_run && runner.os == 'macOS' }}
+        shell: bash
+        env:
+          MAC_CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          MAC_CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "$MAC_CSC_LINK"
+          keychain="$RUNNER_TEMP/native-components.keychain-db"
+          security list-keychains -d user > "$RUNNER_TEMP/native-keychains.txt"
+          password=$(openssl rand -base64 32)
+          printf '%s' "$MAC_CSC_LINK" | base64 --decode > "$RUNNER_TEMP/native-signing.p12"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          keychains=()
+          while IFS= read -r entry; do
+            entry="${entry#*\"}"
+            entry="${entry%\"*}"
+            if [ -n "$entry" ]; then keychains+=("$entry"); fi
+          done < "$RUNNER_TEMP/native-keychains.txt"
+          security list-keychains -d user -s "$keychain" "${keychains[@]}"
+          security import "$RUNNER_TEMP/native-signing.p12" -k "$keychain" -P "$MAC_CSC_KEY_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain"
+          identity=$(security find-identity -v -p codesigning "$keychain" | awk '/Developer ID Application:/ {print $2}')
+          [[ "$identity" =~ ^[A-Fa-f0-9]{40}$ ]]
+          echo "CSC_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+          echo "NATIVE_SIGNING_IDENTITY=$identity" >> "$GITHUB_ENV"
+      - name: Sign macOS components with stable identifiers
+        if: ${{ !inputs.dry_run && runner.os == 'macOS' }}
+        run: node scripts/produce-native-components.mjs sign-mac
+      - name: Azure login
+        if: ${{ !inputs.dry_run && runner.os == 'Windows' }}
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Sign Windows components
+        if: ${{ !inputs.dry_run && runner.os == 'Windows' }}
+        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
+        with:
+          endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_SIGNING_PROFILE }}
+          files-folder: ${{ github.workspace }}/out/native-components
+          files-folder-filter: exe,node
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+          timeout: 900
+      - name: Record verified artifacts
+        shell: bash
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+          AZURE_SIGNING_PUBLISHER: ${{ vars.AZURE_SIGNING_PUBLISHER }}
+        run: |
+          args=()
+          if [ "$DRY_RUN" = true ]; then args+=(--dry-run); fi
+          node scripts/produce-native-components.mjs record out/native-components "${args[@]}"
+      - name: Publish immutable native components
+        if: ${{ !inputs.dry_run }}
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ vars.S3_REGION }}
+          S3_BUCKET: ${{ secrets.S3_BUCKET }}
+          AZURE_SIGNING_PUBLISHER: ${{ vars.AZURE_SIGNING_PUBLISHER }}
+        run: node scripts/produce-native-components.mjs publish
+      - name: Upload component evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: native-components-${{ matrix.target }}
+          path: out/native-components
+          if-no-files-found: error
+          retention-days: 30
+      - name: Clean up macOS signing keychain
+        if: ${{ always() && !inputs.dry_run && runner.os == 'macOS' }}
+        shell: bash
+        run: |
+          if [ -f "$RUNNER_TEMP/native-keychains.txt" ]; then
+            keychains=()
+            while IFS= read -r entry; do
+              entry="${entry#*\"}"
+              entry="${entry%\"*}"
+              if [ -n "$entry" ]; then keychains+=("$entry"); fi
+            done < "$RUNNER_TEMP/native-keychains.txt"
+            security list-keychains -d user -s "${keychains[@]}"
+          fi
+          security delete-keychain "$RUNNER_TEMP/native-components.keychain-db" || true
+          rm -f "$RUNNER_TEMP/native-signing.p12"
