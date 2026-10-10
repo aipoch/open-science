@@ -274,10 +274,17 @@ const nativeLockRestoreState = (
   const conda = lock.components.find((component) => component.ecosystem === 'conda')
   const condaPackages = new Set(conda?.packages.map(normalizePackageName) ?? [])
   let projectSelectionUnresolved = false
+  let partialComponent: NativeLockComponent | undefined
+  let partialCoverage = 0
   for (const component of lock.components) {
     if (component.ecosystem === 'conda' || component.resolution !== 'locked') continue
     if (lock.schemaVersion !== 2 && !condaPackages.has(requiredTool(component))) continue
     const packages = lockedPackageVersions(component)
+    const coverage = required.filter((pkg) => packages.has(pkg!.name)).length
+    if (component.ecosystem === lock.kernelKind && coverage > partialCoverage) {
+      partialComponent = component
+      partialCoverage = coverage
+    }
     if (required.every((pkg) => packages.has(pkg!.name))) {
       // Project locks describe possible installations, including extras and platform branches.
       // Without the captured selection, the default sync/install command can silently omit a
@@ -354,17 +361,19 @@ const nativeLockRestoreState = (
           // Restore will choose this same first component without the capture-time inventory.
           const diagnostics: NotebookEnvironmentLockDiagnostic[] = []
           for (const [packageName, versions] of packages) {
-            const pkg = observed.find(
+            const candidates = observed.filter(
               (candidate) => normalizePackageName(candidate.name) === packageName
             )
             const lockedVersion = [...versions][0]
-            if (!pkg && installsEveryPackage)
+            if (candidates.length === 0 && installsEveryPackage)
               diagnostics.push({
                 reason: 'package-not-captured',
                 packageName,
                 lockedVersion
               })
-            else if (pkg && !versionMatches(pkg, versions))
+            for (const pkg of candidates.filter(
+              (candidate) => !versionMatches(candidate, versions)
+            ))
               diagnostics.push({
                 reason: 'package-version-mismatch',
                 packageName,
@@ -392,21 +401,49 @@ const nativeLockRestoreState = (
       state: 'unsupported',
       diagnostics: [{ reason: 'project-selection-unresolved' }]
     }
-  return {
-    state: 'unsupported',
-    diagnostics: required.slice(0, 20).map((pkg) => {
-      const observed = observedPackages?.find(
+  // Explain the closest single restore candidate without combining incompatible lock files
+  // or reporting already pinned packages as missing. This never makes a partial plan restorable.
+  const partialVersions = partialComponent
+    ? lockedPackageVersions(partialComponent)
+    : new Map<string, Set<string | undefined>>()
+  const diagnostics = required.flatMap((pkg): NotebookEnvironmentLockDiagnostic[] => {
+    const observed = observedPackages?.filter(
+      (candidate) =>
+        candidate.ecosystem === pkg!.ecosystem && normalizePackageName(candidate.name) === pkg!.name
+    )
+    const versions = partialVersions.get(pkg!.name)
+    if (!versions)
+      return [
+        {
+          reason: 'package-lock-missing',
+          packageName: pkg!.name,
+          ...(observed?.[0]?.version ? { observedVersion: observed[0].version } : {})
+        }
+      ]
+    if (versions.size !== 1 || versions.has(undefined))
+      return [{ reason: 'package-version-unresolved', packageName: pkg!.name }]
+    const lockedVersion = [...versions][0]!
+    if (observed?.length === 0)
+      return [{ reason: 'package-not-captured', packageName: pkg!.name, lockedVersion }]
+    const mismatches =
+      observed?.filter(
         (candidate) =>
-          candidate.ecosystem === pkg!.ecosystem &&
-          normalizePackageName(candidate.name) === pkg!.name
-      )
-      return {
-        reason: 'package-lock-missing',
+          candidate.versionStatus !== 'known' ||
+          !candidate.version ||
+          !packageVersionsMatch(pkg!.ecosystem, candidate.version, lockedVersion)
+      ) ?? []
+    if (mismatches.length)
+      return mismatches.map((candidate) => ({
+        reason: 'package-version-mismatch',
         packageName: pkg!.name,
-        ...(observed?.version ? { observedVersion: observed.version } : {})
-      }
-    })
-  }
+        lockedVersion,
+        ...(candidate.version ? { observedVersion: candidate.version } : {})
+      }))
+    if (partialComponent && !lockedSourcesMatch(partialComponent, observed))
+      return [{ reason: 'source-mismatch', packageName: pkg!.name }]
+    return []
+  })
+  return { state: 'unsupported', diagnostics: diagnostics.slice(0, 20) }
 }
 
 const executableInPrefix = (
