@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { createHash } from 'node:crypto'
 import { access, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -31,6 +32,8 @@ vi.mock('electron', () => ({
   shell: { openPath: vi.fn() },
   ipcMain: { handle: vi.fn(), removeHandler: vi.fn() }
 }))
+await configureTestElectronHost(await import('electron'))
+
 const cleanups: (() => Promise<unknown>)[] = []
 afterEach(async () => {
   vi.restoreAllMocks()

@@ -701,7 +701,8 @@
       "src/main/project-recordings/recorder.test.ts",
       "src/main/run-observation/managed-status.test.ts",
       "src/main/runtime-view/owner.integration.test.ts",
-      "src/main/managed-runtime-views.integration.test.ts"
+      "src/main/managed-runtime-views.integration.test.ts",
+      "src/main/observation-desktop/bridge.test.ts"
     ]
   },
   "capabilityOverlays": [],

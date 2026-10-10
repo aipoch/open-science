@@ -1,23 +1,61 @@
-import { callerContextForEvent, createCallerContext } from '../caller-context'
-import { callerLeaseForEvent } from '../caller-lifecycle'
-import { ipcMainHandle } from '../ipc-handler-registry'
+import { createCallerContext } from '../caller-context'
 import {
-  BROWSER_RECORDING_EXTERNAL_METHODS,
-  type BrowserRecordingExternalPort
-} from './external-port'
+  defineApplicationCommand,
+  defineApplicationCommandGroup,
+  type ApplicationCommandHandlers,
+  type ApplicationCommandRegistrar,
+  type ApplicationCommandInstallation,
+  type ApplicationInvocation
+} from '../application-command-router'
+import type { BrowserRecordingExternalPort } from './external-port'
+import { BROWSER_RECORDING_EXTERNAL_METHODS } from './external-port'
 
-export function registerBrowserRecordingIpc(port: BrowserRecordingExternalPort): void {
-  for (const method of BROWSER_RECORDING_EXTERNAL_METHODS) {
-    ipcMainHandle(`project-recording:${method}`, (event, request: unknown) => {
-      const lease = callerLeaseForEvent(event)
-      return port.call(
-        method,
-        request,
-        createCallerContext({
-          ...callerContextForEvent(event),
-          isAuthorizationCurrent: () => lease.isCurrent() && !lease.signal.aborted
+const methods = BROWSER_RECORDING_EXTERNAL_METHODS
+export const browserRecordingCommandGroup = defineApplicationCommandGroup(
+  'project-recording',
+  methods.map((method) =>
+    defineApplicationCommand<`project-recording:${typeof method}`, readonly unknown[], unknown>(
+      `project-recording:${method}`
+    )
+  )
+)
+
+export function createBrowserRecordingHandlers(
+  port: BrowserRecordingExternalPort
+): ApplicationCommandHandlers<typeof browserRecordingCommandGroup.commands> {
+  return Object.fromEntries(
+    methods.map((method) => [
+      `project-recording:${method}`,
+      async (invocation: ApplicationInvocation<readonly unknown[]>): Promise<unknown> => {
+        const { callerContext, callerLease, args } = invocation
+        const caller = createCallerContext({
+          ...callerContext,
+          isAuthorizationCurrent: () =>
+            callerContext.isAuthorizationCurrent() &&
+            callerLease.isCurrent() &&
+            !callerLease.signal.aborted
         })
-      )
-    })
+        if (!caller.isAuthorizationCurrent())
+          throw new Error('Observation caller authorization ended.')
+        const result = await port.call(method, args[0], caller)
+        if (!caller.isAuthorizationCurrent())
+          throw new Error('Observation caller authorization ended.')
+        return result
+      }
+    ])
+  ) as ApplicationCommandHandlers<typeof browserRecordingCommandGroup.commands>
+}
+
+export function registerBrowserRecordingCommands(
+  registrar: ApplicationCommandRegistrar,
+  port: BrowserRecordingExternalPort
+): ApplicationCommandInstallation {
+  const scope = registrar.createScope()
+  try {
+    scope.registerGroup(browserRecordingCommandGroup, createBrowserRecordingHandlers(port))
+    return scope.complete()
+  } catch (error) {
+    scope.rollback()
+    throw error
   }
 }

@@ -35,9 +35,7 @@
     "src/shared/research-execution-profile.ts",
     "src/main/research-execution-profiles/document.ts"
   ],
-  "consumerModules": [
-    "main_session_package"
-  ],
+  "consumerModules": ["main_session_package"],
   "testFiles": {
     "owner": [
       "src/shared/research-reproduction.test.ts",
@@ -235,7 +233,8 @@
       "src/main/acp/prompt-turn-workflow.test.ts",
       "src/main/acp/prompt-outcome-finalizer.test.ts",
       "src/main/acp/native-follow-up-workflow.test.ts",
-      "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts"
+      "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts",
+      "src/main/observation-desktop/bridge.test.ts"
     ]
   },
   "capabilityOverlays": [],

@@ -235,7 +235,8 @@
       "src/main/run-observation/managed-port.test.ts",
       "src/main/run-observation/recorded-reader.test.ts",
       "src/main/run-observation/managed-status.test.ts",
-      "src/main/managed-runtime-views.integration.test.ts"
+      "src/main/managed-runtime-views.integration.test.ts",
+      "src/main/observation-desktop/bridge.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

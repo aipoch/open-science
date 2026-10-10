@@ -204,7 +204,7 @@ async function openView(
   const f = await fixture()
   const controller = new AbortController()
   const service = await openService(f, controller)
-  const owner = new RuntimeViewOwner(limits)
+  const owner = new RuntimeViewOwner(limits, desktopObservationFrameRegistry)
   owners.push(owner)
   const access = await owner.open({
     scope,
@@ -298,7 +298,7 @@ describe.skipIf(process.platform === 'win32')('owned interactive runtime view tr
       const f = await fixture()
       const controller = new AbortController()
       const service = await openService(f, controller)
-      const owner = new RuntimeViewOwner()
+      const owner = new RuntimeViewOwner({}, desktopObservationFrameRegistry)
       owners.push(owner)
       const access = await owner.open({
         scope,
@@ -420,7 +420,7 @@ describe.skipIf(process.platform === 'win32')('owned interactive runtime view tr
       })
     ).rejects.toThrow('verified')
     const service = await openService(f)
-    const owner = new RuntimeViewOwner()
+    const owner = new RuntimeViewOwner({}, desktopObservationFrameRegistry)
     owners.push(owner)
     const args = {
       scope,
@@ -446,7 +446,7 @@ describe.skipIf(process.platform === 'win32')('owned interactive runtime view tr
     v.f.server.closeAllConnections()
     await new Promise<void>((resolve) => v.f.server.close(() => resolve()))
     const replacement = await fixture({ socketPath: v.f.socketPath, proof: v.f.proof })
-    expect(() => v.owner.issueAccess(v.access.view.viewId, scope)).toThrow()
+    await expect(v.owner.issueAccess(v.access.view.viewId, scope)).rejects.toThrow()
     expect(replacement.seen).toEqual([])
     expect(v.owner.list(scope)[0].state).toBe('closed')
   })
@@ -485,9 +485,9 @@ describe.skipIf(process.platform === 'win32')('owned interactive runtime view tr
         })
       ).status
     ).toBe(403)
-    expect(() =>
+    await expect(
       v.owner.issueAccess(v.access.view.viewId, { ...scope, sessionId: 'other' })
-    ).toThrow('scope')
+    ).rejects.toThrow('scope')
     expect(v.owner.list({ ...scope, sessionId: 'other' })).toEqual([])
   })
 
@@ -570,7 +570,7 @@ describe.skipIf(process.platform === 'win32')('owned interactive runtime view tr
       v.owner.revoke(access.view.viewId, scope)
     }
     expect(v.owner.list(scope)).toHaveLength(16)
-    expect(() => v.owner.issueAccess(v.access.view.viewId, scope)).toThrow('scope')
+    await expect(v.owner.issueAccess(v.access.view.viewId, scope)).rejects.toThrow('scope')
   })
 
   it('rewrites local redirects but rejects external redirects and dangerous declarations', async () => {
@@ -641,7 +641,7 @@ describe.skipIf(process.platform === 'win32')('owned interactive runtime view tr
     v.controller.abort()
     await closed
     expect(v.owner.list(scope)[0]).toMatchObject({ state: 'closed', closedReason: 'run-ended' })
-    expect(() => v.owner.issueAccess(v.access.view.viewId, scope)).toThrow()
+    await expect(v.owner.issueAccess(v.access.view.viewId, scope)).rejects.toThrow()
     const other = await openView()
     other.owner.revoke(other.access.view.viewId, scope)
     expect(other.service.signal.aborted).toBe(false)
@@ -652,7 +652,7 @@ describe.skipIf(process.platform === 'win32')('owned interactive runtime view tr
   it('fails closed when the owner closes while the loopback listener is starting', async () => {
     const f = await fixture(),
       service = await openService(f),
-      owner = new RuntimeViewOwner()
+      owner = new RuntimeViewOwner({}, desktopObservationFrameRegistry)
     owners.push(owner)
     const pending = owner.open({
       scope,
@@ -698,7 +698,7 @@ describe.skipIf(process.platform === 'win32')('owned interactive runtime view tr
     const f = await fixture({ delayProof: 30 })
     const controller = new AbortController(),
       service = await openService(f, controller)
-    const owner = new RuntimeViewOwner()
+    const owner = new RuntimeViewOwner({}, desktopObservationFrameRegistry)
     owners.push(owner)
     const access = await owner.open({
       scope,
@@ -782,7 +782,7 @@ describe.skipIf(process.platform === 'win32')('owned interactive runtime view tr
     const service = await openService(f, new AbortController(), () => {
       if (!current) throw new Error('Run no longer current')
     })
-    const owner = new RuntimeViewOwner()
+    const owner = new RuntimeViewOwner({}, desktopObservationFrameRegistry)
     owners.push(owner)
     const access = await owner.open({
       scope,
@@ -791,7 +791,7 @@ describe.skipIf(process.platform === 'win32')('owned interactive runtime view tr
       allowedParentOrigins: ['http://127.0.0.1:5000']
     })
     current = false
-    expect(() => owner.issueAccess(access.view.viewId, scope)).toThrow('no longer current')
+    await expect(owner.issueAccess(access.view.viewId, scope)).rejects.toThrow('no longer current')
     expect(owner.list(scope)[0].state).toBe('closed')
     expect(f.server.listening).toBe(true)
   })

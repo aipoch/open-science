@@ -24,9 +24,7 @@
     "src/main/runtime-view/owner.ts",
     "src/main/replay-viewer/desktop-frame-registry.ts"
   ],
-  "consumerModules": [
-    "notebook_application"
-  ],
+  "consumerModules": ["notebook_application"],
   "testFiles": {
     "owner": [
       "src/main/replay-viewer/assets.test.ts",
@@ -37,9 +35,7 @@
       "src/main/replay-viewer/desktop-frame-registry.test.ts",
       "src/main/managed-runtime-views.integration.test.ts"
     ],
-    "contract": [
-      "src/main/notebook/managed-execution-service.test.ts"
-    ],
+    "contract": ["src/main/notebook/managed-execution-service.test.ts"],
     "consumer": [
       "src/main/notebook/managed-execution-collection.integration.test.ts",
       "src/main/notebook/managed-output-recovery.test.ts",
@@ -263,7 +259,8 @@
       "src/main/acp/prompt-turn-workflow.test.ts",
       "src/main/acp/prompt-outcome-finalizer.test.ts",
       "src/main/acp/native-follow-up-workflow.test.ts",
-      "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts"
+      "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts",
+      "src/main/observation-desktop/bridge.test.ts"
     ]
   },
   "capabilityOverlays": [],

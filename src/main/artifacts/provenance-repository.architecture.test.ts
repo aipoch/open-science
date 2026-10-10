@@ -1032,7 +1032,8 @@ describe('Artifact Provenance repository architecture', () => {
       'src/main/browser-recordings/owner.test.ts',
       'src/main/run-observation/media-collector.test.ts',
       'src/main/project-recordings/recorder.test.ts',
-      'src/main/managed-runtime-views.integration.test.ts'
+      'src/main/managed-runtime-views.integration.test.ts',
+      'src/main/observation-desktop/bridge.test.ts'
     ])
     expect(module.capabilityOverlays).toEqual([
       'windows_sensitive',

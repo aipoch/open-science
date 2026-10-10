@@ -374,7 +374,9 @@
       "src/main/notebook/managed-execution-collection.integration.test.ts",
       "src/main/notebook/managed-execution-entrypoints.integration.test.ts",
       "src/main/notebook/session-operation-owner.integration.test.ts",
-      "src/main/session-package/headless.test.ts"
+      "src/main/session-package/headless.test.ts",
+      "src/main/run-observation/capture-package.integration.test.ts",
+      "src/main/run-observation/managed-coordinator.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

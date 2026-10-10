@@ -1500,13 +1500,10 @@
       "src/main/runtime-view/owner.integration.test.ts",
       "src/main/run-observation/electron-capture.integration.test.ts",
       "src/main/managed-runtime-views.integration.test.ts",
-      "src/main/notebook/managed-shell-execution.test.ts"
+      "src/main/notebook/managed-shell-execution.test.ts",
+      "src/main/observation-desktop/bridge.test.ts"
     ]
   },
-  "capabilityOverlays": [
-    "e2e_regressions",
-    "e2e_delegation",
-    "windows_sensitive"
-  ],
+  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
   "fallbackCapability": "main_runtime"
 }

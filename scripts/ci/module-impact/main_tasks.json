@@ -13,10 +13,7 @@
   ],
   "consumerModules": [],
   "testFiles": {
-    "owner": [
-      "src/main/tasks/task-run-journal.test.ts",
-      "src/main/tasks/task-runner.test.ts"
-    ],
+    "owner": ["src/main/tasks/task-run-journal.test.ts", "src/main/tasks/task-runner.test.ts"],
     "contract": [
       "src/preload/index.test.ts",
       "src/renderer/web/api-installer.test.ts",
@@ -72,10 +69,6 @@
       "src/main/composition/artifact-surfaces.test.ts"
     ]
   },
-  "capabilityOverlays": [
-    "e2e_regressions",
-    "e2e_delegation",
-    "windows_sensitive"
-  ],
+  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
   "fallbackCapability": "main_runtime"
 }

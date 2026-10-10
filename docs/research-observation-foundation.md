@@ -55,3 +55,22 @@ Browser capture currently targets the local desktop and produces video without a
 remote desktop capture, DOM reconstruction and MP4 export are not provided by this layer. A saved
 recording is evidence of observed execution; its existence alone does not establish scientific
 reproduction.
+
+## Standalone backend and native capture
+
+The Node backend owns observation, permission leases, HTTP viewers and immutable Artifact writes.
+`observation-desktop/bridge.ts` injects an optional private desktop capability; it does not import
+Electron. The desktop installs `observation-desktop/electron.ts` using the existing transport's
+`documentFor` resolver. A document UUID is never a numeric window ID outside that trusted adapter.
+Frame grants are acknowledged by the native navigation registry before a viewer URL or redirect is
+returned. Reload, document replacement and transport loss revoke native capture and frame grants.
+Local SDK viewers retain their own backend lease and do not require a connected desktop.
+
+The compositor, crop/masking and WebM encoder stay in Electron. The bridge transports only complete
+segments (at most 8 MiB each), bounded metadata batches and explicit acknowledgements. It does not
+send raw frames through the command transport. The next segment waits for the backend Artifact
+sink to accept the previous one. Stop drains admitted evidence; release, stale documents, stalled
+polling and disconnect dispose native resources without granting a replacement document access.
+Without an attached desktop, screenshots/browser recording are unavailable; existing observation,
+project-export recording and recorded evidence readers remain usable. Closing capture does not
+cancel the backend-owned experiment. The Replay layer installs the actual application composition.

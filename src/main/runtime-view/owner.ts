@@ -16,10 +16,10 @@ import type {
 } from '../../shared/runtime-view'
 import { isRuntimeViewPath } from '../../shared/runtime-view'
 import { OwnedRuntimeViewService, sameRuntimeViewScope } from './owned-service'
-import {
-  desktopObservationFrameRegistry,
-  type DesktopObservationRegistration
-} from '../replay-viewer/desktop-frame-registry'
+import type {
+  ObservationFramePort,
+  ObservationFrameRegistration
+} from '../observation-desktop/frame-port'
 
 interface RuntimeViewLimits {
   maxViews: number
@@ -68,7 +68,7 @@ interface ViewRecord {
   expiry?: ReturnType<typeof setTimeout>
   onAbort: () => void
   webSockets: WebSocketServer
-  desktopFrames?: DesktopObservationRegistration
+  desktopFrames?: ObservationFrameRegistration
 }
 const defaults: RuntimeViewLimits = {
   maxViews: 8,
@@ -176,7 +176,10 @@ export class RuntimeViewOwner {
   private readonly limits: RuntimeViewLimits
   private closed = false
 
-  constructor(limits: Partial<RuntimeViewLimits> = {}) {
+  constructor(
+    limits: Partial<RuntimeViewLimits> = {},
+    private readonly desktopFrames?: ObservationFramePort
+  ) {
     this.limits = { ...defaults, ...limits }
     if (Object.values(this.limits).some((value) => !Number.isSafeInteger(value) || value < 1)) {
       throw new Error('Invalid runtime view limits.')
@@ -302,7 +305,8 @@ export class RuntimeViewOwner {
       // after the operating system reassigns a released TCP port to another view generation.
       view.origin = `http://rv-${viewId}.localhost:${address.port}`
       OwnedRuntimeViewService.assertOwned(options.service, options.scope)
-      view.desktopFrames = desktopObservationFrameRegistry.registerRuntime({
+      view.desktopFrames = await this.desktopFrames?.registerRuntime({
+        excludedPath: view.service.excludedPath,
         origin: view.origin,
         parents: view.parents,
         expiresAt: now + this.limits.lifetimeMs,
@@ -317,7 +321,7 @@ export class RuntimeViewOwner {
         this.limits.lifetimeMs
       )
       view.expiry.unref()
-      return this.issueAccess(viewId, options.scope)
+      return await this.issueAccess(viewId, options.scope)
     } catch (error) {
       this.closeRecord(view, 'failed', 'unavailable')
       throw error
@@ -337,7 +341,7 @@ export class RuntimeViewOwner {
       .map((view) => this.describe(view))
   }
 
-  issueAccess(viewId: string, scope: RuntimeViewScope): RuntimeViewAccess {
+  async issueAccess(viewId: string, scope: RuntimeViewScope): Promise<RuntimeViewAccess> {
     const view = this.require(viewId, scope)
     this.assertAuthorization(view)
     view.service.assertCurrent()
@@ -348,7 +352,9 @@ export class RuntimeViewOwner {
     const expiresAt = Date.now() + 60000
     const url = `${view.origin}/__open_science_view?grant=${grant}`
     view.grants.set(grant, expiresAt)
-    view.desktopFrames?.issueGrant(url, expiresAt)
+    await view.desktopFrames?.issueGrant(url, expiresAt)
+    this.assertAuthorization(view)
+    view.service.assertCurrent()
     return { view: this.describe(view), url }
   }
 
@@ -456,7 +462,9 @@ export class RuntimeViewOwner {
         return
       }
       view.grants.delete(grant)
-      view.desktopFrames?.authenticateGrant(grant)
+      await view.desktopFrames?.authenticateGrant(grant)
+      this.assertAuthorization(view)
+      view.service.assertCurrent()
       const cookiePolicy =
         view.cookiePolicy === 'partitioned'
           ? 'Secure; SameSite=None; Partitioned'

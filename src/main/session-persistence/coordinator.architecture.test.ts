@@ -1887,7 +1887,8 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/browser-recordings/owner.test.ts',
       'src/main/run-observation/media-collector.test.ts',
       'src/main/project-recordings/recorder.test.ts',
-      'src/main/managed-runtime-views.integration.test.ts'
+      'src/main/managed-runtime-views.integration.test.ts',
+      'src/main/observation-desktop/bridge.test.ts'
     ])
     expect(sessionPersistence.capabilityOverlays).toEqual([
       'windows_sensitive',

@@ -10,10 +10,10 @@ import {
 } from '../../shared/browser-recording'
 import type { CallerContext } from '../caller-context'
 import type { Locale } from '../../shared/locale'
-import {
-  desktopObservationFrameRegistry,
-  type DesktopObservationRegistration
-} from './desktop-frame-registry'
+import type {
+  ObservationFramePort,
+  ObservationFrameRegistration
+} from '../observation-desktop/frame-port'
 import type { ManagedRuntimeViews } from '../managed-runtime-views'
 import type {
   ObservationViewers,
@@ -76,6 +76,7 @@ type Viewers = Pick<
   | 'revoke'
 >
 export interface ReplayViewerHttpDependencies {
+  desktopFrames?: ObservationFramePort
   browserRecording?(
     method: BrowserRecordingMethod,
     input: {
@@ -151,7 +152,7 @@ type Binding = {
   requests: number
   projectOrigin?: string
   recordingSourceViewId?: string
-  desktopFrames?: DesktopObservationRegistration
+  desktopFrames?: ObservationFrameRegistration
   captureEvidence: Map<string, NonNullable<ObservationViewerCapture['viewerEvidence']>>
 }
 const maxBody = 8192,
@@ -768,7 +769,8 @@ export class ReplayViewerHttpHost {
       await this.dependencies.viewers.describe(access.viewerId, { caller })
       this.assertCurrent(binding)
       if (caller.surface === 'electron' && options.desktopParent === 'file:') {
-        binding.desktopFrames = desktopObservationFrameRegistry.registerViewer({
+        if (!this.dependencies.desktopFrames) throw new HostError(503, 'desktop-unavailable')
+        binding.desktopFrames = await this.dependencies.desktopFrames.registerViewer({
           origin: binding.origin,
           caller: binding.caller,
           expiresAt: access.expiresAt,
@@ -804,7 +806,7 @@ export class ReplayViewerHttpHost {
           })
       }, 500)
       binding.revalidation.unref()
-      return this.access(binding, access)
+      return await this.access(binding, access)
     } catch (error) {
       this.closeViewer(access.viewerId)
       await this.dependencies.viewers.revoke(access.viewerId, { caller }).catch(() => undefined)
@@ -838,9 +840,13 @@ export class ReplayViewerHttpHost {
     this.closed = true
     for (const viewerId of this.bindings.keys()) this.closeViewer(viewerId)
   }
-  private access(binding: Binding, grant: ObservationViewAccess): ReplayViewerHttpAccess {
+  private async access(
+    binding: Binding,
+    grant: ObservationViewAccess
+  ): Promise<ReplayViewerHttpAccess> {
     const url = `${binding.origin}/__open_science_viewer?grant=${grant.grant}`
-    binding.desktopFrames?.issueGrant(url, grant.grantExpiresAt)
+    await binding.desktopFrames?.issueGrant(url, grant.grantExpiresAt)
+    this.assertCurrent(binding)
     return {
       ...structuredClone(binding.descriptor),
       url
@@ -898,7 +904,8 @@ export class ReplayViewerHttpHost {
         this.assertCurrent(binding)
         await this.dependencies.viewers.describe(viewerId, { capability: auth.capability })
         this.assertCurrent(binding)
-        binding.desktopFrames?.authenticateGrant(url.searchParams.get('grant') ?? '')
+        await binding.desktopFrames?.authenticateGrant(url.searchParams.get('grant') ?? '')
+        this.assertCurrent(binding)
         response.writeHead(303, {
           location: '/',
           'set-cookie': `${binding.cookie}=${auth.capability}; HttpOnly; Secure; SameSite=None; Partitioned; Path=/`,
