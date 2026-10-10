@@ -1,5 +1,5 @@
 import { nodeRuntimeEnvironment } from '../node-process-host'
-import { runtimeMetadata } from '../runtime-metadata'
+import { runtimeMetadataIfConfigured } from '../runtime-metadata'
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync, watch, type FSWatcher } from 'node:fs'
@@ -449,16 +449,8 @@ const stripUnpublishedGenerations = (workingFiles: NotebookWorkingFile[]): Noteb
 
 // Plain-Node hosts (runtime certification, SDK consumers) configure no host entry; the
 // __dirname candidates below resolve the worker directly instead of throwing.
-const hostResourcesPath = (): string | undefined => {
-  try {
-    return runtimeMetadata().resourcesPath
-  } catch {
-    return undefined
-  }
-}
-
 const resolveEvidenceWorkerPath = (): string => {
-  const resourcesPath = hostResourcesPath()
+  const resourcesPath = runtimeMetadataIfConfigured()?.resourcesPath
   const candidates = [
     resourcesPath &&
       join(resourcesPath, 'app.asar.unpacked', 'resources', 'notebook', 'file_evidence_worker.js'),

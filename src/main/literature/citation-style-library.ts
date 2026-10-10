@@ -1,4 +1,4 @@
-import { runtimeMetadata } from '../runtime-metadata'
+import { runtimeMetadataIfConfigured } from '../runtime-metadata'
 import { createHash, randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { mkdir, readFile, readdir, rename, rm, unlink, writeFile } from 'node:fs/promises'
@@ -25,7 +25,7 @@ const require = createRequire(import.meta.url)
 type CitationStyleSource = LiteratureCitationStyleView & Readonly<{ content: string }>
 
 const citationResourceDirectory = (): string => {
-  const resourcesPath = runtimeMetadata().resourcesPath
+  const resourcesPath = runtimeMetadataIfConfigured()?.resourcesPath
   const candidates = [
     join(here, '../../../resources/citation'),
     join(here, '../../resources/citation'),

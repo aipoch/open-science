@@ -1,5 +1,5 @@
 import { nodeRuntimeEnvironment } from '../node-process-host'
-import { runtimeMetadata } from '../runtime-metadata'
+import { runtimeMetadataIfConfigured } from '../runtime-metadata'
 import { createLogger } from '../logger'
 import { prepareReplCellBindings, type ReplCellBindings } from './repl-cell-bindings'
 import {
@@ -385,34 +385,38 @@ class NotebookExecutionCancelledError extends Error {
   }
 }
 
+// Plain-Node hosts (runtime certification, SDK consumers) configure no host entry; the
+// repo-relative candidates below resolve the loops directly instead of throwing.
+const hostResourcesPath = (): string | undefined => runtimeMetadataIfConfigured()?.resourcesPath
+
 // Resolves the packaged/dev location of python_loop.py; an env override wins (tests, dev), then the
 // packaged resources dir, then the repo-relative dev path.
 const defaultPythonLoopPath = (): string => {
   if (process.env.OPEN_SCIENCE_PYTHON_LOOP) return process.env.OPEN_SCIENCE_PYTHON_LOOP
-  if (runtimeMetadata().resourcesPath)
-    return join(runtimeMetadata().resourcesPath, 'notebook', 'python_loop.py')
+  const resourcesPath = hostResourcesPath()
+  if (resourcesPath) return join(resourcesPath, 'notebook', 'python_loop.py')
   return join(__dirname, '../../../resources/notebook/python_loop.py')
 }
 
 // Resolves the packaged/dev location of r_loop.R, mirroring defaultPythonLoopPath.
 const defaultRLoopPath = (): string => {
   if (process.env.OPEN_SCIENCE_R_LOOP) return process.env.OPEN_SCIENCE_R_LOOP
-  if (runtimeMetadata().resourcesPath)
-    return join(runtimeMetadata().resourcesPath, 'notebook', 'r_loop.R')
+  const resourcesPath = hostResourcesPath()
+  if (resourcesPath) return join(resourcesPath, 'notebook', 'r_loop.R')
   return join(__dirname, '../../../resources/notebook/r_loop.R')
 }
 
 // Resolves the packaged/dev location of repl_loop.js, mirroring defaultPythonLoopPath.
 const defaultReplLoopPath = (): string => {
   if (process.env.OPEN_SCIENCE_REPL_LOOP) return process.env.OPEN_SCIENCE_REPL_LOOP
-  if (runtimeMetadata().resourcesPath)
-    return join(runtimeMetadata().resourcesPath, 'notebook', 'repl_loop.js')
+  const resourcesPath = hostResourcesPath()
+  if (resourcesPath) return join(resourcesPath, 'notebook', 'repl_loop.js')
   return join(__dirname, '../../../resources/notebook/repl_loop.js')
 }
 
 const defaultProcessHostPath = (): string => {
-  if (runtimeMetadata().resourcesPath)
-    return join(runtimeMetadata().resourcesPath, 'notebook', 'kernel_process_host.js')
+  const resourcesPath = hostResourcesPath()
+  if (resourcesPath) return join(resourcesPath, 'notebook', 'kernel_process_host.js')
   return join(__dirname, '../../../resources/notebook/kernel_process_host.js')
 }
 

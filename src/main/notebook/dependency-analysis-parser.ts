@@ -1,4 +1,4 @@
-import { runtimeMetadata } from '../runtime-metadata'
+import { runtimeMetadataIfConfigured } from '../runtime-metadata'
 import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -15,7 +15,9 @@ const wasmFile = (language: NotebookParserLanguage | 'runtime'): string =>
   language === 'runtime' ? 'web-tree-sitter.wasm' : `tree-sitter-${language}.wasm`
 
 const resolveTreeSitterDir = (): string | undefined => {
-  const resourcesPath = runtimeMetadata().resourcesPath
+  // Plain-Node hosts (runtime certification, SDK consumers) configure no host entry; the
+  // source-tree candidates above the resources-path ones keep the parser usable there.
+  const resourcesPath = runtimeMetadataIfConfigured()?.resourcesPath
   const candidates = [
     join(here, '../../../resources/tree-sitter'),
     join(here, '../../resources/tree-sitter'),
