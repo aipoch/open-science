@@ -531,16 +531,9 @@ export const STRUCTURES_PDB_TOOLS: ToolDescriptor[] = [
         const body = (await ctx.postJson(SEARCH_URL, payload, {
           allowNoContent: true
         })) as SearchResponse | undefined
-        // Only an initial HTTP 204 proves zero hits. A later empty page contradicts the
-        // reported total; malformed JSON must propagate as an error on every page.
-        if (body === undefined) {
-          if (records.length > 0) {
-            throw new Error(
-              'PDB search returned HTTP 204 before all reported results were retrieved.'
-            )
-          }
-          break
-        }
+        // An initial HTTP 204 leaves an empty result. On later pages, preserve the previous
+        // total and records so truncation reflects the incomplete retrieval.
+        if (body === undefined) break
         totalCount = body.total_count ?? 0
         const page = body.result_set ?? []
         for (const r of page) records.push({ pdb_id: r.identifier, score: r.score ?? null })

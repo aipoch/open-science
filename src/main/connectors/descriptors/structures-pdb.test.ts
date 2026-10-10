@@ -202,7 +202,7 @@ describe('pdb_search_structures', () => {
     expect(fetchImpl).toHaveBeenCalledOnce()
   })
 
-  it.each(['malformed JSON', 'HTTP 204'])('rejects %s on a later page', async (failure) => {
+  it.each(['malformed JSON', 'HTTP 204'])('handles %s on a later page', async (failure) => {
     const fetchImpl = vi
       .fn()
       .mockResolvedValueOnce(
@@ -218,9 +218,13 @@ describe('pdb_search_structures', () => {
       )
     const execution = run('pdb_search_structures', { text: 'p53', max_rows: 200 }, fetchImpl)
     if (failure === 'HTTP 204') {
-      await expect(execution).rejects.toThrow(
-        'PDB search returned HTTP 204 before all reported results were retrieved.'
-      )
+      await expect(execution).resolves.toEqual({
+        total_count: 250,
+        n_retrieved: 100,
+        truncated: true,
+        max_rows: 200,
+        records: Array.from({ length: 100 }, (_, i) => ({ pdb_id: `ID${i}`, score: 1 }))
+      })
     } else {
       await expect(execution).rejects.toBeInstanceOf(SyntaxError)
     }
