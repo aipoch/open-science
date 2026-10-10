@@ -1,4 +1,4 @@
-import { runtimeMetadata } from '../runtime-metadata'
+import { runtimeMetadataIfConfigured } from '../runtime-metadata'
 import { homedir } from 'node:os'
 import { resolveBootstrapConfigRoot, resolveConfigRootOverride } from '../../shared/config-root'
 import { execFile } from 'node:child_process'
@@ -391,7 +391,7 @@ export const createProductionMicromambaRunner = (
     }
   }
 
-  const resourcesPath = deps.resourcesPath ?? runtimeMetadata().resourcesPath
+  const resourcesPath = deps.resourcesPath ?? runtimeMetadataIfConfigured()?.resourcesPath
   const compatibilityPath = resourcesPath ? join(resourcesPath, 'micromamba-compat.exe') : undefined
   if (compatibilityPath && isFile(compatibilityPath)) {
     candidates.push({

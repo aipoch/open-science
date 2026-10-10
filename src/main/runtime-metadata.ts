@@ -29,3 +29,9 @@ export function runtimeMetadata(): RuntimeMetadata {
   if (!resolveMetadata) throw new Error('Runtime metadata must be configured by the host entry.')
   return resolveMetadata()
 }
+
+// Plain-Node test hosts and SDK consumers run without a configured host entry. Resource
+// resolution falls back to source-tree candidates instead of throwing.
+export function runtimeMetadataIfConfigured(): RuntimeMetadata | undefined {
+  return resolveMetadata?.()
+}

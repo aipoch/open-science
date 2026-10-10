@@ -9,7 +9,7 @@ import { dirname, join } from 'node:path'
 
 import { desktopShellInteraction, desktopFileInteraction } from '../desktop-interaction'
 import { runtimeLifecycle } from '../runtime-lifecycle'
-import { runtimeMetadata } from '../runtime-metadata'
+import { runtimeMetadataIfConfigured } from '../runtime-metadata'
 
 import type {
   ActiveSessionInfo,
@@ -563,7 +563,9 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
             (deps.exportRuntimeLocks ?? exportRuntimeLocks)(fromDataRoot, toDataRoot, {
               mm: deps.micromambaRunner
                 ? await deps.micromambaRunner.resolve()
-                : resolveMicromamba({ resourcesPath: runtimeMetadata().resourcesPath }),
+                : resolveMicromamba({
+                    resourcesPath: runtimeMetadataIfConfigured()?.resourcesPath
+                  }),
               capture: (argv) =>
                 captureMicromamba(argv, micromambaSpawnEnv(runtimeRoot(fromDataRoot)))
             })

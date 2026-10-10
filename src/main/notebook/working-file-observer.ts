@@ -1,5 +1,5 @@
 import { nodeRuntimeEnvironment } from '../node-process-host'
-import { runtimeMetadata } from '../runtime-metadata'
+import { runtimeMetadataIfConfigured } from '../runtime-metadata'
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync, watch, type FSWatcher } from 'node:fs'
@@ -447,18 +447,14 @@ const stripUnpublishedGenerations = (workingFiles: NotebookWorkingFile[]): Noteb
     return unpublished
   })
 
+// Plain-Node hosts (runtime certification, SDK consumers) configure no host entry; the
+// __dirname candidates below resolve the worker directly instead of throwing.
 const resolveEvidenceWorkerPath = (): string => {
+  const resourcesPath = runtimeMetadataIfConfigured()?.resourcesPath
   const candidates = [
-    runtimeMetadata().resourcesPath &&
-      join(
-        runtimeMetadata().resourcesPath,
-        'app.asar.unpacked',
-        'resources',
-        'notebook',
-        'file_evidence_worker.js'
-      ),
-    runtimeMetadata().resourcesPath &&
-      join(runtimeMetadata().resourcesPath, 'resources', 'notebook', 'file_evidence_worker.js'),
+    resourcesPath &&
+      join(resourcesPath, 'app.asar.unpacked', 'resources', 'notebook', 'file_evidence_worker.js'),
+    resourcesPath && join(resourcesPath, 'resources', 'notebook', 'file_evidence_worker.js'),
     join(__dirname, '../../resources/notebook/file_evidence_worker.js'),
     join(__dirname, '../../../resources/notebook/file_evidence_worker.js')
   ].filter((candidate): candidate is string => Boolean(candidate))
