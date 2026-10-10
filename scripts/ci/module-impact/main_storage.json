@@ -122,6 +122,7 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/desktop-runtime-launcher.integration.test.ts",
       "src/main/connectors/custom-mcp/bootstrap.test.ts",
       "src/main/connectors/custom-skill-doc.test.ts",
       "src/main/connectors/descriptors/encori.test.ts",
