@@ -605,16 +605,20 @@ jobs:
           # (~6400 modules) OOMs during emit at that limit. This is a ceiling, not a reservation.
           NODE_OPTIONS: --max-old-space-size=8192
         run: |
-          npm run build:e2e
-          npm run build:web
-          # Nightly: override the packaged version with `<base>-nightly.<short-sha>` (valid semver
-          # prerelease). Every artifactName template uses ${version}, so this alone makes nightly
-          # filenames distinct from stable ones and ties each build to its commit.
           eb_ver=()
           if [ "${{ inputs.nightly }}" = "true" ]; then
             base=$(node -p "require('./package.json').version")
+            # Nightly: override the packaged version with `<base>-nightly.<short-sha>` (valid semver
+            # prerelease). Every artifactName template uses ${version}, so this alone makes nightly
+            # filenames distinct from stable ones and ties each build to its commit. Rewrite the
+            # root manifest itself — not just extraMetadata — because the standalone Node backend is
+            # staged by beforePack from the root manifest; otherwise the backend reports the stable
+            # base version from /api/bootstrap while installers carry the nightly suffix.
+            npm version --no-git-tag-version "${base}-nightly.${GITHUB_SHA::7}"
             eb_ver=(-c.extraMetadata.version="${base}-nightly.${GITHUB_SHA::7}")
           fi
+          npm run build:e2e
+          npm run build:web
           windows_signing_args=()
           if [ "${{ inputs.sign_windows }}" = "true" ] && [ "${{ matrix.platform }}" = "win" ]; then
             for name in AZURE_SIGNING_PUBLISHER AZURE_SIGNING_ENDPOINT AZURE_SIGNING_ACCOUNT AZURE_SIGNING_PROFILE; do
