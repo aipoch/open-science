@@ -260,7 +260,14 @@
     "scripts/electron-builder-config.test.ts",
     "scripts/electron-fixture-teardown.test.ts",
     "scripts/electron-vite-config.test.ts",
-    "src/main/composition/notebook-approvals.ts"
+    "src/main/composition/notebook-approvals.ts",
+    "src/main/desktop-event-delivery.ts",
+    "src/main/desktop-event-delivery.test.ts",
+    "src/main/desktop-frame-sender.ts",
+    "src/main/desktop-frame-sender.test.ts",
+    "src/main/desktop-runtime-backpressure.integration.test.ts",
+    "src/main/desktop-runtime-client-diagnostics.test.ts",
+    "src/main/desktop-runtime-transport-diagnostics.test.ts"
   ],
   "interfacePaths": [
     "src/main/app-lifecycle.ts",
@@ -451,7 +458,12 @@
       "scripts/stage-node-runtime.test.ts",
       "src/main/desktop-runtime-launcher.test.ts",
       "src/main/desktop-runtime-launcher.integration.test.ts",
-      "src/main/desktop-runtime-lifecycle.test.ts"
+      "src/main/desktop-runtime-lifecycle.test.ts",
+      "src/main/desktop-event-delivery.test.ts",
+      "src/main/desktop-frame-sender.test.ts",
+      "src/main/desktop-runtime-backpressure.integration.test.ts",
+      "src/main/desktop-runtime-client-diagnostics.test.ts",
+      "src/main/desktop-runtime-transport-diagnostics.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

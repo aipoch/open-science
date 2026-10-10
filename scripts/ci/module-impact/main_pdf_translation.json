@@ -584,7 +584,9 @@
       "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout-paired-definition.test.ts",
       "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout-parameter-prose.test.ts",
       "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout-plot-axis.test.ts",
-      "src/main/desktop-runtime-transport.integration.test.ts"
+      "src/main/desktop-runtime-transport.integration.test.ts",
+      "src/main/desktop-runtime-backpressure.integration.test.ts",
+      "src/main/desktop-runtime-transport-diagnostics.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions"],

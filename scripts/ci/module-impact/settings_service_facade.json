@@ -106,7 +106,9 @@
       "src/main/literature/smart-collections.test.ts",
       "src/main/session-persistence/ipc.test.ts",
       "src/main/composition/reviewer.test.ts",
-      "src/main/desktop-runtime-transport.integration.test.ts"
+      "src/main/desktop-runtime-transport.integration.test.ts",
+      "src/main/desktop-runtime-backpressure.integration.test.ts",
+      "src/main/desktop-runtime-transport-diagnostics.test.ts"
     ]
   },
   "capabilityOverlays": [

@@ -679,6 +679,7 @@ describe('native desktop requests over the authenticated connection', () => {
   async function nativeSetup(
     onNativeRequest?: import('./desktop-native-contract').DesktopNativeHandler
   ) {
+    const disconnected = vi.fn()
     const { currentDesktopCaller } = await import('./desktop-native-contract')
     const server = await startDesktopRuntimeTransport({
       version: 'test',
@@ -686,6 +687,7 @@ describe('native desktop requests over the authenticated connection', () => {
       commands: {
         commandNames: () => ['projects:list'],
         invoke: async (_name, invocation) => {
+          if (invocation.args[0] === 'ping') return 'pong'
           const caller = currentDesktopCaller()!
           expect(caller.clientId).toBe(invocation.callerContext.clientId)
           return server.requestNative(
@@ -701,9 +703,9 @@ describe('native desktop requests over the authenticated connection', () => {
       endpoint: server.endpoint,
       onNativeRequest,
       onEvent: () => {},
-      onDisconnect: () => {}
+      onDisconnect: disconnected
     })
-    return { server, client, document: randomUUID() }
+    return { server, client, document: randomUUID(), disconnected }
   }
 
   it('round-trips native selections through the original command and caller lease', async () => {
@@ -755,6 +757,7 @@ describe('native desktop requests over the authenticated connection', () => {
       let signal: AbortSignal | undefined
       let finish!: (value: unknown) => void
       const value = await nativeSetup(async (_request, callerSignal) => {
+        if (signal) return { canceled: true }
         signal = callerSignal
         return new Promise((resolve) => {
           finish = resolve
@@ -771,15 +774,62 @@ describe('native desktop requests over the authenticated connection', () => {
       finish({ canceled: true })
       if (reason === 'release') {
         // A cancelled operation's late return must not corrupt the next document/command.
-        await vi.waitFor(() => expect(value.client.commandNames()).toContain('projects:list'))
+        await expect(value.client.invoke(randomUUID(), 'projects:list', ['ping'])).resolves.toBe(
+          'pong'
+        )
+        await expect(value.client.invoke(randomUUID(), 'projects:list', [])).resolves.toEqual({
+          canceled: true
+        })
+        expect(value.disconnected).not.toHaveBeenCalled()
         value.client.close()
       }
     }
   )
 
+  it('reclaims cancelled native requests even when their handlers never settle', async () => {
+    let nextStarted!: (signal: AbortSignal) => void
+    let completeNative = false
+    const value = await nativeSetup(async (_request, signal) => {
+      if (completeNative) return { canceled: true }
+      nextStarted(signal)
+      return new Promise(() => {})
+    })
+    try {
+      for (let index = 0; index < 33; index++) {
+        const started = new Promise<AbortSignal>((resolve) => {
+          nextStarted = resolve
+        })
+        const document = randomUUID()
+        const operation = value.client.invoke(document, 'projects:list', [])
+        // Race against rejection so exhausted client capacity fails promptly, not by timeout.
+        const signal = await Promise.race([
+          started,
+          operation.then(() => {
+            throw new Error('Native operation unexpectedly completed.')
+          })
+        ])
+        const rejected = expect(operation).rejects.toThrow()
+        value.client.release(document)
+        await rejected
+        await vi.waitFor(() => expect(signal.aborted).toBe(true))
+      }
+      await expect(value.client.invoke(randomUUID(), 'projects:list', ['ping'])).resolves.toBe(
+        'pong'
+      )
+      completeNative = true
+      await expect(value.client.invoke(randomUUID(), 'projects:list', [])).resolves.toEqual({
+        canceled: true
+      })
+      expect(value.disconnected).not.toHaveBeenCalled()
+    } finally {
+      value.client.close()
+    }
+  })
+
   it('times out native dialogs, cancels the client operation and retains the command connection', async () => {
     let signal: AbortSignal | undefined
     const value = await nativeSetup(async (_request, callerSignal) => {
+      if (signal) return { canceled: true }
       signal = callerSignal
       return new Promise(() => {})
     })
@@ -792,7 +842,13 @@ describe('native desktop requests over the authenticated connection', () => {
       await vi.advanceTimersByTimeAsync(300_000)
       await pending
       while (!signal.aborted) await new Promise((resolve) => setImmediate(resolve))
-      expect(value.client.commandNames()).toEqual(['projects:list'])
+      await expect(value.client.invoke(value.document, 'projects:list', ['ping'])).resolves.toBe(
+        'pong'
+      )
+      await expect(value.client.invoke(value.document, 'projects:list', [])).resolves.toEqual({
+        canceled: true
+      })
+      expect(value.disconnected).not.toHaveBeenCalled()
     } finally {
       vi.useRealTimers()
       value.client.close()

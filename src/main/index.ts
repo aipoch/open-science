@@ -1,3 +1,4 @@
+import { deliverDesktopEvent } from './desktop-event-delivery'
 import {
   app,
   BrowserWindow,
@@ -365,8 +366,7 @@ async function startDesktop(): Promise<void> {
   const i18n = createNativeI18n('en')
   const translate = i18n.t.bind(i18n)
   const broadcast = (channel: string, payload: unknown): void => {
-    for (const window of BrowserWindow.getAllWindows())
-      if (!window.isDestroyed() && isMainWindow(window)) window.webContents.send(channel, payload)
+    deliverDesktopEvent(BrowserWindow.getAllWindows(), isMainWindow, channel, payload)
   }
   startupDiagnostics?.phase('notification-projection')
   const visibility = registerUnreadTaskIpc({
