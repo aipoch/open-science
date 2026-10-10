@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { zipSync, gzipSync } from 'fflate'
@@ -720,3 +721,5 @@ it.each(['message', 'file'] as const)(
     }
   }
 )
+
+await configureTestElectronHost(await import('electron'))

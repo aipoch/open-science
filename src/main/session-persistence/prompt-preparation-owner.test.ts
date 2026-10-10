@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -718,3 +719,5 @@ describe('Main prompt preparation rollback authority', () => {
     )
   })
 })
+
+await configureTestElectronHost(await import('electron'))

@@ -1,3 +1,23 @@
+import type { CompletionHandoffCommandOwner } from './agents/completion-handoff-ipc'
+import type {
+  CompletionHandoffCommand,
+  CompletionHandoffLifecycleEvent
+} from '../shared/specialist'
+import type { LocalePreferenceOwner } from './locale/owner'
+import type {
+  InitializeLocalePreferenceRequest,
+  SetLocalePreferenceRequest,
+  LocalePreferenceSnapshot
+} from '../shared/locale'
+import type { NetworkCommandOwner } from './network-ipc'
+import type { NetworkInfo } from '../shared/network'
+import type { BackgroundResultActivityOwner } from './background-result-delivery/ipc'
+import type {
+  BackgroundResultDeliveryProjectRequest,
+  BackgroundResultDeliverySessionRequest,
+  ProjectBackgroundActivity,
+  SessionBackgroundResultActivity
+} from '../shared/background-result-delivery'
 import { pdfStructureCommandContracts } from '../shared/pdf-structure'
 import type {
   ParsePdfStructureRequest,
@@ -24,6 +44,8 @@ import type {
 } from '../shared/local-fs'
 import type { LogFileStatus, OpenLogFileResult, RevealLogFileResult } from '../shared/logs'
 import type {
+  NotificationDesktopAvailability,
+  NotificationTestResult,
   NotificationInboxSnapshot,
   NotificationMarkAllReadRequest,
   NotificationMarkReadRequest,
@@ -166,6 +188,16 @@ const logsCommands = Object.freeze({
 })
 
 const notificationCommands = Object.freeze({
+  getDesktopAvailability: defineApplicationCommand<
+    'notifications:get-desktop-availability',
+    readonly [],
+    NotificationDesktopAvailability
+  >('notifications:get-desktop-availability'),
+  sendTest: defineApplicationCommand<
+    'notifications:send-test',
+    readonly [],
+    NotificationTestResult
+  >('notifications:send-test'),
   getSnapshot: defineApplicationCommand<
     'notifications:get-snapshot',
     readonly [],
@@ -403,7 +435,63 @@ const localModelCommands = Object.freeze({
   >('local-models:remove')
 })
 
+const backgroundResultCommands = Object.freeze({
+  sessionActivity: defineApplicationCommand<
+    'background-result-delivery:session-activity',
+    readonly [BackgroundResultDeliverySessionRequest],
+    SessionBackgroundResultActivity
+  >('background-result-delivery:session-activity'),
+  projectActivity: defineApplicationCommand<
+    'background-result-delivery:project-activity',
+    readonly [BackgroundResultDeliveryProjectRequest],
+    ProjectBackgroundActivity
+  >('background-result-delivery:project-activity')
+})
+
+const networkCommands = Object.freeze({
+  getInfo: defineApplicationCommand<'network:get-info', readonly [], NetworkInfo>(
+    'network:get-info'
+  ),
+  checkConnectivity: defineApplicationCommand<'network:check-connectivity', readonly [], boolean>(
+    'network:check-connectivity'
+  )
+})
+
+const localeCommands = Object.freeze({
+  initialize: defineApplicationCommand<
+    'locale:initialize',
+    readonly [InitializeLocalePreferenceRequest],
+    LocalePreferenceSnapshot
+  >('locale:initialize'),
+  setPreference: defineApplicationCommand<
+    'locale:set-preference',
+    readonly [SetLocalePreferenceRequest],
+    LocalePreferenceSnapshot
+  >('locale:set-preference')
+})
+
+const completionHandoffCommands = Object.freeze({
+  getEvents: defineApplicationCommand<
+    'specialist:get-handoff-events',
+    readonly [string],
+    CompletionHandoffLifecycleEvent[]
+  >('specialist:get-handoff-events'),
+  retry: defineApplicationCommand<
+    'specialist:retry-handoff',
+    readonly [CompletionHandoffCommand],
+    unknown
+  >('specialist:retry-handoff'),
+  cancel: defineApplicationCommand<
+    'specialist:cancel-handoff',
+    readonly [CompletionHandoffCommand],
+    void
+  >('specialist:cancel-handoff')
+})
 const hostApplicationCommands = Object.freeze({
+  completionHandoff: completionHandoffCommands,
+  locale: localeCommands,
+  network: networkCommands,
+  backgroundResults: backgroundResultCommands,
   localModels: localModelCommands,
   pdfStructure: pdfStructureCommands,
   cli: cliCommands,
@@ -428,10 +516,21 @@ const hostApplicationCommandGroups = Object.freeze([
   defineApplicationCommandGroup('storage', Object.values(storageCommands)),
   defineApplicationCommandGroup('update', Object.values(updateCommands)),
   defineApplicationCommandGroup('local-models', Object.values(localModelCommands)),
-  defineApplicationCommandGroup('pdf-structure', Object.values(pdfStructureCommands))
+  defineApplicationCommandGroup('pdf-structure', Object.values(pdfStructureCommands)),
+  defineApplicationCommandGroup(
+    'background-result-delivery',
+    Object.values(backgroundResultCommands)
+  ),
+  defineApplicationCommandGroup('network', Object.values(networkCommands)),
+  defineApplicationCommandGroup('locale', Object.values(localeCommands)),
+  defineApplicationCommandGroup('completion-handoff', Object.values(completionHandoffCommands))
 ] as const)
 
 type HostApplicationCommandDependencies = Readonly<{
+  completionHandoff: CompletionHandoffCommandOwner
+  locale: Pick<LocalePreferenceOwner, 'initialize' | 'setPreference'>
+  network: NetworkCommandOwner
+  backgroundResults: BackgroundResultActivityOwner
   pdfStructure: Pick<
     PdfStructureReader,
     'parse' | 'cancel' | 'readThumbnail' | 'clearCache' | 'readCached'
@@ -454,6 +553,9 @@ type HostApplicationCommandDependencies = Readonly<{
   >
   logs: LogsCommandOwner
   notifications: Readonly<{
+    getDesktopAvailability():
+      NotificationDesktopAvailability | Promise<NotificationDesktopAvailability>
+    sendTest(): Promise<NotificationTestResult>
     getSnapshot: () => Promise<NotificationInboxSnapshot>
     markAllRead: (request: NotificationMarkAllReadRequest) => Promise<void>
     markRead: (request: NotificationMarkReadRequest) => Promise<void>
@@ -593,6 +695,14 @@ const registerHostApplicationCommands = (
         )
     })
     scope.registerGroup(hostApplicationCommandGroups[4], {
+      'notifications:get-desktop-availability': ({ callerContext }) => {
+        requireDesktopCaller(callerContext)
+        return dependencies.notifications.getDesktopAvailability()
+      },
+      'notifications:send-test': ({ callerContext }) => {
+        requireDesktopCaller(callerContext)
+        return dependencies.notifications.sendTest()
+      },
       'notifications:get-snapshot': () => dependencies.notifications.getSnapshot(),
       'notifications:mark-all-read': ({ args }) =>
         dependencies.notifications.markAllRead(requireNotificationMarkAllReadRequest(args[0])),
@@ -776,6 +886,46 @@ const registerHostApplicationCommands = (
         localCommand(callerContext, 'pdf-structure:clear-cache', () =>
           dependencies.pdfStructure.clearCache(callerContext, callerLease)
         )
+    })
+    scope.registerGroup(hostApplicationCommandGroups[11], {
+      'background-result-delivery:session-activity': ({ args }) =>
+        dependencies.backgroundResults.sessionActivity(args[0]),
+      'background-result-delivery:project-activity': ({ args }) =>
+        dependencies.backgroundResults.projectActivity(args[0])
+    })
+    scope.registerGroup(hostApplicationCommandGroups[13], {
+      'locale:initialize': ({ args, callerContext }) => {
+        requireDesktopCaller(callerContext)
+        return dependencies.locale.initialize(args[0]?.cachedPreference)
+      },
+      'locale:set-preference': ({ args, callerContext }) => {
+        requireDesktopCaller(callerContext)
+        return dependencies.locale.setPreference(args[0]?.preference)
+      }
+    })
+    scope.registerGroup(hostApplicationCommandGroups[12], {
+      'network:get-info': ({ callerContext }) => {
+        requireDesktopCaller(callerContext)
+        return dependencies.network.getInfo()
+      },
+      'network:check-connectivity': ({ callerContext }) => {
+        requireDesktopCaller(callerContext)
+        return dependencies.network.checkConnectivity()
+      }
+    })
+    scope.registerGroup(hostApplicationCommandGroups[14], {
+      'specialist:get-handoff-events': ({ callerContext, args }) => {
+        requireDesktopCaller(callerContext)
+        return dependencies.completionHandoff.getEvents(args[0])
+      },
+      'specialist:retry-handoff': ({ callerContext, args }) => {
+        requireDesktopCaller(callerContext)
+        return dependencies.completionHandoff.retry(args[0])
+      },
+      'specialist:cancel-handoff': ({ callerContext, args }) => {
+        requireDesktopCaller(callerContext)
+        return dependencies.completionHandoff.cancel(args[0])
+      }
     })
     return scope.complete()
   } catch (error) {

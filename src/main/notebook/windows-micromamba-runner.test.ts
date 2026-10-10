@@ -497,3 +497,7 @@ it.each(['OPEN_SCIENCE_E2E_STORAGE_ROOT', 'OPEN_SCIENCE_CONFIG_ROOT', 'OPEN_SCIE
     ).toThrow(`${key} must be an absolute path.`)
   }
 )
+
+vi.mock('../runtime-metadata', () => ({
+  runtimeMetadata: () => ({ packaged: false, resourcesPath: '', homePath: '' })
+}))

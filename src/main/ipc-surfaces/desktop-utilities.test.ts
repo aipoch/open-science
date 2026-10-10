@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { EventEmitter } from 'node:events'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -26,6 +27,20 @@ vi.mock('electron', async () => {
     BrowserWindow: { fromWebContents: () => native.window },
     app: { getPath: () => native.directory },
     dialog: { showSaveDialog: native.saveDialog }
+  }
+})
+
+import { configureDesktopFileInteraction } from '../desktop-interaction'
+configureDesktopFileInteraction({
+  chooseSavePath: (options) => native.saveDialog(options),
+  chooseFiles: async () => {
+    throw new Error('Unexpected open dialog')
+  },
+  confirm: async () => {
+    throw new Error('Unexpected confirmation')
+  },
+  printConversationPdf: async () => {
+    throw new Error('Unexpected PDF')
   }
 })
 
@@ -296,3 +311,5 @@ describe('desktop utilities Electron production surface', () => {
     expect(eventChannels.slice(1).map((name) => ipcMain.listenerCount(name))).toEqual([0, 0])
   })
 })
+
+await configureTestElectronHost(await import('electron'))

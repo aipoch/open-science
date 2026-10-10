@@ -49,7 +49,6 @@ describe('NotificationInboxDbRepository', () => {
   it('N01: exposes an unread failure behind 50 read outcomes through the default controller snapshot', async () => {
     const repository = await createRepository()
     const inbox = createNotificationInboxController({
-      headless: false,
       repository,
       onChanged: vi.fn()
     })
@@ -121,7 +120,6 @@ describe('NotificationInboxDbRepository', () => {
     await client!.$disconnect()
     client = createProjectDbClient(storageRoot!)
     const restored = createNotificationInboxController({
-      headless: true,
       repository: new NotificationInboxDbRepository(() => Promise.resolve(client!)),
       onChanged: vi.fn(),
       now: () => 3000

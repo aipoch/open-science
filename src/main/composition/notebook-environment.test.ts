@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -22,6 +23,9 @@ vi.mock('../notebook/provisioner', async (importOriginal) => ({
   createProductionProvisioner: mocks.createProvisioner
 }))
 vi.mock('../notebook/mirror-probe', () => ({ effectiveMirrorAsync: mocks.mirror }))
+vi.mock('../desktop-surface-declarations', () => ({
+  registerNotebookEnvIpcHandlers: mocks.register
+}))
 vi.mock('../notebook/env-ipc', () => ({
   registerNotebookEnvIpcHandlers: mocks.register,
   broadcastNotebookEnvProgress: mocks.progress
@@ -178,3 +182,5 @@ describe('Notebook environment composition', () => {
     })
   })
 })
+
+configureTestRuntimeMetadata()

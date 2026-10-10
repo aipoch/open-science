@@ -83,3 +83,7 @@ describe('registerUpdateIpcHandlers', () => {
     expect(strategy.apply).toHaveBeenCalledTimes(1)
   })
 })
+
+await (
+  await import('../../../test/runtime-host')
+).configureTestElectronHost(await import('electron'))

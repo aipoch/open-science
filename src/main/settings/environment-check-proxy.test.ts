@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { netFetch } = vi.hoisted(() => ({ netFetch: vi.fn() }))
@@ -29,3 +30,5 @@ describe('proxy-aware registry reachability', () => {
     )
   })
 })
+
+await configureTestElectronHost(await import('electron'))

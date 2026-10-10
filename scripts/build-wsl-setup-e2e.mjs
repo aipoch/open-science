@@ -2,12 +2,19 @@
 // This output is for the Windows setup conversation test, not for packaging or distribution.
 import { resolveConfig } from 'electron-vite'
 import { build } from 'vite'
+import { execFileSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 
 if (process.platform !== 'win32') {
   throw new Error('The WSL setup conversation development build requires Windows.')
 }
 
 process.env.OPEN_SCIENCE_DEV_WSL2_BASH_PREVIEW = '1'
+execFileSync(
+  process.execPath,
+  [fileURLToPath(new URL('./build-backend.mjs', import.meta.url)), '--development'],
+  { stdio: 'inherit' }
+)
 const development = await resolveConfig({}, 'serve', 'development')
 const production = await resolveConfig({}, 'build', 'production')
 if (!development.config?.main || !development.config.preload || !production.config?.renderer) {

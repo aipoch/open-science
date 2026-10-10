@@ -153,6 +153,9 @@ const setup = (
   overrides: Partial<
     Pick<
       AppLifecycleDeps,
+      | 'refreshQuitState'
+      | 'requireCleanBackendShutdown'
+      | 'onQuitError'
       | 'shutdownBackends'
       | 'beforeExit'
       | 'prepareForQuit'
@@ -216,6 +219,9 @@ const setup = (
         trayHandlers = handlers
         return tray as unknown as import('electron').Tray | undefined
       },
+      refreshQuitState: overrides.refreshQuitState,
+      requireCleanBackendShutdown: overrides.requireCleanBackendShutdown,
+      onQuitError: overrides.onQuitError,
       shutdownBackends,
       prepareForQuit,
       holdSettingsInstallAdmission:
@@ -1826,4 +1832,71 @@ describe('installAppLifecycle', () => {
     await expect(resolveCloseActionPromise).resolves.toBe('minimize')
     await flush()
   })
+})
+
+// A desktop client cannot treat remote preparation errors as a successful local best-effort quit.
+it.each(['timeout', 'failed', 'degraded'] as const)(
+  'keeps the remote backend connected after %s preparation and allows a clean retry',
+  async (outcome) => {
+    const onQuitError = vi.fn()
+    const prepareForQuit = vi
+      .fn<() => Promise<ShutdownStepOutcome>>()
+      .mockResolvedValueOnce(outcome)
+      .mockResolvedValueOnce('completed')
+    const h = setup({ requireCleanBackendShutdown: true, onQuitError, prepareForQuit })
+    h.closeOpts[0].requestQuit(true)
+    h.app.emit('before-quit')
+    await vi.waitFor(() => expect(onQuitError).toHaveBeenCalledOnce())
+    expect(h.abortQuitPreparation).toHaveBeenCalledOnce()
+    expect(h.shutdownBackends).not.toHaveBeenCalled()
+    expect(h.app.exit).not.toHaveBeenCalled()
+    // Only preflight ran: no final flush may depend on a disconnected backend.
+    expect(h.flushSessionPersistence).toHaveBeenCalledTimes(1)
+
+    h.closeOpts[0].requestQuit(true)
+    h.app.emit('before-quit')
+    await vi.waitFor(() => expect(h.app.exit).toHaveBeenCalledOnce())
+    expect(h.shutdownBackends).toHaveBeenCalledOnce()
+    expect(h.flushSessionPersistence).toHaveBeenCalledTimes(3)
+  }
+)
+
+it.each(['prepare', 'shutdown'] as const)(
+  'retains the desktop and rolls back admission after remote %s failure',
+  async (kind) => {
+    const error = new Error('remote runtime still owns work'),
+      onQuitError = vi.fn()
+    const failure = vi.fn(async () => {
+      throw error
+    })
+    const h = setup({
+      requireCleanBackendShutdown: true,
+      onQuitError,
+      ...(kind === 'prepare' ? { prepareForQuit: failure } : { shutdownBackends: failure })
+    })
+    h.closeOpts[0].requestQuit(true)
+    h.app.emit('before-quit')
+    await vi.waitFor(() => expect(onQuitError).toHaveBeenCalledWith(error))
+    expect(h.abortQuitPreparation).toHaveBeenCalledOnce()
+    expect(h.app.exit).not.toHaveBeenCalled()
+    if (kind === 'prepare') expect(h.shutdownBackends).not.toHaveBeenCalled()
+  }
+)
+it('awaits authoritative work before the confirmation and refuses a failed inspection', async () => {
+  let inspect!: (changed: boolean) => void
+  const refreshQuitState = vi.fn(
+    () =>
+      new Promise<boolean>((resolve) => {
+        inspect = resolve
+      })
+  )
+  const h = setup({ refreshQuitState })
+  const event = h.app.emit('before-quit')
+  expect(event.defaultPrevented).toBe(true)
+  expect(h.confirmClose).not.toHaveBeenCalled()
+  expect(h.prepareForQuit).not.toHaveBeenCalled()
+  inspect(true)
+  await vi.waitFor(() => expect(h.quit).toHaveBeenCalledOnce())
+  h.app.emit('before-quit')
+  await vi.waitFor(() => expect(h.confirmClose).toHaveBeenCalledOnce())
 })

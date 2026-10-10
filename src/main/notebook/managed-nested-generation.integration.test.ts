@@ -412,3 +412,6 @@ describe.skipIf(!enabled)('managed child generations through real REPL and sandb
     expectOwnGeneration(result, result.outer, outerRelativePath)
   })
 })
+
+const { configureTestElectronHost } = await import('../../../test/runtime-host')
+await configureTestElectronHost(await import('electron'))

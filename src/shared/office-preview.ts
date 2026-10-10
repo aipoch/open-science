@@ -187,6 +187,24 @@ const OFFICE_PREVIEW_EXTENSIONS = new Set<OfficePreviewRequestedExtension>([
 const isNonEmptyString = (value: unknown): value is string =>
   typeof value === 'string' && value.length > 0
 
+export const isOfficePreviewOpenRequest = (value: unknown): value is OfficePreviewOpenRequest => {
+  if (typeof value !== 'object' || value === null) return false
+  const request = value as Record<string, unknown>
+  return (
+    isNonEmptyString(request.requestId) &&
+    isNonEmptyString(request.name) &&
+    OFFICE_PREVIEW_EXTENSIONS.has(request.extension as OfficePreviewRequestedExtension) &&
+    Number.isSafeInteger(request.attempt) &&
+    (request.attempt as number) >= 0 &&
+    (request.source === 'notebook-input'
+      ? isNonEmptyString(request.path)
+      : (request.source === 'artifact' || request.source === 'upload') &&
+        isNonEmptyString(request.projectId) &&
+        isNonEmptyString(request.fileId) &&
+        (request.versionId === undefined || isNonEmptyString(request.versionId)))
+  )
+}
+
 export const isOfficePreviewRuntimeState = (value: unknown): value is OfficePreviewRuntimeState => {
   if (typeof value !== 'object' || value === null) return false
 

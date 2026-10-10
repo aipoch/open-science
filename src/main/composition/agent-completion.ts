@@ -1,4 +1,4 @@
-import { app } from 'electron'
+import { runtimeMetadata } from '../runtime-metadata'
 import { join } from 'node:path'
 import type { AcpSessionAgentTarget } from '../../shared/acp'
 import { SPECIALIST_IPC } from '../../shared/specialist'
@@ -13,6 +13,7 @@ import { type SessionAgentTargetResolver } from '../acp/session-agent-target'
 import { createAcpTaskAgentPort } from '../acp/task-agent-port'
 import { createProductionAppHandoffRuntime } from '../agents/app-handoff-runtime'
 import { createClaudeCodeCompletionGateRuntime } from '../agents/claude-code-handoff'
+import { withApprovedSpecialistBinding } from '../agents/production-completion-handoff'
 import {
   CompletionGateCoordinator,
   CompletionGateRuntimeRegistry,
@@ -50,10 +51,12 @@ import type { TaskAgentPort } from '../tasks/task-runner'
 export async function composeAgentCompletion({
   notebookService,
   specialistService,
+  declareElectronAdapter,
   modules
 }: {
   notebookService: NotebookRuntimeService
   specialistService: SpecialistService
+  declareElectronAdapter: (name: string, install: () => void) => void
   modules: ApplicationModuleBuilder
 }): Promise<{
   completionGateRuntimeRegistry: CompletionGateRuntimeRegistry
@@ -74,7 +77,9 @@ export async function composeAgentCompletion({
       return { specialistId: profile.id, revision: profile.revision }
     }
   )
-  registerCompletionHandoffIpcHandlers(completionHandoffLifecycle)
+  declareElectronAdapter('completion-handoff', () =>
+    registerCompletionHandoffIpcHandlers(completionHandoffLifecycle)
+  )
   const completionGateCoordinator = new CompletionGateCoordinator(
     completionGateRuntimeRegistry,
     completionHandoffLifecycle
@@ -170,7 +175,7 @@ export async function composeAgentWorkflows({
   const codeReconstructionLog = createLogger('artifacts:code-reconstruction')
   const codeReconstructionRunner = await modules.add(
     {
-      appVersion: app.getVersion(),
+      appVersion: runtimeMetadata().version,
       configRoot,
       captureTarget: () => settingsService.captureActiveExplicitAgentBackendTarget(),
       resolveTarget: (target, context) =>
@@ -234,10 +239,18 @@ export async function composeAgentWorkflows({
     resolveSessionAgentTarget,
     resolveDefaultSessionAgentTarget
   )
+  const registerHandoff = (adapter: Parameters<typeof withApprovedHandoffOutcome>[1]): void => {
+    completionGateRuntimeRegistry.register(
+      withApprovedHandoffOutcome(
+        runtime,
+        withApprovedSpecialistBinding(adapter, {
+          getSpecialistBinding: (sessionId) => sessionBindingService.getBinding(sessionId),
+          getSpecialist: (specialistId) => specialistService.resolveRunnableById(specialistId)
+        })
+      )
+    )
+  }
   {
-    const registerHandoff = (adapter: Parameters<typeof withApprovedHandoffOutcome>[1]): void => {
-      completionGateRuntimeRegistry.register(withApprovedHandoffOutcome(runtime, adapter))
-    }
     // Framework-specific adapters declare their own session selector. The registry resolves those
     // selectors before its generic fallback, so registration order cannot route a Codex/OpenCode
     // completion through the wrong continuation path.
@@ -297,47 +310,43 @@ export async function composeAgentWorkflows({
   }
   // Claude's Specialist identity is baked into agent session creation. Its selector joins the Codex
   // and OpenCode selectors above; the generic runtime remains fallback-only.
-  completionGateRuntimeRegistry.register(
-    withApprovedHandoffOutcome(
-      runtime,
-      createClaudeCodeCompletionGateRuntime({
-        sessionFramework: (sessionId) => runtime.getSessionFramework(sessionId),
-        cancelPrompt: async (request) => {
-          await runtime.stopPromptForHandoff(request.sessionId)
-          return runtime.getState()
-        },
-        waitForPromptOwnershipRelease: (sessionId) =>
-          runtime.waitForPromptOwnershipRelease(sessionId),
-        resolveSpecialistId: (sessionId) => sessionBindingService.getBinding(sessionId),
-        resolveSwitchReadBack: async (sessionId, targetName) => {
-          const specialistId = sessionBindingService.getBinding(sessionId)
-          const revision = specialistId
-            ? (await specialistService.resolveRunnableById(specialistId)).revision
-            : undefined
-          return {
-            status: 'approved',
-            operation: 'switch',
-            binding: {
-              sessionId,
-              specialistId,
-              targetName,
-              ...(revision === undefined ? {} : { revision })
-            }
+  registerHandoff(
+    createClaudeCodeCompletionGateRuntime({
+      sessionFramework: (sessionId) => runtime.getSessionFramework(sessionId),
+      cancelPrompt: async (request) => {
+        await runtime.stopPromptForHandoff(request.sessionId)
+        return runtime.getState()
+      },
+      waitForPromptOwnershipRelease: (sessionId) =>
+        runtime.waitForPromptOwnershipRelease(sessionId),
+      resolveSpecialistId: (sessionId) => sessionBindingService.getBinding(sessionId),
+      resolveSwitchReadBack: async (sessionId, targetName) => {
+        const specialistId = sessionBindingService.getBinding(sessionId)
+        const revision = specialistId
+          ? (await specialistService.resolveRunnableById(specialistId)).revision
+          : undefined
+        return {
+          status: 'approved',
+          operation: 'switch',
+          binding: {
+            sessionId,
+            specialistId,
+            targetName,
+            ...(revision === undefined ? {} : { revision })
           }
-        },
-        prepareReplayContext: createPersistedClaudeReplayPreparer({
-          repository: sessionRepository,
-          coordinator: sessionPersistenceCoordinator,
-          prepareReplay: (input) => runtime.prepareClaudeCodeHandoffReplay(input)
-        }),
-        discardReplayContext: async (sessionId) =>
-          runtime.discardClaudeCodeHandoffReplay(sessionId),
-        switchSpecialist: (sessionId, specialistId) =>
-          sessionSpecialistReconfiguration.applyPersisted(sessionId, specialistId),
-        createContinuationRequest: (input) => runtime.createClaudeCodeContinuationRequest(input),
-        sendAppContinuation: (request) => runtime.sendAppContinuation(request)
-      })
-    )
+        }
+      },
+      prepareReplayContext: createPersistedClaudeReplayPreparer({
+        repository: sessionRepository,
+        coordinator: sessionPersistenceCoordinator,
+        prepareReplay: (input) => runtime.prepareClaudeCodeHandoffReplay(input)
+      }),
+      discardReplayContext: async (sessionId) => runtime.discardClaudeCodeHandoffReplay(sessionId),
+      switchSpecialist: (sessionId, specialistId) =>
+        sessionSpecialistReconfiguration.applyPersisted(sessionId, specialistId),
+      createContinuationRequest: (input) => runtime.createClaudeCodeContinuationRequest(input),
+      sendAppContinuation: (request) => runtime.sendAppContinuation(request)
+    })
   )
   void completionHandoffLifecycle.recover().catch((error: unknown) => {
     createLogger('completion-handoff').error(

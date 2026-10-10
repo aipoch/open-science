@@ -307,7 +307,12 @@ const composeAcpRuntimePromptOwners = (
         : {}),
       emitSkillActivities,
       onSkillImportAttachmentEligible: callbacks.onSkillImportAttachmentEligible,
-      onProviderPromptAccepted: callbacks.onProviderPromptAccepted,
+      onProviderPromptAccepted: (sessionId, promptAttemptId) => {
+        // session/new alone may not create a resumable Claude transcript. Keep approved replay
+        // through pre-prompt Skill reconnects, then retire it once the provider accepts a prompt.
+        base.handoffContinuity.commitClaudeReplay(sessionId)
+        callbacks.onProviderPromptAccepted?.(sessionId, promptAttemptId)
+      },
       ...(options.runtimeSessions
         ? {
             onRuntimeSessionProviderAccepted: async (

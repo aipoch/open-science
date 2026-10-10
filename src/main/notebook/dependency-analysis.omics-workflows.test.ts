@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -329,3 +330,5 @@ result = custom.read_sav("inputs/cohort.sav")`
     )
   ).toMatchObject({ reads: [], externalState: 'partial' })
 })
+
+configureTestRuntimeMetadata()

@@ -1,3 +1,4 @@
+import { requireDesktopCaller } from '../caller-context'
 import type { PrivateDestinationRequest } from '../../shared/notebook-network'
 import type {
   AppIconPreview,
@@ -95,6 +96,9 @@ type CoreSettingsCommandStore = Pick<
   | 'getPreflight'
   | 'getSettingsView'
   | 'getSkillDetail'
+  | 'resolveSkillDocument'
+  | 'listAgentHomeSkills'
+  | 'previewCustomServerTemplateExport'
   | 'installClaude'
   | 'installCodeBuddy'
   | 'installCodex'
@@ -153,6 +157,22 @@ type SwitchToPowerShellResult = Awaited<
 type UseWsl2BashResult = Awaited<ReturnType<LocalShellSettingsWorkflows['useWsl2Bash']>>
 
 const settingsCoreApplicationCommands = Object.freeze({
+  resolveSkillDocument: defineApplicationCommand<
+    'settings:resolve-skill-document',
+    Readonly<Parameters<CoreSettingsCommandStore['resolveSkillDocument']>>,
+    StoreResult<'resolveSkillDocument'>
+  >('settings:resolve-skill-document'),
+  listAgentHomeSkills: defineApplicationCommand<
+    'settings:list-agent-home-skills',
+    Readonly<Parameters<CoreSettingsCommandStore['listAgentHomeSkills']>>,
+    StoreResult<'listAgentHomeSkills'>
+  >('settings:list-agent-home-skills'),
+  previewCustomServerTemplateExport: defineApplicationCommand<
+    'settings:preview-custom-server-template-export',
+    Readonly<Parameters<CoreSettingsCommandStore['previewCustomServerTemplateExport']>>,
+    StoreResult<'previewCustomServerTemplateExport'>
+  >('settings:preview-custom-server-template-export'),
+
   getSkillMarketplaceBatch: defineApplicationCommand<
     'settings:get-skill-marketplace-batch',
     readonly [],
@@ -521,6 +541,10 @@ const settingsCoreApplicationCommandGroup = defineApplicationCommandGroup('setti
   settingsCoreApplicationCommands.getWslSetupStatus,
   settingsCoreApplicationCommands.getPreflight,
   settingsCoreApplicationCommands.getSettings,
+  settingsCoreApplicationCommands.resolveSkillDocument,
+  settingsCoreApplicationCommands.listAgentHomeSkills,
+  settingsCoreApplicationCommands.previewCustomServerTemplateExport,
+
   settingsCoreApplicationCommands.getSkillDetail,
   settingsCoreApplicationCommands.installClaude,
   settingsCoreApplicationCommands.installCodeBuddy,
@@ -598,6 +622,19 @@ const registerCoreSettingsApplicationCommands = (
 
   try {
     scope.registerGroup(settingsCoreApplicationCommandGroup, {
+      'settings:resolve-skill-document': ({ args, callerContext }) => {
+        requireDesktopCaller(callerContext)
+        return dependencies.service.resolveSkillDocument(args[0])
+      },
+      'settings:list-agent-home-skills': ({ callerContext }) => {
+        requireDesktopCaller(callerContext)
+        return dependencies.service.listAgentHomeSkills()
+      },
+      'settings:preview-custom-server-template-export': ({ args, callerContext }) => {
+        requireDesktopCaller(callerContext)
+        return dependencies.service.previewCustomServerTemplateExport(args[0])
+      },
+
       'settings:cancel-claude-login': ({ callerContext }) => {
         requireLocalCaller(callerContext, 'settings:cancel-claude-login')
         return dependencies.service.cancelClaudeLogin()

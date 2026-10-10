@@ -1,9 +1,18 @@
+import {
+  createOfficePreviewCommands,
+  type OfficePreviewCommands
+} from '../office-preview/application-commands'
+import type { ApplicationModuleBuilder } from '../application-runtime'
+import {
+  createOfficePreviewElectronSurfaces,
+  installManagedPreviewElectronAdapter,
+  registerRuntimeIpcHandlers
+} from '../desktop-surface-declarations'
 import { join } from 'node:path'
 import { type DiagnosticOperation } from '../diagnostics/operation'
-import { createOfficePreviewElectronSurfaces } from '../ipc-surfaces/office-preview'
-import { installManagedPreviewElectronAdapter } from '../managed-preview-ipc'
+
 import { getRuntimeRoot } from '../notebook/repository'
-import { registerRuntimeIpcHandlers } from '../notebook/runtime-ipc'
+
 import { createRuntimeWorkflows } from '../notebook/runtime-workflows'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import { resolveDataRoot } from '../storage-root'
@@ -14,6 +23,8 @@ import type { composeNotebookRuntime } from './notebook-runtime'
 import type { composeSettingsBootstrap } from './settings-bootstrap'
 
 export async function composeNotebookSurfaces({
+  modules,
+  reportOfficePreviewState,
   surfaceAdapters,
   declareElectronAdapter,
   settingsBootstrap,
@@ -23,15 +34,21 @@ export async function composeNotebookSurfaces({
   managedPreviewProtocol,
   composition
 }: {
+  modules: ApplicationModuleBuilder
+  reportOfficePreviewState?: (
+    clientId: string,
+    state: import('../../shared/office-preview').OfficePreviewRuntimeState
+  ) => void
   surfaceAdapters: import('../runtime-electron-wiring').NamedElectronSurfaceAdapter[]
   declareElectronAdapter: (name: string, install: () => void | (() => void)) => void
   settingsBootstrap: Awaited<ReturnType<typeof composeSettingsBootstrap>>
   backgroundResults: Awaited<ReturnType<typeof composeBackgroundResults>>
   managedFiles: ReturnType<typeof composeManagedFiles>
   notebookRuntime: Awaited<ReturnType<typeof composeNotebookRuntime>>
-  managedPreviewProtocol: import('../managed-preview-protocol').PreviewProtocolRegistrar
+  managedPreviewProtocol?: import('../managed-preview-protocol').PreviewProtocolRegistrar
   composition: DiagnosticOperation
 }): Promise<{
+  officePreviewCommands: OfficePreviewCommands
   runtimeWorkflows: ReturnType<typeof createRuntimeWorkflows>
   notebookEnvironmentLifecycle: Awaited<ReturnType<typeof registerNotebookEnvironmentComposition>>
 }> {
@@ -68,8 +85,17 @@ export async function composeNotebookSurfaces({
       managedFiles.managedPreviewOwners
     )
   )
+  const officePreviewCommands = await modules.add({}, () => {
+    const commands = createOfficePreviewCommands(
+      managedFiles.previewResources,
+      managedFiles.managedPreviewOwners,
+      (clientId, state) => reportOfficePreviewState?.(clientId, state)
+    )
+    return { name: 'office-preview', capability: commands, dispose: () => commands.dispose() }
+  })
   surfaceAdapters.push(
     ...createOfficePreviewElectronSurfaces({
+      commands: officePreviewCommands,
       previewResources: managedFiles.previewResources,
       runtimeHtmlPath: join(__dirname, '../renderer/office-preview.html')
     })
@@ -87,5 +113,5 @@ export async function composeNotebookSurfaces({
     declareElectronAdapter
   })
   composition.phase('notebook-provisioner')
-  return { runtimeWorkflows, notebookEnvironmentLifecycle }
+  return { officePreviewCommands, runtimeWorkflows, notebookEnvironmentLifecycle }
 }

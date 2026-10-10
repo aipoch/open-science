@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { describe, expect, it } from 'vitest'
 import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
 
@@ -191,3 +192,5 @@ describe('documented input resource forms', () => {
     })
   })
 })
+
+configureTestRuntimeMetadata()

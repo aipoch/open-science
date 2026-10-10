@@ -367,3 +367,5 @@ describe('micromambaSpawnEnv', () => {
     }
   )
 })
+
+;(await import('../../../test/runtime-metadata')).configureTestRuntimeMetadata()

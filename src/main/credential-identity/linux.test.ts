@@ -421,6 +421,25 @@ describe('Linux OS credentials through production bootstrap and access', () => {
     expect(recover).toHaveBeenCalledOnce()
   })
 
+  it('issue 3386: a transient Secret Service failure after validation does not stop the session', async () => {
+    const { selectStartupCredentialIdentity, prepareCredentialValidation } =
+      await import('./bootstrap')
+    const nativeCipher = cipher()
+    const recover = vi.fn()
+    prepareCredentialValidation(
+      selectStartupCredentialIdentity({ platform: 'linux', packaged: true }),
+      paths(true)
+    )(nativeCipher, recover)
+    // gnome-keyring drops a short-lived busctl client (GNOME/gnome-keyring#195).
+    native.run.mockReturnValue({ status: 1, signal: null, stdout: '' })
+    const { credentialCipher, assertCredentialAccessAllowed } = await import('./runtime')
+    // Each settings load asks whether credentials can be saved.
+    for (let load = 0; load < 14; load++)
+      expect(credentialCipher(nativeCipher).isEncryptionAvailable()).toBe(true)
+    expect(() => assertCredentialAccessAllowed()).not.toThrow()
+    expect(recover).not.toHaveBeenCalled()
+  })
+
   it('latches a backend-query exception before any secret or persistence operation', async () => {
     const { selectStartupCredentialIdentity, prepareCredentialValidation } =
       await import('./bootstrap')

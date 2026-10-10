@@ -85,11 +85,24 @@ it('signs the unpacked credential executables before signing the outer macOS app
   const exports: { default?: (context: unknown) => Promise<void> } = {}
   runInNewContext(readFileSync('build/adhoc-sign.cjs', 'utf8'), {
     exports,
+    Buffer,
     __dirname: '/fixture/build',
     console: { log: vi.fn() },
     require: (id: string) => {
       if (id === 'node:path') return posix
-      if (id === 'node:fs') return { existsSync: () => true }
+      if (id === 'node:fs')
+        return {
+          existsSync: () => true,
+          readdirSync: (directory: string) =>
+            directory.endsWith('/node-runtime')
+              ? [{ name: 'node', isDirectory: () => false, isFile: () => true }]
+              : directory.endsWith('/backend')
+                ? [{ name: 'native.node', isDirectory: () => false, isFile: () => true }]
+                : [],
+          openSync: (file: string) => file,
+          readSync: (_fd: string, buffer: Buffer) => Buffer.from('cffaedfe', 'hex').copy(buffer),
+          closeSync: vi.fn()
+        }
       if (id === 'node:buffer') return { Buffer }
       if (id === 'node:child_process')
         return { execFileSync: (_command: string, args: string[]) => calls.push(args) }
@@ -105,11 +118,22 @@ it('signs the unpacked credential executables before signing the outer macOS app
     app,
     'Contents/Resources/app.asar.unpacked/node_modules/@aipoch/credential-identity-probe-native/build/Release'
   )
-  for (const executable of ['credential_identity_probe', 'credential_key_validator']) {
+  for (const executable of [
+    'credential_identity_probe',
+    'credential_key_validator',
+    'credential_secret'
+  ]) {
     const position = calls.findIndex(
       (args) => args.at(-1) === posix.join(packageDirectory, executable)
     )
     expect(position, executable).toBeGreaterThanOrEqual(0)
+    expect(position).toBeLessThan(calls.findIndex((args) => args.at(-1) === app))
+  }
+  for (const relative of ['node-runtime/node', 'backend/native.node']) {
+    const position = calls.findIndex(
+      (args) => args.at(-1) === posix.join(app, 'Contents/Resources', relative)
+    )
+    expect(position, relative).toBeGreaterThanOrEqual(0)
     expect(position).toBeLessThan(calls.findIndex((args) => args.at(-1) === app))
   }
 })

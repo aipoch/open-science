@@ -1,3 +1,4 @@
+import { nodeRuntimeEnvironmentEntries } from '../node-process-host'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -143,7 +144,7 @@ describe('notebook MCP server config', () => {
       command: '/Applications/Open-Science.app/Contents/MacOS/Open-Science',
       args: ['/app/out/main/index.js', '--open-science-notebook-mcp'],
       env: [
-        { name: 'ELECTRON_RUN_AS_NODE', value: '1' },
+        ...nodeRuntimeEnvironmentEntries(),
         { name: 'OPEN_SCIENCE_NOTEBOOK_RPC_ENDPOINT', value: 'http://127.0.0.1:4567' },
         { name: 'OPEN_SCIENCE_NOTEBOOK_RPC_TOKEN', value: 'secret-token' },
         { name: 'OPEN_SCIENCE_NOTEBOOK_PROJECT_ID', value: 'default-project' },
@@ -3429,3 +3430,5 @@ describe('compactRestartResult', () => {
     expect(compactRestartResult('x')).toBe('x')
   })
 })
+
+;(await import('../../../test/runtime-metadata')).configureTestRuntimeMetadata()

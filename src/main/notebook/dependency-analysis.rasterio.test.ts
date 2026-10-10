@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { createHash } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -120,3 +121,5 @@ describe('Python rasterio dependency corpus', () => {
     expect(projection?.stalenessByRunId['run-5']).toEqual({ state: 'clear' })
   })
 })
+
+configureTestRuntimeMetadata()

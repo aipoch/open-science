@@ -1,4 +1,15 @@
-import { webContents } from 'electron'
+import {
+  createArtifactReproducibilityCommands,
+  type ArtifactReproducibilityCommands
+} from '../artifacts/artifact-reproducibility-commands'
+import { createArtifactReproducibilityDependencies } from './artifact-reproducibility'
+import type { ArtifactReproducibilityCheckState } from '../../shared/artifact-reproducibility'
+import {
+  createArtifactElectronSurface,
+  createSessionPersistenceElectronSurface,
+  createUploadElectronSurface
+} from '../desktop-surface-declarations'
+
 import type { ArtifactFile } from '../../shared/artifacts'
 import { createAcpRuntime } from '../acp/runtime-composition'
 import { ArchiveCoordinator } from '../archive/coordinator'
@@ -14,9 +25,7 @@ import { ArtifactRunRegistry } from '../artifacts/run-registry'
 import { BackgroundResultDeliveryOwner } from '../background-result-delivery/owner'
 import { createProductionDelegatedWorkComposition } from '../delegation/production-composition'
 import { ipcMainHandle } from '../ipc-handler-registry'
-import { createArtifactElectronSurface } from '../ipc-surfaces/artifacts'
-import { createSessionPersistenceElectronSurface } from '../ipc-surfaces/session-persistence'
-import { createUploadElectronSurface } from '../ipc-surfaces/uploads'
+
 import { createLogger, errorLogFields } from '../logger'
 import { ManagedFileVersionService } from '../managed-file-versions/service'
 import { NotebookInputRegistry } from '../notebook/input-registry'
@@ -36,6 +45,7 @@ import { withDataRootWrite } from '../storage/migration-state'
 import { createUploadCommandOwner } from '../uploads/command-owner'
 
 export function composeArtifactSurfaces({
+  reportReproducibilityCheck,
   surfaceAdapters,
   declareElectronAdapter,
   storageLog,
@@ -63,6 +73,8 @@ export function composeArtifactSurfaces({
   onArtifactsPublished,
   translate
 }: {
+  reportReproducibilityCheck:
+    ((clientId: string, state: ArtifactReproducibilityCheckState) => void) | undefined
   surfaceAdapters: import('../runtime-electron-wiring').NamedElectronSurfaceAdapter[]
   declareElectronAdapter: (name: string, install: () => void | (() => void)) => void
   storageLog: ReturnType<typeof createLogger>
@@ -97,6 +109,7 @@ export function composeArtifactSurfaces({
   onArtifactsPublished?: (artifacts: readonly ArtifactFile[]) => Promise<void>
   translate: import('../locale/main-process-messages').NativeTranslator
 }): {
+  reproducibilityCommands: ArtifactReproducibilityCommands
   artifactHandlers: ReturnType<typeof createArtifactHandlers>
   sessionDeletionOwner: SessionDeletionOwner
   runtimeWriter: RuntimeWriterOwner
@@ -151,8 +164,28 @@ export function composeArtifactSurfaces({
       sessionPersistenceCoordinator.retryArtifactFinalization(request)
   })
   artifactHandlersRef.current = artifactHandlers
+  const reproducibilityCommands = createArtifactReproducibilityCommands(
+    () => {
+      const owner = artifactReproducibilityAttemptOwnerRef.current
+      if (!owner) throw new Error('Artifact reproducibility lifecycle is not configured.')
+      return owner
+    },
+    createArtifactReproducibilityDependencies({
+      artifactRepository,
+      artifactRunRegistry,
+      artifactProvenanceRepository,
+      artifactHandlers,
+      artifactReproducibilityAttemptOwnerRef,
+      archiveCoordinator,
+      sessionPersistenceCoordinator,
+      notebookService,
+      translate
+    }),
+    (clientId, state) => reportReproducibilityCheck?.(clientId, state)
+  )
   surfaceAdapters.push(
     createArtifactElectronSurface({
+      reproducibilityCommands,
       artifactRepository,
       artifactRunRegistry,
       artifactProvenanceRepository,
@@ -188,11 +221,7 @@ export function composeArtifactSurfaces({
         )
     }
   })
-  const runtimeWriter = new RuntimeWriterOwner(undefined, undefined, (clientId) => {
-    if (!clientId.startsWith('electron:')) return undefined
-    const sender = webContents.fromId(Number(clientId.slice('electron:'.length)))
-    return Boolean(sender && !sender.isDestroyed() && !sender.isCrashed())
-  })
+  const runtimeWriter = new RuntimeWriterOwner()
   surfaceAdapters.push(
     createSessionPersistenceElectronSurface({
       runtimeWriter,
@@ -204,5 +233,5 @@ export function composeArtifactSurfaces({
       sessionRepository
     })
   )
-  return { artifactHandlers, sessionDeletionOwner, runtimeWriter }
+  return { artifactHandlers, sessionDeletionOwner, runtimeWriter, reproducibilityCommands }
 }

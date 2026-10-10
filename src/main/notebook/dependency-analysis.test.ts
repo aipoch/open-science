@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -9363,6 +9364,8 @@ it.each([
   expect(await readFile(path, 'utf8')).toBe(original)
   expect(JSON.stringify(runs)).toBe(before)
 })
+
+configureTestRuntimeMetadata()
 
 describe('named Python callback container derived cache', () => {
   const source = 'def callback(t, y):\n    return y[0]\nevent_callbacks = [callback]'

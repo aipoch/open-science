@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { EventEmitter } from 'node:events'
 import { resolve } from 'node:path'
 import type { IpcMain, IpcMainInvokeEvent } from 'electron'
@@ -193,3 +194,5 @@ describe('Session persistence Electron surface', () => {
     }
   )
 })
+
+await configureTestElectronHost(await import('electron'))

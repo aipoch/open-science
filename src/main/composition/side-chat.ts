@@ -1,4 +1,4 @@
-import { app } from 'electron'
+import { runtimeMetadata } from '../runtime-metadata'
 import { createAcpRuntime } from '../acp/runtime-composition'
 import { SideChatRelayOwner } from '../acp/side-chat-relay-owner'
 import { type ApplicationModuleBuilder } from '../application-runtime'
@@ -66,7 +66,7 @@ export async function composeSideChat({
   const sideChatLog = createLogger('side-chat')
   const sideChatRuntime = await modules.add(
     {
-      appVersion: app.getVersion(),
+      appVersion: runtimeMetadata().version,
       configRoot,
       captureTarget: async (selection) => {
         if (!selection) return settingsService.captureActiveExplicitAgentBackendTarget()

@@ -986,6 +986,10 @@ test('reviews classified papers in the library table using a local fixture servi
       page.getByRole('heading', { name: 'Manual collection', exact: true })
     ).toBeVisible()
     await page.getByRole('button', { name: 'Clinical trials', exact: true }).click()
+    // The restored rows can precede the async panel read; menus snapshot available actions.
+    await expect(
+      panel.getByRole('button', { name: 'Update collection', exact: true })
+    ).toBeEnabled()
     await expect(page.getByRole('progressbar', { name: 'Re-evaluate', exact: true })).toHaveCount(0)
     await expect(page.locator('tbody tr')).toHaveText(savedTitles)
     const inputsBeforeStop = classifiedInputs.length

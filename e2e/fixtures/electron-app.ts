@@ -64,7 +64,7 @@ const electronLaunchTarget = (
   return {
     args: [
       `--user-data-dir=${userDataRoot}`,
-      ...(platform === 'linux' ? ['--password-store=basic'] : []),
+      ...(platform === 'linux' ? ['--password-store=gnome-libsecret'] : []),
       ...(platform === 'darwin' && !executablePath
         ? [
             '--use-mock-keychain',
@@ -72,7 +72,9 @@ const electronLaunchTarget = (
             resolve(APP_ROOT, 'e2e/fixtures/mock-credential-identity.cjs')
           ]
         : []),
-      ...(executablePath ? [] : [APP_ROOT])
+      ...(executablePath
+        ? []
+        : ['--require', resolve(APP_ROOT, 'e2e/fixtures/node-runtime-preload.cjs'), APP_ROOT])
     ],
     ...(executablePath ? { executablePath } : {})
   }
@@ -311,6 +313,7 @@ type NativeMenuProbe = {
   dispose: () => void
 }
 type ElectronApp = {
+  addCleanupAudit: (audit: () => Promise<void>) => void
   captureBrandState: () => Promise<BrandState>
   restartWithBrandFixture: (
     mode: 'legacy' | 'legacy-config' | 'custom' | 'onboarding'
@@ -334,6 +337,11 @@ type ElectronApp = {
   routeMarketplaceRequests: (origin: string) => Promise<void>
   configureFileBrowserFixture: () => Promise<void>
   configureFakeAgent: () => Promise<Page>
+  configureLiveAgent: (
+    settingsPath: string,
+    model: string,
+    credentialProfile?: string
+  ) => Promise<Page>
   createTestDirectory: (name: string) => Promise<string>
   configureSessionPackageDialogs: (options?: { availableBytes?: number }) => Promise<string>
   restartWithPackage: (path: string) => Promise<Page>
@@ -455,23 +463,18 @@ const launchOpenScience = async (
         windowMode,
         sessionPerformanceTrace
       ),
+      ...(process.platform === 'darwin' && !process.env.OPEN_SCIENCE_E2E_EXECUTABLE
+        ? {
+            NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --require=${JSON.stringify(resolve(APP_ROOT, 'e2e/fixtures/mock-node-credentials.cjs'))}`
+          }
+        : {}),
       OPEN_SCIENCE_CONFIG_ROOT: storageRoot,
       OPEN_SCIENCE_USER_DATA: userDataRoot
     }
   })
 
-  if (process.platform === 'linux') {
-    await application.evaluate(({ safeStorage }) => {
-      // Linux CI has no desktop keyring. Keep its isolated test cipher, but make this
-      // Playwright-controlled main process report a secure test backend so fake credentials can
-      // exercise the production Settings path without adding a production security bypass.
-      safeStorage.setUsePlainTextEncryption(true)
-      Object.defineProperty(safeStorage, 'getSelectedStorageBackend', {
-        configurable: true,
-        value: () => 'gnome_libsecret'
-      })
-    })
-  }
+  // Linux source certification requires an unlocked Secret Service on its test D-Bus session.
+  // Both ordinary Node and Electron use that same vault; no plaintext test fallback.
 
   return application
 }
@@ -540,6 +543,62 @@ const makeTreeWritable = async (root: string): Promise<void> => {
   )
 }
 
+// Protection may outlive Electron. Never erase its ownership/rollback evidence just because
+// the desktop process exited, including when a UAC removal request was cancelled.
+const assertProtectionCleanup = async (storageRoot: string): Promise<void> => {
+  const sandboxRoot = join(storageRoot, 'notebook-sandbox')
+  let installations: string[]
+  try {
+    installations = await readdir(sandboxRoot)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
+    throw error
+  }
+  for (const installation of installations) {
+    const root = join(sandboxRoot, installation)
+    const records = await readdir(root)
+    const pending = records.some((name) =>
+      ['receipt.json', 'creating.json', 'acl-state.json', 'receipt.json.tmp'].includes(name)
+    )
+    const leases = records.includes('acl-leases') ? await readdir(join(root, 'acl-leases')) : []
+    if (pending || leases.length > 0) {
+      throw new Error(
+        'Notebook protection cleanup is unverified; retain the profile and ownership records.'
+      )
+    }
+  }
+}
+
+// A finally error must not replace the failing assertion or restart error that led to cleanup.
+const runWithCleanup = async <T>(
+  body: () => Promise<T>,
+  cleanup: () => Promise<void>
+): Promise<T> => {
+  let result!: T
+  let bodyError: unknown
+  let failed = false
+  try {
+    result = await body()
+  } catch (error) {
+    failed = true
+    bodyError = error
+  }
+  try {
+    await cleanup()
+  } catch (cleanupError) {
+    if (failed) {
+      throw new AggregateError(
+        [bodyError, cleanupError],
+        `Test body and cleanup failed; first error: ${String(bodyError)}`,
+        { cause: bodyError }
+      )
+    }
+    throw cleanupError
+  }
+  if (failed) throw bodyError
+  return result
+}
+
 const waitForRendererReady = async (page: Page): Promise<void> => {
   const deadline = performance.now() + (process.platform === 'win32' ? 180_000 : 90_000)
   const remainingTimeout = (): number => Math.max(1, deadline - performance.now())
@@ -597,6 +656,11 @@ const enableRendererRuntimeProfiling = async (page: Page): Promise<void> => {
 }
 
 class ElectronAppHarness implements ElectronApp {
+  private readonly cleanupAudits: Array<() => Promise<void>> = []
+
+  addCleanupAudit(audit: () => Promise<void>): void {
+    this.cleanupAudits.push(audit)
+  }
   private application: ElectronApplication | undefined
   private currentPage: Page | undefined
   private mainLogDirectory: string | undefined
@@ -651,6 +715,9 @@ class ElectronAppHarness implements ElectronApp {
       await writeFakeAgentLauncher(harness.roots.fakeAgentBinRoot)
       await writeFakeRemoteItCommands(harness.roots.fakeRemoteItRoot)
       await harness.launch()
+      // Specs start from English copy regardless of the Windows account's language. Set this
+      // only for a fresh fixture; relaunches must retain locale choices made by the test.
+      await harness.page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
       return harness
     } catch (error) {
       await harness
@@ -687,6 +754,20 @@ class ElectronAppHarness implements ElectronApp {
     const destination = join(evidenceRoot, name)
     if (!this.mainLogDirectory) throw new Error('Electron log directory is unavailable.')
     await copyFile(join(this.mainLogDirectory, 'main.log'), destination)
+    // Business owners now log in the isolated Node configuration root. Preserve these before
+    // fixture teardown removes it, including backend startup stderr from each desktop launch.
+    const backendLogDirectory = join(this.roots.storageRoot, 'logs')
+    const backendLogs = await readdir(backendLogDirectory).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return []
+      throw error
+    })
+    for (const file of backendLogs.sort()) {
+      if (file !== 'main.log' && !/^desktop-backend-\d+-\d+\.log$/u.test(file)) continue
+      await appendFile(
+        destination,
+        `\n--- Node backend: ${file} ---\n${await readFile(join(backendLogDirectory, file), 'utf8')}`
+      )
+    }
     if (this.flushTimeline) {
       await appendFile(
         destination,
@@ -870,16 +951,6 @@ class ElectronAppHarness implements ElectronApp {
   }
 
   async authenticatedWebUrl(): Promise<string> {
-    const target = electronLaunchTarget(this.roots.userDataRoot)
-    const child = spawn(
-      target.executablePath ?? ((await import('electron')).default as unknown as string),
-      [...target.args, '--serve=0'],
-      { env: launchEnvironment(this.roots.storageRoot), stdio: 'ignore' }
-    )
-    await new Promise<void>((resolve, reject) => {
-      child.once('error', reject)
-      child.once('exit', () => resolve())
-    })
     let port: number | undefined
     await expect
       .poll(async () => {
@@ -907,6 +978,50 @@ class ElectronAppHarness implements ElectronApp {
       await bridge.api.settings.markOnboardingComplete()
     })
     await this.page.reload({ waitUntil: 'domcontentloaded' })
+    return this.page
+  }
+
+  async configureLiveAgent(
+    settingsPath: string,
+    model: string,
+    credentialProfile?: string
+  ): Promise<Page> {
+    const source = JSON.parse(await readFile(settingsPath, 'utf8'))
+    const provider = source.providers?.find(
+      (candidate: { id: string }) => candidate.id === source.activeProviderId
+    )
+    if (!provider?.keyRef || source.activeModel !== model || !source.opencodePath) {
+      throw new Error('The requested live model and OpenCode must already be configured.')
+    }
+    if (process.platform === 'win32' && provider.keyRef.startsWith('enc:') && !credentialProfile) {
+      throw new Error('Encrypted Windows credentials require the source Electron profile.')
+    }
+    await this.close()
+    if (process.platform === 'win32' && credentialProfile) {
+      // Windows OSCrypt ciphertext belongs to the profile's DPAPI envelope. Copy only that
+      // envelope into the disposable profile, never decrypted keys or the source profile itself.
+      const original = JSON.parse(await readFile(join(credentialProfile, 'Local State'), 'utf8'))
+      if (!original.os_crypt?.encrypted_key) throw new Error('Source profile has no OSCrypt key.')
+      const statePath = join(this.roots.userDataRoot, 'Local State')
+      const state = JSON.parse(await readFile(statePath, 'utf8'))
+      state.os_crypt = original.os_crypt
+      await writeFile(statePath, JSON.stringify(state), 'utf8')
+    }
+    const target = join(this.roots.storageRoot, 'settings.json')
+    const settings = JSON.parse(await readFile(target, 'utf8'))
+    Object.assign(settings, {
+      providers: [provider],
+      activeProviderId: provider.id,
+      activeModel: model,
+      opencodePath: source.opencodePath,
+      opencodeVersion: source.opencodeVersion,
+      agentFramework: 'opencode',
+      localePreference: 'en',
+      sessionDetailsModel: { mode: 'disabled' }
+    })
+    await writeFile(target, `${JSON.stringify(settings, null, 2)}\n`, 'utf8')
+    await this.launch()
+    await this.page.evaluate(() => window.api.settings.setAgentFramework({ id: 'opencode' }))
     return this.page
   }
 
@@ -1533,6 +1648,8 @@ class ElectronAppHarness implements ElectronApp {
     const errors: unknown[] = []
     try {
       await this.closeForCleanup()
+      await assertProtectionCleanup(this.roots.storageRoot)
+      for (const audit of this.cleanupAudits) await audit()
       await makeTreeWritable(this.testRoot)
       await removeTreeForCleanup(this.testRoot)
     } catch (error) {
@@ -1552,20 +1669,12 @@ class ElectronAppHarness implements ElectronApp {
     }
   }
 
-  // Keep real Chromium redirect handling while replacing external GitHub traffic with a local
-  // HTTP fixture. URL admission still sees the original URL; only the transport destination changes.
+  // Keep production URL admission and redirect logic; route only the Node HTTP transport.
   async routeMarketplaceRequests(origin: string): Promise<void> {
-    await this.runningApplication.evaluate(({ net }, origin) => {
-      const fetch = net.fetch.bind(net)
-      const request = net.request.bind(net)
-      const route = (url: string): string =>
-        url.startsWith(origin + '/') ? url : `${origin}/${encodeURIComponent(url)}`
-      net.fetch = (input, init) => fetch(route(String(input)), init)
-      net.request = (options) =>
-        request(
-          typeof options === 'string' ? route(options) : { ...options, url: route(options.url!) }
-        )
-    }, origin)
+    if (process.env.OPEN_SCIENCE_E2E_EXECUTABLE)
+      throw new Error('Marketplace transport routing requires the source-test Node preload.')
+    if (!/^http:\/\/127\.0\.0\.1:\d+$/.test(origin)) throw new Error('Invalid E2E origin.')
+    await writeFile(join(this.roots.storageRoot, 'e2e-marketplace-origin'), origin, { mode: 0o600 })
   }
 
   private async launch(packagePath?: string, timingName = 'startup-ready'): Promise<void> {
@@ -1772,7 +1881,11 @@ class ElectronAppHarness implements ElectronApp {
 }
 
 const test = base.extend<{ app: ElectronApp; windowMode: E2eWindowMode }>({
-  windowMode: ['hidden', { option: true }],
+  // Packaged Windows windows need a presented surface for screenshots and native clipboard focus.
+  windowMode: [
+    process.platform === 'win32' && process.env.OPEN_SCIENCE_E2E_EXECUTABLE ? 'normal' : 'hidden',
+    { option: true }
+  ],
   // Playwright fixture callbacks require an object pattern even when no base fixture is needed.
   app: [
     async ({ windowMode }, install, testInfo) => {
@@ -1812,10 +1925,12 @@ const test = base.extend<{ app: ElectronApp; windowMode: E2eWindowMode }>({
 })
 
 export {
+  runWithCleanup,
   closeElectronApplicationForCleanup,
   installRestartPersistenceRetry,
   observeElectronFlushDiagnostics,
   electronLaunchTarget,
+  launchOpenScience,
   launchEnvironment,
   removeTreeForCleanup,
   test

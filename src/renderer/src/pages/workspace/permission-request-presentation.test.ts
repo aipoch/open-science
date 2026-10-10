@@ -26,7 +26,11 @@ describe('describePermissionRequest', () => {
       describePermissionRequest(
         request({ appOwned: true, rawInput: { notebookRuntimeSelection: { language: 'python' } } })
       )
-    ).toMatchObject({ actionTitle: 'Confirm Notebook kernel and environment' })
+    ).toMatchObject({
+      actionTitle: 'Confirm Notebook kernel and environment',
+      description:
+        'Later Notebook runs use this environment. Approval does not cover package changes or code execution.'
+    })
     expect(
       describePermissionRequest(request({ rawInput: { notebookCodeRisk: {} } }))
     ).toHaveProperty('actionTitle', 'Allow tool access?')

@@ -1,4 +1,6 @@
-import { app, dialog } from 'electron'
+import { desktopFileInteraction } from '../desktop-interaction'
+import { runtimeMetadata } from '../runtime-metadata'
+
 import type {
   SensitiveContentEvidence,
   SensitiveContentFailure,
@@ -133,13 +135,15 @@ export async function composeSessionFoundation({
           dataRoot: resolveDataRoot(),
           configRoot: resolveConfigRoot(),
           logPath: getLogFilePath(),
-          appVersion: app.getVersion(),
+          appVersion: runtimeMetadata().version,
           sensitiveContent: sensitiveContent?.failure,
           sensitiveContentSources: sensitiveContent?.sources
         }
       },
       chooseDestination: async (defaultName) => {
-        const result = await dialog.showSaveDialog({ defaultPath: defaultName })
+        const result = await desktopFileInteraction().chooseSavePath({
+          defaultPath: defaultName
+        })
         return result.canceled ? undefined : result.filePath
       }
     })

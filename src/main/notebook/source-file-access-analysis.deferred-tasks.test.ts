@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { expect, it } from 'vitest'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -190,3 +191,5 @@ it('restores the constructor binding and its dependency across cells', async () 
     await rm(root, { recursive: true, force: true })
   }
 })
+
+configureTestRuntimeMetadata()

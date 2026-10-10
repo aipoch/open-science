@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { expect, it } from 'vitest'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -106,3 +107,5 @@ it.each([
   const { facts } = await analyzeRNotebookSource('sets<-list(A=1:3,B=2:4)\n' + body)
   expect(facts.state, JSON.stringify(facts)).toBe('unknown')
 })
+
+configureTestRuntimeMetadata()

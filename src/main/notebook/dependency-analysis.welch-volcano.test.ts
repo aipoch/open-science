@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { expect, it } from 'vitest'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -273,3 +274,5 @@ it.each([
   expect(method?.returnCopyArguments).not.toBe(true)
   expect(method?.returnType).not.toBe('r-value')
 })
+
+configureTestRuntimeMetadata()

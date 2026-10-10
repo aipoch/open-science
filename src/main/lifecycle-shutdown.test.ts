@@ -4,6 +4,7 @@ import {
   BackendShutdownCoordinator,
   shutdownBackends,
   UPDATE_SHUTDOWN_BUDGET_MS,
+  QUIT_SHUTDOWN_BUDGET_MS,
   type BackendShutdownDeps
 } from './lifecycle-shutdown'
 
@@ -137,6 +138,39 @@ describe('shutdownBackends', () => {
 describe('BackendShutdownCoordinator', () => {
   afterEach(() => {
     vi.useRealTimers()
+  })
+
+  it('keeps pending Notebook cleanup reusable after quit preparation times out', async () => {
+    vi.useFakeTimers()
+    let finishCleanup!: (result: { reaped: boolean }) => void
+    const cleanup = new Promise<{ reaped: boolean }>((resolve) => {
+      finishCleanup = resolve
+    })
+    const deps = makeDeps()
+    vi.mocked(deps.notebook.shutdownAll).mockReturnValue(cleanup)
+    const coordinator = new BackendShutdownCoordinator(deps)
+
+    const preparation = coordinator.runForQuitPreparation()
+    await vi.advanceTimersByTimeAsync(QUIT_SHUTDOWN_BUDGET_MS)
+    await expect(preparation).resolves.toBe('timeout')
+    expect(deps.notebook.dispose).not.toHaveBeenCalled()
+    expect(deps.runtime.shutdownForQuit).not.toHaveBeenCalled()
+    expect(deps.sideChat.shutdown).not.toHaveBeenCalled()
+    expect(deps.sideChat.suspendAll).toHaveBeenCalledWith({ holdAdmission: true })
+
+    finishCleanup({ reaped: true })
+    await expect(coordinator.runForQuitPreparation()).resolves.toBe('completed')
+    await expect(coordinator.runForQuit()).resolves.toEqual({ completed: true, reaped: true })
+    expect(deps.notebook.dispose).toHaveBeenCalledOnce()
+  })
+
+  it('refuses quit preparation when cleanup settles without reaping its workload', async () => {
+    const deps = makeDeps()
+    vi.mocked(deps.notebook.shutdownAll).mockResolvedValue({ reaped: false })
+    await expect(new BackendShutdownCoordinator(deps).runForQuitPreparation()).resolves.toBe(
+      'failed'
+    )
+    expect(deps.notebook.dispose).not.toHaveBeenCalled()
   })
 
   it('runForQuit uses the latching teardown and reports completed + reaped when clean', async () => {

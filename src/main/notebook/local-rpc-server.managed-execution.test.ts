@@ -645,3 +645,6 @@ it('rejects a trusted RPC binding whose storage route differs from the actual Ar
     ).toHaveLength(0)
   }
 })
+
+const { configureTestElectronHost } = await import('../../../test/runtime-host')
+await configureTestElectronHost(await import('electron'))

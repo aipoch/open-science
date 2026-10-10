@@ -1,8 +1,8 @@
 import { beforeEach, expect, it, vi } from 'vitest'
 
 const capture = vi.hoisted(() => ({ strategy: vi.fn(), storage: vi.fn() }))
-vi.mock('../update/create-strategy', () => ({ createUpdateStrategy: capture.strategy }))
-vi.mock('../update/ipc', () => ({
+vi.mock('../update/runtime-strategy', () => ({ createRuntimeUpdateStrategy: capture.strategy }))
+vi.mock('../update/command-owner', () => ({
   createUpdateCommandOwner: () => ({}),
   registerUpdateIpcHandlers: vi.fn()
 }))

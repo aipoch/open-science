@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { EventEmitter } from 'node:events'
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -135,3 +136,5 @@ it.each(['confirmed', 'changed', 'runtime-blocked', 'new-record', 'claimed', 'co
     }
   }
 )
+
+configureTestRuntimeMetadata()

@@ -1,3 +1,4 @@
+import { nodeRuntimeEnvironment } from '../node-process-host'
 import {
   spawn,
   type ChildProcessWithoutNullStreams,
@@ -435,7 +436,7 @@ const buildSpawnEnvironment = (
   return {
     ...env,
     ...input.env,
-    ELECTRON_RUN_AS_NODE: '1'
+    ...nodeRuntimeEnvironment()
   }
 }
 

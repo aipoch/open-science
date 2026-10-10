@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { expect, it } from 'vitest'
 import { analyzeRNotebookSource } from './dependency-analysis-r'
 import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
@@ -124,3 +125,5 @@ it('does not certify objects from another namespace', async () => {
     ).externalState
   ).toBe('partial')
 })
+
+configureTestRuntimeMetadata()

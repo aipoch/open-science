@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -3876,6 +3877,7 @@ gate('repl_loop.js host.mcp', () => {
   }, 60_000)
 })
 
+configureTestRuntimeMetadata()
 gate('managed execution Host SDK bridge', () => {
   it('carries host.managedExecution through the actual control RPC and freezes returned data', async () => {
     const requests: { method: string; payload: unknown; sessionId: string; executionId: string }[] =

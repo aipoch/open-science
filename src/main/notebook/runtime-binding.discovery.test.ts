@@ -1,8 +1,11 @@
 import { win32, posix, join } from 'node:path'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi, type Mock } from 'vitest'
 import * as discovery from './environment-discovery'
 import { NotebookRuntimeBindingOwner } from './runtime-binding'
 import { createRootNotebookLane } from './lane-identity'
+import type { DiscoveredInterpreter } from '../../shared/notebook-runtime'
+import type { NotebookSessionRuntimeBinding, NotebookSessionAggregate } from './session-aggregate'
+import type { NotebookRunRepository } from './repository'
 
 // Keep the real binding/discovery orchestration. Only machine enumeration and interpreter
 // subprocesses are controlled through the existing discovery factory boundary.
@@ -87,4 +90,109 @@ describe('runtime discovery enablement', () => {
       expect(probeVersion).toHaveBeenCalledWith(managed, 'python')
     }
   )
+})
+
+describe.each(['python', 'r'] as const)('%s binding decision target validation', (language) => {
+  const fixture = (): {
+    runtime: DiscoveredInterpreter
+    discover: Mock<() => Promise<DiscoveredInterpreter[]>>
+    write: Mock<NotebookRunRepository['setRuntimeBindings']>
+    setBinding: ReturnType<typeof vi.fn>
+    session: Pick<
+      NotebookSessionAggregate,
+      'projectId' | 'sessionId' | 'lane' | 'runtimeBinding' | 'setRuntimeBinding'
+    >
+    owner: NotebookRuntimeBindingOwner
+  } => {
+    // A canonical realpath need not contain the logical default directory (e.g. symlinked prefixes).
+    // Discovery ownership and logical environment identity are the authority, never model paths.
+    const runtime: DiscoveredInterpreter = {
+      language,
+      provenance: 'app-managed',
+      envId: `/canonical/runtime/bin/${language === 'r' ? 'R' : 'python'}`,
+      interpreterPath: `/visible/runtime/bin/${language === 'r' ? 'R' : 'python'}`,
+      label: 'Default',
+      runnable: true,
+      condaEnv: language === 'r' ? 'default-r' : 'default-python'
+    }
+    const discover = vi.fn(async () => [runtime])
+    const write = vi.fn<NotebookRunRepository['setRuntimeBindings']>()
+    let current: NotebookSessionRuntimeBinding | undefined
+    const setBinding = vi.fn((_language, binding) => {
+      current = binding
+    })
+    const session = {
+      projectId: 'project',
+      sessionId: 'session',
+      lane: createRootNotebookLane('project', 'session', 'root-frame'),
+      runtimeBinding: () => current,
+      setRuntimeBinding: setBinding
+    }
+    const owner = new NotebookRuntimeBindingOwner({
+      dataRoot: '/data',
+      discoverRuntimes: discover,
+      repository: { setRuntimeBindings: write, findExisting: vi.fn() },
+      runtimeSettings: {
+        getSnapshot: async () => ({
+          language,
+          manualInterpreters: [],
+          packageMirror: {},
+          runtimeEnablement: { enabled: {}, installAuthorized: {} }
+        })
+      },
+      repairPolicy: {
+        bindingRequirement: () => ({ required: false, keys: [], protectedIdentity: false })
+      }
+    })
+    return { runtime, discover, write, setBinding, session, owner }
+  }
+
+  it('recognizes a discovered canonical default and refuses missing logical default identity', async () => {
+    const h = fixture()
+    expect(await h.owner.resolveBindingTarget(language, h.runtime.envId)).toMatchObject({
+      readyDefault: true,
+      runnable: true
+    })
+    h.runtime.condaEnv = undefined
+    expect(await h.owner.resolveBindingTarget(language, h.runtime.envId)).toMatchObject({
+      readyDefault: false
+    })
+    h.runtime.provenance = 'agent-created'
+    expect(await h.owner.resolveBindingTarget(language, h.runtime.envId)).toMatchObject({
+      readyDefault: false
+    })
+  })
+
+  it('checks cancellation after final discovery and before durable commit', async () => {
+    const h = fixture()
+    const controller = new AbortController()
+    h.discover
+      .mockImplementationOnce(async () => [h.runtime])
+      .mockImplementationOnce(async () => {
+        controller.abort(new Error('cancelled at commit'))
+        return [h.runtime]
+      })
+    expect(
+      await h.owner.bind(
+        h.session,
+        language,
+        h.runtime.envId,
+        async () => undefined,
+        () => controller.signal.throwIfAborted()
+      )
+    ).toMatchObject({ ok: false, bindingChanged: false, error: 'cancelled at commit' })
+    expect(h.write).not.toHaveBeenCalled()
+    expect(h.setBinding).not.toHaveBeenCalled()
+  })
+
+  it('revalidates logical default identity after the decision callback returns', async () => {
+    const h = fixture()
+    expect(
+      await h.owner.bind(h.session, language, h.runtime.envId, async () => {
+        h.runtime.condaEnv = undefined
+      })
+    ).toMatchObject({ ok: false, bindingChanged: false })
+    expect(h.write).not.toHaveBeenCalled()
+    expect(h.setBinding).not.toHaveBeenCalled()
+  })
 })

@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { expect, it } from 'vitest'
 import type { NotebookRunRecord } from '../../shared/notebook'
 import { analyzeRNotebookSource } from './dependency-analysis-r'
@@ -103,3 +104,5 @@ it('keeps terra GDAL sidecars and VRT sources partial', async () => {
     analyzeNotebookSourceFileAccess('r', 'tiles <- terra::rast("inputs/tiles.tif")')
   ).resolves.toMatchObject({ reads: ['inputs/tiles.tif'], readState: 'complete' })
 })
+
+configureTestRuntimeMetadata()

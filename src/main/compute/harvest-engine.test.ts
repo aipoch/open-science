@@ -10,6 +10,7 @@
  *             §6 (enumeration), §9 (harvest_failed).
  */
 
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { mkdir, readFile, readdir, realpath, rename, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -1665,3 +1666,5 @@ describe('harvestJob - bounded logs and disk reserve', () => {
     )
   })
 })
+
+configureTestRuntimeMetadata()

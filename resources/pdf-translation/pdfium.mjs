@@ -5,6 +5,9 @@ import { readFile } from 'node:fs/promises'
 import { init } from '@embedpdf/pdfium'
 export async function engine() {
   const p = await init({
+    // PDFium's Emscripten environment encodes the program name as ASCII. It is a
+    // logical WASM label, not a host path; a Unicode worker path otherwise aborts.
+    thisProgram: 'open-science-pdf-translation',
     wasmBinary: await readFile(require.resolve('@embedpdf/pdfium/pdfium.wasm'))
   })
   p.PDFiumExt_Init()

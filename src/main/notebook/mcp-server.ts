@@ -1,3 +1,4 @@
+import { nodeRuntimeEnvironmentEntries } from '../node-process-host'
 import type { McpServerStdio } from '@agentclientprotocol/sdk'
 import { McpServer as ModelContextProtocolServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
@@ -354,7 +355,7 @@ const createNotebookMcpServerConfig = (request: NotebookMcpServerConfigRequest):
     command: request.command,
     args: [request.entryPath, NOTEBOOK_MCP_SERVER_ARG],
     env: [
-      { name: 'ELECTRON_RUN_AS_NODE', value: '1' },
+      ...nodeRuntimeEnvironmentEntries(),
       { name: 'OPEN_SCIENCE_NOTEBOOK_RPC_ENDPOINT', value: request.endpoint },
       ...(request.socketPath
         ? [{ name: 'OPEN_SCIENCE_NOTEBOOK_RPC_SOCKET_PATH', value: request.socketPath }]

@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { createHash } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
@@ -24,6 +25,8 @@ import { NotebookNetworkSandboxOwner } from './network-sandbox-owner'
 import type { NotebookProcessSandbox } from './process-sandbox'
 import { NotebookRunRepository } from './repository'
 import { NotebookRuntimeService } from './runtime-service'
+
+configureTestRuntimeMetadata()
 
 const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`
 const digest = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex')

@@ -1,3 +1,4 @@
+import { RUNTIME_LOCK_FILE } from '../runtime-ownership'
 import { lstatSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { MIGRATABLE_DATA_DIRS } from './data-directories'
@@ -30,6 +31,7 @@ export const directoryHasFiles = (
     if (!info.isDirectory()) return !requireRegularFiles && info.isFile()
     return readdirSync(root, { withFileTypes: true }).some(
       (entry) =>
+        entry.name !== RUNTIME_LOCK_FILE &&
         entry.name !== '.DS_Store' &&
         entry.name !== 'desktop.ini' &&
         (entry.isDirectory()

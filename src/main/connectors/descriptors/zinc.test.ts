@@ -1,3 +1,4 @@
+import { configureTestRuntimeNetwork } from '../../../../test/runtime-host'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ZINC_TOOLS } from './zinc'
 import type { ToolContext } from '../types'
@@ -521,3 +522,5 @@ describe('zinc / zinc_get_3d', () => {
     expect(fetchImpl).not.toHaveBeenCalled()
   })
 })
+
+configureTestRuntimeNetwork()
