@@ -375,6 +375,8 @@
       "src/main/notebook/managed-execution-entrypoints.integration.test.ts",
       "src/main/notebook/session-operation-owner.integration.test.ts",
       "src/main/session-package/headless.test.ts",
+      "src/main/run-observation/capture-package.integration.test.ts",
+      "src/main/run-observation/managed-coordinator.test.ts",
       "src/main/research-demos/owner.macos.integration.test.ts"
     ]
   },

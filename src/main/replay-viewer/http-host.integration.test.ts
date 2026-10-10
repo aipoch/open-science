@@ -63,6 +63,7 @@ function harness(
     readCapture?: ReplayViewerHttpDependencies['readCapture']
     recordingStatus?: ReplayViewerHttpDependencies['recordingStatus']
     desktopLocale?: ReplayViewerHttpDependencies['desktopLocale']
+    desktopFrames?: ReplayViewerHttpDependencies['desktopFrames']
   } = {}
 ): Harness {
   let authorized = true
@@ -161,6 +162,7 @@ function harness(
             : undefined)
   )
   const host: ReplayViewerHttpHost = new ReplayViewerHttpHost({
+    desktopFrames: options.desktopFrames ?? desktopObservationFrameRegistry,
     desktopLocale: options.desktopLocale,
     browserRecording: options.browserRecording,
     ...(options.capture
@@ -545,6 +547,28 @@ describe('isolated Replay viewer HTTP host', () => {
       401
     )
     expect(create).not.toHaveBeenCalled()
+  })
+
+  it('closes viewer resources when asynchronous native grant admission fails', async () => {
+    const close = vi.fn()
+    const h = harness({
+      desktopFrames: {
+        registerViewer: async () => ({
+          issueGrant: async () => {
+            throw new Error('native document ended')
+          },
+          authenticateGrant: () => undefined,
+          close
+        }),
+        registerRuntime: () => undefined
+      }
+    })
+    const owner = createCallerContext({ ...h.owner, surface: 'electron', clientId: '17' })
+    await expect(h.host.open(scope, owner, { desktopParent: 'file:' })).rejects.toThrow(
+      'native document ended'
+    )
+    expect(close).toHaveBeenCalledOnce()
+    expect(h.projectClose).toHaveBeenCalledOnce()
   })
 
   it('registers desktop navigation only for its actual Electron owner and HTTP-authenticated frame', async () => {

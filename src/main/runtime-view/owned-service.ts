@@ -86,6 +86,11 @@ export class OwnedRuntimeViewService {
     service.assertCurrent()
   }
 
+  /** Private native navigation adapter mirrors the same excluded proof route. */
+  get excludedPath(): string {
+    return this.options.proofPath
+  }
+
   permitsPath(path: string): boolean {
     try {
       const pathname = decodeURIComponent(new URL(path, this.options.upstreamOrigin).pathname)

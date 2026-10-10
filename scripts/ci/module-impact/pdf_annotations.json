@@ -703,6 +703,8 @@
       "src/main/run-observation/media-collector.test.ts",
       "src/main/project-recordings/recorder.test.ts",
       "src/main/run-observation/managed-status.test.ts",
+      "src/main/managed-runtime-views.integration.test.ts",
+      "src/main/observation-desktop/bridge.test.ts",
       "src/renderer/src/pages/workspace/replay/ReplayPanel.layout.test.tsx",
       "src/renderer/src/pages/workspace/RecordedRunObservationPreview.test.tsx",
       "src/renderer/replay-viewer/ViewerApp.test.tsx",
@@ -731,8 +733,7 @@
       "src/renderer/src/pages/workspace/previews/renderers/PlanJsonPreview.recorded.test.tsx",
       "src/main/replay-viewer/assets.test.ts",
       "src/main/replay-viewer/desktop-embed.integration.test.ts",
-      "src/main/notebook/managed-execution-service.macos.integration.test.ts",
-      "src/main/managed-runtime-views.integration.test.ts"
+      "src/main/notebook/managed-execution-service.macos.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions"],

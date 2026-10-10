@@ -1032,6 +1032,8 @@ describe('Artifact Provenance repository architecture', () => {
       'src/main/browser-recordings/owner.test.ts',
       'src/main/run-observation/media-collector.test.ts',
       'src/main/project-recordings/recorder.test.ts',
+      'src/main/managed-runtime-views.integration.test.ts',
+      'src/main/observation-desktop/bridge.test.ts',
       'src/main/research-demos/owner.macos.integration.test.ts',
       'src/main/notebook/offline-plan-admission.test.ts',
       'src/renderer/replay-viewer/browser-recording.integration.test.ts',
@@ -1049,8 +1051,7 @@ describe('Artifact Provenance repository architecture', () => {
       'src/main/research-runs/inspection.test.ts',
       'src/main/research-runs/ipc.test.ts',
       'src/main/replay-viewer/desktop-embed.integration.test.ts',
-      'src/main/notebook/managed-execution-service.macos.integration.test.ts',
-      'src/main/managed-runtime-views.integration.test.ts'
+      'src/main/notebook/managed-execution-service.macos.integration.test.ts'
     ])
     expect(module.capabilityOverlays).toEqual([
       'windows_sensitive',

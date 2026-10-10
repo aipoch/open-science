@@ -1184,6 +1184,8 @@ describe('Compute service architecture', () => {
       'src/main/run-observation/media-collector.test.ts',
       'src/main/project-recordings/recorder.test.ts',
       'src/main/run-observation/managed-status.test.ts',
+      'src/main/managed-runtime-views.integration.test.ts',
+      'src/main/observation-desktop/bridge.test.ts',
       'src/main/research-demos/owner.macos.integration.test.ts',
       'src/renderer/replay-viewer/research-browser.integration.test.ts',
       'src/main/research-replay/http-host.integration.test.ts',
@@ -1201,8 +1203,7 @@ describe('Compute service architecture', () => {
       'src/renderer/replay-viewer/browser-recording-transport.integration.test.ts',
       'src/main/research-demos/inspection.test.ts',
       'src/main/replay-viewer/desktop-embed.integration.test.ts',
-      'src/main/notebook/managed-execution-service.macos.integration.test.ts',
-      'src/main/managed-runtime-views.integration.test.ts'
+      'src/main/notebook/managed-execution-service.macos.integration.test.ts'
     ])
   })
 

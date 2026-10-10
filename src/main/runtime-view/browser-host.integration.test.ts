@@ -21,6 +21,7 @@ import { RunObservationOwner, type RunObservationSource } from '../run-observati
 import { ObservationViewers } from '../run-observation/viewers'
 import { createCallerContext } from '../caller-context'
 import { ReplayViewerHttpHost } from '../replay-viewer/http-host'
+import { desktopObservationFrameRegistry } from '../replay-viewer/desktop-frame-registry'
 
 const enabled = process.env.RUN_RUNTIME_VIEW_BROWSER === '1' && process.platform === 'darwin'
 const evidence = '/tmp/open-science-runtime-view-browser-acceptance'
@@ -191,7 +192,7 @@ it.skipIf(!enabled)(
       }
     })
     cleanups.push(() => service.close())
-    const owner = new RuntimeViewOwner()
+    const owner = new RuntimeViewOwner({}, desktopObservationFrameRegistry)
     cleanups.push(() => owner.close())
     let projectUrl = ''
     const viewerBase = await listen(
@@ -236,7 +237,7 @@ it.skipIf(!enabled)(
         version: browser.version(),
         screenshot: join(evidence, 'chromium.png')
       }
-      projectUrl = owner.issueAccess(access.view.viewId, scope).url
+      projectUrl = (await owner.issueAccess(access.view.viewId, scope)).url
       const foreignPage = await browser.newPage()
       const deniedAncestors: string[] = []
       foreignPage.on('console', (message) => {
@@ -247,7 +248,7 @@ it.skipIf(!enabled)(
       expect(await foreignPage.frameLocator('#project').locator('#status').count()).toBe(0)
       await foreignPage.close()
       count = 0
-      projectUrl = owner.issueAccess(access.view.viewId, scope).url
+      projectUrl = (await owner.issueAccess(access.view.viewId, scope)).url
       const html = join(root, 'viewer.html'),
         main = join(root, 'main.cjs')
       await writeFile(
@@ -280,7 +281,9 @@ it.skipIf(!enabled)(
 
       // Exercise the production observation HTTP host as well: its credential must remain
       // HttpOnly while a second, separately scoped project cookie works below the file ancestor.
-      const projectViews = new ManagedRuntimeViews()
+      const projectViews = new ManagedRuntimeViews(
+        new RuntimeViewOwner({}, desktopObservationFrameRegistry)
+      )
       cleanups.push(() => projectViews.close())
       projectViews.register({
         scope,
@@ -325,6 +328,7 @@ it.skipIf(!enabled)(
       cleanups.push(() => viewers.close())
       const viewerJs = `fetch('/api/snapshot').then(r=>r.json()).then(s=>document.getElementById('viewer-state').textContent=s.phase);document.getElementById('open-project').onclick=async()=>{const r=await fetch('/api/project-view',{method:'POST',headers:{'content-type':'application/json'},body:'{}'});const a=await r.json();document.getElementById('project').src=a.url;};`
       const httpHost: ReplayViewerHttpHost = new ReplayViewerHttpHost({
+        desktopFrames: desktopObservationFrameRegistry,
         viewers,
         projectViews,
         readAsset: async (path) =>

@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { createHash } from 'node:crypto'
 import { mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -26,6 +27,8 @@ vi.mock('electron', () => ({
   shell: { openPath: vi.fn() },
   ipcMain: { handle: vi.fn(), removeHandler: vi.fn() }
 }))
+
+await configureTestElectronHost(await import('electron'))
 
 const target = {
   projectId: 'project-a',

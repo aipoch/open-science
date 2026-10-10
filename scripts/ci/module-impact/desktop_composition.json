@@ -1501,6 +1501,7 @@
       "src/main/run-observation/electron-capture.integration.test.ts",
       "src/main/managed-runtime-views.integration.test.ts",
       "src/main/notebook/managed-shell-execution.test.ts",
+      "src/main/observation-desktop/bridge.test.ts",
       "src/main/research-demos/owner.macos.integration.test.ts",
       "src/main/notebook/offline-plan-admission.test.ts",
       "src/renderer/replay-viewer/browser-recording.integration.test.ts",

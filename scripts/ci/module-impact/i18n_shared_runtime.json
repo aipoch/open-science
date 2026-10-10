@@ -688,8 +688,6 @@
       "src/renderer/src/lib/acp/workspace-prompt-rollback-failure.test.ts",
       "src/renderer/src/lib/acp/workspace-runtime-overflow-recovery-failures.test.ts",
       "src/renderer/src/pages/workspace/SessionHeaderMenu.test.tsx",
-      "src/renderer/src/pages/workspace/workspace-discussion-navigation.test.ts",
-      "src/renderer/src/pages/workspace/ResearchWorkspaceHeader.test.tsx",
       "src/main/literature/pdf-translation/ipc.test.ts",
       "src/main/literature/pdf-translation/index.test.ts",
       "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationControls.test.tsx",
@@ -754,6 +752,10 @@
       "src/main/run-observation/media-collector.test.ts",
       "src/main/project-recordings/recorder.test.ts",
       "src/main/run-observation/managed-status.test.ts",
+      "src/main/managed-runtime-views.integration.test.ts",
+      "src/main/observation-desktop/bridge.test.ts",
+      "src/renderer/src/pages/workspace/workspace-discussion-navigation.test.ts",
+      "src/renderer/src/pages/workspace/ResearchWorkspaceHeader.test.tsx",
       "src/renderer/replay-viewer/ViewerApp.test.tsx",
       "src/renderer/src/pages/workspace/use-research-run-launcher.test.tsx",
       "src/renderer/src/pages/workspace/replay/ReplayPanel.layout.test.tsx",
@@ -784,8 +786,7 @@
       "src/main/research-demos/inspection.test.ts",
       "src/main/replay-viewer/desktop-embed.integration.test.ts",
       "src/main/replay-viewer/assets.test.ts",
-      "src/main/notebook/managed-execution-service.macos.integration.test.ts",
-      "src/main/managed-runtime-views.integration.test.ts"
+      "src/main/notebook/managed-execution-service.macos.integration.test.ts"
     ]
   },
   "capabilityOverlays": [],

@@ -897,6 +897,8 @@ describe('Reviewer orchestrator architecture', () => {
           'src/main/run-observation/media-collector.test.ts',
           'src/main/project-recordings/recorder.test.ts',
           'src/main/run-observation/managed-status.test.ts',
+          'src/main/managed-runtime-views.integration.test.ts',
+          'src/main/observation-desktop/bridge.test.ts',
           'src/main/research-demos/owner.macos.integration.test.ts',
           'src/main/research-demos/owner.test.ts',
           'src/main/research-runs/inspection.test.ts',
@@ -914,8 +916,7 @@ describe('Reviewer orchestrator architecture', () => {
           'src/renderer/replay-viewer/browser-recording-transport.integration.test.ts',
           'src/main/research-demos/inspection.test.ts',
           'src/main/replay-viewer/desktop-embed.integration.test.ts',
-          'src/main/notebook/managed-execution-service.macos.integration.test.ts',
-          'src/main/managed-runtime-views.integration.test.ts'
+          'src/main/notebook/managed-execution-service.macos.integration.test.ts'
         ]
       },
       capabilityOverlays: ['windows_sensitive', 'e2e_regressions', 'e2e_delegation'],

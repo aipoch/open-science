@@ -1087,6 +1087,8 @@
       "src/main/run-observation/media-collector.test.ts",
       "src/main/project-recordings/recorder.test.ts",
       "src/main/run-observation/managed-status.test.ts",
+      "src/main/managed-runtime-views.integration.test.ts",
+      "src/main/observation-desktop/bridge.test.ts",
       "src/main/notebook/offline-plan-admission.test.ts",
       "src/renderer/replay-viewer/browser-recording.integration.test.ts",
       "src/renderer/replay-viewer/browser.integration.test.ts",
@@ -1105,8 +1107,7 @@
       "src/main/research-runs/ipc.test.ts",
       "src/renderer/src/pages/workspace/NotebookPreview.gate.render.test.tsx",
       "src/main/replay-viewer/desktop-embed.integration.test.ts",
-      "src/main/notebook/managed-execution-service.macos.integration.test.ts",
-      "src/main/managed-runtime-views.integration.test.ts"
+      "src/main/notebook/managed-execution-service.macos.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

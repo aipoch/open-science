@@ -271,6 +271,8 @@
       "src/main/browser-recordings/external-port.test.ts",
       "src/main/runtime-view/browser-host.integration.test.ts",
       "src/main/replay-viewer/http-host.integration.test.ts",
+      "src/main/managed-runtime-views.integration.test.ts",
+      "src/main/observation-desktop/bridge.test.ts",
       "src/main/research-demos/owner.macos.integration.test.ts",
       "src/main/notebook/offline-plan-admission.test.ts",
       "src/renderer/replay-viewer/browser-recording.integration.test.ts",
@@ -280,8 +282,7 @@
       "src/main/research-demos/owner.test.ts",
       "src/main/research-demos/inspection.test.ts",
       "src/main/replay-viewer/desktop-embed.integration.test.ts",
-      "src/main/notebook/managed-execution-service.macos.integration.test.ts",
-      "src/main/managed-runtime-views.integration.test.ts"
+      "src/main/notebook/managed-execution-service.macos.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

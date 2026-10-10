@@ -270,6 +270,7 @@
       "src/main/acp/prompt-outcome-finalizer.test.ts",
       "src/main/acp/native-follow-up-workflow.test.ts",
       "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts",
+      "src/main/observation-desktop/bridge.test.ts",
       "src/renderer/replay-viewer/browser.integration.test.ts",
       "src/main/replay-viewer/desktop-embed.integration.test.ts",
       "src/renderer/src/pages/workspace/ResearchRunLauncher.test.tsx",
