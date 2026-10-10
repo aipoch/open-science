@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { resolve } from 'node:path'
 import type { CommandGatewayOptions } from '../runtime/src/gateway/command-gateway.js'
+import type { ExecutionConfinement } from '../runtime/src/gateway/execution-confinement.js'
 import type { NetworkRuntimeConfig } from '../runtime/src/notebook-runtime.js'
 
 // Exercise the real runtime/context lifecycle, DestinationPolicy and ViolationLog.
@@ -57,8 +58,9 @@ const commandId = 'public-read-command'
 const approval = vi.fn(async () => false)
 let gateway: CommandGatewayOptions
 
-const wrap = async (): Promise<void> => {
+const wrap = async (confinement?: ExecutionConfinement): Promise<void> => {
   await runtime.wrap({
+    confinement,
     commandId,
     command: 'fixture',
     cwd: process.cwd(),
@@ -357,5 +359,48 @@ describe('public-read runtime decision lifecycle', () => {
       allowed: true,
       address: '8.8.8.8'
     })
+  })
+})
+
+describe('per-command confinement ceiling', () => {
+  it('denies offline requests before DNS, approved policies or temporary approval', async () => {
+    approval.mockResolvedValue(true)
+    await wrap({ mode: 'offline-demo' })
+    for (const host of ['approved.example', 'unknown.example', 'explicit.example']) {
+      for (const purpose of ['probe', 'block'] as const) {
+        const result = await gateway.decide(host, 443, purpose)
+        expect(result).toMatchObject({
+          allowed: false,
+          message: expect.stringContaining('POLICY_BLOCKED')
+        })
+        expect(result).not.toHaveProperty('source')
+      }
+    }
+    expect(mocks.lookup).not.toHaveBeenCalled()
+    expect(approval).not.toHaveBeenCalled()
+  })
+
+  it('requires both exact host membership and normal policy authorization for research', async () => {
+    await wrap({ mode: 'research', allowedNetworkHosts: ['explicit.example', 'unknown.example'] })
+    expect(await gateway.decide('approved.example', 443, 'probe')).toMatchObject({ allowed: false })
+    expect(mocks.lookup).not.toHaveBeenCalled()
+    const publicRead = await gateway.decide('unknown.example', 443, 'probe')
+    expect(publicRead).toMatchObject({ allowed: false })
+    expect(publicRead).not.toHaveProperty('source')
+    approval.mockResolvedValue(true)
+    expect(await gateway.decide('explicit.example', 443)).toMatchObject({
+      allowed: true,
+      address: '8.8.8.8'
+    })
+    expect(await gateway.decide('other.example', 443)).toMatchObject({ allowed: false })
+  })
+
+  it('snapshots the ceiling and survives broader global updates', async () => {
+    const hosts = ['approved.example']
+    await wrap({ mode: 'research', allowedNetworkHosts: hosts })
+    hosts.push('other.example')
+    await runtime.updateConfig({ ...config, allowedDomains: ['approved.example', 'other.example'] })
+    expect(await gateway.decide('approved.example', 443)).toMatchObject({ allowed: true })
+    expect(await gateway.decide('other.example', 443)).toMatchObject({ allowed: false })
   })
 })

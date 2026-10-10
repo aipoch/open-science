@@ -492,7 +492,14 @@
       "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts",
       "src/renderer/src/stores/settings-connectors-slice.test.ts",
       "src/shared/renderer-surface-inventory.test.ts",
-      "src/shared/renderer-surface-matrix.test.ts"
+      "src/shared/renderer-surface-matrix.test.ts",
+      "src/main/composition/managed-execution.integration.test.ts",
+      "src/main/composition/artifact-surfaces.test.ts",
+      "src/main/composition/session-packages.test.ts",
+      "src/main/composition/handoff.test.ts",
+      "src/main/notebook/local-rpc-server.managed-execution.test.ts",
+      "src/main/notebook/managed-nested-generation.integration.test.ts",
+      "src/main/notebook/managed-output-publication.integration.test.ts"
     ]
   },
   "capabilityOverlays": [],

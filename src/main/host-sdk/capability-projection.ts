@@ -4,6 +4,7 @@ const HOST_CAPABILITY_BASE_KEYS = [
   'agents',
   'skills',
   'artifacts',
+  'managedExecution',
   'lineage',
   'frames',
   'sessions',
@@ -48,6 +49,7 @@ type HostCapabilityProjectionContext = Readonly<{
     agents: boolean
     skills: boolean
     artifacts: boolean
+    managedExecution?: boolean
     lineage: boolean
     frames: boolean
     sessions: boolean
@@ -84,6 +86,13 @@ const projectHostCapabilities = (
     agents: allows('agentsCall') && context.services.agents,
     skills: allows('skillsCall') && context.services.skills,
     artifacts: allows('artifactsCall') && context.services.artifacts,
+    managedExecution:
+      context.callerRole === 'main' &&
+      context.isControl &&
+      context.hasActiveControlInvocation &&
+      context.hasWorkspace &&
+      allows('managedExecutionCall') &&
+      Boolean(context.services.managedExecution),
     lineage: allows('lineageCall') && context.services.lineage,
     frames: context.isControl && allows('framesCall') && context.services.frames,
     sessions:

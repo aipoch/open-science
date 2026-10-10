@@ -100,8 +100,33 @@ describe('module test impact commands', () => {
       )
       spawn.mockClear()
       // Ordinary local invocations still do no work for an empty selection.
-      executeModuleTestPlan(plan, { spawn })
+      executeModuleTestPlan(plan, { spawn, environment: {} })
       expect(spawn).not.toHaveBeenCalled()
+    } finally {
+      write.mockRestore()
+    }
+  })
+
+  it.each(['0', '1'])('honors package-only selections in portable CI mode %s', (portable) => {
+    const plan = createAffectedTestPlan([], { status: 'unavailable-manifest-only', testFiles: [] })
+    const spawn = vi.fn(() => ({ status: 0 }))
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+    const environment = {
+      npm_execpath: '/npm/bin/npm-cli.js',
+      VITEST_PORTABLE_CI: portable,
+      OPEN_SCIENCE_CI_SELECTED_PACKAGE_ROOTS: '["packages/connector-core"]'
+    }
+    try {
+      expect(executeModuleTestPlan(plan, { spawn, environment, nodeExecutable: '/node' })).toBe(0)
+      if (portable === '1') {
+        expect(spawn).toHaveBeenCalledExactlyOnceWith(
+          '/node',
+          ['/npm/bin/npm-cli.js', 'test', '--', 'packages/connector-core'],
+          expect.objectContaining({ env: environment })
+        )
+      } else {
+        expect(spawn).not.toHaveBeenCalled()
+      }
     } finally {
       write.mockRestore()
     }

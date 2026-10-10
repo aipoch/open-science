@@ -27,6 +27,7 @@ import { resolveProjectId, type ProjectIdScope } from '../../shared/project-scop
 import { notebookLaneScope, type NotebookLaneIdentity } from './lane-identity'
 import type { NotebookHelperModuleInjection } from './helper-module-host'
 import type { NotebookSourceFileAccessContext } from './dependency-analysis-types'
+import type { NestedWorkingFileReader } from './nested-working-file-owner'
 
 export type NotebookSessionResolvedInterpreter = {
   command: string
@@ -128,6 +129,8 @@ export type NotebookSessionExecutionRequest = {
   // Opaque per-control invocation identity forwarded through the REPL request frame. It binds a
   // host.agents.switch approval to this exact outer repl_execute completion.
   controlInvocationId?: string
+  // Main-owned live child-generation references, never serialized into a kernel request.
+  nestedWorkingFiles?: NestedWorkingFileReader
 }
 
 export type NotebookSessionExecutionResult = {

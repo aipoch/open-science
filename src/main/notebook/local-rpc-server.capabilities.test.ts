@@ -89,6 +89,7 @@ describe('capabilitiesCall RPC', () => {
         lineage: true,
         frames: true,
         sessions: true,
+        managedExecution: false,
         llm: true,
         currentModel: true,
         listModels: true,

@@ -1,3 +1,8 @@
+import {
+  normalizeExecutionConfinement,
+  executionConfinementAllowsHost,
+  type ExecutionConfinement
+} from './gateway/execution-confinement.js'
 import { NETWORK_APPROVAL_REQUIRED, NETWORK_POLICY_BLOCKED } from './gateway/recovery-context.js'
 import { constants } from 'node:fs'
 import { access } from 'node:fs/promises'
@@ -20,6 +25,7 @@ import {
 import { ViolationLog } from './gateway/violation-log.js'
 import { checkLinuxTools, linuxLaunch } from './platform/linux-isolation.js'
 import { macosLaunch } from './platform/macos-isolation.js'
+import { validateLocalService, type NotebookLocalService } from './platform/local-service.js'
 import { wsl2Launch } from './platform/wsl2-isolation.js'
 import {
   checkWindowsAppContainer,
@@ -99,6 +105,8 @@ const cleanupComplete = (result: SandboxCleanupResult): boolean =>
   result.processesTerminated && result.networkClosed && result.temporaryResourcesRemoved
 
 type NetworkWrapRequest = Readonly<{
+  confinement?: ExecutionConfinement
+  localService?: NotebookLocalService
   target?: NotebookSandboxTarget
   command: string
   executable?: string
@@ -121,6 +129,7 @@ type NetworkWrapRequest = Readonly<{
 }>
 
 type RuntimeContext = {
+  confinement?: ExecutionConfinement
   filesystem: FilesystemLayout
   gateway?: CommandGateway
   releasePlatform?: (reason: SandboxCleanupReason) => Promise<boolean | void | SandboxCleanupResult>
@@ -192,6 +201,13 @@ const decide = async (
     message:
       'OPEN_SCIENCE_NETWORK_POLICY_BLOCKED: Execution context expired. Start a new Notebook execution if still needed; domain approval cannot revive a stale connection.'
   }
+  if (context?.confinement && !context.executionActive) return expired
+  // This ceiling precedes global/default grants, temporary grants, DNS and public-read probing.
+  // No settings update can widen a command's immutable authority after launch.
+  if (context?.confinement && !executionConfinementAllowsHost(context.confinement, host)) {
+    violations.record(commandId, `deny network-outbound ${host}:${port} (execution confinement)`)
+    return { allowed: false, message: NETWORK_POLICY_BLOCKED }
+  }
   const policy = destinationPolicy
   if (!policy) {
     violations.record(commandId, `deny network-outbound ${host}:${port} (policy unavailable)`)
@@ -216,7 +232,9 @@ const decide = async (
   if (!current()) return expired
   if (allowed) return { allowed: true, address: verdict.address }
   if (purpose === 'probe')
-    return { allowed: false, source: verdict.source, address: verdict.address }
+    return context?.confinement
+      ? { allowed: false, message: NETWORK_APPROVAL_REQUIRED }
+      : { allowed: false, source: verdict.source, address: verdict.address }
   violations.record(commandId, `deny network-outbound ${verdict.host}:${port} (not approved)`)
   return {
     allowed: false,
@@ -274,10 +292,20 @@ const wrap = async (
   confirmProcessState?: () => Promise<SandboxProcessState>
   beginSpawn?: () => Readonly<{ started: () => void; notStarted: () => void }>
 }> => {
+  const confinement = request.confinement
+    ? normalizeExecutionConfinement(request.confinement)
+    : undefined
+  const target = request.target ?? { kind: 'native' }
+  // The managed research owner currently admits native POSIX execution only. In particular,
+  // Windows standard mode must never advertise a ceiling while allowing direct socket access.
+  if (confinement && process.platform === 'win32')
+    throw new Error('Confined research execution requires a supported native POSIX sandbox.')
+  const localService = request.localService
+    ? validateLocalService(request.localService, process.platform, target.kind)
+    : undefined
   if (finishing.size > 0) await Promise.allSettled([...finishing])
   const config = runtimeConfig
   if (!config) throw new Error('Notebook process runtime is not initialized.')
-  const target = request.target ?? { kind: 'native' }
   const filesystem = normalizeFilesystemLayout({
     ...request.filesystem,
     ...((process.platform === 'darwin' || process.platform === 'linux') &&
@@ -311,6 +339,7 @@ const wrap = async (
         gatewayCredentials: credentials,
         onCleanupReady: (releasePlatform) => {
           commandContexts.set(request.commandId, {
+            confinement,
             filesystem,
             gateway,
             releasePlatform,
@@ -322,6 +351,7 @@ const wrap = async (
         ...(request.signal ? { signal: request.signal } : {})
       })
       commandContexts.set(request.commandId, {
+        confinement,
         filesystem,
         gateway,
         releasePlatform: launch.release,
@@ -364,6 +394,7 @@ const wrap = async (
   const env = { ...request.env, ...(trustBundle ? clientTrustEnvironment(trustBundle.path) : {}) }
   let gateway: CommandGateway | undefined
   const context: RuntimeContext = {
+    confinement,
     filesystem,
     executionActive: false,
     epoch: 0,
@@ -455,6 +486,7 @@ const wrap = async (
     context.gateway = gateway
     if (process.platform === 'darwin') {
       const launch = macosLaunch({
+        ...(localService ? { localService } : {}),
         command: request.command,
         shell: typeof request.shell === 'string' ? request.shell : '/bin/bash',
         gatewayPort: gateway.port,

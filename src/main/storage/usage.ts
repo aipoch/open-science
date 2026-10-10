@@ -9,6 +9,7 @@ import {
 } from '../../shared/storage'
 import { logicalEnvNameFromDirectory } from '../notebook/runtime-paths'
 import { MANAGED_WORKSPACE_OWNERSHIP_DIR } from './managed-workspace-ownership-dir'
+import { MANAGED_EXECUTION_DATA_DIRS } from './data-directories'
 
 // Ownership enrichment is injected by the electron-side wrapper (usage-ownership.ts) so this module
 // stays importable from the artifact MCP server's plain-Node bundle.
@@ -209,6 +210,14 @@ export const computeStorageUsage = async (
     } else if (key === 'workspaces') {
       const { bytes, children } = await workspaceUsage(dir, readOwnership)
       categories.push(children.length > 0 ? { key, bytes, children } : { key, bytes })
+    } else if (key === 'notebooks') {
+      // Preparation directories and operation receipts belong to the existing Notebook category;
+      // storage plumbing does not need separate user-facing categories.
+      const seen = new Set<string>()
+      let bytes = await dirSize(dir, seen)
+      for (const directory of MANAGED_EXECUTION_DATA_DIRS)
+        bytes += await dirSize(join(dataRoot, directory), seen)
+      categories.push({ key, bytes })
     } else if (key === 'execution-file-evidence') {
       const seen = new Set<string>()
       const bytes =

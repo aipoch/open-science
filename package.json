@@ -132,6 +132,7 @@
     "web-tree-sitter": "^0.26.13",
     "ws": "^8.22.0",
     "zod": "^4.6.5",
+    "semver": "^7.7.3",
     "@aipoch/connector-mcp-client": "file:packages/connector-mcp-client"
   },
   "overrides": {
@@ -221,6 +222,7 @@
     "unified": "^11.0.5",
     "vite": "^7.2.6",
     "vitest": "^4.1.11",
-    "zustand": "^5.0.14"
+    "zustand": "^5.0.14",
+    "@types/semver": "^7.7.0"
   }
 }

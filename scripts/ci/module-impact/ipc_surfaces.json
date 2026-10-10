@@ -28,7 +28,9 @@
     "src/main/window-find-ipc.test.ts",
     "resources/find-overlay/findOverlay.js",
     "resources/find-overlay/findOverlay.test.js",
-    "resources/find-overlay/index.html"
+    "resources/find-overlay/index.html",
+    "src/shared/renderer-contracts/research-execution-profiles.ts",
+    "src/shared/renderer-contracts/run-observation.ts"
   ],
   "interfacePaths": [
     "src/main/ipc-surfaces/adapter.ts",
@@ -43,7 +45,9 @@
     "src/main/ipc-surfaces/specialist.ts",
     "src/main/ipc-surfaces/session-persistence.ts",
     "src/main/ipc-surfaces/office-preview.ts",
-    "src/main/session-package/desktop-composition.ts"
+    "src/main/session-package/desktop-composition.ts",
+    "src/shared/renderer-contracts/research-execution-profiles.ts",
+    "src/shared/renderer-contracts/run-observation.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -176,7 +180,36 @@
       "src/main/composition/notebook-environment.test.ts",
       "src/main/composition/reviewer.test.ts",
       "src/main/windows.test.ts",
-      "src/renderer/src/hooks/useWindowFindAppearanceSync.overlay.test.tsx"
+      "src/renderer/src/hooks/useWindowFindAppearanceSync.overlay.test.tsx",
+      "src/main/acp/runtime.test.ts",
+      "src/main/application-command-client.test.ts",
+      "src/main/composition/artifact-surfaces.test.ts",
+      "src/main/composition/handoff.test.ts",
+      "src/main/composition/managed-execution.integration.test.ts",
+      "src/main/composition/session-packages.test.ts",
+      "src/main/compute/application-commands.test.ts",
+      "src/main/compute/compute-service.architecture.test.ts",
+      "src/main/host-application-commands.test.ts",
+      "src/main/literature/scale-regressions.test.ts",
+      "src/main/notebook/runtime-application-commands.test.ts",
+      "src/main/permission-grants/application-commands.test.ts",
+      "src/main/remote-access/ipc.test.ts",
+      "src/main/remote-access/pairing.test.ts",
+      "src/main/remote-access/service.test.ts",
+      "src/main/reviewer/reviewer-orchestrator.architecture.test.ts",
+      "src/main/settings/application-commands.test.ts",
+      "src/main/settings/bootstrap.integration.test.ts",
+      "src/main/settings/runtime-application-commands.test.ts",
+      "src/main/web-service/artifact-download.integration.test.ts",
+      "src/main/web-service/controller.test.ts",
+      "src/main/web-service/http-server.test.ts",
+      "src/main/web-service/task-api.test.ts",
+      "src/renderer/src/pages/workspace/handoff-lifecycle-source.test.ts",
+      "src/renderer/web/bootstrap.test.ts",
+      "src/renderer/web/renderer-argument-shape-characterization.test.ts",
+      "src/shared/renderer-surface-inventory.test.ts",
+      "src/main/desktop-runtime-electron-adapter.test.ts",
+      "src/main/desktop-runtime-transport.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation"],

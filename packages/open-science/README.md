@@ -172,3 +172,15 @@ conversation drafts are not changed.
 `--provider-default-model` keeps following the provider-owned default instead of pinning the
 first model in its catalog. An explicit `--model` stays fixed. If a saved selection becomes
 unavailable, choose a replacement explicitly or wait for it to become available again.
+
+## Package materials and managed execution
+
+Authenticated local clients expose `client.packages` for explicit `.science` import preflight,
+commit, cancellation and export, and `client.execution` for source inspection, runtime discovery,
+private-configuration requests, preparation, execution, status, cancellation and output collection.
+Commands run in Open Science's managed environment and publish into an ordinary writable Session.
+The original imported Session stays read-only; a working copy is optional.
+
+See [Managed research execution](../../docs/managed-research-execution.md) for the workflow,
+platform requirements, credential boundary, retry identities and cleanup behavior. Public requests
+never accept internal producer authority or credential values.

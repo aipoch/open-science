@@ -106,5 +106,11 @@
     "resources/find-overlay/findOverlay.js",
     "src/main/windows.ts"
   ],
-  "resources/find-overlay/findOverlay.js": ["src/main/find-overlay.ts"]
+  "resources/find-overlay/findOverlay.js": ["src/main/find-overlay.ts"],
+  "src/main/notebook/node-local-service-preload.mjs": [
+    "src/main/notebook/managed-research-environment.ts"
+  ],
+  "src/main/run-observation/electron-capture.ts": [
+    "src/main/run-observation/electron-capture.integration.test.ts"
+  ]
 }
