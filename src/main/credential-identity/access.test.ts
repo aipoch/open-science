@@ -37,6 +37,7 @@ const fixture = (
 describe('process credential access', () => {
   it('reads old ciphertext with the one selected identity, without a second name lookup', () => {
     const { access, cipher, probe } = fixture()
+    expect(access.validateEncryptedCookie).toBeUndefined()
     expect(access.decryptString(Buffer.from('legacy:old-secret'))).toBe('old-secret')
     expect(access.encryptString('next').toString()).toBe('legacy:next')
     expect(cipher.decryptString).toHaveBeenCalledTimes(1)
@@ -201,3 +202,54 @@ it('preserves safe macOS recheck diagnostics in the final redacted recovery log'
     osStatus: 0
   })
 })
+
+it('guards binary cookie validation and latches failure before any later credential read or write', () => {
+  const { cipher, recover, probe } = fixture()
+  const validateEncryptedCookie =
+    vi.fn<(value: Buffer, context: { hostKey: string; databaseVersion: number }) => void>()
+  const access = createCredentialAccess({
+    identity,
+    cipher: { ...cipher, validateEncryptedCookie },
+    recover,
+    probe
+  })
+  const ciphertext = Buffer.from('synthetic-cookie'),
+    context = { hostKey: 'fixture.example', databaseVersion: 24 }
+  access.validateEncryptedCookie!(ciphertext, context)
+  expect(validateEncryptedCookie).toHaveBeenCalledExactlyOnceWith(ciphertext, context)
+  expect(cipher.decryptString).not.toHaveBeenCalled()
+  expect(probe).toHaveBeenCalledExactlyOnceWith(identity.appName)
+  validateEncryptedCookie.mockImplementation(() => {
+    throw new Error('private-cookie')
+  })
+  expect(() => access.validateEncryptedCookie!(ciphertext, context)).toThrow(/recovery/i)
+  expect(() => access.decryptString(Buffer.from('legacy:secret'))).toThrow(/recovery/i)
+  expect(() => access.encryptString('replacement')).toThrow(/recovery/i)
+  expect(() => access.validateEncryptedCookie!(ciphertext, context)).toThrow(/recovery/i)
+  expect(validateEncryptedCookie).toHaveBeenCalledTimes(2)
+  expect(cipher.decryptString).not.toHaveBeenCalled()
+  expect(cipher.encryptString).not.toHaveBeenCalled()
+  expect(recover).toHaveBeenCalledOnce()
+  expect(String(recover.mock.calls[0][0])).not.toContain('private-cookie')
+})
+
+it.each(['access-blocked', 'not-found'] as const)(
+  'does not call the binary cookie validator when the selected identity is %s',
+  (status) => {
+    const { cipher, recover } = fixture()
+    const validateEncryptedCookie = vi.fn()
+    const access = createCredentialAccess({
+      identity,
+      cipher: { ...cipher, validateEncryptedCookie },
+      recover,
+      probe: () => ({ status })
+    })
+    expect(() =>
+      access.validateEncryptedCookie!(Buffer.from('synthetic-cookie'), {
+        hostKey: 'fixture.example',
+        databaseVersion: 24
+      })
+    ).toThrow(/recovery/i)
+    expect(validateEncryptedCookie).not.toHaveBeenCalled()
+  }
+)
