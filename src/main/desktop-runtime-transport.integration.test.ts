@@ -1,6 +1,6 @@
 import { ChildProcess } from 'node:child_process'
 import { PermissionApprovalPresence } from './permission-approval-presence'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { once } from 'node:events'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { WebSocket } from 'ws'
@@ -677,7 +677,11 @@ describe('desktop quit ownership', () => {
 describe('native desktop requests over the authenticated connection', () => {
   // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
   async function nativeSetup(
-    onNativeRequest?: import('./desktop-native-contract').DesktopNativeHandler
+    onNativeRequest?: import('./desktop-native-contract').DesktopNativeHandler,
+    operation: import('./desktop-native-contract').DesktopNativeOperation = {
+      operation: 'save-dialog',
+      options: {}
+    }
   ) {
     const { currentDesktopCaller } = await import('./desktop-native-contract')
     const server = await startDesktopRuntimeTransport({
@@ -688,11 +692,7 @@ describe('native desktop requests over the authenticated connection', () => {
         invoke: async (_name, invocation) => {
           const caller = currentDesktopCaller()!
           expect(caller.clientId).toBe(invocation.callerContext.clientId)
-          return server.requestNative(
-            { operation: 'save-dialog', options: {} },
-            caller.clientId,
-            caller.signal
-          )
+          return server.requestNative(operation, caller.clientId, caller.signal)
         }
       }
     })
@@ -724,6 +724,86 @@ describe('native desktop requests over the authenticated connection', () => {
     })
     value.client.close()
   })
+
+  it.each(['capture', 'record-poll'] as const)(
+    'preserves observation %s bytes through the production native request and command transports',
+    async (method) => {
+      // This is transport evidence, not a media decoder test. Exercise non-text bytes and the
+      // maximum finalized-segment payload through the actual authenticated WebSocket codecs.
+      const bytes = Uint8Array.from(
+        { length: method === 'record-poll' ? 8 * 1024 * 1024 : 1024 },
+        (_, index) => index % 256
+      )
+      const result =
+        method === 'capture'
+          ? { bytes }
+          : {
+              packets: [
+                {
+                  kind: 'segment',
+                  sequence: 1,
+                  value: {
+                    bytes,
+                    startMs: 0,
+                    endMs: 1000,
+                    width: 1280,
+                    height: 720,
+                    codec: 'vp8',
+                    frameRate: 30
+                  }
+                }
+              ],
+              stopped: false
+            }
+      const operation: import('./desktop-native-contract').DesktopNativeOperation = {
+        operation: 'observation',
+        request:
+          method === 'capture'
+            ? {
+                method,
+                viewerOrigin: 'http://viewer-fixture.localhost:1234',
+                projectOrigin: 'http://rv-fixture.localhost:1234'
+              }
+            : { method, recordingId: randomUUID(), ack: 0 }
+      }
+      const native = vi.fn(async () => result)
+      const value = await nativeSetup(native, operation)
+      try {
+        const received = (await value.client.invoke(value.document, 'projects:list', [])) as
+          { bytes: Uint8Array } | { packets: Array<{ value: { bytes: Uint8Array } }> }
+        const receivedBytes = 'bytes' in received ? received.bytes : received.packets[0].value.bytes
+        expect(receivedBytes).toBeInstanceOf(Uint8Array)
+        expect(receivedBytes).not.toBe(bytes)
+        expect(receivedBytes.byteLength).toBe(bytes.byteLength)
+        expect(createHash('sha256').update(receivedBytes).digest('hex')).toBe(
+          createHash('sha256').update(bytes).digest('hex')
+        )
+        if (method === 'record-poll') {
+          expect(received).toMatchObject({
+            packets: [
+              {
+                kind: 'segment',
+                sequence: 1,
+                value: { startMs: 0, endMs: 1000, width: 1280, height: 720, codec: 'vp8' }
+              }
+            ],
+            stopped: false
+          })
+        }
+        expect(native).toHaveBeenCalledExactlyOnceWith(
+          expect.objectContaining({ clientId: value.document, request: operation }),
+          expect.any(AbortSignal)
+        )
+        value.client.release(value.document)
+        await expect(value.client.invoke(value.document, 'projects:list', [])).rejects.toThrow(
+          'released'
+        )
+        expect(native).toHaveBeenCalledOnce()
+      } finally {
+        value.client.close()
+      }
+    }
+  )
 
   it('reports unavailable native capability without silently accepting a destination', async () => {
     const value = await nativeSetup()
