@@ -61,6 +61,7 @@ import type { DiagnosticOperation } from './diagnostics/operation'
 const APP_NAME = 'Open-Science'
 const APP_USER_MODEL_ID = 'com.aipoch.open-science'
 const bootstrapLog = createLogger('desktop-bootstrap')
+const webServiceLog = createLogger('web-service')
 let startupDiagnostics: DiagnosticOperation | undefined
 let cleanupStartupClient: (() => Promise<void>) | undefined
 let bootstrapPhase = 'credential-preflight'
@@ -452,6 +453,13 @@ async function startDesktop(): Promise<void> {
           preview = await createDesktopPreviewProxy(configRoot, client!.processId())
           installRelay()
           ready = true
+          // The web service lives in the Node backend (#3358) and logs to its own file; packaged
+          // certification parses the app stdout for this readiness line, so main re-publishes it.
+          webServiceLog.info(`Open-Science Web: http://127.0.0.1:${preview.port}/`, {
+            host: '127.0.0.1',
+            port: preview.port,
+            source: 'node-backend'
+          })
           const settings = (await client!.invokeHost('settings:get-settings')) as SettingsSnapshot
           icons?.setVariant(settings.appIconVariant)
           packageFiles.bind((path) => {
