@@ -10,7 +10,7 @@
   "consumerModules": [],
   "testFiles": {
     "owner": [],
-    "contract": [],
+    "contract": ["scripts/native-components.test.ts"],
     "consumer": [
       "src/main/agents/agents-dispatch.test.ts",
       "src/main/agents/agents-mutations.test.ts",
