@@ -9,6 +9,7 @@ import { ApplicationEventHub } from './application-events'
 import type { ApplicationInvocation } from './application-command-router'
 import { connectToDesktopEndpoint } from './desktop-connection'
 import { connectDesktopRuntime } from './desktop-runtime-client'
+import { handleOwnedBackendDisconnect } from './desktop-backend-exit'
 import { startDesktopRuntimeTransport } from './desktop-runtime-transport'
 import { parseRpcJson, stringifyRpcJson } from './rpc-json'
 
@@ -575,6 +576,39 @@ describe('desktop quit ownership', () => {
     expect(disconnected).not.toHaveBeenCalled()
     expect(startedProcess.kill).not.toHaveBeenCalled()
   })
+  it.each([true, false])(
+    'follows only the authenticated child on backend disconnect (owned=%s)',
+    async (owned) => {
+      const shutdown = vi.fn()
+      const server = await host(shutdown)
+      const startedProcess = child(owned ? process.pid : process.pid + 1)
+      const onCleanExit = vi.fn()
+      const onFailure = vi.fn()
+      const client = await connectDesktopRuntime({
+        endpoint: server.endpoint,
+        startedProcess,
+        onEvent: vi.fn(),
+        onDisconnect: (error) =>
+          handleOwnedBackendDisconnect({
+            child: startedProcess,
+            runtimePid: client.processId(),
+            error,
+            isUpdateCommitted: () => false,
+            onCleanExit,
+            onFailure
+          })
+      })
+      Object.assign(startedProcess, { exitCode: 0 })
+      startedProcess.emit('exit', 0, null)
+      await server.close()
+      await vi.waitFor(() => expect(owned ? onCleanExit : onFailure).toHaveBeenCalledOnce())
+      expect(owned ? onFailure : onCleanExit).not.toHaveBeenCalled()
+      await client.quit()
+      expect(shutdown).not.toHaveBeenCalled()
+      expect(startedProcess.kill).not.toHaveBeenCalled()
+    }
+  )
+
   it('reports an abnormal child exit without force-kill or success', async () => {
     const shutdown = vi.fn()
     const server = await host(shutdown)

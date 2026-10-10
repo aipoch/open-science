@@ -1,20 +1,23 @@
-import { EventEmitter } from 'node:events'
+import { ChildProcess } from 'node:child_process'
 
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { handleOwnedBackendDisconnect } from './desktop-backend-exit'
 
-const childWith = (exitCode: number | null): EventEmitter & { exitCode: number | null } =>
-  Object.assign(new EventEmitter(), { exitCode })
+const childWith = (exitCode: number | null): ChildProcess =>
+  Object.assign(new ChildProcess(), { pid: 123, exitCode })
+
+afterEach(() => vi.useRealTimers())
 
 describe('handleOwnedBackendDisconnect', () => {
   it('quits when the owned backend already exited cleanly', () => {
     const onCleanExit = vi.fn()
     const onFailure = vi.fn()
     handleOwnedBackendDisconnect({
-      child: childWith(0) as never,
+      child: childWith(0),
+      runtimePid: 123,
       error: new Error('disconnect'),
-      updateCommitted: false,
+      isUpdateCommitted: () => false,
       onCleanExit,
       onFailure
     })
@@ -27,9 +30,10 @@ describe('handleOwnedBackendDisconnect', () => {
     const onFailure = vi.fn()
     const error = new Error('disconnect')
     handleOwnedBackendDisconnect({
-      child: childWith(1) as never,
+      child: childWith(1),
+      runtimePid: 123,
       error,
-      updateCommitted: false,
+      isUpdateCommitted: () => false,
       onCleanExit,
       onFailure
     })
@@ -42,14 +46,15 @@ describe('handleOwnedBackendDisconnect', () => {
     const onCleanExit = vi.fn()
     const onFailure = vi.fn()
     handleOwnedBackendDisconnect({
-      child: child as never,
+      child: child,
+      runtimePid: 123,
       error: new Error('disconnect'),
-      updateCommitted: false,
+      isUpdateCommitted: () => false,
       onCleanExit,
       onFailure
     })
     expect(onCleanExit).not.toHaveBeenCalled()
-    child.exitCode = 0
+    Object.assign(child, { exitCode: 0 })
     child.emit('exit', 0, null)
     expect(onCleanExit).toHaveBeenCalledOnce()
     expect(onFailure).not.toHaveBeenCalled()
@@ -61,28 +66,30 @@ describe('handleOwnedBackendDisconnect', () => {
     const onFailure = vi.fn()
     const error = new Error('disconnect')
     handleOwnedBackendDisconnect({
-      child: child as never,
+      child: child,
+      runtimePid: 123,
       error,
-      updateCommitted: false,
+      isUpdateCommitted: () => false,
       onCleanExit,
       onFailure
     })
-    child.exitCode = 1
+    Object.assign(child, { exitCode: 1 })
     child.emit('exit', 1, null)
     expect(onCleanExit).not.toHaveBeenCalled()
     expect(onFailure).toHaveBeenCalledWith(error)
   })
 
-  it('reports the disconnect when the backend keeps running past the settle window', () => {
+  it.each([0, 1])('reports timeout once and still observes a later exit code %s', (exitCode) => {
     vi.useFakeTimers()
     const child = childWith(null)
     const onCleanExit = vi.fn()
     const onFailure = vi.fn()
     const error = new Error('disconnect')
     handleOwnedBackendDisconnect({
-      child: child as never,
+      child: child,
+      runtimePid: 123,
       error,
-      updateCommitted: false,
+      isUpdateCommitted: () => false,
       onCleanExit,
       onFailure,
       exitSettleTimeoutMs: 1_000
@@ -90,12 +97,83 @@ describe('handleOwnedBackendDisconnect', () => {
     vi.advanceTimersByTime(1_000)
     expect(onCleanExit).not.toHaveBeenCalled()
     expect(onFailure).toHaveBeenCalledWith(error)
-    // A late exit after the fallback must not fire a second decision.
-    child.exitCode = 0
+    expect(child.listenerCount('exit')).toBe(1)
+    Object.assign(child, { exitCode })
+    child.emit('exit', exitCode, null)
+    expect(onCleanExit).toHaveBeenCalledTimes(exitCode === 0 ? 1 : 0)
+    expect(onFailure).toHaveBeenCalledOnce()
+    expect(child.listenerCount('exit')).toBe(0)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it.each([456, undefined])(
+    'does not treat another runtime PID (%s) as the owned child',
+    (runtimePid) => {
+      const onCleanExit = vi.fn()
+      const onFailure = vi.fn()
+      const error = new Error('disconnect')
+      const child = childWith(0)
+      handleOwnedBackendDisconnect({
+        child,
+        runtimePid,
+        error,
+        isUpdateCommitted: () => false,
+        onCleanExit,
+        onFailure
+      })
+      expect(onCleanExit).not.toHaveBeenCalled()
+      expect(onFailure).toHaveBeenCalledWith(error)
+      expect(child.listenerCount('exit')).toBe(0)
+    }
+  )
+
+  it.each([true, false])('reports signal termination (already exited: %s)', (alreadyExited) => {
+    vi.useFakeTimers()
+    const child = childWith(null)
+    if (alreadyExited) Object.assign(child, { signalCode: 'SIGTERM' })
+    const onCleanExit = vi.fn()
+    const onFailure = vi.fn()
+    const error = new Error('disconnect')
+    handleOwnedBackendDisconnect({
+      child,
+      runtimePid: 123,
+      error,
+      isUpdateCommitted: () => false,
+      onCleanExit,
+      onFailure
+    })
+    if (!alreadyExited) {
+      expect(onFailure).not.toHaveBeenCalled()
+      Object.assign(child, { signalCode: 'SIGTERM' })
+      child.emit('exit', null, 'SIGTERM')
+    }
+    expect(onFailure).toHaveBeenCalledExactlyOnceWith(error)
+    expect(onCleanExit).not.toHaveBeenCalled()
+    expect(child.listenerCount('exit')).toBe(0)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('rechecks update precedence while waiting for the child', () => {
+    vi.useFakeTimers()
+    const child = childWith(null)
+    const onCleanExit = vi.fn()
+    const onFailure = vi.fn()
+    let updateCommitted = false
+    handleOwnedBackendDisconnect({
+      child,
+      runtimePid: 123,
+      error: new Error('disconnect'),
+      isUpdateCommitted: () => updateCommitted,
+      onCleanExit,
+      onFailure
+    })
+    updateCommitted = true
+    vi.advanceTimersByTime(10_000)
+    Object.assign(child, { exitCode: 0 })
     child.emit('exit', 0, null)
     expect(onCleanExit).not.toHaveBeenCalled()
-    expect(onFailure).toHaveBeenCalledOnce()
-    vi.useRealTimers()
+    expect(onFailure).not.toHaveBeenCalled()
+    expect(child.listenerCount('exit')).toBe(0)
   })
 
   it('does nothing when an update commit is in flight', () => {
@@ -103,13 +181,14 @@ describe('handleOwnedBackendDisconnect', () => {
     const onCleanExit = vi.fn()
     const onFailure = vi.fn()
     handleOwnedBackendDisconnect({
-      child: child as never,
+      child: child,
+      runtimePid: 123,
       error: new Error('disconnect'),
-      updateCommitted: true,
+      isUpdateCommitted: () => true,
       onCleanExit,
       onFailure
     })
-    child.exitCode = 0
+    Object.assign(child, { exitCode: 0 })
     child.emit('exit', 0, null)
     expect(onCleanExit).not.toHaveBeenCalled()
     expect(onFailure).not.toHaveBeenCalled()

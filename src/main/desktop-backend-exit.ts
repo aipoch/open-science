@@ -1,36 +1,46 @@
 import type { ChildProcess } from 'node:child_process'
 
-// The web service lives in the launched Node backend (#3358). An HTTP shutdown stops the backend
-// with exit code 0, and the desktop cannot outlive the backend it owns — quit the way the
-// pre-#3358 in-process web service did. Client-initiated quits suppress onDisconnect upstream.
+// The web service lives in the launched Node backend. Follow its clean shutdown through the
+// ordinary desktop quit flow, retaining renderer persistence protection. Client-initiated quits
+// suppress onDisconnect upstream.
 export const handleOwnedBackendDisconnect = (input: {
   child: ChildProcess
+  runtimePid: number | undefined
   error: Error
-  updateCommitted: boolean
+  isUpdateCommitted: () => boolean
   onCleanExit: () => void
   onFailure: (error: Error) => void
-  // The transport usually closes moments before the process exit settles. A backend still
-  // running past this window lost the connection instead of shutting down — report it.
   exitSettleTimeoutMs?: number
 }): void => {
   const { child } = input
-  const decide = (): void => {
-    if (input.updateCommitted) return
-    if (child.exitCode === 0) input.onCleanExit()
-    else input.onFailure(input.error)
+  if (input.isUpdateCommitted()) return
+  let failureReported = false
+  const reportFailure = (): void => {
+    if (failureReported || input.isUpdateCommitted()) return
+    failureReported = true
+    input.onFailure(input.error)
   }
-  if (child.exitCode !== null) {
+  // A spawned child may have lost the startup race to the authenticated runtime.
+  if (child.pid === undefined || child.pid !== input.runtimePid) {
+    reportFailure()
+    return
+  }
+  const decide = (): void => {
+    if (input.isUpdateCommitted()) return
+    if (child.exitCode === 0 && child.signalCode === null) input.onCleanExit()
+    else reportFailure()
+  }
+  if (child.exitCode !== null || child.signalCode !== null) {
     decide()
     return
   }
-  let settled = false
   const onExit = (): void => {
-    if (settled) return
-    settled = true
     clearTimeout(timer)
     decide()
   }
-  const timer = setTimeout(onExit, input.exitSettleTimeoutMs ?? 10_000)
-  timer.unref?.()
+  // Surface a lost connection promptly, but keep observing the child: WebSocket close handshakes
+  // and remaining backend teardown may legitimately outlast this diagnostic window.
+  const timer = setTimeout(reportFailure, input.exitSettleTimeoutMs ?? 10_000)
+  timer.unref()
   child.once('exit', onExit)
 }

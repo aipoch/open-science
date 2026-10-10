@@ -568,8 +568,9 @@ async function startDesktop(): Promise<void> {
       } else if (launch.startedProcess) {
         handleOwnedBackendDisconnect({
           child: launch.startedProcess,
+          runtimePid: client?.processId(),
           error,
-          updateCommitted,
+          isUpdateCommitted: () => updateCommitted,
           onCleanExit: () => app.quit(),
           onFailure: reportError
         })
