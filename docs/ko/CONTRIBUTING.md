@@ -234,10 +234,6 @@ ci(review): unify automated AI reviews
 - 운영 체제와 앱 버전.
 - 관련 로그 또는 스크린샷(있는 경우).
 
-## npm 패키지 게시
-
-유지 관리자는 [npm 패키지 릴리스 가이드](../npm-release.md)를 따라야 합니다. npm 패키지 버전은 `npm-v*` 태그를 사용하며 보호된 `Publish npm package` 워크플로를 통해 게시됩니다.
-
 ## 라이선스
 
 기여하면 기여 내용이 프로젝트와 같은 [Apache License 2.0](../../LICENSE)에 따라 라이선스되는 데 동의하는 것입니다.
