@@ -212,7 +212,19 @@
       "src/main/desktop-runtime-transport.integration.test.ts",
       "src/main/side-chat/application-commands.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
-      "src/main/agents/production-completion-handoff.test.ts"
+      "src/main/agents/production-completion-handoff.test.ts",
+      "src/main/acp/auto-operation-adapter.test.ts",
+      "src/main/acp/auto-operation-broker.test.ts",
+      "src/main/acp/auto-operation-inventory.test.ts",
+      "src/main/acp/auto-operation-policy.test.ts",
+      "src/main/acp/client-interaction-owner.test.ts",
+      "src/main/acp/library-auto-policy.test.ts",
+      "src/main/acp/permission-broker.test.ts",
+      "src/main/acp/permission-context.test.ts",
+      "src/main/acp/permission-frequency.test.ts",
+      "src/main/acp/permission-policy.test.ts",
+      "src/main/acp/permission-wait-owner.test.ts",
+      "src/renderer/src/lib/session-persistence/session-persistence.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
