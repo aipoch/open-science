@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { ParserEngine } from '../engine'
 import { CHEMISTRY_TOOLS } from './chemistry'
-import type { ToolDescriptor } from '../types'
+import type { ToolDescriptor } from '../../connector-core/types'
 
 const tool = (id: string): ToolDescriptor => CHEMISTRY_TOOLS.find((t) => t.id === id)!
 const jsonRes = (body: unknown): Response =>

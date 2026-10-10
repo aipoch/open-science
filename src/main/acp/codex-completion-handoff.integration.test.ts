@@ -1,3 +1,4 @@
+import { builtinConnectorRegistry } from '../connectors/registry'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
@@ -133,6 +134,7 @@ describe('Codex approved handoff', () => {
       specialistId: context.specialistId
     }))
     const connectorService = new ConnectorService({
+      registry: builtinConnectorRegistry,
       getConnectors: () => ({ enabledIds: [], autoAllowIds: [] }),
       resolveApiKey: () => undefined,
       resolveSpecialistProfile: async (specialistId) => resolveSpecialist(specialistId),

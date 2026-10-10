@@ -1,4 +1,4 @@
-import type { ToolDescriptor } from '../types'
+import type { ToolDescriptor } from '../../connector-core/types'
 import { STRUCTURES_EMDB_TOOLS } from './structures-emdb'
 import { STRUCTURES_COMPLEXPORTAL_TOOLS } from './structures-complexportal'
 import { STRUCTURES_INTACT_TOOLS } from './structures-intact'

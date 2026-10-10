@@ -10,6 +10,7 @@ import { SpecialistEditor } from './SpecialistEditor'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { ConnectorService } from '../../../../main/connectors/service'
+import { builtinConnectorRegistry } from '../../../../main/connectors/registry'
 import { SpecialistRepository } from '../../../../main/specialist/repository'
 import { SpecialistService } from '../../../../main/specialist/service'
 import type { CreateSpecialistInput, UpdateSpecialistInput } from '../../../../shared/specialist'
@@ -187,6 +188,7 @@ describe('Specialist editor durable behavior regressions', () => {
       expect(document.specialists).toHaveLength(2)
       const dispatch = vi.fn().mockResolvedValue({ ok: true })
       const gate = new ConnectorService({
+        registry: builtinConnectorRegistry,
         mcpClientManager: {
           call: dispatch,
           listTools: vi.fn().mockResolvedValue([{ name: 'read' }, { name: 'danger' }])

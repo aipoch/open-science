@@ -1,4 +1,4 @@
-import type { ToolContext, ToolDescriptor } from '../types'
+import type { ToolContext, ToolDescriptor } from '../../connector-core/types'
 
 // Three clinical-genomics knowledge bases behind one connector (faithful port of the upstream
 // mcp-clinical-genomics server): ClinGen curations (REST), CIViC clinical evidence (GraphQL, fully

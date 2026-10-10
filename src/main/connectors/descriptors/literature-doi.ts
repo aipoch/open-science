@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { ToolDescriptor } from '../types'
+import type { ToolDescriptor } from '../../connector-core/types'
 
 // Public metadata APIs. Keep their distinct relationship vocabularies and provenance intact.
 // https://www.crossref.org/documentation/retrieve-metadata/rest-api/

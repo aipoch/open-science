@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { ParserEngine } from '../engine'
 import { VARIANTS_MAVEDB_TOOLS } from './variants-mavedb'
-import type { ToolDescriptor } from '../types'
+import type { ToolDescriptor } from '../../connector-core/types'
 
 const SCORE_SET = 'urn:mavedb:00000003-a-1'
 const EXPERIMENT = 'urn:mavedb:00000003-a'

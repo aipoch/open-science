@@ -1,4 +1,4 @@
-import type { ToolDescriptor } from '../types'
+import type { ToolDescriptor } from '../../connector-core/types'
 import { GENOMES_BLAST_TOOLS } from './genomes-blast'
 import { GENOMES_CLUSTAL_TOOLS } from './genomes-clustal'
 import { GENOMES_ENSEMBL_TOOLS } from './genomes-ensembl'

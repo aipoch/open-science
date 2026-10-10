@@ -1,7 +1,7 @@
 import { configureTestRuntimeNetwork } from '../../../../test/runtime-host'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ParserEngine } from '../engine'
-import type { ToolContext } from '../types'
+import type { ToolContext } from '../../connector-core/types'
 import { GENOMES_BLAST_TOOLS } from './genomes-blast'
 
 const [submit, status, results] = GENOMES_BLAST_TOOLS

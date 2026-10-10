@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { ParserEngine } from '../engine'
 import { BIOMART_TOOLS } from './biomart'
-import type { ToolDescriptor } from '../types'
+import type { ToolDescriptor } from '../../connector-core/types'
 
 const tool = (id: string): ToolDescriptor => BIOMART_TOOLS.find((t) => t.id === id)!
 const textRes = (body: string): Response =>

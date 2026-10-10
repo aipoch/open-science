@@ -1,6 +1,6 @@
 import { DOMParser } from '@xmldom/xmldom'
-import { ncbiEtiquette } from './ncbi'
-import type { ToolContext, ToolDescriptor } from '../types'
+import { ncbiEtiquette } from '../../connector-core/ncbi'
+import type { ToolContext, ToolDescriptor } from '../../connector-core/types'
 
 // PubMed connector over NCBI E-utilities, the NCBI/PMC ID Converter, and Europe PMC. Threads NCBI
 // etiquette (email/api_key) from ctx.credentials onto every eutils/idconv call via ncbiEtiquette.

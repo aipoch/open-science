@@ -90,6 +90,7 @@ import { ContentRepository, type OpenedContent } from '../storage/content-reposi
 import { digestFileWithinBudget } from '../bounded-file-io'
 import {
   ArtifactLiteratureManifestOwner,
+  type ReadArtifactLiteratureItems,
   type RecordArtifactLiteraturePdfReadRequest,
   type RecordArtifactLiteratureSearchRequest
 } from './literature-manifest'
@@ -119,6 +120,7 @@ const assertExpectedArtifactContent = (
 type ArtifactProvenanceRepositoryOptions = {
   storageRoot: string
   getClient: () => Promise<PrismaClient>
+  readLiteratureItems?: ReadArtifactLiteratureItems
   inputAuthority?: Pick<ImmutableInputAuthority, 'validateVersion'>
   compatibilityRepository?: ArtifactRepository
   notebookRepository?: Pick<NotebookRunRepository, 'readSessionDocuments'>
@@ -293,7 +295,7 @@ class ArtifactProvenanceRepository {
       resourceBudgets: options.resourceBudgets,
       now: () => this.now().getTime()
     })
-    this.literatureManifestOwner = new ArtifactLiteratureManifestOwner(options.getClient)
+    this.literatureManifestOwner = new ArtifactLiteratureManifestOwner(options.readLiteratureItems)
     const inputAuthority =
       options.inputAuthority ??
       new ImmutableInputAuthority({

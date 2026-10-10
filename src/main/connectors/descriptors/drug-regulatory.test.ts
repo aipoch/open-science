@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { ParserEngine } from '../engine'
 import { DRUG_REGULATORY_TOOLS } from './drug-regulatory'
-import type { ToolDescriptor } from '../types'
+import type { ToolDescriptor } from '../../connector-core/types'
 
 const tool = (id: string): ToolDescriptor => DRUG_REGULATORY_TOOLS.find((t) => t.id === id)!
 

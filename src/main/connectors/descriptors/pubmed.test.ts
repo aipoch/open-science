@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { ParserEngine } from '../engine'
-import type { ToolDescriptor } from '../types'
+import type { ToolDescriptor } from '../../connector-core/types'
 import { PUBMED_TOOLS } from './pubmed'
 
 const jsonRes = (body: unknown): Response =>

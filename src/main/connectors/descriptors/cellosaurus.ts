@@ -1,5 +1,5 @@
-import { ConnectorHttpError } from '../engine'
-import type { ToolDescriptor } from '../types'
+import { ConnectorHttpError } from '../../connector-core/engine'
+import type { ToolDescriptor } from '../../connector-core/types'
 
 // Contract: https://api.cellosaurus.org/openapi.json and /api-fields.
 // JSON uses the Cellosaurus XML-style envelope, not Solr's response.docs format.

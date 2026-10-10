@@ -1,11 +1,11 @@
-import type { ToolContext, ToolDescriptor } from '../types'
+import type { ToolContext, ToolDescriptor } from '../../connector-core/types'
 import { netFetchStandard } from '../../skills/net-fetch'
-import { abortableDelay } from '../abortable-delay'
+import { abortableDelay } from '../../connector-core/abortable-delay'
 import {
   CONNECTOR_RETRYABLE_STATUS,
   boundedExponentialBackoff,
   withTimeoutSignal
-} from '../request-policy'
+} from '../../connector-core/request-policy'
 
 // Gene-regulation domain connector aggregating three public REST APIs, mirroring the upstream
 // mcp-regulation server: ENCODE portal (functional-genomics experiments/biosamples/files), JASPAR

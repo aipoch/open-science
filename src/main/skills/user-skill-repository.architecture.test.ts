@@ -1009,7 +1009,10 @@ describe('User Skill repository architecture', () => {
           'src/main/project-recordings/recorder.test.ts',
           'src/main/run-observation/managed-status.test.ts',
           'src/main/managed-runtime-views.integration.test.ts',
-          'src/main/observation-desktop/bridge.test.ts'
+          'src/main/observation-desktop/bridge.test.ts',
+          'src/main/acp/auto-operation-adapter.test.ts',
+          'src/main/acp/auto-operation-broker.test.ts',
+          'src/main/acp/auto-operation-policy.test.ts'
         ]
       },
       capabilityOverlays: ['windows_sensitive', 'e2e_regressions', 'e2e_delegation'],
