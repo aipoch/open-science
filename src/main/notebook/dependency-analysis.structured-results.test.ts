@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { mkdtemp, readFile, writeFile, rm, mkdir } from 'node:fs/promises'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -368,3 +369,5 @@ write.csv(counts, list(csv="counts.csv", ignored="unused-output.csv")["csv"][[1]
     }
   }
 )
+
+configureTestRuntimeMetadata()

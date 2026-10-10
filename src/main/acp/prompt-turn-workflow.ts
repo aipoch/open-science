@@ -226,6 +226,7 @@ type AcpPromptTurnWorkflowOptions = Readonly<{
   disconnectForReload: () => Promise<unknown>
   resumeAfterReload: (input: {
     sessionId: string
+    providerSessionId?: string
     cwd: string
     projectId: string
     permissionProfile: PermissionProfileId
@@ -344,11 +345,17 @@ class AcpPromptTurnWorkflow {
           this.options.interactions.release(reservation)
           return { stopReason: 'cancelled' }
         }
-        const snapshot = this.options.registry.lookup(request.sessionId)?.aggregate.snapshot()
+        const entry = this.options.registry.lookup(request.sessionId)
+        const snapshot = entry?.aggregate.snapshot()
+        // App identity survives replacement; a Skill reconnect must resume the current provider,
+        // not the original provider whose ID happened to seed the App Session.
+        const providerSessionId =
+          entry?.attachment?.providerSessionId ?? snapshot?.providerSessionId
         const projectId = this.options.resolveProjectId(request.sessionId)
         await this.options.disconnectForReload()
         const resumed = await this.options.resumeAfterReload({
           sessionId: request.sessionId,
+          ...(providerSessionId ? { providerSessionId } : {}),
           cwd: snapshot?.cwd ?? this.options.currentCwd(),
           projectId,
           permissionProfile:

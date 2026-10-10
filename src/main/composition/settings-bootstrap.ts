@@ -1,4 +1,5 @@
-import { app, session } from 'electron'
+import { runtimeMetadata } from '../runtime-metadata'
+import { runtimeNetwork } from '../runtime-network'
 import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { AcpSessionAgentTarget } from '../../shared/acp'
@@ -95,8 +96,8 @@ export async function composeSettingsBootstrap({
   initializeWsl2BashPreview({
     platform: process.platform,
     arch: process.arch,
-    packaged: app.isPackaged,
-    resourcesPath: process.resourcesPath
+    packaged: runtimeMetadata().packaged,
+    resourcesPath: runtimeMetadata().resourcesPath
   })
   const settingsInstallCoordinator = new SettingsInstallCoordinator()
   const wslSetupSessions = new WslSetupSessionOwner(resolveConfigRoot())
@@ -144,7 +145,7 @@ export async function composeSettingsBootstrap({
     return Object.freeze({ kind: 'powershell', version: '7.6' })
   }
   const networkProxyRuntime = new NetworkProxyRuntime({
-    setProxy: (config) => session.defaultSession.setProxy(config)
+    setProxy: (config) => runtimeNetwork().setProxy(config)
   })
   const settingsServiceRef: { current?: SettingsService } = {}
   const grantedRootsRepositoryRef: { current?: GrantedLocalRootsRepository } = {}
@@ -176,11 +177,11 @@ export async function composeSettingsBootstrap({
   const notebookNetworkSandbox = await modules.add(undefined, () => {
     const capability = new NotebookNetworkSandboxOwner({
       windowsRuntimeRoot: join(resolveConfigRoot(), 'notebook-runtimes'),
-      packaged: app.isPackaged,
+      packaged: runtimeMetadata().packaged,
       allowRuntimeAccessPrompt: !headless,
-      resourceRoot: app.isPackaged
-        ? join(process.resourcesPath, 'notebook-network-sandbox')
-        : join(app.getAppPath(), 'packages', 'notebook-network-sandbox', 'vendor'),
+      resourceRoot: runtimeMetadata().packaged
+        ? join(runtimeMetadata().resourcesPath, 'notebook-network-sandbox')
+        : join(runtimeMetadata().applicationPath, 'packages', 'notebook-network-sandbox', 'vendor'),
       // R rejects a TEMP path containing spaces. Electron's product-named userData directory
       // includes them in both production and development; keep command temp under the fixed config root.
       temporaryRoot: join(resolveConfigRoot(), 'notebook-command-temp'),

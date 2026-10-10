@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { ComputeApprovalRequest } from '../../shared/compute'
@@ -15,7 +16,8 @@ import {
   getTaskNotificationAvailability,
   showTestTaskNotification,
   buildSkillImportApprovalBroadcast,
-  buildTaskNotificationShow
+  buildTaskNotificationShow,
+  createDesktopNotificationHandler
 } from './electron-wiring'
 
 // Minimal stand-in for Electron's Notification class: exposes the static isSupported check the
@@ -35,6 +37,7 @@ class FakeNotification {
   )
 
   readonly show = vi.fn()
+  readonly close = vi.fn(() => this.fire('close'))
   private readonly handlers: Partial<
     Record<'show' | 'click' | 'close' | 'failed', (...args: unknown[]) => void>
   > = {}
@@ -453,5 +456,61 @@ describe('approval notification broadcasts', () => {
 
     expect(broadcastToRenderers).toHaveBeenCalledWith('skills:conversation-import-request', request)
     expect(handleSkillImportApproval).toHaveBeenCalledWith(request)
+  })
+})
+
+describe('native notification transport adapter', () => {
+  it('rechecks focus, forwards a single click capability and closes banners on disconnect', async () => {
+    const live = new Set<FakeNotification>()
+    const onAction = vi.fn()
+    let focused = true
+    const native = createDesktopNotificationHandler({
+      delivery: {
+        notificationCtor: FakeNotification as never,
+        liveNotifications: live as never,
+        headless: false,
+        log: createLog()
+      },
+      isAppFocused: () => focused,
+      isMainWindowFocused: () => focused,
+      confirmSessionVisible: async () => true,
+      setBadgeCount: vi.fn(),
+      requestAttention: vi.fn(),
+      clearAttention: vi.fn(),
+      activate: vi.fn(),
+      onAction
+    })
+    const token = randomUUID()
+    const request = {
+      kind: 'native-request' as const,
+      id: 1,
+      request: {
+        operation: 'notification-show' as const,
+        token,
+        title: 'Task completed',
+        body: 'Open the app.'
+      }
+    }
+    const signal = new AbortController().signal
+    await native.handle(request, signal)
+    expect(live.size).toBe(0)
+    expect(onAction).toHaveBeenCalledWith(token, 'closed')
+    focused = false
+    onAction.mockClear()
+    await native.handle(request, signal)
+    const banner = [...live][0]
+    banner.fire('click')
+    banner.fire('close')
+    expect(onAction).toHaveBeenCalledExactlyOnceWith(token, 'clicked')
+    await native.handle(
+      { ...request, id: 2, request: { ...request.request, token: randomUUID() } },
+      signal
+    )
+    const remaining = [...live][0]
+    native.dispose()
+    expect(remaining.close).toHaveBeenCalledOnce()
+    expect(live.size).toBe(0)
+    expect(onAction).toHaveBeenCalledOnce()
+    await expect(native.handle(request, signal)).rejects.toThrow('closed')
   })
 })

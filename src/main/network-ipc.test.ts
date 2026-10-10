@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../test/runtime-host'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { Logger } from './logger'
@@ -116,3 +117,5 @@ describe('network IPC handler', () => {
     })
   })
 })
+
+await configureTestElectronHost(await import('electron'))

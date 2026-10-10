@@ -1,3 +1,6 @@
+import { callerContextForEvent } from '../caller-context'
+import { callerLeaseForEvent } from '../caller-lifecycle'
+import type { OfficePreviewCommands } from './application-commands'
 import { ipcMain, type IpcMainEvent } from 'electron'
 
 import { ipcMainHandle } from '../ipc-handler-registry'
@@ -102,3 +105,45 @@ const registerOfficePreviewIpcHandlers = (
 
 export { registerOfficePreviewIpcHandlers }
 export type { OfficePreviewSupervisorPort }
+
+export function registerOfficePreviewCommandIpc(commands: OfficePreviewCommands): () => void {
+  ipcMainHandle(OFFICE_PREVIEW_OPEN_CHANNEL, (event, request) =>
+    commands.open({
+      callerContext: callerContextForEvent(event),
+      callerLease: callerLeaseForEvent(event),
+      args: [request]
+    })
+  )
+  ipcMainHandle(OFFICE_PREVIEW_ATTACH_FRAME_CHANNEL, (event, sessionId) =>
+    commands.attachFrame({
+      callerContext: callerContextForEvent(event),
+      callerLease: callerLeaseForEvent(event),
+      args: [sessionId]
+    })
+  )
+  ipcMainHandle(OFFICE_PREVIEW_CLOSE_CHANNEL, (event, sessionId) =>
+    commands.close({
+      callerContext: callerContextForEvent(event),
+      callerLease: callerLeaseForEvent(event),
+      args: [sessionId]
+    })
+  )
+  const report = (
+    event: IpcMainEvent,
+    sessionId: string,
+    state: import('../../shared/office-preview').OfficePreviewRuntimeState
+  ): void => {
+    if (event.senderFrame !== event.sender.mainFrame) return
+    try {
+      commands.reportState({
+        callerContext: callerContextForEvent(event),
+        callerLease: callerLeaseForEvent(event),
+        args: [sessionId, state]
+      })
+    } catch (error) {
+      log.error('failed to report runtime state', diagnosticErrorFields(error))
+    }
+  }
+  ipcMain.on(OFFICE_PREVIEW_REPORT_STATE_CHANNEL, report)
+  return () => ipcMain.removeListener(OFFICE_PREVIEW_REPORT_STATE_CHANNEL, report)
+}

@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { existsSync } from 'node:fs'
 import { execFile, spawn } from 'node:child_process'
 import { once } from 'node:events'
@@ -4068,3 +4069,5 @@ it('explains that existing public policy is not private-service admission', asyn
   expect(requestDecision).not.toHaveBeenCalled()
   expect(persistAlwaysAllow).not.toHaveBeenCalled()
 })
+
+configureTestRuntimeMetadata()

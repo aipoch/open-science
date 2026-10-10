@@ -11,7 +11,7 @@ import { SessionPdfSourceResolver } from '../literature/session-pdf-source-resol
 import { GrantedLocalRootsRepository } from '../local-fs/granted-roots-repository'
 import { LocalFsService } from '../local-fs/service'
 import { ManagedFileVersionService } from '../managed-file-versions/service'
-import { createManagedPreviewOwnerRegistry } from '../managed-preview-ipc'
+import { createManagedPreviewOwnerRegistry } from '../managed-preview-owner-registry'
 import { ManagedPreviewResources } from '../managed-preview-resources'
 import { NotebookDependencyAnalyzer } from '../notebook/dependency-analysis'
 import { NotebookInputRegistry } from '../notebook/input-registry'

@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { createHash } from 'node:crypto'
 import type { NotebookExecutionContext } from '../../shared/notebook-execution-context'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
@@ -949,3 +950,5 @@ describe('Notebook reproduction runtime', () => {
     )
   })
 })
+
+configureTestRuntimeMetadata()

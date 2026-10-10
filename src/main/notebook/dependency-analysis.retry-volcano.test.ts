@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { expect, it } from 'vitest'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -159,3 +160,5 @@ it('captures workbook sheet discovery as an input read', async () => {
     writes: []
   })
 })
+
+configureTestRuntimeMetadata()

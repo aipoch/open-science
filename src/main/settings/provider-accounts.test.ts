@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -2343,3 +2344,5 @@ describe('ProviderAccountsModule', () => {
     }
   )
 })
+
+await configureTestElectronHost(await import('electron'))

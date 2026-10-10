@@ -288,6 +288,7 @@ export type ApprovedSpecialistIdentity = {
 }
 
 export class CompletionHandoffLifecycle {
+  private readonly reconfigurationAttempts = new Map<string, object>()
   private readonly retryLifecycles = new Map<string, Promise<DurableCompletionHandoff>>()
 
   constructor(
@@ -403,6 +404,7 @@ export class CompletionHandoffLifecycle {
   // no old identity is eligible to receive a completion. A caller can later retry from the saved
   // safe stage if its product policy permits it.
   async cancel(context: TrustedToolCompletionContext): Promise<void> {
+    this.reconfigurationAttempts.delete(completionHandoffKey(context))
     const cancelled = await this.repository.update(context, (current) => {
       if (!current || current.stage === 'continued') return current
       return this.observe({
@@ -414,6 +416,7 @@ export class CompletionHandoffLifecycle {
       })
     })
     if (cancelled) this.emit(cancelled)
+    if (cancelled?.cancelled) await this.runtime.cleanupCancelledHandoff?.(context)
   }
 
   async run(context: TrustedToolCompletionContext): Promise<DurableCompletionHandoff> {
@@ -435,7 +438,13 @@ export class CompletionHandoffLifecycle {
         return this.fail(switching, 'switching', error)
       }
       const current = await this.require(context)
-      if (current.cancelled || current.stage === 'failed') return current
+      if (
+        current.cancelled ||
+        current.stage === 'failed' ||
+        current.generation !== switching.generation ||
+        current.sequence !== switching.sequence
+      )
+        return current
       return this.runReconfigure(current)
     }
 
@@ -512,16 +521,38 @@ export class CompletionHandoffLifecycle {
   private async runReconfigure(
     handoff: DurableCompletionHandoff
   ): Promise<DurableCompletionHandoff> {
+    const key = completionHandoffKey(handoff.context)
+    const attempt = {}
+    this.reconfigurationAttempts.set(key, attempt)
+    const isCurrentAttempt = (): boolean => this.reconfigurationAttempts.get(key) === attempt
     const reconfiguring = await this.saveStage(handoff, 'reconfiguring')
-    if (reconfiguring.cancelled || reconfiguring.stage === 'failed') return reconfiguring
+    if (reconfiguring.cancelled || reconfiguring.stage === 'failed' || !isCurrentAttempt()) {
+      if (isCurrentAttempt()) this.reconfigurationAttempts.delete(key)
+      return reconfiguring
+    }
     try {
-      await this.runtime.reconfigure(asCapturedDisposition(reconfiguring), reconfiguring.context)
+      await this.runtime.reconfigure(
+        asCapturedDisposition(reconfiguring),
+        reconfiguring.context,
+        isCurrentAttempt
+      )
     } catch (error) {
       return this.fail(reconfiguring, 'reconfiguring', error)
+    } finally {
+      if (isCurrentAttempt()) this.reconfigurationAttempts.delete(key)
     }
 
     const current = await this.require(handoff.context)
-    if (current.cancelled || current.stage === 'failed') return current
+    if (current.cancelled) {
+      await this.runtime.cleanupCancelledHandoff?.(current.context)
+      return current
+    }
+    if (
+      current.stage === 'failed' ||
+      current.generation !== reconfiguring.generation ||
+      current.sequence !== reconfiguring.sequence
+    )
+      return current
     const continuing = await this.saveStage(current, 'continuation-start')
     return this.runContinuation(continuing)
   }
@@ -574,6 +605,7 @@ export class CompletionHandoffLifecycle {
     retryFrom: CompletionHandoffRetryStage,
     error: unknown
   ): Promise<DurableCompletionHandoff> {
+    let claimedFailure = false
     const failed = await this.repository.update(handoff.context, (current) => {
       if (
         !current ||
@@ -582,6 +614,7 @@ export class CompletionHandoffLifecycle {
       ) {
         return current
       }
+      claimedFailure = true
       return this.observe({
         ...current,
         stage: 'failed',
@@ -590,6 +623,11 @@ export class CompletionHandoffLifecycle {
       })
     })
     if (!failed) throw new Error('Approved completion handoff disappeared while failing closed.')
+    if (failed.cancelled) {
+      await this.runtime.cleanupCancelledHandoff?.(failed.context)
+      return failed
+    }
+    if (!claimedFailure) return failed
     this.emit(failed)
     try {
       await this.runtime.reportHandoffFailure(error, asCapturedDisposition(failed), failed.context)

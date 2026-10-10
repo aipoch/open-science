@@ -1,5 +1,6 @@
 {
   "ownerPaths": [
+    "src/main/literature/pdf-translation/application-commands.ts",
     "test/fixtures/pdf-translation/compact-cjk-table-header-fit.jsonl",
     "test/fixtures/pdf-translation/compact-cjk-linked-label-fit.jsonl",
     "test/fixtures/pdf-translation/cross-column-word-hyphen-linked-citation.jsonl",
@@ -148,6 +149,7 @@
     "test/fixtures/pdf-translation/native-visual-reading-order.jsonl"
   ],
   "interfacePaths": [
+    "src/main/literature/pdf-translation/application-commands.ts",
     "src/main/literature/pdf-translation/index.ts",
     "src/main/literature/pdf-translation/ipc.ts",
     "src/main/literature/pdf-translation/usage.ts"
@@ -581,7 +583,8 @@
       "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout-float-footnote.test.ts",
       "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout-paired-definition.test.ts",
       "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout-parameter-prose.test.ts",
-      "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout-plot-axis.test.ts"
+      "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-layout-plot-axis.test.ts",
+      "src/main/desktop-runtime-transport.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions"],

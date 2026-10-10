@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -155,3 +156,5 @@ it('recovers in a fresh kernel and preserves the failed producer status', async 
     await rm(root, { recursive: true, force: true })
   }
 })
+
+configureTestRuntimeMetadata()

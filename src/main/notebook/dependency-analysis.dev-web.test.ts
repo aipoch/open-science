@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -99,3 +100,5 @@ it('does not carry the live Python counts across a kernel restart', async () => 
     await rm(root, { recursive: true, force: true })
   }
 })
+
+configureTestRuntimeMetadata()

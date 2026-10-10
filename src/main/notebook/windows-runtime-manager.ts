@@ -1,3 +1,4 @@
+import { runtimeMetadata } from '../runtime-metadata'
 import { join } from 'node:path'
 import catalog from './windows-runtime-catalog.json'
 import { extractPackArchive } from './pack-archive'
@@ -128,8 +129,15 @@ export class WindowsNotebookRuntimeManager {
         component,
         architecture: this.architecture,
         officialRoots,
-        bundledRoots: process.resourcesPath
-          ? [join(process.resourcesPath, 'notebook-runtime', this.architecture, component)]
+        bundledRoots: runtimeMetadata().resourcesPath
+          ? [
+              join(
+                runtimeMetadata().resourcesPath,
+                'notebook-runtime',
+                this.architecture,
+                component
+              )
+            ]
           : [],
         allowDownload,
         signal,

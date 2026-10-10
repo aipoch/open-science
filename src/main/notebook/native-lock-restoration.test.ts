@@ -113,6 +113,10 @@ const file = (path: string, content: string): NotebookEnvironmentLockFile => ({
 
 describe('native Environment lock restoration', () => {
   it.each([
+    ['2026.07.22', '2026.7.22', 'ready'],
+    ['01.002.000', '1.2', 'ready'],
+    ['0.0', '00', 'ready'],
+    ['1.02+custom', '1.2', 'unsupported'],
     ['1.2.0', '1.2', 'ready'],
     ['1.2', '1.2.0.0', 'ready'],
     ['1.2.1', '1.2', 'unsupported'],
@@ -142,6 +146,66 @@ describe('native Environment lock restoration', () => {
           }
         ])
       ).toMatchObject({ state })
+    }
+  )
+
+  it.each([false, true])(
+    'reports only missing pins and every conflicting observation (%s)',
+    (reverse) => {
+      const lock = lockWith(
+        {
+          ecosystem: 'python',
+          format: 'pip-requirements',
+          resolution: 'locked',
+          files: [
+            file(
+              'requirements.lock',
+              ['patsy==1.0.3', 'wrapt==2.4.1']
+                .map((pin) => `${pin} --hash=sha256:${'a'.repeat(64)}`)
+                .join('\n')
+            )
+          ]
+        },
+        'pip',
+        'patsy'
+      )
+      lock.untrackedPackages = ['python:patsy', 'python:wrapt', 'python:numpy']
+      const observed = [
+        ['patsy', '1.0.3'],
+        ['wrapt', '2.4.1'],
+        ['wrapt', '2.4.0'],
+        ['numpy', '2.5.3']
+      ].map(([name, version]) => ({
+        name,
+        version,
+        ecosystem: 'python' as const,
+        versionStatus: 'known' as const,
+        evidenceSources: ['python-importlib-metadata' as const]
+      }))
+      expect(nativeLockRestoreState(lock, reverse ? observed.reverse() : observed)).toEqual({
+        state: 'unsupported',
+        diagnostics: [
+          {
+            reason: 'package-version-mismatch',
+            packageName: 'wrapt',
+            observedVersion: '2.4.0',
+            lockedVersion: '2.4.1'
+          },
+          { reason: 'package-lock-missing', packageName: 'numpy', observedVersion: '2.5.3' }
+        ]
+      })
+      lock.untrackedPackages = ['python:patsy', 'python:wrapt']
+      expect(nativeLockRestoreState(lock, observed)).toEqual({
+        state: 'unsupported',
+        diagnostics: [
+          {
+            reason: 'package-version-mismatch',
+            packageName: 'wrapt',
+            observedVersion: '2.4.0',
+            lockedVersion: '2.4.1'
+          }
+        ]
+      })
     }
   )
 

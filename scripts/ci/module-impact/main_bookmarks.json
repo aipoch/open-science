@@ -62,6 +62,9 @@
       "src/main/pdf-annotations/service.test.ts",
       "src/main/session-package/ro-crate.integration.test.ts",
       "src/main/session-persistence/ipc.test.ts",
+      "src/main/composition/notebook-environment.test.ts",
+      "src/main/composition/reviewer.test.ts",
+      "src/main/desktop-runtime-transport.integration.test.ts",
       "src/main/session-package/research-reproduction.integration.test.ts"
     ]
   },

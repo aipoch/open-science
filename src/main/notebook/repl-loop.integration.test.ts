@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -3875,3 +3876,5 @@ gate('repl_loop.js host.mcp', () => {
     }
   }, 60_000)
 })
+
+configureTestRuntimeMetadata()

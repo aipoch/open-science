@@ -92,11 +92,15 @@ export type CompletionGateRuntime = {
   stopOldPrompt(context: TrustedToolCompletionContext): Promise<void>
   // Resolves only on the runtime's explicit in-flight ownership/lease-release acknowledgement.
   waitForOwnershipRelease(context: TrustedToolCompletionContext): Promise<void>
+  // Release adapter-owned handoff context after explicit cancellation without publishing failure.
+  cleanupCancelledHandoff?(context: TrustedToolCompletionContext): Promise<void>
   reconfigure(
     handoff:
       | Extract<CompletionDisposition, { kind: 'capture-for-handoff' }>
       | ApprovedCompletionHandoffTarget,
-    context: TrustedToolCompletionContext
+    context: TrustedToolCompletionContext,
+    // Synchronous attempt authority; wrappers must check after their final await before entry.
+    isCurrentAttempt?: () => boolean
   ): Promise<void>
   continueAsApproved(
     handoff: Extract<CompletionDisposition, { kind: 'capture-for-handoff' }>,
@@ -140,9 +144,10 @@ export class CompletionGateRuntimeRegistry implements CompletionGateRuntime {
 
   async reconfigure(
     handoff: Extract<CompletionDisposition, { kind: 'capture-for-handoff' }>,
-    context: TrustedToolCompletionContext
+    context: TrustedToolCompletionContext,
+    isCurrentAttempt?: () => boolean
   ): Promise<void> {
-    return this.requireRuntime(context).reconfigure(handoff, context)
+    return this.requireRuntime(context).reconfigure(handoff, context, isCurrentAttempt)
   }
 
   async continueAsApproved(
@@ -159,6 +164,10 @@ export class CompletionGateRuntimeRegistry implements CompletionGateRuntime {
     context: TrustedToolCompletionContext
   ): Promise<void> {
     return this.requireRuntime(context).reportHandoffFailure(error, handoff, context)
+  }
+
+  async cleanupCancelledHandoff(context: TrustedToolCompletionContext): Promise<void> {
+    await this.runtimeFor(context)?.cleanupCancelledHandoff?.(context)
   }
 
   private runtimeFor(context: TrustedToolCompletionContext): CompletionGateRuntime | undefined {

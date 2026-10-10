@@ -38,7 +38,7 @@ export type TaskNotificationServiceDeps = {
   // Detailed native copy is a separate privacy opt-in. Absence fails closed to generic copy.
   showContent?: () => Promise<boolean>
   // Notifications only make sense when the user has switched away; a focused app needs none.
-  isAppFocused: () => boolean
+  isAppFocused: () => boolean | Promise<boolean>
   // OS-specific delivery (Electron Notification in production, a spy in tests).
   show: (request: TaskNotificationRequest) => void
   // Live main-process translator. Tests and non-desktop compositions inject the English translator.
@@ -361,9 +361,9 @@ export class TaskNotificationService {
 
   // A destroyed native window can throw while Electron reports focus. Suppress delivery when focus
   // is unknown, which avoids showing a background notification over a potentially focused app.
-  private isAppFocused(): boolean {
+  private async isAppFocused(): Promise<boolean> {
     try {
-      return this.deps.isAppFocused()
+      return await this.deps.isAppFocused()
     } catch (error) {
       reportTaskNotificationError(this.deps.onDeliveryError, error)
       return true
@@ -813,7 +813,7 @@ export class TaskNotificationService {
   // only when the notification belongs to a known session. Focus is checked both before and after
   // the settings read so a user who switches back during the async gap doesn't get a spurious banner.
   private async deliver(notification: TaskNotification, sessionId?: string): Promise<void> {
-    if (this.isAppFocused()) return
+    if (await this.isAppFocused()) return
 
     let enabled = false
     let showContent = false
@@ -831,7 +831,7 @@ export class TaskNotificationService {
     if (!enabled) return
 
     // Re-check focus after the async settings read: the user may have switched back during the gap.
-    if (this.isAppFocused()) return
+    if (await this.isAppFocused()) return
 
     const onClick = (): void => {
       try {

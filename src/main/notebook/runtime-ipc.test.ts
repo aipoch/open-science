@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { NotebookLanguage } from '../../shared/notebook'
@@ -272,3 +273,5 @@ describe('runtime IPC adapter', () => {
     })
   })
 })
+
+await configureTestElectronHost(await import('electron'))

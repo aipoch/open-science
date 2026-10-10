@@ -112,7 +112,9 @@ export const webRpcBootstrapSchema = z
     platform: z.string(),
     draftScope: z.string().min(1).optional(),
     webCallerLocation: z.enum(WEB_CALLER_LOCATIONS).optional(),
-    versions: z.object({ electron: z.string(), chrome: z.string(), node: z.string() }).strict(),
+    versions: z
+      .object({ electron: z.string().optional(), chrome: z.string().optional(), node: z.string() })
+      .strict(),
     rpcProtocolVersion: z.literal(WEB_RPC_PROTOCOL_VERSION),
     eventStream: z
       .object({

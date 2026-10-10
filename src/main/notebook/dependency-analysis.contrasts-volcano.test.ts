@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { expect, it } from 'vitest'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -195,3 +196,5 @@ it('retains deferred mask dependencies and earlier environment lookups', async (
   )
   expect(facts.possiblyUsedNames).toEqual(expect.arrayContaining(['cutoff', 'earlier_cutoff']))
 })
+
+configureTestRuntimeMetadata()

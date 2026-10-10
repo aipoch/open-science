@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -102,7 +103,10 @@ vi.mock('../session-persistence/repository', () => ({
 
 // Capture broadcasts so a test can assert the start-failure error review reaches the renderer.
 const broadcastToRenderers = vi.fn()
-vi.mock('../renderer-broadcast', () => ({ broadcastToRenderers }))
+vi.mock('../renderer-broadcast', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../renderer-broadcast')>()),
+  broadcastToRenderers
+}))
 
 // Treat stale-review detection as a no-op identity function so GET_FOR_SESSION tests stay focused
 // on the IPC wiring (no scope resolution / file IO). Tests that exercise staleness use a real
@@ -1420,3 +1424,5 @@ describe('Main correction completion ownership', () => {
     expect(runReview).not.toHaveBeenCalled()
   })
 })
+
+await configureTestElectronHost(await import('electron'))

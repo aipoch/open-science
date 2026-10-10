@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -419,3 +420,5 @@ describe('DeviceCredentialStore', () => {
     expect(parseCredentialReference('enc:ciphertext')).toBeUndefined()
   })
 })
+
+await configureTestElectronHost(await import('electron'))

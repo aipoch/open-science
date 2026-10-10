@@ -1,3 +1,4 @@
+import { nodeRuntimeEnvironment } from '../node-process-host'
 import {
   createWriteStream,
   existsSync,
@@ -939,7 +940,7 @@ const summarizeCondaJsonCapture = (
       {
         stdio: ['ignore', 'pipe', 'ignore'],
         windowsHide: true,
-        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
+        env: { ...process.env, ...nodeRuntimeEnvironment() }
       }
     )
     parser.stdout?.on('data', (chunk) => stdout.push(chunk))

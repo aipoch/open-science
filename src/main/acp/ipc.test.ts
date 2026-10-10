@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 // Pins the ACP IPC bridge: the channel string and that it forwards verbatim to the runtime method.
 // The runtime behavior is covered in runtime.test.ts; this guards the wiring itself so a channel typo
 // (mismatched against the preload) can't slip through green. resetSessionContext is the overflow-recovery
@@ -1616,3 +1617,5 @@ describe('installAcpIpcHandlers — acp:send-prompt notification tracking', () =
     expect(untrackPrompt).not.toHaveBeenCalled()
   })
 })
+
+await configureTestElectronHost(await import('electron'))

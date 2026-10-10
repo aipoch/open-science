@@ -183,6 +183,10 @@ const useWorkspaceSessionController = ({
     getWorkspaceSpecialistBarrierSnapshot
   )
   const specialistItemsRef = useRef(specialistItems)
+  const restoredPendingBindings = useRef(new Map<string, string | undefined>())
+  const specialistResolutionTokens = useRef(new Map<string, symbol>())
+  const handoffResolutionTokens = useRef(new Map<string, symbol>())
+  const pendingSwitchResolutionTokens = useRef(new Map<string, Map<string | null, symbol>>())
   const [exportError, setExportError] = useState<string | null>(null)
   const sessionDetails = useWorkspaceSessionDetailsController(
     isPersistenceReady,
@@ -351,6 +355,7 @@ const useWorkspaceSessionController = ({
     }
     const sessionId = activeSession.id
     if (isWorkspaceSpecialistBarrierInFlight(sessionId)) return
+    specialistResolutionTokens.current.set(sessionId, Symbol())
     if (clearIdleRetry(sessionId)) clearPending(sessionId)
     const running = projectSessionActionability(activeSession).activity !== 'inactive'
     if (running) {
@@ -444,6 +449,7 @@ const useWorkspaceSessionController = ({
     specialistId: string | undefined
   ): Promise<boolean> => {
     if (isWorkspaceSpecialistBarrierInFlight(sessionId)) return false
+    specialistResolutionTokens.current.set(sessionId, Symbol())
     const previous = useSessionStore
       .getState()
       .sessions.find((candidate) => candidate.id === sessionId)
@@ -499,6 +505,7 @@ const useWorkspaceSessionController = ({
     const sessionId = activeSession.id
     const setter = window.api?.specialist?.setSessionSpecialist
     if (!setter || isWorkspaceSpecialistBarrierInFlight(sessionId)) return
+    specialistResolutionTokens.current.set(sessionId, Symbol())
     const attempt = reconfiguration.beginIdleAttempt(sessionId, undefined)
     setBarrier(sessionId, true)
     void setter({ sessionId, specialistId: undefined })
@@ -524,10 +531,27 @@ const useWorkspaceSessionController = ({
       .finally(() => setBarrier(sessionId, false))
   }
   useEffect(() => {
-    if (!activeSession || activeSession.specialistBindingPending !== true) return
+    if (!activeSession) return
+    if (activeSession.specialistBindingPending !== true) {
+      if (!restoredPendingBindings.current.has(activeSession.id)) return
+      const restoredId = restoredPendingBindings.current.get(activeSession.id)
+      restoredPendingBindings.current.delete(activeSession.id)
+      // Runtime application clears durable recovery; retain any newer local selection.
+      setPendingSpecialists((current) => {
+        if (!Object.hasOwn(current, activeSession.id) || current[activeSession.id] !== restoredId)
+          return current
+        const next = { ...current }
+        delete next[activeSession.id]
+        return next
+      })
+      setReconfigureError((current) =>
+        current?.sessionId === activeSession.id && current.committed ? null : current
+      )
+      return
+    }
+    restoredPendingBindings.current.set(activeSession.id, activeSession.specialistId)
     // The durable Session store is an external source. Mirror its restored recovery state so the
     // existing retry/choose-another interaction remains available after an application restart.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setPendingSpecialists((current) =>
       Object.hasOwn(current, activeSession.id)
         ? current
@@ -558,6 +582,12 @@ const useWorkspaceSessionController = ({
     const specialistApi = window.api?.specialist
     if (!specialistApi?.onPendingSwitch) return
     return specialistApi.onPendingSwitch((pending) => {
+      const token = Symbol()
+      specialistResolutionTokens.current.set(pending.sessionId, token)
+      const pendingTokens =
+        pendingSwitchResolutionTokens.current.get(pending.sessionId) ?? new Map()
+      pendingTokens.set(pending.targetName, token)
+      pendingSwitchResolutionTokens.current.set(pending.sessionId, pendingTokens)
       if (clearIdleRetry(pending.sessionId)) clearPending(pending.sessionId)
       if (pending.targetName === null) {
         setPendingSpecialists((current) => ({
@@ -581,6 +611,7 @@ const useWorkspaceSessionController = ({
       void resolver
         .call(specialistApi, { sessionId: pending.sessionId })
         .then((resolution) => {
+          if (specialistResolutionTokens.current.get(pending.sessionId) !== token) return
           if (resolution.kind === 'bound') {
             setPendingSpecialists((current) => ({
               ...current,
@@ -593,23 +624,64 @@ const useWorkspaceSessionController = ({
   }, [clearIdleRetry, clearPending])
   const applyHandoffLifecycleEvent = useCallback(
     (event: CompletionHandoffLifecycleEvent): void => {
-      if (event.phase !== 'continuation-start' && event.phase !== 'continued') return
+      if (event.removed) {
+        handoffResolutionTokens.current.delete(event.id)
+        return
+      }
+      const continuing = event.phase === 'continuation-start' || event.phase === 'continued'
+      if (
+        event.phase !== 'awaiting-approval' &&
+        event.phase !== 'switching' &&
+        event.phase !== 'reconfiguring' &&
+        !continuing
+      )
+        return
+      // Approval emits before the originating tool finishes and switching begins. Capture intent
+      // from that first projection so later phases cannot clear a choice made during the tool.
+      const pendingTokens = pendingSwitchResolutionTokens.current.get(event.sessionId)
+      const previousToken =
+        handoffResolutionTokens.current.get(event.id) ?? pendingTokens?.get(event.target)
+      if (previousToken) handoffResolutionTokens.current.set(event.id, previousToken)
+      pendingTokens?.delete(event.target)
+      if (pendingTokens?.size === 0) pendingSwitchResolutionTokens.current.delete(event.sessionId)
+      if (
+        previousToken &&
+        specialistResolutionTokens.current.get(event.sessionId) !== previousToken
+      )
+        return
+      const token = continuing
+        ? Symbol()
+        : (specialistResolutionTokens.current.get(event.sessionId) ?? Symbol())
+      handoffResolutionTokens.current.set(event.id, token)
+      specialistResolutionTokens.current.set(event.sessionId, token)
+      if (!continuing) return
       const specialistApi = window.api?.specialist
       const resolver = specialistApi?.resolveSessionSpecialist
       if (!resolver) return
       void resolver
         .call(specialistApi, { sessionId: event.sessionId })
         .then((resolution) => {
+          if (specialistResolutionTokens.current.get(event.sessionId) !== token) return
+          // Resolution reads the saved binding, which may already belong to a newer switch.
+          if (
+            (resolution.kind === 'bound' && resolution.profile.name !== event.target) ||
+            (resolution.kind === 'main' && event.target !== null)
+          )
+            return
           if (resolution.kind === 'bound') {
             setSessionSpecialistId(event.sessionId, resolution.profile.id)
           } else if (resolution.kind === 'main') {
             setSessionSpecialistId(event.sessionId, undefined)
           } else return
-          if (clearIdleRetry(event.sessionId)) clearPending(event.sessionId)
+          clearIdleRetry(event.sessionId)
+          clearPending(event.sessionId)
+          setReconfigureError((current) =>
+            current?.sessionId === event.sessionId ? null : current
+          )
         })
         .catch(() => undefined)
     },
-    [clearIdleRetry, clearPending, setSessionSpecialistId]
+    [clearIdleRetry, clearPending, setReconfigureError, setSessionSpecialistId]
   )
   useEffect(() => {
     const specialistApi = window.api?.specialist
@@ -619,13 +691,20 @@ const useWorkspaceSessionController = ({
   useEffect(() => {
     const specialistApi = window.api?.specialist
     if (!activeSession?.id || !specialistApi?.getHandoffEvents) return
+    const sessionId = activeSession.id
+    const token = specialistResolutionTokens.current.get(sessionId)
+    let cancelled = false
     void specialistApi
-      .getHandoffEvents(activeSession.id)
+      .getHandoffEvents(sessionId)
       .then((events) => {
+        if (cancelled || specialistResolutionTokens.current.get(sessionId) !== token) return
         const latest = events.sort(compareHandoffEventOrder).at(-1)
         if (latest) applyHandoffLifecycleEvent(latest)
       })
       .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
   }, [activeSession?.id, applyHandoffLifecycleEvent])
   return {
     view: {

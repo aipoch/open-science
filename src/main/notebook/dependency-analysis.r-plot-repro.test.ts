@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
@@ -911,3 +912,5 @@ it.skipIf(!process.env.RUN_KERNEL || !rPrefix).each([
   },
   60_000
 )
+
+configureTestRuntimeMetadata()

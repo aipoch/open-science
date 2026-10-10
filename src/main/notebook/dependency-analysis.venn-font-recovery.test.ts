@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -118,3 +119,5 @@ it('recovers the corrected script in a fresh kernel after failed font attempts',
     await rm(root, { recursive: true, force: true })
   }
 })
+
+configureTestRuntimeMetadata()

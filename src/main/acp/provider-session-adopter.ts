@@ -58,7 +58,6 @@ type AcpProviderSessionAdopterDependencies = Readonly<{
   // session adoption.
   resolveProjectAgentContext?: (projectId: string) => Promise<string | undefined>
   peekClaudeReplay: (sessionId: string) => string | undefined
-  commitClaudeReplay: (sessionId: string) => void
   updateCwd: (cwd: string) => void
   emitState: () => void
   diagnosticContext: () => Readonly<Record<string, unknown>>
@@ -212,7 +211,6 @@ export class AcpProviderSessionAdopter {
         if (hasAuthoritativeSpecialistBinding) aggregate.setSpecialistId(specialistId)
         capability.commit(stableAppSessionId)
         capability.registerBridgeMcpSession?.(stableAppSessionId, provisionalSession.sessionId)
-        this.deps.commitClaudeReplay(stableAppSessionId)
         provisionalSession = undefined
         capability = undefined
         identity.release()

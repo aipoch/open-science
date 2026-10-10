@@ -1,9 +1,9 @@
+import { desktopShellInteraction } from '../desktop-interaction'
+import { runtimeMetadata } from '../runtime-metadata'
 import { hostname, userInfo } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { readdir, realpath, stat } from 'node:fs/promises'
 import { basename, join, posix } from 'node:path'
-
-import { app, shell } from 'electron'
 
 import type { ArtifactPreviewResult, ReadArtifactPreviewRequest } from '../../shared/artifacts'
 import type {
@@ -90,7 +90,7 @@ export class LocalFsService {
 
   // Absolute paths for the browser's initial location and "Go to → Home".
   getRoots(): LocalRoots {
-    return { home: app.getPath('home'), machineName: buildMachineName() }
+    return { home: runtimeMetadata().homePath, machineName: buildMachineName() }
   }
 
   // Mounted drives/volumes for the browsers' drive switchers. Windows probes mounted drive letters;
@@ -160,7 +160,7 @@ export class LocalFsService {
     assertValidAccess(request.access)
     assertValidLocalPath(request.path)
     const resolvedPath = await realpath(request.path)
-    // Home must be canonicalized too: app.getPath('home') may sit behind a symlink (/var on
+    // Home must be canonicalized too: runtimeMetadata().homePath may sit behind a symlink (/var on
     // macOS, /home mounts on some Linux setups), and comparing the realpath'd candidate against
     // the verbatim string would fail the is-home check.
     const resolvedHome = await realpath(this.getRoots().home)
@@ -267,14 +267,14 @@ export class LocalFsService {
   }
 
   // Reveals a file in the OS file manager (Finder / Explorer).
-  revealInFolder(path: string): void {
+  async revealInFolder(path: string): Promise<void> {
     assertValidLocalPath(path)
-    shell.showItemInFolder(path)
+    await desktopShellInteraction().revealPath(path)
   }
 
   // Opens a file with the OS default application. Returns the shell error string, or '' on success.
   async openPath(path: string): Promise<string> {
     assertValidLocalPath(path)
-    return shell.openPath(path)
+    return desktopShellInteraction().openPath(path)
   }
 }

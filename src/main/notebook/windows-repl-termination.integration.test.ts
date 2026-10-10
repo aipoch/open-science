@@ -33,6 +33,9 @@ import { NotebookKernelExecutor } from './kernel-executor'
 import { KernelProcessLifecycleOwner } from './kernel-process-lifecycle.windows-posix'
 import type { NotebookProcessSandbox } from './process-sandbox'
 import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
+
+configureTestRuntimeMetadata()
 
 it.skipIf(process.platform !== 'win32')(
   'uses the production standard launcher to prove a naturally exiting REPL',
@@ -62,6 +65,7 @@ it.skipIf(process.platform !== 'win32')(
       policy: { allowedDomains: [], deniedDomains: [] }
     })
     const launchModes: string[] = []
+    const terminationRequests: ReturnType<typeof vi.fn>[] = []
     const port: NotebookProcessSandbox = {
       wrap: async (invocation) => {
         await sandbox.initialize()
@@ -76,11 +80,14 @@ it.skipIf(process.platform !== 'win32')(
           onNetworkAccessRequest: async () => false
         })
         launchModes.push(wrapped.argv[1])
+        terminationRequests.push(vi.spyOn(wrapped, 'requestProcessTreeTermination'))
         return {
           executable: wrapped.argv[0],
           args: wrapped.argv.slice(1),
           env: wrapped.env,
           confirmProcessTreeTermination: wrapped.confirmProcessTreeTermination,
+          requestProcessTreeTermination: wrapped.requestProcessTreeTermination,
+          confirmProcessState: wrapped.confirmProcessState,
           beginSpawn: wrapped.beginSpawn,
           annotateStderr: wrapped.annotateStderr,
           cleanup: wrapped.cleanup
@@ -117,6 +124,7 @@ it.skipIf(process.platform !== 'win32')(
       })
       await expect(readFile(join(root, 'fixture-started'), 'utf8')).resolves.toBe('started')
       expect(launchModes).toEqual(['supervise'])
+      expect(terminationRequests[0]).toHaveBeenCalled()
       const descendantPid = Number(await readFile(join(root, 'descendant.pid'), 'utf8'))
       expect(() => process.kill(descendantPid, 0)).toThrow(
         expect.objectContaining({ code: 'ESRCH' })
@@ -240,6 +248,12 @@ it
           if (proof === 'error') throw new Error('Native proof unavailable')
           if (proof === 'late' && !recoveryAllowed) return false
           return launch.confirmProcessTreeTermination()
+        },
+        confirmProcessState: async () => {
+          if (proof === 'missing' || (proof === 'late' && !recoveryAllowed))
+            return 'termination-unknown'
+          if (proof === 'error') throw new Error('Native proof unavailable')
+          return launch.confirmProcessState()
         }
       }
     })
@@ -259,6 +273,9 @@ it
           args: wrapped.argv.slice(1),
           env: wrapped.env,
           confirmProcessTreeTermination: wrapped.confirmProcessTreeTermination,
+          requestProcessTreeTermination: wrapped.requestProcessTreeTermination,
+          confirmProcessState: wrapped.confirmProcessState,
+          beginSpawn: wrapped.beginSpawn,
           annotateStderr: wrapped.annotateStderr,
           cleanup: wrapped.cleanup
         }

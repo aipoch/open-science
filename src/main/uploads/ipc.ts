@@ -1,4 +1,4 @@
-import { type IpcMainInvokeEvent } from 'electron'
+import type { IpcMainInvokeEvent } from 'electron'
 
 import type { ApplicationInvocation } from '../application-command-router'
 import { callerContextForEvent } from '../caller-context'

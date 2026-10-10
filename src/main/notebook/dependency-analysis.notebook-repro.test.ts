@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -521,3 +522,5 @@ describe('reported Python call tracking regressions', () => {
     expect(projection.stalenessByRunId['run-2']).toEqual({ state: 'clear' })
   })
 })
+
+configureTestRuntimeMetadata()

@@ -5306,91 +5306,95 @@ describe('translated PDF writer', () => {
       expect(config).toContain(path)
   })
 
-  it('generates a readable translated PDF from the configured ASAR unpack boundary', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'pdf-translation-asar-')),
-      source = join(root, 'source'),
-      archive = join(root, 'installed', 'app.asar'),
-      copied = new Set<string>(),
-      caller = lease()
-    let document: ReturnType<typeof getDocument> | undefined
-    try {
-      const config = load(await readFile('electron-builder.yml', 'utf8')) as {
-        asarUnpack: string[]
-      }
-      const copyPackage = async (
-        name: string,
-        from: ReturnType<typeof createRequire>
-      ): Promise<void> => {
-        let directory = dirname(from.resolve(name))
-        let metadata: { name: string; dependencies?: Record<string, string> }
-        for (;;) {
-          metadata = await readFile(join(directory, 'package.json'), 'utf8')
-            .then((text) => JSON.parse(text))
-            .catch(() => ({ name: '' }))
-          if (metadata.name === name) break
-          const parent = dirname(directory)
-          if (parent === directory) throw new Error(`Missing package root: ${name}`)
-          directory = parent
+  it.each(['installed', '安装 package'])(
+    'generates a readable translated PDF from the configured ASAR unpack boundary (%s)',
+    async (installationDirectory) => {
+      const root = await mkdtemp(join(tmpdir(), 'pdf-translation-asar-')),
+        source = join(root, 'source'),
+        archive = join(root, installationDirectory, 'app.asar'),
+        copied = new Set<string>(),
+        caller = lease()
+      let document: ReturnType<typeof getDocument> | undefined
+      try {
+        const config = load(await readFile('electron-builder.yml', 'utf8')) as {
+          asarUnpack: string[]
         }
-        // Preserve nested dependency versions at their installed relative location.
-        const location = relative(resolve('node_modules'), directory)
-        expect(isAbsolute(location) || location.startsWith('..')).toBe(false)
-        if (copied.has(directory)) return
-        copied.add(directory)
-        const target = join(source, 'node_modules', location)
-        await mkdir(dirname(target), { recursive: true })
-        await cp(directory, target, { recursive: true })
-        for (const dependency of Object.keys(metadata.dependencies ?? {}))
-          await copyPackage(dependency, createRequire(join(directory, 'package.json')))
-      }
-      await mkdir(join(source, 'resources'), { recursive: true })
-      await mkdir(dirname(archive), { recursive: true })
-      // An ancestor's module type must not substitute for the manifest inside ASAR.
-      await writeFile(join(root, 'package.json'), '{"type":"module"}')
-      await writeFile(join(source, 'package.json'), '{"type":"commonjs"}')
-      await cp('resources/pdf-translation', join(source, 'resources', 'pdf-translation'), {
-        recursive: true
-      })
-      const require = createRequire(resolve('package.json'))
-      for (const name of ['@embedpdf/pdfium', 'fontkit', 'pdf-lib'])
-        await copyPackage(name, require)
-      await createPackageWithOptions(source, archive, {
-        unpack: `{${config.asarUnpack.map((pattern) => '**/' + pattern).join(',')}}`
-      })
-      for (const file of [
-        'worker.mjs',
-        'form-labels.mjs',
-        'link-labels.mjs',
-        'scientific-scripts.mjs',
-        'NotoSansSC-Regular.otf',
-        'OFL.txt'
-      ])
-        expect(statFile(archive, join('resources', 'pdf-translation', file))).toMatchObject({
-          unpacked: true
+        const copyPackage = async (
+          name: string,
+          from: ReturnType<typeof createRequire>
+        ): Promise<void> => {
+          let directory = dirname(from.resolve(name))
+          let metadata: { name: string; dependencies?: Record<string, string> }
+          for (;;) {
+            metadata = await readFile(join(directory, 'package.json'), 'utf8')
+              .then((text) => JSON.parse(text))
+              .catch(() => ({ name: '' }))
+            if (metadata.name === name) break
+            const parent = dirname(directory)
+            if (parent === directory) throw new Error(`Missing package root: ${name}`)
+            directory = parent
+          }
+          // Preserve nested dependency versions at their installed relative location.
+          const location = relative(resolve('node_modules'), directory)
+          expect(isAbsolute(location) || location.startsWith('..')).toBe(false)
+          if (copied.has(directory)) return
+          copied.add(directory)
+          const target = join(source, 'node_modules', location)
+          await mkdir(dirname(target), { recursive: true })
+          await cp(directory, target, { recursive: true })
+          for (const dependency of Object.keys(metadata.dependencies ?? {}))
+            await copyPackage(dependency, createRequire(join(directory, 'package.json')))
+        }
+        await mkdir(join(source, 'resources'), { recursive: true })
+        await mkdir(dirname(archive), { recursive: true })
+        // An ancestor's module type must not substitute for the manifest inside ASAR.
+        await writeFile(join(root, 'package.json'), '{"type":"module"}')
+        await writeFile(join(source, 'package.json'), '{"type":"commonjs"}')
+        await cp('resources/pdf-translation', join(source, 'resources', 'pdf-translation'), {
+          recursive: true
         })
-      expect(statFile(archive, 'package.json')).not.toHaveProperty('unpacked', true)
-      const writer = new PdfTranslationWriter(() =>
-        join(archive + '.unpacked', 'resources', 'pdf-translation', 'worker.mjs')
-      )
-      const output = await writer.generate(await fixture(), caller.lease)
-      expect(output).toBeInstanceOf(Uint8Array)
-      document = getDocument({ data: output!, useSystemFonts: true })
-      const pdf = await document.promise
-      expect(pdf.numPages).toBe(2)
-      for (let number = 1; number <= 2; number++) {
-        const page = await pdf.getPage(number)
-        const text = (await page.getTextContent()).items
-          .flatMap((item) => ('str' in item ? [item.str] : []))
-          .join('')
-        expect(text).toContain('测量细胞生长。')
-        expect(text).toContain('p = 0.05; n = 128')
+        const require = createRequire(resolve('package.json'))
+        for (const name of ['@embedpdf/pdfium', 'fontkit', 'pdf-lib'])
+          await copyPackage(name, require)
+        await createPackageWithOptions(source, archive, {
+          unpack: `{${config.asarUnpack.map((pattern) => '**/' + pattern).join(',')}}`
+        })
+        for (const file of [
+          'worker.mjs',
+          'form-labels.mjs',
+          'link-labels.mjs',
+          'scientific-scripts.mjs',
+          'NotoSansSC-Regular.otf',
+          'OFL.txt'
+        ])
+          expect(statFile(archive, join('resources', 'pdf-translation', file))).toMatchObject({
+            unpacked: true
+          })
+        expect(statFile(archive, 'package.json')).not.toHaveProperty('unpacked', true)
+        const writer = new PdfTranslationWriter(() =>
+          join(archive + '.unpacked', 'resources', 'pdf-translation', 'worker.mjs')
+        )
+        const output = await writer.generate(await fixture(), caller.lease)
+        expect(output).toBeInstanceOf(Uint8Array)
+        document = getDocument({ data: output!, useSystemFonts: true })
+        const pdf = await document.promise
+        expect(pdf.numPages).toBe(2)
+        for (let number = 1; number <= 2; number++) {
+          const page = await pdf.getPage(number)
+          const text = (await page.getTextContent()).items
+            .flatMap((item) => ('str' in item ? [item.str] : []))
+            .join('')
+          expect(text).toContain('测量细胞生长。')
+          expect(text).toContain('p = 0.05; n = 128')
+        }
+      } finally {
+        await document?.destroy()
+        caller.release()
+        await rm(root, { recursive: true, force: true })
       }
-    } finally {
-      await document?.destroy()
-      caller.release()
-      await rm(root, { recursive: true, force: true })
-    }
-  }, 60000)
+    },
+    60000
+  )
 })
 
 it('translates prose containing repeated formula baselines instead of retaining the paragraph', async () => {

@@ -22,6 +22,8 @@ import {
 type PermissionPolicyContext = {
   // Main-only handoff to the Notebook execution owner's per-code gate. Never read from tool input.
   notebookHostAdmission?: boolean
+  // Separate main-only handoff to the validated Runtime binding boundary.
+  notebookBindingHostAdmission?: boolean
   permissionPrompts?: 'none'
   profile: PermissionProfileId
   projectId?: string

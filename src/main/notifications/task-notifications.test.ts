@@ -279,7 +279,7 @@ describe('describeTaskNotification', () => {
 const createService = (overrides: {
   isEnabled?: () => Promise<boolean>
   showContent?: () => Promise<boolean>
-  isAppFocused?: () => boolean
+  isAppFocused?: () => boolean | Promise<boolean>
   show?: (request: TaskNotificationRequest) => void
   onDeliveryError?: (error: unknown) => void
   requestAttention?: () => void
@@ -750,6 +750,27 @@ describe('TaskNotificationService', () => {
 
     expect(deliveryErrors).toEqual([boom])
     expect(attentionRequests).toEqual([])
+  })
+
+  it('fails closed when the remote focus probe rejects', async () => {
+    const onDeliveryError = vi.fn()
+    const { service, shown } = createService({
+      isAppFocused: async () => {
+        throw new Error('desktop disconnected')
+      },
+      onDeliveryError
+    })
+    service.trackPrompt({ sessionId: 's-1', text: 'Analyze data' })
+    await service.handleRuntimeEvent({
+      id: 'done',
+      level: 'info',
+      sessionId: 's-1',
+      kind: 'stop',
+      text: 'end_turn',
+      timestamp: 1
+    })
+    expect(shown).toHaveLength(0)
+    expect(onDeliveryError).toHaveBeenCalled()
   })
 
   it('fails closed when the focus probe throws and reports the delivery error', async () => {

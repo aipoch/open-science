@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -144,3 +145,5 @@ describe('terminal failure live projection with real Session storage', () => {
     }
   })
 })
+
+await configureTestElectronHost(await import('electron'))

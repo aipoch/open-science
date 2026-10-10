@@ -1,3 +1,4 @@
+import { runtimeMetadata } from '../runtime-metadata'
 import { open } from 'node:fs/promises'
 import { join } from 'node:path'
 
@@ -12,7 +13,7 @@ const VERSION_MARKER = `wsl-setup-guide-version: ${WSL_SETUP_GUIDE_VERSION}`
 export const WSL_SETUP_GUIDE_MAX_BYTES = 64 * 1024
 
 export const resolveWslSetupGuideCandidates = (
-  resourcesPath = process.resourcesPath
+  resourcesPath = runtimeMetadata().resourcesPath
 ): readonly string[] => [
   ...(resourcesPath
     ? [

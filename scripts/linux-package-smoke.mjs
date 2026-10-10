@@ -102,7 +102,13 @@ const packagedResourcePaths = (
   executable,
   resourceRoot = join(dirname(executable), 'resources')
 ) => {
-  return [executable, join(resourceRoot, 'app.asar'), join(resourceRoot, 'micromamba')]
+  return [
+    executable,
+    join(resourceRoot, 'app.asar'),
+    join(resourceRoot, 'node-runtime', 'node'),
+    join(resourceRoot, 'backend', 'out', 'backend', 'index.cjs'),
+    join(resourceRoot, 'backend', 'resources', 'micromamba')
+  ]
 }
 
 const findResourceRoot = async (executable, resolvedExecutable = executable) => {
@@ -129,7 +135,7 @@ const assertPackagedResources = async (
   for (const path of packagedResourcePaths(executable, resourceRoot)) {
     if (!(await pathExists(path))) throw new Error(`Packaged Linux resource is missing: ${path}`)
   }
-  const prismaRoot = join(resourceRoot, 'node_modules', '.prisma', 'client')
+  const prismaRoot = join(resourceRoot, 'backend', 'resources', 'prisma-client')
   const engines = await readdir(prismaRoot).catch(() => [])
   const nativeEngines = engines.filter(
     (name) => name.includes('query_engine-') && name.endsWith('.node')
@@ -144,12 +150,15 @@ const assertPackagedResources = async (
   }
 }
 
-const launchAndProbe = async ({ executable, expectedVersion, env }) => {
-  // Headless packaged launches have no Secret Service desktop, so OS credential mode fails closed;
-  // the file backend is the supported headless mode on Linux (matching the CLI smoke launch).
+const launchAndProbe = async ({ resourceRoot, expectedVersion, env }) => {
+  // Headless certification uses the shipped Node host; Electron only hosts the native desktop.
   const child = spawn(
-    executable,
-    ['--open-science-headless', '--serve=0', '--no-sandbox', '--credential-store=file'],
+    join(resourceRoot, 'node-runtime', 'node'),
+    [
+      join(resourceRoot, 'backend', 'out', 'backend', 'index.cjs'),
+      '--serve=0',
+      '--credential-store=file'
+    ],
     {
       env,
       stdio: ['ignore', 'pipe', 'pipe']
@@ -162,7 +171,7 @@ const launchAndProbe = async ({ executable, expectedVersion, env }) => {
   child.stderr?.on('data', (chunk) => (output += `\n${chunk}`))
   const exit = new Promise((resolveExit, rejectExit) => {
     child.once('error', rejectExit)
-    child.once('exit', resolveExit)
+    child.once('exit', (code, signal) => resolveExit({ code, signal }))
   })
 
   try {
@@ -170,8 +179,10 @@ const launchAndProbe = async ({ executable, expectedVersion, env }) => {
       waitFor('the packaged Linux web service', async () =>
         authenticatePackagedAppEndpoint(output, [env.OPEN_SCIENCE_E2E_STORAGE_ROOT])
       ),
-      exit.then((code) => {
-        throw new Error(`Packaged Linux app exited before becoming healthy (${code}).\n${output}`)
+      exit.then(({ code, signal }) => {
+        throw new Error(
+          `Packaged Linux app exited before becoming healthy (${signal ?? code}).\n${output}`
+        )
       })
     ])
     const response = await fetch(`${service.endpoint}/api/bootstrap?${service.auth}`, {
@@ -193,13 +204,13 @@ const launchAndProbe = async ({ executable, expectedVersion, env }) => {
     await shutdown.text()
     if (shutdown.status !== 202)
       throw new Error(`Packaged Linux shutdown returned ${shutdown.status}.`)
-    const exitCode = await Promise.race([
+    const { code, signal } = await Promise.race([
       exit,
       delay(60_000).then(() => {
         throw new Error('Packaged Linux app did not exit after shutdown.')
       })
     ])
-    if (exitCode !== 0) throw new Error(`Packaged Linux app exited with ${exitCode}.\n${output}`)
+    if (code !== 0) throw new Error(`Packaged Linux app exited with ${signal ?? code}.\n${output}`)
     return parsePackagedSqliteVersion(output)
   } catch (error) {
     child.kill('SIGKILL')
@@ -217,10 +228,10 @@ const smokeExecutable = async ({
   const resolvedExecutable = await realpath(executable)
   const resourceRoot = await findResourceRoot(executable, resolvedExecutable)
   await assertPackagedResources(resolvedExecutable, resourceRoot)
-  await runProcess(join(resourceRoot, 'micromamba'), ['--version'], { env })
+  await runProcess(join(resourceRoot, 'backend', 'resources', 'micromamba'), ['--version'], { env })
   const sqliteVersions = [
-    await launchAndProbe({ executable, expectedVersion, env }),
-    await launchAndProbe({ executable, expectedVersion, env })
+    await launchAndProbe({ resourceRoot, expectedVersion, env }),
+    await launchAndProbe({ resourceRoot, expectedVersion, env })
   ]
   await verifyDatabaseMigrationLedger(storageRoot)
   if (expectLegacyProject) await verifyLegacyProjectPreserved(storageRoot)
@@ -405,7 +416,7 @@ const main = async () => {
         specialPath: 'passed'
       }
     })
-    console.log('Linux deb install and AppImage launch smoke completed successfully.')
+    console.log('Linux deb install and AppImage headless backend smoke completed successfully.')
   } finally {
     await rm(root, { force: true, maxRetries: 5, recursive: true, retryDelay: 200 })
   }
@@ -426,6 +437,7 @@ export {
   assertPackagedResources,
   findOne,
   findResourceRoot,
+  launchAndProbe,
   packagedResourcePaths,
   parseArguments,
   parsePackagedAppEndpoint,

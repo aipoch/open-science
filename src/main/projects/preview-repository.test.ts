@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -371,3 +372,5 @@ describe('preview state repository (integration)', () => {
     )
   })
 })
+
+await configureTestElectronHost(await import('electron'))

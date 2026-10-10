@@ -302,6 +302,71 @@ const secondPermissionRequest: AcpPermissionRequest = {
 }
 
 describe('PermissionApprovalControls', () => {
+  it.each([
+    ['session', 'Allow for this conversation'],
+    ['project', 'Allow for this project'],
+    ['global', 'Allow globally']
+  ] as const)('retains the full label for a lone persistent %s scope', (scope, label) => {
+    const html = renderToStaticMarkup(
+      <PermissionApprovalControls
+        requests={[
+          {
+            ...noInputRequest,
+            options: [{ optionId: 'persistent', name: 'Always', kind: 'allow_always', scope }]
+          }
+        ]}
+        onRespond={() => undefined}
+      />
+    )
+    const host = document.createElement('div')
+    host.innerHTML = html
+    expect(host.querySelector('[data-testid="allow-primary"]')?.textContent).toBe(label)
+    expect(host.querySelector('[data-testid="scope-chevron"]')).toBeNull()
+  })
+
+  it.each([
+    [
+      'Runtime',
+      {
+        appOwned: true,
+        rawInput: { notebookRuntimeSelection: { language: 'python', label: 'default-python' } }
+      }
+    ],
+    [
+      'code risk',
+      { appOwned: true, rawInput: { notebookCodeRisk: { language: 'python', risks: [] } } }
+    ],
+    ['Skill', { isMcp: true, mcpIdentity: 'skills/load_skill', rawInput: { skill: 'mcp-pubmed' } }],
+    ['Specialist', { rawInput: { specialistApproval: { kind: 'switch', targetName: null } } }]
+  ] as const)(
+    'uses Allow / Deny for fixed one-time %s requests with or without reject_once',
+    (_kind, input) => {
+      for (const hasReject of [false, true]) {
+        const html = renderToStaticMarkup(
+          <PermissionApprovalControls
+            requests={[
+              {
+                ...noInputRequest,
+                ...input,
+                options: [
+                  { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once', scope: 'once' },
+                  ...(hasReject ? [{ optionId: 'deny', name: 'Deny', kind: 'reject_once' }] : [])
+                ]
+              }
+            ]}
+            onRespond={() => undefined}
+            embedded
+          />
+        )
+        const host = document.createElement('div')
+        host.innerHTML = html
+        expect(host.querySelector('[data-testid="allow-primary"]')?.textContent).toBe('Allow')
+        expect(host.querySelector('[data-testid="deny-button"]')?.textContent).toBe('Deny')
+        expect(host.querySelector('[data-testid="scope-chevron"]')).toBeNull()
+      }
+    }
+  )
+
   // jsdom-mounted cards to unmount after each test (static-markup tests mount nothing).
   const mounted: Array<{ root: Root; host: HTMLDivElement }> = []
 
@@ -379,7 +444,7 @@ describe('PermissionApprovalControls', () => {
       expect(block?.getAttribute('data-language')).toBe(displayedLanguage)
       expect(block?.textContent).toBe(code)
       expect(host.querySelector('[data-testid="scope-chevron"]')).toBeNull()
-      expect(host.textContent).toContain('Allow once')
+      expect(host.querySelector('[data-testid="allow-primary"]')?.textContent).toBe('Allow')
       expect(host.textContent).toContain('Deny')
     }
   )
@@ -453,6 +518,9 @@ describe('PermissionApprovalControls', () => {
       'Python research'
     )
     expect(host.textContent).toContain('Python base')
+    expect(host.querySelector('[data-testid="notebook-runtime-selection"]')?.textContent).toContain(
+      'Later Notebook runs use this environment. Approval does not cover package changes or code execution.'
+    )
     expect(host.textContent).toContain(
       "Switching environments clears the current kernel's variables."
     )
@@ -985,7 +1053,7 @@ describe('PermissionApprovalControls', () => {
       const onceHtml = renderToStaticMarkup(
         <PermissionApprovalControls requests={[noInputRequest]} onRespond={() => undefined} />
       )
-      expect(onceHtml).toContain('>今回のみ許可</span>')
+      expect(onceHtml).toContain('>許可する</span>')
 
       const sessionHtml = renderToStaticMarkup(
         <PermissionApprovalControls requests={[permissionRequest]} onRespond={() => undefined} />

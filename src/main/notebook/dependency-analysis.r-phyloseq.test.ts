@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { expect, it } from 'vitest'
 import type { NotebookRunRecord } from '../../shared/notebook'
 import { analyzeRNotebookSource } from './dependency-analysis-r'
@@ -75,3 +76,5 @@ it('does not trust an unqualified phyloseq constructor after local shadowing', a
     )
   ).resolves.toMatchObject({ readState: 'partial' })
 })
+
+configureTestRuntimeMetadata()

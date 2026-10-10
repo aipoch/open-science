@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { expect, it } from 'vitest'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -148,3 +149,5 @@ it('keeps the failed theme provider when the later plot still inherits its theme
     await rm(root, { recursive: true, force: true })
   }
 })
+
+configureTestRuntimeMetadata()

@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../../test/runtime-host'
 // @vitest-environment jsdom
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -195,3 +196,5 @@ it.each(['copying', 'verified'] as const)(
     expect(document.body.textContent).not.toContain('No matching staged data copy was found.')
   }
 )
+
+await configureTestElectronHost(await import('electron'))

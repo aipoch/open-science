@@ -1016,6 +1016,7 @@ describe('AcpPromptTurnWorkflow', () => {
     expect(harness.interactions.reservePrompt).toHaveBeenCalledTimes(2)
     expect(harness.resumeAfterReload).toHaveBeenCalledWith({
       sessionId: 's1',
+      providerSessionId: 'provider-1',
       cwd: '/session',
       projectId: 'project-1',
       permissionProfile: 'ask',

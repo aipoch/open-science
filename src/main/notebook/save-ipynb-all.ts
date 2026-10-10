@@ -1,3 +1,5 @@
+import { desktopFileInteraction, type DesktopFileInteraction } from '../desktop-interaction'
+import { runtimeMetadata } from '../runtime-metadata'
 import { link, mkdtemp, readFile as fsReadFile, rename, rm, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
@@ -84,30 +86,12 @@ export const writeNotebooksWithCleanup = async (
   return { ok: true, published }
 }
 
-export type ElectronSurface = {
-  app: { getPath: (name: string) => string }
-  dialog: {
-    showOpenDialog: (options: {
-      title: string
-      defaultPath: string
-      properties: string[]
-    }) => Promise<{ canceled: boolean; filePaths: string[] }>
-    showMessageBox: (options: {
-      type?: 'question' | 'info' | 'warning' | 'error'
-      title: string
-      message: string
-      detail?: string
-      buttons: string[]
-      defaultId?: number
-      cancelId?: number
-    }) => Promise<{ response: number }>
-  }
-}
-
 type FsCheck = (path: string) => boolean
 
 export type SaveIpynbAllDeps = {
-  electron: ElectronSurface
+  downloadsPath: string
+  chooseDirectory: DesktopFileInteraction['chooseFiles']
+  confirmOverwrite: DesktopFileInteraction['confirm']
   fsCheck: FsCheck
   fsOps: FsDeps
 }
@@ -139,7 +123,9 @@ export const saveIpynbAll = async (
   const resolvedDeps: SaveIpynbAllDeps =
     deps ??
     ({
-      electron: (await import('electron')) as unknown as ElectronSurface,
+      downloadsPath: runtimeMetadata().downloadsPath,
+      chooseDirectory: desktopFileInteraction().chooseFiles,
+      confirmOverwrite: desktopFileInteraction().confirm,
       fsCheck: existsSync,
       fsOps: {
         writeFile: (p, d) => writeFile(p, d, 'utf8'),
@@ -162,9 +148,9 @@ export const saveIpynbAll = async (
       }
     } satisfies SaveIpynbAllDeps)
 
-  const { canceled, filePaths } = await resolvedDeps.electron.dialog.showOpenDialog({
+  const { canceled, filePaths } = await resolvedDeps.chooseDirectory({
     title: translate('Export notebooks by kernel'),
-    defaultPath: resolvedDeps.electron.app.getPath('downloads'),
+    defaultPath: resolvedDeps.downloadsPath,
     properties: ['openDirectory', 'createDirectory']
   })
   const directory = filePaths[0]
@@ -175,7 +161,7 @@ export const saveIpynbAll = async (
 
   if (conflicts.length > 0) {
     const listing = conflicts.map((c) => c.name).join(', ')
-    const { response } = await resolvedDeps.electron.dialog.showMessageBox({
+    const { response } = await resolvedDeps.confirmOverwrite({
       type: 'question',
       title: translate('Overwrite existing notebooks?'),
       message: translate('{{count}} notebooks already exist in the chosen directory.', {

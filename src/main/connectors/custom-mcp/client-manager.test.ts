@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../../test/runtime-host'
 import { afterEach, describe, it, expect, vi } from 'vitest'
 import { delimiter } from 'node:path'
 import type { Writable } from 'node:stream'
@@ -1035,7 +1036,7 @@ describe('buildTransport', () => {
     await transport.send({ jsonrpc: '2.0', method: 'notifications/initialized' })
 
     expect(netFetch).toHaveBeenCalledWith(
-      new URL('https://mcp.example.test'),
+      'https://mcp.example.test/',
       expect.objectContaining({ method: 'POST' })
     )
     expect(directFetch).not.toHaveBeenCalled()
@@ -1161,7 +1162,7 @@ describe('buildTransport', () => {
 
     expect(netFetch).toHaveBeenNthCalledWith(
       2,
-      new URL('https://mcp.example.test/redirected-mcp'),
+      'https://mcp.example.test/redirected-mcp',
       expect.objectContaining({
         headers: expect.any(Headers),
         method: 'POST',
@@ -1194,3 +1195,5 @@ describe('buildTransport', () => {
     expect(() => buildTransport({ id: 'srv-sse', name: 'sse-server', transport: 'sse' })).toThrow()
   })
 })
+
+await configureTestElectronHost(await import('electron'))

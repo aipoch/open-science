@@ -1,3 +1,15 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
+import type { RequestPermissionRequest } from '@agentclientprotocol/sdk'
+import type { AcpPermissionRequest } from '../../shared/acp'
+import type { NotebookLanguage } from '../../shared/notebook'
+import type { DiscoveredInterpreter } from '../../shared/notebook-runtime'
+import type { PermissionProfileId } from '../../shared/permission-profiles'
+import type { NotebookRpcConnection } from './mcp-server'
+import { getAgentFramework } from '../agent-framework'
+import { AcpPermissionContext, HUMAN_PERMISSION_ACTION_ORIGIN } from '../acp/permission-context'
+import { ConversationPermissionGrantStore } from '../acp/permission-broker'
+import type { AcpRuntimeCoordinator } from '../acp/runtime-coordinator'
+import { bindNotebookApprovals } from '../composition/notebook-approvals'
 import { createHash } from 'node:crypto'
 import { once } from 'node:events'
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
@@ -6,7 +18,7 @@ import { createConnection, type Socket } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { PrismaClient } from '@prisma/client'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi, type Mock } from 'vitest'
 
 import { ABOUT_YOU_MEMORY_CATEGORY_ID } from '../../shared/memory'
 import {
@@ -38,7 +50,8 @@ import { NotebookLocalRpcServer } from './local-rpc-server'
 import {
   NotebookControlCompletionCapturedError,
   NotebookRuntimeService,
-  type NotebookExecutionRequest
+  type NotebookExecutionRequest,
+  type NotebookExecutionResult
 } from './runtime-service'
 import { NotebookRunRepository, getRuntimeRoot } from './repository'
 import type { NotebookInputRunLease } from './input-registry'
@@ -47,6 +60,7 @@ import {
   DEFAULT_PY_ENV,
   envPrefix,
   pythonBin,
+  rBin,
   writeReadyMarker
 } from './runtime-paths'
 
@@ -5113,5 +5127,686 @@ describe('notebook local RPC server', () => {
     } finally {
       await server.close()
     }
+  })
+})
+
+configureTestRuntimeMetadata()
+describe('real ACP / RPC / Runtime approval wiring', () => {
+  type WiringRpcResponse = {
+    status: number
+    body: {
+      result?: { ok?: boolean; status?: string; bound?: { runtimeId: string } }
+      error?: unknown
+    }
+  }
+  type WiringHarness = {
+    root: string
+    state: {
+      profile: PermissionProfileId
+      unattended: boolean
+      prompt: string
+      strategy: 'native' | 'conservative'
+      cancelled: boolean
+    }
+    service: NotebookRuntimeService
+    context: AcpPermissionContext
+    server: NotebookLocalRpcServer
+    emitted: AcpPermissionRequest[]
+    runtimes: DiscoveredInterpreter[]
+    enabled: Record<string, boolean>
+    interpreterPath: string
+    execute: Mock<(request: NotebookExecutionRequest) => Promise<NotebookExecutionResult>>
+    outer: (
+      tool?: string,
+      input?: Record<string, unknown>,
+      verified?: boolean
+    ) => ReturnType<AcpPermissionContext['handleProviderRequest']>
+    rpc: (
+      method?: string,
+      params?: Record<string, unknown>,
+      rpcConnection?: NotebookRpcConnection
+    ) => Promise<WiringRpcResponse>
+    respond: (allow?: boolean) => Promise<void>
+    grants: ConversationPermissionGrantStore
+    setTurn: () => void
+    language: NotebookLanguage
+    connection: NotebookRpcConnection
+  }
+  const disposals: (() => Promise<void>)[] = []
+  afterEach(async () => {
+    for (const dispose of disposals.splice(0)) await dispose()
+  })
+
+  async function harness(
+    language: NotebookLanguage = 'python',
+    frameworkId: 'opencode' | 'codex' = 'opencode'
+  ): Promise<WiringHarness> {
+    const root = await mkdtemp(join(tmpdir(), 'notebook-binding-wiring-'))
+    const environment = language === 'python' ? 'default-python' : 'default-r'
+    const prefix = envPrefix(getRuntimeRoot(root), environment)
+    const interpreterPath = language === 'python' ? pythonBin(prefix) : rBin(prefix)
+    await mkdir(dirname(interpreterPath), { recursive: true })
+    await writeFile(interpreterPath, '')
+    writeReadyMarker(getRuntimeRoot(root), DEFAULT_ENV_VERSION, 'ready')
+    const state: {
+      profile: PermissionProfileId
+      unattended: boolean
+      prompt: string
+      strategy: 'native' | 'conservative'
+      cancelled: boolean
+    } = {
+      strategy: 'conservative',
+      cancelled: false,
+      profile: 'ask',
+      unattended: false,
+      prompt: 'prompt-1'
+    }
+    const runtimes: DiscoveredInterpreter[] = [
+      {
+        language,
+        provenance: 'app-managed',
+        envId: interpreterPath,
+        interpreterPath,
+        condaEnv: environment,
+        label: environment,
+        runnable: true
+      }
+    ]
+    const enabled: Record<string, boolean> = { [interpreterPath]: true }
+    const execute = vi.fn(
+      async (request: NotebookExecutionRequest): Promise<NotebookExecutionResult> => ({
+        status: 'completed' as const,
+        stdout: '',
+        stderr: '',
+        traceback: '',
+        cwdAfter: request.cwd,
+        outputs: [],
+        kernelDispatched: true
+      })
+    )
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'project',
+      getAgentEnvironmentCreationEnabled: async () => false,
+      notebookRuntimeSettings: {
+        getSnapshot: async (requested) => ({
+          language: requested,
+          manualInterpreters: [],
+          packageMirror: {},
+          runtimeEnablement: { enabled, installAuthorized: {} }
+        })
+      },
+      discoverRuntimes: async (requested) =>
+        runtimes.filter((runtime) => runtime.language === requested),
+      executorFactory: () => ({ execute, shutdown: async () => ({ reaped: true }) })
+    })
+    const server = new NotebookLocalRpcServer(service, { transport: 'tcp' })
+    const connection = await server.issueSessionConnection(
+      'session',
+      'project',
+      'root-frame-session'
+    )
+    const setTurn = (): void =>
+      server.setArtifactTurnBinding('session', {
+        ownerExecutionId: state.prompt,
+        projectId: 'project',
+        provenanceContext: {
+          rootFrameId: 'actual-random-root-frame',
+          agentFrameId: 'actual-random-root-frame',
+          messageBranchId: 'branch',
+          runtimeSegmentId: 'segment',
+          promptMessageId: state.prompt
+        }
+      })
+    setTurn()
+    const emitted: AcpPermissionRequest[] = []
+    const grants = new ConversationPermissionGrantStore()
+    const context = new AcpPermissionContext({
+      emitPermissionRequest: (request) => emitted.push(request),
+      conversationGrants: grants,
+      routing: {
+        resolveAppSessionId: (id) => id,
+        sessionSnapshot: () => ({
+          cwd: root,
+          frameworkId,
+          permissionProfile: { selectedProfile: state.profile, autoReviewStrategy: state.strategy }
+        }),
+        hasActivePrimarySession: () => true,
+        capturePrompt: () => ({
+          sequence: 1,
+          promptMessageId: state.prompt,
+          permissionPrompts: state.unattended ? 'none' : undefined,
+          isCancellationAccepted: () => state.cancelled
+        }),
+        permissionPromptsForSession: () => (state.unattended ? 'none' : undefined),
+        currentInteractionSequence: () => 1,
+        mcpServerNamesFor: () => ['open-science-notebook'],
+        reviewerContextFor: () => undefined,
+        resolveReviewerPermission: () => undefined,
+        currentFramework: () => getAgentFramework(frameworkId),
+        resolveProjectId: () => 'project',
+        canOwnRuntimeBindingDecision: async (request) => {
+          const trusted = server.runtimeBindingAdmissionRequest(request)
+          return trusted ? service.canOwnRuntimeBindingDecision(trusted) : false
+        },
+        authorizeRuntimeBindingAdmission: (admission) =>
+          server.authorizeRuntimeBindingAdmission(admission)
+      }
+    })
+    bindNotebookApprovals(
+      service,
+      () =>
+        ({
+          getState: () => ({ permissionProfiles: { session: { selectedProfile: state.profile } } }),
+          requestAppApproval: (input: Parameters<AcpPermissionContext['requestAppApproval']>[0]) =>
+            context.requestAppApproval(input)
+        }) as unknown as Pick<AcpRuntimeCoordinator, 'getState' | 'requestAppApproval'>
+    )
+    let call = 0
+    const outer = async (
+      tool = 'notebook_bind_runtime',
+      input: Record<string, unknown> = { language, runtimeId: interpreterPath },
+      verified = true
+    ): ReturnType<AcpPermissionContext['handleProviderRequest']> => {
+      const toolCallId = `tool-${++call}`
+      const title =
+        frameworkId === 'codex'
+          ? `mcp.open-science-notebook.${tool}`
+          : `open_science_notebook_${tool}`
+      if (verified)
+        context.observeProviderUpdate({
+          sessionId: 'session',
+          update: {
+            sessionUpdate: 'tool_call',
+            toolCallId,
+            title,
+            kind: 'other',
+            status: 'pending',
+            rawInput:
+              frameworkId === 'codex'
+                ? { server: 'open-science-notebook', tool, arguments: input }
+                : input,
+            _meta: frameworkId === 'codex' ? { is_mcp_tool_call: true } : { toolName: title }
+          }
+        })
+      const request: RequestPermissionRequest = {
+        sessionId: 'session',
+        toolCall: { toolCallId, title, kind: 'other', status: 'pending', rawInput: input },
+        options: [
+          { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+          { optionId: 'reject-once', name: 'Deny', kind: 'reject_once' }
+        ],
+        ...(frameworkId === 'codex' ? { _meta: { is_mcp_tool_approval: true } } : {})
+      }
+      return context.handleProviderRequest(request)
+    }
+    const rpc = async (
+      method = 'bindRuntime',
+      params: Record<string, unknown> = { language, runtimeId: interpreterPath },
+      rpcConnection: NotebookRpcConnection = connection
+    ): Promise<WiringRpcResponse> => {
+      const response = await fetchLocalRpc(
+        rpcConnection,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${rpcConnection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            method,
+            params: { sessionId: 'session', workspaceCwd: root, ...params }
+          })
+        },
+        'Notebook binding wiring test'
+      )
+      return {
+        status: response.status,
+        body: (await response.json()) as {
+          result?: { ok?: boolean; status?: string; bound?: { runtimeId: string } }
+          error?: unknown
+        }
+      }
+    }
+    const respond = async (allow = true): Promise<void> => {
+      await vi.waitFor(() => expect(context.getPendingRequests()).toHaveLength(1))
+      const request = context.getPendingRequests()[0]
+      await context.respondToPermission(
+        {
+          requestId: request.requestId,
+          optionId: request.options.find(
+            (option) => option.kind === (allow ? 'allow_once' : 'reject_once')
+          )!.optionId
+        },
+        HUMAN_PERMISSION_ACTION_ORIGIN
+      )
+    }
+    disposals.push(async () => {
+      context.dispose()
+      await server.close()
+      await service.shutdownAll()
+      await rm(root, { recursive: true, force: true })
+    })
+    return {
+      root,
+      state,
+      service,
+      context,
+      server,
+      emitted,
+      runtimes,
+      enabled,
+      interpreterPath,
+      execute,
+      outer,
+      rpc,
+      respond,
+      grants,
+      setTurn,
+      language,
+      connection
+    }
+  }
+
+  it.each(['python', 'r'] as const)(
+    'asks exactly once for %s despite an existing tool grant, then reuses binding',
+    async (language) => {
+      const h = await harness(language)
+      h.grants.remember('session', 'mcp:open-science-notebook/notebook_bind_runtime')
+      await expect(h.outer()).resolves.toMatchObject({ outcome: { outcome: 'selected' } })
+      expect(h.emitted).toHaveLength(0)
+      const pending = h.rpc()
+      await vi.waitFor(() => expect(h.emitted).toHaveLength(1))
+      expect(
+        (
+          await h.service.listRuntimes({
+            sessionId: 'session',
+            projectId: 'project',
+            workspaceCwd: h.root
+          })
+        ).bindings[language]
+      ).toBeUndefined()
+      expect(h.execute).not.toHaveBeenCalled()
+      await h.respond()
+      const bound = await pending
+      expect(bound.body.result?.bound?.runtimeId, JSON.stringify(bound)).toBe(h.interpreterPath)
+      await h.outer()
+      expect((await h.rpc()).body.result?.bound?.runtimeId).toBe(h.interpreterPath)
+      expect(h.emitted).toHaveLength(1)
+    }
+  )
+
+  it.each(['python', 'r'] as const)(
+    'reuses %s without an outer card when matching provider observation arrives after permission',
+    async (language) => {
+      const h = await harness(language)
+      h.state.profile = 'auto'
+      await h.outer()
+      expect((await h.rpc()).body.result?.bound?.runtimeId).toBe(h.interpreterPath)
+      h.state.profile = 'ask'
+      let released = false
+      const permission = h.outer('notebook_bind_runtime', undefined, false).then((response) => {
+        released = true
+        return response
+      })
+      const title = 'open_science_notebook_notebook_bind_runtime'
+      h.context.observeProviderUpdate({
+        sessionId: 'session',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'tool-2',
+          title,
+          kind: 'other',
+          status: 'pending',
+          rawInput: { language, runtimeId: h.interpreterPath },
+          _meta: { toolName: title }
+        }
+      })
+      await vi.waitFor(() => expect(released || h.emitted.length > 0).toBe(true))
+      expect(h.emitted).toHaveLength(0)
+      await expect(permission).resolves.toEqual({
+        outcome: { outcome: 'selected', optionId: 'allow-once' }
+      })
+      expect((await h.rpc()).body.result?.bound?.runtimeId).toBe(h.interpreterPath)
+      expect(h.emitted).toHaveLength(0)
+      expect(h.execute).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each(['python', 'r'] as const)(
+    'Auto handles %s with native and conservative provider paths',
+    async (language) => {
+      for (const framework of ['codex', 'opencode'] as const)
+        for (const hasOuter of [false, true]) {
+          const h = await harness(language, framework)
+          h.state.profile = 'auto'
+          h.state.strategy = hasOuter ? 'conservative' : 'native'
+          h.state.unattended = true
+          if (hasOuter) await h.outer()
+          const bound = await h.rpc()
+          expect(bound.body.result?.bound?.runtimeId, JSON.stringify(bound)).toBe(h.interpreterPath)
+          expect(h.emitted).toHaveLength(0)
+        }
+    }
+  )
+
+  it.each(['python', 'r'] as const)(
+    'Ask unattended %s denies without publishing or hanging, including no outer callback',
+    async (language) => {
+      for (const hasOuter of [false, true]) {
+        const h = await harness(language)
+        h.state.unattended = true
+        if (hasOuter) await h.outer()
+        expect((await h.rpc()).body.result?.ok).toBe(false)
+        expect(h.emitted).toHaveLength(0)
+        expect(h.context.getPendingRequests()).toEqual([])
+      }
+    }
+  )
+
+  it('reads Auto → Ask at the final decision and retains an Ask card through Ask → Auto', async () => {
+    const h = await harness()
+    h.state.profile = 'auto'
+    await h.outer()
+    h.state.profile = 'ask'
+    const pending = h.rpc()
+    await vi.waitFor(() => expect(h.emitted).toHaveLength(1))
+    h.state.profile = 'auto'
+    expect(h.context.getPendingRequests()).toHaveLength(1)
+    await h.respond(false)
+    expect((await pending).body.result?.ok).toBe(false)
+    await h.outer()
+    expect((await h.rpc()).body.result?.bound?.runtimeId).toBe(h.interpreterPath)
+    expect(h.emitted).toHaveLength(1)
+  })
+
+  it('fails closed when trusted default ownership changes after handoff', async () => {
+    const h = await harness()
+    h.state.profile = 'auto'
+    await h.outer()
+    h.runtimes[0] = { ...h.runtimes[0], provenance: 'user-own', condaEnv: undefined }
+    expect((await h.rpc()).body.result?.ok).toBe(false)
+    expect(h.emitted).toHaveLength(0)
+  })
+
+  it('keeps explicit sole External and Agent-created managed bindings on the existing outer policy', async () => {
+    for (const provenance of ['user-own', 'agent-created'] as const) {
+      const h = await harness()
+      h.state.profile = 'auto'
+      h.runtimes[0] = { ...h.runtimes[0], provenance }
+      const outer = h.outer()
+      await h.respond()
+      expect(h.emitted).toHaveLength(1)
+      await outer
+      expect((await h.rpc()).body.result?.bound?.runtimeId).toBe(h.interpreterPath)
+      expect(h.emitted).toHaveLength(1)
+    }
+  })
+
+  it('does not trust a forged binding tool title or execution handoff flag', async () => {
+    const h = await harness()
+    const pending = h.outer(
+      'notebook_bind_runtime',
+      { language: 'python', runtimeId: h.interpreterPath, notebookHostAdmission: true },
+      false
+    )
+    expect(h.context.snapshot().sessions.session?.pendingWaiters).toBe(1)
+    // A complete but unobserved binding call now exhausts the existing correlation window first.
+    await vi.waitFor(() => expect(h.context.getPendingRequests()).toHaveLength(1), {
+      timeout: 2_000
+    })
+    await h.respond(false)
+    await expect(pending).resolves.toMatchObject({
+      outcome: { outcome: 'selected', optionId: 'reject-once' }
+    })
+    expect(h.emitted).toHaveLength(1)
+  })
+
+  it('does not let source=user or an approved default environment discharge dangerous-code approval', async () => {
+    const h = await harness()
+    h.state.profile = 'auto'
+    await h.outer()
+    expect((await h.rpc()).body.result?.bound?.runtimeId).toBe(h.interpreterPath)
+    const pending = h.rpc('execute', {
+      source: 'user',
+      language: 'python',
+      code: 'import os\nos.unlink("target.txt")'
+    })
+    await vi.waitFor(() => expect(h.emitted).toHaveLength(1))
+    expect(h.emitted[0].rawInput).toHaveProperty('notebookCodeRisk')
+    await h.respond(false)
+    await pending
+    expect(h.execute).not.toHaveBeenCalled()
+  })
+
+  it('rejects a receipt for another target or prompt instead of transferring its authority', async () => {
+    const h = await harness()
+    await h.outer()
+    expect((await h.rpc('bindRuntime', { language: 'python', runtimeId: 'other' })).status).toBe(
+      409
+    )
+    h.state.prompt = 'prompt-2'
+    h.setTurn()
+    h.state.profile = 'auto'
+    expect((await h.rpc()).body.result?.bound?.runtimeId).toBe(h.interpreterPath)
+    expect(h.emitted).toHaveLength(0)
+  })
+  it('isolates child receipts by authenticated Frame and Attempt and resolves classifier lane from the capability', async () => {
+    const h = await harness()
+    const createChild = (
+      frame: string
+    ): ReturnType<NotebookLocalRpcServer['issueDelegatedNotebookConnection']> =>
+      h.server.issueDelegatedNotebookConnection({
+        sessionId: 'session',
+        projectId: 'project',
+        rootFrameId: 'actual-random-root-frame',
+        agentFrameId: frame,
+        attemptId: `attempt-${frame}`,
+        messageBranchId: `branch-${frame}`,
+        runtimeSegmentId: 'segment',
+        promptMessageId: `prompt-${frame}`,
+        workspaceCwd: h.root,
+        isAttemptWritable: () => true
+      })
+    const child = await createChild('child')
+    const sibling = await createChild('sibling')
+    const request = h.server.runtimeBindingAdmissionRequest(
+      {
+        sessionId: 'provider-local-session',
+        workspaceCwd: '/forged',
+        language: 'python',
+        runtimeId: h.interpreterPath
+      },
+      child
+    )
+    expect(request).toMatchObject({
+      sessionId: 'session',
+      projectId: 'project',
+      workspaceCwd: h.root,
+      delegatedWorkAttemptId: 'attempt-child',
+      provenanceContext: { agentFrameId: 'child', promptMessageId: 'prompt-child' }
+    })
+    expect(await h.service.canOwnRuntimeBindingDecision(request!)).toBe(true)
+    expect(
+      h.server.authorizeRuntimeBindingAdmission(
+        {
+          sessionId: 'provider-local-session',
+          toolCallId: 'child-tool',
+          promptMessageId: 'prompt-child',
+          language: 'python',
+          runtimeId: h.interpreterPath
+        },
+        child
+      )
+    ).toBe(true)
+    const bindings = vi.spyOn(h.service, 'bindRuntime')
+    h.state.prompt = 'root-replacement'
+    h.setTurn()
+    h.state.profile = 'full'
+    expect((await h.rpc()).body.result?.bound?.runtimeId).toBe(h.interpreterPath)
+    expect(bindings.mock.calls.at(-1)?.[2]).toBeUndefined()
+    expect(
+      (await h.rpc('bindRuntime', { language: 'python', runtimeId: h.interpreterPath }, sibling))
+        .body.result?.bound?.runtimeId
+    ).toBe(h.interpreterPath)
+    expect(bindings.mock.calls.at(-1)?.[2]).toBeUndefined()
+    h.state.profile = 'ask'
+    const pending = h.rpc(
+      'bindRuntime',
+      { language: 'python', runtimeId: h.interpreterPath },
+      child
+    )
+    await h.respond()
+    expect((await pending).body.result?.bound?.runtimeId).toBe(h.interpreterPath)
+    expect(bindings.mock.calls.at(-1)?.[2]).toEqual({ requireHostDecision: true })
+    await child.revoke()
+    await sibling.revoke()
+  })
+
+  it('does not reject another language because Python has a pending binding handoff', async () => {
+    const h = await harness()
+    await h.outer()
+    const bindings = vi.spyOn(h.service, 'bindRuntime')
+    const externalR = join(h.root, 'external-r')
+    await writeFile(externalR, '')
+    h.runtimes.push({
+      language: 'r',
+      provenance: 'user-own',
+      envId: externalR,
+      interpreterPath: externalR,
+      label: 'External R',
+      runnable: true
+    })
+    h.enabled[externalR] = true
+    const outerR = h.outer('notebook_bind_runtime', { language: 'r', runtimeId: externalR })
+    await h.respond()
+    await outerR
+    const other = await h.rpc('bindRuntime', { language: 'r', runtimeId: externalR })
+    expect(other.status).toBe(200)
+    expect(other.body.result?.bound?.runtimeId).toBe(externalR)
+    expect(bindings.mock.calls.at(-1)?.[2]).toBeUndefined()
+    const python = h.rpc()
+    await h.respond()
+    expect((await python).body.result?.bound?.runtimeId).toBe(h.interpreterPath)
+  })
+
+  it('cancels classification when the original prompt is cancelled or replaced before receipt registration', async () => {
+    for (const cancelled of [true, false]) {
+      const h = await harness()
+      let release!: () => void
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const classify = h.service.canOwnRuntimeBindingDecision.bind(h.service)
+      vi.spyOn(h.service, 'canOwnRuntimeBindingDecision').mockImplementation(async (request) => {
+        await gate
+        return classify(request)
+      })
+      const pending = h.outer()
+      await vi.waitFor(() => expect(h.service.canOwnRuntimeBindingDecision).toHaveBeenCalled())
+      h.state.cancelled = cancelled
+      if (!cancelled) {
+        h.state.prompt = 'replacement'
+        h.setTurn()
+      }
+      release()
+      expect(await pending).toMatchObject({ outcome: { outcome: 'cancelled' } })
+      expect(h.emitted).toHaveLength(0)
+    }
+  })
+  it.each(['bindRuntime', 'execute'] as const)(
+    'keeps delegated Ask %s noninteractive when its parent is interactive',
+    async (method) => {
+      const h = await harness()
+      const child = await h.server.issueDelegatedNotebookConnection({
+        sessionId: 'session',
+        projectId: 'project',
+        rootFrameId: 'actual-random-root-frame',
+        agentFrameId: 'child-none',
+        attemptId: 'attempt-none',
+        messageBranchId: 'branch-child',
+        runtimeSegmentId: 'segment',
+        promptMessageId: 'child-prompt',
+        workspaceCwd: h.root,
+        permissionPrompts: 'none',
+        isAttemptWritable: () => true
+      })
+      const result = await h.rpc(
+        method,
+        method === 'execute'
+          ? { language: 'python', code: 'print(1)' }
+          : { language: 'python', runtimeId: h.interpreterPath },
+        child
+      )
+      expect(result.status).toBe(method === 'bindRuntime' ? 200 : 500)
+      if (method === 'bindRuntime') expect(result.body.result?.ok).toBe(false)
+      expect(h.emitted).toHaveLength(0)
+      expect(h.context.getPendingRequests()).toEqual([])
+      expect(h.execute).not.toHaveBeenCalled()
+      await child.revoke()
+    }
+  )
+
+  it('cancels a waiting child binding before lane shutdown and ignores a late approval', async () => {
+    const h = await harness()
+    const child = await h.server.issueDelegatedNotebookConnection({
+      sessionId: 'session',
+      projectId: 'project',
+      rootFrameId: 'actual-random-root-frame',
+      agentFrameId: 'child-cancel',
+      attemptId: 'attempt-cancel',
+      messageBranchId: 'branch-child',
+      runtimeSegmentId: 'segment',
+      promptMessageId: 'child-prompt',
+      workspaceCwd: h.root,
+      isAttemptWritable: () => true
+    })
+    const pending = h.rpc(
+      'bindRuntime',
+      { language: 'python', runtimeId: h.interpreterPath },
+      child
+    )
+    await vi.waitFor(() => expect(h.context.getPendingRequests()).toHaveLength(1))
+    const approval = h.context.getPendingRequests()[0]
+    await child.revoke()
+    await pending
+    expect(h.context.getPendingRequests()).toEqual([])
+    expect(
+      await h.context.respondToPermission(
+        {
+          requestId: approval.requestId,
+          optionId: approval.options.find((option) => option.kind === 'allow_once')!.optionId
+        },
+        HUMAN_PERMISSION_ACTION_ORIGIN
+      )
+    ).toBe(false)
+    const childRequest = {
+      sessionId: 'session',
+      projectId: 'project',
+      workspaceCwd: h.root,
+      provenanceContext: {
+        rootFrameId: 'actual-random-root-frame',
+        agentFrameId: 'child-cancel',
+        messageBranchId: 'branch-child',
+        runtimeSegmentId: 'segment',
+        promptMessageId: 'child-prompt'
+      },
+      delegatedWorkAttemptId: 'attempt-cancel'
+    }
+    expect((await h.service.listRuntimes(childRequest)).bindings.python).toBeUndefined()
+  })
+
+  it('does not allow source=user to bypass the zero-candidate creation restriction', async () => {
+    const h = await harness()
+    h.state.profile = 'auto'
+    h.runtimes.splice(0)
+    await rm(getRuntimeRoot(h.root), { recursive: true, force: true })
+    const provisioner = { provisionPython: vi.fn(), provisionR: vi.fn() }
+    h.service.setDefaultEnvProvisioner(provisioner as never)
+    await h.rpc('execute', { source: 'user', language: 'python', code: 'print(1)' })
+    expect(h.execute).not.toHaveBeenCalled()
+    expect(provisioner.provisionPython).not.toHaveBeenCalled()
+    expect(h.emitted).toHaveLength(0)
   })
 })

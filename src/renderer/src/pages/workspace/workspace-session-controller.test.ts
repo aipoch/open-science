@@ -130,8 +130,8 @@ const sessionWithPendingDelegatedQuestion = (): ChatSession => {
   return pending
 }
 
-const specialist = (id: string, name: string): SpecialistListItem =>
-  ({ kind: 'custom', id, name, enabled: true }) as SpecialistListItem
+const specialist = (id: string, name: string): Extract<SpecialistListItem, { kind: 'custom' }> =>
+  ({ kind: 'custom', id, name, enabled: true }) as Extract<SpecialistListItem, { kind: 'custom' }>
 
 const deferred = <T>(): {
   promise: Promise<T>
@@ -214,6 +214,285 @@ afterEach(() => {
 })
 
 describe('workspace session controller', () => {
+  it('does not treat a newer saved binding as the applied target of an older handoff', async () => {
+    const active = session({ specialistId: 'specialist-c', specialistBindingPending: true })
+    const saved = specialist('specialist-c', 'Specialist C')
+    let handoffListener: ((event: CompletionHandoffLifecycleEvent) => void) | undefined
+    useSessionStore.setState({ sessions: [active], selectedSessionId: active.id })
+    window.api = {
+      specialist: {
+        resolveSessionSpecialist: vi.fn().mockResolvedValue({ kind: 'bound', profile: saved }),
+        onHandoffLifecycleEvent: vi.fn((listener) => {
+          handoffListener = listener
+          return () => undefined
+        })
+      }
+    } as unknown as Window['api']
+    const hook = renderController({ activeSession: active, specialistItems: [saved] })
+    mounted.push(hook)
+    await act(async () => {
+      handoffListener?.({
+        id: 'handoff-b',
+        sessionId: active.id,
+        sequence: 2,
+        observedAt: 2,
+        phase: 'continued',
+        target: 'Specialist B',
+        provenance: { originatingTurnId: 'turn-b', attachmentIds: [], artifactIds: [] }
+      })
+      await Promise.resolve()
+    })
+    hook.rerender(useSessionStore.getState().sessions[0])
+    expect(useSessionStore.getState().sessions[0].specialistBindingPending).toBe(true)
+    expect(hook.result.current.view.specialist.reconfigureError?.committed).toBe(true)
+    expect(hook.result.current.lifecycle.captureSendIntent(false)).toMatchObject({
+      hasPendingSwitch: true,
+      pendingSpecialistId: 'specialist-c'
+    })
+  })
+
+  it('continued event retains choice made during continuation', async () => {
+    const active = session({ specialistId: 'specialist-a', status: 'running' })
+    const applied = specialist('specialist-b', 'Specialist B')
+    let pendingListener:
+      ((pending: { sessionId: string; targetName: string | null }) => void) | undefined
+    let handoffListener: ((event: CompletionHandoffLifecycleEvent) => void) | undefined
+    useSessionStore.setState({ sessions: [active], selectedSessionId: active.id })
+    window.api = {
+      specialist: {
+        resolveSessionSpecialist: vi.fn().mockResolvedValue({ kind: 'bound', profile: applied }),
+        onPendingSwitch: vi.fn((listener) => {
+          pendingListener = listener
+          return () => undefined
+        }),
+        onHandoffLifecycleEvent: vi.fn((listener) => {
+          handoffListener = listener
+          return () => undefined
+        })
+      }
+    } as unknown as Window['api']
+    const hook = renderController({ activeSession: active, specialistItems: [applied] })
+    mounted.push(hook)
+    const handoff = {
+      id: 'handoff-1',
+      sessionId: active.id,
+      sequence: 1,
+      observedAt: 1,
+      target: applied.name,
+      provenance: { originatingTurnId: 'turn-1', attachmentIds: [], artifactIds: [] }
+    }
+    act(() => pendingListener?.({ sessionId: active.id, targetName: applied.name }))
+    await act(async () => {
+      handoffListener?.({ ...handoff, phase: 'continuation-start' })
+      await Promise.resolve()
+    })
+    hook.rerender(useSessionStore.getState().sessions[0])
+    act(() => hook.result.current.actions.selectSpecialist('specialist-c'))
+    expect(hook.result.current.lifecycle.captureSendIntent(false)).toMatchObject({
+      hasPendingSwitch: true,
+      pendingSpecialistId: 'specialist-c'
+    })
+    await act(async () => {
+      handoffListener?.({ ...handoff, sequence: 2, observedAt: 2, phase: 'continued' })
+      await Promise.resolve()
+    })
+    hook.rerender(useSessionStore.getState().sessions[0])
+    expect(hook.result.current.lifecycle.captureSendIntent(false)).toMatchObject({
+      hasPendingSwitch: true,
+      pendingSpecialistId: 'specialist-c'
+    })
+  })
+
+  it.each([
+    ['pending-switch', 'local'],
+    ['pending-switch', 'broadcast'],
+    ['awaiting-approval', 'local'],
+    ['awaiting-approval', 'main'],
+    ['awaiting-approval', 'broadcast'],
+    ['switching', 'local'],
+    ['switching', 'broadcast'],
+    ['reconfiguring', 'local'],
+    ['reconfiguring', 'broadcast']
+  ] as const)(
+    'retains newer %s / %s intent before the first continuation',
+    async (phase, source) => {
+      const active = session({ specialistId: 'specialist-a', status: 'running' })
+      const applied = specialist('specialist-b', 'Specialist B')
+      const newer = specialist('specialist-c', 'Specialist C')
+      let pendingListener:
+        ((pending: { sessionId: string; targetName: string | null }) => void) | undefined
+      let handoffListener: ((event: CompletionHandoffLifecycleEvent) => void) | undefined
+      useSessionStore.setState({ sessions: [active], selectedSessionId: active.id })
+      window.api = {
+        specialist: {
+          resolveSessionSpecialist: vi.fn().mockResolvedValue({ kind: 'bound', profile: applied }),
+          onPendingSwitch: vi.fn((listener) => {
+            pendingListener = listener
+            return () => undefined
+          }),
+          onHandoffLifecycleEvent: vi.fn((listener) => {
+            handoffListener = listener
+            return () => undefined
+          })
+        }
+      } as unknown as Window['api']
+      const hook = renderController({ activeSession: active, specialistItems: [applied, newer] })
+      mounted.push(hook)
+      const handoff = {
+        id: 'handoff-1',
+        sessionId: active.id,
+        sequence: 1,
+        observedAt: 1,
+        target: applied.name,
+        provenance: { originatingTurnId: 'turn-1', attachmentIds: [], artifactIds: [] }
+      }
+      act(() => {
+        if (phase === 'pending-switch') {
+          pendingListener?.({ sessionId: active.id, targetName: applied.name })
+        } else handoffListener?.({ ...handoff, phase })
+      })
+      const selectedId = source === 'main' ? undefined : newer.id
+      act(() => {
+        if (source === 'broadcast')
+          pendingListener?.({ sessionId: active.id, targetName: newer.name })
+        else hook.result.current.actions.selectSpecialist(selectedId)
+      })
+      const remainingPhases: CompletionHandoffLifecycleEvent['phase'][] = [
+        ...(phase === 'awaiting-approval' ? (['switching', 'reconfiguring'] as const) : []),
+        'continuation-start',
+        'continued'
+      ]
+      for (const [index, nextPhase] of remainingPhases.entries()) {
+        await act(async () => {
+          handoffListener?.({
+            ...handoff,
+            phase: nextPhase,
+            sequence: index + 2,
+            observedAt: index + 2
+          })
+          await Promise.resolve()
+        })
+        hook.rerender(useSessionStore.getState().sessions[0])
+        expect(hook.result.current.lifecycle.captureSendIntent(false)).toMatchObject({
+          hasPendingSwitch: true,
+          pendingSpecialistId: selectedId
+        })
+        expect(hook.result.current.view.specialist.historyId).toBe(selectedId)
+      }
+    }
+  )
+
+  it.each([
+    ['continuation-start', 'local'],
+    ['continuation-start', 'broadcast'],
+    ['continued', 'local'],
+    ['continued', 'broadcast']
+  ] as const)('%s must retain newer %s intent', async (phase, intentSource) => {
+    const active = session({ specialistId: 'specialist-a', status: 'running' })
+    const applied = specialist('specialist-b', 'Specialist B')
+    const newer = specialist('specialist-c', 'Specialist C')
+    const resolution = deferred<{ kind: 'bound'; profile: SpecialistListItem }>()
+    let pendingListener:
+      ((pending: { sessionId: string; targetName: string | null }) => void) | undefined
+    let handoffListener: ((event: CompletionHandoffLifecycleEvent) => void) | undefined
+    useSessionStore.setState({ sessions: [active], selectedSessionId: active.id })
+    window.api = {
+      specialist: {
+        resolveSessionSpecialist: vi.fn().mockReturnValue(resolution.promise),
+        onPendingSwitch: vi.fn((listener) => {
+          pendingListener = listener
+          return () => undefined
+        }),
+        onHandoffLifecycleEvent: vi.fn((listener) => {
+          handoffListener = listener
+          return () => undefined
+        })
+      }
+    } as unknown as Window['api']
+    const hook = renderController({ activeSession: active, specialistItems: [applied, newer] })
+    mounted.push(hook)
+    act(() => pendingListener?.({ sessionId: active.id, targetName: applied.name }))
+    act(() =>
+      handoffListener?.({
+        id: 'handoff-1',
+        sessionId: active.id,
+        sequence: 1,
+        observedAt: 1,
+        phase,
+        target: applied.name,
+        provenance: { originatingTurnId: 'turn-1', attachmentIds: [], artifactIds: [] }
+      })
+    )
+    act(() => {
+      if (intentSource === 'local') hook.result.current.actions.selectSpecialist(newer.id)
+      else pendingListener?.({ sessionId: active.id, targetName: newer.name })
+    })
+    expect(hook.result.current.lifecycle.captureSendIntent(false)).toMatchObject({
+      hasPendingSwitch: true,
+      pendingSpecialistId: newer.id
+    })
+    await act(async () => {
+      resolution.resolve({ kind: 'bound', profile: applied })
+      await resolution.promise
+    })
+    hook.rerender(useSessionStore.getState().sessions[0])
+    expect(hook.result.current.lifecycle.captureSendIntent(false)).toMatchObject({
+      hasPendingSwitch: true,
+      pendingSpecialistId: newer.id
+    })
+  })
+
+  it.each(['local', 'broadcast'])(
+    'ignores handoff history loaded after newer %s intent',
+    async (source) => {
+      const active = session({ specialistId: 'specialist-a', status: 'running' })
+      const target = specialist('specialist-c', 'Specialist C')
+      const history = deferred<CompletionHandoffLifecycleEvent[]>()
+      let pendingListener:
+        ((pending: { sessionId: string; targetName: string | null }) => void) | undefined
+      const resolver = vi
+        .fn()
+        .mockResolvedValue({ kind: 'bound', profile: specialist('specialist-b', 'Specialist B') })
+      useSessionStore.setState({ sessions: [active], selectedSessionId: active.id })
+      window.api = {
+        specialist: {
+          getHandoffEvents: vi.fn(() => history.promise),
+          resolveSessionSpecialist: resolver,
+          onPendingSwitch: vi.fn((listener) => {
+            pendingListener = listener
+            return () => undefined
+          })
+        }
+      } as unknown as Window['api']
+      const hook = renderController({ activeSession: active, specialistItems: [target] })
+      mounted.push(hook)
+      act(() => {
+        if (source === 'local') hook.result.current.actions.selectSpecialist(target.id)
+        else pendingListener?.({ sessionId: active.id, targetName: target.name })
+      })
+      await act(async () => {
+        history.resolve([
+          {
+            id: 'old-handoff',
+            sessionId: active.id,
+            sequence: 1,
+            observedAt: 1,
+            phase: 'continued',
+            target: 'Specialist B',
+            provenance: { originatingTurnId: 'turn-1', attachmentIds: [], artifactIds: [] }
+          }
+        ])
+        await history.promise
+      })
+      hook.rerender(useSessionStore.getState().sessions[0])
+      expect(hook.result.current.lifecycle.captureSendIntent(false)).toMatchObject({
+        hasPendingSwitch: true,
+        pendingSpecialistId: target.id
+      })
+      expect(resolver).not.toHaveBeenCalled()
+    }
+  )
+
   it('loads an unopened Session before opening Edit session', async () => {
     const summary = session({ contentLoaded: false, activeMessageCount: 1 })
     const persisted: PersistedChatSession = {
@@ -1179,6 +1458,110 @@ describe('workspace session controller', () => {
     expect(hook.result.current.view.specialist.reconfigureError).toBeNull()
     expect(hook.result.current.actions.retrySpecialistSelection()).toBe(false)
   })
+
+  it.each(['specialist-b', undefined])(
+    'clears restored recovery after durable binding %s is applied',
+    (specialistId) => {
+      const active = session({ specialistId, specialistBindingPending: true })
+      useSessionStore.setState({ sessions: [active], selectedSessionId: active.id })
+      const hook = renderController({ activeSession: active })
+      mounted.push(hook)
+      expect(hook.result.current.view.specialist.reconfigureError?.committed).toBe(true)
+
+      act(() => useSessionStore.getState().setSessionSpecialistId(active.id, specialistId))
+      hook.rerender(useSessionStore.getState().sessions[0])
+
+      expect(hook.result.current.view.specialist.reconfigureError).toBeNull()
+      expect(hook.result.current.lifecycle.captureSendIntent(false).hasPendingSwitch).toBe(false)
+    }
+  )
+
+  it('preserves a newer local selection when durable recovery finishes', () => {
+    const active = session({
+      specialistId: 'specialist-b',
+      specialistBindingPending: true,
+      status: 'running'
+    })
+    useSessionStore.setState({ sessions: [active], selectedSessionId: active.id })
+    const hook = renderController({ activeSession: active })
+    mounted.push(hook)
+    act(() => hook.result.current.actions.selectSpecialist('specialist-c'))
+    act(() => useSessionStore.getState().setSessionSpecialistId(active.id, 'specialist-b'))
+    hook.rerender(useSessionStore.getState().sessions[0])
+
+    expect(hook.result.current.view.specialist.reconfigureError).toBeNull()
+    expect(hook.result.current.lifecycle.captureSendIntent(false)).toMatchObject({
+      hasPendingSwitch: true,
+      pendingSpecialistId: 'specialist-c'
+    })
+  })
+
+  it.each([false, true])(
+    'clears a broadcast pending switch after its handoff continues (late resolution: %s)',
+    async (lateResolution) => {
+      const active = session({ specialistId: 'specialist-a', status: 'running' })
+      const target = specialist('specialist-b', 'Specialist B')
+      const pendingResolution = deferred<{ kind: 'bound'; profile: SpecialistListItem }>()
+      const resolver = vi.fn().mockResolvedValue({ kind: 'bound', profile: target })
+      if (lateResolution) resolver.mockReturnValueOnce(pendingResolution.promise)
+      let pendingListener:
+        ((pending: { sessionId: string; targetName: string | null }) => void) | undefined
+      let handoffListener: ((event: CompletionHandoffLifecycleEvent) => void) | undefined
+      useSessionStore.setState({ sessions: [active], selectedSessionId: active.id })
+      window.api = {
+        specialist: {
+          resolveSessionSpecialist: resolver,
+          onPendingSwitch: vi.fn((listener) => {
+            pendingListener = listener
+            return () => undefined
+          }),
+          onHandoffLifecycleEvent: vi.fn((listener) => {
+            handoffListener = listener
+            return () => undefined
+          })
+        }
+      } as unknown as Window['api']
+      const hook = renderController({
+        activeSession: active,
+        specialistItems: lateResolution ? [] : [target]
+      })
+      mounted.push(hook)
+      act(() => pendingListener?.({ sessionId: active.id, targetName: 'Specialist B' }))
+      if (!lateResolution) expect(hook.result.current.view.specialist.hasPendingSwitch).toBe(true)
+      act(() => {
+        handoffListener?.({
+          id: 'handoff-1',
+          sessionId: active.id,
+          sequence: 1,
+          observedAt: 1,
+          phase: 'switching',
+          target: 'Specialist B',
+          provenance: { originatingTurnId: 'turn-1', attachmentIds: [], artifactIds: [] }
+        })
+      })
+      await act(async () => {
+        handoffListener?.({
+          id: 'handoff-1',
+          sessionId: active.id,
+          sequence: 1,
+          observedAt: 1,
+          phase: 'continued',
+          target: 'Specialist B',
+          provenance: { originatingTurnId: 'turn-1', attachmentIds: [], artifactIds: [] }
+        })
+        await Promise.resolve()
+      })
+      if (lateResolution) {
+        await act(async () => {
+          pendingResolution.resolve({ kind: 'bound', profile: target })
+          await pendingResolution.promise
+        })
+      }
+      hook.rerender(useSessionStore.getState().sessions[0])
+      expect(hook.result.current.view.specialist.hasPendingSwitch).toBe(false)
+      expect(hook.result.current.lifecycle.captureSendIntent(false).hasPendingSwitch).toBe(false)
+    }
+  )
 
   it('discards an idle Specialist failure after an authoritative handoff', async () => {
     const active = session({ specialistId: 'specialist-a' })

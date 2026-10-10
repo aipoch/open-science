@@ -197,6 +197,18 @@ export const shutdownBackends = async (deps: QuitShutdownDeps): Promise<void> =>
 export class BackendShutdownCoordinator {
   constructor(private readonly deps: BackendShutdownDeps) {}
 
+  // Keep the backend transport and reusable owners alive until pending cleanup (including Windows
+  // ACL restoration) finishes. A refused quit can then flush state and retry through the same backend.
+  async runForQuitPreparation(): Promise<
+    Extract<ShutdownStepOutcome, 'completed' | 'timeout' | 'failed'>
+  > {
+    const outcome = await this.runForUpdateGate(QUIT_SHUTDOWN_BUDGET_MS, {
+      holdSideChatAdmission: true
+    })
+    if (!outcome.completed) return 'timeout'
+    return outcome.reaped ? 'completed' : 'failed'
+  }
+
   runForQuit(
     budgetMs: number = this.deps.timeoutMs ?? QUIT_SHUTDOWN_BUDGET_MS
   ): Promise<ShutdownOutcome> {

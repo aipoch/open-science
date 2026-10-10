@@ -1,3 +1,4 @@
+import { configureTestRuntimeNetwork } from '../../../../test/runtime-host'
 import { createServer } from 'node:http'
 import { randomUUID } from 'node:crypto'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
@@ -213,3 +214,5 @@ it('accepts an empty tool catalog without claiming tool execution', async () => 
     message: 'MCP connection and tool discovery succeeded. Business tools were not executed.'
   })
 })
+
+configureTestRuntimeNetwork()

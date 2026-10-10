@@ -19,7 +19,6 @@ import {
   initCommand,
   parseCliArgs,
   reportCliError,
-  rollbackCommand,
   runCli,
   runTaskCommand,
   updateCommand
@@ -28,6 +27,72 @@ import {
 const listProjects = async (): Promise<Array<{ id: string; name: string }>> => [
   { id: 'project-1', name: 'Research' }
 ]
+
+describe('CLI help', () => {
+  it.each([
+    'project',
+    'runtime',
+    'provider',
+    'connector',
+    'credential',
+    'cli',
+    'codex',
+    'session',
+    'settings',
+    'plan',
+    'artifacts'
+  ])(
+    'recognizes help flags for the %s group without consuming them as subcommands',
+    async (command) => {
+      const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+      try {
+        for (const flag of ['--help', '-h']) {
+          expect(parseCliArgs([command, flag])).toMatchObject({ command, options: { help: true } })
+          expect(parseCliArgs([command, flag]).subcommand).toBeUndefined()
+          await runCli([command, flag])
+          expect(log).toHaveBeenLastCalledWith(
+            expect.stringContaining(`Usage: open-science ${command} <subcommand>`)
+          )
+        }
+      } finally {
+        log.mockRestore()
+      }
+    }
+  )
+
+  it.each([
+    ['doctor', '--help'],
+    ['project', 'create', '--help'],
+    ['project', 'session-defaults', 'update', '--help'],
+    ['session', 'config', 'update', '--help'],
+    ['provider', 'add', '--help'],
+    ['run', '--help']
+  ])('prints help for %j without execution arguments or backend access', async (...argv) => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    try {
+      await runCli(argv)
+      expect(log).toHaveBeenCalledWith(expect.stringContaining(`Usage: open-science ${argv[0]}`))
+    } finally {
+      log.mockRestore()
+    }
+  })
+
+  it('limits project help to project commands and retains errors for unknown input', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    try {
+      await runCli(['project', '--help'])
+      const output = String(log.mock.calls[0][0])
+      expect(output).toContain('project create <name>')
+      expect(output).toContain('project session-defaults update')
+      expect(output).not.toContain('runtime install')
+      await expect(runCli(['unknown-command', '--help'])).rejects.toThrow('Unknown command')
+      expect(() => parseCliArgs(['project', '--typo'])).toThrow('Unknown option')
+      expect(() => parseCliArgs(['doctor'])).toThrow('doctor requires --json.')
+    } finally {
+      log.mockRestore()
+    }
+  })
+})
 
 describe('task CLI', () => {
   it('prepares Codex through the public task client', async () => {
@@ -81,7 +146,7 @@ describe('task CLI', () => {
     await expect(
       initCommand(
         { configRoot: root, json: true },
-        { log, locateApp: vi.fn().mockResolvedValue({ packaged: false }) }
+        { log, locateBackend: vi.fn().mockResolvedValue({ development: true }) }
       )
     ).resolves.toEqual({
       configRoot: root,
@@ -92,13 +157,18 @@ describe('task CLI', () => {
     await rm(root, { recursive: true, force: true })
   })
 
-  it('rejects profile overrides for packaged initialization', async () => {
-    await expect(
-      initCommand(
-        { configRoot: '/tmp/profile', json: true },
-        { log: vi.fn(), locateApp: vi.fn().mockResolvedValue({ packaged: true }) }
-      )
-    ).rejects.toThrow('--config-root is only supported for development builds.')
+  it('allows an explicit profile for an installed Node backend', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-installed-profile-'))
+    try {
+      await expect(
+        initCommand(
+          { configRoot: root },
+          { log: vi.fn(), locateBackend: vi.fn().mockResolvedValue({ development: false }) }
+        )
+      ).resolves.toMatchObject({ configRoot: root })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 
   it('requires JSON output for doctor', () => {
@@ -206,7 +276,8 @@ describe('task CLI', () => {
 
   it('rejects ports that are not complete decimal values', () => {
     expect(() => parseCliArgs(['start', '--port', '44100xyz'])).toThrow('Invalid port: 44100xyz')
-    expect(() => parseCliArgs(['start', '--port', '0'])).toThrow('Invalid port: 0')
+    expect(parseCliArgs(['start', '--port', '0']).options.port).toBe(0)
+    expect(() => parseCliArgs(['start', '--port', '-1'])).toThrow('Invalid port: -1')
   })
 
   it.each([
@@ -218,10 +289,6 @@ describe('task CLI', () => {
     {
       argv: ['codex', 'login', 'unexpected'],
       message: 'codex login accepts no arguments.'
-    },
-    {
-      argv: ['rollback-to-0.7.3', 'unexpected'],
-      message: 'rollback-to-0.7.3 accepts no arguments.'
     },
     { argv: ['project', 'list', 'unexpected'], message: 'project list accepts no arguments.' },
     {
@@ -913,50 +980,22 @@ describe('task CLI', () => {
     )
   })
 
-  it('parses and runs the explicit offline rollback command', async () => {
-    const parsed = parseCliArgs([
-      'rollback-to-0.7.3',
-      '--yes',
-      '--config-root',
-      '/config',
-      '--data-root',
-      '/data',
-      '--output',
-      '/rollback'
-    ])
-    expect(parsed).toEqual({
-      command: 'rollback-to-0.7.3',
-      options: {
-        open: true,
-        json: false,
-        yes: true,
-        configRoot: '/config',
-        dataRoot: '/data',
-        output: '/rollback'
-      }
-    })
-
-    const runRollback = vi.fn().mockResolvedValue({
-      targetVersion: '0.7.3',
-      rollbackDataRoot: '/rollback',
-      preservedConfigRoot: '/config.before-rollback',
-      preservedDataRoot: '/data',
-      sessionsConverted: 4
-    })
-    const log = vi.fn()
-    await rollbackCommand(parsed.options, { runRollback, log })
-
-    expect(runRollback).toHaveBeenCalledWith({
-      configRoot: '/config',
-      dataRoot: '/data',
-      output: '/rollback',
-      confirm: true
-    })
-    expect(log.mock.calls.map(([line]) => line)).toContain(
-      'Preserved newer Config Root: /config.before-rollback'
+  it('rejects the retired rollback command and its exclusive options', async () => {
+    await expect(runCli(['rollback-to-0.7.3'])).rejects.toThrow(
+      'Unknown command: rollback-to-0.7.3'
     )
-    expect(() => parseCliArgs(['rollback-to-0.7.3'])).not.toThrow()
-    expect(() => parseCliArgs(['status', '--yes'])).toThrow('--yes requires rollback-to-0.7.3.')
+    for (const option of ['--yes', '--data-root']) {
+      expect(() => parseCliArgs(['status', option])).toThrow(`Unknown option: ${option}`)
+    }
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    try {
+      await runCli(['--help'])
+      const help = log.mock.calls.flat().join('\n')
+      expect(help).not.toMatch(/rollback-to-0\.7\.3|--yes|--data-root/)
+      expect(help).toContain('--output <path>')
+    } finally {
+      log.mockRestore()
+    }
   })
 
   it('dispatches project, session, and artifact commands through the SDK', async () => {

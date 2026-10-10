@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { EventEmitter } from 'node:events'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -318,7 +319,7 @@ describe('ClaudeIsolatedAuthController', () => {
       expect(spawnCalls[0]).toMatchObject({
         command: process.execPath,
         args: ['/resolved/cli.js', 'setup-token'],
-        env: { ELECTRON_RUN_AS_NODE: '1' }
+        env: { ELECTRON_RUN_AS_NODE: process.versions.electron ? '1' : undefined }
       })
     })
 
@@ -427,3 +428,5 @@ describe('ClaudeIsolatedAuthController', () => {
     })
   })
 })
+
+configureTestRuntimeMetadata()

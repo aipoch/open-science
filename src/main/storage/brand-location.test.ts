@@ -1,3 +1,5 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
+import { RUNTIME_LOCK_FILE } from '../runtime-ownership'
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile, symlink } from 'node:fs/promises'
 import { existsSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -5,14 +7,6 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 const state = vi.hoisted(() => ({ home: '', packaged: true }))
-vi.mock('electron', () => ({
-  app: {
-    get isPackaged() {
-      return state.packaged
-    },
-    getPath: () => state.home
-  }
-}))
 import {
   dataRootForPicked,
   initDataRoot,
@@ -126,7 +120,7 @@ it.each([true, false])(
     const prepared = await prepareApplicationLocations(configRoot)
     expect((await prepared.repository.getSettings()).dataRoot).toBeUndefined()
     expect(resolveDataRoot()).toBe(join(fixture, packaged ? 'Open-Science' : 'Open-Science-DEV'))
-    expect(existsSync(resolveDataRoot())).toBe(false)
+    expect(await readdir(resolveDataRoot())).toEqual([RUNTIME_LOCK_FILE])
     expect((await prepared.repository.getSettings()).onboardingCompletedAt).toBeUndefined()
     expect(existsSync(join(configRoot, 'settings.json'))).toBe(false)
     expect(existsSync(profilePath)).toBe(false)
@@ -291,6 +285,8 @@ it.each([true, false])(
     const initial = await prepareApplicationLocations(configRoot)
     await new SettingsPreferencesModule(initial.repository, () => 1234).markOnboardingComplete()
     const { prepareBrandStorageFixture } = await import('../../../e2e/fixtures/brand-storage-data')
+    // The E2E fixture edits a stopped application's data directory.
+    await resetOwnership()
     await prepareBrandStorageFixture(configRoot, fixture, 'legacy', packaged)
     const prepared = await prepareApplicationLocations(configRoot)
     const expected = join(configRoot, packaged ? 'OpenScience' : 'OpenScience-DEV')
@@ -778,3 +774,8 @@ it('preserves a dangling legacy data link when the default also has research', a
   await expect(prepareApplicationLocations(configRoot)).rejects.toThrow('Multiple data locations')
   expect(await readFile(join(configRoot, 'settings.json'), 'utf8')).toBe(json)
 })
+
+const resetOwnership = configureTestRuntimeMetadata(() => ({
+  homePath: state.home,
+  packaged: state.packaged
+}))

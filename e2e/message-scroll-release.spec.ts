@@ -1,4 +1,6 @@
 import { expect } from '@playwright/test'
+import { writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 
 import { test } from './fixtures/electron-app'
 
@@ -28,7 +30,8 @@ test('releases follow-output when the reader scrolls up mid-stream', async ({ ap
     await expect(conversation.getByText(AGENT_REPLY, { exact: true })).toHaveCount(turn + 1)
   }
 
-  await textbox.fill(LONG_STREAM_PROMPT)
+  const releaseFile = join(await app.createTestDirectory('scroll-stream'), 'release')
+  await textbox.fill(`${LONG_STREAM_PROMPT} Release file: ${JSON.stringify(releaseFile)}`)
   await expect(sendButton).toBeEnabled()
   await sendButton.click()
 
@@ -41,7 +44,7 @@ test('releases follow-output when the reader scrolls up mid-stream', async ({ ap
   // Wait for the current reply's presented text before scrolling.
   const paragraphs = conversation.getByText(/^Segment \d+ paragraph \d+\./)
   await expect(
-    conversation.getByText('Segment 1 paragraph 3. The quick brown fox jumps over the lazy dog.', {
+    conversation.getByText('Segment 1 paragraph 11. The quick brown fox jumps over the lazy dog.', {
       exact: true
     })
   ).toBeVisible()
@@ -71,7 +74,13 @@ test('releases follow-output when the reader scrolls up mid-stream', async ({ ap
   const textAfterWheel = await paragraphs.allTextContents()
 
   // While the reply keeps streaming, the reader's position must hold (no re-follow).
-  await page.waitForTimeout(900)
+  await writeFile(releaseFile, '')
+  await expect.poll(() => paragraphs.allTextContents()).not.toEqual(textAfterWheel)
+  await expect(
+    conversation.getByText('Segment 3 paragraph 7. The quick brown fox jumps over the lazy dog.', {
+      exact: true
+    })
+  ).toBeVisible()
   const later = await readScrollTop()
   expect(later - afterWheel).toBeLessThan(120)
   expect(await paragraphs.allTextContents()).not.toEqual(textAfterWheel)

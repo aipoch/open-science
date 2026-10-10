@@ -285,7 +285,7 @@ const writeShim = async ({
   if (platform === 'win32') {
     await writeFile(
       binPath,
-      `@echo off\r\nset ELECTRON_RUN_AS_NODE=1\r\n"${execPath}" "${packageBin}" %*\r\n`
+      `@echo off\r\nset ELECTRON_RUN_AS_NODE=${process.versions.electron ? '1' : ''}\r\n"${execPath}" "${packageBin}" %*\r\n`
     )
     return binPath
   }
@@ -294,7 +294,7 @@ const writeShim = async ({
     binPath,
     [
       '#!/bin/sh',
-      'ELECTRON_RUN_AS_NODE=1',
+      `ELECTRON_RUN_AS_NODE=${process.versions.electron ? '1' : ''}`,
       'export ELECTRON_RUN_AS_NODE',
       `exec ${shellQuote(execPath)} ${shellQuote(packageBin)} "$@"`,
       ''

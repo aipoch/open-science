@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import type { IpcMain, IpcMainInvokeEvent } from 'electron'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -186,3 +187,5 @@ describe('connector approval Electron production surface', () => {
     }
   )
 })
+
+await configureTestElectronHost(await import('electron'))

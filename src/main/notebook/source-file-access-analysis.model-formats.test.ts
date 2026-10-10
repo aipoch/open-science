@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { describe, expect, it } from 'vitest'
 
 import { analyzePythonNotebookSource } from './dependency-analysis-python'
@@ -286,3 +287,5 @@ describe('model format file access coverage', () => {
     })
   })
 })
+
+configureTestRuntimeMetadata()

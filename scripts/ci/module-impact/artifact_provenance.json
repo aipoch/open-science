@@ -106,7 +106,9 @@
     "src/renderer/src/pages/workspace/ArtifactReproducibilityPanel.test.tsx",
     "src/main/notebook/dependency-analysis.stdlib-replay.test.ts",
     "src/main/artifacts/resumed-finalization-ownership.test.ts",
-    "src/main/artifacts/export-filename.ts"
+    "src/main/artifacts/export-filename.ts",
+    "src/main/artifacts/artifact-reproducibility-commands.test.ts",
+    "src/main/artifacts/artifact-reproducibility-commands.ts"
   ],
   "interfacePaths": [
     "src/main/artifacts/provenance-message-snapshot.ts",
@@ -144,7 +146,8 @@
     "src/main/artifacts/session-reproducibility-store.ts",
     "src/main/notebook/reproduction-runtime.ts",
     "src/renderer/src/pages/workspace/ArtifactReproducibilityPanel.tsx",
-    "src/main/artifacts/ro-crate-export.ts"
+    "src/main/artifacts/ro-crate-export.ts",
+    "src/main/artifacts/artifact-reproducibility-commands.ts"
   ],
   "consumerModules": ["session_persistence"],
   "testFiles": {
@@ -189,7 +192,8 @@
       "src/main/artifacts/session-reproducibility-store.test.ts",
       "src/main/artifacts/session-reproducibility.test.ts",
       "src/main/artifacts/storage-access.context.test.ts",
-      "src/main/artifacts/resumed-finalization-ownership.test.ts"
+      "src/main/artifacts/resumed-finalization-ownership.test.ts",
+      "src/main/artifacts/artifact-reproducibility-commands.test.ts"
     ],
     "contract": [
       "src/main/artifacts/artifact-reproducibility-ipc.test.ts",
@@ -570,8 +574,18 @@
       "src/main/acp/approved-handoff-outcome.integration.test.ts",
       "src/main/acp/approved-handoff-outcome.test.ts",
       "src/main/literature/pdf-translation/checkpoints.test.ts",
-      "src/main/session-package/research-reproduction.integration.test.ts",
-      "src/main/session-plan/session-plan-turn-outcome.test.ts"
+      "src/main/node-process-host.test.ts",
+      "src/main/desktop-runtime-electron-adapter.test.ts",
+      "src/main/desktop-runtime-transport.integration.test.ts",
+      "src/main/side-chat/application-commands.test.ts",
+      "src/main/settings/file-commands.test.ts",
+      "src/main/office-preview/application-commands.test.ts",
+      "src/main/reviewer/paged-preview-host.test.ts",
+      "src/main/desktop-native-electron.test.ts",
+      "src/main/session-plan/session-plan-turn-outcome.test.ts",
+      "src/main/acp/specialist-switch-recovery.integration.test.ts",
+      "src/main/agents/production-completion-handoff.test.ts",
+      "src/main/session-package/research-reproduction.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],

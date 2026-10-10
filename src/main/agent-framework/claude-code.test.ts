@@ -184,7 +184,7 @@ describe('claudeCodeFramework', () => {
       command: '/app/electron',
       args: ['/app/main.js', '--open-science-skill-runtime-mcp'],
       env: {
-        ELECTRON_RUN_AS_NODE: '1',
+        ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
         [SKILL_RUNTIME_ROOT_ENV]: '/runtime/revision'
       }
     })
@@ -194,7 +194,7 @@ describe('claudeCodeFramework', () => {
         command: '/app/electron',
         args: ['/app/main.js', '--open-science-skill-runtime-mcp'],
         env: [
-          { name: 'ELECTRON_RUN_AS_NODE', value: '1' },
+          ...(process.versions.electron ? [{ name: 'ELECTRON_RUN_AS_NODE', value: '1' }] : []),
           { name: SKILL_RUNTIME_ROOT_ENV, value: '/runtime/revision' }
         ]
       }

@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import filesystem from 'node:fs'
@@ -28,6 +29,8 @@ import { NotebookNetworkSandboxOwner } from './network-sandbox-owner'
 import { sandboxedPackageSpawn } from './package-process-sandbox'
 import { createProductionProvisioner } from './provisioner'
 import { envPrefix, rLibraryDir, rScriptBin, runtimeRoot } from './runtime-paths'
+
+configureTestRuntimeMetadata()
 
 // Use an already staged binary; this check never downloads tools or packages.
 const micromamba = resolveMicromamba() ?? ''
