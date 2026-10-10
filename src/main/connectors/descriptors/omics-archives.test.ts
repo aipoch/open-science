@@ -621,6 +621,67 @@ describe('geo_get_series', () => {
     })
   })
 
+  it.each([
+    ['Cy5', 'Cy3'],
+    ['Cy3', 'Cy5']
+  ])('preserves reference and test metadata by channel with labels %s/%s', async (ch1, ch2) => {
+    const fetchImpl = vi.fn().mockImplementation(async (url: string) => {
+      if (url.includes('esearch.fcgi'))
+        return jsonRes({ esearchresult: { count: '1', idlist: ['16005'] } })
+      if (url.includes('esummary.fcgi'))
+        return jsonRes({ result: { uids: ['16005'], '16005': { accession: 'GSE16005' } } })
+      if (url.includes('targ=self')) return textRes('^SERIES = GSE16005\n')
+      return textRes(
+        [
+          '^SAMPLE = GSM400565',
+          '!Sample_channel_count = 2',
+          '!Sample_source_name_ch1 = control pool',
+          '!Sample_organism_ch1 = Mus musculus',
+          '!Sample_characteristics_ch1 = tissue: pooled reference',
+          '!Sample_molecule_ch1 = total RNA',
+          `!Sample_label_ch1 = ${ch1}`,
+          '!Sample_source_name_ch2 = MF3-1',
+          '!Sample_organism_ch2 = Mus musculus',
+          '!Sample_characteristics_ch2 = tissue: tumor',
+          '!Sample_characteristics_ch2 = disease state: lymphoma',
+          '!Sample_molecule_ch2 = total RNA',
+          `!Sample_label_ch2 = ${ch2}`
+        ].join('\n')
+      )
+    })
+    const out = (await engine(fetchImpl).call(
+      tool('geo_get_series'),
+      { accessions: ['GSE16005'] },
+      {}
+    )) as {
+      records: Array<{ samples: Array<Record<string, unknown>> }>
+    }
+    const sample = out.records[0].samples[0]
+    expect(sample.source_name).toBe('control pool')
+    expect(sample.characteristics).toEqual([{ tag: 'tissue', value: 'pooled reference' }])
+    expect(sample.channels).toEqual([
+      {
+        channel: 1,
+        source_name: 'control pool',
+        organism: ['Mus musculus'],
+        characteristics: [{ tag: 'tissue', value: 'pooled reference' }],
+        molecule: 'total RNA',
+        label: ch1
+      },
+      {
+        channel: 2,
+        source_name: 'MF3-1',
+        organism: ['Mus musculus'],
+        characteristics: [
+          { tag: 'tissue', value: 'tumor' },
+          { tag: 'disease state', value: 'lymphoma' }
+        ],
+        molecule: 'total RNA',
+        label: ch2
+      }
+    ])
+  })
+
   it('rejects a non-GSE accession before any request', async () => {
     const fetchImpl = vi.fn()
     await expect(

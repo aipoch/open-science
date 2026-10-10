@@ -87,13 +87,44 @@ describe('arxiv_search', () => {
     )
     const search = decodeURIComponent(url.split('search_query=')[1].split('&')[0])
     expect(search).toBe(
-      'ti:transformer AND au:vaswani AND cat:cs.LG AND submittedDate:[202101010000 TO 202112312359]'
+      '(ti:transformer AND au:vaswani) AND cat:cs.LG AND submittedDate:[202101010000 TO 202112312359]'
     )
     expect((out as { search_query: string }).search_query).toBe(search)
     expect(url).toContain('sortBy=submittedDate')
     expect(url).toContain('sortOrder=ascending')
     // The raw query keeps its spaces percent-encoded, not dropped.
-    expect(url).toContain('search_query=ti%3Atransformer')
+    expect(url).toContain('search_query=(ti%3Atransformer')
+  })
+
+  it.each<{ filters: Record<string, string>; suffix: string }>([
+    { filters: { category: 'cs.LG' }, suffix: 'cat:cs.LG' },
+    {
+      filters: { date_from: '2021-01-01' },
+      suffix: 'submittedDate:[202101010000 TO 300001012359]'
+    },
+    {
+      filters: { category: 'cs.LG', date_to: '2021-12-31' },
+      suffix: 'cat:cs.LG AND submittedDate:[199101010000 TO 202112312359]'
+    }
+  ])(
+    'applies additional filters to the entire OR expression: $suffix',
+    async ({ filters, suffix }) => {
+      const { out, url } = await run(
+        'arxiv_search',
+        { query: 'ti:transformer OR ti:attention', ...filters },
+        SEARCH_FEED
+      )
+      const expected = `(ti:transformer OR ti:attention) AND ${suffix}`
+      expect(new URL(url).searchParams.get('search_query')).toBe(expected)
+      expect((out as { search_query: string }).search_query).toBe(expected)
+    }
+  )
+
+  it('preserves a raw OR expression when no additional filter is supplied', async () => {
+    const query = 'ti:transformer OR ti:attention'
+    const { out, url } = await run('arxiv_search', { query }, SEARCH_FEED)
+    expect(new URL(url).searchParams.get('search_query')).toBe(query)
+    expect((out as { search_query: string }).search_query).toBe(query)
   })
 
   it('fills open-ended date ranges with sentinel bounds', async () => {

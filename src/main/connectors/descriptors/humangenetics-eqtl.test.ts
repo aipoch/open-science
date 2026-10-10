@@ -2,8 +2,11 @@ import { describe, it, expect, vi } from 'vitest'
 import { ParserEngine } from '../engine'
 import { HUMANGENETICS_EQTL_TOOLS } from './humangenetics-eqtl'
 
-const jsonRes = (body: unknown): Response =>
-  ({ ok: true, status: 200, json: async () => body }) as Response
+const jsonRes = (body: unknown, status = 200): Response =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { 'content-type': 'application/json' }
+  })
 
 const tool = (id: string): (typeof HUMANGENETICS_EQTL_TOOLS)[number] => {
   const t = HUMANGENETICS_EQTL_TOOLS.find((x) => x.id === id)
@@ -235,7 +238,7 @@ describe('eqtl_associations', () => {
   })
 
   it('treats an HTTP 400 "No results" from a well-formed query as empty (not a throw)', async () => {
-    const fetchImpl = vi.fn().mockResolvedValueOnce({ ok: false, status: 400 } as Response)
+    const fetchImpl = vi.fn().mockResolvedValueOnce(jsonRes({ message: 'No results' }, 400))
     const out = (await run(
       'eqtl_associations',
       { dataset_id: 'QTD000266', gene_id: 'ENSG00000130203' },
@@ -244,5 +247,47 @@ describe('eqtl_associations', () => {
     expect(out.returned).toBe(0)
     expect(out.associations).toEqual([])
     expect(out.truncated).toBe(false)
+  })
+
+  it.each([
+    { message: 'Cannot specify both variant and rsid' },
+    { message: 'Position range exceeds the maximum allowed length' },
+    { message: 'No results could be retrieved because the request is invalid' },
+    { error: 'Invalid request' },
+    []
+  ])('rejects an HTTP 400 body that is not the explicit no-results response: %j', async (body) => {
+    const fetchImpl = vi.fn().mockResolvedValueOnce(jsonRes(body, 400))
+    await expect(
+      run('eqtl_associations', { dataset_id: 'QTD000266', rsid: 'rs429358' }, fetchImpl)
+    ).rejects.toMatchObject({ name: 'ConnectorHttpError', status: 400 })
+    expect(fetchImpl).toHaveBeenCalledOnce()
+  })
+
+  it('keeps HTTP 422 validation failures as errors', async () => {
+    const fetchImpl = vi.fn().mockResolvedValueOnce(jsonRes({ message: 'Invalid locus' }, 422))
+    await expect(
+      run('eqtl_associations', { dataset_id: 'QTD000266', pos: 'invalid' }, fetchImpl)
+    ).rejects.toMatchObject({ name: 'ConnectorHttpError', status: 422 })
+    expect(fetchImpl).toHaveBeenCalledOnce()
+  })
+})
+
+describe('eQTL Catalogue REST retirement', () => {
+  it.each<{ id: string; args: Record<string, unknown> }>([
+    { id: 'eqtl_list_datasets', args: {} },
+    {
+      id: 'eqtl_associations',
+      args: { dataset_id: 'QTD000266', gene_id: 'ENSG00000130203' }
+    }
+  ])('reports retirement for HTTP 410 without parsing its body: $id', async ({ id, args }) => {
+    const response = new Response('<html>Gone</html>', { status: 410 })
+    const parseBody = vi.spyOn(response, 'json')
+    const fetchImpl = vi.fn().mockResolvedValueOnce(response)
+    await expect(run(id, args, fetchImpl)).rejects.toThrow(
+      'The eQTL Catalogue REST API has been retired (HTTP 410) and is no longer available. See https://www.ebi.ac.uk/eqtl/Data_access/'
+    )
+    expect(parseBody).not.toHaveBeenCalled()
+    expect(response.bodyUsed).toBe(true)
+    expect(fetchImpl).toHaveBeenCalledOnce()
   })
 })

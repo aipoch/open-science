@@ -1,4 +1,5 @@
-import type { ToolDescriptor } from '../../connector-core/types'
+import type { ToolContext, ToolDescriptor } from '../../connector-core/types'
+import { ConnectorHttpError } from '../../connector-core/engine'
 
 // eQTL Catalogue REST API v2 (molecular-QTL summary statistics; ~760 datasets). The API publishes
 // NO total count and NO pagination link headers, so exhaustion is inferred from the page fill: a
@@ -6,6 +7,34 @@ import type { ToolDescriptor } from '../../connector-core/types'
 // {message:"No results"} object rather than an empty array — normalized to [] here.
 const BASE = 'https://www.ebi.ac.uk/eqtl/api/v2'
 const MAX_SIZE = 1000
+
+// The official REST service has retired. Preserve the tool entry points and explain HTTP 410
+// independently of its response-body format (the retired endpoint may return HTML or no body).
+async function fetchEqtlJson(
+  ctx: ToolContext,
+  url: string,
+  allowNoResults = false
+): Promise<unknown> {
+  try {
+    const { body, status } = await ctx.fetchJsonWithHeaders(url, {
+      allowHttpStatuses: allowNoResults ? [400] : []
+    })
+    if (status === 400) {
+      if (body && typeof body === 'object' && 'message' in body && body.message === 'No results') {
+        return []
+      }
+      throw new ConnectorHttpError(status, url)
+    }
+    return body
+  } catch (err) {
+    if (err instanceof ConnectorHttpError && err.status === 410) {
+      throw new Error(
+        'The eQTL Catalogue REST API has been retired (HTTP 410) and is no longer available. See https://www.ebi.ac.uk/eqtl/Data_access/ for official data access options.'
+      )
+    }
+    throw err
+  }
+}
 
 // ---- Minimal shapes of the eQTL Catalogue JSON we read ---------------------------------------
 
@@ -133,7 +162,7 @@ export const HUMANGENETICS_EQTL_TOOLS: ToolDescriptor[] = [
         filters['quant_method'] = String(a.quant_method)
 
       const qs = queryString({ ...filters, size: maxRecords })
-      const resp = await ctx.fetchJson(`${BASE}/datasets?${qs}`)
+      const resp = await fetchEqtlJson(ctx, `${BASE}/datasets?${qs}`)
       const rows = asRows<EqtlDataset>(resp)
       // Deterministic order regardless of upstream order.
       rows.sort((x, y) => String(x.dataset_id).localeCompare(String(y.dataset_id)))
@@ -206,20 +235,13 @@ export const HUMANGENETICS_EQTL_TOOLS: ToolDescriptor[] = [
         nlog10p: nlog10pMin,
         size: maxRecords
       })
-      // The v2 associations endpoint returns HTTP 400 {"message":"No results"} when a well-formed
-      // filter simply matches nothing (a normal "not tested / not present" outcome, per the docs).
-      // The engine strips the body, and validation errors are 422, so a 400 here is treated as empty.
-      let resp: unknown
-      try {
-        resp = await ctx.fetchJson(
-          `${BASE}/datasets/${encodeURIComponent(datasetId)}/associations?${qs}`
-        )
-      } catch (err) {
-        if (err instanceof Error && /HTTP 400\b/.test(err.message)) {
-          return { dataset_id: datasetId, filters, returned: 0, truncated: false, associations: [] }
-        }
-        throw err
-      }
+      // Historical HTTP 400 responses include both "No results" and invalid-query errors.
+      // Inspect the body so rejected filters cannot be mistaken for a completed empty query.
+      const resp = await fetchEqtlJson(
+        ctx,
+        `${BASE}/datasets/${encodeURIComponent(datasetId)}/associations?${qs}`,
+        true
+      )
       const rows = asRows<EqtlAssociation>(resp)
       const associations = rows.map(leanAssociation)
       return {

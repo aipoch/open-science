@@ -35,6 +35,7 @@ class ConnectorRuntimeSettingsProjection {
   private pendingCustomServerRefreshes = new Map<string, number>()
   private refreshErrors = new Map<string, unknown>()
   private refreshQueue: Promise<void> = Promise.resolve()
+  private readonly refreshController = new AbortController()
   private readonly syncBundledSkillDocs: typeof syncConnectorSkillDocs
   private readonly syncCustomSkillDocs: typeof syncCustomServerSkillDocs
   private readonly reportError: (error: unknown) => void
@@ -76,6 +77,7 @@ class ConnectorRuntimeSettingsProjection {
     id: string,
     availability: CustomMcpFailureAvailability | undefined
   ): void {
+    if (this.refreshController.signal.aborted) return
     const current = this.dispatchAvailabilities.get(id)
     if (current === availability) return
     if (availability) this.dispatchAvailabilities.set(id, availability)
@@ -91,7 +93,15 @@ class ConnectorRuntimeSettingsProjection {
     return this.enqueueRefresh(serverId)
   }
 
+  dispose(): Promise<void> {
+    // Stop producers before the MCP manager closes; draining also covers filesystem work that
+    // cannot itself be interrupted, so it cannot resume after module disposal has completed.
+    this.refreshController.abort()
+    return this.refreshQueue
+  }
+
   private enqueueRefresh(serverId?: string): Promise<void> {
+    if (this.refreshController.signal.aborted) return Promise.resolve()
     if (serverId) {
       const pending = this.pendingCustomServerRefreshes.get(serverId) ?? 0
       this.pendingCustomServerRefreshes.set(serverId, pending + 1)
@@ -108,10 +118,10 @@ class ConnectorRuntimeSettingsProjection {
           if (remaining > 0) this.pendingCustomServerRefreshes.set(serverId, remaining)
           else {
             this.pendingCustomServerRefreshes.delete(serverId)
-            if (this.pendingRefreshes === 0) this.options.notifyStatusChanged?.()
+            if (this.pendingRefreshes === 0) this.notifyStatusChanged()
           }
         } else if (--this.pendingRefreshes === 0) {
-          this.options.notifyStatusChanged?.()
+          this.notifyStatusChanged()
         }
       })
     this.refreshQueue = queued.catch(() => undefined)
@@ -119,12 +129,16 @@ class ConnectorRuntimeSettingsProjection {
   }
 
   private async refreshOnce(serverId?: string): Promise<void> {
+    const signal = this.refreshController.signal
+    if (signal.aborted) return
     try {
       const connectors = await this.options.readConnectors()
+      signal.throwIfAborted()
       this.snapshot = connectors
 
       if (serverId) {
         await this.refreshCustomServerOnce(connectors, serverId)
+        signal.throwIfAborted()
         this.clearRefreshError(serverId)
         return
       }
@@ -132,13 +146,17 @@ class ConnectorRuntimeSettingsProjection {
       const disabled = new Set(connectors?.disabledConnectorIds ?? [])
       const enabledIds = ALL_CONNECTOR_IDS.filter((id) => !disabled.has(id))
 
-      await this.syncBundledSkillDocs(this.options.skillsDir, enabledIds)
+      await this.syncBundledSkillDocs(this.options.skillsDir, enabledIds, signal)
+      signal.throwIfAborted()
       const customServers = selectEnabledCustomServers(connectors)
       const customSync = await this.syncCustomSkillDocs(
         this.options.skillsDir,
         customServers,
-        (server) => this.options.mcpClientManager.listTools(toCustomMcpConfig(server))
+        (server) => this.discoverTools(server),
+        undefined,
+        signal
       )
+      signal.throwIfAborted()
       this.materializedCustomSkills = customSync.materializedNames.map(customConnectorSkillName)
       this.discoveryAvailabilities = new Map(
         customSync.failures.map(({ server, error }) => [server.id, classifyCustomMcpFailure(error)])
@@ -146,9 +164,36 @@ class ConnectorRuntimeSettingsProjection {
       this.reportCustomSyncFailures(customSync.failures)
       this.clearRefreshError()
     } catch (error) {
+      if (signal.aborted) return
       this.reportError(error)
       this.recordRefreshError(serverId, error)
       throw error
+    }
+  }
+
+  private notifyStatusChanged(): void {
+    if (!this.refreshController.signal.aborted) this.options.notifyStatusChanged?.()
+  }
+
+  private async discoverTools(
+    server: StoredCustomMcpServer
+  ): ReturnType<McpClientManager['listTools']> {
+    const parent = this.refreshController.signal
+    parent.throwIfAborted()
+    // The MCP SDK retains request abort listeners after completion. Keep those listeners on a
+    // discovery-scoped signal, and detach it from the projection once discovery has settled.
+    const controller = new AbortController()
+    const forwardAbort = (): void => controller.abort(parent.reason)
+    parent.addEventListener('abort', forwardAbort, { once: true })
+    try {
+      if (parent.aborted) forwardAbort()
+      controller.signal.throwIfAborted()
+      return await this.options.mcpClientManager.listTools(
+        toCustomMcpConfig(server),
+        controller.signal
+      )
+    } finally {
+      parent.removeEventListener('abort', forwardAbort)
     }
   }
 
@@ -171,6 +216,7 @@ class ConnectorRuntimeSettingsProjection {
     connectors: StoredConnectors | undefined,
     serverId: string
   ): Promise<void> {
+    const signal = this.refreshController.signal
     const server = connectors?.customMcpServers?.find((candidate) => candidate.id === serverId)
     if (!server) return
 
@@ -181,9 +227,11 @@ class ConnectorRuntimeSettingsProjection {
     const customSync = await this.syncCustomSkillDocs(
       this.options.skillsDir,
       enabledServer ? [enabledServer] : [],
-      (candidate) => this.options.mcpClientManager.listTools(toCustomMcpConfig(candidate)),
-      [name]
+      (candidate) => this.discoverTools(candidate),
+      [name],
+      signal
     )
+    signal.throwIfAborted()
     const skillName = customConnectorSkillName(name)
     const materialized = new Set(this.materializedCustomSkills)
     if (customSync.materializedNames.includes(name)) materialized.add(skillName)
