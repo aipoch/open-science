@@ -79,22 +79,19 @@ test('keeps real desktop RPC connected when a window rejects event delivery', as
     expect(result).toEqual({ connected: true })
   } finally {
     // Stop only the backend registered beneath this test's unique storage root.
-    const stopped = await promisify(execFile)(
-      process.execPath,
-      [resolve('cli/index.mjs'), 'stop'],
-      {
-        env: {
-          ...launchEnvironment(roots.storageRoot),
-          OPEN_SCIENCE_USER_DATA: roots.userDataRoot
-        },
-        timeout: 30000
-      }
-    ).then(
+    const stopping = promisify(execFile)(process.execPath, [resolve('cli/index.mjs'), 'stop'], {
+      env: {
+        ...launchEnvironment(roots.storageRoot),
+        OPEN_SCIENCE_USER_DATA: roots.userDataRoot
+      },
+      timeout: 30000
+    }).then(
       () => true,
       () => false
     )
     await application.evaluate(({ app }) => app.exit(0)).catch(() => undefined)
     await application.close().catch(() => undefined)
+    const stopped = await stopping
     expect(stopped, `Test backend cleanup failed; retained evidence at ${root}`).toBe(true)
     await rm(root, { recursive: true, force: true })
   }

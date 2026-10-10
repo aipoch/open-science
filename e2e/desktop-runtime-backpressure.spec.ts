@@ -169,22 +169,19 @@ test('keeps real desktop connected through concurrent Notebook and session reads
     expect(result.reads.every((read) => read.status === 'fulfilled')).toBe(true)
     expect(result.followup).toBe('ok')
   } finally {
-    const stopped = await promisify(execFile)(
-      process.execPath,
-      [resolve('cli/index.mjs'), 'stop'],
-      {
-        env: {
-          ...launchEnvironment(roots.storageRoot),
-          OPEN_SCIENCE_USER_DATA: roots.userDataRoot
-        },
-        timeout: 30000
-      }
-    ).then(
+    const stopping = promisify(execFile)(process.execPath, [resolve('cli/index.mjs'), 'stop'], {
+      env: {
+        ...launchEnvironment(roots.storageRoot),
+        OPEN_SCIENCE_USER_DATA: roots.userDataRoot
+      },
+      timeout: 30000
+    }).then(
       () => true,
       () => false
     )
     await application.evaluate(({ app }) => app.exit(0)).catch(() => undefined)
     await application.close().catch(() => undefined)
+    const stopped = await stopping
     expect(stopped, `Test backend cleanup failed; retained evidence at ${root}`).toBe(true)
     await rm(root, { recursive: true, force: true })
   }
