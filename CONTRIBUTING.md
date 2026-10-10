@@ -41,7 +41,8 @@ npm install
 ```
 
 `npm install` runs a `postinstall` step that generates the Prisma client and
-installs native Electron app dependencies.
+stages verified first-party native components and installs Electron app dependencies.
+See the [native component workflow](docs/native-components.md) for source builds and signed CDN artifacts.
 
 An existing `node_modules` directory can retain an older patch even when the
 dependency version has not changed. Before applying patches, `npm install`

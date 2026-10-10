@@ -3,13 +3,16 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import { load } from 'js-yaml'
+import { publishNativeFiles } from './produce-native-components.mjs'
+import { rebuildElectronDependencies } from './install-native-components.mjs'
 import {
   digest,
   nativeFiles,
   sourceFingerprint,
   spec,
   stageNativeComponents,
-  validateNativeRelease
+  validateNativeRelease,
+  verifyPackagedNativeComponents
 } from './native-components.mjs'
 
 type NativeFile = { package: string; name: string; sha256: string; size: number; url: string }
@@ -47,6 +50,14 @@ async function fixture(): Promise<{
     await mkdir(join(directory, 'packages', pkg, 'src'), { recursive: true })
     await writeFile(join(directory, 'packages', pkg, 'binding.gyp'), '{}')
     await writeFile(join(directory, 'packages', pkg, 'src/main.cc'), 'native-source')
+  }
+  for (const path of [
+    '.github/workflows/native-components.yml',
+    'scripts/produce-native-components.mjs',
+    'scripts/verify-native-component-signatures.ps1'
+  ]) {
+    await mkdir(join(directory, path, '..'), { recursive: true })
+    await writeFile(join(directory, path), await readFile(path))
   }
   const target = 'linux-x64'
   const files = nativeFiles(target).map((file: { package: string; name: string }) => {
@@ -182,4 +193,122 @@ it('keeps dry-run compilation on the same producer without signing or publishing
   ])
     expect(job.steps.find((s) => s.name === name).if).toContain('!inputs.dry_run')
   expect(job.steps.find((s) => s.name === 'Record verified artifacts').run).toContain('--dry-run')
+})
+
+it('verifies both packaged copies and rejects a byte changed by a later signing pass', async () => {
+  const { directory, catalog } = await fixture()
+  catalog['linux-x64'].source = await sourceFingerprint()
+  for (const base of ['backend', 'app.asar.unpacked'])
+    for (const file of catalog['linux-x64'].files) {
+      const output = join(directory, base, 'node_modules/@aipoch', file.package, 'build/Release')
+      await mkdir(output, { recursive: true })
+      await writeFile(join(output, file.name), file.name)
+    }
+  expect((await verifyPackagedNativeComponents(directory, 'linux-x64', catalog)).size).toBe(10)
+  await writeFile(
+    join(
+      directory,
+      'backend/node_modules/@aipoch/credential-identity-probe-native/build/Release/credential_secret'
+    ),
+    'changed-signature'
+  )
+  await expect(verifyPackagedNativeComponents(directory, 'linux-x64', catalog)).rejects.toThrow()
+})
+it('publishes only verified files with an atomic create-only S3 condition', async () => {
+  const { directory, catalog } = await fixture()
+  const release = catalog['linux-x64']
+  for (const file of release.files) await writeFile(join(directory, file.name), file.name)
+  const invoke = vi.fn((_command: string, args: string[]) =>
+    args[1] === 'head-object' ? { status: 1, stderr: '(404)' } : { status: 0 }
+  )
+  await publishNativeFiles(directory, release, { S3_BUCKET: 'fixture' }, invoke)
+  expect(invoke).toHaveBeenCalledTimes(10)
+  const put = invoke.mock.calls.filter((call) => call[1][1] === 'put-object')
+  for (const [, args] of put) {
+    expect(args).toContain('--if-none-match')
+    expect(args[args.indexOf('--if-none-match') + 1]).toBe('*')
+    expect(args).toContain('--checksum-sha256')
+  }
+  const failure = vi.fn(() => ({ status: 1, stderr: '(403)' }))
+  await expect(
+    publishNativeFiles(directory, release, { S3_BUCKET: 'fixture' }, failure)
+  ).rejects.toThrow('Cannot inspect')
+  expect(failure).toHaveBeenCalledTimes(1)
+  await writeFile(join(directory, release.files[0].name), 'tampered')
+  invoke.mockClear()
+  await expect(
+    publishNativeFiles(directory, release, { S3_BUCKET: 'fixture' }, invoke)
+  ).rejects.toThrow()
+  expect(invoke).not.toHaveBeenCalled()
+})
+it('reuses matching immutable objects and refuses an existing object with different bytes', async () => {
+  const { directory, catalog } = await fixture()
+  const release = catalog['linux-x64']
+  for (const file of release.files) await writeFile(join(directory, file.name), file.name)
+  const invoke = vi.fn((_command: string, args: string[]) => {
+    const file = release.files.find((f) => args.includes(new URL(f.url).pathname.slice(1)))!
+    return {
+      status: 0,
+      stdout: JSON.stringify({
+        ContentLength: file.size,
+        ChecksumSHA256: Buffer.from(file.sha256, 'hex').toString('base64')
+      })
+    }
+  })
+  await publishNativeFiles(directory, release, { S3_BUCKET: 'fixture' }, invoke)
+  expect(invoke).toHaveBeenCalledTimes(5)
+  await expect(
+    publishNativeFiles(directory, release, { S3_BUCKET: 'fixture' }, () => ({
+      status: 0,
+      stdout: '{}'
+    }))
+  ).rejects.toThrow('differs')
+})
+it('routes normal builds and installation to staging, preserving component signatures', async () => {
+  const pkg = JSON.parse(await readFile('package.json', 'utf8'))
+  expect(pkg.scripts['build:backend-native']).toBe('node scripts/native-components.mjs')
+  expect(pkg.scripts.postinstall).toContain('node scripts/install-native-components.mjs')
+  expect(pkg.scripts.postinstall).not.toContain('install-app-deps')
+  for (const name of Object.keys(spec.packages)) {
+    const native = JSON.parse(await readFile(`packages/${name}/package.json`, 'utf8'))
+    expect(native.gypfile).toBe(false)
+    expect(native.scripts.install).toBeUndefined()
+  }
+  expect(await readFile('build/stage-desktop-runtime.cjs', 'utf8')).not.toContain('node-gyp')
+  const config = load(await readFile('electron-builder.yml', 'utf8')) as {
+    mac: { signIgnore: string[] }
+    win: { signExts: string[] }
+  }
+  for (const file of nativeFiles('darwin-arm64')) {
+    const path = `/fixture/Contents/Resources/backend/node_modules/@aipoch/${file.package}/build/Release/${file.name}`
+    expect(config.mac.signIgnore.some((pattern) => new RegExp(pattern).test(path))).toBe(true)
+  }
+  expect(config.win.signExts).toEqual([
+    '!credential_identity_probe.exe',
+    '!credential_key_validator.exe',
+    '!credential_secret.exe'
+  ])
+})
+
+it('the installed Electron rebuilder skips linked first-party gyp sources', async () => {
+  const { directory } = await fixture()
+  const dependencies = Object.fromEntries(
+    Object.keys(spec.packages).map((name) => [`@aipoch/${name}`, `file:packages/${name}`])
+  )
+  await writeFile(
+    join(directory, 'package.json'),
+    JSON.stringify({ name: 'native-fixture', version: '1.0.0', dependencies })
+  )
+  await mkdir(join(directory, 'node_modules/@aipoch'), { recursive: true })
+  for (const name of Object.keys(spec.packages)) {
+    const source = join(directory, 'packages', name)
+    await writeFile(
+      join(source, 'package.json'),
+      JSON.stringify({ name: `@aipoch/${name}`, version: '1.0.0' })
+    )
+    // Deliberately invalid: any attempted gyp rebuild must fail this test.
+    await writeFile(join(source, 'binding.gyp'), 'invalid-gyp-must-not-run')
+    await symlink(source, join(directory, 'node_modules/@aipoch', name), 'junction')
+  }
+  await expect(rebuildElectronDependencies(directory)).resolves.toBeUndefined()
 })

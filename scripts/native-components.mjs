@@ -25,6 +25,15 @@ export async function sourceFingerprint(directory = root) {
   const hash = createHash('sha256').update(JSON.stringify(spec))
   const lock = JSON.parse(await readFile(join(directory, 'package-lock.json'), 'utf8'))
   hash.update(JSON.stringify(lock.packages['node_modules/node-gyp']))
+  for (const path of [
+    '.github/workflows/native-components.yml',
+    'scripts/produce-native-components.mjs',
+    'scripts/verify-native-component-signatures.ps1'
+  ]) {
+    hash
+      .update(path)
+      .update((await readFile(join(directory, path), 'utf8')).replaceAll('\r\n', '\n'))
+  }
   for (const pkg of Object.keys(spec.packages)) {
     const base = join(directory, 'packages', pkg)
     const paths = [
@@ -82,6 +91,27 @@ export async function verifiedBytes(path, expected) {
   if (digest(bytes) !== expected.sha256)
     throw new Error(`Native component checksum mismatch: ${path}`)
   return bytes
+}
+
+export async function verifyPackagedNativeComponents(resources, target, catalog) {
+  catalog ??= JSON.parse(await readFile(join(root, 'build/native-components-lock.json'), 'utf8'))
+  const release = validateNativeRelease(catalog[target], target, await sourceFingerprint())
+  const paths = new Set()
+  for (const base of ['backend', 'app.asar.unpacked']) {
+    for (const file of release.files) {
+      const path = join(
+        resources,
+        base,
+        'node_modules/@aipoch',
+        file.package,
+        'build/Release',
+        file.name
+      )
+      await verifiedBytes(path, file)
+      paths.add(path)
+    }
+  }
+  return paths
 }
 
 export async function stageNativeComponents({

@@ -78,12 +78,6 @@ export function verifyNativeSignatures(output, target, invoke = run) {
     const path = join(output, file.name)
     if (process.platform === 'darwin') {
       invoke('codesign', ['--verify', '--strict', '--verbose=2', path])
-      const details = invoke('codesign', ['-d', '--verbose=4', path], {
-        stdio: ['ignore', 'pipe', 'pipe'],
-        encoding: 'utf8'
-      })
-      // codesign prints metadata on stderr; the requirement below is the authoritative identity check.
-      void details
       invoke('codesign', [
         '--verify',
         '-R',
@@ -130,10 +124,15 @@ export async function recordNativeRelease(output, { dryRun = false } = {}) {
   return release
 }
 
-export async function publishNativeRelease(output, environment = process.env, invoke = spawnSync) {
+export async function publishNativeRelease(output, environment = process.env) {
   const release = JSON.parse(await readFile(join(output, 'release.json'), 'utf8'))
   validateNativeRelease(release, `${process.platform}-${process.arch}`, await sourceFingerprint())
   verifyNativeSignatures(output, release.target)
+  await publishNativeFiles(output, release, environment)
+}
+
+export async function publishNativeFiles(output, release, environment, invoke = spawnSync) {
+  validateNativeRelease(release, release.target, release.source)
   if (!environment.S3_BUCKET) throw new Error('S3_BUCKET is required')
   for (const file of release.files) await verifiedBytes(join(output, file.name), file)
   for (const file of release.files) {
