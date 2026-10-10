@@ -1,4 +1,4 @@
-import type { ToolContext, ToolDescriptor } from '../types'
+import type { ToolContext, ToolDescriptor } from '../../connector-core/types'
 
 // ChEMBL REST (EBI): read-only compound / drug / ADMET / bioactivity / mechanism / target lookups.
 const BASE = 'https://www.ebi.ac.uk/chembl/api/data'

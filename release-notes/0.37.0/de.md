@@ -18,6 +18,7 @@
 - Notebook-Umgebungen: präzise gemischte Conda/pip-Erfassung, bewahrte micromamba-Build-Metadaten in der Pakettabelle sowie gehärtete Callback-Abhängigkeiten und Dateieingabe-Herkunft (#3398, #3385, #3369)
 - Linux-Anmeldedaten prüfen nach dem ersten Geheimnis-Vorgang nicht mehr den Secret-Service-Backend, wodurch fälschliche, fatale Wiederherstellungsabbrüche verhindert werden (#3389)
 - Die Genehmigung und das Verwerfen von Sitzungsplänen stören die Ausführungswiederherstellung nicht mehr (#3366)
+- GitHub-Releases enthalten jetzt eigenständige CLI-Archive (macOS und Linux arm64/x64, Windows x64) neben den Desktop-Installationsprogrammen; für die Installation der CLI ist kein lokales Node.js-Toolset mehr erforderlich (#3394)
 
 ## 🐛 Fehlerbehebungen
 
@@ -28,3 +29,7 @@
 - Intelligente Sammlungen setzen den fehlgeschlagenen Stapel fort und versuchen ihn erneut, statt von vorne zu beginnen (#3351)
 - Codex stellt gestreamte MCP-Werkzeugargumente wieder her, die im abgeschlossenen Aufruf leer ankommen (#3349)
 - Das Wechseln von Specialists unter Windows hinterlässt keine genehmigte Übergabe mehr, die ausstehend bleibt und spätere Abfragen blockiert (#3388)
+- Der PDB-Konnektor lehnt fehlerhafte Suchantworten ab, statt sie als null Treffer zu melden, und unvollständige Seitenabrufe werden nicht mehr als abgeschlossen markiert (#3399)
+- Der Automodus fordert keine redundanten Tool-Freigaben mehr beim Prüfen oder Abbrechen eines Hintergrundlaufs, Auflisten von Umgebungen, Überprüfen eines Plans oder Vorschau eines Skill-Imports (#3408)
+- Notebook-Zellen, die scheitern, bevor Quellcode ausgeführt wird, verbleiben nicht mehr im Risikoverlauf desselben Kernels und erzwingen keine wiederholten Freigaben für Folgezellen (#3410)
+- Headless-Hosts und SDK-Nutzer können die gebündelten Ressourcen der Notebook-Runtime (Ausführungsschleifen, Evidence-Erfassung und Grammatiken zur Quellanalyse) wieder auflösen (#3406)

@@ -117,6 +117,21 @@ describe('parseLoopResponse', () => {
     })
   })
 
+  it.each([false, true])('preserves explicit execution_started=%s evidence', (executionStarted) => {
+    expect(
+      parseLoopResponse(JSON.stringify({ req_id: 'evidence', execution_started: executionStarted }))
+    ).toMatchObject({ executionStarted })
+  })
+
+  it.each([undefined, null, 0, 1, 'false', 'true'])(
+    'leaves execution evidence unknown for missing or non-boolean value %s',
+    (executionStarted) => {
+      expect(
+        parseLoopResponse(JSON.stringify({ req_id: 'legacy', execution_started: executionStarted }))
+      ).not.toHaveProperty('executionStarted')
+    }
+  )
+
   it('fills in safe defaults for missing fields', () => {
     const line = JSON.stringify({ req_id: 'r2' })
     expect(parseLoopResponse(line)).toEqual({

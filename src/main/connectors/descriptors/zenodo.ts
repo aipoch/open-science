@@ -1,4 +1,4 @@
-import type { ToolDescriptor } from '../types'
+import type { ToolDescriptor } from '../../connector-core/types'
 
 const BASE = 'https://zenodo.org/api/records'
 const MAX_SEARCH_RESULTS = 10000

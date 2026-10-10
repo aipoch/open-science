@@ -7,6 +7,8 @@ on:
   workflow_run:
     workflows: [PR Gate, CI Integrity]
     types: [requested]
+    # Filter upstream branches before creating runs; the job guard alone still creates PR noise.
+    branches: ['gh-readonly-queue/main/**']
   workflow_dispatch:
 
 permissions:

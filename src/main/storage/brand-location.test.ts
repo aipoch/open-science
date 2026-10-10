@@ -618,6 +618,9 @@ it('rechecks root availability before publishing the legacy pointer', async () =
       mutate(
         (settings) => {
           const result = update(settings)
+          // initializeDataLocation leases the runtime lock inside the root; drop it before
+          // removing the tree so Windows can delete the open lock file.
+          resetOwnershipSync()
           rmSync(root, { recursive: true })
           return result
         },
@@ -779,3 +782,4 @@ const resetOwnership = configureTestRuntimeMetadata(() => ({
   homePath: state.home,
   packaged: state.packaged
 }))
+const { resetOwnershipSync } = resetOwnership

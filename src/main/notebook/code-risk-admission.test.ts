@@ -1,6 +1,7 @@
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { execFile, spawn } from 'node:child_process'
 import { once } from 'node:events'
+import { createServer } from 'node:http'
 import { createInterface } from 'node:readline'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { promisify } from 'node:util'
@@ -8,6 +9,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { NotebookRuntimeService, type NotebookExecutionRequest } from './runtime-service'
+import { NotebookKernelExecutor } from './kernel-executor'
 import { analyzeNotebookCodeRisk } from './code-risk-analysis'
 import * as riskAnalysis from './code-risk-analysis'
 import type { ShellRuntimeBinding, NotebookRunSummary } from '../../shared/notebook'
@@ -196,7 +198,293 @@ async function harness(
   }
 }
 
+async function productionKernelHarness(language: 'python' | 'r' | 'repl'): Promise<
+  Awaited<ReturnType<typeof harness>> & {
+    executor: NotebookKernelExecutor
+    overrides: Partial<NotebookExecutionRequest>
+  }
+> {
+  const setup = await harness()
+  const executor = new NotebookKernelExecutor({
+    pythonLoopPath: join(__dirname, '../../../resources/notebook/python_loop.py'),
+    rLoopPath: join(__dirname, '../../../resources/notebook/r_loop.R'),
+    replLoopPath: join(__dirname, '../../../resources/notebook/repl_loop.js'),
+    platform: 'linux'
+  })
+  const overrides: Partial<NotebookExecutionRequest> =
+    language === 'repl'
+      ? {}
+      : {
+          resolvedInterpreter: {
+            command: (language === 'r'
+              ? process.env.OPEN_SCIENCE_RISK_R
+              : process.env.OPEN_SCIENCE_RISK_PYTHON)!
+          }
+        }
+  setup.execute.mockImplementation((execution) => executor.execute({ ...execution, ...overrides }))
+  return { ...setup, executor, overrides }
+}
+
 describe('host-owned one-shot execution admission', () => {
+  it('keeps a production REPL compile failure out of subsequent risk history without calling connectors', async () => {
+    const { service, execute, request, executor, overrides } = await productionKernelHarness('repl')
+    const calls: string[] = []
+    const rpc = createServer(async (req, res) => {
+      let body = ''
+      for await (const chunk of req) body += chunk
+      calls.push(JSON.parse(body).method)
+      res.setHeader('content-type', 'application/json')
+      res.end(JSON.stringify({ result: { description: 'test help' } }))
+    })
+    rpc.listen(0, '127.0.0.1')
+    await once(rpc, 'listening')
+    const address = rpc.address() as { port: number }
+    overrides.mcpRpcEndpoint = `http://127.0.0.1:${address.port}`
+    overrides.mcpRpcToken = 'test-token'
+    const approve = vi.fn(async () => true)
+    service.setExecutionApproval(approve)
+    try {
+      const failed = await service.executeControl({
+        ...request,
+        code: 'await host.mcp("data","list",{});\nconst ='
+      })
+      expect(failed.status).toBe('failed')
+      expect(calls).toEqual([])
+      approve.mockClear().mockResolvedValue(false)
+      for (let index = 0; index < 3; index++) {
+        const result = await service.executeControl({
+          ...request,
+          code: 'return await host.help();'
+        })
+        expect(approve).not.toHaveBeenCalled()
+        expect(result.status).toBe('completed')
+      }
+      expect(approve).not.toHaveBeenCalled()
+      expect(calls).toEqual(['hostSdkHelp', 'hostSdkHelp', 'hostSdkHelp'])
+      expect(await execute.mock.results[0].value).toMatchObject({ executionStarted: false })
+      expect(await service.state(request)).toMatchObject({
+        runs: expect.arrayContaining([
+          expect.objectContaining({
+            script: 'await host.mcp("data","list",{});\nconst =',
+            status: 'failed',
+            executionStarted: false
+          })
+        ])
+      })
+    } finally {
+      await executor.shutdown()
+      await new Promise<void>((resolve) => rpc.close(() => resolve()))
+    }
+  }, 30_000)
+
+  it.skipIf(!process.env.OPEN_SCIENCE_RISK_R)(
+    'keeps a production R parse failure out of subsequent risk history',
+    async () => {
+      const { service, execute, request, executor } = await productionKernelHarness('r')
+      const approve = vi.fn(async () => true)
+      service.setExecutionApproval(approve)
+      try {
+        const failed = await service.execute({
+          ...request,
+          language: 'r',
+          code: 'print("must not run")\nvalue <- 1\nprint("broken"))'
+        })
+        expect(failed.status).toBe('failed')
+        expect((await execute.mock.results[0].value).stdout).toBe('')
+        approve.mockClear().mockResolvedValue(false)
+        for (const code of ['print(1)', 'print(2)', 'print(3)'])
+          expect(await service.execute({ ...request, language: 'r', code })).toMatchObject({
+            status: 'completed'
+          })
+        expect(approve).not.toHaveBeenCalled()
+        expect(await execute.mock.results[0].value).toMatchObject({ executionStarted: false })
+        expect(await service.state(request)).toMatchObject({
+          runs: expect.arrayContaining([
+            expect.objectContaining({ runId: failed.runId, status: 'failed' })
+          ])
+        })
+      } finally {
+        await executor.shutdown()
+      }
+    },
+    30_000
+  )
+
+  describe.each(['r', 'repl'] as const)('production %s partial execution', (language) => {
+    it
+      .skipIf(language === 'r' && !process.env.OPEN_SCIENCE_RISK_R)
+      .each(['runtime', 'syntax'] as const)(
+      'retains assignments before a %s failure and reviews deletion and overwrite',
+      async (failure) => {
+        const { service, execute, request, executor } = await productionKernelHarness(language)
+        const approve = vi.fn(async () => true)
+        service.setExecutionApproval(approve)
+        const target = join(request.workspaceCwd, 'sentinel.txt')
+        await writeFile(target, 'keep')
+        const run = (
+          code: string
+        ):
+          | ReturnType<NotebookRuntimeService['executeControl']>
+          | ReturnType<NotebookRuntimeService['execute']> =>
+          language === 'repl'
+            ? service.executeControl({ ...request, code })
+            : service.execute({ ...request, language, code })
+        const broken =
+          language === 'r'
+            ? 'erase <- unlink\n' +
+              (failure === 'syntax' ? 'parse(text="broken)")' : 'stop("test")')
+            : 'const fs = require("node:fs"); const erase = fs.unlinkSync;\n' +
+              (failure === 'syntax' ? 'eval("const =")' : 'throw new Error("test")')
+        try {
+          expect(await run(broken)).toMatchObject({ status: 'failed' })
+          expect(await execute.mock.results[0].value).toMatchObject({ executionStarted: true })
+          approve.mockClear().mockResolvedValue(false)
+          const commands = [
+            `erase(${JSON.stringify(target)})`,
+            language === 'r'
+              ? `writeLines("replace", ${JSON.stringify(target)})`
+              : `fs.writeFileSync(${JSON.stringify(target)}, "replace")`
+          ]
+          for (const code of commands) {
+            if (language === 'repl') expect(await run(code)).toMatchObject({ status: 'failed' })
+            else await expect(run(code)).rejects.toThrow('one-time approval')
+          }
+          expect(approve).toHaveBeenCalledTimes(2)
+          expect(execute).toHaveBeenCalledTimes(1)
+          expect(await readFile(target, 'utf8')).toBe('keep')
+        } finally {
+          await executor.shutdown()
+        }
+      },
+      30_000
+    )
+  })
+
+  it.each(
+    (['python', 'r', 'repl'] as const).flatMap((language) =>
+      [false, undefined].map((executionStarted) => ({ language, executionStarted }))
+    )
+  )(
+    'omits failed source from risk history only with explicit not-started evidence: $language $executionStarted',
+    async ({ language, executionStarted }) => {
+      const { service, execute, request } = await harness()
+      execute.mockResolvedValueOnce({
+        status: 'failed',
+        stdout: '',
+        stderr: '',
+        traceback: 'SyntaxError',
+        cwdAfter: request.workspaceCwd,
+        outputs: [],
+        kernelDispatched: true,
+        ...(executionStarted === false ? { executionStarted } : {})
+      })
+      const approve = vi.fn(async () => true)
+      service.setExecutionApproval(approve)
+      const broken = language === 'repl' ? 'const =' : 'print("broken"))'
+      const harmless = language === 'repl' ? 'console.log(1)' : 'print(1)'
+      const run = (
+        code: string
+      ):
+        | ReturnType<NotebookRuntimeService['executeControl']>
+        | ReturnType<NotebookRuntimeService['execute']> =>
+        language === 'repl'
+          ? service.executeControl({ ...request, code })
+          : service.execute({ ...request, language, code })
+      await run(broken)
+      approve.mockClear().mockResolvedValue(false)
+      if (executionStarted === false) {
+        expect(await run(harmless)).toMatchObject({
+          status: 'completed'
+        })
+        expect(approve).not.toHaveBeenCalled()
+      } else {
+        if (language === 'repl') expect(await run(harmless)).toMatchObject({ status: 'failed' })
+        else await expect(run(harmless)).rejects.toThrow('one-time approval')
+        expect(approve).toHaveBeenCalledTimes(1)
+      }
+      expect(await service.state(request)).toMatchObject({
+        runs: expect.arrayContaining([
+          expect.objectContaining({ script: broken, status: 'failed' })
+        ])
+      })
+    }
+  )
+
+  it
+    .skipIf(!process.env.OPEN_SCIENCE_RISK_PYTHON)
+    .each([
+      'print("must not run")\nvalue = 1\nprint("broken"))',
+      'print("must not run")\nreturn 1'
+    ])(
+    'keeps a parse/compile-failed Python cell in history without reviewing later harmless cells: %s',
+    async (broken) => {
+      const { service, execute, request, executor } = await productionKernelHarness('python')
+      const approve = vi.fn(async () => false)
+      service.setExecutionApproval(approve)
+      approve.mockResolvedValue(true)
+      try {
+        const failed = await service.execute({ ...request, code: broken })
+        expect(failed.status).toBe('failed')
+        expect(await execute.mock.results[0].value).toMatchObject({
+          stdout: '',
+          executionStarted: false
+        })
+        expect((await execute.mock.results[0].value).traceback).toContain('SyntaxError')
+        approve.mockClear().mockResolvedValue(false)
+        for (const code of ['print(1)', 'print(2)', 'print(3)'])
+          expect(await service.execute({ ...request, code })).toMatchObject({ status: 'completed' })
+        expect(approve).not.toHaveBeenCalled()
+        expect(await service.state(request)).toMatchObject({
+          runs: expect.arrayContaining([
+            expect.objectContaining({ runId: failed.runId, status: 'failed' })
+          ])
+        })
+      } finally {
+        await executor.shutdown()
+      }
+    },
+    30_000
+  )
+
+  it.skipIf(!process.env.OPEN_SCIENCE_RISK_PYTHON).each(['exec("broken)")', 'await erase'])(
+    'retains Python assignments before a later syntax failure (%s) and reviews deletion and overwrite',
+    async (failure) => {
+      const { service, execute, request, executor } = await productionKernelHarness('python')
+      const approve = vi.fn(async () => false)
+      service.setExecutionApproval(approve)
+      const target = join(request.workspaceCwd, 'sentinel.txt')
+      await writeFile(target, 'keep')
+      try {
+        approve.mockResolvedValue(true)
+        const failed = await service.execute({
+          ...request,
+          code: 'import os\nerase = os.unlink\n' + failure
+        })
+        expect(failed.status).toBe('failed')
+        expect(await execute.mock.results[0].value).toMatchObject({
+          executionStarted: true,
+          stdout: '',
+          traceback: expect.stringContaining('SyntaxError')
+        })
+        approve.mockClear().mockResolvedValue(false)
+        await expect(
+          service.execute({ ...request, code: `erase(${JSON.stringify(target)})` })
+        ).rejects.toThrow('one-time approval')
+        await expect(
+          service.execute({
+            ...request,
+            code: `open(${JSON.stringify(target)}, "w").write("replace")`
+          })
+        ).rejects.toThrow('one-time approval')
+        expect(await readFile(target, 'utf8')).toBe('keep')
+        expect(execute).toHaveBeenCalledTimes(1)
+        expect(approve).toHaveBeenCalledTimes(2)
+      } finally {
+        await executor.shutdown()
+      }
+    },
+    30_000
+  )
   it.each(['python', 'r'] as const)(
     'keeps %s default binding admission separate from every later destructive Cell',
     async (language) => {

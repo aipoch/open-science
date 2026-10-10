@@ -1,5 +1,5 @@
 import { desktopFileInteraction } from '../desktop-interaction'
-import { runtimeMetadata } from '../runtime-metadata'
+import { runtimeMetadata, runtimeMetadataIfConfigured } from '../runtime-metadata'
 import type { ReplayRunIndex } from '../../shared/replay'
 import { randomUUID } from 'node:crypto'
 import { existsSync, realpathSync } from 'node:fs'
@@ -364,18 +364,19 @@ const saveIpynbWithDialog = async (
 // Resolves the on-disk locations of executable Notebook resources without depending on Electron
 // (mirrors micromamba.ts's electron-free resolution). resources/** ships via electron-builder's
 // asarUnpack, so a packaged build's scripts land beside app.asar under app.asar.unpacked rather
-// than directly under runtimeMetadata().resourcesPath. Existence-checked so a resolution mistake fails fast at
+// than directly under the resources path. Existence-checked so a resolution mistake fails fast at
 // startup instead of surfacing as an opaque spawn ENOENT.
 const resolveNotebookResource = (envOverride: string | undefined, fileName: string): string => {
   if (envOverride) return envOverride
 
+  // Plain-Node hosts (runtime certification, SDK consumers) configure no host entry; the
+  // __dirname candidates below resolve the scripts directly instead of throwing.
+  const resourcesPath = runtimeMetadataIfConfigured()?.resourcesPath
   const candidates = [
-    // Packaged (asar): resources/** is unpacked next to app.asar under runtimeMetadata().resourcesPath.
-    runtimeMetadata().resourcesPath &&
-      join(runtimeMetadata().resourcesPath, 'app.asar.unpacked', 'resources', 'notebook', fileName),
+    // Packaged (asar): resources/** is unpacked next to app.asar under the resources path.
+    resourcesPath && join(resourcesPath, 'app.asar.unpacked', 'resources', 'notebook', fileName),
     // Packaged without an asar (e.g. an unpacked --dir build).
-    runtimeMetadata().resourcesPath &&
-      join(runtimeMetadata().resourcesPath, 'resources', 'notebook', fileName),
+    resourcesPath && join(resourcesPath, 'resources', 'notebook', fileName),
     // Dev: electron-vite bundles main into out/main, two levels below the repo root.
     join(__dirname, `../../resources/notebook/${fileName}`),
     // Dev/test: unbundled ts source keeps this file at src/main/notebook, three levels below root.
@@ -673,6 +674,7 @@ class NotebookRuntimeService {
         (previous) =>
           previous.runId !== run.runId &&
           previous.kernelEpochId === run.kernelEpochId &&
+          previous.executionStarted !== false &&
           (previous.kernelDispatched === true || previous.status === 'completed') &&
           // A soft cancellation can preserve assignments in the live kernel, like a timeout.
           ['completed', 'failed', 'timeout', 'cancelled'].includes(previous.status)

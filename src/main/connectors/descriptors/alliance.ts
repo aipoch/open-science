@@ -1,4 +1,4 @@
-import type { ToolDescriptor } from '../types'
+import type { ToolDescriptor } from '../../connector-core/types'
 
 // Alliance of Genome Resources public site API. The read-only routes are available without
 // authentication and cover model-organism gene, homology, disease, phenotype, allele and

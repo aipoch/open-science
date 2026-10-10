@@ -1,3 +1,4 @@
+import { builtinConnectorRegistry } from '../connectors/registry'
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -85,6 +86,7 @@ async function executeGenomesCell(
   fetchImpl: typeof fetch
 ): Promise<NotebookExecutionResult> {
   const connectorService = new ConnectorService({
+    registry: builtinConnectorRegistry,
     getConnectors: () => ({ enabledIds: ['genomes'], autoAllowIds: ['genomes'] }),
     resolveApiKey: () => undefined,
     engine: new ParserEngine({ retries: 0, fetchImpl })
@@ -132,6 +134,7 @@ describe('clinical trial host.mcp regression', () => {
       }
     }
     const connectorService = new ConnectorService({
+      registry: builtinConnectorRegistry,
       getConnectors: () => ({
         enabledIds: ['clinical-trials'],
         autoAllowIds: ['clinical-trials']
@@ -235,6 +238,7 @@ describe('Open Targets host.mcp regression', () => {
       { message: 'associatedTargets resolver failed', path: ['disease', 'associatedTargets'] }
     ]
     const connectorService = new ConnectorService({
+      registry: builtinConnectorRegistry,
       getConnectors: () => ({
         enabledIds: ['clinical-genomics'],
         autoAllowIds: ['clinical-genomics']
@@ -517,6 +521,7 @@ gate('repl kernel host.mcp', () => {
         species: 'mus_musculus'
       }
       const connectorService = new ConnectorService({
+        registry: builtinConnectorRegistry,
         getConnectors: () => ({
           enabledIds: ['genomes', 'genes'],
           autoAllowIds: ['genomes', 'genes']
@@ -642,6 +647,7 @@ gate('repl kernel host.mcp', () => {
       const lookupUrl = `https://rest.ensembl.org/lookup/id/${record.id}?expand=0`
       const sequenceUrl = `https://rest.ensembl.org/sequence/region/mus_musculus/${region}`
       const connectorService = new ConnectorService({
+        registry: builtinConnectorRegistry,
         getConnectors: () => ({ enabledIds: ['genomes'], autoAllowIds: ['genomes'] }),
         resolveApiKey: () => undefined,
         engine: new ParserEngine({
@@ -712,6 +718,7 @@ gate('repl kernel host.mcp', () => {
   it('preserves VEP strand normalization and validation through host.mcp', async () => {
     const urls: string[] = []
     const connectorService = new ConnectorService({
+      registry: builtinConnectorRegistry,
       getConnectors: () => ({ enabledIds: ['genomes'], autoAllowIds: ['genomes'] }),
       resolveApiKey: () => undefined,
       engine: new ParserEngine({
@@ -792,6 +799,7 @@ gate('repl kernel host.mcp', () => {
     async (status) => {
       let attempts = 0
       const connectorService = new ConnectorService({
+        registry: builtinConnectorRegistry,
         getConnectors: () => ({ enabledIds: ['genes'], autoAllowIds: ['genes'] }),
         resolveApiKey: () => undefined,
         engine: new ParserEngine({
@@ -845,6 +853,7 @@ gate('repl kernel host.mcp', () => {
     async (status) => {
       let markerRequests = 0
       const connectorService = new ConnectorService({
+        registry: builtinConnectorRegistry,
         getConnectors: () => ({ enabledIds: ['cellguide'], autoAllowIds: ['cellguide'] }),
         resolveApiKey: () => undefined,
         engine: new ParserEngine({
@@ -1018,6 +1027,7 @@ gate('repl kernel host.mcp', () => {
 
   it('tells the agent how to recover when host.mcp names an unavailable connector', async () => {
     const connectorService = new ConnectorService({
+      registry: builtinConnectorRegistry,
       getConnectors: () => ({ enabledIds: [], autoAllowIds: [], disabledConnectorIds: [] }),
       resolveApiKey: () => undefined
     })
@@ -1057,6 +1067,7 @@ gate('repl kernel host.mcp', () => {
 
   it('tells the agent to wait for sign-in when a Connector requires authentication', async () => {
     const connectorService = new ConnectorService({
+      registry: builtinConnectorRegistry,
       getConnectors: () => ({
         enabledIds: [],
         autoAllowIds: [],

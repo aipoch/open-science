@@ -144,11 +144,22 @@ jobs:
     uses: ./.github/workflows/notarize-mac.yml
     secrets: inherit
 
+  # Repack the certified desktop backend after notarization; no second native build/signing path.
+  cli-artifacts:
+    needs: [build, package-smoke, notarize-mac]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    uses: ./.github/workflows/runtime-packages.yml
+    permissions:
+      contents: read
+      actions: read
+    with:
+      desktop_run_id: ${{ format('{0}', github.run_id) }}
+
   # Collect every platform's artifacts and publish them to the tag's Release in one shot (a single
   # publish job avoids the race of multiple build jobs writing the same Release). Depends on
   # notarize-mac so the mac dmg/zip it downloads are the stapled versions.
   publish:
-    needs: [build, package-smoke, notarize-mac]
+    needs: [build, package-smoke, notarize-mac, cli-artifacts]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -180,6 +191,9 @@ jobs:
           path: artifacts
           merge-multiple: true # flatten every platform's files into one directory
 
+      - name: Verify standalone release archive set
+        run: node scripts/runtime-archives.mjs verify artifacts
+
       # Fail closed unless every native target reports package evidence for this exact tag commit.
       # P0 and visual regression run independently as advisory Desktop Regression checks.
       - name: Aggregate release certification evidence
@@ -199,7 +213,7 @@ jobs:
         working-directory: artifacts
         run: |
           shopt -s nullglob
-          files=(*.dmg *.zip *.exe *.AppImage *.deb)
+          files=(*.dmg *.zip *.exe *.AppImage *.deb *.tar.gz)
           if [ ${#files[@]} -gt 0 ]; then
             sha256sum "${files[@]}" > SHA256SUMS.txt
             cat SHA256SUMS.txt
@@ -219,6 +233,7 @@ jobs:
             artifacts/*.exe
             artifacts/*.AppImage
             artifacts/*.deb
+            artifacts/open-science-*.tar.gz
 
       # Set the final body before GitHub emits the release event consumed by Zenodo. Updating the
       # GitHub Release afterwards is too late because Zenodo archives the event payload it received.
@@ -250,6 +265,7 @@ jobs:
             artifacts/*.exe
             artifacts/*.AppImage
             artifacts/*.deb
+            artifacts/open-science-*.tar.gz
             artifacts/SHA256SUMS.txt
             artifacts/RELEASE-CERTIFICATION.json
             artifacts/latest.yml
@@ -278,3 +294,6 @@ jobs:
     uses: ./.github/workflows/release-sbom-poc.yml
     with:
       tag: ${{ github.ref_name }}
+
+  # GITHUB_TOKEN-created releases do not trigger a separate release-event workflow.
+  # The protected tag, root version, source commit and native artifacts are shared with desktop.

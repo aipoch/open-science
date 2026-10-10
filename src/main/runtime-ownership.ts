@@ -95,6 +95,15 @@ export class RuntimeDirectoryOwnership {
     for (const lease of [...this.leases.values()].reverse()) lease.release()
     this.leases.clear()
   }
+
+  // Tests that synchronously rewrite an owned directory need the lease dropped inline: Windows
+  // denies deleting a tree while the runtime lock file inside it stays open. Call only when the
+  // acquire queue has settled; production teardown uses close().
+  closeSync(): void {
+    this.closed = true
+    for (const lease of [...this.leases.values()].reverse()) lease.release()
+    this.leases.clear()
+  }
 }
 
 type RuntimeDirectoryOwner = Pick<RuntimeDirectoryOwnership, 'acquireSync' | 'acquire'>

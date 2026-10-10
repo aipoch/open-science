@@ -261,10 +261,6 @@ ci(review): unify automated AI reviews
 - 操作系统和应用版本。
 - 相关日志或截图（如有）。
 
-## 发布 npm 软件包
-
-维护者应遵循 [npm 软件包发布指南](../npm-release.md)。npm 软件包版本使用 `npm-v*` 标签，并通过受保护的 `Publish npm package` 工作流发布。
-
 ## 许可证
 
 参与贡献即表示你同意，你的贡献将在与本项目相同的 [Apache License 2.0](../../LICENSE) 下许可。

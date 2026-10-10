@@ -1,4 +1,4 @@
-import type { ToolDescriptor } from '../types'
+import type { ToolDescriptor } from '../../connector-core/types'
 import { encoriCall } from '../encori/runtime'
 import { query, references, type Args } from '../encori/client'
 import { BULK_TYPES, DATASETS, download, listDatasets } from '../encori/download'

@@ -111,21 +111,27 @@ describe('obsolete queue cleanup', () => {
   })
   it('executes only trusted main code in a separate Ubuntu job', () => {
     const workflow = load(readFileSync('.github/workflows/queue-cleanup.yml', 'utf8')) as {
-      on: { workflow_run: unknown }
+      on: { workflow_run: unknown; workflow_dispatch: unknown }
       concurrency: Record<string, unknown>
       jobs: {
         cleanup: {
+          if: string
           'runs-on': string
           permissions: Record<string, string>
           steps: Array<{ with: { script: string } }>
         }
       }
     }
-    // Both queue-triggered required workflows spawn cleanup; only a new run can make others stale.
+    // Filter before creating a run: a job-level guard still floods global concurrency with PR runs.
     expect(workflow.on.workflow_run).toEqual({
       workflows: ['PR Gate', 'CI Integrity'],
-      types: ['requested']
+      types: ['requested'],
+      branches: ['gh-readonly-queue/main/**']
     })
+    expect(workflow.on).toHaveProperty('workflow_dispatch')
+    expect(workflow.jobs.cleanup.if).toBe(
+      "${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.event == 'merge_group' }}"
+    )
     expect(workflow.jobs.cleanup['runs-on']).toBe('ubuntu-latest')
     expect(workflow.jobs.cleanup.permissions).toEqual({ contents: 'read', actions: 'write' })
     expect(workflow.jobs.cleanup.steps[0].with).toMatchObject({

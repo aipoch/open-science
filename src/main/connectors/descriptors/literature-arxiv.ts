@@ -1,5 +1,5 @@
 import { DOMParser } from '@xmldom/xmldom'
-import type { ToolDescriptor } from '../types'
+import type { ToolDescriptor } from '../../connector-core/types'
 
 const ARXIV_API = 'https://export.arxiv.org/api/query'
 

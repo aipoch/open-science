@@ -49,6 +49,8 @@ type NotebookRunTerminalResult = {
   environmentCapture?: NotebookRunEnvironmentCapture
   environmentLock?: NotebookRunEnvironmentLockCapture
   kernelDispatched?: boolean
+  // False proves no user source began execution; absent evidence remains conservative.
+  executionStarted?: boolean
   helperModules?: NotebookHelperModuleEvidence[]
   helperEvidenceStatus?: NotebookHelperEvidenceStatus
 }
@@ -484,6 +486,9 @@ class NotebookRunTerminalizationOwner {
       ...(limitedResult.recovery ? { recovery: limitedResult.recovery } : {}),
       environmentCapture,
       ...(limitedResult.environmentLock ? { environmentLock: limitedResult.environmentLock } : {}),
+      ...(limitedResult.executionStarted !== undefined
+        ? { executionStarted: limitedResult.executionStarted }
+        : {}),
       ...(limitedResult.kernelDispatched !== undefined
         ? { kernelDispatched: limitedResult.kernelDispatched }
         : {}),

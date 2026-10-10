@@ -1,5 +1,3 @@
-import type { PrismaClient } from '@prisma/client'
-
 import {
   artifactLiteratureManifestSchema,
   artifactLiteratureRequestSchema,
@@ -9,9 +7,16 @@ import {
 } from '../../shared/artifact-literature'
 import type { CreateArtifactVersionRequest } from '../../shared/artifact-provenance'
 import type { LiteratureItemView } from '../../shared/literature'
-import { LiteratureCatalog } from '../literature/catalog'
-import type { LiteratureLibrarySearchResult } from '../literature/library-mcp-server'
 import { canonicalJson, sha256, type CanonicalJson } from './provenance-canonical'
+
+// Only bibliographic identity and metadata cross this seam; the host owns catalog access.
+export type ArtifactLiteratureItemSnapshot = Pick<
+  LiteratureItemView,
+  'id' | 'metadataRevision' | 'item'
+>
+export type ReadArtifactLiteratureItems = (
+  itemIds: readonly string[]
+) => Promise<readonly ArtifactLiteratureItemSnapshot[]>
 
 type PreparedArtifactLiteratureManifest = {
   schemaVersion: 1
@@ -31,7 +36,12 @@ type RecordArtifactLiteratureSearchRequest = ArtifactLiteratureManifestContext &
   Readonly<{
     offset?: number
     limit?: number
-    result: LiteratureLibrarySearchResult
+    result: Readonly<{
+      items: readonly Pick<LiteratureItemView, 'id' | 'item'>[]
+      totalCount: number
+      nextOffset?: number
+      hasMore: boolean
+    }>
   }>
 
 type RecordArtifactLiteraturePdfReadRequest = ArtifactLiteratureManifestContext &
@@ -63,14 +73,11 @@ const retrievalKey = (criteria: ArtifactLiteratureRetrievalCriteria): string =>
   ])
 
 class ArtifactLiteratureManifestOwner {
-  private readonly catalog: LiteratureCatalog
   private readonly abstractReads = new Map<string, Set<string>>()
   private readonly fullTextReads = new Map<string, Set<string>>()
   private readonly searches = new Map<string, RecordedSearch[]>()
 
-  constructor(getClient: () => Promise<PrismaClient>) {
-    this.catalog = new LiteratureCatalog(getClient)
-  }
+  constructor(private readonly readItems?: ReadArtifactLiteratureItems) {}
 
   recordSearch(request: RecordArtifactLiteratureSearchRequest): void {
     const key = searchKey(request)
@@ -152,7 +159,8 @@ class ArtifactLiteratureManifestOwner {
         ...(parsed.corpus?.itemIds ?? [])
       ])
     ]
-    const items = await this.catalog.getMany(itemIds)
+    if (!this.readItems) throw new Error('Artifact Literature reader is unavailable.')
+    const items = await this.readItems(itemIds)
     const itemsById = new Map(items.map((item) => [item.id, item]))
     for (const itemId of itemIds) {
       const view = itemsById.get(itemId)
@@ -188,7 +196,7 @@ class ArtifactLiteratureManifestOwner {
 
   private prepareCorpus(
     corpus: ArtifactLiteratureCorpusRequest,
-    itemsById: ReadonlyMap<string, LiteratureItemView>,
+    itemsById: ReadonlyMap<string, ArtifactLiteratureItemSnapshot>,
     context: ArtifactLiteratureManifestContext | undefined
   ): NonNullable<ArtifactLiteratureManifest['corpus']> {
     if (!context) throw new Error('Literature review corpus requires trusted Artifact context.')

@@ -1,4 +1,4 @@
-import type { ToolContext, ToolDescriptor } from '../types'
+import type { ToolContext, ToolDescriptor } from '../../connector-core/types'
 
 // Public, version-pinned endpoints (ported from the upstream mcp_protein_annotation fleet libs).
 const INTERPRO_BASE = 'https://www.ebi.ac.uk/interpro/api'

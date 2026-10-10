@@ -1,4 +1,4 @@
-import type { ToolContext, ToolDescriptor } from '../types'
+import type { ToolContext, ToolDescriptor } from '../../connector-core/types'
 
 // OpenAlex REST API (all disciplines, ~250M works). An API key is optional for basic use and is
 // applied only to this exact origin. Payloads are kept lean via `select=` and multi-page walks use

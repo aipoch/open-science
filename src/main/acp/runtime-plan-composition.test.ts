@@ -31,6 +31,9 @@ vi.mock('../logger', async (importOriginal) => {
   }
 })
 
+import { AcpPermissionBroker } from './permission-broker'
+import { withTrustedMcpToolIdentity } from './permission-policy'
+
 import type { AcpPromptRequest } from '../../shared/acp'
 import type { SessionPlanDelivery, SessionRuntimeContext } from '../../shared/session-persistence'
 import {
@@ -2511,6 +2514,125 @@ describe('explicit unavailable Plan recovery ownership', () => {
     await expect(harness.workflow.discardUnavailable(identity)).rejects.toMatchObject({
       code: 'interaction-mismatch'
     })
+  })
+})
+
+describe('Auto Plan permission handoff', () => {
+  it.each([
+    { decision: 'approved' as const, arguments: { decision: 'approved' } },
+    { decision: 'rejected' as const, arguments: { decision: 'rejected' } },
+    { decision: 'approved' as const, arguments: { approve: true } }
+  ])('retains inner decision authorization after outer Allow for $arguments', async (testCase) => {
+    const harness = createHarness()
+    const emit = vi.fn()
+    const broker = new AcpPermissionBroker(emit)
+    const server = createPlanMcpServer({
+      generate: vi.fn(),
+      approve: () =>
+        harness.workflow.call({
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          operation: 'approve'
+        }),
+      reject: () =>
+        harness.workflow.call({
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          operation: 'reject'
+        }),
+      updateStepStatus: vi.fn()
+    })
+    const client = new Client({ name: 'auto-plan-handoff', version: '1' })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    await server.connect(serverTransport)
+    await client.connect(clientTransport)
+    const call = async (): ReturnType<typeof client.callTool> => {
+      const permission = await broker.requestPermission(
+        withTrustedMcpToolIdentity(
+          {
+            sessionId: 'session-1',
+            toolCall: {
+              toolCallId: 'plan-decision',
+              title: 'generate_plan',
+              status: 'pending',
+              rawInput: testCase.arguments
+            },
+            options: [{ optionId: 'once', name: 'Allow once', kind: 'allow_once' }]
+          },
+          'open-science-plan/generate_plan'
+        ),
+        {
+          profile: 'auto',
+          frameworkId: 'codex',
+          autoReviewStrategy: 'conservative',
+          mcpServerNames: ['open-science-plan']
+        }
+      )
+      expect(permission).toEqual({ outcome: { outcome: 'selected', optionId: 'once' } })
+      return client.callTool({ name: 'generate_plan', arguments: testCase.arguments })
+    }
+    try {
+      // The outer Allow carries no human decision authorization.
+      expect(await call()).toMatchObject({
+        isError: true,
+        structuredContent: { error: { code: 'interaction-mismatch' } }
+      })
+      expect(harness.respond).not.toHaveBeenCalled()
+      expect(await harness.workflow.projection('project-1', 'session-1')).toMatchObject({
+        approval: 'pending'
+      })
+
+      // Authorization for an older version cannot settle the active Plan.
+      harness.interactions.authorizeAgentDecision({
+        sessionId: 'session-1',
+        artifactVersionId: 'old-version',
+        interactionSequence: harness.interaction.sequence
+      })
+      expect(await call()).toMatchObject({
+        isError: true,
+        structuredContent: { error: { code: 'interaction-mismatch' } }
+      })
+      expect(harness.respond).not.toHaveBeenCalled()
+
+      harness.interactions.authorizeAgentDecision({
+        sessionId: 'session-1',
+        artifactVersionId: 'version-1',
+        interactionSequence: harness.interaction.sequence - 1
+      })
+      expect(await call()).toMatchObject({
+        isError: true,
+        structuredContent: { error: { code: 'interaction-mismatch' } }
+      })
+      expect(harness.respond).not.toHaveBeenCalled()
+
+      // Only the existing inner authorization for this version and interaction settles it.
+      harness.interactions.authorizeAgentDecision({
+        sessionId: 'session-1',
+        artifactVersionId: 'version-1',
+        interactionSequence: harness.interaction.sequence
+      })
+      const result = await call()
+      expect(result.isError).not.toBe(true)
+      expect(harness.respond).toHaveBeenCalledOnce()
+      expect(harness.respond).toHaveBeenCalledWith(
+        expect.objectContaining({
+          decision: testCase.decision,
+          artifactVersionId: 'version-1',
+          beforeDecisionCommit: expect.any(Function)
+        })
+      )
+      expect(await harness.workflow.projection('project-1', 'session-1')).toMatchObject({
+        approval: testCase.decision
+      })
+      expect(emit).not.toHaveBeenCalled()
+      expect(broker.getPendingRequests()).toEqual([])
+      expect(broker.listGrants('session-1')).toEqual([])
+    } finally {
+      broker.cancelAllPending()
+      await client.close()
+      await server.close()
+      harness.sessionInteractions.release(harness.interaction)
+    }
   })
 })
 

@@ -1,4 +1,4 @@
-import type { ToolContext, ToolDescriptor } from '../types'
+import type { ToolContext, ToolDescriptor } from '../../connector-core/types'
 
 // UCSC Genome Browser public REST API. Track listings are large (hg38 ~17MB), so the flattened
 // leaf-track list is cached per genome in a process-level Map (see TRACK_LIST_CACHE).

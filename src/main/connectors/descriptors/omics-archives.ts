@@ -1,5 +1,5 @@
-import { ncbiEtiquette } from './ncbi'
-import type { ToolContext, ToolDescriptor } from '../types'
+import { ncbiEtiquette } from '../../connector-core/ncbi'
+import type { ToolContext, ToolDescriptor } from '../../connector-core/types'
 import { ENA_OMICS_TOOLS } from './omics-ena'
 import { GEO_MATRIX_TOOLS } from './omics-geo-matrix'
 import { WORKBENCH_OMICS_TOOLS } from './omics-workbench'

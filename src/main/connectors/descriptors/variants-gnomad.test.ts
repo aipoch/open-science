@@ -1,9 +1,10 @@
+import { builtinConnectorRegistry } from '../registry'
 import { describe, it, expect, vi } from 'vitest'
 import { ParserEngine } from '../engine'
 import { validateToolArguments } from '../registry'
 import { ConnectorService } from '../service'
 import { renderSkillDoc } from '../skill-doc'
-import type { ToolDescriptor } from '../types'
+import type { ToolDescriptor } from '../../connector-core/types'
 import { VARIANTS_GNOMAD_TOOLS } from './variants-gnomad'
 
 const jsonRes = (body: unknown): Response =>
@@ -477,6 +478,7 @@ query Variant($variantId: String!, $dataset: DatasetId!) {
           blockedToolIds: [] as string[]
         }
         const service = new ConnectorService({
+          registry: builtinConnectorRegistry,
           engine: new ParserEngine({ fetchImpl }),
           getConnectors: () => settings,
           resolveApiKey: () => undefined

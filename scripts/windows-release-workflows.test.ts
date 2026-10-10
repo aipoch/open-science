@@ -808,7 +808,12 @@ describe('post-merge Windows validation', () => {
       uses: './.github/workflows/package-smoke.yml'
     })
     expect(release.jobs['notarize-mac'].needs).toEqual(['build', 'package-smoke'])
-    expect(release.jobs.publish.needs).toEqual(['build', 'package-smoke', 'notarize-mac'])
+    expect(release.jobs.publish.needs).toEqual([
+      'build',
+      'package-smoke',
+      'notarize-mac',
+      'cli-artifacts'
+    ])
     expect(nightly.jobs.build.uses).toBe('./.github/workflows/build.yml')
     expect(nightly.jobs['package-smoke']).toMatchObject({
       needs: 'build',
@@ -1016,7 +1021,12 @@ if ($artifactSaveBase -eq $artifactSaveCommit) {
     ).toMatchObject({ id: 'installer', 'continue-on-error': true })
     expect(release.jobs['windows-full-test']).toBeUndefined()
     expect(release.jobs['windows-upgrade-smoke']).toBeUndefined()
-    expect(release.jobs.publish.needs).toEqual(['build', 'package-smoke', 'notarize-mac'])
+    expect(release.jobs.publish.needs).toEqual([
+      'build',
+      'package-smoke',
+      'notarize-mac',
+      'cli-artifacts'
+    ])
     expect(
       findStep(release.jobs.publish, 'Aggregate release certification evidence').run
     ).toContain('--require-signed-windows')

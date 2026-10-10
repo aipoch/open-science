@@ -767,6 +767,7 @@
       "src/main/notebook/windows-shell.integration.test.ts",
       "src/main/notebook/working-file-observer.performance.test.ts",
       "src/main/notebook/working-file-observer.test.ts",
+      "src/main/notebook/working-file-observer-plain-host.test.ts",
       "src/main/notebook/wsl-setup-powershell.integration.test.ts",
       "src/main/notebook/wsl2-shell.integration.test.ts",
       "src/main/notifications/notification-inbox-runtime.test.ts",
@@ -1018,6 +1019,12 @@
       "src/main/session-plan/session-plan-turn-outcome.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/agents/production-completion-handoff.test.ts",
+      "src/main/acp/auto-operation-adapter.test.ts",
+      "src/main/acp/auto-operation-broker.test.ts",
+      "src/main/acp/auto-operation-inventory.test.ts",
+      "src/main/acp/auto-operation-policy.test.ts",
+      "src/main/acp/permission-broker.test.ts",
+      "src/main/acp/permission-policy.test.ts",
       "src/main/desktop-runtime-backpressure.integration.test.ts",
       "src/main/desktop-runtime-transport-diagnostics.test.ts"
     ]
