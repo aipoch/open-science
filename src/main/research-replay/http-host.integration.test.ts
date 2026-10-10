@@ -128,6 +128,25 @@ async function abortPendingMedia(
 }
 
 describe('research Replay local HTTP boundary', () => {
+  it('keeps cookie-authenticated refreshes readable without renewing a revoked caller lease', async () => {
+    const h = await setup()
+    const context = await call(`${h.origin}/api/context`, { headers: { cookie: h.cookie } })
+    for (let refresh = 0; refresh < 3; refresh++) {
+      const page = await call(h.origin, { headers: { cookie: h.cookie } })
+      expect(page.status).toBe(200)
+      expect(page.headers['set-cookie']).toBeUndefined()
+      const refreshed = await call(`${h.origin}/api/context`, { headers: { cookie: h.cookie } })
+      expect(refreshed.status).toBe(200)
+      expect(refreshed.body).toBe(context.body)
+    }
+    expect((await call(h.url, { headers: { cookie: h.cookie } })).status).toBe(401)
+    h.h.setCurrent(false)
+    expect((await call(h.origin, { headers: { cookie: h.cookie } })).status).toBe(401)
+    expect((await call(`${h.origin}/api/context`, { headers: { cookie: h.cookie } })).status).toBe(
+      401
+    )
+  })
+
   it('uses a one-time bootstrap, scoped HttpOnly cookie and readonly context', async () => {
     const h = await setup()
     expect((await call(h.url)).status).toBe(401)

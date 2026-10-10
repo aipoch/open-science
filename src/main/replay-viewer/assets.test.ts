@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, symlink, truncate, writeFile } from 'node:fs/promises'
+import { cp, mkdtemp, mkdir, rm, symlink, truncate, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -18,6 +18,26 @@ async function fixture(): Promise<string> {
 }
 
 describe('the packaged observer asset reader', () => {
+  it.each(['out/backend', 'out/standalone/out/backend'])(
+    'reads the same relocated bundle beside %s without an Electron host',
+    async (backendDirectory) => {
+      const bundle = await fixture()
+      const distribution = await mkdtemp(join(tmpdir(), 'viewer-distribution-'))
+      directories.push(distribution)
+      const backend = join(distribution, backendDirectory)
+      await mkdir(backend, { recursive: true })
+      await writeFile(join(bundle, 'assets', 'main.css'), 'main { display: grid }')
+      await cp(bundle, resolveReplayViewerAssetRoot(backend), { recursive: true })
+      // The source checkout can disappear after packing; no source or Electron lookup is used.
+      await rm(bundle, { recursive: true })
+      const read = createReplayViewerAssetReader(resolveReplayViewerAssetRoot(backend))
+      expect((await read('index.html'))?.body.toString()).toBe('<main>Replay</main>')
+      expect((await read('assets/main.js'))?.body.toString()).toBe('export const ready = true')
+      expect((await read('assets/main.css'))?.mimeType).toBe('text/css; charset=utf-8')
+      expect(await read('../../backend/index.cjs')).toBeUndefined()
+    }
+  )
+
   it('serves only the known bundle entry and asset types from actual disk', async () => {
     const root = await fixture()
     const read = createReplayViewerAssetReader(root)
