@@ -11,7 +11,13 @@ import {
 } from '../application-command-router'
 import { createCallerContext } from '../caller-context'
 
-function fixture() {
+function fixture(): {
+  service: { [K in keyof ResearchExecutionProfileCommands]: ReturnType<typeof vi.fn> }
+  handlers: ReturnType<typeof createResearchExecutionProfileHandlers>
+  invocation: ApplicationInvocation<readonly unknown[]>
+  controller: AbortController
+  revoke(): void
+} {
   const controller = new AbortController()
   let current = true
   const caller = createCallerContext({

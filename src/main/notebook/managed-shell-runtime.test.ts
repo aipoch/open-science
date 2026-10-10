@@ -487,3 +487,5 @@ describe.skipIf(process.platform === 'win32')(
     })
   }
 )
+
+;(await import('../../../test/runtime-metadata')).configureTestRuntimeMetadata()

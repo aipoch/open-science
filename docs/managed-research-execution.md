@@ -12,7 +12,7 @@ Packages without a description remain usable through explicit selection of immut
 ## Local client workflow
 
 Use the authenticated SDK exported by `@aipoch/open-science` (or the existing local CLI connection).
-The receiving app must be running and expose its local service. Managed execution and package-path
+The receiving Open Science Node backend must be running and expose its local service. Managed execution and package-path
 endpoints require both an authenticated local caller and a loopback socket peer. Remote web clients
 cannot supply filesystem paths or execution capabilities.
 
@@ -79,10 +79,12 @@ or local settings are needed, `requestConfiguration` creates a request in the tr
 The desktop form records public variables, exact allowed service hostnames and declared differences
 from the original experiment. Credential values use the existing encrypted local credential flow;
 public replies expose configured keys and an opaque profile ID. Values are not returned to the
-Agent or exported with the research. Profile writes are Electron-only, require a live caller lease,
-and redact errors. A profile is bound to the exact source and description/plan identity.
+Agent or exported with the research. Profile writes use the Node application-command owner through
+a connected local Electron document, require its current caller lease, and redact errors. They are
+not exposed to the HTTP or Host SDK writer. A profile is bound to the exact source and
+description/plan identity.
 
-`execute` may reference the selected `profileId`. Main resolves its authorized environment variables
+`execute` may reference the selected `profileId`. The backend resolves its authorized environment variables
 and network policy for that invocation, and screens captured output before publication. Local
 readiness does not validate external credentials or establish scientific reproduction. Projects can
 still write arbitrary sensitive content; existing package content checks remain mandatory.
@@ -95,10 +97,11 @@ software, reuse Electron as a project runtime, or fall back to an unrestricted h
 Unsupported native-service environments fail explicitly.
 
 The environment owner writes a durable creation receipt for an exact app-owned directory and runtime
-identity. Completion, cancel, timeout, Session/Project stop, application quit, restart recovery and
+identity. Completion, cancel, timeout, Session/Project stop, backend shutdown, restart recovery and
 data-root handoff stop the owned process before cleanup. Replaced or unproven directories are kept
 for diagnosis; cleanup never scans unrelated host directories. The existing storage owner includes
-managed environment directories in application data accounting/removal.
+managed environment directories in application data accounting/removal. Detaching a desktop from
+a separately owned backend does not stop that backend or its admitted executions.
 
 Material, operation, Notebook Run and output Version identities are distinct. Collection receipts
 identify what actually ran; an Agent's comparison report must explain differences and cannot claim

@@ -129,7 +129,11 @@
       "src/shared/renderer-surface-inventory.test.ts",
       "src/main/remote-access/pairing.test.ts",
       "src/main/notebook/managed-execution-entrypoints.integration.test.ts",
-      "src/main/notebook/session-operation-owner.integration.test.ts"
+      "src/main/notebook/session-operation-owner.integration.test.ts",
+      "src/main/desktop-runtime-transport.integration.test.ts",
+      "src/main/composition/notebook-environment.test.ts",
+      "src/main/composition/reviewer.test.ts",
+      "src/main/composition/artifact-surfaces.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
