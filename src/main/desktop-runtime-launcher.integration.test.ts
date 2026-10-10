@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { ChildProcess } from 'node:child_process'
 import { startOrAttachDesktopBackend } from './desktop-runtime-launcher'
+import { resolveElectronProfile } from './storage/electron-profile'
 const children: ChildProcess[] = []
 const roots: string[] = []
 afterEach(async () => {
@@ -22,7 +23,7 @@ const fixtureSource = `
 const http=require('node:http'), fs=require('node:fs'), path=require('node:path'), crypto=require('node:crypto');
 const root=process.env.OPEN_SCIENCE_CONFIG_ROOT, generation=crypto.randomUUID(), token='x'.repeat(43);
 fs.writeFileSync(path.join(root,'web-token'),token);
-fs.writeFileSync(path.join(root,'launched.json'),JSON.stringify({electron:process.versions.electron??null,asNode:process.env.ELECTRON_RUN_AS_NODE??null,argv:process.argv}));
+fs.writeFileSync(path.join(root,'launched.json'),JSON.stringify({electron:process.versions.electron??null,asNode:process.env.ELECTRON_RUN_AS_NODE??null,argv:process.argv,configRoot:root,userData:process.env.OPEN_SCIENCE_USER_DATA??null}));
 const server=http.createServer((req,res)=>{
  if(req.headers.authorization!=='Bearer '+token||req.headers['x-open-science-runtime-generation']!==generation){res.writeHead(403).end();return;}
  res.end(JSON.stringify({generation,pid:process.pid}));
@@ -38,6 +39,7 @@ describe('ordinary Node desktop launcher', () => {
     await writeFile(entry, fixtureSource)
     const options = {
       configRoot: root,
+      profilePath: join(root, 'original-profile'),
       version: 'test',
       command: process.execPath,
       entry,
@@ -51,6 +53,18 @@ describe('ordinary Node desktop launcher', () => {
     expect(launched).toMatchObject({ electron: null, asNode: null })
     expect(launched.argv).toContain('--development')
     expect(launched.argv).toContain('--serve')
+    expect(launched.userData).toBe(options.profilePath)
+    expect(
+      resolveElectronProfile({
+        appData: join(root, 'app-data'),
+        configRoot: launched.configRoot,
+        packaged: false,
+        env: {
+          OPEN_SCIENCE_CONFIG_ROOT: launched.configRoot,
+          OPEN_SCIENCE_USER_DATA: launched.userData
+        }
+      })
+    ).toBe(options.profilePath)
     const second = await startOrAttachDesktopBackend(options)
     expect(second.endpoint).toEqual(first.endpoint)
     expect(second.startedProcess).toBeUndefined()
@@ -64,6 +78,7 @@ describe('ordinary Node desktop launcher', () => {
     await expect(
       startOrAttachDesktopBackend({
         configRoot: root,
+        profilePath: join(root, 'original-profile'),
         version: 'test',
         command: process.execPath,
         entry,

@@ -12,6 +12,8 @@ import {
   type CompletionHandoffRuntime
 } from './completion-handoff-lifecycle'
 import type { TrustedToolCompletionContext } from './completion-gate'
+import { createClaudeCodeCompletionGateRuntime } from './claude-code-handoff'
+import { withApprovedSpecialistBinding } from './production-completion-handoff'
 
 const context: TrustedToolCompletionContext = {
   sessionId: 'trusted-session',
@@ -44,6 +46,271 @@ const createRuntime = (
 }
 
 describe('CompletionHandoffLifecycle', () => {
+  it.each([false, true])(
+    'ignores stale ownership release after a same-context retry (retry completed=%s)',
+    async (retryCompleted) => {
+      const oldOwnership = Promise.withResolvers<void>()
+      const retryPreparation = Promise.withResolvers<void>()
+      let ownershipWaits = 0
+      const { runtime } = createRuntime({
+        waitForOwnershipRelease: async () => {
+          if (++ownershipWaits === 1) await oldOwnership.promise
+        },
+        reconfigure: vi.fn(async () => {
+          await retryPreparation.promise
+        })
+      })
+      const lifecycle = new CompletionHandoffLifecycle(
+        new InMemoryCompletionHandoffRepository(),
+        runtime
+      )
+      await lifecycle.approve({ context, targetName: 'Specialist', generation: 1 })
+      await lifecycle.capture(context, { kind: 'returned', value: 'approved' })
+      const oldRun = lifecycle.run(context)
+      await vi.waitFor(() => expect(ownershipWaits).toBe(1))
+      await lifecycle.cancel(context)
+      const retry = lifecycle.retry(context)
+      await vi.waitFor(() => expect(runtime.reconfigure).toHaveBeenCalledOnce())
+      if (retryCompleted) {
+        retryPreparation.resolve()
+        await expect(retry).resolves.toMatchObject({ stage: 'continued' })
+      }
+      oldOwnership.resolve()
+      await oldRun
+      expect(runtime.reconfigure).toHaveBeenCalledOnce()
+      if (!retryCompleted) retryPreparation.resolve()
+      await Promise.all([oldRun, retry])
+      expect(runtime.reconfigure).toHaveBeenCalledOnce()
+      expect(runtime.continueAsApproved).toHaveBeenCalledOnce()
+      expect(runtime.reportHandoffFailure).not.toHaveBeenCalled()
+    }
+  )
+  it('invalidates attempt authority synchronously when cancellation starts', async () => {
+    const pending = Promise.withResolvers<void>()
+    let isCurrentAttempt: (() => boolean) | undefined
+    const { runtime } = createRuntime({
+      reconfigure: async (_handoff, _context, isCurrent) => {
+        isCurrentAttempt = isCurrent
+        await pending.promise
+      }
+    })
+    const lifecycle = new CompletionHandoffLifecycle(
+      new InMemoryCompletionHandoffRepository(),
+      runtime
+    )
+    await lifecycle.approve({ context, targetName: 'Specialist', generation: 1 })
+    await lifecycle.capture(context, { kind: 'returned', value: 'approved' })
+    const running = lifecycle.run(context)
+    await vi.waitFor(() => expect(isCurrentAttempt?.()).toBe(true))
+    const cancellation = lifecycle.cancel(context)
+    expect(isCurrentAttempt?.()).toBe(false)
+    await cancellation
+    pending.resolve()
+    await running
+    expect(runtime.continueAsApproved).not.toHaveBeenCalled()
+  })
+  it('rejects a cancelled guard lookup before it can steal a same-context retry replay', async () => {
+    const profile = Promise.withResolvers<void>()
+    const retryPreparation = Promise.withResolvers<void>()
+    let lookups = 0
+    let preparations = 0
+    let staged: string | undefined
+    const switchSpecialist = vi.fn(async () => ({ contextReset: true }))
+    const sendAppContinuation = vi.fn(async () => {
+      expect(staged).toBe('retry')
+    })
+    const reportHandoffFailure = vi.fn(async () => undefined)
+    const runtime = withApprovedSpecialistBinding(
+      createClaudeCodeCompletionGateRuntime({
+        sessionFramework: () => 'claude-code',
+        cancelPrompt: vi.fn(),
+        waitForPromptOwnershipRelease: vi.fn(),
+        resolveSpecialistId: () => 'approved',
+        resolveSwitchReadBack: async (sessionId, targetName) => ({
+          status: 'approved',
+          operation: 'switch',
+          binding: { sessionId, targetName, specialistId: 'approved' }
+        }),
+        prepareReplayContext: async (_input, isCurrent) => {
+          const attempt = ++preparations
+          if (attempt === 1) await retryPreparation.promise
+          if (isCurrent?.()) staged = attempt === 1 ? 'retry' : 'stale-old'
+        },
+        discardReplayContext: async () => {
+          staged = undefined
+        },
+        switchSpecialist,
+        createContinuationRequest: async () => ({ sessionId: context.sessionId, text: 'Continue' }),
+        sendAppContinuation,
+        reportHandoffFailure
+      }),
+      {
+        getSpecialistBinding: () => 'approved',
+        getSpecialist: async () => {
+          if (++lookups === 1) await profile.promise
+          return { name: 'Specialist', revision: 1, enabled: true }
+        }
+      }
+    )
+    const lifecycle = new CompletionHandoffLifecycle(
+      new InMemoryCompletionHandoffRepository(),
+      runtime,
+      Date.now,
+      undefined,
+      async () => ({ specialistId: 'approved', revision: 1 })
+    )
+    await lifecycle.approve({ context, targetName: 'Specialist', generation: 1 })
+    await lifecycle.capture(context, { kind: 'returned', value: 'approved' })
+    const oldRun = lifecycle.run(context)
+    await vi.waitFor(() => expect(lookups).toBe(1))
+    await lifecycle.cancel(context)
+    const retry = lifecycle.retry(context)
+    await vi.waitFor(() => expect(preparations).toBe(1))
+    profile.resolve()
+    await oldRun
+    expect(switchSpecialist).not.toHaveBeenCalled()
+    expect(preparations).toBe(1)
+    retryPreparation.resolve()
+    await expect(retry).resolves.toMatchObject({ stage: 'continued' })
+    expect(sendAppContinuation).toHaveBeenCalledOnce()
+    expect(reportHandoffFailure).not.toHaveBeenCalled()
+  })
+  it.each([false, true])(
+    'prevents replay staging after cancellation while production approval validation was pending (throw=%s)',
+    async (throwOnSwitch) => {
+      const profile = Promise.withResolvers<{ name: string; revision: number; enabled: boolean }>()
+      const getSpecialist = vi.fn(() => profile.promise)
+      let staged = false
+      const discardReplayContext = vi.fn(async () => {
+        staged = false
+      })
+      const reportHandoffFailure = vi.fn(async () => undefined)
+      const runtime = withApprovedSpecialistBinding(
+        createClaudeCodeCompletionGateRuntime({
+          sessionFramework: () => 'claude-code',
+          cancelPrompt: vi.fn(),
+          waitForPromptOwnershipRelease: vi.fn(),
+          resolveSpecialistId: () => 'approved',
+          resolveSwitchReadBack: async (sessionId, targetName) => ({
+            status: 'approved',
+            operation: 'switch',
+            binding: { sessionId, targetName, specialistId: 'approved' }
+          }),
+          prepareReplayContext: async () => {
+            staged = true
+          },
+          discardReplayContext,
+          switchSpecialist: async () => {
+            if (throwOnSwitch) throw new Error('replacement failed')
+            return { contextReset: true }
+          },
+          createContinuationRequest: vi.fn(),
+          sendAppContinuation: vi.fn(),
+          reportHandoffFailure
+        }),
+        { getSpecialistBinding: () => 'approved', getSpecialist }
+      )
+      const lifecycle = new CompletionHandoffLifecycle(
+        new InMemoryCompletionHandoffRepository(),
+        runtime,
+        Date.now,
+        undefined,
+        async () => ({ specialistId: 'approved', revision: 1 })
+      )
+      await lifecycle.approve({ context, targetName: 'Specialist', generation: 1 })
+      await lifecycle.capture(context, { kind: 'returned', value: 'approved' })
+      const running = lifecycle.run(context)
+      await vi.waitFor(() => expect(getSpecialist).toHaveBeenCalledOnce())
+      await lifecycle.cancel(context)
+      profile.resolve({ name: 'Specialist', revision: 1, enabled: true })
+      await expect(running).resolves.toMatchObject({ cancelled: true })
+      expect(staged).toBe(false)
+      expect(discardReplayContext).not.toHaveBeenCalled()
+      expect(reportHandoffFailure).not.toHaveBeenCalled()
+    }
+  )
+  it.each(['reject', 'resolve'] as const)(
+    'does not let a stale reconfiguration %s unwind affect a same-context retry',
+    async (outcome) => {
+      const oldGate = Promise.withResolvers<void>()
+      const retryGate = Promise.withResolvers<void>()
+      let preparations = 0
+      let switches = 0
+      let staged: string | undefined
+      const sendAppContinuation = vi.fn(async () => {
+        expect(staged).toBe('retry')
+      })
+      const reportHandoffFailure = vi.fn(async () => undefined)
+      const runtime = createClaudeCodeCompletionGateRuntime({
+        sessionFramework: () => 'claude-code',
+        cancelPrompt: vi.fn(),
+        waitForPromptOwnershipRelease: vi.fn(),
+        resolveSpecialistId: () => 'approved',
+        resolveSwitchReadBack: async (sessionId, targetName) => ({
+          status: 'approved',
+          operation: 'switch',
+          binding: { sessionId, targetName, specialistId: 'approved' }
+        }),
+        prepareReplayContext: async (_input, isCurrent) => {
+          const attempt = ++preparations
+          if (attempt === 1 && outcome === 'reject') await oldGate.promise
+          if (isCurrent?.()) staged = attempt === 1 ? 'old' : 'retry'
+        },
+        discardReplayContext: async () => {
+          staged = undefined
+        },
+        switchSpecialist: async () => {
+          const attempt = ++switches
+          await (outcome === 'resolve' && attempt === 1 ? oldGate.promise : retryGate.promise)
+          return { contextReset: true }
+        },
+        createContinuationRequest: async () => ({ sessionId: context.sessionId, text: 'Continue' }),
+        sendAppContinuation,
+        reportHandoffFailure
+      })
+      const lifecycle = new CompletionHandoffLifecycle(
+        new InMemoryCompletionHandoffRepository(),
+        runtime
+      )
+      await lifecycle.approve({ context, targetName: 'Specialist', generation: 1 })
+      await lifecycle.capture(context, { kind: 'returned', value: 'approved' })
+      const oldRun = lifecycle.run(context)
+      await vi.waitFor(() => expect(outcome === 'reject' ? preparations : switches).toBe(1))
+      await lifecycle.cancel(context)
+      const retry = lifecycle.retry(context)
+      await vi.waitFor(() => expect(switches).toBe(outcome === 'reject' ? 1 : 2))
+      oldGate.resolve()
+      await oldRun
+      expect(reportHandoffFailure).not.toHaveBeenCalled()
+      expect(sendAppContinuation).not.toHaveBeenCalled()
+      expect(staged).toBe('retry')
+      retryGate.resolve()
+      await expect(retry).resolves.toMatchObject({ stage: 'continued' })
+      expect(sendAppContinuation).toHaveBeenCalledOnce()
+    }
+  )
+  it('cleans cancelled adapter context without publishing failure when preparation unwinds', async () => {
+    const preparation = Promise.withResolvers<void>()
+    const cleanupCancelledHandoff = vi.fn(async () => undefined)
+    const { runtime } = createRuntime({
+      reconfigure: vi.fn(() => preparation.promise),
+      cleanupCancelledHandoff
+    })
+    const lifecycle = new CompletionHandoffLifecycle(
+      new InMemoryCompletionHandoffRepository(),
+      runtime
+    )
+    await lifecycle.approve({ context, targetName: 'Specialist', generation: 1 })
+    await lifecycle.capture(context, { kind: 'returned', value: 'approved' })
+    const running = lifecycle.run(context)
+    await vi.waitFor(() => expect(runtime.reconfigure).toHaveBeenCalledOnce())
+    await lifecycle.cancel(context)
+    expect(cleanupCancelledHandoff).toHaveBeenCalledWith(context)
+    preparation.reject(new Error('The Claude Code handoff was superseded.'))
+    await expect(running).resolves.toMatchObject({ cancelled: true })
+    expect(runtime.reportHandoffFailure).not.toHaveBeenCalled()
+    expect(runtime.continueAsApproved).not.toHaveBeenCalled()
+  })
   it('assigns unique global commit order across concurrent file writes and continues after restart', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'open-science-handoff-order-'))
     const makeRecord = (toolInvocationId: string): DurableCompletionHandoff => ({
@@ -415,7 +682,8 @@ describe('CompletionHandoffLifecycle', () => {
         approvedSpecialistId: 'specialist-1',
         approvedSpecialistRevision: 7
       }),
-      context
+      context,
+      expect.any(Function)
     )
   })
 

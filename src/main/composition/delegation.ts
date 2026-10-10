@@ -137,6 +137,8 @@ export function composeDelegation({
       provenanceRepository: artifactProvenanceRepository,
       managedFileVersions: managedFileVersionService,
       uploadRepository,
+      canOwnRuntimeBindingDecision: (request) =>
+        notebookService.canOwnRuntimeBindingDecision(request),
       peekNotebookHandoffContext: (sessionId) => notebookService.peekHandoffContext(sessionId),
       authorizeSkillImportReferencedUploads: (projectId, sessionId, paths) =>
         conversationSkillImporter.authorizeReferencedUploads(projectId, sessionId, paths),

@@ -520,6 +520,27 @@ describe('EnvironmentStateTracker', () => {
     }
   )
 
+  it('merges equivalent live Python release spellings', async () => {
+    dataRoot = await mkdtemp(join(tmpdir(), 'python-equivalent-version-'))
+    const tracker = new EnvironmentStateTracker({
+      dataRoot,
+      captureFingerprint: async () => 'stable',
+      inspectInstalled: async () => ({ packages: [] })
+    })
+    const captured = await tracker.captureCompletedRun(target, {
+      packages: ['2026.07.22', '2026.7.22'].map((version) => ({
+        name: 'certifi',
+        version,
+        versionStatus: 'known',
+        ecosystem: 'python',
+        evidenceSources: ['python-kernel-modules', 'python-importlib-metadata'],
+        loadedState: 'loaded'
+      }))
+    })
+    expect(captured.manifest.packages).toHaveLength(1)
+    expect(captured.manifest.packages[0]).toMatchObject({ name: 'certifi', loadedState: 'loaded' })
+  })
+
   it.each([false, true])(
     'preserves conflicting live Python versions regardless of observation order (%s)',
     async (reverse) => {

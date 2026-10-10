@@ -118,6 +118,7 @@
     ],
     "contract": [],
     "consumer": [
+      "src/main/desktop-runtime-launcher.integration.test.ts",
       "src/main/storage/wsl-npm-migration.integration.test.ts",
       "src/main/composition/notebook-environment.test.ts",
       "src/main/literature/command-owner.test.ts",
@@ -630,7 +631,9 @@
       "src/main/reviewer/paged-preview-host.test.ts",
       "src/main/desktop-native-electron.test.ts",
       "src/main/session-plan/session-plan-turn-outcome.test.ts",
-      "src/main/notebook/runtime-repair.windows.integration.test.ts"
+      "src/main/notebook/runtime-repair.windows.integration.test.ts",
+      "src/main/acp/specialist-switch-recovery.integration.test.ts",
+      "src/main/agents/production-completion-handoff.test.ts"
     ]
   },
   "capabilityOverlays": [],

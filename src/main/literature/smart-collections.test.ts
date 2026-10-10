@@ -3726,9 +3726,19 @@ it('evaluates existing unpaused automatic collections when started', async () =>
     where: { collectionId: id },
     data: { autoUpdate: true }
   })
+  expect(await db.literatureSmartRun.count({ where: { collectionId: id } })).toBe(0)
   owner.start()
-  await vi.waitFor(async () => expect((await owner.view(id)).run?.state).toBe('completed'), {
-    timeout: 5000
-  })
+  // Poll one row while the startup scan writes SQLite; inspect the complete public view afterward.
+  await vi.waitFor(
+    async () =>
+      expect(
+        await db.literatureSmartRun.findFirst({
+          where: { collectionId: id },
+          select: { state: true }
+        })
+      ).toEqual({ state: 'completed' }),
+    { timeout: 15000, interval: 100 }
+  )
+  expect((await owner.view(id)).run?.state).toBe('completed')
   expect(classify).toHaveBeenCalledTimes(1)
 })

@@ -5,6 +5,9 @@ export function connectorDescription(
   connector: { id: string; description: string; sources?: string[] },
   t: TFunction
 ): string {
+  if (connector.id === 'encori') {
+    return t('RNA interactions, regulatory evidence and bulk datasets from ENCORI.')
+  }
   if (connector.id === 'pdc') {
     return t('Cancer proteomics studies, sample and aliquot mappings, and file discovery from PDC.')
   }
@@ -73,6 +76,27 @@ export function connectorDescription(
 
 export function connectorToolDescription(id: string, fallback: string, t: TFunction): string {
   switch (id) {
+    case 'encori/query_mirna_targets':
+      return t('Query miRNA target evidence.')
+    case 'encori/query_rna_rna_interactions':
+      return t('Query RNA–RNA interaction evidence.')
+    case 'encori/query_rbp_targets':
+      return t('Query RBP target evidence.')
+    case 'encori/query_cerna_network':
+      return t('Query ceRNA networks.')
+    case 'encori/query_rbp_disease':
+      return t('Query RBP disease associations.')
+    case 'encori/scan_rbp_motifs':
+      return t('Search RBP motif rankings.')
+    case 'encori/get_binding_sites':
+      return t('Retrieve dataset binding sites.')
+    case 'encori/get_reference_tables':
+      return t('List or read official reference tables.')
+    case 'encori/list_bulk_datasets':
+      return t('List bulk datasets without downloading.')
+    case 'encori/download_bulk_dataset':
+      return t('Download and verify one bulk dataset.')
+
     case 'pdc/pdc_search_studies':
       return t('Search PDC studies and versions by name or identifier.')
     case 'pdc/pdc_get_study':

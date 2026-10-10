@@ -131,6 +131,7 @@ import { createLogger, errorLogFields } from '../logger'
 import { EnvironmentStateTracker, type EnvironmentCaptureTarget } from './environment-state-tracker'
 import { resolveMicromamba } from './micromamba'
 import { NotebookRuntimeBindingOwner } from './runtime-binding'
+import { readTrustedNotebookBindingPermissionPrompts } from './runtime-binding-admission'
 import type { RuntimeDiagnosticLogger } from './runtime-diagnostics'
 import { resolveProjectId, type ProjectIdScope } from '../../shared/project-scope'
 import { NotebookRunTerminalizationOwner } from './run-terminalization'
@@ -145,7 +146,7 @@ import {
   type NotebookControlResult
 } from './execution-owner'
 import { NotebookSessionReadModel, type NotebookHandoffContext } from './session-read-model'
-import { notebookLaneKey } from './lane-identity'
+import { notebookLaneKey, notebookLaneScope } from './lane-identity'
 import {
   completeWorkingFileEvidence,
   deleteWorkingFileEvidenceProject
@@ -320,6 +321,16 @@ export type NotebookExecutionApproval = (request: {
   title: string
   rawInput: unknown
   signal?: AbortSignal
+  permissionPrompts?: 'none'
+}) => Promise<boolean>
+
+export type NotebookRuntimeBindingApproval = (request: {
+  sessionId: string
+  title: string
+  rawInput: unknown
+  signal?: AbortSignal
+  defaultManagedFirstBinding: boolean
+  permissionPrompts?: 'none'
 }) => Promise<boolean>
 
 // The wire binding plus the interpreter override the executor needs. `resolvedInterpreter` is set only
@@ -418,9 +429,185 @@ const resolveDefaultExecutorOptions = (): NotebookKernelExecutorOptions => {
 // Coordinates notebook cells, shared interpreters, persisted run history, and UI notifications.
 class NotebookRuntimeService {
   private executionApproval: NotebookExecutionApproval | undefined
+  private runtimeBindingApproval: NotebookRuntimeBindingApproval | undefined
+  private readonly runtimeBindingPermissionPolicies = new WeakMap<AbortSignal, 'none'>()
 
   setExecutionApproval(approve: NotebookExecutionApproval): void {
     this.executionApproval = approve
+  }
+
+  setRuntimeBindingApproval(approve: NotebookRuntimeBindingApproval): void {
+    this.runtimeBindingApproval = approve
+  }
+
+  // Read-only classification for authenticated outer-tool admission. The binding boundary repeats
+  // this decision; a correlated handoff requires it still to be valid when the actual call arrives.
+  async canOwnRuntimeBindingDecision(
+    request: NotebookSessionRequest & { language: NotebookLanguage; runtimeId: string }
+  ): Promise<boolean> {
+    if (!this.runtimeBindingApproval) return false
+    try {
+      return await this.sessionLifecycle.runProjectOperation(request, async () => {
+        const lane = this.sessionLifecycle.laneForRequest(request)
+        const target = await this.runtimeBindingOwner.resolveBindingTarget(
+          request.language,
+          request.runtimeId
+        )
+        if (!target.runnable || target.binding.status !== 'active') return false
+        const session = this.sessions.get(lane)
+        const existing = session?.runtimeBinding(request.language)
+        if (existing) return this.runtimeBindingOwner.sameTarget(existing, target.binding)
+        if (session) return target.readyDefault
+        const document = await this.repository.findExisting(
+          notebookLaneScope(lane).projectId,
+          request.sessionId,
+          lane
+        )
+        const persisted = document?.runtimeBindings?.[request.language]
+        if (persisted) {
+          // The resolver reconstructs envName and interpreter arguments from trusted discovery.
+          return (
+            (persisted.status ?? 'active') === 'active' &&
+            persisted.runtimeId === target.binding.runtimeId &&
+            persisted.language === target.binding.language &&
+            persisted.source === target.binding.source &&
+            persisted.provenance === target.binding.provenance &&
+            persisted.interpreterPath === target.binding.interpreterPath
+          )
+        }
+        return target.readyDefault
+      })
+    } catch {
+      return false
+    }
+  }
+
+  private async reviewRuntimeBinding(
+    session: RuntimeSession,
+    language: NotebookLanguage,
+    binding: NotebookSessionRuntimeBinding,
+    operation: 'bind' | 'switch',
+    signal?: AbortSignal,
+    requireHostDecision = false,
+    permissionPrompts?: 'none'
+  ): Promise<void> {
+    signal?.throwIfAborted()
+    const target = await this.runtimeBindingOwner.resolveBindingTarget(language, binding.runtimeId)
+    signal?.throwIfAborted()
+    if (!this.runtimeBindingOwner.sameTarget(binding, target.binding)) {
+      throw new Error(
+        'The selected Notebook runtime changed before approval. Select an enabled runtime again.'
+      )
+    }
+    const current = session.runtimeBinding(language)
+    const defaultManagedFirstBinding = operation === 'bind' && !current && target.readyDefault
+    const validReuse =
+      operation === 'bind' &&
+      current &&
+      target.runnable &&
+      this.runtimeBindingOwner.sameTarget(current, target.binding)
+    if (
+      requireHostDecision &&
+      (!this.runtimeBindingApproval || (!defaultManagedFirstBinding && !validReuse))
+    ) {
+      throw new Error(
+        'The selected Notebook runtime is no longer eligible for host binding admission. Select an enabled runtime again.'
+      )
+    }
+    if (
+      this.runtimeBindingApproval &&
+      operation === 'bind' &&
+      !current &&
+      binding.provenance === 'app-managed' &&
+      binding.envName === this.defaultEnvNameFor(language) &&
+      !target.readyDefault
+    ) {
+      throw new Error(
+        'The app-managed default Notebook runtime is not ready. Recheck runtimes before binding it.'
+      )
+    }
+    let approval: NotebookExecutionApproval | NotebookRuntimeBindingApproval | undefined
+    if (defaultManagedFirstBinding && this.runtimeBindingApproval) {
+      approval = this.runtimeBindingApproval
+    } else if (this.executionApproval) {
+      const { runtimes } = await this.runtimeBindingOwner.list(session)
+      const multiple =
+        runtimes.filter((runtime) => runtime.language === language && runtime.runnable).length > 1
+      if ((current && current.runtimeId !== binding.runtimeId) || (!current && multiple)) {
+        approval = this.executionApproval
+      }
+    }
+    signal?.throwIfAborted()
+    if (!approval) return
+    if (!this.runtimeBindingApproval && permissionPrompts === 'none') {
+      throw new Error(
+        'Notebook runtime selection declined: this operation requires an interactive decision.'
+      )
+    }
+    const pending = approval({
+      sessionId: session.sessionId,
+      title: (this.options.translate ?? englishNativeTranslator)(
+        'Confirm Notebook kernel and environment'
+      ),
+      rawInput: {
+        notebookRuntimeSelection: {
+          language,
+          runtimeId: binding.runtimeId,
+          label: binding.label,
+          interpreterPath: binding.interpreterPath,
+          previousRuntimeId: current?.runtimeId,
+          previousLabel: current?.label
+        }
+      },
+      signal,
+      defaultManagedFirstBinding,
+      permissionPrompts
+    })
+    const approved = await this.awaitRuntimeBindingApproval(pending, signal)
+    signal?.throwIfAborted()
+    if (!approved) throw new Error('Notebook runtime selection declined.')
+    const refreshed = await this.runtimeBindingOwner.resolveBindingTarget(
+      language,
+      binding.runtimeId
+    )
+    signal?.throwIfAborted()
+    if (
+      !refreshed.runnable ||
+      !this.runtimeBindingOwner.sameTarget(binding, refreshed.binding) ||
+      (defaultManagedFirstBinding && !refreshed.readyDefault)
+    ) {
+      throw new Error(
+        'The selected Notebook runtime changed while approval was pending. Select an enabled runtime again.'
+      )
+    }
+  }
+
+  private async awaitRuntimeBindingApproval(
+    pending: Promise<boolean>,
+    signal?: AbortSignal
+  ): Promise<boolean> {
+    if (!signal) return pending
+    let abort!: () => void
+    try {
+      return await new Promise<boolean>((resolve, reject) => {
+        abort = () => reject(signal.reason)
+        signal.addEventListener('abort', abort, { once: true })
+        pending.then(resolve, reject)
+        if (signal.aborted) abort()
+      })
+    } finally {
+      signal.removeEventListener('abort', abort)
+    }
+  }
+
+  private runtimeSelectionExecutionSignal(
+    request: NotebookSessionRequest,
+    signals: AbortSignal[]
+  ): AbortSignal {
+    const signal = AbortSignal.any(signals)
+    const policy = readTrustedNotebookBindingPermissionPrompts(request)
+    if (policy) this.runtimeBindingPermissionPolicies.set(signal, policy)
+    return signal
   }
 
   private async prepareRuntimeSelection(
@@ -428,7 +615,11 @@ class NotebookRuntimeService {
     language: NotebookLanguage,
     signal?: AbortSignal
   ): Promise<void> {
-    if (!this.executionApproval || session.runtimeBinding(language)) return
+    if (
+      (!this.executionApproval && !this.runtimeBindingApproval) ||
+      session.runtimeBinding(language)
+    )
+      return
     await this.runtimeBindingOwner.runWrite(notebookLaneKey(session.lane), async () => {
       if (session.runtimeBinding(language)) return
       const { runtimes } = await this.runtimeBindingOwner.list(session)
@@ -441,13 +632,24 @@ class NotebookRuntimeService {
           `Several ${language} environments are enabled. Choose the kernel/environment with list_notebook_runtimes and notebook_bind_runtime before executing code.`
         )
       }
-      // No installed default yet: retain the existing provisioning policy. A sole enabled runtime
-      // is already the user's Settings choice and does not require a per-Session execution grant.
+      // No installed default yet: retain the existing provisioning policy. The sole ready default
+      // uses the same host-owned decision as explicit binding, including Ask's one-shot prompt.
       if (candidates.length === 1) {
         const result = await this.runtimeBindingOwner.bind(
           session,
           language,
-          candidates[0].runtimeId
+          candidates[0].runtimeId,
+          (binding) =>
+            this.reviewRuntimeBinding(
+              session,
+              language,
+              binding,
+              'bind',
+              signal,
+              false,
+              signal ? this.runtimeBindingPermissionPolicies.get(signal) : undefined
+            ),
+          () => signal?.throwIfAborted()
         )
         if ('error' in result) throw new Error(result.error)
         this.sessionLifecycle.notifyChanged(session)
@@ -1015,9 +1217,10 @@ class NotebookRuntimeService {
   // runtime; refuses re-binding a different runtime (use notebook_switch_runtime to change).
   async bindRuntime(
     request: NotebookSessionRequest & { language: NotebookLanguage; runtimeId: string },
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    admission?: Readonly<{ requireHostDecision: true }>
   ): Promise<RuntimeBindingOperationResult> {
-    return this.changeRuntimeBinding(request, 'bind', signal)
+    return this.changeRuntimeBinding(request, 'bind', signal, admission?.requireHostDecision)
   }
 
   // An explicit switch stops the previous kernel before committing the new runtime selection.
@@ -1031,7 +1234,8 @@ class NotebookRuntimeService {
   private async changeRuntimeBinding(
     request: NotebookSessionRequest & { language: NotebookLanguage; runtimeId: string },
     operation: 'bind' | 'switch',
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    requireHostDecision = false
   ): Promise<RuntimeBindingOperationResult> {
     return this.sessionLifecycle.runProjectOperation(request, (deletionSignal) =>
       this.runtimeBindingOwner.runWrite(
@@ -1058,59 +1262,29 @@ class NotebookRuntimeService {
               async (binding?: NotebookSessionRuntimeBinding) => {
                 signal?.throwIfAborted()
                 deletionSignal.throwIfAborted()
-                if (binding && this.executionApproval) {
-                  const current = session.runtimeBinding(request.language)
-                  const { runtimes } = await this.runtimeBindingOwner.list(session)
-                  const multiple =
-                    runtimes.filter(
-                      (runtime) => runtime.language === request.language && runtime.runnable
-                    ).length > 1
-                  if (
-                    (current && current.runtimeId !== binding.runtimeId) ||
-                    (!current && multiple)
-                  ) {
-                    const approved = await this.executionApproval({
-                      sessionId: request.sessionId,
-                      title: (this.options.translate ?? englishNativeTranslator)(
-                        'Confirm Notebook kernel and environment'
-                      ),
-                      rawInput: {
-                        notebookRuntimeSelection: {
-                          language: request.language,
-                          runtimeId: binding.runtimeId,
-                          label: binding.label,
-                          interpreterPath: binding.interpreterPath,
-                          previousRuntimeId: current?.runtimeId,
-                          previousLabel: current?.label
-                        }
-                      },
-                      signal: signal ? AbortSignal.any([signal, deletionSignal]) : deletionSignal
-                    })
-                    signal?.throwIfAborted()
-                    deletionSignal.throwIfAborted()
-                    if (!approved) throw new Error('Notebook runtime selection declined.')
-                    const refreshed = await this.runtimeBindingOwner.list(session)
-                    if (
-                      !refreshed.runtimes.some(
-                        (candidate) =>
-                          candidate.runtimeId === binding.runtimeId &&
-                          candidate.interpreterPath === binding.interpreterPath &&
-                          candidate.runnable
-                      )
-                    ) {
-                      throw new Error(
-                        'The selected Notebook runtime changed while approval was pending. Select an enabled runtime again.'
-                      )
-                    }
-                  }
+                if (binding) {
+                  await this.reviewRuntimeBinding(
+                    session,
+                    request.language,
+                    binding,
+                    operation,
+                    signal ? AbortSignal.any([signal, deletionSignal]) : deletionSignal,
+                    requireHostDecision,
+                    readTrustedNotebookBindingPermissionPrompts(request)
+                  )
                 }
                 if (operation === 'bind') {
+                  if (session.runtimeBinding(request.language)) return
                   if (binding?.source !== 'external') return
                   const env = this.resolveRunEnv(session, request.language)
                   if (session.kernelStatus(dataProcessKey(request.language, env)) === undefined)
                     return
                 }
                 await stopKernel()
+              },
+              () => {
+                signal?.throwIfAborted()
+                deletionSignal.throwIfAborted()
               }
             )
             bindingChanged = 'bound' in result || result.bindingChanged
@@ -1300,7 +1474,10 @@ class NotebookRuntimeService {
       const { run, dependencyProjection } = await this.executionOwner.executeDataCell(
         session,
         request,
-        signal ? AbortSignal.any([signal, deletionSignal]) : deletionSignal,
+        this.runtimeSelectionExecutionSignal(
+          request,
+          signal ? [signal, deletionSignal] : [deletionSignal]
+        ),
         helperModules
       )
       return this.sessionReadModel.toRunSummary(session, run, dependencyProjection)
@@ -1434,7 +1611,10 @@ class NotebookRuntimeService {
     const completion = this.sessionLifecycle
       .runProjectOperation(request, async (deletionSignal) => {
         const session = await this.sessionLifecycle.ensure(request)
-        const executionSignal = AbortSignal.any([controller.signal, deletionSignal])
+        const executionSignal = this.runtimeSelectionExecutionSignal(request, [
+          controller.signal,
+          deletionSignal
+        ])
         const { run, dependencyProjection } = await this.executionOwner.executeDataCell(
           session,
           request,

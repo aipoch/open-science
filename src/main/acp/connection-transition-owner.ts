@@ -90,6 +90,9 @@ export class AcpConnectionTransitionOwner {
   }
 
   private async disconnectDeferred(): Promise<void> {
+    // Active reviewer work may send more prompts before releasing its lease. Block startup only
+    // once this deferred intent can actually begin tearing down the connection.
+    this.armBarrier()
     const expectedBarrierGeneration = this.barrierGeneration
     const disconnectedGeneration = this.options.connectionGeneration()
     try {

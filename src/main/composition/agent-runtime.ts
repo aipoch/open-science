@@ -157,6 +157,8 @@ export async function composeAgentRuntime({
       notebookRpcServer,
       wslSetupSessions,
       getShellRuntimeBinding: getAvailableShellRuntimeBinding,
+      canOwnRuntimeBindingDecision: (request) =>
+        notebookService.canOwnRuntimeBindingDecision(request),
       peekNotebookHandoffContext: (sessionId) => notebookService.peekHandoffContext(sessionId),
       authorizeSkillImportReferencedUploads: (projectId, sessionId, paths) =>
         conversationSkillImporter.authorizeReferencedUploads(projectId, sessionId, paths),

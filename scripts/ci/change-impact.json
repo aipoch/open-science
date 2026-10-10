@@ -426,9 +426,26 @@
         "src/main/wsl/**"
       ],
       "capabilities": ["e2e_regressions", "e2e_delegation"]
+    },
+    {
+      "id": "specialist_recovery",
+      "role": "overlay",
+      "paths": [
+        "src/main/acp/**",
+        "src/main/agents/**",
+        "src/main/specialist/**",
+        "src/main/agent-framework/claude-code.ts",
+        "src/main/composition/agent-completion.ts",
+        "src/main/session-persistence/claude-replay.ts"
+      ],
+      "capabilities": ["specialist_recovery"]
     }
   ],
   "capabilities": {
+    "specialist_recovery": {
+      "consumers": [],
+      "lanes": ["windows_runtime"]
+    },
     "ci_integrity_surface": {
       "consumers": [],
       "lanes": []
