@@ -122,6 +122,7 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/desktop-runtime-launcher.integration.test.ts",
       "src/main/notebook/dependency-analysis.r-arrow-dataset.test.ts",
       "src/main/notebook/dependency-analysis.r-deseq2.test.ts",
       "src/main/notebook/dependency-analysis.r-hdf5array.test.ts",
