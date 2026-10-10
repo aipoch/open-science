@@ -479,7 +479,12 @@
       "src/renderer/src/pages/workspace/replay/use-browser-recording-transport.test.tsx",
       "src/renderer/src/pages/workspace/replay/use-replay-executions.test.tsx",
       "src/shared/renderer-surface-inventory.test.ts",
-      "src/shared/renderer-surface-matrix.test.ts"
+      "src/shared/renderer-surface-matrix.test.ts",
+      "src/main/desktop-runtime-transport.integration.test.ts",
+      "src/main/composition/notebook-environment.test.ts",
+      "src/main/composition/reviewer.test.ts",
+      "src/main/composition/artifact-surfaces.test.ts",
+      "src/main/observation-desktop/bridge.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "windows_sensitive"],

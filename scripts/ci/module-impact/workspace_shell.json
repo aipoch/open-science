@@ -588,7 +588,12 @@
       "src/main/replay-viewer/assets.test.ts",
       "src/renderer/replay-viewer/browser-recording-transport.integration.test.ts",
       "src/renderer/replay-viewer/browser-recording.integration.test.ts",
-      "src/renderer/replay-viewer/browser.integration.test.ts"
+      "src/renderer/replay-viewer/browser.integration.test.ts",
+      "src/main/desktop-runtime-transport.integration.test.ts",
+      "src/main/composition/notebook-environment.test.ts",
+      "src/main/composition/reviewer.test.ts",
+      "src/main/composition/artifact-surfaces.test.ts",
+      "src/main/observation-desktop/bridge.test.ts"
     ]
   },
   "capabilityOverlays": [],

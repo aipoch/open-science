@@ -301,7 +301,8 @@
       "src/renderer/replay-viewer/research-observation-selection.test.ts",
       "src/renderer/replay-viewer/research-viewer.test.tsx",
       "src/renderer/src/pages/workspace/replay/ReplayPanel.layout.test.tsx",
-      "src/main/notebook/managed-execution-service.macos.integration.test.ts"
+      "src/main/notebook/managed-execution-service.macos.integration.test.ts",
+      "src/main/desktop-runtime-electron-adapter.test.ts"
     ]
   },
   "capabilityOverlays": [],

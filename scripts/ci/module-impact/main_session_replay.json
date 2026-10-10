@@ -190,7 +190,8 @@
       "src/main/research-demos/owner.macos.integration.test.ts",
       "src/main/browser-recordings/external-port.test.ts",
       "src/main/run-observation-external-port.test.ts",
-      "src/renderer/replay-viewer/research-browser.integration.test.ts"
+      "src/renderer/replay-viewer/research-browser.integration.test.ts",
+      "src/main/observation-desktop/bridge.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "windows_sensitive"],
