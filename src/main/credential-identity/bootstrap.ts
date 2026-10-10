@@ -71,8 +71,6 @@ export const prepareCredentialValidation = (
     })
     if (identity.backend === 'linux-secret-service' || identity.backend === 'linux-kwallet')
       credentialCipher(cipher).isEncryptionAvailable()
-    verifyCredentialCiphertexts(ciphertexts, (value) =>
-      credentialCipher(cipher).decryptString(value)
-    )
+    verifyCredentialCiphertexts(ciphertexts, credentialCipher(cipher))
   }
 }

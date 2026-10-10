@@ -6,17 +6,22 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { withReadOnlySqliteSnapshot as database } from './sqlite-snapshot'
 import { CredentialIdentityError } from './selection'
+import type { SecureStorageCipher } from '../secure-storage'
 
 const PROTECTED_PREFIX = 'open-science:protected:v1:'
 const MAX_DOCUMENT_BYTES = 64 * 1024 * 1024
+
+type CredentialCiphertext =
+  | { kind: 'application'; value: Buffer }
+  | { kind: 'cookie'; value: Buffer; hostKey: string; databaseVersion: number }
 
 // Read the original documents directly: the normal durable store may promote crash-recovery temps
 // or sanitize fields. Neither action is allowed before the selected key proves it can read them.
 export const readCredentialCiphertexts = (options: {
   configRoot: string
   profilePath: string
-}): Buffer[] => {
-  const values: Buffer[] = []
+}): CredentialCiphertext[] => {
+  const values: CredentialCiphertext[] = []
   const record = (value: unknown): Record<string, unknown> =>
     value !== null && typeof value === 'object' && !Array.isArray(value)
       ? (value as Record<string, unknown>)
@@ -28,7 +33,7 @@ export const readCredentialCiphertexts = (options: {
     const bytes = Buffer.from(encoded, 'base64')
     if (!bytes.length || bytes.toString('base64') !== encoded)
       throw new Error('Invalid ciphertext reference')
-    values.push(bytes)
+    values.push({ kind: 'application', value: bytes })
   }
   const collectDocument = (contents: string, name: string): void => {
     const value: unknown =
@@ -139,7 +144,7 @@ export const readCredentialCiphertexts = (options: {
       if (tables.has('ComputeCredential')) {
         for (const row of db.prepare('SELECT ciphertext FROM ComputeCredential').iterate()) {
           if (!(row.ciphertext instanceof Uint8Array)) throw new Error('Invalid compute ciphertext')
-          values.push(Buffer.from(row.ciphertext))
+          values.push({ kind: 'application', value: Buffer.from(row.ciphertext) })
         }
       }
       if (tables.has('ComputeJob')) {
@@ -177,12 +182,28 @@ export const readCredentialCiphertexts = (options: {
     for (const profile of profiles) {
       for (const relative of ['Cookies', 'Network/Cookies']) {
         database(join(profile, relative), (db) => {
+          if (!db.prepare('SELECT 1 FROM cookies WHERE length(encrypted_value) > 0 LIMIT 1').get())
+            return
+          const versions = db.prepare("SELECT value FROM meta WHERE key = 'version'").all()
+          const version = versions[0]?.value
+          if (versions.length !== 1 || (typeof version !== 'string' && typeof version !== 'number'))
+            throw new Error('Invalid cookie database version')
+          const databaseVersion = Number(version)
+          if (!/^[1-9][0-9]*$/.test(String(version)) || !Number.isSafeInteger(databaseVersion))
+            throw new Error('Invalid cookie database version')
           for (const row of db
-            .prepare('SELECT encrypted_value FROM cookies WHERE length(encrypted_value) > 0')
+            .prepare(
+              'SELECT host_key, encrypted_value FROM cookies WHERE length(encrypted_value) > 0'
+            )
             .iterate()) {
-            if (!(row.encrypted_value instanceof Uint8Array))
+            if (!(row.encrypted_value instanceof Uint8Array) || typeof row.host_key !== 'string')
               throw new Error('Invalid encrypted cookie')
-            values.push(Buffer.from(row.encrypted_value))
+            values.push({
+              kind: 'cookie',
+              value: Buffer.from(row.encrypted_value),
+              hostKey: row.host_key,
+              databaseVersion
+            })
           }
         })
       }
@@ -195,13 +216,18 @@ export const readCredentialCiphertexts = (options: {
 }
 
 // This is a real secret-read phase, deliberately separate from metadata probing. The caller runs
-// it only after Electron has bound OSCrypt to the selected identity, before any app/profile writer.
+// it only after the host has bound OSCrypt to the selected identity, before any app/profile writer.
 export const verifyCredentialCiphertexts = (
-  ciphertexts: readonly Buffer[],
-  decrypt: (value: Buffer) => string
+  ciphertexts: readonly CredentialCiphertext[],
+  cipher: Pick<SecureStorageCipher, 'decryptString' | 'validateEncryptedCookie'>
 ): void => {
   try {
-    for (const value of ciphertexts) decrypt(value)
+    for (const entry of ciphertexts) {
+      if (entry.kind === 'cookie') {
+        if (!cipher.validateEncryptedCookie) throw new Error('Cookie validation is unavailable')
+        cipher.validateEncryptedCookie(entry.value, entry)
+      } else cipher.decryptString(entry.value)
+    }
   } catch {
     throw new CredentialIdentityError('decryption-failed')
   }

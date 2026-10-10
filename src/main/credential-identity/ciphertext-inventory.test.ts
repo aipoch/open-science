@@ -59,12 +59,12 @@ describe('read-only ciphertext inventory', () => {
     )
     writeFileSync(path, contents)
     const ciphertexts = readCredentialCiphertexts(paths)
-    expect(ciphertexts.map((value) => value.toString())).toEqual([
+    expect(ciphertexts.map((value) => value.value.toString())).toEqual([
       'research-provider',
       'research-solver'
     ])
     const decrypt = vi.fn(() => 'private-plaintext-is-not-returned')
-    expect(verifyCredentialCiphertexts(ciphertexts, decrypt)).toBeUndefined()
+    expect(verifyCredentialCiphertexts(ciphertexts, { decryptString: decrypt })).toBeUndefined()
     expect(decrypt).toHaveBeenCalledTimes(2)
     expect(readFileSync(path, 'utf8')).toBe(contents)
     expect(readdirSync(paths.configRoot)).toEqual(['research-execution-profiles.json'])
@@ -185,8 +185,12 @@ describe('read-only ciphertext inventory', () => {
       mkdirSync(directory)
       const path = join(directory, 'Cookies')
       const db = new DatabaseSync(path)
-      db.exec(`PRAGMA journal_mode=${mode}; CREATE TABLE cookies(encrypted_value BLOB)`)
-      db.prepare('INSERT INTO cookies VALUES (?)').run(Buffer.from('legacy-cookie'))
+      db.exec(
+        `PRAGMA journal_mode=${mode}; CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT); INSERT INTO meta VALUES ('version', '23'); CREATE TABLE cookies(host_key TEXT, encrypted_value BLOB)`
+      )
+      db.prepare("INSERT INTO cookies VALUES ('fixture.example', ?)").run(
+        Buffer.from('legacy-cookie')
+      )
       db.close()
       const before = Object.fromEntries(
         readdirSync(directory).map((name) => [name, readFileSync(join(directory, name))])
@@ -195,7 +199,7 @@ describe('read-only ciphertext inventory', () => {
         expect(before['Cookies-journal'].length).toBeGreaterThan(512)
         expect(before['Cookies-journal'].subarray(0, 28)).toEqual(Buffer.alloc(28))
       }
-      expect(readCredentialCiphertexts(paths).map((value) => value.toString())).toEqual([
+      expect(readCredentialCiphertexts(paths).map((value) => value.value.toString())).toEqual([
         'legacy-cookie'
       ])
       expect(
@@ -232,7 +236,7 @@ describe('read-only ciphertext inventory', () => {
     })
     writeFileSync(join(paths.configRoot, 'settings.json'), settings)
     writeFileSync(join(paths.configRoot, 'credentials.json'), credentials)
-    expect(readCredentialCiphertexts(paths).map((b) => b.toString())).toEqual([
+    expect(readCredentialCiphertexts(paths).map((b) => b.value.toString())).toEqual([
       'old-provider',
       'classification-key',
       'old-env',
@@ -248,11 +252,15 @@ describe('read-only ciphertext inventory', () => {
       const directory = join(paths.profilePath, relative)
       mkdirSync(directory, { recursive: true })
       const db = new DatabaseSync(join(directory, 'Cookies'))
-      db.exec('CREATE TABLE cookies(encrypted_value BLOB)')
-      db.prepare('INSERT INTO cookies VALUES (?)').run(Buffer.from(`v10:${relative}`))
+      db.exec(
+        "CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT); INSERT INTO meta VALUES ('version', '23'); CREATE TABLE cookies(host_key TEXT, encrypted_value BLOB)"
+      )
+      db.prepare("INSERT INTO cookies VALUES ('fixture.example', ?)").run(
+        Buffer.from(`v10:${relative}`)
+      )
       db.close()
     }
-    expect(readCredentialCiphertexts(paths).map((b) => b.toString())).toEqual([
+    expect(readCredentialCiphertexts(paths).map((b) => b.value.toString())).toEqual([
       'v10:Network',
       'v10:Partitions/accounts/Network'
     ])
@@ -272,7 +280,7 @@ describe('read-only ciphertext inventory', () => {
       JSON.stringify([1, Buffer.from('fingerprint-key').toString('base64'), 'digest'])
     )
     db.close()
-    expect(readCredentialCiphertexts(paths).map((b) => b.toString())).toEqual([
+    expect(readCredentialCiphertexts(paths).map((b) => b.value.toString())).toEqual([
       'compute-password',
       'command',
       'fingerprint-key'
@@ -301,7 +309,11 @@ describe('read-only ciphertext inventory', () => {
     const decrypt = vi.fn(() => {
       throw new Error('wrong key')
     })
-    expect(() => verifyCredentialCiphertexts([ciphertext], decrypt)).toThrow(/recovery/i)
+    expect(() =>
+      verifyCredentialCiphertexts([{ kind: 'application', value: ciphertext }], {
+        decryptString: decrypt
+      })
+    ).toThrow(/recovery/i)
     expect(decrypt).toHaveBeenCalledTimes(1)
     expect(ciphertext.toString()).toBe('old-ciphertext')
   })
@@ -371,7 +383,7 @@ it('does not interpret ordinary names, prompts, command output, or legacy opaque
   )
   db.prepare('INSERT INTO ComputeAuthOperation VALUES (?)').run('legacy-opaque-fingerprint')
   db.close()
-  expect(readCredentialCiphertexts(paths).map((b) => b.toString())).toEqual([
+  expect(readCredentialCiphertexts(paths).map((b) => b.value.toString())).toEqual([
     'real-key',
     'classification-key',
     'real-device-key'
@@ -417,6 +429,100 @@ it('accepts historical settings version 1 without migration or rewriting', () =>
   const path = join(paths.configRoot, 'settings.json')
   const contents = JSON.stringify({ version: 1, providers: [{ keyRef: ref('legacy') }] })
   writeFileSync(path, contents)
-  expect(readCredentialCiphertexts(paths).map((value) => value.toString())).toEqual(['legacy'])
+  expect(readCredentialCiphertexts(paths).map((value) => value.value.toString())).toEqual([
+    'legacy'
+  ])
   expect(readFileSync(path, 'utf8')).toBe(contents)
+})
+
+describe('typed Chromium cookie inventory', () => {
+  const cookieDatabase = (
+    paths: ReturnType<typeof fixture>,
+    version: string | null = '24'
+  ): string => {
+    const path = join(paths.profilePath, 'Cookies')
+    const db = new DatabaseSync(path)
+    db.exec(
+      'CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT); CREATE TABLE cookies(host_key TEXT, encrypted_value BLOB)'
+    )
+    if (version !== null) db.prepare("INSERT INTO meta VALUES ('version', ?)").run(version)
+    db.prepare('INSERT INTO cookies VALUES (?, ?)').run(
+      'synthetic.example',
+      Buffer.from('encrypted-cookie')
+    )
+    db.close()
+    return path
+  }
+  it('keeps the host and schema with every cookie and never validates it as application text', () => {
+    const paths = fixture(),
+      path = cookieDatabase(paths)
+    writeFileSync(
+      join(paths.configRoot, 'settings.json'),
+      JSON.stringify({ version: 2, providers: [{ keyRef: ref('application') }] })
+    )
+    const before = readFileSync(path)
+    const inventory = readCredentialCiphertexts(paths)
+    expect(inventory).toEqual([
+      { kind: 'application', value: Buffer.from('application') },
+      {
+        kind: 'cookie',
+        value: Buffer.from('encrypted-cookie'),
+        hostKey: 'synthetic.example',
+        databaseVersion: 24
+      }
+    ])
+    const cipher = { decryptString: vi.fn(() => 'secret'), validateEncryptedCookie: vi.fn() }
+    verifyCredentialCiphertexts(inventory, cipher)
+    expect(cipher.decryptString).toHaveBeenCalledExactlyOnceWith(Buffer.from('application'))
+    expect(cipher.validateEncryptedCookie).toHaveBeenCalledExactlyOnceWith(
+      Buffer.from('encrypted-cookie'),
+      inventory[1]
+    )
+    expect(readFileSync(path)).toEqual(before)
+    expect(() =>
+      verifyCredentialCiphertexts(inventory, { decryptString: cipher.decryptString })
+    ).toThrow(/recovery/i)
+    cipher.validateEncryptedCookie.mockImplementation(() => {
+      throw new Error('private-host-or-cookie')
+    })
+    expect(() => verifyCredentialCiphertexts(inventory, cipher)).toThrow(/recovery/i)
+    expect(() => verifyCredentialCiphertexts(inventory, cipher)).not.toThrow(
+      /private-host-or-cookie/
+    )
+  })
+  it.each([null, '', '0', '-1', '24suffix', '24.5', '9007199254740992'])(
+    'rejects encrypted cookies with unverifiable schema %s',
+    (version) => {
+      const paths = fixture(),
+        path = cookieDatabase(paths, version),
+        before = readFileSync(path)
+      expect(() => readCredentialCiphertexts(paths)).toThrow(/recovery/i)
+      expect(readFileSync(path)).toEqual(before)
+    }
+  )
+  it('rejects ambiguous cookie metadata instead of selecting a weaker schema', () => {
+    const paths = fixture(),
+      path = cookieDatabase(paths)
+    const db = new DatabaseSync(path)
+    db.exec(
+      "DROP TABLE meta; CREATE TABLE meta(key TEXT, value TEXT); INSERT INTO meta VALUES ('version', '23'), ('version', '24')"
+    )
+    db.close()
+    expect(() => readCredentialCiphertexts(paths)).toThrow(/recovery/i)
+  })
+  it('rejects a missing cookie host rather than falling back to string decryption', () => {
+    const paths = fixture(),
+      path = cookieDatabase(paths)
+    const db = new DatabaseSync(path)
+    db.exec('UPDATE cookies SET host_key = NULL')
+    db.close()
+    expect(() => readCredentialCiphertexts(paths)).toThrow(/recovery/i)
+  })
+  it('does not require cookie metadata when there is no encrypted value', () => {
+    const paths = fixture(),
+      db = new DatabaseSync(join(paths.profilePath, 'Cookies'))
+    db.exec("CREATE TABLE cookies(encrypted_value BLOB); INSERT INTO cookies VALUES (X'')")
+    db.close()
+    expect(readCredentialCiphertexts(paths)).toEqual([])
+  })
 })

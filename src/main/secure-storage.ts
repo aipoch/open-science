@@ -6,6 +6,11 @@ interface SecureStorageCipher {
   getSelectedStorageBackend?(): string
   encryptString(value: string): Buffer
   decryptString(value: Buffer): string
+  // Startup-only binary cookie validation; application credentials remain strict UTF-8 strings.
+  validateEncryptedCookie?(
+    value: Buffer,
+    context: { hostKey: string; databaseVersion: number }
+  ): void
 }
 
 let selectedCipher: SecureStorageCipher | undefined
