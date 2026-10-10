@@ -13,6 +13,7 @@ import {
   type LiteratureCollectionView,
   literatureCandidateInputSchema,
   literatureItemInputSchema,
+  LITERATURE_IMPORT_IDENTITY_CONFLICT,
   type LiteratureCandidateInput
 } from '../../shared/literature'
 import { toCslItem } from '../../shared/literature-csl'
@@ -2306,57 +2307,447 @@ describe('LiteratureCatalog', () => {
     expect((await restarted.search({ scope: 'inbox' })).entries).toHaveLength(1)
   })
 
-  it('keeps acquired PDFs in Inbox until acceptance and reuses an existing library reference', async () => {
-    const catalog = await setup()
-    const existing = await catalog.transact({ kind: 'create-item', item: candidate().item })
+  const inboxIdentityConflicts = [
+    {
+      name: 'a disagreeing single owner',
+      records: [
+        [
+          ['doi', '10.1234/a'],
+          ['pmid', '111']
+        ]
+      ],
+      incoming: [
+        ['doi', '10.1234/b'],
+        ['pmid', '111']
+      ]
+    },
+    {
+      name: 'disagreeing identifiers on different owners',
+      records: [
+        [
+          ['doi', '10.1234/a'],
+          ['pmid', '111']
+        ],
+        [
+          ['doi', '10.1234/b'],
+          ['pmid', '222']
+        ]
+      ],
+      incoming: [
+        ['doi', '10.1234/b'],
+        ['pmid', '111']
+      ]
+    },
+    {
+      name: 'identifiers split between owners',
+      records: [[['pmid', '111']], [['doi', '10.1234/b']]],
+      incoming: [
+        ['doi', '10.1234/b'],
+        ['pmid', '111']
+      ]
+    },
+    {
+      name: 'duplicate owners sharing one identifier but disagreeing on another',
+      records: [
+        [
+          ['doi', '10.1234/b'],
+          ['pmid', '111']
+        ],
+        [
+          ['doi', '10.1234/b'],
+          ['pmid', '222']
+        ]
+      ],
+      incoming: [['doi', '10.1234/b']]
+    }
+  ] as const
+  const conflictingInboxItem = (
+    identifiers: readonly (readonly [string, string])[]
+  ): LiteratureCandidateInput['item'] =>
+    literatureItemInputSchema.parse({
+      ...candidate().item,
+      identifiers: identifiers.map(([scheme, value]) => ({ scheme, value, isPrimary: true }))
+    })
+  const inboxConflictPdf = {
+    contentBlobId: 'identity-conflict-blob',
+    checksum: 'e'.repeat(64),
+    sizeBytes: 128,
+    contentType: 'application/pdf',
+    filename: 'conflict.pdf',
+    pageCount: 8,
+    sourceUrl: 'https://example.test/conflict'
+  }
+  const createInboxConflictBlob = async (): Promise<void> => {
     await client!.contentBlob.create({
       data: {
-        id: 'inbox-blob',
-        checksum: 'c'.repeat(64),
-        storageKey: 'content/inbox-blob',
-        sizeBytes: 128n,
-        contentType: 'application/pdf',
+        id: inboxConflictPdf.contentBlobId,
+        checksum: inboxConflictPdf.checksum,
+        storageKey: 'content/identity-conflict-blob',
+        sizeBytes: BigInt(inboxConflictPdf.sizeBytes),
+        contentType: inboxConflictPdf.contentType,
         state: 'available'
       }
     })
-    const pdf = {
-      contentBlobId: 'inbox-blob',
-      checksum: 'c'.repeat(64),
-      sizeBytes: 128,
-      contentType: 'application/pdf',
-      filename: 'paper.pdf',
-      pageCount: 8,
-      sourceUrl: 'https://pmc.ncbi.nlm.nih.gov/articles/PMC1/',
-      provenance: {
-        provider: 'pmc',
-        source: 'PMC',
-        sourceUrl: 'https://pmc.ncbi.nlm.nih.gov/articles/PMC1/',
-        acquiredAt: 123,
-        version: 'accepted' as const,
-        license: 'cc-by'
+  }
+
+  it.each(
+    [
+      ...inboxIdentityConflicts,
+      {
+        name: 'multiple candidate DOI values without an established alias owner',
+        records: [],
+        incoming: [
+          ['doi', '10.1234/a'],
+          ['doi', '10.1234/b']
+        ] as const
       }
+    ].flatMap((entry) => ['metadata', 'PDF'].map((kind) => ({ ...entry, kind })))
+  )(
+    'rejects staging $kind with $name before linking any evidence',
+    async ({ records, incoming, kind }) => {
+      const catalog = await setup()
+      await catalog.importItems(records.map(conflictingInboxItem), undefined, 'separate')
+      const input = { ...candidate(), item: conflictingInboxItem(incoming) }
+      if (kind === 'PDF') await createInboxConflictBlob()
+      await expect(
+        kind === 'PDF'
+          ? catalog.stageAcquiredPdf(input, inboxConflictPdf)
+          : catalog.transact({ kind: 'stage-candidate', candidate: input })
+      ).rejects.toThrow(LITERATURE_IMPORT_IDENTITY_CONFLICT)
+      expect(await client!.literatureItem.count()).toBe(records.length)
+      expect(await client!.literatureInboxCandidate.count()).toBe(0)
+      expect(await client!.literatureInboxPdf.count()).toBe(0)
+      expect(await client!.literatureSourceRecord.count()).toBe(0)
+      expect(await client!.literatureAttachment.count()).toBe(0)
+      expect(await client!.projectLiterature.count()).toBe(0)
     }
-    const staged = await catalog.stageAcquiredPdf(candidate(), pdf)
-    expect(staged).toMatchObject({ kind: 'candidate', state: 'pending' })
-    await expect(catalog.stageAcquiredPdf(candidate(), pdf)).resolves.toEqual(staged)
-    expect((await catalog.get(existing.id))!.attachments).toEqual([])
-    expect((await catalog.search({ scope: 'inbox' })).entries[0]).toMatchObject({
-      pdfs: [{ filename: 'paper.pdf', pageCount: 8 }]
-    })
-    expect(
-      JSON.parse((await client!.literatureInboxPdf.findFirstOrThrow()).provenanceJson!)
-    ).toEqual(pdf.provenance)
-    const accepted = await catalog.transact({ kind: 'accept-candidate', candidateId: staged.id })
-    expect(accepted.id).toBe(existing.id)
-    expect((await catalog.get(existing.id))!.attachments[0].versions[0].provenance).toEqual(
-      pdf.provenance
+  )
+
+  it.each(inboxIdentityConflicts)(
+    'retains pending Inbox evidence if acceptance finds $name after staging',
+    async ({ records, incoming }) => {
+      const catalog = await setup()
+      await createInboxConflictBlob()
+      const staged = await catalog.stageAcquiredPdf(
+        { ...candidate(), item: conflictingInboxItem(incoming) },
+        inboxConflictPdf
+      )
+      const before = await client!.literatureInboxCandidate.findUniqueOrThrow({
+        where: { id: staged.id },
+        include: { pdfs: true, sourceRecords: true, discoveries: true }
+      })
+      expect(before.state).toBe('pending')
+      expect(before.pdfs).toHaveLength(1)
+      expect(before.sourceRecords).toHaveLength(1)
+      const { itemIds } = await catalog.importItems(
+        records.map(conflictingInboxItem),
+        undefined,
+        'separate'
+      )
+      await expect(
+        catalog.transact({ kind: 'accept-candidate', candidateId: staged.id })
+      ).rejects.toThrow(LITERATURE_IMPORT_IDENTITY_CONFLICT)
+      expect(
+        await client!.literatureInboxCandidate.findUniqueOrThrow({
+          where: { id: staged.id },
+          include: { pdfs: true, sourceRecords: true, discoveries: true }
+        })
+      ).toEqual(before)
+      expect(await client!.literatureItem.count()).toBe(records.length)
+      expect(await client!.literatureSourceRecord.count({ where: { itemId: { not: null } } })).toBe(
+        0
+      )
+      expect(await client!.literatureAttachment.count()).toBe(0)
+      expect(await client!.literatureAttachmentVersion.count()).toBe(0)
+      expect(await client!.projectLiterature.count()).toBe(0)
+      for (const id of itemIds)
+        await expect(catalog.get(id)).resolves.toMatchObject({ attachments: [], projectIds: [] })
+    }
+  )
+
+  it.each(
+    ['metadata', 'PDF'].flatMap((evidence) =>
+      ['primary DOI', 'known DOI alias', 'unknown DOI alias'].map((identity) => ({
+        evidence,
+        identity
+      }))
     )
-    expect((await catalog.get(existing.id))!.attachments).toHaveLength(1)
-    expect((await catalog.get(existing.id))!.projectIds).toEqual(['project-1'])
-    expect(await client!.literatureInboxPdf.count()).toBe(0)
-    await catalog.transact({ kind: 'accept-candidate', candidateId: staged.id })
-    expect((await catalog.get(existing.id))!.attachments).toHaveLength(1)
-  })
+  )(
+    'resolves merged aliases with a partial duplicate when staging and accepting $evidence ($identity)',
+    async ({ evidence, identity }) => {
+      const catalog = await setup()
+      const primary = candidate({ doi: '10.1234/x' })
+      const pmid = { scheme: 'pmid' as const, value: '111', isPrimary: true }
+      const libraryItem = { ...primary.item, identifiers: [...primary.item.identifiers, pmid] }
+      const input = candidate({
+        doi:
+          identity === 'primary DOI'
+            ? '10.1234/x'
+            : identity === 'known DOI alias'
+              ? '10.1234/y'
+              : '10.1234/z'
+      })
+      if (identity !== 'primary DOI') input.item.identifiers.push(pmid)
+      if (evidence === 'PDF') await createInboxConflictBlob()
+      const stage = (): ReturnType<LiteratureCatalog['stageAcquiredPdf']> =>
+        evidence === 'PDF'
+          ? catalog.stageAcquiredPdf(input, inboxConflictPdf)
+          : catalog.transact({ kind: 'stage-candidate', candidate: input })
+      const pending = await stage()
+      expect(pending).toMatchObject({ kind: 'candidate', state: 'pending' })
+      const survivor = await catalog.transact({ kind: 'create-item', item: libraryItem })
+      const donor = await catalog.transact({
+        kind: 'create-item',
+        item: candidate({ doi: '10.1234/y' }).item
+      })
+      const reviewed = (await Promise.all([catalog.get(survivor.id), catalog.get(donor.id)])).map(
+        (view) => view!
+      )
+      await catalog.transact({
+        kind: 'merge-items',
+        survivorId: survivor.id,
+        duplicateIds: [donor.id],
+        expectedMetadataRevision: reviewed[0]!.metadataRevision,
+        expectedItems: reviewed.map((view) => ({
+          id: view.id,
+          metadataRevision: view.metadataRevision,
+          updatedAt: view.updatedAt
+        })),
+        item: {
+          ...reviewed[0]!.item,
+          identifiers: [
+            ...reviewed[0]!.item.identifiers,
+            { scheme: 'doi', value: '10.1234/y', isPrimary: false }
+          ]
+        }
+      })
+      const partial = await catalog.transact({
+        kind: 'create-item',
+        item: libraryItem,
+        duplicatePolicy: 'separate'
+      })
+      await client!.literatureItem.update({
+        where: { id: partial.id },
+        data: { createdAt: new Date(Date.now() + 1_000) }
+      })
+      expect((await catalog.get(survivor.id))!.item.identifiers).toHaveLength(3)
+      expect((await catalog.get(partial.id))!.item.identifiers).toHaveLength(2)
+      if (identity === 'unknown DOI alias') {
+        const before = await client!.literatureInboxCandidate.findUniqueOrThrow({
+          where: { id: pending.id },
+          include: { pdfs: true, sourceRecords: true, discoveries: true }
+        })
+        await expect(stage()).rejects.toThrow(LITERATURE_IMPORT_IDENTITY_CONFLICT)
+        await expect(
+          catalog.transact({ kind: 'accept-candidate', candidateId: pending.id })
+        ).rejects.toThrow(LITERATURE_IMPORT_IDENTITY_CONFLICT)
+        expect(
+          await client!.literatureInboxCandidate.findUniqueOrThrow({
+            where: { id: pending.id },
+            include: { pdfs: true, sourceRecords: true, discoveries: true }
+          })
+        ).toEqual(before)
+        expect(
+          await client!.literatureSourceRecord.count({ where: { itemId: { not: null } } })
+        ).toBe(0)
+        expect(await client!.literatureAttachment.count()).toBe(0)
+        expect(await client!.projectLiterature.count()).toBe(0)
+        return
+      }
+      await expect(stage()).resolves.toMatchObject(
+        evidence === 'PDF'
+          ? { kind: 'candidate', id: pending.id, state: 'pending' }
+          : { kind: 'item', id: survivor.id, state: 'present' }
+      )
+      await expect(
+        catalog.transact({ kind: 'accept-candidate', candidateId: pending.id })
+      ).resolves.toMatchObject({ kind: 'item', id: survivor.id, state: 'linked' })
+      await expect(
+        client!.literatureInboxCandidate.findUniqueOrThrow({ where: { id: pending.id } })
+      ).resolves.toMatchObject({ state: 'accepted', acceptedItemId: survivor.id })
+      expect((await catalog.get(survivor.id))!.projectIds).toEqual(['project-1'])
+      expect((await catalog.get(survivor.id))!.attachments).toHaveLength(evidence === 'PDF' ? 1 : 0)
+      expect(await client!.literatureSourceRecord.count({ where: { itemId: survivor.id } })).toBe(1)
+      expect(await client!.literatureInboxPdf.count()).toBe(0)
+      expect(
+        await client!.literatureSourceRecord.count({ where: { inboxCandidateId: pending.id } })
+      ).toBe(0)
+      await expect(catalog.get(partial.id)).resolves.toMatchObject({
+        attachments: [],
+        projectIds: []
+      })
+      expect(await client!.literatureSourceRecord.count({ where: { itemId: partial.id } })).toBe(0)
+    }
+  )
+
+  it.each(
+    ['metadata', 'PDF'].flatMap((evidence) =>
+      ['stage', 'accept'].flatMap((operation) =>
+        [true, false].map((known) => ({ evidence, operation, known }))
+      )
+    )
+  )(
+    'checks complete candidate DOI aliases against a stored owner ($evidence, $operation, known=$known)',
+    async ({ evidence, operation, known }) => {
+      const catalog = await setup()
+      const input = candidate({ doi: '10.1234/x' })
+      if (evidence === 'PDF') await createInboxConflictBlob()
+      const stage = (): ReturnType<LiteratureCatalog['stageAcquiredPdf']> =>
+        evidence === 'PDF'
+          ? catalog.stageAcquiredPdf(input, inboxConflictPdf)
+          : catalog.transact({ kind: 'stage-candidate', candidate: input })
+      const pending = operation === 'accept' ? await stage() : undefined
+      const survivor = await catalog.transact({ kind: 'create-item', item: input.item })
+      const donor = await catalog.transact({
+        kind: 'create-item',
+        item: candidate({ doi: '10.1234/y' }).item
+      })
+      const reviewed = (await Promise.all([catalog.get(survivor.id), catalog.get(donor.id)])).map(
+        (view) => view!
+      )
+      await catalog.transact({
+        kind: 'merge-items',
+        survivorId: survivor.id,
+        duplicateIds: [donor.id],
+        expectedMetadataRevision: reviewed[0].metadataRevision,
+        expectedItems: reviewed.map((view) => ({
+          id: view.id,
+          metadataRevision: view.metadataRevision,
+          updatedAt: view.updatedAt
+        })),
+        item: {
+          ...reviewed[0].item,
+          identifiers: [
+            ...reviewed[0].item.identifiers,
+            { scheme: 'doi', value: '10.1234/y', isPrimary: false }
+          ]
+        }
+      })
+      input.item.identifiers.push({
+        scheme: 'doi',
+        value: known ? '10.1234/y' : '10.1234/z',
+        isPrimary: false
+      })
+      // Legacy pending candidates can already contain the complete alias set.
+      if (pending)
+        await client!.literatureInboxCandidate.update({
+          where: { id: pending.id },
+          data: { candidateJson: JSON.stringify(input) }
+        })
+      const before = await client!.literatureInboxCandidate.findMany({
+        include: { pdfs: true, sourceRecords: true, discoveries: true }
+      })
+      const submit = (): ReturnType<typeof stage> =>
+        pending ? catalog.transact({ kind: 'accept-candidate', candidateId: pending.id }) : stage()
+      if (!known) {
+        await expect(submit()).rejects.toThrow(LITERATURE_IMPORT_IDENTITY_CONFLICT)
+        expect(
+          await client!.literatureInboxCandidate.findMany({
+            include: { pdfs: true, sourceRecords: true, discoveries: true }
+          })
+        ).toEqual(before)
+        await expect(catalog.get(survivor.id)).resolves.toMatchObject({
+          attachments: [],
+          projectIds: []
+        })
+        expect(
+          await client!.literatureSourceRecord.count({ where: { itemId: { not: null } } })
+        ).toBe(0)
+        return
+      }
+      const receipt = await submit()
+      if (receipt.kind === 'candidate') {
+        await expect(
+          catalog.transact({ kind: 'accept-candidate', candidateId: receipt.id })
+        ).resolves.toMatchObject({ kind: 'item', id: survivor.id, state: 'linked' })
+      } else {
+        expect(receipt).toMatchObject({ kind: 'item', id: survivor.id })
+      }
+      await expect(catalog.get(survivor.id)).resolves.toMatchObject({ projectIds: ['project-1'] })
+      expect((await catalog.get(survivor.id))!.attachments).toHaveLength(evidence === 'PDF' ? 1 : 0)
+      expect(await client!.literatureSourceRecord.count({ where: { itemId: survivor.id } })).toBe(1)
+      expect(await client!.literatureInboxPdf.count()).toBe(0)
+    }
+  )
+
+  it.each(['complete', 'missing PMID'])(
+    'keeps acquired PDFs in Inbox and reuses the oldest compatible duplicate (%s)',
+    async (identityFields) => {
+      const catalog = await setup()
+      const input = {
+        ...candidate().item,
+        identifiers: [
+          ...candidate().item.identifiers,
+          { scheme: 'pmid' as const, value: '111', isPrimary: true }
+        ]
+      }
+      const existing = await catalog.transact({ kind: 'create-item', item: input })
+      const duplicate = await catalog.transact({
+        kind: 'create-item',
+        item: identityFields === 'complete' ? input : candidate().item,
+        duplicatePolicy: 'separate'
+      })
+      await client!.literatureItem.update({
+        where: { id: duplicate.id },
+        data: { createdAt: new Date(Date.now() + 1_000) }
+      })
+      await expect(
+        catalog.transact({ kind: 'stage-candidate', candidate: candidate() })
+      ).resolves.toMatchObject({ kind: 'item', id: existing.id, state: 'present' })
+      await client!.contentBlob.create({
+        data: {
+          id: 'inbox-blob',
+          checksum: 'c'.repeat(64),
+          storageKey: 'content/inbox-blob',
+          sizeBytes: 128n,
+          contentType: 'application/pdf',
+          state: 'available'
+        }
+      })
+      const pdf = {
+        contentBlobId: 'inbox-blob',
+        checksum: 'c'.repeat(64),
+        sizeBytes: 128,
+        contentType: 'application/pdf',
+        filename: 'paper.pdf',
+        pageCount: 8,
+        sourceUrl: 'https://pmc.ncbi.nlm.nih.gov/articles/PMC1/',
+        provenance: {
+          provider: 'pmc',
+          source: 'PMC',
+          sourceUrl: 'https://pmc.ncbi.nlm.nih.gov/articles/PMC1/',
+          acquiredAt: 123,
+          version: 'accepted' as const,
+          license: 'cc-by'
+        }
+      }
+      const staged = await catalog.stageAcquiredPdf(candidate(), pdf)
+      expect(staged).toMatchObject({ kind: 'candidate', state: 'pending' })
+      await expect(catalog.stageAcquiredPdf(candidate(), pdf)).resolves.toEqual(staged)
+      expect((await catalog.get(existing.id))!.attachments).toEqual([])
+      expect((await catalog.search({ scope: 'inbox' })).entries[0]).toMatchObject({
+        pdfs: [{ filename: 'paper.pdf', pageCount: 8 }]
+      })
+      expect(
+        JSON.parse((await client!.literatureInboxPdf.findFirstOrThrow()).provenanceJson!)
+      ).toEqual(pdf.provenance)
+      const accepted = await catalog.transact({ kind: 'accept-candidate', candidateId: staged.id })
+      expect(accepted.id).toBe(existing.id)
+      expect((await catalog.get(existing.id))!.attachments[0].versions[0].provenance).toEqual(
+        pdf.provenance
+      )
+      expect((await catalog.get(existing.id))!.attachments).toHaveLength(1)
+      expect((await catalog.get(existing.id))!.projectIds).toEqual(['project-1'])
+      expect((await catalog.get(duplicate.id))!.attachments).toEqual([])
+      expect((await catalog.get(duplicate.id))!.projectIds).toEqual([])
+      expect(await client!.literatureSourceRecord.count({ where: { itemId: duplicate.id } })).toBe(
+        0
+      )
+      expect(await client!.literatureInboxPdf.count()).toBe(0)
+      await catalog.transact({ kind: 'accept-candidate', candidateId: staged.id })
+      expect((await catalog.get(existing.id))!.attachments).toHaveLength(1)
+    }
+  )
 
   it('rejects a cancelled acquisition while waiting for the database client before any Inbox write', async () => {
     await setup()
