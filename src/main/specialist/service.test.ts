@@ -1,3 +1,4 @@
+import { builtinConnectorRegistry } from '../connectors/registry'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { mkdir, readFile, writeFile, rm } from 'node:fs/promises'
@@ -985,6 +986,7 @@ describe.each(['full', 'selected'] as const)(
         expect.soft((await service.listForSettingsSnapshot()).integrity.status).toBe('degraded')
         const dispatch = vi.fn().mockResolvedValue({ ok: true })
         const gate = new ConnectorService({
+          registry: builtinConnectorRegistry,
           mcpClientManager: {
             call: dispatch,
             listTools: vi.fn().mockResolvedValue([{ name: 'danger' }])

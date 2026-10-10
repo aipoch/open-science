@@ -1,7 +1,7 @@
-import type { ToolDescriptor } from '../types'
+import type { ToolDescriptor } from '../../connector-core/types'
 import { netFetchStandard } from '../../skills/net-fetch'
-import { abortableDelay } from '../abortable-delay'
-import { withTimeoutSignal } from '../request-policy'
+import { abortableDelay } from '../../connector-core/abortable-delay'
+import { withTimeoutSignal } from '../../connector-core/request-policy'
 
 // CartBlanche22 (ZINC22 purchasable-compound search) — every search endpoint is ASYNC and
 // POST-only (form-encoded): submit returns a task receipt {"task": "<uuid>"}, and the result is

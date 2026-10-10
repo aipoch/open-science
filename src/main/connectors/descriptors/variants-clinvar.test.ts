@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { ParserEngine } from '../engine'
 import { VARIANTS_CLINVAR_TOOLS } from './variants-clinvar'
-import type { ToolDescriptor } from '../types'
+import type { ToolDescriptor } from '../../connector-core/types'
 
 const jsonRes = (body: unknown): Response =>
   ({ ok: true, status: 200, json: async () => body }) as Response

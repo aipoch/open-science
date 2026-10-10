@@ -1,7 +1,7 @@
 import { configureTestRuntimeNetwork } from '../../../../test/runtime-host'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ZINC_TOOLS } from './zinc'
-import type { ToolContext } from '../types'
+import type { ToolContext } from '../../connector-core/types'
 
 const byId = ZINC_TOOLS.find((t) => t.id === 'zinc_search_by_id')!
 const bySmiles = ZINC_TOOLS.find((t) => t.id === 'zinc_search_by_smiles')!

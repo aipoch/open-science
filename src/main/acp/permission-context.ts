@@ -34,12 +34,14 @@ import {
   type RestoredPermissionContinuation
 } from './permission-broker'
 import type { PermissionPolicyContext } from './permission-policy'
+import { APP_AUTO_OPERATION_IDENTITIES } from './auto-operation-policy'
 import {
   isNativeWebFetchCandidate,
   isNativeWebSearchCandidate,
   isMcpToolName,
   trustedMcpToolIdentity,
   withTrustedMcpToolIdentity,
+  withTrustedAutoOperation,
   withTrustedNativeToolIdentity
 } from './permission-policy'
 import { extractProviderToolName, toAcpRuntimeEvent } from './runtime-events'
@@ -1092,6 +1094,22 @@ class AcpPermissionContext {
     }
     if (framework === 'claude-code') {
       return this.restoreClaudeCodeMcpToolInput(params, sessionId, mcpServerNames)
+    }
+    if (framework === 'codebuddy') {
+      // Repair identity correlation only for this Auto change. Restoring unrelated CodeBuddy
+      // metadata would also change existing automatic rules and remembered-grant matching.
+      const inputs = this.claudeCodeMcpToolInputs.get(sessionId)
+      const input = inputs?.get(params.toolCall.toolCallId)
+      if (
+        !input ||
+        input.title !== params.toolCall.title ||
+        !isMcpToolName(input.title, mcpServerNames) ||
+        !APP_AUTO_OPERATION_IDENTITIES.has(input.mcpIdentity)
+      )
+        return params
+      inputs?.delete(params.toolCall.toolCallId)
+      if (inputs?.size === 0) this.claudeCodeMcpToolInputs.delete(sessionId)
+      return withTrustedAutoOperation(params, input.mcpIdentity, input.rawInput)
     }
     if (framework === 'opencode') {
       if (this.isOpenCodeRequestCancelled(sessionId, params.toolCall.toolCallId, context)) {

@@ -1,4 +1,4 @@
-import type { ToolContext, ToolDescriptor } from '../types'
+import type { ToolContext, ToolDescriptor } from '../../connector-core/types'
 
 // bioRxiv/medRxiv REST API (api.biorxiv.org): read-only preprint metadata, published-article links,
 // funder listings, and platform statistics. There is NO keyword/text search — filter by date and

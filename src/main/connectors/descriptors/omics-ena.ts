@@ -1,4 +1,4 @@
-import type { ToolContext, ToolDescriptor } from '../types'
+import type { ToolContext, ToolDescriptor } from '../../connector-core/types'
 
 const FILE_REPORT = 'https://www.ebi.ac.uk/ena/portal/api/filereport'
 const SEARCH = 'https://www.ebi.ac.uk/ena/portal/api/search'

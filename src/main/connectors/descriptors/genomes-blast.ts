@@ -1,6 +1,6 @@
-import type { ToolContext, ToolDescriptor } from '../types'
+import type { ToolContext, ToolDescriptor } from '../../connector-core/types'
 import { netFetchStandard } from '../../skills/net-fetch'
-import { withTimeoutSignal } from '../request-policy'
+import { withTimeoutSignal } from '../../connector-core/request-policy'
 import { redactSensitiveText } from '../../diagnostic-redaction'
 
 const BLAST_URL = 'https://blast.ncbi.nlm.nih.gov/Blast.cgi'

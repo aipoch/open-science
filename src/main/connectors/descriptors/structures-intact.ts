@@ -1,4 +1,4 @@
-import type { ToolContext, ToolDescriptor } from '../types'
+import type { ToolContext, ToolDescriptor } from '../../connector-core/types'
 
 // EBI IntAct molecular-interaction web service (www.ebi.ac.uk/intact/ws). Ports the upstream
 // `intact_interactions` reference (client.py / core.py / details.py): a count-verified paginated

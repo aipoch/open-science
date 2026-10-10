@@ -224,7 +224,19 @@
       "src/main/notebook/managed-execution-entrypoints.integration.test.ts",
       "src/main/notebook/session-operation-owner.integration.test.ts",
       "src/main/notebook/managed-execution-service.test.ts",
-      "src/main/research-execution-profiles/ipc.test.ts"
+      "src/main/research-execution-profiles/ipc.test.ts",
+      "src/main/acp/auto-operation-adapter.test.ts",
+      "src/main/acp/auto-operation-broker.test.ts",
+      "src/main/acp/auto-operation-inventory.test.ts",
+      "src/main/acp/auto-operation-policy.test.ts",
+      "src/main/acp/client-interaction-owner.test.ts",
+      "src/main/acp/library-auto-policy.test.ts",
+      "src/main/acp/permission-broker.test.ts",
+      "src/main/acp/permission-context.test.ts",
+      "src/main/acp/permission-frequency.test.ts",
+      "src/main/acp/permission-policy.test.ts",
+      "src/main/acp/permission-wait-owner.test.ts",
+      "src/renderer/src/lib/session-persistence/session-persistence.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

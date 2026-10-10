@@ -1,4 +1,4 @@
-import type { ToolContext, ToolDescriptor } from '../types'
+import type { ToolContext, ToolDescriptor } from '../../connector-core/types'
 
 // ClinicalTrials.gov API v2. Read-only; the engine paces and retries 429/5xx. Each tool is
 // page-oriented: page_size / page_token are forwarded server-side and next_page_token is returned,

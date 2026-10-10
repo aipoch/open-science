@@ -1,4 +1,4 @@
-import type { ToolDescriptor } from '../types'
+import type { ToolDescriptor } from '../../connector-core/types'
 import { VARIANTS_GNOMAD_TOOLS } from './variants-gnomad'
 import { VARIANTS_CLINVAR_TOOLS } from './variants-clinvar'
 import { VARIANTS_DBSNP_TOOLS } from './variants-dbsnp'

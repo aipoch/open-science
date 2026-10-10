@@ -1614,7 +1614,10 @@ describe('Settings backend ownership architecture', () => {
       'src/main/notebook/screened-auxiliary-output.test.ts',
       'src/main/notebook/session-operation-owner.integration.test.ts',
       'src/main/research-execution-profiles/ipc.test.ts',
-      'src/main/session-package/headless.test.ts'
+      'src/main/session-package/headless.test.ts',
+      'src/main/acp/auto-operation-adapter.test.ts',
+      'src/main/acp/auto-operation-broker.test.ts',
+      'src/main/acp/auto-operation-policy.test.ts'
     ])
     expect(
       [

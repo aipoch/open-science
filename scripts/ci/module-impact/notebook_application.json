@@ -1112,7 +1112,16 @@
       "src/main/notebook/managed-shell.macos.integration.test.ts",
       "src/main/notebook/research-material-authority.test.ts",
       "src/main/research-execution-profiles/ipc.test.ts",
-      "src/main/session-package/headless.test.ts"
+      "src/main/session-package/headless.test.ts",
+      "src/main/acp/auto-operation-adapter.test.ts",
+      "src/main/acp/auto-operation-broker.test.ts",
+      "src/main/acp/auto-operation-inventory.test.ts",
+      "src/main/acp/auto-operation-policy.test.ts",
+      "src/main/acp/client-interaction-owner.test.ts",
+      "src/main/acp/permission-broker.test.ts",
+      "src/main/acp/permission-context.test.ts",
+      "src/main/acp/permission-frequency.test.ts",
+      "src/main/acp/permission-policy.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

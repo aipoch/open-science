@@ -1,6 +1,6 @@
 import { DOMParser } from '@xmldom/xmldom'
-import { ncbiEtiquette } from './ncbi'
-import type { ToolContext, ToolDescriptor } from '../types'
+import { ncbiEtiquette } from '../../connector-core/ncbi'
+import type { ToolContext, ToolDescriptor } from '../../connector-core/types'
 
 const EUTILS = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils'
 

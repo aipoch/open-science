@@ -1,4 +1,4 @@
-import type { ToolDescriptor } from '../types'
+import type { ToolDescriptor } from '../../connector-core/types'
 import { OPENALEX_LITERATURE_TOOLS } from './literature-openalex'
 import { ARXIV_LITERATURE_TOOLS } from './literature-arxiv'
 import { DOI_LITERATURE_TOOLS } from './literature-doi'

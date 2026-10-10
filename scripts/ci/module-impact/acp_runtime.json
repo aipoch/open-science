@@ -225,7 +225,12 @@
     "src/main/acp/approved-handoff-outcome.ts",
     "src/main/acp/approved-handoff-outcome.integration.test.ts",
     "src/main/acp/approved-handoff-outcome.test.ts",
-    "src/main/acp/specialist-switch-recovery.integration.test.ts"
+    "src/main/acp/specialist-switch-recovery.integration.test.ts",
+    "src/main/acp/auto-operation-adapter.test.ts",
+    "src/main/acp/auto-operation-broker.test.ts",
+    "src/main/acp/auto-operation-inventory.test.ts",
+    "src/main/acp/auto-operation-policy.test.ts",
+    "src/main/acp/auto-operation-policy.ts"
   ],
   "interfacePaths": [
     "src/main/acp/agent-process.ts",
@@ -396,7 +401,11 @@
       "src/main/process-tree.windows.integration.test.ts",
       "src/main/acp/approved-handoff-outcome.integration.test.ts",
       "src/main/acp/approved-handoff-outcome.test.ts",
-      "src/main/acp/specialist-switch-recovery.integration.test.ts"
+      "src/main/acp/specialist-switch-recovery.integration.test.ts",
+      "src/main/acp/auto-operation-adapter.test.ts",
+      "src/main/acp/auto-operation-broker.test.ts",
+      "src/main/acp/auto-operation-inventory.test.ts",
+      "src/main/acp/auto-operation-policy.test.ts"
     ],
     "contract": [
       "src/main/agent-framework/app-mcp-names.test.ts",

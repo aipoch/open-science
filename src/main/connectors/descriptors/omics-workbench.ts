@@ -1,4 +1,4 @@
-import type { ToolContext, ToolDescriptor } from '../types'
+import type { ToolContext, ToolDescriptor } from '../../connector-core/types'
 
 // Public read-only API: https://www.metabolomicsworkbench.org/tools/MWRestAPIv1.1.pdf
 const BASE = 'https://www.metabolomicsworkbench.org/rest'

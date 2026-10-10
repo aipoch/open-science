@@ -1,4 +1,4 @@
-import type { ToolDescriptor } from '../types'
+import type { ToolDescriptor } from '../../connector-core/types'
 
 // Public read API: https://api.mavedb.org/openapi.json. Search pagination is in the
 // POST body; CSV pagination uses start/limit; mapped-variants has no pagination.

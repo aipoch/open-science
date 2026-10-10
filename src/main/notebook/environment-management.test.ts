@@ -139,6 +139,28 @@ describe('NotebookEnvironmentManagementOwner', () => {
     }
   )
 
+  it('lists without mutation and preserves the creation policy for the next request', async () => {
+    const {
+      owner,
+      options,
+      manager: configured
+    } = harness({
+      isAgentEnvironmentCreationEnabled: vi.fn().mockResolvedValue(false)
+    })
+    await expect(owner.manage({ action: 'list' })).resolves.toEqual({ environments: [] })
+    expect(options.isAgentEnvironmentCreationEnabled).not.toHaveBeenCalled()
+    expect(options.ensureRecovered).not.toHaveBeenCalled()
+    expect(options.environmentOperations.runMutation).not.toHaveBeenCalled()
+    expect(configured?.createNamedEnvironment).not.toHaveBeenCalled()
+    expect(configured?.removeEnvironment).not.toHaveBeenCalled()
+    await expect(
+      owner.manage({ action: 'create', name: 'analysis', language: 'python' })
+    ).rejects.toThrow('AGENT_ENVIRONMENT_CREATION_DISABLED')
+    expect(options.isAgentEnvironmentCreationEnabled).toHaveBeenCalledOnce()
+    expect(options.environmentOperations.runMutation).not.toHaveBeenCalled()
+    expect(configured?.createNamedEnvironment).not.toHaveBeenCalled()
+  })
+
   it('does not enter policy or recovery for an already cancelled request', async () => {
     const { owner, options } = harness()
     const cancellation = new AbortController()
