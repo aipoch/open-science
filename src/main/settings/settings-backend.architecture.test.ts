@@ -1591,7 +1591,8 @@ describe('Settings backend ownership architecture', () => {
       'src/main/desktop-native-electron.test.ts',
       'src/main/session-plan/session-plan-turn-outcome.test.ts',
       'src/main/acp/specialist-switch-recovery.integration.test.ts',
-      'src/main/agents/production-completion-handoff.test.ts'
+      'src/main/agents/production-completion-handoff.test.ts',
+      'src/main/session-package/research-reproduction.integration.test.ts'
     ])
     expect(
       [

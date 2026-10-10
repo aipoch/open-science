@@ -1,6 +1,8 @@
 import type { RequestNotebookNetworkAccessResult } from '../../shared/notebook'
 import type { ShellRuntimeBinding } from '../../shared/notebook'
 import type { WindowsNotebookRuntime } from './windows-notebook-runtime'
+import type { NotebookLocalService } from '@aipoch/notebook-network-sandbox'
+export type { NotebookLocalService } from '@aipoch/notebook-network-sandbox'
 
 export type NotebookSandboxTarget =
   | Readonly<{ kind: 'native' }>
@@ -49,6 +51,8 @@ export const withNotebookSandboxProcessState = (
 }
 
 export type NotebookSandboxInvocation = Readonly<{
+  /** Trusted host capability; its identity must match this invocation's executionReference. */
+  localService?: NotebookLocalService
   target?: NotebookSandboxTarget
   executable: string
   args: readonly string[]

@@ -819,6 +819,8 @@
       "src/main/office-preview/application-commands.test.ts",
       "src/main/reviewer/paged-preview-host.test.ts",
       "src/main/desktop-native-electron.test.ts",
+      "src/main/session-package/research-reproduction.integration.test.ts",
+      "src/main/notebook/research-service.macos.integration.test.ts",
       "src/main/session-plan/session-plan-turn-outcome.test.ts",
       "src/renderer/src/pages/workspace/session-plan/session-plan-resume.test.tsx"
     ]

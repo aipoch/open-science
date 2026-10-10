@@ -71,6 +71,8 @@
     "packages/notebook-network-sandbox/vendor/windows-runtime/README.md",
     "packages/notebook-network-sandbox/vendor/windows-runtime/sources.json",
     "packages/notebook-network-sandbox/vendor/windows-runtime/npm/prepare.mjs",
+    "packages/notebook-network-sandbox/runtime/src/platform/local-service.ts",
+    "packages/notebook-network-sandbox/src/local-service.test.ts",
     "scripts/windows-installer-smoke.test.ts",
     "scripts/check-windows-notebook-runtime.test.ts",
     "scripts/windows-runtime-cdn.test.ts",
@@ -85,9 +87,10 @@
     "packages/notebook-network-sandbox/runtime/src/platform/electron-as-node-launch-policy.ts",
     "packages/notebook-network-sandbox/src/config.ts",
     "packages/notebook-network-sandbox/vendor/wsl2/manifest.json",
-    "packages/notebook-network-sandbox/src/config-root.ts"
+    "packages/notebook-network-sandbox/src/config-root.ts",
+    "packages/notebook-network-sandbox/runtime/src/platform/local-service.ts"
   ],
-  "consumerModules": [],
+  "consumerModules": ["notebook_execution"],
   "testFiles": {
     "owner": [
       "packages/notebook-network-sandbox/src/config.test.ts",
@@ -114,7 +117,8 @@
       "packages/notebook-network-sandbox/src/windows-runtime-access.test.ts",
       "packages/notebook-network-sandbox/src/wsl2-isolation.integration.test.ts",
       "packages/notebook-network-sandbox/src/wsl2-isolation.test.ts",
-      "packages/notebook-network-sandbox/src/installed-package.test.ts"
+      "packages/notebook-network-sandbox/src/installed-package.test.ts",
+      "packages/notebook-network-sandbox/src/local-service.test.ts"
     ],
     "contract": [],
     "consumer": [
@@ -630,10 +634,27 @@
       "src/main/office-preview/application-commands.test.ts",
       "src/main/reviewer/paged-preview-host.test.ts",
       "src/main/desktop-native-electron.test.ts",
+      "src/main/notebook/research-service.macos.integration.test.ts",
+      "src/main/session-package/research-reproduction.integration.test.ts",
+      "src/main/notebook/local-service.macos.integration.test.ts",
+      "src/main/notebook/windows-runtime-probe.test.ts",
+      "src/main/wsl/wsl2-packaged-restart-certification.test.ts",
+      "src/main/notebook/shell-runtime.test.ts",
+      "src/main/acp/context-usage-static-context.test.ts",
+      "src/main/agent-framework/claude-code.test.ts",
+      "src/main/agent-framework/native-shell-policy.test.ts",
+      "src/main/notebook/mcp-wsl-diagnostics.test.ts",
+      "src/main/notebook/skill-loading-guidance.test.ts",
+      "src/main/notebook/configured-shell-runtime.test.ts",
+      "src/main/acp/permission-context.test.ts",
+      "src/main/acp/permission-frequency.test.ts",
+      "src/main/acp/client-interaction-owner.test.ts",
+      "src/main/notebook/local-service-lease.test.ts",
       "src/main/session-plan/session-plan-turn-outcome.test.ts",
       "src/main/notebook/runtime-repair.windows.integration.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
-      "src/main/agents/production-completion-handoff.test.ts"
+      "src/main/agents/production-completion-handoff.test.ts",
+      "src/main/node-process-host.test.ts"
     ]
   },
   "capabilityOverlays": [],

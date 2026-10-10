@@ -210,6 +210,13 @@
     "src/main/notebook/windows-notebook-runtime.ts",
     "src/main/notebook/windows-notebook-runtime.test.ts",
     "src/main/notebook/code-risk-admission.test.ts",
+    "src/main/notebook/local-service-lease.ts",
+    "src/main/notebook/local-service-lease.test.ts",
+    "src/main/notebook/local-service.macos.integration.test.ts",
+    "src/main/notebook/node-local-service-preload.mjs",
+    "src/main/notebook/node-local-service-preload.test.ts",
+    "src/main/notebook/research-service.macos.integration.test.ts",
+    "src/main/notebook/fixtures/research-service-driver.mjs",
     "test/fixtures/fake_loop.py",
     "src/main/notebook/python-command.probe.test.ts",
     "src/main/notebook/runtime-repair.windows.integration.test.ts",
@@ -314,6 +321,8 @@
     "src/main/notebook/dependency-analysis.rdkit.test.ts",
     "src/main/notebook/dependency-analysis.scipy-sparse-composition.test.ts",
     "src/main/notebook/dependency-analysis.scipy-sparse.test.ts",
+    "src/main/notebook/local-service-lease.ts",
+    "src/main/notebook/node-local-service-preload.mjs",
     "src/main/notebook/windows-python.test-support.ts"
   ],
   "consumerModules": [],
@@ -397,6 +406,10 @@
       "src/main/notebook/r-connection-guard.test.ts",
       "src/main/notebook/windows-notebook-runtime.test.ts",
       "src/main/notebook/code-risk-admission.test.ts",
+      "src/main/notebook/local-service-lease.test.ts",
+      "src/main/notebook/local-service.macos.integration.test.ts",
+      "src/main/notebook/node-local-service-preload.test.ts",
+      "src/main/notebook/research-service.macos.integration.test.ts",
       "src/main/notebook/python-command.probe.test.ts",
       "src/main/notebook/runtime-repair.windows.integration.test.ts",
       "src/main/notebook/windows-python-probe.integration.test.ts"
@@ -1017,7 +1030,8 @@
       "src/main/desktop-native-electron.test.ts",
       "src/main/session-plan/session-plan-turn-outcome.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
-      "src/main/agents/production-completion-handoff.test.ts"
+      "src/main/agents/production-completion-handoff.test.ts",
+      "src/main/session-package/research-reproduction.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],
