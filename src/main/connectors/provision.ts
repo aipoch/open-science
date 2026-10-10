@@ -43,18 +43,24 @@ const findCaseFoldedAlias = async (
 // passes can never delete each other's output.
 export async function syncConnectorSkillDocs(
   skillsDir: string,
-  enabledIds: string[]
+  enabledIds: string[],
+  signal?: AbortSignal
 ): Promise<void> {
+  signal?.throwIfAborted()
   // A first-run pre-enabled connector may sync before the skills dir has ever been created.
   await mkdir(skillsDir, { recursive: true })
   const enabled = new Set(enabledIds.filter((id) => ALL_CONNECTOR_IDS.includes(id)))
   for (const id of enabled) {
+    signal?.throwIfAborted()
     const dir = join(skillsDir, `mcp-${id}`)
     await mkdir(dir, { recursive: true })
+    signal?.throwIfAborted()
     await writeFile(join(dir, 'SKILL.md'), renderSkillDoc(id), 'utf8')
   }
+  signal?.throwIfAborted()
   const existing = await readdir(skillsDir).catch(() => [] as string[])
   for (const entry of existing) {
+    signal?.throwIfAborted()
     const m = /^mcp-(.+)$/.exec(entry)
     if (!m || !namesBundledConnector(m[1])) continue // not a bundled-connector dir; leave it alone
     const canonicalId = m[1].toLowerCase()
@@ -76,6 +82,7 @@ export async function syncConnectorSkillDocs(
       ])
       const distinct =
         canonical && variant && (canonical.dev !== variant.dev || canonical.ino !== variant.ino)
+      signal?.throwIfAborted()
       if (distinct) await rm(join(skillsDir, entry), { recursive: true, force: true })
     }
   }
@@ -104,8 +111,10 @@ export async function syncCustomServerSkillDocs(
   skillsDir: string,
   servers: StoredCustomMcpServer[],
   listTools: CustomServerListTools,
-  cleanupNames?: readonly string[]
+  cleanupNames?: readonly string[],
+  signal?: AbortSignal
 ): Promise<CustomServerSkillSyncResult> {
+  signal?.throwIfAborted()
   await mkdir(skillsDir, { recursive: true })
   const safeServers = servers
     .map((server) => ({ server, name: server.name }))
@@ -113,9 +122,11 @@ export async function syncCustomServerSkillDocs(
   const materializedNames: string[] = []
   const failures: CustomServerSkillSyncResult['failures'] = []
   for (const { server, name } of safeServers) {
+    signal?.throwIfAborted()
     const skillName = `mcp-${name}`
     const dir = join(skillsDir, skillName)
     const caseFoldedAlias = await findCaseFoldedAlias(skillsDir, skillName)
+    signal?.throwIfAborted()
     if (caseFoldedAlias) {
       failures.push({
         server,
@@ -129,20 +140,25 @@ export async function syncCustomServerSkillDocs(
     try {
       tools = await listTools(server)
     } catch (error) {
+      signal?.throwIfAborted()
       failures.push({ server, error })
       // A previously healthy Connector may have left a now-stale Skill behind. Keeping it would
       // advertise tools that this startup could not actually discover or call.
       await rm(dir, { recursive: true, force: true })
       continue
     }
+    signal?.throwIfAborted()
     await mkdir(dir, { recursive: true })
+    signal?.throwIfAborted()
     await writeFile(join(dir, 'SKILL.md'), renderCustomSkillDoc(server, tools), 'utf8')
     materializedNames.push(name)
   }
   const enabledNames = new Set(materializedNames)
   const cleanupScope = cleanupNames ? new Set(cleanupNames) : undefined
+  signal?.throwIfAborted()
   const existing = await readdir(skillsDir).catch(() => [] as string[])
   for (const entry of existing) {
+    signal?.throwIfAborted()
     const name = customConnectorNameFromSkillName(entry)
     // A bundled-connector dir (case-insensitive) belongs to syncConnectorSkillDocs — never delete it
     // here, even a case-variant like mcp-Chemistry that the built-in sync has written its doc into.

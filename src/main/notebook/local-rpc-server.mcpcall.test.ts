@@ -1,3 +1,4 @@
+import { builtinConnectorRegistry } from '../connectors/registry'
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { AgentComputeService } from '../compute/agent-compute-service'
 import { ComputeService } from '../compute/compute-service'
@@ -141,6 +142,7 @@ describe('mcpCall RPC', () => {
       revision: 1
     }
     const connectorService = new ConnectorService({
+      registry: builtinConnectorRegistry,
       getConnectors: () => ({ enabledIds: [], autoAllowIds: [] }),
       resolveApiKey: () => undefined,
       resolveSpecialistProfile: async () => specialist

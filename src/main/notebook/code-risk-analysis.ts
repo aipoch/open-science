@@ -5017,6 +5017,110 @@ export async function analyzeNotebookCodeRisk(
       )
     }
     const exceptionPrefixes: Bindings[] = []
+    const retainedReferences = new Set<Bindings>()
+    const objectReceipts = new Map<number, Set<string>>()
+    const registeredObjectReceipts = new Set<string>()
+    let allocationsSinceCollection = 0
+    let collectionThreshold = 1
+    const activeCallValues = new Set<Map<number, string | undefined>>()
+    // These scopes restore only names, unlike full branch/function snapshots. Keep their
+    // hidden outer references live until restoration so collection cannot discard their heap.
+    const preserveScopedBindings = (names: string[], states: Bindings[]): (() => void) => {
+      const saved = states.map((state) => {
+        const values: Bindings = new Map()
+        for (const name of names) {
+          spendWork()
+          if (state.has(name)) values.set(name, state.get(name)!)
+        }
+        retainedReferences.add(values)
+        return { state, values }
+      })
+      return () => {
+        for (const { state, values } of saved) {
+          for (const name of names) {
+            spendWork()
+            if (values.has(name)) state.set(name, values.get(name)!)
+            else state.delete(name)
+          }
+          retainedReferences.delete(values)
+        }
+      }
+    }
+    const collectObjects = (block: Node, force = false): void => {
+      const receipts = objectReceipts.get(block.id)
+      if (language !== 'repl' || !receipts) return
+      const states = [bindings, ...exceptionPrefixes]
+      // Only completed block literals are consumed. Ancestor indexes remain available
+      // because a full branch snapshot may restore a previously consumed receipt.
+      for (const key of receipts) {
+        spendWork()
+        for (const state of states) {
+          spendWork()
+          state.delete(key)
+        }
+      }
+      // Amortize full-heap tracing over heap growth. Receipts are consumed above on
+      // every block, but a large persistent heap need not be rescanned for each literal.
+      if (!force && allocationsSinceCollection < collectionThreshold) return
+      const members = new Map<string, string[]>()
+      const roots: string[] = []
+      for (const state of states)
+        for (const [key, value] of state) {
+          spendWork()
+          const object = /^(@object:\d+)\./.exec(key)?.[1]
+          if (object) {
+            const values = members.get(object) ?? []
+            values.push(value)
+            members.set(object, values)
+          } else roots.push(value)
+        }
+      for (const state of retainedReferences)
+        for (const value of state.values()) {
+          spendWork()
+          roots.push(value)
+        }
+      for (const values of activeCallValues)
+        for (const value of values.values()) {
+          spendWork()
+          if (value !== undefined) roots.push(value)
+        }
+      collectFunctionObjectRoots(roots)
+      // Roots and retained binding entries both contribute to the next full scan,
+      // even when they are scalars or many fields belonging to a single object.
+      let retainedScanSize = roots.length + functions.size
+      const live = new Set<string>()
+      for (let index = 0; index < roots.length; index++) {
+        spendWork()
+        // Object references can be nested in choices or bound-callable encodings.
+        for (const [object] of roots[index].matchAll(/@object:\d+/g)) {
+          spendWork()
+          if (!live.has(object)) {
+            live.add(object)
+            roots.push(...(members.get(object) ?? []))
+          }
+        }
+      }
+      for (const state of states)
+        for (const key of state.keys()) {
+          spendWork()
+          const object = /^(@object:\d+)\./.exec(key)?.[1]
+          if (object && !live.has(object)) state.delete(key)
+          else retainedScanSize++
+        }
+      allocationsSinceCollection = 0
+      collectionThreshold = Math.max(1, retainedScanSize)
+      // Other saved states restore/join complete bindings, including their object members;
+      // they need no heap from this current state. Allocation IDs are never reused.
+    }
+    const collectFunctionObjectRoots = (roots: string[]): void => {
+      for (const fn of functions.values()) {
+        spendWork()
+        for (const [key, value] of fn.members) {
+          spendWork()
+          roots.push(key, value)
+        }
+      }
+    }
     let functionRevision = 0
     const functionModuleWrites: Set<string>[] = []
     const invalidatePathClass = (target: string | undefined): void => {
@@ -5068,20 +5172,13 @@ export async function analyzeNotebookCodeRisk(
                   ])
                 )
             : []
-        const before = new Map(bindings)
-        const prefixes = exceptionPrefixes.map((prefix) => ({ prefix, before: new Map(prefix) }))
+        const restoreScope = preserveScopedBindings(scopedNames, [bindings, ...exceptionPrefixes])
         for (const child of node.namedChildren) {
           visit(child, output)
           if (blockControl(child)) break
         }
-        for (const name of scopedNames) {
-          if (before.has(name)) bindings.set(name, before.get(name)!)
-          else bindings.delete(name)
-          for (const state of prefixes) {
-            if (state.before.has(name)) state.prefix.set(name, state.before.get(name)!)
-            else state.prefix.delete(name)
-          }
-        }
+        restoreScope()
+        collectObjects(node)
         capturePrefixes()
         return
       }
@@ -5243,19 +5340,35 @@ export async function analyzeNotebookCodeRisk(
         const beforeValues = values?.map((value) =>
           bindingUpdates(target, value, bindings, language)
         )
+        // Iterable evaluation and later loop bodies can collect objects while these
+        // captured elements are not yet bound to the loop variable.
+        if (language === 'repl')
+          for (const value of beforeValues ?? []) {
+            spendWork()
+            retainedReferences.add(value)
+          }
         if (iterable) visit(iterable, output)
         const iterationValues = values?.map((value, index) =>
           joinedBindings(beforeValues![index], bindingUpdates(target, value, bindings, language))
         )
+        if (language === 'repl') {
+          for (const value of beforeValues ?? []) {
+            spendWork()
+            retainedReferences.delete(value)
+          }
+          for (const value of iterationValues ?? []) {
+            spendWork()
+            retainedReferences.add(value)
+          }
+        }
         if (condition && node.type !== 'do_statement') visit(condition, output)
         const entry = new Map(bindings)
         const loopNames = [...bindingUpdates(target, null, bindings, language).keys()]
         const scoped =
           language === 'repl' && ['let', 'const'].includes(fieldChild(node, 'kind')?.text ?? '')
-        const prefixScopes = exceptionPrefixes.map((prefix) => ({
-          prefix,
-          before: new Map(prefix)
-        }))
+        const restoreLoopScope = scoped
+          ? preserveScopedBindings(loopNames, [bindings, ...exceptionPrefixes])
+          : undefined
         const runBody = (): string | undefined => {
           if (body) visit(body, loopRisks)
           const control = blockControl(body)
@@ -5278,6 +5391,8 @@ export async function analyzeNotebookCodeRisk(
           let converged = false
           const exits: Bindings[] = []
           for (let pass = 0; pass < 18; pass++) {
+            // Fixed-point comparison must not count unreachable allocation records.
+            if (body) collectObjects(body, true)
             const before = new Map(bindings)
             const revision = functionRevision
             if (target) {
@@ -5296,8 +5411,10 @@ export async function analyzeNotebookCodeRisk(
               capturePrefixes()
             }
             const control = runBody()
+            if (body) collectObjects(body, true)
             exits.push(new Map(bindings))
             restore(joinedBindings(before, bindings))
+            if (body) collectObjects(body, true)
             if (control && !['continue_statement', 'next'].includes(control)) {
               converged = true
               break
@@ -5326,15 +5443,7 @@ export async function analyzeNotebookCodeRisk(
           )
         }
         // A JS lexical loop variable does not replace an outer binding after the loop.
-        if (scoped)
-          for (const name of loopNames) {
-            if (entry.has(name)) bindings.set(name, entry.get(name)!)
-            else bindings.delete(name)
-            for (const state of prefixScopes) {
-              if (state.before.has(name)) state.prefix.set(name, state.before.get(name)!)
-              else state.prefix.delete(name)
-            }
-          }
+        restoreLoopScope?.()
         if (alternative) {
           // Python else may be skipped by break. Inspect it without erasing the non-else exit.
           const exit = new Map(bindings)
@@ -5346,6 +5455,11 @@ export async function analyzeNotebookCodeRisk(
           )
             restore(joinedBindings(exit, bindings))
         }
+        if (language === 'repl')
+          for (const value of iterationValues ?? []) {
+            spendWork()
+            retainedReferences.delete(value)
+          }
         output.push(...uniqueRisks(loopRisks))
         capturePrefixes()
         return
@@ -5369,14 +5483,12 @@ export async function analyzeNotebookCodeRisk(
             fieldChild(handler, 'parameter') ?? fieldChild(fieldChild(handler, 'value'), 'alias')
           if (parameter?.type === 'as_pattern_target') parameter = parameter.namedChild(0)
           const names = [...bindingUpdates(parameter, null, bindings, language).keys()]
-          const old = new Map(bindings)
+          const restoreHandlerScope =
+            language === 'repl' ? preserveScopedBindings(names, [bindings]) : undefined
           for (const name of names) bindings.set(name, '<dynamic>')
           visit(handler, tryRisks)
-          for (const name of names) {
-            if (language === 'python') bindings.delete(name)
-            else if (old.has(name)) bindings.set(name, old.get(name)!)
-            else bindings.delete(name)
-          }
+          if (restoreHandlerScope) restoreHandlerScope()
+          else for (const name of names) bindings.delete(name)
           exits.push(new Map(bindings))
         }
         const normal = joinedBindings(...exits)
@@ -5485,9 +5597,43 @@ export async function analyzeNotebookCodeRisk(
           )
         ) {
           const object = `@object:${objectRevision++}`
+          allocationsSinceCollection++
           const nodeKey = `@node:${node.id}`
           evaluatedNodeKeys.add(nodeKey)
           bindings.set(nodeKey, object)
+          if (!registeredObjectReceipts.has(nodeKey)) {
+            registeredObjectReceipts.add(nodeKey)
+            const blocks: number[] = []
+            let parent = node.parent
+            let insideLoop = false
+            while (parent) {
+              spendWork()
+              if (
+                [
+                  'function_declaration',
+                  'function_expression',
+                  'arrow_function',
+                  'method_definition'
+                ].includes(parent.type)
+              )
+                break
+              if (
+                ['for_statement', 'for_in_statement', 'while_statement', 'do_statement'].includes(
+                  parent.type
+                )
+              )
+                insideLoop = true
+              if (['block', 'statement_block'].includes(parent.type)) blocks.push(parent.id)
+              parent = parent.parent
+            }
+            if (insideLoop)
+              for (const block of blocks) {
+                spendWork()
+                const receipts = objectReceipts.get(block) ?? new Set<string>()
+                receipts.add(nodeKey)
+                objectReceipts.set(block, receipts)
+              }
+          }
           for (const entry of entries) {
             const member = `${object}.${keyOf(entry)}`
             const value =
@@ -5718,6 +5864,9 @@ export async function analyzeNotebookCodeRisk(
         evaluatedCallee = reference
         const resolved = identity(called, bindings)
         const argumentValues = new Map<number, string | undefined>()
+        // Receivers and earlier arguments remain live while later arguments execute.
+        argumentValues.set(-1, resolved)
+        activeCallValues.add(argumentValues)
         if (language === 'repl' || language === 'python') {
           const receiver = fieldChild(unparenthesized(called) ?? null, 'object')
           if (receiver) argumentValues.set(receiver.id, identity(receiver, bindings))
@@ -6351,6 +6500,7 @@ export async function analyzeNotebookCodeRisk(
           evaluatedNodeKeys.add(nodeKey)
           bindings.set(nodeKey, identity(node, bindings, resolved, argumentValues) ?? '<dynamic>')
         }
+        activeCallValues.delete(argumentValues)
       }
       for (const child of node.namedChildren)
         if (child.id !== evaluatedCallee?.id && child.id !== evaluatedArguments?.id)

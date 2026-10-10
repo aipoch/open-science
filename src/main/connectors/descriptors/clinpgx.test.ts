@@ -2,7 +2,7 @@ import Ajv2020 from 'ajv/dist/2020.js'
 import { describe, expect, it, vi } from 'vitest'
 import { ParserEngine } from '../engine'
 import { CLINPGX_TOOLS } from './clinpgx'
-import type { ToolDescriptor } from '../types'
+import type { ToolDescriptor } from '../../connector-core/types'
 
 const tool = (id: string): ToolDescriptor => CLINPGX_TOOLS.find((candidate) => candidate.id === id)!
 const ajv = new Ajv2020({ strict: true })

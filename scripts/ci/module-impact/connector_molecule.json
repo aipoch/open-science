@@ -1,9 +1,13 @@
 {
   "ownerPaths": [
     "src/main/connectors/descriptors/molecule.test.ts",
-    "src/main/connectors/descriptors/molecule.ts"
+    "src/main/connectors/descriptors/molecule.ts",
+    "src/main/connectors/molecule/render.ts"
   ],
-  "interfacePaths": ["src/main/connectors/descriptors/molecule.ts"],
+  "interfacePaths": [
+    "src/main/connectors/descriptors/molecule.ts",
+    "src/main/connectors/molecule/render.ts"
+  ],
   "consumerModules": [],
   "testFiles": {
     "owner": ["src/main/connectors/descriptors/molecule.test.ts"],
@@ -192,7 +196,9 @@
       "src/main/acp/approved-handoff-outcome.test.ts",
       "src/main/desktop-runtime-transport.integration.test.ts",
       "src/main/side-chat/application-commands.test.ts",
-      "src/main/settings/file-commands.test.ts"
+      "src/main/settings/file-commands.test.ts",
+      "src/main/acp/specialist-switch-recovery.integration.test.ts",
+      "src/main/agents/production-completion-handoff.test.ts"
     ]
   },
   "capabilityOverlays": [],

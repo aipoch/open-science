@@ -154,6 +154,8 @@ export type NotebookSessionExecutionResult = {
   // Dispatch evidence persisted onto data runs and exposed in Agent results. Optional keeps injected/legacy executors
   // source-compatible; the execution owner treats a missing value after dispatch conservatively.
   kernelDispatched?: boolean
+  // False proves no user source began execution; absent evidence remains conservative.
+  executionStarted?: boolean
   // Exact helper initializations acknowledged by the persistent loop before producer dispatch.
   // The host uses this even when the producer later fails, so same-epoch retries stay idempotent.
   helperModulesInitialized?: readonly string[]

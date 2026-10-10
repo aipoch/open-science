@@ -1705,6 +1705,59 @@ gate('NotebookKernelExecutor (fake loop)', () => {
     }
   })
 
+  it.skipIf(process.platform === 'win32').each(['timeout', 'cancelled'] as const)(
+    'does not trust non-execution evidence from a loop response after %s',
+    async (status) => {
+      cwdDir = await makeDefaultEnvCwd('os-kernel-interrupted-evidence-')
+      const loopPath = join(cwdDir, 'interrupt-evidence.py')
+      const readyPath = join(cwdDir, 'waiting')
+      await writeFile(
+        loopPath,
+        [
+          'import json, os, sys, time',
+          'for line in sys.stdin:',
+          '    request = json.loads(line)',
+          '    if request["code"] == "wait":',
+          '        try:',
+          `            open(${JSON.stringify(readyPath)}, "w").close()`,
+          '            time.sleep(60)',
+          '        except KeyboardInterrupt:',
+          '            pass',
+          '    print(json.dumps({"req_id": request["req_id"], "stdout": "loop responded", "error": "interrupted", "execution_started": False, "cwd": os.getcwd()}), flush=True)'
+        ].join('\n')
+      )
+      const executor = new NotebookKernelExecutor({
+        pythonBin: python3,
+        pythonLoopPath: loopPath,
+        platform: 'linux'
+      })
+      const cancellation = new AbortController()
+      try {
+        const request = baseRequest(cwdDir)
+        await expect(executor.execute({ ...request, code: 'warm' })).resolves.toMatchObject({
+          status: 'failed',
+          executionStarted: false
+        })
+        const run = executor.execute({
+          ...request,
+          code: 'wait',
+          signal: cancellation.signal,
+          timeoutMs: status === 'timeout' ? 1_000 : undefined
+        })
+        if (status === 'cancelled') {
+          await vi.waitFor(() => expect(existsSync(readyPath)).toBe(true))
+          cancellation.abort()
+        }
+        const result = await run
+        expect(result).toMatchObject({ status, kernelDispatched: true, stdout: 'loop responded' })
+        expect(result).not.toHaveProperty('executionStarted')
+      } finally {
+        await executor.shutdown()
+      }
+    },
+    15_000
+  )
+
   it('soft-interrupts a long run with SIGINT and reports a timeout', async () => {
     cwdDir = await makeDefaultEnvCwd('os-kernel-soft-')
     const executor = makeExecutor()

@@ -1,4 +1,4 @@
-import type { ToolContext, ToolDescriptor } from '../types'
+import type { ToolContext, ToolDescriptor } from '../../connector-core/types'
 
 // Drugs@FDA applications (NDA/ANDA/BLA), product labels (SPL), FAERS adverse events and drug
 // enforcement reports, all served by openFDA. Read-only; anonymous rate limits apply (the engine

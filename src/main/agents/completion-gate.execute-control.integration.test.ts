@@ -198,7 +198,8 @@ const concreteFrameworkRuntime = (
     getSessionFramework: () => framework,
     capturePromptForHandoff: () => ({
       prompt: { sessionId, text: 'original task' },
-      originatingTurnToken: 'original-user-turn'
+      originatingTurnToken: 'original-user-turn',
+      restoreSession: async () => undefined
     }),
     cancelPrompt: async (): Promise<AcpStateSnapshot> => fakeSnapshot(),
     waitForPromptRelease: async (): Promise<void> => undefined,

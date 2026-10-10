@@ -92,7 +92,7 @@ for (const mode of ['shell', 'python', 'ssh'] as const) {
           exact: true
         })
         await expect(review).toContainText('background-completion-e2e')
-        await review.getByRole('button', { name: 'Allow once', exact: true }).click()
+        await review.getByRole('button', { name: 'Allow', exact: true }).click()
       }
       await expect(page.getByText('Background execution submitted.', { exact: true })).toBeVisible()
       try {

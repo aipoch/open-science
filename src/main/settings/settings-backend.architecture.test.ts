@@ -1589,7 +1589,12 @@ describe('Settings backend ownership architecture', () => {
       'src/main/office-preview/application-commands.test.ts',
       'src/main/reviewer/paged-preview-host.test.ts',
       'src/main/desktop-native-electron.test.ts',
-      'src/main/session-plan/session-plan-turn-outcome.test.ts'
+      'src/main/session-plan/session-plan-turn-outcome.test.ts',
+      'src/main/acp/specialist-switch-recovery.integration.test.ts',
+      'src/main/agents/production-completion-handoff.test.ts',
+      'src/main/acp/auto-operation-adapter.test.ts',
+      'src/main/acp/auto-operation-broker.test.ts',
+      'src/main/acp/auto-operation-policy.test.ts'
     ])
     expect(
       [

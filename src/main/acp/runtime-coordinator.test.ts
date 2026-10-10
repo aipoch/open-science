@@ -294,6 +294,7 @@ const createFakeRuntime = (options: {
     createSession,
     resumeSession,
     resetSessionContext,
+    captureHandoffSessionResume: () => async () => undefined,
     switchSpecialist,
     compactSession,
     cancelPrompt,

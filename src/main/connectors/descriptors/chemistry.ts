@@ -1,4 +1,4 @@
-import type { ToolContext, ToolDescriptor } from '../types'
+import type { ToolContext, ToolDescriptor } from '../../connector-core/types'
 
 // PubChem PUG REST + PUG-View. Structure/name inputs go via GET query params so slashes and
 // other path-reserved characters in SMILES survive intact (the engine only offers GET + JSON POST).

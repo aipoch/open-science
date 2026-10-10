@@ -51,7 +51,7 @@ AIPOCH Open-Science は、機械学習、統計学、生命科学、化学、材
 
 完了した研究セッションは、選択した会話分岐、ファイルバージョン、Notebook 記録、検証証拠を含む持ち運び可能な `.science` パッケージとして、レビュー、引き継ぎ、アーカイブのためにエクスポートできます。
 
-> 💡 **[AIPOCH Open-Science v0.36.0 をリリースしました](https://github.com/aipoch/open-science/releases/latest)** _(2026年10月更新)_。 AIPOCH Open-Science v0.36.0 では、実行ごとにリスクをレビューできる Notebook 実行、原文・訳文・対照表示の読書モードを備えた再開可能な共有 PDF 翻訳、がんタンパク質組学の PDC コネクター、集団特異的な連鎖不平衡クエリを備えた Genomes コネクター、Claude Haiku 5.5 のサポートが追加されました。修正には、科学 PDF のネイティブレイアウト保持、公式モデルカタログの整理、空の会話での検索復元、ファイルメンション・Remote Web マーケットプレイス・コンポーザーチップの信頼性向上などが含まれます。詳細は[最新のリリースノート](https://github.com/aipoch/open-science/releases/latest)をご覧ください。
+> 💡 **[AIPOCH Open-Science v0.37.0 をリリースしました](https://github.com/aipoch/open-science/releases/latest)** _(2026年10月更新)_。 AIPOCH Open-Science v0.37.0 では、共有バックエンドがスタンドアロン Node サービスとして実行されるようになり、コマンドラインやヘッドレスモードがウィンドウレス Electron ホスト不要になり、デスクトップアプリはネイティブクライアントとして接続します。コネクターカタログには ENCORI コネクター、ChEMBL アッセイ詳細とバイオアクティビティのページネーション、ClinVar 提出エビデンスクエリが追加され、PDF 翻訳はネイティブの読書順序を保持し、構造抽出はソースが保持する図と表を完全に保持します。ノートブックランタイムは簡素化された承認カードの背後で環境情報をより正確にレポートします。修正には、Windows Python 検出、デスクトップバックエンドのポートとプロファイル、`.science` の新規プロジェクトへのインポート、スマートコレクションのバッチ内リトライ、Codex のストリーミングツール引数などが含まれます。詳細は[最新のリリースノート](https://github.com/aipoch/open-science/releases/latest)をご覧ください。
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science のヒーローバナー：Science, Open to All — オープンソース、モデル非依存、セルフホスト対応の科学 AI 研究ワークベンチ" src="../images/readme/open-science-banner.png" />

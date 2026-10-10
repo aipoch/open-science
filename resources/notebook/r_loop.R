@@ -1509,6 +1509,7 @@ run <- base::local({
       }
     }
     error <- NULL
+    execution_started <- FALSE
     interrupt_ack <- FALSE
     error_line <- NA_integer_
     stdout_path <- tempfile("open-science-r-stdout-")
@@ -1543,6 +1544,7 @@ run <- base::local({
           idx <- 0L
           tryCatch({
             for (idx in seq_along(exprs)) {
+              execution_started <- TRUE
               package_observer$record(exprs[[idx]])
               namespace_tracker$prepare(exprs[[idx]])
               res <- withVisible(eval(exprs[[idx]], envir = globalenv()))
@@ -1614,6 +1616,7 @@ run <- base::local({
       list()
     }
     list(stdout = stdout_text, stderr = "", error = if (is.null(error)) NA else error,
+         execution_started = isTRUE(execution_started),
          interrupt_ack = isTRUE(interrupt_ack),
          error_line = if (is.na(error_line)) NULL else error_line,
          result = NA, cwd = getwd(), figures = figures,

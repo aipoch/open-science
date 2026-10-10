@@ -1,5 +1,5 @@
 import { DOMParser } from '@xmldom/xmldom'
-import type { ToolDescriptor } from '../types'
+import type { ToolDescriptor } from '../../connector-core/types'
 
 const MARTSERVICE = 'https://www.ensembl.org/biomart/martservice'
 const COMPLETION_STAMP = '[success]'

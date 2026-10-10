@@ -1,5 +1,9 @@
+import {
+  listProductionSources,
+  readProductionSource
+} from '../../../test/architecture-source-index'
 import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { dirname, relative, resolve, sep } from 'node:path'
 
 import {
   canHaveModifiers,
@@ -17,6 +21,7 @@ import {
   isPropertyDeclaration,
   isReturnStatement,
   isVariableStatement,
+  preProcessFile,
   ScriptKind,
   ScriptTarget,
   SyntaxKind,
@@ -991,7 +996,9 @@ describe('Artifact Provenance repository architecture', () => {
       'src/main/office-preview/application-commands.test.ts',
       'src/main/reviewer/paged-preview-host.test.ts',
       'src/main/desktop-native-electron.test.ts',
-      'src/main/session-plan/session-plan-turn-outcome.test.ts'
+      'src/main/session-plan/session-plan-turn-outcome.test.ts',
+      'src/main/acp/specialist-switch-recovery.integration.test.ts',
+      'src/main/agents/production-completion-handoff.test.ts'
     ])
     expect(module.capabilityOverlays).toEqual([
       'windows_sensitive',
@@ -1000,4 +1007,24 @@ describe('Artifact Provenance repository architecture', () => {
     ])
     expect(module.fallbackCapability).toBe('main_runtime')
   })
+})
+
+it('keeps Literature and Artifact implementations connected only through injected capabilities', () => {
+  const root = resolve(__dirname, '../../..')
+  const artifacts = resolve(root, 'src/main/artifacts') + sep
+  const literature = resolve(root, 'src/main/literature') + sep
+  const violations: string[] = []
+  for (const file of listProductionSources(root, ['src/main/artifacts', 'src/main/literature'])) {
+    const forbidden = file.startsWith(artifacts) ? literature : artifacts
+    for (const { fileName: specifier } of preProcessFile(
+      readProductionSource(file, root),
+      true,
+      true
+    ).importedFiles) {
+      if (specifier.startsWith('.') && resolve(dirname(file), specifier).startsWith(forbidden)) {
+        violations.push(`${relative(root, file)} -> ${specifier}`)
+      }
+    }
+  }
+  expect(violations).toEqual([])
 })

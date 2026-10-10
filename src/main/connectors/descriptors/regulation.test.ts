@@ -2,7 +2,7 @@ import { configureTestRuntimeNetwork } from '../../../../test/runtime-host'
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { ParserEngine } from '../engine'
 import { REGULATION_TOOLS } from './regulation'
-import type { ToolContext, ToolDescriptor } from '../types'
+import type { ToolContext, ToolDescriptor } from '../../connector-core/types'
 
 const tool = (id: string): ToolDescriptor => REGULATION_TOOLS.find((t) => t.id === id)!
 const jsonRes = (body: unknown): Response =>
@@ -73,7 +73,171 @@ const encodeRun = async (
 }
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.unstubAllGlobals()
+})
+
+describe('regulation / ENCODE Retry-After', () => {
+  it.each([
+    { kind: 'network errors', status: undefined, retryAfter: undefined },
+    { kind: 'HTTP 429 without a header', status: 429, retryAfter: undefined },
+    { kind: 'HTTP 503 without a header', status: 503, retryAfter: undefined },
+    { kind: 'an empty header', status: 429, retryAfter: '' },
+    { kind: 'a whitespace header', status: 503, retryAfter: '   ' },
+    { kind: 'an invalid header', status: 429, retryAfter: 'not-a-date' }
+  ])('preserves 400/800/1600ms backoff for $kind', async ({ status, retryAfter }) => {
+    vi.useFakeTimers()
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0.5)
+    const fetchImpl = vi.fn()
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (status === undefined) fetchImpl.mockRejectedValueOnce(new Error('network unavailable'))
+      else {
+        fetchImpl.mockResolvedValueOnce(
+          new Response('Retry later', {
+            status,
+            headers: retryAfter === undefined ? {} : { 'Retry-After': retryAfter }
+          })
+        )
+      }
+    }
+    fetchImpl.mockResolvedValueOnce(jsonRes({ accession: 'ENCSR000AKP' }))
+    vi.stubGlobal('fetch', fetchImpl)
+    const pending = tool('encode_get_experiment').run!(ENCODE_CTX, { accession: 'ENCSR000AKP' })
+    try {
+      await vi.advanceTimersByTimeAsync(0)
+      for (const [attempt, delay] of [400, 800, 1600].entries()) {
+        await vi.advanceTimersByTimeAsync(delay - 1)
+        expect(fetchImpl).toHaveBeenCalledTimes(attempt + 1)
+        await vi.advanceTimersByTimeAsync(1)
+        expect(fetchImpl).toHaveBeenCalledTimes(attempt + 2)
+      }
+      await expect(pending).resolves.toMatchObject({ accession: 'ENCSR000AKP' })
+    } finally {
+      await vi.runAllTimersAsync()
+      random.mockRestore()
+    }
+  })
+
+  it.each(['0', 'Sat, 10 Oct 2026 00:00:00 GMT'])(
+    'honors a valid zero-duration Retry-After: %s',
+    async (retryAfter) => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-10-10T00:01:00Z'))
+      const fetchImpl = vi
+        .fn()
+        .mockResolvedValueOnce(
+          new Response('Retry later', { status: 429, headers: { 'Retry-After': retryAfter } })
+        )
+        .mockResolvedValueOnce(jsonRes({ accession: 'ENCSR000AKP' }))
+      vi.stubGlobal('fetch', fetchImpl)
+      const pending = tool('encode_get_experiment').run!(ENCODE_CTX, { accession: 'ENCSR000AKP' })
+      await vi.advanceTimersByTimeAsync(1)
+      await expect(pending).resolves.toMatchObject({ accession: 'ENCSR000AKP' })
+      expect(fetchImpl).toHaveBeenCalledTimes(2)
+    }
+  )
+
+  it.each([
+    { status: 429, retryAfter: '60' },
+    { status: 503, retryAfter: 'Sat, 10 Oct 2026 00:01:00 GMT' }
+  ])(
+    'honors the complete Retry-After wait for HTTP $status ($retryAfter)',
+    async ({ status, retryAfter }) => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-10-10T00:00:00Z'))
+      const response = new Response('Retry later', {
+        status,
+        headers: { 'Retry-After': retryAfter }
+      })
+      const cancelBody = vi.spyOn(response.body!, 'cancel')
+      const fetchImpl = vi
+        .fn()
+        .mockResolvedValueOnce(response)
+        .mockResolvedValueOnce(jsonRes({ accession: 'ENCSR000AKP' }))
+      vi.stubGlobal('fetch', fetchImpl)
+
+      const pending = tool('encode_get_experiment').run!(ENCODE_CTX, { accession: 'ENCSR000AKP' })
+      await vi.advanceTimersByTimeAsync(59_999)
+      expect(fetchImpl).toHaveBeenCalledOnce()
+      expect(cancelBody).toHaveBeenCalledOnce()
+      await vi.advanceTimersByTimeAsync(1)
+      await expect(pending).resolves.toMatchObject({ accession: 'ENCSR000AKP' })
+      expect(fetchImpl).toHaveBeenCalledTimes(2)
+    }
+  )
+
+  it('cancels a Retry-After wait at the engine total deadline without another request', async () => {
+    vi.useFakeTimers()
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response('Retry later', { status: 429, headers: { 'Retry-After': '60' } })
+      )
+    vi.stubGlobal('fetch', fetchImpl)
+    const pending = new ParserEngine({ totalTimeoutMs: 20_000 }).call(
+      tool('encode_get_experiment'),
+      { accession: 'ENCSR000AKP' },
+      {}
+    )
+    const rejected = expect(pending).rejects.toThrow(/20000ms total deadline/)
+    await vi.advanceTimersByTimeAsync(20_000)
+    await rejected
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(fetchImpl).toHaveBeenCalledOnce()
+  })
+
+  it.each([
+    { kind: 'oversized seconds', retryAfter: () => '2147484' },
+    {
+      kind: 'distant HTTP date',
+      retryAfter: () => new Date(Date.now() + 2_147_483_647 + 60_000).toUTCString()
+    },
+    { kind: 'digit string overflowing to Infinity', retryAfter: () => '9'.repeat(400) }
+  ])('keeps $kind waiting until cancellation with valid real timers', async ({ retryAfter }) => {
+    // Real timers catch Node's overflow-to-1ms behavior, which fake timers need not reproduce.
+    const timerSpy = vi.spyOn(globalThis, 'setTimeout')
+    try {
+      const fetchImpl = vi
+        .fn()
+        .mockResolvedValueOnce(
+          new Response('Retry later', { status: 429, headers: { 'Retry-After': retryAfter() } })
+        )
+        .mockResolvedValue(jsonRes({ accession: 'ENCSR000AKP' }))
+      vi.stubGlobal('fetch', fetchImpl)
+      const pending = new ParserEngine({ totalTimeoutMs: 100 }).call(
+        tool('encode_get_experiment'),
+        { accession: 'ENCSR000AKP' },
+        {}
+      )
+      await expect(pending).rejects.toThrow(/100ms total deadline/)
+      expect(fetchImpl).toHaveBeenCalledOnce()
+      const delays = timerSpy.mock.calls.map(([, delay]) => Number(delay))
+      expect(delays).toContain(2_147_483_647)
+      expect(delays.every((delay) => delay <= 2_147_483_647)).toBe(true)
+    } finally {
+      timerSpy.mockRestore()
+    }
+  })
+
+  it('waits the entire oversized seconds interval across timer segments before retrying', async () => {
+    vi.useFakeTimers()
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response('Retry later', { status: 429, headers: { 'Retry-After': '2147484' } })
+      )
+      .mockResolvedValueOnce(jsonRes({ accession: 'ENCSR000AKP' }))
+    vi.stubGlobal('fetch', fetchImpl)
+
+    const pending = tool('encode_get_experiment').run!(ENCODE_CTX, { accession: 'ENCSR000AKP' })
+    await vi.advanceTimersByTimeAsync(2_147_483_647)
+    expect(fetchImpl).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(352)
+    expect(fetchImpl).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(1)
+    await expect(pending).resolves.toMatchObject({ accession: 'ENCSR000AKP' })
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+  })
 })
 
 describe('regulation / ENCODE cancellation', () => {

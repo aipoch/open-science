@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { ParserEngine } from '../engine'
 import { STRUCTURES_ALPHAFOLD_TOOLS } from './structures-alphafold'
-import type { ToolDescriptor } from '../types'
+import type { ToolDescriptor } from '../../connector-core/types'
 
 const tool = (id: string): ToolDescriptor => STRUCTURES_ALPHAFOLD_TOOLS.find((t) => t.id === id)!
 

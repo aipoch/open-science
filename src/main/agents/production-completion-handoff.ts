@@ -27,20 +27,33 @@ export const createApprovedContinuationPrompt = (
     `Captured completion: ${inspect(handoff.envelope, { depth: 5, maxArrayLength: 50, maxStringLength: 4_000 })}`
   ].join('\n\n')
 
-// Provider-neutral production fallback. It performs the safety-critical cancellation, explicit
-// ownership-release wait, and binding reconfigure against the real ACP coordinator. Framework
-// continuation callback re-enters ACP through an application-owned, non-user prompt route.
-export const createProductionCompletionHandoffRuntime = (
-  dependencies: ProductionCompletionHandoffDependencies
+// Apply the same durable approval checks to every provider adapter before it can rearm a binding.
+// Current Session binding alone cannot authorize a retry of an older captured handoff.
+export const withApprovedSpecialistBinding = (
+  adapter: CompletionGateRuntime,
+  dependencies: Pick<
+    ProductionCompletionHandoffDependencies,
+    'getSpecialistBinding' | 'getSpecialist'
+  >
 ): CompletionGateRuntime => ({
-  stopOldPrompt: (context) => dependencies.stopPromptForHandoff(context.sessionId),
-  waitForOwnershipRelease: (context) =>
-    dependencies.waitForSessionInteractionRelease(context.sessionId),
-  reconfigure: async (handoff, context) => {
+  ...(adapter.canHandle ? { canHandle: (context) => adapter.canHandle!(context) } : {}),
+  ...(adapter.canCapture ? { canCapture: (context) => adapter.canCapture!(context) } : {}),
+  stopOldPrompt: (context) => adapter.stopOldPrompt(context),
+  waitForOwnershipRelease: (context) => adapter.waitForOwnershipRelease(context),
+  cleanupCancelledHandoff: (context) =>
+    adapter.cleanupCancelledHandoff?.(context) ?? Promise.resolve(),
+  reconfigure: async (handoff, context, isCurrentAttempt) => {
+    const reconfigureIfCurrent = async (): Promise<void> => {
+      if (isCurrentAttempt && !isCurrentAttempt()) {
+        throw new Error('The approved handoff attempt was superseded.')
+      }
+      await adapter.reconfigure(handoff, context, isCurrentAttempt)
+    }
     const currentBinding = await dependencies.getSpecialistBinding(context.sessionId)
     if (handoff.targetName === null) {
-      if (currentBinding) throw new Error('The approved Main Agent binding was superseded.')
-      await dependencies.switchSpecialist(context.sessionId, undefined)
+      if (currentBinding !== undefined)
+        throw new Error('The approved Main Agent binding was superseded.')
+      await reconfigureIfCurrent()
       return
     }
     if (!handoff.approvedSpecialistId || handoff.approvedSpecialistRevision === undefined) {
@@ -58,9 +71,39 @@ export const createProductionCompletionHandoffRuntime = (
     ) {
       throw new Error('The durable approved Specialist identity no longer matches its approval.')
     }
-    await dependencies.switchSpecialist(context.sessionId, handoff.approvedSpecialistId)
+    // Profile lookup can yield to a newer picker switch. Reject before an adapter can restore a
+    // detached provider, stage replay, or apply the old identity.
+    if (
+      (await dependencies.getSpecialistBinding(context.sessionId)) !== handoff.approvedSpecialistId
+    ) {
+      throw new Error('The approved Specialist binding was superseded.')
+    }
+    await reconfigureIfCurrent()
   },
-  continueAsApproved: dependencies.continueAsApproved,
-  reportHandoffFailure: (error, handoff, context: TrustedToolCompletionContext) =>
-    dependencies.reportHandoffFailure?.(error, handoff, context) ?? Promise.resolve()
+  continueAsApproved: (handoff, context, continuationContext) =>
+    adapter.continueAsApproved(handoff, context, continuationContext),
+  reportHandoffFailure: (error, handoff, context) =>
+    adapter.reportHandoffFailure(error, handoff, context)
 })
+
+// Provider-neutral production fallback. Framework continuation callbacks re-enter ACP through an
+// application-owned, non-user prompt route after the shared approval checks.
+export const createProductionCompletionHandoffRuntime = (
+  dependencies: ProductionCompletionHandoffDependencies
+): CompletionGateRuntime =>
+  withApprovedSpecialistBinding(
+    {
+      stopOldPrompt: (context) => dependencies.stopPromptForHandoff(context.sessionId),
+      waitForOwnershipRelease: (context) =>
+        dependencies.waitForSessionInteractionRelease(context.sessionId),
+      reconfigure: (handoff, context) =>
+        dependencies.switchSpecialist(
+          context.sessionId,
+          handoff.targetName === null ? undefined : handoff.approvedSpecialistId
+        ),
+      continueAsApproved: dependencies.continueAsApproved,
+      reportHandoffFailure: (error, handoff, context: TrustedToolCompletionContext) =>
+        dependencies.reportHandoffFailure?.(error, handoff, context) ?? Promise.resolve()
+    },
+    dependencies
+  )

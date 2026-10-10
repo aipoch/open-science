@@ -1108,6 +1108,91 @@ w.save(sys.argv[1])`,
     }
   }, 60_000)
 
+  it.each(['capture_probe', 'capture_alias'])(
+    'does not claim conflicting same-directory metadata is loaded for %s',
+    async (importName) => {
+      const root = mkdtempSync(join(tmpdir(), 'python-duplicate-metadata-'))
+      for (const version of ['1.0', '2.0']) {
+        const dist = join(root, `capture_probe-${version}.dist-info`)
+        mkdirSync(dist)
+        writeFileSync(join(dist, 'METADATA'), `Name: capture-probe\nVersion: ${version}\n`)
+        writeFileSync(join(dist, 'top_level.txt'), `${importName}\n`)
+        writeFileSync(join(dist, 'RECORD'), `${importName}.py,,\n`)
+      }
+      writeFileSync(join(root, `${importName}.py`), '__version__ = "1.0"\n')
+      const { child, send } = startLoop(pyBin as string, { PYTHONDONTWRITEBYTECODE: '1' })
+      try {
+        const response = await send(
+          `import sys; sys.path.insert(0, ${JSON.stringify(root)}); import ${importName}`
+        )
+        expect(response.error).toBeNull()
+        const packages = response.environment.packages.filter(
+          (pkg) => pkg.name.replace(/_/gu, '-') === 'capture-probe'
+        )
+        expect(packages.filter((pkg) => pkg.loaded_state === 'loaded')).toEqual([
+          expect.objectContaining({ version: '1.0' })
+        ])
+        expect(packages).toContainEqual(
+          expect.objectContaining({ version: '2.0', loaded_state: 'unknown' })
+        )
+      } finally {
+        child.kill()
+        rmSync(root, { recursive: true, force: true })
+      }
+    },
+    60_000
+  )
+
+  it('keeps ambiguous same-directory versions unknown when the module has no version', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'python-unknown-metadata-'))
+    for (const version of ['1.0', '2.0']) {
+      const dist = join(root, `capture_probe-${version}.dist-info`)
+      mkdirSync(dist)
+      writeFileSync(join(dist, 'METADATA'), `Name: capture-probe\nVersion: ${version}\n`)
+      writeFileSync(join(dist, 'top_level.txt'), 'capture_alias\n')
+      writeFileSync(join(dist, 'RECORD'), 'capture_alias.py,,\n')
+    }
+    writeFileSync(join(root, 'capture_alias.py'), 'VALUE = 42\n')
+    const { child, send } = startLoop(pyBin as string, { PYTHONDONTWRITEBYTECODE: '1' })
+    try {
+      const response = await send(
+        `import sys; sys.path.insert(0, ${JSON.stringify(root)}); import capture_alias`
+      )
+      expect(response.error).toBeNull()
+      const packages = response.environment.packages.filter((pkg) => pkg.name === 'capture-probe')
+      expect(packages).toHaveLength(2)
+      expect(packages.every((pkg) => pkg.loaded_state === 'unknown')).toBe(true)
+    } finally {
+      child.kill()
+      rmSync(root, { recursive: true, force: true })
+    }
+  }, 60_000)
+
+  it('does not duplicate equivalent module and distribution release spellings', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'python-equivalent-metadata-'))
+    const dist = join(root, 'capture_probe-2026.7.22.dist-info')
+    mkdirSync(dist)
+    writeFileSync(join(dist, 'METADATA'), 'Name: capture-probe\nVersion: 2026.7.22\n')
+    writeFileSync(join(dist, 'top_level.txt'), 'capture_probe\n')
+    writeFileSync(join(dist, 'RECORD'), 'capture_probe.py,,\n')
+    writeFileSync(join(root, 'capture_probe.py'), '__version__ = "2026.07.22"\n')
+    const { child, send } = startLoop(pyBin as string, { PYTHONDONTWRITEBYTECODE: '1' })
+    try {
+      const response = await send(
+        `import sys; sys.path.insert(0, ${JSON.stringify(root)}); import capture_probe`
+      )
+      expect(response.error).toBeNull()
+      expect(
+        response.environment.packages.filter(
+          (pkg) => pkg.name.replace(/_/gu, '-') === 'capture-probe'
+        )
+      ).toEqual([expect.objectContaining({ version: '2026.7.22', loaded_state: 'loaded' })])
+    } finally {
+      child.kill()
+      rmSync(root, { recursive: true, force: true })
+    }
+  }, 60_000)
+
   it.each(['extra_import', 'extra_distribution'])(
     'keeps the loaded %s distribution identity after its original search path is removed',
     async (importName) => {

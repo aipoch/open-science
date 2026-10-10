@@ -65,10 +65,16 @@ export const createCodexCompletionGateRuntime = (
   waitForOwnershipRelease: (context: TrustedToolCompletionContext) =>
     options.runtime.waitForPromptRelease(context.sessionId),
   reconfigure: async (
-    _handoff: Pick<Extract<CompletionDisposition, { kind: 'capture-for-handoff' }>, 'targetName'>,
+    handoff: Pick<
+      Extract<CompletionDisposition, { kind: 'capture-for-handoff' }>,
+      'targetName' | 'approvedSpecialistId'
+    >,
     context
   ) => {
-    const specialistId = options.resolveApprovedSpecialistId(context.sessionId)
+    const specialistId =
+      handoff.targetName === null
+        ? undefined
+        : (handoff.approvedSpecialistId ?? options.resolveApprovedSpecialistId(context.sessionId))
     await options.runtime.switchSpecialist(context.sessionId, specialistId)
   },
   continueAsApproved: async (handoff, context) => {

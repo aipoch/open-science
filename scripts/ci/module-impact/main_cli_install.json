@@ -421,6 +421,7 @@
       "src/main/notebook/shell-process.test.ts",
       "src/main/notebook/windows-runtime-manager.test.ts",
       "src/main/notebook/working-file-observer.test.ts",
+      "src/main/notebook/working-file-observer-plain-host.test.ts",
       "src/main/update/ipc.test.ts",
       "src/main/wsl/wsl-setup-guide.test.ts",
       "src/main/compute/connection-broker.test.ts",
@@ -463,7 +464,10 @@
       "src/main/literature/pdf-translation/reader-ownership.test.ts",
       "src/main/notebook/code-risk-admission.test.ts",
       "src/main/notebook/runtime-repair.windows.integration.test.ts",
-      "src/main/session-plan/session-plan-turn-outcome.test.ts"
+      "src/main/session-plan/session-plan-turn-outcome.test.ts",
+      "src/main/acp/specialist-switch-recovery.integration.test.ts",
+      "src/main/agents/production-completion-handoff.test.ts",
+      "src/main/notebook/auto-mode-budget.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

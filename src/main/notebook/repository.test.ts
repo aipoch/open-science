@@ -46,6 +46,31 @@ afterEach(async () => {
 })
 
 describe('notebook run repository', () => {
+  it('preserves failed runs and optional execution evidence after reopening durable history', async () => {
+    const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
+    const projectId = 'default-project'
+    const sessionId = 'session-1'
+    const lane = createRootNotebookLane(projectId, sessionId, 'root-frame-session-1')
+    await repository.loadOrCreate({ projectId, sessionId, lane, workspaceCwd: '/workspace' })
+    const runs = [
+      admittedRun({ runId: 'parse-failure', status: 'failed', executionStarted: false }),
+      admittedRun({ runId: 'runtime-failure', status: 'failed', executionStarted: true }),
+      admittedRun({ runId: 'legacy-failure', status: 'failed' })
+    ]
+    for (const run of runs) {
+      await repository.appendRun({ projectId, sessionId, lane, run })
+    }
+
+    const reopened = new NotebookRunRepository(root)
+    const history = await reopened.readSessionRuns(projectId, sessionId)
+    expect(history).toHaveLength(3)
+    expect(history).toEqual(expect.arrayContaining(runs.map((run) => expect.objectContaining(run))))
+    expect(history.find((run) => run.runId === 'legacy-failure')).not.toHaveProperty(
+      'executionStarted'
+    )
+  })
+
   it('preserves valid history with more than 32 loaded helper modules', async () => {
     const root = await createStorageRoot()
     const repository = new NotebookRunRepository(root)

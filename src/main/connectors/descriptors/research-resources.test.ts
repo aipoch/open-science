@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { ParserEngine } from '../engine'
 import { RESEARCH_RESOURCES_TOOLS } from './research-resources'
-import type { ToolDescriptor } from '../types'
+import type { ToolDescriptor } from '../../connector-core/types'
 
 const tool = (id: string): ToolDescriptor => RESEARCH_RESOURCES_TOOLS.find((t) => t.id === id)!
 const jsonRes = (body: unknown): Response =>

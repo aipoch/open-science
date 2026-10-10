@@ -17,6 +17,7 @@ export type KernelLoopResponse = {
   // True only when this request consumed a process-level interrupt. R uses this acknowledgement to
   // distinguish a cancelled request from a normal response that raced ahead of SIGINT delivery.
   interruptAck?: boolean
+  executionStarted?: boolean
   // 1-based source line of the failing statement when the loop can attribute one (R); null otherwise.
   errorLine: number | null
   result: string | null
@@ -188,6 +189,9 @@ export function parseLoopResponse(line: string): KernelLoopResponse | null {
     stdout: typeof obj.stdout === 'string' ? obj.stdout : '',
     stderr: typeof obj.stderr === 'string' ? obj.stderr : '',
     error: typeof obj.error === 'string' ? obj.error : null,
+    ...(typeof obj.execution_started === 'boolean'
+      ? { executionStarted: obj.execution_started }
+      : {}),
     ...(typeof obj.interrupt_ack === 'boolean' ? { interruptAck: obj.interrupt_ack } : {}),
     errorLine:
       typeof obj.error_line === 'number' && Number.isFinite(obj.error_line) ? obj.error_line : null,

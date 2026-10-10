@@ -362,7 +362,8 @@
       "src/renderer/src/stores/settings-connectors-slice.test.ts",
       "src/main/desktop-runtime-transport.integration.test.ts",
       "src/main/side-chat/application-commands.test.ts",
-      "src/main/artifacts/artifact-reproducibility-commands.test.ts"
+      "src/main/artifacts/artifact-reproducibility-commands.test.ts",
+      "src/main/acp/specialist-switch-recovery.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
