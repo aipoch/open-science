@@ -975,7 +975,8 @@ describe('User Skill repository architecture', () => {
           'src/main/acp/auto-operation-adapter.test.ts',
           'src/main/acp/auto-operation-broker.test.ts',
           'src/main/acp/auto-operation-policy.test.ts',
-          'src/main/notebook/working-file-observer-plain-host.test.ts'
+          'src/main/notebook/working-file-observer-plain-host.test.ts',
+          'src/main/notebook/auto-mode-budget.integration.test.ts'
         ]
       },
       capabilityOverlays: ['windows_sensitive', 'e2e_regressions', 'e2e_delegation'],
