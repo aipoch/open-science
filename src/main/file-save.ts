@@ -1,4 +1,8 @@
-import { BrowserWindow, app, dialog, type OpenDialogOptions } from 'electron'
+import { desktopFileInteraction } from './desktop-interaction'
+import { runtimeMetadata } from './runtime-metadata'
+import { callerContextForEvent, requireDesktopCaller } from './caller-context'
+import { callerLeaseForEvent } from './caller-lifecycle'
+import type { ApplicationInvocation } from './application-command-router'
 import { Zip, ZipDeflate } from 'fflate'
 
 import { ipcMainHandle } from './ipc-handler-registry'
@@ -266,6 +270,7 @@ const writeProjectArtifactArchive = async (options: {
   failures: SaveProjectArtifactFailure[]
   limits: ProjectArtifactExportLimits
   createTemporaryRoot: () => Promise<string>
+  assertActive: () => void
 }): Promise<boolean> => {
   let temporaryRoot: string | undefined
   let archiveHandle: FileHandle | undefined
@@ -300,6 +305,7 @@ const writeProjectArtifactArchive = async (options: {
     }
 
     for (const file of options.files) {
+      options.assertActive()
       let managedSource: ManagedFileVersionHandle | undefined
       let entryStarted = false
       try {
@@ -345,6 +351,7 @@ const writeProjectArtifactArchive = async (options: {
         entryStarted = true
         let entryBytes = 0
         for await (const chunk of chunks) {
+          options.assertActive()
           entryBytes += chunk.byteLength
           if (entryBytes > options.limits.maxFileBytes) {
             throw new Error('Project export file exceeds the per-file size limit.')
@@ -517,12 +524,55 @@ const extensionForMime = (mimeType: string): string | undefined => {
   }
 }
 
-const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {}): void => {
-  const publish = options.publishUserFile ?? publishUserFile
-  ipcMainHandle(
-    'file:save-blob',
-    async (event, request: SaveBlobFileRequest): Promise<SaveBlobFileResult> => {
-      const parentWindow = BrowserWindow.fromWebContents(event.sender)
+type FileSaveInvocation = ApplicationInvocation<readonly unknown[]>
+const assertCaller = ({ callerContext, callerLease }: FileSaveInvocation): void => {
+  requireDesktopCaller(callerContext)
+  callerLease.signal.throwIfAborted()
+  if (!callerLease.isCurrent()) throw new Error('File export caller is no longer current.')
+}
+export type FileSaveCommands = {
+  'file:save-blob': (
+    invocation: ApplicationInvocation<readonly [SaveBlobFileRequest]>
+  ) => Promise<SaveBlobFileResult>
+  'file:save-managed': (
+    invocation: ApplicationInvocation<readonly [SaveManagedFileRequest]>
+  ) => Promise<SaveManagedFileResult>
+  'file:save-session-artifacts': (
+    invocation: ApplicationInvocation<readonly [SaveSessionArtifactsRequest]>
+  ) => Promise<SaveSessionArtifactsResult>
+  'file:save-project-artifacts': (
+    invocation: ApplicationInvocation<readonly [SaveProjectArtifactsRequest]>
+  ) => Promise<SaveProjectArtifactsResult>
+}
+export const createFileSaveCommands = (
+  options: RegisterFileSaveHandlersOptions = {}
+): FileSaveCommands => {
+  const publishFor =
+    (invocation: FileSaveInvocation): typeof publishUserFile =>
+    (destination, write, publishOptions) => {
+      assertCaller(invocation)
+      return (options.publishUserFile ?? publishUserFile)(
+        destination,
+        async (temporary) => {
+          await write(temporary)
+          assertCaller(invocation)
+        },
+        {
+          ...publishOptions,
+          validateDestination: async () => {
+            await publishOptions?.validateDestination?.()
+            assertCaller(invocation)
+          }
+        }
+      )
+    }
+  return {
+    'file:save-blob': async (
+      invocation: ApplicationInvocation<readonly [SaveBlobFileRequest]>
+    ): Promise<SaveBlobFileResult> => {
+      assertCaller(invocation)
+      const [request] = invocation.args
+      const publish = publishFor(invocation)
       const extension = extensionForMime(request.mimeType)
       const dialogOptions = {
         defaultPath: request.suggestedName,
@@ -530,10 +580,12 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
           ? [{ name: extension.toUpperCase(), extensions: [extension] }]
           : undefined
       }
-      const { canceled, filePath } = parentWindow
-        ? await dialog.showSaveDialog(parentWindow, dialogOptions)
-        : await dialog.showSaveDialog(dialogOptions)
+      const { canceled, filePath } = await desktopFileInteraction().chooseSavePath(
+        dialogOptions,
+        invocation.callerContext.clientId
+      )
 
+      assertCaller(invocation)
       if (canceled || !filePath) {
         return { saved: false }
       }
@@ -542,13 +594,15 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
         writeFile(temporaryPath, Buffer.from(request.data))
       )
       return { saved: true, filePath }
-    }
-  )
+    },
 
-  // Managed-file export stays in main so large files never pass through renderer memory.
-  ipcMainHandle(
-    'file:save-managed',
-    async (event, request: SaveManagedFileRequest): Promise<SaveManagedFileResult> => {
+    // Managed-file export stays in main so large files never pass through renderer memory.
+    'file:save-managed': async (
+      invocation: ApplicationInvocation<readonly [SaveManagedFileRequest]>
+    ): Promise<SaveManagedFileResult> => {
+      assertCaller(invocation)
+      const [request] = invocation.args
+      const publish = publishFor(invocation)
       assertSaveManagedFileRequest(request)
       const versionedRequest =
         request.source === 'artifact' || request.source === 'upload' ? request : undefined
@@ -590,15 +644,16 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
             ? versionedRequest.fileId
             : basename((notebookInputRequest ?? pathRequest)!.path)
       const dialogOptions = {
-        defaultPath: join(app.getPath('downloads'), safeName),
+        defaultPath: join(runtimeMetadata().downloadsPath, safeName),
         title: (options.translate ?? englishNativeTranslator)('Save file')
       }
-      const parentWindow = BrowserWindow.fromWebContents(event.sender)
       try {
-        const { canceled, filePath } = parentWindow
-          ? await dialog.showSaveDialog(parentWindow, dialogOptions)
-          : await dialog.showSaveDialog(dialogOptions)
+        const { canceled, filePath } = await desktopFileInteraction().chooseSavePath(
+          dialogOptions,
+          invocation.callerContext.clientId
+        )
 
+        assertCaller(invocation)
         if (canceled || !filePath) return { saved: false }
 
         // Resolve managed identities after confirmation so the default export observes the DB head.
@@ -627,30 +682,33 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
       } finally {
         await pathManagedFile?.close()
       }
-    }
-  )
+    },
 
-  ipcMainHandle(
-    'file:save-session-artifacts',
-    async (event, request: SaveSessionArtifactsRequest): Promise<SaveSessionArtifactsResult> => {
+    'file:save-session-artifacts': async (
+      invocation: ApplicationInvocation<readonly [SaveSessionArtifactsRequest]>
+    ): Promise<SaveSessionArtifactsResult> => {
+      assertCaller(invocation)
+      const [request] = invocation.args
+      const publish = publishFor(invocation)
       assertSaveSessionArtifactsRequest(request)
       const openManagedFileVersion = options.openManagedFileVersion
       if (!openManagedFileVersion) {
         throw new Error('Managed file Version resolver is not configured.')
       }
-      const parentWindow = BrowserWindow.fromWebContents(event.sender)
 
       if (request.files.length === 1) {
         const [file] = request.files
         const safeName = getSafeFilename(file.suggestedName, file.fileId)
         const dialogOptions = {
-          defaultPath: join(app.getPath('downloads'), safeName),
+          defaultPath: join(runtimeMetadata().downloadsPath, safeName),
           title: (options.translate ?? englishNativeTranslator)('Save artifact')
         }
-        const { canceled, filePath } = parentWindow
-          ? await dialog.showSaveDialog(parentWindow, dialogOptions)
-          : await dialog.showSaveDialog(dialogOptions)
+        const { canceled, filePath } = await desktopFileInteraction().chooseSavePath(
+          dialogOptions,
+          invocation.callerContext.clientId
+        )
 
+        assertCaller(invocation)
         if (canceled || !filePath) return { saved: false }
 
         const managedFile = await openManagedFileVersion('artifact', {
@@ -671,14 +729,18 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
         }
       }
 
-      const directoryDialogOptions: OpenDialogOptions = {
-        defaultPath: app.getPath('downloads'),
+      const directoryDialogOptions: Parameters<
+        ReturnType<typeof desktopFileInteraction>['chooseFiles']
+      >[0] = {
+        defaultPath: runtimeMetadata().downloadsPath,
         properties: ['openDirectory', 'createDirectory'],
         title: (options.translate ?? englishNativeTranslator)('Choose where to save artifacts')
       }
-      const { canceled, filePaths } = parentWindow
-        ? await dialog.showOpenDialog(parentWindow, directoryDialogOptions)
-        : await dialog.showOpenDialog(directoryDialogOptions)
+      const { canceled, filePaths } = await desktopFileInteraction().chooseFiles(
+        directoryDialogOptions,
+        invocation.callerContext.clientId
+      )
+      assertCaller(invocation)
       const destinationDirectory = filePaths[0]
       if (canceled || !destinationDirectory) return { saved: false }
 
@@ -687,6 +749,7 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
         Extract<SaveSessionArtifactsResult, { saved: true }>['failures']
       > = []
       for (const file of request.files) {
+        assertCaller(invocation)
         let managedFile: ManagedFileHandle | undefined
         try {
           managedFile = await openManagedFileVersion('artifact', {
@@ -712,24 +775,25 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
         filePaths: savedPaths,
         ...(failures.length > 0 ? { failures } : {})
       }
-    }
-  )
+    },
 
-  // Project-wide export packs every Artifact and Upload into one zip, grouped under uploads/ and
-  // generated/ by source.
-  ipcMainHandle(
-    'file:save-project-artifacts',
-    async (event, request: SaveProjectArtifactsRequest): Promise<SaveProjectArtifactsResult> => {
+    // Project-wide export packs every Artifact and Upload into one zip, grouped under uploads/ and
+    // generated/ by source.
+    'file:save-project-artifacts': async (
+      invocation: ApplicationInvocation<readonly [SaveProjectArtifactsRequest]>
+    ): Promise<SaveProjectArtifactsResult> => {
+      assertCaller(invocation)
+      const [request] = invocation.args
+      const publish = publishFor(invocation)
       assertSaveProjectArtifactsRequest(request)
       const openManagedFileVersion = options.openManagedFileVersion
       if (!openManagedFileVersion) {
         throw new Error('Managed file Version resolver is not configured.')
       }
 
-      const parentWindow = BrowserWindow.fromWebContents(event.sender)
       const dialogOptions = {
         defaultPath: join(
-          app.getPath('downloads'),
+          runtimeMetadata().downloadsPath,
           `${getSafeZipBaseName(request.suggestedArchiveName)}-artifacts.zip`
         ),
         title: (options.translate ?? englishNativeTranslator)('Download project artifacts'),
@@ -740,14 +804,17 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
           }
         ]
       }
-      const dialogResult = parentWindow
-        ? await dialog.showSaveDialog(parentWindow, dialogOptions)
-        : await dialog.showSaveDialog(dialogOptions)
+      const dialogResult = await desktopFileInteraction().chooseSavePath(
+        dialogOptions,
+        invocation.callerContext.clientId
+      )
       const { canceled, filePath } = dialogResult
+      assertCaller(invocation)
       if (canceled || !filePath) return { saved: false }
 
       const failures: SaveProjectArtifactFailure[] = []
       const wroteArchive = await writeProjectArtifactArchive({
+        assertActive: () => assertCaller(invocation),
         destinationPath: filePath,
         projectId: request.projectId,
         files: request.files,
@@ -765,8 +832,22 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
         ...(failures.length > 0 ? { failures } : {})
       }
     }
-  )
+  }
 }
 
+const registerFileSaveHandlers = (
+  options: RegisterFileSaveHandlersOptions = {},
+  commands = createFileSaveCommands(options)
+): void => {
+  for (const [channel, command] of Object.entries(commands)) {
+    ipcMainHandle(channel, (event, request) =>
+      command({
+        callerContext: callerContextForEvent(event),
+        callerLease: callerLeaseForEvent(event),
+        args: [request]
+      })
+    )
+  }
+}
 export { registerFileSaveHandlers }
 export type { RegisterFileSaveHandlersOptions }

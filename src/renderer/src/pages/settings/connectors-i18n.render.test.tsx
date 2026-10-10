@@ -770,3 +770,49 @@ describe('PDC settings translations', () => {
     }
   )
 })
+
+describe('ENCORI settings translations', () => {
+  it.each(['de', 'es', 'fr', 'zh-Hans', 'zh-Hant', 'ja', 'ko', 'ru'] as const)(
+    'renders ENCORI and all ten available tools in %s',
+    async (locale) => {
+      await prepareI18nLocale(locale)
+      const t = i18next.getFixedT(locale, 'renderer')
+      const description = 'RNA interactions, regulatory evidence and bulk datasets from ENCORI.'
+      const translated = connectorDescription({ id: 'encori', description }, t)
+      expect(translated).not.toBe(description)
+      const methods = [
+        'query_mirna_targets',
+        'query_rna_rna_interactions',
+        'query_rbp_targets',
+        'query_cerna_network',
+        'query_rbp_disease',
+        'scan_rbp_motifs',
+        'get_binding_sites',
+        'get_reference_tables',
+        'list_bulk_datasets',
+        'download_bulk_dataset'
+      ]
+      const english = i18next.getFixedT('en', 'renderer')
+      const copies = methods.map((method) =>
+        connectorToolDescription(`encori/${method}`, 'fallback', t)
+      )
+      act(() =>
+        root.render(
+          <div>
+            <p>{translated}</p>
+            {copies.map((copy, index) => (
+              <p key={methods[index]}>{copy}</p>
+            ))}
+          </div>
+        )
+      )
+      expect(container.querySelectorAll('p')).toHaveLength(11)
+      methods.forEach((method, index) => {
+        expect(copies[index]).not.toBe('fallback')
+        expect(copies[index]).not.toBe(
+          connectorToolDescription(`encori/${method}`, 'fallback', english)
+        )
+      })
+    }
+  )
+})

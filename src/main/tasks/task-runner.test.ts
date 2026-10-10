@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import {
   rebaseTaskSessionBinding,
   rebaseTaskTurnOntoLatestSession
@@ -6899,3 +6900,5 @@ it('does not let one Session repair failure reject startup and retries it on the
   expect((await h.raw()).taskRunCommitId).toBe(RESTART_RUN)
   expect(second.getRun(RESTART_RUN)).toMatchObject({ status: 'failed' })
 })
+
+await configureTestElectronHost(await import('electron'))

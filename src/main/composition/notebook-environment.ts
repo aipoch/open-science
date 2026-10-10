@@ -1,9 +1,10 @@
-import { app } from 'electron'
+import { registerNotebookEnvIpcHandlers } from '../desktop-surface-declarations'
+import { runtimeMetadata } from '../runtime-metadata'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { NotebookRunResultDeliveryAdapter } from '../background-result-delivery/notebook-adapter'
 import { createLogger, errorLogFields } from '../logger'
 import { installNotebookEnvironmentSurface } from '../notebook/application'
-import { broadcastNotebookEnvProgress, registerNotebookEnvIpcHandlers } from '../notebook/env-ipc'
+import { broadcastNotebookEnvProgress } from '../notebook/env-ipc'
 import {
   createNotebookEnvironmentLifecycle,
   type NotebookEnvironmentLifecycle
@@ -77,7 +78,7 @@ export const registerNotebookEnvironmentComposition = async ({
   try {
     const configuredMirror = await settingsService.getPackageMirror()
     const effectiveMirror = (): ReturnType<typeof effectiveMirrorAsync> =>
-      effectiveMirrorAsync(configuredMirror, app.getLocale())
+      effectiveMirrorAsync(configuredMirror, runtimeMetadata().locale)
     provisioner = createProductionProvisioner(
       {
         root: provisioningRoot,
@@ -90,9 +91,9 @@ export const registerNotebookEnvironmentComposition = async ({
         // through synchronously while channel selection warms in the background.
         caBundle: configuredMirror?.caBundle,
         micromamba: {
-          resourcesPath: process.resourcesPath,
-          packaged: app.isPackaged,
-          configHome: app.getPath('home')
+          resourcesPath: runtimeMetadata().resourcesPath,
+          packaged: runtimeMetadata().packaged,
+          configHome: runtimeMetadata().homePath
         },
         // Self-guard the provisioner's prefix writes (startup restore/upgrade/repair, named create, lazy
         // materialize) against a prefix crash-recovery could not confirm free of a live orphan — closes

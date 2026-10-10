@@ -520,6 +520,8 @@ describe('Artifact Provenance repository architecture', () => {
       'src/main/notebook/dependency-analysis.stdlib-replay.test.ts',
       'src/main/artifacts/resumed-finalization-ownership.test.ts',
       'src/main/artifacts/export-filename.ts',
+      'src/main/artifacts/artifact-reproducibility-commands.test.ts',
+      'src/main/artifacts/artifact-reproducibility-commands.ts',
       'src/main/artifacts/session-version-content-reader.test.ts',
       'src/main/artifacts/session-version-content-reader.ts'
     ])
@@ -560,6 +562,7 @@ describe('Artifact Provenance repository architecture', () => {
       'src/main/notebook/reproduction-runtime.ts',
       'src/renderer/src/pages/workspace/ArtifactReproducibilityPanel.tsx',
       'src/main/artifacts/ro-crate-export.ts',
+      'src/main/artifacts/artifact-reproducibility-commands.ts',
       'src/main/artifacts/session-version-content-reader.ts'
     ])
     expect(module.consumerModules).toEqual(['session_persistence'])
@@ -605,6 +608,7 @@ describe('Artifact Provenance repository architecture', () => {
       'src/main/artifacts/session-reproducibility.test.ts',
       'src/main/artifacts/storage-access.context.test.ts',
       'src/main/artifacts/resumed-finalization-ownership.test.ts',
+      'src/main/artifacts/artifact-reproducibility-commands.test.ts',
       'src/main/artifacts/session-version-content-reader.test.ts'
     ])
     expect(module.testFiles.contract).toEqual([
@@ -986,8 +990,18 @@ describe('Artifact Provenance repository architecture', () => {
       'src/main/acp/approved-handoff-outcome.integration.test.ts',
       'src/main/acp/approved-handoff-outcome.test.ts',
       'src/main/literature/pdf-translation/checkpoints.test.ts',
-      'src/main/session-package/research-reproduction.integration.test.ts',
+      'src/main/node-process-host.test.ts',
+      'src/main/desktop-runtime-electron-adapter.test.ts',
+      'src/main/desktop-runtime-transport.integration.test.ts',
+      'src/main/side-chat/application-commands.test.ts',
+      'src/main/settings/file-commands.test.ts',
+      'src/main/office-preview/application-commands.test.ts',
+      'src/main/reviewer/paged-preview-host.test.ts',
+      'src/main/desktop-native-electron.test.ts',
       'src/main/session-plan/session-plan-turn-outcome.test.ts',
+      'src/main/acp/specialist-switch-recovery.integration.test.ts',
+      'src/main/agents/production-completion-handoff.test.ts',
+      'src/main/session-package/research-reproduction.integration.test.ts',
       'src/main/composition/artifact-surfaces.test.ts',
       'src/main/composition/handoff.test.ts',
       'src/main/composition/managed-execution.integration.test.ts',

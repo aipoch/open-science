@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
@@ -1537,3 +1538,5 @@ qc.describe(include="all").to_json(out / "proteomics-qc-summary.json")`
     externalState: 'partial'
   })
 })
+
+configureTestRuntimeMetadata()

@@ -1,3 +1,4 @@
+import { ownRuntimeDataDirectorySync } from '../runtime-ownership'
 import { readdir } from 'node:fs/promises'
 import { mkdirSync } from 'node:fs'
 import { DATA_ROOT_SELECTION_CHANGED } from '../../shared/storage'
@@ -6,7 +7,9 @@ import type { Dirent } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { dirname, join } from 'node:path'
 
-import { app, dialog, shell } from 'electron'
+import { desktopShellInteraction, desktopFileInteraction } from '../desktop-interaction'
+import { runtimeLifecycle } from '../runtime-lifecycle'
+import { runtimeMetadata } from '../runtime-metadata'
 
 import type {
   ActiveSessionInfo,
@@ -376,7 +379,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
   const revealAppStorage = async (): Promise<RevealAppStorageResult> => {
     // The renderer supplies no path: main resolves the single trusted config root at invocation time.
     try {
-      const error = await shell.openPath(resolveConfigRoot())
+      const error = await desktopShellInteraction().openPath(resolveConfigRoot())
       if (error) logger.warn('application storage reveal failed', { errorCategory: 'shell' })
       return error ? { revealed: false, error } : { revealed: true }
     } catch (error) {
@@ -425,7 +428,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
   const pickDirectory = async (): Promise<string | null> => {
     try {
       if (deps.showOpenDialog) return await deps.showOpenDialog()
-      const result = await dialog.showOpenDialog({
+      const result = await desktopFileInteraction().chooseFiles({
         properties: ['openDirectory', 'createDirectory']
       })
       return result.filePaths[0] ?? null
@@ -484,7 +487,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       const target = request.selection?.dataRoot ?? dataRootForPicked(request.parent)
       if (!samePath(dataRootForPicked(request.parent), target))
         throw new Error(DATA_ROOT_SELECTION_CHANGED)
-      const selection: DataRootSelection = request.selection ?? {
+      let selection: DataRootSelection = request.selection ?? {
         pickedPath: request.parent,
         dataRoot: target,
         kind: 'move',
@@ -529,6 +532,16 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
 
       assertDataRootSelection(selection)
 
+      // Only the confirmed absent destination may change identity when acquiring its lock.
+      if (await isDataRootMissing(target)) {
+        assertDataRootSelection(selection)
+        mkdirSync(target)
+        selection = { ...selection, identity: dataRootIdentity(target) }
+      }
+      assertDataRootSelection(selection)
+      ownRuntimeDataDirectorySync(target)
+      assertDataRootSelection(selection)
+
       // Flag the copy: sets both the quit guard (Cmd+Q warning) and the write-gate (blocks ACP/notebook
       // writes to the old root for the whole copy→commit window).
       beginMigration()
@@ -550,7 +563,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
             (deps.exportRuntimeLocks ?? exportRuntimeLocks)(fromDataRoot, toDataRoot, {
               mm: deps.micromambaRunner
                 ? await deps.micromambaRunner.resolve()
-                : resolveMicromamba({ resourcesPath: process.resourcesPath }),
+                : resolveMicromamba({ resourcesPath: runtimeMetadata().resourcesPath }),
               capture: (argv) =>
                 captureMicromamba(argv, micromambaSpawnEnv(runtimeRoot(fromDataRoot)))
             })
@@ -699,7 +712,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
     }
   }
 
-  // Production relaunches through app.quit(), allowing the single application lifecycle owner to
+  // Production relaunches through runtimeLifecycle().quit(), allowing the single application lifecycle owner to
   // drain usage, flush renderer persistence, stop backends, write a terminal diagnostic, and flush
   // main.log before exit. The injected callback remains a narrow test seam. This runs only after the
   // pointer commits; if relaunch scheduling or quit itself throws, the durable handoff cannot safely
@@ -709,24 +722,24 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       try {
         deps.relaunch()
       } catch (error) {
-        app.exit(1)
+        runtimeLifecycle().exit(1)
         throw error
       }
       return
     }
     try {
-      app.relaunch()
+      runtimeLifecycle().relaunch()
     } catch (error) {
-      app.exit(1)
+      runtimeLifecycle().exit(1)
       throw error
     }
     markApplicationShutdownTrigger('migration-relaunch')
     try {
-      app.quit()
+      runtimeLifecycle().quit()
     } catch (error) {
       // Producer teardown and renderer durability were already confirmed before the pointer commit.
       // Bypass the failed graceful path rather than leaving this process alive on its cached old root.
-      app.exit(1)
+      runtimeLifecycle().exit(1)
       throw error
     }
   }
@@ -892,6 +905,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
           kind: 'recover',
           identity: dataRootIdentity(target)
         }
+        ownRuntimeDataDirectorySync(staged.target)
         outcome = await commitDataRootSwitch(
           {
             currentDataRoot,
@@ -937,6 +951,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
         // switchover failure discard the now-orphan staged copy (best-effort), then lift the write-gate
         // in every case. The old root is untouched and immediately usable.
         if ('switchoverFailed' in outcome) {
+          ownRuntimeDataDirectorySync(staged.target)
           await discardStagedCopy(
             { currentDataRoot: resolveDataRoot(), expectedToken: staged.token, npmMigration },
             request.parent
@@ -1170,6 +1185,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       }
       assertDataRootSelection(selection)
       operation.phase('persist-pointer', { mode: classification.kind })
+      ownRuntimeDataDirectorySync(target)
       await deps.settingsService.setDataRoot(target, {
         completeOnboarding: request.markOnboarding === true,
         previousDataRoot: resolveDataRoot(),
@@ -1178,7 +1194,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       pointerCommitted = true
       quitOperation.markCommitted()
       // The copy-phase quit warning is not appropriate after the pointer commits, but keep `pending`
-      // raised so no writer can reopen against this process's cached old root before app.quit().
+      // raised so no writer can reopen against this process's cached old root before runtimeLifecycle().quit().
       endMigrationCopy()
       operation.phase('request-relaunch', { mode: classification.kind })
       await cleanRelaunch()

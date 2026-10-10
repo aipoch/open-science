@@ -21,7 +21,13 @@ export const withApprovedHandoffOutcome = (
       await adapter.stopOldPrompt(context)
     },
     waitForOwnershipRelease: (context) => adapter.waitForOwnershipRelease(context),
-    reconfigure: (handoff, context) => adapter.reconfigure(handoff, context),
+    cleanupCancelledHandoff: async (context) => {
+      if (failures.get(context.sessionId)?.key === completionContextKey(context))
+        failures.delete(context.sessionId)
+      await adapter.cleanupCancelledHandoff?.(context)
+    },
+    reconfigure: (handoff, context, isCurrentAttempt) =>
+      adapter.reconfigure(handoff, context, isCurrentAttempt),
     continueAsApproved: async (handoff, context, continuationContext) => {
       await adapter.continueAsApproved(handoff, context, continuationContext)
       if (failures.get(context.sessionId)?.key === completionContextKey(context))

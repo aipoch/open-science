@@ -1250,3 +1250,6 @@ it.skipIf(process.platform === 'win32')(
     )
   }
 )
+
+const { configureTestElectronHost } = await import('../../../test/runtime-host')
+await configureTestElectronHost(await import('electron'))

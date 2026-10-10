@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { expect, it } from 'vitest'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -178,3 +179,5 @@ ${prefix}write_csv(data, "clean.csv")`
     writeState: 'complete'
   })
 })
+
+configureTestRuntimeMetadata()

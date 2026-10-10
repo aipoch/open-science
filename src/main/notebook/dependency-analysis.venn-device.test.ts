@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { expect, it } from 'vitest'
 import { analyzeRNotebookSource } from './dependency-analysis-r'
 import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
@@ -169,3 +170,5 @@ it.each([
   expect(facts.state === 'unknown' ? facts.reasons : [], JSON.stringify(facts)).toEqual([])
   expect(facts.copyOnModifyNames).toContain('d')
 })
+
+configureTestRuntimeMetadata()

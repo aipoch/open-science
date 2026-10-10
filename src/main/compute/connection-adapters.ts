@@ -1,10 +1,10 @@
+import { nodeRuntimeEnvironment } from '../node-process-host'
+import { runtimeMetadata } from '../runtime-metadata'
 import { randomUUID } from 'node:crypto'
 import { chmod, mkdtemp, rm } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { platform, tmpdir } from 'node:os'
 import { join } from 'node:path'
-
-import { app } from 'electron'
 
 import type { ComputeHost } from '../../shared/compute'
 import {
@@ -140,9 +140,9 @@ const withoutInheritedAuthenticationOptions = (args: readonly string[]): string[
 }
 
 const askpassResourcePath = (name: string): string =>
-  app.isPackaged
-    ? join(process.resourcesPath, 'app.asar.unpacked', 'resources', name)
-    : join(app.getAppPath(), 'resources', name)
+  runtimeMetadata().packaged
+    ? join(runtimeMetadata().resourcesPath, 'app.asar.unpacked', 'resources', name)
+    : join(runtimeMetadata().applicationPath, 'resources', name)
 
 const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
@@ -281,7 +281,7 @@ const createAskpassEnvironment = async (
     SSH_ASKPASS_REQUIRE: 'force',
     OPEN_SCIENCE_ASKPASS_SOCKET: socketPath,
     OPEN_SCIENCE_ASKPASS_CAPABILITY: capability,
-    ELECTRON_RUN_AS_NODE: '1'
+    ...nodeRuntimeEnvironment()
   }
   return {
     env:

@@ -11,23 +11,39 @@ type CompletionHandoffCommands = {
   cancelById(id: string, sessionId: string): Promise<void>
 }
 
+export type CompletionHandoffCommandOwner = {
+  getEvents(sessionId: unknown): Promise<CompletionHandoffLifecycleEvent[]>
+  retry(request: CompletionHandoffCommand): Promise<unknown>
+  cancel(request: CompletionHandoffCommand): Promise<void>
+}
+export const createCompletionHandoffCommands = (
+  lifecycle: CompletionHandoffCommands
+): CompletionHandoffCommandOwner => ({
+  getEvents: (sessionId) => {
+    if (typeof sessionId !== 'string') throw new Error('Handoff sessionId must be a string.')
+    return lifecycle.getEvents(sessionId)
+  },
+  retry: (request) => {
+    assertCommand(request, 'retry')
+    return lifecycle.retryById(request.id, request.sessionId)
+  },
+  cancel: (request) => {
+    assertCommand(request, 'cancel')
+    return lifecycle.cancelById(request.id, request.sessionId)
+  }
+})
 export const registerCompletionHandoffIpcHandlers = (
   lifecycle: CompletionHandoffCommands
 ): void => {
-  ipcMainHandle(SPECIALIST_IPC.GET_HANDOFF_EVENTS, (_event, sessionId: unknown) => {
-    if (typeof sessionId !== 'string') throw new Error('Handoff sessionId must be a string.')
-    return lifecycle.getEvents(sessionId)
-  })
-  ipcMainHandle(SPECIALIST_IPC.RETRY_HANDOFF, (_event, request: CompletionHandoffCommand) => {
-    assertCommand(request, 'retry')
-    return lifecycle.retryById(request.id, request.sessionId)
-  })
-  ipcMainHandle(
-    SPECIALIST_IPC.CANCEL_HANDOFF,
-    async (_event, request: CompletionHandoffCommand) => {
-      assertCommand(request, 'cancel')
-      await lifecycle.cancelById(request.id, request.sessionId)
-    }
+  const owner = createCompletionHandoffCommands(lifecycle)
+  ipcMainHandle(SPECIALIST_IPC.GET_HANDOFF_EVENTS, (_event, sessionId: unknown) =>
+    owner.getEvents(sessionId)
+  )
+  ipcMainHandle(SPECIALIST_IPC.RETRY_HANDOFF, (_event, request: CompletionHandoffCommand) =>
+    owner.retry(request)
+  )
+  ipcMainHandle(SPECIALIST_IPC.CANCEL_HANDOFF, (_event, request: CompletionHandoffCommand) =>
+    owner.cancel(request)
   )
 }
 

@@ -15,3 +15,10 @@ module.exports.validatorExecutablePath = join(
   'Release',
   process.platform === 'win32' ? 'credential_key_validator.exe' : 'credential_key_validator'
 )
+
+module.exports.secretExecutablePath = join(
+  __dirname,
+  'build',
+  'Release',
+  process.platform === 'win32' ? 'credential_secret.exe' : 'credential_secret'
+)

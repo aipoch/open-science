@@ -175,6 +175,8 @@
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/main/index-fatal-errors.test.ts",
       "src/main/session-package/fork.test.ts",
+      "src/main/composition/notebook-environment.test.ts",
+      "src/main/composition/reviewer.test.ts",
       "src/main/windows.test.ts",
       "src/renderer/src/hooks/useWindowFindAppearanceSync.overlay.test.tsx",
       "src/main/acp/runtime.test.ts",

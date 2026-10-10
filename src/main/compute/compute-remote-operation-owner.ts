@@ -1,8 +1,8 @@
+import { runtimeMetadata } from '../runtime-metadata'
 import { mkdir, mkdtemp, rename, stat as fsStat, rm } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
-import { app } from 'electron'
 
 import type { ComputeCallError, ComputeHost, ExecResult } from '../../shared/compute'
 import type { DirListing, DownloadDest, LocalFile, RemoteFsError } from '../../shared/remote-fs'
@@ -553,7 +553,7 @@ export class ComputeRemoteOperationOwner {
 
   private getDownloadsDir(): string {
     try {
-      return app.getPath('downloads')
+      return runtimeMetadata().downloadsPath
     } catch {
       return join(tmpdir(), 'downloads')
     }

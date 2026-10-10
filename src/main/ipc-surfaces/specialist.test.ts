@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { EventEmitter } from 'node:events'
 import { mkdir, mkdtemp, readFile, rm, truncate, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -299,3 +300,5 @@ describe('Specialist Electron surface', () => {
     expect(await readFile(destination)).toEqual(originalZip)
   })
 })
+
+await configureTestElectronHost(await import('electron'))

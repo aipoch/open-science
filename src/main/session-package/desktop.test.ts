@@ -1772,3 +1772,7 @@ it.each(['import', 'fork', 'unrelated-failure', 'cleanup-pending', 'running'] as
     await desktop.close()
   }
 )
+
+await (
+  await import('../../../test/runtime-host')
+).configureTestElectronHost(await import('electron'))

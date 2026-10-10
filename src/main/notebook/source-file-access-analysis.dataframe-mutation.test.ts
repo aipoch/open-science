@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { expect, it } from 'vitest'
 
 import { analyzePythonNotebookSource } from './dependency-analysis-python'
@@ -51,3 +52,5 @@ cohort["risk"] = 1`)
   )
   expect(result.writes).toEqual(['outputs/cohort.csv'])
 })
+
+configureTestRuntimeMetadata()

@@ -1,4 +1,4 @@
-import { ipcMain, type IpcMain, type IpcMainInvokeEvent } from 'electron'
+import type { IpcMain, IpcMainInvokeEvent } from 'electron'
 
 import { callerContextForEvent, type CallerContext } from './caller-context'
 import {
@@ -209,12 +209,23 @@ const createIpcHandlerRegistry = (
   }
 }
 
-const defaultRegistry = createIpcHandlerRegistry(ipcMain)
+let defaultRegistry: IpcHandlerRegistry | undefined
 
-const ipcMainHandle = defaultRegistry.ipcMainHandle
-const disposeIpcHandlerRegistry = (): void => defaultRegistry.dispose()
+export const configureIpcHandlerRegistry = (
+  target: Parameters<typeof createIpcHandlerRegistry>[0]
+): void => {
+  if (defaultRegistry) throw new Error('Electron IPC registry is already configured.')
+  defaultRegistry = createIpcHandlerRegistry(target)
+}
+const installedRegistry = (): IpcHandlerRegistry => {
+  if (!defaultRegistry) throw new Error('Electron IPC is unavailable in this host.')
+  return defaultRegistry
+}
+const ipcMainHandle: IpcMain['handle'] = (channel, listener) =>
+  installedRegistry().ipcMainHandle(channel, listener)
+const disposeIpcHandlerRegistry = (): void => installedRegistry().dispose()
 const createIpcHandlerInstallationScope = (): IpcHandlerInstallationScope =>
-  defaultRegistry.createInstallationScope()
+  installedRegistry().createInstallationScope()
 
 export {
   createIpcHandlerInstallationScope,

@@ -1,8 +1,9 @@
+import { desktopShellInteraction } from '../desktop-interaction'
 import {
   captureProvenanceRead,
   type ProvenanceReadResult
 } from '../../shared/provenance-read-result'
-import { shell } from 'electron'
+
 import { basename, dirname } from 'node:path'
 
 import { ipcMainHandle } from '../ipc-handler-registry'
@@ -204,7 +205,8 @@ const createArtifactHandlers = (
 ): ArtifactHandlers => {
   const finalizeLocks = new Map<string, Promise<void>>()
   const openPath =
-    dependencies.openPath ?? ((filePath: string): Promise<string> => shell.openPath(filePath))
+    dependencies.openPath ??
+    ((filePath: string): Promise<string> => desktopShellInteraction().openPath(filePath))
   return {
     finalizeRunArtifacts: (request) =>
       withDataRootWrite(() =>
@@ -272,7 +274,7 @@ const createArtifactHandlers = (
         return result
       }),
     openFile: async (request) => {
-      // Resolve through the repository first so shell.openPath never sees unmanaged locations.
+      // Resolve through the repository first so desktopShellInteraction().openPath never sees unmanaged locations.
       const versionIdentity = parseArtifactVersionLocator(request.path)
       if (!versionIdentity) {
         const openError = await openPath(await repository.resolveManagedFilePath(request))

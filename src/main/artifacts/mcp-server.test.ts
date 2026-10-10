@@ -1,3 +1,4 @@
+import { nodeRuntimeEnvironmentEntries } from '../node-process-host'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -446,7 +447,7 @@ describe('artifact MCP server', () => {
       command: '/Applications/Open-Science.app/Contents/MacOS/Open-Science',
       args: ['/app/out/main/index.js', '--open-science-artifact-mcp'],
       env: [
-        { name: 'ELECTRON_RUN_AS_NODE', value: '1' },
+        ...nodeRuntimeEnvironmentEntries(),
         { name: 'OPEN_SCIENCE_ARTIFACT_STORAGE_ROOT', value: '/Users/example/.open-science' },
         { name: 'OPEN_SCIENCE_ARTIFACT_PROJECT_ID', value: 'default-project' },
         { name: 'OPEN_SCIENCE_ARTIFACT_SESSION_ID', value: 'session-1' },
@@ -575,3 +576,5 @@ describe('artifact MCP server', () => {
     expect(JSON.stringify(result)).not.toContain('/private/session')
   })
 })
+
+;(await import('../../../test/runtime-metadata')).configureTestRuntimeMetadata()

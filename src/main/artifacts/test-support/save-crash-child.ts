@@ -12,8 +12,18 @@ import { NotebookRunRepository } from '../../notebook/repository'
 import { writeArtifactFileForCurrentRun } from '../mcp-server'
 import { createLinearConversationGraph } from '../../../shared/conversation-graph'
 import type { PersistedChatSession } from '../../../shared/session-persistence'
+import { configureRuntimeMetadata } from '../../runtime-metadata'
 
 const [root, phase] = process.argv.slice(2)
+configureRuntimeMetadata(() => ({
+  version: '0.0.0-test',
+  locale: 'en-US',
+  packaged: false,
+  applicationPath: process.cwd(),
+  homePath: root,
+  downloadsPath: root,
+  resourcesPath: join(process.cwd(), 'resources')
+}))
 const pause = async (): Promise<never> => {
   process.send?.({ phase })
   return new Promise(() => undefined)

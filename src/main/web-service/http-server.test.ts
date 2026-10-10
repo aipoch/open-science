@@ -97,6 +97,7 @@ const startTestWebHttpServer = (
 
   return startWebHttpServer({
     ...serverOptions,
+    fetchPreview: serverOptions.fetchPreview ?? ((request) => net.fetch(request.url)),
     applicationCommands: options.applicationCommands ?? {
       localWeb: { commandNames: () => localNames, invoke: invokeDirect },
       remoteWeb: {

@@ -1,3 +1,4 @@
+import { runtimeMetadata } from '../runtime-metadata'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -40,7 +41,7 @@ export const resolveBundleDir = (deps: BundleDirDeps = {}): string | undefined =
   const override = deps.override ?? process.env.OPEN_SCIENCE_ENV_BUNDLE_DIR
   if (override) return existsSync(override) ? override : undefined
 
-  const resourcesPath = deps.resourcesPath ?? process.resourcesPath
+  const resourcesPath = deps.resourcesPath ?? runtimeMetadata().resourcesPath
   const candidates = [
     resourcesPath && join(resourcesPath, 'app.asar.unpacked', 'resources', 'default-envs'),
     resourcesPath && join(resourcesPath, 'resources', 'default-envs'),

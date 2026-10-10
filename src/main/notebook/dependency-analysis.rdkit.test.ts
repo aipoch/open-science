@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { createHash } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -132,3 +133,5 @@ describe('RDKit molecule multi-cell lineage', { timeout: 60_000 }, () => {
     })
   })
 })
+
+configureTestRuntimeMetadata()

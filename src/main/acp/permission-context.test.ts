@@ -25,6 +25,7 @@ import {
   isManagedSkillPermission,
   isNativeWebFetchPermission,
   isNativeWebSearchPermission,
+  trustedMcpToolIdentity,
   withTrustedMcpToolIdentity
 } from './permission-policy'
 
@@ -116,6 +117,193 @@ describe('ACP permission context', () => {
       }
     }
   )
+  it('waits for a matching observed OpenCode binding identity even when permission input is complete', async () => {
+    const context = new AcpPermissionContext({
+      emitPermissionRequest: vi.fn(),
+      routing: permissionRouting()
+    })
+    const title = 'open_science_notebook_notebook_bind_runtime'
+    const rawInput = { language: 'python', runtimeId: '/validated/default' }
+    try {
+      const restored = context.restoreToolCall(
+        permissionRequest('s', 'late-binding', { title, rawInput }),
+        {
+          sessionId: 's',
+          framework: 'opencode',
+          mcpServerNames: NOTEBOOK_SERVERS,
+          isCancelled: () => false
+        }
+      )
+      expect(context.snapshot().sessions.s?.pendingWaiters).toBe(1)
+      observe(
+        context,
+        {
+          sessionId: 's',
+          update: {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'late-binding',
+            title,
+            kind: 'other',
+            status: 'pending',
+            rawInput,
+            _meta: { toolName: title }
+          }
+        },
+        'opencode'
+      )
+      expect(trustedMcpToolIdentity((await restored)!)).toBe(
+        'open-science-notebook/notebook_bind_runtime'
+      )
+      expect(context.snapshot().sessions.s?.pendingWaiters ?? 0).toBe(0)
+    } finally {
+      context.dispose()
+    }
+  })
+
+  it('keeps complete OpenCode binding input untrusted after mismatched observation and timeout', async () => {
+    vi.useFakeTimers()
+    const context = new AcpPermissionContext({
+      emitPermissionRequest: vi.fn(),
+      routing: permissionRouting()
+    })
+    const title = 'open_science_notebook_notebook_bind_runtime'
+    const rawInput = { language: 'python', runtimeId: '/validated/default' }
+    try {
+      const restored = context.restoreToolCall(
+        permissionRequest('s', 'binding', { title, rawInput }),
+        {
+          sessionId: 's',
+          framework: 'opencode',
+          mcpServerNames: NOTEBOOK_SERVERS,
+          isCancelled: () => false
+        }
+      )
+      observe(
+        context,
+        {
+          sessionId: 's',
+          update: {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'other-binding',
+            title,
+            kind: 'other',
+            status: 'pending',
+            rawInput
+          }
+        },
+        'opencode'
+      )
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(trustedMcpToolIdentity((await restored)!)).toBeUndefined()
+      expect(context.snapshot().sessions.s?.pendingWaiters ?? 0).toBe(0)
+    } finally {
+      context.dispose()
+      vi.useRealTimers()
+    }
+  })
+
+  it('retains an already observed OpenCode binding identity when only permission has arguments', async () => {
+    const context = new AcpPermissionContext({
+      emitPermissionRequest: vi.fn(),
+      routing: permissionRouting()
+    })
+    const title = 'open_science_notebook_notebook_bind_runtime'
+    try {
+      observe(
+        context,
+        {
+          sessionId: 's',
+          update: {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'binding',
+            title,
+            kind: 'other',
+            status: 'pending'
+          }
+        },
+        'opencode'
+      )
+      const restored = await context.restoreToolCall(
+        permissionRequest('s', 'binding', {
+          title,
+          rawInput: { language: 'python', runtimeId: '/validated/default' }
+        }),
+        {
+          sessionId: 's',
+          framework: 'opencode',
+          mcpServerNames: NOTEBOOK_SERVERS,
+          isCancelled: () => false
+        }
+      )
+      expect(trustedMcpToolIdentity(restored!)).toBe('open-science-notebook/notebook_bind_runtime')
+      expect(context.snapshot().sessions.s?.pendingWaiters ?? 0).toBe(0)
+    } finally {
+      context.dispose()
+    }
+  })
+
+  it('records binding admission only after a provider one-call release, without cancelled-request residue', async () => {
+    const emit = vi.fn()
+    const authorize = vi.fn(() => true)
+    const classify = vi.fn(async () => true)
+    const context = new AcpPermissionContext({
+      emitPermissionRequest: emit,
+      routing: permissionRouting({
+        capturePrompt: () => ({
+          sequence: 1,
+          promptMessageId: 'prompt',
+          isCancellationAccepted: () => false
+        }),
+        currentInteractionSequence: () => 1,
+        canOwnRuntimeBindingDecision: classify,
+        authorizeRuntimeBindingAdmission: authorize
+      })
+    })
+    try {
+      const requestFor = (toolCallId: string): RequestPermissionRequest => {
+        const title = 'open_science_notebook_notebook_bind_runtime'
+        const rawInput = { language: 'python', runtimeId: '/validated/default' }
+        observe(
+          context,
+          {
+            sessionId: 's',
+            update: {
+              sessionUpdate: 'tool_call',
+              toolCallId,
+              title,
+              kind: 'other',
+              status: 'pending',
+              rawInput,
+              _meta: { toolName: title }
+            }
+          },
+          'opencode'
+        )
+        return permissionRequest('s', toolCallId, { title, rawInput })
+      }
+      const cancelled = requestFor('missing-one-call')
+      cancelled.options = cancelled.options.filter((option) => option.kind !== 'allow_once')
+      expect(await context.handleProviderRequest(cancelled)).toEqual({
+        outcome: { outcome: 'cancelled' }
+      })
+      expect(classify).toHaveBeenCalledTimes(1)
+      expect(authorize).not.toHaveBeenCalled()
+      expect(await context.handleProviderRequest(requestFor('released'))).toEqual({
+        outcome: { outcome: 'selected', optionId: 'allow-once' }
+      })
+      expect(authorize).toHaveBeenCalledExactlyOnceWith({
+        sessionId: 's',
+        toolCallId: 'released',
+        promptMessageId: 'prompt',
+        language: 'python',
+        runtimeId: '/validated/default'
+      })
+      expect(emit).not.toHaveBeenCalled()
+    } finally {
+      context.dispose()
+    }
+  })
+
   it('does not log routine permission requests through the ACP context', async () => {
     const root = await mkdtemp(join(tmpdir(), 'permission-context-log-'))
     initLogger({ logDir: root, mirrorToConsole: false })

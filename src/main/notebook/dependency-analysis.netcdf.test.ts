@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -79,3 +80,5 @@ describe('netCDF4 multi-cell lineage', { timeout: 60_000 }, () => {
     expect(projection?.dependenciesByRunId?.['run-4']).toEqual(expect.arrayContaining(['run-3']))
   })
 })
+
+configureTestRuntimeMetadata()

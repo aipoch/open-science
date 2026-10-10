@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -78,3 +79,5 @@ describe('NotebookRuntimeService main-process logging', () => {
     expect(serialized).not.toContain('token=secret')
   })
 })
+
+configureTestRuntimeMetadata()

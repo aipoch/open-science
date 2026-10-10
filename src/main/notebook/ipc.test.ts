@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { NotebookRuntimeService } from './runtime-service'
@@ -283,3 +284,5 @@ describe('notebook IPC handlers', () => {
     expect(logged).not.toContain('kernel connection closed')
   })
 })
+
+await configureTestElectronHost(await import('electron'))

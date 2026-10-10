@@ -2377,6 +2377,7 @@ describe('notebook shell process behavior', () => {
   })
 })
 
+;(await import('../../../test/runtime-metadata')).configureTestRuntimeMetadata()
 it.skipIf(process.platform === 'win32')(
   'injects private research bindings only at spawn and redacts live split output',
   async () => {

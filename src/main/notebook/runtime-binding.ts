@@ -240,18 +240,20 @@ export class NotebookRuntimeBindingOwner {
     session: RuntimeBindingSession,
     language: NotebookLanguage,
     runtimeId: string,
-    beforeBind?: (binding: NotebookSessionRuntimeBinding) => Promise<void>
+    beforeBind?: (binding: NotebookSessionRuntimeBinding) => Promise<void>,
+    assertActive?: () => void
   ): Promise<RuntimeBindingOperationResult> {
-    return this.change(session, language, runtimeId, false, beforeBind)
+    return this.change(session, language, runtimeId, false, beforeBind, assertActive)
   }
 
   async switch(
     session: RuntimeBindingSession,
     language: NotebookLanguage,
     runtimeId: string,
-    beforeReplace: () => Promise<void>
+    beforeReplace: (binding: NotebookSessionRuntimeBinding) => Promise<void>,
+    assertActive?: () => void
   ): Promise<RuntimeBindingOperationResult> {
-    return this.change(session, language, runtimeId, true, beforeReplace)
+    return this.change(session, language, runtimeId, true, beforeReplace, assertActive)
   }
 
   private async change(
@@ -259,13 +261,15 @@ export class NotebookRuntimeBindingOwner {
     language: NotebookLanguage,
     runtimeId: string,
     replace: boolean,
-    beforeChange?: (binding: NotebookSessionRuntimeBinding) => Promise<void>
+    beforeChange?: (binding: NotebookSessionRuntimeBinding) => Promise<void>,
+    assertActive?: () => void
   ): Promise<RuntimeBindingOperationResult> {
     let lease: EnvironmentLease | undefined
     try {
       let binding: NotebookSessionRuntimeBinding
       try {
-        binding = await this.resolveEnabledRuntime(language, runtimeId)
+        let target = await this.resolveBindingTarget(language, runtimeId)
+        binding = target.binding
         if (
           binding.source === 'managed' &&
           binding.envName &&
@@ -274,7 +278,8 @@ export class NotebookRuntimeBindingOwner {
           lease = await this.options.acquireEnvironmentBindingLease(binding.envName)
           // Discovery may have completed before a synchronous removal. Validate again under the
           // shared lease and retain it through durable commit and live publication.
-          binding = await this.resolveEnabledRuntime(language, runtimeId)
+          target = await this.resolveBindingTarget(language, runtimeId)
+          binding = target.binding
         }
         const existing = session.runtimeBinding(language)
         if (!replace && existing && existing.runtimeId !== binding.runtimeId) {
@@ -283,7 +288,30 @@ export class NotebookRuntimeBindingOwner {
               'notebook_switch_runtime to change it (it tears down the current kernel first).'
           )
         }
-        if (replace || !existing) await beforeChange?.(binding)
+        if (
+          !replace &&
+          existing &&
+          (existing.status ?? 'active') === 'active' &&
+          this.sameTarget(existing, binding) &&
+          target.runnable
+        ) {
+          assertActive?.()
+          return { bound: this.toWireBinding(existing), bindings: this.snapshot(session) }
+        }
+        await beforeChange?.(binding)
+        // Consent is tied to the exact discovered target, including ownership and execution route.
+        // Re-discover after a waiting approval, before publishing or persisting a new binding.
+        const refreshed = await this.resolveBindingTarget(language, runtimeId)
+        if (
+          !this.sameTarget(binding, refreshed.binding) ||
+          (target.runnable && !refreshed.runnable) ||
+          (target.readyDefault && !refreshed.readyDefault)
+        ) {
+          throw new Error(
+            'The selected Notebook runtime changed while approval was pending. Select an enabled runtime again.'
+          )
+        }
+        assertActive?.()
       } catch (error) {
         return this.failureResult(session, language, error)
       }
@@ -617,12 +645,26 @@ export class NotebookRuntimeBindingOwner {
     return discovered.filter((env) => isEnvEnabled(env, settings?.runtimeEnablement))
   }
 
-  private async resolveEnabledRuntime(
+  async resolveBindingTarget(
     language: NotebookLanguage,
     runtimeId: string
-  ): Promise<NotebookSessionRuntimeBinding> {
-    const enabled = await this.listEnabledInterpreters(language)
-    const match = enabled.find((env) => env.envId === runtimeId)
+  ): Promise<{
+    binding: NotebookSessionRuntimeBinding
+    runnable: boolean
+    readyDefault: boolean
+  }> {
+    const settings = await this.runtimeSettingsSnapshot(language)
+    const discovered = await this.discover(
+      language,
+      settings?.manualInterpreters ?? [],
+      settings?.runtimeEnablement
+    )
+    const match = discovered.find(
+      (env) =>
+        env.language === language &&
+        env.envId === runtimeId &&
+        isEnvEnabled(env, settings?.runtimeEnablement)
+    )
     if (!match) {
       throw new Error(
         `"${runtimeId}" is not an enabled ${language} runtime. Use list_notebook_runtimes to see the ` +
@@ -630,11 +672,46 @@ export class NotebookRuntimeBindingOwner {
           'runtimes are refused).'
       )
     }
-    const binding = this.toInternalBinding(match)
-    const environment = binding.envName ?? defaultEnvironment(language)
-    return this.options.repairPolicy.bindingRequirement(language, environment, binding).required
-      ? { ...binding, status: 'unavailable', reason: 'repair-required' }
-      : binding
+    const candidate = this.toInternalBinding(match)
+    const environment = candidate.envName ?? defaultEnvironment(language)
+    const binding = this.options.repairPolicy.bindingRequirement(language, environment, candidate)
+      .required
+      ? { ...candidate, status: 'unavailable' as const, reason: 'repair-required' as const }
+      : candidate
+    return {
+      binding,
+      runnable: match.runnable,
+      // Neither a generic managed source nor a missing conda name proves default ownership.
+      readyDefault:
+        settings !== undefined &&
+        match.runnable &&
+        binding.status === 'active' &&
+        match.provenance === 'app-managed' &&
+        match.condaEnv === defaultEnvironment(language)
+    }
+  }
+
+  private async resolveEnabledRuntime(
+    language: NotebookLanguage,
+    runtimeId: string
+  ): Promise<NotebookSessionRuntimeBinding> {
+    return (await this.resolveBindingTarget(language, runtimeId)).binding
+  }
+
+  sameTarget(left: NotebookSessionRuntimeBinding, right: NotebookSessionRuntimeBinding): boolean {
+    const identity = (binding: NotebookSessionRuntimeBinding): unknown => ({
+      language: binding.language,
+      runtimeId: binding.runtimeId,
+      source: binding.source,
+      provenance: binding.provenance,
+      interpreterPath: binding.interpreterPath,
+      envName: binding.envName,
+      resolvedInterpreter: binding.resolvedInterpreter,
+      version: binding.version,
+      status: binding.status ?? 'active',
+      reason: binding.reason
+    })
+    return isDeepStrictEqual(identity(left), identity(right))
   }
 
   private toInternalBinding(env: DiscoveredInterpreter): NotebookSessionRuntimeBinding {

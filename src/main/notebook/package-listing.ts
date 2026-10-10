@@ -43,9 +43,9 @@ export const condaPrefixFromInterpreter = (
   return dir(binDir)
 }
 
-// Parses `micromamba list --json`: an array of {name, version, build, channel} objects. Throws on
-// invalid JSON or a non-array payload; entries without string name/version are skipped rather than
-// failing the whole listing.
+// Parses `micromamba list --json`: an array of name/version/build_string/channel records.
+// Maps build_string to build, with a legacy string build fallback. Throws on invalid JSON or a
+// non-array payload; entries without string name/version are skipped rather than failing the list.
 export const parseMicromambaListJson = (stdout: string): EnvPackage[] => {
   let parsed: unknown
   try {
@@ -59,10 +59,11 @@ export const parseMicromambaListJson = (stdout: string): EnvPackage[] => {
   const packages: EnvPackage[] = []
   for (const entry of parsed as Array<Record<string, unknown>>) {
     if (typeof entry?.name !== 'string' || typeof entry?.version !== 'string') continue
+    const build = typeof entry.build_string === 'string' ? entry.build_string : entry.build
     packages.push({
       name: entry.name,
       version: entry.version,
-      ...(typeof entry.build === 'string' ? { build: entry.build } : {}),
+      ...(typeof build === 'string' ? { build } : {}),
       ...(typeof entry.channel === 'string' ? { channel: entry.channel } : {})
     })
   }

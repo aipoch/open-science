@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { createHash } from 'node:crypto'
 import { dirname, join, posix } from 'node:path'
 import { mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises'
@@ -1449,3 +1450,5 @@ describe('artifact provenance input authority', () => {
     await expect(value.client.artifactVersion.count()).resolves.toBe(1)
   })
 })
+
+configureTestRuntimeMetadata()

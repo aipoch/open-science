@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { createLiteratureLibraryMcpServer } from './library-mcp-server'
@@ -293,3 +294,5 @@ it('routes stored metadata sources through the validated application boundary', 
     installation.uninstall()
   }
 })
+
+await configureTestElectronHost(await import('electron'))

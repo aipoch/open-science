@@ -140,6 +140,9 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
   notebookRpcServer: NotebookLocalRpcServer
   wslSetupSessions?: AcpRuntimeOptions['wslSetupSessions']
   getShellRuntimeBinding?: () => ShellRuntimeBinding | Promise<ShellRuntimeBinding>
+  canOwnRuntimeBindingDecision?: NonNullable<
+    AcpRuntimeOptions['notebook']
+  >['canOwnRuntimeBindingDecision']
   peekNotebookHandoffContext?: (sessionId: string) => NotebookHandoffContext | undefined
   authorizeSkillImportReferencedUploads: (
     projectId: string,
@@ -257,6 +260,7 @@ const createAcpRuntime = ({
   notebookRpcServer,
   wslSetupSessions,
   getShellRuntimeBinding,
+  canOwnRuntimeBindingDecision,
   peekNotebookHandoffContext,
   authorizeSkillImportReferencedUploads,
   settingsService,
@@ -777,6 +781,20 @@ const createAcpRuntime = ({
             }
           : undefined,
         notebook: {
+          canOwnRuntimeBindingDecision: async (request) => {
+            const trustedRequest = notebookRpcServer.runtimeBindingAdmissionRequest(
+              request,
+              delegatedNotebookConnection
+            )
+            return trustedRequest && canOwnRuntimeBindingDecision
+              ? canOwnRuntimeBindingDecision(trustedRequest)
+              : false
+          },
+          authorizeRuntimeBindingAdmission: (admission) =>
+            notebookRpcServer.authorizeRuntimeBindingAdmission(
+              admission,
+              delegatedNotebookConnection
+            ),
           projectId: DEFAULT_ARTIFACT_PROJECT_ID,
           mcpEntryPath,
           memoryTools: !delegatedNotebookConnection,

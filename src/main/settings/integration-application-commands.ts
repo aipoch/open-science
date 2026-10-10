@@ -1,5 +1,9 @@
+import type { SettingsFileCommands } from './file-commands'
+import type { CredentialRequestBroker } from '../connectors/credential-request-broker'
+import { requireDesktopCaller } from '../caller-context'
 import type {
   ConversationSkillImportApprovalResponse,
+  RespondConnectorCredentialRequest,
   RespondApprovalRequest
 } from '../../shared/settings'
 import {
@@ -29,6 +33,7 @@ type SkillIntegrationWorkflows = Pick<
   | 'installSkillMarketplace'
   | 'startSkillMarketplaceBatch'
   | 'importSkillZipBatch'
+  | 'importAgentHomeSkills'
 >
 
 type ConnectorIntegrationWorkflows = Pick<
@@ -77,6 +82,37 @@ const requireLocalCaller = (context: CallerContext, channel: string): void => {
 }
 
 const settingsIntegrationApplicationCommands = Object.freeze({
+  exportSkill: defineApplicationCommand<
+    'settings:export-skill',
+    Parameters<SettingsFileCommands['exportSkill']>[0]['args'],
+    Awaited<ReturnType<SettingsFileCommands['exportSkill']>>
+  >('settings:export-skill'),
+  selectTemplate: defineApplicationCommand<
+    'settings:select-custom-server-template',
+    Parameters<SettingsFileCommands['selectTemplate']>[0]['args'],
+    Awaited<ReturnType<SettingsFileCommands['selectTemplate']>>
+  >('settings:select-custom-server-template'),
+  exportTemplate: defineApplicationCommand<
+    'settings:export-custom-server-template',
+    Parameters<SettingsFileCommands['exportTemplate']>[0]['args'],
+    Awaited<ReturnType<SettingsFileCommands['exportTemplate']>>
+  >('settings:export-custom-server-template'),
+
+  importAgentHomeSkills: defineApplicationCommand<
+    'settings:import-agent-home-skills',
+    OwnerArgs<SkillIntegrationWorkflows, 'importAgentHomeSkills'>,
+    OwnerResult<SkillIntegrationWorkflows, 'importAgentHomeSkills'>
+  >('settings:import-agent-home-skills'),
+  respondConnectorCredential: defineApplicationCommand<
+    'connectors:credential-respond',
+    readonly [RespondConnectorCredentialRequest],
+    void
+  >('connectors:credential-respond'),
+  replayPendingConnectorCredentials: defineApplicationCommand<
+    'connectors:credential-replay-pending',
+    readonly [],
+    void
+  >('connectors:credential-replay-pending'),
   testCustomServer: defineApplicationCommand<
     'settings:test-custom-server',
     OwnerArgs<ConnectorIntegrationWorkflows, 'testCustomServer'>,
@@ -285,12 +321,16 @@ const settingsSkillApplicationCommandGroup = defineApplicationCommandGroup('sett
   settingsIntegrationApplicationCommands.importSkillZip,
   settingsIntegrationApplicationCommands.installSkillMarketplace,
   settingsIntegrationApplicationCommands.startSkillMarketplaceBatch,
-  settingsIntegrationApplicationCommands.importSkillZipBatch
+  settingsIntegrationApplicationCommands.importSkillZipBatch,
+  settingsIntegrationApplicationCommands.importAgentHomeSkills,
+  settingsIntegrationApplicationCommands.exportSkill
 ] as const)
 
 const settingsConnectorApplicationCommandGroup = defineApplicationCommandGroup(
   'settings-connectors',
   [
+    settingsIntegrationApplicationCommands.selectTemplate,
+    settingsIntegrationApplicationCommands.exportTemplate,
     settingsIntegrationApplicationCommands.testCustomServer,
     settingsIntegrationApplicationCommands.listDeviceCredentials,
     settingsIntegrationApplicationCommands.createDeviceCredential,
@@ -320,6 +360,8 @@ const settingsConnectorApplicationCommandGroup = defineApplicationCommandGroup(
 const settingsApprovalApplicationCommandGroup = defineApplicationCommandGroup(
   'settings-approvals',
   [
+    settingsIntegrationApplicationCommands.respondConnectorCredential,
+    settingsIntegrationApplicationCommands.replayPendingConnectorCredentials,
     settingsIntegrationApplicationCommands.respondConnectorApproval,
     settingsIntegrationApplicationCommands.replayConnectorApproval,
     settingsIntegrationApplicationCommands.replayPendingConnectorApprovals,
@@ -330,8 +372,10 @@ const settingsApprovalApplicationCommandGroup = defineApplicationCommandGroup(
 
 type IntegrationSettingsApplicationCommandDependencies = Readonly<{
   skills: SkillIntegrationWorkflows
+  files: SettingsFileCommands
   connectors: ConnectorIntegrationWorkflows
   snapshotCommits: SettingsSnapshotCommitOwner
+  connectorCredentials: Pick<CredentialRequestBroker, 'respond' | 'replayPending'>
   connectorApprovals: Pick<ApprovalBroker, 'getPending' | 'replayPending' | 'respond'>
   skillImportApprovals: Pick<SkillImportApprovalBroker, 'respond' | 'replayPending'>
 }>
@@ -344,6 +388,11 @@ const registerIntegrationSettingsApplicationCommands = (
 
   try {
     scope.registerGroup(settingsSkillApplicationCommandGroup, {
+      'settings:export-skill': (invocation) => dependencies.files.exportSkill(invocation),
+      'settings:import-agent-home-skills': ({ args, callerContext }) => {
+        requireDesktopCaller(callerContext)
+        return dependencies.skills.importAgentHomeSkills(args[0])
+      },
       'settings:set-conversation-skill-import-enabled': ({ args }) =>
         dependencies.snapshotCommits.currentSnapshotAfter(
           dependencies.skills.setConversationSkillImportEnabled({
@@ -365,6 +414,10 @@ const registerIntegrationSettingsApplicationCommands = (
         dependencies.skills.importSkillZipBatch(args[0])
     })
     scope.registerGroup(settingsConnectorApplicationCommandGroup, {
+      'settings:select-custom-server-template': (invocation) =>
+        dependencies.files.selectTemplate(invocation),
+      'settings:export-custom-server-template': (invocation) =>
+        dependencies.files.exportTemplate(invocation),
       'settings:test-custom-server': ({ args, callerContext, callerLease }) => {
         requireLocalCaller(callerContext, 'settings:test-custom-server')
         return dependencies.connectors.testCustomServer(args[0], callerLease.signal)
@@ -451,6 +504,21 @@ const registerIntegrationSettingsApplicationCommands = (
       }
     })
     scope.registerGroup(settingsApprovalApplicationCommandGroup, {
+      'connectors:credential-respond': ({ args, callerContext }) => {
+        requireDesktopCaller(callerContext)
+        if (!canSatisfyHumanApproval(callerContext))
+          throw new Error('Only a current human caller can respond to credential requests.')
+        const request = args[0]
+        if (!request || typeof request.id !== 'string' || typeof request.configured !== 'boolean')
+          throw new Error('Invalid Connector credential response.')
+        return dependencies.connectorCredentials.respond(request.id, request.configured)
+      },
+      'connectors:credential-replay-pending': ({ callerContext }) => {
+        requireDesktopCaller(callerContext)
+        if (!canSatisfyHumanApproval(callerContext))
+          throw new Error('Only a current human caller can reopen credential requests.')
+        return dependencies.connectorCredentials.replayPending()
+      },
       'connectors:approval-respond': ({ args, callerContext }) => {
         if (!canSatisfyHumanApproval(callerContext)) {
           throw new Error('Only a current human caller can respond to connector approval requests.')

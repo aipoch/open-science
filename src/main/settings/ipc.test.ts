@@ -1,3 +1,5 @@
+import { createSettingsFileCommands, type SettingsExportFiles } from './file-commands'
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
@@ -343,8 +345,11 @@ type TestSettingsIpcOptions = {
   onCustomServerSecurityChanged?: (serverId: string) => Promise<unknown>
   onAppIconVariantChanged?: SettingsWorkflowEffects['appearance']['applyAppIconVariant']
   listAppIconPreviews?: SettingsIpcOptions['listAppIconPreviews']
-  connectorTemplateFiles?: SettingsIpcOptions['connectorTemplateFiles']
-  skillExportFiles?: SettingsIpcOptions['skillExportFiles']
+  connectorTemplateFiles?: {
+    select: SettingsExportFiles['selectTemplate']
+    save: SettingsExportFiles['saveTemplate']
+  }
+  skillExportFiles?: { save: SettingsExportFiles['saveSkill'] }
 }
 
 // Keeps the adapter tests concise while routing every mutation through the real workflow owner.
@@ -401,8 +406,23 @@ const registerTestSettingsIpcHandlers = ({
       }
     }),
     listAppIconPreviews,
-    connectorTemplateFiles,
-    skillExportFiles
+    fileCommands: createSettingsFileCommands(service, {
+      selectTemplate:
+        connectorTemplateFiles?.select ??
+        (async () => {
+          throw new Error('Connector configuration files are unavailable')
+        }),
+      saveTemplate:
+        connectorTemplateFiles?.save ??
+        (async () => {
+          throw new Error('Connector configuration files are unavailable')
+        }),
+      saveSkill:
+        skillExportFiles?.save ??
+        (async () => {
+          throw new Error('Skill export is unavailable')
+        })
+    })
   })
 }
 
@@ -520,7 +540,7 @@ describe('settings IPC handlers', () => {
     expect(connectorTemplateFiles.save).toHaveBeenCalledWith(
       'open-science-connector-example.json',
       '{"schemaVersion":1}\n',
-      ipcSender
+      expect.objectContaining({ callerContext: expect.objectContaining({ clientId: '42' }) })
     )
 
     await expect(
@@ -533,7 +553,7 @@ describe('settings IPC handlers', () => {
     expect(connectorTemplateFiles.save).toHaveBeenLastCalledWith(
       'mcp-example.json',
       '{"mcpServers":{}}\n',
-      ipcSender
+      expect.objectContaining({ callerContext: expect.objectContaining({ clientId: '42' }) })
     )
 
     await expect(
@@ -1076,7 +1096,7 @@ describe('settings IPC handlers', () => {
         fileName: 'my-skill.zip',
         archiveBytes: new Uint8Array([1, 2, 3])
       },
-      ipcSender
+      expect.objectContaining({ callerContext: expect.objectContaining({ clientId: '42' }) })
     )
   })
 
@@ -1826,3 +1846,5 @@ describe('settings IPC handlers', () => {
     )
   })
 })
+
+await configureTestElectronHost(await import('electron'))

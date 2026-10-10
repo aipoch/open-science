@@ -231,3 +231,6 @@ it.skipIf(process.platform === 'win32').each(['external', 'ordinary', 'fork'] as
   'runs the %s entry through the real shared core, managed Notebook Run, and existing Artifact publication',
   (entry) => verifyEntry(entry)
 )
+
+const { configureTestElectronHost } = await import('../../../test/runtime-host')
+await configureTestElectronHost(await import('electron'))

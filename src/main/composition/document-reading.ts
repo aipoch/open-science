@@ -6,10 +6,10 @@ import { capturePdfTranslationApiTarget } from '../literature/pdf-translation/ap
 import { capturePdfTranslationAgentTarget } from '../literature/pdf-translation/agent-target'
 import { ProviderTextGenerationService } from '../settings/provider-text-generation'
 import { PdfTranslationUsageRecorder } from '../literature/pdf-translation/usage'
-import { registerPdfTranslationIpc } from '../literature/pdf-translation/ipc'
 import { RestrictedInferenceRunner } from '../acp/restricted-inference-runner'
 import type { SettingsService } from '../settings/service'
-import { app } from 'electron'
+import { registerLocalModelIpcHandlers } from '../desktop-surface-declarations'
+import { runtimeMetadata } from '../runtime-metadata'
 import { realpath } from 'node:fs/promises'
 import { join } from 'node:path'
 import { PENDING_UPLOAD_SESSION_ID } from '../../shared/uploads'
@@ -27,7 +27,8 @@ import { createPdfStructureOwner } from '../literature/pdf-structure/owner'
 import { PdfStructureReader } from '../literature/pdf-structure/reader'
 import { PdfStructureSourceAuthority } from '../literature/pdf-structure/source'
 import { SessionPdfSourceResolver } from '../literature/session-pdf-source-resolver'
-import { createLocalModelApi, registerLocalModelIpcHandlers } from '../local-models/ipc'
+import { createLocalModelApi } from '../local-models/owner'
+
 import { createLocalModelOwner } from '../local-models/owner'
 import { createLogger, errorLogFields } from '../logger'
 import { PdfAnnotationRepository } from '../pdf-annotations/repository'
@@ -82,6 +83,7 @@ export async function composeDocumentReading({
   sessionPdfContextOwner: SessionPdfContextOwner
   literatureContextLog: ReturnType<typeof createLogger>
   localModelOwner: ReturnType<typeof createLocalModelOwner>
+  pdfTranslationOwner: PdfTranslationOwner
   localModels: ReturnType<typeof createLocalModelApi>
   pdfStructureReader: PdfStructureReader
   pdfElementReader: PdfElementAgentReader
@@ -195,7 +197,7 @@ export async function composeDocumentReading({
     sources: pdfStructureSources,
     engine: createPdfStructureEngine(
       join(
-        app.getAppPath().replace(/app\.asar$/, 'app.asar.unpacked'),
+        runtimeMetadata().applicationPath.replace(/app\.asar$/, 'app.asar.unpacked'),
         'resources',
         'pdf-structure'
       )
@@ -232,14 +234,14 @@ export async function composeDocumentReading({
       apiRunner: new ProviderTextGenerationService(),
       localRunner: createPdfTranslationLocalRuntime(
         join(
-          app.getAppPath().replace(/app\.asar$/, 'app.asar.unpacked'),
+          runtimeMetadata().applicationPath.replace(/app\.asar$/, 'app.asar.unpacked'),
           'resources',
           'pdf-translation-local'
         ),
         localTranslationModels
       ),
       runner: new RestrictedInferenceRunner({
-        appVersion: app.getVersion(),
+        appVersion: runtimeMetadata().version,
         configRoot: resolveConfigRoot(),
         profileNamespace: 'pdf-translation',
         resolveTarget: (target, context) =>
@@ -253,7 +255,6 @@ export async function composeDocumentReading({
       dispose: () => owner.shutdown()
     }
   })
-  declareElectronAdapter('pdf-translation', () => registerPdfTranslationIpc(pdfTranslationOwner))
   return {
     bookmarkService,
     pdfAnnotationTagEvents,
@@ -263,6 +264,7 @@ export async function composeDocumentReading({
     literatureContextLog,
     localModelOwner,
     localModels,
+    pdfTranslationOwner,
     pdfStructureReader,
     pdfElementReader,
     literatureDocumentReader

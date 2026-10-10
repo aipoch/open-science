@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { createArtifactHandlers } from './ipc'
 import { ArtifactRunRegistry } from './run-registry'
 import { createLinearConversationGraph } from '../../shared/conversation-graph'
@@ -1127,3 +1128,5 @@ describe('complete Artifact save over the production local RPC', () => {
     expect(await f.client.artifactVersion.count()).toBe(2)
   })
 })
+
+configureTestRuntimeMetadata()

@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import {
   chmodSync,
   existsSync,
@@ -3765,3 +3766,5 @@ describe('DefaultRuntimeProvisioner prefix-block self-guard (startup gate path)'
     expect(existsSync(join(dir, 'my-analysis.lock'))).toBe(true)
   })
 })
+
+configureTestRuntimeMetadata()

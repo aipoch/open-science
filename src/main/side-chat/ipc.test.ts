@@ -1,6 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { registerSideChatIpcHandlers } from './ipc'
+import { registerSideChatIpcHandlers as installSideChatIpc } from './ipc'
+import { createSideChatCommandOwner, type SideChatCommandDependencies } from './command-owner'
+import type { SideChatRuntimeOwner } from './runtime-owner'
+
+const registerSideChatIpcHandlers = (
+  runtime: SideChatRuntimeOwner,
+  dependencies: SideChatCommandDependencies
+): void => {
+  installSideChatIpc(createSideChatCommandOwner(runtime, dependencies))
+}
 
 const handlers = new Map<string, (event: unknown, payload: never) => unknown>()
 

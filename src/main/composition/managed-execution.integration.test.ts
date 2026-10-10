@@ -557,3 +557,6 @@ it.each(['quiesce', 'close'] as const)(
     expect(reconcile).toHaveBeenCalledOnce()
   }
 )
+
+const { configureTestElectronHost } = await import('../../../test/runtime-host')
+await configureTestElectronHost(await import('electron'))

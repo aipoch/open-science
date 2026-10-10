@@ -789,6 +789,20 @@ def _capture_execution_context():
         return None
 
 
+def _python_versions_match(left, right):
+    if left == right:
+        return True
+    import re
+    if not re.fullmatch(r"[0-9]+(?:\.[0-9]+)*", left or "") or not re.fullmatch(r"[0-9]+(?:\.[0-9]+)*", right or ""):
+        return False
+    def release(value):
+        parts = [part.lstrip("0") or "0" for part in value.split(".")]
+        while len(parts) > 1 and parts[-1] == "0":
+            parts.pop()
+        return parts
+    return release(left) == release(right)
+
+
 def _capture_environment(execution_context=None):
     packages = []
     seen = set()
@@ -838,9 +852,14 @@ def _capture_environment(execution_context=None):
                 metadata_paths.append(os.path.dirname(directory) if hasattr(module, "__path__") else directory)
         metadata_paths = list(dict.fromkeys(os.path.realpath(path) for path in metadata_paths if isinstance(path, str)))
         distributions = list(metadata.distributions(path=metadata_paths))
+        versions_by_location = {}
         for dist in distributions:
             name = dist.metadata.get("Name")
             if name:
+                location = (normalize(name), os.path.normcase(os.path.realpath(dist.locate_file(""))))
+                versions = versions_by_location.setdefault(location, [])
+                if not any(_python_versions_match(dist.version, version) for version in versions):
+                    versions.append(dist.version)
                 for root in (dist.read_text("top_level.txt") or "").split():
                     owners_by_root.setdefault(root, []).append(name)
         for root, names in owners_by_root.items():
@@ -872,8 +891,22 @@ def _capture_environment(execution_context=None):
                         for path in (root + ".py", root + "/__init__.py")
                     )
                     ownership_known = loaded
+            location = (key, os.path.normcase(os.path.realpath(dist.locate_file(""))))
+            if loaded and len(versions_by_location.get(location, [])) > 1:
+                # Stale dist-info records can claim the same files. A path hit alone cannot
+                # establish which version is loaded; unresolved claims must not become unused.
+                root_versions = [
+                    str(version)
+                    for root in (roots or ())
+                    if (module := sys.modules.get(root)) is not None
+                    and isinstance(path := getattr(module, "__file__", None), str)
+                    and any(os.path.realpath(dist.locate_file(file)) == os.path.realpath(path) for file in (dist.files or ()))
+                    and (version := getattr(module, "__version__", None)) is not None
+                ]
+                loaded = bool(root_versions) and all(_python_versions_match(version, dist.version) for version in root_versions)
+                ownership_known = loaded
             existing = by_name.get(key)
-            if existing and loaded and (not existing["version"] or existing["version"] == dist.version):
+            if existing and loaded and (not existing["version"] or _python_versions_match(existing["version"], dist.version)):
                 existing["version"] = dist.version
                 existing["version_status"] = "known" if dist.version else "unavailable"
                 existing["evidence_sources"] = ["python-kernel-modules", "python-importlib-metadata"]

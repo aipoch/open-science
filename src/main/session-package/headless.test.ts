@@ -331,3 +331,6 @@ describe('headless package transfers', () => {
     expect(f.deps.reserveImport).not.toHaveBeenCalled()
   })
 })
+
+const { configureTestElectronHost } = await import('../../../test/runtime-host')
+await configureTestElectronHost(await import('electron'))

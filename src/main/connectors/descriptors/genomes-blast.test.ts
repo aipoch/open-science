@@ -1,3 +1,4 @@
+import { configureTestRuntimeNetwork } from '../../../../test/runtime-host'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ParserEngine } from '../engine'
 import type { ToolContext } from '../types'
@@ -378,3 +379,5 @@ describe('BLAST results format contract', () => {
     expect(results.description).toContain('not pure TSV or CSV')
   })
 })
+
+configureTestRuntimeNetwork()

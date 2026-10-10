@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { access, mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -223,3 +224,5 @@ describe.skipIf(process.platform === 'win32')('POSIX Shell search admission', ()
     expect(wrap).toHaveBeenCalledOnce()
   })
 })
+
+configureTestRuntimeMetadata()

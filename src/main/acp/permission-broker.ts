@@ -1156,11 +1156,17 @@ class AcpPermissionBroker {
         resolveMcpToolIdentity(params.toolCall.title, mcpServerNames) ??
         resolveMcpToolIdentity(extractProviderToolName(params.toolCall), mcpServerNames))
       : undefined
-    const notebookHostAdmission =
-      policyContext?.notebookHostAdmission === true &&
-      /^open[-_]science[-_]notebook\/(?:notebook_execute|repl_execute|bash_execute)$/.test(
+    const notebookBindingHostAdmission =
+      policyContext?.notebookBindingHostAdmission === true &&
+      /^open[-_]science[-_]notebook\/notebook_bind_runtime$/.test(
         trustedMcpToolIdentity(params) ?? ''
       )
+    const notebookHostAdmission =
+      notebookBindingHostAdmission ||
+      (policyContext?.notebookHostAdmission === true &&
+        /^open[-_]science[-_]notebook\/(?:notebook_execute|repl_execute|bash_execute)$/.test(
+          trustedMcpToolIdentity(params) ?? ''
+        ))
     const projectedProviderOptions = projectPermissionOptions(params, policyContext, isMcp)
     const providerPermissionOptions = projectedProviderOptions.filter(
       (option) =>

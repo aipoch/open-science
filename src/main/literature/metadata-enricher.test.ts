@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { describe, expect, it, vi, type Mock } from 'vitest'
 
 import {
@@ -1273,3 +1274,5 @@ it('replays serialized v2 proposals independently of provider payload shape and 
     })
   )
 })
+
+configureTestRuntimeMetadata()

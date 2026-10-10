@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { installElectronBroadcast } from './renderer-broadcast-electron'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const windows: Array<{
   destroyed: boolean
@@ -19,7 +20,10 @@ import {
   installRendererBroadcastEventHub
 } from './renderer-broadcast'
 
+let removeDesktop: (() => void) | undefined
+afterEach(() => removeDesktop?.())
 beforeEach(() => {
+  removeDesktop = installElectronBroadcast()
   windows.length = 0
 })
 

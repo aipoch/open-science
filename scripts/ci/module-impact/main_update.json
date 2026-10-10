@@ -20,13 +20,17 @@
     "src/main/update/service.ts",
     "src/main/update/strategy.test.ts",
     "src/main/update/strategy.ts",
-    "src/main/update/update-integrity-regressions.test.ts"
+    "src/main/update/update-integrity-regressions.test.ts",
+    "src/main/update/command-owner.ts",
+    "src/main/update/runtime-strategy.ts"
   ],
   "interfacePaths": [
     "src/main/update/create-strategy.ts",
     "src/main/update/ipc.ts",
     "src/main/update/scheduler.ts",
-    "src/main/update/strategy.ts"
+    "src/main/update/strategy.ts",
+    "src/main/update/command-owner.ts",
+    "src/main/update/runtime-strategy.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -71,6 +75,9 @@
       "src/shared/renderer-surface-inventory.test.ts",
       "src/shared/renderer-surface-matrix.test.ts",
       "src/main/session-persistence/ipc.test.ts",
+      "src/main/composition/notebook-environment.test.ts",
+      "src/main/composition/reviewer.test.ts",
+      "src/main/desktop-runtime-transport.integration.test.ts",
       "src/main/composition/handoff.test.ts"
     ]
   },

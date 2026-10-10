@@ -1,4 +1,6 @@
-import { existsSync, rmSync } from 'node:fs'
+import { RUNTIME_LOCK_FILE } from '../runtime-ownership'
+import { configureTestElectronHost } from '../../../test/runtime-host'
+import { existsSync, rmSync, readdirSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -1844,7 +1846,7 @@ describe('storage IPC handlers', () => {
 
     await invoke('storage:discard-migrated-copy', { parent: targetParent })
 
-    expect(existsSync(target)).toBe(false)
+    expect(readdirSync(target)).toEqual([RUNTIME_LOCK_FILE])
     expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
     expect(deps.relaunch).not.toHaveBeenCalled()
   })
@@ -1964,7 +1966,7 @@ describe('storage IPC handlers', () => {
 
     expect(commitOutcome).toEqual({ ok: false, error: 'A migration is already being resolved.' })
     expect(existsSync(join(dataRoot, 'artifacts', 'keep.txt'))).toBe(true)
-    expect(existsSync(target)).toBe(false)
+    expect(readdirSync(target)).toEqual([RUNTIME_LOCK_FILE])
     expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
   })
 
@@ -1998,7 +2000,7 @@ describe('storage IPC handlers', () => {
     expect(isMigrationPending()).toBe(true)
 
     await invoke('storage:discard-migrated-copy', { parent: targetParent })
-    expect(existsSync(target)).toBe(false)
+    expect(readdirSync(target)).toEqual([RUNTIME_LOCK_FILE])
   })
 
   it('allows a later migration while cleanup from an earlier move remains queued', async () => {
@@ -2016,7 +2018,7 @@ describe('storage IPC handlers', () => {
     })
     const runDataRootMigration = vi.fn<NonNullable<FakeDeps['runDataRootMigration']>>(
       async (_deps, parent, options) => {
-        await mkdir(alternateTarget)
+        expect(existsSync(join(alternateTarget, RUNTIME_LOCK_FILE))).toBe(true)
         options.onVerified?.({ token: 'next-migration', target: dataRootFor(parent) })
         return { ok: true }
       }
@@ -2056,7 +2058,7 @@ describe('storage IPC handlers', () => {
       _parent,
       options
     ) => {
-      await mkdir(target)
+      expect(existsSync(join(target, RUNTIME_LOCK_FILE))).toBe(true)
       options.onVerified?.({ token: 'tok-ipc', target })
       return { ok: true }
     }
@@ -2087,7 +2089,7 @@ describe('storage IPC handlers', () => {
       _parent,
       options
     ) => {
-      await mkdir(target)
+      expect(existsSync(join(target, RUNTIME_LOCK_FILE))).toBe(true)
       options.onVerified?.({ token: 'tok-ipc', target })
       return { ok: true }
     }
@@ -2125,7 +2127,7 @@ describe('storage IPC handlers', () => {
     expect(outcome.switchoverFailed).toBe(true)
     // The UI can't retry, so the app must not soft-lock: the staged copy is discarded and the gate lifts.
     expect(isMigrationPending()).toBe(false)
-    expect(existsSync(target)).toBe(false)
+    expect(readdirSync(target)).toEqual([RUNTIME_LOCK_FILE])
   })
 
   it('rejects a concurrent migrate call while one is already in flight', async () => {
@@ -2370,7 +2372,7 @@ describe('storage IPC handlers', () => {
       ok: false,
       cancelled: true
     })
-    expect(existsSync(target)).toBe(false)
+    expect(readdirSync(target)).toEqual([RUNTIME_LOCK_FILE])
     expect(isMigrationPending()).toBe(false)
   })
 
@@ -3324,3 +3326,5 @@ it.each([true, false])(
     expect(existsSync(legacy)).toBe(!missing)
   }
 )
+
+await configureTestElectronHost(await import('electron'))

@@ -27,7 +27,7 @@ describe('source macOS mock Keychain metadata', () => {
     })
     runInNewContext(source, {
       require: load,
-      process: { platform: 'darwin' },
+      process: { platform: 'darwin', env: {} },
       __dirname: resolve('e2e/fixtures')
     })
     expect(probe.executablePath).toBe(resolve('e2e/fixtures/mock-credential-identity.sh'))

@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -144,3 +145,5 @@ it.each(['seq_len(nrow(counts))', 'base::seq_len(nrow(counts))', 'seq_along(coun
     }
   }
 )
+
+configureTestRuntimeMetadata()

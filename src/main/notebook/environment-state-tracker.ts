@@ -18,6 +18,7 @@ import {
   type NotebookPackageSource,
   type NotebookPackageInstallerAttempt
 } from '../../shared/notebook'
+import { packageVersionsMatch } from './package-version-comparison'
 import { condaActivatedPath, runtimeRoot } from './runtime-paths'
 import { buildManagedRuntimeProcessEnvironment } from './process-environment'
 import { runtimeChildProcessErrorFields, type RuntimeDiagnosticLogger } from './runtime-diagnostics'
@@ -649,7 +650,7 @@ const mergePackages = (
       pkg.ecosystem === 'python' &&
       pkg.version &&
       existing?.version &&
-      pkg.version !== existing.version &&
+      !packageVersionsMatch('python', pkg.version, existing.version) &&
       existing.evidenceSources.includes('python-kernel-modules')
     ) {
       key += `\0version:${pkg.version}`

@@ -1,3 +1,5 @@
+import { nodeRuntimeEnvironment } from '../node-process-host'
+import { runtimeMetadata } from '../runtime-metadata'
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync, watch, type FSWatcher } from 'node:fs'
@@ -452,16 +454,16 @@ const stripUnpublishedGenerations = (workingFiles: NotebookWorkingFile[]): Noteb
 
 const resolveEvidenceWorkerPath = (): string => {
   const candidates = [
-    process.resourcesPath &&
+    runtimeMetadata().resourcesPath &&
       join(
-        process.resourcesPath,
+        runtimeMetadata().resourcesPath,
         'app.asar.unpacked',
         'resources',
         'notebook',
         'file_evidence_worker.js'
       ),
-    process.resourcesPath &&
-      join(process.resourcesPath, 'resources', 'notebook', 'file_evidence_worker.js'),
+    runtimeMetadata().resourcesPath &&
+      join(runtimeMetadata().resourcesPath, 'resources', 'notebook', 'file_evidence_worker.js'),
     join(__dirname, '../../resources/notebook/file_evidence_worker.js'),
     join(__dirname, '../../../resources/notebook/file_evidence_worker.js')
   ].filter((candidate): candidate is string => Boolean(candidate))
@@ -477,7 +479,7 @@ export const runEvidenceWorker = async (
     signal?.throwIfAborted()
     const child = spawn(process.execPath, [resolveEvidenceWorkerPath()], {
       cwd: evidenceRoot,
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      env: { ...process.env, ...nodeRuntimeEnvironment() },
       stdio: ['pipe', 'pipe', 'pipe']
     })
     let stdout = ''

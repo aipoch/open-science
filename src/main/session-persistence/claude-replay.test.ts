@@ -14,6 +14,11 @@ import {
 import { SessionPersistenceCoordinator, type SessionFileIndex } from './coordinator'
 import { SessionRepository } from './repository'
 import { createPersistedClaudeReplayPreparer } from './claude-replay'
+import { SessionSpecialistReconfiguration } from '../specialist/session-reconfiguration'
+import {
+  CompletionHandoffLifecycle,
+  InMemoryCompletionHandoffRepository
+} from '../agents/completion-handoff-lifecycle'
 
 const fileIndex: SessionFileIndex = {
   syncSession: async () => [],
@@ -51,6 +56,104 @@ afterEach(async () => {
 })
 
 describe('persisted Claude handoff replay', () => {
+  it('does not stage a cancelled replay after the Session read finishes', async () => {
+    const read = Promise.withResolvers<PersistedChatSession | undefined>()
+    const loadSession = vi.fn(() => read.promise)
+    const prepareReplay = vi.fn()
+    let current = true
+    const prepare = createPersistedClaudeReplayPreparer({
+      repository: { loadSession, loadAll: vi.fn(), assertSessionIdentityOwnership: vi.fn() },
+      coordinator: { sessionProjectId: async () => 'project-1' },
+      prepareReplay
+    })
+    const pending = prepare(
+      {
+        sessionId: 'current',
+        capturedCompletion: { kind: 'returned', value: 'approved' },
+        switchReadBack: {
+          status: 'approved',
+          operation: 'switch',
+          binding: { sessionId: 'current', specialistId: undefined, targetName: null }
+        }
+      },
+      () => current
+    )
+    await vi.waitFor(() => expect(loadSession).toHaveBeenCalledOnce())
+    current = false
+    read.resolve(session('current'))
+    await pending
+    expect(prepareReplay).not.toHaveBeenCalled()
+  })
+  it('retries a Claude handoff after runtime application already cleared the pending binding', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'claude-repeat-'))
+    roots.push(root)
+    initDataRoot(root)
+    const repository = new SessionRepository(root)
+    await repository.saveSession(session('current'))
+    const coordinator = new SessionPersistenceCoordinator(repository, fileIndex)
+    await coordinator.loadAllReadOnly()
+    let applications = 0
+    const reconfiguration = new SessionSpecialistReconfiguration({
+      sessionBinding: { resolve: vi.fn(), setBinding: vi.fn(), clearSession: vi.fn() },
+      loadBinding: () => repository.loadSession('project-1', 'current'),
+      persistBinding: async (_id, specialistId, pending) => {
+        const saved = await repository.loadSession('project-1', 'current')
+        await coordinator.saveSessionSpecialistBinding(saved!, specialistId, pending)
+      },
+      applyRuntime: async () => ({ contextReset: ++applications > 1 })
+    })
+    const errors: unknown[] = []
+    const adapter = createClaudeCodeCompletionGateRuntime({
+      sessionFramework: () => 'claude-code',
+      cancelPrompt: async () => undefined,
+      waitForPromptOwnershipRelease: async () => undefined,
+      resolveSpecialistId: () => undefined,
+      resolveSwitchReadBack: async () => ({
+        status: 'approved',
+        operation: 'switch',
+        binding: { sessionId: 'current', specialistId: undefined, targetName: null }
+      }),
+      prepareReplayContext: createPersistedClaudeReplayPreparer({
+        repository,
+        coordinator,
+        prepareReplay: () => undefined
+      }),
+      discardReplayContext: async () => undefined,
+      switchSpecialist: (id, specialistId) => reconfiguration.applyPersisted(id, specialistId),
+      createContinuationRequest: async () => ({ sessionId: 'current', text: 'Continue' }),
+      sendAppContinuation: async () => undefined,
+      reportHandoffFailure: async (error) => {
+        errors.push(error)
+      }
+    })
+    const lifecycle = new CompletionHandoffLifecycle(
+      new InMemoryCompletionHandoffRepository(),
+      adapter
+    )
+    await reconfiguration.commitDesired('current', undefined)
+    const context = {
+      sessionId: 'current',
+      turnId: 'turn-1',
+      toolInvocationId: 'tool-1',
+      controlInvocationGeneration: 1
+    }
+    await lifecycle.approve({ context, targetName: null, generation: 1 })
+    await lifecycle.capture(context, { kind: 'returned', value: 'approved' })
+    await expect(lifecycle.run(context)).resolves.toMatchObject({
+      stage: 'failed',
+      retryFrom: 'reconfiguring'
+    })
+    expect(errors).toEqual([
+      expect.objectContaining({ message: 'Claude Code handoff did not replace the agent session.' })
+    ])
+    expect(
+      (await repository.loadSession('project-1', 'current'))?.specialistBindingPending
+    ).toBeUndefined()
+    expect(await lifecycle.canStartUserPrompt('current')).toBe(false)
+    await expect(lifecycle.retry(context)).resolves.toMatchObject({ stage: 'continued' })
+    expect(await lifecycle.canStartUserPrompt('current')).toBe(true)
+  })
+
   it.each([false, true])('resolves current context with hydrated ownership %s', async (hydrate) => {
     const root = await mkdtemp(join(tmpdir(), 'claude-replay-owner-'))
     initDataRoot(root)

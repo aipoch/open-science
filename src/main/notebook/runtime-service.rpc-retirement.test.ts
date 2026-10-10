@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { existsSync } from 'node:fs'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -486,3 +487,5 @@ describe('REPL process RPC ownership', () => {
     expect(await h.authorityStatus(h.requests[0])).toBe(401)
   })
 })
+
+configureTestRuntimeMetadata()

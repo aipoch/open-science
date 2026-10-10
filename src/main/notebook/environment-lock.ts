@@ -75,7 +75,7 @@ type CondaEnvironmentSnapshot = {
 type EnvironmentLockCacheEntry = {
   revision: string
   lock: NotebookEnvironmentLock
-  pipPackages: CondaEnvironmentSnapshot['pipPackages']
+  conda: CondaEnvironmentSnapshot
   retryAfter?: number
 }
 
@@ -835,7 +835,7 @@ const assessEnvironmentLock = (
   lock: NotebookEnvironmentLock,
   manifest: NotebookEnvironmentManifest,
   nativeRejected: boolean,
-  pipPackages: CondaEnvironmentSnapshot['pipPackages']
+  conda: CondaEnvironmentSnapshot
 ): {
   captureStatus: 'complete' | 'partial'
   partialReasons?: NotebookEnvironmentLockPartialReason[]
@@ -848,7 +848,7 @@ const assessEnvironmentLock = (
   const omitted = new Set(lock.omittedPackages ?? [])
   const unresolvedNative =
     nativeState.state === 'unsupported' ||
-    pipPackages.some(
+    conda.pipPackages.some(
       (installed) =>
         !omitted.has(`python:${installed.name}`) &&
         !manifest.packages.some(
@@ -878,12 +878,42 @@ const assessEnvironmentLock = (
       : []),
     ...(unresolvedNative && nativeRejected ? (['native-lock-file-rejected'] as const) : [])
   ]
+  const diagnostics =
+    nativeState.state === 'unsupported'
+      ? nativeState.diagnostics?.flatMap((diagnostic) => {
+          if (
+            diagnostic.reason !== 'package-lock-missing' ||
+            !diagnostic.packageName ||
+            lock.kernelKind !== 'python'
+          )
+            return [diagnostic]
+          const name = diagnostic.packageName
+          const lockedVersion = conda.packages.get(name) ?? conda.packages.get(`${name}-base`)
+          if (!lockedVersion) return [diagnostic]
+          const conflicts = manifest.packages.filter(
+            (pkg) =>
+              pkg.ecosystem === 'python' &&
+              normalizedPackageName(pkg.name) === name &&
+              !pkg.source &&
+              pkg.version &&
+              !packageVersionsMatch('python', pkg.version, lockedVersion)
+          )
+          return conflicts.length
+            ? conflicts.map((pkg) => ({
+                reason: 'package-version-mismatch' as const,
+                packageName: name,
+                observedVersion: pkg.version,
+                lockedVersion
+              }))
+            : [diagnostic]
+        })
+      : undefined
   return {
     captureStatus: partialReasons.length > 0 ? 'partial' : 'complete',
     ...(partialReasons.length > 0 ? { partialReasons } : {}),
-    ...(partialReasons.length > 0 && nativeState.state === 'unsupported' && nativeState.diagnostics
+    ...(partialReasons.length > 0 && diagnostics?.length
       ? {
-          diagnostics: nativeState.diagnostics.map((diagnostic) => ({
+          diagnostics: diagnostics.slice(0, 20).map((diagnostic) => ({
             reason: diagnostic.reason,
             ...(diagnostic.packageName
               ? { packageName: diagnostic.packageName.slice(0, 200) }
@@ -1042,7 +1072,7 @@ class EnvironmentLockCaptureOwner {
         return {
           state: 'captured',
           lock: cached.lock,
-          ...assessEnvironmentLock(cached.lock, manifest, native.rejected, cached.pipPackages)
+          ...assessEnvironmentLock(cached.lock, manifest, native.rejected, cached.conda)
         }
       }
 
@@ -1158,12 +1188,12 @@ class EnvironmentLockCaptureOwner {
         ...(installers.length > 0 ? { nonCondaInstallers: installers } : {})
       }
       stage = 'assessing-lock-coverage'
-      const assessment = assessEnvironmentLock(lock, manifest, native.rejected, conda.pipPackages)
+      const assessment = assessEnvironmentLock(lock, manifest, native.rejected, conda)
       if (revision)
         this.cache.set(cacheKey, {
           revision,
           lock,
-          pipPackages: conda.pipPackages,
+          conda,
           // A transient lookup failure must not freeze a partial lock for the app's lifetime.
           ...(recoveryAttempted && assessment.captureStatus === 'partial'
             ? { retryAfter: Date.now() + 60_000 }

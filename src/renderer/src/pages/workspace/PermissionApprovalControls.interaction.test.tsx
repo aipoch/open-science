@@ -61,6 +61,78 @@ afterEach(() => {
 })
 
 describe('PermissionApprovalControls interactions', () => {
+  it.each([
+    [false, false],
+    [true, true]
+  ])(
+    'keeps fixed one-time payloads and prevents repeated keyboard activation (reject=%s, embedded=%s)',
+    async (hasReject, embedded) => {
+      let resolveResponse!: () => void
+      const onRespond = vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveResponse = resolve
+          })
+      )
+      const onceOnly: AcpPermissionRequest = {
+        ...baseRequest,
+        options: [
+          { optionId: 'fixed-once', name: 'Allow once', kind: 'allow_once', scope: 'once' },
+          ...(hasReject ? [{ optionId: 'fixed-deny', name: 'Deny', kind: 'reject_once' }] : [])
+        ]
+      }
+      act(() =>
+        root.render(
+          <PermissionApprovalControls
+            requests={[onceOnly]}
+            onRespond={onRespond}
+            embedded={embedded}
+          />
+        )
+      )
+      const allow = container.querySelector<HTMLButtonElement>('[data-testid="allow-primary"]')!
+      const deny = container.querySelector<HTMLButtonElement>('[data-testid="deny-button"]')!
+      expect(allow.textContent).toBe('Allow')
+      expect(container.querySelector('[data-testid="scope-chevron"]')).toBeNull()
+      allow.focus()
+      expect(document.activeElement).toBe(allow)
+      // Native Enter/Space button activation dispatches a click. Multiple activations during
+      // one pending response must send the same one-time payload only once.
+      act(() => {
+        allow.click()
+        allow.click()
+        deny.click()
+      })
+      expect(onRespond).toHaveBeenCalledTimes(1)
+      expect(onRespond).toHaveBeenCalledWith('req-1', 'fixed-once')
+      expect(allow.disabled).toBe(true)
+      expect(deny.disabled).toBe(true)
+      await act(async () => resolveResponse())
+    }
+  )
+
+  it.each([false, true])(
+    'preserves fixed one-time Deny rejection or cancellation (reject=%s)',
+    (hasReject) => {
+      const onRespond = vi.fn()
+      const onceOnly: AcpPermissionRequest = {
+        ...baseRequest,
+        options: [
+          { optionId: 'fixed-once', name: 'Allow once', kind: 'allow_once' },
+          ...(hasReject ? [{ optionId: 'fixed-deny', name: 'Deny', kind: 'reject_once' }] : [])
+        ]
+      }
+      act(() =>
+        root.render(
+          <PermissionApprovalControls requests={[onceOnly]} onRespond={onRespond} embedded />
+        )
+      )
+      act(() => container.querySelector<HTMLButtonElement>('[data-testid="deny-button"]')!.click())
+      expect(onRespond).toHaveBeenCalledTimes(1)
+      expect(onRespond).toHaveBeenCalledWith('req-1', hasReject ? 'fixed-deny' : undefined)
+    }
+  )
+
   it('routes persistent network access through the standard Global approval scope', () => {
     const onRespond = vi.fn()
     act(() => {

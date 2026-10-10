@@ -18,3 +18,6 @@ require('@aipoch/credential-identity-probe-native').executablePath = join(
   __dirname,
   'mock-credential-identity.sh'
 )
+// Electron/Playwright can consume NODE_OPTIONS while bootstrapping main. Explicitly propagate
+// the same test-only credential implementation to the ordinary Node backend it subsequently starts.
+process.env.NODE_OPTIONS = `${process.env.NODE_OPTIONS ?? ''} --require=${JSON.stringify(join(__dirname, 'mock-node-credentials.cjs'))}`

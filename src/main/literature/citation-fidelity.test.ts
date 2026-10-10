@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
@@ -259,3 +260,5 @@ describe('Citation fidelity through document and export boundaries', () => {
     ).toBe(true)
   })
 })
+
+configureTestRuntimeMetadata()

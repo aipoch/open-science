@@ -1,3 +1,4 @@
+import { configureTestRuntimeNetwork } from '../../../../test/runtime-host'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { GENES_REACTOME_TOOLS } from './genes-reactome'
 import type { ToolContext } from '../types'
@@ -445,3 +446,5 @@ describe('genes / map_reactome_pathways', () => {
     expect(fetchImpl).not.toHaveBeenCalled()
   })
 })
+
+configureTestRuntimeNetwork()

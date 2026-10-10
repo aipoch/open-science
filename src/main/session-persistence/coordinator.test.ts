@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { ProjectFilesReconciliationError } from '../project-files/repository'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -7888,3 +7889,5 @@ const createTestLogger = (): TestLogger =>
     warn: vi.fn<Logger['warn']>(),
     error: vi.fn<Logger['error']>()
   }) satisfies Logger
+
+configureTestRuntimeMetadata()
