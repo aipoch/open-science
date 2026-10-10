@@ -49,6 +49,10 @@ beforeAll(async () => {
   })
   await writeFile(join(dataRoot, 'result.json'), '{"value":42}')
   const observed = await observer.finish()
+  expect(observed.fileEvidence).toMatchObject({
+    checksum: expect.stringMatching(/^[a-f0-9]{64}$/),
+    generationCount: 1
+  })
   child = {
     ...run('inner', 'bash'),
     fileEvidence: observed.fileEvidence,
@@ -182,3 +186,5 @@ it('keeps ambiguous ownership if a referenced file changes during outer publicat
   expect(await readFile(path, 'utf8')).toBe('{"changed":true}')
   parent.close()
 })
+
+;(await import('../../../test/runtime-metadata')).configureTestRuntimeMetadata()
