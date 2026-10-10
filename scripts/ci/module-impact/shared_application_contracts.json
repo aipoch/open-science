@@ -19,7 +19,6 @@
     "src/shared/configured-model-catalog.test.ts",
     "src/shared/configured-model-catalog.ts",
     "src/shared/custom-connector.ts",
-    "src/shared/diagnostic-redaction.ts",
     "src/shared/diagnostics.ts",
     "src/shared/download-progress.test.ts",
     "src/shared/download-progress.ts",
@@ -61,8 +60,6 @@
     "src/shared/node-install-hint.test.ts",
     "src/shared/notifications.contract.test.ts",
     "src/shared/notifications.ts",
-    "src/shared/oauth-redirect.test.ts",
-    "src/shared/oauth-redirect.ts",
     "src/shared/output-comparison.ts",
     "src/shared/pdf-bookmarks.test.ts",
     "src/shared/pdf-bookmarks.ts",
@@ -192,7 +189,9 @@
     "src/shared/pdf-translation-snapshot.ts",
     "src/shared/pdf-translation-models.ts",
     "src/shared/pdf-translation-models.test.ts",
-    "src/shared/pdf-text.test.ts"
+    "src/shared/pdf-text.test.ts",
+    "src/shared/diagnostic-redaction.ts",
+    "src/shared/diagnostic-redaction.test.ts"
   ],
   "interfacePaths": [
     "src/shared/interface-scale.ts",
@@ -209,7 +208,6 @@
     "src/shared/codex-runtime.ts",
     "src/shared/configured-model-catalog.ts",
     "src/shared/custom-connector.ts",
-    "src/shared/diagnostic-redaction.ts",
     "src/shared/diagnostics.ts",
     "src/shared/download-progress.ts",
     "src/shared/execution-recovery.ts",
@@ -240,7 +238,6 @@
     "src/shared/network-proxy.ts",
     "src/shared/network.ts",
     "src/shared/notifications.ts",
-    "src/shared/oauth-redirect.ts",
     "src/shared/output-comparison.ts",
     "src/shared/pdf-bookmarks.ts",
     "src/shared/pdf-preparation-scope.ts",
@@ -288,7 +285,8 @@
     "src/shared/provider-text-generation-failure.ts",
     "src/shared/pdf-translation-snapshot.ts",
     "src/shared/pdf-translation-languages.ts",
-    "src/shared/pdf-translation-models.ts"
+    "src/shared/pdf-translation-models.ts",
+    "src/shared/diagnostic-redaction.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -309,7 +307,6 @@
       "src/shared/memory.test.ts",
       "src/shared/node-install-hint.test.ts",
       "src/shared/notifications.contract.test.ts",
-      "src/shared/oauth-redirect.test.ts",
       "src/shared/pdf-bookmarks.test.ts",
       "src/shared/pdf-table-copy.test.ts",
       "src/shared/provider-reasoning-effort.test.ts",
@@ -341,7 +338,8 @@
       "src/shared/pdf-translation-numeric-units.test.ts",
       "src/shared/pdf-translation-languages.test.ts",
       "src/shared/pdf-translation-models.test.ts",
-      "src/shared/pdf-text.test.ts"
+      "src/shared/pdf-text.test.ts",
+      "src/shared/diagnostic-redaction.test.ts"
     ],
     "contract": [],
     "consumer": [

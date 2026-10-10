@@ -63,7 +63,7 @@ import {
 import { requestPlanReviewProviderStop } from './plan-review-provider-stop'
 import { renderAppMcpToolReferences } from '../agent-framework/app-mcp-names'
 import { createLogger, diagnosticErrorFields, errorLogFields } from '../logger'
-import { redactSensitiveText } from '../diagnostic-redaction'
+import { redactSensitiveText } from '../../shared/diagnostic-redaction'
 import type { AcpRuntimeSnapshotOwner } from './runtime-snapshot-owner'
 import { buildLiteratureReferencePrompt } from './literature-reference-prompt'
 import { buildSessionReferencePrompt } from './session-reference-prompt'

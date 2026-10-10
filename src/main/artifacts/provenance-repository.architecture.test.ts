@@ -714,7 +714,7 @@ describe('Artifact Provenance repository architecture', () => {
       'src/main/compute/job-deletion-runtime-drain.test.ts',
       'src/main/compute/job-deletion-runtime-isolation.test.ts',
       'src/main/compute/session-catalog-hydration.integration.test.ts',
-      'src/main/connectors/application.test.ts',
+      'src/main/composition/connector-application.test.ts',
       'src/main/database/literature-inbox-integrity-migration.test.ts',
       'src/main/database/migration-service.test.ts',
       'src/main/delegation/delegated-artifact-evidence.test.ts',

@@ -1,3 +1,4 @@
+import { projectConnectorsFromStored } from '../connectors/read-model'
 import { createAcpRuntime } from '../acp/runtime-composition'
 import { AgentsService } from '../agents/agents-service'
 import {
@@ -74,9 +75,11 @@ export function composeAgentControls({
     specialistService,
     catalog: {
       listSkillCatalog: () => settingsService.listSpecialistSkillCatalog(),
-      getConnectors: () => settingsService.getConnectors()
+      getConnectors: async () =>
+        projectConnectorsFromStored(await settingsService.getConnectors(), (id) =>
+          connectorRuntimeSettings.customServerAvailability(id)
+        )
     },
-    customServerAvailability: (id) => connectorRuntimeSettings.customServerAvailability(id),
     sessionBinding: sessionBindingService,
     approvalGateway: specialistApprovalGateway,
     approvalLifecycle: completionHandoffLifecycle,

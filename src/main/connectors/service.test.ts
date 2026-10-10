@@ -1,15 +1,14 @@
-import { createConnectorRegistry } from '../connector-core/registry'
+import { createConnectorRegistry } from '@aipoch/connector-core'
 import { builtinConnectorRegistry } from './registry'
 import { describe, it, expect, vi } from 'vitest'
 import { configureRuntimeNetwork } from '../runtime-network'
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { ConnectorService } from './service'
-import { ParserEngine } from './engine'
-import { McpClientManager, McpToolCallError } from './custom-mcp'
+import { ParserEngine } from '@aipoch/connector-core'
+import { McpClientManager, McpToolCallError } from '@aipoch/connector-mcp-client'
 import type { SpecialistView } from '../../shared/specialist'
-import type { CustomMcpServerConfig } from './custom-mcp'
+import type { CustomMcpServerConfig } from '@aipoch/connector-mcp-client'
 import * as connectorNetwork from '../skills/net-fetch'
-import * as encoriFiles from './encori/client'
 
 const internal = { origin: 'internal' as const }
 
@@ -2882,7 +2881,10 @@ describe('ConnectorService specialist capability gate', () => {
 it('enforces ENCORI enablement and download policy before network or filesystem work', async () => {
   const fetchImpl = vi.fn()
   const network = vi.spyOn(connectorNetwork, 'netFetchStandard')
-  const directory = vi.spyOn(encoriFiles, 'outputDirectory')
+  const directory = vi.spyOn(
+    builtinConnectorRegistry.getDescriptor('encori', 'download_bulk_dataset')!,
+    'run'
+  )
   try {
     const settings = {
       enabledIds: [],
@@ -2923,7 +2925,10 @@ it('enforces ENCORI enablement and download policy before network or filesystem 
 
 it('honors explicit download Ask and rejects denial before network or filesystem work', async () => {
   const network = vi.spyOn(connectorNetwork, 'netFetchStandard')
-  const directory = vi.spyOn(encoriFiles, 'outputDirectory')
+  const directory = vi.spyOn(
+    builtinConnectorRegistry.getDescriptor('encori', 'download_bulk_dataset')!,
+    'run'
+  )
   const approvalPrompt = vi.fn().mockResolvedValue('deny')
   try {
     const service = new ConnectorService({

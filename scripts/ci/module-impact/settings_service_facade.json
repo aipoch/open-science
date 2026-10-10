@@ -84,7 +84,7 @@
       "src/main/acp/runtime.test.ts",
       "src/main/application-command-client.test.ts",
       "src/main/application-command-electron-adapter.test.ts",
-      "src/main/connectors/application.test.ts",
+      "src/main/composition/connector-application.test.ts",
       "src/main/delegation/production-framework-runtime.test.ts",
       "src/main/host-application-commands.test.ts",
       "src/main/index-fatal-errors.test.ts",

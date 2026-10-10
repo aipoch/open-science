@@ -864,7 +864,8 @@ it.each([
 it('uses only declared owner tests to recover colocated implementation ownership', () => {
   const manifest = loadModuleImpactManifest(resolve('scripts/ci/module-impact.json'))
   const graph = { status: 'unavailable-manifest-only', testFiles: [] }
-  const module = manifest.modules.genomes_ensembl_connector
+  const module = manifest.modules.connector_builtins
+  // Synthetic main-process path exercises owner inference independently of package routing.
   const source = 'src/main/connectors/descriptors/new-known-descriptor.ts'
   const test = source.replace('.ts', '.test.ts')
   const changes = [{ path: source, status: 'added' }]
@@ -874,7 +875,7 @@ it('uses only declared owner tests to recover colocated implementation ownership
   module.testFiles.owner.push(test)
   const plan = createAffectedTestPlan(changes, graph, manifest)
   expect(plan.mode).toBe('selective')
-  expect(plan.modules).toContain('genomes_ensembl_connector')
+  expect(plan.modules).toContain('connector_builtins')
   expect(plan.testFiles).toContain(test)
   expect(
     createAffectedTestPlan(
@@ -887,8 +888,8 @@ it('uses only declared owner tests to recover colocated implementation ownership
 
 it.each([
   [
-    'src/main/connectors/descriptors/genomes-ensembl.ts',
-    'src/main/connectors/descriptors/genomes.test.ts'
+    'packages/connector-builtins/src/genomes-ensembl.ts',
+    'packages/connector-builtins/src/genomes.test.ts'
   ],
   ['src/main/reviewer/correction.ts', 'src/main/reviewer/correction-owner.test.ts']
 ])('retains the direct owner/aggregate contract when %s changes', (path, testFile) => {

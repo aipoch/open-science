@@ -110,7 +110,7 @@
       "src/main/compute/job-deletion-runtime-drain.test.ts",
       "src/main/compute/job-deletion-runtime-isolation.test.ts",
       "src/main/compute/session-catalog-hydration.integration.test.ts",
-      "src/main/connectors/application.test.ts",
+      "src/main/composition/connector-application.test.ts",
       "src/main/data-content-application-commands.test.ts",
       "src/main/database/literature-inbox-integrity-migration.test.ts",
       "src/main/database/managed-file-version-domain.test.ts",

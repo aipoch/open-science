@@ -17,7 +17,7 @@ import {
 import type { FileDigest } from '../bounded-file-io'
 import { LOCAL_RESOURCE_BUDGETS, assertWithinResourceBudget } from '../resource-budget'
 import { availableBytes } from '../storage/usage'
-import { redactSensitiveText } from '../diagnostic-redaction'
+import { redactSensitiveText } from '../../shared/diagnostic-redaction'
 
 // Bound dependency diagnostics before adding execution state and recovery identities.
 export const artifactFailureDiagnostic = (error: unknown): string => {

@@ -38,7 +38,9 @@ describe('Prisma Client fingerprint', () => {
     const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as {
       scripts: { predev?: string; pretest?: string }
     }
-    expect(pkg.scripts.pretest).toBe('node scripts/check-prisma-client.mjs')
+    expect(pkg.scripts.pretest).toBe(
+      'node scripts/check-prisma-client.mjs && npm run build:connectors'
+    )
     expect(pkg.scripts.predev).toBe(
       'node scripts/check-prisma-client.mjs && node scripts/dev-app-branding.cjs'
     )

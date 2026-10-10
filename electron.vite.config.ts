@@ -29,6 +29,10 @@ export default defineConfig(({ command }) => ({
   },
   preload: {
     build: {
+      // Local npm packages resolve outside node_modules through their file: links.
+      commonjsOptions: {
+        include: [/node_modules/, /packages[\\/]connector-(?:core|mcp-client)[\\/]dist/]
+      },
       rollupOptions: {
         input: {
           index: resolve('src/preload/index.ts'),
@@ -46,6 +50,8 @@ export default defineConfig(({ command }) => ({
         ? {
             // Regenerate lazy chunks so a persisted Electron page cannot request stale hashes.
             force: true,
+            // file: links resolve outside node_modules and need explicit CJS prebundling.
+            include: ['@aipoch/connector-mcp-client/oauth-redirect'],
             entries: [
               '*.html',
               'src/**/*.worker.ts',
@@ -90,6 +96,10 @@ export default defineConfig(({ command }) => ({
       tailwindcss()
     ],
     build: {
+      // Local npm packages resolve outside node_modules through their file: links.
+      commonjsOptions: {
+        include: [/node_modules/, /packages[\\/]connector-(?:core|mcp-client)[\\/]dist/]
+      },
       rollupOptions: {
         input: {
           index: resolve('src/renderer/index.html'),

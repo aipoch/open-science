@@ -1,6 +1,6 @@
 import { homedir } from 'node:os'
 
-import { redactSensitiveText } from '../diagnostic-redaction'
+import { redactSensitiveText } from '../../shared/diagnostic-redaction'
 
 export type DiagnosticTextOptions = {
   configRoot?: string

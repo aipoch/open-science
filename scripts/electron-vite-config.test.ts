@@ -28,6 +28,7 @@ describe('electron-vite renderer dependency optimization', () => {
     const dev = resolveConfig({ command: 'serve', mode: 'development' })
     expect(dev.renderer?.optimizeDeps).toEqual({
       force: true,
+      include: ['@aipoch/connector-mcp-client/oauth-redirect'],
       entries: [
         '*.html',
         'src/**/*.worker.ts',

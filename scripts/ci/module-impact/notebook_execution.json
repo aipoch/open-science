@@ -548,7 +548,7 @@
       "src/main/compute/skill-provisioning.test.ts",
       "src/main/compute/slurm.real-ssh.integration.test.ts",
       "src/main/compute/ssh-runner.test.ts",
-      "src/main/connectors/application.test.ts",
+      "src/main/composition/connector-application.test.ts",
       "src/main/data-content-application-commands.test.ts",
       "src/main/database/literature-inbox-integrity-migration.test.ts",
       "src/main/database/managed-file-version-domain.test.ts",
