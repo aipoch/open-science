@@ -945,6 +945,7 @@ def _run(code, replay_random_state=None):
     sys.stdout, sys.stderr = out, err
     error = None
     result = None
+    execution_started = False
     try:
         parsed = ast.parse(code, mode="exec")
         body = parsed.body
@@ -952,9 +953,13 @@ def _run(code, replay_random_state=None):
         if body and isinstance(body[-1], ast.Expr):
             tail = ast.Expression(body.pop().value)
         if body:
-            exec(compile(ast.Module(body, type_ignores=[]), "<cell>", "exec"), _globals)
+            compiled_body = compile(ast.Module(body, type_ignores=[]), "<cell>", "exec")
+            execution_started = True
+            exec(compiled_body, _globals)
         if tail is not None:
-            value = eval(compile(tail, "<cell>", "eval"), _globals)
+            compiled_tail = compile(tail, "<cell>", "eval")
+            execution_started = True
+            value = eval(compiled_tail, _globals)
             if value is not None:
                 result = output_budget.take(repr(value))
     except KeyboardInterrupt:
@@ -969,6 +974,7 @@ def _run(code, replay_random_state=None):
         sys.stdout, sys.stderr = old_out, old_err
     figures, figures_truncated = _capture_figures()
     return {"stdout": out.getvalue(), "stderr": err.getvalue(), "error": error,
+            "execution_started": execution_started,
             "result": result, "cwd": os.getcwd(), "figures": figures,
             "output_truncated": output_budget.truncated or diagnostic_budget.truncated or figures_truncated,
             "environment": _capture_environment({"schemaVersion": 1, "before": context_before,
