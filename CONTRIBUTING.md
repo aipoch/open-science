@@ -525,8 +525,9 @@ explains the format, the curation follow-ups, and how reviewed examples are inde
 
 ## Publishing the npm Package
 
-Maintainers should follow the [npm package release guide](docs/npm-release.md). npm package versions
-use `npm-v*` tags and are published through the protected `Publish npm package` workflow.
+Maintainers should follow the [npm package release guide](docs/npm-release.md). Generated npm packages use the root application version. The `Publish npm package` workflow currently
+performs native installation dry-runs only; `npm-v*` publication is disabled while release integration
+and signing verification are completed.
 
 ## License
 
