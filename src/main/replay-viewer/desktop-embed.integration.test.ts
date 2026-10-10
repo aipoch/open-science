@@ -8,6 +8,230 @@ import { expect, it } from 'vitest'
 
 const enabled = process.env.RUN_OBSERVATION_DESKTOP_EMBED === '1' && process.platform === 'darwin'
 
+it.skipIf(!enabled)(
+  'binds an independent Node viewer to the actual desktop document UUID across refresh and revocation',
+  async () => {
+    const directory = await realpath(await mkdtemp(join(tmpdir(), 'os-viewer-node-')))
+    let electron: ElectronApplication | undefined
+    try {
+      const html = join(directory, 'index.html')
+      const source = await readFile(resolve('src/renderer/index.html'), 'utf8')
+      const csp = source.match(/http-equiv="Content-Security-Policy"\s+content="([^"]+)"/)?.[1]
+      expect(csp).toBeDefined()
+      await writeFile(
+        html,
+        `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="${csp}"></head><body style="margin:0"><iframe id="viewer" title="Node viewer" sandbox="allow-scripts allow-same-origin allow-forms" style="border:0;width:100vw;height:65vh"></iframe><iframe id="trusted" title="Existing preview" src="open-science-preview://fixture/report.html" style="position:absolute;left:30px;top:550px;width:700px;height:100px"></iframe></body></html>`
+      )
+      await writeFile(
+        join(directory, 'preload.cjs'),
+        "const {ipcRenderer}=require('electron');window.addEventListener('DOMContentLoaded',()=>ipcRenderer.invoke('projects:list'))"
+      )
+      const backend = join(directory, 'backend.cjs')
+      await build({
+        stdin: {
+          resolveDir: process.cwd(),
+          sourcefile: 'independent-viewer-backend.ts',
+          loader: 'ts',
+          contents: `
+import {createServer} from 'node:http'
+import {join} from 'node:path'
+import {randomUUID} from 'node:crypto'
+import {createDesktopObservationBridge} from './src/main/observation-desktop/bridge'
+import {ReplayViewerHttpHost} from './src/main/replay-viewer/http-host'
+import {createReplayViewerAssetReader} from './src/main/replay-viewer/assets'
+import {ManagedRuntimeViews} from './src/main/managed-runtime-views'
+import {RuntimeViewOwner} from './src/main/runtime-view/owner'
+import {RunObservationOwner} from './src/main/run-observation/owner'
+import {ObservationViewers} from './src/main/run-observation/viewers'
+import {createCallerContext} from './src/main/caller-context'
+let sequence=0
+const pending=new Map(), callers=new Map()
+const bridge=createDesktopObservationBridge((operation,clientId,signal)=>new Promise((resolve,reject)=>{
+ const id=++sequence
+ const aborted=()=>{pending.delete(id);reject(new Error('native request aborted'))}
+ signal?.addEventListener('abort',aborted,{once:true})
+ pending.set(id,{resolve:value=>{signal?.removeEventListener('abort',aborted);resolve(value)},reject:error=>{signal?.removeEventListener('abort',aborted);reject(error)}})
+ process.send({kind:'native',id,operation,clientId})
+}))
+const scope={projectId:'node-project',sessionId:'node-session',runId:'run',environmentId:'environment',generationId:randomUUID()}
+const target={projectId:scope.projectId,sessionId:scope.sessionId,runId:scope.runId}
+const socketPath=join(${JSON.stringify(directory)},'project.sock'), lifetime=new AbortController()
+const project=createServer((request,response)=>{
+ if(request.url==='/__proof'){response.end('fixture-proof');return}
+ response.setHeader('content-type','text/html')
+ response.end('<!doctype html><p id="ready">Independent Node project</p><a id="next" href="/next">Next recorded page</a>')
+})
+const projectViews=new ManagedRuntimeViews(new RuntimeViewOwner({},bridge.frames))
+const observation=new RunObservationOwner({authorize:(target,viewer)=>viewers.assertViewer(target,viewer),read:async()=>({identity:target,phase:'running',artifacts:[],run:{runId:'run',cellId:'cell',source:'agent',kernelKind:'bash',script:'printf observed',status:'running',startedAt:1,text:{stdout:'ready',stderr:'',traceback:'',plain:[]},outputs:[],workingFiles:[]}})})
+const viewers=new ObservationViewers({observer:observation,authorizeScope:async()=>undefined,onRevoked:id=>host.closeViewer(id)})
+const host=new ReplayViewerHttpHost({viewers,projectViews,desktopFrames:bridge.frames,desktopLocale:()=> 'en',readAsset:createReplayViewerAssetReader(${JSON.stringify(resolve('out/replay-viewer'))})})
+const ready=new Promise(resolve=>project.listen(socketPath,resolve)).then(()=>projectViews.register({scope,declaration:{title:'Node project',entryPath:'/',adaptFrameAncestors:true},socketPath,proof:{path:'/__proof',value:'fixture-proof'},logicalPort:4173,signal:lifetime.signal}))
+const close=async()=>{await host.close();await viewers.close();await projectViews.close();observation.close();bridge.close();lifetime.abort();project.closeAllConnections();project.close(()=>process.exit(0))}
+process.once('disconnect',()=>{void close()})
+process.on('message',async message=>{
+ try{
+  if(message.kind==='native-result'){const request=pending.get(message.id);pending.delete(message.id);if(message.error)request?.reject(new Error(message.error));else request?.resolve(message.result);return}
+  if(message.kind==='release'){const state=callers.get(message.clientId);if(state)state.current=false;return}
+  if(message.kind==='open'){
+   await ready
+   const state={current:true};callers.set(message.clientId,state)
+   const caller=createCallerContext({clientId:message.clientId,lifecycleClientId:message.clientId,leaseId:message.clientId,surface:'electron',location:'local',principalKind:'human',actionOrigin:'human',isAuthorizationCurrent:()=>state.current})
+   const access=await host.open(target,caller,{allowInteraction:true,desktopParent:'file:'})
+   process.send({kind:'opened',clientId:message.clientId,url:access.url,pid:process.pid});return
+  }
+  if(message.kind==='close')await close()
+ }catch(error){process.send({kind:'error',message:String(error)})}
+})
+`
+        },
+        outfile: backend,
+        platform: 'node',
+        format: 'cjs',
+        bundle: true,
+        logLevel: 'silent'
+      })
+      const main = join(directory, 'main.cjs')
+      await build({
+        stdin: {
+          resolveDir: process.cwd(),
+          sourcefile: 'independent-viewer-desktop.ts',
+          loader: 'ts',
+          contents: `
+import {app,BrowserWindow,protocol,webFrameMain} from 'electron'
+import {fork} from 'node:child_process'
+import {installDesktopRuntimeElectronAdapter} from './src/main/desktop-runtime-electron-adapter'
+import {createDesktopObservationNativeHandler} from './src/main/observation-desktop/electron'
+import {desktopObservationFrameRegistry} from './src/main/replay-viewer/desktop-frame-registry'
+import {createFrameNavigationGuard} from './src/main/navigation-policy'
+import {installPreviewContextMenuBridge} from './src/main/preview-context-menu'
+protocol.registerSchemesAsPrivileged([{scheme:'open-science-preview',privileges:{standard:true,secure:true,supportFetchAPI:true}}])
+const windows=[],menus=[],nativeMenus=[],decisions=[],errors=[],opens=[],released=[]
+let relay,child,native,owner
+const waiting=new Map()
+function createWindow(preload){
+ const window=new BrowserWindow({show:false,width:1200,height:950,webPreferences:{...(preload?{preload:${JSON.stringify(join(directory, 'preload.cjs'))}}:{}),contextIsolation:true,nodeIntegration:false,sandbox:true,webSecurity:true}})
+ windows.push(window)
+ const wc=window.webContents
+ const guard=createFrameNavigationGuard((url,frame)=>desktopObservationFrameRegistry.allows({url,frame,webContentsId:wc.id,mainFrame:wc.mainFrame}))
+ const enforce=(details,processId,routingId)=>{const frame=details.frame?.frameTreeNodeId!==undefined?details.frame:webFrameMain.fromId(details.processId??processId,details.routingId??routingId);const allowed=guard(details.url,details.isMainFrame,wc.getURL(),frame);decisions.push({allowed,windowId:wc.id,url:details.url.split('?')[0]});if(!allowed)details.preventDefault()}
+ wc.on('will-frame-navigate',details=>enforce(details))
+ wc.on('will-redirect',(details,_url,_inPlace,_main,processId,routingId)=>enforce(details,processId,routingId))
+ wc.on('context-menu',(_event,params)=>nativeMenus.push({url:params.frame?.url,editable:params.isEditable}))
+ const dispose=installPreviewContextMenuBridge({get mainFrame(){return wc.mainFrame},getZoomFactor:()=>wc.getZoomFactor(),on:(e,l)=>wc.on(e,l),removeListener:(e,l)=>wc.removeListener(e,l),send:(channel,payload)=>{menus.push(payload);wc.send(channel,payload)}})
+ window.on('closed',dispose)
+ return window
+}
+app.whenReady().then(async()=>{
+ protocol.handle('open-science-preview',()=>new Response('<!doctype html><p id="managed">Managed preview</p><p id="passthrough" data-preview-context-menu-passthrough>Native menu area</p>',{headers:{'content-type':'text/html'}}))
+ child=fork(${JSON.stringify(backend)},[],{execPath:${JSON.stringify(process.execPath)},stdio:['ignore','pipe','pipe','ipc']})
+ child.stderr.on('data',data=>errors.push(String(data)))
+ native=createDesktopObservationNativeHandler({documentFor:id=>relay?.documentFor(id)})
+ child.on('message',async message=>{
+  if(message.kind==='native'){try{const result=await native.handle({clientId:message.clientId,request:message.operation.request},new AbortController().signal);child.send({kind:'native-result',id:message.id,result})}catch(error){child.send({kind:'native-result',id:message.id,error:String(error)})}return}
+  if(message.kind==='opened'){opens.push(message);const resolve=waiting.get(message.clientId);waiting.delete(message.clientId);resolve?.(message);return}
+  if(message.kind==='error')errors.push(message.message)
+ })
+ relay=installDesktopRuntimeElectronAdapter({commandNames:()=>['projects:list'],invoke:async(clientId)=>{const opened=new Promise(resolve=>waiting.set(clientId,resolve));child.send({kind:'open',clientId});const access=await opened;const wc=relay.documentFor(clientId);if(wc)await wc.executeJavaScript('document.getElementById("viewer").src='+JSON.stringify(access.url));return []},release:clientId=>{released.push(clientId);child.send({kind:'release',clientId})}},sender=>windows.some(window=>!window.isDestroyed()&&window.webContents===sender))
+ owner=createWindow(true)
+ globalThis.fixture={errors,opens,released,decisions,menus,nativeMenus,desktopPid:process.pid,zoom:()=>owner.webContents.setZoomFactor(1.25),other:async()=>{const other=createWindow(false);await other.loadFile(${JSON.stringify(html)});await other.webContents.executeJavaScript('document.getElementById("viewer").src='+JSON.stringify(new URL(opens[opens.length-1].url).origin+'/'));return other.webContents.id},oldDocumentAvailable:id=>!!relay.documentFor(id),close:async()=>{relay.uninstall();await native.close();child.send({kind:'close'});await new Promise(resolve=>{const timer=setTimeout(()=>{child.kill();resolve()},2000);child.once('exit',()=>{clearTimeout(timer);resolve()})});for(const window of windows)if(!window.isDestroyed())window.destroy()}}
+ await owner.loadFile(${JSON.stringify(html)})
+}).catch(error=>{console.error(error);app.exit(1)})
+app.on('window-all-closed',()=>app.quit())
+`
+        },
+        outfile: main,
+        platform: 'node',
+        format: 'cjs',
+        bundle: true,
+        external: ['electron'],
+        logLevel: 'silent'
+      })
+      electron = await _electron.launch({ args: [main], cwd: process.cwd() })
+      const page = await electron.firstWindow()
+      type State = {
+        errors: string[]
+        opens: Array<{ clientId: string; url: string; pid: number }>
+        released: string[]
+        desktopPid: number
+        decisions: Array<{ allowed: boolean; windowId: number; url: string }>
+        menus: Array<{ frameUrl: string; x: number; y: number }>
+        nativeMenus: Array<{ url: string }>
+        zoom(): void
+        other(): Promise<number>
+        oldDocumentAvailable(id: string): boolean
+        close(): Promise<void>
+      }
+      const state = (): Promise<State> =>
+        electron!.evaluate(() => {
+          const { errors, opens, released, desktopPid, decisions, menus, nativeMenus } = (
+            globalThis as unknown as { fixture: State }
+          ).fixture
+          return { errors, opens, released, desktopPid, decisions, menus, nativeMenus }
+        }) as Promise<State>
+      const viewer = page.frameLocator('#viewer')
+      await viewer.getByRole('button', { name: 'Project interface', exact: true }).click()
+      const project = viewer.frameLocator('iframe[title="Node project"]')
+      await project.locator('#ready').waitFor()
+      const initial = await state()
+      expect(initial.errors).toEqual([])
+      expect(initial.opens[0].clientId).toMatch(/^[0-9a-f-]{36}$/)
+      expect(initial.opens[0].pid).not.toBe(initial.desktopPid)
+      await project.locator('#next').click()
+      await project.locator('#ready').waitFor()
+      const actualViewer = page.frames().find((frame) => /^http:\/\/viewer-/.test(frame.url()))!
+      await actualViewer.evaluate(() => location.reload())
+      await viewer.getByRole('button', { name: 'Project interface', exact: true }).click()
+      await project.locator('#ready').waitFor()
+      expect((await state()).opens).toHaveLength(1)
+      const other = await electron.evaluate(() =>
+        (globalThis as unknown as { fixture: State }).fixture.other()
+      )
+      await expect
+        .poll(async () =>
+          (await state()).decisions.some((entry) => entry.windowId === other && !entry.allowed)
+        )
+        .toBe(true)
+      await electron.evaluate(() => (globalThis as unknown as { fixture: State }).fixture.zoom())
+      const trusted = page
+        .frames()
+        .find((frame) => frame.url().startsWith('open-science-preview:'))!
+      const point = await trusted.evaluate(() => {
+        const rect = document.getElementById('managed')!.getBoundingClientRect()
+        return { x: 30 + rect.left + 10, y: 550 + rect.top + 8 }
+      })
+      await page.mouse.click(point.x, point.y, { button: 'right' })
+      await expect.poll(async () => (await state()).menus.length).toBe(1)
+      const menu = (await state()).menus[0]
+      expect(menu.frameUrl).toBe('open-science-preview://fixture/report.html')
+      expect(Math.abs(menu.x - point.x)).toBeLessThanOrEqual(1)
+      expect(Math.abs(menu.y - point.y)).toBeLessThanOrEqual(1)
+      const nativeCount = (await state()).nativeMenus.length
+      await trusted.locator('#passthrough').click({ button: 'right' })
+      await expect.poll(async () => (await state()).nativeMenus.length).toBe(nativeCount + 1)
+      expect((await state()).menus).toHaveLength(1)
+      await page.reload()
+      await viewer.getByRole('button', { name: 'Project interface', exact: true }).click()
+      await project.locator('#ready').waitFor()
+      const refreshed = await state()
+      expect(refreshed.released).toContain(initial.opens[0].clientId)
+      expect(refreshed.opens.at(-1)!.clientId).not.toBe(initial.opens[0].clientId)
+      expect(
+        await electron.evaluate(
+          (_electron, id) =>
+            (globalThis as unknown as { fixture: State }).fixture.oldDocumentAvailable(id),
+          initial.opens[0].clientId
+        )
+      ).toBe(false)
+      expect(refreshed.errors).toEqual([])
+      await electron.evaluate(() => (globalThis as unknown as { fixture: State }).fixture.close())
+    } finally {
+      await electron?.close().catch(() => undefined)
+      await rm(directory, { recursive: true, force: true })
+    }
+  },
+  90_000
+)
+
 /** Uses the production root CSP, production navigation guard, real registry and both actual HTTP
  * owners. A bare file:// iframe fixture cannot detect privileged desktop embedding regressions. */
 it
