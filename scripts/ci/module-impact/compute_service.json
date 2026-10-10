@@ -326,7 +326,7 @@
       "src/main/artifacts/provenance-write-contract.test.ts",
       "src/main/bookmarks/pdf-source-diagnostics.test.ts",
       "src/main/bookmarks/service.test.ts",
-      "src/main/connectors/application.test.ts",
+      "src/main/composition/connector-application.test.ts",
       "src/main/data-content-application-commands.test.ts",
       "src/main/database/literature-inbox-integrity-migration.test.ts",
       "src/main/database/managed-file-version-domain.test.ts",

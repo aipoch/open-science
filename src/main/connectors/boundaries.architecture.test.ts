@@ -1,77 +1,95 @@
-import { loadModuleImpactManifest } from '../../../scripts/ci/load-module-impact.mjs'
-import { dirname, relative, resolve, sep } from 'node:path'
+import { execFileSync } from 'node:child_process'
+import { existsSync, readFileSync } from 'node:fs'
+import { dirname, resolve, sep } from 'node:path'
 import {
-  createSourceFile,
-  isExportDeclaration,
-  isImportDeclaration,
-  isStringLiteral,
+  createModuleResolutionCache,
   preProcessFile,
+  readConfigFile,
+  parseJsonConfigFileContent,
   resolveModuleName,
   ModuleResolutionKind,
-  sys,
-  ScriptTarget
+  sys
 } from 'typescript'
 import { expect, it } from 'vitest'
-import {
-  listProductionSources,
-  readProductionSource
-} from '../../../test/architecture-source-index'
 
-it('keeps Custom MCP implementation imports behind its facade and pure URL admission entry', () => {
+it('consumes Connector packages only through exports and keeps packages independent of host source', () => {
   const root = resolve(__dirname, '../../..')
-  const moduleRoot = resolve(__dirname, 'custom-mcp')
-  const violations: string[] = []
-  for (const file of listProductionSources(root)) {
-    if (file.startsWith(moduleRoot + sep)) continue
-    const source = readProductionSource(file, root)
-    if (!source.includes('custom-mcp/')) continue
-    const parsed = createSourceFile(file, source, ScriptTarget.Latest)
-    for (const statement of parsed.statements) {
-      if (!(isImportDeclaration(statement) || isExportDeclaration(statement))) continue
-      const specifier = statement.moduleSpecifier
-      if (!specifier || !isStringLiteral(specifier) || !specifier.text.startsWith('.')) continue
-      const target = resolve(dirname(file), specifier.text)
-      if (
-        target.startsWith(moduleRoot + sep) &&
-        !/^(?:index|url)(?:\.ts)?$/.test(relative(moduleRoot, target))
-      ) {
-        violations.push(`${relative(root, file)} -> ${specifier.text}`)
-      }
+  const resolutionOptions = ['tsconfig.node.json', 'tsconfig.web.json'].map((name) => ({
+    ...parseJsonConfigFileContent(
+      readConfigFile(resolve(root, name), sys.readFile).config,
+      sys,
+      root
+    ).options,
+    moduleResolution: ModuleResolutionKind.Bundler
+  }))
+  const resolutionCaches = resolutionOptions.map((options) =>
+    createModuleResolutionCache(root, (path) => path, options)
+  )
+  const packages = ['connector-core', 'connector-builtins', 'connector-mcp-client'].map((name) => {
+    const directory = resolve(root, 'packages', name)
+    const manifest = JSON.parse(readFileSync(resolve(directory, 'package.json'), 'utf8'))
+    return {
+      directory,
+      manifest,
+      entries: new Set(
+        Object.keys(manifest.exports).map((entry) =>
+          entry === '.' ? manifest.name : `${manifest.name}/${entry.slice(2)}`
+        )
+      )
     }
-  }
-  expect(violations).toEqual([])
-})
-
-it('keeps descriptor families independent of host integration and connector-core independent of both', () => {
-  const root = resolve(__dirname, '../../..')
-  const { modules } = loadModuleImpactManifest(resolve(root, 'scripts/ci/module-impact.json'))
-  const owners = new Map<string, string>()
-  for (const [owner, module] of Object.entries(modules)) {
-    for (const path of (module as { ownerPaths: string[] }).ownerPaths) {
-      owners.set(resolve(root, path), owner)
-    }
-  }
+  })
+  expect([...packages[0].entries]).toEqual([
+    '@aipoch/connector-core',
+    '@aipoch/connector-core/url-admission'
+  ])
+  expect(packages[1].entries.has('@aipoch/connector-builtins')).toBe(false)
+  expect([...packages[2].entries]).toEqual([
+    '@aipoch/connector-mcp-client',
+    '@aipoch/connector-mcp-client/oauth-redirect'
+  ])
+  const files = execFileSync(
+    'git',
+    ['ls-files', '--cached', '--others', '--exclude-standard', '-z'],
+    { cwd: root, encoding: 'utf8' }
+  )
+    .split('\0')
+    .filter((file) => /\.[cm]?[jt]sx?$/.test(file) && existsSync(resolve(root, file)))
   const violations: string[] = []
-  for (const file of listProductionSources(root)) {
-    const owner = owners.get(file)
-    if (!owner?.startsWith('connector_')) continue
-    const source = readProductionSource(file, root)
+  for (const path of files) {
+    const file = resolve(root, path)
+    const owner = packages.find((pkg) => file.startsWith(pkg.directory + sep))
+    const source = readFileSync(file, 'utf8')
     for (const { fileName: specifier } of preProcessFile(source, true, true).importedFiles) {
-      const target = resolveModuleName(
-        specifier,
-        file,
-        {
-          moduleResolution: ModuleResolutionKind.Bundler
-        },
-        sys
-      ).resolvedModule?.resolvedFileName
-      if (!target) continue
-      const targetOwner = owners.get(target)
-      if (
-        targetOwner === 'main_connectors' ||
-        (owner === 'connector_core' && targetOwner && targetOwner !== 'connector_core')
-      ) {
-        violations.push(`${relative(root, file)} -> ${specifier} (${targetOwner})`)
+      const target = resolutionOptions
+        .map(
+          (options, index) =>
+            resolveModuleName(specifier, file, options, sys, resolutionCaches[index]).resolvedModule
+              ?.resolvedFileName
+        )
+        .find(Boolean)
+      for (const pkg of packages) {
+        if (specifier === pkg.manifest.name || specifier.startsWith(pkg.manifest.name + '/')) {
+          if (!pkg.entries.has(specifier)) violations.push(`${path} -> private export ${specifier}`)
+        } else if (target?.startsWith(pkg.directory + sep) && owner !== pkg) {
+          violations.push(`${path} -> package source ${specifier}`)
+        }
+      }
+      if (!owner) continue
+      if (specifier.startsWith('.')) {
+        if (!resolve(dirname(file), specifier).startsWith(owner.directory + sep)) {
+          violations.push(`${path} -> outside package ${specifier}`)
+        }
+      } else if (!specifier.startsWith('node:')) {
+        const dependency = specifier.startsWith('@')
+          ? specifier.split('/').slice(0, 2).join('/')
+          : specifier.split('/')[0]
+        const declared = {
+          ...owner.manifest.dependencies,
+          ...owner.manifest.peerDependencies,
+          ...owner.manifest.devDependencies
+        }
+        if (!(dependency in declared))
+          violations.push(`${path} -> undeclared dependency ${specifier}`)
       }
     }
   }

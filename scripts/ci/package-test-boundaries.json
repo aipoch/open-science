@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "packages": [
+    { "root": "packages/connector-core", "dependencies": [] },
+    { "root": "packages/connector-builtins", "dependencies": ["packages/connector-core"] },
+    { "root": "packages/connector-mcp-client", "dependencies": ["packages/connector-core"] }
+  ]
+}

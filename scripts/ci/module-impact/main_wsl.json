@@ -99,7 +99,7 @@
       "src/main/artifacts/mcp-server.test.ts",
       "src/main/artifacts/provenance-write-contract.test.ts",
       "src/main/compute/compute-job-workflow-owner.test.ts",
-      "src/main/connectors/application.test.ts",
+      "src/main/composition/connector-application.test.ts",
       "src/main/delegation/production-composition.test.ts",
       "src/main/delegation/production-framework-runtime.test.ts",
       "src/main/host-application-commands.test.ts",
@@ -272,7 +272,9 @@
       "src/main/runtime-view/browser-host.integration.test.ts",
       "src/main/replay-viewer/http-host.integration.test.ts",
       "src/main/managed-runtime-views.integration.test.ts",
-      "src/main/observation-desktop/bridge.test.ts"
+      "src/main/observation-desktop/bridge.test.ts",
+      "src/main/notebook/working-file-observer-plain-host.test.ts",
+      "src/main/notebook/auto-mode-budget.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

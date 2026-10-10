@@ -1,3 +1,4 @@
+import { projectConnectorsFromStored } from '../connectors/read-model'
 import { builtinConnectorRegistry } from '../connectors/registry'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -1087,7 +1088,10 @@ describe('Specialist errors through host.agents', () => {
   it('preserves owned domain failures but hides unknown dependencies', async () => {
     const agents = new AgentsService({
       specialistService: service,
-      catalog: { listSkillCatalog: async () => [], getConnectors: async () => undefined }
+      catalog: {
+        listSkillCatalog: async () => [],
+        getConnectors: async () => projectConnectorsFromStored(undefined)
+      }
     })
     await expect(agents.dispatch({ op: 'get', params: { name: 'missing' } })).rejects.toThrow(
       'host.agents.get: Specialist "missing" not found.'

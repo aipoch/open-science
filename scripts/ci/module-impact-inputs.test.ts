@@ -242,6 +242,7 @@ describe('trusted additive module registrations', () => {
         'classify-pr-changes.mjs',
         'change-impact.json',
         'load-module-impact.mjs',
+        'package-test-impact.mjs',
         'module-impact-inputs.mjs',
         'module-test-impact.mjs',
         'module-impact-authority.mjs',

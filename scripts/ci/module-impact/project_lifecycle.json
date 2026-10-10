@@ -236,7 +236,7 @@
       "src/main/session-package/ro-crate.integration.test.ts",
       "src/main/database/literature-smart-collections-migration.test.ts",
       "src/main/literature/smart-collections.test.ts",
-      "src/main/connectors/application.test.ts",
+      "src/main/composition/connector-application.test.ts",
       "src/main/settings/application-commands.test.ts",
       "src/main/settings/classification-usage.test.ts",
       "src/main/settings/connector-credential-recovery.integration.test.ts",

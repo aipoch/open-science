@@ -1102,7 +1102,7 @@ describe('Settings backend ownership architecture', () => {
       'src/main/acp/runtime.test.ts',
       'src/main/application-command-client.test.ts',
       'src/main/application-command-electron-adapter.test.ts',
-      'src/main/connectors/application.test.ts',
+      'src/main/composition/connector-application.test.ts',
       'src/main/delegation/production-framework-runtime.test.ts',
       'src/main/host-application-commands.test.ts',
       'src/main/index-fatal-errors.test.ts',
@@ -1260,13 +1260,9 @@ describe('Settings backend ownership architecture', () => {
       'src/main/compute/job-runtime.test.ts',
       'src/main/compute/session-catalog-hydration.integration.test.ts',
       'src/main/compute/skill-provisioning.test.ts',
-      'src/main/connectors/application.test.ts',
-      'src/main/connectors/custom-mcp/bootstrap.test.ts',
+      'src/main/composition/connector-application.test.ts',
       'src/main/connectors/custom-skill-doc.test.ts',
-      'src/main/connectors/descriptors/variants-gnomad.test.ts',
-      'src/main/connectors/custom-mcp/client-manager.test.ts',
       'src/main/connectors/mcp-payload-pagination.integration.test.ts',
-      'src/main/connectors/custom-mcp/oauth-client.test.ts',
       'src/main/connectors/provision.test.ts',
       'src/main/connectors/runtime-settings-projection.test.ts',
       'src/main/connectors/service.test.ts',
@@ -1632,7 +1628,9 @@ describe('Settings backend ownership architecture', () => {
       'src/main/observation-desktop/bridge.test.ts',
       'src/main/acp/auto-operation-adapter.test.ts',
       'src/main/acp/auto-operation-broker.test.ts',
-      'src/main/acp/auto-operation-policy.test.ts'
+      'src/main/acp/auto-operation-policy.test.ts',
+      'src/main/connectors/custom-mcp-config.test.ts',
+      'src/main/connectors/mcp-host-dependencies.test.ts'
     ])
     expect(
       [

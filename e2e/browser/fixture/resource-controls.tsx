@@ -10,7 +10,7 @@ import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-
 import { createInitialTagState, useTagStore } from '@/stores/tag-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { useThemeStore } from '@/stores/theme-store'
-import { CONNECTOR_CATALOG } from '../../../src/main/connectors/catalog'
+import { CONNECTOR_CATALOG } from '@aipoch/connector-builtins/catalog'
 import manifest from '../../../resources/skills/manifest.json'
 import type { SkillView, ConnectorsSnapshot } from '../../../src/shared/settings'
 import type { SpecialistView, UpdateSpecialistInput } from '../../../src/shared/specialist'

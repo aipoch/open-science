@@ -17,7 +17,7 @@ import type { ComputeHostRepository } from './repository'
 import { quoteRemotePath, shellSingleQuote } from './remote-path-security'
 import type { SessionCacheOwner } from './session-cache-owner'
 import { withDataRootWrite } from '../storage/migration-state'
-import { redactSensitiveText } from '../diagnostic-redaction'
+import { redactSensitiveText } from '../../shared/diagnostic-redaction'
 import {
   MAX_DOWNLOAD_BYTES,
   MAX_IMPORT_BYTES,

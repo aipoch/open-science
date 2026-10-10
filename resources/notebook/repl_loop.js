@@ -3757,12 +3757,15 @@ async function run(code, publisher) {
   }
   let error = null,
     result = null
+  let executionStarted = false
   const bindings = []
   if (typeof publisher === 'string' && /^__open_science_publish_[a-f0-9]+$/.test(publisher)) {
     sandbox[publisher] = (name, get, set) => bindings.push({ name, get, set })
   }
   try {
-    const value = await vm.runInContext(wrapForRun(code), context, { filename: '<repl>' })
+    const script = new vm.Script(wrapForRun(code), { filename: '<repl>' })
+    executionStarted = true
+    const value = await script.runInContext(context)
     if (value !== undefined) {
       // Non-serializable (e.g. circular) echoes fall back to a string so a run never fails on output.
       try {
@@ -3795,6 +3798,7 @@ async function run(code, publisher) {
   return {
     stdout: out,
     stderr: err,
+    execution_started: executionStarted,
     error,
     result,
     cwd: process.cwd(),

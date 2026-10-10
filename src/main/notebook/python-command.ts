@@ -4,7 +4,7 @@ import { access, realpath } from 'node:fs/promises'
 import { delimiter, join } from 'node:path'
 import { promisify } from 'node:util'
 
-import { redactSensitiveText } from '../diagnostic-redaction'
+import { redactSensitiveText } from '../../shared/diagnostic-redaction'
 import { createLogger } from '../logger'
 
 const execFileAsync = promisify(execFile)

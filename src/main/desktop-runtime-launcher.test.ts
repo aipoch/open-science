@@ -104,6 +104,7 @@ describe('desktop preview proxy', () => {
     const { root, fetcher } = await fixture()
     await writeFile(join(root, 'web-service.json'), JSON.stringify({ pid: 123, port: 40001 }))
     const proxy = await createDesktopPreviewProxy(root, 123)
+    expect(proxy.port).toBe(40001)
     fetcher.mockResolvedValueOnce(
       new Response('data', {
         status: 206,

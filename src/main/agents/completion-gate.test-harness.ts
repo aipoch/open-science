@@ -1,3 +1,4 @@
+import { projectConnectorsFromStored } from '../connectors/read-model'
 import { vi, type Mock } from 'vitest'
 
 import type { ApprovalGateway, ApprovalResult } from '../../shared/agents-contract'
@@ -19,7 +20,7 @@ import {
 
 const catalog: AgentsCatalogSource = {
   listSkillCatalog: async () => [],
-  getConnectors: async () => ({ enabledIds: [], autoAllowIds: [] })
+  getConnectors: async () => projectConnectorsFromStored({ enabledIds: [], autoAllowIds: [] })
 }
 
 export const approvedSpecialist = (overrides: Partial<SpecialistView> = {}): SpecialistView => ({

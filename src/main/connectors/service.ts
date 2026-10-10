@@ -1,15 +1,15 @@
-import { isSensitiveDiagnosticKey, redactSensitiveText } from '../diagnostic-redaction'
-import { ConnectorHttpError, ParserEngine } from './engine'
-import type { ConnectorRegistry } from '../connector-core/registry'
+import { isSensitiveDiagnosticKey, redactSensitiveText } from '../../shared/diagnostic-redaction'
+import { ConnectorHttpError, ParserEngine } from '@aipoch/connector-core'
+import type { ConnectorRegistry } from '@aipoch/connector-core'
 import {
   classifyCustomMcpFailure,
   hasUsableCustomMcpCredentials,
   isCustomMcpServerRouteSafe,
   toCustomMcpConfig,
   type CustomMcpFailureAvailability
-} from './custom-mcp'
-import { McpToolCallError, type CustomMcpServerConfig } from './custom-mcp'
-import type { ConnectorCredentialId, ConnectorCredentials, ToolDescriptor } from './types'
+} from './custom-mcp-config'
+import { McpToolCallError, type CustomMcpServerConfig } from '@aipoch/connector-mcp-client'
+import type { ConnectorCredentials, ToolDescriptor } from '@aipoch/connector-core'
 import type { StoredConnectors, StoredCustomMcpServer } from '../settings/types'
 import { customServerSecurityFingerprint } from '../settings/custom-server-identity'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
@@ -61,7 +61,7 @@ type ConnectorServiceDeps = {
   ) => Promise<ApprovalDecision>
   requestCredential?: (
     info: {
-      credentialId: ConnectorCredentialId
+      credentialId: 'openalex'
       connector: string
       method: string
       sessionId?: string
@@ -239,7 +239,7 @@ export class ConnectorService {
     }
   >()
   constructor(private readonly deps: ConnectorServiceDeps) {
-    this.engine = deps.engine ?? new ParserEngine()
+    this.engine = deps.engine ?? new ParserEngine({ redactDiagnosticText: redactSensitiveText })
     this.permissionBroker = new ConnectorPermissionBroker(
       deps.permissionGrantRegistry,
       deps.requestApproval
@@ -473,7 +473,7 @@ export class ConnectorService {
         throw new ConnectorGateError('credential_required')
       }
     }
-    return this.callDescriptorWithOptionalOpenAlexCredential(
+    return this.callDescriptorWithOptionalCredential(
       descriptor,
       connector,
       method,
@@ -486,7 +486,7 @@ export class ConnectorService {
     )
   }
 
-  private async callDescriptorWithOptionalOpenAlexCredential(
+  private async callDescriptorWithOptionalCredential(
     descriptor: ToolDescriptor,
     connector: string,
     method: string,
@@ -512,10 +512,10 @@ export class ConnectorService {
             ? (error as { status?: unknown }).status
             : undefined
       if (
-        descriptor.connector !== 'literature' ||
-        !descriptor.id.startsWith('openalex_') ||
-        credentials.openAlexApiKey ||
-        httpStatus !== 429 ||
+        !descriptor.optionalCredential ||
+        descriptor.optionalCredential.id !== 'openalex' ||
+        credentials[descriptor.optionalCredential.key] ||
+        httpStatus !== descriptor.optionalCredential.retryStatus ||
         !this.deps.requestCredential
       ) {
         throw error
@@ -523,7 +523,7 @@ export class ConnectorService {
 
       const configured = await this.deps.requestCredential(
         {
-          credentialId: 'openalex',
+          credentialId: descriptor.optionalCredential.id,
           connector,
           method,
           ...(context.sessionId ? { sessionId: context.sessionId } : {})
@@ -964,7 +964,9 @@ export class ConnectorService {
     if (!credentialId || this.hasCredential(credentials, credentialId)) {
       return { credentials, prompted: false }
     }
-    if (!this.deps.requestCredential) throw new ConnectorGateError('credential_required')
+    if (credentialId !== 'openalex' || !this.deps.requestCredential) {
+      throw new ConnectorGateError('credential_required')
+    }
 
     const configured = await this.deps.requestCredential(
       {
@@ -985,7 +987,7 @@ export class ConnectorService {
     return { credentials, prompted: true }
   }
 
-  private hasCredential(credentials: ConnectorCredentials, id: ConnectorCredentialId): boolean {
+  private hasCredential(credentials: ConnectorCredentials, id: string): boolean {
     return id === 'openalex' && Boolean(credentials.openAlexApiKey)
   }
 

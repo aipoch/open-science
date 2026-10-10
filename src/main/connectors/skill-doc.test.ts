@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { Tiktoken } from 'js-tiktoken/lite'
 import cl100kBase from 'js-tiktoken/ranks/cl100k_base'
 import { renderConnectorInstructions, renderSkillDoc, renderCustomSkillDoc } from './skill-doc'
-import { CONNECTOR_CATALOG } from './catalog'
+import { CONNECTOR_CATALOG } from '@aipoch/connector-builtins/catalog'
 
 const tokenizer = new Tiktoken(cl100kBase)
 

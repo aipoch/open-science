@@ -25,7 +25,8 @@ import {
   launchAndProbe,
   packagedResourcePaths,
   parseArguments,
-  parsePackagedAppEndpoint
+  parsePackagedAppEndpoint,
+  readDaemonLogs
 } from './linux-package-smoke.mjs'
 
 describe('Linux package smoke', () => {
@@ -218,5 +219,26 @@ describe('Linux package smoke', () => {
     await expect(assertPackagedResources(executable, undefined, 'x64')).rejects.toThrow(
       /rhel-openssl-3\.0\.x/
     )
+  })
+
+  it('concatenates every UUID-suffixed daemon log for token-leak diagnostics', async () => {
+    const configRoot = await mkdtemp(join(tmpdir(), 'open-science-linux-daemon-logs-'))
+    roots.push(configRoot)
+    await Promise.all([
+      writeFile(join(configRoot, 'cli-daemon-11111111-2222-4333-8444-555555555555.log'), 'first\n'),
+      writeFile(join(configRoot, 'cli-daemon-aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee.log'), 'second'),
+      writeFile(join(configRoot, 'cli-daemon.log'), 'legacy\n'),
+      writeFile(join(configRoot, 'web-token'), 'not-a-log')
+    ])
+
+    const logs = await readDaemonLogs(configRoot)
+
+    expect(logs).toBe('first\n\nsecond\nlegacy\n')
+  })
+
+  it('returns an empty string when no daemon log exists yet', async () => {
+    const configRoot = await mkdtemp(join(tmpdir(), 'open-science-linux-daemon-logs-'))
+
+    await expect(readDaemonLogs(configRoot)).resolves.toBe('')
   })
 })

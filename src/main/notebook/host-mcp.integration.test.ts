@@ -4,10 +4,9 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import * as netFetch from '../skills/net-fetch'
 import { ConnectorService } from '../connectors/service'
-import { ParserEngine } from '../connectors/engine'
-import { CLINICAL_TRIALS_TOOLS } from '../connectors/descriptors/clinical-trials'
+import { ParserEngine } from '@aipoch/connector-core'
+import { CLINICAL_TRIALS_TOOLS } from '@aipoch/connector-builtins/clinical-trials'
 import { renderSkillDoc } from '../connectors/skill-doc'
 import { NotebookKernelExecutor } from './kernel-executor'
 import { NotebookLocalRpcServer } from './local-rpc-server'
@@ -520,6 +519,37 @@ gate('repl kernel host.mcp', () => {
         display_name: 'Trp53',
         species: 'mus_musculus'
       }
+      let submissions = 0
+      // Inject provider transport through the package API; keep the local RPC transport real.
+      const reactomeFetch = vi.fn<typeof fetch>(async (input, init) => {
+        const url = new URL(String(input))
+        expect(url.origin).toBe('https://reactome.org')
+        if (url.pathname === '/AnalysisService/database/version') return new Response('97')
+        if (url.pathname === '/AnalysisService/token/test-token/notFound') return Response.json([])
+        expect(url.pathname).toBe('/AnalysisService/identifiers/')
+        expect(url.searchParams.get('species')).toBe('Mus musculus')
+        expect(url.searchParams.get('resource')).toBe('TOTAL')
+        expect(init?.method).toBe('POST')
+        expect(new Headers(init?.headers).get('content-type')).toBe('text/plain')
+        expect(init?.body).toBe('Trp53')
+        submissions++
+        const mismatch =
+          (mode === 'batch-mismatch' && submissions === 1) ||
+          (mode === 'single-mismatch' && submissions === 2)
+        return Response.json({
+          summary: { token: 'test-token' },
+          identifiersNotFound: 0,
+          pathwaysFound: 1,
+          pathways: [
+            {
+              stId: mismatch ? 'R-HSA-test' : 'R-MMU-test',
+              name: 'Test pathway',
+              species: { name: mismatch ? 'Homo sapiens' : 'Mus musculus' },
+              llp: true
+            }
+          ]
+        })
+      })
       const connectorService = new ConnectorService({
         registry: builtinConnectorRegistry,
         getConnectors: () => ({
@@ -529,46 +559,14 @@ gate('repl kernel host.mcp', () => {
         resolveApiKey: () => undefined,
         engine: new ParserEngine({
           retries: 0,
-          fetchImpl: async (input) => {
+          fetchImpl: async (input, init) => {
+            if (new URL(String(input)).origin === 'https://reactome.org')
+              return reactomeFetch(input, init)
             expect(String(input)).toBe(`https://rest.ensembl.org/lookup/id/${record.id}?expand=0`)
             return Response.json(record)
           }
         })
       })
-      let submissions = 0
-      // Mock only Reactome's external transport; preserve the real local RPC transport.
-      const reactomeFetch = vi
-        .spyOn(netFetch, 'netFetchStandard')
-        .mockImplementation(async (input, init) => {
-          const url = new URL(String(input))
-          expect(url.origin).toBe('https://reactome.org')
-          if (url.pathname === '/AnalysisService/database/version') return new Response('97')
-          if (url.pathname === '/AnalysisService/token/test-token/notFound')
-            return Response.json([])
-          expect(url.pathname).toBe('/AnalysisService/identifiers/')
-          expect(url.searchParams.get('species')).toBe('Mus musculus')
-          expect(url.searchParams.get('resource')).toBe('TOTAL')
-          expect(init?.method).toBe('POST')
-          expect(new Headers(init?.headers).get('content-type')).toBe('text/plain')
-          expect(init?.body).toBe('Trp53')
-          submissions++
-          const mismatch =
-            (mode === 'batch-mismatch' && submissions === 1) ||
-            (mode === 'single-mismatch' && submissions === 2)
-          return Response.json({
-            summary: { token: 'test-token' },
-            identifiersNotFound: 0,
-            pathwaysFound: 1,
-            pathways: [
-              {
-                stId: mismatch ? 'R-HSA-test' : 'R-MMU-test',
-                name: 'Test pathway',
-                species: { name: mismatch ? 'Homo sapiens' : 'Mus musculus' },
-                llp: true
-              }
-            ]
-          })
-        })
       const rpcServer = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
         connectorService
       })

@@ -141,7 +141,7 @@
       "src/main/compute/job-runtime.test.ts",
       "src/main/compute/session-catalog-hydration.integration.test.ts",
       "src/main/compute/skill-provisioning.test.ts",
-      "src/main/connectors/application.test.ts",
+      "src/main/composition/connector-application.test.ts",
       "src/main/data-content-application-commands.test.ts",
       "src/main/database/database-startup-logging.test.ts",
       "src/main/database/literature-inbox-integrity-migration.test.ts",
@@ -422,13 +422,6 @@
       "src/main/notebook/working-file-observer.test.ts",
       "src/main/wsl/wsl-setup-guide.test.ts",
       "src/main/compute/connection-broker.test.ts",
-      "src/main/connectors/custom-mcp/client-manager.test.ts",
-      "src/main/connectors/descriptors/genes-reactome.test.ts",
-      "src/main/connectors/descriptors/genomes-blast.test.ts",
-      "src/main/connectors/descriptors/genomes-clustal.test.ts",
-      "src/main/connectors/descriptors/interproscan.test.ts",
-      "src/main/connectors/descriptors/regulation.test.ts",
-      "src/main/connectors/descriptors/zinc.test.ts",
       "src/main/local-models/owner.test.ts",
       "src/main/projects/preview-repository.test.ts",
       "src/main/session-persistence/prompt-preparation-owner.test.ts",
@@ -493,7 +486,8 @@
       "src/main/project-recordings/recorder.test.ts",
       "src/main/run-observation/managed-status.test.ts",
       "src/main/managed-runtime-views.integration.test.ts",
-      "src/main/observation-desktop/bridge.test.ts"
+      "src/main/observation-desktop/bridge.test.ts",
+      "src/main/connectors/mcp-host-dependencies.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

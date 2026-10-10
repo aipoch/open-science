@@ -5,7 +5,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
-import { McpClientManager } from './custom-mcp'
+import { McpClientManager } from '@aipoch/connector-mcp-client'
 import { ConnectorService } from './service'
 
 const config = { id: 'test-mcp', name: 'test-mcp', transport: 'stdio' as const, command: 'unused' }

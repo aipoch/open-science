@@ -270,6 +270,7 @@
     "src/main/notebook/windows-repl-termination.integration.test.ts",
     "src/main/notebook/windows-shell.integration.test.ts",
     "src/main/notebook/working-file-observer.performance.test.ts",
+    "src/main/notebook/working-file-observer-plain-host.test.ts",
     "src/main/notebook/working-file-observer.test.ts",
     "src/main/notebook/working-file-observer.ts",
     "src/main/notebook/wsl-setup-powershell.integration.test.ts",
@@ -343,7 +344,10 @@
     "src/main/notebook/screened-auxiliary-output.ts",
     "src/main/notebook/session-operation-owner.integration.test.ts",
     "src/main/notebook/session-operation-owner.ts",
-    "src/main/notebook/session-operation.test-support.ts"
+    "src/main/notebook/session-operation.test-support.ts",
+    "src/main/notebook/code-risk-analysis.object-budget.test.ts",
+    "src/main/notebook/code-risk-budget-fixtures.ts",
+    "src/main/notebook/auto-mode-budget.integration.test.ts"
   ],
   "interfacePaths": [
     "src/main/notebook/analysis-version.ts",
@@ -440,7 +444,8 @@
     "src/main/notebook/nested-working-file-owner.ts",
     "src/main/notebook/screened-auxiliary-output.ts",
     "src/main/notebook/session-operation-owner.ts",
-    "src/main/notebook/session-operation.test-support.ts"
+    "src/main/notebook/session-operation.test-support.ts",
+    "src/main/notebook/code-risk-budget-fixtures.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -626,6 +631,7 @@
       "src/main/notebook/windows-repl-termination.integration.test.ts",
       "src/main/notebook/windows-shell.integration.test.ts",
       "src/main/notebook/working-file-observer.performance.test.ts",
+      "src/main/notebook/working-file-observer-plain-host.test.ts",
       "src/main/notebook/working-file-observer.test.ts",
       "src/main/notebook/wsl-setup-powershell.integration.test.ts",
       "src/main/notebook/wsl2-shell.integration.test.ts",
@@ -652,7 +658,9 @@
       "src/main/notebook/managed-output-recovery.test.ts",
       "src/main/notebook/nested-working-file-owner.test.ts",
       "src/main/notebook/screened-auxiliary-output.test.ts",
-      "src/main/notebook/session-operation-owner.integration.test.ts"
+      "src/main/notebook/session-operation-owner.integration.test.ts",
+      "src/main/notebook/code-risk-analysis.object-budget.test.ts",
+      "src/main/notebook/auto-mode-budget.integration.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -795,7 +803,7 @@
       "src/main/compute/skill-provisioning.test.ts",
       "src/main/compute/slurm.real-ssh.integration.test.ts",
       "src/main/compute/ssh-runner.test.ts",
-      "src/main/connectors/application.test.ts",
+      "src/main/composition/connector-application.test.ts",
       "src/main/data-content-application-commands.test.ts",
       "src/main/database/literature-inbox-integrity-migration.test.ts",
       "src/main/database/managed-file-version-domain.test.ts",

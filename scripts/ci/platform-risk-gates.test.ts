@@ -246,7 +246,7 @@ it('applies the platform policy only when explicitly enabled', () => {
 
 it.each([
   'src/main/locale/main-process-messages.ts',
-  'src/main/connectors/descriptors/genes-ontology.ts'
+  'packages/connector-builtins/src/genes-ontology.ts'
 ])('uses Windows business coverage without Mac for known non-native main changes: %s', (path) => {
   const { plan } = runModuleImpactAuthorityCli(
     ['--base', 'a'.repeat(40), '--head', 'b'.repeat(40)],
@@ -303,8 +303,8 @@ it.each(['pull_request', 'merge_group'])('keeps known PR diffs selective for %s'
     {
       number: 2696,
       paths: [
-        'src/main/connectors/descriptors/genomes-ensembl.test.ts',
-        'src/main/connectors/descriptors/genomes-ensembl.ts',
+        'packages/connector-builtins/src/genomes-ensembl.test.ts',
+        'packages/connector-builtins/src/genomes-ensembl.ts',
         'src/main/notebook/host-mcp.integration.test.ts'
       ]
     },
@@ -342,7 +342,7 @@ it.each(['pull_request', 'merge_group'])('keeps known PR diffs selective for %s'
       expect.arrayContaining(fixture.paths.filter((path) => path.endsWith('.test.ts')))
     )
     expect(report.shadow.modules).toContain(
-      fixture.number === 2696 ? 'genomes_ensembl_connector' : 'acp_runtime'
+      fixture.number === 2696 ? 'connector_builtins' : 'acp_runtime'
     )
   }
 })

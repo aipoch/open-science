@@ -1,3 +1,4 @@
+import { packageTestExcludePatterns } from './scripts/ci/package-test-impact.mjs'
 import { availableParallelism, cpus } from 'node:os'
 import { basename, dirname, resolve } from 'path'
 import { defineConfig, configDefaults } from 'vitest/config'
@@ -72,6 +73,7 @@ const VITEST_PORTABLE_CI_EXCLUDE_PATTERNS = [
 function vitestExcludePatternsFor(env: NodeJS.ProcessEnv): string[] {
   return [
     ...BASE_VITEST_EXCLUDE_PATTERNS,
+    ...packageTestExcludePatterns(env),
     ...(env.VITEST_PORTABLE_CI === '1' ? VITEST_PORTABLE_CI_EXCLUDE_PATTERNS : [])
   ]
 }

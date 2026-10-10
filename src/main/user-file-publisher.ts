@@ -9,6 +9,7 @@ import { publishNoReplace as publishAnchoredNoReplace } from './uploads/atomic-n
 
 type PublishUserFileOptions = {
   exclusive?: boolean
+  signal?: AbortSignal
   validateDestination?: () => Promise<void>
   durability?: FileDurability
   copyFileExclusive?: (sourcePath: string, destinationPath: string) => Promise<void>
@@ -51,9 +52,11 @@ const publishExclusive = async (
   linkFile: LinkFile,
   copyFileExclusive: CopyFileExclusive,
   durability: FileDurability,
-  publishNoReplace: PublishNoReplace
+  publishNoReplace: PublishNoReplace,
+  signal?: AbortSignal
 ): Promise<void> => {
   try {
+    signal?.throwIfAborted()
     await linkFile(sourcePath, destinationPath)
     return
   } catch (error) {
@@ -64,8 +67,11 @@ const publishExclusive = async (
   // copy under a private random name, flush it, then atomically rename it without replacement.
   const stagingPath = join(dirname(destinationPath), `.open-science-publish-${randomUUID()}`)
   try {
+    signal?.throwIfAborted()
     await copyFileExclusive(sourcePath, stagingPath)
+    signal?.throwIfAborted()
     await durability.syncFile(stagingPath)
+    signal?.throwIfAborted()
     await publishNoReplace(stagingPath, destinationPath)
   } finally {
     await rm(stagingPath, { force: true }).catch(() => undefined)
@@ -95,6 +101,7 @@ const publishUserFile = async (
       }
     }
     await options.validateDestination?.()
+    options.signal?.throwIfAborted()
     if (options.exclusive) {
       await publishExclusive(
         temporaryPath,
@@ -102,13 +109,14 @@ const publishUserFile = async (
         options.linkFile ?? link,
         options.copyFileExclusive ?? defaultCopyFileExclusive,
         durability,
-        options.publishNoReplace ?? defaultPublishNoReplace
+        options.publishNoReplace ?? defaultPublishNoReplace,
+        options.signal
       )
     } else {
-      await retryFileReplacement(
-        () => (options.replace ?? rename)(temporaryPath, destinationPath),
-        options.wait
-      )
+      await retryFileReplacement(() => {
+        options.signal?.throwIfAborted()
+        return (options.replace ?? rename)(temporaryPath, destinationPath)
+      }, options.wait)
     }
     await durability.syncDirectory(directory)
   } finally {

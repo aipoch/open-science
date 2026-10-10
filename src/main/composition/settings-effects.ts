@@ -1,3 +1,4 @@
+import { CONNECTOR_CATALOG } from '@aipoch/connector-builtins/catalog'
 import { createSettingsExportFiles, createSettingsFileCommands } from '../settings/file-commands'
 import { createBackgroundResultActivityOwner } from '../background-result-delivery/ipc'
 import {
@@ -83,7 +84,7 @@ export async function composeSettingsEffects({
   removeResourceTags: (resources: Parameters<TagService['removeResources']>[0]) => Promise<void>
   connectorService: import('../connectors/service').ConnectorService
   connectorRuntimeSettings: import('../connectors/runtime-settings-projection').ConnectorRuntimeSettingsProjection
-  mcpClientManager: import('../connectors/custom-mcp/client-manager').McpClientManager
+  mcpClientManager: import('@aipoch/connector-mcp-client').McpClientManager
   runtime: ReturnType<typeof createAcpRuntime>
   sideChatRuntime: SideChatRuntimeOwner
   translate: import('../locale/main-process-messages').NativeTranslator
@@ -114,10 +115,27 @@ export async function composeSettingsEffects({
           )
       },
       connectors: {
-        get: async () => ({
-          ...(await settingsService.getConnectors()),
-          bundledConnectorIds: ALL_CONNECTOR_IDS
-        })
+        get: async () => {
+          const stored = await settingsService.getConnectors()
+          return {
+            autoAllowIds: stored?.autoAllowIds,
+            blockedToolIds: stored?.blockedToolIds,
+            askToolIds: stored?.askToolIds,
+            disabledConnectorIds: stored?.disabledConnectorIds,
+            bundledConnectorIds: ALL_CONNECTOR_IDS,
+            bundledConnectorNames: Object.fromEntries(
+              CONNECTOR_CATALOG.map(({ id, displayName }) => [id, displayName])
+            ),
+            customMcpServers: stored?.customMcpServers?.map((server) => ({
+              id: server.id,
+              name: server.name,
+              displayName: server.displayName,
+              enabled: server.enabled,
+              oauth: Boolean(server.oauth),
+              oauthAuthenticated: Boolean(server.oauthState?.tokens?.access_token)
+            }))
+          }
+        }
       }
     },
     (dependencies) => {

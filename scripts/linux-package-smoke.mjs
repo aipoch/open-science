@@ -39,6 +39,19 @@ const findOne = async (directory, pattern, description) => {
   return matches[0]
 }
 
+// #3358 names each daemon log cli-daemon-<uuid>.log; concatenate every match so the
+// token-leak check and failure diagnostics cover all daemon starts.
+const readDaemonLogs = async (configRoot) => {
+  const names = (await readdir(configRoot, { withFileTypes: true }))
+    .filter((entry) => entry.isFile() && /^cli-daemon.*\.log$/.test(entry.name))
+    .map((entry) => entry.name)
+    .sort()
+  const chunks = await Promise.all(
+    names.map((name) => readFile(join(configRoot, name), 'utf8').catch(() => ''))
+  )
+  return chunks.join('\n')
+}
+
 const appImageVersion = (path) => {
   const match = basename(path).match(APPIMAGE_PATTERN)
   if (!match) throw new Error(`Cannot derive the app version from AppImage: ${path}`)
@@ -296,7 +309,7 @@ const smokeInstalledCli = async ({ executable, expectedVersion, root, env }) => 
     ) {
       throw new Error('Installed CLI started an unexpected or unhealthy application.')
     }
-    const logs = await readFile(join(initialized.configRoot, 'cli-daemon.log'), 'utf8')
+    const logs = await readDaemonLogs(initialized.configRoot)
     if (
       [started.stdout, started.stderr, reused.stdout, reused.stderr, logs].some((text) =>
         text.includes(token)
@@ -320,9 +333,7 @@ const smokeInstalledCli = async ({ executable, expectedVersion, root, env }) => 
     const token = await readFile(join(initialized.configRoot, 'web-token'), 'utf8')
       .then((text) => text.trim())
       .catch(() => '')
-    const logs = await readFile(join(initialized.configRoot, 'cli-daemon.log'), 'utf8').catch(
-      () => '(daemon log unavailable)'
-    )
+    const logs = (await readDaemonLogs(initialized.configRoot)) || '(daemon log unavailable)'
     const diagnostic = `${failure.message}\n${logs}`
     throw new Error(token ? diagnostic.replaceAll(token, '<REDACTED>') : diagnostic)
   }
@@ -441,5 +452,6 @@ export {
   packagedResourcePaths,
   parseArguments,
   parsePackagedAppEndpoint,
+  readDaemonLogs,
   smokeInstalledCli
 }

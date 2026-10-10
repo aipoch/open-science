@@ -8,7 +8,7 @@ import type {
 } from '../../shared/settings'
 import { isCodexSubscriptionProvider, providerValidationTargetMatches } from '../../shared/settings'
 import { isCustomConnectorName, toCustomConnectorName } from '../../shared/custom-connector'
-import { normalizeLoopbackOAuthRedirectUri } from '../../shared/oauth-redirect'
+import { normalizeLoopbackOAuthRedirectUri } from '@aipoch/connector-mcp-client/oauth-redirect'
 import type { PackageMirror } from '../../shared/mirror'
 import { isOfficialVendorId } from '../../shared/provider-registry'
 import {

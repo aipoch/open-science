@@ -134,7 +134,7 @@ const redactEmbeddedUrlCredentials = (rawUrl: string): string => {
 const redactSensitiveAssignments = (value: string): string => {
   let output = ''
   let cursor = 0
-  for (const match of value.matchAll(/\b([a-z][a-z0-9_-]*)(\s*["']?\s*[:=]\s*)/gi)) {
+  for (const match of value.matchAll(/\b([a-z][a-z0-9_-]*)(\s*(?:["']\s*)?[:=]\s*)/gi)) {
     if (match.index < cursor || !isSensitiveDiagnosticKey(match[1])) continue
     const start = match.index + match[0].length
     const rest = value.slice(start)
@@ -151,35 +151,66 @@ const redactSensitiveAssignments = (value: string): string => {
   return output + value.slice(cursor)
 }
 
+// Scan quoted JSON fields once. A global quoted-string regex can repeatedly start at
+// escaped quotes in malformed input and revisit the remaining suffix quadratically.
+const quotedStringEnd = (value: string, start: number): number => {
+  for (let index = start + 1; index < value.length; index++) {
+    if (value[index] === '\\') index++
+    else if (value[index] === '"') return index + 1
+  }
+  return -1
+}
+
+const redactJsonStringValues = (value: string): string => {
+  let output = ''
+  let cursor = 0
+  let index = 0
+  while ((index = value.indexOf('"', index)) !== -1) {
+    const keyStart = index
+    const keyEnd = quotedStringEnd(value, keyStart)
+    if (keyEnd === -1) break
+    index = keyEnd
+    while (index < value.length && /\s/.test(value[index])) index++
+    if (value[index] !== ':') {
+      // An unmatched quote in a log prefix can consume a real key's opening quote.
+      // Reuse that closing quote as the next candidate; each interval is scanned at most twice.
+      index = keyEnd - 1
+      continue
+    }
+    index++
+    while (index < value.length && /\s/.test(value[index])) index++
+    if (value[index] !== '"') continue
+    const valueStart = index
+    const valueEnd = quotedStringEnd(value, valueStart)
+    if (valueEnd === -1) break
+    index = valueEnd
+    try {
+      if (!isSensitiveDiagnosticKey(JSON.parse(value.slice(keyStart, keyEnd)) as string)) continue
+    } catch {
+      continue
+    }
+    output += `${value.slice(cursor, valueStart)}"${REDACTED_MARKER}"`
+    cursor = valueEnd
+  }
+  return output + value.slice(cursor)
+}
+
 // Shared credential-text policy for diagnostic sinks and persisted tool payloads. Keep this
 // helper unbounded: each caller owns its own output budget, while the credential patterns stay
 // identical at every boundary.
 const redactSensitiveText = (value: string): string =>
-  redactSensitiveAssignments(value)
-    // Match complete quoted values before header rules can stop at an escaped quote.
-    .replace(
-      /("(?:\\.|[^"\\])*")(\s*:\s*)("(?:\\.|[^"\\])*")/g,
-      (match, key: string, separator: string) => {
-        try {
-          return isSensitiveDiagnosticKey(JSON.parse(key) as string)
-            ? `${key}${separator}"${REDACTED_MARKER}"`
-            : match
-        } catch {
-          return match
-        }
-      }
-    )
+  redactJsonStringValues(redactSensitiveAssignments(value))
     .replace(/\b[a-z][a-z0-9+.-]*:(?:\\?\/){2}[^\s"'<>]+/gi, redactEmbeddedUrlCredentials)
     .replace(
-      /\b(authorization|proxy-authorization|x-api-key|api-key|x-auth-token|x-amz-security-token|cookie|set-cookie)\b(\s*["']?\s*:\s*["']?)[^"'\r\n}]*/gi,
+      /\b(authorization|proxy-authorization|x-api-key|api-key|x-auth-token|x-amz-security-token|cookie|set-cookie)\b(\s*(?:["']\s*)?:\s*["']?)[^"'\r\n}]*/gi,
       `$1$2${REDACTED_MARKER}`
     )
     .replace(
-      /\b(api[_-]?key|access[_-]?key|access[_-]?token|auth[_-]?token|authorization|bearer[_-]?token|client[_-]?secret|cookie|credential|password|passphrase|passwd|private[_-]?key|refresh[_-]?token|secret|secret[_-]?access[_-]?key|security[_-]?token|session[_-]?token|token)\b(\s*["']?\s*[:=]\s*)(["'])(?:\\.|(?!\3)[^\\\r\n])*\3/gi,
+      /\b(api[_-]?key|access[_-]?key|access[_-]?token|auth[_-]?token|authorization|bearer[_-]?token|client[_-]?secret|cookie|credential|password|passphrase|passwd|private[_-]?key|refresh[_-]?token|secret|secret[_-]?access[_-]?key|security[_-]?token|session[_-]?token|token)\b(\s*(?:["']\s*)?[:=]\s*)(["'])(?:\\.|(?!\3)[^\\\r\n])*\3/gi,
       `$1$2$3${REDACTED_MARKER}$3`
     )
     .replace(
-      /\b(api[_-]?key|access[_-]?key|access[_-]?token|auth[_-]?token|authorization|bearer[_-]?token|client[_-]?secret|cookie|credential|password|passphrase|passwd|private[_-]?key|refresh[_-]?token|secret|secret[_-]?access[_-]?key|security[_-]?token|session[_-]?token|token)\b(\s*["']?\s*[:=]\s*["']?)(?:(?:Bearer|Basic|Digest|Negotiate)\s+)?[^"'&;}\r\n]+/gi,
+      /\b(api[_-]?key|access[_-]?key|access[_-]?token|auth[_-]?token|authorization|bearer[_-]?token|client[_-]?secret|cookie|credential|password|passphrase|passwd|private[_-]?key|refresh[_-]?token|secret|secret[_-]?access[_-]?key|security[_-]?token|session[_-]?token|token)\b(\s*(?:["']\s*)?[:=]\s*["']?)(?:(?:Bearer|Basic|Digest|Negotiate)\s+)?[^"'&;}\r\n]+/gi,
       `$1$2${REDACTED_MARKER}`
     )
     .replace(

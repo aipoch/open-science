@@ -30,7 +30,7 @@ import type {
   ValidateOpenAlexCredentialRequest
 } from '../../shared/settings'
 import { inferResourceId, validateResourceId } from '../../shared/resource-id'
-import { normalizeLoopbackOAuthRedirectUri } from '../../shared/oauth-redirect'
+import { normalizeLoopbackOAuthRedirectUri } from '@aipoch/connector-mcp-client/oauth-redirect'
 import {
   assertAddCustomServerLimits,
   assertCustomServerCapacity,
@@ -40,9 +40,12 @@ import {
   customConnectorNameFromSkillName,
   isCustomConnectorName
 } from '../../shared/custom-connector'
-import { CONNECTOR_CATALOG } from '../connectors/catalog'
-import { hasUsableCustomMcpCredentials, isCustomMcpServerRouteSafe } from '../connectors/custom-mcp'
-import { hasAmbiguousCustomMcpCredentialNames } from '../connectors/custom-mcp'
+import { CONNECTOR_CATALOG } from '@aipoch/connector-builtins/catalog'
+import {
+  hasUsableCustomMcpCredentials,
+  isCustomMcpServerRouteSafe
+} from '../connectors/custom-mcp-config'
+import { hasAmbiguousCustomMcpCredentialNames } from '@aipoch/connector-mcp-client'
 import { getConnectorTools } from '../connectors/registry'
 import { encryptKey, isEncryptionAvailable, tryDecryptKey } from './crypto'
 import { getCredentialStore } from './credential-store-mode'
@@ -69,7 +72,7 @@ import {
   CustomServerIdConflictError,
   customServerSecurityFingerprint
 } from './custom-server-identity'
-import { assertSecureCustomMcpUrl } from '../connectors/custom-mcp'
+import { assertSecureCustomMcpUrl } from '@aipoch/connector-mcp-client'
 
 type CustomServerSecurityChangeGuard = {
   commit(server: StoredCustomMcpServer): void

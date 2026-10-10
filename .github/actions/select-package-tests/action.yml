@@ -1,0 +1,42 @@
+name: Select independent package tests
+description: Load trusted package policy and export directional test selection
+inputs:
+  enabled:
+    description: False retains the complete package baseline
+    default: 'true'
+  base:
+    description: Change base revision
+    required: true
+  head:
+    description: Change head revision
+    required: true
+  trusted-base:
+    description: Revision owning the approved policy
+    required: true
+  working-directory:
+    description: Git checkout to inspect
+    default: '.'
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        PACKAGE_SELECTION_ENABLED: ${{ inputs.enabled }}
+        BASE_SHA: ${{ inputs.base }}
+        HEAD_SHA: ${{ inputs.head }}
+        TRUSTED_BASE_SHA: ${{ inputs.trusted-base }}
+      run: |
+        set -euo pipefail
+        policy="$RUNNER_TEMP/package-test-impact.mjs"
+        if [[ "$PACKAGE_SELECTION_ENABLED" == "true" ]] && git cat-file -e "${TRUSTED_BASE_SHA}:scripts/ci/package-test-impact.mjs" 2>/dev/null; then
+          git show "${TRUSTED_BASE_SHA}:scripts/ci/package-test-impact.mjs" > "$policy"
+          node "$policy" --base "$BASE_SHA" --head "$HEAD_SHA" --trusted-base "$TRUSTED_BASE_SHA" --github-env
+        else
+          echo 'OPEN_SCIENCE_CI_EXCLUDED_PACKAGE_ROOTS=[]' >> "$GITHUB_ENV"
+          if [[ "$PACKAGE_SELECTION_ENABLED" == "true" ]]; then
+            echo 'OPEN_SCIENCE_CI_SELECTED_PACKAGE_ROOTS=["packages"]' >> "$GITHUB_ENV"
+          else
+            echo 'OPEN_SCIENCE_CI_SELECTED_PACKAGE_ROOTS=[]' >> "$GITHUB_ENV"
+          fi
+        fi

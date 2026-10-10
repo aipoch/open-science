@@ -113,7 +113,7 @@
       "src/main/compute/job-recovery-regressions.integration.test.ts",
       "src/main/compute/job-runtime.test.ts",
       "src/main/compute/skill-provisioning.test.ts",
-      "src/main/connectors/application.test.ts",
+      "src/main/composition/connector-application.test.ts",
       "src/main/delegation/production-composition.test.ts",
       "src/main/delegation/production-framework-runtime.test.ts",
       "src/main/host-application-commands.test.ts",

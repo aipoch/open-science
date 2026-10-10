@@ -1,3 +1,4 @@
+import { projectConnectorsFromStored } from '../connectors/read-model'
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
@@ -854,7 +855,7 @@ describe('repl_loop local RPC transport', () => {
       specialistService: profiles,
       catalog: {
         listSkillCatalog: async () => [],
-        getConnectors: async () => undefined
+        getConnectors: async () => projectConnectorsFromStored(undefined)
       }
     })
     const server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {

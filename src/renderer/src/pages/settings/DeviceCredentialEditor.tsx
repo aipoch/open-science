@@ -12,7 +12,7 @@ import type {
   DeviceOAuthRegistration,
   DeviceOAuthTransport
 } from '../../../../shared/settings'
-import { DEFAULT_LOOPBACK_OAUTH_REDIRECT_URI } from '../../../../shared/oauth-redirect'
+import { DEFAULT_LOOPBACK_OAUTH_REDIRECT_URI } from '@aipoch/connector-mcp-client/oauth-redirect'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {

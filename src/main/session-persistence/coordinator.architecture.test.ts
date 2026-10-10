@@ -1535,7 +1535,7 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/compute/skill-provisioning.test.ts',
       'src/main/compute/slurm.real-ssh.integration.test.ts',
       'src/main/compute/ssh-runner.test.ts',
-      'src/main/connectors/application.test.ts',
+      'src/main/composition/connector-application.test.ts',
       'src/main/data-content-application-commands.test.ts',
       'src/main/database/literature-inbox-integrity-migration.test.ts',
       'src/main/database/managed-file-version-domain.test.ts',
@@ -1677,6 +1677,7 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/notebook/windows-repl-termination.integration.test.ts',
       'src/main/notebook/windows-shell.integration.test.ts',
       'src/main/notebook/working-file-observer.test.ts',
+      'src/main/notebook/working-file-observer-plain-host.test.ts',
       'src/main/notebook/wsl-setup-powershell.integration.test.ts',
       'src/main/notebook/wsl2-shell.integration.test.ts',
       'src/main/notifications/notification-inbox-runtime.test.ts',
@@ -1888,7 +1889,8 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/run-observation/media-collector.test.ts',
       'src/main/project-recordings/recorder.test.ts',
       'src/main/managed-runtime-views.integration.test.ts',
-      'src/main/observation-desktop/bridge.test.ts'
+      'src/main/observation-desktop/bridge.test.ts',
+      'src/main/notebook/auto-mode-budget.integration.test.ts'
     ])
     expect(sessionPersistence.capabilityOverlays).toEqual([
       'windows_sensitive',

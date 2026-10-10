@@ -548,6 +548,13 @@ queue uses short Mac core plus focused native checks for sensitive changes. Full
 regression and Delegation matrices are not repeated in the queue. Capacity profiling remains in
 Source Regression; manual callers without an explicit capacity input retain complete coverage.
 
+### Independent package tests
+
+Register independent packages and their dependencies in `scripts/ci/package-test-boundaries.json`.
+Ubuntu PR tests skip unchanged upstream packages while retaining host integration coverage;
+shared changes or uncertain evidence retain all package tests. Local `npm test` stays complete.
+Registry changes require CI owner review.
+
 ### CI control-plane approval
 
 CI workflows, local actions, CI scripts, Dependabot configuration and CODEOWNERS itself have
@@ -565,7 +572,9 @@ Trusted-base CI Integrity validates candidate registration data in both PRs and 
 It preserves surviving owner/interface/test paths, consumer edges, capability overlays, fallback
 routing and existing full-validation markers. References to actually deleted files may be removed.
 New explicit ownership cannot hide existing inferred test coverage. Unknown policy metadata and
-coverage reductions fail the check; owner approval alone does not waive these invariants. Deliberate
+coverage reductions fail the check; owner approval alone does not waive these invariants.
+Module moves and consolidation must preserve surviving ownership, interfaces, test evidence and
+routing obligations, including consumer edges; they retain full PR validation. Deliberate
 reductions require a separate CI policy change, not a registration-only PR. Trusted selection may
 accept additive evidence in existing module shards: it reads candidate Git blobs as JSON, verifies
 preserved policy/evidence against the merge base, and adds evidence to the trusted manifest without

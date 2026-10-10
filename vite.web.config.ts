@@ -19,9 +19,17 @@ export default defineConfig({
       '@renderer': resolve('src/renderer/src')
     }
   },
+  // Prebundle linked CommonJS leaves when serving the renderer in development.
+  optimizeDeps: {
+    include: ['@aipoch/connector-mcp-client/oauth-redirect']
+  },
   plugins: [react(), tailwindcss()],
   build: {
     outDir: resolve('out/web'),
+    // Local npm packages resolve outside node_modules through their file: links.
+    commonjsOptions: {
+      include: [/node_modules/, /packages[\\/]connector-(?:core|mcp-client)[\\/]dist/]
+    },
     emptyOutDir: true
   }
 })

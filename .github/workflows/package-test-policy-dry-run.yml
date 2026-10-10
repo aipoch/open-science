@@ -1,0 +1,92 @@
+name: Package test policy dry-run
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/actions/select-package-tests/**'
+      - '.github/workflows/package-test-policy-dry-run.yml'
+      - 'scripts/ci/package-test-*'
+      - 'scripts/ci/check-module-ownership*'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  policy:
+    name: Package test direction and lossless registration
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: node scripts/ci/npm-ci.mjs
+      # Exercise the same selector and registration guard as PR Gate, including real
+      # Git history and Vitest configuration, without full tests or publishing.
+      - run: >-
+          npx vitest run
+          scripts/ci/package-test-impact.test.ts
+          scripts/ci/check-module-ownership.test.ts
+          scripts/ci/module-test-impact.test.ts
+          scripts/ci/module-impact-inputs.test.ts
+          scripts/ci/pr-gate-workflow.test.ts
+          --maxWorkers=2
+      - name: Prepare isolated downstream-change fixture
+        id: fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          fixture="$RUNNER_TEMP/package-policy-fixture"
+          mkdir -p "$fixture/scripts/ci" "$fixture/packages/core/src" "$fixture/src"
+          cp scripts/ci/package-test-impact.mjs "$fixture/scripts/ci/"
+          echo '{"schemaVersion":1,"packages":[{"root":"packages/core","dependencies":[]}]}' > "$fixture/scripts/ci/package-test-boundaries.json"
+          echo '{"name":"fixture-core","scripts":{"test":"vitest run"}}' > "$fixture/packages/core/package.json"
+          touch "$fixture/packages/core/src/core.test.ts" "$fixture/src/host.test.ts"
+          git -C "$fixture" init -q
+          git -C "$fixture" -c user.name=CI -c user.email=ci@example.invalid add .
+          git -C "$fixture" -c user.name=CI -c user.email=ci@example.invalid commit -qm baseline
+          echo "base=$(git -C "$fixture" rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo '// downstream change' > "$fixture/src/host.ts"
+          git -C "$fixture" add .
+          git -C "$fixture" -c user.name=CI -c user.email=ci@example.invalid commit -qm downstream
+          echo "head=$(git -C "$fixture" rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Select through the production action
+        uses: ./.github/actions/select-package-tests
+        with:
+          base: ${{ steps.fixture.outputs.base }}
+          head: ${{ steps.fixture.outputs.head }}
+          trusted-base: ${{ steps.fixture.outputs.base }}
+          working-directory: ${{ runner.temp }}/package-policy-fixture
+      - name: Verify actual Vitest discovery from exported environment
+        env:
+          VITEST_PORTABLE_CI: '1'
+        run: |
+          npx vitest list --config "$GITHUB_WORKSPACE/vitest.config.ts" --root "$RUNNER_TEMP/package-policy-fixture" --filesOnly --json > "$RUNNER_TEMP/package-policy-files.json"
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict'
+          import { readFileSync } from 'node:fs'
+          const files = JSON.parse(readFileSync(`${process.env.RUNNER_TEMP}/package-policy-files.json`, 'utf8'))
+          assert.deepEqual(files.map(({ file }) => file), [`${process.env.RUNNER_TEMP}/package-policy-fixture/src/host.test.ts`])
+          JS
+      - name: Retain the complete manual baseline
+        uses: ./.github/actions/select-package-tests
+        with:
+          enabled: 'false'
+          base: ${{ steps.fixture.outputs.base }}
+          head: ${{ steps.fixture.outputs.head }}
+          trusted-base: ${{ steps.fixture.outputs.base }}
+          working-directory: ${{ runner.temp }}/package-policy-fixture
+      - name: Verify the baseline includes the upstream package
+        env:
+          VITEST_PORTABLE_CI: '1'
+        run: |
+          npx vitest list --config "$GITHUB_WORKSPACE/vitest.config.ts" --root "$RUNNER_TEMP/package-policy-fixture" --filesOnly --json > "$RUNNER_TEMP/package-policy-files.json"
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict'
+          import { readFileSync } from 'node:fs'
+          const files = JSON.parse(readFileSync(`${process.env.RUNNER_TEMP}/package-policy-files.json`, 'utf8'))
+          assert.equal(files.length, 2)
+          JS

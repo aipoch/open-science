@@ -408,7 +408,7 @@
       "src/main/artifacts/resumed-finalization-ownership.test.ts",
       "src/main/bookmarks/pdf-source-diagnostics.test.ts",
       "src/main/bookmarks/service.test.ts",
-      "src/main/connectors/application.test.ts",
+      "src/main/composition/connector-application.test.ts",
       "src/main/delegation/session-record-adapter.test.ts",
       "src/main/immutable-input-authority.test.ts",
       "src/main/literature/attachment-authority.test.ts",

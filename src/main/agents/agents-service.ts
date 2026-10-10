@@ -12,17 +12,11 @@
 //    instructions, connector args, credentials, headers, environment values, or tokens.
 //  - The SpecialistService and catalog services remain authoritative; nothing is copied here.
 
-import { CONNECTOR_CATALOG, type ConnectorMeta } from '../connectors/catalog'
-import {
-  hasUsableCustomMcpCredentials,
-  isCustomMcpServerRouteSafe,
-  type CustomMcpFailureAvailability
-} from '../connectors/custom-mcp'
-import { getConnectorTools } from '../connectors/registry'
+import type { ConnectorReadModel } from '../connectors/read-model'
+export type { ConnectorReadModel } from '../connectors/read-model'
 import type { SpecialistService } from '../specialist/service'
 import type { SessionBindingService } from '../specialist/session-binding'
 import type { SpecialistView } from '../../shared/specialist'
-import type { StoredConnectors } from '../settings/types'
 import {
   isAgentsOpName,
   isAgentsParams,
@@ -58,18 +52,13 @@ export type AgentsCatalogSource = {
       available: boolean
     }>
   >
-  // The stored connectors document (bundled enablement + custom MCP servers). Used to project
-  // public connector information; secret material is never read through this adapter.
-  getConnectors(): Promise<StoredConnectors | undefined>
+  // Public, secret-free Connector snapshot; discovery and credential projection stay with its owner.
+  getConnectors(): Promise<ConnectorReadModel[]>
 }
 
 export type AgentsServiceDeps = {
   specialistService: SpecialistService
   catalog: AgentsCatalogSource
-  // Runtime failures are projected separately from durable Settings. Keeping this as a narrow,
-  // optional resolver lets host.agents share the authoritative custom MCP status without owning
-  // the connector runtime or forcing read-only tests to construct it.
-  customServerAvailability?: (id: string) => CustomMcpFailureAvailability | undefined
   // Injected (fake-able) seams for privileged mutations and Specialist switches. Read-only callers
   // may leave these unset; the dispatcher routes privileged ops through
   // `approvalGateway` and signals approved switches via `switchNotifier`. They are SERVER-supplied
@@ -133,20 +122,6 @@ export type SkillCatalogReadModel = {
 export type ConnectorToolReadModel = {
   id: string
   description: string
-}
-
-export type ConnectorReadModel = {
-  id: string
-  name: string
-  displayName: string
-  description: string
-  mainEnabled: boolean
-  // Authentication/availability state, projected without secret detail. Custom connectors report
-  // 'unavailable'/'unauthenticated'/'credential_unavailable' from their stored shape; bundled
-  // connectors are 'available'.
-  availability: 'available' | 'unavailable' | 'unauthenticated' | 'credential_unavailable'
-  source: 'bundled' | 'custom'
-  tools: ConnectorToolReadModel[]
 }
 
 // ---------------------------------------------------------------------------
@@ -393,15 +368,8 @@ export class AgentsService {
   // name, description, Main enabled state, authentication/availability state, and safe public tool
   // information. Never returns credentials, headers, environment values, or connector arguments.
   async listConnectors(params: { name_or_id?: unknown }): Promise<ConnectorReadModel[]> {
-    const stored = await this.deps.catalog.getConnectors()
-    return applyNameOrIdFilter(this.projectConnectors(stored), params.name_or_id, 'list_connectors')
-  }
-
-  // Shared projection used by both the read slice and the ordinary-mutation module (issue 03), so
-  // the mutation module never duplicates the connector catalog rules. Exported via the standalone
-  // `projectConnectorsFromStored` below.
-  private projectConnectors(stored: StoredConnectors | undefined): ConnectorReadModel[] {
-    return projectConnectorsFromStored(stored, this.deps.customServerAvailability)
+    const snapshot = await this.deps.catalog.getConnectors()
+    return applyNameOrIdFilter(snapshot, params.name_or_id, 'list_connectors')
   }
 }
 
@@ -415,59 +383,5 @@ export class AgentsService {
 
 // Projects the stored connectors document into public read models. Never returns credentials,
 // headers, environment values, or connector arguments.
-export const projectConnectorsFromStored = (
-  stored: StoredConnectors | undefined,
-  customServerAvailability: (id: string) => CustomMcpFailureAvailability | undefined = () =>
-    undefined
-): ConnectorReadModel[] => {
-  const disabled = new Set(stored?.disabledConnectorIds ?? [])
-  const bundled: ConnectorReadModel[] = (CONNECTOR_CATALOG as ConnectorMeta[]).map((meta) => ({
-    id: meta.id,
-    name: meta.id,
-    displayName: meta.displayName,
-    description: meta.description,
-    mainEnabled: !disabled.has(meta.id),
-    availability: 'available',
-    source: 'bundled',
-    tools: getConnectorTools(meta.id).map((tool) => ({
-      id: tool.id,
-      description: tool.description
-    }))
-  }))
-
-  const customServers = stored?.customMcpServers ?? []
-  const custom: ConnectorReadModel[] = customServers
-    .filter((server) => isCustomMcpServerRouteSafe(server, customServers))
-    .map((server) => {
-      const runtimeAvailability = customServerAvailability(server.id)
-      const unreachable =
-        (server.transport === 'stdio' && !server.command) ||
-        (server.transport !== 'stdio' && !server.url)
-      const credentialUnavailable = !hasUsableCustomMcpCredentials(server)
-      const unauthenticated = Boolean(server.oauth && !server.oauthState?.tokens?.access_token)
-      return {
-        // Local Specialist references use the UUID; name remains the immutable public route.
-        id: server.id,
-        name: server.name,
-        displayName: server.displayName,
-        description: server.description ?? '',
-        mainEnabled: server.enabled && !credentialUnavailable && !unauthenticated,
-        // Custom MCP servers expose their tools dynamically; we do not enumerate them here (the
-        // milestone decides whole-Connector inclusion only). An empty tools list keeps the shape
-        // consistent without leaking transport/command details.
-        availability: unreachable
-          ? 'unavailable'
-          : credentialUnavailable
-            ? 'credential_unavailable'
-            : unauthenticated
-              ? 'unauthenticated'
-              : (runtimeAvailability ?? 'available'),
-        source: 'custom',
-        tools: []
-      }
-    })
-
-  return [...bundled, ...custom]
-}
 
 export { applyNameOrIdFilter }
