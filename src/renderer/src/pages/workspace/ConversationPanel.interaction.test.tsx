@@ -8704,7 +8704,7 @@ describe('ConversationPanel error box + report affordance', () => {
   })
 })
 
-it('offers Fork to continue while leaving the imported conversation read-only', async () => {
+it('offers Fork to run experiments while leaving the imported conversation read-only', async () => {
   forkSessionMock.mockClear()
   const activeSession: ChatSession = {
     id: 'imported-session',
@@ -8725,7 +8725,7 @@ it('offers Fork to continue while leaving the imported conversation read-only', 
   }
   renderPanel({ view: { activeSession } })
   const button = [...container.querySelectorAll('button')].find((button) =>
-    button.textContent?.includes('Fork to continue')
+    button.textContent?.includes('Fork to run experiments')
   )
   expect(button).toBeDefined()
   expect(container.querySelector('[data-testid="ordinary-composer-form"]')).toBeNull()

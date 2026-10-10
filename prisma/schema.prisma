@@ -190,6 +190,9 @@ model Session {
   title                 String
   status                String
   presentedStatus       String
+  // Rebuildable local research organization, projected from Session JSON.
+  researchMembershipJson String?
+  importedResearchId String?
   pinned                Boolean              @default(false)
   archivedAtMs          BigInt?
   revision              BigInt               @default(0)

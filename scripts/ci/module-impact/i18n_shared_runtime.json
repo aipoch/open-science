@@ -688,6 +688,8 @@
       "src/renderer/src/lib/acp/workspace-prompt-rollback-failure.test.ts",
       "src/renderer/src/lib/acp/workspace-runtime-overflow-recovery-failures.test.ts",
       "src/renderer/src/pages/workspace/SessionHeaderMenu.test.tsx",
+      "src/renderer/src/pages/workspace/workspace-discussion-navigation.test.ts",
+      "src/renderer/src/pages/workspace/ResearchWorkspaceHeader.test.tsx",
       "src/main/literature/pdf-translation/ipc.test.ts",
       "src/main/literature/pdf-translation/index.test.ts",
       "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationControls.test.tsx",

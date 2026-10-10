@@ -2,7 +2,10 @@ import { replayAnnotationTarget } from '../../../../shared/replay-reference'
 import { SessionDiscussionSource } from './SessionDiscussionSource'
 import { composerContextRowClassName } from './SessionDiscussionBar'
 import { SessionDiscussionButton } from './SessionDiscussionButton'
-import { createSessionReplayItem } from './workspace-session-actions'
+import { ResearchWorkspaceHeader } from './ResearchWorkspaceHeader'
+import { useResearchWorkspaceStore } from '@/stores/research-workspace-store'
+import { researchSourceFromSession } from './workspace-discussion-navigation'
+import { showSessionReplay } from './workspace-session-actions'
 import { forkSession, sessionForkAvailable } from '@/lib/session-fork'
 import { sideChatBlock, sideChatBlockMessage } from './side-chat-availability'
 import {
@@ -524,6 +527,19 @@ const ConversationPanel = ({
     sideChatDisabledReason,
     sessionImport
   } = view
+  const draftResearch = useResearchWorkspaceStore(
+    (state) => state.draftResearchByProject[sessionImport?.projectId ?? '']
+  )
+  const research = activeSession
+    ? (activeSession.researchMembership ?? researchSourceFromSession(activeSession))
+    : draftResearch
+  const researchTitle = useSessionStore((state) =>
+    research
+      ? (state.sessions.find(
+          (row) => row.id === research.sourceSessionId && row.projectId === research.sourceProjectId
+        )?.title ?? research.sourceTitle)
+      : undefined
+  )
   const sourceSession = useSessionStore((state) =>
     state.sessions.find((session) => session.id === activeSession?.branchSource?.sessionId)
   )
@@ -566,6 +582,24 @@ const ConversationPanel = ({
       dismissAutomaticReading
     }
   } = composer
+  const discussionAnnotation = annotations
+    .filter((annotation) => replayAnnotationTarget(annotation))
+    .at(-1)
+  const discussionTarget = discussionAnnotation && replayAnnotationTarget(discussionAnnotation)
+  const discussionTitle = useSessionStore((state) =>
+    discussionTarget
+      ? (state.sessions.find(
+          (row) =>
+            row.projectId === discussionTarget.projectId &&
+            row.id === discussionTarget.sourceSessionId
+        )?.title ??
+        (discussionAnnotation?.kind === 'text'
+          ? discussionAnnotation.quote
+              .match(/^(?:Session|Research): ([^\r\n]*)/)?.[1]
+              ?.slice(0, 240)
+          : undefined))
+      : activeSession?.runtimeContext?.sessionContext?.bindings.at(-1)?.title
+  )
   // Stable identities across re-renders: the transcript memo compares these callbacks, so an
   // inline closure would re-render every message on each composer state change.
   const annotationSourceId = `main:${activeSession?.projectId}:${activeSession?.id}:${composerFocusKey ?? 'composer'}`
@@ -747,7 +781,8 @@ const ConversationPanel = ({
   const [messageQueueExpanded, setMessageQueueExpanded] = useState(false)
   const setElicitationEditDraft = useSessionStore((state) => state.setElicitationEditDraft)
   const setElicitationDraftAnswers = useSessionStore((state) => state.setElicitationDraftAnswers)
-  const isNewConversation = !activeSession && !optimisticMessage
+  // Research drafts keep their source-specific welcome and discussion prompts.
+  const isNewConversation = !activeSession && !optimisticMessage && !research && !discussionTitle
   useEffect(() => {
     if (!isNewConversation) return
     // The start surface has no transcript scroller to own the native find handshake.
@@ -1474,20 +1509,45 @@ const ConversationPanel = ({
           >
             <Menu className="size-5" strokeWidth={2} aria-hidden="true" />
           </button>
-          <h1 className="min-w-0 flex-1 text-[13px] font-semibold text-text-000">
-            {activeSession ? (
-              <SessionInfoPopover
-                key={activeSession.id}
-                session={activeSession}
-                sourceSession={sourceSession}
-                onOpenSession={sessionTools.openSession}
-                onEdit={sessionTools.editSession}
-                onTogglePin={sessionTools.togglePin}
-              />
-            ) : (
-              <span className="block truncate">{t('New conversation')}</span>
-            )}
-          </h1>
+          {research ? (
+            <ResearchWorkspaceHeader
+              key={JSON.stringify([
+                research.sourceProjectId,
+                research.sourceSessionId,
+                research.sourceImportId
+              ])}
+              source={research}
+              historical={Boolean(activeSession?.packageOrigin ?? activeSession?.importedResearch)}
+            >
+              {activeSession ? (
+                <SessionInfoPopover
+                  key={activeSession.id}
+                  session={activeSession}
+                  sourceSession={sourceSession}
+                  onOpenSession={sessionTools.openSession}
+                  onEdit={sessionTools.editSession}
+                  onTogglePin={sessionTools.togglePin}
+                />
+              ) : (
+                <span>{t('New discussion')}</span>
+              )}
+            </ResearchWorkspaceHeader>
+          ) : (
+            <h1 className="min-w-0 flex-1 text-[13px] font-semibold text-text-000">
+              {activeSession ? (
+                <SessionInfoPopover
+                  key={activeSession.id}
+                  session={activeSession}
+                  sourceSession={sourceSession}
+                  onOpenSession={sessionTools.openSession}
+                  onEdit={sessionTools.editSession}
+                  onTogglePin={sessionTools.togglePin}
+                />
+              ) : (
+                <span className="block truncate">{t('New conversation')}</span>
+              )}
+            </h1>
+          )}
           {activeSession && sessionTools.exportDiagnostics && (
             <TooltipProvider>
               <Tooltip>
@@ -1558,6 +1618,7 @@ const ConversationPanel = ({
             <WorkspaceMessageScroller
               activeSession={activeSession}
               sessionImport={sessionImport}
+              researchTitle={researchTitle ?? discussionTitle}
               onStartResearch={
                 canEditDraft &&
                 !draftDoc.nodes.some((node) => node.type !== 'text' || node.text.trim())
@@ -2053,7 +2114,7 @@ const ConversationPanel = ({
                         </p>
                         <p className="mt-1 text-xs leading-5 text-muted-foreground">
                           {t(
-                            'Read-only. Browse the conversation, files and recorded results. Code execution and continuation are disabled.'
+                            'The original research is read-only. Discuss it alongside the replay, or create a copy to run experiments.'
                           )}
                         </p>
                         <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -2066,7 +2127,7 @@ const ConversationPanel = ({
                               }}
                             >
                               <GitBranch className="size-4" aria-hidden="true" />
-                              {t('Fork to continue')}
+                              {t('Fork to run experiments')}
                             </Button>
                           ) : null}
                           <Button
@@ -2074,15 +2135,11 @@ const ConversationPanel = ({
                             size="sm"
                             aria-controls="right-panel"
                             onClick={() => {
-                              usePreviewWorkbenchStore
-                                .getState()
-                                .upsertAndActivateItem(
-                                  createSessionReplayItem(
-                                    activeSession.projectId,
-                                    activeSession.id,
-                                    activeSession.title
-                                  )
-                                )
+                              showSessionReplay(
+                                activeSession.projectId,
+                                activeSession.id,
+                                activeSession.title
+                              )
                             }}
                           >
                             <Play className="size-4" aria-hidden="true" />

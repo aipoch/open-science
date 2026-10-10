@@ -11,7 +11,14 @@ import type { ReplayViewState, SessionReplaySnapshot } from '../../../../shared/
 import { SessionReplayPreview } from './SessionReplayPreview'
 import type { ReplayPanelProps } from './replay/ReplayPanel'
 
-const mocks = vi.hoisted(() => ({ load: vi.fn(), panel: vi.fn(), get: vi.fn(), save: vi.fn() }))
+const mocks = vi.hoisted(() => ({
+  load: vi.fn(),
+  panel: vi.fn(),
+  get: vi.fn(),
+  save: vi.fn(),
+  discuss: vi.fn()
+}))
+vi.mock('./workspace-discussion-navigation', () => ({ openResearchDiscussion: mocks.discuss }))
 vi.mock('react-i18next', () => createI18nTestStub())
 vi.mock('@/lib/replay', () => ({ loadReplayDocument: mocks.load }))
 vi.mock('@/lib/session-fork', () => ({ sessionForkAvailable: () => false, forkSession: vi.fn() }))
@@ -99,6 +106,7 @@ beforeEach(() => {
   mocks.get.mockImplementation(async (request) =>
     snapshot(request.sourceSessionId, request.sourceSessionId === 'other' ? 7 : 1)
   )
+  mocks.discuss.mockResolvedValue(true)
   mocks.save.mockResolvedValue({ status: 'saved', revision: 2 })
   Object.defineProperty(window, 'api', {
     configurable: true,
@@ -108,6 +116,75 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe('SessionReplayPreview lifecycle', () => {
+  it.each(['Source files', 'Original records', 'evidence'])(
+    'reveals the existing player from %s without reloading or stealing focus',
+    async (mode) => {
+      const mounted = render(<SessionReplayPreview item={item()} />)
+      const player = await screen.findByTestId('replay-panel')
+      const initialView = props().initialView
+      fireEvent.click(
+        screen.getByRole('button', { name: mode === 'evidence' ? 'Original records' : mode })
+      )
+      if (mode === 'evidence') {
+        fireEvent.click(screen.getByRole('button', { name: /Complete original recorded question/ }))
+        await waitFor(() =>
+          expect(document.activeElement).toBe(
+            screen.getByRole('button', { name: 'Back to original records' })
+          )
+        )
+      }
+      expect(props().active).toBe(false)
+      // An ordinary tab round-trip must retain the selected materials view.
+      mounted.rerender(<SessionReplayPreview item={item()} isActive={false} />)
+      mounted.rerender(<SessionReplayPreview item={item()} isActive />)
+      expect(props().active).toBe(false)
+      // The invoking control remains focused when explicit navigation exits evidence.
+      const invokingControl = screen.getByRole('button', { name: 'Replay' })
+      invokingControl.focus()
+      mounted.rerender(
+        <SessionReplayPreview item={{ ...item(), replayRevealRequest: 1 }} isActive />
+      )
+      expect(props().active).toBe(true)
+      expect(screen.getByTestId('replay-panel')).toBe(player)
+      expect(props().initialView).toBe(initialView)
+      expect(screen.queryByRole('region', { name: 'Original recorded evidence' })).toBeNull()
+      await act(async () => {
+        await new Promise((resolve) => requestAnimationFrame(resolve))
+      })
+      expect(document.activeElement).toBe(invokingControl)
+      expect(mocks.load).toHaveBeenCalledTimes(1)
+      expect(mocks.get).toHaveBeenCalledTimes(1)
+
+      fireEvent.click(screen.getByRole('button', { name: 'Source files' }))
+      mounted.rerender(
+        <SessionReplayPreview item={{ ...item(), replayRevealRequest: 1 }} isActive />
+      )
+      expect(props().active).toBe(false)
+      mounted.rerender(
+        <SessionReplayPreview item={{ ...item(), replayRevealRequest: 2 }} isActive />
+      )
+      expect(props().active).toBe(true)
+      expect(screen.getByTestId('replay-panel')).toBe(player)
+    }
+  )
+
+  it('browses original records and source files without changing conversation or restarting replay', async () => {
+    render(<SessionReplayPreview item={item()} />)
+    await screen.findByTestId('replay-panel')
+    const selected = useSessionStore.getState().selectedSessionId
+    fireEvent.click(screen.getByRole('button', { name: 'Original records' }))
+    expect(props().active).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: /Complete original recorded question/ }))
+    expect(await screen.findByRole('region', { name: 'Original recorded evidence' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Back to original records' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Source files' }))
+    expect(screen.getByText('No source files are available.')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Replay' }))
+    expect(props().active).toBe(true)
+    expect(mocks.load).toHaveBeenCalledTimes(1)
+    expect(useSessionStore.getState().selectedSessionId).toBe(selected)
+  })
+
   it('defers restored background archives until activation and retains them across tab switches', async () => {
     const mounted = render(<SessionReplayPreview item={item()} isActive={false} />)
     await act(async () => {})
@@ -122,12 +199,12 @@ describe('SessionReplayPreview lifecycle', () => {
     expect(props().active).toBe(true)
   })
 
-  it('opens the ordinary conversation chooser without staging or sending the question', async () => {
+  it('opens the conversation chooser only through the explicit secondary action', async () => {
     useNavigationStore.setState({ activeProjectId: 'project' })
     render(<SessionReplayPreview item={item()} />)
     await screen.findByTestId('replay-panel')
     act(() =>
-      props().onAskStep?.({
+      props().onChooseConversation?.({
         projectId: 'project',
         sourceSessionId: 'source',
         sourceTitle: 'Study',
@@ -141,6 +218,37 @@ describe('SessionReplayPreview lifecycle', () => {
     )
     expect(await screen.findByRole('dialog', { name: 'Ask in a conversation' })).toBeTruthy()
     expect(useSessionReplayStore.getState().pendingDiscussion).toBeUndefined()
+  })
+  it('opens discussion directly and prevents duplicate lookup while it is pending', async () => {
+    let finish!: (value: boolean) => void
+    mocks.discuss.mockReturnValue(
+      new Promise<boolean>((resolve) => {
+        finish = resolve
+      })
+    )
+    render(<SessionReplayPreview item={item()} />)
+    await screen.findByTestId('replay-panel')
+    const capture = {
+      projectId: 'project',
+      sourceSessionId: 'source',
+      sourceTitle: 'Study',
+      fingerprint: 'hash',
+      branchId: 'main',
+      stepId: step.id,
+      stepOffsetMs: 0,
+      evidence: [],
+      excerpt: 'Question'
+    }
+    act(() => {
+      props().onAskStep(capture)
+      props().onAskStep(capture)
+    })
+    expect(mocks.discuss).toHaveBeenCalledTimes(1)
+    expect(props().discussionPending).toBe(true)
+    expect(screen.queryByRole('dialog')).toBeNull()
+    await act(async () => finish(false))
+    expect(props().discussionPending).toBe(false)
+    expect(screen.getByText('Could not open the research discussion. Please retry.')).toBeTruthy()
   })
   it('loads paused history and forwards active visibility changes', async () => {
     const mounted = render(<SessionReplayPreview item={item()} />)

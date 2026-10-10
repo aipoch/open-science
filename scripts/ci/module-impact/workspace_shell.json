@@ -150,7 +150,11 @@
     "src/renderer/src/pages/workspace/workspace-specialist-reconfiguration.ts",
     "src/renderer/src/pages/workspace/workspace-translate-clause.ts",
     "src/renderer/src/pages/workspace/workspace-web-search-details.test.ts",
-    "src/renderer/src/pages/workspace/workspace-web-search-details.ts"
+    "src/renderer/src/pages/workspace/workspace-web-search-details.ts",
+    "src/renderer/src/pages/workspace/research-navigation-model.ts",
+    "src/renderer/src/pages/workspace/research-navigation-model.test.ts",
+    "src/renderer/src/pages/workspace/ResearchMembershipDialog.tsx",
+    "src/renderer/src/pages/workspace/ResearchMembershipDialog.test.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/workspace/AgentControlMenuItemTooltip.tsx",
@@ -233,7 +237,9 @@
     "src/renderer/src/pages/workspace/workspace-specialist-barrier.ts",
     "src/renderer/src/pages/workspace/workspace-specialist-reconfiguration.ts",
     "src/renderer/src/pages/workspace/workspace-translate-clause.ts",
-    "src/renderer/src/pages/workspace/workspace-web-search-details.ts"
+    "src/renderer/src/pages/workspace/workspace-web-search-details.ts",
+    "src/renderer/src/pages/workspace/research-navigation-model.ts",
+    "src/renderer/src/pages/workspace/ResearchMembershipDialog.tsx"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -302,7 +308,9 @@
       "src/renderer/src/pages/workspace/workspace-session-agent-configuration-controller.availability.test.ts",
       "src/renderer/src/pages/workspace/workspace-session-delegation-control-owner.test.tsx",
       "src/renderer/src/pages/workspace/workspace-skill-load.test.ts",
-      "src/renderer/src/pages/workspace/workspace-web-search-details.test.ts"
+      "src/renderer/src/pages/workspace/workspace-web-search-details.test.ts",
+      "src/renderer/src/pages/workspace/research-navigation-model.test.ts",
+      "src/renderer/src/pages/workspace/ResearchMembershipDialog.test.tsx"
     ],
     "contract": [],
     "consumer": [
@@ -520,6 +528,8 @@
       "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.interaction.test.tsx",
       "src/renderer/src/pages/workspace/TurnOutcomeNotice.test.tsx",
       "src/renderer/src/pages/workspace/SessionHeaderMenu.test.tsx",
+      "src/renderer/src/pages/workspace/workspace-discussion-navigation.test.ts",
+      "src/renderer/src/pages/workspace/ResearchWorkspaceHeader.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationControls.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationEditions.test.tsx",
       "src/renderer/src/pages/workspace/session-plan/session-plan-resume.test.tsx"

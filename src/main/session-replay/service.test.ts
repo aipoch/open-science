@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PrismaClient } from '@prisma/client'
 import type { PersistedChatSession } from '../../shared/session-persistence'
+import type { SessionReadingBinding } from '../../shared/session-reading'
 import type { ReplayViewState, SessionDiscussionSnapshot } from '../../shared/session-replay'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { SessionReplayRepository } from './repository'
@@ -67,10 +68,12 @@ describe('local research workspace ownership', () => {
   let service: SessionReplayService
   let sessions: Map<string, PersistedChatSession>
   let reads: SessionReplaySessions['read']
+  let list: ReturnType<typeof vi.fn<SessionReplaySessions['list']>>
+  let readCurrent: ReturnType<typeof vi.fn<SessionReplaySessions['readCurrent']>>
   let save: ReturnType<typeof vi.fn>
   let unreadable: Set<string>
   const makeService = (): SessionReplayService =>
-    new SessionReplayService(repository, { read: reads })
+    new SessionReplayService(repository, { read: reads, list, readCurrent })
 
   beforeEach(async () => {
     directory = await mkdtemp(join(tmpdir(), 'session-replay-'))
@@ -86,6 +89,21 @@ describe('local research workspace ownership', () => {
           ? { status: 'found' as const, session: structuredClone(sessions.get(sessionId)!) }
           : { status: 'missing' as const }
     )
+    list = vi.fn(async () =>
+      [...sessions.values()].map(
+        ({ id, projectId, updatedAt, researchMembership, archivedAt, packageOrigin }) => ({
+          id,
+          projectId,
+          updatedAt,
+          researchMembership,
+          archivedAt,
+          importedResearch: packageOrigin ? { importId: packageOrigin.importId } : undefined
+        })
+      )
+    )
+    readCurrent = vi.fn(async (_projectId, sessionId) =>
+      unreadable.has(sessionId) ? undefined : structuredClone(sessions.get(sessionId))
+    )
     save = vi.fn(async (session: PersistedChatSession) => {
       const saved = { ...structuredClone(session), revision: 1 }
       sessions.set(session.id, saved)
@@ -97,6 +115,147 @@ describe('local research workspace ownership', () => {
   afterEach(async () => {
     await client?.$disconnect()
     if (directory) await rm(directory, { recursive: true, force: true })
+  })
+
+  const binding = (sourceSessionId = identity.sourceSessionId): SessionReadingBinding => ({
+    projectId: identity.projectId,
+    sessionId: sourceSessionId,
+    contextId: 'selection-snapshot',
+    title: 'Original research',
+    scope: 'session',
+    branchId: 'main',
+    promptMessageId: 'question'
+  })
+  const addDiscussion = (id: string, updatedAt: number): PersistedChatSession => {
+    const session: PersistedChatSession = {
+      ...sourceSession(),
+      id,
+      updatedAt,
+      packageOrigin: undefined,
+      researchMembership: {
+        sourceProjectId: identity.projectId,
+        sourceSessionId: identity.sourceSessionId,
+        sourceImportId: 'original',
+        sourceTitle: 'Original research'
+      },
+      runtimeContext: {
+        version: 1,
+        revision: 1,
+        sessionContext: { version: 1, bindings: [binding()] }
+      }
+    }
+    sessions.set(id, session)
+    return session
+  }
+
+  it('restores the most recent linked discussion after restart without changing either Session', async () => {
+    addDiscussion('older-discussion', 2)
+    addDiscussion('newer-discussion', 5)
+    const before = structuredClone(sessions)
+    expect(await makeService().findDiscussion(identity)).toEqual({ sessionId: 'newer-discussion' })
+    expect(readCurrent).toHaveBeenCalledTimes(1)
+    expect(readCurrent).toHaveBeenCalledWith(identity.projectId, 'newer-discussion')
+    expect(sessions).toEqual(before)
+    expect(save).not.toHaveBeenCalled()
+    expect(await client.sessionReplayProgress.count()).toBe(0)
+    expect(await client.sessionDiscussionSnapshot.count()).toBe(0)
+  })
+
+  it('skips other projects, imported and archived receivers, missing and unreadable records', async () => {
+    addDiscussion('discussion', 2)
+    addDiscussion('other-project', 10).projectId = 'other'
+    addDiscussion('imported', 9).packageOrigin = sourceSession().packageOrigin
+    addDiscussion('archived', 8).archivedAt = 8
+    addDiscussion('unreadable', 7)
+    unreadable.add('unreadable')
+    const missing = addDiscussion('missing', 6)
+    const rows = await list()
+    sessions.delete(missing.id)
+    list.mockResolvedValue(rows)
+    expect(await service.findDiscussion(identity)).toEqual({ sessionId: 'discussion' })
+    expect(readCurrent).not.toHaveBeenCalledWith(identity.projectId, identity.sourceSessionId)
+    expect(readCurrent).not.toHaveBeenCalledWith(identity.projectId, 'other-project')
+  })
+
+  it('keeps explicit membership when reading focus is removed or switched, and revalidates stale membership', async () => {
+    const linked = addDiscussion('discussion', 5)
+    linked.runtimeContext = {
+      version: 1,
+      revision: 2,
+      sessionContext: { version: 1, bindings: [] }
+    }
+    expect(await service.findDiscussion(identity)).toEqual({ sessionId: linked.id })
+    linked.runtimeContext.sessionContext!.bindings = [binding('other-source')]
+    expect(await service.findDiscussion(identity)).toEqual({ sessionId: linked.id })
+    const stale = await list()
+    list.mockResolvedValue(stale)
+    linked.researchMembership = undefined
+    expect(await service.findDiscussion(identity)).toBeNull()
+  })
+
+  it('never scans ordinary sessions or infers membership from legacy reading links', async () => {
+    for (let index = 0; index < 100; index += 1)
+      addDiscussion(`ordinary-${index}`, index).researchMembership = undefined
+    expect(await service.findDiscussion(identity)).toBeNull()
+    expect(readCurrent).not.toHaveBeenCalled()
+  })
+
+  it('distinguishes repeated imports and rejects sources replaced while opening a candidate', async () => {
+    const discussion = addDiscussion('discussion', 3)
+    discussion.researchMembership!.sourceImportId = 'other-import'
+    expect(await service.findDiscussion(identity)).toBeNull()
+    discussion.researchMembership!.sourceImportId = 'original'
+    readCurrent.mockImplementation(async () => {
+      sessions.get(identity.sourceSessionId)!.packageOrigin!.importId = 'replacement'
+      return discussion
+    })
+    expect(await service.findDiscussion(identity)).toBeNull()
+  })
+
+  it.each(['missing', 'unreadable', 'archived', 'deleted-project', 'archived-project'])(
+    'does not restore a discussion when its source is %s',
+    async (state) => {
+      addDiscussion('discussion', 2)
+      if (state === 'missing') sessions.delete(identity.sourceSessionId)
+      if (state === 'unreadable') unreadable.add(identity.sourceSessionId)
+      if (state === 'archived') sessions.get(identity.sourceSessionId)!.archivedAt = 2
+      if (state === 'deleted-project' || state === 'archived-project') {
+        await client.project.update({
+          where: { id: identity.projectId },
+          data: state === 'deleted-project' ? { deletedAt: new Date() } : { archivedAt: new Date() }
+        })
+      }
+      expect(await service.findDiscussion(identity)).toBeNull()
+      expect(list).not.toHaveBeenCalled()
+      expect(readCurrent).not.toHaveBeenCalled()
+    }
+  )
+
+  it('returns no match without fabricating a Session when no durable discussion exists', async () => {
+    expect(await service.findDiscussion(identity)).toBeNull()
+    expect(save).not.toHaveBeenCalled()
+    expect(readCurrent).not.toHaveBeenCalled()
+  })
+
+  it('routes explicit grouping through the Main owner and refuses archived projects before mutation', async () => {
+    const discussion = addDiscussion('discussion', 2)
+    const setResearchMembership = vi.fn(async () => discussion)
+    const mutate = new SessionReplayService(repository, {
+      read: reads,
+      list,
+      readCurrent,
+      setResearchMembership
+    })
+    const request = { projectId: identity.projectId, sessionId: discussion.id, expectedRevision: 0 }
+    expect(await mutate.setResearchMembership(request)).toEqual(discussion)
+    expect(setResearchMembership).toHaveBeenCalledWith(request)
+    setResearchMembership.mockClear()
+    await client.project.update({
+      where: { id: identity.projectId },
+      data: { archivedAt: new Date() }
+    })
+    await expect(mutate.setResearchMembership(request)).rejects.toThrow('Project is unavailable')
+    expect(setResearchMembership).not.toHaveBeenCalled()
   })
 
   it('browses and saves playback checkpoints without creating or mutating any Session', async () => {
@@ -138,9 +297,20 @@ describe('local research workspace ownership', () => {
   )
 
   it('admits local replay writes before reading or writing any data-root-owned state', async () => {
-    const gated = new SessionReplayService(repository, { read: reads }, async () => {
-      throw new Error('Data root changing')
-    })
+    const gated = new SessionReplayService(
+      repository,
+      { read: reads, list, readCurrent, setResearchMembership: vi.fn() },
+      async () => {
+        throw new Error('Data root changing')
+      }
+    )
+    await expect(
+      gated.setResearchMembership({
+        projectId: identity.projectId,
+        sessionId: 'discussion',
+        expectedRevision: 0
+      })
+    ).rejects.toThrow('Data root changing')
     await expect(gated.saveView({ ...identity, state: view, expectedRevision: 0 })).rejects.toThrow(
       'Data root changing'
     )

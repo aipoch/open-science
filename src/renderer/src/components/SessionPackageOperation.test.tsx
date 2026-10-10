@@ -1,3 +1,5 @@
+import * as discussionNavigation from '@/pages/workspace/workspace-discussion-navigation'
+import { useSessionStore } from '@/stores/session-store'
 import { drainWorkspaceRuntimeEventsForPersistence } from '@/lib/acp/useWorkspaceAgentRuntime'
 import { flushSessionPersistence } from '@/lib/session-persistence/session-persistence'
 import { useNavigationStore } from '@/stores/navigation-store'
@@ -1441,6 +1443,54 @@ it.each([
   expect(
     [...document.querySelectorAll('button')].some((item) => item.textContent === 'Export anyway')
   ).toBe(false)
+})
+
+it('opens an imported archive as a research workspace without selecting its locked record', async () => {
+  const operation: PackageOperationSnapshot = {
+    id: 'workspace-import',
+    kind: 'import',
+    state: 'succeeded',
+    progress: { phase: 'importing' },
+    result: { imported: { projectId: 'target', sessionId: 'research-imported' } }
+  }
+  const navigate = vi.spyOn(useNavigationStore.getState(), 'openSession').mockReturnValue(true)
+  const openResearch = vi
+    .spyOn(discussionNavigation, 'openResearchWorkspace')
+    .mockResolvedValue(true)
+  useSessionStore.getState().upsertPersistedSession({
+    id: 'research-imported',
+    projectId: 'target',
+    title: 'Imported research',
+    cwd: '',
+    status: 'idle',
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1,
+    packageOrigin: {
+      importId: 'receipt',
+      importedAt: 1,
+      sourceProjectId: 'foreign',
+      sourceSessionId: 'foreign-source',
+      manifestChecksum: 'a'.repeat(64)
+    }
+  })
+  vi.stubGlobal('api', {
+    sessions: {
+      packageOperation: async () => operation,
+      onPackageOperation: () => () => undefined
+    },
+    projects: { list: async () => [{ id: 'target', name: 'Target', createdAt: 1, updatedAt: 1 }] }
+  })
+  usePackageOperationStore.setState({ operation, open: true })
+  await act(async () => root.render(<SessionPackageOperation />))
+  await act(async () => button('Open imported Session').click())
+  expect(openResearch).toHaveBeenCalledExactlyOnceWith({
+    sourceProjectId: 'target',
+    sourceSessionId: 'research-imported',
+    sourceImportId: 'receipt',
+    sourceTitle: 'Imported research'
+  })
+  expect(navigate).not.toHaveBeenCalled()
 })
 
 it.each(['import', 'fork'] as const)(

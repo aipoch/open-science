@@ -1,3 +1,4 @@
+import { useResearchWorkspaceStore } from './research-workspace-store'
 import type { PdfAnnotation, PdfAnnotationSource } from '../../../shared/pdf-annotations'
 import { create } from 'zustand'
 
@@ -415,6 +416,7 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
   startCustomizeConversation: (projectId, goal = 'specialist') => {
     if (!isActiveProject(projectId)) return
     requestPreviewLeaveForNavigation({ view: 'workspace', projectId }, () => {
+      useResearchWorkspaceStore.getState().leaveDraft(projectId)
       useSessionStore.getState().clearSelection()
       recordLastOpenedProject(projectId)
 
@@ -440,6 +442,7 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
   startLiteratureReviewConversation: (projectId, scope, prompt) => {
     if (!isActiveProject(projectId)) return false
     return requestPreviewLeaveForNavigation({ view: 'workspace', projectId }, () => {
+      useResearchWorkspaceStore.getState().leaveDraft(projectId)
       useSessionStore.getState().clearSelection()
       recordLastOpenedProject(projectId)
       set((state) => {
@@ -481,6 +484,7 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
     )
       return false
     return requestPreviewLeaveForNavigation({ view: 'workspace', projectId }, () => {
+      useResearchWorkspaceStore.getState().leaveDraft(projectId)
       useSessionStore.getState().clearSelection()
       recordLastOpenedProject(projectId)
       set((state) =>
@@ -513,6 +517,7 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
   startWslSupportConversation: (projectId, doc, setupSessionToken) => {
     if (!isActiveProject(projectId)) return false
     return requestPreviewLeaveForNavigation({ view: 'workspace', projectId }, () => {
+      useResearchWorkspaceStore.getState().leaveDraft(projectId)
       useSessionStore.getState().clearSelection()
       recordLastOpenedProject(projectId)
 

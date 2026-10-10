@@ -3625,13 +3625,22 @@ it('drains paid requests and retains a durable pause when both result and failur
   await db.$executeRawUnsafe(
     "CREATE TRIGGER fail_failure BEFORE UPDATE ON LiteratureSmartRunItem BEGIN SELECT RAISE(ABORT,'disk full'); END"
   )
-  owner.schedule()
-  await vi.waitFor(() => expect(classify).toHaveBeenCalledTimes(4), { timeout: 5000 })
-  expect(
-    (await db.literatureSmartCollection.findUniqueOrThrow({ where: { collectionId: id } }))
-      .automaticPauseReason
-  ).toBe('interrupted')
-  finish()
+  try {
+    // Await automatic admission before measuring the four paid requests. The scheduler's
+    // debounce and SQLite checkpoint preparation are separate from draining in-flight work.
+    await owner.execute(
+      { kind: 'smart-collection', collectionId: id, action: 'refresh', offset: 0 },
+      true
+    )
+    await vi.waitFor(() => expect(classify).toHaveBeenCalledTimes(4), { timeout: 5000 })
+    expect(
+      (await db.literatureSmartCollection.findUniqueOrThrow({ where: { collectionId: id } }))
+        .automaticPauseReason
+    ).toBe('interrupted')
+  } finally {
+    // An admission assertion must not strand the mock requests that dispose() drains.
+    finish()
+  }
   await vi.waitFor(
     async () => expect((await owner.view(id)).automaticPauseReason).toBe('storage-error'),
     { timeout: 5000 }

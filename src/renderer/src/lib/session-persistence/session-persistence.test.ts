@@ -1062,6 +1062,84 @@ describe('renderer session persistence bridge', () => {
     }
   )
 
+  it.each(['assign', 'reassign', 'remove'] as const)(
+    'does not echo a Main-owned research membership %s receipt and still saves later edits',
+    async (operation) => {
+      vi.useFakeTimers()
+      const membership = {
+        sourceProjectId: 'default',
+        sourceSessionId: 'research-source',
+        sourceImportId: 'import-1',
+        sourceTitle: 'Imported research'
+      }
+      let durable = createPersistedSession({
+        revision: 1,
+        researchMembership:
+          operation === 'assign'
+            ? undefined
+            : { ...membership, sourceSessionId: 'previous-research-source' }
+      })
+      useSessionStore.getState().upsertPersistedSession(durable)
+      const saveSession = vi.fn(async (submitted: PersistedChatSession) => {
+        durable = {
+          ...submitted,
+          revision: (durable.revision ?? 0) + 1,
+          researchMembership: durable.researchMembership
+        }
+        useSessionStore.getState().applyDurableSessionProjection({
+          source: useSessionStore.getState().sessions[0],
+          session: durable,
+          mode: 'archive-authority'
+        })
+        return durable
+      })
+      const api = createApi({ saveSession })
+      const persistence = createOrderedSessionPersistence(api)
+      const save = createStoreSaver(api, useSessionStore.getState(), {}, persistence)
+      const unsubscribe = useSessionStore.subscribe((state) => {
+        void save(state)
+      })
+      try {
+        durable = {
+          ...durable,
+          revision: 2,
+          researchMembership: operation === 'remove' ? undefined : membership
+        }
+        useSessionStore.getState().applyDurableSessionProjection({
+          source: useSessionStore.getState().sessions[0],
+          session: durable,
+          mode: 'archive-authority'
+        })
+        await vi.advanceTimersByTimeAsync(500)
+        await persistence.flush()
+
+        expect(saveSession).not.toHaveBeenCalled()
+        expect(useSessionStore.getState().sessions[0].researchMembership).toEqual(
+          durable.researchMembership
+        )
+
+        useSessionStore.getState().renameSession(durable.id, 'A later local edit')
+        await persistence.flush()
+
+        expect(saveSession).toHaveBeenCalledOnce()
+        expect(saveSession).toHaveBeenCalledWith(
+          expect.objectContaining({
+            title: 'A later local edit',
+            revision: 2,
+            researchMembership: operation === 'remove' ? undefined : membership
+          }),
+          expect.anything()
+        )
+        expect(durable.researchMembership).toEqual(operation === 'remove' ? undefined : membership)
+      } finally {
+        unsubscribe()
+        await vi.runAllTimersAsync()
+        await persistence.flush()
+        vi.useRealTimers()
+      }
+    }
+  )
+
   it('does not echo an externally hydrated session back to persistence', async () => {
     const api = createApi()
     const save = createStoreSaver(api)

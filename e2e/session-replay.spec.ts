@@ -49,7 +49,14 @@ test('discusses and replays an ordinary Session directly from its menu', async (
     .getByRole('region', { name: 'Projects', exact: true })
     .getByRole('button', { name: 'Ordinary replay', exact: true })
     .click()
-  const row = page.locator(`[data-session-preview][data-session-id="${source.id}"]`)
+  // Wait for selected-history hydration before opening its action target. A summary-to-full
+  // replacement invalidates an already open context-menu snapshot by design.
+  await expect(page.getByRole('region', { name: 'Conversation', exact: true })).toContainText(
+    'The recorded measurement was forty-two.'
+  )
+  const row = page.locator(
+    `[data-session-preview][data-session-id="${source.id}"] [data-slot="session-open-button"]`
+  )
   const before = await page.evaluate(
     async ({ projectId, sessionId }) => window.api.sessions.loadOne({ projectId, sessionId }),
     { projectId, sessionId: source.id }
@@ -64,10 +71,9 @@ test('discusses and replays an ordinary Session directly from its menu', async (
   await row.click({ button: 'right' })
   await page.getByRole('menuitem', { name: 'Discuss', exact: true }).click()
   const ask = page.getByRole('dialog', { name: 'Ask in a conversation' })
-  await expect(ask).toBeVisible()
-  await expect(ask).toContainText('Entire research')
-  await expect(ask.getByRole('option')).toHaveCount(0)
-  await ask.getByRole('button', { name: 'New conversation', exact: true }).click()
+  await expect(ask).toHaveCount(0)
+  await expect(page.getByRole('textbox', { name: 'Ask anything', exact: true })).toBeFocused()
+  await expect(page.getByTestId('session-discussion-draft')).toContainText('Entire research')
   await expect(page.getByTestId('session-discussion-draft')).toContainText(source.title)
   const after = await page.evaluate(
     async ({ projectId, sessionId }) => window.api.sessions.loadOne({ projectId, sessionId }),
@@ -90,6 +96,7 @@ test('discusses and replays an ordinary Session directly from its menu', async (
 test('opens imported research, asks about a recorded step and restores the ordinary conversation and replay', async ({
   app
 }, testInfo) => {
+  test.setTimeout(180_000)
   await app.completeOnboarding()
   let page = await app.configureFakeAgent()
   await page.getByRole('button', { name: 'New project', exact: true }).click()
@@ -144,24 +151,17 @@ test('opens imported research, asks about a recorded step and restores the ordin
   const replay = page.getByTestId('replay-panel')
   await expect(replay).toHaveCount(0)
   await page
-    .getByRole('region', { name: 'Imported research history', exact: true })
-    .getByRole('button', { name: 'Discuss', exact: true })
+    .locator(`[data-research-id="${source.id}"] [data-slot="session-open-button"]`)
+    .first()
     .click()
-  const importedDiscussion = page.getByRole('dialog', { name: 'Ask in a conversation' })
-  await expect(importedDiscussion).toBeVisible()
-  await expect(importedDiscussion).toContainText('Entire research')
-  await expect(importedDiscussion.getByRole('option')).toHaveCount(0)
-  await importedDiscussion.getByRole('button', { name: 'Cancel', exact: true }).click()
-  await page
-    .getByRole('region', { name: 'Imported research history', exact: true })
-    .getByRole('button', { name: 'View replay', exact: true })
-    .click()
+  await expect(page.getByRole('dialog', { name: 'Ask in a conversation' })).toHaveCount(0)
   await expect(replay).toBeVisible()
-  await expect(
-    page.getByRole('region', { name: 'Imported research history', exact: true })
-  ).toBeVisible()
   const editor = page.getByRole('textbox', { name: 'Ask anything', exact: true })
-  await expect(editor).toHaveCount(0)
+  await expect(editor).toBeFocused()
+  await expect(
+    page.getByRole('heading', { name: `Discussing ${source.title}`, exact: true })
+  ).toBeVisible()
+  await expect(page.getByTestId('session-discussion-draft')).toContainText('Entire research')
   await expect(page.getByText('Conversation storage needs attention', { exact: true })).toHaveCount(
     0
   )
@@ -258,10 +258,7 @@ test('opens imported research, asks about a recorded step and restores the ordin
 
   await replay.getByRole('button', { name: 'Exit full screen', exact: true }).click()
   await replay.getByRole('button', { name: 'Ask about this step', exact: true }).click()
-  await page
-    .getByRole('dialog', { name: 'Ask in a conversation' })
-    .getByRole('button', { name: 'New conversation', exact: true })
-    .click()
+  await expect(page.getByRole('dialog', { name: 'Ask in a conversation' })).toHaveCount(0)
   await expect(page.locator('[data-session-discussion-source]')).toBeVisible()
   await expect(editor).not.toContainText('Archived analysis')
   await expect(replay.getByRole('button', { name: 'Watch again', exact: true })).toBeVisible()
@@ -285,7 +282,7 @@ test('opens imported research, asks about a recorded step and restores the ordin
   await editor.focus()
   await page.keyboard.press('ControlOrMeta+End')
   await page.keyboard.insertText('Explain this saved result.')
-  // Navigation leaves the draft untouched; Send captures the visible frame.
+  // The chosen evidence stays fixed while the reader scrubs and edits the question.
   const discussionBar = page.getByTestId('session-discussion-bar')
   await discussionBar.evaluate((element) => {
     element.style.width = '320px'
@@ -302,8 +299,9 @@ test('opens imported research, asks about a recorded step and restores the ordin
   await page.screenshot({ path: testInfo.outputPath('discussion-send-focus.png') })
   expect(await app.readFakeAgentPrompts()).toEqual(prompts)
   await editor.fill('Explain this saved result.')
-  await replay.getByRole('slider', { name: 'Replay progress', exact: true }).focus()
-  await page.keyboard.press('End')
+  await expect(
+    replay.getByRole('slider', { name: 'Replay progress', exact: true })
+  ).toHaveAttribute('aria-valuenow', '0')
   await expect(page.locator('[data-session-discussion-source]')).toContainText('Step 2')
   await page.getByRole('button', { name: 'Send message', exact: true }).click()
   try {
@@ -337,6 +335,12 @@ test('opens imported research, asks about a recorded step and restores the ordin
   )
   expect(target?.id).toBeTruthy()
   expect(target!.id).not.toBe(source.id)
+  expect(target!.researchMembership).toEqual({
+    sourceProjectId: projectId,
+    sourceSessionId: source.id,
+    sourceImportId: source.packageOrigin!.importId,
+    sourceTitle: source.title
+  })
   // New ordinary conversations also generate metadata through a separate provider request.
   const conversationPrompts = async (): ReturnType<typeof app.readFakeAgentPrompts> =>
     (await app.readFakeAgentPrompts()).filter(
@@ -352,6 +356,8 @@ test('opens imported research, asks about a recorded step and restores the ordin
   )
   expect((await conversationPrompts()).at(-1)?.prompt).not.toContain('"excerpt":')
   await expect(page.getByTestId('session-discussion-source')).toContainText('Archived analysis')
+  await replay.getByRole('slider', { name: 'Replay progress', exact: true }).focus()
+  await page.keyboard.press('End')
   await expect
     .poll(async () =>
       page.evaluate(
@@ -418,30 +424,21 @@ test('opens imported research, asks about a recorded step and restores the ordin
   await expect(page.getByRole('button', { name: 'Stop generating' })).toHaveCount(0)
   expect((await conversationPrompts()).at(-1)?.prompt).toContain('host.sessions.read()')
   expect((await conversationPrompts()).at(-1)?.prompt).toContain(
-    '"selectedSteps":[{"branchNumber":1,"stepNumber":1,"title":"What does the saved experiment show?"}]'
+    '"selectedSteps":[{"branchNumber":1,"stepNumber":2,"title":"The archived result is forty-two."}]'
   )
   const switched = await page.evaluate((request) => window.api.sessions.loadOne(request), {
     projectId,
     sessionId: target!.id
   })
   expect(switched!.runtimeContext!.sessionContext!.bindings[0].positions).toHaveLength(1)
-  expect(switched!.runtimeContext!.sessionContext!.bindings[0].positions![0].stepNumber).toBe(1)
+  expect(switched!.runtimeContext!.sessionContext!.bindings[0].positions![0].stepNumber).toBe(2)
+  expect(
+    switched!.messages.filter((message) => message.role === 'user').at(-1)?.annotations ?? []
+  ).toEqual([])
   expect(
     retainedTarget?.runtimeContext?.sessionContext?.bindings[0].positions?.[0].stepNumber
   ).toBe(2)
-  await linked.getByRole('button', { name: 'Unlink Session', exact: true }).click()
-  await expect(linked).toHaveCount(0)
-  await followUp.fill('Now discuss something unrelated.')
-  await page.getByRole('button', { name: 'Send message', exact: true }).click()
-  await expect
-    .poll(async () => (await conversationPrompts()).length)
-    .toBe(recordedPrompts.length + 2)
-  expect((await conversationPrompts()).at(-1)?.prompt).not.toContain(
-    'The user linked these Sessions for ongoing reading.'
-  )
-  await expect(page.getByRole('button', { name: 'Stop generating' })).toHaveCount(0)
-  // Wait for each committed selection before adding another. Closing the chooser alone
-  // does not mean its asynchronous draft insertion has finished.
+  // Repeated direct Ask reuses the current discussion and commits each selection before the next.
   for (const endpoint of ['Home', 'End']) {
     const activeReplay = page.getByTestId('replay-panel')
     const progress = activeReplay.getByRole('slider', { name: 'Replay progress', exact: true })
@@ -449,10 +446,12 @@ test('opens imported research, asks about a recorded step and restores the ordin
     await page.keyboard.press(endpoint)
     await expect(progress).toHaveAttribute('aria-valuenow', endpoint === 'Home' ? '0' : '5000')
     await activeReplay.getByRole('button', { name: 'Ask about this step', exact: true }).click()
-    const chooser = page.getByRole('dialog', { name: 'Ask in a conversation' })
-    await expect(chooser).toContainText(endpoint === 'Home' ? 'Step 1' : 'Step 2')
-    await chooser.getByRole('option').first().click()
-    await expect(chooser).not.toBeVisible()
+    await expect(page.getByRole('dialog', { name: 'Ask in a conversation' })).toHaveCount(0)
+    await expect(
+      page.locator(
+        `[data-session-preview][data-session-id="${target!.id}"] [data-slot="session-open-button"]`
+      )
+    ).toHaveAttribute('aria-current', 'page')
     await expect(page.locator('[data-session-discussion-source]')).toHaveCount(1)
     await expect(page.locator('[data-session-discussion-source]')).toContainText(
       endpoint === 'Home' ? 'Step 1' : '2 steps'
@@ -462,17 +461,17 @@ test('opens imported research, asks about a recorded step and restores the ordin
   await page.getByRole('button', { name: 'Send message', exact: true }).click()
   await expect
     .poll(async () => (await conversationPrompts()).length)
-    .toBe(recordedPrompts.length + 3)
+    .toBe(recordedPrompts.length + 2)
   await expect(page.getByRole('button', { name: 'Stop generating' })).toHaveCount(0)
   const compared = await page.evaluate(
     ({ projectId, sessionId }) => window.api.sessions.loadOne({ projectId, sessionId }),
     { projectId, sessionId: target!.id }
   )
   expect(compared!.runtimeContext!.sessionContext!.bindings).toHaveLength(1)
-  expect(compared!.runtimeContext!.sessionContext!.bindings[0].positions).toHaveLength(1)
+  expect(compared!.runtimeContext!.sessionContext!.bindings[0].positions).toHaveLength(2)
   await page
     .getByTestId('session-discussion-source')
-    .getByRole('button', { name: 'Discuss', exact: true })
+    .getByRole('button', { name: 'Question scope', exact: true })
     .click()
   const choices = page.getByRole('dialog').filter({ hasText: 'Selected steps' })
   await choices.getByRole('button', { name: /The archived result is forty-two/ }).click()
@@ -483,42 +482,32 @@ test('opens imported research, asks about a recorded step and restores the ordin
   // A learner can ask about the imported study without selecting a playback step.
   await page
     .getByTestId('replay-panel')
-    .getByRole('button', { name: 'Ask about this research', exact: true })
+    .getByRole('button', { name: 'Discuss the entire research', exact: true })
     .hover()
-  await expect(page.getByRole('tooltip', { name: 'Ask about this research' })).toBeVisible()
+  await expect(page.getByRole('tooltip', { name: 'Discuss the entire research' })).toBeVisible()
   await page
     .getByTestId('replay-panel')
     .screenshot({ path: testInfo.outputPath('discussion-research-entry.png') })
   await page
     .getByTestId('replay-panel')
-    .getByRole('button', { name: 'Ask about this research', exact: true })
+    .getByRole('button', { name: 'Discuss the entire research', exact: true })
     .click()
-  const wholeResearch = page.getByRole('dialog', { name: 'Ask in a conversation' })
-  await expect(wholeResearch).toContainText('Entire research')
+  await expect(page.getByRole('dialog', { name: 'Ask in a conversation' })).toHaveCount(0)
+  await expect(page.locator('[data-session-discussion-source]')).toContainText('Entire research')
   await page.screenshot({
-    path: testInfo.outputPath('discussion-entire-research-dialog.png'),
+    path: testInfo.outputPath('discussion-entire-research.png'),
     animations: 'disabled'
   })
-  await wholeResearch.getByRole('option').first().click()
-  // Repeated Ask must update the source, not accumulate snapshot IDs as steps.
+  // Repeated Ask keeps the same conversation and one whole-research selection.
   for (let repeat = 0; repeat < 2; repeat += 1) {
-    await expect(page.locator('[data-session-discussion-source]')).not.toContainText(
-      'Entire research'
-    )
     await page
       .getByTestId('replay-panel')
-      .getByRole('button', { name: 'Ask about this research', exact: true })
+      .getByRole('button', { name: 'Discuss the entire research', exact: true })
       .click()
-    await page
-      .getByRole('dialog', { name: 'Ask in a conversation' })
-      .getByRole('option')
-      .first()
-      .click()
+    await expect(page.getByRole('dialog', { name: 'Ask in a conversation' })).toHaveCount(0)
+    await expect(page.locator('[data-session-discussion-source]')).toContainText('Entire research')
   }
   await expect(page.locator('[data-session-discussion-source]')).toHaveCount(1)
-  await expect(page.locator('[data-session-discussion-source]')).not.toContainText(
-    'Entire research'
-  )
   await expect(page.locator('[data-session-discussion-source]')).not.toContainText('steps')
   // Pointer dragging, including release, does not mutate the draft or save its focus.
   const wholeBar = page.getByTestId('session-discussion-bar')
@@ -545,26 +534,89 @@ test('opens imported research, asks about a recorded step and restores the ordin
   // not immediately switch back to the old playhead.
   await page
     .getByTestId('replay-panel')
-    .getByRole('button', { name: 'Ask about this research', exact: true })
+    .getByRole('button', { name: 'Discuss the entire research', exact: true })
     .click()
-  await page
-    .getByRole('dialog', { name: 'Ask in a conversation' })
-    .getByRole('option')
-    .first()
-    .click()
+  await expect(page.getByRole('dialog', { name: 'Ask in a conversation' })).toHaveCount(0)
   await expect(page.locator('[data-session-discussion-source]')).not.toContainText('Step')
   await followUp.fill('I am new to this. Explain the research goal and where to start.')
   await page.screenshot({ path: testInfo.outputPath('discussion-learning-draft.png') })
   await page.getByRole('button', { name: 'Send message', exact: true }).click()
   await expect
     .poll(async () => (await conversationPrompts()).at(-1)?.prompt)
-    .toContain('"stepNumber":1')
+    .toContain('"scope":"session"')
   const learning = await page.evaluate(
     ({ projectId, sessionId }) => window.api.sessions.loadOne({ projectId, sessionId }),
     { projectId, sessionId: target!.id }
   )
-  expect(learning!.runtimeContext!.sessionContext!.bindings[0].scope).toBe('step')
+  expect(learning!.runtimeContext!.sessionContext!.bindings[0].scope).toBe('session')
+  expect((await conversationPrompts()).at(-1)?.prompt).not.toContain('"selectedSteps"')
   expect(learning!.runtimeContext!.sessionContext!.bindings[0].positions).toHaveLength(1)
+  await expect(page.getByRole('button', { name: 'Stop generating' })).toHaveCount(0)
+
+  // Return through the imported source after restart: durable association, not renderer cache,
+  // must bring the reader back to this same discussion without changing the source history.
+  const promptsBeforeReturn = await conversationPrompts()
+  page = await app.restart()
+  await page
+    .getByRole('region', { name: 'Projects', exact: true })
+    .getByRole('button', { name: 'Replay research', exact: true })
+    .click()
+  const sourceRow = page
+    .locator(`[data-research-id="${source.id}"] [data-slot="session-open-button"]`)
+    .first()
+  await sourceRow.click()
+  await expect(page.getByRole('dialog', { name: 'Ask in a conversation' })).toHaveCount(0)
+  await expect(
+    page.locator(
+      `[data-session-preview][data-session-id="${target!.id}"] [data-slot="session-open-button"]`
+    )
+  ).toHaveAttribute('aria-current', 'page')
+  await expect(page.getByTestId('replay-panel')).toBeVisible()
+  await expect(page.getByRole('region', { name: 'Conversation', exact: true })).toContainText(
+    'I am new to this. Explain the research goal and where to start.'
+  )
+  const resumedEditor = page.getByRole('textbox', { name: 'Ask anything', exact: true })
+  await expect(resumedEditor).toBeEditable()
+  await expect(page.getByTestId('session-discussion-draft')).toHaveCount(0)
+  await expect(page.getByTestId('research-workspace-header')).toContainText(source.title)
+  expect(await conversationPrompts()).toEqual(promptsBeforeReturn)
+  await resumedEditor.fill('Continue our earlier discussion of the same research.')
+  await page.getByRole('button', { name: 'Send message', exact: true }).click()
+  await expect
+    .poll(async () => (await conversationPrompts()).length)
+    .toBe(promptsBeforeReturn.length + 1)
+  await expect(page.getByRole('button', { name: 'Stop generating' })).toHaveCount(0)
+  const sessionsAfterReturn = await page.evaluate(
+    async (projectId) =>
+      (await window.api.sessions.loadAll()).sessions.filter((row) => row.projectId === projectId),
+    projectId
+  )
+  expect(sessionsAfterReturn.filter((row) => !row.packageOrigin).map((row) => row.id)).toEqual([
+    target!.id
+  ])
+  expect(
+    sessionsAfterReturn
+      .find((row) => row.id === target!.id)!
+      .messages.filter((message) => message.role === 'user')
+  ).toHaveLength(5)
+  const originalAfterReturn = await page.evaluate(
+    (request) => window.api.sessions.loadOne(request),
+    { projectId, sessionId: source.id }
+  )
+  expect(originalAfterReturn?.messages).toEqual(before?.messages)
+  expect(originalAfterReturn?.packageOrigin).toEqual(before?.packageOrigin)
+
+  const resumedSource = page.getByTestId('session-discussion-source')
+  await resumedSource.getByRole('button', { name: 'Unlink Session', exact: true }).click()
+  await expect(resumedSource).toHaveCount(0)
+  await resumedEditor.fill('Now discuss something unrelated.')
+  await page.getByRole('button', { name: 'Send message', exact: true }).click()
+  await expect
+    .poll(async () => (await conversationPrompts()).length)
+    .toBe(promptsBeforeReturn.length + 2)
+  expect((await conversationPrompts()).at(-1)?.prompt).not.toContain(
+    'Current discussion focus for this turn; this replaces any earlier focus.'
+  )
 })
 
 test('previews recorded DOCX inside replay and routes its iframe menu at non-default zoom', async ({

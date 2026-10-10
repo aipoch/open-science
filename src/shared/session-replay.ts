@@ -1,3 +1,4 @@
+import { persistedChatSessionCodec } from './session-persistence'
 import { z } from 'zod'
 import { defineApplicationCommandContract, validationCodec } from './application-command-contract'
 
@@ -14,6 +15,8 @@ export const sessionReplayRequestSchema = z
   })
   .strict()
 export type SessionReplayRequest = z.infer<typeof sessionReplayRequestSchema>
+const sessionDiscussionMatchSchema = z.object({ sessionId: identity }).strict().nullable()
+export type SessionDiscussionMatch = z.infer<typeof sessionDiscussionMatchSchema>
 export const sessionReplayListRequestSchema = z.object({ projectId: identity }).strict()
 export type SessionReplayListRequest = z.infer<typeof sessionReplayListRequestSchema>
 export const replayViewStateSchema = z
@@ -195,7 +198,25 @@ export const unlinkSessionReadingRequestSchema = z
   .strict()
 export type UnlinkSessionReadingRequest = z.infer<typeof unlinkSessionReadingRequestSchema>
 
+export const setResearchMembershipRequestSchema = z
+  .object({
+    projectId: identity,
+    sessionId: identity,
+    expectedRevision: z.number().int().nonnegative(),
+    source: sessionReplayRequestSchema.extend({ importId: identity }).strict().optional()
+  })
+  .strict()
+export type SetResearchMembershipRequest = z.infer<typeof setResearchMembershipRequestSchema>
+
 export const sessionReplayCommandContracts = {
+  setResearchMembership: defineApplicationCommandContract(
+    validationCodec(z.tuple([setResearchMembershipRequestSchema])),
+    persistedChatSessionCodec
+  ),
+  findDiscussion: defineApplicationCommandContract(
+    validationCodec(z.tuple([sessionReplayRequestSchema])),
+    validationCodec(sessionDiscussionMatchSchema)
+  ),
   unlinkSession: defineApplicationCommandContract(
     validationCodec(z.tuple([unlinkSessionReadingRequestSchema])),
     validationCodec(z.void())

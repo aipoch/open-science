@@ -295,6 +295,7 @@ export const createSessionMessageGraphOwner = <
     attribution,
     cwd,
     projectId,
+    researchMembership,
     permissionProfile,
     agentFrameworkId,
     agentBackendId,
@@ -467,6 +468,7 @@ export const createSessionMessageGraphOwner = <
       const newSession: ChatSession = {
         id: sessionId,
         projectId: projectId ?? '',
+        ...(researchMembership ? { researchMembership: { ...researchMembership } } : {}),
         isPending: isPending ? true : undefined,
         delegationPolicyAuthorityPending:
           isPending && delegationPolicy !== undefined ? true : undefined,

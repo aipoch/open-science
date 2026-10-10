@@ -3,8 +3,10 @@ import {
   unlinkSessionReadingRequestSchema,
   type UnlinkSessionReadingRequest
 } from '../../shared/session-replay'
-import type { PersistedChatSession } from '../../shared/session-persistence'
+import type { PersistedChatSession, SessionSummary } from '../../shared/session-persistence'
 import {
+  setResearchMembershipRequestSchema,
+  type SetResearchMembershipRequest,
   sessionReplayRequestSchema,
   sessionReplayListRequestSchema,
   saveSessionReplayProgressRequestSchema,
@@ -16,6 +18,7 @@ import {
   type SessionReplayRequest,
   type SessionReplayListRequest,
   type SessionReplaySnapshot,
+  type SessionDiscussionMatch,
   type SaveSessionReplayProgressRequest,
   type SaveSessionReplayProgressResult
 } from '../../shared/session-replay'
@@ -25,6 +28,16 @@ type SessionRead =
   { status: 'found'; session: PersistedChatSession } | { status: 'missing' | 'unreadable' }
 export type SessionReplaySessions = {
   read(projectId: string, sessionId: string): Promise<SessionRead>
+  list(): Promise<
+    ReadonlyArray<
+      Pick<
+        SessionSummary,
+        'id' | 'projectId' | 'updatedAt' | 'researchMembership' | 'importedResearch' | 'archivedAt'
+      >
+    >
+  >
+  setResearchMembership?(request: SetResearchMembershipRequest): Promise<PersistedChatSession>
+  readCurrent(projectId: string, sessionId: string): Promise<PersistedChatSession | undefined>
 }
 type DataRootAdmission = <T>(operation: () => Promise<T>) => Promise<T>
 
@@ -35,6 +48,19 @@ export class SessionReplayService {
     private readonly withDataRootWrite: DataRootAdmission = (operation) => operation(),
     private readonly reading?: SessionReadingOwner
   ) {}
+
+  async setResearchMembership(input: SetResearchMembershipRequest): Promise<PersistedChatSession> {
+    const request = setResearchMembershipRequestSchema.parse(input)
+    if (!this.sessions.setResearchMembership) throw new Error('Research membership is unavailable.')
+    return this.withDataRootWrite(async () => {
+      const client = await this.repository.getClient()
+      const project = await client.project.findFirst({
+        where: { id: request.projectId, deletedAt: null, archivedAt: null }
+      })
+      if (!project) throw new Error('The discussion Project is unavailable.')
+      return this.sessions.setResearchMembership!(request)
+    })
+  }
 
   async unlinkSession(input: UnlinkSessionReadingRequest): Promise<void> {
     const request = unlinkSessionReadingRequestSchema.parse(input)
@@ -63,6 +89,54 @@ export class SessionReplayService {
       ...(source.status === 'found' ? { sourceTitle: source.session.title } : {}),
       ...(replayViewSnapshot(row) ? { view: replayViewSnapshot(row) } : {})
     }
+  }
+
+  async findDiscussion(input: SessionReplayRequest): Promise<SessionDiscussionMatch> {
+    const request = sessionReplayRequestSchema.parse(input)
+    const source = await this.get(request)
+    if (source.sourceStatus !== 'available') return null
+
+    const imported = await this.sessions.read(request.projectId, request.sourceSessionId)
+    if (imported.status !== 'found' || !imported.session.packageOrigin) return null
+    const importId = imported.session.packageOrigin.importId
+    // Grouping is a stable local relationship. Reading/quoting a source never enrolls an ordinary
+    // Session, and startup navigation only opens JSON for actual projected discussion candidates.
+    const matches = (membership: PersistedChatSession['researchMembership']): boolean =>
+      membership?.sourceProjectId === request.projectId &&
+      membership.sourceSessionId === request.sourceSessionId &&
+      membership.sourceImportId === importId
+    const candidates = (await this.sessions.list())
+      .filter(
+        ({ projectId, id, archivedAt, importedResearch, researchMembership }) =>
+          projectId === request.projectId &&
+          id !== request.sourceSessionId &&
+          archivedAt === undefined &&
+          !importedResearch &&
+          matches(researchMembership)
+      )
+      .sort((left, right) => right.updatedAt - left.updatedAt || left.id.localeCompare(right.id))
+    for (const candidate of candidates) {
+      const session = await this.sessions.readCurrent(request.projectId, candidate.id)
+      if (
+        !session ||
+        session.id !== candidate.id ||
+        session.projectId !== request.projectId ||
+        session.packageOrigin ||
+        session.archivedAt !== undefined ||
+        !matches(session.researchMembership)
+      )
+        continue
+      // A source may have been removed/reimported while the candidate was being read.
+      const currentSource = await this.sessions.read(request.projectId, request.sourceSessionId)
+      if (
+        currentSource.status !== 'found' ||
+        currentSource.session.archivedAt !== undefined ||
+        currentSource.session.packageOrigin?.importId !== importId
+      )
+        return null
+      return { sessionId: session.id }
+    }
+    return null
   }
 
   async list(input: SessionReplayListRequest): Promise<SessionReplaySnapshot[]> {
