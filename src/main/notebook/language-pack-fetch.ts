@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promise
 import { join } from 'node:path'
 
 import type { DownloadProgress } from '../../shared/download-progress'
-import { netFetchStandard } from '../skills/net-fetch'
+import { netFetchStandard } from '../network-fetch'
 import { resilientDownload } from '../net/resilient-download'
 
 import {

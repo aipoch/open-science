@@ -1,4 +1,5 @@
 import { createRequire } from 'node:module'
+import { createSkillApplicationModule, type SkillApplicationDeps } from '../skills/application'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -31,7 +32,7 @@ interface ConnectorApplicationHarness {
   mcpClientManager: TestDoubles
   connectorApprovals: TestDoubles
   skillImportApprovals: TestDoubles
-  deps: ConnectorApplicationDeps
+  deps: ConnectorApplicationDeps & SkillApplicationDeps
 }
 
 const createHarness = (): ConnectorApplicationHarness => {
@@ -78,8 +79,9 @@ const createHarness = (): ConnectorApplicationHarness => {
     cancelSession: vi.fn(),
     cancelAll: vi.fn()
   }
-  const deps: ConnectorApplicationDeps = {
-    settings: settings as unknown as ConnectorApplicationDeps['settings'],
+  const deps: ConnectorApplicationDeps & SkillApplicationDeps = {
+    settings: settings as unknown as ConnectorApplicationDeps['settings'] &
+      SkillApplicationDeps['settings'],
     skillsDir: '/tmp/skills',
     openExternal: vi.fn(),
     notifyStatusChanged: vi.fn(),
@@ -92,7 +94,7 @@ const createHarness = (): ConnectorApplicationHarness => {
     broadcastSkillImportApproval: vi.fn(),
     onSkillImportSettled: vi.fn(),
     onSkillImportLifecycleSettled: vi.fn(),
-    uploads: {} as ConnectorApplicationDeps['uploads'],
+    uploads: {} as SkillApplicationDeps['uploads'],
     fetchImpl: vi.fn() as unknown as typeof fetch,
     resolveApiKey: vi.fn(),
     canRequestCredential: vi.fn().mockReturnValue(true),
@@ -104,7 +106,7 @@ const createHarness = (): ConnectorApplicationHarness => {
       ConnectorApplicationDeps['connectorApprovals']
     >,
     skillImportApprovals: skillImportApprovals as unknown as NonNullable<
-      ConnectorApplicationDeps['skillImportApprovals']
+      SkillApplicationDeps['skillImportApprovals']
     >
   }
   return { settings, mcpClientManager, connectorApprovals, skillImportApprovals, deps }
@@ -233,8 +235,7 @@ describe('Connector application composition', () => {
   )
 
   it('reuses fakes and closes the MCP manager through runtime disposal', async () => {
-    const { settings, mcpClientManager, connectorApprovals, skillImportApprovals, deps } =
-      createHarness()
+    const { settings, mcpClientManager, connectorApprovals, deps } = createHarness()
     const runtime = await composeApplicationRuntime(async (modules) => ({
       application: await modules.add(deps, createConnectorApplicationModule)
     }))
@@ -242,10 +243,8 @@ describe('Connector application composition', () => {
 
     expect(application.mcpClientManager).toBe(mcpClientManager)
     expect(application.connectorApprovals).toBe(connectorApprovals)
-    expect(application.skillImportApprovals).toBe(skillImportApprovals)
     expect(application.connectorService).toBeDefined()
     expect(application.runtimeSettings).toBeDefined()
-    expect(application.skillImporter).toBeDefined()
     expect(settings.setCustomServerRuntimeProjectionProvider).toHaveBeenCalledOnce()
     expect(settings.setCustomServerAuthenticator).toHaveBeenCalledOnce()
     expect(settings.setDeviceCredentialAuthenticator).toHaveBeenCalledOnce()
@@ -421,7 +420,7 @@ describe('Connector application composition', () => {
       isCancelled: () => false
     })
     const runtime = await composeApplicationRuntime(async (modules) => ({
-      application: await modules.add(deps, createConnectorApplicationModule)
+      application: await modules.add(deps, createSkillApplicationModule)
     }))
 
     await expect(
@@ -440,6 +439,7 @@ describe('Connector application composition', () => {
     expect(forwardedSignal.aborted).toBe(true)
 
     await runtime.dispose()
+    expect(skillImportApprovals.cancelAll).toHaveBeenCalledOnce()
   })
 
   it('runs anonymous OpenAlex calls when no local credential owner is available', async () => {

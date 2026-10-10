@@ -4,7 +4,7 @@ import {
   normalizeLiteratureIdentifierValue,
   type LiteratureFullTextCandidate
 } from '../../shared/literature'
-import { netFetchStandard } from '../skills/net-fetch'
+import { netFetchStandard } from '../network-fetch'
 import { fullTextUrl } from './full-text-download'
 
 type Candidate = Omit<LiteratureFullTextCandidate, 'id'>

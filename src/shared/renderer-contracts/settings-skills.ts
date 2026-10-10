@@ -10,7 +10,7 @@ import type {
   SkillMarketplaceInstallRequest,
   SkillMarketplaceInstallResult,
   SkillMarketplaceResult
-} from '../skill-marketplace'
+} from '@aipoch/skills/document'
 
 import type {
   SetConversationSkillImportEnabledRequest,

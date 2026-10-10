@@ -23,7 +23,7 @@ import {
   validateSpecialistDescription,
   validateSpecialistSystemPrompt
 } from '../../../shared/specialist'
-import { parseSkillDocument } from '../../../shared/skill-frontmatter'
+import { parseSkillDocument } from '@aipoch/skills/document'
 import type { SkillSource } from '../../../shared/settings'
 import { createLogger } from '@aipoch/diagnostics/node'
 import type { SpecialistOrigin, StoredSpecialist, StoredSpecialists } from '../types'

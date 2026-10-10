@@ -5,10 +5,7 @@ import { ArrowLeft, ChevronDown, Download, ListChecks, LoaderCircle, RefreshCw }
 import { Button } from '@/components/ui/button'
 import { ErrorNotice } from '@/components/error-notice'
 import { SettingsSegmentedControl } from './SettingsSegmentedControl'
-import type {
-  SkillMarketplaceBatch,
-  SkillMarketplaceBatchRequest
-} from '../../../../shared/skill-marketplace'
+import type { SkillMarketplaceBatch, SkillMarketplaceBatchRequest } from '@aipoch/skills/document'
 
 export type MarketplaceBatchMode = 'install' | 'update' | undefined
 

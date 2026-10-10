@@ -11,7 +11,7 @@ import {
 } from '../../../shared/specialist-package'
 import { validateSpecialistDirectory } from './directory-adapter'
 import { validateSpecialistZip } from './zip-adapter'
-import { UserSkillSpecialistPackageAdapter } from '../../skills/specialist-package-adapter'
+import { UserSkillSpecialistPackageAdapter } from '@aipoch/skills'
 
 const fixtureRoot = join(import.meta.dirname, 'test-fixtures', 'valid')
 const invalidFixtureRoot = join(import.meta.dirname, 'test-fixtures', 'invalid')

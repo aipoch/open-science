@@ -3,7 +3,7 @@ import '@/pages/settings/skill-marketplace.css'
 import { createRoot } from 'react-dom/client'
 import { initI18n, prepareI18nLocale } from '@/i18n'
 import { SkillMarketplaceBatchControls } from '@/pages/settings/SkillMarketplaceBatch'
-import type { SkillMarketplaceBatch } from '../../../src/shared/skill-marketplace'
+import type { SkillMarketplaceBatch } from '@aipoch/skills/document'
 
 const params = new URLSearchParams(location.search)
 const failed = params.has('failed')

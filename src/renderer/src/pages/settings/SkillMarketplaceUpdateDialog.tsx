@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { DiffViewer } from '@/components/diff-viewer'
 import { ErrorNotice } from '@/components/error-notice'
 import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
-import type { SkillMarketplaceUpdatePreview } from '../../../../shared/skill-marketplace'
+import type { SkillMarketplaceUpdatePreview } from '@aipoch/skills/document'
 import { SkillReplacementSummary } from './SkillImportCandidatePreview'
 
 export function SkillMarketplaceUpdateDialog({

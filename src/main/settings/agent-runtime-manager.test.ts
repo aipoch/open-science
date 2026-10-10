@@ -13,7 +13,7 @@ import type { ClaudeDetectDeps } from './claude-detect'
 import type { CodexDetectDeps } from './codex-detect'
 import type { OpencodeDetectDeps } from './opencode-detect'
 import type { ProviderPreflightAccess } from './agent-runtime-manager'
-import type { SkillCatalogModule } from './skill-catalog'
+import type { SkillCatalogModule } from '../skills/catalog'
 
 vi.mock('electron', () => ({
   safeStorage: {

@@ -10,9 +10,9 @@ import type {
   SpecialistPackageCatalogSnapshot,
   SpecialistPackageSkillPlan
 } from '../../../shared/specialist-package'
-import { UserSkillSpecialistPackageAdapter } from '../../skills/specialist-package-adapter'
+import { UserSkillSpecialistPackageAdapter } from '@aipoch/skills'
 import { UserSkillRepository } from '../../skills/user-skill-repository'
-import type { FetchLike } from '../../skills/github-import'
+import type { FetchLike } from '@aipoch/skills/sources'
 import { SettingsRepository } from '../../settings/repository'
 import { SpecialistRepository } from '../repository'
 import { SpecialistService } from '../service'
@@ -2681,12 +2681,9 @@ describe('SpecialistPackageService', () => {
       /recovery failed/i
     )
     const unrelated = await new SpecialistService(repository).create({ name: 'Unrelated Edit' })
-    const guardedUserSkills = new UserSkillRepository(
-      storageDir,
-      undefined,
-      undefined,
-      (operation) => recoveryService.withRecoveryBarrier(operation)
-    )
+    const guardedUserSkills = new UserSkillRepository(storageDir, {
+      withExternalRecoveryBarrier: (operation) => recoveryService.withRecoveryBarrier(operation)
+    })
 
     await expect(
       guardedUserSkills.createPersonal({

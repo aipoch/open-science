@@ -1,3 +1,4 @@
+import { validateSkillHelper } from './helper-validation'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -16,7 +17,7 @@ import {
   RegisteredSkillHelperCatalog,
   type RegisteredSkillPackage
 } from './registered-helper-catalog'
-import { inspectSkillPackage } from './skill-package-inspection'
+import { inspectSkillPackage } from '@aipoch/skills/sources'
 
 const roots: string[] = []
 
@@ -101,7 +102,9 @@ describe('RegisteredSkillHelperCatalog managed Python validation', () => {
     await mkdir(join(prefix, 'bin'), { recursive: true })
     await writeFile(managedPython, '')
 
-    await expect(inspectSkillPackage(packageRoot, { storageRoot })).resolves.toHaveLength(3)
+    await expect(
+      inspectSkillPackage(packageRoot, { storageRoot, validateHelper: validateSkillHelper })
+    ).resolves.toHaveLength(3)
     expect(validateNotebookHelperExports).toHaveBeenCalledWith(
       'managed-helper-function',
       'def public_value():\n    return 1\n',

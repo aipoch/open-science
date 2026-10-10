@@ -16,8 +16,8 @@
     "lint": "eslint --cache .",
     "pretest": "node scripts/check-prisma-client.mjs && npm run build:packages",
     "test": "vitest run",
-    "test:module": "node scripts/ci/module-test-impact.mjs module",
-    "test:affected": "node scripts/ci/module-test-impact.mjs affected",
+    "test:module": "npm run build:skills && node scripts/ci/module-test-impact.mjs module",
+    "test:affected": "npm run build:skills && node scripts/ci/module-test-impact.mjs affected",
     "test:affected:explain": "node scripts/ci/module-test-impact.mjs affected --explain",
     "build:e2e": "npm run build:backend && npm run stage:node-runtime && npm run build:web && node --max-old-space-size=4096 node_modules/electron-vite/bin/electron-vite.js build",
     "test:e2e": "playwright test",
@@ -41,7 +41,7 @@
     "eval:reviewer:live": "electron scripts/reviewer-model-evaluation-live.mjs",
     "typecheck:node": "npm run build:packages && node node_modules/typescript-native/bin/tsc --noEmit -p tsconfig.node.json --composite false && npm run typecheck:sandbox",
     "typecheck:sandbox": "npm --prefix packages/notebook-network-sandbox run typecheck",
-    "typecheck:web": "node node_modules/typescript-native/bin/tsc --noEmit -p tsconfig.web.json --composite false",
+    "typecheck:web": "npm run build:skills && node node_modules/typescript-native/bin/tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "gen:web-api-map": "node scripts/generate-web-api-map.mjs",
     "check:web-api-map": "node scripts/generate-web-api-map.mjs --check",
@@ -49,7 +49,7 @@
     "db:schema:check": "node scripts/generate-database-schema.mjs --check",
     "check:cli-package": "npm pack ./packages/open-science --dry-run --json --cache ./node_modules/.cache/npm-pack",
     "check:claude-acp-patch": "node scripts/check-claude-acp-patch.mjs",
-    "build:web": "npm run gen:web-api-map && node --max-old-space-size=8192 node_modules/vite/bin/vite.js build --config vite.web.config.ts",
+    "build:web": "npm run build:skills && npm run gen:web-api-map && node --max-old-space-size=8192 node_modules/vite/bin/vite.js build --config vite.web.config.ts",
     "start": "electron-vite preview",
     "dev": "npm run build:backend -- --development && npm run stage:node-runtime && electron-vite dev",
     "dev:native-send-now": "node scripts/dev-native-send-now.cjs",
@@ -83,13 +83,15 @@
     "build:connectors": "npm --prefix packages/connector-core run build && npm --prefix packages/connector-builtins run build && npm run build --prefix packages/connector-mcp-client",
     "check:connector-packages": "node scripts/check-connector-packages.mjs",
     "build:diagnostics": "npm --prefix packages/diagnostics run build",
-    "build:packages": "npm run build:connectors && npm run build:diagnostics && npm run build:pdf-packages",
+    "build:packages": "npm run build:connectors && npm run build:diagnostics && npm run build:pdf-packages && npm run build:skills",
     "check:diagnostics-package": "node scripts/check-diagnostics-package.mjs",
     "prebuild:web": "npm run build:diagnostics && npm run build:pdf-packages",
     "pretypecheck:web": "npm run build:diagnostics && npm run build:pdf-packages",
     "build:pdf-structure": "npm --prefix packages/pdf-structure run build",
     "build:pdf-packages": "npm --prefix packages/pdf-structure run build && npm --prefix packages/pdf-translation run build",
-    "check:pdf-packages": "node scripts/check-package-isolation.mjs --packages=pdf-structure,pdf-translation"
+    "check:pdf-packages": "node scripts/check-package-isolation.mjs --packages=pdf-structure,pdf-translation",
+    "build:skills": "npm --prefix packages/skills run build",
+    "test:skills": "npm --prefix packages/skills test"
   },
   "dependencies": {
     "@agentclientprotocol/claude-agent-acp": "^0.70.0",
@@ -143,7 +145,8 @@
     "@aipoch/connector-mcp-client": "file:packages/connector-mcp-client",
     "@aipoch/diagnostics": "file:packages/diagnostics",
     "@aipoch/pdf-structure": "file:packages/pdf-structure",
-    "@aipoch/pdf-translation": "file:packages/pdf-translation"
+    "@aipoch/pdf-translation": "file:packages/pdf-translation",
+    "@aipoch/skills": "file:packages/skills"
   },
   "overrides": {
     "@huggingface/transformers": {

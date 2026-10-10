@@ -19,7 +19,7 @@ import {
   isSupportedClaudeCliVersion
 } from '../../shared/claude-runtime'
 import { findPythonCommand, type PythonCommand } from '../notebook/python-command'
-import { netFetchStandard } from '../skills/net-fetch'
+import { netFetchStandard } from '../network-fetch'
 import { getManagedPlatform } from './managed-claude'
 import { detectAvx2, resolveOpencodePlatform } from './managed-opencode'
 import { resolveManagedCodexPlatform } from './managed-codex'

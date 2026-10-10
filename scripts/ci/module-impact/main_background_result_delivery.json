@@ -187,7 +187,7 @@
       "src/main/session-plan/production-plan-service.test.ts",
       "src/main/settings/backend-resolver.test.ts",
       "src/main/settings/bootstrap.integration.test.ts",
-      "src/main/settings/skill-catalog.registered-helpers.test.ts",
+      "src/main/skills/catalog.registered-helpers.test.ts",
       "src/main/side-chat/ipc.test.ts",
       "src/main/side-chat/runtime-owner.test.ts",
       "src/main/skills/registered-helper-catalog.test.ts",

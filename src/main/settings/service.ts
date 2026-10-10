@@ -1,3 +1,4 @@
+import { attachSkillDiagnostics } from '../skills/diagnostics'
 import type {
   PrivateDestinationRequest,
   PrivateDestinationReview
@@ -12,7 +13,7 @@ import { homedir } from 'node:os'
 import { z } from 'zod'
 import { MarketplaceInstallConflict } from '../skills/user-skill-repository'
 import { SkillMarketplaceService } from '../skills/marketplace-service'
-import { SkillMarketplaceInstallQueue } from '../skills/marketplace-install-queue'
+import { SkillMarketplaceInstallQueue } from '@aipoch/skills/sources'
 import type {
   SkillMarketplaceCatalog,
   SkillMarketplaceCatalogRequest,
@@ -22,7 +23,7 @@ import type {
   SkillMarketplaceInstallRequest,
   SkillMarketplaceInstallResult,
   SkillMarketplaceResult
-} from '../../shared/skill-marketplace'
+} from '@aipoch/skills/document'
 import { readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
@@ -158,7 +159,7 @@ import type { LocalShellRuntimeMutation } from './local-shell-runtime-mutation'
 import { SettingsPreferencesModule, type SetDataRootOptions } from './preferences'
 import { buildSettingsSnapshot } from './settings-view'
 import { NotebookRuntimeSettingsModule } from './notebook-runtime-settings'
-import { SkillCatalogModule, type SkillCatalogEntry } from './skill-catalog'
+import { SkillCatalogModule, type SkillCatalogEntry } from '../skills/catalog'
 import { ConnectorSettingsModule, type CustomServerSecurityChangeGuard } from './connector-settings'
 import type {
   CustomServerRuntimeProjectionProvider,
@@ -176,15 +177,15 @@ import {
 } from './backend-resolver'
 import { SkillRegistry, type BundledSkill } from '../skills/registry'
 import { UserSkillRepository } from '../skills/user-skill-repository'
-import { SAFE_SKILL_NAME } from '../skills/skill-name'
-import { parseFrontmatter } from '../skills/frontmatter'
-import { SKILL_IMPORT_LIMITS } from '../skills/import-limits'
+import { SAFE_SKILL_NAME } from '@aipoch/skills/document'
+import { parseFrontmatter } from '@aipoch/skills/document'
+import { SKILL_IMPORT_LIMITS } from '@aipoch/skills/sources'
 import { CONNECTOR_CATALOG } from '../connectors/catalog'
 import { ALL_CONNECTOR_IDS } from '../connectors/registry'
 import { renderSkillDoc } from '../connectors/skill-doc'
 import { connectorSkillSourceDir } from '../connectors/provision'
 import type { SkillExportArchive } from '../skills/export'
-import type { FetchLike } from '../skills/github-import'
+import type { FetchLike } from '@aipoch/skills/sources'
 import type { StoredConnectors, StoredCustomMcpOAuthState, StoredSettings } from './types'
 import type { CodexAuthControllerPort } from './codex-auth'
 import { createSettingsIdSequence } from './id-sequence'
@@ -484,6 +485,8 @@ class SettingsService {
     return this.installCoordinator.holdAdmission()
   }
 
+  private readonly detachSkillDiagnostics: () => void
+
   async dispose(): Promise<void> {
     const outcomes = await Promise.allSettled([
       this.skillMarketplaceQueue.dispose(),
@@ -491,6 +494,7 @@ class SettingsService {
       this.classification.flushUsage(false),
       this.runtimeManager.dispose()
     ])
+    this.detachSkillDiagnostics()
     for (const outcome of outcomes) {
       if (outcome.status === 'rejected') throw outcome.reason
     }
@@ -613,6 +617,7 @@ class SettingsService {
       skillRuntimeMcpEntryPath: options.skillRuntimeMcpEntryPath ?? process.argv[1] ?? '',
       getXaiOAuthAccessToken: (forceRefresh) => this.providers.getXaiOAuthAccessToken(forceRefresh)
     })
+    this.detachSkillDiagnostics = attachSkillDiagnostics()
     this.scenarioModels = createScenarioModels(
       this.repository,
       this.providers,

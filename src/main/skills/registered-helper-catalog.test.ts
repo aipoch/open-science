@@ -1,3 +1,4 @@
+import { validateSkillHelper } from './helper-validation'
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -141,7 +142,7 @@ describe('RegisteredSkillHelperCatalog', () => {
         helperModules: injections,
         code: 'print(plotted_value())'
       })
-      expect(result).toMatchObject({ status: 'completed', stdout: '42\n' })
+      expect(result, JSON.stringify(result)).toMatchObject({ status: 'completed', stdout: '42\n' })
     } finally {
       await executor.shutdown()
     }
@@ -593,8 +594,10 @@ describe('RegisteredSkillHelperCatalog', () => {
     }
     await writeFile(join(root, 'open-science.json'), JSON.stringify(descriptor))
 
-    const { inspectSkillPackage } = await import('./skill-package-inspection')
-    await expect(inspectSkillPackage(root)).rejects.toThrow('callable export')
+    const { inspectSkillPackage } = await import('@aipoch/skills/sources')
+    await expect(
+      inspectSkillPackage(root, { validateHelper: validateSkillHelper })
+    ).rejects.toThrow('callable export')
   })
 })
 

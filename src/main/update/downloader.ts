@@ -1,6 +1,6 @@
 import type { DownloadProgress } from '../../shared/download-progress'
 import type { PlatformDownload } from '../../shared/update'
-import { netFetchStandard } from '../skills/net-fetch'
+import { netFetchStandard } from '../network-fetch'
 import { resilientDownload } from '../net/resilient-download'
 
 export { DownloadChecksumError } from '../net/resilient-download'

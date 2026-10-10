@@ -1,14 +1,15 @@
+import { createRequire } from 'node:module'
 import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import { mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 import { buildSync } from 'esbuild'
 import { strToU8, zipSync } from 'fflate'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { SpecialistPackageCatalogSnapshot } from '../../../shared/specialist-package'
-import { UserSkillSpecialistPackageAdapter } from '../../skills/specialist-package-adapter'
+import { UserSkillSpecialistPackageAdapter } from '@aipoch/skills'
 import { UserSkillRepository } from '../../skills/user-skill-repository'
 import { SpecialistRepository } from '../repository'
 import { SettingsRepository } from '../../settings/repository'
@@ -240,7 +241,7 @@ describe('reported Specialist package regressions', () => {
       const original = existing ? await readFile(live, 'utf8') : undefined
       const bundle = join(storageDir, 'adapter.cjs')
       buildSync({
-        entryPoints: [resolve('src/main/skills/specialist-package-adapter.ts')],
+        entryPoints: [createRequire(import.meta.url).resolve('@aipoch/skills')],
         outfile: bundle,
         bundle: true,
         platform: 'node',

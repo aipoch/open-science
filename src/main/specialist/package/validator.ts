@@ -12,7 +12,7 @@ import {
   type SpecialistPackageValidationPlan,
   type SpecialistPackageValidationResult
 } from '../../../shared/specialist-package'
-import { parseSkillDocument } from '../../../shared/skill-frontmatter'
+import { parseSkillDocument } from '@aipoch/skills/document'
 import {
   validateSpecialistDescription,
   validateSpecialistDisplayName,

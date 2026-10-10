@@ -13,16 +13,13 @@ import type {
   SkillPackageFileInfo,
   SkillReference
 } from '../../../../shared/settings'
-import { serializePersonalSkillDocument } from '../../../../shared/personal-skill-document'
-import {
-  isSkillPackageBudgetedPath,
-  SKILL_IMPORT_LIMITS
-} from '../../../../shared/skill-import-limits'
-import { parseSkillDocument } from '../../../../shared/skill-frontmatter'
+import { serializePersonalSkillDocument } from '@aipoch/skills/document'
+import { isSkillPackageBudgetedPath, SKILL_IMPORT_LIMITS } from '@aipoch/skills/document'
+import { parseSkillDocument } from '@aipoch/skills/document'
 import { ErrorNotice } from '@/components/error-notice'
 import { FileDropOverlay } from '@/components/FileDropOverlay'
 import { Button } from '@/components/ui/button'
-import { isSafeSkillReferenceName } from '../../../../shared/skill-reference-name'
+import { isSafeSkillReferenceName } from '@aipoch/skills/document'
 import { Input } from '@/components/ui/input'
 import {
   dialogBodyClassName,

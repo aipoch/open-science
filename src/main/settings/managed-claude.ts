@@ -10,7 +10,7 @@ import type { ReadableStream as NodeReadableStream } from 'node:stream/web'
 import { createGunzip } from 'node:zlib'
 
 import type { ClaudeInstallEvent, ClaudeInstallResult } from '../../shared/settings'
-import { netFetchWithManualRedirect } from '../skills/net-fetch'
+import { netFetchWithManualRedirect } from '../network-fetch'
 
 // App-managed Claude installer. The `@anthropic-ai/claude-code` npm package is a thin wrapper whose
 // real payload is a per-platform native binary shipped as an optionalDependency

@@ -247,7 +247,7 @@
       "src/main/side-chat/ipc.test.ts",
       "src/main/acp/prompt-turn-workflow.test.ts",
       "src/main/acp/turn-skill-owner.test.ts",
-      "src/main/settings/skill-catalog.test.ts",
+      "src/main/skills/catalog.test.ts",
       "src/main/acp/prompt-outcome-finalizer.test.ts",
       "src/main/acp/prompt-preparation-owner.test.ts",
       "src/main/acp/restricted-inference-runner.test.ts",

@@ -4,7 +4,7 @@ import type {
 } from '../../shared/settings'
 import { isXaiSubscriptionProvider } from '../../shared/settings'
 import { resolveVendorModelsUrl } from '../../shared/provider-registry'
-import { netFetchStandard } from '../skills/net-fetch'
+import { netFetchStandard } from '../network-fetch'
 import { listProviderModels } from './list-models'
 import type { ResolvedProvider } from './provider-env'
 import type { SettingsRepository } from './repository'

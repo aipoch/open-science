@@ -210,7 +210,7 @@
       "src/main/settings/service.connectors.test.ts",
       "src/main/settings/service.providers.test.ts",
       "src/main/settings/service.test.ts",
-      "src/main/settings/skill-catalog.registered-helpers.test.ts",
+      "src/main/skills/catalog.registered-helpers.test.ts",
       "src/main/settings/workflows.test.ts",
       "src/main/settings/workflows/connectors-diagnostic.test.ts",
       "src/main/side-chat/ipc.test.ts",

@@ -6,7 +6,7 @@ const fetchMock = vi.fn()
 const requestMock = vi.fn()
 vi.mock('electron', () => ({ net: { fetch: fetchMock, request: requestMock } }))
 
-const { netFetch, netFetchWithManualRedirect } = await import('./net-fetch-electron')
+const { netFetch, netFetchWithManualRedirect } = await import('../network-fetch-electron')
 
 function outgoing(): EventEmitter & {
   end: ReturnType<typeof vi.fn>

@@ -6,7 +6,7 @@ import { join } from 'node:path'
 
 import { LOCAL_MODEL_NOT_INSTALLED, type LocalModelSnapshot } from '../../shared/local-models'
 import { DownloadChecksumError, resilientDownload } from '../net/resilient-download'
-import { netFetchStandard } from '../skills/net-fetch'
+import { netFetchStandard } from '../network-fetch'
 import { readFileWithinLimit, writeDurableJsonFile } from '../storage/durable-json-file'
 import { acquireDataRootWriter } from '../storage/migration-state'
 import { resolveDataRoot } from '../storage-root'

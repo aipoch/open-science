@@ -24,7 +24,7 @@ import { encryptKey, hardenKeyMask, maskKey, tryDecryptKey } from './crypto'
 import type { SettingsRepository } from './repository'
 import { fetchProviderRequest } from './provider-fetch'
 import { readBoundedResponseText } from './bounded-response'
-import { netFetchStandard } from '../skills/net-fetch'
+import { netFetchStandard } from '../network-fetch'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import {
   boundedSkillSelectorCatalog,

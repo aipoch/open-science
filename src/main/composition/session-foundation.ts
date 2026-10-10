@@ -21,7 +21,7 @@ import {
 import { createDefaultSessionRepository } from '../session-persistence/ipc'
 import { SettingsService } from '../settings/service'
 import { SideChatRuntimeOwner } from '../side-chat/runtime-owner'
-import { UserSkillCatalogObserver } from '../skills/user-skill-catalog-observer'
+import { UserSkillCatalogObserver } from '@aipoch/skills'
 import { resolveConfigRoot, resolveDataRoot } from '../storage-root'
 
 export async function composeSessionFoundation({

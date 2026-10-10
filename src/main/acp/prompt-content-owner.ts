@@ -41,10 +41,7 @@ import {
 } from '../uploads/attachment-media'
 import type { ManagedFileVersionService } from '../managed-file-versions/service'
 import type { UploadRepository } from '../uploads/repository'
-import {
-  isImportableSkillArchive,
-  isImportableSkillArchivePath
-} from '../skills/skill-archive-sniffer'
+import { isImportableSkillArchive, isImportableSkillArchivePath } from '@aipoch/skills/sources'
 import {
   ATTACHMENT_PREVIEW_BYTES,
   MAX_EMBEDDED_TEXT_UPLOAD_BYTES,

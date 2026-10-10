@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { AgentHomeSkillView, SkillImportPreviewContent } from '../../../../shared/settings'
 import { SkillsPanel } from './SkillsPanel'
-import { SKILL_IMPORT_LIMITS } from '../../../../shared/skill-import-limits'
+import { SKILL_IMPORT_LIMITS } from '@aipoch/skills/document'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'

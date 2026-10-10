@@ -8,7 +8,7 @@ import { ParserEngine } from '@aipoch/connector-core'
 import { McpClientManager, McpToolCallError } from '@aipoch/connector-mcp-client'
 import type { SpecialistView } from '../../shared/specialist'
 import type { CustomMcpServerConfig } from '@aipoch/connector-mcp-client'
-import * as connectorNetwork from '../skills/net-fetch'
+import * as connectorNetwork from '../network-fetch'
 
 const internal = { origin: 'internal' as const }
 

@@ -1,6 +1,6 @@
 import { session } from 'electron'
 import { configureRuntimeNetwork } from './runtime-network'
-import { netFetchStandard, netFetchWithManualRedirect } from './skills/net-fetch-electron'
+import { netFetchStandard, netFetchWithManualRedirect } from './network-fetch-electron'
 
 export function installElectronNetwork(): void {
   configureRuntimeNetwork({

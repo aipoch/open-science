@@ -6,7 +6,7 @@ import { createGithubCommandOwner } from '../github-ipc'
 
 import { createLogsCommandOwner } from '../logs-ipc'
 import { ManagedFileVersionService } from '../managed-file-versions/service'
-import { netFetchStandard } from '../skills/net-fetch'
+import { netFetchStandard } from '../network-fetch'
 import type { composeManagedFiles } from './managed-files'
 import type { composeSessionAuthority } from './session-authority'
 

@@ -9,7 +9,7 @@ import type { SpecialistPackageValidationPlan } from '../../../shared/specialist
 import { emptyFullAccessConfig, emptySelectedConfig } from '../../../shared/specialist'
 import { SpecialistRepository } from '../repository'
 import { SettingsRepository } from '../../settings/repository'
-import { UserSkillSpecialistPackageAdapter } from '../../skills/specialist-package-adapter'
+import { UserSkillSpecialistPackageAdapter } from '@aipoch/skills'
 import { NOOP_SPECIALIST_PACKAGE_SKILL_PORT } from './skill-port'
 import { SpecialistPackageTransaction } from './transaction'
 

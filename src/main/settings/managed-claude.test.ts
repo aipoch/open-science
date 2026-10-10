@@ -24,7 +24,7 @@ const { netFetchWithManualRedirect, nonRegularMarkerPaths, markerReplacementsOnR
   })
 )
 
-vi.mock('../skills/net-fetch', () => ({
+vi.mock('../network-fetch', () => ({
   netFetchWithManualRedirect,
   netFetchStandard: vi.fn(async () => {
     throw new Error('Redirect was cancelled')

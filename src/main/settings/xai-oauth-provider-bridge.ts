@@ -1,6 +1,6 @@
 import type { ServerResponse } from 'node:http'
 import { createLogger } from '@aipoch/diagnostics/node'
-import { netFetchStandard } from '../skills/net-fetch'
+import { netFetchStandard } from '../network-fetch'
 
 import { DEFAULT_MAX_PROVIDER_RESPONSE_BYTES, readBoundedResponseText } from './bounded-response'
 import {

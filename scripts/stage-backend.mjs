@@ -80,7 +80,15 @@ async function copyDependency(name, from, destinationParent = stage) {
   await cp(source, destination, {
     recursive: true,
     dereference: true,
-    filter: (path) => backendDependencyIncludes(pkg, relative(source, path))
+    filter: (path) => {
+      const dependencyPath = relative(source, path)
+      if (!backendDependencyIncludes(pkg, dependencyPath)) return false
+      const parts = dependencyPath.split(sep)
+      if (name === '@aipoch/skills' && parts[0]) {
+        return ['dist', 'package.json', 'README.md', 'LICENSE'].includes(parts[0])
+      }
+      return true
+    }
   })
   // These are prebuilt target artifacts. npm must not reinterpret them as a source installation.
   if (name.startsWith('@aipoch/') || name === '@prisma/client') {

@@ -951,7 +951,7 @@ describe('Artifact Provenance repository architecture', () => {
       'src/renderer/web/api-installer.test.ts',
       'src/renderer/web/bootstrap.test.ts',
       'src/renderer/web/renderer-argument-shape-characterization.test.ts',
-      'src/main/settings/skill-catalog.test.ts',
+      'src/main/skills/catalog.test.ts',
       'src/main/session-package/fork.test.ts',
       'src/main/storage/brand-location.test.ts',
       'src/main/storage/migration-target-race.test.ts',

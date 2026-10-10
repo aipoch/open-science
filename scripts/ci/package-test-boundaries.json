@@ -24,6 +24,10 @@
     {
       "root": "packages/pdf-translation",
       "dependencies": ["packages/pdf-structure"]
+    },
+    {
+      "root": "packages/skills",
+      "dependencies": []
     }
   ]
 }

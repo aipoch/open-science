@@ -5,7 +5,7 @@ import { renderSkillDoc, renderCustomSkillDoc } from './skill-doc'
 import type { CustomSkillDocTool } from './skill-doc'
 import type { StoredCustomMcpServer } from '../settings/types'
 import { customConnectorNameFromSkillName } from '../../shared/custom-connector'
-import { parseFrontmatter } from '../skills/frontmatter'
+import { parseFrontmatter } from '@aipoch/skills/document'
 
 // Canonical generated Connector Skill documents are framework-neutral inputs. Keep them outside
 // every backend's private profile/projection so Claude's protected CLAUDE_CONFIG_DIR is never used

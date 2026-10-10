@@ -43,7 +43,7 @@ import {
   getAgentFramework,
   type AgentFrameworkId
 } from '../agent-framework'
-import { netFetchStandard } from '../skills/net-fetch'
+import { netFetchStandard } from '../network-fetch'
 import { type CodexAuthControllerPort } from './codex-auth'
 import { type ClaudeIsolatedAuthControllerPort } from './claude-isolated-auth'
 import { type ClaudeSharedAuthControllerPort } from './claude-shared-auth'

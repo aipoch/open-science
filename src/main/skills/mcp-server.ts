@@ -13,7 +13,7 @@ import {
 import { SKILL_IMPORT_MCP_SERVER_ARG } from '../mcp-server-args'
 import { fetchLocalRpc, type LocalRpcTransport } from '../local-rpc-transport'
 import { LOCAL_RESOURCE_BUDGETS } from '../resource-budget'
-import { parseGitHubSkillUrl } from './github-import'
+import { parseGitHubSkillUrl } from '@aipoch/skills/sources'
 
 const requestSkillImportToolSchema = {
   attachment_uri: z

@@ -6,16 +6,9 @@ import { randomUUID } from 'node:crypto'
 import type { ApplicationModule } from '../application-runtime'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
-import type { ManagedFileVersionService } from '../managed-file-versions/service'
 import type { ConnectorApplicationSettingsCapabilities } from '../settings/service-capabilities'
-import type { UploadRepository } from '../uploads/repository'
 import type { SpecialistView } from '../../shared/specialist'
-import type {
-  ConnectorApprovalRequest,
-  ConnectorCredentialRequest,
-  ConversationSkillImportApprovalRequest
-} from '../../shared/settings'
-import { ConversationSkillImporter, SkillImportApprovalBroker } from '../skills/conversation-import'
+import type { ConnectorApprovalRequest, ConnectorCredentialRequest } from '../../shared/settings'
 import { ApprovalBroker } from '../connectors/approval-broker'
 import { CredentialRequestBroker } from '../connectors/credential-request-broker'
 import { ParserEngine } from '@aipoch/connector-core'
@@ -44,11 +37,6 @@ export type ConnectorApplicationDeps = {
   broadcastCredentialRequest: (request: ConnectorCredentialRequest) => void
   replayCredentialRequest: (request: ConnectorCredentialRequest) => void
   onCredentialRequestSettled: (id: string, configured: boolean) => void
-  broadcastSkillImportApproval: (request: ConversationSkillImportApprovalRequest) => void
-  onSkillImportSettled: (id: string) => void
-  onSkillImportLifecycleSettled: (id: string, state: 'resolved' | 'expired' | 'cancelled') => void
-  uploads: Pick<UploadRepository, 'resolveManagedUpload' | 'resolveSessionUpload'>
-  managedFileVersions?: Pick<ManagedFileVersionService, 'openVersion'>
   fetchImpl: typeof fetch
   resolveApiKey: (ref?: string) => string | undefined
   canRequestCredential: () => boolean
@@ -62,21 +50,17 @@ export type ConnectorApplicationDeps = {
       signal?: AbortSignal
     ) => Promise<unknown>
   >
-  onSkillsChanged?: () => void
   mcpClientManager?: McpClientManager
   connectorApprovals?: ApprovalBroker
   credentialRequests?: CredentialRequestBroker
-  skillImportApprovals?: SkillImportApprovalBroker
 }
 
 type ConnectorApplication = {
   connectorService: ConnectorService
   runtimeSettings: ConnectorRuntimeSettingsProjection
   mcpClientManager: McpClientManager
-  skillImporter: ConversationSkillImporter
   connectorApprovals: ApprovalBroker
   credentialRequests: CredentialRequestBroker
-  skillImportApprovals: SkillImportApprovalBroker
 }
 
 const MAX_APPROVAL_ARGS_JSON_CHARS = 64_000
@@ -166,14 +150,6 @@ const createConnectorApplication = (
       broadcast: deps.broadcastConnectorApproval,
       replay: deps.replayConnectorApproval
     })
-  const skillImportApprovals =
-    deps.skillImportApprovals ??
-    new SkillImportApprovalBroker({
-      generateId: () => randomUUID(),
-      broadcast: deps.broadcastSkillImportApproval,
-      onSettled: deps.onSkillImportSettled,
-      onLifecycleSettled: deps.onSkillImportLifecycleSettled
-    })
   const credentialRequests =
     deps.credentialRequests ??
     new CredentialRequestBroker({
@@ -182,22 +158,6 @@ const createConnectorApplication = (
       replay: deps.replayCredentialRequest,
       onSettled: deps.onCredentialRequestSettled
     })
-
-  const skillImporter = new ConversationSkillImporter({
-    uploads: deps.uploads,
-    managedFileVersions: deps.managedFileVersions,
-    createCancellationGuard: (sessionId, turnToken, attachmentUri) =>
-      skillImportApprovals.createCancellationGuard(sessionId, turnToken, attachmentUri),
-    createSessionCancellationGuard: (sessionId) =>
-      skillImportApprovals.createSessionCancellationGuard(sessionId),
-    previewBundle: (bundle) => deps.settings.previewSkillArchive(bundle),
-    importBundle: (bundle, items) => deps.settings.importSkillArchiveBatch(bundle, items),
-    scanGitHub: async (url, signal) =>
-      (await deps.settings.scanRepoSkills({ repo: url }, signal)).skills,
-    importGitHub: (url, signal) => deps.settings.importSkill({ url }, signal),
-    requestApproval: (request, cancellation) => skillImportApprovals.request(request, cancellation),
-    onSkillsChanged: deps.onSkillsChanged
-  })
 
   const connectorService = new ConnectorService({
     registry: builtinConnectorRegistry,
@@ -244,10 +204,8 @@ const createConnectorApplication = (
     connectorService,
     runtimeSettings,
     mcpClientManager,
-    skillImporter,
     connectorApprovals,
-    credentialRequests,
-    skillImportApprovals
+    credentialRequests
   }
 }
 

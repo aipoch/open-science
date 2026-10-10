@@ -7,7 +7,7 @@ import { strFromU8, strToU8, unzipSync } from 'fflate'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import type { SpecialistPackageCatalogSnapshot } from '../../../shared/specialist-package'
-import { UserSkillSpecialistPackageAdapter } from '../../skills/specialist-package-adapter'
+import { UserSkillSpecialistPackageAdapter } from '@aipoch/skills'
 import { SpecialistRepository } from '../repository'
 import { SpecialistService } from '../service'
 import {

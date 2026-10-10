@@ -27,7 +27,7 @@ import type { SessionPersistenceCommands } from '../session-persistence/coordina
 import { tryDecryptKey } from '../settings/crypto'
 import { SettingsService } from '../settings/service'
 import { parseSystemProxyRules } from '../settings/system-proxy'
-import { netFetchStandard } from '../skills/net-fetch'
+import { netFetchStandard } from '../network-fetch'
 import { SpecialistService } from '../specialist/service'
 import { resolveConfigRoot, resolveDataRoot } from '../storage-root'
 import { ContentRepository } from '../storage/content-repository'

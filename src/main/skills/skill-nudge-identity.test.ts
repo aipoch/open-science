@@ -3,7 +3,7 @@ import { join } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { parseFrontmatter } from './frontmatter'
+import { parseFrontmatter } from '@aipoch/skills/document'
 import { SkillRegistry } from './registry'
 
 // The real bundled-skills root shipped with the app.

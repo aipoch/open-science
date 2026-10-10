@@ -3,7 +3,7 @@ import {
   resilientDownload,
   type ResilientDownloadOpts
 } from '../net/resilient-download'
-import { netFetchStandard } from '../skills/net-fetch'
+import { netFetchStandard } from '../network-fetch'
 import type { LocalModelRevision } from './catalog'
 import { localModelDownloadSources } from './download-sources'
 

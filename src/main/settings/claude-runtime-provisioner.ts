@@ -3,8 +3,8 @@ import { chmod, lstat, mkdir, readFile, readdir, rename, rm } from 'node:fs/prom
 import { join, relative, resolve } from 'node:path'
 
 import { ALL_CONNECTOR_IDS } from '../connectors/registry'
-import { parseFrontmatter } from '../skills/frontmatter'
-import { isUsableSkillName } from '../skills/skill-name'
+import { parseFrontmatter } from '@aipoch/skills/document'
+import { isUsableSkillName } from '@aipoch/skills/document'
 
 const CLAUDE_PRIVATE_PROFILE_DIR = 'claude'
 const CLAUDE_SKILL_RUNTIME_SEGMENTS = ['runtime-support', 'agent-skills', 'claude'] as const

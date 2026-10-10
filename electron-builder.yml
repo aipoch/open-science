@@ -49,6 +49,8 @@ files:
   # platform below so path resolution and code signing remain deterministic.
   - '!node_modules/@aipoch/notebook-network-sandbox{,/**/*}'
   - '!packages/notebook-network-sandbox{,/**/*}'
+  # Skills ship through their installed package dependency, not a second source tree.
+  - '!packages/skills{,/**/*}'
   # pdfjs-dist ships several redundant copies. The main process only loads `legacy/build` (text
   # extraction) and needs `cmaps`/`standard_fonts` for CJK/CID PDFs; the renderer bundles its own
   # copy via Vite. Drop the modern build, viewer, image decoders, TS types, and source maps

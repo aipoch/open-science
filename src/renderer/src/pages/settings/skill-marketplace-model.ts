@@ -1,9 +1,9 @@
-import type { SkillMarketplaceEntry } from '../../../../shared/skill-marketplace'
+import type { SkillMarketplaceEntry } from '@aipoch/skills/document'
 export {
   skillMarketplaceCategories,
   skillMarketplaceRepository,
   type SkillMarketplaceEntry
-} from '../../../../shared/skill-marketplace'
+} from '@aipoch/skills/document'
 export const SKILL_MARKETPLACE_PAGE_SIZE = 36
 
 export function skillMarketplaceSourceOwner(item: SkillMarketplaceEntry): string {

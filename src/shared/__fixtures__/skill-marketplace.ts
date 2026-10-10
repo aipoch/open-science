@@ -2,7 +2,7 @@ import type {
   SkillMarketplaceCatalog,
   SkillMarketplaceDetail,
   SkillMarketplaceEntry
-} from '../skill-marketplace'
+} from '@aipoch/skills/document'
 
 // Renderer tests only. Production data always comes through the verified main-process owner.
 export const marketplaceEntry: SkillMarketplaceEntry = {

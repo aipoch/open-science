@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { strFromU8, unzipSync } from 'fflate'
 
 import { buildSkillExportArchive, saveSkillExport, skillExportFileName } from './export'
-import { SKILL_IMPORT_LIMITS } from '../../shared/skill-import-limits'
+import { SKILL_IMPORT_LIMITS } from '@aipoch/skills/document'
 
 const roots: string[] = []
 

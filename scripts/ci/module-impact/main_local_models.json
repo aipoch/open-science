@@ -288,7 +288,7 @@
       "src/renderer/src/pages/workspace/previews/preview-pagination-contract.test.tsx",
       "src/shared/renderer-surface-inventory.test.ts",
       "src/shared/renderer-surface-matrix.test.ts",
-      "src/main/settings/skill-catalog.test.ts",
+      "src/main/skills/catalog.test.ts",
       "src/main/session-package/fork.test.ts",
       "src/main/storage/brand-location.test.ts",
       "src/main/storage/migration-target-race.test.ts",

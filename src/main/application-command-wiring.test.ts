@@ -217,7 +217,7 @@ describe('production application command wiring', () => {
     )
     expect(occurrences(ipcSource, 'createConnectorApprovalElectronSurface(')).toBe(1)
     expect(domainCompact('connectors')).toContain(
-      'connectorApprovals: approvalBroker, credentialRequests: credentialRequestBroker, skillImportApprovals: skillImportApprovalBroker } = connectorApplication'
+      'connectorApprovals: approvalBroker, credentialRequests: credentialRequestBroker } = connectorApplication'
     )
     const surface = compact(readSource('src/main/ipc-surfaces/connector-approvals.ts'))
     expect(surface).toContain("createElectronSurfaceAdapter('connector-approvals'")
