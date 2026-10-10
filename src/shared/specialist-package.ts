@@ -1,13 +1,31 @@
-import type {
-  SpecialistPackageSkillPlan,
-  SpecialistPackageSkillPreview
-} from '@aipoch/skills/document'
-export type {
-  SpecialistPackageSkillPlan,
-  SpecialistPackageSkillPreview,
-  SpecialistPackageSkillConflict,
-  SpecialistPackageSkillDisposition
-} from '@aipoch/skills/document'
+import type { SpecialistPackageSkillDisposition } from '@aipoch/skills/document'
+export type { SpecialistPackageSkillDisposition } from '@aipoch/skills/document'
+
+export type SpecialistPackageSkillConflict = {
+  localId: string
+  installedVersion: string
+  installedContentHash: string
+  mainEnabled: boolean
+  specialists: ReadonlyArray<{ id: string; name: string }>
+}
+
+export type SpecialistPackageSkillPreview = {
+  id: string
+  version: string
+  versionRange?: string
+  disposition: SpecialistPackageSkillDisposition
+  files: readonly string[]
+  reason?: string
+  conflict?: SpecialistPackageSkillConflict
+}
+
+export type SpecialistPackageSkillPlan = SpecialistPackageSkillPreview & {
+  /** Target installation ID resolved from the portable package Skill name. */
+  localId?: string
+  contentHash: string
+  filesToInstall: ReadonlyArray<{ path: string; bytes: Uint8Array }>
+}
+
 import type { SkillSource } from './settings'
 
 export const SPECIALIST_PACKAGE_SCHEMA_VERSION = 1 as const

@@ -35,7 +35,8 @@
     "src/main/skills/catalog.ts",
     "src/main/skills/diagnostics.ts",
     "src/main/skills/helper-validation.ts",
-    "src/main/skills/package-boundary.test.ts"
+    "src/main/skills/package-boundary.architecture.test.ts",
+    "src/main/skills/host-skills-service.test.ts"
   ],
   "interfacePaths": [
     "src/main/skills/user-skill-repository.ts",
@@ -86,10 +87,11 @@
       "src/main/skills/self-awareness-skill.test.ts",
       "src/main/skills/skill-nudge-identity.test.ts",
       "packages/skills/src/zip-extract.test.ts",
-      "src/main/skills/package-boundary.test.ts"
+      "src/main/skills/package-boundary.architecture.test.ts",
+      "src/main/skills/host-skills-service.test.ts"
     ],
     "contract": [
-      "packages/skills/src/host-skills-service.test.ts",
+      "packages/skills/src/skill-authoring-service.test.ts",
       "packages/skills/src/skill-archive-sniffer.test.ts",
       "src/main/skills/catalog.test.ts",
       "src/renderer/web/api-installer.test.ts",

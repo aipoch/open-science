@@ -15,7 +15,7 @@ import type { ImportOutcome, ParsedSkillPreview } from './user-skill-import-cont
 import type { MarketplacePackage } from './marketplace-package'
 import type {
   SkillMarketplaceInstallation,
-  SkillMarketplaceUpdateImpact,
+  SkillMarketplaceUpdateGuard,
   SkillMarketplaceUpdatePreview
 } from './skill-marketplace'
 import { UserSkillCompatibilityIndex } from './user-skill-compatibility-index'
@@ -185,7 +185,7 @@ class UserSkillRepository {
     expectedVersion: string | null,
     reservedNames: readonly string[],
     updateToken?: string,
-    impact?: (id: string) => Promise<SkillMarketplaceUpdateImpact>,
+    impact?: SkillMarketplaceUpdateGuard,
     withImpactLock?: <T>(operation: () => Promise<T>) => Promise<T>
   ): Promise<ImportOutcome> {
     return this.bundleImports.installMarketplace(
@@ -201,7 +201,7 @@ class UserSkillRepository {
   previewMarketplaceUpdate(
     pkg: MarketplacePackage,
     reservedNames: readonly string[],
-    impact?: (id: string) => Promise<SkillMarketplaceUpdateImpact>
+    impact?: SkillMarketplaceUpdateGuard
   ): Promise<SkillMarketplaceUpdatePreview> {
     return this.bundleImports.previewMarketplaceUpdate(pkg, reservedNames, impact)
   }
@@ -245,9 +245,10 @@ class UserSkillRepository {
   async previewAgentHomeSkill(
     root: string,
     skill?: AgentHomeSkillRef,
-    aliases: readonly AgentHomeSkillRef[] = []
+    aliases: readonly AgentHomeSkillRef[] = [],
+    displayLabel: (ref: AgentHomeSkillRef) => string = (ref) => `${ref.source}/${ref.slug}`
   ): Promise<ParsedSkillPreview> {
-    return this.agentHomeSkills.previewAgentHomeSkill(root, skill, aliases)
+    return this.agentHomeSkills.previewAgentHomeSkill(root, skill, aliases, displayLabel)
   }
 
   async importAgentHomeSkill(

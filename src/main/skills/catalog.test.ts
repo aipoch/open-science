@@ -38,7 +38,15 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 
-const createCatalog = async (includeInternal = false): Promise<SkillCatalogModule> => {
+const createCatalog = async (
+  includeInternal = false,
+  overrides: Partial<
+    Pick<
+      ConstructorParameters<typeof SkillCatalogModule>[0],
+      'readMarketplaceSpecialists' | 'withMarketplaceImpactLock'
+    >
+  > = {}
+): Promise<SkillCatalogModule> => {
   const storageRoot = await mkdtemp(join(tmpdir(), 'settings-skill-catalog-'))
   const bundleRoot = await mkdtemp(join(tmpdir(), 'settings-skill-bundle-'))
   roots.push(storageRoot, bundleRoot)
@@ -81,7 +89,8 @@ const createCatalog = async (includeInternal = false): Promise<SkillCatalogModul
     skillRegistry: new SkillRegistry(bundleRoot),
     userClaudeDir: join(storageRoot, 'user-claude'),
     userCodexDir: join(storageRoot, 'user-codex'),
-    userAgentsDir: join(storageRoot, 'user-agents')
+    userAgentsDir: join(storageRoot, 'user-agents'),
+    ...overrides
   })
   catalogStorageRoots.set(catalog, storageRoot)
   return catalog
@@ -216,16 +225,14 @@ describe('SkillCatalogModule', () => {
         contentSha256: marketplaceContentDigest(files)
       }
     }
-    const impact = async (): Promise<{
-      mainEnabled: boolean
-      specialists: { id: string; name: string }[]
-    }> => ({
-      mainEnabled: !(await settings.getSettings()).disabledSkillIds?.includes('personal-example'),
-      specialists: (await specialists.getAll()).specialists.map((item) => ({
-        id: item.id,
-        name: item.name
-      }))
-    })
+    const impact = async (): Promise<string> =>
+      JSON.stringify({
+        mainEnabled: !(await settings.getSettings()).disabledSkillIds?.includes('personal-example'),
+        specialists: (await specialists.getAll()).specialists.map((item) => ({
+          id: item.id,
+          name: item.name
+        }))
+      })
     const preview = await repo.previewMarketplaceUpdate(pkg, [], impact)
     const updating = repo.installMarketplace(pkg, null, [], preview.token, impact, (operation) =>
       specialists.withReadLock(operation)
@@ -1824,3 +1831,74 @@ it.skipIf(process.platform === 'win32').each(['CON.csv', 'trailing.'])(
 )
 
 await configureTestElectronHost(await import('electron'))
+
+it('keeps host usage labels in previews and rechecks the opaque revision under the impact lock', async () => {
+  let held = false
+  let committing = false
+  const catalog = await createCatalog(false, {
+    readMarketplaceSpecialists: async () => {
+      if (committing) expect(held).toBe(true)
+      return []
+    },
+    withMarketplaceImpactLock: async (operation) => {
+      held = true
+      try {
+        return await operation()
+      } finally {
+        held = false
+      }
+    }
+  })
+  await catalog.createSkill({ name: 'example', description: 'Original', body: 'original witness' })
+  const directory = join(userSkillSourceDir(catalog, 'personal'), 'example')
+  await writeFile(
+    join(directory, '.specialist-package.json'),
+    JSON.stringify({
+      id: 'personal-example',
+      version: '0.1.0',
+      contentHash: 'd'.repeat(64),
+      standalone: false,
+      ownerIds: ['owner-without-profile']
+    })
+  )
+  const files = [
+    {
+      relativePath: 'SKILL.md',
+      content: Buffer.from('---\nname: example\ndescription: Updated\n---\nupdated witness')
+    }
+  ]
+  const pkg: MarketplacePackage = {
+    files,
+    receipt: {
+      marketplace: 'openscience-skills',
+      id: 'example',
+      version: '1.0.0',
+      snapshotId: 'a'.repeat(64),
+      revision: 'b'.repeat(64),
+      descriptorSha256: 'c'.repeat(64),
+      artifactSha256: 'd'.repeat(64),
+      contentSha256: marketplaceContentDigest(files)
+    }
+  }
+  const preview = await catalog.previewMarketplaceUpdate(pkg)
+  expect(preview).toMatchObject({
+    mainEnabled: true,
+    specialists: [{ id: 'owner-without-profile', name: 'owner-without-profile' }]
+  })
+  await catalog.setSkillEnabled({ id: 'personal-example', enabled: false })
+  committing = true
+  await expect(catalog.installMarketplacePackage(pkg, null, preview.token)).rejects.toThrow(
+    'conflict'
+  )
+  expect(await readFile(join(directory, 'SKILL.md'), 'utf8')).toContain('original witness')
+  committing = false
+  const fresh = await catalog.previewMarketplaceUpdate(pkg)
+  expect(fresh.mainEnabled).toBe(false)
+  committing = true
+  expect(await catalog.installMarketplacePackage(pkg, null, fresh.token)).toMatchObject({
+    status: 'updated'
+  })
+  expect(
+    JSON.parse(await readFile(join(directory, '.specialist-package.json'), 'utf8')).ownerIds
+  ).toEqual(['owner-without-profile'])
+})

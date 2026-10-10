@@ -14,7 +14,11 @@ import { SKILL_IMPORT_LIMITS } from './skill-import-limits'
 import { createLogger, diagnosticErrorFields } from './diagnostics'
 
 /** Caller-selected roots. The package does not discover application settings or home paths. */
-export type AgentHomeSkillDirectory = { source: AgentHomeSkillSource; dir: string }
+export type AgentHomeSkillDirectory = {
+  source: AgentHomeSkillSource
+  dir: string
+  displayRoot?: string
+}
 type DiscoveredAgentHomeSkill = {
   skill: AgentHomeSkillView
   realPath: string
@@ -206,13 +210,9 @@ export class AgentHomeSkillCatalog {
     if (!canonical) {
       throw new Error('Refusing to preview installed skill outside a top-level skill directory.')
     }
-    const sourceRoot =
-      canonical.source === 'agents'
-        ? '~/.agents/skills'
-        : canonical.source === 'claude'
-          ? '~/.claude/skills'
-          : '~/.codex/skills'
-    const sourceLabel = `${sourceRoot}/${canonical.slug}`
+    const displayLabel = (ref: AgentHomeSkillRef): string =>
+      `${availableSources.find((source) => source.source === ref.source)?.displayRoot ?? ref.source}/${ref.slug}`
+    const sourceLabel = displayLabel(canonical)
     const discovered = await this.discoverAgentHomeSkills(availableSources)
     const pathKey = process.platform === 'win32' ? sourcePath.toLowerCase() : sourcePath
     const aliases = discovered.find(
@@ -221,7 +221,12 @@ export class AgentHomeSkillCatalog {
     )?.aliases ?? [request]
     try {
       return {
-        ...(await this.userSkills.previewAgentHomeSkill(sourcePath, canonical, aliases)),
+        ...(await this.userSkills.previewAgentHomeSkill(
+          sourcePath,
+          canonical,
+          aliases,
+          displayLabel
+        )),
         sourceLabel
       }
     } catch (error) {

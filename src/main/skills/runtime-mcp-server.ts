@@ -1,12 +1,12 @@
 import {
-  readSkillRuntimeCatalog,
-  loadSkillDocument,
-  loadSkillDocumentContent,
-  type SkillRuntimeEnvironment,
+  readSkillRuntimeCatalog as readCatalog,
+  loadSkillDocument as loadDocument,
+  loadSkillDocumentContent as loadDocumentContent,
+  type SkillRuntimeEnvironment as PackageEnvironment,
   type SkillRuntimeCatalog
 } from '@aipoch/skills/projection'
 import { nodeRuntimeEnvironmentEntries } from '../node-process-host'
-import { isAbsolute } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 
 import { McpServer as ModelContextProtocolServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
@@ -14,6 +14,35 @@ import { z } from 'zod'
 import type { McpServer } from '@agentclientprotocol/sdk'
 
 import { SKILL_RUNTIME_MCP_SERVER_ARG } from '../mcp-server-args'
+
+type SkillRuntimeEnvironment = Omit<PackageEnvironment, 'skillsDirectory'> & {
+  skillsDirectory?: string
+}
+const packageEnvironment = (environment: SkillRuntimeEnvironment): PackageEnvironment => ({
+  ...environment,
+  skillsDirectory: environment.skillsDirectory ?? join(environment.root, '.claude', 'skills')
+})
+// These limits describe the MCP tool schema, not the stored Skill catalog.
+const readSkillRuntimeCatalog = (
+  environment: SkillRuntimeEnvironment
+): Promise<SkillRuntimeCatalog> =>
+  readCatalog(packageEnvironment(environment), {
+    maxEntries: 256,
+    maxDescriptionLength: 1024,
+    maxMetadataBytes: 64 * 1024 - 2 * 1024,
+    measureEntry: ({ name, description }) =>
+      Buffer.byteLength(JSON.stringify({ type: 'string', const: name, description }), 'utf8')
+  })
+const loadSkillDocument = (
+  environment: SkillRuntimeEnvironment,
+  skill: string,
+  args?: string
+): ReturnType<typeof loadDocument> => loadDocument(packageEnvironment(environment), skill, args)
+const loadSkillDocumentContent = (
+  environment: SkillRuntimeEnvironment,
+  skill: string,
+  args?: string
+): Promise<string> => loadDocumentContent(packageEnvironment(environment), skill, args)
 
 // This identifier is model-facing when Claude renders the aliased call. Keep application and
 // projection implementation names out of the Agent-visible tool contract.

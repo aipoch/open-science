@@ -1204,7 +1204,7 @@ describe('UserSkillRepository', () => {
     const preview = await repo.previewAgentHomeSkill(source, ref)
     expect(preview.replacement).toEqual({
       targetId: 'imported-citation',
-      sourceLabel: '~/.agents/skills/citation',
+      sourceLabel: 'agents/citation',
       added: [],
       modified: ['SKILL.md'],
       removed: ['local.txt']

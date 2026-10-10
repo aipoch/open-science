@@ -253,22 +253,15 @@ describe('Marketplace installation transactions', () => {
       })
     )
     await writeFile(join(dir, 'old.txt'), 'remove only after confirmation')
-    const impact = async (): Promise<{
-      mainEnabled: boolean
-      specialists: { id: string; name: string }[]
-    }> => ({
-      mainEnabled: true,
-      specialists: [
-        { id: 'research-specialist', name: 'Research' },
-        { id: 'writing-specialist', name: 'Writing' }
-      ]
-    })
+    const impact = async (_id: string, ownerIds: readonly string[]): Promise<string> => {
+      expect(ownerIds).toEqual(['research-specialist', 'writing-specialist'])
+      return 'usage-revision-1'
+    }
     const preview = await repo.previewMarketplaceUpdate(pkg(), [], impact)
     expect(preview.localSkillId).toBe('personal-example')
     expect(preview.removed).toContain('old.txt')
     expect(preview.modified).toContain('SKILL.md')
     expect(preview.localChanges).toBe('unknown')
-    expect(preview.specialists).toHaveLength(2)
     expect(await readFile(join(dir, 'old.txt'), 'utf8')).toContain('confirmation')
     const result = await repo.installMarketplace(pkg(), null, [], preview.token, impact)
     expect(result).toEqual({ id: 'personal-example', status: 'updated' })
@@ -299,11 +292,8 @@ describe('Marketplace installation transactions', () => {
   it('rejects an expired preview when local contents, ownership or consumers change', async () => {
     const { repo, root } = await repository()
     await repo.createPersonal({ name: 'example', description: 'Mine', body: 'original' })
-    let consumers = [{ id: 'research-specialist', name: 'Research' }]
-    const impact = async (): Promise<{
-      mainEnabled: boolean
-      specialists: { id: string; name: string }[]
-    }> => ({ mainEnabled: true, specialists: consumers })
+    let revision = 'usage-1'
+    const impact = async (): Promise<string> => revision
     const first = await repo.previewMarketplaceUpdate(pkg(), [], impact)
     const doc = join(root, 'skills', 'personal', 'example', 'SKILL.md')
     const before = await readFile(doc, 'utf8')
@@ -313,7 +303,7 @@ describe('Marketplace installation transactions', () => {
     )
     expect(await readFile(doc, 'utf8')).toContain('Concurrent edit')
     const second = await repo.previewMarketplaceUpdate(pkg(), [], impact)
-    consumers = [...consumers, { id: 'writing-specialist', name: 'Writing' }]
+    revision = 'usage-2'
     await expect(repo.installMarketplace(pkg(), null, [], second.token, impact)).rejects.toThrow(
       'conflict'
     )
@@ -424,9 +414,7 @@ describe('Marketplace installation transactions', () => {
       conflict: {
         localId: current.id,
         installedVersion: current.version,
-        installedContentHash: current.contentHash,
-        mainEnabled: false,
-        specialists: []
+        installedContentHash: current.contentHash
       }
     }
     await adapter.beginMutation('specialist-update', 'original-owner', [replacement])

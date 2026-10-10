@@ -65,13 +65,14 @@ export type SkillMarketplaceConflictReason =
   | 'version-changed'
   | 'release-mismatch'
 
-export type SkillMarketplaceUpdateImpact = {
-  mainEnabled: boolean
-  specialists: { id: string; name: string }[]
-}
+// Opaque caller policy revision, recomputed under the caller's impact lock at commit.
+export type SkillMarketplaceUpdateGuard = (
+  id: string,
+  ownerIds: readonly string[]
+) => Promise<string>
 
 // Short-lived preview only. Tokens are process-local and never stored in a Skill receipt.
-export type SkillMarketplaceUpdatePreview = SkillMarketplaceUpdateImpact & {
+export type SkillMarketplaceUpdatePreview = {
   token: string
   localSkillId: string
   displayName: string
@@ -140,7 +141,6 @@ export type SkillMarketplaceDetail = {
   entry: SkillMarketplaceEntry
   licenseEvidence: { url: string; sha256: string }[]
   installation?: SkillMarketplaceInstallation
-  updatePreview?: SkillMarketplaceUpdatePreview
 }
 
 // Transport-safe failures; these are transient browsing results, not installed Skill states.

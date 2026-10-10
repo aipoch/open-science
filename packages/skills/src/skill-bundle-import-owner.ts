@@ -36,7 +36,7 @@ import type { ImportOutcome, ParsedSkillPreview } from './user-skill-import-cont
 import type {
   SkillMarketplaceInstallation,
   SkillMarketplaceConflictReason,
-  SkillMarketplaceUpdateImpact,
+  SkillMarketplaceUpdateGuard,
   SkillMarketplaceUpdatePreview
 } from './skill-marketplace'
 import {
@@ -110,7 +110,7 @@ export class MarketplaceInstallConflict extends Error {
   }
 }
 
-type MarketplaceImpactReader = (id: string) => Promise<SkillMarketplaceUpdateImpact>
+type MarketplaceImpactReader = SkillMarketplaceUpdateGuard
 type MarketplaceTarget = {
   skill: BundledSkill & { source: 'personal' | 'imported' }
   files: FetchedSkillFile[]
@@ -118,7 +118,7 @@ type MarketplaceTarget = {
   fingerprint: string
   metadata?: NonNullable<Awaited<ReturnType<typeof readSpecialistPackageSkillMetadata>>>
   receipt?: MarketplaceReceipt
-  impact: SkillMarketplaceUpdateImpact
+  usageRevision: string
 }
 
 const newerStableVersion = (offered: string, installed: string): boolean => {
@@ -534,16 +534,7 @@ export class SkillBundleImportOwner {
       }))
     )
     const digest = marketplaceContentDigest(files)
-    const supplied = readImpact
-      ? await readImpact(skill.id)
-      : { mainEnabled: false, specialists: [] }
-    const specialists = new Map(supplied.specialists.map((item) => [item.id, item]))
-    for (const ownerId of metadata?.ownerIds ?? [])
-      if (!specialists.has(ownerId)) specialists.set(ownerId, { id: ownerId, name: ownerId })
-    const impact = {
-      mainEnabled: supplied.mainEnabled,
-      specialists: [...specialists.values()].sort((a, b) => a.id.localeCompare(b.id))
-    }
+    const usageRevision = readImpact ? await readImpact(skill.id, metadata?.ownerIds ?? []) : ''
     const fingerprint = createHash('sha256')
       .update(
         JSON.stringify({
@@ -553,11 +544,11 @@ export class SkillBundleImportOwner {
           digest,
           sourceRaw,
           metadataRaw,
-          impact
+          usageRevision
         })
       )
       .digest('hex')
-    return { skill, files, digest, fingerprint, metadata, receipt, impact }
+    return { skill, files, digest, fingerprint, metadata, receipt, usageRevision }
   }
 
   async previewMarketplaceUpdate(
@@ -646,7 +637,6 @@ export class SkillBundleImportOwner {
             ? 'unchanged'
             : 'modified'
           : 'unknown',
-        ...target.impact,
         added: added.sort(),
         modified: modified.sort(),
         removed: removed.sort(),

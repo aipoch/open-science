@@ -6,12 +6,14 @@ import { skillMarketplaceStableVersionPattern } from '@aipoch/skills/document'
 import type {
   SkillMarketplaceCatalog,
   SkillMarketplaceCatalogRequest,
-  SkillMarketplaceDetail,
   SkillMarketplaceInstallation,
   SkillMarketplaceInstallResult,
-  SkillMarketplaceUpdatePreview,
   SkillMarketplaceResult
 } from '@aipoch/skills/document'
+import type {
+  SkillMarketplaceUpdatePreview,
+  SkillMarketplaceDetail
+} from '../../../../shared/skill-marketplace'
 import { ErrorNotice } from '@/components/error-notice'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'

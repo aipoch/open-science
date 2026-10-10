@@ -79,3 +79,48 @@ All four entry points use explicit symbol exports. Internal ZIP extraction, path
 transaction owners are private; add public API deliberately rather than re-exporting entire modules.
 The package's tests reject host imports, undeclared dependencies and local/workspace dependency
 shortcuts. Application networking uses the standard Fetch contract; package transports are inputs.
+
+## Responsibility and acceptance contract
+
+| Package owns                                                                                                     | Host owns                                                                                                          |
+| ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `SkillAuthoringService`: draft files, safe editing, validation, publication, deletion and mutation serialization | `host.skills` request parsing, session identity, deletion approval/decline, model guidance and post-commit refresh |
+| Skill installation plans, content/version preconditions, ownership records and transaction recovery              | Specialist preview choices, Main Agent enablement, consumer names and cross-domain coordination                    |
+| Marketplace verification, diffs and confirmation fingerprints                                                    | Usage impact display and an opaque usage revision recalculated under the existing impact lock                      |
+| Safe projected-directory reading and copying                                                                     | Framework directory defaults, MCP discovery budgets and Agent Home display labels                                  |
+
+Use `runMutationExclusive` to keep an authoring operation serialized across a host approval decision;
+resolve a deletion target before asking and delete that stable target only after approval. All
+instances sharing the draft root use one mutation owner. Do not move file writes back into the host.
+Marketplace guard callbacks receive the installed Skill ID and its recorded owner IDs; return a
+stable revision covering every usage relationship the user approved. Keep the impact lock held
+through revalidation and commit. Display DTOs are composed by the host, never persisted by this guard.
+
+Acceptance is a set of gates, not a file-size or test-count score:
+
+1. **Cohesion:** public operations own Skill workflows or invariants. Package behavior tests use
+   package-only fixtures. Architecture guards reject host session/approval and usage-display
+   contracts in package implementation. Host tests retain RPC, approval, refresh and cross-domain
+   integration evidence. Reviews must also check ownership, locking and lifecycle; import scanning
+   alone cannot establish semantic cohesion.
+2. **Dependency cleanliness:** zero host or sibling source imports, undeclared imports, or local
+   dependency shortcuts in source/tests/scripts; zero host bypasses of public exports. The isolated
+   `verify:package` build, tests, tarball runtime consumer and declaration consumer must all pass.
+   A root-workspace build alone is insufficient. Policy callbacks are supported inputs, not host
+   implementation dependencies.
+3. **Host test reduction:** choose a fixed pre-extraction revision and a stable feature cohort,
+   including renamed host catalog tests. Collect expanded cases with `vitest list --json=<file>`
+   in both revisions; report unique test files and cases separately from package and downstream
+   integration suites. Map removed host tests to their package successors, explain new cases and
+   retain coverage. Host-only case count must decrease; deleting assertions or merely renaming
+   host suites is not reduction. Do not infer elapsed CI savings from counts.
+4. **CI direction:** the host boundary test replays host-only, package-only, shared and unknown
+   changes through the existing package selector. A host-only change selects zero unchanged Skill
+   package unit tests; a package change selects its units and keeps registered host consumer
+   evidence. Shared/unknown changes retain fallback. Root `npm test` remains the complete suite.
+
+Run the package checks above, then from the repository root run focused host tests including
+`src/main/skills/package-boundary.architecture.test.ts`, the module registration guards and affected consumer
+contracts. Record exact revisions, collection commands, counts and selection reasons in the local
+acceptance report. Required PR CI validates the actual Ubuntu/Windows execution; local collection
+and policy replay must not be reported as a measured CI-duration improvement.

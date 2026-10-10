@@ -2,15 +2,17 @@ import { lstat, open, readFile, readdir } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { SKILL_IMPORT_LIMITS } from './skill-import-limits'
 import { parseFrontmatter } from './skill-frontmatter'
-const SAFE_PROJECTED_SKILL_NAME = /^(?=.{1,128}$)[a-z0-9]+[a-z0-9_-]*$/
+const SAFE_PROJECTED_SKILL_NAME = /^[a-z0-9][a-z0-9_-]{0,127}$/
 const SKILL_CATALOG_READ_CHUNK_BYTES = 64 * 1024
-const MAX_SKILL_CATALOG_DESCRIPTION_LENGTH = 1024
-const MAX_ADVERTISED_SKILL_COUNT = 256
-const MAX_SKILL_CATALOG_SCHEMA_BYTES = 64 * 1024
-const SKILL_CATALOG_SCHEMA_RESERVED_BYTES = 2 * 1024
+type SkillRuntimeCatalogPolicy = Readonly<{
+  maxEntries: number
+  maxDescriptionLength: number
+  maxMetadataBytes: number
+  measureEntry: (entry: SkillRuntimeCatalogEntry) => number
+}>
 type SkillRuntimeEnvironment = Readonly<{
   root: string
-  skillsDirectory?: string
+  skillsDirectory: string
   allowedNames?: ReadonlySet<string>
 }>
 
@@ -35,7 +37,7 @@ const requireRealDirectory = async (path: string, label: string): Promise<void> 
 // projection link cannot turn an otherwise contained directory into an arbitrary filesystem read.
 const skillCatalogDirectory = async (environment: SkillRuntimeEnvironment): Promise<string> => {
   const root = resolve(environment.root)
-  const directory = environment.skillsDirectory ?? join(root, '.claude', 'skills')
+  const directory = environment.skillsDirectory
   const relation = relative(root, directory)
   if (
     !isAbsolute(directory) ||
@@ -92,14 +94,14 @@ const readSkillCatalogFrontmatter = async (path: string, size: number): Promise<
 }
 
 const readSkillRuntimeCatalog = async (
-  environment: SkillRuntimeEnvironment
+  environment: SkillRuntimeEnvironment,
+  policy: SkillRuntimeCatalogPolicy
 ): Promise<SkillRuntimeCatalog> => {
   const skillsDir = await skillCatalogDirectory(environment)
 
   const entries = await readdir(skillsDir, { withFileTypes: true })
   entries.sort((left, right) => left.name.localeCompare(right.name, 'en'))
   const catalog: SkillRuntimeCatalogEntry[] = []
-  const discoveryBudget = MAX_SKILL_CATALOG_SCHEMA_BYTES - SKILL_CATALOG_SCHEMA_RESERVED_BYTES
   let catalogBytes = 0
   for (const entry of entries) {
     const directoryName = entry.name
@@ -136,17 +138,11 @@ const readSkillRuntimeCatalog = async (
     const description = (fields.description ?? '')
       .replace(/\s+/g, ' ')
       .trim()
-      .slice(0, MAX_SKILL_CATALOG_DESCRIPTION_LENGTH)
+      .slice(0, policy.maxDescriptionLength)
     if (!description) continue
     const skill = { name, description }
-    const nextBytes = Buffer.byteLength(
-      JSON.stringify({ type: 'string', const: name, description }),
-      'utf8'
-    )
-    if (
-      catalog.length >= MAX_ADVERTISED_SKILL_COUNT ||
-      catalogBytes + nextBytes > discoveryBudget
-    ) {
+    const nextBytes = policy.measureEntry(skill)
+    if (catalog.length >= policy.maxEntries || catalogBytes + nextBytes > policy.maxMetadataBytes) {
       return { entries: catalog, truncated: true }
     }
     catalog.push(skill)
@@ -300,4 +296,9 @@ export {
   loadSkillDocument,
   loadSkillDocumentContent
 }
-export type { SkillRuntimeEnvironment, SkillRuntimeCatalog, SkillRuntimeCatalogEntry }
+export type {
+  SkillRuntimeCatalogPolicy,
+  SkillRuntimeEnvironment,
+  SkillRuntimeCatalog,
+  SkillRuntimeCatalogEntry
+}

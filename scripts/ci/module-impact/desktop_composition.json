@@ -1399,7 +1399,6 @@
       "src/main/skills/catalog.registered-helpers.test.ts",
       "src/main/skills/catalog.test.ts",
       "packages/skills/src/github-import.test.ts",
-      "packages/skills/src/host-skills-service.test.ts",
       "packages/skills/src/marketplace-installation.test.ts",
       "packages/skills/src/marketplace-service.test.ts",
       "packages/skills/src/materializer-integrity.regression.test.ts",
@@ -1409,7 +1408,9 @@
       "packages/skills/src/user-skill-compatibility-index.test.ts",
       "packages/skills/src/user-skill-integrity.regression.test.ts",
       "packages/skills/src/user-skill-repository.atomic.test.ts",
-      "packages/skills/src/user-skill-repository.test.ts"
+      "packages/skills/src/user-skill-repository.test.ts",
+      "packages/skills/src/skill-authoring-service.test.ts",
+      "src/main/skills/host-skills-service.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

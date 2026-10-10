@@ -31,8 +31,8 @@
     "packages/skills/src/github-import.test.ts",
     "packages/skills/src/github-import.ts",
     "packages/skills/src/helper-validation.test.ts",
-    "packages/skills/src/host-skills-service.test.ts",
-    "packages/skills/src/host-skills-service.ts",
+    "packages/skills/src/skill-authoring-service.test.ts",
+    "packages/skills/src/skill-authoring-service.ts",
     "packages/skills/src/import-limits.test.ts",
     "packages/skills/src/import-limits.ts",
     "packages/skills/src/index.ts",
@@ -86,7 +86,8 @@
     "packages/skills/test/boundary.test.ts",
     "packages/skills/tsconfig.json",
     "packages/skills/tsconfig.test.json",
-    "packages/skills/vitest.config.ts"
+    "packages/skills/vitest.config.ts",
+    "packages/skills/src/runtime-document.test.ts"
   ],
   "interfacePaths": [
     "packages/skills/src/index.ts",
@@ -99,7 +100,7 @@
     "owner": [
       "packages/skills/src/frontmatter.test.ts",
       "packages/skills/src/github-import.test.ts",
-      "packages/skills/src/host-skills-service.test.ts",
+      "packages/skills/src/skill-authoring-service.test.ts",
       "packages/skills/src/import-limits.test.ts",
       "packages/skills/src/marketplace-install-queue.test.ts",
       "packages/skills/src/marketplace-installation.test.ts",
@@ -116,7 +117,8 @@
       "packages/skills/test/boundary.test.ts",
       "packages/skills/src/helper-validation.test.ts",
       "packages/skills/src/durable-json-file.test.ts",
-      "packages/skills/src/agent-home-skill-catalog.test.ts"
+      "packages/skills/src/agent-home-skill-catalog.test.ts",
+      "packages/skills/src/runtime-document.test.ts"
     ],
     "contract": [
       "src/main/skills/catalog.test.ts",
@@ -1689,7 +1691,8 @@
       "src/shared/smart-collection-rule.test.ts",
       "src/shared/uploads.test.ts",
       "test/pdf-translation-native-verification.test.ts",
-      "test/pdf-translation-preservation.test.ts"
+      "test/pdf-translation-preservation.test.ts",
+      "src/main/skills/host-skills-service.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],

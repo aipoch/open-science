@@ -885,7 +885,7 @@
       "src/main/skills/conversation-import.test.ts",
       "src/main/skills/env-management-skill.test.ts",
       "src/main/skills/export.test.ts",
-      "packages/skills/src/host-skills-service.test.ts",
+      "packages/skills/src/skill-authoring-service.test.ts",
       "packages/skills/src/marketplace-installation.test.ts",
       "packages/skills/src/materializer-integrity.regression.test.ts",
       "src/main/skills/materializer.test.ts",
@@ -1022,7 +1022,8 @@
       "src/main/acp/permission-broker.test.ts",
       "src/main/acp/permission-policy.test.ts",
       "src/main/notebook/auto-mode-budget.integration.test.ts",
-      "src/main/notebook/code-risk-analysis.object-budget.test.ts"
+      "src/main/notebook/code-risk-analysis.object-budget.test.ts",
+      "src/main/skills/host-skills-service.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

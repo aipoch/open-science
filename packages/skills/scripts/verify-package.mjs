@@ -102,7 +102,7 @@ console.log(
 await writeFile(
   join(consumer, 'usage.ts'),
   `
-import { UserSkillRepository, SkillRegistry, HostSkillsService, type SkillHelperValidator } from '@aipoch/skills'
+import { UserSkillRepository, SkillRegistry, SkillAuthoringService, type SkillHelperValidator } from '@aipoch/skills'
 import { parseSkillDocument } from '@aipoch/skills/document'
 import { buildSkillExportArchive } from '@aipoch/skills/sources'
 import { ClaudeCodeSkillMaterializer } from '@aipoch/skills/projection'
@@ -113,7 +113,7 @@ const catalog = await registry.list()
 await new ClaudeCodeSkillMaterializer().sync('/tmp/projection', catalog)
 if (catalog[0]) await buildSkillExportArchive(catalog[0], undefined, validator)
 parseSkillDocument('---\\nname: example\\n---\\nExample')
-const host: typeof HostSkillsService = HostSkillsService
+const host: typeof SkillAuthoringService = SkillAuthoringService
 void host; void repository
 `
 )

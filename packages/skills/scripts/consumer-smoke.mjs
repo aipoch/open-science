@@ -1,3 +1,4 @@
+const hiddenImplementation = '@aipoch/skills/dist/skill-mutation-owner'
 import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
 import { mkdtemp, rm, readFile } from 'node:fs/promises'
@@ -5,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   AgentHomeSkillCatalog,
+  SkillAuthoringService,
   UserSkillRepository,
   UserSkillSpecialistPackageAdapter,
   MarketplaceInstallConflict
@@ -16,7 +18,7 @@ import { ClaudeCodeSkillMaterializer, loadSkillDocumentContent } from '@aipoch/s
 const require = createRequire(import.meta.url)
 assert.equal(require('@aipoch/skills').UserSkillRepository, UserSkillRepository)
 assert.equal(require('@aipoch/skills').MarketplaceInstallConflict, MarketplaceInstallConflict)
-assert.throws(() => require('@aipoch/skills/dist/skill-mutation-owner'), {
+assert.throws(() => require(hiddenImplementation), {
   code: 'ERR_PACKAGE_PATH_NOT_EXPORTED'
 })
 const root = await mkdtemp(join(tmpdir(), 'skill-consumer-'))
@@ -63,11 +65,39 @@ try {
   await assert.rejects(repository.updatePersonal(id, { ...input, body: 'Stale' }, 'stale-etag'))
   const configDir = join(root, 'runtime', '.claude')
   await new ClaudeCodeSkillMaterializer().sync(configDir, await repository.list())
-  const document = await loadSkillDocumentContent({ root: join(root, 'runtime') }, 'example')
+  const document = await loadSkillDocumentContent(
+    { root: join(root, 'runtime'), skillsDirectory: join(root, 'runtime', '.claude', 'skills') },
+    'example'
+  )
   assert.match(document, /Second version/)
   const projected = await readFile(join(configDir, 'skills', `os-${id}`, 'SKILL.md'), 'utf8')
   assert.equal(parseSkillDocument(projected).name, 'example')
   await repository.delete(id)
+  assert.deepEqual(await repository.list(), [])
+  const authoring = new SkillAuthoringService({
+    storageRoot: root,
+    catalog: {
+      list: () => repository.list(),
+      withSkillRead: (id, read) => repository.withSkillReadLock(id, read),
+      publishPersonalDirectory: (...args) => repository.publishPersonalDirectory(...args),
+      deletePublished: (id) => repository.delete(id)
+    }
+  })
+  await authoring.edit({
+    name: 'authored',
+    path: 'SKILL.md',
+    content: '---\nname: authored\ndescription: Authored document\n---\npublic authoring witness'
+  })
+  assert.equal((await authoring.validate({ name: 'authored' })).valid, true)
+  await authoring.publish({ name: 'authored' })
+  assert.match(
+    (await authoring.read({ name: 'personal-authored' })).content,
+    /public authoring witness/
+  )
+  await authoring.runMutationExclusive(async () => {
+    const target = await authoring.resolveDeletion('personal-authored')
+    await authoring.delete(target.id)
+  })
   assert.deepEqual(await repository.list(), [])
   console.log(
     'Public CJS/ESM identity, shared locking, create/read/update/archive/import/projection/delete passed.'

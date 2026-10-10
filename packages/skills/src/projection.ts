@@ -12,6 +12,7 @@ export {
 } from './runtime-document'
 export type {
   SkillRuntimeEnvironment,
+  SkillRuntimeCatalogPolicy,
   SkillRuntimeCatalog,
   SkillRuntimeCatalogEntry
 } from './runtime-document'

@@ -5,12 +5,12 @@ import type {
   SkillMarketplaceBatch,
   SkillMarketplaceBatchRequest,
   SkillMarketplaceBatchStartResult,
-  SkillMarketplaceDetail,
   SkillMarketplaceDetailRequest,
   SkillMarketplaceInstallRequest,
   SkillMarketplaceInstallResult,
   SkillMarketplaceResult
 } from '@aipoch/skills/document'
+import type { SkillMarketplaceDetail } from '../skill-marketplace'
 
 import type {
   SetConversationSkillImportEnabledRequest,

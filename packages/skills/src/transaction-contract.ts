@@ -11,23 +11,14 @@ export type SpecialistPackageSkillConflict = {
   localId: string
   installedVersion: string
   installedContentHash: string
-  mainEnabled: boolean
-  specialists: ReadonlyArray<{ id: string; name: string }>
 }
 
-export type SpecialistPackageSkillPreview = {
+export type SpecialistPackageSkillPlan = {
   id: string
   version: string
-  versionRange?: string
   disposition: SpecialistPackageSkillDisposition
-  files: readonly string[]
-  reason?: string
-  conflict?: SpecialistPackageSkillConflict
-}
-
-export type SpecialistPackageSkillPlan = SpecialistPackageSkillPreview & {
-  /** Target installation ID resolved from the portable package Skill name. */
   localId?: string
+  conflict?: SpecialistPackageSkillConflict
   contentHash: string
   filesToInstall: ReadonlyArray<{ path: string; bytes: Uint8Array }>
 }

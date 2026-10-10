@@ -18,12 +18,12 @@ import type {
   SkillMarketplaceCatalog,
   SkillMarketplaceCatalogRequest,
   SkillMarketplaceBatchRequest,
-  SkillMarketplaceDetail,
   SkillMarketplaceDetailRequest,
   SkillMarketplaceInstallRequest,
   SkillMarketplaceInstallResult,
   SkillMarketplaceResult
 } from '@aipoch/skills/document'
+import type { SkillMarketplaceDetail } from '../../shared/skill-marketplace'
 import { readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import {

@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { cp, lstat, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 
-export type TrustedCallingSession = { sessionId?: string; callerRole?: 'main' | 'delegate' }
+import { skillMutationOwnerFor, type SkillMutationOwner } from './skill-mutation-owner'
 import { isSkillPackageIgnoredPath, SKILL_IMPORT_LIMITS } from './skill-import-limits'
 import { parseSkillDocument } from './frontmatter'
 import type { BundledSkill } from './registry'
@@ -15,78 +15,68 @@ import {
 import { SAFE_SKILL_NAME, assertUsableSkillName, parseUserSkillId } from './user-skill-repository'
 import { isUnsafeSkillArchivePath } from './zip-extract'
 
-export type HostSkillsCatalog = {
+export type SkillAuthoringCatalog = {
   list(): Promise<BundledSkill[]>
   withSkillRead<T>(id: string, read: (skill: BundledSkill) => Promise<T>): Promise<T | undefined>
   publishPersonalDirectory(name: string, sourcePath: string, overwrite: boolean): Promise<string>
   deletePublished(id: string): Promise<void>
 }
 
-type HostSkillsServiceOptions = {
+type SkillAuthoringServiceOptions = {
   storageRoot: string
   validateHelper?: SkillHelperValidator
-  catalog: HostSkillsCatalog
-  approveDelete?: (
-    request: { name: string; origin: 'draft' | BundledSkill['source'] },
-    context: TrustedCallingSession
-  ) => Promise<boolean>
-  onPublishedSkillsChanged?: () => Promise<void> | void
+  catalog: SkillAuthoringCatalog
 }
 
-type Params = Record<string, unknown>
+type ReadInput = { name: string; path?: string }
+type EditInput = ReadInput & { content: string; oldString?: string }
+type PublishInput = { name: string; overwrite?: boolean }
+export type SkillDeletionTarget = Readonly<{
+  name: string
+  origin: SkillAuthoringOrigin
+  id: string
+}>
 
-type HostSkillOrigin = 'draft' | BundledSkill['source']
+type SkillAuthoringOrigin = 'draft' | BundledSkill['source']
 
-export type HostSkillSummary = Readonly<{
+export type SkillAuthoringSummary = Readonly<{
   id: string
   name: string
   displayName: string
   description: string
-  origin: HostSkillOrigin
+  origin: SkillAuthoringOrigin
   editable: boolean
 }>
 
-export type HostSkillReadResult = Readonly<{
+export type SkillAuthoringReadResult = Readonly<{
   name: string
-  origin: HostSkillOrigin
+  origin: SkillAuthoringOrigin
   path: string
   content: string
   files?: string[]
 }>
 
-export type HostSkillValidationResult = Readonly<{
+export type SkillAuthoringValidationResult = Readonly<{
   valid: boolean
   name: string
-  origin: HostSkillOrigin
+  origin: SkillAuthoringOrigin
   errors: SkillValidationIssue[]
   warnings: SkillValidationIssue[]
 }>
 
-type HostSkillEditResult = Readonly<{
+type SkillAuthoringEditResult = Readonly<{
   status: 'edited'
   name: string
   path: string
   origin: 'draft'
 }>
 
-type HostSkillPublishResult = Readonly<{
+type SkillAuthoringPublishResult = Readonly<{
   status: 'published'
   id: string
   name: string
   origin: 'personal'
 }>
-
-type HostSkillDeleteResult =
-  | Readonly<{ status: 'declined'; operation: 'delete' }>
-  | Readonly<{ status: 'deleted'; operation: 'delete'; name: string }>
-
-export type HostSkillsResult =
-  | HostSkillSummary[]
-  | HostSkillReadResult
-  | HostSkillValidationResult
-  | HostSkillEditResult
-  | HostSkillPublishResult
-  | HostSkillDeleteResult
 
 const asString = (value: unknown): string | undefined =>
   typeof value === 'string' ? value : undefined
@@ -138,63 +128,28 @@ const explicitDraftName = (reference: string): string | undefined => {
   return SAFE_SKILL_NAME.test(name) ? name : undefined
 }
 
-class HostSkillsCallError extends Error {
-  constructor(operation: string, cause: unknown) {
-    const message = cause instanceof Error ? cause.message : String(cause)
-    super(
-      `host.skills.${operation}: ${message.replace(/(['"])(?:[A-Za-z]:\\|\/)[^'"]+\1/g, '<path>')}`,
-      { cause }
-    )
-    this.name = 'HostSkillsCallError'
-  }
-}
-
-// Owns the complete conversational Skill lifecycle behind the single host.skills dispatcher seam.
-// Draft storage, exact replacement, package validation, approval, and published read-back stay here;
-// the RPC transport only supplies authenticated session context and the catalog adapter remains the
-// authority for installed Skills and Specialist deletion guards.
-export class HostSkillsService {
+/** Owns draft files and authoring invariants. The caller owns transport and approval policy. */
+export class SkillAuthoringService {
   private readonly draftsRoot: string
-  private mutationTail: Promise<void> = Promise.resolve()
+  private readonly mutations: SkillMutationOwner
 
-  constructor(private readonly options: HostSkillsServiceOptions) {
+  constructor(private readonly options: SkillAuthoringServiceOptions) {
     this.draftsRoot = join(options.storageRoot, 'skills', 'drafts')
+    this.mutations = skillMutationOwnerFor(this.draftsRoot)
   }
 
-  private mutate<T>(operation: () => Promise<T>): Promise<T> {
-    const result = this.mutationTail.then(operation)
-    this.mutationTail = result.then(
-      () => undefined,
-      () => undefined
-    )
-    return result
+  // A host can keep a multi-step operation serialized across a user decision. Reentrant calls
+  // share this authoring owner; repository writes still use the root-wide repository lock.
+  runMutationExclusive<T>(operation: () => Promise<T>): Promise<T> {
+    return this.mutations.runExclusive(operation)
   }
 
-  async dispatch(request: unknown, context: TrustedCallingSession = {}): Promise<HostSkillsResult> {
-    const op =
-      request && typeof request === 'object' && 'op' in request
-        ? asString((request as { op: unknown }).op)
-        : undefined
-    const paramsValue =
-      request && typeof request === 'object' && 'params' in request
-        ? (request as { params?: unknown }).params
-        : undefined
-    const params: Params =
-      paramsValue && typeof paramsValue === 'object' && !Array.isArray(paramsValue)
-        ? (paramsValue as Params)
-        : {}
+  edit(input: EditInput): Promise<SkillAuthoringEditResult> {
+    return this.runMutationExclusive(() => this.editDraft(input))
+  }
 
-    try {
-      if (op === 'list') return await this.list()
-      if (op === 'read') return await this.read(params)
-      if (op === 'validate') return await this.validate(params)
-      if (op === 'edit') return await this.mutate(() => this.edit(params))
-      if (op === 'publish') return await this.mutate(() => this.publish(params))
-      if (op === 'delete') return await this.mutate(() => this.delete(params, context))
-      throw new Error('Unknown operation')
-    } catch (error) {
-      throw new HostSkillsCallError(op ?? 'unknown', error)
-    }
+  publish(input: PublishInput): Promise<SkillAuthoringPublishResult> {
+    return this.runMutationExclusive(() => this.publishDraft(input))
   }
 
   private draftDir(name: string): string {
@@ -211,7 +166,7 @@ export class HostSkillsService {
     }
   }
 
-  private async list(): Promise<HostSkillSummary[]> {
+  async list(): Promise<SkillAuthoringSummary[]> {
     const installed = (await this.options.catalog.list()).map((skill) => ({
       id: skill.id,
       name: skill.name,
@@ -261,9 +216,9 @@ export class HostSkillsService {
   private async readFromPackage(
     root: string,
     name: string,
-    origin: HostSkillOrigin,
+    origin: SkillAuthoringOrigin,
     relativePath: string
-  ): Promise<HostSkillReadResult> {
+  ): Promise<SkillAuthoringReadResult> {
     const files =
       relativePath === 'SKILL.md'
         ? (
@@ -282,7 +237,7 @@ export class HostSkillsService {
     }
   }
 
-  private async read(params: Params): Promise<HostSkillReadResult> {
+  async read(params: ReadInput): Promise<SkillAuthoringReadResult> {
     const requestedName = asString(params.name)?.trim()
     if (!requestedName) throw new Error('name is required')
     const relativePath = safeRelativePath(params.path, 'SKILL.md')
@@ -294,10 +249,7 @@ export class HostSkillsService {
     }
 
     const skill = await this.resolvePublished(requestedName)
-    if (!skill)
-      throw new Error(
-        `Unknown Skill: ${requestedName}. host.skills reads managed and draft Skills, not generated Connector Skill documents. Use an already loaded document or the current framework's advertised Skill loader. If unavailable, stop the dependent work; do not probe filesystem paths or guess Connector methods.`
-      )
+    if (!skill) throw new Error(`Unknown Skill: ${requestedName}`)
     const result = await this.options.catalog.withSkillRead(skill.id, (lockedSkill) =>
       this.readFromPackage(
         lockedSkill.sourceDir,
@@ -313,9 +265,9 @@ export class HostSkillsService {
   private async validationResult(
     sourceDir: string,
     name: string,
-    origin: HostSkillOrigin,
+    origin: SkillAuthoringOrigin,
     expectedName?: string
-  ): Promise<HostSkillValidationResult> {
+  ): Promise<SkillAuthoringValidationResult> {
     const report = await validateSkillPackage(sourceDir, name, expectedName, {
       validateHelper: this.options.validateHelper,
       storageRoot: this.options.storageRoot
@@ -329,7 +281,7 @@ export class HostSkillsService {
     }
   }
 
-  private async validate(params: Params): Promise<HostSkillValidationResult> {
+  async validate(params: ReadInput): Promise<SkillAuthoringValidationResult> {
     const requestedName = asString(params.name)?.trim()
     if (!requestedName) throw new Error('name is required')
     const draftName =
@@ -448,7 +400,7 @@ export class HostSkillsService {
     }
   }
 
-  private async edit(params: Params): Promise<HostSkillEditResult> {
+  private async editDraft(params: EditInput): Promise<SkillAuthoringEditResult> {
     const requestedName = asString(params.name)?.trim()
     const content = asString(params.content)
     if (!requestedName) throw new Error('name is required')
@@ -466,10 +418,10 @@ export class HostSkillsService {
     if (!target.startsWith(root + sep)) throw new Error('unsafe path')
     await this.ensureSafeParent(root, relativePath)
 
-    const hasOldString = Object.prototype.hasOwnProperty.call(params, 'old_string')
+    const hasOldString = Object.prototype.hasOwnProperty.call(params, 'oldString')
     let next = content
     if (hasOldString) {
-      const oldString = asString(params.old_string)
+      const oldString = asString(params.oldString)
       if (!oldString) throw new Error('oldString must be a non-empty string')
       const current = await readBoundedText(target)
       const first = current.indexOf(oldString)
@@ -492,7 +444,7 @@ export class HostSkillsService {
     return { status: 'edited', name: draft.name, path: relativePath, origin: 'draft' }
   }
 
-  private async publish(params: Params): Promise<HostSkillPublishResult> {
+  private async publishDraft(params: PublishInput): Promise<SkillAuthoringPublishResult> {
     const name = asString(params.name)?.trim()
     if (!name || !SAFE_SKILL_NAME.test(name)) throw new Error('a draft name is required')
     const overwrite = params.overwrite === true
@@ -509,46 +461,23 @@ export class HostSkillsService {
       await rm(draft, { recursive: true, force: true })
     } catch (error) {
       throw new Error(
-        `Skill "${id}" was published, but draft cleanup failed and catalog refresh was not attempted. ` +
-          `The draft "draft-${name}" may remain. Use host.skills.read(${JSON.stringify(id)}) ` +
-          'to inspect the published Skill before any further mutation; do not republish to retry cleanup.',
-        { cause: error }
-      )
-    }
-    try {
-      await this.options.onPublishedSkillsChanged?.()
-    } catch (error) {
-      throw new Error(
-        `Skill "${id}" was published and its draft removed, but catalog refresh failed. ` +
-          `Use host.skills.read(${JSON.stringify(id)}) to inspect the published Skill; ` +
-          'do not republish to retry refresh. Availability in agent contexts has not been confirmed.',
+        `Skill "${id}" was published, but draft cleanup failed. ` +
+          `The draft "draft-${name}" may remain. Inspect the published Skill before any further mutation; do not republish to retry cleanup.`,
         { cause: error }
       )
     }
     return { status: 'published', id, name, origin: 'personal' }
   }
 
-  private async delete(
-    params: Params,
-    context: TrustedCallingSession
-  ): Promise<HostSkillDeleteResult> {
-    const requestedName = asString(params.name)?.trim()
+  async resolveDeletion(name: string): Promise<SkillDeletionTarget> {
+    const requestedName = name.trim()
     if (!requestedName) throw new Error('name is required')
-
     const requestedDraft = explicitDraftName(requestedName)
     if (requestedDraft) {
-      if (!(await exists(this.draftDir(requestedDraft)))) {
+      if (!(await exists(this.draftDir(requestedDraft))))
         throw new Error(`Unknown draft: ${requestedDraft}`)
-      }
-      const approved = await this.options.approveDelete?.(
-        { name: requestedDraft, origin: 'draft' },
-        context
-      )
-      if (!approved) return { status: 'declined', operation: 'delete' }
-      await rm(this.draftDir(requestedDraft), { recursive: true, force: true })
-      return { status: 'deleted', operation: 'delete', name: requestedDraft }
+      return { name: requestedDraft, origin: 'draft', id: `draft-${requestedDraft}` }
     }
-
     const published = await this.resolvePublished(requestedName)
     const unqualifiedDraft =
       SAFE_SKILL_NAME.test(requestedName) && (await exists(this.draftDir(requestedName)))
@@ -558,36 +487,20 @@ export class HostSkillsService {
       )
     }
     if (!published) {
-      if (!unqualifiedDraft) {
-        throw new Error(`Unknown Skill: ${requestedName}`)
-      }
-      const approved = await this.options.approveDelete?.(
-        { name: requestedName, origin: 'draft' },
-        context
-      )
-      if (!approved) return { status: 'declined', operation: 'delete' }
-      await rm(this.draftDir(requestedName), { recursive: true, force: true })
-      return { status: 'deleted', operation: 'delete', name: requestedName }
+      if (!unqualifiedDraft) throw new Error(`Unknown Skill: ${requestedName}`)
+      return { name: requestedName, origin: 'draft', id: `draft-${requestedName}` }
     }
-    if (published?.source === 'featured') throw new Error('built-in Skills cannot be deleted')
+    if (published.source === 'featured') throw new Error('built-in Skills cannot be deleted')
+    return { name: published.name, origin: published.source, id: published.id }
+  }
 
-    const publicName = published.name
-    const approved = await this.options.approveDelete?.(
-      { name: publicName, origin: published.source },
-      context
-    )
-    if (!approved) return { status: 'declined', operation: 'delete' }
-    await this.options.catalog.deletePublished(published.id)
-    try {
-      await this.options.onPublishedSkillsChanged?.()
-    } catch (error) {
-      throw new Error(
-        `Skill "${published.id}" was deleted, but catalog refresh failed. ` +
-          'Use host.skills.list() to inspect the catalog; do not repeat deletion to retry refresh. ' +
-          'Removal from agent contexts has not been confirmed.',
-        { cause: error }
-      )
-    }
-    return { status: 'deleted', operation: 'delete', name: publicName }
+  delete(name: string): Promise<SkillDeletionTarget> {
+    return this.runMutationExclusive(async () => {
+      const target = await this.resolveDeletion(name)
+      if (target.origin === 'draft')
+        await rm(this.draftDir(target.name), { recursive: true, force: true })
+      else await this.options.catalog.deletePublished(target.id)
+      return target
+    })
   }
 }

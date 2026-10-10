@@ -23,9 +23,7 @@ afterEach(async () => {
 const plan = (id = 'analysis-tools'): SpecialistPackageSkillPlan => ({
   id,
   version: '1.2.3',
-  versionRange: '^1.2.0',
   disposition: 'install',
-  files: ['SKILL.md', 'scripts/run.sh'],
   contentHash: '72541991850adc0678ab5319bc5d205fdde34af8065c913b92cae0bad4cab342',
   filesToInstall: [
     {
@@ -278,9 +276,7 @@ describe('UserSkillSpecialistPackageAdapter', () => {
       conflict: {
         localId: 'imported-analysis-tools',
         installedVersion: installed.version,
-        installedContentHash: installed.contentHash,
-        mainEnabled: false,
-        specialists: []
+        installedContentHash: installed.contentHash
       }
     }
 

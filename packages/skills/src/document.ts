@@ -30,7 +30,7 @@ export type {
   SkillMarketplaceCatalogRequest,
   SkillMarketplaceDetailRequest,
   SkillMarketplaceConflictReason,
-  SkillMarketplaceUpdateImpact,
+  SkillMarketplaceUpdateGuard,
   SkillMarketplaceUpdatePreview,
   SkillMarketplaceInstallation,
   SkillMarketplaceInstallRequest,
@@ -46,7 +46,6 @@ export { isSkillEffectivelyEnabled, trustedSkillActivationPolicy } from './activ
 export type {
   SpecialistPackageSkillDisposition,
   SpecialistPackageSkillConflict,
-  SpecialistPackageSkillPreview,
   SpecialistPackageSkillPlan
 } from './transaction-contract'
 

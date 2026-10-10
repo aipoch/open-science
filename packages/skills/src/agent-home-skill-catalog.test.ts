@@ -48,7 +48,7 @@ it('discovers, previews and imports through an independently supplied repository
     source: 'agents',
     slug: 'example'
   })
-  expect(preview.sourceLabel).toBe('~/.agents/skills/example')
+  expect(preview.sourceLabel).toBe('agents/example')
   expect(preview.files).toContain('references/proof.txt')
   const results = await catalog.importAgentHomeSkills(sources, [
     { source: 'agents', slug: 'example' }
@@ -145,4 +145,14 @@ it('keeps a failed legacy migration importable and clears the failure after succ
   await catalog.migrateIdentities(both, [])
   expect((await catalog.list(both))[0].alreadyImported).toBe(true)
   expect((await repo.list())[0].id).toBe(id)
+})
+
+it('uses caller labels for custom source roots and replacement previews', async () => {
+  const { catalog, sources } = await fixture()
+  const labelled = sources.map((source) => ({ ...source, displayRoot: 'managed-library' }))
+  const ref = { source: 'agents' as const, slug: 'example' }
+  await catalog.importAgentHomeSkills(labelled, [ref])
+  const preview = await catalog.previewAgentHomeSkill(labelled, ref)
+  expect(preview.sourceLabel).toBe('managed-library/example')
+  expect(preview.replacement?.sourceLabel).toBe('managed-library/example')
 })

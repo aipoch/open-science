@@ -7,14 +7,13 @@ export type { ImportOutcome, UserSkillRepositoryOptions } from './user-skill-rep
 export { SkillRegistry } from './registry'
 export type { BundledSkill } from './registry'
 export { UserSkillCatalogObserver } from './user-skill-catalog-observer'
-export { HostSkillsService } from './host-skills-service'
+export { SkillAuthoringService } from './skill-authoring-service'
 export type {
-  HostSkillsCatalog,
-  HostSkillsResult,
-  HostSkillSummary,
-  HostSkillReadResult,
-  HostSkillValidationResult
-} from './host-skills-service'
+  SkillAuthoringCatalog,
+  SkillAuthoringSummary,
+  SkillAuthoringReadResult,
+  SkillAuthoringValidationResult
+} from './skill-authoring-service'
 export { UserSkillSpecialistPackageAdapter } from './specialist-package-adapter'
 export { BundledSkillSpecialistPackageAdapter } from './builtin-specialist-package-adapter'
 export type {

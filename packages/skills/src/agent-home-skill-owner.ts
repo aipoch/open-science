@@ -385,7 +385,7 @@ class AgentHomeSkillOwner {
     return { ...staged, signature }
   }
 
-  // Lists the skill directories under a machine-level agent home (typically ~/.claude/skills/).
+  // Lists the skill directories under a machine-level agent home (selected by the caller).
   // Agent Home addresses candidates by a safe external slug directory. Arbitrary siblings are not
   // import choices. Frontmatter supplies the displayed name/description, while the directory name
   // remains Agent Home's stable slug. Hidden transaction directories are ignored.
@@ -454,7 +454,8 @@ class AgentHomeSkillOwner {
   async previewAgentHomeSkill(
     root: string,
     skill?: AgentHomeSkillRef,
-    aliases: readonly AgentHomeSkillRef[] = []
+    aliases: readonly AgentHomeSkillRef[] = [],
+    displayLabel: (ref: AgentHomeSkillRef) => string = (ref) => `${ref.source}/${ref.slug}`
   ): Promise<ParsedSkillPreview> {
     const entries = await this.inspectAgentHomeSkill(root)
     const files = entries.filter(
@@ -482,15 +483,9 @@ class AgentHomeSkillOwner {
       if (!directoryName) return preview
       const source = await this.transactions.readImportedSource(directoryName)
       const ref = source?.agentHome
-      const sourceRoot =
-        ref?.source === 'agents'
-          ? '~/.agents/skills'
-          : ref?.source === 'claude'
-            ? '~/.claude/skills'
-            : '~/.codex/skills'
       const replacement: SkillReplacementPreview = {
         targetId: `imported-${directoryName}`,
-        ...(ref ? { sourceLabel: `${sourceRoot}/${ref.slug}` } : {}),
+        ...(ref ? { sourceLabel: displayLabel(ref) } : {}),
         added: [],
         modified: [],
         removed: []

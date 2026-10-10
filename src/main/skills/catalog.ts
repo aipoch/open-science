@@ -7,12 +7,11 @@ import type { SpecialistListItem } from '../../shared/specialist'
 import { realpath } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import type { MarketplacePackage } from '@aipoch/skills/sources'
+import type { SkillMarketplaceEntry, SkillMarketplaceInstallation } from '@aipoch/skills/document'
 import type {
-  SkillMarketplaceEntry,
-  SkillMarketplaceInstallation,
   SkillMarketplaceUpdateImpact,
   SkillMarketplaceUpdatePreview
-} from '@aipoch/skills/document'
+} from '../../shared/skill-marketplace'
 import { dirname, join, resolve, sep } from 'node:path'
 
 import type {
@@ -707,40 +706,59 @@ class SkillCatalogModule {
         expectedVersion,
         reservedNames,
         updateToken,
-        (id) => this.marketplaceImpact(id),
+        (id, owners) => this.marketplaceUsageRevision(id, owners),
         this.options.withMarketplaceImpactLock
       )
     )
   }
 
-  private async marketplaceImpact(id: string): Promise<SkillMarketplaceUpdateImpact> {
+  private async marketplaceImpact(
+    id: string,
+    ownerIds: readonly string[] = []
+  ): Promise<SkillMarketplaceUpdateImpact> {
     if (!this.options.readMarketplaceSpecialists)
       throw new Error('Specialist impact inspection is unavailable.')
     const [items, settings] = await Promise.all([
       this.options.readMarketplaceSpecialists(),
       this.options.repository.getSettings()
     ])
-    return {
-      mainEnabled: !(settings.disabledSkillIds ?? []).includes(id),
-      specialists: items.flatMap((item) =>
+    const specialists = new Map(
+      items.flatMap((item) =>
         item.kind === 'reviewer'
           ? []
           : item.ownedSkillIds?.includes(id) ||
               (item.capabilityMode === 'full'
                 ? !item.fullAccess.excludedSkillIds.includes(id)
                 : item.selectedCapabilities.skillIds.includes(id))
-            ? [{ id: item.id, name: item.displayName?.trim() || item.name }]
+            ? [[item.id, { id: item.id, name: item.displayName?.trim() || item.name }] as const]
             : []
       )
+    )
+    for (const ownerId of ownerIds)
+      if (!specialists.has(ownerId)) specialists.set(ownerId, { id: ownerId, name: ownerId })
+    return {
+      mainEnabled: !(settings.disabledSkillIds ?? []).includes(id),
+      specialists: [...specialists.values()].sort((a, b) => a.id.localeCompare(b.id))
     }
   }
 
-  previewMarketplaceUpdate(pkg: MarketplacePackage): Promise<SkillMarketplaceUpdatePreview> {
-    return this.bundledSkillNames().then((reservedNames) =>
-      this.userSkills.previewMarketplaceUpdate(pkg, reservedNames, (id) =>
-        this.marketplaceImpact(id)
-      )
+  private async marketplaceUsageRevision(id: string, ownerIds: readonly string[]): Promise<string> {
+    return JSON.stringify(await this.marketplaceImpact(id, ownerIds))
+  }
+
+  async previewMarketplaceUpdate(pkg: MarketplacePackage): Promise<SkillMarketplaceUpdatePreview> {
+    const reservedNames = await this.bundledSkillNames()
+    let impact: SkillMarketplaceUpdateImpact | undefined
+    const preview = await this.userSkills.previewMarketplaceUpdate(
+      pkg,
+      reservedNames,
+      async (id, ownerIds) => {
+        impact = await this.marketplaceImpact(id, ownerIds)
+        return JSON.stringify(impact)
+      }
     )
+    if (!impact) throw new Error('Skill update impact was not inspected.')
+    return { ...preview, ...impact }
   }
 
   async refreshMarketplace(): Promise<void> {
@@ -892,14 +910,17 @@ class SkillCatalogModule {
     return [
       {
         source: 'agents',
+        displayRoot: '~/.agents/skills',
         dir: join(this.options.userAgentsDir ?? join(homedir(), '.agents'), 'skills')
       },
       {
         source: 'claude',
+        displayRoot: '~/.claude/skills',
         dir: join(this.options.userClaudeDir ?? join(homedir(), '.claude'), 'skills')
       },
       {
         source: 'codex',
+        displayRoot: '~/.codex/skills',
         dir: join(this.options.userCodexDir ?? join(homedir(), '.codex'), 'skills')
       }
     ]

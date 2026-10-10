@@ -196,25 +196,30 @@ describe('User Skill repository architecture', () => {
 
   it('keeps production consumers on the facade and one mutation-owner construction seam', () => {
     expect(importersOf(repositoryPath)).toEqual([
-      'packages/skills/src/host-skills-service.ts',
-      'packages/skills/src/index.ts'
+      'packages/skills/src/agent-home-skill-catalog.ts',
+      'packages/skills/src/index.ts',
+      'packages/skills/src/skill-authoring-service.ts'
     ])
     expect(importersOf(mutationOwnerPath)).toEqual([
+      'packages/skills/src/skill-authoring-service.ts',
       'packages/skills/src/skill-package-transaction-owner.ts',
       'packages/skills/src/specialist-package-adapter.ts'
     ])
     expect(importersOf(storePath)).toEqual([
+      'packages/skills/src/agent-home-skill-catalog.ts',
       'packages/skills/src/agent-home-skill-owner.ts',
       'packages/skills/src/index.ts',
       'packages/skills/src/skill-bundle-import-owner.ts',
       'packages/skills/src/user-skill-repository.ts'
     ])
     expect(importersOf(agentHomeOwnerPath)).toEqual([
+      'packages/skills/src/agent-home-skill-catalog.ts',
       'packages/skills/src/index.ts',
       'packages/skills/src/user-skill-repository.ts'
     ])
     expect(importersOf(bundleOwnerPath)).toEqual(['packages/skills/src/user-skill-repository.ts'])
     expect(importersOf(importContractsPath)).toEqual([
+      'packages/skills/src/agent-home-skill-catalog.ts',
       'packages/skills/src/agent-home-skill-owner.ts',
       'packages/skills/src/index.ts',
       'packages/skills/src/skill-bundle-import-owner.ts',
