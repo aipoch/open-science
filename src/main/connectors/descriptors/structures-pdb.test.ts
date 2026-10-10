@@ -194,6 +194,46 @@ describe('pdb_search_structures', () => {
     expect(out.truncated).toBe(true)
   })
 
+  it('propagates malformed HTTP 200 JSON instead of reporting zero hits', async () => {
+    const fetchImpl = vi.fn().mockResolvedValueOnce(new Response('{invalid JSON', { status: 200 }))
+    await expect(run('pdb_search_structures', { text: 'p53' }, fetchImpl)).rejects.toBeInstanceOf(
+      SyntaxError
+    )
+    expect(fetchImpl).toHaveBeenCalledOnce()
+  })
+
+  it.each(['malformed JSON', 'HTTP 204'])('handles %s on a later page', async (failure) => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json({
+          total_count: 250,
+          result_set: Array.from({ length: 100 }, (_, i) => ({ identifier: `ID${i}`, score: 1 }))
+        })
+      )
+      .mockResolvedValueOnce(
+        failure === 'HTTP 204'
+          ? new Response(null, { status: 204 })
+          : new Response('{invalid JSON', { status: 200 })
+      )
+    const execution = run('pdb_search_structures', { text: 'p53', max_rows: 200 }, fetchImpl)
+    if (failure === 'HTTP 204') {
+      await expect(execution).resolves.toEqual({
+        total_count: 250,
+        n_retrieved: 100,
+        truncated: true,
+        max_rows: 200,
+        records: Array.from({ length: 100 }, (_, i) => ({ pdb_id: `ID${i}`, score: 1 }))
+      })
+    } else {
+      await expect(execution).rejects.toBeInstanceOf(SyntaxError)
+    }
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    expect(
+      JSON.parse((fetchImpl.mock.calls[1][1] as { body: string }).body).request_options.paginate
+    ).toEqual({ start: 100, rows: 100 })
+  })
+
   it('throws on an unknown experimental_method with the valid list', async () => {
     const fetchImpl = vi.fn()
     await expect(

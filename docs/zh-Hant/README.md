@@ -51,7 +51,7 @@ AIPOCH Open-Science 支援機器學習、統計學、生命科學、化學、材
 
 已完成的研究會話也可以匯出為可攜式 `.science` 研究套件，用於審閱、交接與封存，並攜帶所選的對話分支、檔案版本、Notebook 記錄與驗證證據。
 
-> 💡 **[AIPOCH Open-Science v0.36.0 已發佈](https://github.com/aipoch/open-science/releases/latest)** _（最後更新於 2026 年 10 月）_。 AIPOCH Open-Science v0.36.0 新增可逐次審查風險的 Notebook 執行、支援原文/譯文/對照閱讀模式的可續傳共享 PDF 全文翻譯；科學資料連接器再擴容——新增面向癌症蛋白質組學研究的 PDC 連接器，基因組連接器支援按人群查詢連鎖不平衡，並新增 Claude Haiku 5.5 模型支援。修復內容涵蓋保留科學 PDF 原生排版、清理官方模型目錄、空工作階段中回復尋找功能，以及檔案提及、Remote Web 市場瀏覽與編輯器標籤樣式等可靠性問題。詳情請查看[最新發行說明](https://github.com/aipoch/open-science/releases/latest)。
+> 💡 **[AIPOCH Open-Science v0.37.0 已發佈](https://github.com/aipoch/open-science/releases/latest)** _（最後更新於 2026 年 10 月）_。 AIPOCH Open-Science v0.37.0 將共享後端作為獨立 Node 服務執行——命令列與無頭模式不再需要無視窗 Electron 宿主，桌面應用以原生用戶端方式接入；連接器目錄新增內建 ENCORI 連接器、ChEMBL 實驗細節與生物活性分頁、ClinVar 提交證據查詢；PDF 翻譯保留原生閱讀順序，結構提取完整保留源文件擁有的圖與表；筆記本執行時在精簡的核准卡片背後更準確地報告環境資訊。修復內容涵蓋：Windows Python 探索、桌面後端連接埠與設定檔、`.science` 匯入新專案、智慧合集批次內重試，以及 Codex 串流工具參數。詳情請查看[最新發行說明](https://github.com/aipoch/open-science/releases/latest)。
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 首屏橫幅：Science, Open to All——開源、模型無關、可自行託管的科學 AI 研究工作台" src="../images/readme/open-science-banner.png" />
