@@ -773,7 +773,9 @@ describe('native desktop requests over the authenticated connection', () => {
           { bytes: Uint8Array } | { packets: Array<{ value: { bytes: Uint8Array } }> }
         const receivedBytes = 'bytes' in received ? received.bytes : received.packets[0].value.bytes
         expect(receivedBytes).toBeInstanceOf(Uint8Array)
-        expect(receivedBytes).not.toBe(bytes)
+        // Compare identity as a boolean: the matcher otherwise deep-compares the entire segment
+        // to suggest an alternative assertion, even when the negated identity check passes.
+        expect(receivedBytes === bytes).toBe(false)
         expect(receivedBytes.byteLength).toBe(bytes.byteLength)
         expect(createHash('sha256').update(receivedBytes).digest('hex')).toBe(
           createHash('sha256').update(bytes).digest('hex')
