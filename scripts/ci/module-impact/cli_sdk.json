@@ -59,7 +59,9 @@
       "src/main/web-service/http-server.test.ts",
       "src/main/runtime-control.integration.test.ts",
       "scripts/stage-npm-release.test.ts",
-      "scripts/pack-npm-release.test.ts"
+      "scripts/pack-npm-release.test.ts",
+      "scripts/publish-npm-release.test.ts",
+      "scripts/npm-runtime-workflow.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

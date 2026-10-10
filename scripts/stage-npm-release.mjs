@@ -31,10 +31,10 @@ export function releaseManifests(cli, standalone, target) {
   return { main, native }
 }
 
-export async function stageNpmRelease(root) {
+export async function stageNpmRelease(root, source = join(root, 'out/standalone')) {
   const stage = join(root, 'out/npm-release')
   const cli = JSON.parse(await readFile(join(root, 'packages/open-science/package.json'), 'utf8'))
-  const standalone = JSON.parse(await readFile(join(root, 'out/standalone/package.json'), 'utf8'))
+  const standalone = JSON.parse(await readFile(join(source, 'package.json'), 'utf8'))
   const version = JSON.parse(await readFile(join(root, 'package.json'), 'utf8')).version
   if (standalone.version !== version) throw new Error('Stale standalone build version')
   const target = currentRuntimeTarget()
@@ -46,7 +46,7 @@ export async function stageNpmRelease(root) {
     if (/\.(mjs|d\.ts|d\.mts)$/.test(file) || ['LICENSE', 'README.md', 'CLI.md'].includes(file))
       await cp(join(root, 'packages/open-science', file), join(stage, 'main', file))
   }
-  await cp(join(root, 'out/standalone'), join(stage, target.id), { recursive: true })
+  await cp(source, join(stage, target.id), { recursive: true })
   for (const [folder, manifest] of [
     ['main', manifests.main],
     [target.id, manifests.native]
@@ -55,4 +55,4 @@ export async function stageNpmRelease(root) {
   console.log(`Staged npm entry and ${target.id} packages at ${version}`)
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url))
-  await stageNpmRelease(resolve(import.meta.dirname, '..'))
+  await stageNpmRelease(resolve(import.meta.dirname, '..'), process.env.OPEN_SCIENCE_NPM_SOURCE)

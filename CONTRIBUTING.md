@@ -525,9 +525,13 @@ explains the format, the curation follow-ups, and how reviewed examples are inde
 
 ## Publishing the npm Package
 
-Maintainers should follow the [npm package release guide](docs/npm-release.md). Generated npm packages use the root application version. The `Publish npm package` workflow currently
-performs native installation dry-runs only; `npm-v*` publication is disabled while release integration
-and signing verification are completed.
+Stable npm versions use the root application version and the same `v<version>` release as desktop.
+The Release workflow verifies and repacks the certified native backend before publishing five
+platform packages and then `@aipoch/open-science`. Manual **Publish npm package** dispatch remains
+an unsigned dry-run with no registry writes; `npm-v*` publication is removed. Configure the protected
+`npm` environment and per-package Trusted Publishers before enabling regular publication. See the
+[npm release guide](docs/npm-release.md) for bootstrap credentials, signing, platform support and
+retry boundaries.
 
 ## License
 

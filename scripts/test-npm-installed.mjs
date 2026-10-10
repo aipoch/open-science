@@ -8,6 +8,7 @@ import { mkdtemp, readFile, rm, writeFile, readdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { createHash } from 'node:crypto'
+import { verifyNpmSignatures } from './verify-npm-signatures.mjs'
 import { currentRuntimeTarget } from '../packages/open-science/runtime-package.mjs'
 
 const root = resolve(import.meta.dirname, '..')
@@ -82,6 +83,10 @@ try {
   for (const pkg of packages)
     assert.ok(downloaded.has(pkg.filename), `npm must download ${pkg.filename}`)
   const installed = join(prefix, 'node_modules/@aipoch/open-science')
+  if (process.env.OPEN_SCIENCE_NPM_VERIFY_SIGNATURES === '1')
+    await verifyNpmSignatures(
+      join(prefix, 'node_modules', `@aipoch/open-science-${currentRuntimeTarget().id}`)
+    )
   const probe = join(prefix, 'verify.mjs')
   await writeFile(
     probe,

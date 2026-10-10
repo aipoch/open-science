@@ -3,6 +3,10 @@ name: Verify native npm packages
 on:
   workflow_call:
     inputs:
+      desktop_run_id:
+        type: string
+        default: ''
+        description: Repack signed desktop artifacts from this run instead of rebuilding.
       target:
         type: string
         default: all
@@ -10,6 +14,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   plan:
@@ -20,9 +25,11 @@ jobs:
       - id: plan
         env:
           TARGET: ${{ inputs.target }}
+          DESKTOP_RUN: ${{ inputs.desktop_run_id }}
         run: |
           node <<'JS'
           const fs = require('node:fs');
+          if (process.env.DESKTOP_RUN && process.env.DESKTOP_RUN !== process.env.GITHUB_RUN_ID) throw new Error('Desktop inputs must belong to this release run');
           const targets = [
             {id:'linux-x64-gnu',runner:'ubuntu-24.04',subdir:'linux-64',bin:'linux/x64'},
             {id:'linux-arm64-gnu',runner:'ubuntu-24.04-arm',subdir:'linux-aarch64',bin:'linux/arm64'},
@@ -69,9 +76,10 @@ jobs:
           node node_modules/prisma/build/index.js generate
           npm rebuild @aipoch/process-tree-native @aipoch/safe-file-publisher-native
       - name: Build Windows protection helper
-        if: runner.os == 'Windows'
+        if: inputs.desktop_run_id == '' && runner.os == 'Windows'
         run: node packages/notebook-network-sandbox/vendor/windows/build.mjs x64
       - name: Stage verified micromamba resources
+        if: inputs.desktop_run_id == ''
         env:
           SUBDIR: ${{ matrix.subdir }}
           BIN_DIRECTORY: ${{ matrix.bin }}
@@ -82,10 +90,22 @@ jobs:
           if [ "$RUNNER_OS" = Windows ]; then
             node scripts/fetch-micromamba.mjs "$SUBDIR" "resources/bin/$BIN_DIRECTORY/micromamba-compat.exe" compatibility
           fi
-      - name: Build and pack ordinary Node runtime
-        run: |
-          npm run stage:backend
-          npm run pack:npm-release
+      - name: Download certified desktop payload
+        if: inputs.desktop_run_id != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: ${{ matrix.id == 'darwin-arm64' && 'macos-arm64' || matrix.id == 'darwin-x64' && 'macos-x64' || matrix.id == 'linux-arm64-gnu' && 'linux-arm64' || matrix.id == 'linux-x64-gnu' && 'linux-x64' || 'windows-x64' }}
+          path: out/npm-desktop
+          run-id: ${{ inputs.desktop_run_id }}
+          github-token: ${{ github.token }}
+      - name: Extract and verify signed backend
+        if: inputs.desktop_run_id != ''
+        run: node scripts/extract-npm-desktop.mjs
+      - name: Build ordinary Node runtime without Electron
+        if: inputs.desktop_run_id == ''
+        run: npm run stage:backend
+      - name: Pack ordinary Node runtime
+        run: npm run pack:npm-release
       - name: Verify npm publish input without publication
         run: |
           for package in out/npm-artifacts/*.tgz; do
@@ -120,3 +140,23 @@ jobs:
           path: out/npm-artifacts/
           if-no-files-found: error
           retention-days: 5
+
+  publication-check:
+    if: inputs.target == 'all'
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: npm-*
+          path: out/npm-publish
+          merge-multiple: false
+      - name: Verify complete version and integrity set without publication
+        run: npm run publish:npm-release -- out/npm-publish --dry-run

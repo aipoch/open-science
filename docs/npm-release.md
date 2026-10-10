@@ -1,66 +1,106 @@
-# npm runtime release preparation
+# npm runtime releases
 
-The standalone Node backend is packaged separately for Darwin arm64/x64, Linux glibc arm64/x64,
-and Windows x64. Users install the public `@aipoch/open-science` entry package; npm selects its
-exact-version native optional dependency. `--omit=optional` excludes the backend. Linux musl and
-Windows ARM64 are not supported by this matrix. Linux builds currently target Ubuntu 24.04;
-older glibc distributions are not certified by this dry-run.
+Users install `@aipoch/open-science` with npm or npx. The entry package selects an exact-version
+native optional dependency for Darwin arm64/x64, Linux glibc arm64/x64, or Windows x64.
+`--omit=optional` excludes the backend. Linux musl and Windows ARM64 are unsupported; the Linux
+matrix targets Ubuntu 24.04 and does not certify older glibc distributions.
 
-The root application version is the source of truth for generated npm manifests. The source CLI/SDK
-manifest is a packaging template; `pack:npm-release` replaces its version and adds the platform
-packages. Each platform package includes the existing backend and bundled native dependencies;
-there is no second runtime implementation and installation does not require Electron.
+The root `package.json.version` is the source of truth for all six generated manifests and the
+`v<version>` desktop release tag. `packages/open-science/package.json` is a source template. Existing
+local `pack:backend` tarballs still work. No second runtime implementation is introduced and the
+installed npm dependency tree does not contain Electron.
 
-## Focused dry-run
+## Dry-run
 
-Run **Publish npm package** manually on the candidate branch, initially with `linux-x64-gnu` and
-then with `all`. Manual dispatch only builds, installs, verifies, runs `npm publish --dry-run`, and
-uploads artifacts. It never publishes to npm, creates tags, or modifies a GitHub Release. The old
-`npm-v*` automatic publication trigger is disabled.
+Run **Publish npm package** manually on the candidate branch, initially with `linux-x64-gnu`, then
+with `all`. Dispatch only builds, installs, verifies, runs `npm publish --dry-run`, and uploads
+artifacts. It cannot publish npm packages, create tags, or modify a Release. `npm-v*` tags no longer
+publish anything.
 
 ```bash
-gh workflow run publish-npm.yml --ref ci/npm-release-pipeline -f target=linux-x64-gnu
+gh workflow run publish-npm.yml --ref ci/npm-release-pipeline -f target=all
 ```
 
-The reusable `npm-runtime.yml` builds on native runners with Electron installation disabled. Each
-leg serves its actual tarballs through an isolated localhost registry and lets npm install the
-entry package and select its native dependency. The fixture checks `npm exec`/npx entry resolution,
-version matching, native loading and the absence of Electron in the installed dependency tree.
-The packed native ABI is exercised on Node 24 and the minimum supported Node 22.13.0.
-Linux additionally exercises the installed backend, authenticated Web UI, real Python Notebook,
-events, cancellation, encrypted credentials, shutdown and restart with the existing deterministic
-Agent fixture. These tests do not exercise a real upstream model provider.
+`npm-runtime.yml` builds on native runners with Electron installation disabled. Each leg serves its
+real tarballs through an isolated localhost registry; npm installs the entry and chooses the native
+dependency. The fixture exercises npm exec/npx entry resolution, version matching, native loading,
+and the Electron-free dependency tree on Node 24 and Node 22.13.0. Linux also runs the installed
+backend, authenticated Web UI, real Python Notebook, events, cancellation, encrypted credentials,
+shutdown and restart using the deterministic Agent fixture, not a real upstream provider.
 
-Artifacts are `npm-<target>` and include the entry tarball, native tarball and SHA-512 integrity
-metadata. A single-target run is iteration evidence, not five-platform release certification.
+A five-platform run additionally checks the full package set, matching source commits, identical
+entry tarballs, actual tarball manifests and SHA-512 integrity. Artifacts are named `npm-<target>`.
+Unsigned dry-runs do not prove Developer ID, notarization, Authenticode or npm authentication.
 
-## Signing boundaries
+## Stable release
 
-npm provenance is independent of native code signing. For official publication, use npm Trusted
-Publishing/OIDC and provenance for every package. Each package needs its own trusted-publisher
-configuration; the same GitHub repository, workflow and protected environment can be used.
-Registry signatures do not replace macOS or Windows executable signatures.
+The existing Release workflow builds and certifies desktop packages, then notarizes macOS. Its
+`npm-artifacts` job calls the same native verifier to extract `Resources/backend` from the final
+macOS zip, installed Windows installer, or Linux deb. It packs those exact backend files instead
+of rebuilding or re-signing them. Windows checks every PE signature and timestamp, preserving
+vendor signatures. macOS checks each Mach-O's Developer ID signature and notarization record.
+The checks run again after npm installation. Missing signing or notarization now blocks the npm
+release gate instead of silently publishing an unsigned CLI.
 
-The desktop and CLI can use the same Apple Developer ID Application identity and notarization
-credentials, and the same Windows Azure Artifact Signing account/certificate profile. A desktop
-container signature alone does not cover a separately distributed unsigned helper. Reuse already
-signed bytes where possible; rebuilds require signing again, and packing must not modify signed
-bytes. Preserve valid third-party Windows signatures and keep credential-helper signing identity
-stable across upgrades. Do not copy Electron-only entitlements onto standalone helpers without
-checking their actual requirements.
+Only after all native verification succeeds may the existing GitHub Release publish. The
+`publish-npm` job then publishes all five native packages before the entry package, in protected
+GitHub Environment `npm`. It has OIDC permission only in that publishing job. The caller is
+**`release.yml`**, not `publish-npm.yml`; GitHub-token-created Releases do not trigger another
+release-event workflow.
 
-This initial dry-run does **not** use production signing credentials. It must not be reported as
-Developer ID, notarization, Authenticode, or real npm OIDC/provenance verification. Formal release
-integration and signed-artifact verification remain required before enabling publication. The
-intended release boundary is the same `v<root-version>` and source commit as the desktop release,
-with all native packages verified/published before exposing the main package. npm and GitHub
-Release publication are separate transactions; partial publication must be reported and safely
-resumed, never overwritten.
+All local and registry integrity checks finish before publication. Retrying the failed publishing
+job skips an existing version only if its registry SHA-512 matches the retained tarball. Different
+bytes, a different source commit, a missing platform or a downgrade of `latest` fail closed. Re-run
+failed jobs against the retained artifacts; do not rebuild the same published version. npm and
+GitHub Release are separate transactions: an npm outage may leave a successful GitHub Release or
+some native packages published. Fix access/connectivity and retry the failed job, without changing
+the version's bytes. If the artifacts expired, publish a new version rather than overwrite.
 
-No application data format or migration is introduced by npm packaging. Installing into a different
-package path can affect OS credential authorization and still requires an upgrade verification.
+## Credentials and one-time bootstrap
+
+Ordinary releases should use npm Trusted Publishing with OIDC; no long-lived `NPM_TOKEN` is needed.
+Every package needs its own trust configuration using:
+
+- GitHub owner: `aipoch`
+- Repository: `open-science`
+- Workflow filename: **`release.yml`**
+- Environment: **`npm`**
+- Allow direct `npm publish` (stage-only permission cannot perform this release flow).
+
+The six names are `@aipoch/open-science` and `@aipoch/open-science-` followed by
+`darwin-arm64`, `darwin-x64`, `linux-x64-gnu`, `linux-arm64-gnu`, and `win32-x64`.
+Use GitHub-hosted runners and npm >=11.5.1 with Node >=22.14 for OIDC publication; the runtime's
+minimum Node version is a separate constraint. Node 24 is used for publication.
+
+npm currently requires a package to exist before adding its Trusted Publisher. First publication
+therefore needs an authorized npm account, or a short-lived granular token limited to the required
+scope and stored as environment secret `NPM_TOKEN`. Do not paste tokens into chat, commit them, or
+place them in command arguments. A maintainer can enter one directly into GitHub's environment
+Secrets UI or the interactive prompt:
+
+```bash
+gh secret set NPM_TOKEN --repo aipoch/open-science --env npm
+```
+
+Configure `npm` to allow only `v*` tags and add the project's release approvers. After the first
+release, configure the six npm trust relationships, remove the bootstrap secret, and revoke its
+token. npm requires a new trust relationship's first successful publish within two days; configure
+it shortly before the next release. Actual npm account login/2FA and the first registry publication
+are separate from dry-run validation. Do not publish placeholder packages just to configure trust.
+
+## Signing and compatibility
+
+npm provenance is separate from native code signing. OIDC publication from this public repository
+generates npm provenance. The desktop's Apple Developer ID/notarization credentials and Windows
+Azure Artifact Signing identity are reused through the signed backend bytes. No separate npm
+code-signing certificate or duplicate signing secrets are needed.
+
+This change adds distribution artifacts, CI metadata and registry versions, not application data
+formats, migrations or business state enum values. Installation paths change when using native
+optional packages; OS credential authorization, particularly macOS Keychain upgrades from an older
+package location, still needs explicit release acceptance. No UI or interaction changes are made.
 
 References: [npm package metadata](https://docs.npmjs.com/cli/v11/configuring-npm/package-json/),
 [trusted publishing](https://docs.npmjs.com/trusted-publishers/),
-[Apple Developer ID](https://developer.apple.com/developer-id/), and
-[Windows Artifact Signing](https://learn.microsoft.com/en-us/azure/artifact-signing/).
+[npm trust prerequisites](https://docs.npmjs.com/cli/v11/commands/npm-trust/), and
+[Apple Developer ID](https://developer.apple.com/developer-id/).
