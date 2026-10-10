@@ -11,17 +11,28 @@ import { configureRuntimeMetadata, type RuntimeMetadata } from '../src/main/runt
 // still fails closed when an entry forgets to install a capability. Each test file is isolated.
 export function configureTestRuntimeMetadata(
   overrides: () => Partial<RuntimeMetadata> = () => ({})
-): () => Promise<void> {
+): (() => Promise<void>) & { resetOwnershipSync: () => void } {
   let ownership = new RuntimeDirectoryOwnership()
   configureRuntimeDirectoryOwnership({
     acquireSync: (directory) => ownership.acquireSync(directory),
     acquire: (directory) => ownership.acquire(directory)
   })
   // Release real file handles before owner-test temporary-directory cleanup, including Windows.
-  const resetOwnership = async (): Promise<void> => {
-    await ownership.close()
-    ownership = new RuntimeDirectoryOwnership()
-  }
+  // resetOwnershipSync drops leases inline for mid-test rewrites of an owned directory (e.g.
+  // deleting the root inside a mocked settings mutation): Windows denies deleting a tree whose
+  // runtime lock file is still open. Only valid once the acquire queue has settled.
+  const resetOwnership = Object.assign(
+    async (): Promise<void> => {
+      await ownership.close()
+      ownership = new RuntimeDirectoryOwnership()
+    },
+    {
+      resetOwnershipSync: (): void => {
+        ownership.closeSync()
+        ownership = new RuntimeDirectoryOwnership()
+      }
+    }
+  )
   afterEach(resetOwnership)
   afterAll(() => ownership.close())
   configureRuntimeMetadata(() => ({
