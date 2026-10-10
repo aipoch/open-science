@@ -1,4 +1,4 @@
-import type { ToolContext, ToolDescriptor } from '../types'
+import type { ToolContext, ToolDescriptor } from '../../connector-core/types'
 
 // PheWeb PheWAS portals. Endpoints below were verified live (2026-07):
 //   FinnGen R12 (GRCh38, base https://r12.finngen.fi):

@@ -1,7 +1,7 @@
 import { z } from 'zod'
-import type { ToolContext, ToolDescriptor } from '../types'
+import type { ToolContext, ToolDescriptor } from '../../connector-core/types'
 import { netFetchStandard } from '../../skills/net-fetch'
-import { withTimeoutSignal } from '../request-policy'
+import { withTimeoutSignal } from '../../connector-core/request-policy'
 
 // EMBL-EBI Job Dispatcher REST API, distinct from the precomputed InterPro annotation API.
 // https://www.ebi.ac.uk/jdispatcher/docs/webservices/

@@ -1,6 +1,6 @@
 import { netFetchStandard } from '../../skills/net-fetch'
-import { abortableDelay } from '../abortable-delay'
-import type { ToolContext } from '../types'
+import { abortableDelay } from '../../connector-core/abortable-delay'
+import type { ToolContext } from '../../connector-core/types'
 
 export type Args = Record<string, unknown>
 export const MAX_BYTES = 64 * 1024 * 1024

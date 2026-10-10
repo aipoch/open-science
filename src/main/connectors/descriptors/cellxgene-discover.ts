@@ -1,4 +1,4 @@
-import type { ToolDescriptor } from '../types'
+import type { ToolDescriptor } from '../../connector-core/types'
 
 // Public read-only API: https://api.cellxgene.cziscience.com/curation/ui/
 // Canonical IDs follow the latest publication; version IDs identify a published snapshot.

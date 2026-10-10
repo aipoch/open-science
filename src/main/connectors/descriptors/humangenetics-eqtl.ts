@@ -1,4 +1,4 @@
-import type { ToolDescriptor } from '../types'
+import type { ToolDescriptor } from '../../connector-core/types'
 
 // eQTL Catalogue REST API v2 (molecular-QTL summary statistics; ~760 datasets). The API publishes
 // NO total count and NO pagination link headers, so exhaustion is inferred from the page fill: a

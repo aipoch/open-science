@@ -1,5 +1,5 @@
-import { ncbiEtiquette } from './ncbi'
-import type { ToolDescriptor } from '../types'
+import { ncbiEtiquette } from '../../connector-core/ncbi'
+import type { ToolDescriptor } from '../../connector-core/types'
 
 // Two NCBI hosts (mirrors the upstream dbsnp_records client): Variation Services for the canonical
 // RefSNP JSON (no E-utils key needed), and E-utilities esearch db=snp for the positional region index.

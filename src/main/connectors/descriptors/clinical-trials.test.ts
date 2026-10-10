@@ -2,7 +2,7 @@ import { Script } from 'node:vm'
 import { describe, it, expect, vi } from 'vitest'
 import { ParserEngine } from '../engine'
 import { CLINICAL_TRIALS_TOOLS } from './clinical-trials'
-import type { ToolDescriptor } from '../types'
+import type { ToolDescriptor } from '../../connector-core/types'
 
 const tool = (id: string): ToolDescriptor => CLINICAL_TRIALS_TOOLS.find((t) => t.id === id)!
 const jsonRes = (body: unknown): Response =>

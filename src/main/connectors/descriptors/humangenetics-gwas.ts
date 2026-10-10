@@ -1,4 +1,4 @@
-import type { ToolContext, ToolDescriptor } from '../types'
+import type { ToolContext, ToolDescriptor } from '../../connector-core/types'
 import { JSON_SCHEMA, load as loadYaml } from 'js-yaml'
 
 // NHGRI-EBI GWAS Catalog REST API v2. The v2 endpoints return flat snake_case records wrapped in a

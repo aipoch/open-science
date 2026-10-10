@@ -7,7 +7,7 @@ import Papa from 'papaparse'
 import { unzipSync } from 'fflate'
 import { publishUserFile, type PublishUserFileOptions } from '../../user-file-publisher'
 import { publishNoReplace } from '../../uploads/atomic-no-replace-publisher'
-import type { ToolContext } from '../types'
+import type { ToolContext } from '../../connector-core/types'
 
 export const BASE = 'https://rnasysu.com/encori'
 export const REFERENCE = `${BASE}/api/ref/ENCORI_referenceData.zip`

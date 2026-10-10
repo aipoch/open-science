@@ -1,4 +1,4 @@
-import type { ToolContext, ToolDescriptor } from '../types'
+import type { ToolContext, ToolDescriptor } from '../../connector-core/types'
 
 const ENRICHR_BASE = 'https://maayanlab.cloud'
 const SPEEDRICHR_BASE = `${ENRICHR_BASE}/speedrichr/api`

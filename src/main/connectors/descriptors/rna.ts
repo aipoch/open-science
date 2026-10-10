@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
-import type { ToolContext, ToolDescriptor } from '../types'
-import { abortableDelay } from '../abortable-delay'
+import type { ToolContext, ToolDescriptor } from '../../connector-core/types'
+import { abortableDelay } from '../../connector-core/abortable-delay'
 
 // Rfam REST API (https://rfam.org): read-only RNA family data. Mirrors the 9 upstream
 // tooluniverse/rfam methods — family metadata, seed alignment (Stockholm/FASTA), covariance

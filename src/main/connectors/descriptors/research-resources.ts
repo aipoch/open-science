@@ -1,4 +1,4 @@
-import type { ToolContext, ToolDescriptor } from '../types'
+import type { ToolContext, ToolDescriptor } from '../../connector-core/types'
 
 // Research Resources aggregates two read-only registries:
 //  * Grants.gov search2 (POST-only funding-opportunity search, complete + count-verified).

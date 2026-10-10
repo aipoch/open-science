@@ -1,4 +1,4 @@
-import type { ToolDescriptor } from '../types'
+import type { ToolDescriptor } from '../../connector-core/types'
 import { HUMANGENETICS_GWAS_TOOLS } from './humangenetics-gwas'
 import { HUMANGENETICS_EQTL_TOOLS } from './humangenetics-eqtl'
 import { HUMANGENETICS_PHEWAS_TOOLS } from './humangenetics-phewas'

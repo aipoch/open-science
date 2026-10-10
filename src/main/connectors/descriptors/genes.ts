@@ -1,4 +1,4 @@
-import type { ToolDescriptor } from '../types'
+import type { ToolDescriptor } from '../../connector-core/types'
 import { GENES_PROTEINS_TOOLS } from './genes-proteins'
 import { GENES_UNIPROT_MAPPING_TOOLS } from './genes-uniprot-mapping'
 import { GENES_ONTOLOGY_TOOLS } from './genes-ontology'

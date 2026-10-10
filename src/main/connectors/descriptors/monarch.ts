@@ -1,4 +1,4 @@
-import type { ToolDescriptor } from '../types'
+import type { ToolDescriptor } from '../../connector-core/types'
 
 // Production contract: https://api.monarchinitiative.org/openapi.json
 // Keep expanded association evidence; compact results omit provenance and qualifiers.
