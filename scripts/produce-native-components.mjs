@@ -81,13 +81,13 @@ export function verifyNativeSignatures(output, target, invoke = run) {
       invoke('codesign', [
         '--verify',
         '-R',
-        `anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and identifier "com.aipoch.open-science.native.${file.name.replaceAll('_', '-')}"`,
+        `=anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and identifier "com.aipoch.open-science.native.${file.name.replaceAll('_', '-')}"`,
         path
       ])
     }
   }
   if (process.platform === 'win32')
-    invoke('powershell.exe', [
+    invoke('pwsh.exe', [
       '-NoProfile',
       '-NonInteractive',
       '-File',
