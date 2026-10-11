@@ -1,6 +1,7 @@
 import { expect } from '@playwright/test'
-import { access, mkdir, readFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
+import { RUNTIME_LOCK_FILE } from '../../src/main/runtime-ownership'
 import { test } from '../fixtures/electron-app'
 import { createProject, openRecentSession, sendPrompt } from './helpers'
 
@@ -131,7 +132,8 @@ test('installs global npm tools through the app and reuses them across Sessions 
     return bridge.api.storage.discardMigratedCopy(parent)
   }, parent)
   expect(discarded).toEqual({ ok: true })
-  await expect(access(staged.dataRoot)).rejects.toMatchObject({ code: 'ENOENT' })
+  // The runtime ownership inode must survive discard; all copied data must be gone.
+  expect(await readdir(staged.dataRoot)).toEqual([RUNTIME_LOCK_FILE])
   await sendPrompt(
     page,
     'Verify application npm tool after restart.',
