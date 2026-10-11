@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
-import { isElectronPackage } from './backend-dependencies.mjs'
+import { isElectronPackage, isShippableDependencyPath } from './backend-dependencies.mjs'
 import { cp, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { dirname, join, resolve, relative, sep } from 'node:path'
@@ -80,10 +80,7 @@ async function copyDependency(name, from, destinationParent = stage) {
   await cp(source, destination, {
     recursive: true,
     dereference: true,
-    filter: (path) => {
-      const parts = relative(source, path).split(sep)
-      return parts[0] !== 'node_modules' && parts[0] !== '.git'
-    }
+    filter: (path) => isShippableDependencyPath(relative(source, path))
   })
   // These are prebuilt target artifacts. npm must not reinterpret them as a source installation.
   if (name.startsWith('@aipoch/') || name === '@prisma/client') {
@@ -135,6 +132,23 @@ for (const entry of ['index.js', 'default.js']) {
     "module.exports = require('../../../resources/prisma-client/index.js')\n"
   )
 }
+// Compiler intermediates are unsigned Mach-O objects: if one reaches the staged tree, packaged
+// signature verification (scripts/verify-runtime-signatures.mjs) fails on the Release cli-artifacts
+// legs. Fail here at staging time instead, where the log is easy to read.
+const assertNoBuildIntermediates = async (directory) => {
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name)
+    if (entry.isDirectory()) {
+      if (entry.name === 'obj.target') {
+        throw new Error(`Staged backend dependency contains build intermediates: ${path}`)
+      }
+      await assertNoBuildIntermediates(path)
+    } else if (entry.name.endsWith('.o')) {
+      throw new Error(`Staged backend dependency contains a compiler intermediate: ${path}`)
+    }
+  }
+}
+await assertNoBuildIntermediates(join(stage, 'node_modules'))
 const nativeRequire = createRequire(join(stage, 'package.json'))
 for (const name of ['@aipoch/process-tree-native', '@aipoch/safe-file-publisher-native'])
   nativeRequire(name)

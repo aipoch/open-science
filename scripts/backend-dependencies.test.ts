@@ -1,5 +1,10 @@
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { assertBackendImports, isElectronPackage } from './backend-dependencies.mjs'
+import {
+  assertBackendImports,
+  isElectronPackage,
+  isShippableDependencyPath
+} from './backend-dependencies.mjs'
 
 describe('standalone dependency boundary', () => {
   it.each([
@@ -46,5 +51,26 @@ describe('standalone dependency boundary', () => {
         { saxes: '6.0.0' }
       )
     ).not.toThrow()
+  })
+  describe('isShippableDependencyPath', () => {
+    it.each([
+      'package.json',
+      'build/Release/probe.node',
+      join('build', 'Release', 'probe.node'),
+      'src/index.js'
+    ])('ships %s', (path) => {
+      expect(isShippableDependencyPath(path)).toBe(true)
+    })
+    it.each([
+      'node_modules',
+      join('node_modules', 'left-pad', 'index.js'),
+      '.git',
+      join('.git', 'HEAD'),
+      'build/Release/obj.target',
+      join('build', 'Release', 'obj.target', 'probe', 'src', 'probe.o'),
+      join('build', 'Release', 'obj.target')
+    ])('excludes %s', (path) => {
+      expect(isShippableDependencyPath(path)).toBe(false)
+    })
   })
 })
