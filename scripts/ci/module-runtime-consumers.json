@@ -1,7 +1,5 @@
 {
-  "src/main/session-package/inspection-worker-entry.ts": [
-    "src/main/ipc.ts"
-  ],
+  "src/main/session-package/inspection-worker-entry.ts": ["src/main/ipc.ts"],
   "packages/process-tree-native/src/process_tree_native.cc": [
     "packages/process-tree-native/index.cjs"
   ],
@@ -67,18 +65,10 @@
   "packages/literature-citations/resources/vancouver.csl": [
     "packages/literature-citations/src/citation-style-library.ts"
   ],
-  "resources/compute-askpass-win.cjs": [
-    "src/main/compute/connection-adapters.ts"
-  ],
-  "resources/compute-askpass.cjs": [
-    "src/main/compute/connection-adapters.ts"
-  ],
-  "resources/compute-askpass.sh": [
-    "src/main/compute/connection-adapters.ts"
-  ],
-  "resources/pdf-translation-local/worker.mjs": [
-    "src/main/literature/pdf-translation/local.ts"
-  ],
+  "resources/compute-askpass-win.cjs": ["src/main/compute/connection-adapters.ts"],
+  "resources/compute-askpass.cjs": ["src/main/compute/connection-adapters.ts"],
+  "resources/compute-askpass.sh": ["src/main/compute/connection-adapters.ts"],
+  "resources/pdf-translation-local/worker.mjs": ["src/main/literature/pdf-translation/local.ts"],
   "packages/notebook-syntax/assets/tree-sitter-bash.LICENSE": [
     "packages/notebook-syntax/src/index.ts"
   ],
@@ -100,12 +90,8 @@
   "packages/notebook-syntax/assets/tree-sitter-python.wasm": [
     "packages/notebook-syntax/src/index.ts"
   ],
-  "packages/notebook-syntax/assets/tree-sitter-r.wasm": [
-    "packages/notebook-syntax/src/index.ts"
-  ],
-  "packages/notebook-syntax/assets/web-tree-sitter.wasm": [
-    "packages/notebook-syntax/src/index.ts"
-  ],
+  "packages/notebook-syntax/assets/tree-sitter-r.wasm": ["packages/notebook-syntax/src/index.ts"],
+  "packages/notebook-syntax/assets/web-tree-sitter.wasm": ["packages/notebook-syntax/src/index.ts"],
   "resources/notebook/python_loop.py": [
     "src/main/notebook/kernel-executor.ts",
     "src/main/notebook/runtime-service.ts"
@@ -127,25 +113,15 @@
     "src/main/notebook/kernel-executor.ts",
     "src/main/notebook/runtime-service.ts"
   ],
-  "resources/notebook/file_evidence_worker.js": [
-    "src/main/notebook/working-file-observer.ts"
-  ],
+  "resources/notebook/file_evidence_worker.js": ["src/main/notebook/working-file-observer.ts"],
   "resources/find-overlay/index.html": [
     "resources/find-overlay/findOverlay.js",
     "src/main/windows.ts"
   ],
-  "resources/find-overlay/findOverlay.js": [
-    "src/main/find-overlay.ts"
-  ],
-  "src/main/session-diagnostics/worker-entry.ts": [
-    "src/main/composition/session-foundation.ts"
-  ],
-  "packages/pdf-structure/resources/host.mjs": [
-    "packages/pdf-structure/src/engine.ts"
-  ],
-  "packages/pdf-structure/resources/scratch.mjs": [
-    "packages/pdf-structure/src/engine.ts"
-  ],
+  "resources/find-overlay/findOverlay.js": ["src/main/find-overlay.ts"],
+  "src/main/session-diagnostics/worker-entry.ts": ["src/main/composition/session-foundation.ts"],
+  "packages/pdf-structure/resources/host.mjs": ["packages/pdf-structure/src/engine.ts"],
+  "packages/pdf-structure/resources/scratch.mjs": ["packages/pdf-structure/src/engine.ts"],
   "packages/pdf-structure/resources/literature-pdf-extract.mjs": [
     "packages/pdf-structure/resources/host.mjs"
   ],
@@ -196,25 +172,13 @@
     "src/main/compute/compute-password-auth.architecture.test.ts",
     "src/main/projects/project-owned-data.catalog.architecture.test.ts"
   ],
-  "packages/compute/src/model.ts": [
-    "src/main/compute/compute-password-auth.architecture.test.ts"
-  ],
+  "packages/compute/src/model.ts": ["src/main/compute/compute-password-auth.architecture.test.ts"],
   "packages/compute/src/compute-job-lifecycle.ts": [
     "src/main/projects/project-owned-data.catalog.architecture.test.ts"
   ],
-  "src/shared/settings.ts": [
-    "cli/connector-contract.test.ts"
-  ],
-  "packages/open-science/index.d.ts": [
-    "cli/connector-contract.test.ts"
-  ],
-  "packages/reproducibility/src/contracts.ts": [
-    "scripts/electron-vite-config.test.ts"
-  ],
-  "packages/reproducibility/src/comparison-contracts.ts": [
-    "scripts/electron-vite-config.test.ts"
-  ],
-  "packages/reproducibility/src/execution-context.ts": [
-    "scripts/electron-vite-config.test.ts"
-  ]
+  "src/shared/settings.ts": ["cli/connector-contract.test.ts"],
+  "packages/open-science/index.d.ts": ["cli/connector-contract.test.ts"],
+  "packages/reproducibility/src/contracts.ts": ["scripts/electron-vite-config.test.ts"],
+  "packages/reproducibility/src/comparison-contracts.ts": ["scripts/electron-vite-config.test.ts"],
+  "packages/reproducibility/src/execution-context.ts": ["scripts/electron-vite-config.test.ts"]
 }
