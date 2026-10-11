@@ -87,10 +87,10 @@
       "src/main/skills/self-awareness-skill.test.ts",
       "src/main/skills/skill-nudge-identity.test.ts",
       "packages/skills/src/zip-extract.test.ts",
-      "src/main/skills/package-boundary.architecture.test.ts",
-      "src/main/skills/host-skills-service.test.ts"
+      "src/main/skills/package-boundary.architecture.test.ts"
     ],
     "contract": [
+      "src/main/skills/host-skills-service.test.ts",
       "packages/skills/src/skill-authoring-service.test.ts",
       "packages/skills/src/skill-archive-sniffer.test.ts",
       "src/main/skills/catalog.test.ts",
