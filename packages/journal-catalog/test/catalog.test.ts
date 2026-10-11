@@ -1,5 +1,5 @@
 import { expect, it, vi } from 'vitest'
-import type { JournalDatabase, JournalReader } from '../src/index.js'
+import type { JournalDatabase, JournalStore } from '../src/index.js'
 import {
   journalIdentityFromItem,
   journalColumnKey,
@@ -188,16 +188,7 @@ it('rejects placeholder identities, drops invalid identifiers, and never silentl
   const result = await service.run({ action: 'preview', token: draft.token, offset: 0 })
   expect(result.rows?.map(({ status }) => status)).toEqual(['invalid', 'invalid', 'new'])
   await service.run({ action: 'commit', ...draft, skipProblems: true })
-  expect(
-    JSON.parse(
-      (
-        await client.query<{ issnsJson: string }[]>({
-          text: 'SELECT issnsJson FROM Journal LIMIT 1',
-          values: []
-        })
-      )[0].issnsJson
-    )
-  ).toEqual([])
+  expect((await client.listJournals())[0].issns).toEqual([])
   const overflow = await preview(
     service,
     [row({ aliases: Array.from({ length: 20 }, (_, i) => `Invented alias ${i}`), issns: [] })],
@@ -784,20 +775,23 @@ function rowIdentity(): Pick<JournalImportRow, 'name' | 'aliases' | 'issns'> {
   return { name, aliases, issns }
 }
 
-it('rolls back package-owned SQL on adapter failure and coalesces a reviewed retry', async () => {
-  const { service, client, changed } = await setup()
+it('rolls back catalog changes on adapter failure and coalesces a reviewed retry', async () => {
+  const { service, client, changed, entries } = await setup()
   const draft = await preview(service)
-  const execute = client.execute.bind(client)
-  const failure = vi.spyOn(client, 'execute').mockImplementation((statement) => {
-    if (statement.text.includes('INSERT INTO "JournalDatasetEntry"'))
-      throw new Error('storage failure')
-    return execute(statement)
-  })
+  const transaction = client.transaction.bind(client)
+  const failure = vi.spyOn(client, 'transaction').mockImplementation((operation) =>
+    transaction((tx) => {
+      tx.saveEntries = async () => {
+        throw new Error('storage failure')
+      }
+      return operation(tx)
+    })
+  )
   await expect(service.run({ action: 'commit', ...draft, skipProblems: false })).rejects.toThrow(
     'storage failure'
   )
-  expect(await client.query({ text: 'SELECT * FROM Journal', values: [] })).toEqual([])
-  expect(await client.query({ text: 'SELECT * FROM JournalDataset', values: [] })).toEqual([])
+  expect(await client.listJournals()).toEqual([])
+  expect(await client.listDatasets()).toEqual([])
   expect(changed).not.toHaveBeenCalled()
   failure.mockRestore()
   const results = await Promise.all(
@@ -806,14 +800,12 @@ it('rolls back package-owned SQL on adapter failure and coalesces a reviewed ret
     )
   )
   expect(results.every((result) => result.imported === 1)).toBe(true)
-  expect(
-    await client.query({ text: 'SELECT * FROM JournalDatasetEntry', values: [] })
-  ).toHaveLength(1)
+  expect(entries()).toHaveLength(1)
   expect(changed).toHaveBeenCalledTimes(1)
 })
 
 it('waits for an in-flight transaction to roll back before disposal completes', async () => {
-  const { service, client, changed } = await setup()
+  const { service, client, changed, entries } = await setup()
   const draft = await preview(service)
   let release!: () => void, entered!: () => void
   const gate = new Promise<void>((resolve) => {
@@ -822,15 +814,18 @@ it('waits for an in-flight transaction to roll back before disposal completes', 
   const started = new Promise<void>((resolve) => {
     entered = resolve
   })
-  const execute = client.execute.bind(client)
-  vi.spyOn(client, 'execute').mockImplementation(async (statement) => {
-    const result = await execute(statement)
-    if (statement.text.includes('INSERT INTO "JournalDatasetEntry"')) {
-      entered()
-      await gate
-    }
-    return result
-  })
+  const transaction = client.transaction.bind(client)
+  vi.spyOn(client, 'transaction').mockImplementation((operation) =>
+    transaction(async (tx) => {
+      const save = tx.saveEntries.bind(tx)
+      tx.saveEntries = async (entries) => {
+        await save(entries)
+        entered()
+        await gate
+      }
+      return operation(tx)
+    })
+  )
   const pending = service.run({ action: 'commit', ...draft, skipProblems: false })
   const rejected = expect(pending).rejects.toThrow('closed')
   await started
@@ -842,8 +837,8 @@ it('waits for an in-flight transaction to roll back before disposal completes', 
   expect(disposed).toBe(false)
   release()
   await Promise.all([rejected, closing])
-  expect(await client.query({ text: 'SELECT * FROM JournalDatasetEntry', values: [] })).toEqual([])
-  expect(await client.query({ text: 'SELECT * FROM Journal', values: [] })).toEqual([])
+  expect(entries()).toEqual([])
+  expect(await client.listJournals()).toEqual([])
   expect(changed).not.toHaveBeenCalled()
 })
 
@@ -923,7 +918,7 @@ it('persists a display name without changing matching or source grouping, and pr
 })
 
 it('imports external-ID-only rows only when they identify an existing journal', async () => {
-  const { service, db } = await setup()
+  const { service, client } = await setup()
   await service.run({
     action: 'commit',
     ...(await preview(service, [
@@ -969,9 +964,9 @@ it('imports external-ID-only rows only when they identify an existing journal', 
   expect(reviewed.ready).toBe(1)
   const saved = await service.run({ action: 'commit', ...draft, skipProblems: true })
   expect(saved.imported).toBe(1)
-  expect(db.prepare('SELECT name FROM Journal ORDER BY name').all()).toEqual([
-    { name: 'Imaginary Other Review' },
-    { name: row().name }
+  expect((await client.listJournals()).map(({ name }) => name).sort()).toEqual([
+    'Imaginary Other Review',
+    row().name
   ])
   const resolved = await service.run({
     action: 'resolve',
@@ -996,15 +991,15 @@ it('keeps import stages bound to their original data root', async () => {
 })
 
 it('coalesces concurrent commits and safely retries a successful commit without writing twice', async () => {
-  const { service, changed, db } = await setup()
+  const { service, changed, client, entries } = await setup()
   const draft = await preview(service)
   const request = { action: 'commit' as const, ...draft, skipProblems: false }
   const [first, concurrent] = await Promise.all([service.run(request), service.run(request)])
   expect(concurrent).toEqual(first)
   expect(await service.run(request)).toEqual(first)
   expect(changed).toHaveBeenCalledTimes(1)
-  expect(db.prepare('SELECT COUNT(*) AS count FROM Journal').get()!.count).toBe(1)
-  expect(db.prepare('SELECT COUNT(*) AS count FROM JournalDatasetEntry').get()!.count).toBe(1)
+  expect((await client.listJournals()).length).toBe(1)
+  expect(entries().length).toBe(1)
   expect(first.datasets?.[0].revision).toBe(1)
   await expect(
     service.run({ action: 'append', token: draft.token, offset: 0, rows: [row()] })
@@ -1033,7 +1028,8 @@ it('reuses reviewed pages and management pages, invalidating them on saved field
     })
   const draft = await service.run({ action: 'preview', token: token!, offset: 0 })
   expect(draft.ready).toBe(count)
-  const query = vi.spyOn(client, 'query')
+  const query = vi.spyOn(client, 'readDatasetRows')
+  const values = vi.spyOn(client, 'readEntries')
   const transaction = vi.spyOn(client, 'transaction')
   const page = await service.run({ action: 'preview', token: token!, offset: 50 })
   expect(page.rows?.[0].row).toBe(51)
@@ -1064,9 +1060,10 @@ it('reuses reviewed pages and management pages, invalidating them on saved field
     .map(({ name, aliases, issns }) => ({ name, aliases, issns }))
   await service.run({ action: 'resolve', identities })
   query.mockClear()
+  values.mockClear()
   const resolved = await service.run({ action: 'resolve', identities })
   expect(resolved.matches).toHaveLength(200)
-  expect(query).toHaveBeenCalledTimes(1)
+  expect(values).toHaveBeenCalledTimes(1)
   await service.run({
     action: 'fields',
     datasetId: dataset.id,
@@ -1086,7 +1083,7 @@ it('reuses reviewed pages and management pages, invalidating them on saved field
 }, 120_000)
 
 it('retains an in-flight commit through expiry and waits for rollback before disposal', async () => {
-  const { service, client, changed, db } = await setup()
+  const { service, client, changed, entries } = await setup()
   const draft = await preview(service)
   let release!: () => void
   let entered!: () => void
@@ -1098,7 +1095,7 @@ it('retains an in-flight commit through expiry and waits for rollback before dis
   })
   const original = client.transaction.bind(client)
   const transaction = vi.spyOn(client, 'transaction').mockImplementation((async (
-    callback: (tx: JournalReader) => Promise<unknown>
+    callback: (tx: JournalStore) => Promise<unknown>
   ) => {
     entered()
     await gate
@@ -1126,7 +1123,7 @@ it('retains an in-flight commit through expiry and waits for rollback before dis
       if (result.status === 'rejected')
         expect(result.reason.message).toBe('Journal service is closed.')
     }
-    expect(db.prepare('SELECT COUNT(*) AS count FROM JournalDatasetEntry').get()!.count).toBe(0)
+    expect(entries().length).toBe(0)
     expect(closed).toBe(true)
     expect(changed).not.toHaveBeenCalled()
   } finally {
@@ -1136,7 +1133,7 @@ it('retains an in-flight commit through expiry and waits for rollback before dis
 })
 
 it('rolls back written batches before disposal without changing previously committed data', async () => {
-  const { service, client, changed, db } = await setup()
+  const { service, client, changed, entries } = await setup()
   await service.run({ action: 'commit', ...(await preview(service)), skipProblems: false })
   const draft = await preview(
     service,
@@ -1160,18 +1157,15 @@ it('rolls back written batches before disposal without changing previously commi
   })
   const original = client.transaction.bind(client)
   const transaction = vi.spyOn(client, 'transaction').mockImplementation((async (
-    callback: (tx: JournalReader) => Promise<unknown>
+    callback: (tx: JournalStore) => Promise<unknown>
   ) =>
     original(async (tx) => {
-      const execute = tx.execute.bind(tx)
-      vi.spyOn(tx, 'execute').mockImplementation((async (...args: Parameters<typeof execute>) => {
-        const result = await execute(...args)
-        if (args[0]?.text.includes('INSERT INTO "JournalDatasetEntry"')) {
-          entered()
-          await gate
-        }
-        return result
-      }) as typeof tx.execute)
+      const save = tx.saveEntries.bind(tx)
+      tx.saveEntries = async (entries) => {
+        await save(entries)
+        entered()
+        await gate
+      }
       return callback(tx)
     })) as typeof client.transaction)
   const pending = service.run({ action: 'commit', ...draft, skipProblems: false })
@@ -1181,16 +1175,16 @@ it('rolls back written batches before disposal without changing previously commi
   release()
   await Promise.all([failed, closing])
   transaction.mockRestore()
-  expect(db.prepare('SELECT COUNT(*) AS count FROM JournalDataset').get()!.count).toBe(1)
-  expect(db.prepare('SELECT COUNT(*) AS count FROM JournalDatasetEntry').get()!.count).toBe(1)
-  expect(db.prepare('SELECT COUNT(*) AS count FROM Journal').get()!.count).toBe(1)
+  expect((await client.listDatasets()).length).toBe(1)
+  expect(entries().length).toBe(1)
+  expect((await client.listJournals()).length).toBe(1)
   expect(changed).toHaveBeenCalledTimes(1)
 })
 
 it('shares one cold identity read across concurrent clients and retries failed reads', async () => {
   const { service, client } = await setup()
   await service.run({ action: 'commit', ...(await preview(service)), skipProblems: false })
-  const read = vi.spyOn(client, 'query')
+  const read = vi.spyOn(client, 'listJournals')
   const request = {
     action: 'resolve' as const,
     identities: [{ name: '', aliases: [], issns: ['1234-5679'] }]
@@ -1203,11 +1197,7 @@ it('shares one cold identity read across concurrent clients and retries failed r
   read.mockClear()
   const results = await Promise.all(Array.from({ length: 8 }, () => service.run(request)))
   expect(results.every((result) => result.matches?.[0].status === 'matched')).toBe(true)
-  expect(
-    read.mock.calls.filter(([sql]) => sql.text.includes('SELECT * FROM "Journal"'))
-  ).toHaveLength(1)
-  // Identity + dataset metadata once, then one bounded values read per caller.
-  expect(read).toHaveBeenCalledTimes(10)
+  expect(read).toHaveBeenCalledTimes(1)
   read.mockRestore()
 })
 
@@ -1219,14 +1209,14 @@ it('does not publish an old in-flight identity snapshot after a dataset mutation
     skipProblems: false
   })
   const dataset = saved.datasets![0]
-  const rows = await client.query({ text: 'SELECT * FROM Journal', values: [] })
+  const rows = await client.listJournals()
   let release!: (rows: unknown) => void
   const pendingRows = new Promise((resolve) => {
     release = resolve
   })
   const read = vi
-    .spyOn(client, 'query')
-    .mockReturnValueOnce(pendingRows as ReturnType<JournalDatabase['query']>)
+    .spyOn(client, 'listJournals')
+    .mockReturnValueOnce(pendingRows as ReturnType<JournalDatabase['listJournals']>)
   const request = {
     action: 'resolve' as const,
     identities: [{ name: row().name, aliases: [], issns: [] }]
@@ -1246,7 +1236,7 @@ it('does not publish an old in-flight identity snapshot after a dataset mutation
   expect(current.matches?.[0].attributes[0].label).toBe('Updated Signal index')
   read.mockClear()
   expect(await service.run(request)).toEqual(current)
-  expect(read).toHaveBeenCalledTimes(1)
+  expect(read).not.toHaveBeenCalled()
   read.mockRestore()
 })
 
@@ -1307,7 +1297,7 @@ it('round-trips a portable bundle with all rows and presentation into an indepen
     importJournalBundle(target.service.run.bind(target.service), bundle, () => false)
   ).rejects.toThrow('already exist')
   expect((await target.service.run({ action: 'list' })).datasets).toHaveLength(1)
-  expect(target.db.prepare('SELECT * FROM TestBinding').all()).toEqual([])
+  expect(target.bindings()).toEqual([])
 })
 
 it('rejects stale export pages and imports no partial bundle when a row is invalid', async () => {
@@ -1348,7 +1338,7 @@ it('rejects stale export pages and imports no partial bundle when a row is inval
     importJournalBundle(target.service.run.bind(target.service), bundle, () => false)
   ).rejects.toThrow('invalid or conflicting')
   expect((await target.service.run({ action: 'list' })).datasets).toEqual([])
-  expect(target.db.prepare('SELECT * FROM Journal').all()).toEqual([])
+  expect(await target.client.listJournals()).toEqual([])
   const badVersion = new TextEncoder().encode(JSON.stringify({ ...bundle, version: 99 }))
   expect(() => readJournalBundle(badVersion.buffer)).toThrow()
 })
@@ -1361,7 +1351,7 @@ it('shares catalog reads across clients and export pages and invalidates after w
     skipProblems: false
   })
   const dataset = saved.datasets![0]
-  const read = vi.spyOn(client, 'query')
+  const read = vi.spyOn(client, 'listDatasets')
   read.mockRejectedValueOnce(new Error('temporary catalog failure'))
   await expect(service.run({ action: 'list' })).rejects.toThrow('temporary catalog failure')
   read.mockClear()
@@ -1369,6 +1359,7 @@ it('shares catalog reads across clients and export pages and invalidates after w
   expect(lists.every((result) => result.datasets![0].id === dataset.id)).toBe(true)
   expect(read).toHaveBeenCalledTimes(1)
   read.mockClear()
+  const rowReads = vi.spyOn(client, 'readDatasetRows')
   const first = (
     await service.run({
       action: 'export',
@@ -1383,7 +1374,8 @@ it('shares catalog reads across clients and export pages and invalidates after w
     after: first.next,
     snapshot: first.snapshot
   })
-  expect(read).toHaveBeenCalledTimes(2) // Row reads only; no repeated dataset counts per export page.
+  expect(read).not.toHaveBeenCalled()
+  expect(rowReads).toHaveBeenCalledTimes(2)
   await service.run({
     action: 'rename',
     datasetId: dataset.id,
@@ -1411,18 +1403,20 @@ it.each(['entries', 'resolve'] as const)(
         ? { action, datasetId: dataset.id, offset: 0, query: '', descending: false }
         : { action, identities: [{ name: row().name, aliases: [], issns: [] }] }
     await service.run(request)
-    const query = client.query.bind(client)
+    const method = action === 'entries' ? 'readDatasetRows' : 'readEntries'
+    const original = client[method]
     let release!: () => void
     const gate = new Promise<void>((resolve) => {
       release = resolve
     })
-    const read = vi.spyOn(client, 'query').mockImplementationOnce(
-      (...args) =>
-        query(...args).then(async (rows) => {
-          await gate
-          return rows
-        }) as ReturnType<JournalDatabase['query']>
-    )
+    const read = vi
+      .spyOn(client, method)
+      .mockImplementationOnce(async (...args: Parameters<typeof original>) => {
+        // The selected method and arguments are paired by the spy.
+        const result = await Reflect.apply(original, client, args)
+        await gate
+        return result
+      })
     const pending = service.run(request)
     const rejected = expect(pending).rejects.toThrow('Journal data changed')
     await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1))

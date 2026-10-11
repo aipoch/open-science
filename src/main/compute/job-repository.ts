@@ -1,22 +1,27 @@
-import type { ComputeJob as PrismaComputeJob, PrismaClient } from '@prisma/client'
+import type {
+  ComputeJobIntegrityIssue,
+  ComputeJobOwner,
+  ComputeJobRemoteCleanupDisposition,
+  ComputeJobSessionOwner,
+  ComputeJobStatus
+} from '@aipoch/compute'
+import type { PrismaClient, ComputeJob as PrismaComputeJob } from '@prisma/client'
 import type {
   ComputeJob,
   ComputeJobAnalysisState,
-  ComputeJobAnalysisTransition,
-  ComputeJobIntegrityIssue,
-  ComputeJobRemoteCleanupDisposition,
-  ComputeJobStatus
+  ComputeJobAnalysisTransition
 } from '../../shared/compute'
-import { classifyComputeJobIntegrity, isKnownComputeJobStatus } from './compute-job-integrity'
-import {
-  OptionalSecureStorageStringProtection,
-  type ProtectedJsonContainer
-} from './credential-vault'
+
+import { classifyComputeJobIntegrity, isKnownComputeJobStatus } from '@aipoch/compute/node'
 import {
   hasImmutableExecutionFileEvidenceReference,
   parseOwnedExecutionFileEvidenceSummary,
   type ExecutionFileEvidenceSummary
 } from '../../shared/execution-file-evidence'
+import {
+  OptionalSecureStorageStringProtection,
+  type ProtectedJsonContainer
+} from './credential-vault'
 
 // Only ComputeJob persistence and a transaction wrapper are needed.
 type ComputeJobClient = Pick<PrismaClient, '$transaction' | 'computeJob'>
@@ -28,16 +33,6 @@ type ComputeJobFieldProtection = Pick<
   OptionalSecureStorageStringProtection,
   'isAvailable' | 'protect' | 'protectJson' | 'reveal' | 'revealJson'
 >
-
-export type ComputeJobOwner = Readonly<{
-  projectId: string
-  sessionId?: string
-}>
-
-export type ComputeJobSessionOwner = Readonly<{
-  projectId: string
-  sessionId: string
-}>
 
 export class UnencryptedComputeJobPersistenceApprovalRequiredError extends Error {
   constructor() {
@@ -76,7 +71,7 @@ export type CreateJobRequest = {
   id: string
   providerId: string
   shape: string
-  executionMode?: import('../../shared/compute').ComputeExecutionMode
+  executionMode?: import('@aipoch/compute').ComputeExecutionMode
   sessionId: string
   projectId: string
   intent: string
@@ -95,29 +90,7 @@ export type CreateJobRequest = {
   allowUnencryptedPersistence?: boolean
 }
 
-export type UpdateJobRequest = {
-  status?: ComputeJobStatus
-  remoteHandle?: string
-  remoteWorkdir?: string
-  exitCode?: number | null
-  stdoutTail?: string | null
-  stderrTail?: string | null
-  errorCode?: string | null
-  // lastPollError is set when SSH connectivity fails during polling (not a job failure).
-  lastPollError?: string | null
-  // retryAfterUserAction is an in-memory hint; always true for poll connectivity errors.
-  // It is NOT persisted to the DB but is carried in the update call so callers can surface
-  // the retry_after_user_action semantic without a separate DB column.
-  retryAfterUserAction?: boolean
-  submittedAt?: Date
-  startedAt?: Date
-  finishedAt?: Date
-  // Phase 3b harvest fields (compute-harvest issue 01).
-  harvestedAt?: Date
-  harvestError?: string | null
-  leftOnRemote?: string | null
-  notifiedAt?: Date | null
-  notificationConsumedAt?: Date | null
+export type UpdateJobRequest = import('@aipoch/compute').UpdateJobRequest & {
   fileEvidence?: ExecutionFileEvidenceSummary
 }
 

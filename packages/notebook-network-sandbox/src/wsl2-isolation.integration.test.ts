@@ -11,7 +11,7 @@ import {
   wsl2Launch,
   type Wsl2Launch
 } from '../runtime/src/platform/wsl2-isolation.js'
-import { notebookWorkloadCacheEnv } from '../../../src/main/notebook/notebook-workload-cache-paths.js'
+import { notebookWorkloadCacheEnv } from '@aipoch/environment'
 import { CommandGateway } from '../runtime/src/gateway/command-gateway.js'
 
 const distro = process.env.OPEN_SCIENCE_WSL_DISTRO

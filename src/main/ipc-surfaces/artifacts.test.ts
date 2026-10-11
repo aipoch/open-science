@@ -36,7 +36,7 @@ vi.mock('../storage-root', () => ({
   resolveStorageRoot: () => native.root
 }))
 
-import type { NotebookEnvironmentLock } from '../../shared/notebook'
+import type { NotebookEnvironmentLock } from '@aipoch/environment/contracts'
 import { registerArtifactIpcHandlers } from '../artifacts/ipc'
 import { registerArtifactReproducibilityIpcHandlers } from '../artifacts/artifact-reproducibility-ipc'
 import {

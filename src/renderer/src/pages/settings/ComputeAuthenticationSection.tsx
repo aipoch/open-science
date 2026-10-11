@@ -2,10 +2,9 @@ import { ChevronDown } from 'lucide-react'
 import type { ComponentType } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
 
-import type {
-  ComputeAuthenticationMode,
-  ComputePasswordCapability
-} from '../../../../shared/compute'
+import type { ComputeAuthenticationMode } from '@aipoch/compute'
+import type { ComputePasswordCapability } from '../../../../shared/compute'
+
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { MaskedPasswordField } from './MaskedPasswordField'

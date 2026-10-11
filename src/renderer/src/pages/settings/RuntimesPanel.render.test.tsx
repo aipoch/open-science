@@ -3,13 +3,11 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { ProvisionStatus } from '../../../../shared/notebook-env'
+import type { ProvisionStatus } from '@aipoch/environment/contracts'
 import type { NotebookNetworkStatus } from '../../../../shared/notebook-network'
-import type {
-  DiscoveredInterpreter,
-  EnvPackage,
-  RuntimeEnablement
-} from '../../../../shared/notebook-runtime'
+import type { DiscoveredInterpreter } from '@aipoch/environment/contracts'
+import type { EnvPackage } from '@aipoch/environment/contracts'
+import type { RuntimeEnablement } from '../../../../shared/notebook-runtime'
 import { createInitialNotebookEnvState, useNotebookEnvStore } from '../../stores/notebook-env-store'
 import { useRuntimeSettingsStore } from '../../stores/runtime-settings-store'
 import { RuntimesPanel } from './RuntimesPanel'

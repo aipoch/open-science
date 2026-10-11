@@ -1,23 +1,23 @@
+import {
+  createComputeExecution,
+  createHarvestScheduler,
+  createJobCancellation
+} from '@aipoch/compute/node'
 import { execFile } from 'node:child_process'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type { ComputeConnectionLease } from '@aipoch/compute/node'
 import type { ComputeJob } from '../../shared/compute'
 import { createMigratedComputeTestDatabase } from './compute-integration.test-support'
-import {
-  ComputeJobCancellationOwner,
-  ComputeJobCancellationReaper
-} from './compute-job-cancellation-owner'
 import { resolveInputs } from './compute-job-workflow-owner'
-import { ConcurrencyManager } from './concurrency-manager'
-import type { ComputeConnectionBroker, ComputeConnectionLease } from './connection-broker'
-import { DispatchTracker } from './dispatch-tracker'
+import type { ComputeConnectionBroker } from './connection-broker'
+
+import { JobPoller, RetryableHarvestError } from '@aipoch/compute/node'
+import { dispatchComputeJob as dispatchJob } from './dispatch-evidence'
 import { harvestJob, type HarvestDeps } from './harvest-engine'
-import { dispatchJob } from './job-dispatcher'
-import { JobHarvestScheduler, RetryableHarvestError } from './job-harvest-scheduler'
-import { JobPoller } from './job-poller'
 import { createComputeJobRuntime } from './job-runtime'
 import { ComputeHostRepository } from './repository'
 
@@ -131,8 +131,7 @@ describe('Compute Job recovery behavior', () => {
         await dispatchJob('job-1', {
           connectionBroker: broker(run),
           hostRepository: hosts,
-          jobRepository: db.repositories.jobs,
-          dispatchTracker: new DispatchTracker()
+          jobRepository: db.repositories.jobs
         })
       } catch (error) {
         rejection = error
@@ -162,15 +161,14 @@ describe('Compute Job recovery behavior', () => {
     const dispatching = dispatchJob(job.job_id, {
       connectionBroker,
       hostRepository: hosts,
-      jobRepository: db.repositories.jobs,
-      dispatchTracker: new DispatchTracker()
+      jobRepository: db.repositories.jobs
     })
     await launchEntered.promise
-    const owner = new ComputeJobCancellationOwner(db.repositories.operations, db.repositories.jobs)
+    const owner = createJobCancellation(db.repositories.operations, db.repositories.jobs)
     await owner.request(job.job_id, scope)
     launchResponse.resolve(success('4242'))
     await dispatching
-    const reaper = new ComputeJobCancellationReaper(
+    const reaper = createComputeExecution().createCancellationReaper(
       db.repositories.operations,
       db.repositories.jobs,
       connectionBroker,
@@ -187,10 +185,7 @@ describe('Compute Job recovery behavior', () => {
     'recovers cancellation after restart with %s launch evidence',
     async (evidence) => {
       const job = await createJob('submitted')
-      const owner = new ComputeJobCancellationOwner(
-        db.repositories.operations,
-        db.repositories.jobs
-      )
+      const owner = createJobCancellation(db.repositories.operations, db.repositories.jobs)
       await owner.request(job.job_id, scope)
       const observation =
         evidence === 'not_started'
@@ -205,7 +200,7 @@ describe('Compute Job recovery behavior', () => {
             : 'absent'
         )
       )
-      const reaper = new ComputeJobCancellationReaper(
+      const reaper = createComputeExecution().createCancellationReaper(
         db.repositories.operations,
         db.repositories.jobs,
         broker(run)
@@ -220,21 +215,20 @@ describe('Compute Job recovery behavior', () => {
 
   it('does not confirm a missing launch while dispatch is still in flight', async () => {
     const job = await createJob('submitted')
-    const owner = new ComputeJobCancellationOwner(db.repositories.operations, db.repositories.jobs)
+    const owner = createJobCancellation(db.repositories.operations, db.repositories.jobs)
     await owner.request(job.job_id, scope)
-    const tracker = new DispatchTracker()
-    tracker.begin(job.job_id)
+    const execution = createComputeExecution()
+    const release = execution.holdDispatch(job.job_id)
     const connectionBroker = broker(vi.fn(async () => success('')))
-    const reaper = new ComputeJobCancellationReaper(
+    const reaper = execution.createCancellationReaper(
       db.repositories.operations,
       db.repositories.jobs,
-      connectionBroker,
-      { dispatchTracker: tracker }
+      connectionBroker
     )
     await reaper.runOnce()
     expect(connectionBroker.acquire).not.toHaveBeenCalled()
     expect((await owner.status(job.job_id, scope)).cancellation_status).toBe('cancelling')
-    tracker.end(job.job_id)
+    release()
   })
 
   it('rejects a conflicting historical input manifest before staging any inputs', async () => {
@@ -260,8 +254,7 @@ describe('Compute Job recovery behavior', () => {
     await dispatchJob('job-1', {
       connectionBroker: broker(run),
       hostRepository: hosts,
-      jobRepository: db.repositories.jobs,
-      dispatchTracker: new DispatchTracker()
+      jobRepository: db.repositories.jobs
     })
     expect(
       run.mock.calls.some(([command]) => command.includes('ln -s') || command.includes('nohup'))
@@ -279,7 +272,7 @@ describe('Compute Job recovery behavior', () => {
       .fn()
       .mockRejectedValueOnce(new RetryableHarvestError('Local free-space check failed.'))
       .mockResolvedValue(undefined)
-    const scheduler = new JobHarvestScheduler(harvest, () => now)
+    const scheduler = createHarvestScheduler(harvest, () => now)
     await scheduler.schedule(job)
     await scheduler.schedule(job)
     expect(harvest).toHaveBeenCalledTimes(1)
@@ -302,7 +295,7 @@ describe('Compute Job recovery behavior', () => {
             finish = resolve
           })
       )
-    const scheduler = new JobHarvestScheduler(harvest, () => 0)
+    const scheduler = createHarvestScheduler(harvest, () => 0)
     await scheduler.schedule(job)
     await scheduler.schedule(job)
     expect(harvest).toHaveBeenCalledOnce()
@@ -339,15 +332,16 @@ describe('Compute Job recovery behavior', () => {
     async (limit) => {
       await createJob('running')
       const jobs = db.repositories.jobs
-      const manager = new ConcurrencyManager(jobs, hosts, vi.fn())
+      const manager = createComputeExecution().createQueue({
+        jobs: jobs,
+        hosts: hosts,
+        dispatch: vi.fn()
+      })
       if (limit === 'session') {
         await manager.setSessionLimit(scope.sessionId, 1)
         await hosts.updateConcurrencyLimit(scope.providerId, 10)
       }
-      await new ComputeJobCancellationOwner(db.repositories.operations, jobs).request(
-        'job-1',
-        scope
-      )
+      await createJobCancellation(db.repositories.operations, jobs).request('job-1', scope)
       expect.soft(await jobs.countActiveBySession(scope.sessionId)).toBe(1)
       expect.soft(await jobs.countActiveByProvider(scope.providerId)).toBe(1)
       const admitted = await manager.admit(scope, async (initialStatus) => {
@@ -371,7 +365,7 @@ describe('Compute Job recovery behavior', () => {
   it('finishes harvest and makes notification ready when cancellation proves no launch occurred', async () => {
     const job = await createJob('submitted')
     await db.repositories.jobs.update(job.job_id, { submittedAt: new Date() })
-    await new ComputeJobCancellationOwner(db.repositories.operations, db.repositories.jobs).request(
+    await createJobCancellation(db.repositories.operations, db.repositories.jobs).request(
       job.job_id,
       scope
     )
@@ -384,6 +378,7 @@ describe('Compute Job recovery behavior', () => {
     const runtime = createComputeJobRuntime(
       {
         computeService: {
+          execution: createComputeExecution(),
           bindJobHarvestRetry: vi.fn(() => () => undefined),
           handleJobUpdated: vi.fn(),
           handleJobCancellationConfirmed: async () => confirmed.resolve(),
@@ -437,7 +432,7 @@ describe('Compute Job recovery behavior', () => {
         stderr_path: `${job.remote_workdir}/stderr`
       })
     })
-    await new ComputeJobCancellationOwner(db.repositories.operations, db.repositories.jobs).request(
+    await createJobCancellation(db.repositories.operations, db.repositories.jobs).request(
       job.job_id,
       scope
     )
@@ -451,6 +446,7 @@ describe('Compute Job recovery behavior', () => {
     const runtime = createComputeJobRuntime(
       {
         computeService: {
+          execution: createComputeExecution(),
           bindJobHarvestRetry: vi.fn(() => () => undefined),
           handleJobUpdated: vi.fn(),
           handleJobCancellationConfirmed: vi.fn(async () => undefined),
@@ -467,7 +463,7 @@ describe('Compute Job recovery behavior', () => {
         harvest,
         broadcast: vi.fn(),
         createPoller: (pollerDeps) => {
-          poller = new JobPoller(pollerDeps)
+          poller = createComputeExecution().createPoller(pollerDeps)
           return {
             start: () => undefined,
             stop: () => poller.stop(),

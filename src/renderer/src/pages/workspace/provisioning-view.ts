@@ -5,7 +5,7 @@ import type {
   ProvisionProgressEvent,
   ProvisionScope,
   ProvisionStatus
-} from '../../../../shared/notebook-env'
+} from '@aipoch/environment/contracts'
 import type { NotebookRuntimeBinding } from '../../../../shared/notebook-runtime'
 
 // Preparing scope can arrive explicitly on progress events. Older main-process senders omit it, so

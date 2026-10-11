@@ -1,11 +1,9 @@
 // Wire protocol shared between the Node kernel driver and the Python/R exec-loop scripts.
 import { notebookExecutionContextSchema } from '../../shared/notebook-execution-context'
 
-import type {
-  NotebookEnvironmentPackage,
-  NotebookLiveEnvironmentOverlay,
-  NotebookNamespaceVariable
-} from '../../shared/notebook'
+import type { NotebookEnvironmentPackage } from '@aipoch/environment/contracts'
+import type { NotebookLiveEnvironmentOverlay } from '../../shared/notebook'
+import type { NotebookNamespaceVariable } from '../../shared/notebook'
 
 export type KernelLoopFigure = { mime: string; path: string }
 

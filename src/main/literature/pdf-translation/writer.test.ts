@@ -1,4 +1,4 @@
-import { createPackageWithOptions, statFile } from '@electron/asar'
+import { FileMatcher } from 'app-builder-lib/out/fileMatcher'
 import { load } from 'js-yaml'
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
@@ -42,29 +42,24 @@ const lease = (): ReturnType<ApplicationCallerLeaseRegistry['acquire']> =>
 it('ships the existing Noto font license and explicit physical worker dependencies', async () => {
   const license = await readFile('packages/pdf-translation/resources/OFL.txt', 'utf8')
   expect(license).toContain('SIL OPEN FONT LICENSE')
-  const config = await readFile('electron-builder.yml', 'utf8')
-  for (const path of [
-    'node_modules/@aipoch/pdf-translation/resources/**',
-    'node_modules/@embedpdf/pdfium/**',
-    'node_modules/fontkit/**',
-    'node_modules/pdf-lib/**',
-    'node_modules/unicode-properties/**'
-  ])
-    expect(config).toContain(path)
+  const manifest = JSON.parse(await readFile('package.json', 'utf8'))
+  for (const name of ['@aipoch/pdf-translation', '@embedpdf/pdfium', 'fontkit', 'pdf-lib'])
+    expect(manifest.dependencies[name]).toEqual(expect.stringMatching(/\S/))
 })
 
 it.each(['installed', '安装 package'])(
-  'generates a readable translated PDF from the configured ASAR unpack boundary (%s)',
+  'generates a readable translated PDF from the configured physical backend boundary (%s)',
   async (installationDirectory) => {
-    const root = await mkdtemp(join(tmpdir(), 'pdf-translation-asar-')),
-      source = join(root, 'source'),
-      archive = join(root, installationDirectory, 'app.asar'),
+    const root = await mkdtemp(join(tmpdir(), 'pdf-translation-backend-')),
+      source = join(root, 'out/standalone'),
+      resources = join(root, installationDirectory, 'resources'),
+      backend = join(resources, 'backend'),
       copied = new Set<string>(),
       caller = lease()
     let document: ReturnType<typeof getDocument> | undefined
     try {
       const config = load(await readFile('electron-builder.yml', 'utf8')) as {
-        asarUnpack: string[]
+        extraResources: Array<{ from: string; to: string; filter?: string[] }>
       }
       const copyPackage = async (
         name: string,
@@ -96,8 +91,7 @@ it.each(['installed', '安装 package'])(
           await copyPackage(dependency, createRequire(join(directory, 'package.json')))
       }
       await mkdir(join(source, 'resources'), { recursive: true })
-      await mkdir(dirname(archive), { recursive: true })
-      // An ancestor's module type must not substitute for the manifest inside ASAR.
+      // An ancestor's module type must not substitute for the backend manifest.
       await writeFile(join(root, 'package.json'), '{"type":"module"}')
       await writeFile(join(source, 'package.json'), '{"type":"commonjs"}')
       await cp(
@@ -110,9 +104,32 @@ it.each(['installed', '安装 package'])(
       const require = createRequire(resolve('package.json'))
       for (const name of ['@embedpdf/pdfium', 'fontkit', 'pdf-lib'])
         await copyPackage(name, require)
-      await createPackageWithOptions(source, archive, {
-        unpack: `{${config.asarUnpack.map((pattern) => '**/' + pattern).join(',')}}`
-      })
+      // electron-builder exports this runtime helper without a declaration.
+      const { copyFiles } = require('app-builder-lib/out/fileMatcher') as {
+        copyFiles(matchers: FileMatcher[]): Promise<void>
+      }
+      await copyFiles(
+        config.extraResources
+          .filter((entry) => entry.to === 'backend' || entry.to.startsWith('backend/'))
+          .map(
+            (entry) =>
+              new FileMatcher(
+                join(root, entry.from),
+                join(resources, entry.to),
+                (value) => value,
+                entry.filter
+              )
+          )
+      )
+      // Execute only the installed copy; dependencies must not fall back to staging.
+      await rm(source, { recursive: true, force: true })
+      const workerResources = join(
+        backend,
+        'node_modules',
+        '@aipoch',
+        'pdf-translation',
+        'resources'
+      )
       for (const file of [
         'worker.mjs',
         'form-labels.mjs',
@@ -121,22 +138,11 @@ it.each(['installed', '安装 package'])(
         'NotoSansSC-Regular.otf',
         'OFL.txt'
       ])
-        expect(
-          statFile(archive, join('node_modules', '@aipoch', 'pdf-translation', 'resources', file))
-        ).toMatchObject({
-          unpacked: true
-        })
-      expect(statFile(archive, 'package.json')).not.toHaveProperty('unpacked', true)
-      const writer = new PdfTranslationWriter(() =>
-        join(
-          archive + '.unpacked',
-          'node_modules',
-          '@aipoch',
-          'pdf-translation',
-          'resources',
-          'worker.mjs'
-        )
+        expect((await readFile(join(workerResources, file))).length).toBeGreaterThan(0)
+      expect(JSON.parse(await readFile(join(backend, 'package.json'), 'utf8')).type).toBe(
+        'commonjs'
       )
+      const writer = new PdfTranslationWriter(() => join(workerResources, 'worker.mjs'))
       const output = await writer.generate(await fixture(), caller.lease)
       expect(output).toBeInstanceOf(Uint8Array)
       document = getDocument({ data: output!, useSystemFonts: true })

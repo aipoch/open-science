@@ -1,4 +1,5 @@
-import type { ComputeJobStatus } from './compute'
+import type { ComputeJobStatus } from '@aipoch/compute'
+
 import type { NotebookRunStatus } from './notebook'
 
 export type BackgroundResultSourceKind = 'local-run' | 'compute-job'

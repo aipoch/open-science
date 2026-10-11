@@ -1,3 +1,4 @@
+import { createComputeExecution, createSshRunner } from '@aipoch/compute/node'
 // Gated integration tests for Phase 3a compute-jobs (issues 01–03).
 // Runs only when RUN_COMPUTE_JOBS=1 and COMPUTE_TEST_SSH_ALIAS is set.
 // These tests require a real SSH host configured in ~/.ssh/config; they are skipped in CI.
@@ -13,16 +14,16 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
-import { computeProviderId } from '../../shared/compute'
+import { computeProviderId } from '@aipoch/compute'
+
+import type { ComputeJobStatus } from '@aipoch/compute'
+import { JobPoller, SshRunner } from '@aipoch/compute/node'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
-import { ComputeHostRepository } from './repository'
-import { ComputeJobRepository } from './job-repository'
 import { ComputeApprovalBroker } from './compute-approval-broker'
 import { ComputeService } from './compute-service'
-import { SystemSshRunner } from './ssh-runner'
 import { SshConfigComputeConnectionBroker } from './connection-broker'
-import { JobPoller } from './job-poller'
-import type { ComputeJobStatus } from '../../shared/compute'
+import { ComputeJobRepository } from './job-repository'
+import { ComputeHostRepository } from './repository'
 
 const RUN = process.env['RUN_COMPUTE_JOBS'] === '1'
 const ALIAS = process.env['COMPUTE_TEST_SSH_ALIAS'] ?? ''
@@ -34,7 +35,7 @@ const POLL_PAUSE_MS = 2_000
 
 const brokerFor = (
   hostRepository: ComputeHostRepository,
-  runner: SystemSshRunner
+  runner: SshRunner
 ): SshConfigComputeConnectionBroker =>
   new SshConfigComputeConnectionBroker({
     getHost: (providerId) => hostRepository.get(providerId),
@@ -88,8 +89,8 @@ describeIf('compute-jobs integration (real SSH)', () => {
   afterAll(async () => {
     // Clean up remote workdirs for all tests.
     if (remoteWorkdirs.length > 0 && ALIAS) {
-      const runner = new SystemSshRunner()
-      const { resolveSshTarget } = await import('./ssh-runner')
+      const runner = createSshRunner()
+      const { resolveSshTarget } = await import('@aipoch/compute/node')
       try {
         const target = await resolveSshTarget(ALIAS, undefined)
         const rmCmds = remoteWorkdirs.map((d) => `rm -rf ${JSON.stringify(d)}`).join('; ')
@@ -128,7 +129,7 @@ describeIf('compute-jobs integration (real SSH)', () => {
     const jobRepo = new ComputeJobRepository(() => Promise.resolve(client))
     const providerId = computeProviderId(ALIAS)
 
-    const runner = new SystemSshRunner()
+    const runner = createSshRunner()
     const service = new ComputeService({
       runner,
       repository: hostRepo,
@@ -148,7 +149,7 @@ describeIf('compute-jobs integration (real SSH)', () => {
     expect(result.job_id).toBeDefined()
     remoteWorkdirs.push(result.remote_workdir)
 
-    const poller = new JobPoller({
+    const poller = createComputeExecution().createPoller({
       connectionBroker: brokerFor(hostRepo, runner),
       hostRepository: hostRepo,
       jobRepository: jobRepo
@@ -166,7 +167,7 @@ describeIf('compute-jobs integration (real SSH)', () => {
     const jobRepo = new ComputeJobRepository(() => Promise.resolve(client))
     const providerId = computeProviderId(ALIAS)
 
-    const runner = new SystemSshRunner()
+    const runner = createSshRunner()
     const service = new ComputeService({
       runner,
       repository: hostRepo,
@@ -185,7 +186,7 @@ describeIf('compute-jobs integration (real SSH)', () => {
     expect(result.status).toBe('submitted')
     remoteWorkdirs.push(result.remote_workdir)
 
-    const poller = new JobPoller({
+    const poller = createComputeExecution().createPoller({
       connectionBroker: brokerFor(hostRepo, runner),
       hostRepository: hostRepo,
       jobRepository: jobRepo
@@ -202,7 +203,7 @@ describeIf('compute-jobs integration (real SSH)', () => {
     const jobRepo = new ComputeJobRepository(() => Promise.resolve(client))
     const providerId = computeProviderId(ALIAS)
 
-    const runner = new SystemSshRunner()
+    const runner = createSshRunner()
     const service = new ComputeService({
       runner,
       repository: hostRepo,
@@ -222,7 +223,7 @@ describeIf('compute-jobs integration (real SSH)', () => {
     remoteWorkdirs.push(result.remote_workdir)
 
     // Poll for up to 3 minutes: timeout command fires at 5s+30s, poller should see exit 124 quickly.
-    const poller = new JobPoller({
+    const poller = createComputeExecution().createPoller({
       connectionBroker: brokerFor(hostRepo, runner),
       hostRepository: hostRepo,
       jobRepository: jobRepo
@@ -240,7 +241,7 @@ describeIf('compute-jobs integration (real SSH)', () => {
     const jobRepo = new ComputeJobRepository(() => Promise.resolve(client))
     const providerId = computeProviderId(ALIAS)
 
-    const runner = new SystemSshRunner()
+    const runner = createSshRunner()
     const service = new ComputeService({
       runner,
       repository: hostRepo,
@@ -264,7 +265,7 @@ describeIf('compute-jobs integration (real SSH)', () => {
     // Wait a few seconds for the process to die, then poll twice.
     await new Promise((r) => setTimeout(r, 3_000))
 
-    const poller = new JobPoller({
+    const poller = createComputeExecution().createPoller({
       connectionBroker: brokerFor(hostRepo, runner),
       hostRepository: hostRepo,
       jobRepository: jobRepo
@@ -310,7 +311,7 @@ describeIf('compute-jobs integration (real SSH)', () => {
         return p
       }
 
-      const runner = new SystemSshRunner()
+      const runner = createSshRunner()
       const service = new ComputeService({
         runner,
         repository: hostRepo,
@@ -335,7 +336,7 @@ describeIf('compute-jobs integration (real SSH)', () => {
       stagedWorkdir = result.remote_workdir
 
       // Poll until terminal state.
-      const poller = new JobPoller({
+      const poller = createComputeExecution().createPoller({
         connectionBroker: brokerFor(hostRepo, runner),
         hostRepository: hostRepo,
         jobRepository: jobRepo
@@ -355,8 +356,8 @@ describeIf('compute-jobs integration (real SSH)', () => {
     } finally {
       // Best-effort remote cleanup.
       if (stagedWorkdir && ALIAS) {
-        const runner = new SystemSshRunner()
-        const { resolveSshTarget } = await import('./ssh-runner')
+        const runner = createSshRunner()
+        const { resolveSshTarget } = await import('@aipoch/compute/node')
         try {
           const target = await resolveSshTarget(ALIAS, undefined)
           await runner.run(target, `rm -rf ${JSON.stringify(stagedWorkdir)}`, {

@@ -8,12 +8,12 @@ import {
   type WindowsPythonFixture
 } from './windows-python.test-support'
 import type { NotebookRuntimeBindings } from '../../shared/notebook-runtime'
-import type { ProvisionProgress } from '../../shared/notebook-env'
+import type { ProvisionProgress } from '@aipoch/environment/contracts'
 import type { NotebookRunDocument } from '../../shared/notebook'
 import { createNotebookEnvironmentLifecycle } from './environment-lifecycle-workflows'
 import { createRootNotebookLane } from './lane-identity'
-import { DefaultRuntimeProvisioner } from './provisioner'
-import { verifyExecutable } from './provisioner-runtime'
+import { DefaultRuntimeProvisioner } from '@aipoch/environment'
+import { verifyExecutable } from './environment-process'
 import { NotebookRuntimeBindingOwner } from './runtime-binding'
 import {
   DEFAULT_PY_ENV,
@@ -21,9 +21,9 @@ import {
   pythonBin,
   readReadyMarker,
   readRepairRequiredReason
-} from './runtime-paths'
+} from '@aipoch/environment'
 import { NotebookRuntimeRepairOwner } from './runtime-repair'
-import { NotebookRuntimeRepairPolicy } from './runtime-repair-policy'
+import { NotebookRuntimeRepairPolicy } from '@aipoch/environment'
 import { NotebookSessionAggregate } from './session-aggregate'
 
 // Real Windows, Python launchers, provisioning verification and default discovery are required.

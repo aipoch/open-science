@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { ComputeApprovalRequest, ComputeHost, ProbeResult } from '../../../shared/compute'
+import type { ComputeHost, ProbeResult } from '@aipoch/compute'
+import type { ComputeApprovalRequest } from '../../../shared/compute'
+
 import {
   consumeComputeHostsPreload,
   createInitialComputeState,

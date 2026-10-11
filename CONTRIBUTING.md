@@ -78,7 +78,7 @@ command, then run `npm run dev` again. Web/headless development has no live relo
 
 For a new local package, follow an existing `tsconfig.dev.json`, reference its local dependencies,
 and add it to `tsconfig.packages.json`. Use `npm run build:packages` to build packages alone. The development alias remains available.
-Build scheduling, selected isolation checks and measurement guidance are in
+Build scheduling and selected isolation checks are described in
 [Package workflows](docs/package-workflows.md).
 
 Native credential helpers build incrementally in development. On macOS, keep

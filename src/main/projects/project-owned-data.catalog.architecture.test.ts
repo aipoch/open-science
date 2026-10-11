@@ -579,7 +579,7 @@ describe('Project-owned data catalog architecture', () => {
   it('proves Compute cleanup removes remote work before deleting owner rows', () => {
     expectCall(
       classMethod(
-        'src/main/compute/job-deletion-owner.ts',
+        'packages/compute/src/job-deletion-owner.ts',
         'ComputeJobDeletionOwner',
         'commitProjectJobDeletion'
       ),
@@ -587,7 +587,7 @@ describe('Project-owned data catalog architecture', () => {
     )
     expectCallsInOrder(
       classMethod(
-        'src/main/compute/job-deletion-owner.ts',
+        'packages/compute/src/job-deletion-owner.ts',
         'ComputeJobDeletionOwner',
         'commitOwner'
       ),
@@ -595,7 +595,7 @@ describe('Project-owned data catalog architecture', () => {
     )
     expectCall(
       classMethod(
-        'src/main/compute/compute-job-lifecycle.ts',
+        'packages/compute/src/compute-job-lifecycle.ts',
         'ComputeJobLifecycle',
         'deleteOwnerRows'
       ),

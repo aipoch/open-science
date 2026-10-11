@@ -5,8 +5,8 @@ import { afterEach, beforeEach, expect, it } from 'vitest'
 import { runEvidenceWorker } from './working-file-observer'
 import { NotebookKernelExecutor } from './kernel-executor'
 import { analyzePythonNotebookSource } from '@aipoch/notebook-analysis'
-import { resolveBundleDir } from './bundle-local'
-import { resolveMicromamba } from './micromamba'
+import { resolveBundleDir } from './environment-resources'
+import { resolveMicromamba } from '@aipoch/environment'
 
 // Plain-Node hosts (runtime certification, SDK consumers) configure no host entry. Resource
 // resolution must fall back to the source-tree candidates instead of demanding runtime metadata.

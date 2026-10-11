@@ -2,20 +2,23 @@ import type { IpcMainInvokeEvent } from 'electron'
 import { z } from 'zod'
 
 import {
-  normalizeComputeApprovalDecision,
   type CancelComputeJobRequest,
+  type DetailsAuthor,
+  type SetComputeJobRemoteCleanupRequest
+} from '@aipoch/compute'
+import {
+  normalizeComputeApprovalDecision,
   type ChangeComputeHostAuthenticationRequest,
   type ComputeApprovalDecisionInput,
+  type ComputeJobAnalysisTransition,
   type ComputeJobsListFilter,
   type ComputeJobsPendingNotificationFilter,
-  type ComputeJobAnalysisTransition,
   type CreateComputeHostRequest,
   type CreatePasswordComputeHostRequest,
   type DeleteComputeHostRequest,
-  type DetailsAuthor,
-  type ResetPasswordComputeHostRequest,
-  type SetComputeJobRemoteCleanupRequest
+  type ResetPasswordComputeHostRequest
 } from '../../shared/compute'
+
 import { LIFECYCLE_CHANNELS } from '../../shared/lifecycle-events'
 import type { DownloadDest, SerializableRemoteFsError } from '../../shared/remote-fs'
 import { encodeRemoteFsError } from '../../shared/remote-fs'

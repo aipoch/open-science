@@ -1,10 +1,7 @@
 import type { NotebookLanguage } from '../../shared/notebook'
-import type {
-  DiscoveredInterpreter,
-  EnvPackage,
-  RuntimeEnablement,
-  RuntimeUsage
-} from '../../shared/notebook-runtime'
+import type { DiscoveredInterpreter } from '@aipoch/environment/contracts'
+import type { EnvPackage } from '@aipoch/environment/contracts'
+import type { RuntimeEnablement, RuntimeUsage } from '../../shared/notebook-runtime'
 import {
   defineApplicationCommand,
   defineApplicationCommandGroup,

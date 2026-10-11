@@ -3,7 +3,8 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { ComputeHost } from '../../../../shared/compute'
+import type { ComputeHost } from '@aipoch/compute'
+
 import { createInitialComputeState, useComputeStore } from '@/stores/compute-store'
 import { ComputeAddForm } from './ComputeAddForm'
 

@@ -165,12 +165,12 @@ jobs:
           src/main/notebook/r-loop.integration.test.ts
           src/main/notebook/kernel-file-evidence.integration.test.ts
           src/main/notebook/reproduction-runtime.integration.test.ts
-          src/main/notebook/native-lock-restoration.test.ts
-          src/main/notebook/environment-lock.test.ts
-          src/main/notebook/restored-environment-verification.test.ts
+          packages/environment/src/native-lock-restoration.test.ts
+          packages/environment/src/environment-lock.test.ts
+          packages/environment/src/restored-environment-verification.test.ts
           src/main/artifacts/artifact-reproducibility-execution.test.ts
-          src/main/notebook/environment-state-tracker.test.ts
-          src/main/notebook/package-manager.test.ts
+          packages/environment/src/environment-state-tracker.test.ts
+          packages/environment/src/package-manager.test.ts
           src/main/notebook/cross-turn-input-repro.integration.test.ts
           src/main/notebook/input-resource-repro.integration.test.ts
           src/main/notebook/e2e.certification.test.ts

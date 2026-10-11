@@ -1,29 +1,30 @@
+import { createComputeExecution } from '@aipoch/compute/node'
 // Integration tests for ConcurrencyManager + ComputeService (issue 03).
 // Tests the full submit→queue→auto-dispatch flow with real repositories and mocked SSH.
 
-import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 
+import { computeProviderId } from '@aipoch/compute'
+import type { ScpRunner, SshRunner } from '@aipoch/compute/node'
+import { ConcurrencyManager } from '@aipoch/compute/node'
+import { type ComputeJob } from '../../shared/compute'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
-import { ComputeHostRepository } from './repository'
-import { ComputeJobRepository } from './job-repository'
-import { ComputeService } from './compute-service'
-import { ConcurrencyManager } from './concurrency-manager'
 import { ComputeApprovalBroker } from './compute-approval-broker'
-import type { SshRunner } from './ssh-runner'
-import type { ScpRunner } from './scp-runner'
-import { computeProviderId, type ComputeJob } from '../../shared/compute'
+import { ComputeService } from './compute-service'
+import { ComputeJobRepository } from './job-repository'
+import { ComputeHostRepository } from './repository'
+
+import type { ComputeConnectionBrokerAcquirer } from '@aipoch/compute/node'
+import type { ComputeConnectionBroker } from './connection-broker'
 import { createComputeJobRuntime } from './job-runtime'
-import type { ComputeConnectionBroker, ComputeConnectionBrokerAcquirer } from './connection-broker'
-import { JobPoller } from './job-poller'
-import { DispatchTracker } from './dispatch-tracker'
 
 // Mock the job-dispatcher module to prevent real SSH dispatches
-vi.mock('./job-dispatcher', async () => {
-  const actual = await vi.importActual('./job-dispatcher')
+vi.mock('@aipoch/compute/node', async () => {
+  const actual = await vi.importActual('@aipoch/compute/node')
   return {
     ...actual,
     dispatchJob: vi.fn(() => Promise.resolve())
@@ -84,7 +85,12 @@ describe('ConcurrencyManager integration with ComputeService', () => {
     const mockDispatch = vi.fn(async () => undefined)
 
     onJobUpdatedSpy = vi.fn()
-    concurrencyManager = new ConcurrencyManager(jobRepo, hostRepo, mockDispatch, onJobUpdatedSpy)
+    concurrencyManager = createComputeExecution().createQueue({
+      jobs: jobRepo,
+      hosts: hostRepo,
+      dispatch: mockDispatch,
+      publish: onJobUpdatedSpy
+    })
 
     service = new ComputeService({
       runner: makeFakeRunner(),
@@ -179,15 +185,12 @@ describe('ConcurrencyManager integration with ComputeService', () => {
         durableSessionLimits.set(sessionId, limit)
       }
     }
-    const initialManager = new ConcurrencyManager(
-      jobRepo,
-      hostRepo,
-      vi.fn(async () => undefined),
-      undefined,
-      undefined,
-      undefined,
-      sessionLimitPersistence
-    )
+    const initialManager = createComputeExecution().createQueue({
+      jobs: jobRepo,
+      hosts: hostRepo,
+      dispatch: vi.fn(async () => undefined),
+      sessionPolicy: sessionLimitPersistence
+    })
     const initialService = new ComputeService({
       runner: makeFakeRunner(),
       repository: hostRepo,
@@ -215,15 +218,12 @@ describe('ConcurrencyManager integration with ComputeService', () => {
       })
     }
 
-    const restartedManager = new ConcurrencyManager(
-      jobRepo,
-      hostRepo,
-      vi.fn(async () => undefined),
-      undefined,
-      undefined,
-      undefined,
-      sessionLimitPersistence
-    )
+    const restartedManager = createComputeExecution().createQueue({
+      jobs: jobRepo,
+      hosts: hostRepo,
+      dispatch: vi.fn(async () => undefined),
+      sessionPolicy: sessionLimitPersistence
+    })
     const restartedService = new ComputeService({
       runner: makeFakeRunner(),
       repository: hostRepo,
@@ -291,7 +291,11 @@ describe('ConcurrencyManager integration with ComputeService', () => {
       return findQueuedJobs()
     }
     const dispatchQueuedJob = vi.fn(async () => undefined)
-    const manager = new ConcurrencyManager(jobRepo, hostRepo, dispatchQueuedJob)
+    const manager = createComputeExecution().createQueue({
+      jobs: jobRepo,
+      hosts: hostRepo,
+      dispatch: dispatchQueuedJob
+    })
     const runtimeService = new ComputeService({
       runner: makeFakeRunner(),
       repository: hostRepo,
@@ -345,12 +349,11 @@ describe('ConcurrencyManager integration with ComputeService', () => {
       initialStatus: 'queued'
     })
     const acquire = vi.fn()
-    const dispatchTracker = new DispatchTracker()
-    const poller = new JobPoller({
+    const execution = createComputeExecution()
+    const poller = execution.createPoller({
       connectionBroker: { acquire } as unknown as ComputeConnectionBrokerAcquirer,
       hostRepository: hostRepo,
-      jobRepository: jobRepo,
-      dispatchTracker
+      jobRepository: jobRepo
     })
     const updateIfStatus = jobRepo.updateIfStatus.bind(jobRepo)
     jobRepo.updateIfStatus = async (...args) => {
@@ -358,20 +361,17 @@ describe('ConcurrencyManager integration with ComputeService', () => {
       if (args[2].status === 'submitted') await poller.tick()
       return updated
     }
-    const manager = new ConcurrencyManager(
-      jobRepo,
-      hostRepo,
-      async () => undefined,
-      undefined,
-      undefined,
-      dispatchTracker
-    )
+    const manager = execution.createQueue({
+      jobs: jobRepo,
+      hosts: hostRepo,
+      dispatch: async () => undefined
+    })
 
     await manager.onJobCompleted()
 
     expect((await jobRepo.get('queued-handoff-job'))?.status).toBe('submitted')
     expect(acquire).not.toHaveBeenCalled()
-    expect(dispatchTracker.has('queued-handoff-job')).toBe(false)
+    expect(execution.isDispatching('queued-handoff-job')).toBe(false)
   })
 
   it('starts independent eligible queued work without waiting for older staging', async () => {
@@ -404,9 +404,13 @@ describe('ConcurrencyManager integration with ComputeService', () => {
       releaseSlowStaging = resolve
     })
     const started: string[] = []
-    const manager = new ConcurrencyManager(jobRepo, hostRepo, async (jobId) => {
-      started.push(jobId)
-      if (jobId === 'queued-slow-staging') await slowStaging
+    const manager = createComputeExecution().createQueue({
+      jobs: jobRepo,
+      hosts: hostRepo,
+      dispatch: async (jobId) => {
+        started.push(jobId)
+        if (jobId === 'queued-slow-staging') await slowStaging
+      }
     })
 
     const reconciling = manager.onJobCompleted()

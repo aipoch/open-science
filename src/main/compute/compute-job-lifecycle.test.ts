@@ -1,11 +1,12 @@
+import { createJobLifecycle } from '@aipoch/compute/node'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 
+import { ComputeJobLifecycle } from '@aipoch/compute/node'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
-import { ComputeJobLifecycle } from './compute-job-lifecycle'
 import { ComputeJobRepository } from './job-repository'
 
 let storageRoot: string | undefined
@@ -58,7 +59,7 @@ beforeEach(async () => {
     allowUnencryptedPersistence: true
   })
   publish = vi.fn()
-  lifecycle = new ComputeJobLifecycle(repository, publish)
+  lifecycle = createJobLifecycle(repository, publish)
 })
 
 afterEach(async () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import type { ProvisionStatus } from '../../../../shared/notebook-env'
+import type { ProvisionStatus } from '@aipoch/environment/contracts'
 import { shouldProvisionR } from './lazy-r'
 
 const status = (o: Partial<ProvisionStatus> = {}): ProvisionStatus => ({

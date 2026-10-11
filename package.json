@@ -3,7 +3,7 @@
   "productName": "Open-Science",
   "desktopName": "open-science.desktop",
   "version": "0.37.0",
-  "description": "Open-Science — an open-source, model-agnostic AI workbench for scientific discovery.",
+  "description": "Open-Science \u2014 an open-source, model-agnostic AI workbench for scientific discovery.",
   "main": "./out/main/index.js",
   "author": "aipoch",
   "license": "Apache-2.0",
@@ -102,7 +102,11 @@
     "build:web:compiled": "npm run gen:web-api-map && node --max-old-space-size=8192 node_modules/vite/bin/vite.js build --config vite.web.config.ts",
     "build:backend:compiled": "npm run build:backend-native && node scripts/build-backend.mjs",
     "check:packages": "node scripts/check-packages.mjs",
-    "check:package-isolation": "node scripts/check-package-isolation.mjs"
+    "check:package-isolation": "node scripts/check-package-isolation.mjs",
+    "build:environment": "node scripts/build-dev-packages.mjs --packages=environment",
+    "check:environment-package": "node scripts/check-environment-package.mjs",
+    "build:compute": "node scripts/build-dev-packages.mjs --packages=compute",
+    "check:compute-package": "node scripts/check-compute-package.mjs"
   },
   "dependencies": {
     "@agentclientprotocol/claude-agent-acp": "^0.70.0",
@@ -160,7 +164,9 @@
     "@aipoch/notebook-code-risk": "file:packages/notebook-code-risk",
     "@aipoch/notebook-analysis": "file:packages/notebook-analysis",
     "@aipoch/literature-citations": "file:packages/literature-citations",
-    "@aipoch/journal-catalog": "file:packages/journal-catalog"
+    "@aipoch/journal-catalog": "file:packages/journal-catalog",
+    "@aipoch/environment": "file:packages/environment",
+    "@aipoch/compute": "file:packages/compute"
   },
   "overrides": {
     "@huggingface/transformers": {

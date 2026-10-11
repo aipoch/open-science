@@ -2,18 +2,19 @@
 // Locale coverage for FileBrowserModal: chrome, listing columns, error banner, detail panel and
 // the download success banner must all follow the active language — including text that was
 // produced by an earlier event and is only rendered later (see the language-switch cases).
-import { openRadixMenu } from './test-utils'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { openRadixMenu } from './test-utils'
 
-import type { ComputeHost } from '../../../../shared/compute'
-import type { DirListing, LocalFile } from '../../../../shared/remote-fs'
-import { FileBrowserModal } from './FileBrowserModal'
+import type { ComputeHost } from '@aipoch/compute'
+
 import { i18next } from '@/i18n'
 import { createInitialComputeState, useComputeStore } from '@/stores/compute-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
+import type { DirListing, LocalFile } from '../../../../shared/remote-fs'
+import { FileBrowserModal } from './FileBrowserModal'
 
 let container: HTMLDivElement
 let root: Root

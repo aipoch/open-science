@@ -1,6 +1,32 @@
 import { expect, it } from 'vitest'
 import { joinPdfTextItems, type PdfTextItem } from './pdf-text'
 
+it('separates a distant period caption below a complete native label band', () => {
+  const labels = ['Alpha', 'Beta', '4'].map((str, i) => ({
+    str,
+    width: 18,
+    height: 8,
+    transform: [8, 0, 0, 8, 140 + i * 30, 180]
+  }))
+  const caption = {
+    str: 'Figure 2. Independent response across complete groups.',
+    width: 280,
+    height: 9,
+    transform: [9, 0, 0, 9, 100, 130]
+  }
+  expect(joinPdfTextItems([...labels, caption])).toBe(
+    'Alpha Beta 4\nFigure 2. Independent response across complete groups.'
+  )
+  for (const str of [
+    'Figure 2.Independent response across complete groups.',
+    'Figure 2 illustrates the complete groups.'
+  ])
+    expect(joinPdfTextItems([...labels, { ...caption, str }])).toBe('Alpha Beta 4' + str)
+  expect(joinPdfTextItems([...labels, { ...caption, transform: [9, 0, 0, 9, 100, 178] }])).toBe(
+    'Alpha Beta 4' + caption.str
+  )
+})
+
 const item = (str: string, x: number, y: number, height = 10): PdfTextItem => ({
   str,
   width: str.length * height * 0.5,
@@ -55,6 +81,97 @@ const nativeFont = (str: string, transform: readonly number[], width: number): P
   height: transform[3],
   dir: 'ltr',
   hasEOL: false
+})
+
+const labelPlate = (last: PdfTextItem): PdfTextItem[] => [
+  nativeFont('First key', [7, 0, 0, 7, 160, 430], 34),
+  { str: '', hasEOL: true },
+  nativeFont('Second key', [7, 0, 0, 7, 260, 425], 40),
+  { str: '', hasEOL: true },
+  last
+]
+
+it.each(['+1.25', 'Method (trial 2)', 'n = 80', 'η'])(
+  'separates a complete descriptive caption from independently positioned native labels: %s',
+  (label) => {
+    const last = nativeFont(label, [9, 0, 0, 9, 360, 420], 65)
+    const caption = nativeFont(
+      'Figure 2: Independent comparison results.',
+      [10, 0, 0, 10, 100, 380],
+      250
+    )
+    expect(joinPdfTextItems([...labelPlate(last), caption])).toContain(label + '\n' + caption.str)
+  }
+)
+
+it('binds a native split dotted prefix and small-cap caption runs to the same printed line', () => {
+  const last = nativeFont('Method (trial 2)', [9, 0, 0, 9, 360, 420], 65)
+  const parts = [
+    nativeFont('Fig. 2', [10, 0, 0, 10, 100, 380], 28),
+    nativeFont('. ', [10, 0, 0, 10, 128, 380], 5),
+    nativeFont('Independent ', [10, 0, 0, 10, 133, 380], 60),
+    nativeFont('RESULTS', [8, 0, 0, 8, 193, 380], 32)
+  ]
+  expect(joinPdfTextItems([...labelPlate(last), ...parts])).toContain(
+    last.str + '\nFig. 2. Independent RESULTS'
+  )
+})
+
+it('uses the entire oriented label envelope before separating a caption', () => {
+  const angle = Math.PI / 18
+  const last = {
+    ...nativeFont(
+      'Axis label',
+      [
+        8 * Math.cos(angle),
+        -8 * Math.sin(angle),
+        8 * Math.sin(angle),
+        8 * Math.cos(angle),
+        360,
+        420
+      ],
+      50
+    ),
+    height: 8
+  }
+  const caption = nativeFont(
+    'Fig. 2: Independent comparison results.',
+    [10, 0, 0, 10, 100, 380],
+    220
+  )
+  expect(joinPdfTextItems([...labelPlate(last), caption])).toContain(last.str + '\n' + caption.str)
+  const approaching = { ...last, width: 250 }
+  expect(joinPdfTextItems([...labelPlate(approaching), caption])).toContain(
+    approaching.str! + caption.str
+  )
+})
+
+it('refuses incomplete captions, unsupported transforms and insufficient independent label evidence', () => {
+  const last = nativeFont('Method (trial 2)', [9, 0, 0, 9, 360, 420], 65)
+  const caption = nativeFont(
+    'Figure 2: Independent comparison results.',
+    [10, 0, 0, 10, 100, 380],
+    250
+  )
+  for (const next of [
+    { ...caption, str: 'Figure 2: Short' },
+    { ...caption, str: 'Figure 2.The results refer to another diagram.' },
+    { ...caption, transform: [10, 0, 0, 10, 370, 380] },
+    { ...caption, transform: [10, 0, 0, 10, 100, 410] },
+    { ...caption, height: 11 }
+  ])
+    expect(joinPdfTextItems([...labelPlate(last), next])).toContain(last.str! + next.str)
+  for (const previous of [
+    { ...last, transform: [9, 2, 0, 9, 360, 420] },
+    { ...last, transform: [-9, 0, 0, -9, 360, 420] },
+    { ...last, width: Number.NaN },
+    { ...last, str: 'Method\u0000 (trial 2)' }
+  ])
+    expect(joinPdfTextItems([...labelPlate(previous), caption])).toContain(
+      previous.str! + caption.str
+    )
+  expect(joinPdfTextItems([last, caption])).toBe(last.str! + caption.str)
+  expect(joinPdfTextItems([last, { ...caption, hasEOL: true }])).toBe(last.str! + caption.str)
 })
 
 const numericCaptionBoundary = {
@@ -177,6 +294,33 @@ it.each(['47', '2.047', '2047+', 'A2047'])(
     expect(joinPdfTextItems([{ ...previous, str }, current])).toBe(str + current.str)
   }
 )
+
+it.each([...'0123456789'])(
+  'separates a distant caption after an upright diagram digit: %s',
+  (str) => {
+    const previous = nativeFont(str, [6, 0, 0, 6, 400, 400], 4)
+    const current = nativeFont('Figure 3:', [12, 0, 0, 12, 100, 360], 60)
+    expect(joinPdfTextItems([previous, current])).toBe(str + '\n' + current.str)
+  }
+)
+
+it('preserves digit-caption joins without complete independent native geometry', () => {
+  const previous = nativeFont('7', [6, 0, 0, 6, 400, 400], 4)
+  const current = nativeFont('Figure 3:', [12, 0, 0, 12, 100, 360], 60)
+  const refused = [
+    [{ ...previous, transform: [0, 6, -6, 0, 400, 400] }, current],
+    [{ ...previous, dir: 'rtl' }, current],
+    [{ ...previous, width: Number.NaN }, current],
+    [nativeFont('7', [8, 0, 0, 8, 400, 400], 4), current],
+    [previous, { ...current, transform: [12, 0, 0, 12, 400, 360] }],
+    [previous, { ...current, transform: [12, 0, 0, 12, 100, 380] }],
+    [previous, { ...current, height: 13 }],
+    [previous, { ...current, str: 'Figure 3' }, nativeFont(':', [12, 0, 0, 12, 160, 360], 3)]
+  ]
+  for (const items of refused) expect(joinPdfTextItems(items)).toBe('7Figure 3:')
+  for (const str of ['-1', '1.2', 'x2', '１２', '²', '7¹'])
+    expect(joinPdfTextItems([{ ...previous, str }, current])).toBe(str + current.str)
+})
 
 it('preserves paragraph and cross-column references instead of treating them as captions', () => {
   expect(joinPdfTextItems([item('See below', 108, 520, 6), item('Figure 8:', 450, 300)])).toBe(
@@ -354,4 +498,583 @@ it('keeps split caption fonts and inline abbreviated references in native order'
   expect(joinPdfTextItems([item('See', 20, 400, 6), item('Fig. 3.', 30, 400, 9)])).toBe(
     'SeeFig. 3.'
   )
+})
+
+const signedLabelCaptionPlate = (angle = 90): PdfTextItem[] => {
+  const radians = (angle * Math.PI) / 180,
+    a = angle === 90 ? 0 : 6 * Math.cos(radians),
+    b = angle === 90 ? 6 : 6 * Math.sin(radians)
+  return [
+    nativeFont('+1.2', [6, 0, 0, 6, 100, 360], 20),
+    { ...nativeFont('−0.4', [a, b, -b, a, 190, 360], 20), height: 6 },
+    nativeFont('+0.3', [6, 0, 0, 6, 280, 350], 20),
+    nativeFont('Figure 4:', [10, 0, 0, 10, 50, 300], 45),
+    nativeFont(' Complete independently measured', [11, 0, 0, 11, 95, 300], 155),
+    nativeFont(' comparison.', [10, 0, 0, 10, 250, 300], 60)
+  ]
+}
+
+const initialIntegerAndClosedTicks = (): PdfTextItem[] => [
+  nativeFont('7', [10, 0, 0, 10, 60, 700], 5),
+  nativeFont('0', [4, 0, 0, 4, 80, 500], 2),
+  { str: ' ' },
+  nativeFont('1', [4, 0, 0, 4, 100, 500], 2),
+  { str: ' ' },
+  nativeFont('2', [4, 0, 0, 4, 120, 500], 2),
+  { str: '', hasEOL: true },
+  nativeFont('Axis', [6, 0, 0, 6, 90, 480], 12)
+]
+
+it('separates an initial solitary integer from a complete independent tick row', () => {
+  const items = initialIntegerAndClosedTicks(),
+    before = structuredClone(items)
+  expect(joinPdfTextItems(items)).toBe('7\n0 1 2\nAxis')
+  expect(items).toEqual(before)
+  expect(joinPdfTextItems(items).replace(/\s/gu, '')).toBe(
+    items
+      .map((i) => i.str ?? '')
+      .join('')
+      .replace(/\s/gu, '')
+  )
+})
+
+const initialIntegerAndWholeDecimalTicks = (values = ['-0.2', '0', '0.2']): PdfTextItem[] => [
+  nativeFont('7', [10, 0, 0, 10, 60, 700], 5),
+  ...values.flatMap((str, index) => [
+    nativeFont(str, [4, 0, 0, 4, 80 + index * 25, 500], str.length * 2),
+    ...(index < values.length - 1 ? [{ str: ' ' }] : [])
+  ]),
+  { str: '', hasEOL: true }
+]
+
+it.each([
+  ['-0.2', '0', '0.2'],
+  ['0.1', '0.2', '0.3'],
+  ['−0.2', '0', '+0.2']
+])('separates a closed row of three whole numeric carriers: %j', (...values) => {
+  const items = initialIntegerAndWholeDecimalTicks(values),
+    before = structuredClone(items),
+    actual = joinPdfTextItems(items)
+  expect(actual).toBe('7\n' + values.join(' '))
+  expect(actual.replace(/\s/gu, '')).toBe(
+    items
+      .map((i) => i.str ?? '')
+      .join('')
+      .replace(/\s/gu, '')
+  )
+  expect(items).toEqual(before)
+})
+
+it.each([
+  'missing EOL',
+  'partial decimal',
+  'standalone sign',
+  'scientific exponent',
+  'unit',
+  'shared carrier',
+  'foreign peer',
+  'wrong font height',
+  'raised peer',
+  'crossing peer',
+  'invalid peer geometry',
+  'counter inside band',
+  'noninteger counter'
+])('keeps an unproved signed tick boundary with %s', (variant) => {
+  const items = initialIntegerAndWholeDecimalTicks()
+  if (variant === 'missing EOL') items.pop()
+  if (variant === 'partial decimal') items[1] = { ...items[1], str: '-0.' }
+  if (variant === 'standalone sign') items[1] = { ...items[1], str: '-' }
+  if (variant === 'scientific exponent') items[3] = { ...items[3], str: '1e3' }
+  if (variant === 'unit') items[3] = { ...items[3], str: '1mm' }
+  if (variant === 'shared carrier') items[3] = { ...items[3], str: '0 0.1' }
+  if (variant === 'foreign peer') items[3] = { ...items[3], str: 'Label' }
+  if (variant === 'wrong font height') items[3] = nativeFont('0', [5, 0, 0, 5, 105, 500], 2)
+  if (variant === 'raised peer') items[3] = nativeFont('0', [2, 0, 0, 2, 105, 502], 2)
+  if (variant === 'crossing peer') items[3] = nativeFont('0', [4, 0, 0, 4, 82, 500], 2)
+  if (variant === 'invalid peer geometry') items[3] = { ...items[3], width: Number.NaN }
+  if (variant === 'counter inside band') items[0] = nativeFont('7', [10, 0, 0, 10, 100, 700], 5)
+  if (variant === 'noninteger counter') items[0] = { ...items[0], str: '7.0' }
+  const before = structuredClone(items),
+    expected = joinPdfTextItems(items.slice(0, 1)) + joinPdfTextItems(items.slice(1))
+  expect(joinPdfTextItems(items)).toBe(expected)
+  expect(items).toEqual(before)
+})
+
+it.each([
+  'missing line end',
+  'two numbers',
+  'foreign row glyph',
+  'split decimal',
+  'rotated last tick',
+  'unknown last tick',
+  'another initial glyph',
+  'repeated initial carrier',
+  'nearby baseline',
+  'same size integer',
+  'overlapping ticks',
+  'noninitial integer',
+  'short row',
+  'foreign whitespace glyph'
+])('preserves an unproved initial numeric block with %s', (variant) => {
+  const items = initialIntegerAndClosedTicks()
+  if (variant === 'missing line end') items[6] = { str: '' }
+  if (variant === 'two numbers') items.splice(4, 2)
+  if (variant === 'foreign row glyph') items[5] = { ...items[5], str: 'x' }
+  if (variant === 'split decimal') items[5] = { ...items[5], str: '.2' }
+  if (variant === 'rotated last tick')
+    items[5] = { ...items[5], transform: [0, 4, -4, 0, 120, 500] }
+  if (variant === 'unknown last tick') items[5] = { ...items[5], width: undefined }
+  if (variant === 'another initial glyph')
+    items.unshift(nativeFont('n', [10, 0, 0, 10, 40, 700], 5))
+  if (variant === 'repeated initial carrier') items.unshift(items[0])
+  if (variant === 'nearby baseline') items[0] = nativeFont('7', [10, 0, 0, 10, 60, 525], 5)
+  if (variant === 'same size integer') items[0] = nativeFont('7', [4, 0, 0, 4, 60, 700], 5)
+  if (variant === 'overlapping ticks') items[5] = nativeFont('2', [4, 0, 0, 4, 100, 500], 2)
+  if (variant === 'noninitial integer') items.unshift({ str: 'Earlier text.', hasEOL: true })
+  if (variant === 'short row') items[5] = nativeFont('2', [4, 0, 0, 4, 110, 500], 2)
+  if (variant === 'foreign whitespace glyph') items[2] = { str: '\u0000' }
+  const before = structuredClone(items),
+    at = items.findIndex((i) => i.str === '0')
+  const actual = joinPdfTextItems(items),
+    expected = joinPdfTextItems(items.slice(0, at)) + joinPdfTextItems(items.slice(at))
+  expect(actual).toBe(expected)
+  expect(items).toEqual(before)
+})
+
+const independentNumericBlocks = (header = false): PdfTextItem[] => [
+  ...(header ? [nativeFont('8', [10, 0, 0, 10, 30, 700], 5), item(' ', 35, 700)] : []),
+  nativeFont(header ? 'Example, et al.' : '−0.73', [10, 0, 0, 10, 250, 700], 70),
+  nativeFont('0', [6, 0, 0, 6, 80, 550], 3),
+  nativeFont('.', [6, 0, 0, 6, 83, 550], 2),
+  nativeFont('19', [6, 0, 0, 6, 85, 550], 6),
+  { str: ' ', height: 0, width: 12, transform: [6, 0, 0, 6, 91, 550] },
+  nativeFont('10', [6, 0, 0, 6, 115, 550], 6),
+  nativeFont('2', [4, 0, 0, 4, 121, 553], 2)
+]
+
+it.each([false, true])(
+  'separates independent numeric bands while retaining split decimals and powers: %s',
+  (header) => {
+    const items = independentNumericBlocks(header),
+      before = structuredClone(items)
+    expect(joinPdfTextItems(items)).toBe((header ? '8 Example, et al.' : '−0.73') + '\n0.19 102')
+    expect(items).toEqual(before)
+  }
+)
+
+it.each([
+  'one tick',
+  'overlapping columns',
+  'nearby line',
+  'same size',
+  'unknown geometry',
+  'control glyph',
+  'rotated tick',
+  'body sentence'
+])('preserves an unproved numeric band boundary with %s', (variant) => {
+  let items = independentNumericBlocks(variant === 'body sentence')
+  const start = variant === 'body sentence' ? 3 : 1
+  if (variant === 'one tick') items = items.slice(0, start + 3)
+  if (variant === 'body sentence') items.unshift({ str: 'Earlier paragraph.', hasEOL: true })
+  if (variant === 'unknown geometry') items[start] = { ...items[start], width: undefined }
+  if (variant === 'control glyph') items[start + 2] = { ...items[start + 2], str: '1\u00002' }
+  if (variant === 'rotated tick')
+    items[start] = { ...items[start], transform: [0, 6, -6, 0, 80, 550] }
+  if (variant === 'same size') items[0] = nativeFont('−0.73', [6, 0, 0, 6, 250, 700], 70)
+  if (variant === 'overlapping columns' || variant === 'nearby line')
+    items = items.map((i, n) =>
+      n < start || !i.transform
+        ? i
+        : {
+            ...i,
+            transform: [
+              ...i.transform.slice(0, 4),
+              i.transform[4] + (variant === 'overlapping columns' ? 180 : 0),
+              i.transform[5] + (variant === 'nearby line' ? 130 : 0)
+            ]
+          }
+    )
+  const boundary = variant === 'body sentence' ? 4 : start
+  expect(joinPdfTextItems(items)).toBe(
+    joinPdfTextItems(items.slice(0, boundary)) + joinPdfTextItems(items.slice(boundary))
+  )
+})
+
+it.each([90, 15])(
+  'separates a complete split caption after three whole signed labels including %s-degree text',
+  (angle) => {
+    const items = signedLabelCaptionPlate(angle),
+      before = structuredClone(items),
+      labels = joinPdfTextItems(items.slice(0, 3)),
+      caption = items
+        .slice(3)
+        .map((i) => i.str)
+        .join(''),
+      result = joinPdfTextItems(items)
+    expect(result).toBe(labels + '\n' + caption)
+    expect(result.replace(/\s/gu, '')).toBe(
+      items
+        .map((i) => i.str)
+        .join('')
+        .replace(/\s/gu, '')
+    )
+    expect(items).toEqual(before)
+  }
+)
+
+it.each([
+  'two carriers',
+  'missing carrier geometry',
+  'foreign carrier lane',
+  'missing previous geometry',
+  'incomplete caption description',
+  'detached caption font',
+  'foreign caption column',
+  'inconsistent caption height'
+])('keeps a signed-label caption seam literal with %s', (variant) => {
+  let items = signedLabelCaptionPlate()
+  if (variant === 'two carriers') items = items.slice(1)
+  if (variant === 'missing carrier geometry') items[0] = { ...items[0], width: 0 }
+  if (variant === 'foreign carrier lane')
+    items[0] = { ...items[0], transform: [6, 0, 0, 6, 700, 360] }
+  if (variant === 'missing previous geometry') items[2] = { ...items[2], transform: undefined }
+  if (variant === 'incomplete caption description')
+    items = [...items.slice(0, 4), { ...items[4], str: ' tiny' }]
+  if (variant === 'detached caption font')
+    items[4] = { ...items[4], transform: [11, 0, 0, 11, 110, 300] }
+  if (variant === 'foreign caption column')
+    items = items.map((i, n) =>
+      n < 3 ? i : { ...i, transform: [...i.transform!.slice(0, 4), i.transform![4] + 450, 300] }
+    )
+  if (variant === 'inconsistent caption height') items[3] = { ...items[3], height: 9 }
+  const at = items.findIndex((i) => i.str === 'Figure 4:'),
+    expected = joinPdfTextItems(items.slice(0, at)) + joinPdfTextItems(items.slice(at)),
+    before = structuredClone(items)
+  expect(joinPdfTextItems(items)).toBe(expected)
+  expect(items).toEqual(before)
+})
+
+const initialLineAndClosedLabels = (): PdfTextItem[] => [
+  nativeFont('Open ', [10, 0, 0, 10, 300, 300], 24),
+  nativeFont('Study ', [8, 0, 0, 8, 324, 300], 30),
+  nativeFont('Record', [10, 0, 0, 10, 354, 300], 34),
+  nativeFont('Bias', [7, 0, 0, 7, 150, 100], 18),
+  { str: ' ' },
+  nativeFont('Error', [7, 0, 0, 7, 260, 100], 22),
+  { str: '', hasEOL: true }
+]
+
+it.each(['empty EOL', 'label EOL', 'same initial size'])(
+  'separates a complete initial line from independent smaller labels with %s',
+  (variant) => {
+    const items = initialLineAndClosedLabels()
+    if (variant === 'label EOL') {
+      items[5] = { ...items[5], hasEOL: true }
+      items.pop()
+    }
+    if (variant === 'same initial size')
+      items[1] = nativeFont('Study ', [10, 0, 0, 10, 324, 300], 30)
+    const before = structuredClone(items),
+      actual = joinPdfTextItems(items)
+    expect(actual).toBe('Open Study Record\nBias Error')
+    expect(actual.replace(/\s/gu, '')).toBe(
+      items
+        .map((i) => i.str ?? '')
+        .join('')
+        .replace(/\s/gu, '')
+    )
+    expect(items).toEqual(before)
+  }
+)
+
+it.each([
+  'initial EOL',
+  'initial whitespace EOL',
+  'foreign initial whitespace',
+  'invalid prefix font',
+  'interleaved prefix',
+  'aliased prefix',
+  'one initial font',
+  'noninitial line',
+  'one label',
+  'missing closure',
+  'foreign band whitespace',
+  'same size labels',
+  'larger labels',
+  'script label',
+  'invalid label font',
+  'near label band',
+  'overlapping labels',
+  'numeric labels',
+  'parenthesized labels',
+  'right-edge crossing',
+  'later prefix carrier',
+  'later prefix alias',
+  'later band carrier',
+  'later band alias',
+  'unknown later font'
+])('respects independent initial-line evidence with %s', (variant) => {
+  const items = initialLineAndClosedLabels()
+  if (variant === 'initial EOL') items[2] = { ...items[2], hasEOL: true }
+  if (variant === 'initial whitespace EOL') items[1] = { str: '', hasEOL: true }
+  if (variant === 'foreign initial whitespace') items[1] = { str: '\t' }
+  if (variant === 'invalid prefix font') items[1] = { ...items[1], width: Number.NaN }
+  if (variant === 'interleaved prefix') items[1] = nativeFont('Study ', [8, 0, 0, 8, 324, 280], 30)
+  if (variant === 'aliased prefix') items[1] = items[0]
+  if (variant === 'one initial font') {
+    items[0] = { str: '' }
+    items[1] = { str: '' }
+  }
+  if (variant === 'one label') items[5] = { str: '' }
+  if (variant === 'missing closure') items.pop()
+  if (variant === 'foreign band whitespace') items[4] = { str: '\t' }
+  if (variant === 'same size labels' || variant === 'larger labels') {
+    const size = variant === 'same size labels' ? 10 : 12
+    items[3] = nativeFont('Bias', [size, 0, 0, size, 150, 100], 18)
+    items[5] = nativeFont('Error', [size, 0, 0, size, 260, 100], 22)
+  }
+  if (variant === 'script label') items[5] = nativeFont('Error', [4, 0, 0, 4, 260, 100], 22)
+  if (variant === 'invalid label font') items[5] = { ...items[5], transform: [] }
+  if (variant === 'near label band') {
+    items[3] = nativeFont('Bias', [7, 0, 0, 7, 150, 280], 18)
+    items[5] = nativeFont('Error', [7, 0, 0, 7, 260, 280], 22)
+  }
+  if (variant === 'overlapping labels') items[5] = nativeFont('Error', [7, 0, 0, 7, 150, 100], 22)
+  if (variant === 'numeric labels') {
+    items[3] = { ...items[3], str: '10' }
+    items[5] = { ...items[5], str: '5' }
+  }
+  if (variant === 'parenthesized labels') {
+    items[3] = { ...items[3], str: '(a)' }
+    items[5] = { ...items[5], str: '(b)' }
+  }
+  if (variant === 'right-edge crossing') items[5] = nativeFont('Error', [7, 0, 0, 7, 500, 100], 22)
+  if (variant === 'later prefix carrier')
+    items.push(nativeFont('Extra', [10, 0, 0, 10, 400, 300], 25))
+  if (variant === 'later prefix alias') items.push(items[1])
+  if (variant === 'later band carrier') items.push(nativeFont('Extra', [7, 0, 0, 7, 300, 100], 25))
+  if (variant === 'later band alias') items.push(items[3])
+  if (variant === 'unknown later font')
+    items.push({ ...nativeFont('Extra', [7, 0, 0, 7, 300, 50], 25), width: Number.NaN })
+  let at = 3
+  if (variant === 'noninitial line') {
+    items.unshift({ str: 'Earlier.', hasEOL: true })
+    at++
+  }
+  const before = structuredClone(items),
+    expected =
+      joinPdfTextItems(items.slice(0, at)) +
+      ([
+        'initial EOL',
+        'one label',
+        'missing closure',
+        'same size labels',
+        'larger labels',
+        'script label',
+        'overlapping labels',
+        'numeric labels',
+        'parenthesized labels',
+        'right-edge crossing',
+        'later band carrier'
+      ].includes(variant)
+        ? '\n'
+        : '') +
+      joinPdfTextItems(items.slice(at))
+  expect(joinPdfTextItems(items)).toBe(expected)
+  expect(items).toEqual(before)
+})
+
+const initialLineAndSingleRun = (): PdfTextItem[] => [
+  nativeFont('Open ', [10, 0, 0, 10, 300, 300], 24),
+  nativeFont('Study Record', [8, 0, 0, 8, 324, 300], 64),
+  nativeFont('Outcome', [12, 0, 0, 12, 150, 100], 30)
+]
+
+it.each(['single larger font', 'numeric', 'script', 'supported rotation'])(
+  'separates a globally isolated initial line from %s',
+  (variant) => {
+    const items = initialLineAndSingleRun()
+    if (variant === 'numeric') items[2] = { ...items[2], str: '10' }
+    if (variant === 'script') items[2] = nativeFont('Outcome', [4, 0, 0, 4, 150, 100], 30)
+    if (variant === 'supported rotation')
+      items[2] = { ...nativeFont('Outcome', [0, 7, -7, 0, 150, 100], 30), height: 7 }
+    const before = structuredClone(items),
+      actual = joinPdfTextItems(items)
+    expect(actual).toBe('Open Study Record\n' + items[2].str)
+    expect(actual.replace(/\s/gu, '')).toBe(
+      items
+        .map((i) => i.str)
+        .join('')
+        .replace(/\s/gu, '')
+    )
+    expect(items).toEqual(before)
+  }
+)
+
+it.each([
+  'highest late font',
+  'strict threshold',
+  'actual prefix minimum',
+  'unknown later font',
+  'later alias',
+  'unsupported rotation',
+  'partial prefix',
+  'unsupported initial script',
+  'rotated prefix'
+])('keeps an unproved whole-page blank band with %s', (variant) => {
+  const items = initialLineAndSingleRun()
+  if (variant === 'highest late font') items.push(nativeFont('Extra', [7, 0, 0, 7, 500, 280], 20))
+  if (variant === 'strict threshold') items[2] = nativeFont('Outcome', [12, 0, 0, 12, 150, 258], 30)
+  if (variant === 'actual prefix minimum') {
+    items[1] = nativeFont('Study Record', [8, 0, 0, 8, 324, 299.6], 64)
+    items[2] = nativeFont('Outcome', [12, 0, 0, 12, 150, 257.8], 30)
+  }
+  if (variant === 'unknown later font') items[2] = { ...items[2], width: Number.NaN }
+  if (variant === 'later alias') items.push(items[2])
+  if (variant === 'unsupported rotation')
+    items[2] = nativeFont('Outcome', [7, 2, 0, 7, 150, 100], 30)
+  if (variant === 'partial prefix')
+    items[1] = nativeFont('Study Record', [8, 0, 0, 8, 354, 300], 64)
+  if (variant === 'unsupported initial script')
+    items[1] = nativeFont('Study Record', [4, 0, 0, 4, 324, 304], 64)
+  if (variant === 'rotated prefix')
+    items[1] = { ...nativeFont('Study Record', [0, 8, -8, 0, 324, 300], 64), height: 8 }
+  const before = structuredClone(items),
+    expected = items.map((i) => i.str).join('')
+  expect(joinPdfTextItems(items)).toBe(expected)
+  expect(items).toEqual(before)
+})
+
+it('preserves the closed-label proof after a failed whole-page gap scan', () => {
+  const items = initialLineAndClosedLabels()
+  items.push(nativeFont('Other', [7, 0, 0, 7, 300, 268], 20))
+  const before = structuredClone(items)
+  expect(joinPdfTextItems(items)).toBe('Open Study Record\nBias Error\nOther')
+  expect(items).toEqual(before)
+})
+
+const captionTailAndClosedLabels = (): PdfTextItem[] => [
+  nativeFont('Figure 2:', [10, 0, 0, 10, 20, 300], 42),
+  { str: ' ' },
+  nativeFont('Measured response in two groups', [10, 0, 0, 10, 65, 300], 155),
+  nativeFont('Bias', [7, 0, 0, 7, 55, 100], 18),
+  { str: ' ' },
+  nativeFont('Error', [7, 0, 0, 7, 163, 100], 22),
+  { str: '', hasEOL: true }
+]
+
+it.each(['empty EOL', 'label EOL', 'prior paragraph', 'existing caption EOL'])(
+  'separates a complete caption tail from a closed smaller label band with %s',
+  (variant) => {
+    const items = captionTailAndClosedLabels()
+    if (variant === 'label EOL') {
+      items[5] = { ...items[5], hasEOL: true }
+      items.pop()
+    }
+    if (variant === 'prior paragraph') items.unshift({ str: 'Earlier paragraph.', hasEOL: true })
+    if (variant === 'existing caption EOL') items[2] = { ...items[2], hasEOL: true }
+    const before = structuredClone(items),
+      actual = joinPdfTextItems(items)
+    expect(actual).toBe(
+      (variant === 'prior paragraph' ? 'Earlier paragraph.\n' : '') +
+        'Figure 2: Measured response in two groups\nBias Error'
+    )
+    expect(actual.replace(/\s/gu, '')).toBe(
+      items
+        .map((i) => i.str ?? '')
+        .join('')
+        .replace(/\s/gu, '')
+    )
+    expect(items).toEqual(before)
+  }
+)
+
+it.each([
+  'body prefix',
+  'unpunctuated reference',
+  'short description',
+  'unbounded preceding line',
+  'invalid caption width',
+  'caption baseline shift',
+  'caption overlap',
+  'unknown caption script',
+  'near label band',
+  'same size labels',
+  'one label',
+  'missing EOL',
+  'label punctuation',
+  'scientific label',
+  'label overlap',
+  'label outside caption',
+  'label baseline shift',
+  'invalid label matrix',
+  'invalid label width',
+  'rotated label',
+  'rtl label',
+  'unknown label script',
+  'foreign whitespace',
+  'aliased caption carrier'
+])('respects independent block evidence at a caption tail with %s', (variant) => {
+  const items = captionTailAndClosedLabels()
+  if (variant === 'body prefix') items[0] = { ...items[0], str: 'Study 2:' }
+  if (variant === 'unpunctuated reference') items[0] = { ...items[0], str: 'Figure 2' }
+  if (variant === 'short description') items[2] = { ...items[2], str: 'Outcome' }
+  if (variant === 'invalid caption width') items[2] = { ...items[2], width: Number.NaN }
+  if (variant === 'caption baseline shift')
+    items[2] = nativeFont('Measured response in two groups', [10, 0, 0, 10, 65, 302], 155)
+  if (variant === 'caption overlap')
+    items[2] = nativeFont('Measured response in two groups', [10, 0, 0, 10, 30, 300], 155)
+  if (variant === 'unknown caption script')
+    items[2] = nativeFont('Measured response in two groups', [4, 0, 0, 4, 65, 300], 155)
+  if (variant === 'near label band') {
+    items[3] = nativeFont('Bias', [7, 0, 0, 7, 55, 280], 18)
+    items[5] = nativeFont('Error', [7, 0, 0, 7, 163, 280], 22)
+  }
+  if (variant === 'same size labels') {
+    items[3] = nativeFont('Bias', [10, 0, 0, 10, 55, 100], 18)
+    items[5] = nativeFont('Error', [10, 0, 0, 10, 163, 100], 22)
+  }
+  if (variant === 'one label') items[5] = { str: '' }
+  if (variant === 'missing EOL') items.pop()
+  if (variant === 'label punctuation') items[5] = { ...items[5], str: 'Error.' }
+  if (variant === 'scientific label') items[5] = { ...items[5], str: '1e3' }
+  if (variant === 'label overlap') items[5] = nativeFont('Error', [7, 0, 0, 7, 60, 100], 22)
+  if (variant === 'label outside caption')
+    items[5] = nativeFont('Error', [7, 0, 0, 7, 300, 100], 22)
+  if (variant === 'label baseline shift') items[5] = nativeFont('Error', [7, 0, 0, 7, 163, 102], 22)
+  if (variant === 'invalid label matrix') items[5] = { ...items[5], transform: [] }
+  if (variant === 'invalid label width') items[5] = { ...items[5], width: Number.NaN }
+  if (variant === 'rotated label') items[5] = nativeFont('Error', [0, 7, -7, 0, 163, 100], 22)
+  if (variant === 'rtl label') items[5] = { ...items[5], dir: 'rtl' }
+  if (variant === 'unknown label script') items[5] = nativeFont('Error', [4, 0, 0, 4, 163, 100], 22)
+  if (variant === 'foreign whitespace') items[4] = { str: '\t' }
+  if (variant === 'aliased caption carrier') items[1] = items[0]
+  let at = 3
+  if (variant === 'unbounded preceding line') {
+    items.unshift(nativeFont('Continuation ', [10, 0, 0, 10, 0, 300], 20))
+    at++
+  }
+  const before = structuredClone(items),
+    expected =
+      joinPdfTextItems(items.slice(0, at)) +
+      ([
+        'body prefix',
+        'unpunctuated reference',
+        'short description',
+        'unbounded preceding line',
+        'same size labels',
+        'one label',
+        'missing EOL',
+        'label punctuation',
+        'scientific label',
+        'label overlap',
+        'label outside caption',
+        'label baseline shift',
+        'unknown label script'
+      ].includes(variant)
+        ? '\n'
+        : '') +
+      joinPdfTextItems(items.slice(at))
+  expect(joinPdfTextItems(items)).toBe(expected)
+  expect(items).toEqual(before)
 })

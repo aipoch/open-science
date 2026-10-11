@@ -4048,8 +4048,10 @@ export function removeEmptyOverlappingRows({ rows, cells, items, rules, repairs 
       empty[0].colSpan >= 3 &&
       empty[0].origin === 'model-span'
     const columnCount = spanningEmpty ? empty[0].colSpan : empty.length
+    const sourceTextSeam = band.origin === 'source-text'
     if (
-      band.origin !== 'model' ||
+      (band.origin !== 'model' && !sourceTextSeam) ||
+      (sourceTextSeam && (spanningEmpty || empty.some((cell) => cell.origin !== 'model-grid'))) ||
       columnCount < 3 ||
       empty.some(
         (cell) =>
@@ -4148,7 +4150,18 @@ export function removeEmptyOverlappingRows({ rows, cells, items, rules, repairs 
       ).length >= 2
     if (spanningEmpty && !displacedSection) continue
     let sources
-    if (overlap.every(Boolean)) {
+    if (sourceTextSeam) {
+      // A source-derived gap can leave a sub-glyph empty band at the leading
+      // edge of the next complete record. It owns no source ink; both actual
+      // records must remain present, aligned and independently complete.
+      if (
+        crossedRule ||
+        !neighbors.every(complete) ||
+        neighbors.some((record) => !/\p{L}/u.test(record[0].text))
+      )
+        continue
+      sources = neighbors.map((record) => record.flatMap((cell) => cell.sourceRects))
+    } else if (overlap.every(Boolean)) {
       if (
         !neighbors.every(
           (record, n) => complete(record) || section(record) || (!n && displacedSection)
@@ -4190,6 +4203,26 @@ export function removeEmptyOverlappingRows({ rows, cells, items, rules, repairs 
       )
     )
       continue
+    if (sourceTextSeam) {
+      const upper = Math.max(...baselines[0].map((rect) => rect[3]))
+      const lower = Math.min(...baselines[1].map((rect) => rect[1]))
+      if (
+        band.rect[3] - band.rect[1] > height * 0.1 ||
+        band.rect[1] < upper ||
+        band.rect[1] >= lower ||
+        band.rect[3] < lower ||
+        band.rect[3] > lower + height * 0.01 ||
+        sources
+          .flat()
+          .some(
+            (rect) =>
+              rect.length !== 4 ||
+              !rect.every(Number.isFinite) ||
+              items.filter((item) => rect.every((v, n) => v === item.rect[n])).length !== 1
+          )
+      )
+        continue
+    }
     if (sources.length === 2) {
       if (
         baselines[1][0][1] <= baselines[0][0][3] ||

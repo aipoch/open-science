@@ -1,18 +1,22 @@
 import { randomUUID } from 'node:crypto'
 
 import type {
-  NotebookCell,
   NotebookEnvironmentManifest,
+  NotebookLiveEnvironmentOverlay
+} from '../../shared/notebook'
+import type {
+  NotebookRunEnvironmentCapture,
+  NotebookRunEnvironmentLockCapture
+} from '@aipoch/environment/contracts'
+import type {
+  NotebookCell,
   NotebookHelperModuleEvidence,
   NotebookHelperEvidenceStatus,
   NotebookKernelInstanceIdentity,
   NotebookKernelMetadata,
   NotebookLanguage,
-  NotebookLiveEnvironmentOverlay,
   NotebookNamespaceVariable,
   NotebookOutput,
-  NotebookRunEnvironmentCapture,
-  NotebookRunEnvironmentLockCapture,
   NotebookRunInputFile,
   NotebookRunSource,
   NotebookRunStatus,

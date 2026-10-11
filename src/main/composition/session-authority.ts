@@ -1,3 +1,5 @@
+import type { ComputeJobOwnerLiveness } from '@aipoch/compute/node'
+import { type DiagnosticOperation } from '@aipoch/diagnostics/node'
 import {
   LIFECYCLE_CHANNELS,
   MAIN_DELEGATED_WORK_LIFECYCLE_CLIENT_ID,
@@ -9,9 +11,7 @@ import { ArtifactReproducibilityAttemptOwner } from '../artifacts/artifact-repro
 import { type ArtifactHandlers } from '../artifacts/ipc'
 import { ProvenanceMessageSnapshotRepository } from '../artifacts/provenance-message-snapshot'
 import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
-import type { ComputeJobOwnerLiveness } from '../compute/job-deletion-owner'
 import { createProductionDelegatedWorkComposition } from '../delegation/production-composition'
-import { type DiagnosticOperation } from '@aipoch/diagnostics/node'
 import { ImmutableInputAuthority } from '../immutable-input-authority'
 import { ManagedFileVersionService } from '../managed-file-versions/service'
 import { NotebookInputRegistry } from '../notebook/input-registry'

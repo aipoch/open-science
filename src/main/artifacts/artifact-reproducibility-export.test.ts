@@ -13,7 +13,7 @@ import type {
   ExportArtifactReproducibilityReceiptRequest
 } from '../../shared/artifact-reproducibility'
 import type { PersistedArtifactExecutionSnapshot } from '../../shared/artifact-provenance'
-import type { NotebookEnvironmentLock } from '../../shared/notebook'
+import type { NotebookEnvironmentLock } from '@aipoch/environment/contracts'
 import {
   buildEnvironmentLockArchive,
   buildEnvironmentLockReadme,

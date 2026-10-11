@@ -1,0 +1,45 @@
+{
+  "name": "@aipoch/environment",
+  "version": "0.1.0",
+  "description": "Scientific Python and R environment lifecycle, inventory, installation and restoration",
+  "license": "Apache-2.0",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./contracts": {
+      "types": "./dist/contracts.d.ts",
+      "default": "./dist/contracts.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "node tsc.cjs -p tsconfig.json",
+    "typecheck": "node tsc.cjs -p tsconfig.json --noEmit && node tsc.cjs -p tsconfig.test.json",
+    "test": "vitest run --config vitest.config.ts",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "@aipoch/diagnostics": "0.1.0",
+    "tar": "^7.5.22",
+    "@bokuweb/zstd-wasm": "^0.0.27"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11",
+    "esbuild": "^0.25.12",
+    "fflate": "^0.8.2"
+  }
+}

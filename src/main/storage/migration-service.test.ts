@@ -48,8 +48,8 @@ import {
   type MigrationMarker
 } from './migration-marker'
 import { withDataRootWrite } from './migration-state'
-import { operationJournalPath, RuntimeOperationJournal } from '../notebook/operation-journal'
-import { exportRuntimeLocks as exportRuntimeLockBundle } from '../notebook/runtime-relocation'
+import { operationJournalPath, RuntimeOperationJournal } from '@aipoch/environment'
+import { exportRuntimeLocks as exportRuntimeLockBundle } from '@aipoch/environment'
 import type { Logger } from '@aipoch/diagnostics/node'
 import { DataRootCleanupJournal } from './data-root-cleanup'
 

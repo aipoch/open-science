@@ -161,5 +161,19 @@
   ],
   "packages/skills/src/user-skill-compatibility-index.ts": [
     "src/main/skills/user-skill-repository.architecture.test.ts"
+  ],
+  "packages/compute/src/job-dispatcher.ts": [
+    "src/main/compute/compute-password-auth.architecture.test.ts"
+  ],
+  "packages/compute/src/job-poller.ts": [
+    "src/main/compute/compute-password-auth.architecture.test.ts"
+  ],
+  "packages/compute/src/job-deletion-owner.ts": [
+    "src/main/compute/compute-password-auth.architecture.test.ts",
+    "src/main/projects/project-owned-data.catalog.architecture.test.ts"
+  ],
+  "packages/compute/src/model.ts": ["src/main/compute/compute-password-auth.architecture.test.ts"],
+  "packages/compute/src/compute-job-lifecycle.ts": [
+    "src/main/projects/project-owned-data.catalog.architecture.test.ts"
   ]
 }

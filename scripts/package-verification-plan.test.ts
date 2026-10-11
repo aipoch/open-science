@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { execFileSync } from 'node:child_process'
 import {
   packageVerificationPlan,
   packageRegistry,
@@ -23,6 +24,34 @@ describe('independent package verification', () => {
     expect(verificationCommands(plan)).toEqual([
       { script: 'check:package-isolation', packages: ['pdf-translation'] }
     ])
+  })
+  it.each(['environment', 'compute'])('builds diagnostics without its tests for %s', (name) => {
+    const plan = verificationPlanFromArguments([`--packages=${name}`], {})
+    expect(plan).toEqual({
+      builds: ['packages/diagnostics', `packages/${name}`],
+      tests: [`packages/${name}`]
+    })
+    expect(verificationCommands(plan)).toEqual([
+      { script: `check:${name}-package`, packages: [name] }
+    ])
+  })
+  it('skips the direct environment verifier when only Compute is selected', () => {
+    const output = execFileSync(
+      process.execPath,
+      ['scripts/check-environment-package.mjs', '--ci'],
+      {
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          npm_execpath: 'unexpected-npm-invocation.cjs',
+          OPEN_SCIENCE_CI_SELECTED_PACKAGE_ROOTS: JSON.stringify(['packages/compute']),
+          OPEN_SCIENCE_CI_EXCLUDED_PACKAGE_ROOTS: JSON.stringify(
+            roots.filter((root: string) => root !== 'packages/compute')
+          )
+        }
+      }
+    )
+    expect(output).toContain('Environment package verification:')
   })
   it('does no work for a proven host-only change and retains missing exclusion evidence', () => {
     expect(packageVerificationPlan(registry, [], roots)).toEqual({ builds: [], tests: [] })

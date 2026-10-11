@@ -1,7 +1,8 @@
 import { create } from 'zustand'
 
 import type { NotebookLanguage } from '../../../shared/notebook'
-import type { DiscoveredInterpreter, RuntimeEnablement } from '../../../shared/notebook-runtime'
+import type { DiscoveredInterpreter } from '@aipoch/environment/contracts'
+import type { RuntimeEnablement } from '../../../shared/notebook-runtime'
 
 type RuntimeEnvironmentLists = {
   python: DiscoveredInterpreter[]

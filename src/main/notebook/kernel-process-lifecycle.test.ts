@@ -9,7 +9,7 @@ import {
   defaultController,
   KernelProcessLifecycleOwner
 } from './kernel-process-lifecycle.windows-posix'
-import { readProcessStartToken } from './operation-recovery'
+import { readProcessStartToken } from '@aipoch/environment'
 
 const processIsAlive = (pid: number): boolean => {
   try {

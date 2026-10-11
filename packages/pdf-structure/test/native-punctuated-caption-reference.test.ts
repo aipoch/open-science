@@ -738,3 +738,329 @@ it('requires unique full-font radical attachment and a distinct caption boundary
     )
   }
 })
+const { associateFigures } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-association.mjs')).href
+)
+const { OPS } = await import('pdfjs-dist/legacy/build/pdf.mjs')
+
+const paintedTitlePage = (wrapped = false): ReturnType<typeof JSON.parse> => {
+  const fnArray: number[] = [],
+    argsArray: unknown[][] = [],
+    tokens: object[] = []
+  const operation = (fn: number, args: unknown[]): void => {
+    fnArray.push(fn)
+    argsArray.push(args)
+  }
+  operation(OPS.save, [])
+  operation(OPS.transform, [380, 0, 0, 180, 110, 520])
+  const imageIndex = fnArray.length
+  operation(OPS.paintImageXObject, ['anonymous-image', 380, 180])
+  operation(OPS.restore, [])
+  const parts = wrapped
+    ? [
+        [
+          ['Figure 3:', 50, 'regular'],
+          ['Where independent self-report records retain their', 350, 'title']
+        ],
+        [
+          ['complete residual.', 100, 'title'],
+          ['Rows are measured separately.', 300, 'regular']
+        ],
+        [['Independent observations remain complete across the printed rows', 400, 'regular']],
+        [['All separate measurements terminate here.', 300, 'regular']]
+      ]
+    : [
+        [
+          ['Figure 3:', 50, 'regular'],
+          ['Where independent records converge.', 230, 'title'],
+          ['Rows are measured.', 120, 'regular']
+        ],
+        [['Independent observations remain complete across the printed rows', 400, 'regular']],
+        [['All separate measurements terminate here.', 300, 'regular']]
+      ]
+  const lines = parts.map((row, index) => {
+    const y = 290 + index * 12
+    let x = 100
+    for (const [literal, width, font] of row) {
+      const text = literal as string,
+        w = width as number
+      operation(OPS.beginText, [])
+      operation(OPS.setFont, [font, 10])
+      operation(OPS.moveText, [x, 800 - y - 10])
+      operation(OPS.showText, [
+        Array.from(text, (unicode) => ({
+          unicode,
+          width: (w * 100) / text.length,
+          isInFont: true,
+          accent: null
+        }))
+      ])
+      operation(OPS.endText, [])
+      tokens.push({
+        text,
+        rect: [x, y, x + w, y + 10],
+        baseline: y + 10,
+        height: 10,
+        horizontal: true,
+        fontDescent: font === 'title' ? -0.21 : -0.22,
+        sourceItem: { pageNumber: 1, index: tokens.length, text }
+      })
+      x += w
+    }
+    return {
+      text: row.map((part) => part[0]).join(' '),
+      x: 100,
+      y,
+      width: x - 100,
+      height: 10,
+      fontSize: 10
+    }
+  })
+  const normalizedRect = [110, 100, 490, 280].map(
+    (v, n) =>
+      (n < 2
+        ? Math.floor((v * 256) / (n % 2 ? 800 : 600))
+        : Math.ceil((v * 256) / (n % 2 ? 800 : 600)) + 1) / 256
+  )
+  return {
+    page: {
+      pageNumber: 1,
+      width: 600,
+      height: 800,
+      invalidGraphicsBounds: 0,
+      lines,
+      graphicsBounds: [
+        {
+          kind: 'image',
+          operationIndex: imageIndex,
+          imageHash: 'a'.repeat(64),
+          normalizedRect,
+          paintedNormalizedRect: [111 / 600, 101 / 800, 489 / 600, 279 / 800]
+        }
+      ]
+    },
+    tokens,
+    context: {
+      operators: { fnArray, argsArray },
+      viewport: { scale: 1, rotation: 0, width: 600, height: 800, transform: [1, 0, 0, -1, 0, 800] }
+    }
+  }
+}
+
+it.each([false, true])(
+  'recovers a complete independently painted title without changing its literal rows (wrapped=%s)',
+  (wrapped) => {
+    const input = paintedTitlePage(wrapped),
+      before = structuredClone(input)
+    expect(captionKind(input.page.lines[0].text)).toBeUndefined()
+    const figures = associateFigures(input.page, [], [], [], [], input.tokens, input.context)
+    expect(figures).toHaveLength(1)
+    expect(figures[0].caption.lines).toEqual(
+      input.page.lines.map((line: { text: string }) => line.text)
+    )
+    expect(figures[0].rect).toEqual(
+      input.page.graphicsBounds[0].paintedNormalizedRect.map(
+        (v: number, n: number) => v * (n % 2 ? 800 : 600)
+      )
+    )
+    expect(figures[0].caption.rect[3]).toBeCloseTo(input.page.lines.at(-1).y + 12.2)
+    expect(input).toEqual(before)
+  }
+)
+
+it.each([false, true])(
+  'preserves independently painted titles under equivalent native translation text matrices (wrapped=%s)',
+  (wrapped) => {
+    for (const typed of [false, true]) {
+      const input = paintedTitlePage(wrapped),
+        reference = associateFigures(input.page, [], [], [], [], input.tokens, input.context),
+        ops = input.context.operators
+      for (let n = 0; n < ops.fnArray.length; n++) {
+        if (ops.fnArray[n] !== OPS.moveText) continue
+        const [x, y] = ops.argsArray[n],
+          matrix = [1, 0, 0, 1, x, y]
+        ops.fnArray[n] = OPS.setTextMatrix
+        ops.argsArray[n] = [typed ? new Float32Array(matrix) : matrix]
+      }
+      const before = structuredClone(input)
+      expect(reference).toHaveLength(1)
+      expect(associateFigures(input.page, [], [], [], [], input.tokens, input.context)).toEqual(
+        reference
+      )
+      expect(input).toEqual(before)
+    }
+  }
+)
+
+it('retains relative native text moves after an absolute translation text matrix', () => {
+  const input = paintedTitlePage(),
+    reference = associateFigures(input.page, [], [], [], [], input.tokens, input.context),
+    ops = input.context.operators
+  for (let n = 0; n < ops.fnArray.length; n++) {
+    if (ops.fnArray[n] !== OPS.moveText) continue
+    const [x, y] = ops.argsArray[n]
+    ops.fnArray.splice(n, 1, OPS.setTextMatrix, OPS.moveText)
+    ops.argsArray.splice(n, 1, [new Float32Array([1, 0, 0, 1, x - 7, y - 11])], [7, 11])
+    n++
+  }
+  // The second Tm must reset the cursor advanced by the first painted packet in the same BT.
+  const firstEnd = ops.fnArray.indexOf(OPS.endText)
+  expect(ops.fnArray[firstEnd + 1]).toBe(OPS.beginText)
+  ops.fnArray.splice(firstEnd, 2)
+  ops.argsArray.splice(firstEnd, 2)
+  const before = structuredClone(input)
+  expect(reference).toHaveLength(1)
+  expect(associateFigures(input.page, [], [], [], [], input.tokens, input.context)).toEqual(
+    reference
+  )
+  expect(input).toEqual(before)
+})
+
+it.each(['scaled', 'rotated', 'skewed', 'short', 'nonfinite', 'unpacked', 'outside-text'])(
+  'refuses native title recovery from an unsupported %s text matrix',
+  (invalid) => {
+    const input = paintedTitlePage(),
+      ops = input.context.operators
+    for (let n = 0; n < ops.fnArray.length; n++) {
+      if (ops.fnArray[n] !== OPS.moveText) continue
+      const [x, y] = ops.argsArray[n]
+      ops.fnArray[n] = OPS.setTextMatrix
+      ops.argsArray[n] = [[1, 0, 0, 1, x, y]]
+    }
+    const n = ops.fnArray.indexOf(OPS.setTextMatrix),
+      matrix = ops.argsArray[n][0]
+    if (invalid === 'scaled') matrix[0] = 2
+    if (invalid === 'rotated') matrix.splice(0, 4, 0, 1, -1, 0)
+    if (invalid === 'skewed') matrix[1] = 0.5
+    if (invalid === 'short') matrix.pop()
+    if (invalid === 'nonfinite') matrix[4] = NaN
+    if (invalid === 'unpacked') ops.argsArray[n] = matrix
+    if (invalid === 'outside-text') {
+      ops.fnArray.splice(4, 0, OPS.setTextMatrix)
+      ops.argsArray.splice(4, 0, [matrix])
+    }
+    const before = structuredClone(input)
+    expect(associateFigures(input.page, [], [], [], [], input.tokens, input.context)).toEqual([])
+    expect(input).toEqual(before)
+  }
+)
+
+it.each([
+  'native-width',
+  'glyph-width',
+  'missing-packet',
+  'duplicate-packet',
+  'same-font',
+  'narrative-title',
+  'missing-operators',
+  'wrong-image-op',
+  'wrong-image-bounds',
+  'extra-image',
+  'path-barrier',
+  'table-barrier',
+  'foreign-row',
+  'unclosed-tail'
+])('refuses recovery without its complete independent %s witness', (missing) => {
+  const input = paintedTitlePage()
+  if (missing === 'native-width') input.tokens[1].rect[2] -= 10
+  if (missing === 'glyph-width') input.context.operators.argsArray[12][0][0].width -= 20
+  if (missing === 'missing-packet') input.tokens.splice(1, 1)
+  if (missing === 'duplicate-packet') input.tokens.push(structuredClone(input.tokens[1]))
+  if (missing === 'same-font')
+    input.context.operators.argsArray.forEach((args: unknown[], n: number) => {
+      if (input.context.operators.fnArray[n] === OPS.setFont) args[0] = 'regular'
+    })
+  if (missing === 'narrative-title') {
+    const text = 'Where independent records are measured.'
+    input.tokens[1].text = input.tokens[1].sourceItem.text = text
+    input.page.lines[0].text = `Figure 3: ${text} Rows are measured.`
+    input.context.operators.argsArray[12] = [
+      Array.from(text, (unicode) => ({
+        unicode,
+        width: 23000 / text.length,
+        isInFont: true,
+        accent: null
+      }))
+    ]
+  }
+  if (missing === 'missing-operators') input.context = undefined
+  if (missing === 'wrong-image-op') input.page.graphicsBounds[0].operationIndex++
+  if (missing === 'wrong-image-bounds') input.page.graphicsBounds[0].normalizedRect[3] += 1 / 256
+  if (missing === 'extra-image')
+    input.page.graphicsBounds.push(structuredClone(input.page.graphicsBounds[0]))
+  if (missing === 'path-barrier')
+    input.page.graphicsBounds.push({ kind: 'path', normalizedRect: [0.2, 0.35, 0.8, 0.37] })
+  if (missing === 'foreign-row')
+    input.page.lines.push({
+      text: 'Separate source paragraph.',
+      x: 110,
+      y: 300,
+      width: 200,
+      height: 10,
+      fontSize: 10
+    })
+  if (missing === 'unclosed-tail')
+    input.page.lines.at(-1).text = input.page.lines.at(-1).text.replace(/\.$/u, '')
+  const before = structuredClone(input)
+  expect(
+    associateFigures(
+      input.page,
+      [],
+      missing === 'table-barrier' ? [[110, 180, 490, 220]] : [],
+      [],
+      [],
+      input.tokens,
+      input.context
+    )
+  ).toEqual([])
+  expect(input).toEqual(before)
+})
+
+it('retains opaque black glyph packets when the native program only disables its soft mask', () => {
+  const input = paintedTitlePage()
+  input.context.operators.fnArray.push(OPS.setGState, OPS.setFillRGBColor, OPS.setStrokeRGBColor)
+  input.context.operators.argsArray.push([[['SMask', false]]], ['#000000'], ['#000000'])
+  expect(associateFigures(input.page, [], [], [], [], input.tokens, input.context)).toHaveLength(1)
+})
+
+it.each([
+  'image-alpha-zero',
+  'caption-white',
+  'invalid-rgb',
+  'unknown-state',
+  'soft-mask',
+  'type3-glyph',
+  'not-in-font',
+  'missing-membership',
+  'accent-program'
+])('refuses independently measured advances without their visible %s paint program', (missing) => {
+  const input = paintedTitlePage(),
+    ops = input.context.operators
+  if (missing === 'image-alpha-zero' || missing === 'unknown-state' || missing === 'soft-mask') {
+    // Insert the changed state before raster paint; its updated paint index and
+    // complete measured source rectangles remain coherent.
+    ops.fnArray.splice(2, 0, OPS.setGState)
+    ops.argsArray.splice(2, 0, [
+      [
+        missing === 'image-alpha-zero'
+          ? ['ca', 0]
+          : missing === 'soft-mask'
+            ? ['SMask', {}]
+            : ['unknown-entry', true]
+      ]
+    ])
+    input.page.graphicsBounds[0].operationIndex++
+  }
+  if (missing === 'caption-white' || missing === 'invalid-rgb') {
+    ops.fnArray.splice(9, 0, OPS.setFillRGBColor)
+    ops.argsArray.splice(9, 0, [missing === 'caption-white' ? '#ffffff' : NaN])
+  }
+  const glyph = ops.argsArray[12]?.[0]?.[0]
+  if (missing === 'type3-glyph') glyph.operatorListId = 'unknown-glyph-program'
+  if (missing === 'not-in-font') glyph.isInFont = false
+  if (missing === 'missing-membership') delete glyph.isInFont
+  if (missing === 'accent-program') glyph.accent = { fontChar: 'unknown-accent' }
+  const before = structuredClone(input)
+  expect(associateFigures(input.page, [], [], [], [], input.tokens, input.context)).toEqual([])
+  expect(input).toEqual(before)
+})

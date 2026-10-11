@@ -1,6 +1,6 @@
-import { builtinModules } from 'node:module'
 import { readFileSync, readdirSync } from 'node:fs'
-import { resolve, relative, sep } from 'node:path'
+import { builtinModules } from 'node:module'
+import { relative, resolve, sep } from 'node:path'
 import ts from 'typescript'
 import { expect, it } from 'vitest'
 import { localPackageSourcePaths } from './local-package-exports.mjs'
@@ -237,4 +237,62 @@ it('host source edits never select unchanged upstream PDF package implementation
       if (/^packages\/pdf-(translation|structure)\//.test(test)) violations.push(`${id} -> ${test}`)
   }
   expect(violations).toEqual([])
+})
+
+it('Compute host edits never register or select upstream Compute units', async () => {
+  const { loadModuleImpactManifest } = await import('./load-module-impact.mjs')
+  const { createAffectedTestPlan, createModuleTestPlan } = await import('./module-test-impact.mjs')
+  const { modules } = loadModuleImpactManifest()
+  for (const [id, module] of Object.entries(modules) as [
+    string,
+    { ownerPaths: string[]; testFiles: Record<string, string[]> }
+  ][]) {
+    if (module.ownerPaths.some((path) => path.startsWith('packages/'))) continue
+    expect(
+      Object.values(module.testFiles)
+        .flat()
+        .filter((path) => path.startsWith('packages/compute/')),
+      id
+    ).toEqual([])
+  }
+  expect(
+    createModuleTestPlan('compute_service').testFiles.filter((path) =>
+      path.startsWith('packages/compute/')
+    )
+  ).toEqual([])
+  const graph = { status: 'not-used', testFiles: [] }
+  const host = createAffectedTestPlan(
+    [{ path: 'src/main/compute/compute-job-workflow-owner.ts', status: 'modified' }],
+    graph
+  )
+  expect(host.mode).toBe('selective')
+  expect(host.testFiles).toContain('src/main/compute/compute-job-workflow-owner.test.ts')
+  expect(host.testFiles.filter((path) => path.startsWith('packages/'))).toEqual([])
+  for (const path of [
+    'packages/compute/src/job-poller.ts',
+    'packages/compute/src/node.ts',
+    'packages/compute/src/model.ts'
+  ]) {
+    const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph)
+    expect(plan.mode, path).toBe('selective')
+    expect(plan.testFiles, path).toEqual(
+      expect.arrayContaining([
+        'packages/compute/src/job-poller.test.ts',
+        'src/main/compute/job-poller.test.ts',
+        'src/main/compute/cancellation-runtime.integration.test.ts',
+        'src/main/compute/job-deletion-runtime-isolation.test.ts'
+      ])
+    )
+    // The CLI package is a real downstream host contract, not an unrelated upstream unit suite.
+    expect(
+      plan.testFiles.filter(
+        (file) => file.startsWith('packages/') && !file.startsWith('packages/compute/')
+      ),
+      path
+    ).toEqual(
+      path.endsWith('/model.ts')
+        ? ['packages/open-science/cli.test.ts', 'packages/open-science/client.test.ts']
+        : []
+    )
+  }
 })

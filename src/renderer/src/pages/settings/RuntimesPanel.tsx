@@ -40,12 +40,9 @@ import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
 import { cn } from '@/lib/utils'
 import { useNotebookEnvStore } from '@/stores/notebook-env-store'
 import { useRuntimeSettingsStore } from '@/stores/runtime-settings-store'
-import {
-  isEnvEnabled,
-  type DiscoveredInterpreter,
-  type EnvPackage,
-  type RuntimeUsage
-} from '../../../../shared/notebook-runtime'
+import { type DiscoveredInterpreter } from '@aipoch/environment/contracts'
+import { type EnvPackage } from '@aipoch/environment/contracts'
+import { isEnvEnabled, type RuntimeUsage } from '../../../../shared/notebook-runtime'
 import type { NotebookLanguage } from '../../../../shared/notebook'
 import type { Wsl2BashPreviewStatus } from '../../../../shared/wsl-setup'
 import type { ImportArtifactEnvironmentLockResult } from '../../../../shared/artifact-reproducibility'

@@ -1,16 +1,14 @@
-import { mkdtemp, mkdir, readFile, readdir, rename, rm, symlink, writeFile } from 'node:fs/promises'
+import { createComputeExecution } from '@aipoch/compute/node'
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
-import { decodeSessionComputePolicy } from './compute-policy'
-import { SessionRepository } from './repository'
-import { ConcurrencyManager } from '../compute/concurrency-manager'
-import { ComputeJobDeletionOwner } from '../compute/job-deletion-owner'
-import { ComputeJobLifecycle } from '../compute/compute-job-lifecycle'
 import type { ComputeJob } from '../../shared/compute'
 import type { ComputeJobRepository } from '../compute/job-repository'
 import type { ComputeHostRepository } from '../compute/repository'
 import { canReconcileSessionAbsences } from './catalog-authority'
+import { decodeSessionComputePolicy } from './compute-policy'
+import { SessionRepository } from './repository'
 
 vi.mock('electron', () => ({ app: { getPath: () => '/home/user', isPackaged: true } }))
 const roots: string[] = []
@@ -120,18 +118,17 @@ it('retains quarantine and lets an unrelated healthy owner admit work despite a 
     countActiveByProvider: vi.fn(async () => 0),
     countQueuedJobs: vi.fn(async () => 0)
   }
-  const manager = new ConcurrencyManager(
-    jobs as unknown as ComputeJobRepository,
-    { get: vi.fn(async () => ({ concurrencyLimit: 20 })) } as unknown as ComputeHostRepository,
-    vi.fn(),
-    undefined,
-    undefined,
-    undefined,
-    {
+  const manager = createComputeExecution().createQueue({
+    jobs: jobs as unknown as ComputeJobRepository,
+    hosts: {
+      get: vi.fn(async () => ({ concurrencyLimit: 20 }))
+    } as unknown as ComputeHostRepository,
+    dispatch: vi.fn(),
+    sessionPolicy: {
       resolve: (id, project) => repository.loadComputePolicy(project!, id),
       save: async () => {}
     }
-  )
+  })
   await manager.startQueueReconciliation()
   try {
     expect(
@@ -189,22 +186,18 @@ it('retries a recovered quarantined owner after startup without a deletion barri
     get: vi.fn(async () => ({ concurrencyLimit: 20 }))
   } as unknown as ComputeHostRepository
   const dispatch = vi.fn(async () => {})
-  const manager = new ConcurrencyManager(
-    jobRepository,
-    hosts,
-    dispatch,
-    undefined,
-    undefined,
-    undefined,
-    {
+  const manager = createComputeExecution().createQueue({
+    jobs: jobRepository,
+    hosts: hosts,
+    dispatch: dispatch,
+    sessionPolicy: {
       resolve: (id, project) => repository.loadComputePolicy(project, id),
       save: async () => {}
     }
-  )
+  })
   const acquire = vi.fn()
-  const deletionOwner = new ComputeJobDeletionOwner({
+  const deletionOwner = createComputeExecution().createDeletionOwner({
     jobRepository,
-    lifecycle: new ComputeJobLifecycle(jobRepository),
     queueManager: manager,
     hostRepository: hosts,
     connectionBroker: { acquire }

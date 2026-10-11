@@ -8,15 +8,15 @@ import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it, vi, type Mock } from 'vitest'
 
 import type { ArtifactReproducibilityEnvironmentRequirement } from '../../shared/artifact-provenance'
-import type { NotebookEnvironmentLock } from '../../shared/notebook'
-import { micromambaCacheLockKey, selectMicromambaCache } from './micromamba-cache'
-import { withExclusiveCacheLock } from './pkgs-cache-lock'
+import type { NotebookEnvironmentLock } from '@aipoch/environment/contracts'
+import { micromambaCacheLockKey, selectMicromambaCache } from '@aipoch/environment'
+import { withExclusiveCacheLock } from '@aipoch/environment'
 import type { NotebookSessionExecutor } from './session-aggregate'
 import {
   createNotebookReproductionRuntime,
   type CreateNotebookReproductionRuntimeDependencies
 } from './reproduction-runtime'
-import { pythonBin, rScriptBin } from './runtime-paths'
+import { pythonBin, rScriptBin } from '@aipoch/environment'
 
 const serializeLock = (
   platform: string = process.platform,

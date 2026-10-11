@@ -2,8 +2,8 @@
 // These are the stable contracts consumed by the main-process ComputeService, IPC handlers, and renderer.
 // No I/O: all functions are pure and directly unit-testable.
 
+import type { ComputeAuthenticationErrorCode } from '@aipoch/compute'
 import type { ComputeBookmarkStore } from './settings'
-import type { ComputeAuthenticationErrorCode } from './compute'
 
 // ---------------------------------------------------------------------------
 // Types

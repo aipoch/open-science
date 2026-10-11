@@ -7,15 +7,15 @@ import { expect } from '@playwright/test'
 import type { Page } from 'playwright'
 import { test } from './fixtures/electron-app'
 import { createProject } from './certification/helpers'
-import { envPrefix } from '../src/main/notebook/runtime-paths'
-import { selectMicromambaCache } from '../src/main/notebook/micromamba-cache'
-import { validateAndSeedPackIntoCache } from '../src/main/notebook/pack-content'
+import { envPrefix } from '@aipoch/environment'
+import { selectMicromambaCache } from '@aipoch/environment'
+import { validateAndSeedPackIntoCache } from '@aipoch/environment'
 import {
   createFromLockArgv,
   micromambaSpawnEnv,
   normalizeExplicitLock,
   resolveMicromamba
-} from '../src/main/notebook/micromamba'
+} from '@aipoch/environment'
 
 // Supply an already provisioned runtime root; never mutate the source installation. OpenCode ACP
 // is deterministic unless LIVE_SETTINGS and LIVE_MODEL explicitly select an existing live provider.

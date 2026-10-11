@@ -1,7 +1,7 @@
 import { useTranslation } from 'react-i18next'
 import { ErrorNotice } from '@/components/error-notice'
 import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
-import type { NotebookRecoveryStatus } from '../../../../shared/notebook-env'
+import type { NotebookRecoveryStatus } from '@aipoch/environment/contracts'
 
 export const NotebookRecoveryNotice = ({
   recovery

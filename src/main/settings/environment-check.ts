@@ -18,7 +18,7 @@ import {
   CLAUDE_CLI_INCOMPATIBLE_MESSAGE,
   isSupportedClaudeCliVersion
 } from '../../shared/claude-runtime'
-import { findPythonCommand, type PythonCommand } from '../notebook/python-command'
+import { findPythonCommand, type PythonCommand } from '@aipoch/environment'
 import { netFetchStandard } from '../network-fetch'
 import { getManagedPlatform } from './managed-claude'
 import { detectAvx2, resolveOpencodePlatform } from './managed-opencode'

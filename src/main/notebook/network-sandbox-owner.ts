@@ -57,7 +57,7 @@ import {
   normalizeRProcessLocale,
   environmentPathRoots,
   notebookTrustBundleEnvironment
-} from './process-environment'
+} from '@aipoch/environment'
 import {
   notebookTrustBundleStatus,
   resolveNotebookTrustBundle,
@@ -66,15 +66,15 @@ import {
 } from './trust-bundle'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import { kernelExecutableReadRoot } from './kernel-executor'
-import { windowsCondaPrefixForR } from './environment-discovery'
-import { rKernelProtocolProbe } from './r-command'
+import { windowsCondaPrefixForR } from '@aipoch/environment'
+import { rKernelProtocolProbe } from '@aipoch/environment'
 import { runtimeChildProcessErrorFields } from '@aipoch/diagnostics/node'
 import {
   condaActivatedPath,
   DEFAULT_R_ENV,
   envPrefix,
   legacyDefaultEnvPrefix
-} from './runtime-paths'
+} from '@aipoch/environment'
 
 export type NotebookNetworkDecision = 'deny' | 'allowOnce' | 'alwaysAllow' | 'unavailable'
 

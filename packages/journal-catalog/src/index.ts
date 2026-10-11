@@ -1,9 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { setImmediate } from 'node:timers/promises'
-import { sql, joinSql } from './sql.js'
 import type {
   JournalDatabase,
-  JournalReader,
+  JournalStore,
   JournalReferenceIdentity,
   JournalIntegration,
   JournalReferenceFilter
@@ -40,7 +39,7 @@ import {
   type JournalResult
 } from './contracts.js'
 
-type Reader = JournalReader
+type Reader = JournalStore
 type Journal = JournalIdentity & { id: string }
 type ReferenceIdentity = JournalReferenceIdentity
 
@@ -62,18 +61,7 @@ const identityKey = (identity: JournalIdentity): string =>
       ])
       .sort(([left], [right]) => left.localeCompare(right))
   ])
-type DatasetRow = {
-  id: string
-  name: string | null
-  source: string
-  year: number
-  revision: number
-  fieldsJson: string
-  importedAt: Date | string | number
-  count: bigint
-}
 type Snapshot = { client: JournalDatabase; index: Index; datasets: JournalDataset[] }
-type Entry = { journalId: string; valuesJson: string; sourceRow: number }
 type Stage = {
   client: JournalDatabase
   request: Extract<JournalRequest, { action: 'begin' }>
@@ -202,37 +190,16 @@ function matchJournal(
 }
 
 const readJournals = async (client: Reader): Promise<Journal[]> => {
-  const rows = await client.query<
-    { id: string; name: string; aliasesJson: string; issnsJson: string; externalIdsJson: string }[]
-  >(sql`SELECT * FROM "Journal"`)
+  const rows = await client.listJournals()
   const journals: Journal[] = []
-  for (const row of rows) {
-    journals.push({
-      id: row.id,
-      ...journalIdentitySchema.parse({
-        name: row.name,
-        aliases: JSON.parse(row.aliasesJson),
-        issns: JSON.parse(row.issnsJson),
-        externalIds: JSON.parse(row.externalIdsJson)
-      })
-    })
+  for (const { id, ...identity } of rows) {
+    journals.push({ id, ...journalIdentitySchema.parse(identity) })
     if (journals.length % 500 === 0) await setImmediate()
   }
   return journals
 }
-const readDatasets = async (client: Reader): Promise<JournalDataset[]> => {
-  const rows = await client.query<DatasetRow[]>(
-    sql`SELECT d.*, COUNT(e."journalId") AS count FROM "JournalDataset" d LEFT JOIN "JournalDatasetEntry" e ON e."datasetId" = d.id GROUP BY d.id ORDER BY d.year DESC, d.source`
-  )
-  return rows.map(({ fieldsJson, ...row }) =>
-    journalDatasetSchema.parse({
-      ...row,
-      fields: JSON.parse(fieldsJson),
-      count: Number(row.count),
-      importedAt: new Date(row.importedAt).getTime()
-    })
-  )
-}
+const readDatasets = async (client: Reader): Promise<JournalDataset[]> =>
+  (await client.listDatasets()).map((dataset) => journalDatasetSchema.parse(dataset))
 
 /** Single in-process import owner; staged rows expire and never enter a durable job queue. */
 export class JournalAttributes {
@@ -357,7 +324,7 @@ export class JournalAttributes {
     limit: number,
     lifecycle: 'active' | 'deleted' | 'all' = 'active'
   ): Promise<ReferenceIdentity[]> {
-    return this.integration.references.read(client, where, limit, lifecycle)
+    return client.references.read(where, limit, lifecycle)
   }
 
   /** Resolve dynamic journal filters with the same identity rules used by alignment. */
@@ -404,15 +371,11 @@ export class JournalAttributes {
       const journalIds = [
         ...new Set(matchedRows.flatMap(({ match }) => (match.id ? [match.id] : [])))
       ]
-      const entries = journalIds.length
-        ? await client.query<{ datasetId: string; journalId: string; valuesJson: string }[]>(
-            sql`SELECT "datasetId", "journalId", "valuesJson" FROM "JournalDatasetEntry" WHERE "datasetId" IN (${joinSql(datasetIds)}) AND "journalId" IN (${joinSql(journalIds)})`
-          )
-        : []
+      const entries = journalIds.length ? await client.readEntries({ datasetIds, journalIds }) : []
       const valuesByEntry = new Map(
         entries.map((entry) => [
           `${entry.datasetId}:${entry.journalId}`,
-          journalImportRowSchema.shape.values.parse(JSON.parse(entry.valuesJson))
+          journalImportRowSchema.shape.values.parse(entry.values)
         ])
       )
       for (const { row, match } of matchedRows) {
@@ -607,19 +570,13 @@ export class JournalAttributes {
       journals = 0,
       bindings = 0
     while (true) {
-      const rows = await client.query<{ id: string }[]>(sql`SELECT j.id FROM "Journal" j
-        WHERE j.id > ${after} AND EXISTS (SELECT 1 FROM "JournalDatasetEntry" e WHERE e."journalId" = j.id AND e."datasetId" = ${datasetId})
-        AND NOT EXISTS (SELECT 1 FROM "JournalDatasetEntry" e WHERE e."journalId" = j.id AND e."datasetId" != ${datasetId}) ORDER BY j.id LIMIT 500`)
-      for (const row of rows) hash.update(JSON.stringify(row)).update('\n')
-      journals += rows.length
-      if (rows.length) {
+      const ids = await client.listExclusiveJournalIds(datasetId, after, 500)
+      for (const id of ids) hash.update(JSON.stringify({ id })).update('\n')
+      journals += ids.length
+      if (ids.length) {
         let afterItem = ''
         while (true) {
-          const confirmed = await this.integration.references.bindings(
-            client,
-            rows.map(({ id }) => id),
-            afterItem
-          )
+          const confirmed = await client.references.bindings(ids, afterItem)
 
           bindings += confirmed.length
           for (const binding of confirmed) hash.update(JSON.stringify(binding)).update('\n')
@@ -628,8 +585,8 @@ export class JournalAttributes {
           await setImmediate()
         }
       }
-      if (rows.length < 500) break
-      after = rows[rows.length - 1].id
+      if (ids.length < 500) break
+      after = ids[ids.length - 1]
       await setImmediate()
     }
     return { journals, bindings, digest: hash.digest('hex') }
@@ -702,15 +659,11 @@ export class JournalAttributes {
     if (dataset && (dataset.source !== definition.source || dataset.year !== definition.year))
       throw new Error('The dataset source and year cannot change during an update.')
     const index = await buildIndex(await readJournals(client))
-    const stored = dataset
-      ? await client.query<Entry[]>(
-          sql`SELECT * FROM "JournalDatasetEntry" WHERE "datasetId" = ${dataset.id}`
-        )
-      : []
+    const stored = dataset ? await client.readEntries({ datasetIds: [dataset.id] }) : []
     const previous = new Map(
       stored.map((entry) => [
         entry.journalId,
-        journalImportRowSchema.shape.values.parse(JSON.parse(entry.valuesJson))
+        journalImportRowSchema.shape.values.parse(entry.values)
       ])
     )
     const journals = new Map<string, Journal>()
@@ -885,30 +838,18 @@ export class JournalAttributes {
       const dataset = (await this.datasets(client)).find(({ id }) => id === request.datasetId)
       if (!dataset || dataset.revision !== request.expectedRevision)
         throw new Error('Journal data changed. Reload the dataset.')
-      const batch = await client.query<
-        {
-          id: string
-          name: string
-          aliasesJson: string
-          issnsJson: string
-          externalIdsJson: string
-          valuesJson: string
-        }[]
-      >(sql`SELECT j.id, j.name, j."aliasesJson", j."issnsJson", j."externalIdsJson", e."valuesJson"
-        FROM "JournalDatasetEntry" e JOIN "Journal" j ON j.id = e."journalId"
-        WHERE e."datasetId" = ${dataset.id} AND j.id > ${request.after ?? ''}
-        ORDER BY j.id LIMIT 100`)
+      const batch = await client.readDatasetRows(dataset.id, { after: request.after, limit: 100 })
       const rows: JournalImportRow[] = []
       let bytes = 0
       let next: string | undefined
       for (const entry of batch) {
         const row = journalImportRowSchema.parse({
-          row: rows.length + 1,
           name: entry.name,
-          aliases: JSON.parse(entry.aliasesJson),
-          issns: JSON.parse(entry.issnsJson),
-          externalIds: JSON.parse(entry.externalIdsJson),
-          values: JSON.parse(entry.valuesJson)
+          aliases: entry.aliases,
+          issns: entry.issns,
+          externalIds: entry.externalIds,
+          values: entry.values,
+          row: rows.length + 1
         })
         const size = Buffer.byteLength(JSON.stringify(row))
         if (rows.length && bytes + size > 512 * 1024) break
@@ -1066,9 +1007,14 @@ export class JournalAttributes {
             }
             if (fields.length > 64)
               throw new Error('A journal dataset supports at most 64 attributes.')
-            await tx.execute(
-              sql`INSERT INTO "JournalDataset" (id, name, source, year, revision, "fieldsJson", "importedAt") VALUES (${datasetId}, ${stage.request.definition.name ?? null}, ${stage.request.definition.source}, ${stage.request.definition.year}, 1, ${JSON.stringify(fields)}, ${new Date()}) ON CONFLICT(id) DO UPDATE SET revision = revision + 1, "fieldsJson" = excluded."fieldsJson", "importedAt" = excluded."importedAt"`
-            )
+            await tx.saveDatasetImport({
+              id: datasetId,
+              name: stage.request.definition.name ?? null,
+              source: stage.request.definition.source,
+              year: stage.request.definition.year,
+              fields,
+              importedAt: Date.now()
+            })
             for (let offset = 0; offset < rows.length; offset += 100) {
               if (this.disposed) throw new Error('Journal service is closed.')
               const chunk = rows.slice(offset, offset + 100).map((row) => {
@@ -1081,25 +1027,21 @@ export class JournalAttributes {
                   }
                 }
               })
-              await tx.execute(
-                sql`INSERT INTO "Journal" (id, name, "normalizedName", "aliasesJson", "issnsJson", "externalIdsJson") VALUES ${joinSql(chunk.map(({ journal }) => sql`(${journal.id}, ${journal.name}, ${normalizeJournalName(journal.name)}, ${JSON.stringify(journal.aliases)}, ${JSON.stringify(journal.issns)}, ${JSON.stringify(journal.externalIds ?? [])})`))} ON CONFLICT(id) DO UPDATE SET "aliasesJson" = excluded."aliasesJson", "issnsJson" = excluded."issnsJson", "externalIdsJson" = excluded."externalIdsJson"`
-              )
-              await tx.execute(
-                sql`INSERT INTO "JournalDatasetEntry" ("datasetId", "journalId", "valuesJson", "sourceRow") VALUES ${joinSql(
-                  chunk.map(({ row, journal }) => {
-                    const values = { ...row.previous }
-                    for (const [key, value] of Object.entries(row.values))
-                      if (
-                        !missingJournalValue(value) &&
-                        (stage.request.policy === 'replace' ||
-                          missingJournalValue(values[key] ?? ''))
-                      )
-                        values[key] = value.trim()
-                    return sql`(${datasetId}, ${journal.id}, ${JSON.stringify(values)}, ${row.row})`
-                  })
-                )} ON CONFLICT("datasetId", "journalId") DO UPDATE SET "valuesJson" = excluded."valuesJson", "sourceRow" = excluded."sourceRow"`
+              await tx.saveJournals(chunk.map(({ journal }) => journal))
+              await tx.saveEntries(
+                chunk.map(({ row, journal }) => {
+                  const values = { ...row.previous }
+                  for (const [key, value] of Object.entries(row.values))
+                    if (
+                      !missingJournalValue(value) &&
+                      (stage.request.policy === 'replace' || missingJournalValue(values[key] ?? ''))
+                    )
+                      values[key] = value.trim()
+                  return { datasetId, journalId: journal.id, values, sourceRow: row.row }
+                })
               )
             }
+
             const datasets = await readDatasets(tx)
             // Disposal can arrive during the final batch or the final read, too.
             if (this.disposed) throw new Error('Journal service is closed.')
@@ -1140,13 +1082,13 @@ export class JournalAttributes {
           const nextValues = journalImportRowSchema.shape.values.parse(request.values)
           if (Object.keys(nextValues).some((key) => !fields.has(key)))
             throw new Error('Journal attribute is not part of this dataset.')
-          const existing = await tx.query<{ valuesJson: string }[]>(sql`
-            SELECT "valuesJson" FROM "JournalDatasetEntry"
-            WHERE "datasetId" = ${dataset.id} AND "journalId" = ${request.journalId}
-          `)
+          const existing = await tx.readEntries({
+            datasetIds: [dataset.id],
+            journalIds: [request.journalId]
+          })
           if (!existing.length) throw new Error('Journal entry not found. Reload the dataset.')
           const values = {
-            ...journalImportRowSchema.shape.values.parse(JSON.parse(existing[0].valuesJson)),
+            ...journalImportRowSchema.shape.values.parse(existing[0].values),
             ...nextValues
           }
           for (const [key, value] of Object.entries(values)) {
@@ -1163,14 +1105,8 @@ export class JournalAttributes {
             )
               throw new Error('Invalid journal attribute value.')
           }
-          await tx.execute(sql`
-            UPDATE "JournalDatasetEntry"
-            SET "valuesJson" = ${JSON.stringify(values)}
-            WHERE "datasetId" = ${dataset.id} AND "journalId" = ${request.journalId}
-          `)
-          await tx.execute(sql`
-            UPDATE "JournalDataset" SET revision = revision + 1 WHERE id = ${dataset.id}
-          `)
+          await tx.saveEntries([{ ...existing[0], values }])
+          await tx.updateDataset(dataset.id, {})
           return readDatasets(tx)
         },
         { timeout: 120_000, maxWait: 30_000 }
@@ -1196,10 +1132,7 @@ export class JournalAttributes {
               (await this.removal(tx, dataset.id)).digest !== request.expectedRemovalDigest
             )
               throw new Error('Journal confirmations changed. Review the deletion again.')
-            await tx.execute(sql`DELETE FROM "JournalDataset" WHERE id = ${dataset.id}`)
-            await tx.execute(
-              sql`DELETE FROM "Journal" WHERE NOT EXISTS (SELECT 1 FROM "JournalDatasetEntry" WHERE "journalId" = "Journal".id)`
-            )
+            await tx.removeDataset(dataset.id)
           } else if (request.action === 'rename') {
             const source = request.source ?? dataset.source
             const year = request.year ?? dataset.year
@@ -1224,9 +1157,7 @@ export class JournalAttributes {
                       ? { ...field, columnKey: `${randomUUID()}:${field.id}` }
                       : field
                   )
-            await tx.execute(
-              sql`UPDATE "JournalDataset" SET name = ${request.name}, source = ${source}, year = ${year}, "fieldsJson" = ${JSON.stringify(fields)}, revision = revision + 1 WHERE id = ${dataset.id}`
-            )
+            await tx.updateDataset(dataset.id, { name: request.name, source, year, fields })
           } else {
             if (
               request.fields.length !== dataset.fields.length ||
@@ -1245,13 +1176,10 @@ export class JournalAttributes {
             if (changedTypes.length) {
               let after = ''
               while (true) {
-                const rows = await tx.query<{ journalId: string; valuesJson: string }[]>(sql`
-                  SELECT "journalId", "valuesJson" FROM "JournalDatasetEntry"
-                  WHERE "datasetId" = ${dataset.id} AND "journalId" > ${after}
-                  ORDER BY "journalId" LIMIT 500`)
+                const rows = await tx.readEntries({ datasetIds: [dataset.id], after, limit: 500 })
                 if (!rows.length) break
                 for (const row of rows) {
-                  const values = JSON.parse(row.valuesJson) as Record<string, string>
+                  const values = row.values
                   for (const field of changedTypes) {
                     const value = values[field.id] ?? ''
                     if (
@@ -1273,9 +1201,7 @@ export class JournalAttributes {
                 await setImmediate()
               }
             }
-            await tx.execute(
-              sql`UPDATE "JournalDataset" SET "fieldsJson" = ${JSON.stringify(request.fields)}, revision = revision + 1 WHERE id = ${dataset.id}`
-            )
+            await tx.updateDataset(dataset.id, { fields: request.fields })
           }
           return readDatasets(tx)
         },
@@ -1308,17 +1234,13 @@ export class JournalAttributes {
         const choices = new Set(Object.keys(field.colors))
         let after = ''
         while (true) {
-          const rows = await client.query<{ journalId: string; value: string }[]>(sql`
-            SELECT e."journalId", v.value FROM "JournalDatasetEntry" e
-            JOIN json_each(e."valuesJson") v ON v.key = ${field.id}
-            WHERE e."datasetId" = ${dataset.id} AND e."journalId" > ${after}
-            ORDER BY e."journalId" LIMIT 500`)
+          const rows = await client.readEntries({ datasetIds: [dataset.id], after, limit: 500 })
           for (const row of rows) {
-            if (typeof row.value !== 'string') throw new Error('Invalid journal attribute value.')
-            if (missingJournalValue(row.value)) continue
-            for (const value of field.kind === 'multiSelect'
-              ? journalChoices(row.value)
-              : [row.value])
+            const raw = row.values[field.id]
+            if (raw === undefined) continue
+            if (typeof raw !== 'string') throw new Error('Invalid journal attribute value.')
+            if (missingJournalValue(raw)) continue
+            for (const value of field.kind === 'multiSelect' ? journalChoices(raw) : [raw])
               choices.add(value)
           }
           if (rows.length < 500) break
@@ -1363,29 +1285,16 @@ export class JournalAttributes {
         const candidates: { id: string; value: string | number | null }[] = []
         let after = ''
         while (true) {
-          const batch = await client.query<
-            {
-              id: string
-              name: string
-              aliasesJson: string
-              issnsJson: string
-              externalIdsJson: string
-              valuesJson: string
-            }[]
-          >(
-            sql`SELECT j.id, j.name, j."aliasesJson", j."issnsJson", j."externalIdsJson", e."valuesJson" FROM "JournalDatasetEntry" e JOIN "Journal" j ON e."journalId" = j.id WHERE e."datasetId" = ${request.datasetId} AND e."journalId" > ${after} ORDER BY e."journalId" LIMIT 500`
-          )
+          const batch = await client.readDatasetRows(request.datasetId, { after, limit: 500 })
           for (const row of batch) {
             const values =
-              query || field
-                ? journalImportRowSchema.shape.values.parse(JSON.parse(row.valuesJson))
-                : {}
+              query || field ? journalImportRowSchema.shape.values.parse(row.values) : {}
             if (query) {
               const identity = journalIdentitySchema.parse({
                 name: row.name,
-                aliases: JSON.parse(row.aliasesJson),
-                issns: JSON.parse(row.issnsJson),
-                externalIds: JSON.parse(row.externalIdsJson)
+                aliases: row.aliases,
+                issns: row.issns,
+                externalIds: row.externalIds
               })
               if (
                 !normalizeJournalName(
@@ -1436,19 +1345,7 @@ export class JournalAttributes {
       }
       const pageIds = ids.slice(request.offset, request.offset + (request.limit ?? 50))
       const rows = pageIds.length
-        ? await client.query<
-            {
-              id: string
-              name: string
-              aliasesJson: string
-              issnsJson: string
-              externalIdsJson: string
-              valuesJson: string
-              sourceRow: number
-            }[]
-          >(
-            sql`SELECT j.id, j.name, j."aliasesJson", j."issnsJson", j."externalIdsJson", e."valuesJson", e."sourceRow" FROM "Journal" j JOIN "JournalDatasetEntry" e ON e."journalId" = j.id WHERE e."datasetId" = ${request.datasetId} AND j.id IN (${joinSql(pageIds)})`
-          )
+        ? await client.readDatasetRows(request.datasetId, { journalIds: pageIds })
         : []
       if (this.disposed || version !== this.version)
         throw new Error('Journal data changed. Reload the dataset.')
@@ -1459,11 +1356,11 @@ export class JournalAttributes {
             id: row.id,
             ...journalImportRowSchema.parse({
               name: row.name,
-              aliases: JSON.parse(row.aliasesJson),
-              issns: JSON.parse(row.issnsJson),
-              externalIds: JSON.parse(row.externalIdsJson),
-              values: JSON.parse(row.valuesJson),
-              row: row.sourceRow
+              aliases: row.aliases,
+              issns: row.issns,
+              externalIds: row.externalIds,
+              values: row.values,
+              row: row.row
             })
           }
         ])
@@ -1495,13 +1392,11 @@ export class JournalAttributes {
         )
           throw new Error('Reference or journal binding changed. Check the library again.')
         if (request.journalId) {
-          const target = await transaction.query<{ id: string }[]>(
-            sql`SELECT id FROM "Journal" WHERE id = ${request.journalId}`
-          )
-          if (!target.length) throw new Error('Journal is no longer available.')
-          await this.integration.references.bind(transaction, item, request.journalId)
+          if (!(await transaction.hasJournal(request.journalId)))
+            throw new Error('Journal is no longer available.')
+          await transaction.references.bind(item, request.journalId)
         } else {
-          await this.integration.references.bind(transaction, item)
+          await transaction.references.bind(item)
         }
         assertCurrent()
       })
@@ -1563,16 +1458,14 @@ export class JournalAttributes {
     const latest = selectJournalDatasets(snapshot.datasets, request.sourceYears)
     const entries =
       ids.length && latest.length
-        ? await client.query<(Entry & { datasetId: string })[]>(
-            sql`SELECT * FROM "JournalDatasetEntry" WHERE "journalId" IN (${joinSql(ids)}) AND "datasetId" IN (${joinSql(latest.map(({ id }) => id))})`
-          )
+        ? await client.readEntries({ journalIds: ids, datasetIds: latest.map(({ id }) => id) })
         : []
     if (this.disposed || version !== this.version)
       throw new Error('Journal data changed. Reload the dataset.')
     const valuesByEntry = new Map(
       entries.map((entry) => [
         `${entry.datasetId}:${entry.journalId}`,
-        journalImportRowSchema.shape.values.parse(JSON.parse(entry.valuesJson))
+        journalImportRowSchema.shape.values.parse(entry.values)
       ])
     )
     return {
@@ -1614,9 +1507,16 @@ export class JournalAttributes {
 }
 
 export type {
-  JournalStatement,
+  JournalRecord,
+  JournalEntry,
+  JournalDatasetRow,
+  JournalDatasetImport,
+  JournalDatasetPatch,
+  JournalEntryQuery,
+  JournalRowQuery,
+  JournalReferences,
   JournalDatabase,
-  JournalReader,
+  JournalStore,
   JournalReferenceIdentity,
   JournalIntegration,
   JournalReferenceFilter

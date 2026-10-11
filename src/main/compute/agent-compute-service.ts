@@ -1,17 +1,17 @@
-import type { AgentResultFollowUpDelivery } from '../../shared/background-result-delivery'
 import type {
-  AgentComputeHostSummary,
   ComputeHost,
   ComputeHostDetails,
   DetailsAuthor,
-  ExecResult,
-  JobResult,
   JobStatusResult,
   SubmitJobResult
-} from '../../shared/compute'
-import { ComputeHostUnavailableError, computeHostSummary } from '../../shared/compute'
-import type { DownloadDest, LocalFile } from '../../shared/remote-fs'
+} from '@aipoch/compute'
+import type { AgentResultFollowUpDelivery } from '../../shared/background-result-delivery'
+import type { AgentComputeHostSummary, ExecResult, JobResult } from '../../shared/compute'
+
+import { ComputeHostUnavailableError, computeHostSummary } from '@aipoch/compute'
+
 import { createLogger } from '@aipoch/diagnostics/node'
+import type { DownloadDest, LocalFile } from '../../shared/remote-fs'
 import type { ComputeService } from './compute-service'
 
 const log = createLogger('compute:agent')

@@ -2,7 +2,8 @@ import { fieldErrorClassName } from '@/components/ui/notice-chrome'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import type { ComputeHost } from '../../../../shared/compute'
+import type { ComputeHost } from '@aipoch/compute'
+
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'

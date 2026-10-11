@@ -1,15 +1,18 @@
-import { runtimeMetadata } from '../runtime-metadata'
+import type { ComputeJobOwnerLiveness } from '@aipoch/compute/node'
+import {
+  createLogger,
+  diagnosticErrorFields,
+  type DiagnosticOperation
+} from '@aipoch/diagnostics/node'
 import { createAcpRuntime } from '../acp/runtime-composition'
 import { SideChatRelayOwner } from '../acp/side-chat-relay-owner'
 import { type ApplicationModuleBuilder } from '../application-runtime'
-import type { ComputeJobOwnerLiveness } from '../compute/job-deletion-owner'
 import { createProductionDelegatedWorkComposition } from '../delegation/production-composition'
-import { type DiagnosticOperation } from '@aipoch/diagnostics/node'
-import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import type { NotebookRuntimeService } from '../notebook/runtime-service'
 import { ProjectRuntimeQuiescenceOwner } from '../projects/project-runtime-quiescence-owner'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import { ReviewerProjectRuntimeOwner } from '../reviewer/project-runtime-owner'
+import { runtimeMetadata } from '../runtime-metadata'
 import { type SessionAuxiliaryTurnUsageRecord } from '../session-persistence/auxiliary-turn-usage'
 import { type ComputeJobDeletionParticipant } from '../session-persistence/coordinator'
 import { SettingsService } from '../settings/service'

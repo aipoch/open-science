@@ -107,6 +107,153 @@ it('keeps a chart strip when a short caption gap contains body prose', () => {
   expect(result?.rect).toEqual([141, 86, 504, 177])
 })
 
+const closedRowBelowParagraph = (): ReturnType<typeof JSON.parse> => {
+  const page = chartPage()
+  page.graphicsBounds = page.graphicsBounds.slice(0, 28)
+  page.lines = page.lines.filter((line: { text: string }) => !/^Task |^LESSER/u.test(line.text))
+  const fontLines = [
+    {
+      text: 'An independently aligned body paragraph has a complete preceding source line.',
+      x: 141,
+      y: 64,
+      width: 360,
+      height: 12,
+      fontSize: 12
+    },
+    {
+      text: 'Its next complete source line remains prose above the independently closed plots.',
+      x: 141,
+      y: 78,
+      width: 360,
+      height: 12,
+      fontSize: 12
+    },
+    { text: 'The final term (10', x: 141, y: 92, width: 62, height: 12, fontSize: 12 },
+    { text: '-2', x: 203.1, y: 91, width: 9, height: 8, fontSize: 8 },
+    { text: ').', x: 212.3, y: 92, width: 8, height: 12, fontSize: 12 }
+  ]
+  page.lines.push(...fontLines)
+  const tokens = page.lines.map(
+    (
+      line: { text: string; x: number; y: number; width: number; height: number; fontSize: number },
+      index: number
+    ) => ({
+      text: line.text,
+      rect: [line.x, line.y, line.x + line.width, line.y + line.height],
+      height: line.fontSize,
+      baseline: line.y + line.height,
+      horizontal: true,
+      sourceItem: { pageNumber: 1, index, text: line.text }
+    })
+  )
+  return { page, tokens, frames: [141, 215, 292, 366].map((left) => [left, 112, left + 62, 161]) }
+}
+
+it('excludes complete body tails and their original raised fragments above a closed four-face row', () => {
+  const { page, tokens, frames } = closedRowBelowParagraph()
+  const legacy = nativeCaptionedVectorChartStrip(page, page.caption, [page.caption], [])
+  const result = nativeCaptionedVectorChartStrip(
+    page,
+    page.caption,
+    [page.caption],
+    [],
+    tokens,
+    frames
+  )
+  expect(legacy?.rect[1]).toBe(92)
+  expect(result?.rect[1]).toBe(112)
+  expect(result?.excludedProseLines.map((line: { text: string }) => line.text)).toContain('-2')
+  expect(result?.excludedProseLines.map((line: { text: string }) => line.text)).toContain(').')
+  expect(result?.rect.slice(2)).toEqual(legacy?.rect.slice(2))
+})
+
+it.each(['missing original font', 'wrong source origin', 'open face', 'unaligned predecessor'])(
+  'retains the legacy crop when paragraph exclusion lacks %s',
+  (fault) => {
+    const { page, tokens, frames } = closedRowBelowParagraph()
+    if (fault === 'missing original font')
+      tokens.splice(
+        tokens.findIndex((t: { text: string }) => t.text.startsWith('The final')),
+        1
+      )
+    if (fault === 'wrong source origin')
+      tokens.find((t: { text: string }) => t.text.startsWith('The final')).sourceItem.text =
+        'different'
+    if (fault === 'open face') frames.pop()
+    if (fault === 'unaligned predecessor')
+      page.lines.find((l: { text: string }) => l.text.startsWith('Its next')).x += 40
+    const result = nativeCaptionedVectorChartStrip(
+      page,
+      page.caption,
+      [page.caption],
+      [],
+      tokens,
+      frames
+    )
+    expect(result?.rect[1]).toBe(92)
+  }
+)
+
+const ruledRowBelowParagraph = (): ReturnType<typeof JSON.parse> => {
+  const { page, frames } = closedRowBelowParagraph()
+  for (const [left] of frames) {
+    page.lines.push({ text: '4', x: left + 8, y: 150, width: 16, height: 7, fontSize: 7 })
+    page.graphicsBounds.push({
+      kind: 'path',
+      normalizedRect: [left + 8, 122, left + 55, 155].map(
+        (v, n) => v / (n % 2 ? page.height : page.width)
+      )
+    })
+  }
+  const tokens = page.lines.map(
+    (
+      line: { text: string; x: number; y: number; width: number; height: number; fontSize: number },
+      index: number
+    ) => ({
+      text: line.text,
+      rect: [line.x, line.y, line.x + line.width, line.y + line.height],
+      height: line.fontSize,
+      baseline: line.y + line.height,
+      horizontal: true,
+      sourceItem: { pageNumber: 1, index, text: line.text }
+    })
+  )
+  const rules = frames.flatMap(([left, top, right, bottom]: number[]) => [
+    [left, top, right, top],
+    [left, bottom, right, bottom],
+    [left, top, left, bottom],
+    [right, top, right, bottom]
+  ])
+  return { page, frames, rules, tokens }
+}
+
+it('keeps whole body tails excluded when native rule-frame completion runs after strip association', () => {
+  const { page, frames, rules, tokens } = ruledRowBelowParagraph()
+  const result = associateFigures(page, [page.caption], [], rules, frames, tokens)[0]
+  expect(result.rect[1]).toBe(112)
+  expect(result.rect[3]).toBe(177)
+  expect(result.excludedProseLines.map((line: { text: string }) => line.text)).toContain('-2')
+  expect(result.excludedProseLines.map((line: { text: string }) => line.text)).toContain(').')
+})
+
+it.each(['missing original font', 'wrong source origin', 'open face'])(
+  'keeps rule-frame completion conservative without the paragraph proof: %s',
+  (fault) => {
+    const { page, frames, rules, tokens } = ruledRowBelowParagraph()
+    const final = tokens.find((t: { text: string }) => t.text.startsWith('The final'))
+    if (fault === 'missing original font') tokens.splice(tokens.indexOf(final), 1)
+    if (fault === 'wrong source origin') final.sourceItem.text = 'different'
+    if (fault === 'open face') frames.pop()
+    const result = associateFigures(page, [page.caption], [], rules, frames, tokens)[0]
+    expect(result.rect[1]).toBe(91)
+    expect(
+      (result.excludedProseLines ?? []).some((line: { text: string }) =>
+        ['The final term (10', '-2', ').'].includes(line.text)
+      )
+    ).toBe(false)
+  }
+)
+
 it('claims a framed native bar chart immediately before its caption', () => {
   const width = 600
   const height = 800

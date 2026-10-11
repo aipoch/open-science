@@ -29,7 +29,7 @@ import type {
   RunNotebookCellRequest
 } from '../notebook'
 
-import type { ProvisionProgress, ProvisionStatus } from '../notebook-env'
+import type { ProvisionProgress, ProvisionStatus } from '@aipoch/environment/contracts'
 
 import {
   callable,

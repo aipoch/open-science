@@ -1,3 +1,4 @@
+import { createWindowsExecutableVerifier } from '../windows-executable-trust'
 import { runtimeMetadata } from '../runtime-metadata'
 import { dirname } from 'node:path'
 import { DEFAULT_ARTIFACT_PROJECT_ID } from '../../shared/artifacts'
@@ -14,9 +15,9 @@ import { createNotebookApplicationModule } from '../notebook/application'
 import { NotebookDependencyAnalyzer } from '@aipoch/notebook-analysis'
 import { NotebookNetworkSandboxOwner } from '../notebook/network-sandbox-owner'
 import { NotebookRunRepository } from '../notebook/repository'
-import { runtimeRoot } from '../notebook/runtime-paths'
+import { runtimeRoot } from '@aipoch/environment'
 import type { NotebookRuntimeService } from '../notebook/runtime-service'
-import { createProductionMicromambaRunner } from '../notebook/windows-micromamba-runner'
+import { createProductionMicromambaRunner } from '../notebook/environment-runner'
 import type { NotebookRuntimeSettings } from '../settings/capabilities'
 import { SettingsService } from '../settings/service'
 import { resolveConfigRoot, resolveDataRoot } from '../storage-root'
@@ -71,6 +72,8 @@ export async function composeNotebookRuntime({
   // One runner owns Windows integrity/preflight/fallback state for every production micromamba
   // consumer in this main-process generation. Each consumer receives only its narrow resolve seam.
   const micromambaRunner = createProductionMicromambaRunner({
+    verifySignature: createWindowsExecutableVerifier(),
+    runtimeRoot: provisioningRoot,
     packaged: runtimeMetadata().packaged,
     configHome: runtimeMetadata().homePath,
     home: dirname(dirname(provisioningRoot)),

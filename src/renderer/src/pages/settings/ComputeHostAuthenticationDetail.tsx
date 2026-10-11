@@ -1,15 +1,13 @@
-import { fieldErrorClassName } from '@/components/ui/notice-chrome'
 import { InlineNotice } from '@/components/ui/inline-notice'
+import { fieldErrorClassName } from '@/components/ui/notice-chrome'
+import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
 import { KeyRound } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
 
-import type {
-  ComputeAuthenticationMode,
-  ComputeHost,
-  ComputePasswordCapability
-} from '../../../../shared/compute'
+import type { ComputeAuthenticationMode, ComputeHost } from '@aipoch/compute'
+import type { ComputePasswordCapability } from '../../../../shared/compute'
+
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import type { NotebookProcessSandbox, NotebookSandboxedSpawn } from './process-sandbox'
-import { buildNotebookKernelEnvironment } from './process-environment'
+import { buildNotebookKernelEnvironment } from '@aipoch/environment'
 import {
   WindowsRuntimeIncompatibleError,
   type WindowsRuntimeComponentSelection

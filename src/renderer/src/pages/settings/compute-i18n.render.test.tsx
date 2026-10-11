@@ -3,16 +3,17 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { ComputeHost } from '../../../../shared/compute'
-import { ComputeApprovalDialog } from './ComputeApprovalDialog'
-import { ComputeHostDetail } from './ComputeHostDetail'
-import { ComputePanel } from './ComputePanel'
+import type { ComputeHost } from '@aipoch/compute'
+
 import { i18next } from '@/i18n'
 import {
   createInitialComputeState,
   useComputeStore,
   type ComputeApproval
 } from '@/stores/compute-store'
+import { ComputeApprovalDialog } from './ComputeApprovalDialog'
+import { ComputeHostDetail } from './ComputeHostDetail'
+import { ComputePanel } from './ComputePanel'
 
 let container: HTMLDivElement
 let root: Root

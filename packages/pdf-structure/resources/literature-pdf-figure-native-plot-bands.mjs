@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
-import { OPS, version } from 'pdfjs-dist/legacy/build/pdf.mjs'
+import { OPS, Util, version } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { collectClosedFigureFrames } from './literature-pdf-graphics.mjs'
 import { nativeClosedRuleFrames } from './literature-pdf-figure-connectivity.mjs'
 import { area, intersection, union, lineRect } from './literature-pdf-page-geometry.mjs'
@@ -21,6 +21,29 @@ export function nativeCaptionedPlotBand(
       .filter((f) => f > 0)
   )
   if (!Number.isFinite(font)) return
+  const closedArray = nativeTwoRowThreeClosedPlots(
+    page,
+    caption,
+    captions,
+    tables,
+    closedFrames,
+    nativeTokens,
+    font,
+    operatorContext
+  )
+  if (closedArray) {
+    // A complete existing owner keeps its established crop and padding.
+    if (
+      Array.isArray(existingOwnedRect) &&
+      existingOwnedRect.length === 4 &&
+      existingOwnedRect.every(Number.isFinite) &&
+      closedArray.rect.every((v, n) =>
+        n < 2 ? v >= existingOwnedRect[n] : v <= existingOwnedRect[n]
+      )
+    )
+      return
+    return closedArray
+  }
   // A compact faceted bar plate needs independent outer/carrier/strip frames,
   // whole fonts and whole measured paint, plus a known complete native program.
   // Missing context keeps every legacy selector and its six-em gate unchanged.
@@ -2290,7 +2313,14 @@ function nativeCompactFacetedNinePlots(
   return { caption, rect, graphicsCount: 9 }
 }
 
-function supportsCompactFacetedOperatorContext(page, tokens, frames, context) {
+function supportsCompactFacetedOperatorContext(
+  page,
+  tokens,
+  frames,
+  context,
+  closedArray = false,
+  connectedNodes = false
+) {
   const allowed = new Set(
     [
       'setFillRGBColor',
@@ -2319,6 +2349,8 @@ function supportsCompactFacetedOperatorContext(page, tokens, frames, context) {
   const numericContainer = (a) => Array.isArray(a) || a instanceof Float32Array
   const numeric = (a, n) => numericContainer(a) && a.length === n && a.every(Number.isFinite)
   const matrix = (a) => numeric(a, 6) && a[0] > 0 && a[3] > 0 && a[1] === 0 && a[2] === 0
+  const textMatrix = (a) =>
+    matrix(a) || (closedArray && numeric(a, 6) && a[0] === 0 && a[3] === 0 && a[1] > 0 && a[2] < 0)
   const pathProgram = (a) => {
     if (!numericContainer(a) || !a.length || a.some((v) => !Number.isFinite(v))) return false
     let current = false
@@ -2372,6 +2404,19 @@ function supportsCompactFacetedOperatorContext(page, tokens, frames, context) {
       a = o.argsArray[i],
       name = Object.keys(OPS).find((key) => OPS[key] === code)
     if (!allowed.has(code)) return false
+    // This separate native-node proof accepts no clipping, form resources or
+    // render-state extensions. Rotated arrowheads still require their exact
+    // path/endpoint ownership in the caller; ordinary plot guards stay strict.
+    if (connectedNodes && ['clip', 'paintFormXObjectBegin', 'paintFormXObjectEnd'].includes(name))
+      return false
+    if (
+      (closedArray || connectedNodes) &&
+      inText &&
+      ['save', 'restore', 'paintFormXObjectBegin', 'paintFormXObjectEnd', 'transform'].includes(
+        name
+      )
+    )
+      return false
     if (
       ['save', 'restore', 'paintFormXObjectEnd', 'beginText', 'endText', 'clip'].includes(name) &&
       a !== null &&
@@ -2395,7 +2440,19 @@ function supportsCompactFacetedOperatorContext(page, tokens, frames, context) {
       stack.push('form')
     } else if (name === 'paintFormXObjectEnd') {
       if (stack.pop() !== 'form') return false
-    } else if (name === 'transform' && !matrix(a)) return false
+    } else if (
+      name === 'transform' &&
+      !matrix(a) &&
+      !(
+        connectedNodes &&
+        !inText &&
+        numeric(a, 6) &&
+        Math.abs(a[0] - a[3]) < 1e-7 &&
+        Math.abs(a[1] + a[2]) < 1e-7 &&
+        Math.abs(a[0] * a[3] - a[1] * a[2] - 1) < 0.0002
+      )
+    )
+      return false
     else if (
       ['setFillRGBColor', 'setStrokeRGBColor'].includes(name) &&
       (!Array.isArray(a) ||
@@ -2421,6 +2478,17 @@ function supportsCompactFacetedOperatorContext(page, tokens, frames, context) {
     )
       return false
     else if (name === 'constructPath') {
+      if (
+        connectedNodes &&
+        Array.isArray(a) &&
+        a.length === 3 &&
+        a[0] === OPS.endPath &&
+        Array.isArray(a[1]) &&
+        a[1].length === 1 &&
+        a[1][0] === null &&
+        a[2] === null
+      )
+        continue
       if (
         !Array.isArray(a) ||
         a.length !== 3 ||
@@ -2458,7 +2526,7 @@ function supportsCompactFacetedOperatorContext(page, tokens, frames, context) {
       currentFont = true
     } else if (
       name === 'setTextMatrix' &&
-      (!inText || !currentFont || !Array.isArray(a) || a.length !== 1 || !matrix(a[0]))
+      (!inText || !currentFont || !Array.isArray(a) || a.length !== 1 || !textMatrix(a[0]))
     )
       return false
     else if (name === 'moveText' && (!inText || !currentFont || !numeric(a, 2))) return false
@@ -2512,5 +2580,399 @@ function supportsCompactFacetedOperatorContext(page, tokens, frames, context) {
     return false
   const rederived = collectClosedFigureFrames(o, v)
   if (JSON.stringify(rederived) !== JSON.stringify(frames)) return false
+  if (closedArray && !nativeCompletePlotGlyphBoxes(tokens, o, v, page)) return false
   return true
+}
+
+// Complete source fonts are independent of the margin-filtered association
+// tokens. The connected-node caller separately binds every measured path and
+// refuses invisible/white paint; no legacy plot selector uses this mode.
+export function completeNativeNodeGlyphProgram(page, tokens, frames, context) {
+  return (
+    supportsCompactFacetedOperatorContext(page, tokens, frames, context, false, true) &&
+    nativeCompletePlotGlyphBoxes(tokens, context.operators, context.viewport)
+  )
+}
+
+// The scoped closed-array path binds each original whole font to the native
+// text program. Literal equality alone cannot detect a changed text matrix.
+function nativeCompletePlotGlyphBoxes(tokens, operators, viewport, page) {
+  let ctm = [1, 0, 0, 1, 0, 0],
+    matrix = [1, 0, 0, 1, 0, 0],
+    size = 0,
+    x = 0,
+    y = 0,
+    lineX = 0,
+    lineY = 0,
+    pendingClip = false,
+    clip = [0, 0, viewport.width, viewport.height],
+    lineWidth = 1,
+    emptyPaint = 0
+  const stack = [],
+    glyphs = [],
+    paint = new Map()
+  const clipped = (r) => [
+    Math.max(clip[0], r[0]),
+    Math.max(clip[1], r[1]),
+    Math.min(clip[2], r[2]),
+    Math.min(clip[3], r[3])
+  ]
+  const transformed = (points) => {
+    const transform = Util.transform(viewport.transform, ctm)
+    const p = points.map((q) => {
+      q = [...q]
+      Util.applyTransform(q, transform)
+      return q
+    })
+    return [
+      Math.min(...p.map((q) => q[0])),
+      Math.min(...p.map((q) => q[1])),
+      Math.max(...p.map((q) => q[0])),
+      Math.max(...p.map((q) => q[1]))
+    ]
+  }
+  for (let i = 0; i < operators.fnArray.length; i++) {
+    const op = operators.fnArray[i],
+      a = operators.argsArray[i]
+    if (op === OPS.save)
+      stack.push({ ctm: [...ctm], size, clip: [...clip], lineWidth, form: false })
+    else if (op === OPS.paintFormXObjectBegin) {
+      stack.push({ ctm: [...ctm], size, clip: [...clip], lineWidth, form: true })
+      if (a[0]) ctm = Util.transform(ctm, a[0])
+      const b = a[1]
+      clip = clipped(
+        transformed([
+          [b[0], b[1]],
+          [b[2], b[1]],
+          [b[0], b[3]],
+          [b[2], b[3]]
+        ])
+      )
+    } else if (op === OPS.restore || op === OPS.paintFormXObjectEnd) {
+      const state = stack.pop()
+      if (!state || state.form !== (op === OPS.paintFormXObjectEnd)) return false
+      ctm = state.ctm
+      size = state.size
+      clip = state.clip
+      lineWidth = state.lineWidth
+    } else if (op === OPS.transform) ctm = Util.transform(ctm, a)
+    else if (op === OPS.setLineWidth) lineWidth = a[0]
+    else if (op === OPS.clip) pendingClip = true
+    else if (op === OPS.constructPath && pendingClip) {
+      // Only the exact four-corner rectangular clip used by these closed
+      // native plot programs is eligible. Curved or incomplete clips refuse.
+      const p = a[1][0],
+        xs = [],
+        ys = []
+      if (a[0] !== OPS.endPath || p.length !== 13 || p[12] !== 4 || p[0] !== 0) return false
+      for (let n = 0; n < 12; n += 3) {
+        if (n && p[n] !== 1) return false
+        xs.push(p[n + 1])
+        ys.push(p[n + 2])
+      }
+      if (
+        new Set(xs).size !== 2 ||
+        new Set(ys).size !== 2 ||
+        new Set(xs.map((v, n) => `${v}:${ys[n]}`)).size !== 4 ||
+        xs.some((v, n) => v !== xs[(n + 1) % 4] && ys[n] !== ys[(n + 1) % 4])
+      )
+        return false
+      clip = clipped(transformed(xs.map((v, n) => [v, ys[n]])))
+      pendingClip = false
+    } else if (op === OPS.constructPath && a[0] !== OPS.endPath) {
+      const p = a[1][0],
+        points = []
+      for (let n = 0; n < p.length;) {
+        const command = p[n++],
+          count = command === 0 || command === 1 ? 2 : command === 2 ? 6 : 0
+        for (let j = 0; j < count; j += 2) points.push([p[n + j], p[n + j + 1]])
+        n += count
+      }
+      if (!points.length) return false
+      const sourceBounds = [
+        Math.min(...points.map((p) => p[0])),
+        Math.min(...points.map((p) => p[1])),
+        Math.max(...points.map((p) => p[0])),
+        Math.max(...points.map((p) => p[1]))
+      ]
+      if (sourceBounds.some((v, n) => Math.abs(v - a[2][n]) > 1e-7)) return false
+      let r = transformed(points)
+      if (a[0] === OPS.stroke) {
+        const dx = (lineWidth * ctm[0]) / 2,
+          dy = (lineWidth * ctm[3]) / 2
+        r = [r[0] - dx, r[1] - dy, r[2] + dx, r[3] + dy]
+      }
+      r = clipped(r)
+      // Match the version-pinned recorded tile envelope after clipping. A
+      // sub-tile reversed extent can still occupy one conservative tile.
+      if (page)
+        r = r.map(
+          (v, n) =>
+            (((n < 2 ? Math.floor : Math.ceil)((v * 256) / (n % 2 ? page.height : page.width)) +
+              (n < 2 ? 0 : 1)) *
+              (n % 2 ? page.height : page.width)) /
+            256
+        )
+      if (r[0] >= r[2] || r[1] >= r[3]) emptyPaint++
+      else paint.set(i, r)
+    } else if (op === OPS.beginText) {
+      matrix = [1, 0, 0, 1, 0, 0]
+      x = y = lineX = lineY = 0
+    } else if (op === OPS.setTextMatrix) {
+      matrix = Array.from(a[0])
+      x = y = lineX = lineY = 0
+    } else if (op === OPS.setFont) size = a[1]
+    else if (op === OPS.moveText) {
+      x = lineX += a[0]
+      y = lineY += a[1]
+    } else if (op === OPS.showText) {
+      for (const g of a[0]) {
+        if (typeof g === 'number') {
+          x -= (g * size) / 1000
+          continue
+        }
+        const width = (g.width * size) / 1000,
+          transform = Util.transform(viewport.transform, Util.transform(ctm, matrix)),
+          points = [
+            [x, y],
+            [x + width, y],
+            [x, y + size],
+            [x + width, y + size]
+          ].map((p) => {
+            Util.applyTransform(p, transform)
+            return p
+          }),
+          rect = [
+            Math.min(...points.map((p) => p[0])),
+            Math.min(...points.map((p) => p[1])),
+            Math.max(...points.map((p) => p[0])),
+            Math.max(...points.map((p) => p[1]))
+          ]
+        if (!rect.every(Number.isFinite) || area(rect) <= 0) return false
+        for (const char of g.unicode.replace(/\s/gu, ''))
+          glyphs.push({
+            char,
+            rect,
+            height: Math.hypot(transform[2], transform[3]) * size,
+            horizontal: transform[1] === 0,
+            baseline: points[0][1]
+          })
+        x += width
+      }
+    }
+  }
+  if (stack.length || pendingClip) return false
+  if (page) {
+    if (
+      !Number.isSafeInteger(page.invalidGraphicsBounds) ||
+      page.invalidGraphicsBounds !== emptyPaint ||
+      !Array.isArray(page.graphicsBounds) ||
+      page.graphicsBounds.length !== paint.size
+    )
+      return false
+    const seen = new Set()
+    for (const g of page.graphicsBounds) {
+      const r = paint.get(g.operationIndex),
+        b = g.paintedNormalizedRect ?? g.normalizedRect
+      if (
+        g.kind !== 'path' ||
+        !r ||
+        seen.has(g.operationIndex) ||
+        !Array.isArray(b) ||
+        b.length !== 4 ||
+        !b.every(Number.isFinite)
+      )
+        return false
+      seen.add(g.operationIndex)
+      const measured = b.map((v, n) => v * (n % 2 ? page.height : page.width))
+      if (r.some((v, n) => Math.abs(v - measured[n]) > 1e-7)) return false
+    }
+  }
+  let offset = 0
+  const indices = new Set()
+  for (const t of tokens) {
+    const text = t.text.replace(/\s/gu, ''),
+      chars = Array.from(text),
+      part = glyphs.slice(offset, offset + chars.length)
+    offset += chars.length
+    if (
+      !text ||
+      !t.rect?.every(Number.isFinite) ||
+      area(t.rect) <= 0 ||
+      !Number.isSafeInteger(t.sourceItem?.index) ||
+      indices.has(t.sourceItem.index) ||
+      t.sourceItem.text !== t.text ||
+      (page && t.sourceItem.pageNumber !== page.pageNumber) ||
+      part.map((g) => g.char).join('') !== text ||
+      !Number.isFinite(t.height) ||
+      !Number.isFinite(t.baseline) ||
+      part.some((g) => Math.abs(g.height - t.height) > 0.02 || g.horizontal !== t.horizontal) ||
+      Math.abs(part[0]?.baseline - t.baseline) > 0.02 ||
+      !part.length ||
+      union(part.map((g) => g.rect)).some((v, n) => Math.abs(v - t.rect[n]) > 0.02)
+    )
+      return false
+    indices.add(t.sourceItem.index)
+  }
+  return offset === glyphs.length
+}
+
+// Six independently closed faces, one optional nested legend, complete native
+// paint and whole original fonts establish one finite two-by-three plate.
+function nativeTwoRowThreeClosedPlots(
+  page,
+  caption,
+  captions,
+  tables,
+  frames,
+  tokens,
+  font,
+  context
+) {
+  const valid = (r) =>
+      Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && area(r) > 0,
+    contains = (a, b) => b.every((v, n) => (n < 2 ? v >= a[n] - 1e-7 : v <= a[n] + 1e-7))
+  if (
+    !context ||
+    caption.page !== page.pageNumber ||
+    !valid(caption.rect) ||
+    !tokens.length ||
+    frames.length < 6 ||
+    frames.length > 7 ||
+    frames.some((r) => !valid(r))
+  )
+    return
+  if (
+    !Array.isArray(caption.lines) ||
+    !caption.lines.length ||
+    caption.lines.some(
+      (text) =>
+        page.lines.filter((l) => l.text === text && contains(caption.rect, lineRect(l))).length !==
+        1
+    ) ||
+    page.lines.filter((l) => l.text === caption.lines[0]).length !== 1
+  )
+    return
+  const outer = frames
+    .filter((f) => !frames.some((r) => r !== f && contains(r, f)))
+    .sort((a, b) => a[1] - b[1] || a[0] - b[0])
+  if (outer.length !== 6) return
+  const upper = outer.slice(0, 3).sort((a, b) => a[0] - b[0]),
+    lower = outer.slice(3).sort((a, b) => a[0] - b[0]),
+    b = union(outer)
+  if (
+    [upper, lower].some((row) =>
+      row.some(
+        (f, n) =>
+          f[2] - f[0] < font * 6 ||
+          f[3] - f[1] < font * 6 ||
+          Math.abs(f[1] - row[0][1]) > font * 0.1 ||
+          Math.abs(f[3] - row[0][3]) > font * 0.1 ||
+          Math.abs(f[2] - f[0] - upper[0][2] + upper[0][0]) > font * 0.1 ||
+          (n && f[0] <= row[n - 1][2])
+      )
+    ) ||
+    lower.some(
+      (f, n) =>
+        f[1] <= upper[n][3] ||
+        f[1] - upper[n][3] > font * 6 ||
+        Math.abs(f[0] - upper[n][0]) > font * 0.1 ||
+        Math.abs(f[2] - upper[n][2]) > font * 0.1 ||
+        Math.abs(f[3] - f[1] - upper[n][3] + upper[n][1]) > font * 0.1
+    ) ||
+    caption.rect[1] - b[3] < 0 ||
+    caption.rect[1] - b[3] > font * 6 ||
+    frames.some(
+      (f) =>
+        !outer.includes(f) &&
+        outer.filter((r) => contains(r, f) && area(f) < area(r) * 0.2).length !== 1
+    )
+  )
+    return
+  if (!supportsCompactFacetedOperatorContext(page, tokens, frames, context, true)) return
+  const titles = outer.map((f) =>
+    tokens.filter(
+      (t) =>
+        t.horizontal &&
+        t.rect[3] < f[1] &&
+        f[1] - t.rect[3] < font * 3 &&
+        t.height > font * 0.8 &&
+        t.height < font * 1.2 &&
+        Math.abs((t.rect[0] + t.rect[2] - f[0] - f[2]) / 2) < font &&
+        t.rect[2] - t.rect[0] < f[2] - f[0] + font * 6
+    )
+  )
+  if (titles.some((a) => a.length !== 1)) return
+  const lanes = outer.map((f, n) => [
+    n % 3 ? Math.max(f[0] - font * 3, (outer[n - 1][2] + f[0]) / 2) : f[0] - font * 3,
+    Math.min(f[1] - font, titles[n][0].rect[1]),
+    n % 3 < 2 ? Math.min(f[2] + font * 3, (f[2] + outer[n + 1][0]) / 2) : f[2] + font * 3,
+    f[3] + font * 2
+  ])
+  const ink = tokens.filter(
+    (t) =>
+      intersection(t.rect, b) > 0 ||
+      titles.some((a) => a.includes(t)) ||
+      lanes.some((l) => contains(l, t.rect))
+  )
+  if (
+    ink.some(
+      (t) =>
+        t.sourceItem.pageNumber !== page.pageNumber ||
+        (!titles.some((a) => a.includes(t)) &&
+          lanes.filter((l) => contains(l, t.rect)).length !== 1)
+    )
+  )
+    return
+  const paint = (page.graphicsBounds ?? []).map((g) => ({
+    g,
+    r: (g.paintedNormalizedRect ?? g.normalizedRect).map(
+      (v, n) => v * (n % 2 ? page.height : page.width)
+    )
+  }))
+  const crossed = paint.filter((p) => intersection(p.r, union(lanes)) > 0)
+  if (
+    crossed.some(
+      (p) =>
+        p.g.kind !== 'path' ||
+        !valid(p.r) ||
+        !Number.isSafeInteger(p.g.operationIndex) ||
+        context.operators.fnArray[p.g.operationIndex] !== OPS.constructPath ||
+        lanes.filter((l) => contains(l, p.r)).length !== 1
+    )
+  )
+    return
+  if (
+    outer.some((f, n) => {
+      const own = ink.filter((t) => contains(lanes[n], t.rect)),
+        numbers = own.filter((t) => /^[−-]?\d+(?:\.\d+)?$/u.test(t.text.trim())),
+        x = numbers.filter((t) => t.rect[1] >= f[3] && t.rect[3] < f[3] + font * 2),
+        y = numbers.filter(
+          (t) => t.rect[2] < f[0] && t.rect[1] >= f[1] - font && t.rect[3] <= f[3] + font
+        ),
+        traces = crossed.filter(
+          (p) =>
+            intersection(p.r, f) / area(p.r) > 0.7 &&
+            area(p.r) < area(f) * 0.9 &&
+            p.r[2] - p.r[0] > font * 3 &&
+            p.r[3] - p.r[1] > font * 0.3
+        )
+      return x.length < 3 || y.length < 3 || traces.length < 3
+    })
+  )
+    return
+  const rect = union([...outer, ...ink.map((t) => t.rect), ...crossed.map((p) => p.r)])
+  if (
+    rect[0] < 0 ||
+    rect[1] < 0 ||
+    rect[2] > page.width ||
+    rect[3] >= caption.rect[1] ||
+    tables.some((r) => intersection(r, rect) > 0) ||
+    captions.some(
+      (c) => c !== caption && c.page === page.pageNumber && intersection(c.rect, rect) > 0
+    ) ||
+    tokens.some((t) => intersection(t.rect, rect) > 0 && !ink.includes(t))
+  )
+    return
+  return { caption, rect, graphicsCount: outer.length }
 }

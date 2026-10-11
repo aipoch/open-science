@@ -3,9 +3,9 @@ import { realpathSync } from 'node:fs'
 import type { NotebookCell, NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement } from '../../shared/notebook-runtime'
 import { NotebookEnvironmentOperations } from './environment-operations'
-import { resolveExternalRLibrary } from './external-r-library'
+import { resolveExternalRLibrary } from '@aipoch/environment'
 import { detectManagedRuntimeMutation } from './managed-runtime-guard'
-import { NotebookRecoveryCoordinator } from './recovery-coordinator'
+import { NotebookRecoveryCoordinator } from '@aipoch/environment'
 import {
   DEFAULT_PY_ENV,
   DEFAULT_R_ENV,
@@ -13,8 +13,8 @@ import {
   pythonBin,
   rBin,
   resolveEnvName
-} from './runtime-paths'
-import type { NotebookRuntimeRepairPolicy } from './runtime-repair-policy'
+} from '@aipoch/environment'
+import type { NotebookRuntimeRepairPolicy } from '@aipoch/environment'
 import type {
   NotebookSessionAggregate,
   NotebookSessionResolvedInterpreter,

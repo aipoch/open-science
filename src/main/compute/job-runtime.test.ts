@@ -1,11 +1,12 @@
+import { createComputeExecution } from '@aipoch/compute/node'
 import { describe, expect, it, vi } from 'vitest'
 
+import type { JobPollerDeps } from '@aipoch/compute/node'
 import type { ComputeJob } from '../../shared/compute'
-import type { JobPollerDeps } from './job-poller'
-import type { ComputeJobRepository } from './job-repository'
-import type { ComputeHostRepository } from './repository'
 import type { ComputeConnectionBroker } from './connection-broker'
+import type { ComputeJobRepository } from './job-repository'
 import { createComputeJobRuntime } from './job-runtime'
+import type { ComputeHostRepository } from './repository'
 
 describe('createComputeJobRuntime', () => {
   it('routes updates through the service-owned seams and delegates runtime start/stop', async () => {
@@ -32,6 +33,7 @@ describe('createComputeJobRuntime', () => {
     const runtime = createComputeJobRuntime(
       {
         computeService: {
+          execution: createComputeExecution(),
           bindJobHarvestRetry: vi.fn(() => () => undefined),
           handleJobUpdated,
           handleJobCancellationConfirmed,
@@ -81,9 +83,7 @@ describe('createComputeJobRuntime', () => {
   })
 
   it('scopes manual collection retries, coalesces with automatic work, and refuses retries during deletion', async () => {
-    let retry!: (
-      request: import('../../shared/compute').RetryComputeJobHarvestRequest
-    ) => Promise<void>
+    let retry!: (request: import('@aipoch/compute').RetryComputeJobHarvestRequest) => Promise<void>
     let deletionRuntime!: { pause(): Promise<void>; resume(): void }
     let pollerDeps!: JobPollerDeps
     const job = {
@@ -105,6 +105,7 @@ describe('createComputeJobRuntime', () => {
     const runtime = createComputeJobRuntime(
       {
         computeService: {
+          execution: createComputeExecution(),
           bindJobHarvestRetry: (callback) => {
             retry = callback
             return vi.fn()
@@ -170,6 +171,7 @@ describe('createComputeJobRuntime', () => {
     const runtime = createComputeJobRuntime(
       {
         computeService: {
+          execution: createComputeExecution(),
           bindJobHarvestRetry: vi.fn(() => () => undefined),
           handleJobUpdated: vi.fn(),
           handleJobCancellationConfirmed: vi.fn(async () => undefined),
@@ -213,6 +215,7 @@ describe('createComputeJobRuntime', () => {
     } as unknown as ComputeJobRepository
     const runtime = createComputeJobRuntime({
       computeService: {
+        execution: createComputeExecution(),
         bindJobHarvestRetry: vi.fn(() => () => undefined),
         handleJobUpdated: vi.fn(),
         handleJobCancellationConfirmed: vi.fn(async () => undefined),
@@ -260,6 +263,7 @@ describe('createComputeJobRuntime', () => {
     const runtime = createComputeJobRuntime(
       {
         computeService: {
+          execution: createComputeExecution(),
           bindJobHarvestRetry: vi.fn(() => () => undefined),
           handleJobUpdated: vi.fn(),
           handleJobCancellationConfirmed: vi.fn(async () => undefined),
@@ -303,6 +307,7 @@ describe('createComputeJobRuntime', () => {
     const runtime = createComputeJobRuntime(
       {
         computeService: {
+          execution: createComputeExecution(),
           bindJobHarvestRetry: vi.fn(() => () => undefined),
           handleJobUpdated: vi.fn(),
           handleJobCancellationConfirmed: vi.fn(async () => undefined),
@@ -394,6 +399,7 @@ describe('createComputeJobRuntime', () => {
     const runtime = createComputeJobRuntime(
       {
         computeService: {
+          execution: createComputeExecution(),
           bindJobHarvestRetry: vi.fn(() => () => undefined),
           handleJobUpdated: vi.fn(),
           handleJobCancellationConfirmed: vi.fn(async () => undefined),
@@ -448,6 +454,7 @@ it('stops independent Compute resources when queue draining rejects', async () =
   const runtime = createComputeJobRuntime(
     {
       computeService: {
+        execution: createComputeExecution(),
         bindJobHarvestRetry: vi.fn(() => () => undefined),
         handleJobUpdated: vi.fn(),
         handleJobCancellationConfirmed: vi.fn(),
@@ -486,6 +493,7 @@ it.each(['startup', 'poller-stop'] as const)(
     const runtime = createComputeJobRuntime(
       {
         computeService: {
+          execution: createComputeExecution(),
           bindJobHarvestRetry: vi.fn(() => () => undefined),
           handleJobUpdated: vi.fn(),
           handleJobCancellationConfirmed: vi.fn(),

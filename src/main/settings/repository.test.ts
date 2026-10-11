@@ -10,7 +10,7 @@ import { SettingsDocumentStore } from './document-store'
 import { SettingsRepository } from './repository'
 import type { StoredCustomMcpServer, StoredProvider } from './types'
 import { UserSkillSpecialistPackageAdapter } from '@aipoch/skills'
-import { envDirectoryName } from '../notebook/runtime-paths'
+import { envDirectoryName } from '@aipoch/environment'
 
 // Capture the warn calls the repository makes through createLogger. vi.hoisted runs before the
 // module's top-level code so the vi.mock factory can reference the same spy instance.

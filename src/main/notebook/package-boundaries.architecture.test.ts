@@ -31,7 +31,12 @@ it('consumes Notebook packages only through exports and keeps packages independe
   const resolutionCaches = resolutionOptions.map((options) =>
     createModuleResolutionCache(root, (path) => path, options)
   )
-  const packages = ['notebook-syntax', 'notebook-code-risk', 'notebook-analysis'].map((name) => {
+  const packages = [
+    'notebook-syntax',
+    'notebook-code-risk',
+    'notebook-analysis',
+    'environment'
+  ].map((name) => {
     const directory = resolve(root, 'packages', name)
     const manifest = JSON.parse(readFileSync(resolve(directory, 'package.json'), 'utf8'))
     return {

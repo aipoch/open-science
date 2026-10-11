@@ -8,6 +8,180 @@ import {
   hasUniqueRecordTokens
 } from './literature-pdf-source-records.mjs'
 import { joinHorizontalTableRules } from './literature-pdf-table-rules.mjs'
+import {
+  proveNativeCompleteRuledSourcePacket,
+  nativeWholeFontOrigins,
+  nativeCompleteRuledPaintCrop
+} from './literature-pdf-native-leaf-record-repair.mjs'
+
+// Two independently fenced statistical bodies change leaf count beneath one
+// printed caption. Whole fonts and persistent empty gutters establish each
+// separate grid; the existing parts transport retains both original headers.
+export function recoverNativeHeterogeneousRuledParts(table, items, captions, rules, context) {
+  const crop = table?.cropRect,
+    valid = (r) =>
+      Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && r[0] < r[2] && r[1] < r[3]
+  if (
+    !valid(crop) ||
+    table.parts ||
+    !Array.isArray(items) ||
+    !Array.isArray(captions) ||
+    !Array.isArray(rules)
+  )
+    return
+  const near = items.filter(
+    (i) =>
+      valid(i.rect) &&
+      i.rect[0] < crop[2] &&
+      i.rect[2] > crop[0] &&
+      i.rect[1] < crop[3] &&
+      i.rect[3] > crop[1]
+  )
+  if (!near.length) return
+  const h = Math.max(...near.map((i) => i.height)),
+    fences = rules.filter(
+      (r) =>
+        r[1] === r[3] &&
+        r[1] >= crop[1] - h &&
+        r[1] <= crop[3] + h &&
+        r[0] >= crop[0] - h &&
+        r[2] <= crop[2] + h
+    )
+  if (fences.length !== 8) return
+  const bands = []
+  for (const fence of fences) {
+    let b = bands.find(
+      (b) => Math.abs(b[0][0] - fence[0]) < 0.01 && Math.abs(b[0][2] - fence[2]) < 0.01
+    )
+    if (!b) {
+      b = []
+      bands.push(b)
+    }
+    b.push(fence)
+  }
+  if (bands.length !== 2 || bands.some((b) => b.length !== 4)) return
+  bands.forEach((b) => b.sort((a, b) => a[1] - b[1]))
+  bands.sort((a, b) => a[0][1] - b[0][1])
+  const [upper, lower] = bands,
+    frame = [upper[0][0], upper[0][1], upper[0][2], lower[3][1]]
+  if (
+    lower[0][0] <= upper[0][0] ||
+    lower[0][2] >= upper[0][2] ||
+    lower[0][1] <= upper[3][1] ||
+    lower[0][1] - upper[3][1] > h * 2 ||
+    !proveNativeCompleteRuledSourcePacket(items, rules, context, frame)
+  )
+    return
+  const titles = captions.filter(
+    (c) =>
+      c.page === near[0].sourceItem?.pageNumber &&
+      captionKind(c.lines?.[0]) === 'table' &&
+      c.rect?.[3] <= frame[1] &&
+      frame[1] - c.rect[3] < h * 3 &&
+      c.rect[2] > frame[0] &&
+      c.rect[0] < frame[2]
+  )
+  if (titles.length !== 1 || captions.some((c) => c.rect[1] < frame[3] && c.rect[3] > frame[1]))
+    return
+  const source = items.filter(
+      (i) =>
+        i.rect[0] < frame[2] && i.rect[2] > frame[0] && i.rect[1] < frame[3] && i.rect[3] > frame[1]
+    ),
+    parts = [],
+    owned = []
+  for (const [n, b] of bands.entries()) {
+    const rect = [b[0][0], b[0][1], b[0][2], b[3][1]],
+      fonts = source.filter(
+        (i) =>
+          i.rect[0] >= rect[0] &&
+          i.rect[2] <= rect[2] &&
+          i.rect[1] >= rect[1] &&
+          i.rect[3] <= rect[3]
+      )
+    if (
+      !fonts.length ||
+      !nativeWholeFontOrigins(fonts) ||
+      fonts.some((i) => Math.abs(i.height - h) > h * 0.01)
+    )
+      return
+    const rows = groupSourceRowsWithScripts(fonts, h, 0.15)
+    if (!rows || rows.length !== 5 || rows.some((g) => g.length !== (n ? 6 : 9))) return
+    rows.forEach((g) => g.sort((a, b) => a.rect[0] - b.rect[0]))
+    if (
+      !rows[0].every((i) => i.rect[3] < b[1][1]) ||
+      rows.slice(1, 4).some((g) => g.some((i) => i.rect[1] <= b[1][1] || i.rect[3] >= b[2][1])) ||
+      rows[4].some((i) => i.rect[1] <= b[2][1])
+    )
+      return
+    if (
+      !/\p{L}/u.test(rows[0][0].text) ||
+      rows
+        .slice(1)
+        .some(
+          (g) =>
+            !/[\p{L}\d]/u.test(g[0].text) ||
+            g.slice(1).some((i) => !/^\d[\d,]*(?:\.\d+)?$/u.test(i.text))
+        )
+    )
+      return
+    const cuts = [rect[0]]
+    for (let c = 0; c < rows[0].length - 1; c++) {
+      const left = Math.max(...rows.map((g) => g[c].rect[2])),
+        right = Math.min(...rows.map((g) => g[c + 1].rect[0]))
+      if (right - left < h * 0.4) return
+      cuts.push((left + right) / 2)
+    }
+    cuts.push(rect[2])
+    if (rows.some((g) => !readSourceRow(g, cuts))) return
+    const ys = [
+        rect[1],
+        b[1][1],
+        ...rows.slice(2, 4).map((g, k) => (union(rows[k + 1])[3] + union(g)[1]) / 2),
+        b[2][1],
+        rect[3]
+      ],
+      cells = []
+    for (const [row, g] of rows.entries())
+      for (const [column, font] of g.entries())
+        cells.push({
+          row,
+          column,
+          rowSpan: 1,
+          colSpan: 1,
+          rect: [cuts[column], ys[row], cuts[column + 1], ys[row + 1]],
+          text: font.text,
+          sourceTokens: [
+            { text: font.text, rect: [...font.rect], height: font.height, baseline: font.baseline }
+          ],
+          sourceRects: [[...font.rect]],
+          sourceItems: nativeWholeFontOrigins([font])
+        })
+    parts.push({
+      title: rows[0][0].text,
+      sourceViewport: table.sourceViewport,
+      grid: rows.map((g) => g.map((i) => i.text)),
+      cells,
+      unassigned: [],
+      issues: [],
+      notes: []
+    })
+    owned.push(...fonts)
+    if (
+      ys.length !== rows.length + 1 ||
+      rows.some((g, k) => g.some((i) => i.rect[1] < ys[k] || i.rect[3] > ys[k + 1]))
+    )
+      return
+  }
+  if (
+    owned.length !== source.length ||
+    new Set(owned).size !== source.length ||
+    source.some((i) => !owned.includes(i))
+  )
+    return
+  const completeCrop = nativeCompleteRuledPaintCrop(frame, fences, context, source)
+  if (!completeCrop) return
+  return { cropRect: completeCrop, parts }
+}
 
 // A wrapped score heading can sit above the model's first header row. A native
 // underline over two timepoint leaves, a closed frame, and bounded score records

@@ -27,7 +27,7 @@ import {
   EnvironmentManifestPublicationError,
   EnvironmentStateTracker,
   type EnvironmentCaptureTarget
-} from './environment-state-tracker'
+} from '@aipoch/environment'
 import { detectManagedRuntimeMutation } from './managed-runtime-guard'
 import { NotebookRunTerminalizationOwner } from './run-terminalization'
 import { notebookLaneKey, notebookLaneScope } from './lane-identity'
@@ -46,7 +46,7 @@ import {
   type NotebookShellProcess,
   type NotebookShellResult
 } from './shell-process'
-import { prepareNotebookWorkloadCache } from './notebook-workload-cache-paths'
+import { prepareNotebookWorkloadCache } from '@aipoch/environment'
 import { startWorkingFileObservation } from './working-file-observer'
 import type { TransientViewImage } from './host-view-image-service'
 import {

@@ -8,7 +8,7 @@ import {
   envDirectoryName,
   logicalEnvNameFromDirectory,
   resolveEnvName
-} from './runtime-paths'
+} from '@aipoch/environment'
 
 export type WindowsManagedRuntimeLocation = {
   environment: string

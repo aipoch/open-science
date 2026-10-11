@@ -1,6 +1,7 @@
-import { expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { pathToFileURL } from 'node:url'
 import { resolve } from './paths'
+import { OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
 
 type NativeToken = {
   text: string
@@ -30,6 +31,367 @@ const line = (text: string, x: number, y: number, width: number): SourceLine => 
   width,
   height: 10,
   fontSize: 10
+})
+
+function centeredCaretSource(): {
+  page: { pageNumber: number; width: number; height: number; lines: SourceLine[] }
+  tokens: (NativeToken & { sourceItem: { pageNumber: number; index: number; text: string } })[]
+  caption: { page: number; lines: string[]; rect: number[] }
+  context: {
+    content: {
+      items: {
+        str: string
+        dir: string
+        width: number
+        height: number
+        transform: number[]
+        fontName: string
+        sourceItem: { pageNumber: number; index: number; text: string }
+      }[]
+      styles: Record<
+        string,
+        { ascent: number; descent: number; vertical: boolean; fontFamily: string }
+      >
+    }
+    operators: { fnArray: number[]; argsArray: unknown[] }
+    viewport: { width: number; height: number; transform: number[] }
+    fonts: {
+      id: string
+      missingFile: boolean
+      isType3Font: boolean
+      vertical: boolean
+      remeasure: boolean
+      fontMatrix: number[]
+    }[]
+    glyphPaths: { id: string; path: number[] }[]
+  }
+} {
+  const fontId = 'loaded-caption-font',
+    pageNumber = 1,
+    scale = 1.5
+  const raw: {
+    str: string
+    dir: string
+    width: number
+    height: number
+    transform: number[]
+    fontName: string
+    sourceItem: { pageNumber: number; index: number; text: string }
+  }[] = []
+  const operators = { fnArray: [] as number[], argsArray: [] as unknown[] }
+  const paths = new Map<string, number[]>()
+  const op = (code: number, args: unknown): void => {
+    operators.fnArray.push(code)
+    operators.argsArray.push(args)
+  }
+  op(OPS.setFillRGBColor, ['#000000'])
+  const add = (text: string, x: number, y: number, width: number, size = 10): void => {
+    raw.push({
+      str: text,
+      dir: 'ltr',
+      width,
+      height: size,
+      transform: [size, 0, 0, size, x, 800 - y - size],
+      fontName: fontId,
+      sourceItem: { pageNumber, index: raw.length, text }
+    })
+    const glyphs = Array.from(text, (char) => {
+      const outline =
+        char === 'ˆ'
+          ? [0, 0.1, 0.54, 1, 0.2, 0.7, 1, 0.3, 0.54, 4]
+          : /\s/u.test(char)
+            ? []
+            : [0, 0, 0, 1, 0.45, 0, 1, 0.45, 0.65, 1, 0, 0.65, 4]
+      paths.set(`${fontId}_path_${char}`, outline)
+      return {
+        originalCharCode: char.codePointAt(0),
+        fontChar: char,
+        unicode: char,
+        accent: null,
+        width: (width / text.length / size) * 1000,
+        isSpace: /\s/u.test(char),
+        isInFont: true
+      }
+    })
+    op(OPS.beginText, null)
+    op(OPS.setFont, [fontId, size])
+    op(OPS.moveText, [x, 800 - y - size])
+    op(OPS.showText, [glyphs])
+    op(OPS.endText, null)
+  }
+  add('Table I: ', 80, 100, 45)
+  add('ˆ', 126, 97.5, 4)
+  add('A', 125, 100, 5)
+  add(' and B', 130, 100, 30)
+  add('2', 160, 100.1, 3.5, 7)
+  add(' value.', 163.5, 100, 35)
+  add('Short continuation.', 60, 112, 158.5)
+  add('Final line.', 80, 124, 118.5)
+  const page = {
+    pageNumber,
+    width: 600,
+    height: 800,
+    lines: [
+      line('Table I:', 80, 100, 45),
+      line('ˆ', 126, 97.5, 4),
+      line('A and B', 125, 100, 35),
+      { ...line('2', 160, 100.1, 3.5), height: 7, fontSize: 7 },
+      line('value.', 163.5, 100, 35),
+      line('Short continuation.', 60, 112, 158.5),
+      line('Final line.', 80, 124, 118.5)
+    ]
+  }
+  const tokens = raw.map((item) => ({
+    text: item.str,
+    sourceItem: item.sourceItem,
+    rect: [
+      item.transform[4] * scale,
+      (800 - item.transform[5] - item.height) * scale,
+      (item.transform[4] + item.width) * scale,
+      (800 - item.transform[5]) * scale
+    ],
+    baseline: (800 - item.transform[5]) * scale,
+    height: item.height * scale,
+    horizontal: true
+  }))
+  const caption = {
+    page: pageNumber,
+    lines: ['Table I: A and B² value.', 'Short continuation.', 'Final line.'],
+    rect: [60, 100, 218.5, 134]
+  }
+  const context = {
+    content: {
+      items: raw,
+      styles: { [fontId]: { ascent: 0.8, descent: -0.2, vertical: false, fontFamily: 'anonymous' } }
+    },
+    operators,
+    viewport: { width: 900, height: 1200, transform: [scale, 0, 0, -scale, 0, 1200] },
+    fonts: [
+      {
+        id: fontId,
+        missingFile: false,
+        isType3Font: false,
+        vertical: false,
+        remeasure: false,
+        fontMatrix: [0.001, 0, 0, 0.001, 0, 0]
+      }
+    ],
+    glyphPaths: Array.from(paths, ([id, path]) => ({ id, path }))
+  }
+  return { page, tokens, caption, context }
+}
+
+describe('source-visible centered caret', () => {
+  it('retains the literal caret through the actual entry while preserving accepted scripts and tails', () => {
+    const source = centeredCaretSource(),
+      before = structuredClone(source)
+    expect(
+      recoverNativeCaptionOverlayAccentLines(
+        source.page,
+        source.caption,
+        source.tokens,
+        1.5,
+        source.context
+      )
+    ).toEqual(['Table I: ˆA and B² value.', 'Short continuation.', 'Final line.'])
+    expect(source).toEqual(before)
+  })
+  it('keeps the wider first-line/script path unavailable without original source evidence', () => {
+    const source = centeredCaretSource()
+    expect(
+      recoverNativeCaptionOverlayAccentLines(source.page, source.caption, source.tokens)
+    ).toBeUndefined()
+  })
+  it('binds actual operator positions to the original caret and owner tokens', () => {
+    const source = centeredCaretSource()
+    for (const literal of ['ˆ', 'A']) {
+      const index = source.context.operators.fnArray.findIndex(
+        (code, n) =>
+          code === OPS.showText &&
+          (source.context.operators.argsArray[n] as { unicode: string }[][])[0]
+            .map((g) => g.unicode)
+            .join('') === literal
+      )
+      ;(source.context.operators.argsArray[index - 1] as number[])[0] += 300
+    }
+    expect(
+      recoverNativeCaptionOverlayAccentLines(
+        source.page,
+        source.caption,
+        source.tokens,
+        1.5,
+        source.context
+      )
+    ).toBeUndefined()
+  })
+  it.each(['missingFile', 'isType3Font', 'vertical', 'remeasure'] as const)(
+    'refuses unsupported loaded font flag %s',
+    (flag) => {
+      const source = centeredCaretSource()
+      source.context.fonts[0][flag] = true
+      expect(
+        recoverNativeCaptionOverlayAccentLines(
+          source.page,
+          source.caption,
+          source.tokens,
+          1.5,
+          source.context
+        )
+      ).toBeUndefined()
+    }
+  )
+  it('refuses selected move-only and zero winding-area glyph outlines', () => {
+    for (const path of [
+      [0, 0.1, 0.54],
+      [0, 0.1, 0.54, 1, 0.3, 0.7, 1, 0.1, 0.7, 1, 0.3, 0.54, 4]
+    ]) {
+      const source = centeredCaretSource()
+      source.context.glyphPaths.find((p) => p.id.endsWith('_ˆ'))!.path = path
+      expect(
+        recoverNativeCaptionOverlayAccentLines(
+          source.page,
+          source.caption,
+          source.tokens,
+          1.5,
+          source.context
+        )
+      ).toBeUndefined()
+    }
+  })
+  it('refuses later opaque paint that covers the selected letter or caret', () => {
+    const source = centeredCaretSource()
+    source.context.operators.fnArray.push(OPS.setFillRGBColor, OPS.constructPath)
+    source.context.operators.argsArray.push(
+      ['#ffffff'],
+      [OPS.fill, [[0, 124, 690, 1, 131, 690, 1, 131, 706, 1, 124, 706, 4]], [124, 690, 131, 706]]
+    )
+    expect(
+      recoverNativeCaptionOverlayAccentLines(
+        source.page,
+        source.caption,
+        source.tokens,
+        1.5,
+        source.context
+      )
+    ).toBeUndefined()
+  })
+  it.each(['hidden', 'restored'])(
+    'requires visible selected ink after an earlier %s background',
+    (mode) => {
+      const source = centeredCaretSource()
+      source.context.operators.fnArray.splice(1, 0, OPS.constructPath)
+      source.context.operators.argsArray.splice(1, 0, [
+        OPS.fill,
+        [[0, 120, 685, 1, 135, 685, 1, 135, 708, 1, 120, 708, 4]],
+        [120, 685, 135, 708]
+      ])
+      if (mode === 'restored') {
+        source.context.operators.fnArray.splice(
+          2,
+          0,
+          OPS.setFillRGBColor,
+          OPS.constructPath,
+          OPS.setFillRGBColor
+        )
+        source.context.operators.argsArray.splice(
+          2,
+          0,
+          ['#ffffff'],
+          [
+            OPS.fill,
+            [[0, 119, 684, 1, 136, 684, 1, 136, 709, 1, 119, 709, 4]],
+            [119, 684, 136, 709]
+          ],
+          ['#000000']
+        )
+      }
+      const before = structuredClone(source)
+      const result = recoverNativeCaptionOverlayAccentLines(
+        source.page,
+        source.caption,
+        source.tokens,
+        1.5,
+        source.context
+      )
+      if (mode === 'hidden') expect(result).toBeUndefined()
+      else
+        expect(result).toEqual(['Table I: ˆA and B² value.', 'Short continuation.', 'Final line.'])
+      expect(source).toEqual(before)
+    }
+  )
+  it('refuses clipping or unproved opacity states', () => {
+    for (const [operation, args] of [
+      [OPS.clip, null],
+      [OPS.setGState, [[['ca', 0.5]]]]
+    ] as const) {
+      const source = centeredCaretSource()
+      source.context.operators.fnArray.unshift(operation)
+      source.context.operators.argsArray.unshift(args)
+      expect(
+        recoverNativeCaptionOverlayAccentLines(
+          source.page,
+          source.caption,
+          source.tokens,
+          1.5,
+          source.context
+        )
+      ).toBeUndefined()
+    }
+  })
+  it('refuses mismatched accepted scripts, repeated first lines and a displaced caption center', () => {
+    for (const control of ['script', 'first', 'center']) {
+      const source = centeredCaretSource()
+      if (control === 'script') source.caption.lines[0] = source.caption.lines[0].replace('²', '³')
+      if (control === 'first') source.page.lines.push({ ...source.page.lines[0] })
+      if (control === 'center') source.caption.rect[2] += 2
+      expect(
+        recoverNativeCaptionOverlayAccentLines(
+          source.page,
+          source.caption,
+          source.tokens,
+          1.5,
+          source.context
+        )
+      ).toBeUndefined()
+    }
+  })
+  it('rejects array metadata and typed iterators before evaluating accessors', () => {
+    let invoked = 0
+    const source = centeredCaretSource()
+    const tuple = new Float32Array(source.context.operators.argsArray[3] as number[])
+    Object.defineProperty(tuple, Symbol.iterator, {
+      get: () => {
+        invoked++
+        return Float32Array.prototype[Symbol.iterator]
+      }
+    })
+    source.context.operators.argsArray[3] = tuple
+    expect(
+      recoverNativeCaptionOverlayAccentLines(
+        source.page,
+        source.caption,
+        source.tokens,
+        1.5,
+        source.context
+      )
+    ).toBeUndefined()
+    expect(invoked).toBe(0)
+    const hole = centeredCaretSource()
+    delete hole.context.fonts[0].fontMatrix[5]
+    Object.defineProperty(hole.context.fonts[0].fontMatrix, '9007199254740991', {
+      value: 0,
+      enumerable: true
+    })
+    expect(
+      recoverNativeCaptionOverlayAccentLines(
+        hole.page,
+        hole.caption,
+        hole.tokens,
+        1.5,
+        hole.context
+      )
+    ).toBeUndefined()
+  })
 })
 const native = (text: string, x: number, y: number, width: number): NativeToken => ({
   text,

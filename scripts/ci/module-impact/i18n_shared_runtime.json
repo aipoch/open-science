@@ -118,7 +118,6 @@
       "src/main/compute/session-catalog-hydration.integration.test.ts",
       "src/main/compute/skill-provisioning.test.ts",
       "src/main/compute/slurm.real-ssh.integration.test.ts",
-      "src/main/compute/ssh-runner.test.ts",
       "src/main/composition/connector-application.test.ts",
       "src/main/credential-identity/recovery.test.ts",
       "src/main/data-content-application-commands.test.ts",
@@ -221,8 +220,6 @@
       "src/main/notebook/package-cache-sandbox.integration.test.ts",
       "src/main/notebook/package-process-sandbox.windows.integration.test.ts",
       "src/main/notebook/process-tree-consumers.macos.integration.test.ts",
-      "src/main/notebook/provisioner.test.ts",
-      "src/main/notebook/recovery-coordinator.test.ts",
       "src/main/notebook/repl-loop.integration.test.ts",
       "src/main/notebook/reproduction-runtime.integration.test.ts",
       "src/main/notebook/reproduction-runtime.test.ts",
@@ -715,7 +712,9 @@
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/agents/production-completion-handoff.test.ts",
       "src/main/notebook/working-file-observer-plain-host.test.ts",
-      "src/main/notebook/auto-mode-budget.integration.test.ts"
+      "src/main/notebook/auto-mode-budget.integration.test.ts",
+      "src/main/notebook/environment-provisioning.contract.test.ts",
+      "src/main/notebook/environment-recovery.contract.test.ts"
     ]
   },
   "capabilityOverlays": [],

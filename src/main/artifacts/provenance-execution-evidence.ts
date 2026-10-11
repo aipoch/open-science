@@ -8,12 +8,14 @@ import type {
   ProvenanceNotebookRun
 } from '../../shared/artifact-provenance'
 import { isArtifactNotebookProducer } from '../../shared/artifact-provenance'
+import type { NotebookEnvironmentManifest } from '../../shared/notebook'
 import type {
-  NotebookEnvironmentManifest,
   NotebookEnvironmentPackage,
+  NotebookRunEnvironmentCapture
+} from '@aipoch/environment/contracts'
+import type {
   NotebookHelperModuleEvidence,
   NotebookOutput,
-  NotebookRunEnvironmentCapture,
   NotebookRunInputFile,
   NotebookRunRecord
 } from '../../shared/notebook'

@@ -17,6 +17,7 @@ import {
   createPackageTestPlan,
   packageTestExcludePatterns,
   notebookPackageVerificationPlan,
+  environmentPackageVerificationPlan,
   packageTestPlanFromRevisions,
   validatePackageTestRegistry
 } from './package-test-impact.mjs'
@@ -190,13 +191,20 @@ it('applies exclusions to real Vitest discovery across inherited projects while 
       'src/host.test.ts',
       'packages/core/src/core.test.ts',
       'packages/core/src/core.architecture.test.ts',
-      'packages/core/src/core.integration.test.ts'
+      'packages/core/src/core.integration.test.ts',
+      'packages/compute/src/compute.test.ts',
+      'packages/compute/src/compute.architecture.test.ts',
+      'packages/compute/src/compute.integration.test.ts'
     ]) {
       const file = join(fixture, path)
       mkdirSync(join(file, '..'), { recursive: true })
       writeFileSync(file, 'import { it } from "vitest"; it("fixture", () => {})\n')
     }
-    const list = (portable: string): Array<{ file: string }> =>
+    writeFileSync(
+      join(fixture, 'packages/compute/vitest.config.ts'),
+      `export default {root: ${JSON.stringify(join(fixture, 'packages/compute'))}, test: {name:'compute',include:['src/**/*.test.ts']}}`
+    )
+    const list = (portable: string, excluded = [core]): Array<{ file: string }> =>
       JSON.parse(
         execFileSync(
           process.execPath,
@@ -216,13 +224,30 @@ it('applies exclusions to real Vitest discovery across inherited projects while 
             env: {
               ...process.env,
               VITEST_PORTABLE_CI: portable,
-              OPEN_SCIENCE_CI_EXCLUDED_PACKAGE_ROOTS: JSON.stringify([core])
+              OPEN_SCIENCE_CI_EXCLUDED_PACKAGE_ROOTS: JSON.stringify(excluded)
             }
           }
         )
       )
-    expect(list('1').map(({ file }) => file)).toEqual([join(fixture, 'src/host.test.ts')])
-    expect(list('0')).toHaveLength(4)
+    expect(list('1', [core, 'packages/compute']).map(({ file }) => file)).toEqual([
+      join(fixture, 'src/host.test.ts')
+    ])
+    // A trusted baseline predating Compute must still discover the new package, exactly once.
+    expect(
+      list('1')
+        .map(({ file }) => file)
+        .sort()
+    ).toEqual(
+      [
+        'src/host.test.ts',
+        'packages/compute/src/compute.test.ts',
+        'packages/compute/src/compute.architecture.test.ts',
+        'packages/compute/src/compute.integration.test.ts'
+      ]
+        .map((file) => join(fixture, file))
+        .sort()
+    )
+    expect(list('0')).toHaveLength(7)
   } finally {
     rmSync(fixture, { recursive: true, force: true })
   }
@@ -281,10 +306,16 @@ it.each(['dependencies', 'unavailable'] as const)(
 )
 
 it.each([
-  ['src/main/notebook/environment-state-tracker.ts', []],
+  ['packages/environment/src/environment-state-tracker.ts', ['packages/environment']],
   ['src/main/session-diagnostics/notebook.ts', []],
-  ['packages/diagnostics/src/diagnostic-redaction.ts', ['packages/diagnostics']],
-  ['packages/diagnostics/src/node.ts', ['packages/diagnostics']]
+  [
+    'packages/diagnostics/src/diagnostic-redaction.ts',
+    ['packages/diagnostics', 'packages/environment', 'packages/compute']
+  ],
+  [
+    'packages/diagnostics/src/node.ts',
+    ['packages/diagnostics', 'packages/environment', 'packages/compute']
+  ]
 ])('applies the real diagnostics registration to %s', (path, selected) => {
   const registered = JSON.parse(readFileSync('scripts/ci/package-test-boundaries.json', 'utf8'))
   const plan = createPackageTestPlan([path], registered)
@@ -360,4 +391,57 @@ it('verifies new packages absent from an older trusted registry instead of silen
   expect(() => notebookPackageVerificationPlan([], ['../untrusted'])).toThrow(
     'Invalid package verification roots'
   )
+})
+
+it('keeps environment verification directional and requires explicit trusted exclusion', () => {
+  const verify = { builds: ['diagnostics', 'environment'], tests: ['environment'] }
+  expect(environmentPackageVerificationPlan(undefined, undefined)).toEqual(verify)
+  expect(environmentPackageVerificationPlan([], [])).toEqual(verify)
+  expect(environmentPackageVerificationPlan([], undefined)).toEqual(verify)
+  expect(
+    environmentPackageVerificationPlan(['packages/environment'], ['packages/diagnostics'])
+  ).toEqual(verify)
+  expect(environmentPackageVerificationPlan(['packages'], ['packages/environment'])).toEqual(verify)
+  expect(environmentPackageVerificationPlan([], ['packages/environment'])).toEqual({
+    builds: [],
+    tests: []
+  })
+  expect(() => environmentPackageVerificationPlan(['../environment'], [])).toThrow('Invalid')
+  expect(() => environmentPackageVerificationPlan([], [42])).toThrow('Invalid')
+})
+
+it('skips unchanged environment units for host edits and retains downstream contracts for package edits', async () => {
+  const { createAffectedTestPlan } = await import('./module-test-impact.mjs')
+  const graph = { status: 'not-used', testFiles: [] }
+  const host = createAffectedTestPlan(
+    [{ path: 'src/main/notebook/runtime-service.ts', status: 'modified' }],
+    graph
+  )
+  expect(host.mode).toBe('selective')
+  expect(host.testFiles.some((path) => path.startsWith('packages/environment/'))).toBe(false)
+  expect(host.testFiles).toContain('src/main/notebook/runtime-service.test.ts')
+  const environment = createAffectedTestPlan(
+    [{ path: 'packages/environment/src/environment-state-tracker.ts', status: 'modified' }],
+    graph
+  )
+  expect(environment.mode).toBe('selective')
+  expect(environment.testFiles).toContain(
+    'packages/environment/src/environment-state-tracker.test.ts'
+  )
+  expect(environment.testFiles).toContain('src/main/notebook/environment-capture.contract.test.ts')
+  expect(environment.testFiles).toContain('src/main/notebook/environment-process.contract.test.ts')
+  expect(environment.testFiles.some((path) => path.startsWith('packages/diagnostics/'))).toBe(false)
+})
+
+it.each([
+  'src/main/windows-executable-trust.ts',
+  'src/main/notebook/environment-runner.ts',
+  'src/main/notebook/environment-resources.ts',
+  'src/main/notebook/shell-process.ts'
+])('keeps environment units excluded for host policy edits to %s', (path) => {
+  const actualRegistry = JSON.parse(readFileSync('scripts/ci/package-test-boundaries.json', 'utf8'))
+  expect(createPackageTestPlan([path], actualRegistry)).toMatchObject({
+    selected: [],
+    excluded: expect.arrayContaining(['packages/environment'])
+  })
 })

@@ -1,28 +1,29 @@
 // @vitest-environment jsdom
+import { waitFor } from '@testing-library/react'
 import { act, StrictMode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import {
-  createInitialPreviewWorkbenchState,
-  type PreviewFileItem,
-  usePreviewWorkbenchStore
-} from '@/stores/preview-workbench-store'
 import { createInitialComputeState, useComputeStore } from '@/stores/compute-store'
 import {
   createInitialGrantedFoldersState,
   useGrantedFoldersStore
 } from '@/stores/granted-folders-store'
+import {
+  createInitialPreviewWorkbenchState,
+  usePreviewWorkbenchStore,
+  type PreviewFileItem
+} from '@/stores/preview-workbench-store'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
-import type { ComputeHost } from '../../../../shared/compute'
+import type { ComputeHost } from '@aipoch/compute'
+
 import {
   createInitialSessionState,
   type ChatMessage,
   type ChatSession
 } from '@/stores/session-store'
 import type { ArtifactPreviewResult } from '../../../../shared/artifacts'
-import type { ProjectFilesChangedEvent, ProjectFileItem } from '../../../../shared/project-files'
+import type { ProjectFileItem, ProjectFilesChangedEvent } from '../../../../shared/project-files'
 import {
   createUploadVersionReference,
   getUploadedAttachmentName,

@@ -1,34 +1,36 @@
 import type {
   CancelComputeJobRequest,
+  ComputeHost,
+  DetailsAuthor,
+  JobStatusResult,
+  ProbeResult,
   RetryComputeJobHarvestRequest,
+  SetComputeJobRemoteCleanupRequest
+} from '@aipoch/compute'
+import type {
+  ChangeComputeHostAuthenticationRequest,
+  ChangeComputeHostAuthenticationResult,
   ComputeApprovalDecision,
   ComputeApprovalRequest,
+  ComputeHostDeletionStatus,
+  ComputeJobAnalysisTransition,
   ComputeJobsListFilter,
   ComputeJobsPendingNotificationFilter,
-  ComputeJobAnalysisTransition,
-  ComputeHost,
-  ComputeHostDeletionStatus,
   ComputePasswordCapability,
   CreateComputeHostRequest,
   CreatePasswordComputeHostRequest,
   CreatePasswordComputeHostResult,
-  ResetPasswordComputeHostRequest,
-  ResetPasswordComputeHostResult,
-  SetComputeJobRemoteCleanupRequest,
-  ChangeComputeHostAuthenticationRequest,
-  ChangeComputeHostAuthenticationResult,
   DeleteComputeHostRequest,
-  DetailsAuthor,
   JobSummary,
-  JobStatusResult,
-  ProbeResult
+  ResetPasswordComputeHostRequest,
+  ResetPasswordComputeHostResult
 } from '../compute'
 
 import type { DirListing, DownloadDest, LocalFile } from '../remote-fs'
 
 import type { PersistedChatSession } from '../session-persistence'
 
-import { callable, LOCAL, EVENT } from './definition'
+import { callable, EVENT, LOCAL } from './definition'
 
 export const contracts = {
   'compute.bookmarksGet': callable<(providerId: string) => Promise<string[]>>()('compute', [
@@ -48,7 +50,10 @@ export const contracts = {
     ['compute:concurrency:set']
   ),
   'compute.executionModeSet': callable<
-    (providerId: string, executionMode: import('../compute').ComputeExecutionMode) => Promise<void>
+    (
+      providerId: string,
+      executionMode: import('@aipoch/compute').ComputeExecutionMode
+    ) => Promise<void>
   >()('compute', ['compute:execution-mode:set']),
   'compute.create': callable<(request: CreateComputeHostRequest) => Promise<ComputeHost>>()(
     'compute',

@@ -1,9 +1,9 @@
 import { win32, posix, join } from 'node:path'
 import { afterEach, describe, expect, it, vi, type Mock } from 'vitest'
-import * as discovery from './environment-discovery'
+import * as discovery from '@aipoch/environment'
 import { NotebookRuntimeBindingOwner } from './runtime-binding'
 import { createRootNotebookLane } from './lane-identity'
-import type { DiscoveredInterpreter } from '../../shared/notebook-runtime'
+import type { DiscoveredInterpreter } from '@aipoch/environment/contracts'
 import type { NotebookSessionRuntimeBinding, NotebookSessionAggregate } from './session-aggregate'
 import type { NotebookRunRepository } from './repository'
 

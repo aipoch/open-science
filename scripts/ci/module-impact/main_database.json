@@ -192,7 +192,7 @@
       "src/main/compute/ambiguous-dispatch-recovery.integration.test.ts",
       "src/main/compute/application-commands.test.ts",
       "src/main/compute/compute-host-profile-concurrency.test.ts",
-      "src/main/compute/compute-job-cancellation-owner.integration.test.ts",
+      "src/main/compute/cancellation-persistence.integration.test.ts",
       "src/main/compute/compute-job-lifecycle.test.ts",
       "src/main/compute/compute-job-workflow-owner.test.ts",
       "src/main/compute/compute-jobs.integration.test.ts",

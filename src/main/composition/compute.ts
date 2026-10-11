@@ -1,16 +1,19 @@
+import type { ComputeJobOwnerLiveness } from '@aipoch/compute/node'
+import {
+  createLogger,
+  diagnosticErrorFields,
+  type DiagnosticOperation
+} from '@aipoch/diagnostics/node'
 import { MAIN_ENABLED_COMPUTE_HOSTS_LIFECYCLE_CLIENT_ID } from '../../shared/lifecycle-events'
 import type { ApplicationEvents } from '../application-events'
 import { ArchiveCoordinator } from '../archive/coordinator'
 import { createDefaultArtifactRepository } from '../artifacts/ipc'
 import { ComputeJobResultDeliveryAdapter } from '../background-result-delivery/compute-adapter'
 import { AgentComputeService } from '../compute/agent-compute-service'
-import { createComputeArtifactResolver } from '../compute/compute-service'
+import { createComputeArtifactResolver } from '../compute/compute-job-workflow-owner'
 import { createComputeIpcModule, toJobSummary } from '../compute/ipc'
-import type { ComputeJobOwnerLiveness } from '../compute/job-deletion-owner'
 import { withSessionCacheDeletion } from '../compute/session-cache-owner'
 import { SessionEnabledComputeHostsOwner } from '../compute/session-enabled-hosts-owner'
-import { type DiagnosticOperation } from '@aipoch/diagnostics/node'
-import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import { ManagedFileVersionService } from '../managed-file-versions/service'
 import { TaskNotificationService } from '../notifications/task-notifications'
 import { createPermissionGrantRegistry } from '../permission-grants/registry'
@@ -180,7 +183,7 @@ export async function composeComputeAdmission({
 }): Promise<{
   computeService: import('../compute/compute-service').ComputeService
   connectionBroker: import('../compute/connection-broker').ComputeConnectionBroker
-  jobDeletionOwner: import('../compute/job-deletion-owner').ComputeJobDeletionOwner
+  jobDeletionOwner: import('@aipoch/compute/node').ComputeJobDeletionOwner
   jobRepository: import('../compute/job-repository').ComputeJobRepository
   operationRepository: import('../compute/compute-job-operation-repository').ComputeJobOperationRepository
   hostRepository: import('../compute/repository').ComputeHostRepository

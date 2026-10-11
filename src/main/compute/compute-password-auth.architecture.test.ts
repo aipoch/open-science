@@ -21,10 +21,10 @@ const productionComputeSources = (): Array<{ path: string; source: string }> =>
 
 describe('Compute password authentication release guards', () => {
   it('keeps public Host projections and settings free of credential material', () => {
-    const sharedContract = read('src/shared/compute.ts')
+    const sharedContract = read('packages/compute/src/model.ts')
     const hostProjection = sharedContract.slice(
       sharedContract.indexOf('export type ComputeHost ='),
-      sharedContract.indexOf('export type CreateComputeHostRequest')
+      sharedContract.indexOf('export type ComputeHostSummary')
     )
     expect(hostProjection).not.toMatch(/password|ciphertext|credentialRef|secret/i)
     expect(read('src/shared/settings.ts')).not.toMatch(/compute[^\n]*(password|ciphertext)/i)
@@ -81,10 +81,10 @@ describe('Compute password authentication release guards', () => {
 
   it('routes the complete Compute Job lifecycle through the connection Broker', () => {
     for (const path of [
-      'src/main/compute/job-dispatcher.ts',
-      'src/main/compute/job-poller.ts',
+      'packages/compute/src/job-dispatcher.ts',
+      'packages/compute/src/job-poller.ts',
       'src/main/compute/harvest-engine.ts',
-      'src/main/compute/job-deletion-owner.ts'
+      'packages/compute/src/job-deletion-owner.ts'
     ]) {
       const source = read(path)
       expect(source, path).toContain('ComputeConnectionBroker')
@@ -110,8 +110,8 @@ describe('Compute password authentication release guards', () => {
       'src/main/compute/connection-adapters.ts',
       'src/main/compute/connection-broker.ts',
       'src/main/compute/ipc.ts',
-      'src/main/compute/scp-runner.ts',
-      'src/main/compute/ssh-runner.ts'
+      'packages/compute/src/scp-runner.ts',
+      'packages/compute/src/ssh-runner.ts'
     ])
     const credentialLookupAllowlist = new Set([
       'src/main/compute/connection-adapters.ts',
@@ -122,7 +122,7 @@ describe('Compute password authentication release guards', () => {
     for (const { path, source } of productionComputeSources()) {
       if (!transportConstructionAllowlist.has(path)) {
         expect(source, `${path} constructs a managed SSH/SCP transport`).not.toMatch(
-          /\b(?:new\s+System(?:Ssh|Scp)Runner|resolveSshTarget\s*\(|runScp(?:Transfer|Upload)\s*\()/
+          /\b(?:create(?:Ssh|Scp)Runner\s*\(|new\s+System(?:Ssh|Scp)Runner|resolveSshTarget\s*\(|runScp(?:Transfer|Upload)\s*\()/
         )
       }
       if (!credentialLookupAllowlist.has(path)) {
@@ -141,10 +141,10 @@ describe('Compute password authentication release guards', () => {
         "intent: 'direct_command'",
         "intent: 'direct_download'"
       ],
-      'src/main/compute/job-dispatcher.ts': ["intent: 'job_dispatch'"],
-      'src/main/compute/job-poller.ts': ["intent: 'job_poll'"],
+      'packages/compute/src/job-dispatcher.ts': ["intent: 'job_dispatch'"],
+      'packages/compute/src/job-poller.ts': ["intent: 'job_poll'"],
       'src/main/compute/harvest-engine.ts': ["intent: 'job_harvest'"],
-      'src/main/compute/job-deletion-owner.ts': ["intent: 'job_cleanup'"]
+      'packages/compute/src/job-deletion-owner.ts': ["intent: 'job_cleanup'"]
     } as const
 
     for (const [path, intents] of Object.entries(owners)) {

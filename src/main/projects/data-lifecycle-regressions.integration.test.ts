@@ -1,19 +1,19 @@
+import { createComputeExecution } from '@aipoch/compute/node'
 // Public lifecycle regressions derived from interrupted deletion and publication scenarios.
 import { createHash } from 'node:crypto'
-import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { expect, it, vi } from 'vitest'
-import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
-import { ProjectRepository } from '../projects/repository'
+import { literatureItemInputSchema } from '../../shared/literature'
+import { LiteratureCatalog } from '../literature/catalog'
 import {
   ProjectDeletionCoordinator,
   ProjectDeletionRecoveryLoop
 } from '../projects/deletion-coordinator'
-import { LiteratureCatalog } from '../literature/catalog'
-import { literatureItemInputSchema } from '../../shared/literature'
+import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
+import { ProjectRepository } from '../projects/repository'
 import { ContentRepository } from '../storage/content-repository'
-import { ComputeJobDeletionOwner } from '../compute/job-deletion-owner'
 
 it('removes deleted projects from literature membership and counts', async () => {
   const root = await mkdtemp(join(tmpdir(), 'lifecycle-audit-links-'))
@@ -107,16 +107,14 @@ it('allows unrelated session deletion after another owner fails remote cleanup',
   )
   const begin = vi.fn(async () => undefined)
   const deleteRows = vi.fn(async () => undefined)
-  const owner = new ComputeJobDeletionOwner({
+  const owner = createComputeExecution().createDeletionOwner({
     jobRepository: {
       findByOwner,
       listOwners: async () => [],
       get: async () => null,
-      settleRemoteCleanup: vi.fn()
-    },
-    lifecycle: {
+      settleRemoteCleanup: vi.fn(),
       beginOwnerDeletion: begin,
-      deleteOwnerRows: deleteRows,
+      deleteByOwner: deleteRows,
       abortOwnerDeletion: async () => undefined
     },
     hostRepository: { get: async () => ({ scratchRoot: '/scratch' }) },
@@ -127,7 +125,6 @@ it('allows unrelated session deletion after another owner fails remote cleanup',
         }
       })
     },
-    dispatchTracker: { waitFor: async () => undefined },
     queueManager: { pauseOwner: async () => undefined, resumeOwner: () => undefined }
   } as never)
   await owner.prepareSessionJobDeletion('project-a', 'session-a')

@@ -2,15 +2,18 @@ import { expect, it } from 'vitest'
 import { resolve } from './paths'
 import { pathToFileURL } from 'node:url'
 import { readPdfFixture } from './read-fixture'
+import { OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
 
 const { associateFigures } = await import(
   pathToFileURL(resolve('resources/literature-pdf-association.mjs')).href
 )
 const {
+  nativeCaptionedAlignedRasterPair,
   nativeCaptionedRaster,
   nativeCaptionedVectorHeatmap,
   nativeCaptionedWorkflowPanel,
   nativeCaptionedVectorDiagram,
+  nativeCaptionedConnectedNodes,
   nativeCaptionedVectorGrid,
   nativeCaptionedVectorTableGrid,
   nativeCaptionedVectorBarChart,
@@ -30,6 +33,324 @@ const {
 } = await import(
   pathToFileURL(resolve('resources/literature-pdf-figure-native-captioned-illustration.mjs')).href
 )
+
+// Short anonymous labels retain only the enclosure/connector proof.
+// No original page, model output, paper identifier or label is needed.
+function connectedNodePacket(): ReturnType<typeof JSON.parse> {
+  const width = 600,
+    height = 800,
+    font = 8
+  const operators: { fnArray: number[]; argsArray: unknown[] } = { fnArray: [], argsArray: [] }
+  const emit = (code: number, args: unknown): void => {
+    operators.fnArray.push(code)
+    operators.argsArray.push(args)
+  }
+  const viewport = {
+    width,
+    height,
+    rotation: 0,
+    transform: [1, 0, 0, -1, 0, height],
+    convertToViewportPoint: (x: number, y: number) => [x, height - y]
+  }
+  const content: ReturnType<typeof JSON.parse> = {
+    items: [],
+    styles: { font: { ascent: 0.8, descent: -0.2, vertical: false } }
+  }
+  const page: ReturnType<typeof JSON.parse> = {
+    pageNumber: 1,
+    width,
+    height,
+    renderRotation: 0,
+    invalidGraphicsBounds: 0,
+    graphicsBounds: [],
+    lines: []
+  }
+  const text = (str: string, x: number, y: number): void => {
+    const glyphs = Array.from(str).map((unicode) => ({
+      unicode,
+      fontChar: unicode,
+      originalCharCode: unicode.charCodeAt(0),
+      width: 500,
+      isSpace: unicode === ' ',
+      isInFont: true
+    }))
+    emit(OPS.setFillRGBColor, ['#000000'])
+    emit(OPS.beginText, null)
+    emit(OPS.setFont, ['font', font])
+    emit(OPS.moveText, [x, height - y - font])
+    emit(OPS.showText, [glyphs])
+    emit(OPS.endText, null)
+    content.items.push({
+      str,
+      dir: 'ltr',
+      transform: [font, 0, 0, font, x, height - y - font],
+      width: str.length * 4,
+      height: font,
+      fontName: 'font'
+    })
+    page.lines.push({ text: str, x, y, width: str.length * 4, height: font, fontSize: font })
+  }
+  const path = (program: number[], paint: number, bounds: number[], rect: number[]): void => {
+    const operationIndex = operators.fnArray.length
+    emit(OPS.constructPath, [paint, [program], bounds])
+    const normalizedRect = rect.map(
+      (v, n) =>
+        ((n < 2 ? Math.floor : Math.ceil)((v * 256) / (n % 2 ? height : width)) + (n < 2 ? 0 : 1)) /
+        256
+    )
+    page.graphicsBounds.push({ kind: 'path', operationIndex, normalizedRect })
+  }
+  const nodes = [
+    [240, 80, 360, 96],
+    [140, 160, 240, 176],
+    [260, 320, 340, 336],
+    [390, 145, 490, 161],
+    [60, 240, 140, 256],
+    [160, 240, 240, 256],
+    [260, 440, 340, 456],
+    [420, 240, 540, 256]
+  ]
+  const parents = [0, 0, 0, 1, 1, 2, 3]
+  for (const [n, r] of nodes.entries()) {
+    const cx = (r[0] + r[2]) / 2,
+      cy = (r[1] + r[3]) / 2,
+      x = (r[2] - r[0]) / 2,
+      y = 8,
+      radius = 4,
+      c = 2.2
+    const program = [
+      0,
+      x - radius,
+      y,
+      1,
+      -x + radius,
+      y,
+      2,
+      -x + c,
+      y,
+      -x,
+      y - c,
+      -x,
+      y - radius,
+      1,
+      -x,
+      -y + radius,
+      2,
+      -x,
+      -y + c,
+      -x + c,
+      -y,
+      -x + radius,
+      -y,
+      1,
+      x - radius,
+      -y,
+      2,
+      x - c,
+      -y,
+      x,
+      -y + c,
+      x,
+      -y + radius,
+      1,
+      x,
+      y - radius,
+      2,
+      x,
+      y - c,
+      x - c,
+      y,
+      x - radius,
+      y,
+      4,
+      0,
+      -x,
+      -y
+    ]
+    emit(OPS.save, null)
+    emit(OPS.transform, [1, 0, 0, 1, cx, height - cy])
+    emit(OPS.setFillRGBColor, ['#ccccff'])
+    emit(OPS.setStrokeRGBColor, ['#000000'])
+    emit(OPS.setLineWidth, [0.4])
+    path(program, OPS.fillStroke, [-x, -y, x, y], r)
+    emit(OPS.restore, null)
+    text(`Node ${n}`, cx - 12, cy - 4.01)
+  }
+  for (const [n, r] of nodes.slice(1).entries()) {
+    const parent = nodes[parents[n]],
+      start = [(parent[0] + parent[2]) / 2, parent[3] + 0.4],
+      tip = [(r[0] + r[2]) / 2, r[1] - 1.2],
+      delta = [tip[0] - start[0], tip[1] - start[1]],
+      length = Math.hypot(...delta),
+      d = delta.map((v) => v / length),
+      end = [tip[0] - d[0] * 5, tip[1] - d[1] * 5]
+    emit(OPS.setLineWidth, [0.4])
+    emit(OPS.setStrokeRGBColor, ['#000000'])
+    emit(OPS.setFillRGBColor, ['#000000'])
+    const line = [0, start[0], height - start[1], 1, end[0], height - end[1]]
+    path(
+      line,
+      OPS.stroke,
+      [
+        Math.min(start[0], end[0]),
+        height - Math.max(start[1], end[1]),
+        Math.max(start[0], end[0]),
+        height - Math.min(start[1], end[1])
+      ],
+      [
+        Math.min(start[0], end[0]) - 0.2,
+        Math.min(start[1], end[1]) - 0.2,
+        Math.max(start[0], end[0]) + 0.2,
+        Math.max(start[1], end[1]) + 0.2
+      ]
+    )
+    const points = [
+        tip,
+        [end[0] - d[0] + d[1] * 1.5, end[1] - d[1] - d[0] * 1.5],
+        [end[0] + d[0] * 0.2, end[1] + d[1] * 0.2],
+        [end[0] - d[0] - d[1] * 1.5, end[1] - d[1] + d[0] * 1.5]
+      ],
+      bounds = [
+        Math.min(...points.map((p) => p[0])),
+        height - Math.max(...points.map((p) => p[1])),
+        Math.max(...points.map((p) => p[0])),
+        height - Math.min(...points.map((p) => p[1]))
+      ]
+    path(
+      points.flatMap((p, n) => [n ? 1 : 0, p[0], height - p[1]]).concat(4),
+      OPS.fillStroke,
+      bounds,
+      [bounds[0], height - bounds[3], bounds[2], height - bounds[1]]
+    )
+  }
+  text('Figure 1: Connected nodes.', 248, 468)
+  const caption = { page: 1, lines: ['Figure 1: Connected nodes.'], rect: [248, 468, 352, 476] }
+  const tokens = content.items.map((i: ReturnType<typeof JSON.parse>, index: number) => ({
+    text: i.str,
+    rect: [
+      i.transform[4],
+      height - i.transform[5] - font,
+      i.transform[4] + i.width,
+      height - i.transform[5]
+    ],
+    horizontal: true,
+    height: font,
+    baseline: height - i.transform[5],
+    sourceItem: { pageNumber: 1, index, text: i.str }
+  }))
+  return { page, caption, tokens, context: { operators, viewport, content } }
+}
+
+it('completes all connected enclosures before generic detached-label padding', () => {
+  const p = connectedNodePacket()
+  expect(
+    nativeCaptionedConnectedNodes(p.page, p.caption, [p.caption], [], p.tokens, p.context)
+      ?.graphicsCount
+  ).toBe(22)
+  const figures = associateFigures(p.page, [p.caption], [], [], [], p.tokens, p.context)
+  expect(figures).toHaveLength(1)
+  expect(figures[0].rect[0]).toBeLessThan(61)
+  expect(figures[0].rect[2]).toBeGreaterThan(540)
+  expect(figures[0].rect[1]).toBeGreaterThan(75)
+  expect(figures[0].rect[3]).toBeLessThan(468)
+})
+
+it('preserves complete source ownership after the extractor scales native tokens through 1.5', () => {
+  const p = connectedNodePacket()
+  const expected = nativeCaptionedConnectedNodes(
+    p.page,
+    p.caption,
+    [p.caption],
+    [],
+    p.tokens,
+    p.context
+  )
+  const original = p.tokens.map((token: ReturnType<typeof JSON.parse>) => ({ ...token }))
+  p.tokens = p.tokens.map((token: ReturnType<typeof JSON.parse>) => {
+    const item = p.context.content.items[token.sourceItem.index]
+    const x = (item.transform[4] * 1.5) / 1.5
+    const baseline = (p.page.height * 1.5 - item.transform[5] * 1.5) / 1.5
+    const height = (item.height * 1.5) / 1.5
+    return {
+      ...token,
+      baseline,
+      height,
+      rect: [x, baseline - height, x + (item.width * 1.5) / 1.5, baseline]
+    }
+  })
+  expect(
+    p.tokens.some(
+      (t: ReturnType<typeof JSON.parse>, n: number) => t.baseline !== original[n].baseline
+    )
+  ).toBe(true)
+  expect(expected?.graphicsCount).toBe(22)
+  expect(
+    nativeCaptionedConnectedNodes(p.page, p.caption, [p.caption], [], p.tokens, p.context)
+  ).toEqual(expected)
+})
+
+it.each([
+  'white text',
+  'white fill',
+  'black fill',
+  'invisible text',
+  'alpha',
+  'clip',
+  'zero glyph',
+  'missing token',
+  'duplicate token',
+  'extra path',
+  'wrong bounds',
+  'missing style',
+  'body overlap',
+  'caption overlap',
+  'different baseline',
+  'NaN baseline',
+  'different height',
+  'NaN height'
+])('refuses connected-node completion with %s', (change) => {
+  const p = connectedNodePacket(),
+    ops = p.context.operators,
+    firstText = ops.fnArray.indexOf(OPS.showText),
+    firstPath = ops.fnArray.indexOf(OPS.constructPath)
+  if (change === 'white text')
+    ops.argsArray[ops.fnArray.indexOf(OPS.setFillRGBColor, firstPath + 1)] = ['#ffffff']
+  if (change === 'white fill' || change === 'black fill')
+    ops.argsArray[ops.fnArray.indexOf(OPS.setFillRGBColor)] = [
+      change === 'white fill' ? '#ffffff' : '#000000'
+    ]
+  if (change === 'invisible text' || change === 'alpha' || change === 'clip') {
+    ops.fnArray.push(
+      change === 'invisible text'
+        ? OPS.setTextRenderingMode
+        : change === 'alpha'
+          ? OPS.setGState
+          : OPS.clip
+    )
+    ops.argsArray.push(
+      change === 'invisible text' ? [3] : change === 'alpha' ? [[['ca', 0]]] : null
+    )
+  }
+  if (change === 'zero glyph') ops.argsArray[firstText][0][0].width = 0
+  if (change === 'missing token') p.tokens.shift()
+  if (change === 'different baseline') p.tokens[0].baseline += 0.00001
+  if (change === 'NaN baseline') p.tokens[0].baseline = Number.NaN
+  if (change === 'different height') p.tokens[0].height += 0.00001
+  if (change === 'NaN height') p.tokens[0].height = Number.NaN
+  if (change === 'duplicate token') p.tokens.push(p.tokens[0])
+  if (change === 'extra path') p.page.graphicsBounds.push({ ...p.page.graphicsBounds[0] })
+  if (change === 'wrong bounds') ops.argsArray[firstPath][2][0] -= 1
+  if (change === 'missing style') delete p.context.content.styles.font
+  if (change === 'body overlap')
+    p.page.lines.push({ text: 'Unowned prose', x: 80, y: 180, width: 120, height: 8, fontSize: 8 })
+  const captions =
+    change === 'caption overlap'
+      ? [p.caption, { page: 1, lines: ['Figure 2: Other.'], rect: [80, 180, 220, 188] }]
+      : [p.caption]
+  expect(
+    nativeCaptionedConnectedNodes(p.page, p.caption, captions, [], p.tokens, p.context)
+  ).toBeUndefined()
+})
 const framedBefore = (): ReturnType<typeof JSON.parse> =>
   readPdfFixture(resolve('test/fixtures/source-grids/caption-before-stacked-framed-raster.jsonl'))
 const framedAfter = (): ReturnType<typeof JSON.parse> =>
@@ -1255,3 +1576,535 @@ it.each(['body-font', 'table', 'competing-caption', 'far-caption', 'incomplete-c
     expect(nativeCaptionedTextIllustration(f.page, f.caption, captions, tables)).toBeUndefined()
   }
 )
+
+// A complete three-font parameter label belongs to its separately painted panel.
+const lowerParameterPair = (): ReturnType<typeof JSON.parse> => {
+  const caption = { page: 1, lines: ['Figure 1. Paired panels.'], rect: [100, 270, 470, 280] }
+  const tokens = [170, 360].flatMap((x, n) =>
+    ['(' + 'ab'[n] + ')', 'r', '= ' + (n + 2)].map((text, i) => {
+      const left = x + [0, 16, 25][i],
+        width = [12, 6, 14][i]
+      return {
+        text,
+        rect: [left, 251, left + width, 260],
+        horizontal: true,
+        height: 9,
+        baseline: 260,
+        fontDescent: -0.2,
+        sourceItem: { pageNumber: 1, text, index: n * 3 + i }
+      }
+    })
+  )
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    invalidGraphicsBounds: 0,
+    lines: [
+      { text: caption.lines[0], x: 100, y: 270, width: 370, height: 10, fontSize: 10 },
+      ...[0, 1].map((n) => ({
+        text: tokens
+          .slice(n * 3, n * 3 + 3)
+          .map((t) => t.text)
+          .join(''),
+        x: tokens[n * 3].rect[0],
+        y: 251,
+        width: 39,
+        height: 9,
+        fontSize: 9
+      }))
+    ],
+    graphicsBounds: [100, 290].map((x, n) => ({
+      kind: 'image',
+      imageHash: 'panel-' + n,
+      normalizedRect: [x / 600, 90 / 800, (x + 180) / 600, 245 / 800],
+      paintedNormalizedRect: [x / 600, 90 / 800, (x + 180) / 600, 245 / 800]
+    }))
+  }
+  return { page, caption, tokens }
+}
+it('includes complete whole-font lower parameter labels and their descenders', () => {
+  const f = lowerParameterPair()
+  expect(
+    nativeCaptionedAlignedRasterPair(f.page, f.caption, [f.caption], [], [], f.tokens)?.rect
+  ).toEqual([100, 90, 470, 261.8])
+})
+it('refuses partial, foreign, fragmented and competing lower parameter labels', () => {
+  const mutations = [
+    (f: ReturnType<typeof lowerParameterPair>) => {
+      f.tokens[1].sourceItem.pageNumber = 2
+    },
+    (f: ReturnType<typeof lowerParameterPair>) => {
+      f.tokens.push({ ...structuredClone(f.tokens[1]), rect: [110, 110, 116, 119] })
+    },
+    (f: ReturnType<typeof lowerParameterPair>) => {
+      f.tokens.pop()
+    },
+    (f: ReturnType<typeof lowerParameterPair>) => {
+      f.tokens[1].sourceItem.text = 'other'
+    },
+    (f: ReturnType<typeof lowerParameterPair>) => {
+      Object.assign(f.tokens[1], { sourceToken: {} })
+    },
+    (f: ReturnType<typeof lowerParameterPair>) => {
+      f.tokens[4].text = 's'
+      f.tokens[4].sourceItem.text = 's'
+    },
+    (f: ReturnType<typeof lowerParameterPair>) => {
+      f.tokens[5].sourceItem.index = 2
+    },
+    (f: ReturnType<typeof lowerParameterPair>) => {
+      f.tokens[2].text = '= '
+      f.tokens[2].sourceItem.text = '= '
+    },
+    (f: ReturnType<typeof lowerParameterPair>) => {
+      f.tokens[0].rect[2] = 300
+    },
+    (f: ReturnType<typeof lowerParameterPair>) => {
+      f.page.graphicsBounds.push({
+        kind: 'image',
+        imageHash: 'foreign',
+        normalizedRect: [0.45, 0.31, 0.48, 0.325],
+        paintedNormalizedRect: [0.45, 0.31, 0.48, 0.325]
+      })
+    },
+    (f: ReturnType<typeof lowerParameterPair>) => {
+      f.page.lines.push({ text: 'unowned', x: 250, y: 251, width: 20, height: 9, fontSize: 9 })
+    }
+  ]
+  for (const change of mutations) {
+    const f = lowerParameterPair()
+    change(f)
+    expect(
+      nativeCaptionedAlignedRasterPair(f.page, f.caption, [f.caption], [], [], f.tokens)
+    ).toBeUndefined()
+  }
+  const f = lowerParameterPair()
+  expect(
+    nativeCaptionedAlignedRasterPair(
+      f.page,
+      f.caption,
+      [f.caption],
+      [[150, 250, 220, 265]],
+      [],
+      f.tokens
+    )
+  ).toBeUndefined()
+  const other = { page: 1, lines: ['Table 1. Separate labels.'], rect: [150, 250, 220, 265] }
+  expect(
+    nativeCaptionedAlignedRasterPair(f.page, f.caption, [f.caption, other], [], [], f.tokens)
+  ).toBeUndefined()
+})
+
+// A compact anonymous grid preserves only two enclosing frames and their titles.
+function frameTitleGrid(): ReturnType<typeof JSON.parse> {
+  const width = 600,
+    height = 800,
+    caption = { page: 1, lines: ['Figure 2. Composite workflow.'], rect: [150, 260, 450, 270] },
+    frames = [
+      [85, 95, 245, 254],
+      [250, 95, 405, 254]
+    ]
+  const token = (text: string, rect: number[], index: number): ReturnType<typeof JSON.parse> => ({
+    text,
+    rect,
+    height: rect[3] - rect[1],
+    baseline: rect[3],
+    horizontal: true,
+    sourceItem: { pageNumber: 1, index, text }
+  })
+  const fonts = [
+    token('Object Sequence Panel', [110, 96, 210, 102.5], 0),
+    token('Interaction Panel', [280, 96, 375, 102.5], 1),
+    token(caption.lines[0], caption.rect, 2)
+  ]
+  const graphics = []
+  for (let row = 0; row < 4; row++)
+    for (const x of [90, 170, 260, 335, 430])
+      graphics.push({
+        kind: 'image',
+        normalizedRect: [
+          x / width,
+          (104 + row * 40) / height,
+          (x + 50) / width,
+          (134 + row * 40) / height
+        ]
+      })
+  for (const r of frames)
+    graphics.push({ kind: 'path', normalizedRect: r.map((v, n) => v / (n % 2 ? height : width)) })
+  const page = {
+    pageNumber: 1,
+    width,
+    height,
+    invalidGraphicsBounds: 0,
+    graphicsBounds: graphics,
+    lines: fonts.map((f) => ({
+      text: f.text,
+      x: f.rect[0],
+      y: f.rect[1],
+      width: f.rect[2] - f.rect[0],
+      height: f.height,
+      fontSize: f.height
+    }))
+  }
+  return { page, caption, frames, fonts }
+}
+
+it('completes two native closed-frame titles without extending the result lane', () => {
+  const x = frameTitleGrid(),
+    result = associateFigures(x.page, [x.caption], [], [], x.frames, x.fonts)[0]
+  expect(result.reason).toBe('native-raster-composite-grid')
+  expect(result.rect).toEqual([85, 95, 480, 254])
+  expect(result.caption).toBe(x.caption)
+})
+
+it.each([
+  [
+    'missing title',
+    (x: ReturnType<typeof JSON.parse>) => {
+      x.fonts.splice(0, 1)
+    }
+  ],
+  [
+    'duplicate source',
+    (x: ReturnType<typeof JSON.parse>) => {
+      x.fonts.push({ ...x.fonts[0] })
+    }
+  ],
+  [
+    'foreign native body',
+    (x: ReturnType<typeof JSON.parse>) => {
+      x.fonts.push({
+        text: 'Foreign body',
+        rect: [430, 96, 470, 102],
+        height: 6,
+        baseline: 102,
+        horizontal: true,
+        sourceItem: { pageNumber: 1, index: 3, text: 'Foreign body' }
+      })
+    }
+  ],
+  [
+    'missing frame',
+    (x: ReturnType<typeof JSON.parse>) => {
+      x.frames.pop()
+    }
+  ],
+  [
+    'outside title',
+    (x: ReturnType<typeof JSON.parse>) => {
+      x.fonts[0].rect = [110, 85, 210, 91.5]
+    }
+  ],
+  [
+    'title source mismatch',
+    (x: ReturnType<typeof JSON.parse>) => {
+      x.fonts[0].sourceItem.text = 'Unknown'
+    }
+  ],
+  [
+    'rotated title',
+    (x: ReturnType<typeof JSON.parse>) => {
+      x.fonts[0].horizontal = false
+    }
+  ],
+  [
+    'invalid native paint',
+    (x: ReturnType<typeof JSON.parse>) => {
+      x.page.invalidGraphicsBounds = 1
+    }
+  ],
+  [
+    'independent strip path',
+    (x: ReturnType<typeof JSON.parse>) => {
+      x.page.graphicsBounds.push({
+        kind: 'path',
+        normalizedRect: [430 / 600, 96 / 800, 470 / 600, 102 / 800]
+      })
+    }
+  ],
+  [
+    'grazing strip path',
+    (x: ReturnType<typeof JSON.parse>) => {
+      x.page.graphicsBounds.push({
+        kind: 'path',
+        normalizedRect: [430 / 600, 96 / 800, 470 / 600, 106 / 800]
+      })
+    }
+  ],
+  [
+    'competing caption',
+    (x: ReturnType<typeof JSON.parse>) => {
+      x.otherCaption = { page: 1, lines: ['Figure 3. Separate.'], rect: [110, 96, 210, 102] }
+    }
+  ],
+  [
+    'overlapping table',
+    (x: ReturnType<typeof JSON.parse>) => {
+      x.tables = [[110, 96, 210, 102]]
+    }
+  ]
+])('refuses a frame-title completion with %s', (_name, mutate) => {
+  const x = frameTitleGrid()
+  mutate(x)
+  const result = associateFigures(
+    x.page,
+    [x.caption, ...(x.otherCaption ? [x.otherCaption] : [])],
+    x.tables ?? [],
+    [],
+    x.frames,
+    x.fonts
+  ).find((f: ReturnType<typeof JSON.parse>) => f.caption === x.caption)
+  expect(result?.rect?.[1]).not.toBe(95)
+})
+
+// A single white Form background and two stroked rectangular frames suffice.
+// These synthetic operators retain no original document or model output.
+function frameTitlePaintGrid(): ReturnType<typeof JSON.parse> {
+  const x = frameTitleGrid(),
+    operators: ReturnType<typeof JSON.parse> = { fnArray: [], argsArray: [] }
+  const emit = (code: number, args: unknown): number => {
+    operators.fnArray.push(code)
+    operators.argsArray.push(args)
+    return operators.fnArray.length - 1
+  }
+  const rectPath = (r: number[]): number[] => [
+    0,
+    r[0],
+    r[1],
+    1,
+    r[2],
+    r[1],
+    1,
+    r[2],
+    r[3],
+    1,
+    r[0],
+    r[3],
+    4
+  ]
+  const quant = (r: number[]): number[] =>
+    r.map(
+      (v, n) =>
+        (n < 2
+          ? Math.floor(((v * 1.5) / Math.ceil((n % 2 ? 800 : 600) * 1.5)) * 256)
+          : Math.ceil(((v * 1.5) / Math.ceil((n % 2 ? 800 : 600) * 1.5)) * 256) + 1) / 256
+    )
+  emit(OPS.transform, [1, 0, 0, 1, 80, 540])
+  emit(OPS.save, null)
+  emit(OPS.beginGroup, [
+    { matrix: null, bbox: [0, 0, 410, 170], smask: null, isolated: false, knockout: false }
+  ])
+  emit(OPS.paintFormXObjectBegin, [null, null])
+  emit(OPS.beginMarkedContent, [{ name: 'Artifact' }])
+  emit(OPS.save, null)
+  emit(OPS.eoClip, null)
+  emit(OPS.constructPath, [OPS.endPath, [rectPath([0, 0, 410, 170])], [0, 0, 410, 170]])
+  x.alphaIndex = emit(OPS.setGState, [
+    [
+      ['BM', 'source-over'],
+      ['ca', 1]
+    ]
+  ])
+  x.whiteIndex = emit(OPS.setFillRGBColor, ['#ffffff'])
+  x.backgroundIndex = emit(OPS.constructPath, [
+    OPS.eoFill,
+    [rectPath([0, 0, 410, 170])],
+    [0, 0, 410, 170]
+  ])
+  emit(OPS.restore, null)
+  emit(OPS.endMarkedContent, null)
+  const paints = [
+    { kind: 'path', operationIndex: x.backgroundIndex, normalizedRect: quant([80, 90, 490, 260]) }
+  ]
+  x.frameIndices = []
+  for (const frame of x.frames) {
+    const r = [frame[0] - 80, 260 - frame[3], frame[2] - 80, 260 - frame[1]]
+    emit(OPS.save, null)
+    emit(OPS.setLineWidth, [1.5])
+    emit(OPS.setStrokeRGBColor, ['#777777'])
+    emit(OPS.setDash, [[1.5, 1.5], 0])
+    const index = emit(OPS.constructPath, [OPS.stroke, [rectPath(r)], r])
+    x.frameIndices.push(index)
+    paints.push({
+      kind: 'path',
+      operationIndex: index,
+      normalizedRect: quant(frame.map((v: number, n: number) => v + (n < 2 ? -0.75 : 0.75)))
+    })
+    emit(OPS.restore, null)
+  }
+  emit(OPS.paintFormXObjectEnd, null)
+  emit(OPS.endGroup, null)
+  emit(OPS.restore, null)
+  x.page.graphicsBounds = [
+    ...paints,
+    ...x.page.graphicsBounds.filter((g: ReturnType<typeof JSON.parse>) => g.kind === 'image')
+  ]
+  x.context = {
+    operators,
+    viewport: { width: 600, height: 800, transform: [1, 0, 0, -1, 0, 800] },
+    content: { items: x.fonts.map((f: ReturnType<typeof JSON.parse>) => ({ str: f.text })) }
+  }
+  return x
+}
+
+it('completes frame titles with specific native white background and border paint', () => {
+  const x = frameTitlePaintGrid(),
+    match = associateFigures(x.page, [x.caption], [], [], x.frames, x.fonts, x.context)[0]
+  expect(match.reason).toBe('native-raster-composite-grid')
+  expect(match.rect).toEqual([85, 95, 480, 254])
+})
+
+it('completes frame titles with the complete multi-page caption provider', () => {
+  const x = frameTitlePaintGrid(),
+    other = { page: 2, lines: ['Figure 2. Independent page.'], rect: [110, 96, 210, 102] },
+    match = associateFigures(x.page, [x.caption, other], [], [], x.frames, x.fonts, x.context)[0]
+  expect(match.rect).toEqual([85, 95, 480, 254])
+})
+
+function frameTitleNativePaintGrid(): ReturnType<typeof JSON.parse> {
+  const x = frameTitlePaintGrid()
+  x.context.operators.argsArray.forEach((args: ReturnType<typeof JSON.parse>, n: number) => {
+    if (x.context.operators.fnArray[n] !== OPS.constructPath) return
+    args[1][0] = new Float32Array(args[1][0])
+    args[2] = new Float32Array(args[2])
+  })
+  return x
+}
+
+it('completes frame titles with original native Float32Array path bounds', () => {
+  const x = frameTitleNativePaintGrid(),
+    match = associateFigures(x.page, [x.caption], [], [], x.frames, x.fonts, x.context)[0]
+  expect(match.rect).toEqual([85, 95, 480, 254])
+})
+
+it.each([
+  [
+    'nonfinite native bounds',
+    (x: ReturnType<typeof JSON.parse>) => {
+      x.context.operators.argsArray[x.backgroundIndex][2][0] = NaN
+    }
+  ],
+  [
+    'inconsistent native bounds',
+    (x: ReturnType<typeof JSON.parse>) => {
+      x.context.operators.argsArray[x.backgroundIndex][2][0] = 1
+    }
+  ],
+  [
+    'incomplete native bounds',
+    (x: ReturnType<typeof JSON.parse>) => {
+      x.context.operators.argsArray[x.backgroundIndex][2] = new Float32Array([0, 0, 410])
+    }
+  ],
+  [
+    'foreign numeric view',
+    (x: ReturnType<typeof JSON.parse>) => {
+      x.context.operators.argsArray[x.backgroundIndex][2] = new Float64Array([0, 0, 410, 170])
+    }
+  ],
+  [
+    'same-page competing caption',
+    (x: ReturnType<typeof JSON.parse>) => {
+      x.otherCaption = { page: 1, lines: ['Figure 2. Separate.'], rect: [110, 96, 210, 102] }
+    }
+  ]
+])('keeps the original native crop with %s', (_name, mutate) => {
+  const x = frameTitleNativePaintGrid()
+  mutate(x)
+  const match = associateFigures(
+    x.page,
+    [x.caption, ...(x.otherCaption ? [x.otherCaption] : [])],
+    [],
+    [],
+    x.frames,
+    x.fonts,
+    x.context
+  )[0]
+  expect(match.rect).toEqual([90, 104, 480, 254])
+})
+
+it.each([
+  [
+    'large foreign path overlapping most of the old body',
+    (x: ReturnType<typeof JSON.parse>) =>
+      x.page.graphicsBounds.push({
+        kind: 'path',
+        normalizedRect: [85 / 600, 96 / 800, 470 / 600, 230 / 800]
+      })
+  ],
+  [
+    'nonopaque white paint',
+    (x: ReturnType<typeof JSON.parse>) => {
+      x.context.operators.argsArray[x.alphaIndex] = [[['ca', 0.5]]]
+    }
+  ],
+  [
+    'colored background',
+    (x: ReturnType<typeof JSON.parse>) => {
+      x.context.operators.argsArray[x.whiteIndex] = ['#eeeeee']
+    }
+  ],
+  [
+    'missing actual source context',
+    (x: ReturnType<typeof JSON.parse>) => {
+      x.context.content.items = []
+    }
+  ],
+  [
+    'foreign source context',
+    (x: ReturnType<typeof JSON.parse>) => {
+      x.context.content.items[0].str = 'Independent text'
+    }
+  ],
+  [
+    'foreign background index',
+    (x: ReturnType<typeof JSON.parse>) => {
+      x.page.graphicsBounds[0].operationIndex++
+    }
+  ],
+  [
+    'duplicate background owner',
+    (x: ReturnType<typeof JSON.parse>) => {
+      x.page.graphicsBounds.push({ ...x.page.graphicsBounds[0] })
+    }
+  ],
+  [
+    'missing clip',
+    (x: ReturnType<typeof JSON.parse>) => {
+      x.context.operators.fnArray[6] = OPS.endPath
+    }
+  ],
+  [
+    'wrong source matrix',
+    (x: ReturnType<typeof JSON.parse>) => {
+      x.context.operators.argsArray[0] = [1, 0, 0, 1, 80, 535]
+    }
+  ],
+  [
+    'transform after clip',
+    (x: ReturnType<typeof JSON.parse>) => {
+      x.context.operators.fnArray[8] = OPS.transform
+      x.context.operators.argsArray[8] = [1, 0, 0, 1, 1, 0]
+    }
+  ],
+  [
+    'different active frame transform',
+    (x: ReturnType<typeof JSON.parse>) => {
+      x.context.operators.fnArray[x.frameIndices[0] - 4] = OPS.transform
+      x.context.operators.argsArray[x.frameIndices[0] - 4] = [1, 0, 0, 1, 1, 0]
+    }
+  ],
+  [
+    'source restore underflow',
+    (x: ReturnType<typeof JSON.parse>) => {
+      x.context.operators.fnArray.push(OPS.restore)
+      x.context.operators.argsArray.push(null)
+    }
+  ]
+])('keeps the original raster-grid crop with %s', (_name, mutate) => {
+  const x = frameTitlePaintGrid()
+  mutate(x)
+  const match = associateFigures(x.page, [x.caption], [], [], x.frames, x.fonts, x.context)[0]
+  expect(match.rect).toEqual([90, 104, 480, 254])
+})

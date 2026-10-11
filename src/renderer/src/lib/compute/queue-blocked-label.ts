@@ -1,5 +1,5 @@
+import type { ComputeQueueBlockedReason } from '@aipoch/compute'
 import type { TFunction } from 'i18next'
-import type { ComputeQueueBlockedReason } from '../../../../shared/compute'
 
 export function computeQueueBlockedLabel(
   reason: ComputeQueueBlockedReason | undefined,

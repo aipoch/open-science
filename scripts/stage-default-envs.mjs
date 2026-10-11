@@ -32,6 +32,8 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
+import { DEFAULT_ENV_VERSION } from '@aipoch/environment'
+
 import { createPackArchive } from './pack-archive.mjs'
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url))
@@ -220,17 +222,8 @@ export const verifyBundleComplete = (lockText, pkgsDir, deps = {}) => {
   }
 }
 
-// Reads DEFAULT_ENV_VERSION straight from runtime-paths.ts (no import of the built app) so the manifest
-// always matches what the app fetches at runtime — same technique build.yml/stage-runtime-bundle.yml use.
-export const readDefaultEnvVersion = () => {
-  const src = readFileSync(
-    join(SCRIPT_DIR, '..', 'src', 'main', 'notebook', 'runtime-paths.ts'),
-    'utf8'
-  )
-  const m = src.match(/DEFAULT_ENV_VERSION\s*=\s*(\d+)/)
-  if (!m) throw new Error('could not read DEFAULT_ENV_VERSION from runtime-paths.ts')
-  return Number(m[1])
-}
+// Consume the package's public version so staging and runtime use the same contract.
+export const readDefaultEnvVersion = () => DEFAULT_ENV_VERSION
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 

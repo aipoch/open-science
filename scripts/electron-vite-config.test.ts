@@ -1,9 +1,12 @@
 import { createRequire } from 'node:module'
-import { normalizePath } from 'vite'
+import { resolve } from 'node:path'
+import { build, normalizePath } from 'vite'
+import { runInNewContext } from 'node:vm'
 import type { UserConfig } from 'electron-vite'
 import { describe, expect, it } from 'vitest'
 
 import config from '../electron.vite.config'
+import webConfig from '../vite.web.config'
 
 const resolveConfig = config as (input: { command: 'build' | 'serve'; mode: string }) => UserConfig
 const resolvedConfig = resolveConfig({ command: 'build', mode: 'production' })
@@ -30,9 +33,11 @@ describe('electron-vite renderer dependency optimization', () => {
       force: true,
       include: [
         '@aipoch/connector-mcp-client/oauth-redirect',
+        '@aipoch/compute',
         '@aipoch/diagnostics',
         '@aipoch/skills/document',
-        '@aipoch/notebook-analysis/contracts'
+        '@aipoch/notebook-analysis/contracts',
+        '@aipoch/environment/contracts'
       ],
       entries: [
         '*.html',
@@ -45,8 +50,53 @@ describe('electron-vite renderer dependency optimization', () => {
         )
       ]
     })
+    expect(webConfig.optimizeDeps?.include).toContain('@aipoch/compute')
     expect(resolvedConfig.renderer?.optimizeDeps).toBeUndefined()
     expect(dev.renderer?.build).toEqual(resolvedConfig.renderer?.build)
     expect(dev.renderer?.worker).toEqual(resolvedConfig.renderer?.worker)
   })
+})
+
+describe('linked Compute package browser consumption', () => {
+  it.each(['renderer', 'preload', 'web'] as const)(
+    'bundles the public API with the %s production CJS policy',
+    async (surface) => {
+      const entry = normalizePath(resolve('compute-browser-contract.js'))
+      const result = await build({
+        configFile: false,
+        logLevel: 'silent',
+        plugins: [
+          {
+            name: 'compute-browser-contract',
+            resolveId: (id) => (id === entry ? entry : undefined),
+            load: (id) =>
+              id === entry
+                ? `
+          import { parseHostConnectionPort, isHostConnectionPortValid, computeProviderId } from '@aipoch/compute'
+          export const actual = [parseHostConnectionPort(' 2222 '), isHostConnectionPortValid('0'), computeProviderId('cluster')]
+        `
+                : undefined
+          }
+        ],
+        build: {
+          write: false,
+          minify: false,
+          commonjsOptions: (surface === 'web' ? webConfig : resolvedConfig[surface])?.build
+            ?.commonjsOptions,
+          lib: { entry, name: 'ComputeContract', formats: ['iife'] }
+        }
+      })
+      const outputs = (Array.isArray(result) ? result : [result]).flatMap((output) =>
+        'output' in output ? output.output : []
+      )
+      const chunk = outputs.find((output) => output.type === 'chunk')
+      expect(chunk).toBeDefined()
+      // A browser-like realm has no require, process or Node globals; execute the actual bundle.
+      expect(runInNewContext(chunk!.code + '; ComputeContract.actual')).toEqual([
+        2222,
+        false,
+        'ssh:cluster'
+      ])
+    }
+  )
 })

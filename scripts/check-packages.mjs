@@ -12,6 +12,8 @@ export const verificationFamilies = [
     packages: ['connector-core', 'connector-builtins', 'connector-mcp-client']
   },
   { script: 'check:diagnostics-package', packages: ['diagnostics'] },
+  { script: 'check:environment-package', packages: ['environment'] },
+  { script: 'check:compute-package', packages: ['compute'] },
   {
     script: 'check:notebook-packages',
     packages: ['notebook-syntax', 'notebook-code-risk', 'notebook-analysis']

@@ -53,7 +53,13 @@ async function preview(
   options: Partial<Extract<JournalRequest, { action: 'begin' }>> = {}
 ): Promise<{ token: string; digest: string }> {
   const { token } = await service.run({ action: 'begin', definition, policy: 'fill', ...options })
-  await service.run({ action: 'append', token: token!, offset: 0, rows })
+  for (let offset = 0; offset < rows.length; offset += 200)
+    await service.run({
+      action: 'append',
+      token: token!,
+      offset,
+      rows: rows.slice(offset, offset + 200)
+    })
   const result = await service.run({ action: 'preview', token: token!, offset: 0 })
   return { token: token!, digest: result.digest! }
 }
@@ -503,4 +509,193 @@ it('uses the native Prisma transaction for both reference validation and binding
   expect(
     await client.journalItemBinding.findUnique({ where: { itemId: 'guarded' } })
   ).toMatchObject({ journalId: target.id })
+})
+
+it('rolls back binding writes and dataset cascades with the surrounding Prisma transaction', async () => {
+  const { service, client, changed } = await setup()
+  const saved = await service.run({
+    action: 'commit',
+    ...(await preview(service)),
+    skipProblems: false
+  })
+  const dataset = saved.datasets![0]
+  await client.literatureItem.create({
+    data: { id: 'atomic-binding', itemType: 'journalArticle', title: 'Atomic binding' }
+  })
+  const target = (await service.run({ action: 'candidates', query: 'Lunar' })).candidates![0]
+  const audit = (await service.run({ action: 'audit', status: 'missing', offset: 0 })).alignment!
+  const bind: Extract<JournalRequest, { action: 'bind' }> = {
+    action: 'bind',
+    token: audit.token,
+    itemId: 'atomic-binding',
+    journalId: target.id,
+    expectedMetadataRevision: 1,
+    expectedBindingRevision: null
+  }
+  const original = client.$transaction.bind(client)
+  const failAfterWrite = (
+    check: (tx: Prisma.TransactionClient) => Promise<void>
+  ): ReturnType<typeof vi.spyOn> =>
+    vi.spyOn(client, '$transaction').mockImplementationOnce((async (
+      operation: (tx: Prisma.TransactionClient) => Promise<unknown>
+    ): Promise<unknown> =>
+      original(async (tx) => {
+        await operation(tx)
+        await check(tx)
+        throw new Error('commit rejected')
+      })) as typeof client.$transaction)
+  let failure = failAfterWrite(async (tx) => {
+    expect(await tx.journalItemBinding.count()).toBe(1)
+    // Read your writes must remain on the same transaction, including host reference data.
+    await tx.literatureItem.update({
+      where: { id: 'atomic-binding' },
+      data: { title: 'Uncommitted' }
+    })
+  })
+  await expect(service.run(bind)).rejects.toThrow('commit rejected')
+  failure.mockRestore()
+  expect(await client.journalItemBinding.count()).toBe(0)
+  expect(
+    (await client.literatureItem.findUniqueOrThrow({ where: { id: 'atomic-binding' } })).title
+  ).toBe('Atomic binding')
+  expect(changed).toHaveBeenCalledTimes(1)
+  await service.run(bind)
+  const binding = await client.journalItemBinding.findUniqueOrThrow({
+    where: { itemId: bind.itemId }
+  })
+  const removal = (
+    await service.run({
+      action: 'remove-preview',
+      datasetId: dataset.id,
+      expectedRevision: dataset.revision
+    })
+  ).removal!
+  expect(removal).toMatchObject({ journals: 1, bindings: 1 })
+  const remove: JournalRequest = {
+    action: 'remove',
+    datasetId: dataset.id,
+    expectedRevision: dataset.revision,
+    expectedRemovalDigest: removal.digest
+  }
+  failure = failAfterWrite(async (tx) => {
+    expect(await tx.journalDataset.count()).toBe(0)
+    expect(await tx.journal.count()).toBe(0)
+    expect(await tx.journalItemBinding.count()).toBe(0)
+  })
+  await expect(service.run(remove)).rejects.toThrow('commit rejected')
+  failure.mockRestore()
+  expect(await client.journalItemBinding.findUnique({ where: { itemId: bind.itemId } })).toEqual(
+    binding
+  )
+  expect(await client.journalDatasetEntry.count()).toBe(1)
+  expect((await service.run({ action: 'list' })).datasets).toEqual([dataset])
+  expect(changed).toHaveBeenCalledTimes(2)
+  await service.run(remove)
+  expect(await client.journal.count()).toBe(0)
+  expect(await client.journalDatasetEntry.count()).toBe(0)
+  expect(await client.journalItemBinding.count()).toBe(0)
+  expect(await client.literatureItem.count()).toBe(1)
+  expect(await client.$queryRawUnsafe('PRAGMA foreign_key_check')).toEqual([])
+})
+
+it('preserves parameterized values, upserts, sparse paging and journals shared by datasets', async () => {
+  const { service, client } = await setup()
+  const hostile = "'); DROP TABLE Journal; --"
+  const rows = Array.from({ length: 505 }, (_, i) =>
+    row({
+      row: i + 2,
+      name: `Fictional periodical ${String(i).padStart(4, '0')} ${hostile}`,
+      aliases: [],
+      issns: [],
+      values: i === 504 ? { signal: '504', band: hostile } : { signal: String(i) }
+    })
+  )
+  const saved = await service.run({
+    action: 'commit',
+    ...(await preview(service, rows)),
+    skipProblems: false
+  })
+  let dataset = saved.datasets![0]
+  expect(dataset.count).toBe(505)
+  const entries = await service.run({
+    action: 'entries',
+    datasetId: dataset.id,
+    query: '',
+    sortField: 'signal',
+    descending: true,
+    offset: 500
+  })
+  expect(entries.total).toBe(505)
+  expect(entries.entries!.map(({ values }) => values.signal)).toEqual(['4', '3', '2', '1', '0'])
+  expect(
+    (
+      await service.run({
+        action: 'choices',
+        datasetId: dataset.id,
+        expectedRevision: 1,
+        fieldId: 'band',
+        query: '',
+        offset: 0
+      })
+    ).choices
+  ).toEqual([hostile])
+  const exported: JournalImportRow[] = []
+  let after: string | undefined, snapshot: string | undefined
+  do {
+    const page = (
+      await service.run({
+        action: 'export',
+        datasetId: dataset.id,
+        expectedRevision: 1,
+        after,
+        snapshot
+      })
+    ).exportPage!
+    exported.push(...page.rows)
+    after = page.next
+    snapshot = page.snapshot
+  } while (after)
+  expect(exported).toHaveLength(505)
+  expect(new Set(exported.map(({ name }) => name)).size).toBe(505)
+  expect(exported.find(({ name }) => name === rows[504].name)!.values.band).toBe(hostile)
+  dataset = (
+    await service.run({
+      action: 'commit',
+      ...(await preview(service, [row({ ...rows[0], values: { signal: '1000' } })], {
+        datasetId: dataset.id,
+        expectedRevision: 1,
+        policy: 'replace'
+      })),
+      skipProblems: false
+    })
+  ).datasets![0]
+  expect(dataset).toMatchObject({ revision: 2, count: 505 })
+  expect(await client.journal.count()).toBe(505)
+  const second = await service.run({
+    action: 'commit',
+    ...(await preview(service, [rows[0]], { definition: { ...definition, year: 2032 } })),
+    skipProblems: false
+  })
+  const retained = second.datasets!.find(({ year }) => year === 2032)!
+  const removal = (
+    await service.run({ action: 'remove-preview', datasetId: dataset.id, expectedRevision: 2 })
+  ).removal!
+  expect(removal.journals).toBe(504)
+  await service.run({
+    action: 'remove',
+    datasetId: dataset.id,
+    expectedRevision: 2,
+    expectedRemovalDigest: removal.digest
+  })
+  expect(await client.journal.count()).toBe(1)
+  expect(await client.journalDatasetEntry.count()).toBe(1)
+  expect((await service.run({ action: 'list' })).datasets).toEqual([retained])
+  const resolved = await service.run({
+    action: 'resolve',
+    identities: [{ name: rows[0].name, aliases: [], issns: [] }]
+  })
+  expect(resolved.matches![0]).toMatchObject({
+    status: 'matched',
+    attributes: [expect.objectContaining({ value: '0', year: 2032 })]
+  })
 })

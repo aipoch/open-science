@@ -9,7 +9,7 @@ import { dirname, join } from 'node:path'
 
 import { desktopShellInteraction, desktopFileInteraction } from '../desktop-interaction'
 import { runtimeLifecycle } from '../runtime-lifecycle'
-import { runtimeMetadataIfConfigured } from '../runtime-metadata'
+import { resolveNotebookMicromamba as resolveMicromamba } from '../notebook/environment-resources'
 
 import type {
   ActiveSessionInfo,
@@ -31,13 +31,13 @@ import {
   resolveDataRoot,
   samePath
 } from '../storage-root'
-import { micromambaSpawnEnv, resolveMicromamba } from '../notebook/micromamba'
-import type { MicromambaRunner } from '../notebook/windows-micromamba-runner'
-import { captureMicromamba } from '../notebook/provisioner-runtime'
-import { exportRuntimeLocks } from '../notebook/runtime-relocation'
-import { runtimeRoot } from '../notebook/runtime-paths'
-import { removeMicromambaCacheForRoot } from '../notebook/micromamba-cache'
-import { removeNotebookWorkloadCache } from '../notebook/notebook-workload-cache-paths'
+import { micromambaSpawnEnv } from '@aipoch/environment'
+import type { MicromambaRunner } from '@aipoch/environment'
+import { captureMicromamba } from '@aipoch/environment'
+import { exportRuntimeLocks } from '@aipoch/environment'
+import { runtimeRoot } from '@aipoch/environment'
+import { removeMicromambaCacheForRoot } from '@aipoch/environment'
+import { removeNotebookWorkloadCache } from '@aipoch/environment'
 import { detectActiveSessions } from './detect-active'
 import { hasAnyExistingPath, isDataRootMissing } from './path-presence'
 import { directoryHasFiles } from './location-evidence'
@@ -564,7 +564,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
               mm: deps.micromambaRunner
                 ? await deps.micromambaRunner.resolve()
                 : resolveMicromamba({
-                    resourcesPath: runtimeMetadataIfConfigured()?.resourcesPath
+                    runtimeRoot: runtimeRoot(fromDataRoot)
                   }),
               capture: (argv) =>
                 captureMicromamba(argv, micromambaSpawnEnv(runtimeRoot(fromDataRoot)))

@@ -9,15 +9,15 @@ import {
   createNotebookEnvironmentLifecycle,
   type NotebookEnvironmentLifecycle
 } from '../notebook/environment-lifecycle-workflows'
-import { serializeProvisioner } from '../notebook/environment-operation-foundation'
+import { serializeProvisioner } from '@aipoch/environment'
 import { effectiveMirrorAsync } from '../notebook/mirror-probe'
 import type { NotebookNetworkSandboxOwner } from '../notebook/network-sandbox-owner'
 import type { NotebookCommandWorkflows } from '../notebook/notebook-workflows'
 import {
   createProductionProvisioner,
-  type ProductionProvisionerDeps,
-  type RuntimeProvisioner
-} from '../notebook/provisioner'
+  type ProductionProvisionerDeps
+} from '../notebook/environment-production'
+import { type RuntimeProvisioner } from '@aipoch/environment'
 import type { NotebookRuntimeService } from '../notebook/runtime-service'
 import type { SettingsService } from '../settings/service'
 import { runDataRootStartupRecovery } from '../storage/migration-state'

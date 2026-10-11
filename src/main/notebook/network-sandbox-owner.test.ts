@@ -54,8 +54,8 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   }
 })
 
-vi.mock('./r-command', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('./r-command')>()),
+vi.mock('@aipoch/environment', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aipoch/environment')>()),
   rKernelProtocolProbe: backend.rKernelProtocolProbe
 }))
 
@@ -78,7 +78,7 @@ vi.mock('@aipoch/notebook-network-sandbox', () => ({
 import { NotebookNetworkSandboxOwner, commandLine } from './network-sandbox-owner'
 import { WindowsNotebookRuntimeManager } from './windows-runtime-manager'
 import { NotebookKernelExecutor } from './kernel-executor'
-import { DEFAULT_R_ENV, envPrefix, legacyDefaultEnvPrefix, rScriptBin } from './runtime-paths'
+import { DEFAULT_R_ENV, envPrefix, legacyDefaultEnvPrefix, rScriptBin } from '@aipoch/environment'
 import {
   beginMigration,
   beginMigrationPreparation,
@@ -2615,7 +2615,8 @@ describe('R startup authorization admission', () => {
   it('retains host child diagnostics when the protocol probe converts a process failure to false', async () => {
     backend.getWindowsRuntimeAccess.mockResolvedValue({ authorized: false, registered: false })
     backend.rKernelProtocolProbe.mockImplementationOnce(
-      (await vi.importActual<typeof import('./r-command')>('./r-command')).rKernelProtocolProbe
+      (await vi.importActual<typeof import('@aipoch/environment')>('@aipoch/environment'))
+        .rKernelProtocolProbe
     )
     const { logger, records } = createCapturingLogger()
     const owner = new NotebookNetworkSandboxOwner({

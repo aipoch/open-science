@@ -19,8 +19,8 @@ vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
   errorLogFields: (error: unknown) => ({ error })
 }))
 vi.mock('../notebook/runtime-service', () => ({ NotebookRuntimeService: class {} }))
-vi.mock('../notebook/provisioner', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../notebook/provisioner')>()),
+vi.mock('../notebook/environment-production', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../notebook/environment-production')>()),
   createProductionProvisioner: mocks.createProvisioner
 }))
 vi.mock('../notebook/mirror-probe', () => ({ effectiveMirrorAsync: mocks.mirror }))
@@ -32,7 +32,7 @@ vi.mock('../notebook/env-ipc', () => ({
   broadcastNotebookEnvProgress: mocks.progress
 }))
 
-import type { RuntimeProvisioner } from '../notebook/provisioner'
+import type { RuntimeProvisioner } from '@aipoch/environment'
 import { initializeDataRootWriteAvailability } from '../storage/migration-state'
 import { registerNotebookEnvironmentComposition } from './notebook-environment'
 

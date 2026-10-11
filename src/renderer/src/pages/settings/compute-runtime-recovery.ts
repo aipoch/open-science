@@ -1,6 +1,7 @@
 import type { TFunction } from 'i18next'
 
-import type { ComputeAuthenticationErrorCode } from '../../../../shared/compute'
+import type { ComputeAuthenticationErrorCode } from '@aipoch/compute'
+
 import {
   computeAuthenticationPresentation,
   isComputeAuthenticationErrorCode

@@ -1,13 +1,13 @@
 import { existsSync } from 'node:fs'
 import type { SkillHelperValidator } from '@aipoch/skills'
-import { validateNotebookHelperExports, type PythonCommand } from '../notebook/python-command'
+import { validateNotebookHelperExports, type PythonCommand } from '@aipoch/environment'
 import {
   condaActivatedPath,
   DEFAULT_PY_ENV,
   envPrefix,
   pythonBin,
   runtimeRoot
-} from '../notebook/runtime-paths'
+} from '@aipoch/environment'
 
 const managedPythonValidation = (
   storageRoot: string | undefined
