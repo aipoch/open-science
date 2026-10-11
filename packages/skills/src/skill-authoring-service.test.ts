@@ -552,3 +552,62 @@ it('reports committed publication if draft cleanup fails without rolling back in
   )
   expect(await service.read({ name: 'personal-committed' })).toMatchObject({ origin: 'personal' })
 })
+
+it('rejects an unqualified delete when a published display name matches a draft name', async () => {
+  const { service, catalog, root } = await makeFixture()
+  await service.edit({
+    name: 'shared-name',
+    path: 'SKILL.md',
+    content: '---\nname: shared-name\ndescription: Draft.\n---\nDraft body.\n'
+  })
+  const listPublished = catalog.list
+  catalog.list = async () => [
+    ...(await listPublished()),
+    {
+      id: 'custom-package-id',
+      name: 'shared-name',
+      displayName: 'Shared name',
+      description: 'Published alias.',
+      source: 'imported',
+      updatedAt: '2026-08-09',
+      sourceDir: root
+    }
+  ]
+
+  await expect(service.resolveDeletion('shared-name')).rejects.toThrow('ambiguous')
+})
+
+it('requires exact replacement for existing draft files and publishes their final bytes', async () => {
+  const { service, root } = await makeFixture()
+  await service.edit({
+    name: 'analysis-helper',
+    path: 'SKILL.md',
+    content: '---\nname: analysis-helper\ndescription: Analyze data.\n---\nBody.'
+  })
+  await expect(
+    service.edit({ name: 'analysis-helper', path: 'SKILL.md', content: 'replacement' })
+  ).rejects.toThrow('already exists')
+  await service.edit({
+    name: 'analysis-helper',
+    path: 'scripts/run.js',
+    content: 'console.log("v1")\n'
+  })
+  await service.edit({
+    name: 'analysis-helper',
+    path: 'scripts/run.js',
+    oldString: 'v1',
+    content: 'v2'
+  })
+  await expect(service.publish({ name: 'analysis-helper' })).resolves.toEqual({
+    status: 'published',
+    id: 'personal-analysis-helper',
+    name: 'analysis-helper',
+    origin: 'personal'
+  })
+  await expect(
+    service.read({ name: 'personal-analysis-helper', path: 'scripts/run.js' })
+  ).resolves.toMatchObject({ content: 'console.log("v2")\n', origin: 'personal' })
+  await expect(
+    readFile(join(root, 'skills', 'drafts', 'analysis-helper', 'SKILL.md'))
+  ).rejects.toMatchObject({ code: 'ENOENT' })
+})

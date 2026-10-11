@@ -75,7 +75,12 @@
     "packages/skills/vitest.config.ts",
     "packages/skills/src/runtime-document.test.ts",
     "packages/skills/src/skill-release.ts",
-    "packages/skills/src/skill-release.test.ts"
+    "packages/skills/src/skill-release.test.ts",
+    "packages/skills/src/registry.test.ts",
+    "packages/skills/src/materializer.test.ts",
+    "packages/skills/src/export.test.ts",
+    "packages/skills/src/registered-helper-catalog.test.ts",
+    "packages/skills/src/catalog.test.ts"
   ],
   "interfacePaths": [
     "packages/skills/src/index.ts",
@@ -104,7 +109,12 @@
       "packages/skills/src/durable-json-file.test.ts",
       "packages/skills/src/agent-home-skill-catalog.test.ts",
       "packages/skills/src/runtime-document.test.ts",
-      "packages/skills/src/skill-release.test.ts"
+      "packages/skills/src/skill-release.test.ts",
+      "packages/skills/src/registry.test.ts",
+      "packages/skills/src/materializer.test.ts",
+      "packages/skills/src/export.test.ts",
+      "packages/skills/src/registered-helper-catalog.test.ts",
+      "packages/skills/src/catalog.test.ts"
     ],
     "contract": [
       "src/main/skills/catalog.test.ts",

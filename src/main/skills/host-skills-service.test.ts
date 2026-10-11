@@ -111,7 +111,7 @@ describe('HostSkillsService', () => {
     )
     expect(await userSkills.list()).toEqual([])
   })
-  it('creates a draft with exact create/replace semantics, publishes it, and reads it back', async () => {
+  it('translates old_string and refreshes only after publication commits', async () => {
     const { service, root, userSkills, reload } = await makeFixture()
     const manifest =
       '---\nname: analysis-helper\ndescription: Analyze a dataset.\n---\nUse the script.\n'
@@ -126,12 +126,6 @@ describe('HostSkillsService', () => {
       op: 'edit',
       params: { name: 'analysis-helper', path: 'scripts/run.js', content: 'console.log("v1")\n' }
     })
-    await expect(
-      service.dispatch({
-        op: 'edit',
-        params: { name: 'analysis-helper', path: 'SKILL.md', content: 'replacement' }
-      })
-    ).rejects.toThrow('already exists')
     await service.dispatch({
       op: 'edit',
       params: {
@@ -213,38 +207,7 @@ describe('HostSkillsService', () => {
       readFile(join(root, 'skills', 'drafts', 'disposable', 'SKILL.md'))
     ).rejects.toMatchObject({ code: 'ENOENT' })
   })
-  it('rejects an unqualified delete when a published display name matches a draft name', async () => {
-    const { service, catalog, root, approveDelete } = await makeFixture()
-    await service.dispatch({
-      op: 'edit',
-      params: {
-        name: 'shared-name',
-        path: 'SKILL.md',
-        content: '---\nname: shared-name\ndescription: Draft.\n---\nDraft body.\n'
-      }
-    })
-    const listPublished = catalog.list
-    catalog.list = async () => [
-      ...(await listPublished()),
-      {
-        id: 'custom-package-id',
-        name: 'shared-name',
-        displayName: 'Shared name',
-        description: 'Published alias.',
-        source: 'imported',
-        updatedAt: '2026-08-09',
-        sourceDir: root
-      }
-    ]
 
-    await expect(
-      service.dispatch(
-        { op: 'delete', params: { name: 'shared-name' } },
-        { sessionId: 'session-1' }
-      )
-    ).rejects.toThrow('ambiguous')
-    expect(approveDelete).not.toHaveBeenCalled()
-  })
   it('requires approval for delete and reports a decline as a normal result', async () => {
     const { service, userSkills, approveDelete, reload } = await makeFixture()
     await userSkills.createPersonal({
