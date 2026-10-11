@@ -280,14 +280,21 @@ describe('storage IPC handlers', () => {
     const preferences = new SettingsPreferencesModule(repository)
     initDataRoot(dataRoot)
     const deps = fakeDeps()
+    let targetRemoved = false
     deps.settingsService.setDataRoot = async (path, options) => {
       const pending = preferences.setDataRoot(path, options)
+      resetOwnership.resetOwnershipSync()
       rmSync(target, { recursive: true })
+      targetRemoved = !existsSync(target)
       await pending
     }
     const owner = createStorageCommandOwner(deps)
     expect(await owner.migrate({ parent: targetParent })).toMatchObject({ ok: true })
-    expect(await owner.commitAndRelaunch({ parent: target })).toMatchObject({ ok: false })
+    expect(await owner.commitAndRelaunch({ parent: target })).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('your current data is untouched.')
+    })
+    expect(targetRemoved).toBe(true)
     expect((await repository.getSettings()).dataRoot).toBe(dataRoot)
     expect(deps.relaunch).not.toHaveBeenCalled()
   })
@@ -302,13 +309,20 @@ describe('storage IPC handlers', () => {
     await mkdir(join(target, 'workspaces'), { recursive: true })
     await writeFile(join(target, 'workspaces/history.json'), '{}')
     const deps = fakeDeps()
+    let targetRemoved = false
     deps.settingsService.setDataRoot = async (path, options) => {
       const pending = preferences.setDataRoot(path, options)
+      resetOwnership.resetOwnershipSync()
       rmSync(target, { recursive: true })
+      targetRemoved = !existsSync(target)
       await pending
     }
     const owner = createStorageCommandOwner(deps)
-    expect(await owner.setDataRootAndRelaunch({ parent: target })).toMatchObject({ ok: false })
+    expect(await owner.setDataRootAndRelaunch({ parent: target })).toMatchObject({
+      ok: false,
+      error: 'The selected data folder changed. Check the location and confirm it again.'
+    })
+    expect(targetRemoved).toBe(true)
     expect((await repository.getSettings()).dataRoot).toBe(dataRoot)
     expect(isMigrationPending()).toBe(false)
     expect(deps.relaunch).not.toHaveBeenCalled()
