@@ -50,7 +50,7 @@ const resolvePlan = (paths: string[]): ReturnType<typeof classifyChanges> => {
 it('uses the packaging heap budget for Web builds in every workflow', () => {
   const scripts = JSON.parse(readFileSync('package.json', 'utf8')).scripts
   expect(scripts['build:web']).toBe(
-    'npm run build:skills && npm run gen:web-api-map && node --max-old-space-size=8192 node_modules/vite/bin/vite.js build --config vite.web.config.ts'
+    'npm run build:skills && npm run build:specialists && npm run gen:web-api-map && node --max-old-space-size=8192 node_modules/vite/bin/vite.js build --config vite.web.config.ts'
   )
 })
 

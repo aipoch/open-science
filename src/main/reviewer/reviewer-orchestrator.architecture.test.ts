@@ -565,7 +565,6 @@ describe('Reviewer orchestrator architecture', () => {
           'src/main/literature/command-owner.test.ts',
           'src/main/session-persistence/runtime-session-owner.test.ts',
           'src/main/session-plan/adversarial-session-plan.test.ts',
-          'packages/open-science/cli.test.ts',
           'src/main/notebook/local-rpc-notebook-adapter.test.ts',
           'src/renderer/src/lib/acp/workspace-events.test.ts',
           'src/renderer/src/stores/review-store.test.ts',

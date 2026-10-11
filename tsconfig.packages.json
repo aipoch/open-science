@@ -45,6 +45,9 @@
     },
     {
       "path": "./packages/literature-discovery/tsconfig.dev.json"
+    },
+    {
+      "path": "./packages/specialists/tsconfig.dev.json"
     }
   ]
 }
