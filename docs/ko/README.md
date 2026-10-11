@@ -51,7 +51,7 @@ AIPOCH Open-Science는 머신러닝, 통계학, 생명과학, 화학, 재료과�
 
 완료된 연구 세션은 선택한 대화 분기, 파일 버전, Notebook 기록 및 검증 증거를 포함하는 이동 가능한 `.science` 패키지로 내보내 검토, 인계 및 보관에 사용할 수도 있습니다.
 
-> 💡 **[AIPOCH Open-Science v0.37.0 출시](https://github.com/aipoch/open-science/releases/latest)** _(2026년 10월 업데이트)_. AIPOCH Open-Science v0.37.0은 공유 백엔드를 독립 실행형 Node 서비스로 실행합니다 — 명령줄과 헤드리스 모드에 창 없는 Electron 호스트가 더 이상 필요 없으며, 데스크톱 앱은 네이티브 클라이언트로 연결됩니다. 커넥터 카탈로그에 ENCORI 커넥터, ChEMBL 어세이 세부 정보와 바이오액티비티 페이지 매기기, ClinVar 제출 증거 조회가 추가되고, PDF 번역은 기본 읽기 순서를 유지하며 구조 추출은 원본이 소유한 그림과 표를 온전히 유지합니다. 노트북 런타임은 간소화된 승인 카드 뒤에서 환경 정보를 더 정확하게 보고합니다. 버그 수정은 Windows Python 검색, 데스크톱 백엔드 포트와 프로필, `.science` 신규 프로젝트 가져오기, 스마트 컬렉션 배치 내 재시도, Codex 스트리밍 도구 인수를 포함합니다. 자세한 내용은 [최신 릴리스 노트](https://github.com/aipoch/open-science/releases/latest)를 참조하세요.
+> 💡 **[AIPOCH Open-Science v0.37.1 출시](https://github.com/aipoch/open-science/releases/latest)** _(2026년 10월 업데이트)_. AIPOCH Open-Science v0.37.1은 PDF 구조 추출 충실도를 복원합니다 — 그림, 눈금 표, 캡션 소유권이 완전히 보존됩니다. Windows 경험이 강화되어 데스크톱 CLI는 비ASCII(중국어 등) 설치 경로를 지원하고, PDF 번역은 Windows 드라이브 경로를 처리하며, Notebook 하위 프로세스가 콘솔 창을 더 이상 띄우지 않습니다. 설치 패키지도 경량화되어 v0.37.0 백엔드 분리 이후 불어났던 사용하지 않는 런타임 페이로드가 제거됩니다. 자세한 내용은 [최신 릴리스 노트](https://github.com/aipoch/open-science/releases/latest)를 참조하세요.
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 히어로 배너: Science, Open to All — 오픈 소스, 모델 독립적, 자체 호스팅 가능한 과학 AI 연구 워크벤치" src="../images/readme/open-science-banner.png" />

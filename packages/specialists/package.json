@@ -1,6 +1,6 @@
 {
   "name": "@aipoch/specialists",
-  "version": "0.37.0",
+  "version": "0.37.1",
   "private": true,
   "description": "Portable Specialist profiles, archives and recoverable transactions",
   "license": "Apache-2.0",
