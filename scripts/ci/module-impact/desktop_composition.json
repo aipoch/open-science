@@ -1269,9 +1269,14 @@
       "src/main/notebook/environment-recovery.contract.test.ts",
       "src/main/notebook/environment-capture.contract.test.ts",
       "scripts/windows-signing-policy.test.ts",
-      "src/main/literature/batch-job-journal.test.ts"
+      "src/main/literature/batch-job-journal.test.ts",
+      "src/main/artifacts/reproducibility-host.test.ts"
     ]
   },
-  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
+  "capabilityOverlays": [
+    "e2e_regressions",
+    "e2e_delegation",
+    "windows_sensitive"
+  ],
   "fallbackCapability": "main_runtime"
 }

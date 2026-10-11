@@ -1,7 +1,4 @@
-import type {
-  ScientificComparisonPolicy,
-  ScientificComparisonReport
-} from '../../shared/output-comparison'
+import type { ScientificComparisonPolicy, ScientificComparisonReport } from './comparison-contracts'
 
 // Serializable worker function. CSV parsing/budgets are owned by the content comparator. Names,
 // contrasts and thresholds come from explicit user policy; this makes no global scientific claim.

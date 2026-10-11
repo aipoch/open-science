@@ -20,7 +20,9 @@
     "shared_workspace_contracts"
   ],
   "testFiles": {
-    "owner": ["packages/compute/src/host-connection-profile.test.ts"],
+    "owner": [
+      "packages/compute/src/host-connection-profile.test.ts"
+    ],
     "contract": [],
     "consumer": [
       "packages/compute/src/concurrency-manager.test.ts",
@@ -212,7 +214,6 @@
       "src/main/artifacts/repository.characterization.test.ts",
       "src/main/artifacts/repository.rollback.test.ts",
       "src/main/artifacts/repository.test.ts",
-      "src/main/artifacts/reproduction-preflight.test.ts",
       "src/main/artifacts/resumed-finalization-ownership.test.ts",
       "src/main/artifacts/reviewer-turn-file-evidence-reader.test.ts",
       "src/main/artifacts/ro-crate-export.test.ts",
@@ -1319,9 +1320,14 @@
       "src/shared/session-persistence/turn-outcome.test.ts",
       "src/shared/session-plan/contract.test.ts",
       "src/shared/smart-collection-rule.test.ts",
-      "src/shared/uploads.test.ts"
+      "src/shared/uploads.test.ts",
+      "src/main/artifacts/reproducibility-host.test.ts"
     ]
   },
-  "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
+  "capabilityOverlays": [
+    "windows_sensitive",
+    "e2e_regressions",
+    "e2e_delegation"
+  ],
   "fallbackCapability": "main_runtime"
 }

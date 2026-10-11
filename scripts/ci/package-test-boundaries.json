@@ -7,11 +7,15 @@
     },
     {
       "root": "packages/connector-builtins",
-      "dependencies": ["packages/connector-core"]
+      "dependencies": [
+        "packages/connector-core"
+      ]
     },
     {
       "root": "packages/connector-mcp-client",
-      "dependencies": ["packages/connector-core"]
+      "dependencies": [
+        "packages/connector-core"
+      ]
     },
     {
       "root": "packages/diagnostics",
@@ -23,7 +27,9 @@
     },
     {
       "root": "packages/pdf-translation",
-      "dependencies": ["packages/pdf-structure"]
+      "dependencies": [
+        "packages/pdf-structure"
+      ]
     },
     {
       "root": "packages/skills",
@@ -35,11 +41,15 @@
     },
     {
       "root": "packages/notebook-code-risk",
-      "dependencies": ["packages/notebook-syntax"]
+      "dependencies": [
+        "packages/notebook-syntax"
+      ]
     },
     {
       "root": "packages/notebook-analysis",
-      "dependencies": ["packages/notebook-syntax"]
+      "dependencies": [
+        "packages/notebook-syntax"
+      ]
     },
     {
       "root": "packages/literature-citations",
@@ -51,19 +61,33 @@
     },
     {
       "root": "packages/environment",
-      "dependencies": ["packages/diagnostics"]
+      "dependencies": [
+        "packages/diagnostics"
+      ]
     },
     {
       "root": "packages/compute",
-      "dependencies": ["packages/diagnostics"]
+      "dependencies": [
+        "packages/diagnostics"
+      ]
     },
     {
       "root": "packages/literature-discovery",
-      "dependencies": ["packages/literature-citations"]
+      "dependencies": [
+        "packages/literature-citations"
+      ]
     },
     {
       "root": "packages/specialists",
       "dependencies": []
+    },
+    {
+      "root": "packages/reproducibility",
+      "dependencies": [
+        "packages/environment",
+        "packages/diagnostics",
+        "packages/notebook-analysis"
+      ]
     }
   ]
 }

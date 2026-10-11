@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { ReproductionPreflightError } from './reproduction-preflight'
+import { ReproductionPreflightError } from '@aipoch/reproducibility'
 import type { SessionReproducibilityStore } from './session-reproducibility-store'
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 const log = createLogger('artifacts:session-reproducibility')

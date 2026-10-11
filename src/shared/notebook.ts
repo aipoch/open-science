@@ -2,7 +2,7 @@ import type {
   NotebookEnvironmentManifest as EnvironmentManifest,
   NotebookLiveEnvironmentOverlay as EnvironmentOverlay
 } from '@aipoch/environment/contracts'
-import type { NotebookExecutionContext } from './notebook-execution-context'
+import type { NotebookExecutionContext } from '@aipoch/reproducibility/execution-context'
 export type NotebookEnvironmentManifest = EnvironmentManifest<NotebookExecutionContext>
 export type NotebookLiveEnvironmentOverlay = EnvironmentOverlay<NotebookExecutionContext>
 import type {

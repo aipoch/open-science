@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import sharp from 'sharp'
-import { compareReproducedContent } from './output-comparison'
+import { compareReproducedContent } from '@aipoch/reproducibility'
 
 import type {
   ArtifactReproducibilityCheckLogRecord,

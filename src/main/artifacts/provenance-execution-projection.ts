@@ -3,7 +3,7 @@ import type {
   PersistedArtifactExecutionSnapshot,
   ProvenanceExecutionInputFile
 } from '../../shared/artifact-provenance'
-import { projectArtifactReproducibility } from './provenance-reproducibility-projection'
+import { projectArtifactReproducibility } from '@aipoch/reproducibility'
 
 export const projectPublicArtifactExecutionSnapshot = (
   persisted: PersistedArtifactExecutionSnapshot,

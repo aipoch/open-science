@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import { compareReproducedContent, validOutputComparisonReport } from './output-comparison'
+import { compareReproducedContent, validOutputComparisonReport } from './index'
 import {
   DEFAULT_OUTPUT_COMPARISON_POLICY,
   type ScientificComparisonPolicy,
   type OutputComparisonReport
-} from '../../shared/output-comparison'
+} from './contracts'
 
 const compare = async (
   expected: string,

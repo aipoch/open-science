@@ -1,6 +1,6 @@
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { createHash } from 'node:crypto'
-import type { NotebookExecutionContext } from '../../shared/notebook-execution-context'
+import type { NotebookExecutionContext } from '@aipoch/reproducibility/execution-context'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'

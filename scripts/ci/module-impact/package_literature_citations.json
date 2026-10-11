@@ -241,7 +241,6 @@
       "src/main/artifacts/repository.characterization.test.ts",
       "src/main/artifacts/repository.rollback.test.ts",
       "src/main/artifacts/repository.test.ts",
-      "src/main/artifacts/reproduction-preflight.test.ts",
       "src/main/artifacts/resumed-finalization-ownership.test.ts",
       "src/main/artifacts/reviewer-turn-file-evidence-reader.test.ts",
       "src/main/artifacts/ro-crate-export.test.ts",
@@ -1336,7 +1335,8 @@
       "packages/literature-discovery/test/metadata-enricher.test.ts",
       "packages/literature-discovery/test/reference-resolver.test.ts",
       "packages/literature-discovery/test/contracts.test.ts",
-      "packages/literature-discovery/test/scale.test.ts"
+      "packages/literature-discovery/test/scale.test.ts",
+      "src/main/artifacts/reproducibility-host.test.ts"
     ]
   },
   "capabilityOverlays": [],

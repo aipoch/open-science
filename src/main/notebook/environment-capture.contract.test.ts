@@ -9,10 +9,8 @@ import type {
   ProvenanceNotebookRun
 } from '../../shared/artifact-provenance'
 
-import {
-  prepareArtifactReproducibilityExecutionPlan,
-  sealArtifactReproducibilityRecipe
-} from '../artifacts/artifact-reproducibility-recipe'
+import { reproductionRecipes, reproductionEvidence } from '../artifacts/reproducibility-host'
+
 import { EnvironmentStateTracker } from '@aipoch/environment'
 
 let dataRoot: string | undefined
@@ -198,13 +196,17 @@ describe('EnvironmentStateTracker', () => {
       outputs: [],
       inputFileVersionKeys: []
     }
-    const recipe = sealArtifactReproducibilityRecipe({
+    const recipe = reproductionRecipes.sealArtifactReproducibilityRecipe({
       provenanceGraph: graph,
       inputFiles: [],
       runs: [run]
     })
     await expect(
-      prepareArtifactReproducibilityExecutionPlan(recipe, 'original-inputs', dataRoot)
+      reproductionRecipes.prepareArtifactReproducibilityExecutionPlan(
+        recipe,
+        'original-inputs',
+        reproductionEvidence(dataRoot)
+      )
     ).resolves.toMatchObject({
       steps: [{ activityId: 'run-1' }],
       environmentRequirements: [{ lockChecksum: repeated.environmentLock.lockChecksum }]

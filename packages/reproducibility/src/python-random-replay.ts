@@ -1,5 +1,5 @@
-import { pythonRandomStateSchema } from '../../shared/notebook-execution-context'
-import type { NotebookExecutionContext } from '../../shared/notebook-execution-context'
+import { pythonRandomStateSchema } from './execution-context'
+import type { NotebookExecutionContext } from './execution-context'
 
 export const validatePythonRandomState = (
   value: unknown

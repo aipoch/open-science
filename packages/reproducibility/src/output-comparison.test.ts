@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import sharp from 'sharp'
-import { compareReproducedContent, validOutputComparisonReport } from './output-comparison'
-import { DEFAULT_OUTPUT_COMPARISON_POLICY } from '../../shared/output-comparison'
+import { compareReproducedContent, validOutputComparisonReport } from './index'
+import { DEFAULT_OUTPUT_COMPARISON_POLICY } from './contracts'
 
 const table = (
   expected: string,

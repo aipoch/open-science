@@ -7,8 +7,8 @@ import {
   outputComparisonReportSchema,
   type OutputComparisonPolicy,
   type OutputComparisonReport
-} from '../../shared/output-comparison'
-import { canonicalJson, sha256, type CanonicalJson } from './provenance-canonical'
+} from './comparison-contracts'
+import { canonicalJson, sha256, type CanonicalJson } from './canonical'
 import {
   compareOutputContent,
   type OutputComparisonWorkerInput,
@@ -24,7 +24,7 @@ const execute = async (
   signal?: AbortSignal
 ): Promise<OutputComparisonWorkerResult> => {
   signal?.throwIfAborted()
-  const require = createRequire(import.meta.url)
+  const require = createRequire(__filename)
   const worker = new Worker(workerSource, {
     eval: true,
     // The worker is self-contained CommonJS; parent launch loaders/input modes do not apply.

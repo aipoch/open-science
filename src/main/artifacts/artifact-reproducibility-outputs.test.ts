@@ -1,13 +1,12 @@
-import { link, mkdtemp, readdir, rm, symlink, truncate, writeFile } from 'node:fs/promises'
+import { MAX_REPRODUCIBILITY_OUTPUT_BYTES } from '@aipoch/reproducibility'
+import { mkdtemp, readdir, rm, symlink, truncate, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { sha256 } from './provenance-canonical'
 import {
-  MAX_REPRODUCIBILITY_OUTPUT_BYTES,
   outputPreview,
   pruneReproducibilityOutputs,
-  readReproducibilityOutputFile,
   readRetainedReproducibilityOutput,
   retainReproducibilityOutput,
   validateReproducibilityOutputs
@@ -47,26 +46,16 @@ describe('retained reproduction outputs', () => {
     await expect(validateReproducibilityOutputs(root)).rejects.toThrow('checksum mismatch')
   })
 
-  it('rejects linked files and linked output directories', async () => {
+  it('rejects linked output directories', async () => {
     const root = await directory()
-    const file = join(root, 'original.txt')
-    await writeFile(file, 'original')
-    await symlink(file, join(root, 'symlink.txt'))
-    await expect(readReproducibilityOutputFile(join(root, 'symlink.txt'))).rejects.toThrow()
-    await link(file, join(root, 'hardlink.txt'))
-    await expect(readReproducibilityOutputFile(join(root, 'hardlink.txt'))).rejects.toThrow()
     await symlink(await directory(), join(root, 'outputs'))
     await expect(retainReproducibilityOutput(root, Buffer.from('changed'))).rejects.toThrow(
       'Invalid'
     )
   })
 
-  it('bounds reads and stored bytes without losing already retained output', async () => {
+  it('bounds stored bytes without losing already retained output', async () => {
     const root = await directory()
-    const oversized = join(root, 'large.dat')
-    await writeFile(oversized, '')
-    await truncate(oversized, MAX_REPRODUCIBILITY_OUTPUT_BYTES + 1)
-    await expect(readReproducibilityOutputFile(oversized)).rejects.toThrow('cannot be retained')
     // Sparse existing entries exercise the aggregate quota without allocating 256 MB.
     await retainReproducibilityOutput(root, Buffer.from('keep'))
     for (let index = 0; index < 8; index++) {

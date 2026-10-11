@@ -23,11 +23,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ProvenanceNotebookRun } from '../../shared/artifact-provenance'
 import type { NotebookRunRecord } from '../../shared/notebook'
 import { sealArtifactProvenanceGraph } from '../artifacts/artifact-provenance-graph'
-import {
-  resolveArtifactReproducibilityExecutionPlan,
-  sealArtifactReproducibilityRecipe
-} from '../artifacts/artifact-reproducibility-recipe'
-import { projectArtifactReproducibility } from '../artifacts/provenance-reproducibility-projection'
+import { reproductionRecipes } from '../artifacts/reproducibility-host'
+
+import { projectArtifactReproducibility } from '@aipoch/reproducibility'
 import {
   batchComputeProjectEvidenceRequests,
   beginComputeJobFileEvidence,
@@ -787,12 +785,14 @@ describe('working-file evidence', () => {
       outputs: [],
       inputFileVersionKeys: []
     }
-    const recipe = sealArtifactReproducibilityRecipe({
+    const recipe = reproductionRecipes.sealArtifactReproducibilityRecipe({
       provenanceGraph: graph,
       inputFiles: [],
       runs: [persistedRun]
     })
-    expect(resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')).toMatchObject({
+    expect(
+      reproductionRecipes.resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')
+    ).toMatchObject({
       steps: [{ activityId: run.runId }]
     })
   })

@@ -1,0 +1,19 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "composite": true,
+    "noEmitOnError": true,
+    "tsBuildInfoFile": "./.cache/dev.tsbuildinfo"
+  },
+  "references": [
+    {
+      "path": "../environment/tsconfig.dev.json"
+    },
+    {
+      "path": "../notebook-analysis/tsconfig.dev.json"
+    },
+    {
+      "path": "../diagnostics/tsconfig.dev.json"
+    }
+  ]
+}

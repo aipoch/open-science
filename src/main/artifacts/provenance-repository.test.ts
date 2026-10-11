@@ -23,7 +23,8 @@ import { createProjectDbClient, migrateApplicationDatabase } from '../projects/p
 import { createFrameNotebookLane } from '../notebook/lane-identity'
 import { NotebookRunRepository } from '../notebook/repository'
 import { createPngBytes, createPngInlineSource } from './artifact-test-fixtures'
-import { artifactReproducibilityRecipeMatchesSnapshot } from './artifact-reproducibility-recipe'
+import { reproductionRecipes } from './reproducibility-host'
+
 import {
   appendArtifactReproducibilityReceipt,
   getArtifactReproducibilityCheckLog,
@@ -3375,14 +3376,17 @@ describe('artifact provenance repository', () => {
       throw new Error('bounded execution snapshot did not retain its reproducibility contract')
     }
     expect(
-      artifactReproducibilityRecipeMatchesSnapshot(persistedExecution.reproducibilityRecipe, {
-        provenanceGraph: persistedExecution.provenanceGraph,
-        inputFiles: persistedExecution.inputFiles,
-        runs: persistedExecution.runs,
-        helperModules: persistedExecution.helperModules,
-        helperEvidenceStatus: persistedExecution.helperEvidenceStatus,
-        truncation: persistedExecution.truncation
-      })
+      reproductionRecipes.artifactReproducibilityRecipeMatchesSnapshot(
+        persistedExecution.reproducibilityRecipe,
+        {
+          provenanceGraph: persistedExecution.provenanceGraph,
+          inputFiles: persistedExecution.inputFiles,
+          runs: persistedExecution.runs,
+          helperModules: persistedExecution.helperModules,
+          helperEvidenceStatus: persistedExecution.helperEvidenceStatus,
+          truncation: persistedExecution.truncation
+        }
+      )
     ).toBe(true)
   })
 

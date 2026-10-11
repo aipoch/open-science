@@ -1,5 +1,5 @@
 // Wire protocol shared between the Node kernel driver and the Python/R exec-loop scripts.
-import { notebookExecutionContextSchema } from '../../shared/notebook-execution-context'
+import { notebookExecutionContextSchema } from '@aipoch/reproducibility/execution-context'
 
 import type { NotebookEnvironmentPackage } from '@aipoch/environment/contracts'
 import type { NotebookLiveEnvironmentOverlay } from '../../shared/notebook'
@@ -209,7 +209,7 @@ export function framePythonRequest(
   code: string,
   controlInvocationId?: string,
   protectedDirs?: readonly string[],
-  pythonRandomState?: import('../../shared/notebook-execution-context').NotebookExecutionContext['before']['pythonRandomState'],
+  pythonRandomState?: import('@aipoch/reproducibility/execution-context').NotebookExecutionContext['before']['pythonRandomState'],
   replPublisher?: string
 ): string {
   return `${JSON.stringify({

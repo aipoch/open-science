@@ -235,3 +235,24 @@ if (
   realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))
 )
   runPackageTestCli()
+
+export function reproducibilityPackageVerificationPlan(selectedRoots, excludedRoots) {
+  validateVerificationRoots(selectedRoots, excludedRoots)
+  const excluded =
+    selectedRoots !== undefined &&
+    !selectedRoots.includes('packages') &&
+    !selectedRoots.includes('packages/reproducibility') &&
+    excludedRoots?.includes('packages/reproducibility')
+  return excluded
+    ? { builds: [], tests: [] }
+    : {
+        builds: [
+          'diagnostics',
+          'notebook-syntax',
+          'notebook-analysis',
+          'environment',
+          'reproducibility'
+        ],
+        tests: ['reproducibility']
+      }
+}

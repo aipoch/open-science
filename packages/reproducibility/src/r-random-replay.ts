@@ -1,4 +1,4 @@
-import { rRandomStateSchema } from '../../shared/notebook-execution-context'
+import { rRandomStateSchema } from './execution-context'
 
 // Validate again at the replay boundary. Only fixed RNG names and bounded integer
 // words become R code; never deserialize an R object or interpolate captured code.

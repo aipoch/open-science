@@ -86,7 +86,9 @@
     "packages/environment/src/environment-lock.ts",
     "packages/environment/src/external-environment-lock.test.ts"
   ],
-  "interfacePaths": ["packages/environment/src/index.ts"],
+  "interfacePaths": [
+    "packages/environment/src/index.ts"
+  ],
   "consumerModules": [
     "notebook_application",
     "notebook_execution",
@@ -96,7 +98,8 @@
     "main_storage",
     "settings_backend_resolution",
     "shared_workspace_contracts",
-    "user_skills_repository"
+    "user_skills_repository",
+    "reproducibility_engine"
   ],
   "testFiles": {
     "owner": [
@@ -657,9 +660,36 @@
       "src/main/artifacts/artifact-reproducibility-export.test.ts",
       "packages/notebook-network-sandbox/src/wsl2-isolation.integration.test.ts",
       "packages/notebook-network-sandbox/src/wsl2-isolation.test.ts",
-      "scripts/verify-runtime-bundle.test.ts"
+      "scripts/verify-runtime-bundle.test.ts",
+      "packages/reproducibility/src/execution.test.ts",
+      "packages/reproducibility/src/output-comparison.test.ts",
+      "packages/reproducibility/src/preflight.test.ts",
+      "packages/reproducibility/src/projection.test.ts",
+      "packages/reproducibility/src/python-random-replay.test.ts",
+      "packages/reproducibility/src/r-random-replay.test.ts",
+      "packages/reproducibility/src/scientific-output-comparison.test.ts",
+      "src/main/notebook/python-random-replay.test.ts",
+      "src/main/notebook/repository.test.ts",
+      "src/main/notebook/repository-cache-consistency.test.ts",
+      "src/main/notebook/repository-kernel-metadata.test.ts",
+      "src/main/session-diagnostics/schema-compatibility.integration.test.ts",
+      "src/main/storage/normalize-legacy-paths.test.ts",
+      "src/main/notebook/run-terminalization.test.ts",
+      "src/main/compute/job-notifier.test.ts",
+      "src/main/artifacts/reviewer-turn-file-evidence-reader.test.ts",
+      "scripts/electron-app-fixture.test.ts",
+      "scripts/electron-fixture-teardown.test.ts",
+      "src/main/notebook/helper-module-host.test.ts",
+      "src/main/notebook/session-aggregate.test.ts",
+      "src/main/artifacts/provenance-reproducibility-projection.test.ts",
+      "src/main/artifacts/artifact-reproducibility-outputs.test.ts",
+      "packages/reproducibility/src/recipe.test.ts",
+      "src/main/artifacts/reproducibility-host.test.ts"
     ]
   },
-  "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],
+  "capabilityOverlays": [
+    "notebook_network_sandbox",
+    "windows_sensitive"
+  ],
   "fallbackCapability": "main_runtime"
 }

@@ -1,11 +1,13 @@
-import { constants } from 'node:fs'
-import { lstat, mkdir, open, readdir, rm, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readdir, rm, writeFile } from 'node:fs/promises'
 import { extname, join } from 'node:path'
 import type { ReproducibilityOutputPreview } from '../../shared/artifact-reproducibility'
 import { sha256 } from './provenance-canonical'
 import { publishUserFile } from '../user-file-publisher'
 
-const MAX_REPRODUCIBILITY_OUTPUT_BYTES = 32 * 1024 * 1024
+import {
+  MAX_REPRODUCIBILITY_OUTPUT_BYTES,
+  readReproducibilityOutputFile
+} from '@aipoch/reproducibility'
 const MAX_STORED_BYTES = 256 * 1024 * 1024
 const MAX_STORED_FILES = 128
 const OUTPUT_DIRECTORY = 'outputs'
@@ -33,39 +35,6 @@ const reproducibilityOutputUsage = async (
     sizeBytes += file.size
   }
   return { sizeBytes, fileCount: entries.length }
-}
-
-// Bounded, regular-file-only reads, including detection of replacement or writes
-// while a kernel's output is being captured. Never follow a final symlink.
-const readReproducibilityOutputFile = async (path: string): Promise<Buffer> => {
-  // Windows CreateFile ignores O_NOFOLLOW, so a symlink must be rejected before open.
-  const identity = await lstat(path)
-  if (identity.isSymbolicLink() || !identity.isFile() || identity.nlink !== 1) {
-    throw new Error('Reproduced output cannot be retained.')
-  }
-  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
-  try {
-    const before = await file.stat()
-    if (!before.isFile() || before.nlink !== 1 || before.size > MAX_REPRODUCIBILITY_OUTPUT_BYTES)
-      throw new Error('Reproduced output cannot be retained.')
-    const bytes = Buffer.alloc(before.size)
-    let offset = 0
-    while (offset < bytes.length) {
-      const read = await file.read(bytes, offset, bytes.length - offset, offset)
-      if (!read.bytesRead) throw new Error('Reproduced output changed while reading.')
-      offset += read.bytesRead
-    }
-    const after = await file.stat()
-    if (
-      after.size !== before.size ||
-      after.mtimeMs !== before.mtimeMs ||
-      after.ctimeMs !== before.ctimeMs
-    )
-      throw new Error('Reproduced output changed while reading.')
-    return bytes
-  } finally {
-    await file.close()
-  }
 }
 
 const writeReproducibilityOutput = async (directory: string, bytes: Buffer): Promise<boolean> => {
@@ -192,12 +161,10 @@ const outputPreview = (filename: string, bytes: Buffer): ReproducibilityOutputPr
 
 export {
   reproducibilityOutputUsage,
-  MAX_REPRODUCIBILITY_OUTPUT_BYTES,
   OUTPUT_DIRECTORY,
   outputPreview,
   pruneReproducibilityOutputs,
   validateReproducibilityOutputs,
-  readReproducibilityOutputFile,
   readRetainedReproducibilityOutput,
   retainReproducibilityOutput
 }

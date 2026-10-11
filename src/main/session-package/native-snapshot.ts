@@ -24,7 +24,8 @@ import {
 } from '../../shared/artifact-provenance'
 import { createUploadVersionReference, parseUploadVersionReference } from '../../shared/uploads'
 import { canonicalJson, sha256, type CanonicalJson } from '../artifacts/provenance-canonical'
-import { sealArtifactReproducibilityRecipe } from '../artifacts/artifact-reproducibility-recipe'
+import { reproductionRecipes } from '../artifacts/reproducibility-host'
+
 import { resolveStorageKey } from '../artifacts/provenance-storage'
 import { packageHistorySchema, type PackageHistory } from './history-schema'
 import { assertPackageSourcePath, readPackageJson } from './archive'
@@ -827,7 +828,7 @@ export const prepareNativeImport = async (
           snapshot.analysisRevision = { ...fields, revisionId: sha256(canonicalJson(fields)) }
         }
         if (snapshot.reproducibilityRecipe && snapshot.provenanceGraph)
-          snapshot.reproducibilityRecipe = sealArtifactReproducibilityRecipe({
+          snapshot.reproducibilityRecipe = reproductionRecipes.sealArtifactReproducibilityRecipe({
             ...snapshot,
             provenanceGraph: snapshot.provenanceGraph
           })

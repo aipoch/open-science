@@ -6,7 +6,7 @@ import type {
   ArtifactReproducibilityProjection,
   ArtifactReproducibilityStartFrontier,
   ProvenanceNotebookRun
-} from '../../shared/artifact-provenance'
+} from './evidence'
 
 const compareActivities = (
   left: ArtifactProvenanceGraphActivity,

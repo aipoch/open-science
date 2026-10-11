@@ -10,7 +10,10 @@
     "packages/environment/vitest.config.ts",
     "packages/environment/src/contracts.test.ts"
   ],
-  "interfacePaths": ["packages/environment/package.json", "packages/environment/src/contracts.ts"],
+  "interfacePaths": [
+    "packages/environment/package.json",
+    "packages/environment/src/contracts.ts"
+  ],
   "consumerModules": [
     "environment_engine",
     "notebook_application",
@@ -22,11 +25,16 @@
     "shared_application_contracts",
     "shared_workspace_contracts",
     "workspace_artifacts",
-    "workspace_shell"
+    "workspace_shell",
+    "reproducibility_contracts"
   ],
   "testFiles": {
-    "owner": ["packages/environment/src/contracts.test.ts"],
-    "contract": ["src/main/notebook/package-boundaries.architecture.test.ts"],
+    "owner": [
+      "packages/environment/src/contracts.test.ts"
+    ],
+    "contract": [
+      "src/main/notebook/package-boundaries.architecture.test.ts"
+    ],
     "consumer": [
       "src/main/notebook/environment-lifecycle-diagnostics.test.ts",
       "packages/environment/src/environment-lock.test.ts",
@@ -857,7 +865,6 @@
       "src/main/acp/file-reference-resolver.test.ts",
       "src/main/artifacts/artifact-reproducibility-receipts.test.ts",
       "src/main/artifacts/provenance-reproducibility-projection.test.ts",
-      "src/main/artifacts/reproduction-preflight.test.ts",
       "src/main/artifacts/ro-crate-export.test.ts",
       "src/main/artifacts/write-budget-owner.test.ts",
       "src/main/database/pdf-annotations-migration.test.ts",
@@ -1328,9 +1335,20 @@
       "packages/notebook-network-sandbox/src/wsl2-isolation.integration.test.ts",
       "packages/notebook-network-sandbox/src/wsl2-isolation.test.ts",
       "scripts/verify-runtime-bundle.test.ts",
-      "packages/environment/src/external-environment-lock.test.ts"
+      "packages/environment/src/external-environment-lock.test.ts",
+      "packages/reproducibility/src/execution.test.ts",
+      "packages/reproducibility/src/output-comparison.test.ts",
+      "packages/reproducibility/src/preflight.test.ts",
+      "packages/reproducibility/src/projection.test.ts",
+      "packages/reproducibility/src/python-random-replay.test.ts",
+      "packages/reproducibility/src/r-random-replay.test.ts",
+      "packages/reproducibility/src/scientific-output-comparison.test.ts",
+      "packages/reproducibility/src/recipe.test.ts",
+      "src/main/artifacts/reproducibility-host.test.ts"
     ]
   },
-  "capabilityOverlays": ["windows_sensitive"],
+  "capabilityOverlays": [
+    "windows_sensitive"
+  ],
   "fallbackCapability": "main_runtime"
 }

@@ -1,9 +1,7 @@
+import type { PersistedArtifactExecutionSnapshot } from './test-support'
 import { describe, it, expect } from 'vitest'
-import type { PersistedArtifactExecutionSnapshot } from '../../shared/artifact-provenance'
-import {
-  validateReproductionContext,
-  validateReproductionDiskSpace
-} from './reproduction-preflight'
+
+import { validateReproductionContext, validateReproductionDiskSpace } from './index'
 
 const fixture = (kind: 'r' | 'python'): PersistedArtifactExecutionSnapshot => ({
   schemaVersion: 2,

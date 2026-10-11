@@ -34,7 +34,9 @@
     "src/main/uploads/repository.test-utils.ts",
     "src/main/uploads/storage-helpers.ts"
   ],
-  "consumerModules": ["session_persistence"],
+  "consumerModules": [
+    "session_persistence"
+  ],
   "testFiles": {
     "owner": [
       "src/main/uploads/active-transfer-owner.test.ts",
@@ -519,9 +521,14 @@
       "src/renderer/src/pages/literature/literature-localization.render.test.tsx",
       "src/main/notebook/environment-provisioning.contract.test.ts",
       "src/main/notebook/environment-recovery.contract.test.ts",
-      "src/main/notebook/environment-capture.contract.test.ts"
+      "src/main/notebook/environment-capture.contract.test.ts",
+      "src/main/artifacts/reproducibility-host.test.ts"
     ]
   },
-  "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
+  "capabilityOverlays": [
+    "windows_sensitive",
+    "e2e_regressions",
+    "e2e_delegation"
+  ],
   "fallbackCapability": "main_runtime"
 }

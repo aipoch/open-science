@@ -48,6 +48,9 @@
     },
     {
       "path": "./packages/specialists/tsconfig.dev.json"
+    },
+    {
+      "path": "./packages/reproducibility/tsconfig.dev.json"
     }
   ]
 }

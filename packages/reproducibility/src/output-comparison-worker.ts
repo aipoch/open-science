@@ -1,4 +1,5 @@
-import type { OutputComparisonPolicy, OutputComparisonReport } from '../../shared/output-comparison'
+import type sharpFactory from 'sharp'
+import type { OutputComparisonPolicy, OutputComparisonReport } from './comparison-contracts'
 
 type Input = {
   expected: Uint8Array
@@ -20,7 +21,7 @@ type Result = Pick<
 // packaged app does not depend on its launch directory or on the user's Python/R environment.
 export const compareOutputContent = async (
   input: Input,
-  sharp: typeof import('sharp').default,
+  sharp: typeof sharpFactory,
   papa: typeof import('papaparse'),
   compareScientificTables: typeof import('./scientific-output-comparison').compareScientificTables
 ): Promise<Result> => {

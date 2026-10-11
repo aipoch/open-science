@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest'
-import { restoreRRandomState } from './r-random-replay'
-import { rRandomStateSchema } from '../../shared/notebook-execution-context'
+import { restoreRRandomState } from './index'
+import { rRandomStateSchema } from './contracts'
 
 const snapshot = {
   state: 'available',

@@ -18,10 +18,7 @@ import type { NotebookRunInputFile, NotebookRunRecord } from '../../shared/noteb
 
 import { sealArtifactProvenanceGraph } from '../artifacts/artifact-provenance-graph'
 
-import {
-  resolveArtifactReproducibilityExecutionPlan,
-  sealArtifactReproducibilityRecipe
-} from '../artifacts/artifact-reproducibility-recipe'
+import { reproductionRecipes } from '../artifacts/reproducibility-host'
 
 import { EnvironmentStateTracker } from '@aipoch/environment'
 
@@ -302,7 +299,7 @@ it.skipIf(!process.env.RUN_KERNEL || !rPrefix).each([
       }).project({ projectId: 'project', sessionId: 'session', completedRun: run })
       expect(projection.stalenessByRunId['plot-run']).toEqual({ state: 'clear' })
       expect(projection.dependenciesByRunId?.['plot-run']).toEqual([])
-      const recipe = sealArtifactReproducibilityRecipe({
+      const recipe = reproductionRecipes.sealArtifactReproducibilityRecipe({
         provenanceGraph: graph,
         inputFiles,
         runs: [failedRun, run].map((entry, runIndex) => ({
@@ -329,7 +326,10 @@ it.skipIf(!process.env.RUN_KERNEL || !rPrefix).each([
           expect.objectContaining({ frontierId: 'original-inputs', reasonCodes: [] })
         ])
       )
-      const plan = resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')
+      const plan = reproductionRecipes.resolveArtifactReproducibilityExecutionPlan(
+        recipe,
+        'original-inputs'
+      )
       expect(plan).toMatchObject({
         steps: [{ activityId: run.runId }]
       })

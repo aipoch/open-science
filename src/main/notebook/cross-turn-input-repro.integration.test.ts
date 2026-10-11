@@ -8,10 +8,8 @@ import { promisify } from 'node:util'
 import { expect, it } from 'vitest'
 import type { NotebookRunInputFile, NotebookRunRecord } from '../../shared/notebook'
 import { sealArtifactProvenanceGraph } from '../artifacts/artifact-provenance-graph'
-import {
-  resolveArtifactReproducibilityExecutionPlan,
-  sealArtifactReproducibilityRecipe
-} from '../artifacts/artifact-reproducibility-recipe'
+import { reproductionRecipes } from '../artifacts/reproducibility-host'
+
 import { createRootNotebookLane } from './lane-identity'
 import { analyzePythonFileAccesses } from '@aipoch/notebook-analysis'
 import { notebookPromptInputPath } from './prompt-input-materialization'
@@ -300,7 +298,7 @@ print("saved group_bar.png")`
             authority: 'authoritative'
           })
         )
-        const recipe = sealArtifactReproducibilityRecipe({
+        const recipe = reproductionRecipes.sealArtifactReproducibilityRecipe({
           provenanceGraph: graph,
           inputFiles: producer.inputFiles ?? [],
           runs: activities.map(({ run, runIndex }) => ({
@@ -327,7 +325,10 @@ print("saved group_bar.png")`
             inputFileVersionKeys: []
           }))
         })
-        const plan = resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')
+        const plan = reproductionRecipes.resolveArtifactReproducibilityExecutionPlan(
+          recipe,
+          'original-inputs'
+        )
         expect(recipe.capture).toEqual({ state: 'sealed', reasonCodes: [] })
         expect(plan?.steps.map((step) => step.activityId)).toEqual([producer.runId])
         expect(plan?.frontier.crossingFiles).toHaveLength(1)

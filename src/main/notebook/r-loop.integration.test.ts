@@ -18,7 +18,7 @@ import { tmpdir } from 'node:os'
 import type { NotebookRunRecord } from '../../shared/notebook'
 
 import { startWorkingFileObservation } from './working-file-observer'
-import { restoreRRandomState } from './r-random-replay'
+import { restoreRRandomState } from '@aipoch/reproducibility'
 import rdsChordCells from './reported-mixed-rds-chord.fixture.json'
 import repelVolcanoCells from './reported-r-repel-volcano.fixture.json'
 import pipedVolcanoCells from './reported-r-piped-volcano.fixture.json'

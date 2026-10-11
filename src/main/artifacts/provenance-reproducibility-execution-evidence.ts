@@ -1,5 +1,5 @@
 import { getArtifactReproducibilitySource } from './artifact-reproducibility-receipts'
-import { readReproducibilityOutputFile } from './artifact-reproducibility-outputs'
+import { readReproducibilityOutputFile } from '@aipoch/reproducibility'
 import { resolveStorageKey } from './provenance-storage'
 import { sha256 } from './provenance-canonical'
 import type {

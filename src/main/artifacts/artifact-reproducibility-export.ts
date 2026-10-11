@@ -34,7 +34,7 @@ import { normalizeRuntimeArchitecture } from '@aipoch/environment'
 import { decodeArtifactReproducibilityReceipt } from './artifact-reproducibility-receipts'
 import { sha256 } from './provenance-canonical'
 import { outputPreview } from './artifact-reproducibility-outputs'
-import { compareReproducedContent } from './output-comparison'
+import { compareReproducedContent } from '@aipoch/reproducibility'
 
 const SHA256 = /^[0-9a-f]{64}$/u
 const ZIP_MTIME = new Date('1980-01-02T00:00:00.000Z')

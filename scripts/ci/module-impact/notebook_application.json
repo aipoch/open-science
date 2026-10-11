@@ -92,8 +92,6 @@
     "src/main/notebook/process-tree-consumers.macos.integration.test.ts",
     "src/main/notebook/prompt-input-materialization.ts",
     "src/main/notebook/r-loop.integration.test.ts",
-    "src/main/notebook/r-random-replay.test.ts",
-    "src/main/notebook/r-random-replay.ts",
     "src/main/notebook/repl-cell-bindings.ts",
     "src/main/notebook/repl-loop.integration.test.ts",
     "src/main/notebook/repository-cache-consistency.test.ts",
@@ -200,7 +198,6 @@
     "src/main/notebook/mirror-probe.ts",
     "src/main/notebook/native-shell-certification.ts",
     "src/main/notebook/prompt-input-materialization.ts",
-    "src/main/notebook/r-random-replay.ts",
     "src/main/notebook/repository.ts",
     "src/main/notebook/run-document-data-paths.ts",
     "src/main/notebook/run-terminalization.ts",
@@ -283,7 +280,6 @@
       "src/main/notebook/powershell-search-parser.windows.integration.test.ts",
       "src/main/notebook/process-tree-consumers.macos.integration.test.ts",
       "src/main/notebook/r-loop.integration.test.ts",
-      "src/main/notebook/r-random-replay.test.ts",
       "src/main/notebook/repl-loop.integration.test.ts",
       "src/main/notebook/repository-cache-consistency.test.ts",
       "src/main/notebook/repository.test.ts",
@@ -432,7 +428,6 @@
       "src/main/artifacts/provenance-snapshot-decoder.test.ts",
       "src/main/artifacts/provenance-startup.integration.test.ts",
       "src/main/artifacts/provenance-write-contract.test.ts",
-      "src/main/artifacts/reproduction-preflight.test.ts",
       "src/main/artifacts/reviewer-turn-file-evidence-reader.test.ts",
       "src/main/artifacts/session-reproducibility-store.test.ts",
       "src/main/artifacts/session-reproducibility.test.ts",
@@ -729,9 +724,13 @@
       "src/renderer/src/pages/literature/literature-localization.render.test.tsx",
       "src/main/notebook/environment-provisioning.contract.test.ts",
       "src/main/notebook/environment-recovery.contract.test.ts",
-      "src/main/notebook/environment-capture.contract.test.ts"
+      "src/main/notebook/environment-capture.contract.test.ts",
+      "src/main/artifacts/reproducibility-host.test.ts"
     ]
   },
-  "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],
+  "capabilityOverlays": [
+    "notebook_network_sandbox",
+    "windows_sensitive"
+  ],
   "fallbackCapability": "main_runtime"
 }

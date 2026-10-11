@@ -1,11 +1,8 @@
 import { statfs } from 'node:fs/promises'
-import { restoreRRandomState } from '../notebook/r-random-replay'
-import { validatePythonRandomState } from '../notebook/python-random-replay'
+import { restoreRRandomState } from './r-random-replay'
+import { validatePythonRandomState } from './python-random-replay'
 import { tmpdir } from 'node:os'
-import type {
-  ArtifactReproducibilityRecipe,
-  PersistedArtifactExecutionSnapshot
-} from '../../shared/artifact-provenance'
+import type { ArtifactReproducibilityRecipe, ReproductionSnapshot } from './evidence'
 
 export class ReproductionPreflightError extends Error {
   constructor(readonly reason: 'environment-transition' | 'insufficient-disk-space') {
@@ -18,7 +15,7 @@ export class ReproductionPreflightError extends Error {
 }
 
 export const validateReproductionContext = (
-  execution: PersistedArtifactExecutionSnapshot,
+  execution: ReproductionSnapshot,
   frontierId: string
 ): void => {
   const recipe = execution.reproducibilityRecipe

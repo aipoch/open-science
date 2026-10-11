@@ -25,7 +25,8 @@ import {
   decodeArtifactExecutionSnapshot,
   parseArtifactExecutionSnapshot
 } from './provenance-execution-snapshot-decoder'
-import { sealArtifactReproducibilityRecipe } from './artifact-reproducibility-recipe'
+import { reproductionRecipes } from './reproducibility-host'
+
 import {
   decodeNotebookHelperEvidence,
   notebookHelperEvidenceKey
@@ -386,7 +387,7 @@ const buildBoundedExecutionSnapshot = (
         ? {
             reproducibilityRecipe:
               cachedRecipe ??
-              (cachedRecipe = sealArtifactReproducibilityRecipe({
+              (cachedRecipe = reproductionRecipes.sealArtifactReproducibilityRecipe({
                 provenanceGraph: base.provenanceGraph,
                 inputFiles,
                 runs: materializedRuns,

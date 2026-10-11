@@ -1,6 +1,6 @@
 import type { ReproducibilitySource } from './reproducibility-source'
 import type { Dirent } from 'node:fs'
-import { validOutputComparisonReport } from './output-comparison'
+import { validOutputComparisonReport } from '@aipoch/reproducibility'
 import { lstat, readFile, readdir } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import {

@@ -1,7 +1,7 @@
 import { createNotebookDependencyAnalyzer } from './dependency-analysis-adapter'
 import { once } from 'node:events'
 import { describe, it, expect } from 'vitest'
-import { notebookExecutionContextSchema } from '../../shared/notebook-execution-context'
+import { notebookExecutionContextSchema } from '@aipoch/reproducibility/execution-context'
 import {
   execFileSync,
   spawn,

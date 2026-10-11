@@ -306,15 +306,18 @@ it.each(['dependencies', 'unavailable'] as const)(
 )
 
 it.each([
-  ['packages/environment/src/environment-state-tracker.ts', ['packages/environment']],
+  [
+    'packages/environment/src/environment-state-tracker.ts',
+    ['packages/environment', 'packages/reproducibility']
+  ],
   ['src/main/session-diagnostics/notebook.ts', []],
   [
     'packages/diagnostics/src/diagnostic-redaction.ts',
-    ['packages/diagnostics', 'packages/environment', 'packages/compute']
+    ['packages/diagnostics', 'packages/environment', 'packages/compute', 'packages/reproducibility']
   ],
   [
     'packages/diagnostics/src/node.ts',
-    ['packages/diagnostics', 'packages/environment', 'packages/compute']
+    ['packages/diagnostics', 'packages/environment', 'packages/compute', 'packages/reproducibility']
   ]
 ])('applies the real diagnostics registration to %s', (path, selected) => {
   const registered = JSON.parse(readFileSync('scripts/ci/package-test-boundaries.json', 'utf8'))
@@ -336,11 +339,11 @@ it('keeps Notebook package tests directional while retaining shared syntax consu
   )
   expect(
     createPackageTestPlan([`${analysis}/src/dependency-analysis.ts`], actual).selected
-  ).toEqual([analysis])
+  ).toEqual([analysis, 'packages/reproducibility'])
   expect(createPackageTestPlan([`${risk}/src/index.ts`], actual).selected).toEqual([risk])
   expect(
     createPackageTestPlan([`${syntax}/assets/tree-sitter-python.wasm`], actual).selected
-  ).toEqual([syntax, risk, analysis])
+  ).toEqual([syntax, risk, analysis, 'packages/reproducibility'])
 })
 
 it.each([
@@ -445,3 +448,44 @@ it.each([
     excluded: expect.arrayContaining(['packages/environment'])
   })
 })
+
+it('verifies the reproduction tarball only when trusted policy selects it or lacks exclusion evidence', async () => {
+  const { reproducibilityPackageVerificationPlan } = await import('./package-test-impact.mjs')
+  const verify = {
+    builds: [
+      'diagnostics',
+      'notebook-syntax',
+      'notebook-analysis',
+      'environment',
+      'reproducibility'
+    ],
+    tests: ['reproducibility']
+  }
+  expect(reproducibilityPackageVerificationPlan(undefined, undefined)).toEqual(verify)
+  expect(reproducibilityPackageVerificationPlan([], undefined)).toEqual(verify)
+  expect(
+    reproducibilityPackageVerificationPlan(['packages/reproducibility'], ['packages/environment'])
+  ).toEqual(verify)
+  expect(reproducibilityPackageVerificationPlan([], ['packages/reproducibility'])).toEqual({
+    builds: [],
+    tests: []
+  })
+})
+
+it.each([
+  'src/main/artifacts/reproducibility-host.ts',
+  'src/main/artifacts/artifact-reproducibility-lifecycle.ts',
+  'src/main/notebook/reproduction-runtime.ts',
+  'src/main/artifacts/session-reproducibility-store.ts'
+])(
+  'keeps unchanged reproduction units excluded when only host behavior changes: %s',
+  async (path) => {
+    const { createAffectedTestPlan } = await import('./module-test-impact.mjs')
+    const plan = createAffectedTestPlan([{ path, status: 'modified' }], {
+      status: 'not-used',
+      testFiles: []
+    })
+    expect(plan.mode).toBe('selective')
+    expect(plan.testFiles.some((file) => file.startsWith('packages/reproducibility/'))).toBe(false)
+  }
+)

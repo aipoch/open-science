@@ -3,7 +3,7 @@
   "productName": "Open-Science",
   "desktopName": "open-science.desktop",
   "version": "0.37.0",
-  "description": "Open-Science \u2014 an open-source, model-agnostic AI workbench for scientific discovery.",
+  "description": "Open-Science — an open-source, model-agnostic AI workbench for scientific discovery.",
   "main": "./out/main/index.js",
   "author": "aipoch",
   "license": "Apache-2.0",
@@ -108,7 +108,9 @@
     "build:compute": "node scripts/build-dev-packages.mjs --packages=compute",
     "check:compute-package": "node scripts/check-compute-package.mjs",
     "build:specialists": "node scripts/build-dev-packages.mjs --packages=specialists",
-    "test:specialists": "npm --prefix packages/specialists test"
+    "test:specialists": "npm --prefix packages/specialists test",
+    "build:reproducibility": "node scripts/build-dev-packages.mjs --packages=reproducibility",
+    "check:reproducibility-package": "node scripts/check-reproducibility-package.mjs"
   },
   "dependencies": {
     "@agentclientprotocol/claude-agent-acp": "^0.70.0",
@@ -170,7 +172,8 @@
     "@aipoch/environment": "file:packages/environment",
     "@aipoch/compute": "file:packages/compute",
     "@aipoch/literature-discovery": "file:packages/literature-discovery",
-    "@aipoch/specialists": "file:packages/specialists"
+    "@aipoch/specialists": "file:packages/specialists",
+    "@aipoch/reproducibility": "file:packages/reproducibility"
   },
   "overrides": {
     "@huggingface/transformers": {

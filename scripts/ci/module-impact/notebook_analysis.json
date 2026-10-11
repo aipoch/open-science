@@ -26,11 +26,14 @@
     "notebook_application",
     "notebook_execution",
     "session_persistence",
-    "notebook_analysis_engine"
+    "notebook_analysis_engine",
+    "reproducibility_contracts"
   ],
   "testFiles": {
     "owner": [],
-    "contract": ["src/main/notebook/package-boundaries.architecture.test.ts"],
+    "contract": [
+      "src/main/notebook/package-boundaries.architecture.test.ts"
+    ],
     "consumer": [
       "packages/notebook-analysis/src/dependency-analysis-parser-unavailable.test.ts",
       "packages/notebook-analysis/src/dependency-analysis.aggregate-volcano.test.ts",
@@ -305,7 +308,6 @@
       "src/main/artifacts/ipc.test.ts",
       "src/main/artifacts/literature-manifest.test.ts",
       "src/main/artifacts/mcp-server.test.ts",
-      "src/main/artifacts/output-comparison.test.ts",
       "src/main/artifacts/prepared-literature-sidecar.test.ts",
       "src/main/artifacts/provenance-analysis-revision.test.ts",
       "src/main/artifacts/provenance-dependency-read.test.ts",
@@ -323,12 +325,10 @@
       "src/main/artifacts/repository.characterization.test.ts",
       "src/main/artifacts/repository.rollback.test.ts",
       "src/main/artifacts/repository.test.ts",
-      "src/main/artifacts/reproduction-preflight.test.ts",
       "src/main/artifacts/resumed-finalization-ownership.test.ts",
       "src/main/artifacts/reviewer-turn-file-evidence-reader.test.ts",
       "src/main/artifacts/ro-crate-export.test.ts",
       "src/main/artifacts/save-request.test.ts",
-      "src/main/artifacts/scientific-output-comparison.test.ts",
       "src/main/artifacts/session-reproducibility-store.test.ts",
       "src/main/artifacts/session-reproducibility.test.ts",
       "src/main/artifacts/storage-access.context.test.ts",
@@ -593,7 +593,6 @@
       "src/main/notebook/python-random-replay.test.ts",
       "src/main/notebook/r-connection-guard.test.ts",
       "src/main/notebook/r-loop.integration.test.ts",
-      "src/main/notebook/r-random-replay.test.ts",
       "src/main/notebook/r-save-guard.test.ts",
       "src/main/notebook/real-notebook-lineage.integration.test.ts",
       "src/main/notebook/real-parquet-lineage.integration.test.ts",
@@ -1467,7 +1466,16 @@
       "src/main/notebook/environment-provisioning.contract.test.ts",
       "src/main/notebook/environment-recovery.contract.test.ts",
       "src/main/notebook/environment-capture.contract.test.ts",
-      "src/main/notebook/environment-process.contract.test.ts"
+      "src/main/notebook/environment-process.contract.test.ts",
+      "packages/reproducibility/src/execution.test.ts",
+      "packages/reproducibility/src/output-comparison.test.ts",
+      "packages/reproducibility/src/preflight.test.ts",
+      "packages/reproducibility/src/projection.test.ts",
+      "packages/reproducibility/src/python-random-replay.test.ts",
+      "packages/reproducibility/src/r-random-replay.test.ts",
+      "packages/reproducibility/src/scientific-output-comparison.test.ts",
+      "packages/reproducibility/src/recipe.test.ts",
+      "src/main/artifacts/reproducibility-host.test.ts"
     ]
   },
   "capabilityOverlays": [

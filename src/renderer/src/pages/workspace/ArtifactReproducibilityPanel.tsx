@@ -48,7 +48,7 @@ import {
 } from '@/components/ui/select'
 import { ReproducibilityStartPreview } from './ReproducibilityStartPreview'
 import { previewNodeStart } from './artifact-reproducibility-start'
-import { DEFAULT_OUTPUT_COMPARISON_POLICY } from '../../../../shared/output-comparison'
+import { DEFAULT_OUTPUT_COMPARISON_POLICY } from '@aipoch/reproducibility/comparison'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'

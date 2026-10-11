@@ -1,15 +1,19 @@
+import type { ArtifactReproducibilityEnvironmentRequirement } from '@aipoch/reproducibility/contracts'
+import type { NotebookSessionExecutionResult } from './session-aggregate'
+import type {
+  NotebookReproductionStep,
+  NotebookReproductionRuntime as ReproductionRuntime,
+  NotebookReproductionEnvironmentProgress,
+  NotebookReproductionEnvironmentOutput,
+  CreateReproductionRuntime
+} from '@aipoch/reproducibility'
 import { resolveNotebookMicromamba as resolveMicromamba } from './environment-resources'
 import { createHash } from 'node:crypto'
-import { restoreRRandomState } from './r-random-replay'
-import { validatePythonRandomState } from './python-random-replay'
-import type { NotebookExecutionContext } from '../../shared/notebook-execution-context'
+import { restoreRRandomState } from '@aipoch/reproducibility'
+import { validatePythonRandomState } from '@aipoch/reproducibility'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import type {
-  ArtifactReproducibilityEnvironmentRequirement,
-  ArtifactReproducibilityRecipeStep
-} from '../../shared/artifact-provenance'
 import type { NotebookEnvironmentLock } from '@aipoch/environment/contracts'
 import type { NotebookHelperModuleEvidence } from '../../shared/notebook'
 import { parseNotebookEnvironmentLock } from '@aipoch/environment'
@@ -34,55 +38,14 @@ import {
   rScriptBin,
   runtimeRoot
 } from '@aipoch/environment'
-import type {
-  NotebookKernelEpochOwnership,
-  NotebookSessionExecutionResult,
-  NotebookSessionExecutor
-} from './session-aggregate'
+import type { NotebookKernelEpochOwnership, NotebookSessionExecutor } from './session-aggregate'
 import { resolveStorageKey, storageKey } from '../artifacts/provenance-storage'
 
-type NotebookReproductionStep = Extract<ArtifactReproducibilityRecipeStep, { kind: 'notebook-run' }>
-
-type NotebookReproductionRuntime = {
-  execute(input: {
-    step: NotebookReproductionStep
-    source: string
-    executionContext?: NotebookExecutionContext
-    sessionRoot: string
-    kernelEpochId?: string
-    helperModules?: NotebookHelperModuleEvidence[]
-    signal?: AbortSignal
-  }): Promise<NotebookSessionExecutionResult>
-  shutdown(): Promise<{ reaped: boolean }>
-}
-
-type CreateNotebookReproductionRuntimeInput = {
-  requirements: ArtifactReproducibilityEnvironmentRequirement[]
+type CreateNotebookReproductionRuntimeInput = Parameters<CreateReproductionRuntime>[0] & {
   storageRoot: string
-  attemptRoot: string
   processSandbox: NotebookProcessSandbox
-  signal?: AbortSignal
   projectId: string
   sessionId: string
-  onEnvironmentProgress?: (event: NotebookReproductionEnvironmentProgress) => void
-  onEnvironmentOutput?: (event: NotebookReproductionEnvironmentOutput) => void
-}
-
-type NotebookReproductionEnvironmentProgress = {
-  requirementId: string
-  kernelKind: 'python' | 'r'
-  index: number
-  total: number
-  stage: 'validating-lock' | 'restoring-packages' | 'verifying-runtime' | 'completed'
-}
-
-type NotebookReproductionEnvironmentOutput = {
-  requirementId: string
-  kernelKind: 'python' | 'r'
-  index: number
-  total: number
-  stream: 'stdout' | 'stderr'
-  text: string
 }
 
 type CreateNotebookReproductionRuntimeDependencies = {
@@ -560,4 +523,54 @@ export type {
   NotebookReproductionEnvironmentOutput,
   NotebookReproductionRuntime,
   NotebookReproductionStep
+}
+
+import {
+  createReproductionExecutor,
+  type ExecuteArtifactReproducibilityInput,
+  type ExecuteArtifactReproducibilityDependencies
+} from '@aipoch/reproducibility'
+import { reproductionRecipes, reproductionEvidence } from '../artifacts/reproducibility-host'
+import { copyFileWithinBudget, digestFileWithinBudget } from '../bounded-file-io'
+const executeReproduction = createReproductionExecutor({
+  recipes: reproductionRecipes,
+  fileIO: { copyFile: copyFileWithinBudget, digestFile: digestFileWithinBudget }
+})
+export type HostReproductionInput = Omit<ExecuteArtifactReproducibilityInput, 'evidence'> & {
+  storageRoot: string
+  processSandbox: NotebookProcessSandbox
+}
+export type HostReproductionDependencies = Omit<
+  ExecuteArtifactReproducibilityDependencies,
+  'createRuntime'
+> & { createRuntime?: typeof createNotebookReproductionRuntime }
+
+// This adapter composes existing Notebook ownership, product identity and sandbox policy.
+// The caller retains authorization, storage leases and receipt publication/SQL transactions.
+export const executeArtifactReproducibility = (
+  input: HostReproductionInput,
+  dependencies: HostReproductionDependencies = {}
+): ReturnType<typeof executeReproduction> => {
+  const { storageRoot, processSandbox, ...attempt } = input
+  return executeReproduction(
+    { ...attempt, evidence: reproductionEvidence(storageRoot) },
+    {
+      createAttemptRoot: dependencies.createAttemptRoot,
+      createRuntime: (runtime) =>
+        (dependencies.createRuntime ?? createNotebookReproductionRuntime)({
+          ...runtime,
+          storageRoot,
+          processSandbox,
+          projectId: 'artifact-reproducibility',
+          sessionId: 'reproduction-' + input.execution.reproducibilityRecipe!.recipeId.slice(0, 16)
+        })
+    }
+  )
+}
+
+// Host callers may inspect kernel outputs; replay needs only the base execution result.
+type NotebookReproductionRuntime = Omit<ReproductionRuntime, 'execute'> & {
+  execute(
+    input: Parameters<ReproductionRuntime['execute']>[0]
+  ): Promise<NotebookSessionExecutionResult>
 }

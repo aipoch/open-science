@@ -13,7 +13,7 @@ import { ArtifactReproducibilityPanel } from './ArtifactReproducibilityPanel'
 import { ReproducibilityOutput } from './ReproducibilityOutput'
 import { ReproducibilityOutputStorage } from './ReproducibilityOutputStorage'
 import * as dependencyGraph from './artifact-reproducibility-graph'
-import { DEFAULT_OUTPUT_COMPARISON_POLICY } from '../../../../shared/output-comparison'
+import { DEFAULT_OUTPUT_COMPARISON_POLICY } from '@aipoch/reproducibility/comparison'
 
 Element.prototype.scrollIntoView = Element.prototype.scrollIntoView ?? ((): void => {})
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
