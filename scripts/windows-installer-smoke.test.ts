@@ -54,7 +54,7 @@ describe('Windows installer smoke plan', () => {
     )
     expect(run).toHaveBeenCalledWith(
       'powershell.exe',
-      expect.arrayContaining([expect.stringContaining('ProcessIdProperty')]),
+      expect.arrayContaining([expect.stringContaining('GetWindowThreadProcessId')]),
       { env: { TEMP: 'isolated', OPEN_SCIENCE_SMOKE_PROCESS_ID: '123' }, timeoutMs: 5_000 }
     )
     run.mockClear()

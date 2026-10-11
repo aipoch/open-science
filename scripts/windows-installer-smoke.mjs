@@ -985,15 +985,43 @@ const captureStartupDialog = async (pid, env, run = runProcess) => {
       '-NoProfile',
       '-NonInteractive',
       '-Command',
-      `Add-Type -AssemblyName UIAutomationClient
-Add-Type -AssemblyName UIAutomationTypes
-$condition = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ProcessIdProperty, [int]$env:OPEN_SCIENCE_SMOKE_PROCESS_ID)
-$windows = [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, $condition)
-foreach ($window in $windows) {
-  $window.Current.Name
-  $text = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Text)
-  $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $text) | Select-Object -First 20 | ForEach-Object { $_.Current.Name }
-}`
+      `Add-Type -TypeDefinition @'
+using System;
+using System.Text;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+public static class SmokeDialog {
+  private delegate bool Visitor(IntPtr window, IntPtr parameter);
+  [DllImport("user32.dll")] private static extern bool EnumWindows(Visitor visitor, IntPtr parameter);
+  [DllImport("user32.dll")] private static extern bool EnumChildWindows(IntPtr window, Visitor visitor, IntPtr parameter);
+  [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern IntPtr SendMessageTimeout(IntPtr window, uint message, UIntPtr length, StringBuilder text, uint flags, uint timeout, out UIntPtr result);
+  public static string Read(uint process) {
+    var lines = new List<string>();
+    Visitor read = (window, parameter) => {
+      uint owner;
+      GetWindowThreadProcessId(window, out owner);
+      if (owner != process || lines.Count >= 20) return true;
+      var text = new StringBuilder(4096);
+      UIntPtr result;
+      SendMessageTimeout(window, 0x000D, new UIntPtr(4096), text, 2, 100, out result);
+      if (text.Length > 0) lines.Add(text.ToString());
+      return true;
+    };
+    EnumWindows((window, parameter) => {
+      uint owner;
+      GetWindowThreadProcessId(window, out owner);
+      if (owner == process) {
+        read(window, parameter);
+        EnumChildWindows(window, read, IntPtr.Zero);
+      }
+      return true;
+    }, IntPtr.Zero);
+    return string.Join(Environment.NewLine, lines);
+  }
+}
+'@
+[SmokeDialog]::Read([uint32]$env:OPEN_SCIENCE_SMOKE_PROCESS_ID)`
     ],
     { env: { ...env, OPEN_SCIENCE_SMOKE_PROCESS_ID: String(pid) }, timeoutMs: 5_000 }
   )
@@ -1060,7 +1088,9 @@ const launchAndProbe = async ({
   } catch (error) {
     // Bootstrap can stop in a native error box before file logging exists. Read only this
     // isolated smoke process's dialog before termination, never unrelated desktop windows.
-    const dialog = await captureStartupDialog(child.pid, env).catch(() => '')
+    const dialog = await captureStartupDialog(child.pid, env).catch(
+      (diagnosticError) => `Startup dialog capture failed: ${diagnosticError.message}`
+    )
     await terminateProcessTree(child)
     const processOutput = [output().trim(), dialog].filter(Boolean).join('\n')
     if (error instanceof Error && processOutput && !error.message.includes(processOutput)) {
