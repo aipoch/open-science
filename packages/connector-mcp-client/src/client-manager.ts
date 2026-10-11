@@ -120,7 +120,7 @@ const createCustomMcpFetch = (
     }
   }
 
-const DEFAULT_CLIENT_INFO = { name: 'connector-mcp-client', version: '0.2.0' }
+const DEFAULT_CLIENT_INFO = { name: 'connector-mcp-client', version: '0.1.0' }
 
 export type McpTransportDependencies = {
   clientInfo?: { name: string; version: string; title?: string }

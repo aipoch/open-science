@@ -13,7 +13,7 @@ const DEFAULT_RETRIES = 2
 const DEFAULT_BACKOFF_MS = 400
 
 // Some public APIs (e.g. AlphaFold EBI) reject requests without a User-Agent; send a stable one.
-const DEFAULT_USER_AGENT = 'connector-core/0.2.0'
+const DEFAULT_USER_AGENT = 'connector-core/0.1.0'
 
 // Strips credential query params (NCBI email/api_key) from a URL before it can land in an error
 // message or log. Falls back to the raw string if it doesn't parse as a URL.

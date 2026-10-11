@@ -56,7 +56,7 @@ their streaming/retry protocol; those providers must pass the call signal.
 Inject `redactDiagnosticText` into `ParserEngine` to retain useful sanitized provider error text.
 Without it, untrusted diagnostic text is replaced with `[redacted]`.
 
-Version 0.2 uses structured `ToolDescriptor.exampleArgs` instead of executable example strings.
+`ToolDescriptor.exampleArgs` provides structured example arguments for callers to render.
 Set `userAgent` to identify your application. It applies to managed and raw requests; an
 explicit raw-request User-Agent takes precedence. Without it the engine identifies itself
-as `connector-core/0.2.0`.
+as `connector-core/0.1.0`.
