@@ -6,6 +6,7 @@ import { readFile } from 'node:fs/promises'
 const ort = await import('onnxruntime-web/wasm')
 ort.env.wasm.numThreads = 1
 // ONNX resolves its WASM module through import(); Windows drive paths are not module URLs.
+// Its Node binary loader converts file:// strings to URL objects before fs.readFileSync.
 ort.env.wasm.wasmPaths = new URL('./', import.meta.resolve('onnxruntime-web/wasm')).href
 const createSession = ort.InferenceSession.create.bind(ort.InferenceSession)
 ort.InferenceSession.create = async (model, options) =>
