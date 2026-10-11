@@ -155,6 +155,7 @@ afterEach(() => {
   act(() => root.unmount())
   container.remove()
   document.body.innerHTML = ''
+  vi.unstubAllGlobals()
   void i18next.changeLanguage('en')
 })
 
@@ -198,6 +199,156 @@ const renderPopup = async ({
 }
 
 describe('ArtifactMentionPopup', () => {
+  it('bounds thumbnail reads and drops queued work when the popup closes', async () => {
+    const files = Array.from({ length: 230 }, (_, index) => ({
+      ...defaultProjectFiles[1],
+      id: `image-${index}`,
+      path: `artifact-version:default/session-1/image-${index}/v1`,
+      name: `image-${index}.png`,
+      mimeType: 'image/png'
+    }))
+    window.api.projectFiles.listFiles = vi
+      .fn()
+      .mockResolvedValue({ items: files, totalCount: files.length })
+    let finish!: (result: {
+      content: string
+      encoding: 'base64'
+      size: number
+      truncated: boolean
+    }) => void
+    const pending = new Promise<{
+      content: string
+      encoding: 'base64'
+      size: number
+      truncated: boolean
+    }>((resolve) => {
+      finish = resolve
+    })
+    const read = vi.fn().mockReturnValue(pending)
+    window.api.artifacts.readPreview = read
+    await renderPopup()
+    expect(options()).toHaveLength(230)
+    expect(read).toHaveBeenCalledTimes(4)
+    await act(async () => {
+      root.render(null)
+    })
+    await act(async () => {
+      finish({ content: '', encoding: 'base64', size: 0, truncated: false })
+    })
+    expect(read).toHaveBeenCalledTimes(4)
+  })
+
+  it('only reads thumbnails after their rows enter the viewport', async () => {
+    let notify!: IntersectionObserverCallback
+    const observed: Element[] = []
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        constructor(callback: IntersectionObserverCallback) {
+          notify = callback
+        }
+        observe(element: Element): void {
+          observed.push(element)
+        }
+        unobserve = vi.fn()
+        disconnect = vi.fn()
+      }
+    )
+    const files = Array.from({ length: 20 }, (_, index) => ({
+      ...defaultProjectFiles[1],
+      id: `image-${index}`,
+      path: `image-${index}`,
+      name: `image-${index}.png`,
+      mimeType: 'image/png'
+    }))
+    window.api.projectFiles.listFiles = vi
+      .fn()
+      .mockResolvedValue({ items: files, totalCount: files.length })
+    await renderPopup()
+    expect(observed).toHaveLength(20)
+    expect(window.api.artifacts.readPreview).not.toHaveBeenCalled()
+    await act(async () =>
+      notify(
+        [{ target: observed[0], isIntersecting: true } as IntersectionObserverEntry],
+        {} as IntersectionObserver
+      )
+    )
+    expect(window.api.artifacts.readPreview).toHaveBeenCalledExactlyOnceWith({
+      path: 'image-0',
+      maxBytes: 256 * 1024,
+      encoding: 'base64'
+    })
+    expect(container.querySelectorAll('img')).toHaveLength(1)
+  })
+
+  it('drops filtered thumbnail requests while allowing the retained row to load', async () => {
+    const files = Array.from({ length: 10 }, (_, index) => ({
+      ...defaultProjectFiles[1],
+      id: `image-${index}`,
+      path: `image-${index}`,
+      name: index === 9 ? 'retained.png' : `image-${index}.png`,
+      mimeType: 'image/png'
+    }))
+    window.api.projectFiles.listFiles = vi
+      .fn()
+      .mockResolvedValue({ items: files, totalCount: files.length })
+    let finish!: () => void
+    const pending = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    const read = vi.fn(async () => {
+      await pending
+      return { content: '', encoding: 'base64' as const, size: 0, truncated: false }
+    })
+    window.api.artifacts.readPreview = read
+    await renderPopup()
+    expect(read).toHaveBeenCalledTimes(4)
+    await renderPopup({ query: 'retained' })
+    expect(options()).toHaveLength(1)
+    await act(async () => finish())
+    expect(read).toHaveBeenCalledTimes(5)
+    expect(read).toHaveBeenLastCalledWith({
+      path: 'image-9',
+      maxBytes: 256 * 1024,
+      encoding: 'base64'
+    })
+    expect(container.querySelector('img')).not.toBeNull()
+  })
+
+  it('does not decode a truncated file prefix as a complete thumbnail', async () => {
+    const file = {
+      ...defaultProjectFiles[1],
+      name: 'large.png',
+      mimeType: 'image/png',
+      size: 1024 * 1024
+    }
+    window.api.projectFiles.listFiles = vi.fn().mockResolvedValue({ items: [file], totalCount: 1 })
+    window.api.artifacts.readPreview = vi.fn().mockResolvedValue({
+      content: 'cGFydGlhbA==',
+      encoding: 'base64',
+      size: file.size,
+      truncated: true
+    })
+    await renderPopup()
+    expect(container.querySelector('img')).toBeNull()
+  })
+
+  it('falls back to the image glyph when a thumbnail cannot be decoded', async () => {
+    const file = { ...defaultProjectFiles[1], name: 'broken.png', mimeType: 'image/png' }
+    window.api.projectFiles.listFiles = vi.fn().mockResolvedValue({ items: [file], totalCount: 1 })
+    window.api.artifacts.readPreview = vi.fn().mockResolvedValue({
+      content: 'bm90IGFuIGltYWdl',
+      encoding: 'base64',
+      size: 12,
+      truncated: false
+    })
+    await renderPopup()
+    const img = container.querySelector('img')
+    expect(img).not.toBeNull()
+    act(() => img!.dispatchEvent(new Event('error')))
+    expect(container.querySelector('img')).toBeNull()
+  })
+
   it.each(['click', 'Enter'])(
     'rejects prior-project Literature suggestions via %s while the next search is pending',
     async (selection) => {

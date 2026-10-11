@@ -32,6 +32,7 @@ import { createCallerContext, type CallerContext } from './caller-context'
 import { listenForDesktop } from './desktop-connection'
 import { parseRpcJson, stringifyRpcJson } from './rpc-json'
 import { InternalWebEventStream } from './web-service/internal-web-event-stream'
+import { createLogger } from '@aipoch/diagnostics/node'
 
 const clientId = z.string().uuid()
 const requestSchema = z.discriminatedUnion('kind', [
@@ -142,6 +143,10 @@ export async function startDesktopRuntimeTransport(options: {
   const send = (socket: WebSocket, frame: string): void => {
     if (socket.readyState !== WebSocket.OPEN) return
     if (socket.bufferedAmount + Buffer.byteLength(frame) > MAX_BUFFERED_BYTES) {
+      createLogger('desktop-transport').warn('desktop send buffer exceeded', {
+        bufferedBytes: socket.bufferedAmount,
+        frameBytes: Buffer.byteLength(frame)
+      })
       socket.terminate()
       return
     }
@@ -394,7 +399,22 @@ export async function startDesktopRuntimeTransport(options: {
         highestRequestId = message.id
         const request = message
         const respond = (response: WebRpcResponse): void => {
-          send(socket, stringifyRpcJson({ kind: 'response', id: request.id, ...response }))
+          let frame = stringifyRpcJson({ kind: 'response', id: request.id, ...response })
+          // A command result can grow during JSON encoding. Reject only this response;
+          // do not drop unrelated in-flight commands or retry a completed mutation.
+          if (Buffer.byteLength(frame) > MAX_BUFFERED_BYTES) {
+            frame = stringifyRpcJson({
+              kind: 'response',
+              id: request.id,
+              protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+              ok: false,
+              error: {
+                code: 'command-failed',
+                message: 'Desktop runtime response exceeds the transport byte budget.'
+              }
+            })
+          }
+          send(socket, frame)
         }
         if (request.kind === 'startup-retry') {
           pending.add(request.id)

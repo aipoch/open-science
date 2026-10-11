@@ -18,6 +18,7 @@ import {
   searchLiteratureMentionOptions
 } from '../literature-pdf-options'
 
+import { createArtifactThumbnailReader, thumbnailRequestKey } from './artifact-thumbnail-reader'
 import { ArtifactFileIcon } from './artifact-file-icon'
 import { fuzzyScore, type FuzzyMatch } from './fuzzy-match'
 import { HighlightedText } from './HighlightedText'
@@ -274,6 +275,17 @@ export const ArtifactMentionPopup = ({
   }, [rows, query])
 
   const [activeIndex, setActiveIndex] = useState(0)
+  const [readThumbnail] = useState(createArtifactThumbnailReader)
+  useLayoutEffect(() => {
+    readThumbnail.setActiveKeys(
+      new Set(
+        matches.map((row) =>
+          thumbnailRequestKey({ source: row.source ?? 'literature', path: row.path ?? '' })
+        )
+      )
+    )
+    return () => readThumbnail.setActiveKeys(new Set())
+  }, [matches, readThumbnail])
 
   // Reset the highlight to the top when the query changes (setState-during-render pattern).
   const [lastQuery, setLastQuery] = useState(query)
@@ -451,6 +463,7 @@ export const ArtifactMentionPopup = ({
             mimeType={row.mimeType}
             path={row.path ?? ''}
             source={row.source ?? 'literature'}
+            readThumbnail={readThumbnail}
           />
         )}
         <span className="flex min-w-0 flex-1 flex-col">

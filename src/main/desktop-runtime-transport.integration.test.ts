@@ -113,6 +113,62 @@ it('keeps notification clicks on the authenticated attachment and clears them on
 })
 
 describe('desktop projection of application commands and events', () => {
+  it.each(['renderer', 'host'] as const)(
+    'rejects an oversized %s response without disconnecting other calls',
+    async (caller) => {
+      // The file fits the preview read cap, but JSON escapes expand it past the 16 MiB wire cap.
+      const content = '\0'.repeat(3 * 1024 * 1024)
+      const invoke = vi.fn(async (name: string) =>
+        name === 'artifacts:read-preview'
+          ? { content, encoding: 'utf8', size: content.length, truncated: false }
+          : []
+      )
+      const commands = {
+        commandNames: () => ['artifacts:read-preview', 'compute:jobs:list'],
+        invoke
+      }
+      const events = new ApplicationEventHub()
+      const server = await startDesktopRuntimeTransport({
+        version: 'test',
+        events,
+        commands,
+        hostCommands: commands
+      })
+      cleanups.push(server.close)
+      const disconnected = vi.fn()
+      const observed = vi.fn()
+      const client = await connectDesktopRuntime({
+        endpoint: server.endpoint,
+        onEvent: observed,
+        onDisconnect: disconnected
+      })
+      cleanups.push(async () => client.close())
+      const document = randomUUID()
+      const oversized =
+        caller === 'renderer'
+          ? client.invoke(document, 'artifacts:read-preview', [])
+          : client.invokeHost('artifacts:read-preview')
+      const other = client.invoke(document, 'compute:jobs:list', [])
+      await expect(oversized).rejects.toMatchObject({
+        code: 'command-failed',
+        message: 'Desktop runtime response exceeds the transport byte budget.'
+      })
+      await expect(other).resolves.toEqual([])
+      await expect(client.invoke(document, 'compute:jobs:list', [])).resolves.toEqual([])
+      events.publish('runtime:policy-changed', undefined)
+      await vi.waitFor(() =>
+        expect(observed).toHaveBeenCalledWith({
+          channel: 'runtime:policy-changed',
+          payload: null
+        })
+      )
+      expect(disconnected).not.toHaveBeenCalled()
+      expect(invoke.mock.calls.filter(([name]) => name === 'artifacts:read-preview')).toHaveLength(
+        1
+      )
+    }
+  )
+
   it.each([undefined, null, false, 0])(
     'preserves the command result %s for renderer and host callers',
     async (result) => {
@@ -174,7 +230,7 @@ describe('desktop projection of application commands and events', () => {
     client.release(document)
     await expect(client.invoke(document, 'projects:list', [])).rejects.toThrow('released')
     const waiting = expect(client.invoke(randomUUID(), 'projects:list', ['wait'])).rejects.toThrow(
-      'closed'
+      'Desktop runtime connection closed (1006).'
     )
     await server.close()
     await waiting

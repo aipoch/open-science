@@ -243,7 +243,13 @@ export async function connectDesktopRuntime(options: {
       fail(error instanceof Error ? error : new Error(String(error)))
     }
   })
-  socket.once('close', () => fail(new Error('Desktop runtime connection closed.')))
+  socket.once('close', (code, reason) => {
+    fail(
+      new Error(
+        `Desktop runtime connection closed (${code}${reason.length ? `: ${reason.toString()}` : ''}).`
+      )
+    )
+  })
   socket.once('error', fail)
   try {
     send({ kind: 'bootstrap' })

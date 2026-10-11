@@ -410,7 +410,9 @@
       "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.interaction.test.tsx",
       "src/main/literature/pdf-translation/writer.test.ts",
       "scripts/pdf-translation-corpus.test.ts",
-      "src/main/literature/pdf-translation/diagnostics.test.ts"
+      "src/main/literature/pdf-translation/diagnostics.test.ts",
+      "src/renderer/src/pages/workspace/composer/ArtifactMentionPopup.render.test.tsx",
+      "src/renderer/src/pages/workspace/composer/ComposerEditor.interaction.test.tsx"
     ]
   },
   "capabilityOverlays": [],

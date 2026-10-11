@@ -10,6 +10,7 @@
     "src/renderer/src/pages/workspace/composer/SkillMentionPopup.render.test.tsx",
     "src/renderer/src/pages/workspace/composer/SkillMentionPopup.tsx",
     "src/renderer/src/pages/workspace/composer/artifact-file-icon.tsx",
+    "src/renderer/src/pages/workspace/composer/artifact-thumbnail-reader.ts",
     "src/renderer/src/pages/workspace/composer/composer-doc.test.ts",
     "src/renderer/src/pages/workspace/composer/composer-doc.ts",
     "src/renderer/src/pages/workspace/composer/fuzzy-match.test.ts",
