@@ -605,6 +605,8 @@ Integrity revision that drops its `merge_group` or pull request trigger.
 Keep required code-owner review and stale-approval dismissal enabled while relying on this policy.
 CI Integrity checks exact module ownership under `src/` and `packages/`, covering all tracked code,
 native sources, runtime helpers, assets and fixtures regardless of file extension.
+Package-root `tsconfig.json`, `tsconfig.*.json`, `package.json` and `package-lock.json` are exempt
+from ownership registration, but still participate in test selection. Runtime JSON and fixtures are not exempt.
 Register each file in exactly one module's `ownerPaths` in `scripts/ci/module-impact/<module-id>.json`,
 including owner, contract and consumer test evidence. Consumer-test membership does not establish
 ownership. New unregistered files and ownership regressions block admission; renames must register
