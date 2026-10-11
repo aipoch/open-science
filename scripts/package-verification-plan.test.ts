@@ -45,6 +45,23 @@ describe('independent package verification', () => {
       { script: `check:${name}-package`, packages: [name] }
     ])
   })
+  it.each(['skills', 'specialists'])('selects only the standalone %s verifier', (name) => {
+    const plan = verificationPlanFromArguments([`--packages=${name}`], {})
+    expect(plan).toEqual({ builds: [`packages/${name}`], tests: [`packages/${name}`] })
+    expect(verificationCommands(plan)).toEqual([
+      { script: 'verify:package', prefix: `packages/${name}`, packages: [name] }
+    ])
+  })
+  it('verifies a new Specialist package absent from trusted exclusion evidence', () => {
+    const plan = packageVerificationPlan(
+      registry,
+      [],
+      roots.filter((root: string) => root !== 'packages/specialists')
+    )
+    expect(verificationCommands(plan)).toEqual([
+      { script: 'verify:package', prefix: 'packages/specialists', packages: ['specialists'] }
+    ])
+  })
   it('skips the direct environment verifier when only Compute is selected', () => {
     const output = execFileSync(
       process.execPath,

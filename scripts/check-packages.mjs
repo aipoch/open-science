@@ -19,6 +19,7 @@ export const verificationFamilies = [
     packages: ['notebook-syntax', 'notebook-code-risk', 'notebook-analysis']
   },
   { script: 'verify:package', prefix: 'packages/skills', packages: ['skills'] },
+  { script: 'verify:package', prefix: 'packages/specialists', packages: ['specialists'] },
   {
     script: 'check:package-isolation',
     packages: [

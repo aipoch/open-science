@@ -16,13 +16,24 @@ for (const entry of await readdir(root)) {
   await cp(join(root, entry), join(source, entry), { recursive: true })
 }
 const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm'
+if (process.argv.includes('--offline')) process.env.npm_config_offline = 'true'
 const cacheArgs = process.env.npm_config_cache ? ['--cache', process.env.npm_config_cache] : []
 const run = (command, args, cwd) => {
+  const env = { ...process.env }
+  for (const key of [
+    'NODE_PATH',
+    'NODE_OPTIONS',
+    'INIT_CWD',
+    'VITEST_PORTABLE_CI',
+    'OPEN_SCIENCE_CI_SELECTED_PACKAGE_ROOTS',
+    'OPEN_SCIENCE_CI_EXCLUDED_PACKAGE_ROOTS'
+  ])
+    delete env[key]
   const result = spawnSync(command, args, {
     cwd,
     encoding: 'utf8',
     maxBuffer: 16 * 1024 * 1024,
-    env: { ...process.env, NODE_PATH: '', INIT_CWD: cwd },
+    env,
     shell: process.platform === 'win32' && command === npm
   })
   if (result.status !== 0)
