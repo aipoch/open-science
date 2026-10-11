@@ -130,7 +130,9 @@ jobs:
     uses: ./.github/workflows/package-smoke.yml
     with:
       artifact_run_id: ${{ inputs.package_smoke_run_id }}
-      require_windows_signing: true
+      # Diagnostic branches cannot enter the protected signing environment. Tag releases below
+      # still require publisher/signature verification; this path only exercises existing packages.
+      require_windows_signing: false
 
   # Exercise the exact uploaded packages in separate native jobs. A failed matrix leg can be retried
   # against the immutable build artifact without repeating installation, packaging, or signing.

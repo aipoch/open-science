@@ -890,7 +890,10 @@ describe('build verification throughput', () => {
     expect(release.jobs['package-smoke-dry-run']).toEqual({
       if: "${{ github.event_name == 'workflow_dispatch' && inputs.package_smoke_run_id != '' }}",
       uses: './.github/workflows/package-smoke.yml',
-      with: { artifact_run_id: '${{ inputs.package_smoke_run_id }}', require_windows_signing: true }
+      with: {
+        artifact_run_id: '${{ inputs.package_smoke_run_id }}',
+        require_windows_signing: false
+      }
     })
     expect(smoke.on?.workflow_call).toMatchObject({
       inputs: { artifact_run_id: { type: 'string', default: '' } }
