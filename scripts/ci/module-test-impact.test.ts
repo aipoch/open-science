@@ -6,6 +6,7 @@ import { resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import { loadModuleImpactManifest } from './load-module-impact.mjs'
+import { createPackageTestPlan, validatePackageTestRegistry } from './package-test-impact.mjs'
 
 import {
   collectCodeGraphTests,
@@ -271,9 +272,17 @@ describe('module test impact commands', () => {
     const manifest = loadModuleImpactManifest()
     const packageTests = manifest.modules.skill_package.testFiles.owner
     expect(packageTests.length).toBeGreaterThan(0)
+    const registry = validatePackageTestRegistry(
+      JSON.parse(readFileSync('scripts/ci/package-test-boundaries.json', 'utf8'))
+    )
     // Check local module plans too: CI's package exclusions must not hide stale host evidence.
+    // A primitive package may legitimately register Skills as its downstream consumer.
     for (const [id, module] of Object.entries(manifest.modules)) {
-      if (id === 'skill_package') continue
+      const packagePaths = module.ownerPaths.filter((path) =>
+        registry.packages.some((entry) => path.startsWith(entry.root + '/'))
+      )
+      if (createPackageTestPlan(packagePaths, registry).selected.includes('packages/skills'))
+        continue
       expect(
         Object.values(module.testFiles)
           .flat()
