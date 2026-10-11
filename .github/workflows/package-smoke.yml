@@ -31,6 +31,10 @@ on:
         default: false
   workflow_dispatch:
     inputs:
+      artifact_run_id:
+        description: Reuse a same-repository build run for a diagnostic smoke; emit no release certification
+        type: string
+        default: ''
       setup_only:
         description: Resolve the smoke matrix and skip every smoke job
         type: boolean
@@ -52,6 +56,7 @@ on:
           - all
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
@@ -111,6 +116,8 @@ jobs:
         with:
           name: ${{ matrix.name }}
           path: dist
+          run-id: ${{ inputs.artifact_run_id || github.run_id }}
+          github-token: ${{ github.token }}
 
       - name: Smoke test macOS packages
         if: ${{ !inputs.install_only && matrix.platform == 'mac' }}
@@ -188,7 +195,7 @@ jobs:
             --installed-cli /usr/bin/open-science
 
       - name: Record platform certification evidence
-        if: ${{ !inputs.install_only }}
+        if: ${{ !inputs.install_only && !inputs.artifact_run_id }}
         shell: bash
         run: |
           database_certification="dist/database-migration-certification-${{ matrix.name }}.json"
@@ -211,7 +218,7 @@ jobs:
             --authenticode "$authenticode"
 
       - name: Upload platform certification evidence
-        if: ${{ !inputs.install_only }}
+        if: ${{ !inputs.install_only && !inputs.artifact_run_id }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: certification-${{ matrix.name }}

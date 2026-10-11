@@ -339,11 +339,13 @@ describe('host-owned one-shot execution admission', () => {
           expect(await run(broken)).toMatchObject({ status: 'failed' })
           expect(await execute.mock.results[0].value).toMatchObject({ executionStarted: true })
           approve.mockClear().mockResolvedValue(false)
+          // Forward slashes keep native Windows paths literal; escaped source is intentionally opaque.
+          const literalTarget = JSON.stringify(target.replaceAll('\\', '/'))
           const commands = [
-            `erase(${JSON.stringify(target)})`,
+            `erase(${literalTarget})`,
             language === 'r'
-              ? `writeLines("replace", ${JSON.stringify(target)})`
-              : `fs.writeFileSync(${JSON.stringify(target)}, "replace")`
+              ? `writeLines("replace", ${literalTarget})`
+              : `fs.writeFileSync(${literalTarget}, "replace")`
           ]
           for (const code of commands) {
             if (language === 'repl') expect(await run(code)).toMatchObject({ status: 'failed' })

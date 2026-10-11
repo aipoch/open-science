@@ -228,6 +228,12 @@ jobs:
           src/main/compute/ambiguous-dispatch-recovery.integration.test.ts
           src/main/notebook/runtime-service.rpc-retirement.test.ts
           src/main/notebook/shell-npm-environment.test.ts
+          src/main/compute/ipc.test.ts
+          src/main/storage/ipc.test.ts
+          src/main/storage/command-owner.atomicity.test.ts
+          src/main/storage/migration-target-race.test.ts
+          src/main/notebook/code-risk-admission.test.ts
+          scripts/ci/windows-test-sequencer.test.ts
           --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000
 
   notebook_sandbox:

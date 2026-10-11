@@ -81,6 +81,7 @@ describe('storage command owner onboarding persistence', () => {
   })
 
   afterEach(async () => {
+    await resetOwnership()
     initDataRoot(undefined)
     await rm(currentParent, { recursive: true, force: true })
     await rm(targetParent, { recursive: true, force: true })
@@ -174,4 +175,4 @@ describe('storage command owner onboarding persistence', () => {
   })
 })
 
-await configureTestElectronHost(await import('electron'))
+const resetOwnership = await configureTestElectronHost(await import('electron'))

@@ -24,6 +24,7 @@ import {
   fetchWithTimeout,
   findSetupInstaller,
   installerVersion,
+  installApplication,
   launchUninstallerLockHolder,
   observeChildClose,
   packagedArtifactSmokeRpcResult,
@@ -45,6 +46,29 @@ import {
 } from './windows-installer-smoke.mjs'
 
 describe('Windows installer smoke plan', () => {
+  it('bounds installation separately and preserves failures when no files were extracted', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-install-deadline-'))
+    const installDirectory = join(root, 'installed app 程序')
+    const failure = new Error('installer stalled')
+    const run = vi.fn().mockRejectedValue(failure)
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    try {
+      await expect(installApplication('setup.exe', installDirectory, {}, run)).rejects.toBe(failure)
+      expect(run).toHaveBeenCalledWith('setup.exe', ['/S', `/D=${installDirectory}`], {
+        env: {},
+        timeoutMs: 300_000
+      })
+      expect(JSON.parse(log.mock.calls[0][0])).toMatchObject({
+        installer: 'setup.exe',
+        installedEntries: [],
+        archiveBytes: 0
+      })
+    } finally {
+      log.mockRestore()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('selects one setup executable and rejects ambiguous artifacts', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-installer-artifacts-'))
     await writeFile(join(root, 'portable.zip'), '')

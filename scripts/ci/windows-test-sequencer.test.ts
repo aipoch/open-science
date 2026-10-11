@@ -22,7 +22,7 @@ describe('Windows module-based test sharding', () => {
     ['src/main/delegation/opencode-runtime-preparation.test.ts', 6],
     ['src/main/notebook/runtime-service.test.ts', 7],
     ['packages/notebook-network-sandbox/src/gateway.test.ts', 7],
-    ['src/renderer/src/new.test.tsx', 8],
+    ['src/renderer/src/new.test.tsx', 1],
     ['scripts/new.test.ts', 8],
     ['src/main/new-module/new.test.ts', 8],
     ['src/main/database-other/new.test.ts', 8]

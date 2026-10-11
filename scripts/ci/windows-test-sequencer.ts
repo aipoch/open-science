@@ -3,12 +3,13 @@ import { BaseSequencer, type TestSpecification } from 'vitest/node'
 
 export const WINDOWS_TEST_SHARD_COUNT = 8
 
-// Keep each module together. The last group owns all remaining application, renderer and tooling
+// Keep each module together. The last group owns all remaining application and tooling
 // tests, including new directories, so this routing never limits Vitest's discovery. Groups are
 // sized from measured scheduled-run durations so each serial shard stays inside the job timeout.
 export const WINDOWS_TEST_MODULE_GROUPS = [
-  // 1: Session packages.
-  ['src/main/session-package/', 'src/main/archive/'],
+  // 1: Session packages and renderer. Moving renderer out of the catch-all balances the
+  // measured 19-minute package shard against the catch-all that exceeded 60 minutes.
+  ['src/main/session-package/', 'src/main/archive/', 'src/renderer/'],
   // 2: Database and storage.
   ['src/main/database/', 'src/main/storage/', 'src/main/session-deletion/', 'src/main/local-fs/'],
   // 3: Session persistence, file versions and project files.

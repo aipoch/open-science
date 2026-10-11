@@ -19,7 +19,8 @@ export function configureTestRuntimeNetwork(): void {
 
 export async function configureTestElectronHost(
   electron: Partial<typeof import('electron')>
-): Promise<void> {
+): Promise<ReturnType<typeof configureTestRuntimeMetadata>> {
+  let resetOwnership: ReturnType<typeof configureTestRuntimeMetadata>
   if ('app' in electron) {
     const app = electron.app!
     if (app.quit) {
@@ -30,7 +31,7 @@ export async function configureTestElectronHost(
         exit: (code) => app.exit(code)
       })
     }
-    configureTestRuntimeMetadata(() => ({
+    resetOwnership = configureTestRuntimeMetadata(() => ({
       packaged: app.isPackaged ?? false,
       applicationPath: app.getAppPath?.() ?? process.cwd(),
       homePath: app.getPath?.('home') ?? homedir(),
@@ -38,7 +39,7 @@ export async function configureTestElectronHost(
       version: app.getVersion?.() ?? '0.0.0-test',
       locale: app.getLocale?.() ?? 'en-US'
     }))
-  } else configureTestRuntimeMetadata()
+  } else resetOwnership = configureTestRuntimeMetadata()
   if ('safeStorage' in electron) {
     const { configureSecureStorageCipher } = await import('../src/main/secure-storage')
     configureSecureStorageCipher(electron.safeStorage!)
@@ -99,4 +100,5 @@ export async function configureTestElectronHost(
       }
     })
   }
+  return resetOwnership
 }

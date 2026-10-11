@@ -10,6 +10,7 @@ import {
   readFile,
   readdir,
   rm,
+  stat,
   writeFile
 } from 'node:fs/promises'
 import { createServer } from 'node:http'
@@ -35,6 +36,7 @@ const ARTIFACT_MCP_SERVER_ARG = '--open-science-artifact-mcp'
 const NOTEBOOK_MCP_SERVER_ARG = '--open-science-notebook-mcp'
 const CONFIG_DIRECTORY = '.open-science'
 const PROCESS_TIMEOUT_MS = 120_000
+const INSTALLATION_TIMEOUT_MS = 5 * 60_000
 const STARTUP_TIMEOUT_MS = 60_000
 const SHUTDOWN_TIMEOUT_MS = 60_000
 const HTTP_REQUEST_TIMEOUT_MS = 15_000
@@ -1157,6 +1159,29 @@ const launchForProcessLock = async ({
   }
 }
 
+const installApplication = async (installer, installDirectory, env, run = runProcess) => {
+  const started = performance.now()
+  try {
+    await run(installer, ['/S', `/D=${installDirectory}`], {
+      env,
+      timeoutMs: INSTALLATION_TIMEOUT_MS
+    })
+  } finally {
+    const entries = await readdir(installDirectory).catch(() => [])
+    const archive = await stat(join(installDirectory, 'resources', 'app.asar')).catch(
+      () => undefined
+    )
+    console.log(
+      JSON.stringify({
+        installer: basename(installer),
+        elapsedMs: Math.round(performance.now() - started),
+        installedEntries: entries,
+        archiveBytes: archive?.size ?? 0
+      })
+    )
+  }
+}
+
 const installAndProbe = async ({
   installer,
   installDirectory,
@@ -1172,7 +1197,7 @@ const installAndProbe = async ({
     `Smoke testing ${phase} ${reuseInstallation ? 'installed app' : 'installer'}: ${basename(installer)}`
   )
   if (!reuseInstallation) {
-    await runProcess(installer, ['/S', `/D=${installDirectory}`], { env })
+    await installApplication(installer, installDirectory, env)
   }
   await assertPackagedResources(installDirectory, {
     certifyWslPreview: phase === 'current' || phase === 'restart'
@@ -1211,7 +1236,7 @@ const installOverRunningApp = async ({
     legacyConfigRoots
   })
   try {
-    await runProcess(installer, ['/S', `/D=${installDirectory}`], { env })
+    await installApplication(installer, installDirectory, env)
     await waitForShutdownExit(running.exit, running.child, running.output)
   } catch (error) {
     await terminateProcessTree(running.child)
@@ -1865,6 +1890,7 @@ export {
   launchUninstallerLockHolder,
   launchAndExpectDatabaseBlocked,
   installAndProbe,
+  installApplication,
   launchAndProbe,
   packagedArtifactSmokeRpcResult,
   packagedMainEntryPath,

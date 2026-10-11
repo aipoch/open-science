@@ -478,7 +478,7 @@ describe('post-merge Windows validation', () => {
       default: 'macos-x64',
       options: ['macos-x64', 'macos-arm64', 'linux-x64', 'linux-arm64', 'windows-x64', 'all']
     })
-    expect(smokeWorkflow.permissions).toEqual({ contents: 'read' })
+    expect(smokeWorkflow.permissions).toEqual({ actions: 'read', contents: 'read' })
     expect(smokeWorkflow.concurrency).toEqual({
       group:
         "package-smoke-${{ github.workflow }}-${{ github.ref }}-${{ inputs.platform_name || 'all' }}",
@@ -501,9 +501,14 @@ describe('post-merge Windows validation', () => {
     expect(job.strategy?.matrix).toBe('${{ fromJson(needs.setup.outputs.matrix) }}')
     expect(install.run).toBe('node scripts/ci/npm-ci.mjs')
     expect(download.if).toBe('${{ !inputs.install_only }}')
+    expect(dispatch?.inputs?.artifact_run_id).toMatchObject({ type: 'string', default: '' })
+    expect(download.with).toMatchObject({
+      'run-id': '${{ inputs.artifact_run_id || github.run_id }}',
+      'github-token': '${{ github.token }}'
+    })
     expect(linux.if).toBe("${{ !inputs.install_only && matrix.platform == 'linux' }}")
-    expect(evidence.if).toBe('${{ !inputs.install_only }}')
-    expect(uploadEvidence.if).toBe('${{ !inputs.install_only }}')
+    expect(evidence.if).toBe('${{ !inputs.install_only && !inputs.artifact_run_id }}')
+    expect(uploadEvidence.if).toBe('${{ !inputs.install_only && !inputs.artifact_run_id }}')
   })
 
   it('signs stable Windows packages through the protected OIDC environment', () => {

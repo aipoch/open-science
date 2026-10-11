@@ -1756,6 +1756,7 @@ describe('toJobSummary — harvest features and left_on_remote parsing', () => {
 
   afterEach(async () => {
     vi.unstubAllEnvs()
+    await resetOwnership()
     await rm(storageRoot, { recursive: true, force: true })
   })
 
@@ -1927,6 +1928,7 @@ describe('createJobUpdatedBroadcaster', () => {
 
   afterEach(async () => {
     vi.unstubAllEnvs()
+    await resetOwnership()
     await rm(storageRoot, { recursive: true, force: true })
   })
 
@@ -2237,6 +2239,7 @@ describe('compute handlers — jobsPendingNotification', () => {
 
   afterEach(async () => {
     vi.unstubAllEnvs()
+    await resetOwnership()
     await rm(storageRoot, { recursive: true, force: true })
   })
 
@@ -2598,6 +2601,7 @@ describe('installComputeIpcHandlers', () => {
   afterEach(async () => {
     delete process.env.OPEN_SCIENCE_STORAGE_ROOT
     vi.unstubAllEnvs()
+    await resetOwnership()
     await rm(storageRoot, { recursive: true, force: true })
   })
 
@@ -2943,6 +2947,7 @@ describe('installComputeIpcHandlers — remoteFsError serialization', () => {
   afterEach(async () => {
     delete process.env.OPEN_SCIENCE_STORAGE_ROOT
     vi.unstubAllEnvs()
+    await resetOwnership()
     await rm(storageRoot, { recursive: true, force: true })
   })
 
@@ -3012,6 +3017,6 @@ describe('installComputeIpcHandlers — remoteFsError serialization', () => {
   })
 })
 
-await (
+const resetOwnership = await (
   await import('../../../test/runtime-host')
 ).configureTestElectronHost(await import('electron'))

@@ -195,6 +195,7 @@ afterEach(async () => {
   initializeDataRootWriteAvailability(false)
   vi.unstubAllEnvs()
   clearApplicationShutdownTrigger()
+  await resetOwnership()
   await rm(currentParent, { recursive: true, force: true })
   await rm(targetParent, { recursive: true, force: true })
 })
@@ -2034,6 +2035,7 @@ describe('storage IPC handlers', () => {
       expect(runDataRootMigration).toHaveBeenCalledOnce()
       await expect(cleanupJournal.hasPending()).resolves.toBe(true)
     } finally {
+      await resetOwnership()
       await rm(alternateParent, { recursive: true, force: true })
     }
   })
@@ -2190,6 +2192,7 @@ describe('storage IPC handlers', () => {
       await migratePromise
     } finally {
       releaseDisconnect?.()
+      await resetOwnership()
       await rm(alternateParent, { recursive: true, force: true })
     }
   })
@@ -2213,6 +2216,7 @@ describe('storage IPC handlers', () => {
       expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
       expect(deps.relaunch).not.toHaveBeenCalled()
     } finally {
+      await resetOwnership()
       await rm(alternateParent, { recursive: true, force: true })
     }
   })
@@ -2245,6 +2249,7 @@ describe('storage IPC handlers', () => {
       expect(deps.relaunch).toHaveBeenCalledOnce()
       await expect(cleanupJournal.hasPending()).resolves.toBe(true)
     } finally {
+      await resetOwnership()
       await rm(alternateParent, { recursive: true, force: true })
     }
   })
@@ -2290,6 +2295,7 @@ describe('storage IPC handlers', () => {
       await commitPromise
     } finally {
       releaseCommit?.()
+      await resetOwnership()
       await rm(alternateParent, { recursive: true, force: true })
     }
   })
@@ -3327,4 +3333,4 @@ it.each([true, false])(
   }
 )
 
-await configureTestElectronHost(await import('electron'))
+const resetOwnership = await configureTestElectronHost(await import('electron'))
