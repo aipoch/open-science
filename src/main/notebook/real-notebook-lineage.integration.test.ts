@@ -4,8 +4,8 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import type { NotebookRunRecord } from '../../shared/notebook'
-import { analyzePythonSources } from '@aipoch/notebook-analysis/python'
-import { projectNotebookDependencies } from '@aipoch/notebook-analysis/projection'
+import { analyzePythonSources } from '@aipoch/notebook-analysis'
+import { projectNotebookDependencies } from '@aipoch/notebook-analysis'
 import { NotebookKernelExecutor } from './kernel-executor'
 import { analyzeNotebookSourceFileAccess } from '@aipoch/notebook-analysis'
 

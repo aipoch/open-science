@@ -1,4 +1,4 @@
-import { NotebookDependencyAnalyzer } from './dependency-analysis-adapter'
+import { createNotebookDependencyAnalyzer } from './dependency-analysis-adapter'
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { expect, it } from 'vitest'
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -8,8 +8,8 @@ import type { NotebookEnvironmentManifest, NotebookRunRecord } from '../../share
 import type { NotebookExecutionContext } from '../../shared/notebook-execution-context'
 import type { NotebookDependencyProjection } from '@aipoch/notebook-analysis/contracts'
 
-import { analyzeRNotebookSource } from '@aipoch/notebook-analysis/r'
-import { projectNotebookDependencies } from '@aipoch/notebook-analysis/projection'
+import { analyzeRNotebookSource } from '@aipoch/notebook-analysis'
+import { projectNotebookDependencies } from '@aipoch/notebook-analysis'
 
 type RPackages = NonNullable<NotebookExecutionContext['rPackages']>
 const packages = (
@@ -178,12 +178,12 @@ it('invalidates cached projections when package evidence changes without a sourc
   const options = { storageRoot: root, repository: { readSessionRuns: async () => [record] } }
   const request = { projectId: 'p', sessionId: 's', completedRun: record }
   try {
-    const analyzer = new NotebookDependencyAnalyzer(options)
+    const analyzer = createNotebookDependencyAnalyzer(options)
     expect((await analyzer.project(request)).stalenessByRunId['run-0']?.state).toBe('clear')
     record.environmentManifest = manifest(
       packages(['readxl'], ['readxl'], [{ name: 'read_excel', package: 'readxl' }])
     )
-    for (const instance of [analyzer, new NotebookDependencyAnalyzer(options)]) {
+    for (const instance of [analyzer, createNotebookDependencyAnalyzer(options)]) {
       expect((await instance.project(request)).stalenessByRunId['run-0']).toMatchObject({
         state: 'unknown',
         reasons: expect.arrayContaining(['missing-package-load:readxl'])

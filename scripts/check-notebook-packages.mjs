@@ -79,10 +79,12 @@ import { withParsedNotebookSource } from '@aipoch/notebook-syntax'
 import { analyzeNotebookCodeRisk } from '@aipoch/notebook-code-risk'
 import { NotebookDependencyAnalyzer } from '@aipoch/notebook-analysis'
 import type { NotebookAnalysisRun } from '@aipoch/notebook-analysis/contracts'
-import { analyzePythonNotebookSource } from '@aipoch/notebook-analysis/python'
-import { analyzeRNotebookSource } from '@aipoch/notebook-analysis/r'
-import { analyzeReplNotebookSource } from '@aipoch/notebook-analysis/repl'
-import * as projection from '@aipoch/notebook-analysis/projection'
+// @ts-expect-error Storage implementation types are not part of the public contract.
+import type { NotebookDependencyAnalysisSidecar } from '@aipoch/notebook-analysis/contracts'
+import { analyzePythonNotebookSource } from '@aipoch/notebook-analysis'
+import { analyzeRNotebookSource } from '@aipoch/notebook-analysis'
+import { analyzeReplNotebookSource } from '@aipoch/notebook-analysis'
+import * as projection from '@aipoch/notebook-analysis'
 import * as powershell from '@aipoch/notebook-syntax/powershell'
 const require = createRequire(import.meta.url)
 for (const name of ['notebook-syntax', 'notebook-code-risk', 'notebook-analysis']) {
@@ -95,6 +97,10 @@ for (const name of ['notebook-syntax', 'notebook-code-risk', 'notebook-analysis'
 assert.equal(require('@aipoch/notebook-analysis').NotebookDependencyAnalyzer, NotebookDependencyAnalyzer)
 assert.equal(require('@aipoch/notebook-code-risk').analyzeNotebookCodeRisk, analyzeNotebookCodeRisk)
 assert.equal(typeof projection.projectNotebookFileDependencies, 'function')
+assert.equal('NotebookDependencyProjector' in projection, false)
+for (const internal of ['projection', 'python', 'r', 'repl']) {
+  assert.throws(() => require('@aipoch/notebook-analysis/' + internal), {code:'ERR_PACKAGE_PATH_NOT_EXPORTED'})
+}
 assert.equal(typeof powershell.parsePowerShellCommands, 'function')
 for (const [language, source] of [['python','x = 1'], ['r','x <- 1'], ['bash','echo hello'], ['javascript','globalThis.x = 1']] as const) {
   assert.equal((await withParsedNotebookSource(language, source, root => root.text)).state, 'ok')

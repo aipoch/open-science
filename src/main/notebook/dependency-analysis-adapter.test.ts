@@ -3,13 +3,13 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it, vi } from 'vitest'
-import { NotebookDependencyAnalyzer } from './dependency-analysis-adapter'
+import { createNotebookDependencyAnalyzer } from './dependency-analysis-adapter'
 
 it('does not derive a managed interpreter from an unsafe persisted environment', async () => {
   const storageRoot = await mkdtemp(join(tmpdir(), 'analysis-adapter-'))
   try {
     const analyze = vi.fn()
-    const analyzer = new NotebookDependencyAnalyzer({
+    const analyzer = createNotebookDependencyAnalyzer({
       storageRoot,
       repository: {
         readSessionRuns: async () => [

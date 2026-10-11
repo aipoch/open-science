@@ -1,4 +1,4 @@
-import { NotebookDependencyAnalyzer } from './dependency-analysis-adapter'
+import { createNotebookDependencyAnalyzer } from './dependency-analysis-adapter'
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
@@ -14,8 +14,8 @@ import type {
   NotebookRunDependencyFacts,
   NotebookSourceFileAccessAnalysis
 } from '@aipoch/notebook-analysis/contracts'
-import { projectNotebookFileDependencies } from '@aipoch/notebook-analysis/projection'
-import { analyzeRNotebookSource } from '@aipoch/notebook-analysis/r'
+import { projectNotebookFileDependencies } from '@aipoch/notebook-analysis'
+import { analyzeRNotebookSource } from '@aipoch/notebook-analysis'
 import { NotebookKernelExecutor } from './kernel-executor'
 import { analyzeNotebookSourceFileAccess } from '@aipoch/notebook-analysis'
 import { sha256, verifyReplayCapture } from './scientific-replay.test-support'
@@ -94,7 +94,7 @@ it.skipIf(!process.env.OPEN_SCIENCE_TEST_PYTHON || !process.env.OPEN_SCIENCE_TES
     const dataRoot = join(root, 'data')
     const runs = handoffRuns(dataRoot, scenario.fixture.cells)
     const history: NotebookRunRecord[] = []
-    const analyzer = new NotebookDependencyAnalyzer({
+    const analyzer = createNotebookDependencyAnalyzer({
       storageRoot: root,
       repository: { readSessionRuns: async () => history }
     })
@@ -259,7 +259,7 @@ it.skipIf(!process.env.OPEN_SCIENCE_TEST_PYTHON || !process.env.OPEN_SCIENCE_TES
       rLoopPath: join(__dirname, '../../../resources/notebook/r_loop.R')
     })
     const history: NotebookRunRecord[] = []
-    const analyzer = new NotebookDependencyAnalyzer({
+    const analyzer = createNotebookDependencyAnalyzer({
       storageRoot: root,
       repository: { readSessionRuns: async () => history }
     })
@@ -392,7 +392,7 @@ it.each([
 ])('retains %s file handoffs across separate Python/R epochs', async (_, fixture) => {
   const root = await mkdtemp(join(tmpdir(), 'native-handoff-source-'))
   const runs = handoffRuns(root, fixture.cells)
-  const analyzer = new NotebookDependencyAnalyzer({
+  const analyzer = createNotebookDependencyAnalyzer({
     storageRoot: root,
     repository: { readSessionRuns: async () => runs }
   })
@@ -428,7 +428,7 @@ it.skipIf(
     const dataRoot = join(root, 'data')
     const runs = handoffRuns(dataRoot)
     const history: NotebookRunRecord[] = []
-    const analyzer = new NotebookDependencyAnalyzer({
+    const analyzer = createNotebookDependencyAnalyzer({
       storageRoot: root,
       repository: { readSessionRuns: async () => history }
     })
@@ -552,7 +552,7 @@ it.each([
     workingFiles: []
   }))
   try {
-    const analyzer = new NotebookDependencyAnalyzer({
+    const analyzer = createNotebookDependencyAnalyzer({
       storageRoot: root,
       repository: { readSessionRuns: async () => runs }
     })

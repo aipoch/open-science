@@ -8,7 +8,13 @@ import {
   parseJsonConfigFileContent,
   resolveModuleName,
   ModuleResolutionKind,
-  sys
+  sys,
+  createSourceFile,
+  isExportDeclaration,
+  isImportDeclaration,
+  isNamedImports,
+  isNamedExports,
+  ScriptTarget
 } from 'typescript'
 import { expect, it } from 'vitest'
 
@@ -59,6 +65,48 @@ it('consumes Notebook packages only through exports and keeps packages independe
     const file = resolve(root, path)
     const owner = packages.find((pkg) => file.startsWith(pkg.directory + sep))
     const source = readFileSync(file, 'utf8')
+    const syntax = createSourceFile(path, source, ScriptTarget.Latest, false)
+    const packageBindings = new Set<string>()
+    for (const statement of syntax.statements) {
+      if (!isImportDeclaration(statement) || !statement.importClause) continue
+      const specifier = statement.moduleSpecifier.getText(syntax).slice(1, -1)
+      if (
+        !packages.some(
+          (pkg) => specifier === pkg.manifest.name || specifier.startsWith(pkg.manifest.name + '/')
+        )
+      )
+        continue
+      if (statement.importClause.name) packageBindings.add(statement.importClause.name.text)
+      const bindings = statement.importClause.namedBindings
+      if (bindings && isNamedImports(bindings))
+        for (const binding of bindings.elements) packageBindings.add(binding.name.text)
+      else if (bindings) packageBindings.add(bindings.name.text)
+    }
+    for (const statement of syntax.statements) {
+      if (!isExportDeclaration(statement)) continue
+      if (
+        !owner &&
+        !statement.moduleSpecifier &&
+        statement.exportClause &&
+        isNamedExports(statement.exportClause)
+      ) {
+        for (const binding of statement.exportClause.elements)
+          if (packageBindings.has((binding.propertyName ?? binding.name).text))
+            violations.push(
+              `${path} -> host forwarding export ${binding.name.text}; import the package directly`
+            )
+      }
+      if (owner && !statement.exportClause)
+        violations.push(`${path} -> wildcard export expands the package API implicitly`)
+      if (
+        !owner &&
+        statement.moduleSpecifier &&
+        packages.some((pkg) =>
+          statement.moduleSpecifier!.getText(syntax).slice(1, -1).startsWith(pkg.manifest.name)
+        )
+      )
+        violations.push(`${path} -> host forwarding export; import the public package directly`)
+    }
     for (const { fileName: specifier } of preProcessFile(source, true, true).importedFiles) {
       const target = resolutionOptions
         .map(

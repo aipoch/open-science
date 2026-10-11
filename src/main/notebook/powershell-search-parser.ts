@@ -2,7 +2,6 @@ import { parsePowerShellCommands } from '@aipoch/notebook-syntax/powershell'
 import { resolveWindowsPowerShellExecutable } from '../windows-powershell'
 import { resolveWindowsNotebookRuntime } from './windows-notebook-runtime'
 
-export type { ParsedPowerShellCommand } from '@aipoch/notebook-syntax/powershell'
 export const parsePowerShellSearchCommands = (
   source: string,
   signal?: AbortSignal,

@@ -1,5 +1,5 @@
-import { NotebookDependencyAnalyzer } from './dependency-analysis-adapter'
-import { analyzePowerShellCodeRisk } from './code-risk-adapter'
+import type { NotebookDependencyAnalyzer } from '@aipoch/notebook-analysis'
+import { createNotebookDependencyAnalyzer } from './dependency-analysis-adapter'
 import { desktopFileInteraction } from '../desktop-interaction'
 import { runtimeMetadata, runtimeMetadataIfConfigured } from '../runtime-metadata'
 import type { ReplayRunIndex } from '../../shared/replay'
@@ -61,7 +61,12 @@ import type {
 } from '../../shared/notebook-env'
 import type { PackageMirror } from '../../shared/mirror'
 import { NotebookDataExecutionAdmissionOwner } from './data-execution-admission'
-import { analyzeNotebookCodeRisk, type NotebookCodeRisk } from '@aipoch/notebook-code-risk'
+import {
+  analyzeNotebookCodeRisk,
+  analyzePowerShellCodeRisk,
+  type NotebookCodeRisk
+} from '@aipoch/notebook-code-risk'
+import { parsePowerShellSearchCommands } from './powershell-search-parser'
 import type { NotebookSourceFileAccessContext } from '@aipoch/notebook-analysis/contracts'
 import {
   NotebookEnvironmentManagementOwner,
@@ -681,12 +686,14 @@ class NotebookRuntimeService {
         script: previous.script,
         incomplete: previous.status !== 'completed'
       }))
+    const shellRuntime = run.shellRuntime
     const risks: NotebookCodeRisk[] =
-      run.shellRuntime?.kind === 'powershell'
+      shellRuntime?.kind === 'powershell'
         ? await analyzePowerShellCodeRisk(
             run.script,
+            (source, signal) =>
+              parsePowerShellSearchCommands(source, signal, shellRuntime.version, true),
             signal,
-            run.shellRuntime.version,
             run.cwdBefore
           )
         : await analyzeNotebookCodeRisk(
@@ -838,7 +845,7 @@ class NotebookRuntimeService {
     })
     this.dependencyAnalyzer =
       options.dependencyAnalyzer ??
-      new NotebookDependencyAnalyzer({
+      createNotebookDependencyAnalyzer({
         storageRoot: options.dataRoot,
         repository: this.repository,
         resolveInterpreter: (run) =>

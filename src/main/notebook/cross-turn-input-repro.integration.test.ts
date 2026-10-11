@@ -1,4 +1,4 @@
-import { NotebookDependencyAnalyzer } from './dependency-analysis-adapter'
+import { createNotebookDependencyAnalyzer } from './dependency-analysis-adapter'
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
@@ -13,7 +13,7 @@ import {
   sealArtifactReproducibilityRecipe
 } from '../artifacts/artifact-reproducibility-recipe'
 import { createRootNotebookLane } from './lane-identity'
-import { analyzePythonFileAccesses } from '@aipoch/notebook-analysis/python'
+import { analyzePythonFileAccesses } from '@aipoch/notebook-analysis'
 import { notebookPromptInputPath } from './prompt-input-materialization'
 import { NotebookRunRepository } from './repository'
 import { NotebookRunTerminalizationOwner } from './run-terminalization'
@@ -255,7 +255,7 @@ print("saved group_bar.png")`
         }
         const producer = activities[2]!.run
         if (reportedPlots) {
-          const projection = await new NotebookDependencyAnalyzer({
+          const projection = await createNotebookDependencyAnalyzer({
             storageRoot,
             repository: { readSessionRuns: async () => activities.map(({ run }) => run) }
           }).project({

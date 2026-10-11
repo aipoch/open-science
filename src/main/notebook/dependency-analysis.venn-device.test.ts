@@ -1,7 +1,7 @@
-import { NotebookDependencyAnalyzer } from './dependency-analysis-adapter'
+import { createNotebookDependencyAnalyzer } from './dependency-analysis-adapter'
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { expect, it } from 'vitest'
-import { analyzeRNotebookSource } from '@aipoch/notebook-analysis/r'
+import { analyzeRNotebookSource } from '@aipoch/notebook-analysis'
 import { analyzeNotebookSourceFileAccess } from '@aipoch/notebook-analysis'
 import cells from './reported-venn-device.fixture.json'
 import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises'
@@ -44,7 +44,7 @@ it('keeps failed upstream state blocked and recovers with successful preparation
   }))
   try {
     for (let attempt = 0; attempt < 2; attempt++) {
-      const analyzer = new NotebookDependencyAnalyzer({
+      const analyzer = createNotebookDependencyAnalyzer({
         storageRoot: root,
         repository: { readSessionRuns: async () => runs }
       })

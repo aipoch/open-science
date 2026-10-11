@@ -12,6 +12,8 @@ import { NotebookRuntimeService, type NotebookExecutionRequest } from './runtime
 import { NotebookKernelExecutor } from './kernel-executor'
 import { analyzeNotebookCodeRisk } from '@aipoch/notebook-code-risk'
 import * as riskAnalysis from '@aipoch/notebook-code-risk'
+import * as powerShellParser from './powershell-search-parser'
+import * as windowsRuntime from './windows-notebook-runtime'
 import type { ShellRuntimeBinding, NotebookRunSummary } from '../../shared/notebook'
 import type { DiscoveredInterpreter } from '../../shared/notebook-runtime'
 
@@ -539,34 +541,62 @@ describe('host-owned one-shot execution admission', () => {
     }
   )
 
-  it('carries PowerShell dialect from the actual runtime into approval evidence', async () => {
-    const analyze = vi
-      .spyOn(riskAnalysis, 'analyzePowerShellCodeRisk')
-      .mockResolvedValue([
-        { operation: 'Remove-Item', source: 'Remove-Item ./temporary.txt', line: 1 }
-      ])
-    try {
-      const { service, shell, request } = await harness(0, { kind: 'powershell', version: '5.1' })
-      const approve = vi.fn(async () => false)
-      service.setExecutionApproval(approve)
-      await expect(
-        service.executeShell({ ...request, command: 'Remove-Item ./temporary.txt' })
-      ).rejects.toThrow('one-time approval')
-      expect(approve).toHaveBeenCalledWith(
-        expect.objectContaining({
-          rawInput: expect.objectContaining({
-            notebookCodeRisk: expect.objectContaining({
-              language: 'bash',
-              shellRuntime: { kind: 'powershell' }
+  it.each(['5.1', '7.6'] as const)(
+    'carries PowerShell %s parser policy, cancellation and cwd into approval evidence',
+    async (version) => {
+      const runtime = vi.spyOn(windowsRuntime, 'resolveWindowsNotebookRuntime').mockReturnValue({
+        root: process.cwd(),
+        node: process.execPath,
+        powershell: process.execPath
+      })
+      const parse = vi
+        .spyOn(powerShellParser, 'parsePowerShellSearchCommands')
+        .mockResolvedValue([])
+      const analyze = vi
+        .spyOn(riskAnalysis, 'analyzePowerShellCodeRisk')
+        .mockImplementation(async (source, parser, signal) => {
+          await parser(source, signal)
+          return [{ operation: 'Remove-Item', source: 'Remove-Item ./temporary.txt', line: 1 }]
+        })
+      try {
+        const { service, shell, request } = await harness(0, { kind: 'powershell', version })
+        const controller = new AbortController()
+        const source = 'Remove-Item ./temporary.txt'
+        const approve = vi.fn(async () => false)
+        service.setExecutionApproval(approve)
+        await expect(
+          service.executeShell({ ...request, command: source }, controller.signal)
+        ).rejects.toThrow('one-time approval')
+        expect(analyze).toHaveBeenCalledTimes(1)
+        const signal = analyze.mock.calls[0][2]
+        expect(signal).toBeInstanceOf(AbortSignal)
+        expect(analyze).toHaveBeenCalledWith(
+          source,
+          expect.any(Function),
+          signal,
+          join(request.workspaceCwd, 'notebooks', request.projectId, request.sessionId, 'data')
+        )
+        expect(parse).toHaveBeenCalledWith(source, signal, version, true)
+        controller.abort()
+        expect(signal?.aborted).toBe(true)
+        expect(approve).toHaveBeenCalledWith(
+          expect.objectContaining({
+            rawInput: expect.objectContaining({
+              notebookCodeRisk: expect.objectContaining({
+                language: 'bash',
+                shellRuntime: { kind: 'powershell' }
+              })
             })
           })
-        })
-      )
-      expect(shell).not.toHaveBeenCalled()
-    } finally {
-      analyze.mockRestore()
+        )
+        expect(shell).not.toHaveBeenCalled()
+      } finally {
+        analyze.mockRestore()
+        parse.mockRestore()
+        runtime.mockRestore()
+      }
     }
-  })
+  )
 
   it.skipIf(process.platform === 'win32').each(['cp', 'mv'])(
     'gates real %s overwrite and source removal per execution',

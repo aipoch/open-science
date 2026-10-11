@@ -1,4 +1,4 @@
-import { NotebookDependencyAnalyzer } from '../notebook/dependency-analysis-adapter'
+import { createNotebookDependencyAnalyzer } from '../notebook/dependency-analysis-adapter'
 import { existsSync } from 'node:fs'
 import {
   access,
@@ -1101,7 +1101,7 @@ describe('Artifact reproducibility execution', () => {
           inputFiles: [],
           fileEvidence: observed.fileEvidence
         }
-        const dependencies = await new NotebookDependencyAnalyzer({
+        const dependencies = await createNotebookDependencyAnalyzer({
           storageRoot,
           repository: { readSessionRuns: async () => [run] }
         }).project({ projectId: 'project', sessionId: 'session', completedRun: run })

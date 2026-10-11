@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, expect, it } from 'vitest'
 import { runEvidenceWorker } from './working-file-observer'
 import { NotebookKernelExecutor } from './kernel-executor'
-import { analyzePythonNotebookSource } from '@aipoch/notebook-analysis/python'
+import { analyzePythonNotebookSource } from '@aipoch/notebook-analysis'
 import { resolveBundleDir } from './bundle-local'
 import { resolveMicromamba } from './micromamba'
 

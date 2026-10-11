@@ -990,3 +990,72 @@ it.each([
   })
   expect(plan.mode).toBe('full')
 })
+
+describe('Notebook package module boundaries', () => {
+  const manifest = loadModuleImpactManifest()
+  const packageModules = ['notebook_syntax', 'notebook_code_risk', 'notebook_analysis']
+  const packageRoots = packageModules.map((id) => `packages/${id.replaceAll('_', '-')}/`)
+  const packageTests = (tests: string[]): string[] =>
+    tests.filter((path) => packageRoots.some((root) => path.startsWith(root)))
+  const graph = { status: 'unavailable-manifest-only', testFiles: [] }
+
+  it('never registers upstream Notebook unit tests as downstream host evidence', () => {
+    for (const [id, module] of Object.entries(manifest.modules)) {
+      if (packageModules.includes(id)) continue
+      expect(packageTests(Object.values(module.testFiles).flat()), id).toEqual([])
+      expect(
+        module.consumerModules.filter((consumer) => packageModules.includes(consumer)),
+        id
+      ).toEqual([])
+      if (!module.fullTestReason)
+        expect(packageTests(createModuleTestPlan(id, manifest).testFiles), id).toEqual([])
+    }
+  })
+
+  it.each([
+    ['src/main/notebook/runtime-service.ts', 'src/main/notebook/runtime-service.test.ts'],
+    [
+      'src/main/notebook/dependency-analysis-adapter.ts',
+      'src/main/notebook/dependency-analysis-adapter.test.ts'
+    ],
+    [
+      'src/main/notebook/working-file-observer.ts',
+      'src/main/notebook/working-file-observer.test.ts'
+    ],
+    ['src/main/storage/content-repository.ts', 'src/main/storage/content-repository.test.ts']
+  ])('keeps host integrations without upstream package units for %s', (path, integration) => {
+    const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph, manifest)
+    expect(plan.mode).toBe('selective')
+    expect(plan.testFiles).toContain(integration)
+    expect(packageTests(plan.testFiles)).toEqual([])
+  })
+
+  it.each([
+    ['notebook_code_risk', 'packages/notebook-code-risk/src/index.ts', ['notebook_code_risk']],
+    [
+      'notebook_analysis',
+      'packages/notebook-analysis/src/dependency-analysis.ts',
+      ['notebook_analysis']
+    ],
+    ['notebook_syntax', 'packages/notebook-syntax/src/index.ts', packageModules]
+  ])(
+    'selects only downstream package suites and host integrations for %s',
+    (id, path, selected) => {
+      const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph, manifest)
+      expect(plan.mode).toBe('selective')
+      for (const candidate of packageModules) {
+        const owned = manifest.modules[candidate].testFiles.owner
+        expect(owned.length).toBeGreaterThan(0)
+        if (selected.includes(candidate))
+          expect(plan.testFiles).toEqual(expect.arrayContaining(owned))
+        else
+          expect(
+            plan.testFiles.filter((test) => owned.includes(test)),
+            `${id} -> ${candidate}`
+          ).toEqual([])
+      }
+      expect(plan.testFiles).toContain('src/main/notebook/runtime-service.test.ts')
+      expect(plan.testFiles).toContain('src/main/notebook/code-risk-admission.test.ts')
+    }
+  )
+})

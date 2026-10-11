@@ -182,7 +182,8 @@
     "packages/notebook-analysis/tsc.cjs",
     "packages/notebook-analysis/tsconfig.json",
     "packages/notebook-analysis/tsconfig.test.json",
-    "packages/notebook-analysis/vitest.config.ts"
+    "packages/notebook-analysis/vitest.config.ts",
+    "packages/notebook-analysis/src/write-scope.test.ts"
   ],
   "interfacePaths": [
     "packages/notebook-analysis/src/analysis-test-support.ts",
@@ -326,12 +327,11 @@
       "packages/notebook-analysis/src/source-file-access-analysis.tabular-formats.test.ts",
       "packages/notebook-analysis/src/source-file-access-analysis.test.ts",
       "packages/notebook-analysis/src/source-file-access-analysis.variants.test.ts",
-      "packages/notebook-analysis/src/source-file-access-analysis.workflow-orchestration.test.ts"
+      "packages/notebook-analysis/src/source-file-access-analysis.workflow-orchestration.test.ts",
+      "packages/notebook-analysis/src/write-scope.test.ts"
     ],
     "contract": ["src/main/notebook/package-boundaries.architecture.test.ts"],
     "consumer": [
-      "packages/notebook-code-risk/src/code-risk-analysis.object-budget.test.ts",
-      "packages/notebook-code-risk/src/code-risk-analysis.test.ts",
       "packages/notebook-network-sandbox/src/wsl2-isolation.integration.test.ts",
       "packages/notebook-network-sandbox/src/wsl2-isolation.test.ts",
       "packages/open-science/cli.test.ts",

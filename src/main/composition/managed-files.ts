@@ -1,4 +1,5 @@
-import { NotebookDependencyAnalyzer } from '../notebook/dependency-analysis-adapter'
+import type { NotebookDependencyAnalyzer } from '@aipoch/notebook-analysis'
+import { createNotebookDependencyAnalyzer } from '../notebook/dependency-analysis-adapter'
 import { parseLiteratureAttachmentVersionReference } from '../../shared/literature'
 import type { ManagedPreviewSource } from '../../shared/preview-resources'
 import { createDefaultArtifactRepository } from '../artifacts/ipc'
@@ -73,7 +74,7 @@ export function composeManagedFiles({
   // Share one repository and registry so runtime artifact claims and renderer finalization meet.
   const artifactRepository = createDefaultArtifactRepository()
   const notebookRepository = new NotebookRunRepository(resolveDataRoot())
-  const notebookDependencyAnalyzer = new NotebookDependencyAnalyzer({
+  const notebookDependencyAnalyzer = createNotebookDependencyAnalyzer({
     storageRoot: resolveDataRoot(),
     repository: notebookRepository
   })

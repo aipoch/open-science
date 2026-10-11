@@ -1,4 +1,4 @@
-import { NotebookDependencyAnalyzer } from './dependency-analysis-adapter'
+import { createNotebookDependencyAnalyzer } from './dependency-analysis-adapter'
 import { once } from 'node:events'
 import { describe, it, expect } from 'vitest'
 import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
@@ -272,7 +272,7 @@ gate('r_loop.R', () => {
           workingFiles: []
         })
       }
-      const result = await new NotebookDependencyAnalyzer({
+      const result = await createNotebookDependencyAnalyzer({
         storageRoot: root,
         repository: { readSessionRuns: async () => runs }
       }).project({ projectId: 'p', sessionId: 's', completedRun: runs[3]! })
@@ -469,7 +469,7 @@ gate('r_loop.R', () => {
       const captured = new Map<string, KernelLoopResponse['environmentOverlay']>()
       const pngs: Buffer[] = []
       let required = new Set(pipedVolcanoCells.map((cell) => cell.runId))
-      const analyzer = new NotebookDependencyAnalyzer({
+      const analyzer = createNotebookDependencyAnalyzer({
         storageRoot: root,
         repository: { readSessionRuns: async () => runs }
       })
@@ -1170,7 +1170,7 @@ write.csv(df,"result.csv",row.names=FALSE)`
           dataRoot
         )
         const runs: NotebookRunRecord[] = []
-        const analyzer = new NotebookDependencyAnalyzer({
+        const analyzer = createNotebookDependencyAnalyzer({
           storageRoot: sessionRoot,
           repository: { readSessionRuns: async () => runs }
         })
@@ -1272,7 +1272,7 @@ write.csv(df,"result.csv",row.names=FALSE)`
         mkdirSync(join(dataRoot, 'inputs'), { recursive: true })
         mkdirSync(figures)
         const runs: NotebookRunRecord[] = []
-        const analyzer = new NotebookDependencyAnalyzer({
+        const analyzer = createNotebookDependencyAnalyzer({
           storageRoot: root,
           repository: { readSessionRuns: async () => runs }
         })
@@ -1404,7 +1404,7 @@ write.csv(df,"result.csv",row.names=FALSE)`
           mkdirSync(join(dataRoot, 'inputs'), { recursive: true })
           mkdirSync(figures)
           const runs: NotebookRunRecord[] = []
-          const analyzer = new NotebookDependencyAnalyzer({
+          const analyzer = createNotebookDependencyAnalyzer({
             storageRoot: root,
             repository: { readSessionRuns: async () => runs }
           })
@@ -2307,7 +2307,7 @@ out |> write.csv(file="out.csv", row.names=FALSE)`
             dataRoot
           )
           const runs: NotebookRunRecord[] = []
-          const analyzer = new NotebookDependencyAnalyzer({
+          const analyzer = createNotebookDependencyAnalyzer({
             storageRoot: sessionRoot,
             repository: { readSessionRuns: async () => runs }
           })
@@ -2495,7 +2495,7 @@ out |> write.csv(file="out.csv", row.names=FALSE)`
           }
         })
       }
-      const analyzer = new NotebookDependencyAnalyzer({
+      const analyzer = createNotebookDependencyAnalyzer({
         storageRoot: root,
         repository: { readSessionRuns: async () => runs }
       })
@@ -2511,7 +2511,7 @@ out |> write.csv(file="out.csv", row.names=FALSE)`
         readFileSync(join(originalDir, 'palette.txt'))
       )
       // Re-loading the projection from disk must preserve package-based edges.
-      const reopened = new NotebookDependencyAnalyzer({
+      const reopened = createNotebookDependencyAnalyzer({
         storageRoot: root,
         repository: { readSessionRuns: async () => runs }
       })

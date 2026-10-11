@@ -1,4 +1,4 @@
-import { NotebookDependencyAnalyzer } from './dependency-analysis-adapter'
+import { createNotebookDependencyAnalyzer } from './dependency-analysis-adapter'
 import { once } from 'node:events'
 import { describe, it, expect } from 'vitest'
 import { notebookExecutionContextSchema } from '../../shared/notebook-execution-context'
@@ -129,7 +129,7 @@ gate('python_loop.py', () => {
       '\n# %%\n'
     )
     const runs: NotebookRunRecord[] = []
-    const analyzer = new NotebookDependencyAnalyzer({
+    const analyzer = createNotebookDependencyAnalyzer({
       storageRoot: root,
       repository: { readSessionRuns: async () => runs }
     })
@@ -262,7 +262,7 @@ w.save(sys.argv[1])`,
         mkdirSync(join(dataRoot, 'inputs'), { recursive: true })
         writeFileSync(join(dataRoot, 'inputs/source.csv'), 'x\n1\n2\n3\n')
         const runs: NotebookRunRecord[] = []
-        const analyzer = new NotebookDependencyAnalyzer({
+        const analyzer = createNotebookDependencyAnalyzer({
           storageRoot: root,
           repository: { readSessionRuns: async () => runs }
         })
@@ -417,7 +417,7 @@ w.save(sys.argv[1])`,
           )
           const loop = startLoop(pyBin!, { PYTHONDONTWRITEBYTECODE: '1' })
           const runs: NotebookRunRecord[] = []
-          const analyzer = new NotebookDependencyAnalyzer({
+          const analyzer = createNotebookDependencyAnalyzer({
             storageRoot: root,
             repository: { readSessionRuns: async () => runs }
           })
@@ -527,7 +527,7 @@ w.save(sys.argv[1])`,
             'df=xl.parse(sheet_name=0)\ndf.to_csv("result.csv",index=False)\nxl.close()'
           ]
           const runs: NotebookRunRecord[] = []
-          const analyzer = new NotebookDependencyAnalyzer({
+          const analyzer = createNotebookDependencyAnalyzer({
             storageRoot: root,
             repository: { readSessionRuns: async () => runs }
           })
@@ -632,7 +632,7 @@ w.save(sys.argv[1])`,
         expect((await loop.send(`import os\nos.chdir(${JSON.stringify(dir)})`)).error).toBeNull()
       }
       for (const source of scripts) expect((await original.send(source)).error).toBeNull()
-      const projection = await new NotebookDependencyAnalyzer({
+      const projection = await createNotebookDependencyAnalyzer({
         storageRoot: root,
         repository: { readSessionRuns: async () => runs }
       }).project({ projectId: 'p', sessionId: 's', completedRun: runs[4]! })
@@ -790,7 +790,7 @@ w.save(sys.argv[1])`,
       const original = startLoop(pyBin!, environment)
       let replay: ReturnType<typeof startLoop> | undefined
       const runs: NotebookRunRecord[] = []
-      const analyzer = new NotebookDependencyAnalyzer({
+      const analyzer = createNotebookDependencyAnalyzer({
         storageRoot: root,
         repository: { readSessionRuns: async () => runs }
       })
@@ -1067,7 +1067,7 @@ w.save(sys.argv[1])`,
         inputFiles: [],
         ...files
       }
-      const projection = await new NotebookDependencyAnalyzer({
+      const projection = await createNotebookDependencyAnalyzer({
         storageRoot: root,
         repository: { readSessionRuns: async () => [run] }
       }).project({ projectId: 'project', sessionId: 'session', completedRun: run })

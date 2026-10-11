@@ -1,4 +1,4 @@
-import { NotebookDependencyAnalyzer } from './dependency-analysis-adapter'
+import { createNotebookDependencyAnalyzer } from './dependency-analysis-adapter'
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { readFileSync } from 'node:fs'
 import { execFile } from 'node:child_process'
@@ -11,7 +11,7 @@ import { expect, it } from 'vitest'
 import type { NotebookRunRecord } from '../../shared/notebook'
 import type { NotebookDependencyProjection } from '@aipoch/notebook-analysis/contracts'
 
-import { analyzeRNotebookSource } from '@aipoch/notebook-analysis/r'
+import { analyzeRNotebookSource } from '@aipoch/notebook-analysis'
 import { frameRRequest, parseLoopResponse } from './kernel-protocol'
 import { analyzeNotebookSourceFileAccess } from '@aipoch/notebook-analysis'
 import { startWorkingFileObservation } from './working-file-observer'
@@ -58,7 +58,7 @@ const project = async (
     inputFiles: []
   }))
   try {
-    return await new NotebookDependencyAnalyzer({
+    return await createNotebookDependencyAnalyzer({
       storageRoot: root,
       repository: { readSessionRuns: async () => runs }
     }).project({ projectId: 'p', sessionId: 's', completedRun: runs.at(-1)! })

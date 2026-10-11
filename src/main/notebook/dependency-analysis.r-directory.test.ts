@@ -1,4 +1,4 @@
-import { NotebookDependencyAnalyzer } from './dependency-analysis-adapter'
+import { createNotebookDependencyAnalyzer } from './dependency-analysis-adapter'
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -9,7 +9,7 @@ import { expect, it } from 'vitest'
 import type { NotebookRunRecord } from '../../shared/notebook'
 import { sealArtifactProvenanceGraph } from '../artifacts/artifact-provenance-graph'
 
-import { analyzeRSources } from '@aipoch/notebook-analysis/r'
+import { analyzeRSources } from '@aipoch/notebook-analysis'
 import { analyzeNotebookSourceFileAccess } from '@aipoch/notebook-analysis'
 import { startWorkingFileObservation } from './working-file-observer'
 
@@ -314,7 +314,7 @@ it.each([
         computeActivities: []
       })
       expect(graph.completeness).toBe('complete')
-      const projection = await new NotebookDependencyAnalyzer({
+      const projection = await createNotebookDependencyAnalyzer({
         storageRoot,
         repository: { readSessionRuns: async () => [failedRun, diagnosticRun, run] }
       }).project({ projectId: 'project', sessionId: 'session', completedRun: run })

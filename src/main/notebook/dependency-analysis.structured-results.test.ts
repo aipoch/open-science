@@ -1,4 +1,4 @@
-import { NotebookDependencyAnalyzer } from './dependency-analysis-adapter'
+import { createNotebookDependencyAnalyzer } from './dependency-analysis-adapter'
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { mkdtemp, readFile, writeFile, rm, mkdir } from 'node:fs/promises'
 import { execFile } from 'node:child_process'
@@ -8,8 +8,8 @@ import { join } from 'node:path'
 import { expect, it, vi } from 'vitest'
 import type { NotebookRunRecord } from '../../shared/notebook'
 import { projectNotebookDependencies } from '@aipoch/notebook-analysis'
-import { analyzePythonSources } from '@aipoch/notebook-analysis/python'
-import { analyzeRSources } from '@aipoch/notebook-analysis/r'
+import { analyzePythonSources } from '@aipoch/notebook-analysis'
+import { analyzeRSources } from '@aipoch/notebook-analysis'
 import { analyzeNotebookSourceFileAccess } from '@aipoch/notebook-analysis'
 import { startWorkingFileObservation } from './working-file-observer'
 
@@ -86,10 +86,12 @@ it.each([
   const repository = { readSessionRuns: async () => runs }
   const request = { projectId: 'project', sessionId: 'session', interpreter: { command: 'unused' } }
   try {
-    const first = await new NotebookDependencyAnalyzer({ storageRoot: root, repository }).project({
-      ...request,
-      completedRun: runs[1]
-    })
+    const first = await createNotebookDependencyAnalyzer({ storageRoot: root, repository }).project(
+      {
+        ...request,
+        completedRun: runs[1]
+      }
+    )
     expect(first.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
     const path = join(root, 'notebooks/project/session/cache/dependency-analysis.json')
     const sidecar = JSON.parse(await readFile(path, 'utf8'))
@@ -98,7 +100,7 @@ it.each([
     const analyze = vi.fn(async () => {
       throw new Error('valid ordered facts must be reusable')
     })
-    const reloaded = new NotebookDependencyAnalyzer({ storageRoot: root, repository, analyze })
+    const reloaded = createNotebookDependencyAnalyzer({ storageRoot: root, repository, analyze })
     expect(await reloaded.project(request)).toEqual(first)
     expect(analyze).not.toHaveBeenCalled()
   } finally {
@@ -190,11 +192,11 @@ it.each(['python', 'python-slice', 'r-vector', 'r-list', 'r-subset'] as const)(
     const repository = { readSessionRuns: async () => runs }
     const request = { projectId: 'project', sessionId: 'session' }
     try {
-      await new NotebookDependencyAnalyzer({ storageRoot: root, repository }).project({
+      await createNotebookDependencyAnalyzer({ storageRoot: root, repository }).project({
         ...request,
         completedRun: runs[0]
       })
-      const analyzer = new NotebookDependencyAnalyzer({ storageRoot: root, repository })
+      const analyzer = createNotebookDependencyAnalyzer({ storageRoot: root, repository })
       const context = await analyzer.sourceFileAccessContext({
         ...request,
         currentRunId: 'run-1',

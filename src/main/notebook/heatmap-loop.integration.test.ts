@@ -1,4 +1,4 @@
-import { NotebookDependencyAnalyzer } from './dependency-analysis-adapter'
+import { createNotebookDependencyAnalyzer } from './dependency-analysis-adapter'
 import { it, expect } from 'vitest'
 import { spawn } from 'node:child_process'
 import { createInterface } from 'node:readline'
@@ -155,7 +155,7 @@ for (const language of ['r', 'python'] as const) {
                 executionContext: response.environmentOverlay?.executionContext
               }
             }
-            const analyzer = new NotebookDependencyAnalyzer({
+            const analyzer = createNotebookDependencyAnalyzer({
               storageRoot: root,
               repository: { readSessionRuns: async () => [run] }
             })

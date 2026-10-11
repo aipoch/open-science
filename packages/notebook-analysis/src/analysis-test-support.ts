@@ -7,7 +7,29 @@ export {
   projectNotebookDependencies,
   unavailableNotebookDependencyProjection
 } from './dependency-analysis'
-export type * from './dependency-analysis-types'
+export type {
+  AnalyzeNotebookScripts,
+  AnalyzedNotebookRun,
+  NotebookDependencyAlias,
+  NotebookDependencyAnalysisSidecar,
+  NotebookDependencyCopyBinding,
+  NotebookDependencyInterpreter,
+  NotebookDependencyMemberWrite,
+  NotebookDependencyProjection,
+  NotebookFileDependency,
+  NotebookDependencyReceiverCall,
+  NotebookDependencyTypeBinding,
+  NotebookDependencyTypeSummary,
+  NotebookFileCallEffectSummary,
+  NotebookPythonHelperModule,
+  NotebookRunDependencyFacts,
+  NotebookSourceFileAccessAnalysis,
+  NotebookSourceFileAccessContext,
+  NotebookSourceFileAccessContextRequest,
+  NotebookSourceFileAccessExtraction,
+  NotebookSourceFileWriteScope,
+  ProjectNotebookDependenciesRequest
+} from './dependency-analysis-types'
 export type NotebookRunRecord = Omit<
   NotebookAnalysisRun,
   'workingFiles' | 'fileEvidence' | 'environmentManifest' | 'helperModules'

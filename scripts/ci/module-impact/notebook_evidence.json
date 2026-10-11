@@ -19,10 +19,7 @@
   "consumerModules": [],
   "testFiles": {
     "owner": [
-      "packages/notebook-analysis/src/dependency-analysis.path-plot.test.ts",
       "src/main/notebook/dependency-analysis.r-plot-repro.test.ts",
-      "packages/notebook-analysis/src/dependency-analysis.r-plot-values.test.ts",
-      "packages/notebook-analysis/src/dependency-analysis.subplots.test.ts",
       "src/main/notebook/host-artifacts-service.test.ts",
       "src/main/notebook/host-lineage-service.test.ts",
       "src/main/notebook/local-rpc-server.artifacts.test.ts",
@@ -102,7 +99,6 @@
       "src/main/literature/library-tool-contracts.test.ts",
       "src/main/literature/scale-regressions.test.ts",
       "src/main/notebook/delegated-lane-capability.test.ts",
-      "packages/notebook-analysis/src/dependency-analysis.dev-web.test.ts",
       "src/main/notebook/e2e.certification.test.ts",
       "src/main/notebook/host-mcp.integration.test.ts",
       "src/main/notebook/host-model-service.test.ts",

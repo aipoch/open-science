@@ -1,4 +1,4 @@
-import { NotebookDependencyAnalyzer } from './dependency-analysis-adapter'
+import { createNotebookDependencyAnalyzer } from './dependency-analysis-adapter'
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -12,7 +12,7 @@ import { expect, it } from 'vitest'
 import { projectNotebookDependencies } from '@aipoch/notebook-analysis'
 import type { NotebookRunRecord } from '../../shared/notebook'
 import type { NotebookDependencyProjection } from '@aipoch/notebook-analysis/contracts'
-import { analyzePythonSources } from '@aipoch/notebook-analysis/python'
+import { analyzePythonSources } from '@aipoch/notebook-analysis'
 import { analyzeNotebookSourceFileAccess } from '@aipoch/notebook-analysis'
 
 const cells = readFileSync(join(__dirname, 'reported-python-chord.fixture.py'), 'utf8').split(
@@ -317,7 +317,7 @@ const project = async (scripts: string[]): Promise<NotebookDependencyProjection>
   const root = await mkdtemp(join(tmpdir(), 'chord-analysis-'))
   const runs = scripts.map(run)
   try {
-    return await new NotebookDependencyAnalyzer({
+    return await createNotebookDependencyAnalyzer({
       storageRoot: root,
       repository: { readSessionRuns: async () => runs }
     }).project({
@@ -1006,15 +1006,16 @@ it('restores workbook call shapes from the analysis cache', async () => {
     interpreter: { command: 'unused' }
   }
   try {
-    const initial = await new NotebookDependencyAnalyzer({ storageRoot: root, repository }).project(
-      request
-    )
+    const initial = await createNotebookDependencyAnalyzer({
+      storageRoot: root,
+      repository
+    }).project(request)
     const path = join(root, 'notebooks', 'project', 'session', 'cache', 'dependency-analysis.json')
     const sidecar = JSON.parse(await readFile(path, 'utf8'))
     sidecar.projectionSnapshots = {}
     await writeFile(path, JSON.stringify(sidecar))
     let reanalyses = 0
-    const restored = await new NotebookDependencyAnalyzer({
+    const restored = await createNotebookDependencyAnalyzer({
       storageRoot: root,
       repository,
       analyze: async () => {

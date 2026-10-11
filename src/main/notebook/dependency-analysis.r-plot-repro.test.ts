@@ -1,4 +1,4 @@
-import { NotebookDependencyAnalyzer } from './dependency-analysis-adapter'
+import { createNotebookDependencyAnalyzer } from './dependency-analysis-adapter'
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -18,7 +18,7 @@ import { EnvironmentStateTracker } from './environment-state-tracker'
 import { frameRRequest, parseLoopResponse } from './kernel-protocol'
 import { resolveMicromamba } from './micromamba'
 import { notebookPromptInputPath } from './prompt-input-materialization'
-import { analyzeRSources } from '@aipoch/notebook-analysis/r'
+import { analyzeRSources } from '@aipoch/notebook-analysis'
 import { analyzeNotebookSourceFileAccess } from '@aipoch/notebook-analysis'
 import { startWorkingFileObservation } from './working-file-observer'
 import { rCallbackPlot } from './reported-r-callback.fixture'
@@ -339,7 +339,7 @@ describe('reported R CSV pie chart capture', () => {
         computeActivities: []
       })
       expect(graph.completeness).toBe('complete')
-      const projection = await new NotebookDependencyAnalyzer({
+      const projection = await createNotebookDependencyAnalyzer({
         storageRoot,
         repository: { readSessionRuns: async () => [failedRun, run] }
       }).project({ projectId: 'project', sessionId: 'session', completedRun: run })
@@ -494,7 +494,7 @@ describe('reported R CSV pie chart capture', () => {
         workingFiles: [],
         inputFiles: []
       }))
-      const projection = await new NotebookDependencyAnalyzer({
+      const projection = await createNotebookDependencyAnalyzer({
         storageRoot,
         repository: {
           readSessionRuns: async () => runs
@@ -835,7 +835,7 @@ it.skipIf(!process.env.RUN_KERNEL || !rPrefix).each([
         computeActivities: []
       })
       expect(graph.completeness).toBe('complete')
-      const projection = await new NotebookDependencyAnalyzer({
+      const projection = await createNotebookDependencyAnalyzer({
         storageRoot,
         repository: {
           readSessionRuns: async () => [failedRun, run]

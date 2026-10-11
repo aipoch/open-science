@@ -17,22 +17,6 @@
     "./contracts": {
       "types": "./dist/contracts.d.ts",
       "default": "./dist/contracts.js"
-    },
-    "./python": {
-      "types": "./dist/dependency-analysis-python.d.ts",
-      "default": "./dist/dependency-analysis-python.js"
-    },
-    "./r": {
-      "types": "./dist/dependency-analysis-r.d.ts",
-      "default": "./dist/dependency-analysis-r.js"
-    },
-    "./repl": {
-      "types": "./dist/dependency-analysis-repl.d.ts",
-      "default": "./dist/dependency-analysis-repl.js"
-    },
-    "./projection": {
-      "types": "./dist/dependency-projection.d.ts",
-      "default": "./dist/dependency-projection.js"
     }
   },
   "files": [
