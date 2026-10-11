@@ -51,9 +51,7 @@
     },
     {
       "root": "packages/environment",
-      "dependencies": [
-        "packages/diagnostics"
-      ]
+      "dependencies": ["packages/diagnostics"]
     },
     {
       "root": "packages/compute",
