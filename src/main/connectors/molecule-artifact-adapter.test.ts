@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Molecule } from 'openchemlib'
+import { renderMoleculeStructure } from '@aipoch/connector-builtins/molecule-render'
 
 import { createMoleculePreviewHandler } from './molecule-artifact-adapter'
 
@@ -20,7 +21,10 @@ describe('molecule preview handler', () => {
       { createInvocationId: () => 'connector-call-1' }
     )
 
-    const out = await handler({ smiles: ASPIRIN_SMILES, filename: 'aspirin' }, { sessionId: 's-1' })
+    const args = { smiles: ASPIRIN_SMILES, filename: 'aspirin' }
+    const rendered = await renderMoleculeStructure(args)
+    if (!rendered.valid) throw new Error('Expected a valid package fixture')
+    const out = await handler(args, { sessionId: 's-1' })
 
     expect(writeArtifactForCurrentRun).toHaveBeenCalledTimes(1)
     const [sessionId, written] = writeArtifactForCurrentRun.mock.calls[0]
@@ -37,18 +41,22 @@ describe('molecule preview handler', () => {
         normalizedArguments: {
           inputKind: 'smiles',
           filename: 'aspirin.mol',
-          smiles: 'CC(OC1=CC=CC=C1C(O)=O)=O'
+          smiles: rendered.smiles
         }
       }
     })
-    expect(written.content).toContain('V2000')
+    // Scientific normalization is package-owned; the adapter must publish its complete output.
+    expect(written.content).toBe(rendered.molfile)
     expect(out).toMatchObject({
       valid: true,
       artifact_id: 'artifact-1',
       version_id: 'version-1',
       version_number: 1,
       filename: 'aspirin.mol',
-      formula: 'C9H8O4'
+      smiles: rendered.smiles,
+      formula: rendered.formula,
+      molecular_weight: rendered.molecular_weight,
+      heavy_atom_count: rendered.heavy_atom_count
     })
   })
 
@@ -70,15 +78,20 @@ describe('molecule preview handler', () => {
     const handler = createMoleculePreviewHandler({ writeArtifactForCurrentRun })
     const molfile = Molecule.fromSmiles(ASPIRIN_SMILES).toMolfile()
 
-    const out = await handler({ molfile, filename: 'aspirin' }, { sessionId: 's-1' })
+    const args = { molfile, filename: 'aspirin' }
+    const rendered = await renderMoleculeStructure(args)
+    if (!rendered.valid) throw new Error('Expected a valid package fixture')
+    const out = await handler(args, { sessionId: 's-1' })
 
-    expect(out).toMatchObject({ valid: true, formula: 'C9H8O4', heavy_atom_count: 13 })
+    expect(out).toMatchObject({
+      valid: true,
+      formula: rendered.formula,
+      heavy_atom_count: rendered.heavy_atom_count
+    })
     expect(writeArtifactForCurrentRun).toHaveBeenCalledTimes(1)
     const [sessionId, written] = writeArtifactForCurrentRun.mock.calls[0]
     expect(sessionId).toBe('s-1')
-    const savedMolecule = Molecule.fromMolfile(written.content)
-    expect(savedMolecule.getAllAtoms()).toBe(13)
-    expect(savedMolecule.getMolecularFormula().formula).toBe('C9H8O4')
+    expect(written.content).toBe(rendered.molfile)
     expect(written.producer.normalizedArguments.inputKind).toBe('molfile')
   })
 

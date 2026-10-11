@@ -4,6 +4,7 @@
     "packages/connector-mcp-client/README.md",
     "packages/connector-mcp-client/package.json",
     "packages/connector-mcp-client/src/client-manager.test.ts",
+    "packages/connector-mcp-client/src/protocol.test.ts",
     "packages/connector-mcp-client/src/client-manager.ts",
     "packages/connector-mcp-client/src/index.ts",
     "packages/connector-mcp-client/src/oauth-client.test.ts",
@@ -31,6 +32,7 @@
   "testFiles": {
     "owner": [
       "packages/connector-mcp-client/src/client-manager.test.ts",
+      "packages/connector-mcp-client/src/protocol.test.ts",
       "packages/connector-mcp-client/src/oauth-client.test.ts",
       "packages/connector-mcp-client/src/oauth-redirect.test.ts"
     ],

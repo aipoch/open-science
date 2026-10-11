@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { ParserEngine } from '@aipoch/connector-core'
+import { createConnectorRegistry, ParserEngine } from '@aipoch/connector-core'
 import type { ToolDescriptor } from '@aipoch/connector-core'
 import { PUBMED_TOOLS } from './pubmed'
 
@@ -231,6 +231,30 @@ describe('pubmed connector (7 tools)', () => {
     })
   })
 
+  it('convert_article_ids: accepts a single id and preserves its request and record', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      jsonRes({
+        status: 'ok',
+        records: [{ 'requested-id': 'PMC9046468', pmcid: 'PMC9046468', pmid: 34713412 }]
+      })
+    )
+    const descriptor = tool('convert_article_ids')
+    const args = { ids: 'PMC9046468', id_type: 'pmcid' }
+    expect(() =>
+      createConnectorRegistry(PUBMED_TOOLS).validateToolArguments(descriptor, args)
+    ).not.toThrow()
+    const out = (await new ParserEngine({ fetchImpl }).call(descriptor, args, {})) as {
+      records: Array<Record<string, unknown>>
+    }
+
+    expect(fetchImpl).toHaveBeenCalledOnce()
+    expect(String(fetchImpl.mock.calls[0][0])).toContain('ids=PMC9046468')
+    expect(out.records[0]).toMatchObject({
+      pmcid: 'PMC9046468',
+      pmid: '34713412',
+      'requested-id': 'PMC9046468'
+    })
+  })
   it('convert_article_ids: surfaces per-id error records', async () => {
     const fetchImpl = vi.fn().mockResolvedValueOnce(
       jsonRes({

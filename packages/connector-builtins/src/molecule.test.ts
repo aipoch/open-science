@@ -51,7 +51,7 @@ describe('molecule/render_molecule', () => {
     expect(out.heavy_atom_count).toBe(13)
     expect(out.molecular_weight).toBeCloseTo(180.16, 1)
     expect(out.molfile).toContain('V2000')
-    expect(out.smiles).toBeTruthy()
+    expect(out.smiles).toBe('CC(OC1=CC=CC=C1C(O)=O)=O')
     expect(out.filename_suggestion).toBe('aspirin.mol')
   })
 
