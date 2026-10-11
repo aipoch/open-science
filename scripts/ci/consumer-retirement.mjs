@@ -47,7 +47,10 @@ function snapshot(revision, cwd) {
     contents.set(oid, batch.subarray(offset, offset + size).toString('utf8'))
     offset += size + 1
   }
-  const read = (path) => contents.get(entries.get(path)?.oid)
+  const read = (path) => {
+    const entry = entries.get(path)
+    return entry && /^100(?:644|755)$/.test(entry.mode) ? contents.get(entry.oid) : undefined
+  }
   return { files: new Set(entries.keys()), read }
 }
 
@@ -219,7 +222,13 @@ export function verifiedConsumerRetirements(
     const currentDependencies = dependencyReader(after, runtimeEdges)
     const retired = new Set()
     for (const { id, test, owner, current } of candidates) {
-      if (!before.files.has(test) || !after.files.has(test) || owner.fullTestReason) continue
+      if (
+        !before.files.has(test) ||
+        !after.files.has(test) ||
+        owner.fullTestReason ||
+        current.fullTestReason
+      )
+        continue
       const owners = new Set([...owner.ownerPaths, ...current.ownerPaths])
       if (!previousDependencies(test, owners).reachable) continue
       const result = currentDependencies(test, owners)

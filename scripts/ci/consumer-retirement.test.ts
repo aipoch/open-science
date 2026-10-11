@@ -10,6 +10,7 @@ const roots: string[] = []
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
+// Each case creates and commits Git snapshots; allow slow Windows/CI filesystem operations.
 const owner = 'src/owner.ts'
 const consumer = 'src/consumer.test.ts'
 function fixture(options: { runtime?: boolean; full?: boolean; baseTest?: string } = {}) {
@@ -55,11 +56,16 @@ function fixture(options: { runtime?: boolean; full?: boolean; baseTest?: string
   git('add', '.')
   git('commit', '-qm', 'base')
   const base = git('rev-parse', 'HEAD')
-  const inspect = (testSource = "import { value } from './independent'", from = base) => {
+  const inspect = (
+    testSource = "import { value } from './independent'",
+    from = base,
+    afterStage = () => {}
+  ) => {
     put(consumer, testSource)
     manifest.modules.upstream.testFiles.consumer = []
     save()
     git('add', '.')
+    afterStage()
     git('commit', '-qm', 'retire consumer')
     return moduleOwnershipFromRevisions(from, git('rev-parse', 'HEAD'), { cwd: root })
   }
@@ -71,7 +77,7 @@ it('admits a consumer retired by a real transitive dependency refactor', () => {
     ok: true,
     retiredConsumers: [`upstream:${consumer}`]
   })
-})
+}, 30_000)
 
 it.each([
   "import { value } from './owner'",
@@ -81,9 +87,13 @@ it.each([
   "vi.doMock('./owner', () => ({}))",
   "const value = await import('./owner')",
   "const value = require('./owner')"
-])('retains consumer evidence for reachable dependency %s', (source) => {
-  expect(fixture().inspect(source).ok).toBe(false)
-})
+])(
+  'retains consumer evidence for reachable dependency %s',
+  (source) => {
+    expect(fixture().inspect(source).ok).toBe(false)
+  },
+  30_000
+)
 
 it.each([
   "import './missing'",
@@ -93,26 +103,30 @@ it.each([
   'const target = process.env.TARGET; require(target)',
   'vi.mock(process.env.TARGET)',
   "import { from './independent'"
-])('fails closed for incomplete candidate evidence: %s', (source) => {
-  expect(fixture().inspect(source).ok).toBe(false)
-})
+])(
+  'fails closed for incomplete candidate evidence: %s',
+  (source) => {
+    expect(fixture().inspect(source).ok).toBe(false)
+  },
+  30_000
+)
 
 it('retains base runtime/source-read edges even if the candidate deletes the declaration', () => {
   const state = fixture({ runtime: true })
   state.put('scripts/ci/module-runtime-consumers.json', '{}')
   expect(state.inspect().ok).toBe(false)
-})
+}, 30_000)
 
 it('honors newly declared runtime consumers', () => {
   const state = fixture()
   state.put('scripts/ci/module-runtime-consumers.json', JSON.stringify({ [owner]: [consumer] }))
   expect(state.inspect().ok).toBe(false)
-})
+}, 30_000)
 
 it('does not retire full-validation or already-unproven historical evidence', () => {
   expect(fixture({ full: true }).inspect().ok).toBe(false)
   expect(fixture({ baseTest: 'export {}' }).inspect().ok).toBe(false)
-})
+}, 30_000)
 
 it('reads candidate source and checker changes as data without running either', () => {
   const state = fixture()
@@ -124,7 +138,7 @@ it('reads candidate source and checker changes as data without running either', 
     ).ok
   ).toBe(true)
   expect(existsSync(marker)).toBe(false)
-})
+}, 30_000)
 
 it.each(['@example/owner', '@/owner', '@renderer/owner'])(
   'resolves %s from Git source without installed packages',
@@ -160,7 +174,8 @@ it.each(['@example/owner', '@/owner', '@renderer/owner'])(
       ok: true,
       retiredConsumers: [`upstream:${consumer}`]
     })
-  }
+  },
+  30_000
 )
 
 it('keeps public interface obligations unchanged when a consumer can retire', () => {
@@ -180,4 +195,24 @@ it('keeps public interface obligations unchanged when a consumer can retire', ()
   expect(result.violations).toEqual(
     expect.arrayContaining([expect.objectContaining({ rule: 'module-registration-regression' })])
   )
-})
+}, 30_000)
+
+it('retains consumer evidence when the candidate declares full validation', () => {
+  const state = fixture()
+  state.manifest.modules.upstream.fullTestReason = 'Unknown runtime dependencies'
+  expect(state.inspect().ok).toBe(false)
+}, 30_000)
+
+it('does not analyze symlinks as regular source even when blob contents match', () => {
+  const state = fixture()
+  // The symlink content is also a valid source blob elsewhere in the snapshot.
+  state.put('src/independent.ts', 'independent')
+  state.put('src/linked.ts', 'independent')
+  state.manifest.modules.downstream.ownerPaths.push('src/linked.ts')
+  expect(
+    state.inspect("import './linked'", undefined, () => {
+      const oid = state.git('rev-parse', ':src/independent.ts')
+      state.git('update-index', '--cacheinfo', `120000,${oid},src/linked.ts`)
+    }).ok
+  ).toBe(false)
+}, 30_000)
