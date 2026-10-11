@@ -28,3 +28,11 @@ The package depends only on `notebook-syntax` and Zod. It does not depend on the
 `module-impact` records downstream evidence only: host modules do not list upstream package unit tests, and sibling analysis/risk modules do not list one another's units. The trusted CI package plan also enforces these boundaries when a broad host contract requires full host validation. Local `npm test` remains complete; `test:module` and `test:affected` use the registered boundaries. Host adapters own resource and executable policy, never duplicate the analyzer's mutable state.
 
 Public contracts and the analysis engine have separate module-impact owners. Contract/schema changes retain broad downstream validation; implementation changes select engine units and runtime consumers without traversing the shared run-schema module. PR Gate runs clean tarball verification for selected packages; prerequisites are built without rerunning unchanged upstream units. Host-only edits skip it. Missing trusted selection retains complete package verification.
+
+## Native analysis regressions
+
+`src/dependency-analysis.*.native.test.ts` compares analysis predictions with Python/R execution, including real scientific plotting fixtures. These tests use no host observer, kernel protocol, storage manifest or app scripts. Set `RUN_KERNEL=1` and `OPEN_SCIENCE_TEST_PYTHON` / `OPEN_SCIENCE_TEST_R_COMMAND`; circlize also accepts `OPEN_SCIENCE_TEST_R_ENV` (an R prefix with `bin/Rscript`). Plot cases require pandas, openpyxl, numpy and matplotlib in Python, and ggplot2 (with `margin_auto`), dplyr, scales, circlize and readxl in R. Without the declared runtime environment native cases keep their explicit skip conditions; portable algorithm tests still run.
+
+The host owns compact namespace/byte-capture and R graphics-device integration contracts. Multi-owner kernel recovery and actual environment-lock/recipe replay tests stay with those host workflows. Drawing variants alone do not justify repeating host integrations.
+
+The Runtime Certification workflow runs the native package suite through its own `npm test` command with scientific runtimes provisioned. Windows regression coverage also selects the native chord matrix. Ordinary host-only PR selection does not run these upstream suites.

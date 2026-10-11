@@ -1,30 +1,15 @@
-import { createNotebookDependencyAnalyzer } from './dependency-analysis-adapter'
-
-import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
-
-import { readFileSync } from 'node:fs'
-
 import { execFile } from 'node:child_process'
-
 import { createHash } from 'node:crypto'
-
+import { readFileSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-
 import { tmpdir } from 'node:os'
-
 import { join } from 'node:path'
-
 import { promisify } from 'node:util'
-
 import { expect, it } from 'vitest'
-
-import type { NotebookRunRecord } from '../../shared/notebook'
-
-import type { NotebookDependencyProjection } from '@aipoch/notebook-analysis/contracts'
-
-import { frameRRequest, parseLoopResponse } from './kernel-protocol'
-
-import { startWorkingFileObservation } from './working-file-observer'
+import type { NotebookRunRecord } from './analysis-test-support'
+import { NotebookDependencyAnalyzer } from './analysis-test-support'
+import type { NotebookDependencyProjection } from './contracts'
+import { analyzeNotebookSourceFileAccess } from './index'
 
 const cells = readFileSync(join(__dirname, 'reported-r-circlize.fixture.R'), 'utf8')
   .trim()
@@ -72,7 +57,7 @@ const project = async (
     inputFiles: []
   }))
   try {
-    return await createNotebookDependencyAnalyzer({
+    return await new NotebookDependencyAnalyzer({
       storageRoot: root,
       repository: { readSessionRuns: async () => runs }
     }).project({ projectId: 'p', sessionId: 's', completedRun: runs.at(-1)! })
@@ -119,7 +104,7 @@ it
             : ['chord_diagram.png']
     }))
   ])(
-  'captures and replays reported circlize $name in fresh R processes',
+  'matches native outputs for reported circlize $name in fresh R processes',
   async ({ script: caseScript, filenames, name: caseName }) => {
     const root = await mkdtemp(join(tmpdir(), 'native-circlize-'))
     const execute = promisify(execFile)
@@ -138,7 +123,7 @@ it
       addDependencies('run-6')
       expect([...required].sort()).toEqual(['run-2', 'run-6'])
       // Fix RNG at each test cell boundary: circlize can choose random colors.
-      // Package restoration is the subject here, not implicit RNG-state replay.
+      // Dependency-selected source replay is the subject here, not implicit RNG-state replay.
       replayScript = packageReplayCells
         .filter((_, index) => required.has(`run-${index}`))
         .map((source) => `set.seed(42)\n${source}`)
@@ -165,47 +150,25 @@ it
           await writeFile(join(dataRoot, 'chord_diagram.png'), 'previous generation')
           await writeFile(join(dataRoot, 'chord_diagram.pdf'), 'previous generation')
         }
-        const observation = await startWorkingFileObservation({
-          dataRoot,
-          notebookSessionRoot: sessionRoot,
-          cwd: dataRoot,
-          code: script,
-          language: 'r',
-          runId: name
-        })
-        const figuresRoot = join(sessionRoot, 'figures')
-        await mkdir(figuresRoot, { recursive: true })
-        // Use the application's device lifecycle. Bare Rscript may open an
-        // implicit Rplots.pdf when circlize restores par() after dev.off().
-        const execution = execute(
+        const analysis = await analyzeNotebookSourceFileAccess('r', script)
+        expect(analysis).toMatchObject({ readState: 'complete', writeState: 'complete' })
+        expect(analysis.reads).toEqual(['inputs/edge-weights-222222222222.xlsx'])
+        expect(analysis.writes.slice().sort()).toEqual(filenames.slice().sort())
+        // The native oracle owns no app device lifecycle. An implicit Rplots.pdf is
+        // outside the explicit writes predicted for this source; host device tests cover it.
+        const scriptPath = join(sessionRoot, 'analysis.R')
+        // Rscript has no interactive display list. Enable a standard in-memory PDF
+        // device for dev.copy fixtures; app graphics lifecycle is tested in the host.
+        const deviceSetup = caseName.startsWith('device-copy-')
+          ? 'grDevices::pdf(NULL)\ngrDevices::dev.control(displaylist="enable")\n'
+          : ''
+        await writeFile(scriptPath, deviceSetup + script)
+        const output = await execute(
           join(process.env.OPEN_SCIENCE_TEST_R_ENV!, 'bin/Rscript'),
-          ['--vanilla', join(__dirname, '../../../resources/notebook/r_loop.R')],
-          {
-            cwd: dataRoot,
-            timeout: 90000,
-            env: { ...process.env, OPEN_SCIENCE_KERNEL_FIGURES_DIR: figuresRoot },
-            maxBuffer: 8 * 1024 * 1024
-          }
+          ['--vanilla', scriptPath],
+          { cwd: dataRoot, timeout: 90000, maxBuffer: 8 * 1024 * 1024 }
         )
-        execution.child.stdin!.end(frameRRequest(name, script))
-        const output = await execution
-        const response = output.stdout
-          .split('\n')
-          .map(parseLoopResponse)
-          .find((item) => item?.reqId === name)
-        expect(response).toMatchObject({ error: null })
-        expect(response?.stdout).not.toContain('FAIL test_')
-        const evidence = await observation.finish()
-        expect(evidence.fileEvidence).toMatchObject({
-          state: 'available',
-          fileReads: 'complete',
-          writerAttribution: 'complete',
-          reasonCodes: []
-        })
-        expect(evidence.confirmedReadPaths).toEqual(['data/inputs/edge-weights-222222222222.xlsx'])
-        expect(evidence.workingFiles.map((file) => file.relativePath).sort()).toEqual(
-          filenames.map((file) => `data/${file}`).sort()
-        )
+        expect(output.stdout).not.toContain('FAIL test_')
         const hashes: string[] = []
         for (const filename of filenames) {
           const data = await readFile(join(dataRoot, filename))
@@ -223,5 +186,3 @@ it
   },
   240000
 )
-
-configureTestRuntimeMetadata()

@@ -1,20 +1,20 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, resolve, sep } from 'node:path'
 import ts, {
   createModuleResolutionCache,
-  preProcessFile,
-  readConfigFile,
-  parseJsonConfigFileContent,
-  resolveModuleName,
-  ModuleResolutionKind,
-  sys,
   createSourceFile,
   isExportDeclaration,
   isImportDeclaration,
-  isNamedImports,
   isNamedExports,
-  ScriptTarget
+  isNamedImports,
+  ModuleResolutionKind,
+  parseJsonConfigFileContent,
+  preProcessFile,
+  readConfigFile,
+  resolveModuleName,
+  ScriptTarget,
+  sys
 } from 'typescript'
 import { expect, it } from 'vitest'
 
@@ -168,7 +168,15 @@ it('keeps every host analysis and admission case connected to host behavior', ()
   const paths = readdirSync(__dirname)
     .filter(
       (name) =>
-        /^dependency-analysis\..*\.integration\.test\.ts$/.test(name) ||
+        [
+          'artifact-analysis-contract.integration.test.ts',
+          'artifact-r-reproduction.integration.test.ts',
+          'kernel-lineage-recovery.integration.test.ts',
+          'kernel-file-evidence.integration.test.ts',
+          'working-file-observer.analysis-contract.integration.test.ts',
+          'working-file-observer.write-scope.integration.test.ts'
+        ].includes(name) ||
+        /^dependency-analysis\..*\.test\.ts$/.test(name) ||
         name === 'code-risk-admission.test.ts'
     )
     .map((name) => resolve(__dirname, name))
@@ -186,6 +194,12 @@ it('keeps every host analysis and admission case connected to host behavior', ()
 
   for (const path of paths) {
     const source = program.getSourceFile(path)!
+    if (
+      path.endsWith('working-file-observer.analysis-contract.integration.test.ts') ||
+      path.endsWith('kernel-file-evidence.integration.test.ts')
+    ) {
+      expect(source.text).not.toMatch(/reported-|fixture|readFileSync/)
+    }
     const usesHost = (test: ts.Node): boolean => {
       const visited = new Set<ts.Node>()
       const visit = (node: ts.Node): boolean => {
@@ -204,6 +218,7 @@ it('keeps every host analysis and admission case connected to host behavior', ()
                 specifier.startsWith('./') &&
                 !specifier.includes('fixture') &&
                 !specifier.includes('test-support') &&
+                specifier !== './dependency-analysis-adapter' &&
                 existsSync(resolve(__dirname, `${specifier}.ts`))
               )
                 return true
@@ -236,7 +251,9 @@ it('keeps every host analysis and admission case connected to host behavior', ()
       ) {
         if (!usesHost(node)) {
           const line = source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1
-          violations.push(`${path}:${line} tests only package behavior; move it into its package`)
+          violations.push(
+            `${path}:${line} has no host behavior beyond analyzer construction; move algorithm assertions into the package`
+          )
         }
         return
       }

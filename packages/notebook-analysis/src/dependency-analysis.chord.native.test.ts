@@ -1,22 +1,30 @@
-import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
-
 import { execFile } from 'node:child_process'
-
 import { createHash } from 'node:crypto'
-
-import { promisify } from 'node:util'
-
-import { startWorkingFileObservation } from './working-file-observer'
-
 import { readFileSync } from 'node:fs'
-
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-
 import { tmpdir } from 'node:os'
-
 import { join } from 'node:path'
+import { promisify } from 'node:util'
+import { afterAll, beforeAll, expect, it } from 'vitest'
+import { analyzeNotebookSourceFileAccess } from './index'
 
-import { expect, it } from 'vitest'
+// Font discovery is process-independent runtime setup, not notebook input state.
+// Share only this disposable cache; every script still runs in a fresh data directory.
+let cacheRoot: string | undefined
+beforeAll(async () => {
+  cacheRoot = await mkdtemp(join(tmpdir(), 'native-chord-fonts-'))
+  await promisify(execFile)(
+    process.env.OPEN_SCIENCE_TEST_PYTHON!,
+    ['-c', 'import matplotlib.font_manager'],
+    {
+      timeout: 90000,
+      env: { ...process.env, MPLBACKEND: 'Agg', MPLCONFIGDIR: cacheRoot }
+    }
+  )
+}, 100000)
+afterAll(async () => {
+  if (cacheRoot) await rm(cacheRoot, { recursive: true, force: true })
+})
 
 const cells = readFileSync(join(__dirname, 'reported-python-chord.fixture.py'), 'utf8').split(
   '\n\n# %%\n\n'
@@ -83,7 +91,7 @@ it
     `${matrixInput}\n${matrixChord}`,
     ...neighborChords
   ])(
-  'captures Excel input and reproduces chord workflow %# in fresh Python processes',
+  'matches native Excel input and chord output for workflow %# in fresh Python processes',
   async (script) => {
     const root = await mkdtemp(join(tmpdir(), 'native-chord-'))
     const python = process.env.OPEN_SCIENCE_TEST_PYTHON!
@@ -106,37 +114,21 @@ it
         if (name === 'original' && redrawCells.includes(script)) {
           await writeFile(join(dataRoot, 'chord_diagram.png'), 'older published generation')
         }
-        const observation = await startWorkingFileObservation({
-          dataRoot,
-          notebookSessionRoot: sessionRoot,
-          cwd: dataRoot,
-          code: script,
-          language: 'python',
-          runId: name
-        })
+        const analysis = await analyzeNotebookSourceFileAccess('python', script)
+        expect(analysis).toMatchObject({ readState: 'complete', writeState: 'complete' })
+        expect(analysis.reads).toContain('inputs/edge-weights-222222222222.xlsx')
+        expect(analysis.writes).toContain('chord_diagram.png')
+        if (redrawCells.includes(script)) expect(analysis.reads).not.toContain('chord_diagram.png')
         await promisify(execFile)(python, ['-c', script], {
           cwd: dataRoot,
           timeout: 30000,
           env: {
             ...process.env,
             MPLBACKEND: 'Agg',
-            MPLCONFIGDIR: join(root, 'matplotlib'),
+            MPLCONFIGDIR: cacheRoot,
             XDG_CACHE_HOME: join(root, 'cache')
           }
         })
-        const evidence = await observation.finish()
-        expect(evidence.fileEvidence).toMatchObject({
-          state: 'available',
-          fileReads: 'complete',
-          writerAttribution: 'complete',
-          reasonCodes: []
-        })
-        expect(evidence.confirmedReadPaths).toContain('data/inputs/edge-weights-222222222222.xlsx')
-        if (redrawCells.includes(script))
-          expect(evidence.confirmedReadPaths).not.toContain('data/chord_diagram.png')
-        expect(evidence.workingFiles.map((file) => file.relativePath)).toContain(
-          'data/chord_diagram.png'
-        )
         const png = await readFile(join(dataRoot, 'chord_diagram.png'))
         expect(png.subarray(1, 4).toString()).toBe('PNG')
         hashes.push(createHash('sha256').update(png).digest('hex'))
@@ -148,5 +140,3 @@ it
   },
   90000
 )
-
-configureTestRuntimeMetadata()

@@ -1,21 +1,13 @@
-import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
-
-import { expect, it } from 'vitest'
-
 import { execFile } from 'node:child_process'
-
-import { promisify } from 'node:util'
-
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-
 import { tmpdir } from 'node:os'
-
 import { join } from 'node:path'
-
-import { startWorkingFileObservation } from './working-file-observer'
+import { promisify } from 'node:util'
+import { expect, it } from 'vitest'
+import { analyzeNotebookSourceFileAccess } from './index'
 
 it.skipIf(!process.env.RUN_KERNEL).each(['python', 'r'] as const)(
-  'captures %s snapshot iteration with real file reads and writes',
+  'matches %s snapshot analysis with native file reads and writes',
   async (language) => {
     const command =
       language === 'python'
@@ -44,38 +36,21 @@ for (path in paths[c(2,1)]) {
         await mkdir(dataRoot, { recursive: true })
         await writeFile(join(dataRoot, 'a.csv'), 'Ctrl\n')
         await writeFile(join(dataRoot, 'b.csv'), 'IRI\n')
-        const observer = await startWorkingFileObservation({
-          dataRoot,
-          notebookSessionRoot,
-          cwd: dataRoot,
-          language,
-          code: script,
-          runId: name
-        })
+        const analysis = await analyzeNotebookSourceFileAccess(language, script)
+        expect(analysis).toMatchObject({ readState: 'complete', writeState: 'complete' })
+        expect(analysis.reads).toEqual(['a.csv', 'b.csv'])
+        expect(analysis.writes.slice().sort()).toEqual(['a.csv.copy', 'b.csv.copy'])
         await promisify(execFile)(
           command!,
           language === 'python' ? ['-c', script] : ['--vanilla', '-e', script],
           { cwd: dataRoot, timeout: 30_000 }
         )
-        const files = await observer.finish()
-        expect(files.fileEvidence).toMatchObject({
-          state: 'available',
-          fileReads: 'complete',
-          writerAttribution: 'complete',
-          reasonCodes: []
-        })
-        expect(files.confirmedReadPaths).toEqual(['data/a.csv', 'data/b.csv'])
-        expect(files.workingFiles.map(({ relativePath }) => relativePath).sort()).toEqual([
-          'data/a.csv.copy',
-          'data/b.csv.copy'
-        ])
         expect(await readFile(join(dataRoot, 'a.csv.copy'), 'utf8')).toBe('Ctrl\n')
         expect(await readFile(join(dataRoot, 'b.csv.copy'), 'utf8')).toBe('IRI\n')
       }
     } finally {
       await rm(root, { recursive: true, force: true })
     }
-  }
+  },
+  90000
 )
-
-configureTestRuntimeMetadata()

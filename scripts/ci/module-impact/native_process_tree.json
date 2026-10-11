@@ -245,7 +245,7 @@
       "src/main/notebook/configured-shell-runtime.test.ts",
       "src/main/notebook/cross-turn-input-repro.integration.test.ts",
       "src/main/notebook/delegated-lane-capability.test.ts",
-      "src/main/notebook/dependency-analysis.r-plot-repro.integration.test.ts",
+      "src/main/notebook/artifact-r-reproduction.integration.test.ts",
       "src/main/notebook/e2e.certification.test.ts",
       "src/main/notebook/env-ipc.test.ts",
       "src/main/notebook/environment-lifecycle-workflows.test.ts",
@@ -556,7 +556,7 @@
       "src/main/notebook/real-notebook-lineage.integration.test.ts",
       "src/main/notebook/real-parquet-lineage.integration.test.ts",
       "src/main/notebook/r-connection-guard.test.ts",
-      "src/main/notebook/dependency-analysis.lineage-regressions.integration.test.ts",
+      "src/main/notebook/kernel-lineage-recovery.integration.test.ts",
       "src/main/session-diagnostics/export-evidence.integration.test.ts",
       "src/main/permission-grants/connector-broker.test.ts",
       "src/main/session-persistence/reconciliation-renderer-parity.test.ts",
@@ -595,7 +595,8 @@
       "src/main/connectors/custom-mcp-config.test.ts",
       "src/main/connectors/mcp-host-dependencies.test.ts",
       "src/main/session-diagnostics/schema-compatibility.integration.test.ts",
-      "src/main/literature/pdf-structure/engine-adapter.test.ts"
+      "src/main/literature/pdf-structure/engine-adapter.test.ts",
+      "src/main/notebook/artifact-analysis-contract.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

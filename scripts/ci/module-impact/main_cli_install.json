@@ -393,7 +393,7 @@
       "src/main/notebook/runtime-service.export.test.ts",
       "src/main/skills/catalog.registered-helpers.test.ts",
       "src/main/update/legacy-shell-recovery.integration.test.ts",
-      "src/main/notebook/dependency-analysis.lineage-regressions.integration.test.ts",
+      "src/main/notebook/kernel-lineage-recovery.integration.test.ts",
       "src/main/notebook/scientific-replay.test.ts",
       "src/main/artifacts/artifact-reproducibility-execution.test.ts",
       "src/main/notebook/reproduction-runtime.integration.test.ts",

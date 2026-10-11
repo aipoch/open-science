@@ -88,6 +88,7 @@ describe('runtime certification workflow', () => {
     expect(create.run).toContain('r-base=4.4 r-jsonlite r-ggplot2 r-renv r-mass')
     expect(create.run).toContain('OPEN_SCIENCE_TEST_PY_ENV=')
     expect(create.run).toContain('OPEN_SCIENCE_TEST_R_ENV=')
+    expect(create.run).toContain('OPEN_SCIENCE_TEST_R_COMMAND=$r_prefix/bin/Rscript')
     expect(create.run).toContain('OPEN_SCIENCE_TEST_RENV_LIBRARY=$r_prefix/lib/R/library')
     expect(create.run).toContain('OPEN_SCIENCE_TEST_RESTORE_PY_ENV=$python_prefix')
     expect(create.run).toContain('OPEN_SCIENCE_TEST_PYTHON=$python_prefix/bin/python')
@@ -135,6 +136,11 @@ describe('runtime certification workflow', () => {
     const test = step(source, 'Test real source runtime chain')
     const allRuns = source.steps?.map(({ run }) => run ?? '').join('\n') ?? ''
 
+    const native = step(source, 'Test package native analysis regressions')
+    expect(native.env).toEqual({ RUN_KERNEL: '1' })
+    expect(native.run).toBe(
+      'npm test --prefix packages/notebook-analysis -- .native.test.ts --maxWorkers=1'
+    )
     expect(test.env).toEqual({ RUN_KERNEL: '1', RUN_REPRODUCTION_SMOKE: '1' })
     for (const file of [
       'repl-loop.integration.test.ts',
@@ -142,6 +148,7 @@ describe('runtime certification workflow', () => {
       'host-mcp.integration.test.ts',
       'python-loop.integration.test.ts',
       'r-loop.integration.test.ts',
+      'kernel-file-evidence.integration.test.ts',
       'reproduction-runtime.integration.test.ts',
       'native-lock-restoration.test.ts',
       'environment-lock.test.ts',

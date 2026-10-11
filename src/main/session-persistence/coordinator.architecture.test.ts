@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { relative, resolve, sep } from 'node:path'
 
 import {
@@ -1586,7 +1586,7 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/notebook/cell-execution-input.test.ts',
       'src/main/notebook/cross-turn-input-repro.integration.test.ts',
       'src/main/notebook/delegated-lane-capability.test.ts',
-      'src/main/notebook/dependency-analysis.r-plot-repro.integration.test.ts',
+      'src/main/notebook/artifact-r-reproduction.integration.test.ts',
       'src/main/notebook/e2e.certification.test.ts',
       'src/main/notebook/env-ipc.test.ts',
       'src/main/notebook/environment-lifecycle-workflows.test.ts',
@@ -1820,7 +1820,7 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/notebook/real-notebook-lineage.integration.test.ts',
       'src/main/notebook/real-parquet-lineage.integration.test.ts',
       'src/main/notebook/r-connection-guard.test.ts',
-      'src/main/notebook/dependency-analysis.lineage-regressions.integration.test.ts',
+      'src/main/notebook/kernel-lineage-recovery.integration.test.ts',
       'src/renderer/src/lib/acp/workspace-prompt-admission.test.ts',
       'src/renderer/src/lib/acp/workspace-prompt-preparation.test.ts',
       'src/renderer/src/lib/acp/workspace-runtime-save-as-skill-owner.test.tsx',
@@ -1845,7 +1845,8 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/acp/specialist-switch-recovery.integration.test.ts',
       'src/main/agents/production-completion-handoff.test.ts',
       'src/main/notebook/auto-mode-budget.integration.test.ts',
-      'src/main/session-diagnostics/schema-compatibility.integration.test.ts'
+      'src/main/session-diagnostics/schema-compatibility.integration.test.ts',
+      'src/main/notebook/artifact-analysis-contract.integration.test.ts'
     ])
     expect(sessionPersistence.capabilityOverlays).toEqual([
       'windows_sensitive',

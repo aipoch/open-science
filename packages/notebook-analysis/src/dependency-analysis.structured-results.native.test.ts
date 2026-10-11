@@ -1,25 +1,17 @@
-import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
-
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-
 import { execFile } from 'node:child_process'
-
-import { promisify } from 'node:util'
-
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-
 import { join } from 'node:path'
-
+import { promisify } from 'node:util'
 import { expect, it } from 'vitest'
-
-import { startWorkingFileObservation } from './working-file-observer'
+import { analyzeNotebookSourceFileAccess } from './index'
 
 const rCommand = process.env.OPEN_SCIENCE_TEST_R_COMMAND
 
 const pythonCommand = process.env.OPEN_SCIENCE_TEST_PYTHON
 
 it.skipIf(!process.env.RUN_KERNEL || !pythonCommand)(
-  'captures inline Python selections and replays them in a fresh directory',
+  'matches inline Python selections and executes them in a fresh directory',
   async () => {
     const root = await mkdtemp(join(tmpdir(), 'python-inline-paths-'))
     const script = `import pandas as pd
@@ -32,40 +24,28 @@ df.to_csv(("unused.csv", "copy.csv")[-1], index=False)`
         const dataRoot = join(notebookSessionRoot, 'data')
         await mkdir(join(dataRoot, 'inputs'), { recursive: true })
         await writeFile(join(dataRoot, 'inputs/groups.csv'), 'group\nCtrl\nIRI\n')
-        const observer = await startWorkingFileObservation({
-          dataRoot,
-          notebookSessionRoot,
-          cwd: dataRoot,
-          language: 'python',
-          code: script,
-          runId: name
+        expect(await analyzeNotebookSourceFileAccess('python', script)).toMatchObject({
+          readState: 'complete',
+          writeState: 'complete',
+          reads: ['inputs/groups.csv'],
+          writes: ['copy.csv']
         })
         await promisify(execFile)(pythonCommand!, ['-c', script], {
           cwd: dataRoot,
           timeout: 30_000
         })
-        const files = await observer.finish()
-        expect(files.fileEvidence).toMatchObject({
-          state: 'available',
-          fileReads: 'complete',
-          writerAttribution: 'complete',
-          reasonCodes: []
-        })
-        expect(files.confirmedReadPaths).toEqual(['data/inputs/groups.csv'])
-        expect(files.workingFiles.map(({ relativePath }) => relativePath)).toContain(
-          'data/copy.csv'
-        )
         outputs.push(await readFile(join(dataRoot, 'copy.csv'), 'utf8'))
       }
       expect(outputs).toEqual(['group\nCtrl\nIRI\n', 'group\nCtrl\nIRI\n'])
     } finally {
       await rm(root, { recursive: true, force: true })
     }
-  }
+  },
+  90000
 )
 
 it.skipIf(!process.env.RUN_KERNEL || !rCommand)(
-  'captures inline R input/output selection and replays it in a fresh directory',
+  'matches inline R input/output selection and executes it in a fresh directory',
   async () => {
     const root = await mkdtemp(join(tmpdir(), 'r-inline-paths-'))
     const script = `paths <- file.path("inputs", c("unused.csv", "groups.csv"))
@@ -90,35 +70,27 @@ write.csv(counts, list(csv="counts.csv", ignored="unused-output.csv")["csv"][[1]
         { timeout: 30_000 }
       )
       expect(stdout.trim().split('\n')).toEqual(expressions.map(() => 'inputs/groups.csv'))
+      for (const expression of expressions) {
+        expect(
+          (await analyzeNotebookSourceFileAccess('r', `read.csv(${expression})`)).reads
+        ).toEqual(['inputs/groups.csv'])
+      }
       const contents = []
       for (const name of ['original', 'replay']) {
         const notebookSessionRoot = join(root, name)
         const dataRoot = join(notebookSessionRoot, 'data')
         await mkdir(join(dataRoot, 'inputs'), { recursive: true })
         await writeFile(join(dataRoot, 'inputs/groups.csv'), 'group\nCtrl\nIRI\nCtrl\n')
-        const observer = await startWorkingFileObservation({
-          dataRoot,
-          notebookSessionRoot,
-          cwd: dataRoot,
-          language: 'r',
-          code: script,
-          runId: name
+        expect(await analyzeNotebookSourceFileAccess('r', script)).toMatchObject({
+          readState: 'complete',
+          writeState: 'complete',
+          reads: ['inputs/groups.csv'],
+          writes: ['counts.csv']
         })
         await promisify(execFile)(rCommand!, ['--vanilla', '-e', script], {
           cwd: dataRoot,
           timeout: 30_000
         })
-        const files = await observer.finish()
-        expect(files.fileEvidence).toMatchObject({
-          state: 'available',
-          fileReads: 'complete',
-          writerAttribution: 'complete',
-          reasonCodes: []
-        })
-        expect(files.confirmedReadPaths).toEqual(['data/inputs/groups.csv'])
-        expect(files.workingFiles.map(({ relativePath }) => relativePath)).toContain(
-          'data/counts.csv'
-        )
         contents.push(await readFile(join(dataRoot, 'counts.csv'), 'utf8'))
       }
       expect(contents[1]).toEqual(contents[0])
@@ -126,7 +98,6 @@ write.csv(counts, list(csv="counts.csv", ignored="unused-output.csv")["csv"][[1]
     } finally {
       await rm(root, { recursive: true, force: true })
     }
-  }
+  },
+  90000
 )
-
-configureTestRuntimeMetadata()

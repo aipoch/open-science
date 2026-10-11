@@ -1,7 +1,7 @@
 {
   "ownerPaths": [
     "src/main/notebook/artifact-source-scope.ts",
-    "src/main/notebook/dependency-analysis.r-plot-repro.integration.test.ts",
+    "src/main/notebook/artifact-r-reproduction.integration.test.ts",
     "src/main/notebook/host-artifacts-service.test.ts",
     "src/main/notebook/host-artifacts-service.ts",
     "src/main/notebook/host-lineage-service.test.ts",
@@ -17,7 +17,7 @@
   "consumerModules": [],
   "testFiles": {
     "owner": [
-      "src/main/notebook/dependency-analysis.r-plot-repro.integration.test.ts",
+      "src/main/notebook/artifact-r-reproduction.integration.test.ts",
       "src/main/notebook/host-artifacts-service.test.ts",
       "src/main/notebook/host-lineage-service.test.ts",
       "src/main/notebook/local-rpc-server.artifacts.test.ts",
@@ -167,7 +167,8 @@
       "src/main/side-chat/application-commands.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/agents/production-completion-handoff.test.ts",
-      "src/main/notebook/analysis-file-evidence.test.ts"
+      "src/main/notebook/analysis-file-evidence.test.ts",
+      "src/main/notebook/artifact-analysis-contract.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

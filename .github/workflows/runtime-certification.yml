@@ -107,6 +107,7 @@ jobs:
           echo "OPEN_SCIENCE_TEST_PY_ENV=$python_prefix/bin/python" >> "$GITHUB_ENV"
           echo "OPEN_SCIENCE_TEST_PYTHON=$python_prefix/bin/python" >> "$GITHUB_ENV"
           echo "OPEN_SCIENCE_TEST_RESTORE_PY_ENV=$python_prefix" >> "$GITHUB_ENV"
+          echo "OPEN_SCIENCE_TEST_R_COMMAND=$r_prefix/bin/Rscript" >> "$GITHUB_ENV"
           echo "OPEN_SCIENCE_TEST_R_ENV=$r_prefix" >> "$GITHUB_ENV"
           echo "OPEN_SCIENCE_TEST_RENV_LIBRARY=$r_prefix/lib/R/library" >> "$GITHUB_ENV"
           echo "OPEN_SCIENCE_TEST_MICROMAMBA=$MICROMAMBA_BIN" >> "$GITHUB_ENV"
@@ -144,6 +145,14 @@ jobs:
           "$OPEN_SCIENCE_TEST_R_ENV/bin/Rscript" -e \
             'packages <- c("jsonlite", "ggplot2", "renv", "MASS", "circlize", "dplyr", "ggrepel", "ggVennDiagram", "magrittr", "openxlsx", "patchwork", "ragg", "RColorBrewer", "readxl", "scales", "showtext", "sysfonts", "systemfonts", "tidyr", "venn", "VennDiagram"); for (package in packages) { loadNamespace(package); cat(package, "=", as.character(packageVersion(package)), "\n", sep="") }'
 
+      - name: Test package native analysis regressions
+        env:
+          RUN_KERNEL: '1'
+        run: >-
+          npm test --prefix packages/notebook-analysis --
+          .native.test.ts
+          --maxWorkers=1
+
       - name: Test real source runtime chain
         env:
           RUN_KERNEL: '1'
@@ -155,6 +164,7 @@ jobs:
           src/main/notebook/host-mcp.integration.test.ts
           src/main/notebook/python-loop.integration.test.ts
           src/main/notebook/r-loop.integration.test.ts
+          src/main/notebook/kernel-file-evidence.integration.test.ts
           src/main/notebook/reproduction-runtime.integration.test.ts
           src/main/notebook/native-lock-restoration.test.ts
           src/main/notebook/environment-lock.test.ts

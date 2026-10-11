@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 
@@ -1025,7 +1025,14 @@ describe('Notebook package module boundaries', () => {
     const units = [
       'input-path-analysis.test.ts',
       'input-resource-analysis.test.ts',
-      'dependency-projection.r-packages.test.ts'
+      'dependency-projection.r-packages.test.ts',
+      'dependency-analysis.chord.native.test.ts',
+      'dependency-analysis.circlize.native.test.ts',
+      'dependency-analysis.filesystem-diagnostics.native.test.ts',
+      'dependency-analysis.iteration-snapshots.native.test.ts',
+      'dependency-analysis.structured-results.native.test.ts',
+      'dependency-analysis.r-directory.native.test.ts',
+      'dependency-analysis.r-pipelines.native.test.ts'
     ].map((name) => `packages/notebook-analysis/src/${name}`)
     expect(manifest.modules.notebook_analysis_engine.testFiles.owner).toEqual(
       expect.arrayContaining(units)
@@ -1052,7 +1059,7 @@ describe('Notebook package module boundaries', () => {
       expect(packageTests(plan.testFiles)).toEqual([])
       expect(plan.testFiles).toContain('src/main/notebook/code-risk-admission.test.ts')
       expect(plan.testFiles).toContain(
-        'src/main/notebook/dependency-analysis.venn-device.integration.test.ts'
+        'src/main/notebook/working-file-observer.write-scope.integration.test.ts'
       )
     }
   })
