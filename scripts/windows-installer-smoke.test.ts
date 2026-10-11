@@ -28,7 +28,7 @@ import {
   launchUninstallerLockHolder,
   observeChildClose,
   packagedArtifactSmokeRpcResult,
-  packagedMainEntryPath,
+  packagedMcpRuntime,
   packagedResourcePaths,
   parseArguments,
   parsePackagedAppEndpoint,
@@ -928,10 +928,34 @@ Open-Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0C
     )
   })
 
-  it('targets the bundled main entry for packaged MCP subprocesses', () => {
-    expect(packagedMainEntryPath(join('smoke', 'app'))).toBe(
-      join('smoke', 'app', 'resources', 'app.asar', 'out', 'main', 'index.js')
-    )
+  it('uses ordinary Node for current MCP helpers and retains released Electron helpers', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'packaged-mcp-runtime-'))
+    const resources = join(root, 'resources')
+    const env = { TEMP: root, ELECTRON_RUN_AS_NODE: '1' }
+    try {
+      await mkdir(resources)
+      await expect(packagedMcpRuntime(root, env)).resolves.toEqual({
+        executable: join(root, 'open-science.exe'),
+        entryPath: join(resources, 'app.asar', 'out', 'main', 'index.js'),
+        env
+      })
+      const entryPath = join(resources, 'backend', 'out', 'backend', 'index.cjs')
+      await mkdir(join(resources, 'backend', 'out', 'backend'), { recursive: true })
+      await writeFile(entryPath, '')
+      // A partially installed current backend must fail, not fall back to the legacy entry.
+      await expect(packagedMcpRuntime(root, env)).rejects.toMatchObject({ code: 'ENOENT' })
+      const executable = join(resources, 'node-runtime', 'node.exe')
+      await mkdir(join(resources, 'node-runtime'))
+      await writeFile(executable, '')
+      await expect(packagedMcpRuntime(root, env)).resolves.toEqual({
+        executable,
+        entryPath,
+        env: { TEMP: root, OPEN_SCIENCE_HOST_PACKAGED: '1' }
+      })
+      expect(env.ELECTRON_RUN_AS_NODE).toBe('1')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 
   it('builds an isolated profile environment for smoke child processes', () => {

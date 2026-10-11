@@ -449,8 +449,24 @@ const packagedResourcePaths = (installDirectory, { includeWslPreview = true } = 
   )
 ]
 
-const packagedMainEntryPath = (installDirectory) =>
-  join(installDirectory, 'resources', 'app.asar', 'out', 'main', 'index.js')
+const packagedMcpRuntime = async (installDirectory, env) => {
+  const resources = join(installDirectory, 'resources')
+  // Upgrade certification also exercises released installers from before backend extraction.
+  const entries = await readdir(resources)
+  if (!entries.includes('backend')) {
+    return {
+      executable: join(installDirectory, APP_EXECUTABLE),
+      entryPath: join(resources, 'app.asar', 'out', 'main', 'index.js'),
+      env: { ...env, ELECTRON_RUN_AS_NODE: '1' }
+    }
+  }
+  const executable = join(resources, 'node-runtime', 'node.exe')
+  const entryPath = join(resources, 'backend', 'out', 'backend', 'index.cjs')
+  await Promise.all([access(executable), access(entryPath)])
+  const nodeEnv = { ...env, OPEN_SCIENCE_HOST_PACKAGED: '1' }
+  delete nodeEnv.ELECTRON_RUN_AS_NODE
+  return { executable, entryPath, env: nodeEnv }
+}
 
 const stringEnvironment = (environment) =>
   Object.fromEntries(Object.entries(environment).filter((entry) => typeof entry[1] === 'string'))
@@ -728,9 +744,11 @@ const runPackagedLocalRpcSmoke = async ({
     )
     await listenOnPipe(server, socketPath)
 
-    const executable = join(installDirectory, APP_EXECUTABLE)
-    const entryPath = packagedMainEntryPath(installDirectory)
-    const sharedEnv = { ...env, ELECTRON_RUN_AS_NODE: '1' }
+    const {
+      executable,
+      entryPath,
+      env: sharedEnv
+    } = await packagedMcpRuntime(installDirectory, env)
     notebookMcp = await connectPackagedMcp({
       executable,
       entryPath,
@@ -1893,7 +1911,7 @@ export {
   installApplication,
   launchAndProbe,
   packagedArtifactSmokeRpcResult,
-  packagedMainEntryPath,
+  packagedMcpRuntime,
   observeChildClose,
   parseArguments,
   packagedResourcePaths,
