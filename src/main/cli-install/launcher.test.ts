@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process'
 import {
+  copyFile,
   link,
   lstat,
   mkdir,
@@ -356,6 +357,55 @@ pdescribe('installCliLauncher / status / uninstall (POSIX)', () => {
 })
 
 describe.skipIf(process.platform !== 'win32')('C04 native cmd caller environment', () => {
+  it.each([
+    [936, 0],
+    [936, 7],
+    [65001, 0],
+    [65001, 7]
+  ])('runs Unicode paths and restores code page %s after exit %s', async (codePage, exitCode) => {
+    const directory = join(home, '安装 目录')
+    await mkdir(directory)
+    const node = join(directory, 'node.exe')
+    await copyFile(process.execPath, node)
+    const entry = join(directory, '命令行.cjs')
+    await writeFile(
+      entry,
+      'console.log(JSON.stringify(process.argv.slice(2))); process.exit(Number(process.argv[3]));'
+    )
+    const plan = planCliLauncher(winEnv({ nodeExecPath: node, cliEntryPath: entry }))
+    await mkdir(plan.binDir, { recursive: true })
+    await writeFile(plan.target, plan.shim)
+    // Keep the caller ASCII: Unicode reaches cmd through its environment, independently of
+    // the encoding of the generated launcher being tested.
+    await writeFile(
+      join(home, 'caller.cmd'),
+      [
+        '@echo off',
+        'for /f "tokens=2 delims=:" %%a in (\'chcp\') do set "CLI_TEST_ORIGINAL_CP=%%a"',
+        `chcp ${codePage} >nul`,
+        `call "%CLI_TEST_LAUNCHER%" "%CLI_TEST_ARGUMENT%" ${exitCode}`,
+        'set "CLI_TEST_EXIT=%errorlevel%"',
+        'chcp',
+        'chcp %CLI_TEST_ORIGINAL_CP% >nul',
+        'exit /b %CLI_TEST_EXIT%',
+        ''
+      ].join('\r\n')
+    )
+    const result = spawnSync('cmd.exe', ['/d', '/c', 'caller.cmd'], {
+      cwd: home,
+      env: { ...process.env, CLI_TEST_LAUNCHER: plan.target, CLI_TEST_ARGUMENT: '中文 argument' },
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 10_000
+    })
+    expect(result.error).toBeUndefined()
+    expect(result.stderr).toBe('')
+    expect(result.status).toBe(exitCode)
+    const [argumentsLine, parentCodePage] = result.stdout.trim().split(/\r?\n/)
+    expect(JSON.parse(argumentsLine)).toEqual(['中文 argument', String(exitCode)])
+    expect(parentCodePage).toMatch(new RegExp(`\\b${codePage}\\b`))
+  })
+
   it.each([
     [true, undefined, 0],
     [true, undefined, 7],

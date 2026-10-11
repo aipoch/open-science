@@ -160,8 +160,15 @@ const windowsShim = (env: CliLauncherEnv): string => {
     'rem Edits are overwritten on reinstall.',
     'setlocal EnableExtensions DisableDelayedExpansion',
     'set ELECTRON_RUN_AS_NODE=',
+    // The shim is UTF-8, regardless of the caller's console code page. Code pages are not
+    // scoped by setlocal, so restore the caller's setting explicitly after the CLI exits.
+    'set "OPEN_SCIENCE_CLI_CODE_PAGE="',
+    'for /f "tokens=2 delims=:" %%a in (\'chcp\') do set "OPEN_SCIENCE_CLI_CODE_PAGE=%%a"',
+    'chcp 65001 >nul',
     `"${nodeExecutable(env)}" "${env.cliEntryPath}" %*`,
-    'endlocal & exit /b %errorlevel%',
+    'set "OPEN_SCIENCE_CLI_EXIT=%errorlevel%"',
+    'if defined OPEN_SCIENCE_CLI_CODE_PAGE chcp %OPEN_SCIENCE_CLI_CODE_PAGE% >nul',
+    'endlocal & exit /b %OPEN_SCIENCE_CLI_EXIT%',
     ''
   ].join('\r\n')
 }
