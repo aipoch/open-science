@@ -137,17 +137,22 @@ it('host consumers use only public package names and exported subpaths', () => {
   // Match the consumer-coverage guard's allowance for a repository-wide scan under CI load.
 }, 60_000)
 
-it('host PDF modules never register upstream PDF package implementation tests', async () => {
+it('every module plan excludes unrelated upstream package tests', async () => {
   const { loadModuleImpactManifest } = await import('./load-module-impact.mjs')
-  const { modules } = loadModuleImpactManifest()
+  const { createModuleTestPlan } = await import('./module-test-impact.mjs')
+  const manifest = loadModuleImpactManifest()
   const violations: string[] = []
-  for (const [id, module] of Object.entries(modules) as [
+  // Historical registrations remain protected by Integrity. Check executed coverage
+  // against the package boundary; full-validation owners retain their fallback.
+  for (const [id, module] of Object.entries(manifest.modules) as [
     string,
-    { ownerPaths: string[]; testFiles: Record<string, string[]> }
+    { ownerPaths: string[] }
   ][]) {
-    if (module.ownerPaths.some((path) => path.startsWith('packages/pdf-'))) continue
-    for (const test of Object.values(module.testFiles).flat())
-      if (/^packages\/pdf-(translation|structure)\//.test(test)) violations.push(`${id} -> ${test}`)
+    const plan = createModuleTestPlan(id, manifest)
+    if (plan.mode === 'full') continue
+    const { excluded } = createPackageTestPlan(module.ownerPaths, registry)
+    for (const test of plan.testFiles)
+      if (excluded.some((root) => test.startsWith(root + '/'))) violations.push(`${id} -> ${test}`)
   }
   expect(violations).toEqual([])
 })
