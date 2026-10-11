@@ -1,16 +1,16 @@
 import { z } from 'zod'
 import { SaxesParser } from 'saxes'
 import {
-  literatureItemInputSchema,
-  type LiteratureItemInput,
+  discoveryRecordSchema,
+  type DiscoveryRecord,
   type LiteratureMetadataConflict,
   type LiteratureMetadataField,
   type LiteratureMetadataValue
-} from '../../shared/literature'
-import { normalizeIdentifier } from './catalog'
+} from './contracts.js'
+import { normalizeIdentifier } from './identifiers.js'
 
 // Provider records may omit a title; persisted catalog items may not.
-const metadataProposalSchema = literatureItemInputSchema.extend({ title: z.string().default('') })
+const metadataProposalSchema = discoveryRecordSchema.extend({ title: z.string().default('') })
 
 const dateSchema = z
   .object({ 'date-parts': z.array(z.array(z.number().int())).min(1) })
@@ -166,7 +166,7 @@ const publicationYear = (text: string): number | undefined => {
     : undefined
 }
 
-const identifierText = (item: LiteratureItemInput): string =>
+const identifierText = (item: DiscoveryRecord): string =>
   item.identifiers
     .map(
       ({ scheme, value, isPrimary }) => `${scheme.toUpperCase()}: ${value}${isPrimary ? ' ★' : ''}`
@@ -174,10 +174,10 @@ const identifierText = (item: LiteratureItemInput): string =>
     .join('; ')
 
 const reviewIdentifiers = (
-  current: LiteratureItemInput,
+  current: DiscoveryRecord,
   merged: ReturnType<typeof mergeCrossrefMetadata>
 ): void => {
-  const key = ({ scheme, value, isPrimary }: LiteratureItemInput['identifiers'][number]): string =>
+  const key = ({ scheme, value, isPrimary }: DiscoveryRecord['identifiers'][number]): string =>
     JSON.stringify([scheme, normalizeIdentifier(scheme, value), Boolean(isPrimary)])
   const existingKeys = new Set(current.identifiers.map(key))
   const incomingKeys = new Set(merged.item.identifiers.map(key))
@@ -192,7 +192,7 @@ const reviewIdentifiers = (
   else merged.conflicts.push({ field: 'identifiers', currentValue: existing, value })
 }
 
-const creatorText = (item: LiteratureItemInput): string =>
+const creatorText = (item: DiscoveryRecord): string =>
   item.creators
     .filter(({ creatorType }) => creatorType === 'author')
     .map((creator) =>
@@ -203,13 +203,13 @@ const creatorText = (item: LiteratureItemInput): string =>
     .join(', ')
 
 const mergeCrossrefMetadata = (
-  current: LiteratureItemInput,
+  current: DiscoveryRecord,
   message: z.infer<typeof crossrefMessageSchema>,
   overwriteFields: ReadonlySet<LiteratureMetadataField> = new Set(),
   originalDate?: string,
   normalizedAbstract?: string
 ): {
-  item: LiteratureItemInput
+  item: DiscoveryRecord
   filled: LiteratureMetadataValue[]
   conflicts: LiteratureMetadataConflict[]
 } => {
@@ -300,7 +300,7 @@ const mergeCrossrefMetadata = (
   }
 
   const incomingCreators =
-    message.author?.flatMap<LiteratureItemInput['creators'][number]>(({ family, given, name }) =>
+    message.author?.flatMap<DiscoveryRecord['creators'][number]>(({ family, given, name }) =>
       name?.trim()
         ? [
             {
@@ -358,10 +358,10 @@ const mergeCrossrefMetadata = (
 }
 
 const setLookupIdentifier = (
-  current: LiteratureItemInput,
+  current: DiscoveryRecord,
   scheme: 'doi' | 'pmid',
   rawValue: string
-): LiteratureItemInput => {
+): DiscoveryRecord => {
   const item = metadataProposalSchema.parse(structuredClone(current))
   const value = normalizeIdentifier(scheme, rawValue)
   item.identifiers = [
@@ -374,7 +374,7 @@ const setLookupIdentifier = (
 }
 
 const addIdentifier = (
-  item: LiteratureItemInput,
+  item: DiscoveryRecord,
   scheme: 'doi' | 'pmcid' | 'pmid',
   rawValue: string
 ): void => {
@@ -392,7 +392,7 @@ const addIdentifier = (
 }
 
 const mergePubmedMetadata = (
-  current: LiteratureItemInput,
+  current: DiscoveryRecord,
   summary: PubmedSummary,
   overwriteFields: ReadonlySet<LiteratureMetadataField> = new Set()
 ): ReturnType<typeof mergeCrossrefMetadata> => {
@@ -446,8 +446,8 @@ const mergePubmedMetadata = (
 }
 
 const mergeMetadata = (
-  current: LiteratureItemInput,
-  incoming: LiteratureItemInput,
+  current: DiscoveryRecord,
+  incoming: DiscoveryRecord,
   overwriteFields: ReadonlySet<LiteratureMetadataField> = new Set()
 ): ReturnType<typeof mergeCrossrefMetadata> => {
   const merged = mergeCrossrefMetadata(

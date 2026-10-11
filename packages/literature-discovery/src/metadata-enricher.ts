@@ -2,25 +2,26 @@ import { randomUUID } from 'node:crypto'
 import {
   type LiteratureMetadataCompletionRequest,
   type LiteratureMetadataCompletionResult,
+  type DiscoveryReference,
   type LiteratureMetadataField
-} from '../../shared/literature'
-import { normalizeIdentifier, type LiteratureCatalog } from './catalog'
-import { mergeMetadata, reviewIdentifiers, setLookupIdentifier } from './metadata-merge'
-import { LiteratureReferenceResolver, identitiesAgree } from './reference-resolver'
+} from './contracts.js'
+import { normalizeIdentifier } from './identifiers.js'
+import type { MetadataCatalog } from './ports.js'
+import { mergeMetadata, reviewIdentifiers, setLookupIdentifier } from './metadata-merge.js'
+import { LiteratureReferenceResolver, identitiesAgree } from './reference-resolver.js'
 
-type MetadataCatalog = Pick<LiteratureCatalog, 'applyMetadata' | 'get' | 'getMetadataCommitReceipt'>
 type FetchFn = typeof fetch
 
-class LiteratureMetadataEnricher {
-  private readonly reviews = new Map<string, LiteratureMetadataCompletionResult>()
+class LiteratureMetadataEnricher<Item extends DiscoveryReference = DiscoveryReference> {
+  private readonly reviews = new Map<string, LiteratureMetadataCompletionResult<Item>>()
   constructor(
-    private readonly catalog: MetadataCatalog,
+    private readonly catalog: MetadataCatalog<Item>,
     private readonly fetchFn: FetchFn = fetch
   ) {}
 
   async complete(
     request: LiteratureMetadataCompletionRequest
-  ): Promise<LiteratureMetadataCompletionResult> {
+  ): Promise<LiteratureMetadataCompletionResult<Item>> {
     if (request.mode === 'commit') {
       const review = request.reviewToken ? this.reviews.get(request.reviewToken) : undefined
       if (
@@ -110,7 +111,7 @@ class LiteratureMetadataEnricher {
     reviewIdentifiers(current.item, merged)
     const source = discovery.source
     const provider = source.provider as LiteratureMetadataCompletionResult['provider']
-    const result: LiteratureMetadataCompletionResult = {
+    const result: LiteratureMetadataCompletionResult<Item> = {
       mode: 'preview',
       reviewVersion: 2,
       provider,
@@ -133,7 +134,7 @@ class LiteratureMetadataEnricher {
   async applyReviewed(
     review: LiteratureMetadataCompletionResult,
     overwriteFields: readonly LiteratureMetadataField[] = []
-  ): Promise<LiteratureMetadataCompletionResult> {
+  ): Promise<LiteratureMetadataCompletionResult<Item>> {
     const current = await this.catalog.get(review.item.id)
     const operationId = review.reviewToken
       ? `${review.reviewToken}:${JSON.stringify([...new Set(overwriteFields)].sort())}`
@@ -197,4 +198,3 @@ class LiteratureMetadataEnricher {
 }
 
 export { LiteratureMetadataEnricher }
-export { mergeCrossrefMetadata, mergePubmedMetadata, parseCrossrefResponse } from './metadata-merge'

@@ -56,6 +56,10 @@
     {
       "root": "packages/compute",
       "dependencies": ["packages/diagnostics"]
+    },
+    {
+      "root": "packages/literature-discovery",
+      "dependencies": ["packages/literature-citations"]
     }
   ]
 }

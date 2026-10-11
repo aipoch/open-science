@@ -1,10 +1,16 @@
-import { LiteratureProviderError } from './provider-error'
+import { LiteratureProviderError } from './provider-error.js'
 import { lookup } from 'node:dns/promises'
 import { Agent, get } from 'node:https'
 import { connect as connectTls } from 'node:tls'
-import { tunnelThroughProxy } from '@aipoch/notebook-network-sandbox'
+import type { Duplex } from 'node:stream'
+export type ProxyTunnel = (
+  proxy: URL,
+  address: string,
+  port: number,
+  signal: AbortSignal
+) => Promise<Duplex>
 import { BlockList, isIP } from 'node:net'
-import type { LiteratureFullTextProgress } from '../../shared/literature'
+import type { LiteratureFullTextProgress } from './contracts.js'
 
 export class FullTextRateLimitError extends Error {
   constructor(readonly retryAt: number) {
@@ -61,7 +67,8 @@ export const downloadFullText = async (
   maxBytes: number,
   onProgress?: (progress: LiteratureFullTextProgress) => void,
   resolveProxy?: (url: string) => Promise<string | undefined>,
-  requestSignal?: AbortSignal
+  requestSignal?: AbortSignal,
+  tunnel?: ProxyTunnel
 ): Promise<Buffer> => {
   const timeout = AbortSignal.timeout(60_000)
   const signal = requestSignal ? AbortSignal.any([requestSignal, timeout]) : timeout
@@ -99,13 +106,9 @@ export const downloadFullText = async (
             ) {
               throw new Error('Full-text host did not resolve to a public address.')
             }
-            const socket = await tunnelThroughProxy(
-              new URL(proxy),
-              addresses[0]!.address,
-              443,
-              undefined,
-              signal
-            )
+            if (!tunnel)
+              throw new Error('A proxy tunnel adapter is required for proxied downloads.')
+            const socket = await tunnel(new URL(proxy), addresses[0]!.address, 443, signal)
             // CONNECT uses the pinned IP. TLS still authenticates the original publisher hostname.
             return connectTls({ socket, servername: target.hostname })
           })

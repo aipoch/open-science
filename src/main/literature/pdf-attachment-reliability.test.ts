@@ -44,7 +44,7 @@ import { inspectPdfPageCount } from '../uploads/attachment-media'
 import { LiteratureAttachmentAuthority } from './attachment-authority'
 import { LiteratureCatalog } from './catalog'
 import { AgentPdfAcquisition } from './agent-pdf-acquisition'
-import { LiteratureFullTextFinder } from './full-text-finder'
+import { LiteratureFullTextFinder } from '@aipoch/literature-discovery'
 import { SessionRepository } from '../session-persistence/repository'
 import {
   SessionPersistenceCoordinator,
@@ -1082,6 +1082,7 @@ describe('Literature PDF attachment reliability', () => {
       let acquire: () => Promise<unknown> = () => importer.import(request)
       if (kind === 'full-text') {
         const finder = new LiteratureFullTextFinder({
+          pageCount: inspectPdfPageCount,
           catalog: {
             get: async (id) => {
               const item = await catalog.get(id)

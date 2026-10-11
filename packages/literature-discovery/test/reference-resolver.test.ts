@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { LiteratureReferenceResolver } from './reference-resolver'
+import { LiteratureReferenceResolver } from '../src/reference-resolver.js'
 
 const pubmedResponse = `PMID- 35486828
 TI  - A PubMed paper.

@@ -1,5 +1,5 @@
 import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
-import { LITERATURE_JOB_MAX_ITEMS } from '../../../../shared/literature-jobs'
+import { LITERATURE_JOB_MAX_ITEMS } from '@aipoch/literature-discovery/jobs'
 import type { PdfAnnotation } from '../../../../shared/pdf-annotations'
 import {
   createBookmarkPreviewItem,
@@ -110,9 +110,9 @@ import type {
 import type {
   LiteratureCollectionView,
   LiteratureInboxCandidateView,
-  LiteratureItemView,
-  LiteratureMetadataField
+  LiteratureItemView
 } from '../../../../shared/literature'
+import type { LiteratureMetadataField } from '@aipoch/literature-discovery/contracts'
 import { createLiteratureAttachmentVersionReference } from '../../../../shared/literature'
 import { ProjectFormDialog } from '../home/ProjectFormDialog'
 import { FilePreviewDialog } from '../workspace/FilePreviewDialog'

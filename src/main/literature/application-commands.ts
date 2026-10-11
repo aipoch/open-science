@@ -8,14 +8,13 @@ import {
   type LiteratureExportRecordRequest,
   type LiteratureExportRecordResult
 } from '../../shared/literature-export'
+import { literatureJobsContract } from '../../shared/literature-jobs'
 import {
-  literatureJobsContract,
   type LiteratureJobRequest,
   type LiteratureJobsResult
-} from '../../shared/literature-jobs'
+} from '@aipoch/literature-discovery/jobs'
 import {
   literatureApplicationCommandContracts,
-  type LiteratureFullTextRequest,
   type LiteratureFullTextResult,
   type LiteratureCatalogCommand,
   type LiteratureCatalogReceipt,
@@ -30,7 +29,6 @@ import {
   type LiteratureItemInput,
   type LiteratureItemView,
   type LiteratureSourceRecordView,
-  type LiteratureMetadataCompletionRequest,
   type LiteratureMetadataCompletionResult,
   type LiteraturePdfCancelImportRequest,
   type LiteraturePdfImportReceipt,
@@ -38,6 +36,10 @@ import {
   type LiteratureRecordImportRequest,
   type LiteratureRecordImportResult
 } from '../../shared/literature'
+import {
+  type LiteratureFullTextRequest,
+  type LiteratureMetadataCompletionRequest
+} from '@aipoch/literature-discovery/contracts'
 import {
   defineApplicationCommand,
   defineApplicationCommandGroup,

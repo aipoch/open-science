@@ -1,11 +1,11 @@
 import { z } from 'zod'
 import {
-  literatureItemInputSchema,
-  type LiteratureItemInput,
+  discoveryRecordSchema,
+  type DiscoveryRecord,
   type LiteratureSourceInput
-} from '../../shared/literature'
-import type { LiteratureFailure } from '../../shared/literature-failure'
-import { normalizeIdentifier } from './catalog'
+} from './contracts.js'
+import type { LiteratureFailure } from './failure.js'
+import { normalizeIdentifier } from './identifiers.js'
 import { LiteratureCitationFormatter } from '@aipoch/literature-citations'
 import {
   metadataProposalSchema,
@@ -13,8 +13,8 @@ import {
   mergeCrossrefMetadata,
   parseCrossrefResponse,
   crossrefAbstract
-} from './metadata-merge'
-import { LiteratureProviderError, literatureFailure } from './provider-error'
+} from './metadata-merge.js'
+import { LiteratureProviderError, literatureFailure } from './provider-error.js'
 
 const CROSSREF_BASE = 'https://api.crossref.org/works/'
 const PUBMED_BASE = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi'
@@ -24,7 +24,7 @@ const REQUEST_TIMEOUT_MS = 15_000
 
 type FetchFn = typeof fetch
 type LiteratureReferenceDiscovery = Readonly<{
-  item: LiteratureItemInput
+  item: DiscoveryRecord
   source: LiteratureSourceInput
 }>
 type MetadataLookup = LiteratureReferenceDiscovery & {
@@ -55,7 +55,7 @@ const parseReference = (input: string): ReferenceKey => {
   return { key: `${scheme}:${value}`, scheme, value }
 }
 
-const crossrefItemType = (type: string | undefined): LiteratureItemInput['itemType'] => {
+const crossrefItemType = (type: string | undefined): DiscoveryRecord['itemType'] => {
   switch (type) {
     case 'book':
     case 'edited-book':
@@ -150,7 +150,7 @@ const dataciteSchema = z.object({
 })
 
 // Require a shared identity and reject contradictory identifiers before merging sources.
-const identitiesAgree = (left: LiteratureItemInput, right: LiteratureItemInput): boolean =>
+const identitiesAgree = (left: DiscoveryRecord, right: DiscoveryRecord): boolean =>
   left.identifiers.some(
     (identifier) =>
       (identifier.scheme === 'doi' || identifier.scheme === 'pmid') &&
@@ -289,7 +289,7 @@ class LiteratureReferenceResolver {
     )
     if (matches.length !== 1) throw new LiteratureProviderError(404)
     const record = matches[0]
-    const identifiers: LiteratureItemInput['identifiers'] = [
+    const identifiers: DiscoveryRecord['identifiers'] = [
       { scheme: reference.scheme, value: reference.value, isPrimary: true }
     ]
     if (record.doi && reference.scheme !== 'doi')
@@ -319,7 +319,7 @@ class LiteratureReferenceResolver {
         }).filter(([, value]) => value)
       ),
       creators:
-        record.authorList?.author.flatMap<LiteratureItemInput['creators'][number]>((author) =>
+        record.authorList?.author.flatMap<DiscoveryRecord['creators'][number]>((author) =>
           author.collectiveName
             ? [
                 {
@@ -490,7 +490,7 @@ class LiteratureReferenceResolver {
           const result = await this.lookup(ref.key, signal)
           if (!result.item.title.trim())
             throw new Error(`REFERENCE_NOT_FOUND: No title was found for ${ref.key}.`)
-          literatureItemInputSchema.parse(result.item)
+          discoveryRecordSchema.parse(result.item)
           // The Agent discovery contract has one source; retain explicit supplemental provenance
           // inside that receipt instead of attributing another provider's abstract to Crossref.
           discoveries.set(ref.key, {

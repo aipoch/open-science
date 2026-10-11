@@ -1,3 +1,4 @@
+import { discoveryJobOptions } from './discovery-adapters'
 import { configureTestElectronHost } from '../../../test/runtime-host'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
@@ -25,7 +26,7 @@ import {
   registerLiteratureApplicationCommands
 } from './application-commands'
 import { LiteratureCitationStyleLibrary } from '@aipoch/literature-citations/styles'
-import { LiteratureBatchJobs } from './batch-jobs'
+import { LiteratureBatchJobs } from '@aipoch/literature-discovery'
 import { LiteratureFullTextIndex } from './full-text-index'
 import { literatureItemInputSchema } from '../../shared/literature'
 
@@ -92,6 +93,7 @@ it('drains a detached batch worker and pauses remaining rows before copying', as
   })
   const path = join(await directory(), 'literature', 'batch-jobs.json')
   const jobs = new LiteratureBatchJobs({
+    ...discoveryJobOptions,
     path,
     spacingMs: 0,
     catalog: {
@@ -156,6 +158,7 @@ it('pauses an admitted task creation that finishes saving after migration starts
   })
   const fullText = vi.fn()
   const jobs = new LiteratureBatchJobs({
+    ...discoveryJobOptions,
     path,
     catalog: { get: vi.fn() },
     fullText: { run: fullText },

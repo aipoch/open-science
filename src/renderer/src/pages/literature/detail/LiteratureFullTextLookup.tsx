@@ -12,12 +12,11 @@ import {
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { ErrorNotice } from '@/components/error-notice'
+import type { LiteratureFullTextResult, LiteratureItemView } from '../../../../../shared/literature'
 import type {
   LiteratureFullTextCandidate,
-  LiteratureFullTextProgress,
-  LiteratureFullTextResult,
-  LiteratureItemView
-} from '../../../../../shared/literature'
+  LiteratureFullTextProgress
+} from '@aipoch/literature-discovery/contracts'
 import { createLiteratureIdentifierUrl } from '@aipoch/literature-citations/contracts'
 
 import { formatBytes } from '../../../../../shared/update'

@@ -1,4 +1,4 @@
-import type { LiteratureFailure } from '../../shared/literature-failure'
+import type { LiteratureFailure } from './failure.js'
 
 export class LiteratureProviderError extends Error {
   constructor(readonly status: number) {

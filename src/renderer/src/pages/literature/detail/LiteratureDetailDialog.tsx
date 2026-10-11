@@ -25,7 +25,8 @@ import type {
   LiteratureCitationStyleView,
   LiteratureItemType
 } from '@aipoch/literature-citations/contracts'
-import type { LiteratureItemView, LiteratureMetadataField } from '../../../../../shared/literature'
+import type { LiteratureItemView } from '../../../../../shared/literature'
+import type { LiteratureMetadataField } from '@aipoch/literature-discovery/contracts'
 import { LiteratureCitationPanel } from './LiteratureCitationPanel'
 import type { LiteratureDetailController } from './LiteratureDetailController'
 import { type LiteratureDetailSnapshot } from './LiteratureDetailController'

@@ -11,7 +11,7 @@ import {
   literatureItemInputSchema,
   type LiteratureCatalogCommand
 } from '../../../src/shared/literature'
-import type { LiteratureJobView, LiteratureJobRequest } from '../../../src/shared/literature-jobs'
+import type { LiteratureJobView, LiteratureJobRequest } from '@aipoch/literature-discovery/jobs'
 
 initI18n('en')
 const parent = {

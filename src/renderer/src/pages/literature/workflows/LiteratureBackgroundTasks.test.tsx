@@ -3,7 +3,7 @@ import { setI18nLocale } from '@/i18n'
 import { useLocaleStore } from '@/stores/locale-store'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
-import type { LiteratureJobSummary } from '../../../../../shared/literature-jobs'
+import type { LiteratureJobSummary } from '@aipoch/literature-discovery/jobs'
 import { LiteratureBackgroundTasks } from './LiteratureBackgroundTasks'
 
 afterEach(cleanup)

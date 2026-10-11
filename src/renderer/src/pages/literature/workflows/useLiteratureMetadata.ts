@@ -4,9 +4,9 @@ import { useTranslation } from 'react-i18next'
 import type {
   LiteratureItemInput,
   LiteratureItemView,
-  LiteratureMetadataCompletionResult,
-  LiteratureMetadataField
+  LiteratureMetadataCompletionResult
 } from '../../../../../shared/literature'
+import type { LiteratureMetadataField } from '@aipoch/literature-discovery/contracts'
 import type { LiteratureDetailController } from '../detail/LiteratureDetailController'
 import type { LiteratureMetadataIdentifier } from '../detail/LiteratureMetadataLookup'
 

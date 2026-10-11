@@ -7,13 +7,8 @@ import {
   literatureJobRowSchema,
   type LiteratureJob,
   type LiteratureJobRow
-} from '../../shared/literature-jobs'
-import {
-  readDurableJsonFile,
-  recoverDurableJsonDirectory,
-  writeDurableJsonFile,
-  DurableJsonRecoveryBarrierError
-} from '../storage/durable-json-file'
+} from './jobs.js'
+import type { CheckpointStorage } from './ports.js'
 
 const hash = z.string().regex(/^[a-f0-9]{64}$/)
 const controlSchema = literatureJobRowSchema
@@ -44,17 +39,19 @@ const indexSchema = z.discriminatedUnion('version', [
 ])
 type Control = z.infer<typeof controlSchema>
 type Record = { epoch: string; rows: Control[] }
-const missing = (): never => {
-  throw new DurableJsonRecoveryBarrierError('Literature task checkpoint is missing or invalid.')
-}
-
 // A command atomically publishes a small base snapshot and a new row-checkpoint epoch.
 // The worker replaces one row checkpoint at a time inside that epoch. Large immutable payloads
 // are separate, so reading task summaries never loads abstracts or metadata previews.
 export class LiteratureBatchJobJournal {
   private records = new Map<string, Record>()
   private hydrated = new WeakSet<LiteratureJobRow>()
-  constructor(private readonly path: string) {}
+  constructor(
+    private readonly path: string,
+    private readonly storage: CheckpointStorage
+  ) {}
+  private missing(): never {
+    throw this.storage.recoveryBarrier('Literature task checkpoint is missing or invalid.')
+  }
 
   private directory(id: string): string {
     return join(`${this.path}.d`, z.string().uuid().parse(id))
@@ -66,25 +63,23 @@ export class LiteratureBatchJobJournal {
     return join(this.directory(id), 'payloads', `${hash.parse(digest)}.json`)
   }
   private async required<T>(path: string, schema: z.ZodType<T>): Promise<T> {
-    const result = await readDurableJsonFile(
+    const result = await this.storage.read(
       path,
       (text) => schema.parse(JSON.parse(text)),
-      {},
-      { maxBytes: 128 * 1024 * 1024 }
+      128 * 1024 * 1024
     )
-    return result.status === 'found' ? result.value : missing()
+    return result.status === 'found' ? result.value : this.missing()
   }
   async load(): Promise<LiteratureJob[]> {
-    const stored = await readDurableJsonFile(
+    const stored = await this.storage.read(
       this.path,
       (text) => {
         const value = JSON.parse(text)
         if (![1, 2, 3].includes(value?.version))
-          throw new DurableJsonRecoveryBarrierError('Unsupported Literature job journal version.')
+          throw this.storage.recoveryBarrier('Unsupported Literature job journal version.')
         return indexSchema.parse(value)
       },
-      {},
-      { maxBytes: 128 * 1024 * 1024 }
+      128 * 1024 * 1024
     )
     if (stored.status === 'missing') return []
     if (stored.value.version !== 3) {
@@ -97,7 +92,7 @@ export class LiteratureBatchJobJournal {
                   join(`${this.path}.d`, `${id}.json`),
                   literatureJobSchema
                 )
-                if (job.id !== id) missing()
+                if (job.id !== id) this.missing()
                 return job
               })
             )
@@ -113,19 +108,18 @@ export class LiteratureBatchJobJournal {
     return Promise.all(
       stored.value.jobIds.map(async (id) => {
         const header = await this.required(this.headerPath(id), headerSchema)
-        if (header.id !== id) missing()
+        if (header.id !== id) this.missing()
         const { epoch, rows } = header
         const fields = literatureJobSchema.omit({ rows: true }).strip().parse(header)
         let updatedAt = fields.updatedAt
         const directory = join(this.directory(id), epoch)
-        await recoverDurableJsonDirectory(
+        await this.storage.recoverDirectory(
           directory,
           (path, contents) => {
-            if (!/^(0|[1-9]\d*)\.json$/.test(basename(path))) missing()
+            if (!/^(0|[1-9]\d*)\.json$/.test(basename(path))) this.missing()
             return deltaSchema.parse(JSON.parse(contents))
           },
-          {},
-          { maxBytes: 1024 * 1024 }
+          1024 * 1024
         )
         const files = await readdir(directory).catch((error: NodeJS.ErrnoException) => {
           if (error.code === 'ENOENT') return []
@@ -134,9 +128,9 @@ export class LiteratureBatchJobJournal {
         // Ignore durable writer temporary/backup files; only exact row indices are authoritative.
         for (const name of files.filter((name) => /^(0|[1-9]\d*)\.json$/.test(name))) {
           const index = Number(name.slice(0, -5))
-          if (index >= rows.length) missing()
+          if (index >= rows.length) this.missing()
           const delta = await this.required(join(directory, name), deltaSchema)
-          if (delta.row.id !== rows[index].id) missing()
+          if (delta.row.id !== rows[index].id) this.missing()
           rows[index] = delta.row
           updatedAt = Math.max(updatedAt, delta.updatedAt)
         }
@@ -200,7 +194,7 @@ export class LiteratureBatchJobJournal {
       digest = contents === '{}' ? undefined : createHash('sha256').update(contents).digest('hex')
       if (digest && digest !== previous?.payload) {
         await mkdir(join(this.directory(jobId), 'payloads'), { recursive: true })
-        await writeDurableJsonFile(this.payloadPath(jobId, digest), contents)
+        await this.storage.write(this.payloadPath(jobId, digest), contents)
       }
     }
     return { id, status, checked, candidateId, payload: digest }
@@ -236,7 +230,7 @@ export class LiteratureBatchJobJournal {
     }
     const epoch = randomUUID()
     await mkdir(this.directory(job.id), { recursive: true })
-    await writeDurableJsonFile(
+    await this.storage.write(
       this.headerPath(job.id),
       JSON.stringify({ ...job, version: 3, epoch, rows })
     )
@@ -262,20 +256,20 @@ export class LiteratureBatchJobJournal {
     }
   }
   async saveRow(job: LiteratureJob, row: LiteratureJobRow): Promise<void> {
-    const record = this.records.get(job.id) ?? missing()
+    const record = this.records.get(job.id) ?? this.missing()
     const index = job.rows.indexOf(row)
-    if (index < 0) missing()
+    if (index < 0) this.missing()
     const control = await this.control(job.id, row, record.rows[index])
     const directory = join(this.directory(job.id), record.epoch)
     await mkdir(directory, { recursive: true })
-    await writeDurableJsonFile(
+    await this.storage.write(
       join(directory, `${index}.json`),
       JSON.stringify({ updatedAt: job.updatedAt, row: control })
     )
     record.rows[index] = control
   }
   saveIndex(jobs: LiteratureJob[]): Promise<void> {
-    return writeDurableJsonFile(
+    return this.storage.write(
       this.path,
       JSON.stringify({ version: 3, jobIds: jobs.map((job) => job.id) })
     )

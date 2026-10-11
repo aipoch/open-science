@@ -187,9 +187,7 @@
       "src/main/session-package/service.test.ts",
       "src/main/session-package/native-snapshot.test.ts",
       "src/main/session-package/ro-crate.test.ts",
-      "src/main/literature/reference-resolver.test.ts",
       "src/main/literature/pdf-importer.test.ts",
-      "src/main/literature/metadata-enricher.test.ts",
       "src/renderer/src/pages/literature/detail/LiteratureFullTextLookup.render.test.tsx",
       "src/main/artifacts/literature-manifest.test.ts",
       "src/main/literature/library-mcp-server.test.ts",
@@ -459,7 +457,8 @@
       "src/main/connectors/mcp-host-dependencies.test.ts",
       "src/renderer/src/pages/literature/literature-localization.render.test.tsx",
       "src/main/notebook/environment-provisioning.contract.test.ts",
-      "src/main/notebook/environment-recovery.contract.test.ts"
+      "src/main/notebook/environment-recovery.contract.test.ts",
+      "src/main/literature/batch-job-journal.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

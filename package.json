@@ -96,8 +96,8 @@
     "check:notebook-packages": "node scripts/check-notebook-packages.mjs",
     "build:packages:dev": "npm run build:packages",
     "build:backend:dev": "npm run build:packages:dev && npm run build:backend-native && node scripts/build-backend.mjs",
-    "build:literature-packages": "node scripts/build-dev-packages.mjs --packages=literature-citations,journal-catalog",
-    "check:literature-packages": "node scripts/check-package-isolation.mjs --packages=literature-citations,journal-catalog",
+    "build:literature-packages": "node scripts/build-dev-packages.mjs --packages=literature-citations,journal-catalog,literature-discovery",
+    "check:literature-packages": "node scripts/check-package-isolation.mjs --packages=literature-citations,journal-catalog,literature-discovery",
     "typecheck:compiled": "npm run typecheck:node:compiled && npm run typecheck:web:compiled",
     "build:web:compiled": "npm run gen:web-api-map && node --max-old-space-size=8192 node_modules/vite/bin/vite.js build --config vite.web.config.ts",
     "build:backend:compiled": "npm run build:backend-native && node scripts/build-backend.mjs",
@@ -166,7 +166,8 @@
     "@aipoch/literature-citations": "file:packages/literature-citations",
     "@aipoch/journal-catalog": "file:packages/journal-catalog",
     "@aipoch/environment": "file:packages/environment",
-    "@aipoch/compute": "file:packages/compute"
+    "@aipoch/compute": "file:packages/compute",
+    "@aipoch/literature-discovery": "file:packages/literature-discovery"
   },
   "overrides": {
     "@huggingface/transformers": {

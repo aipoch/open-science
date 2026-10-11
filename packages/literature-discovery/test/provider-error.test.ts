@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest'
-import { literatureFailure, LiteratureProviderError } from './provider-error'
+
+import { literatureFailure, LiteratureProviderError } from '../src/provider-error.js'
 
 it.each([
   [new LiteratureProviderError(401), 'authentication', false],
