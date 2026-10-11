@@ -133,7 +133,7 @@ const buildIndex = async (journals: Journal[]): Promise<Index> => {
   return index
 }
 
-export function matchJournal(
+function matchJournal(
   identity: JournalIdentity,
   index: Index
 ): { id?: string; ambiguous?: boolean; reason: JournalMatchReason; candidates: string[] } {

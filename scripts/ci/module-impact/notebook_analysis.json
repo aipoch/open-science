@@ -32,7 +32,6 @@
     "owner": [],
     "contract": ["src/main/notebook/package-boundaries.architecture.test.ts"],
     "consumer": [
-      "packages/diagnostics/src/process-diagnostics.test.ts",
       "packages/notebook-analysis/src/dependency-analysis-parser-unavailable.test.ts",
       "packages/notebook-analysis/src/dependency-analysis.aggregate-volcano.test.ts",
       "packages/notebook-analysis/src/dependency-analysis.anndata.test.ts",
@@ -488,7 +487,6 @@
       "src/main/literature/pdf-translation/api-target.test.ts",
       "src/main/literature/pdf-translation/checkpoints.test.ts",
       "src/main/literature/pdf-translation/diagnostics.test.ts",
-      "packages/pdf-translation/test/incremental.test.ts",
       "src/main/literature/pdf-translation/index.test.ts",
       "src/main/literature/pdf-translation/ipc.test.ts",
       "src/main/literature/pdf-translation/local.test.ts",

@@ -1001,8 +1001,8 @@ describe('PR Gate workflow', () => {
     })
     expect(typechecks?.if).toContain("'typecheck_node'")
     expect(typechecks?.if).toContain("'typecheck_web'")
-    expect(typechecks?.run).toContain('npm run typecheck:node >"$node_log" 2>&1 &')
-    expect(typechecks?.run).toContain('npm run typecheck:web >"$web_log" 2>&1 &')
+    expect(typechecks?.run).toContain('npm run typecheck:node:compiled >"$node_log" 2>&1 &')
+    expect(typechecks?.run).toContain('npm run typecheck:web:compiled >"$web_log" 2>&1 &')
     expect(typechecks?.run).toContain('echo "node=$node_outcome" >> "$GITHUB_OUTPUT"')
     expect(typechecks?.run).toContain('echo "web=$web_outcome" >> "$GITHUB_OUTPUT"')
     expect(enforce?.env).toMatchObject({
@@ -1012,6 +1012,59 @@ describe('PR Gate workflow', () => {
     })
     expect(enforce?.run).toContain('check typechecks "$TYPECHECKS_OUTCOME"')
   })
+
+  it.each(['', 'build:packages', 'typecheck:node:compiled', 'typecheck:web:compiled'])(
+    'finishes package declarations before parallel typechecks and propagates %s failures',
+    (failure) => {
+      const directory = mkdtempSync(join(tmpdir(), 'typecheck-writer-'))
+      const step = workflow.jobs.static.steps?.find(({ id }) => id === 'typechecks')
+      const stub = `
+        npm() {
+          echo "$2" >> "$RUNNER_TEMP/commands"
+          if [[ "$2" == "build:packages" ]]; then
+            [[ "$FAIL_COMMAND" != "$2" ]] || return 1
+            touch "$RUNNER_TEMP/declarations-ready"
+          else
+            [[ -f "$RUNNER_TEMP/declarations-ready" ]] || return 2
+            [[ "$2" == "typecheck:node:compiled" || "$2" == "typecheck:web:compiled" ]] || return 3
+            [[ "$FAIL_COMMAND" != "$2" ]] || return 1
+          fi
+        }
+      `
+      try {
+        const output = join(directory, 'outputs')
+        const result = spawnSync('bash', ['-c', stub + step!.run!], {
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            RUNNER_TEMP: directory,
+            GITHUB_OUTPUT: output,
+            RUN_TYPECHECK_NODE: 'true',
+            RUN_TYPECHECK_WEB: 'true',
+            FAIL_COMMAND: failure
+          }
+        })
+        expect(result.status, result.stderr).toBe(failure ? 1 : 0)
+        const commands = readFileSync(join(directory, 'commands'), 'utf8').trim().split('\n')
+        expect(commands[0]).toBe('build:packages')
+        expect(commands.filter((command) => command === 'build:packages')).toHaveLength(1)
+        if (failure === 'build:packages') {
+          expect(commands).toHaveLength(1)
+        } else {
+          expect(commands.slice(1).sort()).toEqual([
+            'typecheck:node:compiled',
+            'typecheck:web:compiled'
+          ])
+          expect(readFileSync(output, 'utf8')).toBe(
+            `node=${failure === 'typecheck:node:compiled' ? 'failure' : 'success'}\n` +
+              `web=${failure === 'typecheck:web:compiled' ? 'failure' : 'success'}\n`
+          )
+        }
+      } finally {
+        rmSync(directory, { recursive: true, force: true })
+      }
+    }
+  )
 
   it('checks complete ownership and import consumers for selective source plans', () => {
     const guard = workflow.jobs.static.steps?.find(

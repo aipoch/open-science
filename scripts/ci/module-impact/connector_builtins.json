@@ -305,7 +305,6 @@
       "packages/connector-builtins/src/zinc.test.ts"
     ],
     "contract": [
-      "packages/connector-core/src/engine.test.ts",
       "src/main/connectors/boundaries.architecture.test.ts",
       "src/main/connectors/registry.test.ts",
       "src/preload/index.test.ts",

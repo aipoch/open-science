@@ -157,6 +157,25 @@ it('every module plan excludes unrelated upstream package tests', async () => {
   expect(violations).toEqual([])
 })
 
+it('module evidence follows independent package dependency direction', async () => {
+  const { loadModuleImpactManifest } = await import('./load-module-impact.mjs')
+  const { modules } = loadModuleImpactManifest()
+  const violations: string[] = []
+  for (const [id, module] of Object.entries(modules) as [
+    string,
+    { ownerPaths: string[]; testFiles: Record<string, string[]>; consumerModules: string[] }
+  ][]) {
+    const { excluded } = createPackageTestPlan(module.ownerPaths, registry)
+    for (const test of Object.values(module.testFiles).flat())
+      if (excluded.some((root) => test.startsWith(root + '/'))) violations.push(`${id} -> ${test}`)
+    for (const consumer of module.consumerModules)
+      for (const path of modules[consumer].ownerPaths)
+        if (excluded.some((root) => path.startsWith(root + '/')))
+          violations.push(`${id} -> module ${consumer} -> ${path}`)
+  }
+  expect(violations).toEqual([])
+})
+
 it('PDF workflow sources contain no application source taxonomy or database adapter', () => {
   const sources = files('packages/pdf-translation/src').filter((path) => path.endsWith('.ts'))
   for (const file of sources) {

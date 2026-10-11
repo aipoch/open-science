@@ -522,15 +522,17 @@ jobs:
           failed=0
           node_outcome=skipped
           web_outcome=skipped
+          # Both checks read the same package declarations. Finish their only writer first.
+          npm run build:packages || exit "$?"
           node_log="$RUNNER_TEMP/typecheck-node.log"
           web_log="$RUNNER_TEMP/typecheck-web.log"
 
           if [[ "$RUN_TYPECHECK_NODE" == "true" ]]; then
-            npm run typecheck:node >"$node_log" 2>&1 &
+            npm run typecheck:node:compiled >"$node_log" 2>&1 &
             node_pid=$!
           fi
           if [[ "$RUN_TYPECHECK_WEB" == "true" ]]; then
-            npm run typecheck:web >"$web_log" 2>&1 &
+            npm run typecheck:web:compiled >"$web_log" 2>&1 &
             web_pid=$!
           fi
 

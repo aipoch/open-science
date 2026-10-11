@@ -1,8 +1,10 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import assert from 'node:assert/strict'
 import { DatabaseSync } from 'node:sqlite'
+import * as journalApi from '@aipoch/journal-catalog'
 import { JournalAttributes } from '@aipoch/journal-catalog'
 import { readJournalFile, createJournalTemplate } from '@aipoch/journal-catalog/files'
+assert.equal('matchJournal' in journalApi, false)
 const template = await createJournalTemplate()
 assert.ok((await readJournalFile(template, 'template.xlsx')).rows.length > 0)
 const db = new DatabaseSync(':memory:')

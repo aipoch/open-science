@@ -1,4 +1,4 @@
-export { LiteratureCitationFormatter, citationKey } from './citation-formatter.js'
+export { LiteratureCitationFormatter } from './citation-formatter.js'
 export type {
   CitationReference,
   CitationOutputFormat,

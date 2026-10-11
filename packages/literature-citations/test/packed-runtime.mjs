@@ -1,8 +1,12 @@
 import assert from 'node:assert/strict'
 import { tmpdir } from 'node:os'
+import * as citationApi from '@aipoch/literature-citations'
+import * as styleApi from '@aipoch/literature-citations/styles'
 import { LiteratureCitationFormatter } from '@aipoch/literature-citations'
 import { bibliographicRecordSchema } from '@aipoch/literature-citations/contracts'
 import { LiteratureLatexBundle } from '@aipoch/literature-citations/documents'
+assert.equal('citationKey' in citationApi, false)
+assert.deepEqual(Object.keys(styleApi), ['LiteratureCitationStyleLibrary'])
 // An unrelated cwd must not be needed to discover styles, locales or WASM.
 process.chdir(tmpdir())
 const item = bibliographicRecordSchema.parse({

@@ -35,7 +35,9 @@
     "packages/literature-citations/test/literature-csl.test.ts",
     "packages/literature-citations/test/packed-runtime.mjs",
     "packages/literature-citations/tsconfig.json",
-    "packages/literature-citations/vitest.config.ts"
+    "packages/literature-citations/vitest.config.ts",
+    "packages/literature-citations/src/styles.ts",
+    "packages/literature-citations/test/export-roundtrip.test.ts"
   ],
   "interfacePaths": [
     "packages/literature-citations/src/index.ts",
@@ -43,7 +45,8 @@
     "packages/literature-citations/src/csl.ts",
     "packages/literature-citations/src/citation-style-library.ts",
     "packages/literature-citations/src/citation-exchange.ts",
-    "packages/literature-citations/src/documents.ts"
+    "packages/literature-citations/src/documents.ts",
+    "packages/literature-citations/src/styles.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -55,7 +58,8 @@
       "packages/literature-citations/test/citation-style-library.test.ts",
       "packages/literature-citations/test/contracts.test.ts",
       "packages/literature-citations/test/latex-bundle.test.ts",
-      "packages/literature-citations/test/literature-csl.test.ts"
+      "packages/literature-citations/test/literature-csl.test.ts",
+      "packages/literature-citations/test/export-roundtrip.test.ts"
     ],
     "contract": [],
     "consumer": [

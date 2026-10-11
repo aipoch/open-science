@@ -27,8 +27,8 @@
       "default": "./dist/csl.js"
     },
     "./styles": {
-      "types": "./dist/citation-style-library.d.ts",
-      "default": "./dist/citation-style-library.js"
+      "types": "./dist/styles.d.ts",
+      "default": "./dist/styles.js"
     },
     "./exchange": {
       "types": "./dist/citation-exchange.d.ts",
