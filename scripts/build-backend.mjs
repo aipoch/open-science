@@ -3,7 +3,7 @@ import { assertBackendImports } from './backend-dependencies.mjs'
 import { context } from 'esbuild'
 import { fileURLToPath } from 'node:url'
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
-import { resolve, basename, join } from 'node:path'
+import { resolve, join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { wsl2BuildDefines } from './wsl2-build-flags.mjs'
 
@@ -49,10 +49,11 @@ export async function createBackendBuilder({
                 namespace: 'node-worker'
               }))
               plugin.onLoad({ filter: /.*/, namespace: 'node-worker' }, ({ path }) => {
-                const name = `${basename(path, '.ts')}-${createHash('sha256').update(path.slice(root.length)).digest('hex').slice(0, 10)}.cjs`
+                // Only fixed text and hexadecimal enter the generated JavaScript literal.
+                const name = `worker-${createHash('sha256').update(path.slice(root.length)).digest('hex')}.cjs`
                 workers.set(path, name)
                 return {
-                  contents: `import { Worker } from 'node:worker_threads'; import { join } from 'node:path'; export default (options) => new Worker(join(__dirname, ${JSON.stringify(name)}), options);`,
+                  contents: `import { Worker } from 'node:worker_threads'; import { join } from 'node:path'; export default (options) => new Worker(join(__dirname, '${name}'), options);`,
                   loader: 'js'
                 }
               })

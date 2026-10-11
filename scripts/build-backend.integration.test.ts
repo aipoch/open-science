@@ -20,22 +20,29 @@ it('rebuilds raw resources, worker edits and newly discovered workers without El
     )
     await put('src/main/message.txt', 'before')
     const entry =
-      'import text from "./message.txt?raw"; import worker from "./worker?nodeWorker"; console.log(text); export { worker }'
+      'import text from "./message.txt?raw"; import worker from "./worker\'s-雪?nodeWorker"; console.log(text); worker().once("message", console.log); export { worker }'
     await put('src/main/node-entry.ts', entry)
-    await put('src/main/worker.ts', 'console.log("worker-before")')
+    await put(
+      "src/main/worker's-雪.ts",
+      'import { parentPort } from "node:worker_threads"; parentPort.postMessage("worker-before")'
+    )
     expect(await builder.rebuild()).toBe(1)
     const run = (): string =>
       execFileSync(process.execPath, [join(root, 'out/backend/index.cjs')], {
         encoding: 'utf8'
       }).trim()
-    expect(run()).toBe('before')
+    expect(run()).toBe('before\nworker-before')
     await put('src/main/message.txt', 'after')
-    await put('src/main/worker.ts', 'console.log("worker-after")')
+    await put(
+      "src/main/worker's-雪.ts",
+      'import { parentPort } from "node:worker_threads"; parentPort.postMessage("worker-after")'
+    )
     expect(await builder.rebuild()).toBe(1)
-    expect(run()).toBe('after')
+    expect(run()).toBe('after\nworker-after')
     const worker = (await readdir(join(root, 'out/backend'))).find(
       (name) => name.startsWith('worker-') && name.endsWith('.cjs')
     )!
+    expect(worker).toMatch(/^worker-[a-f0-9]{64}\.cjs$/)
     expect(await readFile(join(root, 'out/backend', worker), 'utf8')).toContain('worker-after')
     await put('src/main/second.ts', 'console.log("second-worker")')
     await put(
