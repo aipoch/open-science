@@ -100,7 +100,7 @@ describe('module test impact commands', () => {
       )
       spawn.mockClear()
       // Ordinary local invocations still do no work for an empty selection.
-      executeModuleTestPlan(plan, { spawn })
+      executeModuleTestPlan(plan, { spawn, environment: {} })
       expect(spawn).not.toHaveBeenCalled()
     } finally {
       write.mockRestore()
