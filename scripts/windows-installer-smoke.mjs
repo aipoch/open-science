@@ -977,55 +977,49 @@ const createUpgradeProfileGuard = (
   return { cleanup, shouldExpectDowngradeBlock: () => expectDowngradeBlock, verifyCycle }
 }
 
-const captureStartupDialog = async (pid, env, run = runProcess) => {
-  if (!Number.isSafeInteger(pid) || pid <= 0) return ''
-  const result = await run(
-    'pwsh.exe',
-    [
-      '-NoProfile',
-      '-NonInteractive',
-      '-Command',
-      `Add-Type -TypeDefinition @'
-using System;
-using System.Text;
-using System.Collections.Generic;
-using System.Runtime.InteropServices;
-public static class SmokeDialog {
-  private delegate bool Visitor(IntPtr window, IntPtr parameter);
-  [DllImport("user32.dll")] private static extern bool EnumWindows(Visitor visitor, IntPtr parameter);
-  [DllImport("user32.dll")] private static extern bool EnumChildWindows(IntPtr window, Visitor visitor, IntPtr parameter);
-  [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
-  [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern IntPtr SendMessageTimeout(IntPtr window, uint message, UIntPtr length, StringBuilder text, uint flags, uint timeout, out UIntPtr result);
-  public static string Read(uint process) {
-    var lines = new List<string>();
-    Visitor read = (window, parameter) => {
-      uint owner;
-      GetWindowThreadProcessId(window, out owner);
-      if (owner != process || lines.Count >= 20) return true;
-      var text = new StringBuilder(4096);
-      UIntPtr result;
-      SendMessageTimeout(window, 0x000D, new UIntPtr(4096), text, 2, 100, out result);
-      if (text.Length > 0) lines.Add(text.ToString());
-      return true;
-    };
-    EnumWindows((window, parameter) => {
-      uint owner;
-      GetWindowThreadProcessId(window, out owner);
-      if (owner == process) {
-        read(window, parameter);
-        EnumChildWindows(window, read, IntPtr.Zero);
-      }
-      return true;
-    }, IntPtr.Zero);
-    return string.Join(Environment.NewLine, lines);
-  }
-}
-'@
-[SmokeDialog]::Read([uint32]$env:OPEN_SCIENCE_SMOKE_PROCESS_ID)`
-    ],
-    { env: { ...env, OPEN_SCIENCE_SMOKE_PROCESS_ID: String(pid) }, timeoutMs: 5_000 }
+const observeStartupExceptions = async (output) => {
+  const endpoint = await waitFor(
+    'the isolated startup inspector',
+    () => output().match(/ws:\/\/127\.0\.0\.1:\d+\/[^\s]+/u)?.[0],
+    5_000
   )
-  return result.stdout.trim()
+  const socket = new WebSocket(endpoint)
+  const replies = new Map()
+  const exceptions = []
+  let sequence = 0
+  const command = async (method, params = {}) => {
+    const id = ++sequence
+    replies.set(id, undefined)
+    socket.send(JSON.stringify({ id, method, params }))
+    try {
+      const reply = await waitFor(method, () => replies.get(id), 5_000)
+      if (reply.error) throw new Error(JSON.stringify(reply.error))
+    } finally {
+      replies.delete(id)
+    }
+  }
+  socket.addEventListener('error', () => {})
+  socket.addEventListener('message', (event) => {
+    const message = JSON.parse(event.data)
+    if (replies.has(message.id)) replies.set(message.id, message)
+    if (message.method === 'Debugger.paused') {
+      if (message.params.data?.description) {
+        exceptions.push(message.params.data.description)
+        if (exceptions.length > 10) exceptions.shift()
+      }
+      socket.send(JSON.stringify({ id: ++sequence, method: 'Debugger.resume' }))
+    }
+  })
+  try {
+    await waitFor('startup inspector connection', () => socket.readyState === 1, 5_000)
+    await command('Debugger.enable')
+    await command('Debugger.setPauseOnExceptions', { state: 'all' })
+    await command('Runtime.runIfWaitingForDebugger')
+    return { read: () => exceptions.join('\n'), close: () => socket.close() }
+  } catch (error) {
+    socket.close()
+    throw error
+  }
 }
 
 const launchAndProbe = async ({
@@ -1040,10 +1034,12 @@ const launchAndProbe = async ({
 }) => {
   const executable = join(installDirectory, APP_EXECUTABLE)
 
-  const child = spawn(executable, ['--open-science-headless', '--serve=0'], {
-    env,
-    windowsHide: true
-  })
+  const traceStartup = env.OPEN_SCIENCE_PACKAGE_STARTUP_TRACE === '1'
+  const child = spawn(
+    executable,
+    [...(traceStartup ? ['--inspect-brk=0'] : []), '--open-science-headless', '--serve=0'],
+    { env, windowsHide: true }
+  )
   let stdout = ''
   let stderr = ''
   child.stdout?.setEncoding('utf8')
@@ -1056,8 +1052,10 @@ const launchAndProbe = async ({
   })
   const output = () => `${stdout}${stderr ? `\n${stderr}` : ''}`
   const exit = observeChildExit(child)
+  let startupTrace
 
   try {
+    if (traceStartup) startupTrace = await observeStartupExceptions(output)
     const { endpoint, auth } = await Promise.race([
       waitFor('the installed app web service', async () => {
         return authenticatePackagedAppEndpoint(output(), [
@@ -1069,6 +1067,7 @@ const launchAndProbe = async ({
         throw new Error(`Installed app exited before becoming healthy (${code}).\n${output()}`)
       })
     ])
+    startupTrace?.close()
     const response = await fetchWithTimeout(`${endpoint}/api/bootstrap?${auth}`)
     if (!response.ok)
       throw new Error(`Installed app health probe returned HTTP ${response.status}.`)
@@ -1086,32 +1085,15 @@ const launchAndProbe = async ({
     if (onSqliteVersion) onSqliteVersion(parsePackagedSqliteVersion(output()))
     return configRoot
   } catch (error) {
-    // Bootstrap can stop in a native error box before file logging exists. Read only this
-    // isolated smoke process's dialog before termination, never unrelated desktop windows.
-    const dependencyProbe = await runProcess(
-      executable,
-      [
-        '-e',
-        `const load = require('node:module').createRequire(${JSON.stringify(join(installDirectory, 'resources', 'app.asar', 'out', 'main', 'index.js'))});
-const helper = load('@aipoch/credential-identity-probe-native');
-console.log('Packaged credential helper exports:', Object.keys(helper));
-require('node:fs').accessSync(helper.secretExecutablePath.replace(/app\\.asar([/\\\\])/u, 'app.asar.unpacked$1'));
-console.log('Packaged credential helper exists.');`
-      ],
-      { env: { ...env, ELECTRON_RUN_AS_NODE: '1' }, timeoutMs: 5_000 }
-    ).then(
-      (result) => result.stdout.trim(),
-      (probeError) => `Packaged credential dependency probe failed: ${probeError.message}`
-    )
-    const dialog = await captureStartupDialog(child.pid, env).catch(
-      (diagnosticError) => `Startup dialog capture failed: ${diagnosticError.message}`
-    )
+    const processOutput = [output().trim(), startupTrace?.read()].filter(Boolean).join('\n')
+    startupTrace?.close()
     await terminateProcessTree(child)
-    const processOutput = [output().trim(), dependencyProbe, dialog].filter(Boolean).join('\n')
     if (error instanceof Error && processOutput && !error.message.includes(processOutput)) {
       error.message += `\n${processOutput}`
     }
     throw error
+  } finally {
+    startupTrace?.close()
   }
 }
 
@@ -1959,7 +1941,7 @@ if (invokedAsScript) {
 }
 
 export {
-  captureStartupDialog,
+  observeStartupExceptions,
   authenticatePackagedAppEndpoint,
   assertDatabaseDowngradeBlocked,
   assertWsl2RestartCleanupBlocked,

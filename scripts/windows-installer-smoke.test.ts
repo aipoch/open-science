@@ -1,5 +1,6 @@
+import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { EventEmitter } from 'node:events'
+import { EventEmitter, once } from 'node:events'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -9,7 +10,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { WSL2_BASH_PREVIEW_MANIFEST } from '../src/shared/wsl2-preview-manifest'
 
 import {
-  captureStartupDialog,
+  observeStartupExceptions,
   assertPackagedResources,
   assertDatabaseDowngradeBlocked,
   authenticatePackagedAppEndpoint,
@@ -47,20 +48,27 @@ import {
 } from './windows-installer-smoke.mjs'
 
 describe('Windows installer smoke plan', () => {
-  it('bounds bootstrap dialog diagnostics to the isolated child process', async () => {
-    const run = vi.fn().mockResolvedValue({ stdout: 'Startup error\nmissing helper\n' })
-    await expect(captureStartupDialog(123, { TEMP: 'isolated' }, run)).resolves.toBe(
-      'Startup error\nmissing helper'
-    )
-    expect(run).toHaveBeenCalledWith(
-      'pwsh.exe',
-      expect.arrayContaining([expect.stringContaining('GetWindowThreadProcessId')]),
-      { env: { TEMP: 'isolated', OPEN_SCIENCE_SMOKE_PROCESS_ID: '123' }, timeoutMs: 5_000 }
-    )
-    run.mockClear()
-    await expect(captureStartupDialog(undefined, {}, run)).resolves.toBe('')
-    expect(run).not.toHaveBeenCalled()
-  })
+  it('captures a caught startup exception through the isolated inspector', async () => {
+    const child = spawn(process.execPath, [
+      '--inspect-brk=0',
+      '-e',
+      "try { throw new Error('isolated startup witness') } catch {} setInterval(() => {}, 1000)"
+    ])
+    const closed = once(child, 'close')
+    let output = ''
+    child.stderr.on('data', (chunk) => {
+      output += chunk
+    })
+    let trace
+    try {
+      trace = await observeStartupExceptions(() => output)
+      await vi.waitFor(() => expect(trace.read()).toContain('isolated startup witness'))
+    } finally {
+      trace?.close()
+      child.kill('SIGKILL')
+      await closed
+    }
+  }, 15_000)
 
   it('bounds installation separately and preserves failures when no files were extracted', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-install-deadline-'))
