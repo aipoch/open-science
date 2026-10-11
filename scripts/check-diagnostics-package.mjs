@@ -6,14 +6,15 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { isolatedPackageEnvironment } from './package-verification-plan.mjs'
+
 const root = fileURLToPath(new URL('../', import.meta.url))
 const npmCli = process.env.npm_execpath
 if (!npmCli) throw new Error('Run through npm run check:diagnostics-package.')
 const temporary = mkdtempSync(join(tmpdir(), 'diagnostics-package-'))
 const offline = process.argv.includes('--offline') ? ['--offline'] : []
 const env = {
-  ...process.env,
-  NODE_PATH: '',
+  ...isolatedPackageEnvironment(),
   npm_config_cache: process.env.npm_config_cache ?? join(temporary, 'cache')
 }
 const run = (args, cwd) => execFileSync(process.execPath, args, { cwd, env, stdio: 'inherit' })

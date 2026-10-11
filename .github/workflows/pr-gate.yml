@@ -483,11 +483,19 @@ jobs:
           base: ${{ needs.preflight.outputs.base }}
           head: ${{ needs.preflight.outputs.head }}
           trusted-base: ${{ needs.preflight.outputs.trusted_base }}
-      - name: Verify independent Notebook tarballs
-        id: notebook_packages
+      - name: Verify independent package tarballs
+        id: package_verification
         continue-on-error: true
         # Missing trusted selection retains full verification; host-only changes select none.
-        run: npm run check:notebook-packages -- --ci
+        run: npm run check:packages -- --ci
+      - name: Upload package verification timings
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: package-verification
+          path: test-results/package-verification.json
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Check Markdown formatting
         id: docs
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'docs') }}
@@ -624,7 +632,7 @@ jobs:
           FORMAT_OUTCOME: ${{ steps.format.outcome }}
           I18N_OUTCOME: ${{ steps.i18n.outcome }}
           INTERFACE_CONTRACTS_OUTCOME: ${{ steps.interface_contracts.outcome }}
-          NOTEBOOK_PACKAGES_OUTCOME: ${{ steps.notebook_packages.outcome }}
+          PACKAGE_VERIFICATION_OUTCOME: ${{ steps.package_verification.outcome }}
           RUNTIME_BUNDLE_OUTCOME: ${{ steps.runtime_bundle.outcome }}
           LINT_OUTCOME: ${{ steps.lint.outcome }}
           TYPECHECK_NODE_OUTCOME: ${{ steps.typechecks.outputs.node }}
@@ -651,7 +659,7 @@ jobs:
           check cli_node22 "$CLI_NODE22_OUTCOME"
           check i18n "$I18N_OUTCOME"
           check runtime_bundle "$RUNTIME_BUNDLE_OUTCOME"
-          check notebook_packages "$NOTEBOOK_PACKAGES_OUTCOME"
+          check package_verification "$PACKAGE_VERIFICATION_OUTCOME"
           exit "$failed"
 
   unit_shard:

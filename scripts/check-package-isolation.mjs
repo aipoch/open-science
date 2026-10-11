@@ -1,10 +1,11 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { readFile, writeFile, mkdir, mkdtemp, cp, readdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve, dirname } from 'node:path'
+import { join, resolve, dirname, basename } from 'node:path'
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
+import { familyVerificationPlan, isolatedPackageEnvironment } from './package-verification-plan.mjs'
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const output = process.argv.find((a) => a.startsWith('--output='))?.slice(9)
 const evidence = output
@@ -18,7 +19,7 @@ async function fingerprint(dir) {
     for (const entry of (await readdir(p, { withFileTypes: true })).sort((a, b) =>
       a.name.localeCompare(b.name)
     )) {
-      if (['node_modules', 'dist', '.git'].includes(entry.name)) continue
+      if (['node_modules', 'dist', '.git', '.cache'].includes(entry.name)) continue
       const f = join(p, entry.name)
       hash.update(f.slice(dir.length))
       if (entry.isDirectory()) await visit(f)
@@ -30,24 +31,25 @@ async function fingerprint(dir) {
 }
 
 const registry = JSON.parse(await readFile('scripts/ci/package-test-boundaries.json', 'utf8'))
-const requested = process.argv
-  .find((arg) => arg.startsWith('--packages='))
-  ?.slice(11)
-  .split(',')
-const selected = registry.packages.filter(
-  (entry) => !requested || requested.includes(entry.root.split('/').at(-1))
-)
-if (
-  requested &&
-  requested.some((name) => !selected.some((entry) => entry.root === 'packages/' + name))
-)
-  throw Error('Unknown package selection')
+const plan = familyVerificationPlan([
+  'pdf-structure',
+  'pdf-translation',
+  'literature-citations',
+  'journal-catalog'
+])
+console.log('Package isolation plan:', JSON.stringify(plan))
 const entries = await Promise.all(
-  selected.map(async (e) => ({
-    ...e,
-    manifest: JSON.parse(await readFile(join(e.root, 'package.json'), 'utf8'))
-  }))
+  plan.builds.map(async (name) => {
+    const entry = registry.packages.find((item) => item.root === 'packages/' + name)
+    return {
+      ...entry,
+      manifest: JSON.parse(await readFile(join(entry.root, 'package.json'), 'utf8'))
+    }
+  })
 )
+const offline = process.argv.includes('--offline') ? ['--offline'] : []
+const npmCli = process.env.npm_execpath
+if (!npmCli) throw new Error('Run this check through npm run check:package-isolation')
 const inputHashes = Object.fromEntries(
   await Promise.all(entries.map(async (e) => [e.root, await fingerprint(join(root, e.root))]))
 )
@@ -76,14 +78,16 @@ async function seedLock(dir, manifest) {
     if (key.startsWith('packages/') || lock.packages[key].link) delete lock.packages[key]
   await writeFile(join(dir, 'package-lock.json'), JSON.stringify(lock, null, 2))
 }
-const cleanEnv = { ...process.env }
-delete cleanEnv.NODE_PATH
-delete cleanEnv.INIT_CWD
-delete cleanEnv.NODE_OPTIONS
+const cleanEnv = isolatedPackageEnvironment()
 async function run(bin, args, cwd, label) {
+  console.log('Running', label)
   const out = []
   const code = await new Promise((done, reject) => {
-    const p = spawn(bin, args, { cwd, env: cleanEnv, stdio: ['ignore', 'pipe', 'pipe'] })
+    const p = spawn(
+      bin === 'npm' ? process.execPath : bin,
+      bin === 'npm' ? [npmCli, ...args] : args,
+      { cwd, env: cleanEnv, stdio: ['ignore', 'pipe', 'pipe'] }
+    )
     p.stdout.on('data', (d) => out.push(d))
     p.stderr.on('data', (d) => out.push(d))
     p.on('error', reject)
@@ -91,7 +95,10 @@ async function run(bin, args, cwd, label) {
   })
   const text = Buffer.concat(out).toString()
   await writeFile(join(evidence, label + '.log'), text)
-  if (code !== 0) throw Error(label + ' exited ' + code)
+  if (code !== 0) {
+    console.error(text.slice(-8000))
+    throw Error(label + ' exited ' + code + '; log: ' + join(evidence, label + '.log'))
+  }
   return text
 }
 const packed = new Map()
@@ -147,7 +154,7 @@ for (const e of entries) {
     await mkdir(dir, { recursive: true })
     await cp(join(root, e.root), dir, {
       recursive: true,
-      filter: (src) => !['node_modules', 'dist', '.git'].includes(src.split('/').at(-1))
+      filter: (src) => !['node_modules', 'dist', '.git', '.cache'].includes(basename(src))
     })
     const manifest = structuredClone(e.manifest)
     for (const key of [
@@ -169,15 +176,19 @@ for (const e of entries) {
     await seedLock(dir, manifest)
     await run(
       'npm',
-      ['install', '--offline', '--no-audit', '--no-fund'],
+      ['install', ...offline, '--no-audit', '--no-fund'],
       dir,
       'isolated-' + name + '-install'
     )
     await run('npm', ['run', 'build'], dir, 'isolated-' + name + '-build')
     r.source = 'build passed'
+    if (!plan.tests.includes(name)) {
+      r.consumer = 'build prerequisite only'
+      continue
+    }
     await run(
       'npm',
-      ['test', '--', '--reporter=json', '--outputFile=test-report.json'],
+      ['test', '--', '--reporter=default', '--reporter=json', '--outputFile=test-report.json'],
       dir,
       'isolated-' + name + '-test'
     )
@@ -208,6 +219,7 @@ for (const e of entries) {
           devDependencies: {
             typescript: e.manifest.devDependencies.typescript,
             '@types/node': e.manifest.devDependencies['@types/node'],
+            esbuild: '0.25.12',
             ...(e.manifest.devDependencies['@types/react']
               ? { '@types/react': e.manifest.devDependencies['@types/react'] }
               : {})
@@ -220,7 +232,7 @@ for (const e of entries) {
     await seedLock(consumer, JSON.parse(await readFile(join(consumer, 'package.json'), 'utf8')))
     await run(
       'npm',
-      ['install', '--offline', '--omit=dev', '--no-audit', '--no-fund'],
+      ['install', ...offline, '--omit=dev', '--no-audit', '--no-fund'],
       consumer,
       'consumer-' + name + '-production-install'
     )
@@ -237,7 +249,9 @@ for (const e of entries) {
       `import assert from 'node:assert/strict';\nfor(const spec of ${JSON.stringify(specs)}) await import(spec);\nawait assert.rejects(import('${e.manifest.name}/src/index.js'),{code:'ERR_PACKAGE_PATH_NOT_EXPORTED'});\n`
     )
     await run(process.execPath, ['check.mjs'], consumer, 'consumer-' + name + '-runtime')
-    if (['pdf-translation', 'literature-citations', 'journal-catalog'].includes(name)) {
+    if (
+      ['pdf-structure', 'pdf-translation', 'literature-citations', 'journal-catalog'].includes(name)
+    ) {
       await cp(join(root, e.root, 'test/packed-runtime.mjs'), join(consumer, 'packed-runtime.mjs'))
       await run(process.execPath, ['packed-runtime.mjs'], consumer, 'consumer-' + name + '-worker')
     }
@@ -248,6 +262,12 @@ for (const e of entries) {
       if (!(await readFile(asset, 'utf8')).includes('@source'))
         throw Error('Missing stylesheet source entry ' + key)
     }
+    await run(
+      'npm',
+      ['install', ...offline, '--include=dev', '--no-audit', '--no-fund'],
+      consumer,
+      'consumer-' + name + '-type-tools'
+    )
     const browserEntries =
       name === 'pdf-translation'
         ? ['contracts', 'text', 'reader'].map((entry) => e.manifest.name + '/' + entry)
@@ -266,18 +286,16 @@ for (const e of entries) {
           .join('\n')
       )
       await run(
-        join(root, 'node_modules/.bin/esbuild'),
-        ['browser.ts', '--bundle', '--platform=browser', '--format=esm', '--outfile=browser.js'],
+        process.execPath,
+        [
+          '--input-type=module',
+          '-e',
+          "import { build } from 'esbuild'; await build({entryPoints:['browser.ts'],bundle:true,platform:'browser',format:'esm',outfile:'browser.js'})"
+        ],
         consumer,
         'consumer-' + name + '-browser'
       )
     }
-    await run(
-      'npm',
-      ['install', '--offline', '--include=dev', '--no-audit', '--no-fund'],
-      consumer,
-      'consumer-' + name + '-type-tools'
-    )
     await run(
       process.execPath,
       [

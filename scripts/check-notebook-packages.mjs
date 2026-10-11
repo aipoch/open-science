@@ -5,24 +5,17 @@ import { cpSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } f
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { notebookPackageVerificationPlan } from './ci/package-test-impact.mjs'
+import { familyVerificationPlan, isolatedPackageEnvironment } from './package-verification-plan.mjs'
 
 const root = fileURLToPath(new URL('../', import.meta.url))
 const npmCli = process.env.npm_execpath
 if (!npmCli) throw new Error('Run this check through npm run check:notebook-packages.')
-const selected =
-  process.argv.includes('--ci') && process.env.OPEN_SCIENCE_CI_SELECTED_PACKAGE_ROOTS
-    ? JSON.parse(process.env.OPEN_SCIENCE_CI_SELECTED_PACKAGE_ROOTS)
-    : undefined
-const excluded = process.argv.includes('--ci')
-  ? JSON.parse(process.env.OPEN_SCIENCE_CI_EXCLUDED_PACKAGE_ROOTS || '[]')
-  : undefined
-const plan = notebookPackageVerificationPlan(selected, excluded)
+const plan = familyVerificationPlan(['notebook-syntax', 'notebook-code-risk', 'notebook-analysis'])
 console.log('Notebook package verification:', JSON.stringify(plan))
 if (plan.builds.length === 0) process.exit(0)
 const temporary = mkdtempSync(join(tmpdir(), 'notebook-packages-'))
 const offline = process.argv.includes('--offline') ? ['--offline'] : []
-const env = { ...process.env, NODE_PATH: '', npm_config_cache: join(temporary, 'cache') }
+const env = { ...isolatedPackageEnvironment(), npm_config_cache: join(temporary, 'cache') }
 // An explicit cache may supply offline dependencies, never node_modules or source resolution.
 if (process.env.npm_config_cache) env.npm_config_cache = process.env.npm_config_cache
 const run = (command, args, cwd) => execFileSync(command, args, { cwd, env, stdio: 'inherit' })

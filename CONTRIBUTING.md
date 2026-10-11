@@ -77,7 +77,9 @@ For backend/main/preload changes, wait for a successful build, quit the app norm
 command, then run `npm run dev` again. Web/headless development has no live reload.
 
 For a new local package, follow an existing `tsconfig.dev.json`, reference its local dependencies,
-and add it to `tsconfig.packages.json`. Use `npm run build:packages:dev` to build packages alone.
+and add it to `tsconfig.packages.json`. Use `npm run build:packages` to build packages alone. The development alias remains available.
+Build scheduling, selected isolation checks and measurement guidance are in
+[Package workflows](docs/package-workflows.md).
 
 Native credential helpers build incrementally in development. On macOS, keep
 `packages/credential-identity-probe-native/build/` between launches: a clean rebuild can change

@@ -43,7 +43,10 @@ type Workflow = Owner<
   ExplicitAgentBackendTarget & { providerName?: string },
   ProviderTextGenerationTarget & { providerName?: string }
 >
-type Options = Omit<PackageOptions, 'captureTarget' | 'checkpoints'> & {
+type Options = Pick<
+  PackageOptions,
+  'usage' | 'runner' | 'captureApiTarget' | 'apiRunner' | 'localRunner'
+> & {
   checkpoints?: HostCheckpointStore
   captureTarget: (model?: PdfTranslationAgentModel) => ReturnType<PackageOptions['captureTarget']>
 }

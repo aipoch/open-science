@@ -51,10 +51,38 @@ export function packageBuildProjects(root = repositoryRoot) {
 export async function buildDevPackages({
   root = repositoryRoot,
   log = console.log,
-  force = false
+  force = false,
+  clean = false,
+  packages
 } = {}) {
-  const projects = packageBuildProjects(root)
+  const graph = packageBuildProjects(root)
+  const selected = new Set()
+  const include = (project) => {
+    if (!project) throw new Error('Unknown package build target')
+    if (selected.has(project)) return
+    selected.add(project)
+    for (const ref of project.config.projectReferences ?? [])
+      include(graph.find((candidate) => candidate.configPath === resolve(ref.path)))
+  }
+  if (packages)
+    for (const name of packages) include(graph.find((p) => p.root === join(root, 'packages', name)))
+  else graph.forEach(include)
+  const projects = [...selected]
   for (const project of projects) {
+    const out = project.config.options.outDir
+    if (clean) {
+      rmSync(out, { recursive: true, force: true })
+      rmSync(project.config.options.tsBuildInfoFile, { force: true })
+    } else if (existsSync(out)) {
+      // Remove stale emit before compilation: downstream resolution must not see deleted modules.
+      for (const file of readdirSync(out, { recursive: true })) {
+        if (
+          /\.(?:[cm]?js|d\.[cm]?ts)(?:\.map)?$/.test(file) &&
+          !project.outputs.has(join(out, file))
+        )
+          rmSync(join(out, file))
+      }
+    }
     if ([...project.outputs].some((file) => !existsSync(file)))
       rmSync(project.config.options.tsBuildInfoFile, { force: true })
   }
@@ -65,7 +93,7 @@ export async function buildDevPackages({
       [
         require.resolve('typescript/bin/tsc'),
         '--build',
-        join(root, 'tsconfig.packages.json'),
+        ...projects.map((project) => project.configPath),
         '--stopBuildOnErrors',
         ...(force ? ['--force'] : [])
       ],
@@ -76,20 +104,18 @@ export async function buildDevPackages({
       code === 0 ? resolveBuild() : reject(new Error(`Package build failed (${signal ?? code}).`))
     )
   })
-  // TypeScript does not delete outputs of removed/renamed source files. Only these configs own dist.
-  for (const project of packageBuildProjects(root)) {
-    const out = project.config.options.outDir
-    if (!existsSync(out)) continue
-    for (const file of readdirSync(out, { recursive: true })) {
-      if (/\.(?:[cm]?js|d\.[cm]?ts)(?:\.map)?$/.test(file) && !project.outputs.has(join(out, file)))
-        rmSync(join(out, file))
-    }
-  }
   log(
-    `Development packages ready (${((performance.now() - start) / 1000).toFixed(2)}s, incremental).`
+    `Packages ready (${((performance.now() - start) / 1000).toFixed(2)}s, ${clean ? 'clean' : 'incremental'}).`
   )
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  await buildDevPackages()
+  await buildDevPackages({
+    clean: process.argv.includes('--clean'),
+    force: process.argv.includes('--force'),
+    packages: process.argv
+      .find((arg) => arg.startsWith('--packages='))
+      ?.slice(11)
+      .split(',')
+  })
 }

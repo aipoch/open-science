@@ -8,6 +8,11 @@ on:
       - 'scripts/ci/package-test-*'
       - 'scripts/ci/check-module-ownership*'
   workflow_dispatch:
+    inputs:
+      packages:
+        description: Comma-separated independent package names (empty verifies all)
+        type: string
+        default: diagnostics
 permissions:
   contents: read
 jobs:
@@ -90,3 +95,36 @@ jobs:
           const files = JSON.parse(readFileSync(`${process.env.RUNNER_TEMP}/package-policy-files.json`, 'utf8'))
           assert.equal(files.length, 2)
           JS
+
+  isolation:
+    name: Independent installed consumers
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: node scripts/ci/npm-ci.mjs
+      - name: Verify through the production package entry
+        env:
+          PACKAGES: ${{ inputs.packages }}
+        shell: bash
+        run: |
+          if [[ -n "$PACKAGES" ]]; then
+            npm run check:packages -- "--packages=$PACKAGES"
+          else
+            npm run check:packages
+          fi
+      - name: Upload package verification timings
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: package-verification
+          path: test-results/package-verification.json
+          if-no-files-found: ignore
+          retention-days: 14
