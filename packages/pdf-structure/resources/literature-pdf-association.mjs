@@ -701,6 +701,18 @@ function nativeCaptionPaintPackets(page, context) {
       )
         return
       ;[font, size] = a
+    } else if (op === OPS.setTextMatrix) {
+      if (
+        !text ||
+        !Array.isArray(a) ||
+        a.length !== 1 ||
+        !(Array.isArray(a[0]) || a[0] instanceof Float32Array)
+      )
+        return
+      const m = Array.prototype.slice.call(a[0])
+      if (!numbers(m, 6) || m[0] !== 1 || m[1] !== 0 || m[2] !== 0 || m[3] !== 1) return
+      origin = [m[4], m[5]]
+      cursor = origin[0]
     } else if (op === OPS.moveText) {
       if (!text || !numbers(a, 2)) return
       origin = [origin[0] + a[0], origin[1] + a[1]]

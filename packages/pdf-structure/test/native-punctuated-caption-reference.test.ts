@@ -868,6 +868,83 @@ it.each([false, true])(
   }
 )
 
+it.each([false, true])(
+  'preserves independently painted titles under equivalent native translation text matrices (wrapped=%s)',
+  (wrapped) => {
+    for (const typed of [false, true]) {
+      const input = paintedTitlePage(wrapped),
+        reference = associateFigures(input.page, [], [], [], [], input.tokens, input.context),
+        ops = input.context.operators
+      for (let n = 0; n < ops.fnArray.length; n++) {
+        if (ops.fnArray[n] !== OPS.moveText) continue
+        const [x, y] = ops.argsArray[n],
+          matrix = [1, 0, 0, 1, x, y]
+        ops.fnArray[n] = OPS.setTextMatrix
+        ops.argsArray[n] = [typed ? new Float32Array(matrix) : matrix]
+      }
+      const before = structuredClone(input)
+      expect(reference).toHaveLength(1)
+      expect(associateFigures(input.page, [], [], [], [], input.tokens, input.context)).toEqual(
+        reference
+      )
+      expect(input).toEqual(before)
+    }
+  }
+)
+
+it('retains relative native text moves after an absolute translation text matrix', () => {
+  const input = paintedTitlePage(),
+    reference = associateFigures(input.page, [], [], [], [], input.tokens, input.context),
+    ops = input.context.operators
+  for (let n = 0; n < ops.fnArray.length; n++) {
+    if (ops.fnArray[n] !== OPS.moveText) continue
+    const [x, y] = ops.argsArray[n]
+    ops.fnArray.splice(n, 1, OPS.setTextMatrix, OPS.moveText)
+    ops.argsArray.splice(n, 1, [new Float32Array([1, 0, 0, 1, x - 7, y - 11])], [7, 11])
+    n++
+  }
+  // The second Tm must reset the cursor advanced by the first painted packet in the same BT.
+  const firstEnd = ops.fnArray.indexOf(OPS.endText)
+  expect(ops.fnArray[firstEnd + 1]).toBe(OPS.beginText)
+  ops.fnArray.splice(firstEnd, 2)
+  ops.argsArray.splice(firstEnd, 2)
+  const before = structuredClone(input)
+  expect(reference).toHaveLength(1)
+  expect(associateFigures(input.page, [], [], [], [], input.tokens, input.context)).toEqual(
+    reference
+  )
+  expect(input).toEqual(before)
+})
+
+it.each(['scaled', 'rotated', 'skewed', 'short', 'nonfinite', 'unpacked', 'outside-text'])(
+  'refuses native title recovery from an unsupported %s text matrix',
+  (invalid) => {
+    const input = paintedTitlePage(),
+      ops = input.context.operators
+    for (let n = 0; n < ops.fnArray.length; n++) {
+      if (ops.fnArray[n] !== OPS.moveText) continue
+      const [x, y] = ops.argsArray[n]
+      ops.fnArray[n] = OPS.setTextMatrix
+      ops.argsArray[n] = [[1, 0, 0, 1, x, y]]
+    }
+    const n = ops.fnArray.indexOf(OPS.setTextMatrix),
+      matrix = ops.argsArray[n][0]
+    if (invalid === 'scaled') matrix[0] = 2
+    if (invalid === 'rotated') matrix.splice(0, 4, 0, 1, -1, 0)
+    if (invalid === 'skewed') matrix[1] = 0.5
+    if (invalid === 'short') matrix.pop()
+    if (invalid === 'nonfinite') matrix[4] = NaN
+    if (invalid === 'unpacked') ops.argsArray[n] = matrix
+    if (invalid === 'outside-text') {
+      ops.fnArray.splice(4, 0, OPS.setTextMatrix)
+      ops.argsArray.splice(4, 0, [matrix])
+    }
+    const before = structuredClone(input)
+    expect(associateFigures(input.page, [], [], [], [], input.tokens, input.context)).toEqual([])
+    expect(input).toEqual(before)
+  }
+)
+
 it.each([
   'native-width',
   'glyph-width',
