@@ -63,6 +63,14 @@ it('keeps missing timing unavailable and separates queue, elapsed and summed job
       jobs: run.jobs.map((job, index) => ({ ...job, run_attempt: index + 1 }))
     })
   ).toMatchObject({ executionMs: null, jobWorkMs: null, consistentAttempt: false })
+  expect(
+    summarizeCi({
+      ...run,
+      run_attempt: 2,
+      run_started_at: '2026-01-01T00:00:15Z',
+      jobs: run.jobs.map((job) => ({ ...job, run_attempt: 2 }))
+    })
+  ).toMatchObject({ consistentAttempt: false, jobWorkMs: null })
   expect(summarizeCi(run)).toMatchObject({ queueMs: 10000, executionMs: 20000, jobWorkMs: 30000 })
   expect(summarizeCi({ ...run, jobs: [] })).toMatchObject({ executionMs: null, jobWorkMs: null })
 })

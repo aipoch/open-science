@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       packages:
-        description: Comma-separated independent package names (empty verifies all)
+        description: Comma-separated independent package names, or all
         type: string
         default: diagnostics
 permissions:
@@ -115,7 +115,7 @@ jobs:
           PACKAGES: ${{ inputs.packages }}
         shell: bash
         run: |
-          if [[ -n "$PACKAGES" ]]; then
+          if [[ "$PACKAGES" != "all" ]]; then
             npm run check:packages -- "--packages=$PACKAGES"
           else
             npm run check:packages

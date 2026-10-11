@@ -60,6 +60,7 @@ export function summarizeCi(run) {
   const jobs = (run.jobs ?? []).map((job) => ({
     name: job.name,
     attempt: job.run_attempt ?? null,
+    startedAt: job.started_at,
     conclusion: job.conclusion,
     runner: job.runner_name ?? null,
     durationMs: elapsed(job.started_at, job.completed_at),
@@ -71,7 +72,10 @@ export function summarizeCi(run) {
   }))
   const consistentAttempt = jobs.every(
     (job) =>
-      job.attempt === run.run_attempt || ((run.run_attempt ?? 1) === 1 && job.attempt === null)
+      (job.attempt === run.run_attempt || ((run.run_attempt ?? 1) === 1 && job.attempt === null)) &&
+      (job.conclusion === 'skipped' ||
+        !run.run_started_at ||
+        (job.startedAt && Date.parse(job.startedAt) >= Date.parse(run.run_started_at)))
   )
   const executed = jobs.filter((job) => job.conclusion !== 'skipped')
   return {

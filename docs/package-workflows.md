@@ -37,8 +37,8 @@ remove host resolution hooks and CI test exclusions.
 Online installation is the default. `--offline` requires a populated npm cache; a missing cached
 archive is an environment failure, not evidence that a package contract is broken. Timings and
 exit codes are written to `test-results/package-verification.json` and uploaded by CI. The manually
-triggered **Package test policy dry-run** executes the same dispatcher on Ubuntu/Node 24; empty
-`packages` means all registered packages. This is the first place to debug this lane.
+triggered **Package test policy dry-run** executes the same dispatcher on Ubuntu/Node 24; `packages=all`
+selects every registered package explicitly. This is the first place to debug this lane.
 
 ## Business boundary review
 

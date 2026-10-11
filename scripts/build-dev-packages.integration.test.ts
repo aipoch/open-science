@@ -155,3 +155,41 @@ it('skips unchanged output, propagates dependency edits, rejects errors and repa
     await rm(root, { recursive: true, force: true })
   }
 }, 60_000)
+
+it('prepares packages once per composed command, including npm lifecycle hooks', async () => {
+  const { scripts } = JSON.parse(await readFile('package.json', 'utf8'))
+  const expand = (name: string, extra = ''): string[] => {
+    const commands: string[] = []
+    if (scripts[`pre${name}`]) commands.push(...expand(`pre${name}`))
+    for (const command of scripts[name].split(' && ')) {
+      const nested = /^npm run ([\w:-]+)(?: -- (.*))?$/.exec(command)
+      commands.push(...(nested ? expand(nested[1], nested[2]) : [`${command} ${extra}`.trim()]))
+    }
+    if (scripts[`post${name}`]) commands.push(...expand(`post${name}`))
+    return commands
+  }
+  for (const command of [
+    'build',
+    'build:mac',
+    'build:linux',
+    'build:win',
+    'build:e2e',
+    'stage:backend',
+    'typecheck',
+    'typecheck:node',
+    'typecheck:web',
+    'build:web',
+    'build:backend'
+  ]) {
+    const builds = expand(command).filter((step) =>
+      step.startsWith('node scripts/build-dev-packages.mjs')
+    )
+    expect(builds, command).toHaveLength(1)
+    if (
+      ['build', 'build:mac', 'build:linux', 'build:win', 'build:e2e', 'stage:backend'].includes(
+        command
+      )
+    )
+      expect(builds[0], command).toContain('--clean')
+  }
+})
