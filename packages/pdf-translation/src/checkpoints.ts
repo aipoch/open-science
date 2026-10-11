@@ -15,15 +15,12 @@ import {
   pdfTranslationSourceIndices,
   nextPdfTranslationSourceIndex
 } from './recovery.js'
-import { sqltag as sql, raw, empty, type Sql } from '@prisma/client/runtime/library'
-const Prisma = { sql, raw, empty }
 import type {
   TranslationDatabase,
   TranslationTransaction,
   TranslationStoredCheckpoint,
   TranslationCheckpointIdentity
 } from './storage.js'
-import type { PdfDocumentSource } from '@aipoch/pdf-document-contract'
 import {
   pdfTranslationCheckpointSchema,
   pdfTranslationGlossarySchema,
@@ -34,8 +31,7 @@ import {
   type PdfTranslationRecordLayoutRequest,
   pdfTranslationBlockFailureSchema,
   type PdfTranslationBlockFailure,
-  pdfTranslationDocumentSourceSchema,
-  pdfTranslationSourceKey,
+  pdfTranslationSourceSchema,
   type PdfTranslationCheckpointRequest,
   type PdfTranslationCheckpoint,
   type PdfTranslationBeginRequest,
@@ -45,12 +41,6 @@ import {
 } from './contracts.js'
 
 type CheckpointIdentity = TranslationCheckpointIdentity
-const storageIdentity = (key: string): { parent: Sql; blocks: Sql; column: Sql; key: string } => ({
-  parent: Prisma.raw('"PdfTranslation"'),
-  blocks: Prisma.raw('"PdfTranslationBlock"'),
-  column: Prisma.raw('"translationId"'),
-  key
-})
 type StorageReference = { id: string }
 
 const textHash = (text: string): string => createHash('sha256').update(text).digest('hex')
@@ -120,7 +110,6 @@ export class PdfTranslationCheckpoints {
     }
     Object.freeze(checkpoint.layoutReports)
     Object.freeze(checkpoint.model)
-    if (checkpoint.documentSource) Object.freeze(checkpoint.documentSource)
     Object.freeze(checkpoint)
     this.persistedLengths.set(checkpoint, length)
     return checkpoint
@@ -131,12 +120,7 @@ export class PdfTranslationCheckpoints {
       getClient: () => Promise<TranslationDatabase>
       diagnostics?: TranslationDiagnostics
       writes?: TranslationWriteAdmission
-      authority: {
-        resolveVersion(
-          versionId: string
-        ): Promise<{ attachmentId: string; checksum: string } | undefined>
-      }
-      resolveDocumentSource?: (source: PdfDocumentSource) => Promise<PdfDocumentSource | undefined>
+      resolveSource: (sourceId: string) => Promise<CheckpointIdentity | undefined>
     }
   ) {}
 
@@ -149,36 +133,18 @@ export class PdfTranslationCheckpoints {
   private async resolveIdentity(
     request: PdfTranslationCheckpointRequest
   ): Promise<CheckpointIdentity> {
-    if (typeof request !== 'string') {
-      const supplied = pdfTranslationDocumentSourceSchema.parse(request)
-      if (supplied.kind === 'literature-attachment-version') {
-        const version = await this.options.authority.resolveVersion(supplied.versionId)
-        if (
-          !version ||
-          version.attachmentId !== supplied.sourceFileId ||
-          version.checksum !== supplied.checksum
-        )
-          throw new Error('Translation source is unavailable.')
-        return { attachmentVersionId: supplied.versionId, checksum: version.checksum }
-      }
-      const resolved = await this.options.resolveDocumentSource?.(supplied)
-      if (!resolved || pdfTranslationSourceKey(supplied) !== pdfTranslationSourceKey(resolved))
-        throw new Error('Translation source is unavailable.')
-      return { documentSource: resolved, checksum: resolved.checksum }
-    }
-    if (!request || request.length > 256) throw new Error('Invalid attachment version.')
-    const version = await this.options.authority.resolveVersion(request)
-    if (!version) throw new Error('Translation source is unavailable.')
-    return { attachmentVersionId: request, checksum: version.checksum }
+    const sourceId = pdfTranslationSourceSchema.parse(request)
+    const identity = await this.options.resolveSource(sourceId)
+    if (!identity) throw new Error('Translation source is unavailable.')
+    return identity
   }
 
   async contentKey(request: PdfTranslationCheckpointRequest): Promise<string> {
     const identity = await this.resolveIdentity(request)
     const client = await this.options.getClient()
-    // Read-only package attachments have no database owner.
-    if (identity.attachmentVersionId && !(await client.hasAttachment(identity.attachmentVersionId)))
-      return identity.checksum
-    const source = await client.$transaction((tx) => tx.requireSource(identity))
+    // Read-only sources have no database owner.
+    if (!(await client.canPersist(identity))) return identity.checksum
+    const source = await client.transaction((tx) => tx.requireSource(identity))
     return `${identity.checksum}:${source.sizeBytes}`
   }
 
@@ -188,14 +154,9 @@ export class PdfTranslationCheckpoints {
     source: { sizeBytes: bigint },
     checkpointKey?: string
   ): Promise<TranslationStoredCheckpoint | null> {
-    const pdfDocumentId = await tx.requireDocument(identity, source)
+    const contentId = await tx.requireDocument(identity, source)
     // Explicit reads never fall back to a different edition when the requested one is gone.
-    const rows = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
-      SELECT "id" FROM "PdfTranslation" WHERE "pdfDocumentId" = ${pdfDocumentId}
-        ${checkpointKey === undefined ? Prisma.empty : Prisma.sql`AND json_extract("payloadJson", '$.key') = ${checkpointKey}`}
-      ORDER BY "createdAt" DESC, "id" DESC LIMIT 1
-    `)
-    const row = rows[0] ? await readCheckpointRow(tx, rows[0].id) : null
+    const row = await tx.findLatest(contentId, checkpointKey)
     if (row && (row.checksum !== identity.checksum || row.sizeBytes !== source.sizeBytes))
       throw new Error('Translation source changed.')
     return row
@@ -212,33 +173,11 @@ export class PdfTranslationCheckpoints {
     const identity = await this.resolveIdentity(request)
     return this.writes.write(async () => {
       const client = await this.options.getClient()
-      if (
-        identity.attachmentVersionId &&
-        !(await client.hasAttachment(identity.attachmentVersionId))
-      )
-        return []
-      return client.$transaction(async (tx) => {
+      if (!(await client.canPersist(identity))) return []
+      return client.transaction(async (tx) => {
         const source = await tx.requireSource(identity)
-        const pdfDocumentId = await tx.requireDocument(identity, source)
-        const rows = await tx.$queryRaw<
-          Array<{
-            id: string
-            key: string
-            language: string
-            glossary: string
-            concurrency: number
-            model: string
-            updatedAt: Date
-          }>
-        >(Prisma.sql`
-          SELECT "id", json_extract("payloadJson", '$.key') AS "key",
-            json_extract("payloadJson", '$.language') AS "language",
-            json_extract("payloadJson", '$.glossary') AS "glossary",
-            coalesce(json_extract("payloadJson", '$.concurrency'), 1) AS "concurrency",
-            json_extract("payloadJson", '$.model') AS "model", "updatedAt"
-          FROM "PdfTranslation" WHERE "pdfDocumentId" = ${pdfDocumentId}
-          ORDER BY "createdAt" DESC, "id" DESC
-        `)
+        const contentId = await tx.requireDocument(identity, source)
+        const rows = await tx.list(contentId)
         return rows.map((row) => ({
           id: row.id,
           key: pdfTranslationCheckpointSchema.shape.key.parse(row.key),
@@ -261,10 +200,10 @@ export class PdfTranslationCheckpoints {
     const identity = await this.resolveIdentity(request.source)
     return this.writes.write(async () => {
       const client = await this.options.getClient()
-      return client.$transaction(async (tx) => {
+      return client.transaction(async (tx) => {
         const source = await tx.requireSource(identity)
-        const pdfDocumentId = await tx.requireDocument(identity, source)
-        const row = await readCheckpointRow(tx, request.translationId, pdfDocumentId)
+        const contentId = await tx.requireDocument(identity, source)
+        const row = await tx.read(request.translationId, contentId)
         if (row && (row.checksum !== identity.checksum || row.sizeBytes !== source.sizeBytes))
           throw new Error('Translation source changed.')
         const checkpoint = this.decode(row, identity)
@@ -281,14 +220,12 @@ export class PdfTranslationCheckpoints {
     const identity = await this.resolveIdentity(request.source)
     return this.writes.write(async () => {
       const client = await this.options.getClient()
-      await client.$transaction(async (tx) => {
+      await client.transaction(async (tx) => {
         const source = await tx.requireSource(identity)
-        const pdfDocumentId = await tx.requireDocument(identity, source)
+        const contentId = await tx.requireDocument(identity, source)
         signal?.throwIfAborted()
         // Cascade only this edition's blocks, never the PDF or other editions.
-        const result = await tx.$executeRaw(
-          Prisma.sql`DELETE FROM "PdfTranslation" WHERE "id" = ${request.translationId} AND "pdfDocumentId" = ${pdfDocumentId}`
-        )
+        const result = await tx.delete(request.translationId, contentId)
         if (!result) throw new Error('Translation edition is unavailable.')
         signal?.throwIfAborted()
       })
@@ -302,12 +239,8 @@ export class PdfTranslationCheckpoints {
     const startedAt = performance.now()
     return this.writes.write(async () => {
       const client = await this.options.getClient()
-      if (
-        identity.attachmentVersionId &&
-        !(await client.hasAttachment(identity.attachmentVersionId))
-      )
-        return null
-      return client.$transaction(async (tx) => {
+      if (!(await client.canPersist(identity))) return null
+      return client.transaction(async (tx) => {
         const source = await tx.requireSource(identity)
         const row = await this.readStored(tx, identity, source, checkpointKey)
         const decodedAt = performance.now()
@@ -338,7 +271,7 @@ export class PdfTranslationCheckpoints {
       throw new Error('Translation source changed.')
     // The payload's original entry point may have been removed. Only the verified current
     // source is exposed to the renderer; the immutable content and saved layout stay shared.
-    value = { ...value, attachmentVersionId: undefined, documentSource: undefined, ...identity }
+    value = { ...value, ...identity }
     const state = row.blocks.find((block) => block.sourceIndex === -1)
     const blocks = row.blocks.filter((block) => block.sourceIndex !== -1)
     if (state) {
@@ -404,11 +337,10 @@ export class PdfTranslationCheckpoints {
       signal.throwIfAborted()
       const identity = await this.resolveIdentity(request.source)
       const client = await this.options.getClient()
-      await client.$transaction(async (tx) => {
+      await client.transaction(async (tx) => {
         const source = await tx.requireSource(identity)
         const row = await this.readStored(tx, identity, source, request.checkpointKey)
         if (!row) throw new Error('Translation checkpoint no longer exists.')
-        const storage = storageIdentity(row.id)
         const current = pdfTranslationCheckpointSchema.parse(JSON.parse(row.payloadJson))
         if (
           current.key !== request.checkpointKey ||
@@ -427,10 +359,7 @@ export class PdfTranslationCheckpoints {
           return
         }
         signal.throwIfAborted()
-        await tx.$executeRaw(Prisma.sql`
-          UPDATE ${storage.parent} SET "layoutSnapshotJson" = ${snapshotJson}
-          WHERE "id" = ${storage.key} AND "layoutSnapshotJson" IS NULL
-        `)
+        await tx.pinLayout(row.id, snapshotJson)
       })
     })
   }
@@ -446,12 +375,11 @@ export class PdfTranslationCheckpoints {
       signal.throwIfAborted()
       const identity = await this.resolveIdentity(request.source)
       const client = await this.options.getClient()
-      const applied = await client.$transaction(async (tx) => {
+      const applied = await client.transaction(async (tx) => {
         signal.throwIfAborted()
         const source = await tx.requireSource(identity)
         const row = await this.readStored(tx, identity, source, request.checkpointKey)
         if (!row) return []
-        const storage = storageIdentity(row.id)
         const current = this.decode(row, identity)
         if (!current || !row || current.key !== request.checkpointKey) return []
         const translated = new Map(
@@ -496,9 +424,7 @@ export class PdfTranslationCheckpoints {
         })
         if (payloadJson.length > 8 * 1024 * 1024) throw new Error('Invalid translation checkpoint.')
         signal.throwIfAborted()
-        await tx.$executeRaw(
-          Prisma.sql`UPDATE ${storage.parent} SET "payloadJson" = ${payloadJson}, "updatedAt" = ${new Date()} WHERE "id" = ${storage.key}`
-        )
+        await tx.updatePayload(row.id, payloadJson)
         return committed
       })
       const failures = applied.filter((report) => report.failure)
@@ -530,16 +456,15 @@ export class PdfTranslationCheckpoints {
         throw new Error('PDF layout snapshot does not match translation.')
       input = { ...input, layoutSnapshot: snapshot }
     }
-    const request = input.documentSource ?? input.attachmentVersionId
+    const request = input.sourceId
     if (!request) return undefined
     const identity = await this.resolveIdentity(request)
     const previous = input.checkpoint
       ? await this.readResolved(identity, input.checkpoint.key)
       : null
-    // Read-only package attachments retain the existing ephemeral translation flow.
+    // Read-only sources retain the existing ephemeral translation flow.
     const client = await this.options.getClient()
-    if (identity.attachmentVersionId && !(await client.hasAttachment(identity.attachmentVersionId)))
-      return undefined
+    if (!(await client.canPersist(identity))) return undefined
     if (input.checkpoint && previous?.key === input.checkpoint.key) {
       if (
         previous.fingerprint !== input.fingerprint ||
@@ -586,11 +511,17 @@ export class PdfTranslationCheckpoints {
     // Persist admission before returning its key: cancellation or restart before the
     // first paragraph must leave a resumable edition, not an in-memory-only reference.
     await this.writes.write(() =>
-      client.$transaction(async (tx) => {
+      client.transaction(async (tx) => {
         const source = await tx.requireSource(identity)
-        await tx.$executeRaw(
-          Prisma.sql`INSERT INTO "PdfTranslation" ("id","pdfDocumentId","checksum","sizeBytes","revision","payloadJson","layoutSnapshotJson","createdAt","updatedAt") VALUES (${id},${await tx.requireDocument(identity, source)},${identity.checksum},${source.sizeBytes},${opened.revision},${checkpointPayload(opened)},${opened.layoutSnapshot ? JSON.stringify(opened.layoutSnapshot) : null},${new Date()},${new Date()})`
-        )
+        await tx.insert({
+          id,
+          contentId: await tx.requireDocument(identity, source),
+          checksum: identity.checksum,
+          sizeBytes: source.sizeBytes,
+          revision: opened.revision,
+          payloadJson: checkpointPayload(opened),
+          layoutSnapshotJson: opened.layoutSnapshot ? JSON.stringify(opened.layoutSnapshot) : null
+        })
       })
     )
     this.storageReferences.set(opened, { id })
@@ -702,76 +633,59 @@ export class PdfTranslationCheckpoints {
         length = payloadJson.length
       }
       const snapshotBuildMs = performance.now() - startedAt
-      const request = checkpoint.documentSource ?? checkpoint.attachmentVersionId!
+      const request = checkpoint.sourceId
       const identity = await this.resolveIdentity(request)
       signal.throwIfAborted()
       if (identity.checksum !== checkpoint.checksum) throw new Error('Translation source changed.')
       const client = await this.options.getClient()
       let committedId: string | undefined
-      await client.$transaction(async (tx) => {
+      await client.transaction(async (tx) => {
         signal.throwIfAborted()
         const source = await tx.requireSource(identity)
         const reference = this.storageReferences.get(checkpoint)
         if (!reference) throw new Error('Translation checkpoint must be reopened.')
-        const pdfDocumentId = await tx.requireDocument(identity, source)
-        const [current] = await tx.$queryRaw<
-          Array<Pick<TranslationStoredCheckpoint, 'pdfDocumentId' | 'checksum' | 'sizeBytes'>>
-        >(
-          Prisma.sql`SELECT "pdfDocumentId","checksum","sizeBytes" FROM "PdfTranslation" WHERE "id" = ${reference.id}`
-        )
+        const contentId = await tx.requireDocument(identity, source)
+        const current = await tx.readHeader(reference.id)
         if (!current) throw new Error('Translation changed in another window.')
         if (
           current &&
-          (current.pdfDocumentId !== pdfDocumentId ||
+          (current.contentId !== contentId ||
             current.checksum !== identity.checksum ||
             current.sizeBytes !== source.sizeBytes)
         )
           throw new Error('Translation source changed.')
-        const storage = storageIdentity(reference.id)
-        committedId = storage.key
+        committedId = reference.id
+        let layoutReportsJson: string | undefined
         if (incremental && replaceExisting) {
-          const rows = await tx.$queryRaw<Array<{ reports: string | null }>>(
-            Prisma.sql`SELECT json_extract("payloadJson", '$.layoutReports') AS reports FROM ${storage.parent} WHERE "id" = ${storage.key}`
-          )
-          if (rows[0]?.reports) {
+          const reportsJson = await tx.readLayoutReports(reference.id)
+          if (reportsJson) {
             const storedReports = pdfTranslationLayoutReportSchema
               .array()
               .max(10000)
-              .parse(JSON.parse(rows[0].reports))
+              .parse(JSON.parse(reportsJson))
             const reports = matchingLayoutReports(next, storedReports)
             length +=
               JSON.stringify(reports).length - JSON.stringify(next.layoutReports ?? []).length
             next = { ...next, layoutReports: reports }
             if (length > 8 * 1024 * 1024) throw new Error('Invalid translation checkpoint.')
-            if (reports.length !== storedReports.length)
-              await tx.$executeRaw(
-                Prisma.sql`UPDATE ${storage.parent} SET "payloadJson" = json_set("payloadJson", '$.layoutReports', json(${JSON.stringify(reports)})), "updatedAt" = ${new Date()} WHERE "id" = ${storage.key}`
-              )
+            if (reports.length !== storedReports.length) layoutReportsJson = JSON.stringify(reports)
           }
         }
         if (!incremental) {
           // Snapshot replacement must merge the latest independently committed layout reports.
           // Never copy reports from another run, changed extraction or replaced translations.
-          const rows = await tx.$queryRaw<
-            Array<{ payloadJson: string; layoutSnapshotJson: string | null }>
-          >(
-            Prisma.sql`SELECT "payloadJson", "layoutSnapshotJson" FROM ${storage.parent} WHERE "id" = ${storage.key}`
-          )
-          const current = rows[0]
-            ? pdfTranslationCheckpointSchema.parse(JSON.parse(rows[0].payloadJson))
+          const stored = await tx.readBase(reference.id)
+          const current = stored
+            ? pdfTranslationCheckpointSchema.parse(JSON.parse(stored.payloadJson))
             : undefined
-          if (current?.key !== next.key) {
-            await tx.$executeRaw(
-              Prisma.sql`UPDATE ${storage.parent} SET "layoutSnapshotJson" = NULL WHERE "id" = ${storage.key}`
-            )
-          } else if (rows[0]?.layoutSnapshotJson) {
+          if (current?.key === next.key && stored?.layoutSnapshotJson) {
             const snapshot = pdfTranslationLayoutSnapshotSchema.parse(
-              JSON.parse(rows[0].layoutSnapshotJson)
+              JSON.parse(stored.layoutSnapshotJson)
             )
             if (
               !pdfTranslationSnapshotMatchesSources(snapshot, next.fingerprint, next.sources) ||
               (next.layoutSnapshot &&
-                JSON.stringify(next.layoutSnapshot) !== rows[0].layoutSnapshotJson)
+                JSON.stringify(next.layoutSnapshot) !== stored.layoutSnapshotJson)
             )
               throw new Error('PDF layout snapshot is already pinned.')
             next = { ...next, layoutSnapshot: snapshot }
@@ -790,58 +704,21 @@ export class PdfTranslationCheckpoints {
           length = payloadJson.length
           if (length > 8 * 1024 * 1024) throw new Error('Invalid translation checkpoint.')
         }
-        // The -1 row owns the live revision: the unchanged parent TEXT is not rewritten.
-        const state =
-          incremental ||
-          (
-            await tx.$queryRaw<Array<{ revision: number }>>(Prisma.sql`
-            SELECT revision FROM ${storage.blocks}
-            WHERE ${storage.column} = ${storage.key} AND "sourceIndex" = -1
-          `)
-          ).length > 0
-        const updated = state
-          ? await tx.$executeRaw(Prisma.sql`
-                UPDATE ${storage.blocks} SET revision = ${next.revision}
-                WHERE ${storage.column} = ${storage.key} AND "sourceIndex" = -1
-                  AND revision = ${checkpoint.revision}
-              `)
-          : await tx.$executeRaw(Prisma.sql`
-                UPDATE ${storage.parent} SET revision = ${next.revision}, "payloadJson" = ${payloadJson!}, "updatedAt" = ${new Date()}
-                WHERE "id" = ${storage.key} AND revision = ${checkpoint.revision}
-              `)
-        if (updated !== 1) throw new Error('Translation changed in another window.')
-        if (state && !incremental)
-          await tx.$executeRaw(Prisma.sql`
-            UPDATE ${storage.parent} SET revision = ${next.revision}, "payloadJson" = ${payloadJson!}, "updatedAt" = ${new Date()}
-            WHERE "id" = ${storage.key}
-          `)
-        if (!incremental) {
-          await tx.$executeRaw(Prisma.sql`
-            UPDATE ${storage.parent} SET "layoutSnapshotJson" = ${next.layoutSnapshot ? JSON.stringify(next.layoutSnapshot) : null}
-            WHERE "id" = ${storage.key}
-              AND "layoutSnapshotJson" IS NULL
-          `)
-        }
-        if (incremental)
-          await tx.$executeRaw(Prisma.sql`
-          INSERT INTO ${storage.blocks} (${storage.column}, "sourceIndex", "revision", "translation")
-          VALUES (${storage.key}, ${index}, ${next.revision}, ${text ?? null})
-          ON CONFLICT (${storage.column}, "sourceIndex") DO UPDATE
-          SET revision = excluded.revision, translation = excluded.translation
-        `)
-        else {
-          await tx.$executeRaw(
-            Prisma.sql`DELETE FROM ${storage.blocks} WHERE ${storage.column} = ${storage.key}`
-          )
-          await tx.$executeRaw(Prisma.sql`
-            INSERT INTO ${storage.blocks} (${storage.column}, "sourceIndex", "revision")
-            VALUES (${storage.key}, -1, ${next.revision})
-          `)
-        }
-        if (incremental)
-          await tx.$executeRaw(Prisma.sql`
-            UPDATE ${storage.parent} SET "updatedAt" = ${new Date()} WHERE "id" = ${storage.key}
-          `)
+        const updated = await tx.commit(reference.id, checkpoint.revision, {
+          revision: next.revision,
+          ...(incremental
+            ? { block: { sourceIndex: index, translation: text ?? null } }
+            : {
+                base: {
+                  payloadJson: payloadJson!,
+                  layoutSnapshotJson: next.layoutSnapshot
+                    ? JSON.stringify(next.layoutSnapshot)
+                    : null
+                }
+              }),
+          ...(layoutReportsJson !== undefined ? { layoutReportsJson } : {})
+        })
+        if (!updated) throw new Error('Translation changed in another window.')
         signal.throwIfAborted()
       })
       this.diagnostics.debug('checkpoint committed', {
@@ -860,19 +737,4 @@ export class PdfTranslationCheckpoints {
       return this.remember(next, length)
     })
   }
-}
-
-async function readCheckpointRow(
-  tx: TranslationTransaction,
-  id: string,
-  documentId?: string
-): Promise<TranslationStoredCheckpoint | null> {
-  const [row] = await tx.$queryRaw<Omit<TranslationStoredCheckpoint, 'blocks'>[]>(
-    Prisma.sql`SELECT "id","pdfDocumentId","checksum","sizeBytes","revision","payloadJson","layoutSnapshotJson" FROM "PdfTranslation" WHERE "id"=${id} ${documentId === undefined ? Prisma.empty : Prisma.sql`AND "pdfDocumentId"=${documentId}`}`
-  )
-  if (!row) return null
-  const blocks = await tx.$queryRaw<TranslationStoredCheckpoint['blocks']>(
-    Prisma.sql`SELECT "sourceIndex","translation","revision" FROM "PdfTranslationBlock" WHERE "translationId"=${id}`
-  )
-  return { ...row, blocks }
 }

@@ -1,87 +1,22 @@
 /* Fixture builders preserve inferred mock signatures for behavioral assertions. */
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
-import { DatabaseSync, type SQLInputValue } from 'node:sqlite'
-import { sqltag, type Sql } from '@prisma/client/runtime/library'
 import { expect, it } from 'vitest'
 import { PdfTranslationCheckpoints } from '../src/checkpoints.js'
-import type { TranslationDatabase, TranslationTransaction } from '../src/storage.js'
-
+import { memoryCheckpoints } from './support/checkpoint-memory.js'
 function setup() {
-  const db = new DatabaseSync(':memory:')
-  db.exec(`PRAGMA foreign_keys=ON;
-    CREATE TABLE PdfTranslation(id TEXT PRIMARY KEY,pdfDocumentId TEXT NOT NULL,checksum TEXT NOT NULL,sizeBytes BIGINT NOT NULL,revision INTEGER NOT NULL,payloadJson TEXT NOT NULL,layoutSnapshotJson TEXT,createdAt DATETIME NOT NULL,updatedAt DATETIME NOT NULL);
-    CREATE TABLE PdfTranslationBlock(translationId TEXT NOT NULL REFERENCES PdfTranslation(id) ON DELETE CASCADE,sourceIndex INTEGER NOT NULL,revision INTEGER NOT NULL,translation TEXT,PRIMARY KEY(translationId,sourceIndex));`)
-  let authorized = true
-  const statement = (query: TemplateStringsArray | Sql, values: unknown[]) => {
-    const sql = 'sql' in query ? query : sqltag(query, ...values)
-    return {
-      prepared: db.prepare(sql.sql),
-      values: sql.values.map((value) =>
-        value instanceof Date ? value.getTime() : value
-      ) as SQLInputValue[]
-    }
-  }
-  const tx: TranslationTransaction = {
-    async $queryRaw<T>(query: TemplateStringsArray | Sql, ...values: unknown[]): Promise<T> {
-      const sql = statement(query, values)
-      return sql.prepared.all(...sql.values).map((row) => ({
-        ...row,
-        ...('sizeBytes' in row ? { sizeBytes: BigInt(row.sizeBytes as number) } : {})
-      })) as T
-    },
-    async $executeRaw(query, ...values) {
-      const sql = statement(query, values)
-      return Number(sql.prepared.run(...sql.values).changes)
-    },
-    async requireSource(identity) {
-      if (!authorized || identity.checksum !== 'a'.repeat(64)) throw new Error('denied')
-      return { sizeBytes: 12n }
-    },
-    async requireDocument(identity, source) {
-      await tx.requireSource(identity)
-      return `${identity.checksum}:${source.sizeBytes}`
-    }
-  }
-  let queue = Promise.resolve<unknown>(undefined)
-  const database: TranslationDatabase = {
-    async hasAttachment(id) {
-      return id === 'version'
-    },
-    $transaction(operation) {
-      const result = queue.then(async () => {
-        db.exec('BEGIN')
-        try {
-          const value = await operation(tx)
-          db.exec('COMMIT')
-          return value
-        } catch (error) {
-          db.exec('ROLLBACK')
-          throw error
-        }
-      })
-      queue = result.catch(() => undefined)
-      return result
-    }
-  }
-  const create = () =>
-    new PdfTranslationCheckpoints({
-      getClient: async () => database,
-      authority: {
-        resolveVersion: async (id) =>
-          id === 'version' ? { attachmentId: 'attachment', checksum: 'a'.repeat(64) } : undefined
-      }
-    })
+  const memory = memoryCheckpoints()
   return {
-    create,
-    db,
-    revoke: () => {
-      authorized = false
-    }
+    ...memory,
+    create: () =>
+      new PdfTranslationCheckpoints({
+        getClient: async () => memory.database,
+        resolveSource: async (sourceId) => ({ sourceId, checksum: 'a'.repeat(64) })
+      })
   }
 }
 const input = {
   resourceRequestKey: 'reader',
-  attachmentVersionId: 'version',
+  sourceId: 'version',
   fingerprint: 'fp',
   language: 'Chinese',
   concurrency: 2,
@@ -91,7 +26,7 @@ const input = {
 const model = { frameworkId: 'opencode', modelId: 'model' }
 it('persists an edition before inference, resumes sparse progress and fences stale revisions', async () => {
   const h = setup()
-  try {
+  {
     const store = h.create(),
       checkpoint = (await store.open(input, 'b'.repeat(64), model))!
     expect((await h.create().read('version'))?.key).toBe(checkpoint.key)
@@ -110,14 +45,12 @@ it('persists an edition before inference, resumes sparse progress and fences sta
     expect(editions).toHaveLength(1)
     await store.delete({ source: 'version', translationId: editions[0].id })
     expect(await store.read('version')).toBeNull()
-    expect(h.db.prepare('SELECT COUNT(*) AS n FROM PdfTranslationBlock').get()?.n).toBe(0)
-  } finally {
-    h.db.close()
+    expect(h.rows().size).toBe(0)
   }
 })
 it('rechecks source authority inside every transaction and rolls back denied changes', async () => {
   const h = setup()
-  try {
+  {
     const store = h.create(),
       checkpoint = (await store.open(input, 'b'.repeat(64), model))!
     h.revoke()
@@ -125,8 +58,71 @@ it('rechecks source authority inside every transaction and rolls back denied cha
       store.append(checkpoint, 0, 'ATP 增加。', new AbortController().signal)
     ).rejects.toThrow('denied')
     await expect(store.read('version')).rejects.toThrow('denied')
-    expect(h.db.prepare('SELECT revision FROM PdfTranslation').get()?.revision).toBe(1)
+    expect([...h.rows().values()][0].revision).toBe(1)
+  }
+})
+
+it('rolls back an already applied repository mutation when cancellation wins before commit', async () => {
+  const h = setup(),
+    store = h.create()
+  const checkpoint = (await store.open(input, 'b'.repeat(64), model))!
+  const before = h.rows()
+  const controller = new AbortController()
+  const transaction = h.database.transaction.bind(h.database)
+  h.database.transaction = (operation) =>
+    transaction((tx) =>
+      operation({
+        ...tx,
+        async commit(...args) {
+          const changed = await tx.commit(...args)
+          controller.abort()
+          return changed
+        }
+      })
+    )
+  await expect(store.append(checkpoint, 0, 'ATP 增加。', controller.signal)).rejects.toThrow()
+  expect(h.rows()).toEqual(before)
+})
+
+it('runs and reopens a custom-source workflow using only injected inference and an in-memory repository', async () => {
+  const { PdfTranslationOwner } = await import('../src/index.js')
+  const h = setup(),
+    store = h.create()
+  const caller = {
+    leaseId: 'external-reader',
+    generation: 1,
+    signal: new AbortController().signal,
+    isCurrent: () => true
+  }
+  const owner = new PdfTranslationOwner({
+    checkpoints: store,
+    usage: { start: async () => async () => {}, recover: async () => {}, flush: async () => {} },
+    captureTarget: async () => ({
+      frameworkId: 'custom-runner',
+      providerId: 'external-provider',
+      model: { kind: 'required' as const, id: 'test-model' },
+      reasoningEffort: 'default' as const
+    }),
+    runner: {
+      supportsTarget: () => true,
+      run: async () => ({ text: 'ATP 增加。', stopReason: 'end_turn' }),
+      shutdown: async () => {},
+      sweepStaleProfiles: async () => {}
+    }
+  })
+  const sourceId = 'archive:customer-42/paper-7'
+  try {
+    const run = await owner.begin({ ...input, sourceId, sources: ['ATP increased.'] }, caller)
+    await expect(
+      owner.translate(
+        { operationId: run.operationId, sourceIndex: 0, source: 'ATP increased.' },
+        caller
+      )
+    ).resolves.toBe('ATP 增加。')
+    const restored = await h.create().read(sourceId)
+    expect(restored).toMatchObject({ sourceId, translations: ['ATP 增加。'] })
+    owner.close(run.operationId, caller)
   } finally {
-    h.db.close()
+    await owner.shutdown()
   }
 })

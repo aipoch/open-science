@@ -1,4 +1,4 @@
-import type { PdfTranslationCheckpoint } from '@aipoch/pdf-translation/contracts'
+import type { PdfTranslationCheckpoint } from '../../../../../../shared/pdf-translation'
 import {
   createPdfTranslationSource,
   getPdfTranslationLayoutSnapshot,
@@ -272,10 +272,10 @@ describe('reader-owned PDF preparation', () => {
     expect(request).toMatchObject({
       extraction: ready,
       document,
-      attachmentVersionId: 'version',
+      sourceId: 'version',
       sourceIdentity
     })
-    await request.readCached({ attachmentVersionId: 'version', page: 1 })
+    await request.readCached({ sourceId: 'version', page: 1 })
     expect(window.api.pdfStructure.readCached).toHaveBeenCalledOnce()
     await act(async () => deferred.resolve(ready))
     await render()

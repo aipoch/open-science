@@ -1,5 +1,10 @@
 import { pdfTranslationMissingNumericUnits } from './numeric-units.js'
-import { isPdfTranslationFailureRetryable, type PdfTranslationCheckpoint } from './contracts.js'
+import {
+  isPdfTranslationFailureRetryable,
+  type PdfTranslationCheckpoint as StoredCheckpoint
+} from './contracts.js'
+
+type PdfTranslationCheckpoint = Omit<StoredCheckpoint, 'sourceId'>
 
 // Reject unmistakable translation-task commentary, without interpreting or removing
 // arbitrary prose. Literal examples already present in the source remain valid.
@@ -1033,11 +1038,11 @@ function trimDetachedNumericTranslation(translation: string, suffix: string): st
 // File checksum and attachment identity are verified by the storage owner before this runs.
 // Reuse proven ordered or unique, byte-for-byte source matches; never guess
 // how to split or merge a translation.
-export function reconcilePdfTranslationCheckpoint(
-  checkpoint: PdfTranslationCheckpoint,
+export function reconcilePdfTranslationCheckpoint<T extends PdfTranslationCheckpoint>(
+  checkpoint: T,
   fingerprint: string,
   sources: readonly string[]
-): PdfTranslationCheckpoint | undefined {
+): T | undefined {
   if (checkpoint.fingerprint !== fingerprint) return undefined
   if (
     checkpoint.layoutSnapshot &&

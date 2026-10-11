@@ -12,10 +12,12 @@ import {
 import { literatureItemInputSchema } from '../src/shared/literature'
 import type {
   PdfTranslationLayoutSnapshot,
-  PdfTranslationCheckpoint,
-  PdfTranslationCheckpointRequest,
   PdfTranslationEdition
 } from '@aipoch/pdf-translation/contracts'
+import type {
+  PdfTranslationCheckpoint,
+  PdfTranslationCheckpointRequest
+} from '../src/shared/pdf-translation'
 import type { PdfTranslationBeginRequest } from '../src/shared/pdf-translation'
 
 import { test } from './fixtures/electron-app'

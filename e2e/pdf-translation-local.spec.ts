@@ -6,7 +6,7 @@ import { PDF_TRANSLATION_MODEL_REVISIONS } from '../src/main/local-models/catalo
 import { createProjectDbClient } from '../src/main/projects/prisma-client'
 import { literatureItemInputSchema } from '../src/shared/literature'
 import type { PdfTranslationBeginRequest } from '../src/shared/pdf-translation'
-import type { PdfTranslationCheckpoint } from '@aipoch/pdf-translation/contracts'
+import type { PdfTranslationCheckpoint } from '../src/shared/pdf-translation'
 import { test } from './fixtures/electron-app'
 
 // Opt-in local ONNX inference. Cached assets enter the normal install staging directory;

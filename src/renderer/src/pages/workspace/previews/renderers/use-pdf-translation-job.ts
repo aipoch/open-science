@@ -10,7 +10,6 @@ import {
 } from '../../../../../../shared/provider-text-generation-failure'
 
 import {
-  type PdfTranslationCheckpoint,
   type PdfTranslationGlossary,
   type PdfTranslationBlockFailure,
   type PdfTranslationLayoutFailure,
@@ -23,12 +22,13 @@ import {
   type PdfTranslationFailure,
   type PdfTranslationModel
 } from '@aipoch/pdf-translation/contracts'
+import { type PdfTranslationCheckpoint } from '../../../../../../shared/pdf-translation'
 import type { PdfTranslationAgentModel } from '../../../../../../shared/pdf-translation'
 
 import { pdfTranslationAgentModelSchema } from '../../../../../../shared/pdf-translation'
 import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 import type { PdfTranslationResults, PdfTranslationSource } from '@aipoch/pdf-translation/reader'
-import type { PdfDocumentSource } from '@aipoch/pdf-document-contract'
+import type { PdfDocumentSource } from '../../../../../../shared/pdf-document-source'
 
 export type PdfTranslationTarget = Readonly<{
   id: string

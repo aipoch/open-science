@@ -22,12 +22,8 @@
       "dependencies": []
     },
     {
-      "root": "packages/pdf-document-contract",
-      "dependencies": []
-    },
-    {
       "root": "packages/pdf-translation",
-      "dependencies": ["packages/pdf-document-contract", "packages/pdf-structure"]
+      "dependencies": ["packages/pdf-structure"]
     }
   ]
 }

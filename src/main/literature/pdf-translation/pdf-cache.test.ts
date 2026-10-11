@@ -15,12 +15,12 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { PdfTranslationPdfCache } from './pdf-cache'
 import { PdfTranslationWriter } from './writer'
 import type { ApplicationCallerLease } from '../../application-command-router'
+import type { PdfTranslationPdfResult } from '@aipoch/pdf-translation/contracts'
 import type {
   PdfTranslationCheckpoint,
   PdfTranslationPdfRequest,
-  PdfTranslationPdfResult,
   PdfTranslationRecordLayoutRequest
-} from '@aipoch/pdf-translation/contracts'
+} from '../../../shared/pdf-translation'
 
 const roots: string[] = []
 afterEach(async () => {

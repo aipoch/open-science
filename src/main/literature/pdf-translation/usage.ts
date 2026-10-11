@@ -1,3 +1,4 @@
+import { fromTranslationSourceId } from '../../../shared/pdf-translation'
 import type { PrismaClient } from '@prisma/client'
 import { PdfTranslationUsageRecorder as Recorder } from '@aipoch/pdf-translation/storage'
 import type { TranslationUsageRepository } from '@aipoch/pdf-translation/storage'
@@ -16,7 +17,15 @@ export class PdfTranslationUsageRecorder extends Recorder {
                 where: { status: 'started' },
                 data: { status: 'interrupted' }
               }),
-            createAttempt: (data) => client.pdfTranslationUsage.create({ data }),
+            createAttempt: ({ sourceId, ...data }) => {
+              const source = sourceId === undefined ? undefined : fromTranslationSourceId(sourceId)
+              return client.pdfTranslationUsage.create({
+                data: {
+                  ...data,
+                  ...(typeof source === 'string' ? { attachmentVersionId: source } : {})
+                }
+              })
+            },
             completeAttempt: (eventId, data) =>
               client.pdfTranslationUsage.updateMany({
                 where: { eventId, status: { in: ['started', 'interrupted'] } },

@@ -3,7 +3,7 @@ import { readPdfTranslationCases } from '../../../../test/fixtures/pdf-translati
 import { describe, expect, it, vi } from 'vitest'
 import { PdfTranslationOwner } from './index'
 import type { PdfTranslationCheckpoints } from './checkpoints'
-import type { PdfTranslationCheckpoint } from '@aipoch/pdf-translation/contracts'
+import type { PdfTranslationCheckpoint } from '../../../shared/pdf-translation'
 import { ApplicationCallerLeaseRegistry } from '../../caller-lifecycle'
 import type { ExplicitAgentBackendTarget } from '../../settings/backend-target'
 import {
@@ -21,6 +21,8 @@ const input = {
   sources: ['ATP increased.']
 }
 const setup = (checkpoints?: PdfTranslationCheckpoints) => {
+  if (checkpoints && !checkpoints.contentKey)
+    checkpoints.contentKey = async (source) => JSON.stringify(source)
   const registry = new ApplicationCallerLeaseRegistry()
   const caller = registry.acquire({ leaseId: 'reader', surface: 'electron' })
   const target: ExplicitAgentBackendTarget = {
@@ -133,6 +135,7 @@ describe('PDF translation owner', () => {
         version: 1,
         key: 'checkpoint',
         revision: 0,
+        attachmentVersionId: 'version',
         sources: input.sources,
         translations: translatedSourceIndices.map(() => 'ATP 增加。'),
         translatedSourceIndices,
@@ -1752,6 +1755,7 @@ describe('bounded short-unit translation prefetch', () => {
       version: 1,
       key: 'checkpoint',
       revision: 0,
+      attachmentVersionId: 'version',
       sources,
       translatedSourceIndices: [],
       translations: []
@@ -1801,6 +1805,7 @@ describe('bounded short-unit translation prefetch', () => {
       version: 1,
       key: 'checkpoint',
       revision: 0,
+      attachmentVersionId: 'version',
       sources,
       translatedSourceIndices: [],
       translations: []
@@ -2406,7 +2411,11 @@ describe('application-owned local translation', () => {
 
 it('fences edition selection against active readers and new admissions for the same content', async () => {
   let finishSelection!: (value: PdfTranslationCheckpoint) => void
-  const checkpoint = { key: 'edition-key', revision: 1 } as PdfTranslationCheckpoint
+  const checkpoint = {
+    key: 'edition-key',
+    revision: 1,
+    attachmentVersionId: 'version-a'
+  } as PdfTranslationCheckpoint
   const storage = {
     contentKey: vi.fn(async () => 'verified-content:42'),
     list: vi.fn(async () => []),
@@ -2491,7 +2500,11 @@ it.each(['verification', 'selection'] as const)(
         await release.promise
         signal.throwIfAborted()
         committed = true
-        return { key: 'edition-key', revision: 1 } as PdfTranslationCheckpoint
+        return {
+          key: 'edition-key',
+          revision: 1,
+          attachmentVersionId: 'version-a'
+        } as PdfTranslationCheckpoint
       })
     }
     const h = setup(storage as unknown as PdfTranslationCheckpoints)

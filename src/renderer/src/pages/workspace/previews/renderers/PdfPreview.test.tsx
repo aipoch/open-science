@@ -30,14 +30,12 @@ import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import { createPreviewResourceKey } from '../preview-resource-key'
 import { createPdfTranslationSource } from '@aipoch/pdf-translation/reader'
 import * as pdfTranslations from '@aipoch/pdf-translation/reader'
-import {
-  PdfGenerationError,
-  type PdfTranslationCheckpoint
-} from '@aipoch/pdf-translation/contracts'
+import { PdfGenerationError } from '@aipoch/pdf-translation/contracts'
+import { type PdfTranslationCheckpoint } from '../../../../../../shared/pdf-translation'
 
 import { renderPdfNativeLinks } from './pdf-native-links'
 import * as translationJobs from './use-pdf-translation-job'
-import type { PdfDocumentSource } from '@aipoch/pdf-document-contract'
+import type { PdfDocumentSource } from '../../../../../../shared/pdf-document-source'
 
 // Keep the real reader behavior while allowing the layout-admission spy below.
 vi.mock('@aipoch/pdf-translation/reader', async (importOriginal) => ({

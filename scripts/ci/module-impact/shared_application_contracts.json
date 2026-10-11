@@ -179,7 +179,8 @@
     "src/shared/provider-text-generation-failure.test.ts",
     "src/shared/pdf-translation-models.ts",
     "src/shared/pdf-translation-models.test.ts",
-    "src/shared/pdf-text.test.ts"
+    "src/shared/pdf-text.test.ts",
+    "src/shared/pdf-translation.test.ts"
   ],
   "interfacePaths": [
     "src/shared/interface-scale.ts",
@@ -318,7 +319,8 @@
       "src/shared/renderer-contracts/definition.test.ts",
       "src/shared/provider-text-generation-failure.test.ts",
       "src/shared/pdf-translation-models.test.ts",
-      "src/shared/pdf-text.test.ts"
+      "src/shared/pdf-text.test.ts",
+      "src/shared/pdf-translation.test.ts"
     ],
     "contract": [],
     "consumer": [

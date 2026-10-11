@@ -1,3 +1,4 @@
+import { toTranslationSourceId } from '../../../shared/pdf-translation'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -19,7 +20,7 @@ let db: ReturnType<typeof createProjectDbClient>
 let recorder: PdfTranslationUsageRecorder
 const context = {
   runId: 'translation',
-  attachmentVersionId: 'version',
+  sourceId: toTranslationSourceId('version'),
   sourceIndex: 2,
   providerId: 'provider',
   frameworkId: 'direct-api',

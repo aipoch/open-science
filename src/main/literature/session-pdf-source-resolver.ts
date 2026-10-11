@@ -1,7 +1,7 @@
 import type { SessionPdfSourceKind } from '../../shared/session-persistence'
 import { createArtifactVersionLocator } from '../../shared/artifact-provenance'
 import { createUploadVersionReference } from '../../shared/uploads'
-import { sanitizePdfDocumentSource, type PdfDocumentSource } from '@aipoch/pdf-document-contract'
+import { sanitizePdfDocumentSource, type PdfDocumentSource } from '../../shared/pdf-document-source'
 import type {
   ImmutableInputAuthority,
   ImmutableInputContentLease

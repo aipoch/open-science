@@ -1,6 +1,5 @@
 import {
   pdfTranslationBlockFailureSchema,
-  type PdfTranslationCheckpointRequest,
   type PdfTranslationLayoutFailure,
   type PdfTranslationBlockFailure
 } from '../contracts.js'
@@ -49,9 +48,9 @@ type PdfTranslationSourceData = Readonly<{
 export type PdfTranslationSource = PdfTranslationSourceData & {
   readonly [sourceSnapshot]: true
 }
-export type PdfTranslationResults = Readonly<{
+export type PdfTranslationResults<Source = unknown> = Readonly<{
   source: PdfTranslationSource
-  checkpoint?: Readonly<{ key: string; source: PdfTranslationCheckpointRequest }>
+  checkpoint?: Readonly<{ key: string; source: Source }>
   /** Rejected blocks remain original text, separate from accepted translations. */
   failedUnitIds?: readonly string[]
   failures?: Readonly<Record<string, PdfTranslationBlockFailure>>

@@ -1,4 +1,4 @@
-import type { PdfTranslationCheckpoint } from '@aipoch/pdf-translation/contracts'
+import type { PdfTranslationCheckpoint } from '../../../../../../shared/pdf-translation'
 import {
   getPdfTranslationLayoutSnapshot,
   rememberPdfTranslationExtraction,
@@ -105,10 +105,11 @@ export function usePdfTranslationPreparation(
             ? await applyCachedPdfTableSources({
                 extraction,
                 document,
-                attachmentVersionId,
+                sourceId: attachmentVersionId,
                 sourceIdentity,
                 signal: controller.signal,
-                readCached: (request) => window.api.pdfStructure.readCached(request)
+                readCached: ({ sourceId, page }) =>
+                  window.api.pdfStructure.readCached({ attachmentVersionId: sourceId, page })
               })
             : extraction
         controller.signal.throwIfAborted()

@@ -96,7 +96,10 @@ import {
   type PdfAnnotation
 } from '../../../../../../shared/annotations'
 import { parseLiteratureAttachmentVersionReference } from '../../../../../../shared/literature'
-import { sanitizePdfDocumentSource, type PdfDocumentSource } from '@aipoch/pdf-document-contract'
+import {
+  sanitizePdfDocumentSource,
+  type PdfDocumentSource
+} from '../../../../../../shared/pdf-document-source'
 import { joinPdfTextItems } from '../../../../../../shared/pdf-text'
 
 import { PreviewErrorCard, PreviewLoadingContent } from '../PreviewFallback'

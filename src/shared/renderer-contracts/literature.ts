@@ -1,18 +1,20 @@
 import type { PdfAddToLiteratureRequest } from '../pdf-annotations'
 import type {
-  PdfTranslationCheckpoint,
-  PdfTranslationCheckpointRequest,
   PdfTranslationEdition,
-  PdfTranslationSelectEditionRequest,
-  PdfTranslationPdfRequest,
   PdfTranslationPdfResult,
-  PdfTranslationSaveSnapshotRequest,
-  PdfTranslationRecordLayoutRequest,
   PdfTranslationBeginResult,
   PdfTranslationRunRequest,
   PdfTranslationRunResult,
   PdfTranslationOperationRequest
 } from '@aipoch/pdf-translation/contracts'
+import type {
+  PdfTranslationCheckpoint,
+  PdfTranslationCheckpointRequest,
+  PdfTranslationSelectEditionRequest,
+  PdfTranslationPdfRequest,
+  PdfTranslationSaveSnapshotRequest,
+  PdfTranslationRecordLayoutRequest
+} from '../pdf-translation'
 import type { PdfTranslationBeginRequest } from '../pdf-translation'
 
 import type { JournalRequest, JournalResult } from '../journal-attributes'

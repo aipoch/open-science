@@ -1,3 +1,4 @@
+import { pdfTranslationCheckpointRequestSchema } from '../../../../../../shared/pdf-translation'
 import {
   verifiedPdfLatinAccentText,
   pdfTranslationLayoutFragments,
@@ -20,9 +21,9 @@ import { pdfjsLib } from '../pdfjs'
 import {
   pdfGenerationFailure,
   type PdfGenerationFailure,
-  type PdfTranslationLayoutFailure,
-  type PdfTranslationRecordLayoutRequest
+  type PdfTranslationLayoutFailure
 } from '@aipoch/pdf-translation/contracts'
+import { type PdfTranslationRecordLayoutRequest } from '../../../../../../shared/pdf-translation'
 
 /** A generated file belongs to exactly one accepted result snapshot, never a filename alone. */
 export type PdfTranslationArtifact = Readonly<{ results: PdfTranslationResults; data: Uint8Array }>
@@ -1036,7 +1037,7 @@ export function usePdfTranslationDocument(
     const cache =
       complete && runResults.checkpoint
         ? {
-            source: runResults.checkpoint.source,
+            source: pdfTranslationCheckpointRequestSchema.parse(runResults.checkpoint.source),
             checkpointKey: runResults.checkpoint.key,
             ...(bypassCache ? { bypass: true } : {})
           }
@@ -1059,7 +1060,7 @@ export function usePdfTranslationDocument(
       if (runResults.checkpoint && api?.recordLayout) {
         void api
           .recordLayout({
-            source: runResults.checkpoint.source,
+            source: pdfTranslationCheckpointRequestSchema.parse(runResults.checkpoint.source),
             checkpointKey: runResults.checkpoint.key,
             generatedAt,
             units: entries,

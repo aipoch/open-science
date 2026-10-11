@@ -2,15 +2,17 @@ import { pdfTranslationResourceDirectory } from '@aipoch/pdf-translation/resourc
 import { join } from 'node:path'
 import {
   PdfTranslationError,
-  type PdfTranslationCheckpointRequest,
   type PdfTranslationOperationRequest,
+  type PdfTranslationRunRequest,
+  type PdfTranslationRunResult
+} from '@aipoch/pdf-translation/contracts'
+import {
+  type PdfTranslationCheckpointRequest,
   type PdfTranslationPdfRequest,
   type PdfTranslationRecordLayoutRequest,
-  type PdfTranslationRunRequest,
-  type PdfTranslationRunResult,
   type PdfTranslationSaveSnapshotRequest,
   type PdfTranslationSelectEditionRequest
-} from '@aipoch/pdf-translation/contracts'
+} from '../../../shared/pdf-translation'
 import { type PdfTranslationBeginRequest } from '../../../shared/pdf-translation'
 import {
   defineApplicationCommand,

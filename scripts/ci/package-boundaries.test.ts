@@ -136,3 +136,51 @@ it('host consumers use only public package names and exported subpaths', () => {
   expect(violations).toEqual([])
   // Match the consumer-coverage guard's allowance for a repository-wide scan under CI load.
 }, 60_000)
+
+it('host PDF modules never register upstream PDF package implementation tests', async () => {
+  const { loadModuleImpactManifest } = await import('./load-module-impact.mjs')
+  const { modules } = loadModuleImpactManifest()
+  const violations: string[] = []
+  for (const [id, module] of Object.entries(modules) as [
+    string,
+    { ownerPaths: string[]; testFiles: Record<string, string[]> }
+  ][]) {
+    if (module.ownerPaths.some((path) => path.startsWith('packages/pdf-'))) continue
+    for (const test of Object.values(module.testFiles).flat())
+      if (/^packages\/pdf-(translation|structure)\//.test(test)) violations.push(`${id} -> ${test}`)
+  }
+  expect(violations).toEqual([])
+})
+
+it('PDF workflow sources contain no application source taxonomy or database adapter', () => {
+  const sources = files('packages/pdf-translation/src').filter((path) => path.endsWith('.ts'))
+  for (const file of sources) {
+    const source = readFileSync(file, 'utf8')
+    expect(source, file).not.toMatch(
+      /@prisma\/|\$queryRaw|\$executeRaw|attachmentVersionId|literature-attachment-version|upload-version|artifact-version|\bprojectId\b|\bsessionId\b/
+    )
+  }
+})
+
+it('local module and affected plans obey the same downstream package direction as Ubuntu', async () => {
+  const { createModuleTestPlan, createAffectedTestPlan } = await import('./module-test-impact.mjs')
+  for (const id of ['main_pdf_translation', 'workspace_previews'])
+    expect(
+      createModuleTestPlan(id).testFiles.filter((path) => path.startsWith('packages/'))
+    ).toEqual([])
+  for (const path of [
+    'src/main/literature/pdf-translation/index.ts',
+    'src/renderer/src/pages/workspace/previews/renderers/PdfPreview.tsx'
+  ]) {
+    const plan = createAffectedTestPlan([{ path, status: 'modified' }], {
+      status: 'unavailable',
+      testFiles: ['packages/pdf-translation/test/checkpoints.test.ts']
+    })
+    expect(plan.mode).toBe('selective')
+    expect(plan.testFiles.filter((path) => path.startsWith('packages/'))).toEqual([])
+    expect(plan.testFiles.some((path) => path.startsWith('src/'))).toBe(true)
+  }
+  const plan = createModuleTestPlan('package_pdf_translation')
+  expect(plan.testFiles.some((path) => path.startsWith('packages/pdf-translation/'))).toBe(true)
+  expect(plan.testFiles.some((path) => path.startsWith('packages/pdf-structure/'))).toBe(false)
+})

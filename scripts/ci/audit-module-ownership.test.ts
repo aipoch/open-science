@@ -11,6 +11,7 @@ import {
   modulesForPath
 } from './module-test-impact.mjs'
 import { isModuleOwnershipPath } from './module-ownership-paths.mjs'
+import { createPackageTestPlan } from './package-test-impact.mjs'
 import { classifyChanges } from './classify-pr-changes.mjs'
 
 const manifest = loadModuleImpactManifest(resolve('scripts/ci/module-impact.json'))
@@ -23,6 +24,7 @@ const files = [
       .filter((path) => Boolean(path) && existsSync(path))
   )
 ]
+const packageRegistry = JSON.parse(readFileSync('scripts/ci/package-test-boundaries.json', 'utf8'))
 const graph = { status: 'unavailable-manifest-only', testFiles: [] }
 
 describe('complete module ownership', () => {
@@ -34,12 +36,12 @@ describe('complete module ownership', () => {
       [{ path: 'test/fixtures/pdf-translation/new-case.jsonl', status: 'added' }],
       graph
     )
+    const fixtureNames = new Set(fixtures.map((path) => basename(path)))
     const readers = files.filter((path) => {
       if (!/\.(test|spec)\.[cm]?[jt]sx?$/.test(path) || path.startsWith('scripts/ci/')) return false
       const source = readFileSync(path, 'utf8')
-      return fixtures.some(
-        (fixture) =>
-          source.includes(`'${basename(fixture)}'`) || source.includes(`"${basename(fixture)}"`)
+      return [...source.matchAll(/['"]([^'"\r\n]+\.jsonl)['"]/g)].some(([, name]) =>
+        fixtureNames.has(name)
       )
     })
     expect(readers.length).toBeGreaterThan(20)
@@ -74,7 +76,16 @@ describe('complete module ownership', () => {
       if (!module.fullTestReason) {
         expect(plan.modules).toContain(id)
         expect(plan.testFiles).toEqual(
-          expect.arrayContaining(Object.values(module.testFiles).flat())
+          expect.arrayContaining(
+            Object.values(module.testFiles)
+              .flat()
+              .filter(
+                (test) =>
+                  !createPackageTestPlan([path], packageRegistry).excluded.some((root) =>
+                    test.startsWith(root + '/')
+                  )
+              )
+          )
         )
       }
     }

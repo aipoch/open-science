@@ -11,7 +11,7 @@ import {
   type PdfBookmarkDocumentNoteSelector,
   type PdfMarkKind
 } from './pdf-bookmarks'
-import { sanitizePdfDocumentSource, type PdfDocumentSource } from '@aipoch/pdf-document-contract'
+import { sanitizePdfDocumentSource, type PdfDocumentSource } from './pdf-document-source'
 
 export type PdfAnnotationKind = PdfMarkKind | 'page-note' | 'document-note'
 export const PDF_ANNOTATION_ORIGINS = ['user', 'imported'] as const

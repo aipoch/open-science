@@ -27,14 +27,29 @@ type PackageOptions = PdfTranslationOptions<
   ExplicitAgentBackendTarget & { providerName?: string },
   ProviderTextGenerationTarget & { providerName?: string }
 >
-type Options = Omit<PackageOptions, 'captureTarget'> & {
-  captureTarget: (model?: PdfTranslationAgentModel) => ReturnType<PackageOptions['captureTarget']>
-}
-export class PdfTranslationOwner extends Owner<
+import { adaptCheckpointStore, type HostCheckpointStore } from './checkpoint-adapter'
+import {
+  toPackageBegin,
+  toTranslationSourceId,
+  fromPackageCheckpoint,
+  translationSourceReservationKey,
+  type PdfTranslationCheckpointRequest,
+  type PdfTranslationSelectEditionRequest,
+  type PdfTranslationSaveSnapshotRequest,
+  type PdfTranslationRecordLayoutRequest,
+  type PdfTranslationCheckpoint
+} from '../../../shared/pdf-translation'
+type Workflow = Owner<
   ExplicitAgentBackendTarget & { providerName?: string },
   ProviderTextGenerationTarget & { providerName?: string }
-> {
-  override async begin(
+>
+type Options = Omit<PackageOptions, 'captureTarget' | 'checkpoints'> & {
+  checkpoints?: HostCheckpointStore
+  captureTarget: (model?: PdfTranslationAgentModel) => ReturnType<PackageOptions['captureTarget']>
+}
+export class PdfTranslationOwner {
+  private readonly workflow: Workflow
+  async begin(
     input: PdfTranslationBeginRequest,
     caller: TranslationCallerLease
   ): Promise<PdfTranslationBeginResult> {
@@ -44,17 +59,16 @@ export class PdfTranslationOwner extends Owner<
       !pdfTranslationAgentModelSchema.safeParse(input.agentModel).success
     )
       throw new Error('Invalid PDF translation source.')
-    return super.begin(input, caller)
+    return this.workflow.begin(toPackageBegin(input), caller)
   }
 
   constructor(options: Options) {
-    super({
+    this.workflow = new Owner({
+      sourceKey: translationSourceReservationKey,
       get usage() {
         return options.usage
       },
-      get checkpoints() {
-        return options.checkpoints
-      },
+      checkpoints: options.checkpoints ? adaptCheckpointStore(options.checkpoints) : undefined,
       captureTarget: (model) =>
         options.captureTarget(
           model === undefined ? undefined : pdfTranslationAgentModelSchema.parse(model)
@@ -88,5 +102,73 @@ export class PdfTranslationOwner extends Owner<
       isApiTargetAllowed: (target: ProviderTextGenerationTarget) =>
         isPdfTranslationApiProvider(target.provider)
     })
+  }
+
+  translate(...args: Parameters<Workflow['translate']>): ReturnType<Workflow['translate']> {
+    return this.workflow.translate(...args)
+  }
+  skip(...args: Parameters<Workflow['skip']>): ReturnType<Workflow['skip']> {
+    return this.workflow.skip(...args)
+  }
+  close(...args: Parameters<Workflow['close']>): ReturnType<Workflow['close']> {
+    return this.workflow.close(...args)
+  }
+  sweepStaleProfiles(): Promise<void> {
+    return this.workflow.sweepStaleProfiles()
+  }
+  shutdown(): Promise<void> {
+    return this.workflow.shutdown()
+  }
+  saveSnapshot(
+    request: PdfTranslationSaveSnapshotRequest,
+    caller: TranslationCallerLease
+  ): Promise<void> {
+    return this.workflow.saveSnapshot(
+      { ...request, source: toTranslationSourceId(request.source) },
+      caller
+    )
+  }
+  recordLayout(
+    request: PdfTranslationRecordLayoutRequest,
+    caller: TranslationCallerLease
+  ): Promise<void> {
+    return this.workflow.recordLayout(
+      { ...request, source: toTranslationSourceId(request.source) },
+      caller
+    )
+  }
+  async readCheckpoint(
+    source: PdfTranslationCheckpointRequest,
+    caller: TranslationCallerLease,
+    key?: string
+  ): Promise<PdfTranslationCheckpoint | null> {
+    const result = await this.workflow.readCheckpoint(toTranslationSourceId(source), caller, key)
+    return result ? fromPackageCheckpoint(result) : null
+  }
+  listEditions(
+    source: PdfTranslationCheckpointRequest,
+    caller: TranslationCallerLease
+  ): ReturnType<Workflow['listEditions']> {
+    return this.workflow.listEditions(toTranslationSourceId(source), caller)
+  }
+  async selectEdition(
+    request: PdfTranslationSelectEditionRequest,
+    caller: TranslationCallerLease
+  ): Promise<PdfTranslationCheckpoint> {
+    return fromPackageCheckpoint(
+      await this.workflow.selectEdition(
+        { ...request, source: toTranslationSourceId(request.source) },
+        caller
+      )
+    )
+  }
+  deleteEdition(
+    request: PdfTranslationSelectEditionRequest,
+    caller: TranslationCallerLease
+  ): Promise<void> {
+    return this.workflow.deleteEdition(
+      { ...request, source: toTranslationSourceId(request.source) },
+      caller
+    )
   }
 }

@@ -289,6 +289,7 @@ describe('PR Gate workflow', () => {
           'module-impact.json',
           'load-module-impact.mjs',
           'package-test-impact.mjs',
+          'package-test-boundaries.json',
           'validate-module-impact.mjs',
           'classify-pr-changes.mjs',
           'change-impact.json'

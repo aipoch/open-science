@@ -65,18 +65,18 @@ function nativeRect(
 export async function applyCachedPdfTableSources({
   extraction,
   document,
-  attachmentVersionId,
+  sourceId,
   sourceIdentity,
   signal,
   readCached
 }: {
   extraction: PdfTranslationExtraction
   document: Document
-  attachmentVersionId: string
+  sourceId: string
   sourceIdentity: PdfTranslationSourceIdentity
   signal: AbortSignal
   readCached: (
-    request: Readonly<{ attachmentVersionId: string; page: number }>
+    request: Readonly<{ sourceId: string; page: number }>
   ) => Promise<PdfStructureResult | undefined>
 }): Promise<PdfTranslationExtraction> {
   signal.throwIfAborted()
@@ -106,7 +106,7 @@ export async function applyCachedPdfTableSources({
       elements = 0
     for (let page = 1; page <= document.numPages; page++) {
       current()
-      const cached = await readCached({ attachmentVersionId, page })
+      const cached = await readCached({ sourceId, page })
       current()
       if (!cached) continue
       // Schema decoding copies the response before any further await. Identity comes from the lease.

@@ -42,7 +42,7 @@ async function setup() {
     version: 1,
     key: randomUUID(),
     revision: 2,
-    attachmentVersionId: 'source',
+    sourceId: 'source',
     checksum: createHash('sha256').update(data).digest('hex'),
     fingerprint: 'fp',
     language: 'Chinese',

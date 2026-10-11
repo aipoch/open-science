@@ -42,8 +42,10 @@ import {
   type PdfGenerationFailure,
   pdfTranslationLayoutFailureSchema,
   type PdfTranslationPdfResult,
-  type PdfTranslationPdfRequest
+  type PdfTranslationPdfRequest as CachedPdfRequest
 } from './contracts.js'
+
+type PdfTranslationPdfRequest = Omit<CachedPdfRequest, 'cache'>
 
 // One bounded worker per request. Input/output are memory-only; no cache or source-file writes.
 export class PdfTranslationWriter {

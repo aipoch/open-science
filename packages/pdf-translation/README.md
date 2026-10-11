@@ -36,11 +36,12 @@ source authorization, application paths and storage connections. Model/account/A
 credential access, global usage aggregation, process supervision and application shutdown stay
 in the host. Do not place domain decisions in these adapters.
 
-The storage implementation owns translation checkpoint and usage rules. Authorization and
-PDF document registration execute in the **same host database transaction** as checkpoint writes.
-It never creates a separate database or migrates the application's schema. The shared
-`@aipoch/pdf-document-contract` defines PDF source identity; structural results come through
-`@aipoch/pdf-structure/result`. Both are declared dependencies, without host source imports.
+The storage implementation owns translation checkpoint and usage rules. Callers supply opaque
+source IDs, source authorization and a transactional repository. Its transaction includes source
+validation/registration and checkpoint writes; compare-and-swap conflicts and cancellation roll
+back all mutations. The package contains no SQL, application table names or source taxonomy.
+The host adapter translates existing database payloads and source contracts without a migration.
+Structural results come through the declared `@aipoch/pdf-structure/result` dependency.
 
 ## Build and verification
 

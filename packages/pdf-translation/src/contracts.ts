@@ -4,26 +4,10 @@ import {
   type PdfTranslationLayoutSnapshot
 } from './snapshot.js'
 import { z } from 'zod'
-import { sanitizePdfDocumentSource, type PdfDocumentSource } from '@aipoch/pdf-document-contract'
-
-// Use the same immutable PDF identity as Notes & Annotations. Paths are display hints,
-// never authority to read bytes; main resolves and verifies the referenced version.
-export const pdfTranslationDocumentSourceSchema = z.custom<PdfDocumentSource>(
-  (value) => sanitizePdfDocumentSource(value) !== undefined
-)
-export type PdfTranslationCheckpointRequest = string | PdfDocumentSource
-
-export function pdfTranslationSourceKey(source: PdfTranslationCheckpointRequest): string {
-  return typeof source === 'string'
-    ? JSON.stringify(['literature-attachment-version', source])
-    : JSON.stringify([
-        source.kind,
-        source.projectId ?? null,
-        source.sourceFileId,
-        source.versionId,
-        source.checksum
-      ])
-}
+/** Opaque, stable source ID supplied and authorized by the caller. */
+export const pdfTranslationSourceSchema = z.string().min(1).max(65536)
+export type PdfTranslationCheckpointRequest = string
+export const pdfTranslationSourceKey = (source: PdfTranslationCheckpointRequest): string => source
 
 export type PdfTranslationApiModel = Readonly<{ providerId: string; modelId: string }>
 export const pdfTranslationAgentModelSchema = z
@@ -82,8 +66,7 @@ export type PdfTranslationBeginRequest = Readonly<{
   layoutSnapshot?: PdfTranslationLayoutSnapshot
   sourceLocations?: readonly Readonly<{ pageNumbers: readonly number[]; fragmentCount: number }>[]
   expectedTargetKey?: string
-  attachmentVersionId?: string
-  documentSource?: PdfDocumentSource
+  sourceId?: string
   checkpoint?: PdfTranslationCheckpointReference
 }>
 export type PdfTranslationRunRequest = Readonly<{
@@ -131,7 +114,7 @@ export type PdfTranslationEdition = Readonly<{
 }>
 export const pdfTranslationSelectEditionSchema = z
   .object({
-    source: z.union([z.string().min(1).max(256), pdfTranslationDocumentSourceSchema]),
+    source: pdfTranslationSourceSchema,
     translationId: z.string().min(1).max(256)
   })
   .strict()
@@ -316,7 +299,7 @@ export const pdfTranslationLayoutReportSchema = z
 export const pdfTranslationRecordLayoutSchema = z
   .object({
     pdfCacheToken: z.string().uuid().optional(),
-    source: z.union([z.string().min(1).max(256), pdfTranslationDocumentSourceSchema]),
+    source: pdfTranslationSourceSchema,
     checkpointKey: z.string().uuid(),
     generatedAt: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
     units: z
@@ -342,7 +325,7 @@ export type PdfTranslationRecordLayoutRequest = z.infer<typeof pdfTranslationRec
 
 export const pdfTranslationSaveSnapshotSchema = z
   .object({
-    source: z.union([z.string().min(1).max(256), pdfTranslationDocumentSourceSchema]),
+    source: pdfTranslationSourceSchema,
     checkpointKey: z.string().uuid(),
     snapshot: pdfTranslationLayoutSnapshotSchema
   })
@@ -355,8 +338,7 @@ export const pdfTranslationCheckpointSchema = z
     version: z.literal(1),
     key: z.string().uuid(),
     revision: z.number().int().nonnegative(),
-    attachmentVersionId: z.string().min(1).max(256).optional(),
-    documentSource: pdfTranslationDocumentSourceSchema.optional(),
+    sourceId: pdfTranslationSourceSchema,
     checksum: z.string().regex(/^[a-f0-9]{64}$/),
     fingerprint: z.string().min(1).max(256),
     language: z.string().trim().min(1).max(80),
@@ -388,15 +370,6 @@ export const pdfTranslationCheckpointSchema = z
       .optional()
   })
   .strict()
-  .refine(
-    (value) =>
-      value.documentSource
-        ? value.attachmentVersionId === undefined &&
-          value.documentSource.kind !== 'literature-attachment-version' &&
-          value.documentSource.checksum === value.checksum
-        : value.attachmentVersionId !== undefined,
-    { message: 'Translation checkpoint must belong to one immutable PDF source.' }
-  )
   .refine(
     (value) =>
       (!value.layoutSnapshot ||
@@ -431,13 +404,5 @@ export function pdfTranslationCheckpointMatchesSource(
   checkpoint: PdfTranslationCheckpoint,
   source: PdfTranslationCheckpointRequest
 ): boolean {
-  if (typeof source === 'string') return checkpoint.attachmentVersionId === source
-  if (source.kind === 'literature-attachment-version')
-    return (
-      checkpoint.attachmentVersionId === source.versionId && checkpoint.checksum === source.checksum
-    )
-  return Boolean(
-    checkpoint.documentSource &&
-    pdfTranslationSourceKey(checkpoint.documentSource) === pdfTranslationSourceKey(source)
-  )
+  return checkpoint.sourceId === source
 }

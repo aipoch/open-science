@@ -114,7 +114,7 @@ function setup() {
   const context = {
     extraction,
     document: document as unknown as PDFDocumentProxy,
-    attachmentVersionId: 'version',
+    sourceId: 'version',
     sourceIdentity,
     signal: controller.signal,
     readCached
@@ -136,7 +136,7 @@ describe('cached PDF table source ownership', () => {
     ])
     expect(result.source.units[0]).toEqual(f.extraction.source.units[1])
     expect(Object.isFrozen(result.source.units[1])).toBe(true)
-    expect(f.readCached).toHaveBeenCalledWith({ attachmentVersionId: 'version', page: 1 })
+    expect(f.readCached).toHaveBeenCalledWith({ sourceId: 'version', page: 1 })
     expect(f.document.getPage).toHaveBeenCalledTimes(1)
     expect(f.page.getTextContent).toHaveBeenCalledTimes(1)
     const cell = result.source.units[1],

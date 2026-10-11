@@ -23,12 +23,11 @@ import {
   concatTransformationMatrix,
   drawObject
 } from 'pdf-lib'
+import { PdfGenerationError, type PdfTranslationPdfResult } from '@aipoch/pdf-translation/contracts'
 import {
-  PdfGenerationError,
   type PdfTranslationPdfRequest,
-  type PdfTranslationPdfResult,
   type PdfTranslationRecordLayoutRequest
-} from '@aipoch/pdf-translation/contracts'
+} from '../../../../../../shared/pdf-translation'
 const { getDocument, operators } = vi.hoisted(() => ({ getDocument: vi.fn(), operators: {} }))
 vi.mock('../pdfjs', () => ({ pdfjsLib: { getDocument, OPS: operators } }))
 afterEach(() => {

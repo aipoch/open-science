@@ -48,12 +48,7 @@ export function assertBackendImports(metafiles, dependencies) {
 export function backendDependencyIncludes(manifest, relativePath) {
   const top = relativePath.split(/[\\/]/)[0]
   if (!isShippableDependencyPath(relativePath)) return false
-  if (
-    !['@aipoch/pdf-structure', '@aipoch/pdf-translation', '@aipoch/pdf-document-contract'].includes(
-      manifest.name
-    ) ||
-    !top
-  )
+  if (!['@aipoch/pdf-structure', '@aipoch/pdf-translation'].includes(manifest.name) || !top)
     return true
   if (
     !Array.isArray(manifest.files) ||

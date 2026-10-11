@@ -58,7 +58,7 @@ export type TranslationApiRunner<Target extends TranslationApiTarget> = {
 }
 export type TranslationUsageContext = {
   runId: string
-  attachmentVersionId?: string
+  sourceId?: string
   sourceIndex: number
   providerId: string
   frameworkId: string

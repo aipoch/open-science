@@ -8,9 +8,9 @@ import { literatureItemInputSchema } from '../src/shared/literature'
 import type { PdfTranslationBeginRequest } from '../src/shared/pdf-translation'
 import type {
   PdfTranslationBeginResult,
-  PdfTranslationCheckpoint,
   PdfTranslationRunResult
 } from '@aipoch/pdf-translation/contracts'
+import type { PdfTranslationCheckpoint } from '../src/shared/pdf-translation'
 import { test } from './fixtures/electron-app'
 
 // Real built main/preload/IPC/SQLite with a deterministic local provider. These tests

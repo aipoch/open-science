@@ -19,11 +19,11 @@ import {
   nextPdfTranslationSourceIndex,
   pdfTranslationSourceIndices
 } from '@aipoch/pdf-translation/text'
+import { type PdfTranslationRunRequest } from '@aipoch/pdf-translation/contracts'
 import {
   pdfTranslationCheckpointSchema,
-  type PdfTranslationCheckpoint,
-  type PdfTranslationRunRequest
-} from '@aipoch/pdf-translation/contracts'
+  type PdfTranslationCheckpoint
+} from '../../../shared/pdf-translation'
 
 let root: string
 let client: PrismaClient
@@ -1239,7 +1239,7 @@ it('saves concurrent out-of-order paragraphs with sequential CAS writes and rest
 
 async function setupWorkspace(kind: 'upload-version' | 'artifact-version'): Promise<{
   store: PdfTranslationCheckpoints
-  source: import('@aipoch/pdf-document-contract').PdfDocumentSource
+  source: import('../../../shared/pdf-document-source').PdfDocumentSource
 }> {
   await setup()
   await client.project.createMany({

@@ -49,12 +49,10 @@
     "prepack": "npm run build"
   },
   "dependencies": {
-    "@aipoch/pdf-document-contract": "0.1.0",
     "zod": "^4.6.5",
     "pdf-lib": "1.17.1",
     "fontkit": "2.0.4",
     "@embedpdf/pdfium": "2.15.1",
-    "@prisma/client": "^6.19.3",
     "pdfjs-dist": "5.4.624",
     "@aipoch/pdf-structure": "0.1.0"
   },

@@ -8,7 +8,7 @@ import {
 
 type AttemptContext = {
   runId: string
-  attachmentVersionId?: string
+  sourceId?: string
   sourceIndex: number
   providerId: string
   frameworkId: string

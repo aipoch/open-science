@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 
 import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -13,10 +13,27 @@ import {
 } from './classify-pr-changes.mjs'
 import { loadModuleImpactManifest } from './load-module-impact.mjs'
 import { validateModuleImpactManifest } from './validate-module-impact.mjs'
-import { packageTestSelectedRoots } from './package-test-impact.mjs'
+import { packageTestSelectedRoots, createPackageTestPlan } from './package-test-impact.mjs'
 import { resolveModuleImpactInputs } from './module-impact-inputs.mjs'
 
 const defaultManifest = loadModuleImpactManifest()
+const packageRegistryPath = new URL('./package-test-boundaries.json', import.meta.url)
+// Older trusted extraction bundles have no registry: retain all tests rather than guess.
+const packageRegistry = existsSync(packageRegistryPath)
+  ? JSON.parse(readFileSync(packageRegistryPath, 'utf8'))
+  : undefined
+function applyPackageBoundary(plan, paths) {
+  if (!packageRegistry) return plan
+  const packages = createPackageTestPlan(paths, packageRegistry)
+  const omitted = plan.testFiles.filter((path) =>
+    packages.excluded.some((root) => path.startsWith(root + '/'))
+  )
+  if (omitted.length) {
+    plan.testFiles = plan.testFiles.filter((path) => !omitted.includes(path))
+    plan.reasonChains = sorted([...plan.reasonChains, ...packages.reasons])
+  }
+  return plan
+}
 const testKinds = ['owner', 'contract', 'consumer']
 
 function sorted(values) {
@@ -97,10 +114,14 @@ export function createModuleTestPlan(moduleId, manifest = defaultManifest) {
   if (manifest.modules[moduleId].fullTestReason) {
     return fullPlan(`${moduleId} -> ${manifest.modules[moduleId].fullTestReason} -> full`)
   }
-  return selectivePlan(manifest, [moduleId], [`module ${moduleId} -> declared tests`], {
+  const plan = selectivePlan(manifest, [moduleId], [`module ${moduleId} -> declared tests`], {
     status: 'not-requested',
     testFiles: []
   })
+  return applyPackageBoundary(
+    plan,
+    manifest.modules[moduleId].ownerPaths.filter((path) => path.startsWith('packages/'))
+  )
 }
 
 export function createAffectedTestPlan(
@@ -210,7 +231,10 @@ export function createAffectedTestPlan(
     ...directTests,
     ...graph.testFiles
   ])
-  return plan
+  return applyPackageBoundary(
+    plan,
+    changes.flatMap((change) => [change.path, change.previousPath].filter(Boolean))
+  )
 }
 
 function isCurrentGraph(status) {

@@ -14,6 +14,8 @@ const input = {
 }
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type -- Preserve mock method inference in the test fixture.
 const setup = (checkpoints?: PdfTranslationCheckpoints) => {
+  if (checkpoints && !checkpoints.contentKey)
+    checkpoints.contentKey = async (source) => JSON.stringify(source)
   const registry = new ApplicationCallerLeaseRegistry()
   const first = registry.acquire({ leaseId: 'first', surface: 'electron' })
   const second = registry.acquire({ leaseId: 'second', surface: 'electron' })
@@ -32,7 +34,11 @@ const setup = (checkpoints?: PdfTranslationCheckpoints) => {
       sweepStaleProfiles: async () => {}
     },
     checkpoints:
-      checkpoints ?? ({ open: async () => undefined } as unknown as PdfTranslationCheckpoints),
+      checkpoints ??
+      ({
+        contentKey: async (source: unknown) => JSON.stringify(source),
+        open: async () => undefined
+      } as unknown as PdfTranslationCheckpoints),
     usage: { start: async () => async () => {}, recover: async () => {}, flush: async () => {} }
   })
   return { owner, captureTarget, first, second }

@@ -88,8 +88,8 @@
     "prebuild:web": "npm run build:diagnostics && npm run build:pdf-packages",
     "pretypecheck:web": "npm run build:diagnostics && npm run build:pdf-packages",
     "build:pdf-structure": "npm --prefix packages/pdf-structure run build",
-    "build:pdf-packages": "npm --prefix packages/pdf-document-contract run build && npm --prefix packages/pdf-structure run build && npm --prefix packages/pdf-translation run build",
-    "check:pdf-packages": "node scripts/check-package-isolation.mjs --packages=pdf-document-contract,pdf-structure,pdf-translation"
+    "build:pdf-packages": "npm --prefix packages/pdf-structure run build && npm --prefix packages/pdf-translation run build",
+    "check:pdf-packages": "node scripts/check-package-isolation.mjs --packages=pdf-structure,pdf-translation"
   },
   "dependencies": {
     "@agentclientprotocol/claude-agent-acp": "^0.70.0",
@@ -143,8 +143,7 @@
     "@aipoch/connector-mcp-client": "file:packages/connector-mcp-client",
     "@aipoch/diagnostics": "file:packages/diagnostics",
     "@aipoch/pdf-structure": "file:packages/pdf-structure",
-    "@aipoch/pdf-translation": "file:packages/pdf-translation",
-    "@aipoch/pdf-document-contract": "file:packages/pdf-document-contract"
+    "@aipoch/pdf-translation": "file:packages/pdf-translation"
   },
   "overrides": {
     "@huggingface/transformers": {

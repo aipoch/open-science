@@ -1,4 +1,4 @@
-import { sanitizePdfDocumentSource, type PdfDocumentSource } from '@aipoch/pdf-document-contract'
+import { sanitizePdfDocumentSource, type PdfDocumentSource } from './pdf-document-source'
 import {
   ANNOTATION_LIMITS,
   type PdfNormalizedQuad,

@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path'
 import { z } from 'zod'
 import {
   PdfGenerationError,
-  pdfTranslationDocumentSourceSchema,
+  pdfTranslationSourceSchema,
   pdfTranslationLayoutFailureSchema,
   pdfTranslationRecordLayoutSchema,
   pdfTranslationSourceKey,
@@ -35,7 +35,7 @@ const digest = (value: Uint8Array | string): string =>
   createHash('sha256').update(value).digest('hex')
 const descriptor = z
   .object({
-    source: z.union([z.string().min(1).max(256), pdfTranslationDocumentSourceSchema]),
+    source: pdfTranslationSourceSchema,
     checkpointKey: z.string().uuid(),
     bypass: z.boolean().optional()
   })
@@ -107,6 +107,7 @@ export class PdfTranslationPdfCache {
   >()
   constructor(
     private readonly options: {
+      sourceKey?: (sourceId: string) => string
       diagnostics?: TranslationDiagnostics
       writes?: TranslationWriteAdmission
       root: () => string
@@ -343,7 +344,8 @@ export class PdfTranslationPdfCache {
       if (
         !current() ||
         report.checkpointKey !== pending.checkpointKey ||
-        pdfTranslationSourceKey(report.source) !== pdfTranslationSourceKey(pending.source) ||
+        (this.options.sourceKey ?? pdfTranslationSourceKey)(report.source) !==
+          (this.options.sourceKey ?? pdfTranslationSourceKey)(pending.source) ||
         report.units.length !== pending.render.units.length
       )
         return

@@ -23,7 +23,7 @@ const saved: PdfTranslationCheckpoint = {
   version: 1,
   key: '11111111-1111-4111-8111-111111111111',
   revision: 4,
-  attachmentVersionId: 'v',
+  sourceId: 'v',
   checksum: 'a'.repeat(64),
   fingerprint: 'fp',
   language: 'Chinese',

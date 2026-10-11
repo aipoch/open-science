@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { sanitizePdfDocumentSource } from '../src/index.js'
+import { sanitizePdfDocumentSource } from './pdf-document-source'
 const source = {
   kind: 'literature-attachment-version',
   sourceFileId: ' attachment ',

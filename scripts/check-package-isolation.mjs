@@ -253,9 +253,7 @@ for (const e of entries) {
         ? ['contracts', 'text', 'reader'].map((entry) => e.manifest.name + '/' + entry)
         : name === 'pdf-structure'
           ? [e.manifest.name + '/result']
-          : name === 'pdf-document-contract'
-            ? specs
-            : []
+          : []
     if (browserEntries.length) {
       await writeFile(
         join(consumer, 'browser.ts'),

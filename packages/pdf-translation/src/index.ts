@@ -60,7 +60,7 @@ import {
   PdfTranslationError,
   pdfTranslationGlossarySchema,
   pdfTranslationFailure,
-  pdfTranslationDocumentSourceSchema,
+  pdfTranslationSourceSchema,
   pdfTranslationAgentModelSchema,
   pdfTranslationSourceKey,
   pdfTranslationSelectEditionSchema,
@@ -199,6 +199,7 @@ export type PdfTranslationOptions<
   AgentTarget extends TranslationAgentTarget,
   ApiTarget extends TranslationApiTarget
 > = {
+  sourceKey?: (sourceId: string) => string
   diagnostics?: TranslationDiagnostics
   writes?: TranslationWriteAdmission
   providerErrors?: TranslationProviderErrors
@@ -464,10 +465,8 @@ export class PdfTranslationOwner<
       (input.concurrency !== undefined && ![1, 2, 4].includes(input.concurrency)) ||
       !boundedText(input.language, 80) ||
       (input.expectedTargetKey !== undefined && !boundedText(input.expectedTargetKey, 64)) ||
-      (input.attachmentVersionId !== undefined && !boundedText(input.attachmentVersionId, 256)) ||
-      (input.documentSource !== undefined &&
-        !pdfTranslationDocumentSourceSchema.safeParse(input.documentSource).success) ||
-      (input.attachmentVersionId !== undefined && input.documentSource !== undefined) ||
+      (input.sourceId !== undefined &&
+        !pdfTranslationSourceSchema.safeParse(input.sourceId).success) ||
       (input.checkpoint !== undefined &&
         (!isRecord(input.checkpoint) ||
           !boundedText(input.checkpoint.key, 64) ||
@@ -515,14 +514,10 @@ export class PdfTranslationOwner<
     // Reserve the immutable document before awaiting model/storage admission. Two readers
     // must not both spend a provider request before the checkpoint CAS chooses a winner.
     const sourceKey = (value: PdfTranslationBeginRequest): string | undefined => {
-      const source = value.documentSource ?? value.attachmentVersionId
+      const source = value.sourceId
       return source === undefined
         ? undefined
-        : pdfTranslationSourceKey(
-            typeof source !== 'string' && source.kind === 'literature-attachment-version'
-              ? source.versionId
-              : source
-          )
+        : (this.options.sourceKey ?? pdfTranslationSourceKey)(source)
     }
     const requestedSource = sourceKey(input)
     if (
@@ -589,7 +584,7 @@ export class PdfTranslationOwner<
     this.operations.set(operationId, operation)
     caller.signal.addEventListener('abort', abort, { once: true })
     try {
-      const source = input.documentSource ?? input.attachmentVersionId
+      const source = input.sourceId
       if (source !== undefined && this.options.checkpoints?.contentKey) {
         let contentKey: string
         try {
@@ -711,7 +706,7 @@ export class PdfTranslationOwner<
           'model-changed',
           'Translation model changed. Restore the previous model or start a new translation.'
         )
-      if (input.attachmentVersionId || input.documentSource) {
+      if (input.sourceId) {
         try {
           if (!this.options.checkpoints) throw new Error('Translation storage is unavailable.')
           operation.checkpoint = await this.options.checkpoints.open(input, targetKey, model)
@@ -1056,7 +1051,7 @@ export class PdfTranslationOwner<
       > => {
         finishUsage = await this.options.usage.start({
           runId: operation.checkpoint?.key ?? request.operationId,
-          attachmentVersionId: operation.input.attachmentVersionId,
+          sourceId: operation.input.sourceId,
           sourceIndex: request.sourceIndex,
           providerId: localTarget ? 'local-onnx' : (agentTarget ?? apiTarget)!.providerId,
           frameworkId: localTarget ? 'local-onnx' : (agentTarget?.frameworkId ?? 'direct-api'),
@@ -1550,15 +1545,11 @@ export class PdfTranslationOwner<
       throw new Error('Translation storage is unavailable.')
     const request = pdfTranslationSelectEditionSchema.parse(input)
     const keyFor = (source: PdfTranslationCheckpointRequest): string =>
-      pdfTranslationSourceKey(
-        typeof source !== 'string' && source.kind === 'literature-attachment-version'
-          ? source.versionId
-          : source
-      )
+      (this.options.sourceKey ?? pdfTranslationSourceKey)(source)
     const sourceKey = keyFor(request.source)
     const sourceBusy = (): boolean =>
       [...this.operations.values()].some(({ input }) => {
-        const source = input.documentSource ?? input.attachmentVersionId
+        const source = input.sourceId
         return source !== undefined && keyFor(source) === sourceKey
       })
     const busy = (): never => {

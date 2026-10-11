@@ -409,19 +409,8 @@
       "src/renderer/src/pages/workspace/replay/ReplayToolRecord.test.tsx",
       "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.interaction.test.tsx",
       "src/main/literature/pdf-translation/writer.test.ts",
-      "packages/pdf-translation/test/form-graphics.test.ts",
-      "packages/pdf-translation/test/form-identity.test.ts",
       "scripts/pdf-translation-corpus.test.ts",
-      "src/main/literature/pdf-translation/diagnostics.test.ts",
-      "packages/pdf-translation/test/decoration-roundtrip.test.ts",
-      "packages/pdf-translation/test/float-footnote-roundtrip.test.ts",
-      "packages/pdf-translation/test/linked-prose-roundtrip.test.ts",
-      "packages/pdf-translation/test/parameter-prose-roundtrip.test.ts",
-      "packages/pdf-translation/test/spaced-script-roundtrip.test.ts",
-      "packages/pdf-translation/test/structural-roundtrip.test.ts",
-      "packages/pdf-translation/test/styled-float-roundtrip.test.ts",
-      "packages/pdf-translation/test/terminal-link-roundtrip.test.ts",
-      "packages/pdf-translation/test/native-reading-order.test.ts"
+      "src/main/literature/pdf-translation/diagnostics.test.ts"
     ]
   },
   "capabilityOverlays": [],
