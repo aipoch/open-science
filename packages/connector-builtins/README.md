@@ -60,4 +60,4 @@ OpenChemLib lazily; the host adapter persists the returned molfile through its
 existing writer.
 
 `./molecule` advertises only `render_molecule`. Application preview/Artifact actions
-are registered by the host. See the [boundary and migration guide](../../docs/connector-packages.md).
+are registered by the host.

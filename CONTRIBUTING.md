@@ -635,8 +635,3 @@ The migration PR that removes the former unconditional protected-file rejection 
 the old guard from its base revision. Any bootstrap ruleset bypass requires explicit maintainer
 authorization and directly merges the PR; it does not carry approval into a later queue run. Do not
 enqueue a PR with a known failing required check and expect the queue to waive it.
-
-### Connector package acceptance
-
-See [Connector package boundaries and acceptance](docs/connector-packages.md) for cohesion,
-behavior-based test ownership, runtime dependency checks and source API migration requirements.
