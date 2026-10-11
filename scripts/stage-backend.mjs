@@ -174,8 +174,9 @@ const assertNoBuildIntermediates = async (directory) => {
 }
 await assertNoBuildIntermediates(join(stage, 'node_modules'))
 const nativeRequire = createRequire(join(stage, 'package.json'))
-// Transformers imports this native binding even with WASM inference; pruning must keep it loadable.
-nativeRequire('onnxruntime-node')
+// GPU providers are pruned only on Linux x64; its native binding must still load.
+// Do not add a gate on other targets: ONNX 1.24.3 ships no Darwin x64 binding.
+if (process.platform === 'linux' && process.arch === 'x64') nativeRequire('onnxruntime-node')
 for (const name of ['@aipoch/process-tree-native', '@aipoch/safe-file-publisher-native'])
   nativeRequire(name)
 for (const path of Object.values(nativeRequire('@aipoch/credential-identity-probe-native')))
