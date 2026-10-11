@@ -472,6 +472,7 @@ export const runEvidenceWorker = async (
     const child = spawn(process.execPath, [resolveEvidenceWorkerPath()], {
       cwd: evidenceRoot,
       env: { ...process.env, ...nodeRuntimeEnvironment() },
+      windowsHide: true,
       stdio: ['pipe', 'pipe', 'pipe']
     })
     let stdout = ''

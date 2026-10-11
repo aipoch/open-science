@@ -1420,6 +1420,8 @@ class NotebookKernelExecutor implements NotebookExecutor {
       child = spawn(spawnExecutable, spawnArgs, {
         cwd: spawnCwd,
         env: effectiveSpawnEnv,
+        // The desktop's Node backend has no console to inherit; hide the outer host too.
+        windowsHide: true,
         // Persistent kernels own a private POSIX process group. This gives teardown a stable OS-level
         // container that remains addressable even when the loop leader exits before its descendants.
         // Windows descendants are contained by the sandbox host's kill-on-close Job Object and the

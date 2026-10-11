@@ -1,12 +1,18 @@
 import { mkdtemp, mkdir, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, expect, it } from 'vitest'
+import { spawn } from 'node:child_process'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { runEvidenceWorker } from './working-file-observer'
 import { NotebookKernelExecutor } from './kernel-executor'
 import { analyzePythonNotebookSource } from '@aipoch/notebook-analysis'
 import { resolveBundleDir } from './bundle-local'
 import { resolveMicromamba } from './micromamba'
+
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>()
+  return { ...actual, spawn: vi.fn(actual.spawn) }
+})
 
 // Plain-Node hosts (runtime certification, SDK consumers) configure no host entry. Resource
 // resolution must fall back to the source-tree candidates instead of demanding runtime metadata.
@@ -19,7 +25,7 @@ afterEach(async () => {
   await rm(fixture, { recursive: true, force: true })
 })
 
-it('runs the evidence worker without configured runtime metadata', async () => {
+it('runs the evidence worker without configured runtime metadata or a visible Windows console', async () => {
   const evidenceRoot = join(fixture, 'execution-file-evidence')
   await mkdir(evidenceRoot)
   const metadata = await stat(evidenceRoot)
@@ -30,6 +36,11 @@ it('runs the evidence worker without configured runtime metadata', async () => {
       expectedRootIdentity: { dev: metadata.dev, ino: metadata.ino }
     })
   ).resolves.toBeDefined()
+  expect(spawn).toHaveBeenCalledWith(
+    process.execPath,
+    expect.arrayContaining([expect.stringContaining('file_evidence_worker.js')]),
+    expect.objectContaining({ windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] })
+  )
 })
 
 it('constructs the default kernel executor without configured runtime metadata', () => {

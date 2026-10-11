@@ -3,6 +3,7 @@ import {
   type ChildProcess,
   type ChildProcessWithoutNullStreams
 } from 'node:child_process'
+import * as childProcess from 'node:child_process'
 import { existsSync, realpathSync } from 'node:fs'
 import {
   chmod,
@@ -46,6 +47,11 @@ import { verifyReplayCapture } from './scientific-replay.test-support'
 import * as windowsNotebookRuntime from './windows-notebook-runtime'
 import { shellNpmPaths } from './shell-npm-environment'
 import { prepareNotebookWorkloadCache } from './notebook-workload-cache-paths'
+
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>()
+  return { ...actual, spawn: vi.fn(actual.spawn) }
+})
 
 // -- TimeoutController: pure state machine, driven with fake timers + a signal recorder. ------------
 
@@ -517,6 +523,56 @@ afterEach(async () => {
     cwdDir = undefined
   }
 })
+
+it.each([false, true])(
+  'hides Windows kernel consoles with durable ownership %s while preserving execution and cleanup',
+  async (owned) => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-hidden-console-'))
+    const lifecycle = new KernelProcessLifecycleOwner({ storageRoot: cwdDir })
+    await lifecycle.ensureReady()
+    const spawn = vi.mocked(childProcess.spawn)
+    spawn.mockClear()
+    const executor = new NotebookKernelExecutor({
+      replLoopPath: REPL_LOOP,
+      platform: 'win32',
+      processLifecycle: owned ? lifecycle : undefined,
+      laneKey: owned ? '["project","session","root",null,null]' : undefined,
+      processSandbox: {
+        resolveWindowsRuntime: async () => null,
+        wrap: async (invocation) => ({
+          ...invocation,
+          annotateStderr: (stderr) => stderr,
+          cleanup: async (_reason, outcome) => ({
+            processesTerminated: outcome.processesTerminated,
+            networkClosed: true,
+            temporaryResourcesRemoved: true
+          })
+        })
+      }
+    })
+    try {
+      const result = await executor.execute({
+        ...baseRequest(cwdDir),
+        kind: 'repl',
+        code: 'console.log("CONSOLE_TEST_READY")',
+        sessionId: 'session',
+        projectId: 'project'
+      })
+      expect(result.status, result.stderr || result.traceback).toBe('completed')
+      expect(result.stdout).toContain('CONSOLE_TEST_READY')
+      expect(spawn).toHaveBeenCalledWith(
+        process.execPath,
+        expect.arrayContaining([
+          expect.stringContaining(owned ? 'kernel_process_host.js' : 'repl_loop.js')
+        ]),
+        expect.objectContaining({ windowsHide: true, detached: false })
+      )
+    } finally {
+      await expect(executor.shutdown()).resolves.toEqual({ reaped: true })
+    }
+    if (owned) expect(await readdir(join(cwdDir, 'runtime', 'kernel-processes'))).toEqual([])
+  }
+)
 
 it('executes an x64-only managed R through the public kernel boundary', async () => {
   cwdDir = await mkdtemp(join(tmpdir(), 'os-managed-r-x64-'))
