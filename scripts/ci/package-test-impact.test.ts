@@ -449,29 +449,6 @@ it.each([
   })
 })
 
-it('verifies the reproduction tarball only when trusted policy selects it or lacks exclusion evidence', async () => {
-  const { reproducibilityPackageVerificationPlan } = await import('./package-test-impact.mjs')
-  const verify = {
-    builds: [
-      'diagnostics',
-      'notebook-syntax',
-      'notebook-analysis',
-      'environment',
-      'reproducibility'
-    ],
-    tests: ['reproducibility']
-  }
-  expect(reproducibilityPackageVerificationPlan(undefined, undefined)).toEqual(verify)
-  expect(reproducibilityPackageVerificationPlan([], undefined)).toEqual(verify)
-  expect(
-    reproducibilityPackageVerificationPlan(['packages/reproducibility'], ['packages/environment'])
-  ).toEqual(verify)
-  expect(reproducibilityPackageVerificationPlan([], ['packages/reproducibility'])).toEqual({
-    builds: [],
-    tests: []
-  })
-})
-
 it.each([
   'src/main/artifacts/reproducibility-host.ts',
   'src/main/artifacts/artifact-reproducibility-lifecycle.ts',

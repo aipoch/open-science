@@ -62,6 +62,40 @@ describe('independent package verification', () => {
       { script: 'verify:package', prefix: 'packages/specialists', packages: ['specialists'] }
     ])
   })
+  it('builds the reproduction dependency closure while testing only reproduction', () => {
+    const plan = verificationPlanFromArguments(['--packages=reproducibility'], {})
+    expect(plan.tests).toEqual(['packages/reproducibility'])
+    expect(plan.builds).toEqual([
+      'packages/diagnostics',
+      'packages/environment',
+      'packages/notebook-syntax',
+      'packages/notebook-analysis',
+      'packages/reproducibility'
+    ])
+    expect(verificationCommands(plan)).toEqual([
+      { script: 'check:reproducibility-package', packages: ['reproducibility'] }
+    ])
+  })
+  it('skips direct reproduction verification for proven host-only or other-package changes', () => {
+    for (const selected of [[], ['packages/compute']]) {
+      const output = execFileSync(
+        process.execPath,
+        ['scripts/check-reproducibility-package.mjs', '--ci'],
+        {
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            npm_execpath: 'unexpected-npm-invocation.cjs',
+            OPEN_SCIENCE_CI_SELECTED_PACKAGE_ROOTS: JSON.stringify(selected),
+            OPEN_SCIENCE_CI_EXCLUDED_PACKAGE_ROOTS: JSON.stringify(
+              roots.filter((root: string) => !selected.includes(root))
+            )
+          }
+        }
+      )
+      expect(output).toContain('skipped by package selection')
+    }
+  })
   it('skips the direct environment verifier when only Compute is selected', () => {
     const output = execFileSync(
       process.execPath,

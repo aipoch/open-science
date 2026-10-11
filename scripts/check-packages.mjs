@@ -14,6 +14,7 @@ export const verificationFamilies = [
   { script: 'check:diagnostics-package', packages: ['diagnostics'] },
   { script: 'check:environment-package', packages: ['environment'] },
   { script: 'check:compute-package', packages: ['compute'] },
+  { script: 'check:reproducibility-package', packages: ['reproducibility'] },
   {
     script: 'check:notebook-packages',
     packages: ['notebook-syntax', 'notebook-code-risk', 'notebook-analysis']

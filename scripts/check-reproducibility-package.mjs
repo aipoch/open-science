@@ -4,31 +4,34 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } f
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { reproducibilityPackageVerificationPlan } from './ci/package-test-impact.mjs'
+import {
+  packageRegistry,
+  packageVerificationPlan,
+  verificationPlanFromArguments,
+  isolatedPackageEnvironment
+} from './package-verification-plan.mjs'
 
 const root = fileURLToPath(new URL('../', import.meta.url))
 const npmCli = process.env.npm_execpath
 if (!npmCli) throw new Error('Run through npm run check:reproducibility-package.')
-const ci = process.argv.includes('--ci')
-const selected =
-  ci && process.env.OPEN_SCIENCE_CI_SELECTED_PACKAGE_ROOTS
-    ? JSON.parse(process.env.OPEN_SCIENCE_CI_SELECTED_PACKAGE_ROOTS)
-    : undefined
-const excluded =
-  ci && process.env.OPEN_SCIENCE_CI_EXCLUDED_PACKAGE_ROOTS
-    ? JSON.parse(process.env.OPEN_SCIENCE_CI_EXCLUDED_PACKAGE_ROOTS)
-    : undefined
-const plan = reproducibilityPackageVerificationPlan(selected, excluded)
+const selection = verificationPlanFromArguments()
+if (!selection.tests.includes('packages/reproducibility')) {
+  console.log('Reproducibility package verification: skipped by package selection')
+  process.exit(0)
+}
+// Derive prerequisites from the shared registry; only this family's tests run here.
+const plan = packageVerificationPlan(packageRegistry(), ['packages/reproducibility'])
 console.log('Reproducibility package verification:', JSON.stringify(plan))
-if (!plan.tests.length) process.exit(0)
 const temporary = mkdtempSync(join(tmpdir(), 'reproducibility-package-'))
-const env = { ...process.env, NODE_PATH: '', NODE_OPTIONS: '' }
+const offline = process.argv.includes('--offline') ? ['--offline'] : []
+const env = isolatedPackageEnvironment()
 const npm = (args, cwd) =>
   execFileSync(process.execPath, [npmCli, ...args], { cwd, env, stdio: 'inherit' })
 const writeJson = (path, value) => writeFileSync(path, JSON.stringify(value, null, 2))
 try {
   const archives = {}
-  for (const name of plan.builds) {
+  for (const packageRoot of plan.builds) {
+    const name = packageRoot.slice('packages/'.length)
     const directory = join(temporary, name)
     cpSync(join(root, 'packages', name), directory, {
       recursive: true,
@@ -47,10 +50,10 @@ try {
       manifest.overrides[dependency] = specifier
     }
     writeJson(join(directory, 'package.json'), manifest)
-    npm(['install', '--ignore-scripts', '--no-audit', '--no-fund'], directory)
+    npm(['install', '--ignore-scripts', '--no-audit', '--no-fund', ...offline], directory)
     if (name === 'reproducibility') {
       npm(['run', 'typecheck'], directory)
-      npm(['test'], directory)
+      if (!process.argv.includes('--skip-tests')) npm(['test'], directory)
     }
     // Keep the release manifest's declared versions in the tarball.
     cpSync(join(root, 'packages', name, 'package.json'), join(directory, 'package.json'))
@@ -70,7 +73,7 @@ try {
     ),
     devDependencies: { typescript: '^5.9.3', '@types/node': '^22.19.1' }
   })
-  npm(['install', '--ignore-scripts', '--no-audit', '--no-fund'], consumer)
+  npm(['install', '--ignore-scripts', '--no-audit', '--no-fund', ...offline], consumer)
   writeFileSync(
     join(consumer, 'consumer.mts'),
     `
