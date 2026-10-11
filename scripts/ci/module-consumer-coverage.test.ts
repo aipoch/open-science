@@ -1,3 +1,7 @@
+import {
+  createConsumerDependencyReader,
+  provablyStaleConsumerTests
+} from './consumer-retirement.mjs'
 import { localPackageSourcePaths } from './local-package-exports.mjs'
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
@@ -105,6 +109,13 @@ it('retains every statically reachable consumer test and declared runtime-loadin
       `${path} exports shared test contracts; register it as an interface to retain consumers`
     ).toBe(true)
   }
+  const inspectConsumer = createConsumerDependencyReader(
+    {
+      files: tracked,
+      read: (path: string) => (tracked.has(path) ? readFileSync(path, 'utf8') : undefined)
+    },
+    Object.entries(runtimeEdges)
+  )
   const missing: string[] = []
   for (const [id, module] of Object.entries(modules)) {
     if (module.fullTestReason || id === 'i18n_catalog') continue
@@ -119,12 +130,18 @@ it('retains every statically reachable consumer test and declared runtime-loadin
         pending.push(consumer)
       }
     }
-    // Skill extraction records only actual downstream consumers. Filesystem/source-inspection
-    // contracts belong in module-runtime-consumers.json; type imports remain real graph edges.
+    // Reject proven stale Skill consumers, but preserve evidence whose dependency cone is opaque.
+    // This matches Integrity: native or dynamic loading cannot prove safe retirement.
     if (id === 'skill_package') {
       expect(
-        module.testFiles.consumer.filter((path) => !visited.has(path)),
-        'Skill consumer evidence needs a static or explicitly registered runtime/source-read path'
+        provablyStaleConsumerTests(
+          {
+            ownerPaths: module.ownerPaths,
+            testFiles: { consumer: module.testFiles.consumer.filter((path) => !visited.has(path)) }
+          },
+          inspectConsumer
+        ),
+        'Skill consumer evidence must have a dependency path or incomplete dependency evidence'
       ).toEqual([])
     }
     const declared = new Set(Object.values(module.testFiles).flat())

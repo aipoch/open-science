@@ -625,9 +625,11 @@ describe('post-merge Windows validation', () => {
       inputs: { provider: { type: 'choice', default: 'signpath', options: ['signpath', 'azure'] } }
     })
     expect(workflow).toMatchObject({
-      permissions: { actions: 'read', contents: 'read', 'id-token': 'write' }
+      permissions: { actions: 'read', contents: 'read' }
     })
+    expect(workflow.permissions).not.toHaveProperty('id-token')
     expect(workflow.jobs.build).toMatchObject({
+      permissions: { actions: 'read', contents: 'read', 'id-token': 'write' },
       uses: './.github/workflows/build.yml',
       with: {
         platform_name: 'windows-x64',

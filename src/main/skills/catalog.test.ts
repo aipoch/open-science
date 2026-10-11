@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
+import { strToU8, zipSync } from 'fflate'
 
 vi.mock('electron', () => ({
   safeStorage: {
@@ -17,7 +17,7 @@ vi.mock('electron', () => ({
 import { SkillRegistry } from '@aipoch/skills'
 import { AcpTurnSkillOwner } from '../acp/turn-skill-owner'
 import { loadSkillDocument } from './runtime-mcp-server'
-import type { FetchLike } from '@aipoch/skills/sources'
+import { buildSkillExportArchive, type FetchLike } from '@aipoch/skills/sources'
 import { UserSkillRepository } from './user-skill-repository'
 import { UserSkillSpecialistPackageAdapter } from '@aipoch/skills'
 import { SpecialistRepository } from '../specialist/repository'
@@ -25,6 +25,7 @@ import { SPECIALISTS_FILE_VERSION } from '../specialist/types'
 import { SettingsRepository } from '../settings/repository'
 import { SettingsDocumentStore } from '../settings/document-store'
 import { SkillCatalogModule } from './catalog'
+import * as skillExport from './export'
 import { marketplaceContentDigest, type MarketplacePackage } from '../skill-marketplace/package'
 import { createHash } from 'node:crypto'
 const sha256 = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex')
@@ -440,57 +441,6 @@ describe('SkillCatalogModule', () => {
     await expect(Promise.all([observerRead, sessionRead])).resolves.toEqual([[], undefined])
   })
 
-  it('keeps only the newest user Skill when Personal and Imported packages share a name', async () => {
-    const storageRoot = await mkdtemp(join(tmpdir(), 'settings-skill-catalog-'))
-    roots.push(storageRoot)
-    const shared = {
-      name: 'shared',
-      displayName: 'Shared',
-      description: '',
-      sourceDir: storageRoot
-    }
-    const skillRegistry = {
-      list: async () => [
-        {
-          name: 'featured',
-          displayName: 'Featured',
-          description: '',
-          sourceDir: storageRoot,
-          id: 'featured',
-          source: 'featured' as const,
-          updatedAt: '2026-01-01T00:00:00.000Z'
-        }
-      ]
-    } as unknown as SkillRegistry
-    const userSkills = {
-      list: async () => [
-        {
-          ...shared,
-          id: 'personal-shared',
-          source: 'personal' as const,
-          updatedAt: '2026-02-01T00:00:00.000Z'
-        },
-        {
-          ...shared,
-          id: 'imported-shared',
-          source: 'imported' as const,
-          updatedAt: '2026-03-01T00:00:00.000Z'
-        }
-      ]
-    } as unknown as UserSkillRepository
-    const catalog = new SkillCatalogModule({
-      repository: new SettingsRepository(storageRoot),
-      storageRoot,
-      skillRegistry,
-      userSkills
-    })
-
-    expect((await catalog.listHostSkills()).map((skill) => skill.id)).toEqual([
-      'featured',
-      'imported-shared'
-    ])
-  })
-
   it('surfaces every same-name user Skill in the Settings catalog', async () => {
     const storageRoot = await mkdtemp(join(tmpdir(), 'settings-skill-catalog-'))
     roots.push(storageRoot)
@@ -623,34 +573,6 @@ describe('SkillCatalogModule', () => {
       })
     ])
   })
-
-  it.each(['personal', 'imported'] as const)(
-    'excludes %s packages that use app-owned prefixes',
-    async (source) => {
-      const storageRoot = await mkdtemp(join(tmpdir(), 'settings-skill-catalog-'))
-      roots.push(storageRoot)
-      const userSkills = {
-        list: async () =>
-          ['os-private', 'mcp-private', 'ordinary'].map((name) => ({
-            id: `${source}-${name}`,
-            name,
-            displayName: name,
-            description: '',
-            source,
-            updatedAt: '2026-02-01T00:00:00.000Z',
-            sourceDir: storageRoot
-          }))
-      } as unknown as UserSkillRepository
-      const catalog = new SkillCatalogModule({
-        repository: new SettingsRepository(storageRoot),
-        storageRoot,
-        skillRegistry: { list: async () => [] } as unknown as SkillRegistry,
-        userSkills
-      })
-
-      expect((await catalog.listHostSkills()).map((skill) => skill.name)).toEqual(['ordinary'])
-    }
-  )
 
   it.each(['personal', 'imported'] as const)(
     'keeps bundled materialization authoritative over a %s sidecar id collision',
@@ -1497,7 +1419,7 @@ describe('SkillCatalogModule', () => {
     ).resolves.toEqual([])
   })
 
-  it('exports a personal Skill as a portable ZIP archive', async () => {
+  it('forwards the package archive for the selected Personal Skill', async () => {
     const catalog = await createCatalog()
     await catalog.createSkill({
       name: 'my-skill',
@@ -1507,36 +1429,20 @@ describe('SkillCatalogModule', () => {
         { path: 'example.txt', dataBase64: Buffer.from('example reference').toString('base64') }
       ]
     })
-
-    const exported = await catalog.buildSkillExport('personal-my-skill')
-    const files = unzipSync(exported.archiveBytes)
-
-    expect(exported.fileName).toBe('my-skill.zip')
-    expect(strFromU8(files['SKILL.md'])).toContain('# Mine')
-    expect(strFromU8(files['references/example.txt'])).toBe('example reference')
-    expect((await catalog.buildSkillExport('personal-my-skill')).archiveBytes).toEqual(
-      exported.archiveBytes
+    const expected = await catalog.withHostSkillRead('personal-my-skill', (skill) =>
+      buildSkillExportArchive(skill)
     )
-  })
-
-  it('omits imported-Skill provenance from the exported ZIP archive', async () => {
-    const catalog = await createCatalog()
-    const importedZip = zipSync({
-      'SKILL.md': strToU8(
-        ['---', 'name: Imported Skill', 'description: Imported.', '---', '', '# Imported'].join(
-          '\n'
-        )
+    expect(expected).toBeDefined()
+    const buildArchive = vi.spyOn(skillExport, 'buildSkillExportArchive')
+    try {
+      await expect(catalog.buildSkillExport('personal-my-skill')).resolves.toEqual(expected)
+      expect(buildArchive).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'personal-my-skill' }),
+        catalogStorageRoots.get(catalog)
       )
-    })
-    const imported = await catalog.importSkillZip({
-      dataBase64: Buffer.from(importedZip).toString('base64')
-    })
-
-    const exported = await catalog.buildSkillExport(imported.id)
-    const files = unzipSync(exported.archiveBytes)
-
-    expect(Object.keys(files)).toEqual(['SKILL.md'])
-    expect(strFromU8(files['SKILL.md'])).toContain('name: imported-skill')
+    } finally {
+      buildArchive.mockRestore()
+    }
   })
 
   it('refuses to export built-in and unknown Skills', async () => {

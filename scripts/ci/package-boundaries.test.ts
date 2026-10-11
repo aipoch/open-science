@@ -142,8 +142,8 @@ it('every module plan excludes unrelated upstream package tests', async () => {
   const { createModuleTestPlan } = await import('./module-test-impact.mjs')
   const manifest = loadModuleImpactManifest()
   const violations: string[] = []
-  // Historical registrations remain protected by Integrity. Check executed coverage
-  // against the package boundary; full-validation owners retain their fallback.
+  // Validate executed coverage while the trusted retirement policy permits cleanup of
+  // historical redundant registrations. Full-validation owners retain their fallback.
   for (const [id, module] of Object.entries(manifest.modules) as [
     string,
     { ownerPaths: string[] }
@@ -188,4 +188,27 @@ it('local module and affected plans obey the same downstream package direction a
   const plan = createModuleTestPlan('package_pdf_translation')
   expect(plan.testFiles.some((path) => path.startsWith('packages/pdf-translation/'))).toBe(true)
   expect(plan.testFiles.some((path) => path.startsWith('packages/pdf-structure/'))).toBe(false)
+})
+
+it('host source edits never select unchanged upstream PDF package implementation tests', async () => {
+  const { loadModuleImpactManifest } = await import('./load-module-impact.mjs')
+  const { createAffectedTestPlan } = await import('./module-test-impact.mjs')
+  const { modules } = loadModuleImpactManifest()
+  const violations: string[] = []
+  for (const [id, module] of Object.entries(modules) as [string, { ownerPaths: string[] }][]) {
+    if (module.ownerPaths.some((path) => path.startsWith('packages/pdf-'))) continue
+    const source = module.ownerPaths.find(
+      (path) => path.startsWith('src/') && !path.includes('.test.')
+    )
+    if (!source) continue
+    // Integrity retains historical registration evidence. Package boundaries apply to the
+    // executable plan, including stale graph suggestions, rather than to raw evidence records.
+    const plan = createAffectedTestPlan([{ path: source, status: 'modified' }], {
+      status: 'not-used',
+      testFiles: []
+    })
+    for (const test of plan.testFiles)
+      if (/^packages\/pdf-(translation|structure)\//.test(test)) violations.push(`${id} -> ${test}`)
+  }
+  expect(violations).toEqual([])
 })
