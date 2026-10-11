@@ -117,8 +117,6 @@
     "packages/pdf-translation/src/writer.ts",
     "packages/pdf-translation/src/resources.ts"
   ],
-  "resources/pdf-translation/worker.mjs": [],
-  "resources/pdf-structure/host.mjs": [],
   "packages/skills/src/user-skill-repository.ts": [
     "src/main/skills/user-skill-repository.architecture.test.ts"
   ],

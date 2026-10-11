@@ -2426,7 +2426,7 @@
       "src/main/acp/session-capability-owner.test.ts",
       "src/main/acp/session-environment-policy.test.ts",
       "src/main/acp/turn-skill-owner.test.ts",
-      "src/main/settings/skill-catalog.test.ts",
+      "src/main/skills/catalog.test.ts",
       "src/main/acp/session-presentation-policy.test.ts",
       "src/main/acp/context-usage-policy.test.ts",
       "src/main/acp/session-update-projector.test.ts",
