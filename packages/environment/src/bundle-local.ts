@@ -25,24 +25,13 @@ type FetchBundleFn = (
   signal?: AbortSignal
 ) => Promise<FetchedBundle | undefined>
 
-// Injected paths so resolution unit-tests without a real packaged layout.
-export type BundleDirDeps = {
-  resourcesPath?: string
-  override?: string
-  subdir?: string
-}
-
 // Builds a fetchBundle from a packaged bundle dir: when the manifest names a pack archive and that
 // archive is present, it is verified, extracted into
 // <root>/packs/<envVersion>/<subdir>/<packId>, and its referenced tarballs are seeded into the root
 // pkgs cache. Returns undefined when the manifest/archive is missing or incomplete so the caller can
 // try the next source and ultimately fail closed.
 export const createLocalBundleAdapter =
-  (
-    root: string,
-    bundleDir: string | undefined,
-    deps: Pick<BundleDirDeps, 'subdir'> = {}
-  ): FetchBundleFn =>
+  (root: string, bundleDir: string | undefined, deps: { subdir?: string } = {}): FetchBundleFn =>
   async (spec, version, onProgress) => {
     if (!bundleDir) return undefined
     const manifestPath = join(bundleDir, 'manifest.json')

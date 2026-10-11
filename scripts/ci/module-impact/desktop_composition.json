@@ -265,7 +265,9 @@
     "scripts/build-dev-packages.integration.test.ts",
     "scripts/build-backend.integration.test.ts",
     "scripts/dev-build-watch.integration.test.ts",
-    "scripts/dev-build-watch.test.ts"
+    "scripts/dev-build-watch.test.ts",
+    "src/main/windows-executable-trust.ts",
+    "src/main/windows-executable-trust.test.ts"
   ],
   "interfacePaths": [
     "src/main/app-lifecycle.ts",
@@ -351,7 +353,8 @@
     "src/main/desktop-preview-proxy.ts",
     "src/main/desktop-runtime-lifecycle.ts",
     "src/main/desktop-startup-contract.ts",
-    "src/main/composition/notebook-approvals.ts"
+    "src/main/composition/notebook-approvals.ts",
+    "src/main/windows-executable-trust.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -460,7 +463,8 @@
       "scripts/build-dev-packages.integration.test.ts",
       "scripts/build-backend.integration.test.ts",
       "scripts/dev-build-watch.integration.test.ts",
-      "scripts/dev-build-watch.test.ts"
+      "scripts/dev-build-watch.test.ts",
+      "src/main/windows-executable-trust.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -1270,7 +1274,8 @@
       "src/main/notebook/windows-runtime-components.test.ts",
       "src/main/notebook/environment-process.contract.test.ts",
       "src/main/notebook/environment-recovery.contract.test.ts",
-      "src/main/notebook/environment-capture.contract.test.ts"
+      "src/main/notebook/environment-capture.contract.test.ts",
+      "scripts/windows-signing-policy.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

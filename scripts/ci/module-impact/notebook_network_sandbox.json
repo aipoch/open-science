@@ -620,7 +620,14 @@
       "src/renderer/src/pages/literature/literature-localization.render.test.tsx",
       "src/main/notebook/environment-startup.contract.test.ts",
       "src/main/notebook/environment-runner.test.ts",
-      "src/main/notebook/environment-provisioning.contract.test.ts"
+      "src/main/notebook/environment-provisioning.contract.test.ts",
+      "src/main/notebook/environment-operations.test.ts",
+      "src/main/notebook/environment-process.contract.test.ts",
+      "src/main/notebook/environment-recovery.contract.test.ts",
+      "src/main/notebook/environment-restoration-sandbox.contract.test.ts",
+      "src/main/notebook/environment-bundle-resources.test.ts",
+      "src/main/notebook/environment-resources.test.ts",
+      "src/main/notebook/windows-runtime-components.test.ts"
     ]
   },
   "capabilityOverlays": [],

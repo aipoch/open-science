@@ -118,7 +118,7 @@ export {
   PIP_TRANSPORT_ENV_KEYS,
   buildManagedRuntimeProcessEnvironment,
   buildNotebookKernelEnvironment,
-  buildNotebookShellEnvironment,
+  buildShellProcessEnvironment,
   environmentPathRoots,
   normalizeRProcessLocale,
   notebookTrustBundleEnvironment
@@ -169,6 +169,6 @@ export {
   PACK_PATH_BUDGET_FILE
 } from './bundle-manifest'
 export { createFetchBundleAdapter } from './language-pack-fetch'
-export { chainFetchBundle, createLocalBundleAdapter, type BundleDirDeps } from './bundle-local'
+export { chainFetchBundle, createLocalBundleAdapter } from './bundle-local'
 export { packageCacheCleanArgv } from './micromamba-cache-maintenance'
 export type { EnvironmentProcessHost, ProcessTreeKillResult } from './process-host'

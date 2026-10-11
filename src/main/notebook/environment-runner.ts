@@ -1,27 +1,20 @@
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
-import { win32 } from 'node:path'
-import { resolveWindowsPowerShellExecutable } from '../windows-powershell'
-import { micromambaRunnerCachePath } from '@aipoch/environment'
-const execFileAsync = promisify(execFile)
-const WINDOWS_PUBLISHER = 'AIPOCH PTE. LTD.'
-import { runtimeMetadataIfConfigured } from '../runtime-metadata'
-import { homedir } from 'node:os'
-import { resolveBootstrapConfigRoot, resolveConfigRootOverride } from '../../shared/config-root'
-
 import { existsSync } from 'node:fs'
-
+import { homedir } from 'node:os'
 import { join } from 'node:path'
-
-import micromambaVersions from '../../../scripts/micromamba-versions.json'
-import { resolveMicromambaLocations, type MicromambaDeps } from '@aipoch/environment'
-
 import {
   createMicromambaRunnerResolver,
+  micromambaRunnerCachePath,
+  resolveMicromambaLocations,
   type MicromambaRunner,
   type MicromambaRunnerCandidate
 } from '@aipoch/environment'
-export type MicromambaRunnerDeps = MicromambaDeps & {
+
+import micromambaVersions from '../../../scripts/micromamba-versions.json'
+import { resolveBootstrapConfigRoot, resolveConfigRootOverride } from '../../shared/config-root'
+import { runtimeMetadataIfConfigured } from '../runtime-metadata'
+import { notebookMicromambaOptions, type NotebookMicromambaDeps } from './environment-resources'
+
+export type MicromambaRunnerDeps = NotebookMicromambaDeps & {
   packaged?: boolean
   // Binary discovery home may follow the data disk; configuration always follows the app home.
   configHome?: string
@@ -35,8 +28,7 @@ export const createProductionMicromambaRunner = (
 ): MicromambaRunner | undefined => {
   const platform = deps.platform ?? process.platform
   const locations = resolveMicromambaLocations({
-    ...deps,
-    resourcesPath: deps.resourcesPath ?? runtimeMetadataIfConfigured()?.resourcesPath,
+    ...notebookMicromambaOptions(deps),
     platform
   })
   if (platform !== 'win32') {
@@ -77,7 +69,7 @@ export const createProductionMicromambaRunner = (
   const primaryDigest = micromambaVersions.binarySha256['win-64']
   const primaryId = `primary-${micromambaVersions.releaseTag}`
   const candidates: MicromambaRunnerCandidate[] = []
-  const verifySignature = deps.verifySignature ?? verifyWindowsAuthenticode
+  const verifySignature = deps.verifySignature
   let pathIndex = 0
   const add = (location: (typeof locations)[number]): void => {
     const id =
@@ -140,40 +132,4 @@ export const createProductionMicromambaRunner = (
     preflight: deps.preflight,
     verifySignature
   })
-}
-
-const verifyWindowsAuthenticode = async (path: string): Promise<void> => {
-  const windowsRoot = process.env.SystemRoot ?? process.env.WINDIR
-  const powershellModulePath = windowsRoot
-    ? win32.join(windowsRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'Modules')
-    : undefined
-  const script = [
-    '$ErrorActionPreference = "Stop"',
-    ...(powershellModulePath
-      ? ['$env:PSModulePath = $env:OPEN_SCIENCE_POWERSHELL_MODULE_PATH']
-      : []),
-    'Import-Module Microsoft.PowerShell.Security -ErrorAction Stop',
-    '$signature = Get-AuthenticodeSignature -LiteralPath $env:OPEN_SCIENCE_AUTHENTICODE_PATH',
-    'if ($signature.Status -ne "Valid") { throw "invalid Authenticode status: $($signature.Status) $($signature.StatusMessage)" }',
-    '$publisher = $signature.SignerCertificate.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false)',
-    `if ($publisher -ne '${WINDOWS_PUBLISHER}') { throw "unexpected Authenticode publisher: $publisher" }`,
-    'if ($null -eq $signature.TimeStamperCertificate) { throw "missing Authenticode timestamp" }'
-  ].join('; ')
-  const env: NodeJS.ProcessEnv = { ...process.env, OPEN_SCIENCE_AUTHENTICODE_PATH: path }
-  // The app may inherit a PSModulePath from a development/runtime host. Restrict module lookup to
-  // Windows PowerShell's system directory so an incompatible bundled copy cannot shadow the security
-  // module that supplies Get-AuthenticodeSignature.
-  if (powershellModulePath) {
-    env.OPEN_SCIENCE_POWERSHELL_MODULE_PATH = powershellModulePath
-    env.PSModulePath = powershellModulePath
-  }
-  await execFileAsync(
-    resolveWindowsPowerShellExecutable(process.env),
-    ['-NoProfile', '-NonInteractive', '-Command', script],
-    {
-      timeout: 10_000,
-      windowsHide: true,
-      env
-    }
-  )
 }

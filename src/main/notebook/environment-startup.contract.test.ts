@@ -372,3 +372,15 @@ describe('createProductionProvisioner', () => {
 })
 
 configureTestRuntimeMetadata()
+
+it('finds the runtime binary beneath a custom data root without assuming the product directory name', () => {
+  const root = join(makeRoot(), 'research-disk', 'runtime')
+  const name = process.platform === 'win32' ? 'micromamba.exe' : 'micromamba'
+  touchBin(join(root, 'micromamba', 'bin', name))
+  const provisioner = createProductionProvisioner({
+    root,
+    channel: 'conda-forge',
+    micromamba: { env: {}, resourcesPath: join(root, 'missing') }
+  })
+  expect(typeof provisioner.provisionPython).toBe('function')
+})

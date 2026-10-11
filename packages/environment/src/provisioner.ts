@@ -1642,7 +1642,7 @@ export class DefaultRuntimeProvisioner<Context = unknown> implements RuntimeProv
       throw new Error(
         `No verified runtime pack is available to upgrade ${spec.name} ` +
           `(${spec.language} ${spec.version}). Connect to the runtime CDN or provide an offline bundle ` +
-          'in OPEN_SCIENCE_ENV_BUNDLE_DIR.'
+          'through the configured bundle source.'
       )
     }
     const prefix = envPrefix(this.deps.root, spec.name, this.platform)
@@ -1776,7 +1776,7 @@ export class DefaultRuntimeProvisioner<Context = unknown> implements RuntimeProv
     if (!bundle) {
       throw new Error(
         `No verified runtime pack is available for ${spec.name} (${spec.language} ${spec.version}). ` +
-          'Connect to the runtime CDN or provide an offline bundle in OPEN_SCIENCE_ENV_BUNDLE_DIR.'
+          'Connect to the runtime CDN or provide an offline bundle through the configured bundle source.'
       )
     }
     onProgress({

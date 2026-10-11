@@ -244,7 +244,8 @@ const restoreEnvironment = async (
   const platform = dependencies.platform ?? process.platform
   const conda = lock.components.find((component) => component.ecosystem === 'conda')!
 
-  const mm = dependencies.micromamba ?? resolveMicromamba()
+  const mm =
+    dependencies.micromamba ?? resolveMicromamba({ runtimeRoot: runtimeRoot(input.storageRoot) })
   if (!mm) throw new Error('Micromamba is unavailable for reproducibility execution.')
 
   const locksRoot = join(input.attemptRoot, 'locks')

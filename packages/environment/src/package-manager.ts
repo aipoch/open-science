@@ -7,7 +7,7 @@ import {
   rmSync
 } from 'node:fs'
 import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process'
-import { homedir, tmpdir } from 'node:os'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   discoverExternalRLibraries,
@@ -1411,8 +1411,15 @@ export async function installPackages(
     return { ok: false, needsRestart: false, log: '', error: (error as Error).message }
   }
 
-  const storageRoot =
-    deps.storageRoot ?? process.env.OPEN_SCIENCE_STORAGE_ROOT ?? join(homedir(), '.open-science')
+  const storageRoot = deps.storageRoot
+  if (!storageRoot?.trim()) {
+    return {
+      ok: false,
+      needsRestart: false,
+      log: '',
+      error: 'Package installation requires an explicit storageRoot.'
+    }
+  }
   const root = runtimeRoot(storageRoot)
   const workloadCacheEnv = notebookWorkloadCacheEnv(root)
   Object.assign(spawnEnv, workloadCacheEnv)
@@ -1991,7 +1998,7 @@ export async function installPackages(
         prefix,
         error:
           `Cannot verify the installed r-base version and build in ${prefix}; repair this R runtime ` +
-          'before installing packages. Open-Science will not run an incompletely pinned R package transaction.'
+          'before installing packages. Cannot run an incompletely pinned R package transaction.'
       }
     }
 
@@ -2063,7 +2070,7 @@ export async function installPackages(
       prefix,
       error:
         `Cannot verify the installed r-base version and build in ${prefix}; repair this R runtime ` +
-        'before installing packages. Open-Science will not run an incompletely pinned R package transaction.'
+        'before installing packages. Cannot run an incompletely pinned R package transaction.'
     }
   }
   const installedRBaseVersion = installedRBaseIdentity.version

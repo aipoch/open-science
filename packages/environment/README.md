@@ -13,7 +13,12 @@ between Notebook execution and reproduction consumers.
 
 The application owns authorization, session/kernel bindings and notifications, IPC/UI, product
 CDN and bundled executable locations, network transport and authoritative process-tree supervision.
-Pass those capabilities explicitly. In particular, use `createInstallSpawn`,
+Pass those capabilities explicitly. Micromamba discovery accepts `override`, `resourcesPath`,
+`runtimeRoot` and standard `PATH`; it does not read product-specific overrides or infer an application
+storage directory from the user's home. Installations require an explicit `storageRoot`. Windows
+signed candidates require an injected `verifySignature` callback; publisher identity and release
+configuration are host policy. The application supplies that policy from build-time signing inputs,
+not runtime environment overrides. Exact pinned unsigned binaries remain usable without signing policy. In particular, use `createInstallSpawn`,
 `createMicromambaExecutor` and `createExecutableVerifier` with the host's process supervisor.
 `NotebookRecoveryCoordinator` requires that verifier; no fallback silently assumes a process is safe.
 `EnvironmentPackageMutationOwner` rechecks supplied authorization and repair gates after acquiring
@@ -44,3 +49,8 @@ location, installs declared dependencies, builds/types/tests it, then consumes `
 outside the repository. Diagnostics is built as an upstream prerequisite without rerunning its
 unit suite. Ubuntu's trusted package selection skips this package's units and isolation check for
 host-only changes; environment changes retain downstream host contract coverage.
+
+The shell environment helper exposes `buildShellProcessEnvironment(platform, sourceEnv)`; Notebook
+handoff and PowerShell bootstrap protocol variables are added by the host. Historical cache directory
+names, ownership markers and internal subprocess framing tokens retain their existing bytes; these
+are compatibility contracts, not imports or lookups into application configuration.

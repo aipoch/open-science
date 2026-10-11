@@ -41,7 +41,7 @@ import {
   NOTEBOOK_TEXT_LIMIT_BYTES,
   limitUtf8
 } from './content-limits'
-import { buildNotebookShellEnvironment, environmentPathRoots } from '@aipoch/environment'
+import { buildShellProcessEnvironment, environmentPathRoots } from '@aipoch/environment'
 import {
   prepareShellNpmEnvironment,
   shellNpmPaths,
@@ -127,7 +127,10 @@ const buildShellEnv = (
   workloadCacheEnv?: NodeJS.ProcessEnv,
   binding: ShellRuntimeBinding = defaultShellRuntimeBinding(platform)
 ): NodeJS.ProcessEnv => {
-  const env = buildNotebookShellEnvironment(handoffDir, platform, sourceEnv)
+  const env = buildShellProcessEnvironment(platform, sourceEnv)
+  // Handoff and PowerShell bootstrap variables are the Notebook host's protocol.
+  env.OPEN_SCIENCE_HANDOFF_DIR = handoffDir
+  if (platform === 'win32' && env.PSModulePath) env.OPEN_SCIENCE_PSMODULEPATH = env.PSModulePath
   if (runtimeRoot) {
     Object.assign(env, workloadCacheEnv ?? notebookWorkloadCacheEnv(runtimeRoot))
   }

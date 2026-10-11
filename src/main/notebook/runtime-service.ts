@@ -947,7 +947,7 @@ class NotebookRuntimeService {
         resolveMicromamba: async () =>
           options.micromambaRunner
             ? options.micromambaRunner.resolve()
-            : resolveMicromamba({ platform: options.platform }),
+            : resolveMicromamba({ platform: options.platform, runtimeRoot }),
         logger: this.runtimeLogger
       })
     this.packageOperations = new NotebookPackageOperations({

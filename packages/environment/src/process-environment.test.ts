@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildManagedRuntimeProcessEnvironment,
   buildNotebookKernelEnvironment,
-  buildNotebookShellEnvironment,
+  buildShellProcessEnvironment,
   environmentPathRoots,
   notebookTrustBundleEnvironment,
   normalizeRProcessLocale
@@ -58,11 +58,10 @@ describe('Notebook process environment', () => {
   }
 
   it('projects a secret-free shell environment', () => {
-    expect(buildNotebookShellEnvironment('/workspace/handoff', 'linux', source)).toEqual({
+    expect(buildShellProcessEnvironment('linux', source)).toEqual({
       PATH: '/usr/bin',
       HOME: '/home/researcher',
-      LANG: 'en_US.UTF-8',
-      OPEN_SCIENCE_HANDOFF_DIR: '/workspace/handoff'
+      LANG: 'en_US.UTF-8'
     })
   })
 

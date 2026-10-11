@@ -14,9 +14,9 @@ import {
 // fields optional; omitted ones fall back to process defaults.
 export type MicromambaDeps = {
   env?: NodeJS.ProcessEnv
-  storageDirectoryName?: string
+  override?: string
+  runtimeRoot?: string
   resourcesPath?: string
-  home?: string
   platform?: NodeJS.Platform
 }
 
@@ -32,11 +32,7 @@ const isFile = (path: string): boolean => {
   }
 }
 
-// Enumerates micromamba binaries (contract §3). Order: OPEN_SCIENCE_MICROMAMBA_BIN override →
-// packaged resource (host resources path) → <storageRoot>/runtime/micromamba/bin → PATH. The
-// storage-root fallback reuses the production session dir name
-// ((deps.storageDirectoryName ?? '.open-science'), i.e. ~/.open-science) since this module stays electron-free and cannot
-// see the dev/prod choice made by resolveConfigRoot; dev builds rely on the env override or PATH.
+// Search explicit caller locations before the standard process PATH. Product policy stays with the host.
 export type MicromambaLocation = {
   kind: 'override' | 'bundled' | 'runtime' | 'path'
   path: string
@@ -54,23 +50,14 @@ export const resolveMicromambaLocations = (deps: MicromambaDeps = {}): Micromamb
     locations.push({ kind, path })
   }
 
-  const override = env.OPEN_SCIENCE_MICROMAMBA_BIN
+  const override = deps.override
   if (override) add('override', override)
 
   const resourcesPath = deps.resourcesPath
   if (resourcesPath) add('bundled', join(resourcesPath, name))
 
-  const home = deps.home ?? env.HOME ?? env.USERPROFILE
-  if (home) {
-    const runtimeBin = join(
-      home,
-      deps.storageDirectoryName ?? '.open-science',
-      'runtime',
-      'micromamba',
-      'bin',
-      name
-    )
-    add('runtime', runtimeBin)
+  if (deps.runtimeRoot) {
+    add('runtime', join(deps.runtimeRoot, 'micromamba', 'bin', name))
   }
 
   const pathVar = env.PATH ?? env.Path

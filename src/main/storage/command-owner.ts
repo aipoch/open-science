@@ -9,7 +9,7 @@ import { dirname, join } from 'node:path'
 
 import { desktopShellInteraction, desktopFileInteraction } from '../desktop-interaction'
 import { runtimeLifecycle } from '../runtime-lifecycle'
-import { runtimeMetadataIfConfigured } from '../runtime-metadata'
+import { resolveNotebookMicromamba as resolveMicromamba } from '../notebook/environment-resources'
 
 import type {
   ActiveSessionInfo,
@@ -31,7 +31,7 @@ import {
   resolveDataRoot,
   samePath
 } from '../storage-root'
-import { micromambaSpawnEnv, resolveMicromamba } from '@aipoch/environment'
+import { micromambaSpawnEnv } from '@aipoch/environment'
 import type { MicromambaRunner } from '@aipoch/environment'
 import { captureMicromamba } from '@aipoch/environment'
 import { exportRuntimeLocks } from '@aipoch/environment'
@@ -564,7 +564,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
               mm: deps.micromambaRunner
                 ? await deps.micromambaRunner.resolve()
                 : resolveMicromamba({
-                    resourcesPath: runtimeMetadataIfConfigured()?.resourcesPath
+                    runtimeRoot: runtimeRoot(fromDataRoot)
                   }),
               capture: (argv) =>
                 captureMicromamba(argv, micromambaSpawnEnv(runtimeRoot(fromDataRoot)))

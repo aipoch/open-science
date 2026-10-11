@@ -405,3 +405,16 @@ it('skips unchanged environment units for host edits and retains downstream cont
   expect(environment.testFiles).toContain('src/main/notebook/environment-process.contract.test.ts')
   expect(environment.testFiles.some((path) => path.startsWith('packages/diagnostics/'))).toBe(false)
 })
+
+it.each([
+  'src/main/windows-executable-trust.ts',
+  'src/main/notebook/environment-runner.ts',
+  'src/main/notebook/environment-resources.ts',
+  'src/main/notebook/shell-process.ts'
+])('keeps environment units excluded for host policy edits to %s', (path) => {
+  const actualRegistry = JSON.parse(readFileSync('scripts/ci/package-test-boundaries.json', 'utf8'))
+  expect(createPackageTestPlan([path], actualRegistry)).toMatchObject({
+    selected: [],
+    excluded: expect.arrayContaining(['packages/environment'])
+  })
+})

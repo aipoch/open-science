@@ -1,3 +1,4 @@
+import { windowsSigningBuildDefines } from './scripts/windows-signing-policy.mjs'
 import { createRequire } from 'node:module'
 import { resolve } from 'path'
 import { nativeLocaleAssets } from './scripts/native-locale-assets'
@@ -19,6 +20,7 @@ export default defineConfig(({ command }) => ({
     plugins: [nativeLocaleAssets()],
     define: {
       __OPEN_SCIENCE_NATIVE_LOCALE_DIRECTORY__: JSON.stringify('native-locales'),
+      ...windowsSigningBuildDefines(process.env),
       ...wsl2BuildDefines(process.platform, command === 'serve', process.env)
     },
     build: {

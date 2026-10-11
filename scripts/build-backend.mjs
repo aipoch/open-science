@@ -1,3 +1,4 @@
+import { windowsSigningBuildDefines } from './windows-signing-policy.mjs'
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { assertBackendImports } from './backend-dependencies.mjs'
 import { context } from 'esbuild'
@@ -34,6 +35,7 @@ export async function createBackendBuilder({
         define: {
           'import.meta.url': '__entryUrl',
           __OPEN_SCIENCE_NATIVE_LOCALE_DIRECTORY__: JSON.stringify('native-locales'),
+          ...windowsSigningBuildDefines(process.env),
           ...wsl2BuildDefines(process.platform, development, process.env)
         },
         banner: { js: 'const __entryUrl = require("node:url").pathToFileURL(__filename).href;' },

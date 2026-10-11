@@ -24,3 +24,18 @@ describe('runtime CDN platform mapping', () => {
     )
   })
 })
+
+it('maps product overrides and an explicit runtime root to the package inputs', async () => {
+  const { notebookMicromambaOptions } = await import('./environment-resources')
+  expect(
+    notebookMicromambaOptions({
+      env: { HOME: '/unrelated-home', OPEN_SCIENCE_MICROMAMBA_BIN: '/configured/micromamba' },
+      runtimeRoot: '/research/runtime',
+      resourcesPath: '/application/resources'
+    })
+  ).toMatchObject({
+    override: '/configured/micromamba',
+    runtimeRoot: '/research/runtime',
+    resourcesPath: '/application/resources'
+  })
+})

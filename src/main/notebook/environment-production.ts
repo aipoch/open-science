@@ -1,3 +1,4 @@
+import { createWindowsExecutableVerifier } from '../windows-executable-trust'
 import { basename, dirname } from 'node:path'
 
 import {
@@ -84,14 +85,17 @@ export const createProductionProvisioner = (
   opts: ProductionProvisionerOptions,
   deps: ProductionProvisionerDeps = {}
 ): DefaultRuntimeProvisioner<EnvironmentRequestContext> => {
-  // `root` is `<storageRoot>/runtime`; derive the real home dir from it (storageRoot's parent) as a
-  // robust fallback for resolveMicromamba's storage-root branch, instead of leaving it to fall back to
-  // resolveMicromamba's own process.env.HOME lookup — which can be unset for a packaged Electron app
-  // launched outside a shell. This is dev/prod-agnostic (pure path arithmetic on the caller-resolved
-  // root, no directory-name guessing). Caller-supplied opts.micromamba.home still wins when provided.
+  // Pass the caller's resolved runtime root without guessing its storage directory name. Retain
+  // explicit host home overrides for existing embeddings; the package never derives product paths.
   const derivedHome = dirname(dirname(opts.root))
   const runner =
-    deps.runner ?? createProductionMicromambaRunner({ home: derivedHome, ...opts.micromamba })
+    deps.runner ??
+    createProductionMicromambaRunner({
+      verifySignature: createWindowsExecutableVerifier(),
+      runtimeRoot: opts.micromamba?.home ? undefined : opts.root,
+      home: derivedHome,
+      ...opts.micromamba
+    })
   if (!runner) {
     throw new Error(
       'micromamba binary not found (set OPEN_SCIENCE_MICROMAMBA_BIN or ship it as a resource)'

@@ -232,3 +232,29 @@ vi.mock('../runtime-metadata', () => ({
   runtimeMetadata: () => ({ packaged: false, resourcesPath: '', homePath: '' }),
   runtimeMetadataIfConfigured: () => ({ packaged: false, resourcesPath: '', homePath: '' })
 }))
+
+it('delegates signed candidate trust and rejects it without an injected verifier', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'runner-trust-'))
+  try {
+    const resourcesPath = join(root, 'resources')
+    mkdirSync(resourcesPath)
+    writeFileSync(join(resourcesPath, 'micromamba.exe'), 'signed-by-the-release-build')
+    const options = {
+      platform: 'win32' as const,
+      env: {},
+      resourcesPath,
+      localToolsDir: join(root, 'tools'),
+      preflight: async () => undefined
+    }
+    await expect(createProductionMicromambaRunner(options)!.resolve()).rejects.toThrow(
+      /Authenticode/
+    )
+    const verifySignature = vi.fn(async () => undefined)
+    const path = await createProductionMicromambaRunner({ ...options, verifySignature })!.resolve()
+    expect(contentsOf(path)).toBe('signed-by-the-release-build')
+    expect(verifySignature).toHaveBeenCalledWith(join(resourcesPath, 'micromamba.exe'))
+    expect(verifySignature.mock.calls.length).toBeGreaterThan(1)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})

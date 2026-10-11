@@ -2316,3 +2316,16 @@ describe('installPackages shared pkgs cache lock', () => {
     expect(order).toEqual(['pip-start', 'repair', 'pip-end'])
   })
 })
+
+it('requires caller storage configuration before spawning an installer', async () => {
+  const spawn = vi.fn()
+  const result = await installPackages(
+    { language: 'python', packages: ['numpy'] },
+    { spawn, micromamba: 'micromamba' }
+  )
+  expect(result).toMatchObject({
+    ok: false,
+    error: expect.stringContaining('explicit storageRoot')
+  })
+  expect(spawn).not.toHaveBeenCalled()
+})

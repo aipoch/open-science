@@ -83,17 +83,14 @@ const addControlledPowerShellModulePath = (
   if (modulePaths.length === 0) return
   const controlledModulePath = modulePaths.join(win32.delimiter)
   env.PSModulePath = controlledModulePath
-  env.OPEN_SCIENCE_PSMODULEPATH = controlledModulePath
 }
 
-export const buildNotebookShellEnvironment = (
-  handoffDir: string,
+export const buildShellProcessEnvironment = (
   platform: NodeJS.Platform = process.platform,
   sourceEnv: NodeJS.ProcessEnv = process.env
 ): NodeJS.ProcessEnv => {
   const env = projectEnvironment(sourceEnv, platform)
   if (platform === 'win32') addControlledPowerShellModulePath(env, sourceEnv)
-  env.OPEN_SCIENCE_HANDOFF_DIR = handoffDir
   return env
 }
 

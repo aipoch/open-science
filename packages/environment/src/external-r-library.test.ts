@@ -68,6 +68,7 @@ describe('external R package installation', () => {
         const result = await installPackages(
           { language: 'r', packages: ['glue'] },
           {
+            storageRoot: directory,
             interpreter: { command: '/external/Rscript', library },
             spawn
           }
@@ -97,6 +98,7 @@ describe('external R package installation', () => {
         const result = await installPackages(
           { language: 'r', packages: ['glue'], cwd: library },
           {
+            storageRoot: directory,
             interpreter: { command: '/external/Rscript', library },
             spawn
           }

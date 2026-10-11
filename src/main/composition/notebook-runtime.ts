@@ -1,3 +1,4 @@
+import { createWindowsExecutableVerifier } from '../windows-executable-trust'
 import { runtimeMetadata } from '../runtime-metadata'
 import { dirname } from 'node:path'
 import { DEFAULT_ARTIFACT_PROJECT_ID } from '../../shared/artifacts'
@@ -71,6 +72,8 @@ export async function composeNotebookRuntime({
   // One runner owns Windows integrity/preflight/fallback state for every production micromamba
   // consumer in this main-process generation. Each consumer receives only its narrow resolve seam.
   const micromambaRunner = createProductionMicromambaRunner({
+    verifySignature: createWindowsExecutableVerifier(),
+    runtimeRoot: provisioningRoot,
     packaged: runtimeMetadata().packaged,
     configHome: runtimeMetadata().homePath,
     home: dirname(dirname(provisioningRoot)),

@@ -179,11 +179,11 @@ describe('normalizeExplicitLock', () => {
 })
 
 describe('resolveMicromamba', () => {
-  it('prefers the OPEN_SCIENCE_MICROMAMBA_BIN override when it is a file', () => {
+  it('prefers the explicit binary override when it is a file', () => {
     const dir = mkdtempSync(join(tmpdir(), 'os-mm-'))
     const bin = join(dir, 'micromamba')
     writeFileSync(bin, 'x')
-    expect(resolveMicromamba({ env: { OPEN_SCIENCE_MICROMAMBA_BIN: bin } })).toBe(bin)
+    expect(resolveMicromamba({ override: bin })).toBe(bin)
   })
 
   it('ignores the override when it does not point at a real file', () => {
@@ -192,7 +192,7 @@ describe('resolveMicromamba', () => {
     writeFileSync(join(resources, name), 'x')
     expect(
       resolveMicromamba({
-        env: { OPEN_SCIENCE_MICROMAMBA_BIN: '/no/such/bin' },
+        override: '/no/such/bin',
         resourcesPath: resources
       })
     ).toBe(join(resources, name))
@@ -205,13 +205,14 @@ describe('resolveMicromamba', () => {
     expect(resolveMicromamba({ env: {}, resourcesPath: resources })).toBe(join(resources, name))
   })
 
-  it('falls back to the storage-root runtime binary under home', () => {
+  it('falls back to the caller runtime root', () => {
     const home = mkdtempSync(join(tmpdir(), 'os-home-'))
     const name = process.platform === 'win32' ? 'micromamba.exe' : 'micromamba'
-    const runtimeDir = join(home, '.open-science', 'runtime', 'micromamba', 'bin')
+    const root = join(home, 'custom-runtime')
+    const runtimeDir = join(root, 'micromamba', 'bin')
     mkdirSync(runtimeDir, { recursive: true })
     writeFileSync(join(runtimeDir, name), 'x')
-    expect(resolveMicromamba({ env: {}, resourcesPath: '/no/such/dir', home })).toBe(
+    expect(resolveMicromamba({ env: {}, resourcesPath: '/no/such/dir', runtimeRoot: root })).toBe(
       join(runtimeDir, name)
     )
   })
@@ -224,7 +225,7 @@ describe('resolveMicromamba', () => {
       resolveMicromamba({
         env: { PATH: dir },
         resourcesPath: '/no/such/dir',
-        home: '/no/such/home'
+        runtimeRoot: '/no/such/runtime'
       })
     ).toBe(join(dir, name))
   })
@@ -249,7 +250,7 @@ describe('resolveMicromamba', () => {
           platform,
           env: { PATH: [first, second].join(separator) },
           resourcesPath: join(root, 'missing-resources'),
-          home: join(root, 'missing-home')
+          runtimeRoot: join(root, 'missing-runtime')
         })
 
         expect(paths).toEqual([
@@ -264,7 +265,7 @@ describe('resolveMicromamba', () => {
 
   it('returns undefined when nothing resolves', () => {
     expect(
-      resolveMicromamba({ env: {}, resourcesPath: '/no/such/dir', home: '/no/such/home' })
+      resolveMicromamba({ env: {}, resourcesPath: '/no/such/dir', runtimeRoot: '/no/such/runtime' })
     ).toBeUndefined()
   })
 })
@@ -366,4 +367,28 @@ describe('micromambaSpawnEnv', () => {
       expect(env.R_LIBS_SITE).toBeUndefined()
     }
   )
+})
+
+it('does not interpret host product overrides or a home directory as package configuration', () => {
+  const root = mkdtempSync(join(tmpdir(), 'independent-mm-'))
+  try {
+    const name = process.platform === 'win32' ? 'micromamba.exe' : 'micromamba'
+    const bin = join(root, name)
+    const implicit = join(root, '.open-science', 'runtime', 'micromamba', 'bin')
+    mkdirSync(implicit, { recursive: true })
+    writeFileSync(bin, 'override')
+    writeFileSync(join(implicit, name), 'implicit')
+    expect(
+      resolveMicromamba({
+        env: {
+          HOME: root,
+          USERPROFILE: root,
+          OPEN_SCIENCE_MICROMAMBA_BIN: bin
+        }
+      })
+    ).toBeUndefined()
+    expect(resolveMicromamba({ override: bin, env: {} })).toBe(bin)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 })
