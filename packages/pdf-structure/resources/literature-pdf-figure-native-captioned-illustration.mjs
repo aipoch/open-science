@@ -2686,7 +2686,7 @@ export function nativeCaptionedConnectedNodes(page, caption, captions, tables, t
   const nodes = paths.filter(
     (p) =>
       p.fillStroke &&
-      /^#[8-f][0-9a-f][8-f][0-9a-f][8-f][0-9a-f]$/u.test(p.fill) &&
+      /^#[89a-f][0-9a-f][89a-f][0-9a-f][89a-f][0-9a-f]$/u.test(p.fill) &&
       p.commands.join(',') === '0,1,2,1,2,1,2,1,2,4,0' &&
       frames.filter((r) => nearRect(r, p.rect)).length === 1 &&
       p.rect[3] < caption.rect[1] &&
