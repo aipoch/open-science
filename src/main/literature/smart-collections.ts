@@ -1746,52 +1746,57 @@ export class LiteratureSmartCollections {
             }
             resolvedModel = answer.model
           }
-          await client.$transaction(async (tx) => {
-            const current = await this.definition(tx, run.collectionId)
-            const paper =
-              current.where &&
-              (await tx.literatureItem.findFirst({
-                where: { AND: [current.where, { id: row.id }] }
-              }))
-            if (
-              controller.signal.aborted ||
-              (await this.policy()).key !== run.policyKey ||
-              current.definition.ruleRevision !== run.ruleRevision ||
-              !paper ||
-              (
-                await smartInput(
-                  tx,
-                  paper,
-                  smartEvidenceModeSchema.parse(current.definition.evidenceMode)
-                )
-              ).digest !== row.digest
-            )
-              throw new ClassificationEvaluationError('configuration')
-            const data = {
-              ruleRevision: run.ruleRevision,
-              inputDigest: row.digest,
-              policyKey: run.policyKey,
-              verdict: answer.verdict,
-              model: answer.model,
-              probabilitiesJson: JSON.stringify(answer.probabilities),
-              evidenceJson: JSON.stringify(evidence),
-              evaluatedAt: new Date()
-            }
-            await tx.literatureSmartAssessment.upsert({
-              where: { collectionId_itemId: { collectionId: run.collectionId, itemId: row.id } },
-              create: { collectionId: run.collectionId, itemId: row.id, ...data },
-              update: data
-            })
-            await tx.literatureSmartRunItem.update({
-              where: { runId_itemId: { runId, itemId: row.id } },
-              data: {
-                state: 'done',
-                failure: null,
-                resultJson: JSON.stringify({ answer, evidence }),
-                evaluatedAt: data.evaluatedAt
+          // Result writes share the single SQLite connection with parallel usage records.
+          // Match their admission wait instead of failing after Prisma's two-second default.
+          await client.$transaction(
+            async (tx) => {
+              const current = await this.definition(tx, run.collectionId)
+              const paper =
+                current.where &&
+                (await tx.literatureItem.findFirst({
+                  where: { AND: [current.where, { id: row.id }] }
+                }))
+              if (
+                controller.signal.aborted ||
+                (await this.policy()).key !== run.policyKey ||
+                current.definition.ruleRevision !== run.ruleRevision ||
+                !paper ||
+                (
+                  await smartInput(
+                    tx,
+                    paper,
+                    smartEvidenceModeSchema.parse(current.definition.evidenceMode)
+                  )
+                ).digest !== row.digest
+              )
+                throw new ClassificationEvaluationError('configuration')
+              const data = {
+                ruleRevision: run.ruleRevision,
+                inputDigest: row.digest,
+                policyKey: run.policyKey,
+                verdict: answer.verdict,
+                model: answer.model,
+                probabilitiesJson: JSON.stringify(answer.probabilities),
+                evidenceJson: JSON.stringify(evidence),
+                evaluatedAt: new Date()
               }
-            })
-          })
+              await tx.literatureSmartAssessment.upsert({
+                where: { collectionId_itemId: { collectionId: run.collectionId, itemId: row.id } },
+                create: { collectionId: run.collectionId, itemId: row.id, ...data },
+                update: data
+              })
+              await tx.literatureSmartRunItem.update({
+                where: { runId_itemId: { runId, itemId: row.id } },
+                data: {
+                  state: 'done',
+                  failure: null,
+                  resultJson: JSON.stringify({ answer, evidence }),
+                  evaluatedAt: data.evaluatedAt
+                }
+              })
+            },
+            { maxWait: 30000 }
+          )
           row.state = 'done'
         } catch (error) {
           stop = true

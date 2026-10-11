@@ -3742,3 +3742,48 @@ it('evaluates existing unpaused automatic collections when started', async () =>
   expect((await owner.view(id)).run?.state).toBe('completed')
   expect(classify).toHaveBeenCalledTimes(1)
 })
+
+// Classification usage and result commits share the single SQLite connection.
+it('waits for a busy usage connection before committing a classified outcome', async () => {
+  const collectionId = await create()
+  const usage = vi
+    .spyOn(ClassificationUsageRecorder.prototype, 'observer')
+    .mockReturnValue(async () => undefined)
+  const transaction = db.$transaction.bind(db)
+  let blocked = false
+  let blocker: Promise<unknown> | undefined
+  const spy = vi.spyOn(db, '$transaction').mockImplementation((async (
+    operation: Parameters<typeof db.$transaction>[0],
+    options?: Parameters<typeof db.$transaction>[1]
+  ) => {
+    // Inject competing work after inference; the real result commit must wait
+    // for the SQLite connection exactly as it does behind a usage write.
+    if (!blocked && typeof operation === 'function' && classify.mock.calls.length > 0) {
+      blocked = true
+      let entered!: () => void
+      const ready = new Promise<void>((resolve) => {
+        entered = resolve
+      })
+      blocker = transaction(async () => {
+        entered()
+        await new Promise((resolve) => setTimeout(resolve, 2300))
+      })
+      await ready
+    }
+    return transaction(operation, options)
+  }) as typeof db.$transaction)
+  try {
+    await owner.execute({ kind: 'smart-collection', collectionId, action: 'refresh', offset: 0 })
+    await vi.waitFor(
+      async () =>
+        expect((await owner.view(collectionId)).run?.state).toMatch(/^(completed|failed)$/u),
+      { timeout: 10000 }
+    )
+    expect(blocked).toBe(true)
+    expect((await owner.view(collectionId)).run?.state).toBe('completed')
+  } finally {
+    await blocker
+    spy.mockRestore()
+    usage.mockRestore()
+  }
+})
