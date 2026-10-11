@@ -5,7 +5,7 @@ import { basename, dirname, join, resolve, sep } from 'node:path'
 import { validateSpecialistPackageVersion } from './transaction-contract'
 import type { SpecialistPackageSkillPlan } from './transaction-contract'
 import type { SpecialistPackageSkillPort } from './transaction-contract'
-import { writeDurableJsonFile } from './durable-json-file'
+import { writeDurableJsonFile } from '@aipoch/durable-files'
 import { parseSkillDocument } from './frontmatter'
 import { type SkillMutationOwner, skillMutationOwnerFor } from './skill-mutation-owner'
 

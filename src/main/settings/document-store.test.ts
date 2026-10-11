@@ -1,6 +1,5 @@
 import {
   mkdtemp,
-  open as openFile,
   readFile,
   readdir,
   rename as renameFile,
@@ -22,14 +21,6 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>()
   return {
     ...actual,
-    open: vi.fn(async (...args: Parameters<typeof actual.open>) => {
-      if (faults.failOpenOnceWith) {
-        const error = faults.failOpenOnceWith
-        faults.failOpenOnceWith = undefined
-        throw error
-      }
-      return actual.open(...args)
-    }),
     readFile: vi.fn((...args: Parameters<typeof actual.readFile>) => actual.readFile(...args)),
     rename: vi.fn(async (source: string, destination: string) => {
       if (faults.renameFailuresRemaining > 0) {
@@ -47,6 +38,36 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   }
 })
 
+vi.mock('@aipoch/durable-files', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@aipoch/durable-files')>()
+  const boundedRead = vi.fn(async (path: string, maxBytes: number) => {
+    if (faults.failOpenOnceWith) {
+      const failure = faults.failOpenOnceWith
+      faults.failOpenOnceWith = undefined
+      throw failure
+    }
+    return actual.readFileWithinLimit(path, maxBytes)
+  })
+  return {
+    ...actual,
+    readFileWithinLimit: boundedRead,
+    readDurableJsonFile: (path, decode, dependencies, options) =>
+      actual.readDurableJsonFile(
+        path,
+        decode,
+        {
+          stat: statFile,
+          readFileWithinLimit: boundedRead,
+          ...dependencies
+        },
+        options
+      ),
+    writeDurableJsonFile: (path, contents, dependencies) =>
+      actual.writeDurableJsonFile(path, contents, { rename: renameFile, ...dependencies })
+  } satisfies typeof actual
+})
+
+import { readFileWithinLimit } from '@aipoch/durable-files'
 import { SettingsDocumentStore } from './document-store'
 
 let storageRoot: string | undefined
@@ -249,7 +270,7 @@ describe('settings document store', () => {
       path: settingsPath,
       cause: readFailure
     })
-    expect(openFile).toHaveBeenCalledWith(settingsPath, 'r')
+    expect(readFileWithinLimit).toHaveBeenCalledWith(settingsPath, 128 * 1024 * 1024)
     expect(update).not.toHaveBeenCalled()
     await expect(readFile(settingsPath, 'utf8')).resolves.toBe(originalContents)
 

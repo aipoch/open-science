@@ -5,7 +5,7 @@ import { createProjectDbClient, migrateApplicationDatabase } from '../../project
 import { ArtifactProvenanceRepository } from '../provenance-repository'
 import { ArtifactRepository } from '../repository'
 import { ArtifactStorageAccess } from '../storage-access'
-import { defaultArtifactDurability } from '../durability'
+import { defaultFileDurability } from '@aipoch/durable-files'
 import { NotebookLocalRpcServer } from '../../notebook/local-rpc-server'
 import { NotebookRuntimeService } from '../../notebook/runtime-service'
 import { NotebookRunRepository } from '../../notebook/repository'
@@ -89,9 +89,9 @@ const main = async (): Promise<void> => {
     compatibilityRepository: compatibility,
     loadSession: async () => session,
     durability: {
-      ...defaultArtifactDurability,
+      ...defaultFileDurability,
       syncFile: async (path) => {
-        await defaultArtifactDurability.syncFile(path)
+        await defaultFileDurability.syncFile(path)
         if (phase === 'before-version' && path.includes('.staging') && path.endsWith('content'))
           await pause()
         if (phase === 'staging' && path.includes('.staging') && path.endsWith('evidence.json'))

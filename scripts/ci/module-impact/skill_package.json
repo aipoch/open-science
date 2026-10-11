@@ -16,12 +16,8 @@
     "packages/skills/src/catalog.ts",
     "packages/skills/src/diagnostics.ts",
     "packages/skills/src/document.ts",
-    "packages/skills/src/durable-json-file.test.ts",
-    "packages/skills/src/durable-json-file.ts",
     "packages/skills/src/export-snapshot.test.ts",
     "packages/skills/src/export.ts",
-    "packages/skills/src/file-durability.ts",
-    "packages/skills/src/file-replacement.ts",
     "packages/skills/src/frontmatter.test.ts",
     "packages/skills/src/frontmatter.ts",
     "packages/skills/src/github-import.test.ts",
@@ -94,7 +90,6 @@
   "testFiles": {
     "owner": [
       "packages/skills/src/agent-home-skill-catalog.test.ts",
-      "packages/skills/src/durable-json-file.test.ts",
       "packages/skills/src/export-snapshot.test.ts",
       "packages/skills/src/frontmatter.test.ts",
       "packages/skills/src/github-import.test.ts",

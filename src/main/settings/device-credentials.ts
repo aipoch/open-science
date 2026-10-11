@@ -15,7 +15,7 @@ import type {
 } from '../../shared/settings'
 import { normalizeLoopbackOAuthRedirectUri } from '@aipoch/connector-mcp-client/oauth-redirect'
 import { isSecureRemoteUrl } from '@aipoch/connector-core/url-admission'
-import { readDurableJsonFile, writeDurableJsonFile } from '../storage/durable-json-file'
+import { readDurableJsonFile, writeDurableJsonFile } from '@aipoch/durable-files'
 import { hasEmbeddedConnectorCredentials } from './connector-template'
 import { encryptKey, tryDecryptKey } from './crypto'
 import {

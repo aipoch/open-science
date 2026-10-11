@@ -47,9 +47,12 @@ describe('independent package verification', () => {
   })
   it.each(['skills', 'specialists'])('selects only the standalone %s verifier', (name) => {
     const plan = verificationPlanFromArguments([`--packages=${name}`], {})
-    expect(plan).toEqual({ builds: [`packages/${name}`], tests: [`packages/${name}`] })
+    expect(plan).toEqual({
+      builds: ['packages/durable-files', `packages/${name}`],
+      tests: [`packages/${name}`]
+    })
     expect(verificationCommands(plan)).toEqual([
-      { script: 'verify:package', prefix: `packages/${name}`, packages: [name] }
+      { script: 'check:durable-files-package', packages: [name] }
     ])
   })
   it('verifies a new Specialist package absent from trusted exclusion evidence', () => {
@@ -59,7 +62,7 @@ describe('independent package verification', () => {
       roots.filter((root: string) => root !== 'packages/specialists')
     )
     expect(verificationCommands(plan)).toEqual([
-      { script: 'verify:package', prefix: 'packages/specialists', packages: ['specialists'] }
+      { script: 'check:durable-files-package', packages: ['specialists'] }
     ])
   })
   it('builds the reproduction dependency closure while testing only reproduction', () => {

@@ -2,7 +2,7 @@ import { join } from 'node:path'
 import { z } from 'zod'
 import { sha256 } from './provenance-canonical'
 import { parseNotebookEnvironmentLock } from '@aipoch/environment'
-import { readDurableJsonFile } from '../storage/durable-json-file'
+import { readDurableJsonFile } from '@aipoch/durable-files'
 
 const identity = z.string().min(1).max(200)
 export const reproducibilitySourceSchema = z

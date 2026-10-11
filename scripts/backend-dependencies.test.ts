@@ -141,6 +141,7 @@ it.each([
   'connector-core',
   'connector-mcp-client',
   'diagnostics',
+  'durable-files',
   'environment',
   'notebook-analysis',
   'notebook-code-risk',

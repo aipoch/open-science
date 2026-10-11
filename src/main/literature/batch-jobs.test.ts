@@ -18,7 +18,7 @@ import {
 
 import { LiteratureBatchJobs } from '@aipoch/literature-discovery'
 
-import { defaultFileDurability } from '../storage/file-durability'
+import { defaultFileDurability } from '@aipoch/durable-files'
 
 import { waitForDataRootWriters } from '../storage/migration-state'
 

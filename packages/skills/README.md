@@ -54,11 +54,12 @@ throwaway cache. Existing recovery and legacy identity behavior is retained.
 
 ## Development and acceptance
 
-Run `npm ci`, `npm run build`, `npm run typecheck` and `npm test` in this directory.
-`npm run verify:package` copies only this package to an OS temporary directory, installs its own
-locked dependencies, builds/types/tests it, packs it, then installs and exercises the tarball in a
+Install the durable publication prerequisite as described below, then run `npm run build`,
+`npm run typecheck` and `npm test` in this directory.
+`npm run verify:package -- --durable-files-tarball=<absolute-path>` copies only this package to an OS temporary directory, installs its own
+declared dependencies, builds/types/tests it, packs it, then installs and exercises the tarball in a
 second clean consumer. It requires npm registry access on an empty cache. Temporary acceptance
-artifacts are reported and preserved for inspection. The tarball contains emitted code and types,
+artifacts are removed after successful verification. The tarball contains emitted code and types,
 README and LICENSE; tests, host resources and source files are excluded.
 
 Application integration tests run separately from `src/main/skills/` and the consuming features.
@@ -154,3 +155,12 @@ The application Marketplace adapter retains the historical `.source.json.marketp
 and its exact digest algorithm. This refactor does not migrate existing data. Package tests use a
 fictional local publisher with a different version grammar and no official market fixtures. Boundary
 tests reject Marketplace symbols, URLs and protocol identifiers in package source/tests/scripts.
+
+### Durable publication dependency
+
+This package declares `@aipoch/durable-files` as a runtime dependency. For unpublished local builds,
+install its real npm tarball alongside the declared dependencies (`npm install --no-save /path/to/aipoch-durable-files-0.1.0.tgz`),
+then build/typecheck/test as usual. Run the repository dispatcher with
+`npm run check:packages -- --packages=skills` to prepare that prerequisite without rerunning its
+unchanged unit suite. Standalone `verify:package` accepts `-- --durable-files-tarball=<absolute-path>`.
+Verification removes the source copy and consumer devDependencies before its final runtime check.

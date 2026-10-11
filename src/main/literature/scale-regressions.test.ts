@@ -14,7 +14,7 @@ import { startWebHttpServer } from '../web-service/http-server'
 import { LiteratureCatalog } from './catalog'
 import { LiteratureBatchJobs } from '@aipoch/literature-discovery'
 import { findLiteratureDuplicateGroups } from './duplicates'
-import { writeDurableJsonFile } from '../storage/durable-json-file'
+import { writeDurableJsonFile } from '@aipoch/durable-files'
 
 vi.mock('electron', () => ({
   BrowserWindow: { getAllWindows: () => [] },
@@ -23,8 +23,8 @@ vi.mock('electron', () => ({
   net: { fetch: vi.fn() }
 }))
 // Observe bytes at the durable-write boundary; atomic recovery is covered by the journal suite.
-vi.mock('../storage/durable-json-file', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../storage/durable-json-file')>()),
+vi.mock('@aipoch/durable-files', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aipoch/durable-files')>()),
   writeDurableJsonFile: vi.fn(async () => undefined)
 }))
 const cleanup: Array<() => Promise<unknown>> = []

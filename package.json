@@ -110,7 +110,8 @@
     "build:specialists": "node scripts/build-dev-packages.mjs --packages=specialists",
     "test:specialists": "npm --prefix packages/specialists test",
     "build:reproducibility": "node scripts/build-dev-packages.mjs --packages=reproducibility",
-    "check:reproducibility-package": "node scripts/check-reproducibility-package.mjs"
+    "check:reproducibility-package": "node scripts/check-reproducibility-package.mjs",
+    "check:durable-files-package": "node scripts/check-durable-files-package.mjs"
   },
   "dependencies": {
     "@agentclientprotocol/claude-agent-acp": "^0.70.0",
@@ -174,7 +175,8 @@
     "@aipoch/literature-discovery": "file:packages/literature-discovery",
     "@aipoch/specialists": "file:packages/specialists",
     "@aipoch/reproducibility": "file:packages/reproducibility",
-    "@aipoch/literature-screening": "file:packages/literature-screening"
+    "@aipoch/literature-screening": "file:packages/literature-screening",
+    "@aipoch/durable-files": "file:packages/durable-files"
   },
   "overrides": {
     "@huggingface/transformers": {

@@ -27,7 +27,7 @@
     },
     {
       "root": "packages/skills",
-      "dependencies": []
+      "dependencies": ["packages/durable-files"]
     },
     {
       "root": "packages/notebook-syntax",
@@ -63,7 +63,7 @@
     },
     {
       "root": "packages/specialists",
-      "dependencies": []
+      "dependencies": ["packages/durable-files"]
     },
     {
       "root": "packages/reproducibility",
@@ -71,6 +71,10 @@
     },
     {
       "root": "packages/literature-screening",
+      "dependencies": []
+    },
+    {
+      "root": "packages/durable-files",
       "dependencies": []
     }
   ]

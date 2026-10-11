@@ -4,7 +4,11 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { createLiteratureLibraryMcpServer } from './library-mcp-server'
 import { createLiteratureMcpServer } from './mcp-server'
-import * as durableJson from '../storage/durable-json-file'
+import * as durableJson from '@aipoch/durable-files'
+
+vi.mock('@aipoch/durable-files', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aipoch/durable-files')>())
+}))
 import { mkdtemp, rm, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'

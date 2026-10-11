@@ -5,8 +5,8 @@ import { join, relative, resolve, sep } from 'node:path'
 
 import type { ActivePlanProjection, PlanLifecycle } from '../../shared/session-plan/contract'
 import { getNotebookInputRoot } from '../notebook/input-staging'
-import { defaultFileDurability } from '../storage/file-durability'
-import { retryFileReplacement } from '../storage/file-replacement'
+import { defaultFileDurability } from '@aipoch/durable-files'
+import { retryFileReplacement } from '@aipoch/durable-files'
 import { planContextFilePlatformStrategy } from './plan-context-file-windows-strategy'
 
 const PLAN_CONTEXT_DIRECTORY = 'session-plan'

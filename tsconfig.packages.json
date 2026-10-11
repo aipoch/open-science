@@ -2,6 +2,9 @@
   "files": [],
   "references": [
     {
+      "path": "./packages/durable-files/tsconfig.dev.json"
+    },
+    {
       "path": "./packages/connector-core/tsconfig.dev.json"
     },
     {

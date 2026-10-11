@@ -34,7 +34,7 @@ import {
 } from '../../shared/execution-file-evidence'
 import { ArtifactRepository } from './repository'
 import { ImmutableInputAuthority } from '../immutable-input-authority'
-import { defaultArtifactDurability, type ArtifactDurability } from './durability'
+import { defaultFileDurability, type FileDurability } from '@aipoch/durable-files'
 import {
   ArtifactProvenanceVersionWriter,
   normalizeArtifactFilename as normalizeFilename,
@@ -114,7 +114,7 @@ type ArtifactProvenanceRepositoryOptions = {
   ) => Promise<PersistedChatSession | undefined>
   createId?: () => string
   now?: () => Date
-  durability?: ArtifactDurability
+  durability?: FileDurability
   resourceBudgets?: LocalResourceBudgetOverrides
   versionFileOperator?: VersionFileOperator & VersionFileRecovery
   managedFileVersions?: Pick<ManagedFileVersionService, 'openVersion'>
@@ -241,7 +241,7 @@ class ArtifactProvenanceRepository {
   private readonly contentRepository: ContentRepository
   private readonly createId: () => string
   private readonly now: () => Date
-  private readonly durability: ArtifactDurability
+  private readonly durability: FileDurability
   private readonly dependencyReader: ArtifactProvenanceDependencyReader
   private readonly finalizationRecovery: ArtifactProvenanceFinalizationRecovery
   private readonly literatureManifestOwner: ArtifactLiteratureManifestOwner
@@ -267,7 +267,7 @@ class ArtifactProvenanceRepository {
       options.notebookRepository ?? new NotebookRunRepository(options.storageRoot)
     this.createId = options.createId ?? randomUUID
     this.now = options.now ?? (() => new Date())
-    this.durability = options.durability ?? defaultArtifactDurability
+    this.durability = options.durability ?? defaultFileDurability
     this.versionFileOperator =
       options.versionFileOperator ??
       new NodeVersionFileOperator({ storageRoot: options.storageRoot })

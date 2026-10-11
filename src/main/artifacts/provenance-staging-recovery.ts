@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path'
 import type { PrismaClient } from '@prisma/client'
 
 import type { ArtifactVersionFile } from '../../shared/artifact-provenance'
-import type { ArtifactDurability } from './durability'
+import type { FileDurability } from '@aipoch/durable-files'
 import { sha256 } from './provenance-canonical'
 import { readOptionalFile, resolveStorageKey, storageKey } from './provenance-storage'
 import { ArtifactCompatibilityScanIncompleteError, type ArtifactRepository } from './repository'
@@ -34,7 +34,7 @@ type ArtifactProvenanceStagingRecoveryOptions = {
   compatibilityRepository: ArtifactRepository
   createId: () => string
   now: () => Date
-  durability: ArtifactDurability
+  durability: FileDurability
   projectVersionFile: (
     version: PersistedVersionFileRecord,
     projectId: string,

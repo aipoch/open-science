@@ -12,7 +12,7 @@ import {
   readDurableJsonFile,
   readFileWithinLimit,
   writeDurableJsonFile
-} from '../storage/durable-json-file'
+} from '@aipoch/durable-files'
 import { sanitizeSettings } from './document-codec'
 import { createEmptySettings, type StoredSettings } from './types'
 import { isRecord } from '../value-guards'

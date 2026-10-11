@@ -45,7 +45,8 @@
     "fflate": "0.8.3",
     "js-yaml": "^4.1.0",
     "marked": "^17.0.6",
-    "zod": "^4.6.5"
+    "zod": "^4.6.5",
+    "@aipoch/durable-files": "0.1.0"
   },
   "devDependencies": {
     "@types/node": "^22.19.1",

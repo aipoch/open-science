@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import {
   mkdtemp,
   readFile,
@@ -14,11 +15,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   DurableJsonRecoveryBarrierError,
   readDurableJsonFile,
+  recoverDurableJsonDirectory,
   readFileWithinLimit,
   DurableJsonReadLimitError,
   writeDurableJsonFile,
   type DurableJsonFileDependencies
-} from './durable-json-file'
+} from './index'
 
 const replacementDenied = (): NodeJS.ErrnoException =>
   Object.assign(new Error('replacement denied'), { code: 'EPERM' })
@@ -393,7 +395,49 @@ describe('durable JSON file recovery', () => {
     })
     await expect(readdir(root)).resolves.toEqual(['settings.json'])
   })
+
+  it('recovers a current-format temp after its writer exits', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'durable-json-exited-writer-'))
+    roots.push(root)
+    const filePath = join(root, 'settings.json')
+    const pid = execFileSync(
+      process.execPath,
+      ['-e', 'process.stdout.write(String(process.pid))'],
+      {
+        encoding: 'utf8'
+      }
+    )
+    await writeFile(`${filePath}.${pid}-12345678-1234-1234-1234-123456789abc.tmp`, '{}')
+
+    await expect(readDurableJsonFile(filePath, JSON.parse)).resolves.toEqual({
+      status: 'found',
+      value: {}
+    })
+    await expect(readdir(root)).resolves.toEqual(['settings.json'])
+  })
 })
+
+it.each(['syncFile', 'rename', 'syncDirectory'] as const)(
+  'preserves the correct committed value when %s fails',
+  async (operation) => {
+    const root = await mkdtemp(join(tmpdir(), 'durable-json-failed-publication-'))
+    roots.push(root)
+    const path = join(root, 'document.json')
+    await writeFile(path, '{"old":true}')
+    const failure = Object.assign(new Error('I/O failure'), { code: 'EIO' })
+    await expect(
+      writeDurableJsonFile(path, '{"new":true}', {
+        [operation]: async () => {
+          throw failure
+        }
+      })
+    ).rejects.toBe(failure)
+    await expect(readFile(path, 'utf8')).resolves.toBe(
+      operation === 'syncDirectory' ? '{"new":true}' : '{"old":true}'
+    )
+    await expect(readdir(root)).resolves.toEqual(['document.json'])
+  }
+)
 
 it('reads large UTF-8 JSON with bounded scratch allocations and an exact byte limit', async () => {
   const root = await mkdtemp(join(tmpdir(), 'durable-json-read-'))
@@ -421,4 +465,68 @@ it('reads large UTF-8 JSON with bounded scratch allocations and an exact byte li
   await expect(readFileWithinLimit(path, bytes - 1)).rejects.toBeInstanceOf(
     DurableJsonReadLimitError
   )
+})
+
+it('releases a failed writer, queues reads, and allows another path to progress', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'durable-json-queue-'))
+  roots.push(root)
+  const filePath = join(root, 'document.json')
+  let enter!: () => void
+  let release!: () => void
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve
+  })
+  const held = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const failure = new Error('file flush failed')
+  const first = writeDurableJsonFile(filePath, '{"first":true}', {
+    syncFile: async () => {
+      enter()
+      await held
+      throw failure
+    }
+  })
+  const rejected = expect(first).rejects.toBe(failure)
+  await entered
+  const second = writeDurableJsonFile(filePath, '{"second":true}')
+  let readFinished = false
+  const read = readDurableJsonFile(filePath, JSON.parse).then((result) => {
+    readFinished = true
+    return result
+  })
+  try {
+    await writeDurableJsonFile(join(root, 'other.json'), '{}')
+    expect(readFinished).toBe(false)
+  } finally {
+    release()
+  }
+  await rejected
+  await second
+  await expect(read).resolves.toEqual({ status: 'found', value: { second: true } })
+  expect((await readdir(root)).sort()).toEqual(['document.json', 'other.json'])
+})
+
+it('recovers missing directory targets while retaining committed primaries and unrelated files', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'durable-json-directory-'))
+  roots.push(root)
+  await writeFile(join(root, 'missing.json.1700000000000-1.tmp'), '{"recovered":true}')
+  await writeFile(join(root, 'present.json'), '{}')
+  await writeFile(join(root, 'present.json.1700000000000-1.tmp'), '{"old":true}')
+  await writeFile(join(root, 'other.txt.1700000000000-1.tmp'), '{}')
+  const targets: string[] = []
+  await recoverDurableJsonDirectory(root, (path, contents) => {
+    targets.push(path)
+    return JSON.parse(contents)
+  })
+  expect(targets.length).toBeGreaterThan(0)
+  expect(new Set(targets)).toEqual(new Set([join(root, 'missing.json')]))
+  await expect(readFile(join(root, 'missing.json'), 'utf8')).resolves.toBe('{"recovered":true}')
+  await expect(readFile(join(root, 'present.json'), 'utf8')).resolves.toBe('{}')
+  expect((await readdir(root)).sort()).toEqual([
+    'missing.json',
+    'other.txt.1700000000000-1.tmp',
+    'present.json',
+    'present.json.1700000000000-1.tmp'
+  ])
 })

@@ -12,7 +12,7 @@ import {
   sessionPackageManifestSchema,
   type SessionPackageManifest
 } from '../../shared/session-package'
-import { readFileWithinLimit } from '../storage/durable-json-file'
+import { readFileWithinLimit } from '@aipoch/durable-files'
 import { resolveStorageKey } from '../artifacts/provenance-storage'
 import { digestFileWithinBudget } from '../bounded-file-io'
 import { pacedFileTransform } from '../file-io-pacing'

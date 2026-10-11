@@ -38,8 +38,8 @@ import {
   readFileWithinLimit,
   recoverDurableJsonDirectory,
   writeDurableJsonFile
-} from '../storage/durable-json-file'
-import { defaultFileDurability } from '../storage/file-durability'
+} from '@aipoch/durable-files'
+import { defaultFileDurability } from '@aipoch/durable-files'
 import { SessionPersistenceOperationScheduler } from './operation-scheduler'
 import {
   assertSessionProjectionStorageShape,

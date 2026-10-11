@@ -1,7 +1,7 @@
 import { SpecialistError, specialistError } from './errors'
 import { join } from 'node:path'
 import { silentLogger, type SpecialistLogger } from './ports'
-import { readDurableJsonFile, writeDurableJsonFile } from './durable-json-file'
+import { readDurableJsonFile, writeDurableJsonFile } from '@aipoch/durable-files'
 import {
   createEmptySpecialists,
   SPECIALISTS_FILE_VERSION,

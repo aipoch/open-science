@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import assert from 'node:assert/strict'
-import { cp, mkdir, mkdtemp, readFile, readdir, writeFile, access } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, readdir, writeFile, access, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
@@ -9,10 +9,19 @@ import { fileURLToPath } from 'node:url'
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const work = await mkdtemp(join(tmpdir(), 'specialists-package-acceptance-'))
 console.log(`Acceptance artifacts: ${work}`)
+const durableTarball = process.argv
+  .find((arg) => arg.startsWith('--durable-files-tarball='))
+  ?.split('=')
+  .slice(1)
+  .join('=')
+if (!durableTarball)
+  throw new Error(
+    'Supply --durable-files-tarball=<npm pack archive>; the repository check:packages dispatcher supplies it.'
+  )
 const source = join(work, 'package')
 await mkdir(source)
 for (const entry of await readdir(root)) {
-  if (['node_modules', 'dist', '.git'].includes(entry) || entry.endsWith('.tgz')) continue
+  if (['node_modules', 'dist', '.git', '.cache'].includes(entry) || entry.endsWith('.tgz')) continue
   await cp(join(root, entry), join(source, entry), { recursive: true })
 }
 const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm'
@@ -43,7 +52,16 @@ const run = (command, args, cwd) => {
 console.log(
   run(
     npm,
-    ['ci', '--ignore-scripts', '--prefer-offline', '--no-audit', '--no-fund', ...cacheArgs],
+    [
+      'install',
+      '--no-save',
+      '--ignore-scripts',
+      '--prefer-offline',
+      '--no-audit',
+      '--no-fund',
+      ...cacheArgs,
+      durableTarball
+    ],
     source
   )
 )
@@ -74,7 +92,10 @@ await writeFile(
     name: 'specialists-clean-consumer',
     private: true,
     type: 'module',
-    dependencies: { '@aipoch/specialists': `file:../${packed.filename}` },
+    dependencies: {
+      '@aipoch/specialists': `file:../${packed.filename}`,
+      '@aipoch/durable-files': `file:${durableTarball}`
+    },
     devDependencies: {
       typescript: manifest.devDependencies.typescript,
       '@types/node': manifest.devDependencies['@types/node'],
@@ -167,3 +188,34 @@ console.log(
   )
 )
 console.log('PASS: browser-safe public entry bundles without Node or host modules')
+
+await rm(source, { recursive: true, force: true })
+console.log(
+  run(
+    npm,
+    ['prune', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund', ...cacheArgs],
+    consumer
+  )
+)
+console.log(run(process.execPath, ['smoke.mjs'], consumer))
+console.log(
+  run(
+    process.execPath,
+    [
+      '--input-type=module',
+      '-e',
+      `
+import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+import { realpathSync } from 'node:fs';
+import { DurableJsonRecoveryBarrierError } from '@aipoch/durable-files';
+const require = createRequire(import.meta.url);
+const sibling = createRequire(require.resolve('@aipoch/specialists'));
+assert.equal(realpathSync(sibling.resolve('@aipoch/durable-files')), realpathSync(require.resolve('@aipoch/durable-files')));
+assert.equal(sibling('@aipoch/durable-files').DurableJsonRecoveryBarrierError, DurableJsonRecoveryBarrierError);
+`
+    ],
+    consumer
+  )
+)
+await rm(work, { recursive: true, force: true })

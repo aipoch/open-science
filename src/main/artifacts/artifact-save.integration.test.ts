@@ -7,7 +7,7 @@ import type { PersistedChatSession } from '../../shared/session-persistence'
 import { strToU8, zipSync } from 'fflate'
 import { ARTIFACT_LITERATURE_SIDECAR_SUFFIX } from '../../shared/artifact-literature'
 import * as boundedIo from '../bounded-file-io'
-import { defaultArtifactDurability } from './durability'
+import { defaultFileDurability } from '@aipoch/durable-files'
 import { createHash } from 'node:crypto'
 import { mkdir, readFile, rm, truncate, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -235,9 +235,9 @@ describe('complete Artifact save over the production local RPC', () => {
       'artifacts/project-1/artifact-session-1/.pending/artifact-run-1/same.txt'
     )
     const before = await readFile(pending)
-    const sync = defaultArtifactDurability.syncFile
+    const sync = defaultFileDurability.syncFile
     let fail = true
-    vi.spyOn(defaultArtifactDurability, 'syncFile').mockImplementation(async (path) => {
+    vi.spyOn(defaultFileDurability, 'syncFile').mockImplementation(async (path) => {
       if (fail && path.includes('.staging') && path.endsWith('content')) {
         fail = false
         throw new Error('injected pre-commit failure')
@@ -324,9 +324,9 @@ describe('complete Artifact save over the production local RPC', () => {
     vi.spyOn(f.repository, 'saveVersion').mockImplementationOnce((request, scope, signal) =>
       save(request, scope, AbortSignal.any([controller.signal, ...(signal ? [signal] : [])]))
     )
-    const sync = defaultArtifactDurability.syncFile
+    const sync = defaultFileDurability.syncFile
     let fail = true
-    vi.spyOn(defaultArtifactDurability, 'syncFile').mockImplementation(async (path) => {
+    vi.spyOn(defaultFileDurability, 'syncFile').mockImplementation(async (path) => {
       await sync(path)
       if (fail && path.includes('.staging') && path.endsWith('evidence.json')) {
         fail = false

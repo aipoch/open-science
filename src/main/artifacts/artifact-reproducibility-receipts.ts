@@ -30,7 +30,7 @@ import {
   readDurableJsonFile,
   recoverDurableJsonDirectory,
   writeDurableJsonFile
-} from '../storage/durable-json-file'
+} from '@aipoch/durable-files'
 import { canonicalJson, sha256, type CanonicalJson } from './provenance-canonical'
 import {
   readReproducibilityEnvironmentLock,

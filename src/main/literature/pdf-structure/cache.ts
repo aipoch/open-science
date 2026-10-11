@@ -3,8 +3,8 @@ import { createReadStream } from 'node:fs'
 import { lstat, mkdir, readdir, rename, rmdir, unlink, utimes, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
-import { readFileWithinLimit } from '../../storage/durable-json-file'
-import { defaultFileDurability } from '../../storage/file-durability'
+import { readFileWithinLimit } from '@aipoch/durable-files'
+import { defaultFileDurability } from '@aipoch/durable-files'
 import {
   parsePdfStructureResult,
   type PdfStructureIdentity,

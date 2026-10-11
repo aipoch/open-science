@@ -9,7 +9,7 @@ import {
   readDurableJsonFile,
   recoverDurableJsonDirectory,
   writeDurableJsonFile
-} from './durable-json-file'
+} from '@aipoch/durable-files'
 
 const MANAGED_WORKSPACE_OWNERSHIP_VERSION = 1
 

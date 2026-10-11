@@ -3,7 +3,7 @@ import { createServer } from 'node:http'
 import { readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { loadOrCreateWebToken } from './web-service/auth'
-import { writeDurableJsonFile } from './storage/durable-json-file'
+import { writeDurableJsonFile } from '@aipoch/durable-files'
 import type { DesktopEndpoint } from './desktop-connection'
 
 export const RUNTIME_OWNER_FILE = 'runtime-owner.json'

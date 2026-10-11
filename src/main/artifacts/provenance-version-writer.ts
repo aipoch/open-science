@@ -9,7 +9,7 @@ import type {
   ArtifactVersionFile,
   CreateArtifactVersionRequest
 } from '../../shared/artifact-provenance'
-import type { ArtifactDurability } from './durability'
+import type { FileDurability } from '@aipoch/durable-files'
 import { artifactFailureDiagnostic } from './pending-file-transaction'
 import type {
   ArtifactVersionProducerCapture,
@@ -139,7 +139,7 @@ type ArtifactProvenanceVersionWriterOptions = {
   compatibilityRepository: Pick<ArtifactRepository, 'listPendingRunFiles'>
   createId: () => string
   now: () => Date
-  durability: ArtifactDurability
+  durability: FileDurability
   resourceBudgets?: LocalResourceBudgetOverrides
   writeBudgetOwner: Pick<ArtifactWriteBudgetOwner, 'assertReserved' | 'release'>
   captureProducer: (

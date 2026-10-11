@@ -8,8 +8,8 @@ import {
   type SessionPackageReceipt
 } from '../../shared/session-package'
 import { SessionRepository } from '../session-persistence/repository'
-import { writeDurableJsonFile } from '../storage/durable-json-file'
-import { defaultFileDurability as durability } from '../storage/file-durability'
+import { writeDurableJsonFile } from '@aipoch/durable-files'
+import { defaultFileDurability as durability } from '@aipoch/durable-files'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import { startDiagnosticOperation } from '@aipoch/diagnostics/node'
 import { assertPackageSourcePath, readPackageJson } from './archive'

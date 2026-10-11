@@ -194,7 +194,10 @@ it('applies exclusions to real Vitest discovery across inherited projects while 
       'packages/core/src/core.integration.test.ts',
       'packages/compute/src/compute.test.ts',
       'packages/compute/src/compute.architecture.test.ts',
-      'packages/compute/src/compute.integration.test.ts'
+      'packages/compute/src/compute.integration.test.ts',
+      'packages/durable-files/src/publication.test.ts',
+      'packages/durable-files/src/publication.architecture.test.ts',
+      'packages/durable-files/src/publication.integration.test.ts'
     ]) {
       const file = join(fixture, path)
       mkdirSync(join(file, '..'), { recursive: true })
@@ -203,6 +206,10 @@ it('applies exclusions to real Vitest discovery across inherited projects while 
     writeFileSync(
       join(fixture, 'packages/compute/vitest.config.ts'),
       `export default {root: ${JSON.stringify(join(fixture, 'packages/compute'))}, test: {name:'compute',include:['src/**/*.test.ts']}}`
+    )
+    writeFileSync(
+      join(fixture, 'packages/durable-files/vitest.config.ts'),
+      `export default {root: ${JSON.stringify(join(fixture, 'packages/durable-files'))}, test: {name:'durable-files',include:['src/**/*.test.ts']}}`
     )
     const list = (portable: string, excluded = [core]): Array<{ file: string }> =>
       JSON.parse(
@@ -229,10 +236,10 @@ it('applies exclusions to real Vitest discovery across inherited projects while 
           }
         )
       )
-    expect(list('1', [core, 'packages/compute']).map(({ file }) => file)).toEqual([
-      join(fixture, 'src/host.test.ts')
-    ])
-    // A trusted baseline predating Compute must still discover the new package, exactly once.
+    expect(
+      list('1', [core, 'packages/compute', 'packages/durable-files']).map(({ file }) => file)
+    ).toEqual([join(fixture, 'src/host.test.ts')])
+    // A trusted baseline predating these standalone packages must still discover the new package, exactly once.
     expect(
       list('1')
         .map(({ file }) => file)
@@ -242,12 +249,15 @@ it('applies exclusions to real Vitest discovery across inherited projects while 
         'src/host.test.ts',
         'packages/compute/src/compute.test.ts',
         'packages/compute/src/compute.architecture.test.ts',
-        'packages/compute/src/compute.integration.test.ts'
+        'packages/compute/src/compute.integration.test.ts',
+        'packages/durable-files/src/publication.test.ts',
+        'packages/durable-files/src/publication.architecture.test.ts',
+        'packages/durable-files/src/publication.integration.test.ts'
       ]
         .map((file) => join(fixture, file))
         .sort()
     )
-    expect(list('0')).toHaveLength(7)
+    expect(list('0')).toHaveLength(10)
   } finally {
     rmSync(fixture, { recursive: true, force: true })
   }

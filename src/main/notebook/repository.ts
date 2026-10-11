@@ -21,7 +21,7 @@ import {
   DurableJsonRecoveryBarrierError,
   readDurableJsonFile,
   writeDurableJsonFile
-} from '../storage/durable-json-file'
+} from '@aipoch/durable-files'
 import { decodeVersionedJson } from '../storage/versioned-json-decoder'
 import {
   decodeRunDocumentDataPaths,

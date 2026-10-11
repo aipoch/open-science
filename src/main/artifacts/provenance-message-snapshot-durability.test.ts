@@ -1,7 +1,8 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, open, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import { createFileDurability } from '@aipoch/durable-files'
 import type { PrismaClient } from '@prisma/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -105,6 +106,7 @@ describe('Provenance Message snapshot durability', () => {
     const { ProvenanceMessageSnapshotRepository } = await import('./provenance-message-snapshot')
     const snapshots = new ProvenanceMessageSnapshotRepository({
       storageRoot,
+      durability: createFileDurability({ openHandle: open }),
       getClient: () => Promise.resolve(client),
       createId: () => 'snapshot-1',
       now: () => new Date('2026-09-04T00:00:00.000Z')

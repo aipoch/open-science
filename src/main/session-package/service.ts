@@ -109,8 +109,8 @@ import {
 import type { PublishedSessionHandoff } from '../session-persistence/coordinator'
 import { isSessionPackagePending } from '../storage/session-package-state'
 import { SessionRepository, loadSessionMutationAuthority } from '../session-persistence/repository'
-import { defaultFileDurability } from '../storage/file-durability'
-import { writeDurableJsonFile } from '../storage/durable-json-file'
+import { defaultFileDurability } from '@aipoch/durable-files'
+import { writeDurableJsonFile } from '@aipoch/durable-files'
 import {
   fileChecksum,
   assertPackageSourcePath,

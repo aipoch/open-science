@@ -3,8 +3,8 @@ import { constants } from 'node:fs'
 import { chmod, copyFile, link, mkdtemp, rename, rm, stat } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 
-import { defaultFileDurability, type FileDurability } from './storage/file-durability'
-import { retryFileReplacement } from './storage/file-replacement'
+import { defaultFileDurability, type FileDurability } from '@aipoch/durable-files'
+import { retryFileReplacement } from '@aipoch/durable-files'
 import { publishNoReplace as publishAnchoredNoReplace } from './uploads/atomic-no-replace-publisher'
 
 type PublishUserFileOptions = {

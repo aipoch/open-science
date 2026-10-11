@@ -7,6 +7,7 @@ import { verificationPlanFromArguments } from './package-verification-plan.mjs'
 
 // These are consumer scenarios, not another dependency graph. Prerequisites come from the registry.
 export const verificationFamilies = [
+  { script: 'check:durable-files-package', packages: ['durable-files', 'skills', 'specialists'] },
   {
     script: 'check:connector-packages',
     packages: ['connector-core', 'connector-builtins', 'connector-mcp-client']
@@ -19,8 +20,6 @@ export const verificationFamilies = [
     script: 'check:notebook-packages',
     packages: ['notebook-syntax', 'notebook-code-risk', 'notebook-analysis']
   },
-  { script: 'verify:package', prefix: 'packages/skills', packages: ['skills'] },
-  { script: 'verify:package', prefix: 'packages/specialists', packages: ['specialists'] },
   {
     script: 'check:package-isolation',
     packages: [

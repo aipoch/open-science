@@ -377,3 +377,62 @@ it('every module plan excludes unrelated upstream package tests', async () => {
   }
   expect(violations).toEqual([])
 })
+
+it('selects durable file consumers downstream without testing unchanged prerequisites', async () => {
+  const { createAffectedTestPlan, createModuleTestPlan, executeModuleTestPlan } =
+    await import('./module-test-impact.mjs')
+  const graph = { status: 'not-used', testFiles: [] }
+  const cases = [
+    [
+      'packages/durable-files/src/index.ts',
+      ['packages/durable-files', 'packages/skills', 'packages/specialists']
+    ],
+    ['packages/skills/src/specialist-package-adapter.ts', ['packages/skills']],
+    ['packages/specialists/src/repository.ts', ['packages/specialists']],
+    ['src/main/settings/document-store.ts', []],
+    ['src/main/artifacts/repository.ts', []],
+    ['packages/journal-catalog/src/index.ts', ['packages/journal-catalog']]
+  ] as const
+  for (const [path, selected] of cases) {
+    const packagePlan = createPackageTestPlan([path], registry)
+    expect([...packagePlan.selected].sort(), path).toEqual([...selected].sort())
+    const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph)
+    expect(plan.mode, path).toBe('selective')
+    for (const entry of registry.packages) {
+      const included = plan.testFiles.some((test: string) => test.startsWith(entry.root + '/'))
+      expect(included, `${path} -> ${entry.root}`).toBe(selected.includes(entry.root as never))
+    }
+  }
+  const durable = createAffectedTestPlan(
+    [{ path: 'packages/durable-files/src/durable-json-file.ts', status: 'modified' }],
+    graph
+  )
+  expect(durable.testFiles).toEqual(
+    expect.arrayContaining([
+      'packages/durable-files/src/durable-json-file.test.ts',
+      'packages/skills/src/specialist-package-adapter.test.ts',
+      'packages/specialists/src/repository.test.ts',
+      'src/main/settings/document-store.test.ts',
+      'src/main/session-persistence/repository.test.ts',
+      'src/main/artifacts/artifact-save-crash.integration.test.ts'
+    ])
+  )
+  for (const id of ['main_storage', 'skill_package', 'specialist_package']) {
+    expect(
+      createModuleTestPlan(id).testFiles.filter((test: string) =>
+        test.startsWith('packages/durable-files/')
+      ),
+      id
+    ).toEqual([])
+  }
+  // The executor forwards the exact filters to Vitest; upstream builds are a separate step.
+  const invocations: string[][] = []
+  executeModuleTestPlan(durable, {
+    environment: {},
+    spawn: (_command: string, args: string[]) => {
+      invocations.push(args)
+      return { status: 0 }
+    }
+  })
+  expect(invocations.flat()).toContain('packages/durable-files/src/durable-json-file.test.ts')
+})

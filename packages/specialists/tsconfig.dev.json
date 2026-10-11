@@ -4,5 +4,10 @@
     "composite": true,
     "noEmitOnError": true,
     "tsBuildInfoFile": "./.cache/dev.tsbuildinfo"
-  }
+  },
+  "references": [
+    {
+      "path": "../durable-files/tsconfig.dev.json"
+    }
+  ]
 }

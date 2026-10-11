@@ -22,7 +22,7 @@ await domain.catalog.update({
 
 ## Environment contracts
 
-The package has no host or sibling-package imports. It never discovers application resources, reads global settings, contacts a marketplace, opens a dialog or invokes a model. Supply builtins and live capability catalogs explicitly. Full-access capabilities resolve against the live catalog; selected IDs remain durable references.
+The package has no host or sibling-package source imports. It never discovers application resources, reads global settings, contacts a marketplace, opens a dialog or invokes a model. Supply builtins and live capability catalogs explicitly. Full-access capabilities resolve against the live catalog; selected IDs remain durable references.
 
 For bundled Skills, provide `parseSkillDocument` and a `SpecialistPackageSkillPort`. The caller owns Skill syntax and files. Missing participants reject nonempty mutations. Configure `SkillEnablementPort` and `disableNewSkills` when new Skills should initially be disabled for another consumer. The journal records only settings introduced by that transaction. Ports must preserve mutation-lock context and implement idempotent transaction recovery.
 
@@ -38,4 +38,13 @@ Catalog writes reject when a journal exists until archives are configured to rec
 
 ## Verification
 
-`npm ci`, `npm run build`, `npm run typecheck`, `npm test`, and `npm run verify:package` run inside this package. Verification copies sources outside the checkout, installs declared dependencies, runs its suite, packs a tarball and exercises a clean runtime/TypeScript/browser consumer. Test fixtures and scripts are package-owned; tests use explicit external participant fakes. Real host/Skill/Settings/Marketplace integration tests belong to the host.
+Install the durable publication prerequisite below, then run `npm run build`, `npm run typecheck`, `npm test`, and `npm run verify:package -- --durable-files-tarball=<absolute-path>` inside this package. Verification copies sources outside the checkout, installs declared dependencies, runs its suite, packs a tarball and exercises a clean runtime/TypeScript/browser consumer. Test fixtures and scripts are package-owned; tests use explicit external participant fakes. Real host/Skill/Settings/Marketplace integration tests belong to the host.
+
+### Durable publication dependency
+
+This package declares `@aipoch/durable-files` as a runtime dependency. For unpublished local builds,
+install its real npm tarball alongside the declared dependencies (`npm install --no-save /path/to/aipoch-durable-files-0.1.0.tgz`),
+then build/typecheck/test as usual. Run the repository dispatcher with
+`npm run check:packages -- --packages=specialists` to prepare that prerequisite without rerunning its
+unchanged unit suite. Standalone `verify:package` accepts `-- --durable-files-tarball=<absolute-path>`.
+Verification removes the source copy and consumer devDependencies before its final runtime check.

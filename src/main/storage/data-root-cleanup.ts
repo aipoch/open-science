@@ -7,14 +7,14 @@ import {
   DurableJsonRecoveryBarrierError,
   readDurableJsonFile,
   writeDurableJsonFile
-} from './durable-json-file'
+} from '@aipoch/durable-files'
 import {
   MIGRATION_MARKER_FILENAME,
   readMigrationMarker,
   removeMigrationMarker,
   scanInventory
 } from './migration-marker'
-import { defaultFileDurability } from './file-durability'
+import { defaultFileDurability } from '@aipoch/durable-files'
 import type { NpmMigration } from './wsl-npm-migration'
 
 const DATA_ROOT_CLEANUP_FILENAME = 'data-root-cleanup.json'

@@ -302,7 +302,6 @@
       "src/main/artifacts/artifact-save.integration.test.ts",
       "src/main/artifacts/code-reconstruction.test.ts",
       "src/main/artifacts/content-type.test.ts",
-      "src/main/artifacts/durability.test.ts",
       "src/main/artifacts/ipc.test.ts",
       "src/main/artifacts/literature-manifest.test.ts",
       "src/main/artifacts/mcp-server.test.ts",

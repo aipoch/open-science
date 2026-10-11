@@ -6,7 +6,7 @@ import {
   writeDurableJsonFile,
   recoverDurableJsonDirectory,
   DurableJsonRecoveryBarrierError
-} from '../storage/durable-json-file'
+} from '@aipoch/durable-files'
 import {
   acquireDataRootWriter,
   isMigrationPending,

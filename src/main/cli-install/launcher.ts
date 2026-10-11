@@ -5,7 +5,7 @@ import { link, lstat, mkdir, open, rename, rm, type FileHandle } from 'node:fs/p
 import { basename, join, posix, win32 } from 'node:path'
 
 import type { CliLauncherStatus } from '../../shared/cli'
-import { defaultFileDurability } from '../storage/file-durability'
+import { defaultFileDurability } from '@aipoch/durable-files'
 
 const MANAGED_LAUNCHER_HEADER_V1 =
   'Open-Science command-line launcher. Managed by the app. Format version: 1.'

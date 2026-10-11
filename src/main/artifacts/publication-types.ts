@@ -1,5 +1,5 @@
 import type { ArtifactFile, MovePendingRunArtifactsRequest } from '../../shared/artifacts'
-import type { ArtifactDurability } from './durability'
+import type { FileDurability } from '@aipoch/durable-files'
 import type {
   PendingFileTransactionOptions,
   PendingFileTransactionStorage
@@ -74,7 +74,7 @@ type BindPendingArtifactVersionRouting = (
 ) => Promise<void>
 
 type ArtifactPublicationStorage = PendingFileTransactionStorage & {
-  durability: ArtifactDurability & { readMarkerFile?: (path: string) => Promise<string> }
+  durability: FileDurability & { readMarkerFile?: (path: string) => Promise<string> }
   assertSafePathSegment: (segment: string) => string
   assertSafeFilename: (filename: string) => string
   normalizeArtifactVersionIds: (versionIds: readonly string[]) => string[]

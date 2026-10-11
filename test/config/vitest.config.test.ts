@@ -162,6 +162,7 @@ it.each([
           profile === '1' || name !== 'default' ? 1 : resolveVitestMaxWorkers(undefined, override),
         testTimeout: 60_000
       })),
+      { name: 'durable-files', hookTimeout: 10000, testTimeout: 60000 },
       { name: 'compute', hookTimeout: 10000, testTimeout: 60000 }
     ])
   }
@@ -282,3 +283,56 @@ it('accepts an explicit positive worker cap independently of available CPUs', ()
   expect(resolveVitestMaxWorkers(8, '2')).toBe(2)
   expect(resolveVitestMaxWorkers(1, '4')).toBe(4)
 })
+
+it.each([false, true])(
+  'discovers durable-files exactly once with package-owned setup (excluded=%s)',
+  (excluded) => {
+    const probe = spawnSync(
+      process.execPath,
+      [
+        '--input-type=module',
+        '-e',
+        `
+    import { createVitest } from 'vitest/node'
+    const ctx = await createVitest('test', { watch: false })
+    try {
+      const specs = await ctx.globTestSpecifications(['packages/durable-files'])
+      const project = ctx.projects.find(({name}) => name === 'durable-files')
+      console.log(JSON.stringify({
+        specs: specs.map((spec) => ({name: spec.project.name, path: spec.moduleId})),
+        setup: project?.config.setupFiles,
+        workers: project?.config.maxWorkers
+      }))
+    } finally { await ctx.close() }
+  `
+      ],
+      {
+        encoding: 'utf8',
+        timeout: 30000,
+        env: {
+          ...process.env,
+          VITEST_PORTABLE_CI: '1',
+          OPEN_SCIENCE_CI_EXCLUDED_PACKAGE_ROOTS: JSON.stringify(
+            excluded ? ['packages/durable-files'] : []
+          ),
+          OPEN_SCIENCE_CI_SELECTED_PACKAGE_ROOTS: JSON.stringify(
+            excluded ? [] : ['packages/durable-files']
+          )
+        }
+      }
+    )
+    expect(probe.error).toBeUndefined()
+    expect(probe.status, probe.stderr).toBe(0)
+    const result = JSON.parse(probe.stdout)
+    if (excluded) expect(result.specs).toEqual([])
+    else {
+      expect(result.specs).toHaveLength(4)
+      expect(new Set(result.specs.map(({ path }: { path: string }) => path)).size).toBe(4)
+      expect(result.specs.every(({ name }: { name: string }) => name === 'durable-files')).toBe(
+        true
+      )
+      expect(result.setup).toEqual([])
+      expect(result.workers).toBeUndefined()
+    }
+  }
+)

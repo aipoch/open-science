@@ -18,7 +18,11 @@ import {
   waitForDataRootWriters
 } from '../storage/migration-state'
 import { composeApplicationRuntime } from '../application-runtime'
-import * as durableJson from '../storage/durable-json-file'
+import * as durableJson from '@aipoch/durable-files'
+
+vi.mock('@aipoch/durable-files', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aipoch/durable-files')>())
+}))
 
 vi.mock('electron', () => ({
   net: { fetch: vi.fn() },
