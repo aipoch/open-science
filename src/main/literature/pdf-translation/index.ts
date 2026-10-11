@@ -1,4 +1,14 @@
-import { PdfTranslationOwner as Owner, type PdfTranslationOptions } from '@aipoch/pdf-translation'
+import {
+  PdfTranslationOwner as Owner,
+  type PdfTranslationOptions,
+  type TranslationCallerLease
+} from '@aipoch/pdf-translation'
+import {
+  pdfTranslationAgentModelSchema,
+  type PdfTranslationAgentModel,
+  type PdfTranslationBeginRequest,
+  type PdfTranslationBeginResult
+} from '../../../shared/pdf-translation'
 import { isPdfTranslationApiProvider } from '../../../shared/pdf-translation-models'
 import {
   providerErrorDetails,
@@ -13,14 +23,30 @@ import {
 } from '../../settings/provider-text-generation'
 import { runDataRootStartupRecovery, withDataRootWrite } from '../../storage/migration-state'
 const log = createLogger('pdf-translation')
-type Options = PdfTranslationOptions<
+type PackageOptions = PdfTranslationOptions<
   ExplicitAgentBackendTarget & { providerName?: string },
   ProviderTextGenerationTarget & { providerName?: string }
 >
+type Options = Omit<PackageOptions, 'captureTarget'> & {
+  captureTarget: (model?: PdfTranslationAgentModel) => ReturnType<PackageOptions['captureTarget']>
+}
 export class PdfTranslationOwner extends Owner<
   ExplicitAgentBackendTarget & { providerName?: string },
   ProviderTextGenerationTarget & { providerName?: string }
 > {
+  override async begin(
+    input: PdfTranslationBeginRequest,
+    caller: TranslationCallerLease
+  ): Promise<PdfTranslationBeginResult> {
+    caller.signal.throwIfAborted()
+    if (
+      input?.agentModel !== undefined &&
+      !pdfTranslationAgentModelSchema.safeParse(input.agentModel).success
+    )
+      throw new Error('Invalid PDF translation source.')
+    return super.begin(input, caller)
+  }
+
   constructor(options: Options) {
     super({
       get usage() {
@@ -29,9 +55,10 @@ export class PdfTranslationOwner extends Owner<
       get checkpoints() {
         return options.checkpoints
       },
-      get captureTarget() {
-        return options.captureTarget
-      },
+      captureTarget: (model) =>
+        options.captureTarget(
+          model === undefined ? undefined : pdfTranslationAgentModelSchema.parse(model)
+        ),
       get runner() {
         return options.runner
       },

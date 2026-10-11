@@ -1494,7 +1494,10 @@
       "src/main/literature/pdf-translation/local.test.ts",
       "src/main/literature/pdf-translation/agent-target.test.ts",
       "src/main/literature/pdf-translation/cache-revision.test.ts",
-      "packages/pdf-translation/test/owner.test.ts"
+      "packages/pdf-translation/test/owner.test.ts",
+      "packages/pdf-translation/test/cache-isolation.test.ts",
+      "packages/pdf-translation/test/usage-admission.test.ts",
+      "packages/pdf-translation/test/inference-adapter.test.ts"
     ]
   },
   "capabilityOverlays": [],

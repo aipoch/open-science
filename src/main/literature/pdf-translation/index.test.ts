@@ -761,9 +761,38 @@ it.each([
   const h = setup()
   await expect(
     h.owner.begin({ ...input, agentModel } as Parameters<typeof h.owner.begin>[0], h.caller.lease)
-  ).rejects.toThrow()
+  ).rejects.toThrow('Invalid PDF translation source.')
   expect(h.captureTarget).not.toHaveBeenCalled()
 })
+
+it.each(['claude-code', 'opencode', 'codex', 'codebuddy'] as const)(
+  'retains host admission and translation through %s',
+  async (frameworkId) => {
+    const h = setup()
+    const target = { ...h.target, frameworkId }
+    h.captureTarget.mockResolvedValue(target)
+    const agentModel = {
+      frameworkId,
+      providerId: 'provider',
+      modelId: 'model',
+      reasoningEffort: 'default' as const
+    }
+    try {
+      const admitted = await h.owner.begin({ ...input, agentModel }, h.caller.lease)
+      expect(h.captureTarget).toHaveBeenCalledWith(agentModel)
+      await expect(
+        h.owner.translate(
+          { operationId: admitted.operationId, sourceIndex: 0, source: input.sources[0] },
+          h.caller.lease
+        )
+      ).resolves.toBe('ATP 增加。')
+      expect(h.runner.run).toHaveBeenCalledWith(expect.objectContaining({ target }))
+    } finally {
+      await h.owner.shutdown()
+      h.registry.dispose()
+    }
+  }
+)
 
 it('returns only public model identity and reports a deadline distinctly from cancellation', async () => {
   const h = setup()

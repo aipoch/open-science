@@ -55,7 +55,7 @@ export class PdfTranslationUsageRecorder {
       const client = await this.getClient()
       await this.ready(client)
       // Do not accumulate unflushed completions or send more billable requests while storage fails.
-      await this.flush()
+      await this.flushAdmitted()
       const eventId = randomUUID()
       await client.createAttempt({ ...context, eventId, occurredAt: new Date(), status: 'started' })
       let finished = false
@@ -82,7 +82,7 @@ export class PdfTranslationUsageRecorder {
         }
         this.pending.set(eventId, entry)
         try {
-          await this.write(entry)
+          await this.writes.write(() => this.persist(entry))
           this.pending.delete(eventId)
         } catch {
           // Keep the durable started row and retry only this write. Never repeat the provider call.
@@ -91,12 +91,10 @@ export class PdfTranslationUsageRecorder {
     })
   }
 
-  private async write({ client, eventId, data }: Pending): Promise<void> {
-    return this.writes.write(async () => {
-      const result = await client.completeAttempt(eventId, data)
-      if (!result.count && !(await client.hasAttempt(eventId)))
-        throw new Error('Translation usage request identity is missing.')
-    })
+  private async persist({ client, eventId, data }: Pending): Promise<void> {
+    const result = await client.completeAttempt(eventId, data)
+    if (!result.count && !(await client.hasAttempt(eventId)))
+      throw new Error('Translation usage request identity is missing.')
   }
 
   async recover(): Promise<void> {
@@ -104,8 +102,12 @@ export class PdfTranslationUsageRecorder {
   }
 
   async flush(): Promise<void> {
+    if (this.pending.size) await this.writes.write(() => this.flushAdmitted())
+  }
+
+  private async flushAdmitted(): Promise<void> {
     for (const [id, entry] of this.pending) {
-      await this.write(entry)
+      await this.persist(entry)
       if (this.pending.get(id) === entry) this.pending.delete(id)
     }
   }

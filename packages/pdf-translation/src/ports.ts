@@ -20,6 +20,7 @@ export const silentDiagnostics: TranslationDiagnostics = {
   }
 }
 export type TranslationWriteAdmission = {
+  /** Admit one operation. The package must not recursively acquire this capability. */
   write<T>(operation: () => Promise<T>): Promise<T>
   recover(operation: () => Promise<void>): Promise<void>
 }

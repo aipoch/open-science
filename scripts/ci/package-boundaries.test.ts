@@ -108,22 +108,31 @@ it('a Literature host-only change runs zero unchanged package suites', () => {
 
 it('host consumers use only public package names and exported subpaths', () => {
   const violations: string[] = []
+  const byName = new Map(manifests.map((entry) => [entry.manifest.name, entry]))
+  const packageDirectory = resolve('packages') + sep
+  const packageRoots = manifests.map((entry) => resolve(entry.root) + sep)
   for (const file of files('src').filter((path) => /\.[cm]?[jt]sx?$/.test(path))) {
     for (const { fileName: specifier } of ts.preProcessFile(readFileSync(file, 'utf8'), true, true)
       .importedFiles) {
-      for (const entry of manifests) {
-        const name = entry.manifest.name
-        if (specifier === name || specifier.startsWith(name + '/')) {
-          const key = specifier === name ? '.' : '.' + specifier.slice(name.length)
-          if (!Object.hasOwn(entry.manifest.exports, key))
-            violations.push(`${file} -> ${specifier}: private package import`)
-        } else if (specifier.startsWith('.')) {
-          const target = resolve(file, '..', specifier)
-          if (target.startsWith(resolve(entry.root) + sep))
-            violations.push(`${file} -> ${specifier}: repository-relative package import`)
-        }
+      if (specifier.startsWith('.')) {
+        const target = resolve(file, '..', specifier)
+        if (
+          target.startsWith(packageDirectory) &&
+          packageRoots.some((root) => target.startsWith(root))
+        )
+          violations.push(`${file} -> ${specifier}: repository-relative package import`)
+        continue
       }
+      const name = specifier.startsWith('@')
+        ? specifier.split('/').slice(0, 2).join('/')
+        : specifier.split('/')[0]
+      const entry = byName.get(name)
+      if (!entry) continue
+      const key = specifier === name ? '.' : '.' + specifier.slice(name.length)
+      if (!Object.hasOwn(entry.manifest.exports, key))
+        violations.push(`${file} -> ${specifier}: private package import`)
     }
   }
   expect(violations).toEqual([])
-})
+  // Match the consumer-coverage guard's allowance for a repository-wide scan under CI load.
+}, 60_000)

@@ -28,7 +28,8 @@ export function pdfTranslationSourceKey(source: PdfTranslationCheckpointRequest)
 export type PdfTranslationApiModel = Readonly<{ providerId: string; modelId: string }>
 export const pdfTranslationAgentModelSchema = z
   .object({
-    frameworkId: z.enum(['claude-code', 'opencode', 'codex', 'codebuddy']),
+    // Framework availability belongs to the injected inference adapter, not the PDF workflow.
+    frameworkId: z.string().trim().min(1).max(80),
     providerId: z.string().trim().min(1).max(256),
     modelId: z.string().trim().min(1).max(512).optional(),
     reasoningEffort: z.enum(['default', 'low', 'medium', 'high', 'xhigh', 'max'])

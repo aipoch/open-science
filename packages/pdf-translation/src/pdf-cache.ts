@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
-import { lstat, mkdir, open, readdir, rename, unlink } from 'node:fs/promises'
+import { lstat, mkdir, open, readdir, realpath, rename, unlink } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { z } from 'zod'
 import {
@@ -80,10 +80,21 @@ type Pending = Identity & {
   expiry: ReturnType<typeof setTimeout>
 }
 // Serialize publication and eviction across cache instances sharing a data root.
-let files: Promise<unknown> = Promise.resolve()
-function serialized<T>(writes: TranslationWriteAdmission, operation: () => Promise<T>): Promise<T> {
-  const result = files.then(() => writes.write(operation))
-  files = result.catch(() => undefined)
+const files = new Map<string, Promise<void>>()
+function serialized<T>(
+  root: string,
+  writes: TranslationWriteAdmission,
+  operation: () => Promise<T>
+): Promise<T> {
+  const result = (files.get(root) ?? Promise.resolve()).then(() => writes.write(operation))
+  const settled = result.then(
+    () => undefined,
+    () => undefined
+  )
+  files.set(root, settled)
+  void settled.then(() => {
+    if (files.get(root) === settled) files.delete(root)
+  })
   return result
 }
 
@@ -108,8 +119,10 @@ export class PdfTranslationPdfCache {
   private get diagnostics(): TranslationDiagnostics {
     return this.options.diagnostics ?? silentDiagnostics
   }
-  private serialized<T>(operation: () => Promise<T>): Promise<T> {
-    return serialized(this.options.writes ?? standaloneWriteAdmission, operation)
+  private async serialized<T>(root: string, operation: () => Promise<T>): Promise<T> {
+    // Different spellings (including case and ancestor aliases) can address the same directory.
+    const canonical = await realpath(root)
+    return serialized(canonical, this.options.writes ?? standaloneWriteAdmission, operation)
   }
   private current(root: string, caller: ApplicationCallerLease): boolean {
     return resolve(this.options.root()) === root && !caller.signal.aborted && caller.isCurrent()
@@ -197,7 +210,9 @@ export class PdfTranslationPdfCache {
             this.current(root, caller) &&
             !operation.cancelled
           ) {
-            const hit = await this.serialized(() => this.read(root, cacheKey!, input.units.length))
+            const hit = await this.serialized(root, () =>
+              this.read(root, cacheKey!, input.units.length)
+            )
             if (hit && this.current(root, caller) && !operation.cancelled) {
               // Authorization may have changed while reading the disk file.
               const latest = await this.options.owner.readCheckpoint(
@@ -349,7 +364,7 @@ export class PdfTranslationPdfCache {
         )
       )
         return
-      await this.serialized(async () => {
+      await this.serialized(pending.root, async () => {
         if (!current()) return
         const checkpoint = await this.options.owner.readCheckpoint(
           pending.source,
@@ -528,7 +543,7 @@ export class PdfTranslationPdfCache {
         continue
       const info = await lstat(join(directory, name))
       if (!info.isFile() || info.isSymbolicLink()) continue
-      // The process-wide queue leaves only this publication's protected temporary file active.
+      // The queue for this root leaves only this publication's protected temporary file active.
       if (name.endsWith('.tmp') || Date.now() - info.mtimeMs > lifetime)
         await unlink(join(directory, name))
       else if (name.endsWith('.pdfcache') && name !== replacing)

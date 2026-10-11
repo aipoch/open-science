@@ -23,6 +23,9 @@ or public entry points. See each package README for lifecycle obligations and su
 - **Cohesion:** each package owns its named workflow/invariants, state, failure and cleanup rules.
   Host ports supply external capabilities; they must not conceal the package's domain decisions.
   Tests cover success, error, cancellation and recovery. One service owns each mutable state.
+  Independent consumers must not inherit application-specific framework allowlists or undocumented
+  reentrant-lock requirements. Unrelated storage roots must not share a publication queue; aliases
+  for the same root must retain mutual exclusion. Verify these behaviors, not just import direction.
 - **Clean dependencies:** every production, type, build and test dependency is declared. Relative
   imports stay inside the package; external imports use package names and explicit exports.
   A copied source tree must build and test outside the repository. A clean production consumer of

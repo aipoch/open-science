@@ -5,15 +5,15 @@ layout, output generation, checkpoints, usage recording and generated-PDF cachin
 
 ## Public API
 
-| Export | Responsibility | Environment |
-| --- | --- | --- |
-| `@aipoch/pdf-translation` | `PdfTranslationOwner`, options and inference/checkpoint/local-runtime/lease capability types | Node |
-| `/contracts` | Validated requests, checkpoints, snapshots | Node or browser |
-| `/text` | Batching, language support, numeric and recovery rules | Node or browser |
-| `/reader` | Source extraction, text reconstruction, layout and presentation helpers | Node or browser |
-| `/writer` | `PdfTranslationWriter`, worker lifecycle and output generation | Node |
-| `/storage` | Checkpoint, cache and usage owners and revisions; database and repository capability types | Node |
-| `/resources` | Packaged worker/font resource paths | Node |
+| Export                    | Responsibility                                                                               | Environment     |
+| ------------------------- | -------------------------------------------------------------------------------------------- | --------------- |
+| `@aipoch/pdf-translation` | `PdfTranslationOwner`, options and inference/checkpoint/local-runtime/lease capability types | Node            |
+| `/contracts`              | Validated requests, checkpoints, snapshots                                                   | Node or browser |
+| `/text`                   | Batching, language support, numeric and recovery rules                                       | Node or browser |
+| `/reader`                 | Source extraction, text reconstruction, layout and presentation helpers                      | Node or browser |
+| `/writer`                 | `PdfTranslationWriter`, worker lifecycle and output generation                               | Node            |
+| `/storage`                | Checkpoint, cache and usage owners and revisions; database and repository capability types   | Node            |
+| `/resources`              | Packaged worker/font resource paths                                                          | Node            |
 
 Import only these capability entries. Internal file paths are not API. Each entry has generated
 TypeScript declarations. Required interface changes migrate in-repository consumers together.
@@ -24,6 +24,12 @@ Create one translation owner per service. It owns job state, cancellation, check
 and recovery; the writer owns its workers. Shut down the owners before releasing their host
 capabilities. A caller lease invalidated by reload or disconnect stops that caller's operation.
 Package tests exercise success, failure, cancellation, retries and cleanup.
+
+Framework identifiers are supplied by the inference adapter; the package does not contain an
+application-specific framework allowlist. The host validates its supported frameworks before
+admitting a request. Cache publication serializes only owners of the same resolved data root;
+unrelated roots do not block each other. Write-admission capabilities need not be reentrant:
+pending usage completions flush inside the already-admitted write before a new attempt starts.
 
 The host supplies inference execution, provider error interpretation, diagnostics, write admission,
 source authorization, application paths and storage connections. Model/account/Agent lifetimes,
