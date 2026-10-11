@@ -14,3 +14,4 @@
 - The desktop CLI no longer misreads its launcher under legacy code pages when the installation path contains Chinese characters, and preserves the caller's code page and exit code (#3457)
 - Local PDF translation on Windows no longer fails with an unsupported module URL when the WASM assets live on a drive path (#3457)
 - Notebook kernels, environment fingerprinting, package inventory, and lock capture no longer flash a console window or Windows Terminal during execution (#3460)
+- Translated PDF regeneration no longer rejects legitimate source text because of differing embedded glyph-name spellings — proven glyphs keep their original ink (#3469)

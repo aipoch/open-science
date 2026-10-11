@@ -14,3 +14,4 @@
 - La CLI de escritorio ya no malinterpreta su lanzador bajo páginas de códigos heredadas cuando la ruta de instalación contiene caracteres chinos, y preserva la página de códigos del llamador y el código de salida (#3457)
 - La traducción local de PDF en Windows ya no falla con una URL de módulo no admitida cuando los recursos WASM residen en una ruta de unidad (#3457)
 - Los kernels de Notebook, la huella de entorno, el inventario de paquetes y la captura de bloqueos ya no muestran una ventana de consola ni Windows Terminal durante la ejecución (#3460)
+- La regeneración de un PDF traducido ya no rechaza texto fuente legítimo por distintas grafías de nombres de glifos incrustados, y los glifos verificados conservan su trazo original (#3469)

@@ -14,3 +14,4 @@
 - Le CLI de bureau ne lit plus de manière erronée son lanceur sous les pages de codes héritées lorsque le chemin d'installation contient des caractères chinois, et préserve la page de codes et le code de sortie de l'appelant (#3457)
 - La traduction PDF locale sous Windows n'échoue plus avec une URL de module non prise en charge lorsque les ressources WASM résident sur un chemin de lecteur (#3457)
 - Les noyaux Notebook, l'empreinte d'environnement, l'inventaire des packages et la capture des verrous ne font plus apparaître une fenêtre console ou Windows Terminal pendant l'exécution (#3460)
+- La régénération d'un PDF traduit ne rejette plus le texte source légitime en raison de différentes orthographes de noms de glyphes intégrés — les glyphes vérifiés conservent leur encre d'origine (#3469)

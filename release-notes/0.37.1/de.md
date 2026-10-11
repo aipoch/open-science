@@ -14,3 +14,4 @@
 - Die Desktop-CLI liest ihren Starter unter Legacy-Codepages nicht mehr falsch, wenn der Installationspfad chinesische Zeichen enthält, und bewahrt die Codepage und den Exitcode des Aufrufers (#3457)
 - Die lokale PDF-Übersetzung unter Windows schlägt nicht mehr mit einer nicht unterstützten Modul-URL fehl, wenn sich die WASM-Ressourcen auf einem Laufwerkspfad befinden (#3457)
 - Notebook-Kernel, Umgebungs-Fingerprinting, Paketinventar und Sperrerfassung blenden während der Ausführung kein Konsolenfenster oder Windows-Terminal mehr auf (#3460)
+- Die erneute Generierung übersetzter PDFs lehnt legitimen Ausgangstext wegen abweichender Schreibweisen eingebetteter Glyphennamen nicht mehr ab — verifizierte Glyphen behalten ihre ursprüngliche Form (#3469)
