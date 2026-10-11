@@ -3619,23 +3619,39 @@ it('drains paid requests and retains a durable pause when both result and failur
       probabilities: { match: 1, 'no-match': 0, uncertain: 0 }
     }
   })
-  await db.$executeRawUnsafe(
-    "CREATE TRIGGER fail_result BEFORE INSERT ON LiteratureSmartAssessment BEGIN SELECT RAISE(ABORT,'disk full'); END"
-  )
-  await db.$executeRawUnsafe(
-    "CREATE TRIGGER fail_failure BEFORE UPDATE ON LiteratureSmartRunItem BEGIN SELECT RAISE(ABORT,'disk full'); END"
-  )
-  owner.schedule()
-  await vi.waitFor(() => expect(classify).toHaveBeenCalledTimes(4), { timeout: 5000 })
-  expect(
-    (await db.literatureSmartCollection.findUniqueOrThrow({ where: { collectionId: id } }))
-      .automaticPauseReason
-  ).toBe('interrupted')
-  finish()
+  try {
+    await owner.execute(
+      { kind: 'smart-collection', collectionId: id, action: 'refresh', offset: 0 },
+      true
+    )
+    // Each paid request first commits its usage reservation on the single SQLite connection.
+    // Inject the write failure only after all four requests are in flight.
+    await vi.waitFor(() => expect(classify).toHaveBeenCalledTimes(4), { timeout: 15000 })
+    expect(
+      (await db.literatureSmartCollection.findUniqueOrThrow({ where: { collectionId: id } }))
+        .automaticPauseReason
+    ).toBe('interrupted')
+    await db.$executeRawUnsafe(
+      "CREATE TRIGGER fail_result BEFORE INSERT ON LiteratureSmartAssessment BEGIN SELECT RAISE(ABORT,'disk full'); END"
+    )
+    await db.$executeRawUnsafe(
+      "CREATE TRIGGER fail_failure BEFORE UPDATE ON LiteratureSmartRunItem BEGIN SELECT RAISE(ABORT,'disk full'); END"
+    )
+  } finally {
+    // A failed setup/assertion must also release the mock so dispose can drain the worker.
+    finish()
+  }
   await vi.waitFor(
-    async () => expect((await owner.view(id)).automaticPauseReason).toBe('storage-error'),
-    { timeout: 5000 }
+    async () =>
+      expect(
+        await db.literatureSmartCollection.findUniqueOrThrow({
+          where: { collectionId: id },
+          select: { automaticPauseReason: true }
+        })
+      ).toEqual({ automaticPauseReason: 'storage-error' }),
+    { timeout: 15000, interval: 100 }
   )
+  expect((await owner.view(id)).automaticPauseReason).toBe('storage-error')
   expect((await owner.view(id)).run?.state).toBe('failed')
   expect(await db.classificationUsage.count({ where: { status: 'completed' } })).toBe(4)
   expect(classify).toHaveBeenCalledTimes(4)

@@ -1043,7 +1043,6 @@ describe('Compute service architecture', () => {
       'src/main/side-chat/ipc.test.ts',
       'src/main/side-chat/runtime-owner.test.ts',
       'src/main/skills/conversation-import.test.ts',
-      'packages/skills/src/materializer-integrity.regression.test.ts',
       'src/main/skills/materializer.test.ts',
       'src/main/skills/runtime-mcp-server.test.ts',
       'src/main/specialist/application-commands.test.ts',
