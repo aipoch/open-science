@@ -343,7 +343,7 @@ describe('pull request change classification', () => {
     manifest.rules.push({
       id: 'notebook_runtime',
       role: 'owner',
-      paths: ['src/main/notebook/source-file-access-analysis.ts'],
+      paths: ['packages/notebook-analysis/src/source-file-access-analysis.ts'],
       capabilities: ['notebook_runtime']
     })
     manifest.capabilities.notebook_runtime = {
@@ -352,7 +352,12 @@ describe('pull request change classification', () => {
     }
 
     const plan = classifyChanges(
-      [{ path: 'src/main/notebook/source-file-access-analysis.ts', status: 'modified' }],
+      [
+        {
+          path: 'packages/notebook-analysis/src/source-file-access-analysis.ts',
+          status: 'modified'
+        }
+      ],
       manifest
     )
 
@@ -526,7 +531,7 @@ describe('pull request change classification', () => {
 
   it('does not add focused Windows lanes for platform-neutral Main changes', () => {
     const plan = classifyChanges([
-      { path: 'src/main/notebook/source-file-access-analysis.ts', status: 'modified' }
+      { path: 'packages/notebook-analysis/src/source-file-access-analysis.ts', status: 'modified' }
     ])
 
     expect(plan.roots).not.toContain('windows_sensitive')
@@ -756,7 +761,7 @@ describe('pull request change classification', () => {
 
   it('selects one macOS Module-test lane without duplicate coverage or Renderer lanes', () => {
     const plan = classifyChanges([
-      { path: 'src/main/notebook/source-file-access-analysis.ts', status: 'modified' }
+      { path: 'packages/notebook-analysis/src/source-file-access-analysis.ts', status: 'modified' }
     ])
 
     expect(plan.mode).toBe('selective')
@@ -770,7 +775,7 @@ describe('pull request change classification', () => {
 
   it.each([
     'src/main/notebook/windows-shell.ts',
-    'src/main/notebook/code-risk-analysis.ts',
+    'packages/notebook-code-risk/src/index.ts',
     'src/main/notebook/runtime-service.ts',
     'src/shared/tool-detail-sanitizer.ts',
     'src/shared/renderer-contract-catalog.ts',

@@ -1,3 +1,4 @@
+import { NotebookDependencyAnalyzer } from './dependency-analysis-adapter'
 import { once } from 'node:events'
 import { describe, it, expect } from 'vitest'
 import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
@@ -15,7 +16,7 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import type { NotebookRunRecord } from '../../shared/notebook'
-import { NotebookDependencyAnalyzer } from './dependency-analysis'
+
 import { startWorkingFileObservation } from './working-file-observer'
 import { restoreRRandomState } from './r-random-replay'
 import rdsChordCells from './reported-mixed-rds-chord.fixture.json'

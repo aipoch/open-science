@@ -1,7 +1,7 @@
 import { realpath } from 'node:fs/promises'
 import { parsePowerShellSearchCommands } from './powershell-search-parser'
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
-import { fieldChildren, withParsedNotebookSource, type Node } from './dependency-analysis-parser'
+import { fieldChildren, withParsedNotebookSource, type Node } from '@aipoch/notebook-syntax'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 
 // Maps WSL2 guest paths (e.g. /mnt/c/data) to Windows host paths (e.g. C:\data).

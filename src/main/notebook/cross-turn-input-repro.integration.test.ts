@@ -1,3 +1,4 @@
+import { NotebookDependencyAnalyzer } from './dependency-analysis-adapter'
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
@@ -12,14 +13,14 @@ import {
   sealArtifactReproducibilityRecipe
 } from '../artifacts/artifact-reproducibility-recipe'
 import { createRootNotebookLane } from './lane-identity'
-import { analyzePythonFileAccesses } from './dependency-analysis-python'
+import { analyzePythonFileAccesses } from '@aipoch/notebook-analysis/python'
 import { notebookPromptInputPath } from './prompt-input-materialization'
 import { NotebookRunRepository } from './repository'
 import { NotebookRunTerminalizationOwner } from './run-terminalization'
-import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
+import { analyzeNotebookSourceFileAccess } from '@aipoch/notebook-analysis'
 import { startWorkingFileObservation } from './working-file-observer'
 import { reportedPythonPlots } from './reported-python-plots.fixture'
-import { NotebookDependencyAnalyzer } from './dependency-analysis'
+
 import { reportedSubplots, reportedSubplotsInput } from './reported-python-subplots.fixture'
 import { rBasePlots } from './reported-r-base-plots.fixture'
 

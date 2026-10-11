@@ -24,7 +24,11 @@ export default defineConfig({
   worker: { format: 'es' },
   build: {
     commonjsOptions: {
-      include: [/node_modules/, /packages[\\/]connector-(?:core|builtins|mcp-client)[\\/]dist/]
+      include: [
+        /node_modules/,
+        /packages[\\/]connector-(?:core|builtins|mcp-client)[\\/]dist/,
+        /packages[\\/]notebook-analysis[\\/]dist/
+      ]
     },
     outDir: resolve('out/browser-tests'),
     emptyOutDir: true,

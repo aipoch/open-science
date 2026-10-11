@@ -1,7 +1,7 @@
+import { analyzePowerShellCodeRisk } from './code-risk-adapter'
 import { describe, expect, it } from 'vitest'
 import { parsePowerShellSearchCommands } from './powershell-search-parser'
 import { assertShellSearchScope } from './shell-search-scope'
-import { analyzePowerShellCodeRisk } from './code-risk-analysis'
 
 describe.skipIf(process.platform !== 'win32')('Windows PowerShell search preflight', () => {
   it('locates multiline mutation evidence without executing submitted code', async () => {

@@ -1,3 +1,4 @@
+import { NotebookDependencyAnalyzer } from './dependency-analysis-adapter'
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -7,9 +8,9 @@ import { promisify } from 'node:util'
 import { expect, it } from 'vitest'
 import type { NotebookRunRecord } from '../../shared/notebook'
 import { sealArtifactProvenanceGraph } from '../artifacts/artifact-provenance-graph'
-import { NotebookDependencyAnalyzer } from './dependency-analysis'
-import { analyzeRSources } from './dependency-analysis-r'
-import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
+
+import { analyzeRSources } from '@aipoch/notebook-analysis/r'
+import { analyzeNotebookSourceFileAccess } from '@aipoch/notebook-analysis'
 import { startWorkingFileObservation } from './working-file-observer'
 
 const sineSource = String.raw`suppressPackageStartupMessages(library(ggplot2))

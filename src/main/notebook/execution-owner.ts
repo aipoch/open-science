@@ -53,7 +53,7 @@ import {
   unavailableNotebookDependencyProjection,
   type NotebookDependencyInterpreter,
   type NotebookDependencyProjection
-} from './dependency-analysis'
+} from '@aipoch/notebook-analysis'
 import type { NotebookHelperModuleHost, NotebookHelperModuleScope } from './helper-module-host'
 import { getNotebookFileEvidenceLocation } from './repository'
 import { getNotebookInputRoot } from './input-staging'
@@ -62,7 +62,7 @@ import {
   defaultShellRuntimeBinding,
   shellRuntimePlatform
 } from './shell-runtime'
-import type { NotebookSourceFileAccessContext } from './dependency-analysis-types'
+import type { NotebookSourceFileAccessContext } from '@aipoch/notebook-analysis/contracts'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 
 type NotebookControlResult = Pick<

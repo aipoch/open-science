@@ -24,7 +24,7 @@ import { getNotebookSessionRoot, NotebookRunRepository } from '../notebook/repos
 import {
   unavailableNotebookDependencyProjection,
   type NotebookDependencyAnalyzer
-} from '../notebook/dependency-analysis'
+} from '@aipoch/notebook-analysis'
 import {
   sealArtifactProvenanceGraph,
   type ArtifactProvenanceComputeActivityInput,

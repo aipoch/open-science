@@ -51,29 +51,29 @@
   "resources/compute-askpass.cjs": ["src/main/compute/connection-adapters.ts"],
   "resources/compute-askpass.sh": ["src/main/compute/connection-adapters.ts"],
   "resources/pdf-translation-local/worker.mjs": ["src/main/literature/pdf-translation/local.ts"],
-  "resources/tree-sitter/tree-sitter-bash.LICENSE": [
-    "src/main/notebook/dependency-analysis-parser.ts"
+  "packages/notebook-syntax/assets/tree-sitter-bash.LICENSE": [
+    "packages/notebook-syntax/src/index.ts"
   ],
-  "resources/tree-sitter/tree-sitter-bash.provenance.json": [
-    "src/main/notebook/dependency-analysis-parser.ts"
+  "packages/notebook-syntax/assets/tree-sitter-bash.provenance.json": [
+    "packages/notebook-syntax/src/index.ts"
   ],
-  "resources/tree-sitter/tree-sitter-bash.wasm": [
-    "src/main/notebook/dependency-analysis-parser.ts"
+  "packages/notebook-syntax/assets/tree-sitter-bash.wasm": [
+    "packages/notebook-syntax/src/index.ts"
   ],
-  "resources/tree-sitter/tree-sitter-javascript.LICENSE": [
-    "src/main/notebook/dependency-analysis-parser.ts"
+  "packages/notebook-syntax/assets/tree-sitter-javascript.LICENSE": [
+    "packages/notebook-syntax/src/index.ts"
   ],
-  "resources/tree-sitter/tree-sitter-javascript.provenance.json": [
-    "src/main/notebook/dependency-analysis-parser.ts"
+  "packages/notebook-syntax/assets/tree-sitter-javascript.provenance.json": [
+    "packages/notebook-syntax/src/index.ts"
   ],
-  "resources/tree-sitter/tree-sitter-javascript.wasm": [
-    "src/main/notebook/dependency-analysis-parser.ts"
+  "packages/notebook-syntax/assets/tree-sitter-javascript.wasm": [
+    "packages/notebook-syntax/src/index.ts"
   ],
-  "resources/tree-sitter/tree-sitter-python.wasm": [
-    "src/main/notebook/dependency-analysis-parser.ts"
+  "packages/notebook-syntax/assets/tree-sitter-python.wasm": [
+    "packages/notebook-syntax/src/index.ts"
   ],
-  "resources/tree-sitter/tree-sitter-r.wasm": ["src/main/notebook/dependency-analysis-parser.ts"],
-  "resources/tree-sitter/web-tree-sitter.wasm": ["src/main/notebook/dependency-analysis-parser.ts"],
+  "packages/notebook-syntax/assets/tree-sitter-r.wasm": ["packages/notebook-syntax/src/index.ts"],
+  "packages/notebook-syntax/assets/web-tree-sitter.wasm": ["packages/notebook-syntax/src/index.ts"],
   "resources/notebook/python_loop.py": [
     "src/main/notebook/kernel-executor.ts",
     "src/main/notebook/runtime-service.ts"

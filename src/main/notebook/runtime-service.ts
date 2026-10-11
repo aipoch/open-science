@@ -1,3 +1,5 @@
+import { NotebookDependencyAnalyzer } from './dependency-analysis-adapter'
+import { analyzePowerShellCodeRisk } from './code-risk-adapter'
 import { desktopFileInteraction } from '../desktop-interaction'
 import { runtimeMetadata, runtimeMetadataIfConfigured } from '../runtime-metadata'
 import type { ReplayRunIndex } from '../../shared/replay'
@@ -59,12 +61,8 @@ import type {
 } from '../../shared/notebook-env'
 import type { PackageMirror } from '../../shared/mirror'
 import { NotebookDataExecutionAdmissionOwner } from './data-execution-admission'
-import {
-  analyzeNotebookCodeRisk,
-  analyzePowerShellCodeRisk,
-  type NotebookCodeRisk
-} from './code-risk-analysis'
-import type { NotebookSourceFileAccessContext } from './dependency-analysis-types'
+import { analyzeNotebookCodeRisk, type NotebookCodeRisk } from '@aipoch/notebook-code-risk'
+import type { NotebookSourceFileAccessContext } from '@aipoch/notebook-analysis/contracts'
 import {
   NotebookEnvironmentManagementOwner,
   type NotebookEnvironmentManager
@@ -156,7 +154,7 @@ import {
   type NotebookExecutorLifecycleCallbacks,
   type NotebookSessionLifecycleCallbacks
 } from './session-lifecycle'
-import { NotebookDependencyAnalyzer } from './dependency-analysis'
+
 import {
   assertNotebookCodeAppendWithinLimit,
   assertNotebookCodeWithinLimit

@@ -43,7 +43,14 @@ export const WINDOWS_TEST_MODULE_GROUPS = [
     'src/main/compute/'
   ],
   // 7: Notebook runtime and sandbox.
-  ['src/main/notebook/', 'packages/notebook-network-sandbox/', 'packages/process-tree-native/']
+  [
+    'src/main/notebook/',
+    'packages/notebook-syntax/',
+    'packages/notebook-code-risk/',
+    'packages/notebook-analysis/',
+    'packages/notebook-network-sandbox/',
+    'packages/process-tree-native/'
+  ]
 ] as const
 
 export function windowsTestShard(path: string): number {

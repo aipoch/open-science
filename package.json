@@ -83,7 +83,7 @@
     "build:connectors": "npm --prefix packages/connector-core run build && npm --prefix packages/connector-builtins run build && npm run build --prefix packages/connector-mcp-client",
     "check:connector-packages": "node scripts/check-connector-packages.mjs",
     "build:diagnostics": "npm --prefix packages/diagnostics run build",
-    "build:packages": "npm run build:connectors && npm run build:diagnostics && npm run build:pdf-packages && npm run build:skills",
+    "build:packages": "npm run build:connectors && npm run build:diagnostics && npm run build:pdf-packages && npm run build:skills && npm run build:notebook-analysis",
     "check:diagnostics-package": "node scripts/check-diagnostics-package.mjs",
     "prebuild:web": "npm run build:diagnostics && npm run build:pdf-packages",
     "pretypecheck:web": "npm run build:diagnostics && npm run build:pdf-packages",
@@ -91,7 +91,9 @@
     "build:pdf-packages": "npm --prefix packages/pdf-structure run build && npm --prefix packages/pdf-translation run build",
     "check:pdf-packages": "node scripts/check-package-isolation.mjs --packages=pdf-structure,pdf-translation",
     "build:skills": "npm --prefix packages/skills run build",
-    "test:skills": "npm --prefix packages/skills test"
+    "test:skills": "npm --prefix packages/skills test",
+    "build:notebook-analysis": "npm --prefix packages/notebook-syntax run build && npm --prefix packages/notebook-code-risk run build && npm --prefix packages/notebook-analysis run build",
+    "check:notebook-packages": "node scripts/check-notebook-packages.mjs"
   },
   "dependencies": {
     "@agentclientprotocol/claude-agent-acp": "^0.70.0",
@@ -139,14 +141,16 @@
     "tiff": "7.1.3",
     "tiktoken": "1.0.22",
     "undici": "6.29.0",
-    "web-tree-sitter": "^0.26.13",
     "ws": "^8.22.0",
     "zod": "^4.6.5",
     "@aipoch/connector-mcp-client": "file:packages/connector-mcp-client",
     "@aipoch/diagnostics": "file:packages/diagnostics",
     "@aipoch/pdf-structure": "file:packages/pdf-structure",
     "@aipoch/pdf-translation": "file:packages/pdf-translation",
-    "@aipoch/skills": "file:packages/skills"
+    "@aipoch/skills": "file:packages/skills",
+    "@aipoch/notebook-syntax": "file:packages/notebook-syntax",
+    "@aipoch/notebook-code-risk": "file:packages/notebook-code-risk",
+    "@aipoch/notebook-analysis": "file:packages/notebook-analysis"
   },
   "overrides": {
     "@huggingface/transformers": {

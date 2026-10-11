@@ -5,12 +5,12 @@ import { promisify } from 'node:util'
 import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
+import { analyzeNotebookSourceFileAccess } from '@aipoch/notebook-analysis'
 import { startWorkingFileObservation } from './working-file-observer'
-import { analyzePythonNotebookSource } from './dependency-analysis-python'
-import { projectNotebookDependencies } from './dependency-analysis'
+import { analyzePythonNotebookSource } from '@aipoch/notebook-analysis/python'
+import { projectNotebookDependencies } from '@aipoch/notebook-analysis'
 import type { NotebookRunRecord } from '../../shared/notebook'
-import type { NotebookSourceFileAccessContext } from './dependency-analysis-types'
+import type { NotebookSourceFileAccessContext } from '@aipoch/notebook-analysis/contracts'
 
 it('keeps the copy read dependency without marking it as a shared reference', async () => {
   const scripts = [

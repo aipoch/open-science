@@ -30,7 +30,7 @@ import {
   unavailableNotebookDependencyProjection,
   type NotebookDependencyAnalyzer,
   type NotebookDependencyProjection
-} from './dependency-analysis'
+} from '@aipoch/notebook-analysis'
 
 const DEFAULT_KERNEL_PROCESS_KEY = `python:${DEFAULT_PY_ENV}`
 

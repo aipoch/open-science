@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { fieldChild, withParsedNotebookSource, type Node } from './dependency-analysis-parser'
+import { fieldChild, withParsedNotebookSource, type Node } from '@aipoch/notebook-syntax'
 
 // Publish bindings from the existing per-cell async function, rather than replacing its JS
 // semantics. This preserves top-level return, await and declarations repeated in later cells.

@@ -96,7 +96,7 @@ import {
 } from './literature-manifest'
 import { readPreparedLiteratureSidecar } from './prepared-literature-sidecar'
 import { validateArtifactSaveSource } from './save-request'
-import type { NotebookDependencyAnalyzer } from '../notebook/dependency-analysis'
+import type { NotebookDependencyAnalyzer } from '@aipoch/notebook-analysis'
 
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 

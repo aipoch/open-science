@@ -1,3 +1,4 @@
+import { NotebookDependencyAnalyzer } from '../notebook/dependency-analysis-adapter'
 import { parseLiteratureAttachmentVersionReference } from '../../shared/literature'
 import type { ManagedPreviewSource } from '../../shared/preview-resources'
 import { createDefaultArtifactRepository } from '../artifacts/ipc'
@@ -14,7 +15,7 @@ import { LocalFsService } from '../local-fs/service'
 import { ManagedFileVersionService } from '../managed-file-versions/service'
 import { createManagedPreviewOwnerRegistry } from '../managed-preview-owner-registry'
 import { ManagedPreviewResources } from '../managed-preview-resources'
-import { NotebookDependencyAnalyzer } from '../notebook/dependency-analysis'
+
 import { NotebookInputRegistry } from '../notebook/input-registry'
 import { NotebookRunRepository } from '../notebook/repository'
 import { getProjectDbClient } from '../projects/prisma-client'

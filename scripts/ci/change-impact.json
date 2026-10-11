@@ -164,7 +164,12 @@
       "id": "main_runtime",
       "role": "owner",
       "fallbackOwner": true,
-      "paths": ["src/main/**"],
+      "paths": [
+        "src/main/**",
+        "packages/notebook-syntax/**",
+        "packages/notebook-code-risk/**",
+        "packages/notebook-analysis/**"
+      ],
       "capabilities": ["main_runtime"]
     },
     {
@@ -209,12 +214,12 @@
         "src/main/literature/pdf-structure/engine.ts",
         "src/main/literature/pdf-translation/local.ts",
         "src/main/local-rpc-transport.ts",
-        "src/main/notebook/code-risk-analysis.ts",
+        "packages/notebook-code-risk/src/index.ts",
         "src/main/notebook/runtime-service.ts",
         "src/shared/tool-detail-sanitizer.ts",
-        "src/main/notebook/dependency-analysis-python.ts",
-        "src/main/notebook/dependency-analysis-repl.ts",
-        "src/main/notebook/dependency-projection.ts",
+        "packages/notebook-analysis/src/dependency-analysis-python.ts",
+        "packages/notebook-analysis/src/dependency-analysis-repl.ts",
+        "packages/notebook-analysis/src/dependency-projection.ts",
         "src/main/notebook/working-file-observer.ts",
         "src/main/notebook/conditional-restore-script.ts",
         "src/main/notebook/environment-discovery.ts",
@@ -310,7 +315,10 @@
         "src/main/delegation/production-framework-runtime.ts",
         "src/main/desktop-connection.ts",
         "src/main/desktop-runtime-launcher.ts",
-        "src/main/node-entry.ts"
+        "src/main/node-entry.ts",
+        "src/main/notebook/code-risk-adapter.ts",
+        "packages/notebook-syntax/src/powershell.ts",
+        "packages/notebook-analysis/src/*path*.ts"
       ],
       "capabilities": ["windows_sensitive"]
     },
@@ -422,7 +430,10 @@
         "src/main/tasks/**",
         "src/main/update/**",
         "src/main/web-service/**",
-        "src/main/wsl/**"
+        "src/main/wsl/**",
+        "packages/notebook-syntax/**",
+        "packages/notebook-code-risk/**",
+        "packages/notebook-analysis/**"
       ],
       "capabilities": ["e2e_regressions", "e2e_delegation"]
     },

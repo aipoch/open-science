@@ -83,7 +83,7 @@ import type { NotebookShellProcess } from './shell-process'
 import * as windowsNotebookRuntime from './windows-notebook-runtime'
 import { NOTEBOOK_CODE_LIMIT_BYTES } from './content-limits'
 import type { RuntimeDiagnosticLogger } from '@aipoch/diagnostics/node'
-import { projectNotebookDependencies, type AnalyzedNotebookRun } from './dependency-analysis'
+import { projectNotebookDependencies, type AnalyzedNotebookRun } from '@aipoch/notebook-analysis'
 import { NotebookRuntimeBindingOwner } from './runtime-binding'
 import type { NotebookEnvironmentManager } from './environment-management'
 

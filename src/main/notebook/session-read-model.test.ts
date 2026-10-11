@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { NotebookRunRepository, getNotebookRunJsonPath, getRuntimeRoot } from './repository'
 import { NotebookSessionReadModel, type NotebookSessionReadSource } from './session-read-model'
-import type { NotebookDependencyProjection } from './dependency-analysis'
+import type { NotebookDependencyProjection } from '@aipoch/notebook-analysis'
 import type { NotebookSessionSnapshot } from './session-aggregate'
 import { createFrameNotebookLane } from './lane-identity'
 import type { NotebookRunRecord } from '../../shared/notebook'

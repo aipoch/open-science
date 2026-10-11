@@ -966,7 +966,7 @@ jobs:
           src/main/literature/smart-collections.test.ts
           src/main/literature/pdf-structure/owner.test.ts
           src/main/notebook/kernel-startup-retry.integration.test.ts
-          src/main/notebook/code-risk-analysis.test.ts
+          packages/notebook-code-risk/src/code-risk-analysis.test.ts
           src/main/notebook/code-risk-admission.test.ts
           src/main/local-models/owner.test.ts
           --testNamePattern

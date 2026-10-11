@@ -1,0 +1,193 @@
+import type { NotebookLanguage } from './run-contract'
+import { managedEnvironmentIsReadOnly } from './managed-path-context'
+import { analyzeReplNotebookSource } from './dependency-analysis-repl'
+import { analyzePythonNotebookSource } from './dependency-analysis-python'
+import { analyzeRNotebookSource } from './dependency-analysis-r'
+import type {
+  NotebookSourceFileAccessExtraction,
+  NotebookSourceFileAccessAnalysis,
+  NotebookSourceFileAccessContext,
+  NotebookRunDependencyFacts
+} from './dependency-analysis-types'
+
+const normalizeNotebookSourceFileAccess = (
+  language: NotebookLanguage | 'repl',
+  dependencyFacts: NotebookRunDependencyFacts | undefined,
+  fileAccess: NotebookSourceFileAccessExtraction | undefined,
+  context?: NotebookSourceFileAccessContext
+): NotebookSourceFileAccessAnalysis => {
+  if (!fileAccess) {
+    return {
+      readState: 'unavailable',
+      writeState: 'unavailable',
+      externalState: 'unavailable',
+      reads: [],
+      writes: [],
+      reasonCodes: ['source-analysis-unsupported-call']
+    }
+  }
+
+  const activeContext = context
+  const reasonCodes: NotebookSourceFileAccessAnalysis['reasonCodes'] = []
+  const unresolvedPriorNames = new Set(dependencyFacts?.priorUsedNames ?? [])
+  if (language === 'r') unresolvedPriorNames.delete('pi')
+  for (const safeName of dependencyFacts?.safeCallNames ?? []) unresolvedPriorNames.delete(safeName)
+  for (const { name } of activeContext?.staticStrings ?? []) unresolvedPriorNames.delete(name)
+  for (const { name } of activeContext?.staticCollections ?? []) unresolvedPriorNames.delete(name)
+  for (const { name } of activeContext?.localFileWrappers ?? []) unresolvedPriorNames.delete(name)
+  for (const name of activeContext?.resolvedKernelNames ?? []) unresolvedPriorNames.delete(name)
+  const shadowedNames = new Set([
+    ...(dependencyFacts?.definedNames ?? []),
+    ...(dependencyFacts?.conditionallyDefinedNames ?? [])
+  ])
+  const replayedHelperNames = new Set(fileAccess.replayedHelperNames ?? [])
+  for (const name of fileAccess.context.pythonHelperModules?.flatMap(({ exports }) => exports) ??
+    []) {
+    if (!shadowedNames.has(name) && replayedHelperNames.has(name)) unresolvedPriorNames.delete(name)
+  }
+  const dependencyAnalysisUnavailable =
+    !dependencyFacts ||
+    (dependencyFacts.state === 'unknown' &&
+      dependencyFacts.reasons.some(
+        (reason) =>
+          reason !== 'external-state' &&
+          reason !== 'graphics-state-unavailable' &&
+          reason !== 'control-flow' &&
+          !(reason === 'function-scope' && fileAccess.localFileWrappersComplete)
+      ))
+  const unresolvedCalls =
+    dependencyFacts?.receiverCalls?.some(
+      (call) => call.kind === 'callable' && unresolvedPriorNames.has(call.receiver)
+    ) ?? false
+  if (dependencyAnalysisUnavailable || unresolvedPriorNames.size > 0) {
+    reasonCodes.push('source-analysis-unsupported-call')
+  }
+  if (fileAccess.unresolvedReads || fileAccess.unresolvedWrites) {
+    reasonCodes.push('dynamic-path-unresolved')
+  }
+  if (fileAccess.unsupportedExternalState || fileAccess.directoryStateRead) {
+    reasonCodes.push('source-analysis-unsupported-call')
+  }
+  // sf and terra writers can create companion files or driver sidecars even
+  // when their destination path is literal. Keep dependency edges precise via
+  // safeCallNames, while source coverage remains conservative until runtime
+  // evidence enumerates the complete output set.
+  const conservativeRWriter =
+    language === 'r' &&
+    (dependencyFacts?.safeCallNames?.some((name) =>
+      ['sf::st_write', 'terra::writeRaster'].includes(name)
+    ) ??
+      false)
+  return {
+    readState:
+      dependencyAnalysisUnavailable ||
+      unresolvedPriorNames.size > 0 ||
+      fileAccess.unresolvedReads ||
+      fileAccess.unsupportedExternalState
+        ? 'partial'
+        : 'complete',
+    writeState:
+      dependencyAnalysisUnavailable ||
+      unresolvedCalls ||
+      fileAccess.unresolvedWrites ||
+      conservativeRWriter
+        ? 'partial'
+        : 'complete',
+    externalState:
+      dependencyAnalysisUnavailable ||
+      unresolvedCalls ||
+      fileAccess.unresolvedReads ||
+      fileAccess.unresolvedWrites ||
+      fileAccess.unsupportedExternalState ||
+      fileAccess.directoryStateRead
+        ? 'partial'
+        : 'complete',
+    reads: fileAccess.reads,
+    writes: fileAccess.writes,
+    ...(fileAccess.writeScopes?.length ? { writeScopes: fileAccess.writeScopes } : {}),
+    reasonCodes: [...new Set(reasonCodes)]
+  }
+}
+
+const analyzeNotebookSourceFileAccess = async (
+  language: NotebookLanguage | 'repl',
+  source: string,
+  context?: NotebookSourceFileAccessContext
+): Promise<NotebookSourceFileAccessAnalysis> => {
+  if (context?.managedEnvironment && !(await managedEnvironmentIsReadOnly(language, source))) {
+    context = { ...context, managedEnvironment: undefined }
+  }
+  let activeContext: NotebookSourceFileAccessContext | undefined
+  const analyze = language === 'r' ? analyzeRNotebookSource : analyzePythonNotebookSource
+  const { facts: dependencyFacts, fileAccess } = await (language === 'repl'
+    ? analyzeReplNotebookSource(source, context)
+    : analyze(source, context, (dependencyFacts) => {
+        const shadowedNames = new Set([
+          ...(dependencyFacts?.definedNames ?? []),
+          ...(dependencyFacts?.conditionallyDefinedNames ?? [])
+        ])
+        const globalsGetNames = new Set(
+          [...source.matchAll(/globals\s*\(\s*\)\s*\.\s*get\s*\(\s*["']([^"']+)["']/gu)].map(
+            ([, name]) => name
+          )
+        )
+        const preservedStaticNames = new Set(
+          context?.staticStrings
+            .filter(({ name }) => globalsGetNames.has(name))
+            .map(({ name }) => name) ?? []
+        )
+        activeContext = context
+          ? {
+              ...(context.workingDirectory ? { workingDirectory: context.workingDirectory } : {}),
+              managedEnvironment: context.managedEnvironment,
+              staticStrings: context.staticStrings.filter(
+                ({ name }) => !shadowedNames.has(name) || preservedStaticNames.has(name)
+              ),
+              staticCollections: context.staticCollections.filter(
+                ({ name }) => !shadowedNames.has(name)
+              ),
+              localFileWrappers: context.localFileWrappers.filter(
+                ({ name }) => !shadowedNames.has(name)
+              ),
+              // These identities are invalidated in Python statement order.
+              ...(context.pythonBindings ? { pythonBindings: context.pythonBindings } : {}),
+              ...(context.pythonTaintedNamespaces
+                ? { pythonTaintedNamespaces: context.pythonTaintedNamespaces }
+                : {}),
+              ...(context.staticCollectionAliases
+                ? { staticCollectionAliases: context.staticCollectionAliases }
+                : {}),
+              ...(context.pythonHelperModules
+                ? { pythonHelperModules: context.pythonHelperModules }
+                : {}),
+              ...(context.resolvedKernelNames
+                ? {
+                    resolvedKernelNames: context.resolvedKernelNames.filter(
+                      (name) =>
+                        !shadowedNames.has(name) || dependencyFacts?.priorUsedNames?.includes(name)
+                    )
+                  }
+                : {}),
+              ...(context.rCopyOnModifyNames
+                ? {
+                    rCopyOnModifyNames: context.rCopyOnModifyNames.filter(
+                      (name) => !shadowedNames.has(name)
+                    )
+                  }
+                : {}),
+              ...(context.rFunctions
+                ? { rFunctions: context.rFunctions.filter(({ name }) => !shadowedNames.has(name)) }
+                : {})
+            }
+          : undefined
+        return activeContext
+      }))
+  return normalizeNotebookSourceFileAccess(
+    language,
+    dependencyFacts,
+    fileAccess,
+    language === 'repl' ? context : activeContext
+  )
+}
+
+export { analyzeNotebookSourceFileAccess, normalizeNotebookSourceFileAccess }

@@ -1,3 +1,4 @@
+import { rPackageBindingsSchema } from '@aipoch/notebook-analysis/contracts'
 import { z } from 'zod'
 
 const rngWord = z.number().int().min(0).max(4294967295)
@@ -107,17 +108,7 @@ export const notebookExecutionContextSchema = z
     after: observation,
     // Ordered attached-package names and syntactic call bindings only. No user
     // values, namespace contents, library paths or serialized R objects.
-    rPackages: z
-      .object({
-        before: z.array(z.string().max(128)).max(128),
-        after: z.array(z.string().max(128)).max(128),
-        reads: z
-          .array(z.object({ name: z.string().max(256), package: z.string().max(128) }).strict())
-          .max(256),
-        complete: z.boolean()
-      })
-      .strict()
-      .optional()
+    rPackages: rPackageBindingsSchema
   })
   .strict()
 export type NotebookExecutionContext = z.infer<typeof notebookExecutionContextSchema>

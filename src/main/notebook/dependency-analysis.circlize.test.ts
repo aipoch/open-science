@@ -1,3 +1,4 @@
+import { NotebookDependencyAnalyzer } from './dependency-analysis-adapter'
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { readFileSync } from 'node:fs'
 import { execFile } from 'node:child_process'
@@ -8,11 +9,11 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { expect, it } from 'vitest'
 import type { NotebookRunRecord } from '../../shared/notebook'
-import type { NotebookDependencyProjection } from './dependency-analysis-types'
-import { NotebookDependencyAnalyzer } from './dependency-analysis'
-import { analyzeRNotebookSource } from './dependency-analysis-r'
+import type { NotebookDependencyProjection } from '@aipoch/notebook-analysis/contracts'
+
+import { analyzeRNotebookSource } from '@aipoch/notebook-analysis/r'
 import { frameRRequest, parseLoopResponse } from './kernel-protocol'
-import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
+import { analyzeNotebookSourceFileAccess } from '@aipoch/notebook-analysis'
 import { startWorkingFileObservation } from './working-file-observer'
 
 const cells = readFileSync(join(__dirname, 'reported-r-circlize.fixture.R'), 'utf8')

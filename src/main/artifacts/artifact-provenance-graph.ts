@@ -13,7 +13,7 @@ import {
   type ScientificOutputRisk
 } from '../../shared/execution-file-evidence'
 import type { NotebookRunInputFile, NotebookRunRecord } from '../../shared/notebook'
-import type { NotebookDependencyProjection } from '../notebook/dependency-analysis'
+import type { NotebookDependencyProjection } from '@aipoch/notebook-analysis'
 import { canonicalJson, sha256, type CanonicalJson } from './provenance-canonical'
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u

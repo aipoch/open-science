@@ -1,3 +1,4 @@
+import { NotebookDependencyAnalyzer } from './dependency-analysis-adapter'
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
@@ -7,16 +8,16 @@ import { join, normalize } from 'node:path'
 import { gzipSync } from 'node:zlib'
 import { describe, expect, it } from 'vitest'
 import type { NotebookRunRecord } from '../../shared/notebook'
-import { NotebookDependencyAnalyzer } from './dependency-analysis'
+
 import type {
   AnalyzedNotebookRun,
   NotebookRunDependencyFacts,
   NotebookSourceFileAccessAnalysis
-} from './dependency-analysis-types'
-import { projectNotebookFileDependencies } from './dependency-projection'
-import { analyzeRNotebookSource } from './dependency-analysis-r'
+} from '@aipoch/notebook-analysis/contracts'
+import { projectNotebookFileDependencies } from '@aipoch/notebook-analysis/projection'
+import { analyzeRNotebookSource } from '@aipoch/notebook-analysis/r'
 import { NotebookKernelExecutor } from './kernel-executor'
-import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
+import { analyzeNotebookSourceFileAccess } from '@aipoch/notebook-analysis'
 import { sha256, verifyReplayCapture } from './scientific-replay.test-support'
 import sqliteHandoff from './fixtures/lineage/readonly-sqlite-handoff.json'
 import atomicPaths from './fixtures/lineage/cwd-unpacked-atomic-paths.json'
@@ -1233,7 +1234,6 @@ describe('file lineage identity and completeness guards', () => {
             {
               path: join(root, 'result.json'),
               relativePath: 'result.json',
-              kind: 'other',
               createdByRunId: 'producer',
               change: 'created',
               checksum: 'i'.repeat(64)

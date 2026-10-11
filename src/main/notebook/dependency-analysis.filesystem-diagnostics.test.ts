@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { expect, it } from 'vitest'
-import { analyzePythonSources } from './dependency-analysis-python'
-import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
+import { analyzePythonSources } from '@aipoch/notebook-analysis/python'
+import { analyzeNotebookSourceFileAccess } from '@aipoch/notebook-analysis'
 import { startWorkingFileObservation } from './working-file-observer'
 
 const reportedSine = `import numpy as np

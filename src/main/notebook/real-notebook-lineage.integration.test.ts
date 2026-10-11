@@ -4,10 +4,10 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import type { NotebookRunRecord } from '../../shared/notebook'
-import { analyzePythonSources } from './dependency-analysis-python'
-import { projectNotebookDependencies } from './dependency-projection'
+import { analyzePythonSources } from '@aipoch/notebook-analysis/python'
+import { projectNotebookDependencies } from '@aipoch/notebook-analysis/projection'
 import { NotebookKernelExecutor } from './kernel-executor'
-import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
+import { analyzeNotebookSourceFileAccess } from '@aipoch/notebook-analysis'
 
 // This is intentionally opt-in: it exercises the shipped kernel loop against a provisioned local
 // interpreter, creates real scientific outputs, and verifies the analyzer against those outputs.

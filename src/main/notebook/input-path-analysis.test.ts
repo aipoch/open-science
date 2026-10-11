@@ -1,6 +1,6 @@
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { describe, expect, it } from 'vitest'
-import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
+import { analyzeNotebookSourceFileAccess } from '@aipoch/notebook-analysis'
 
 const analyzedPythonPath = (value: string): string =>
   process.platform === 'win32' ? value.replaceAll('/', '\\') : value

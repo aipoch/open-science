@@ -2,7 +2,7 @@ import type {
   ArtifactAnalysisRevision,
   ArtifactProvenanceGraph
 } from '../../shared/artifact-provenance'
-import { NOTEBOOK_ANALYZER_VERSION, NOTEBOOK_ANALYZER_REVISION } from '../notebook/analysis-version'
+import { NOTEBOOK_ANALYZER_VERSION, NOTEBOOK_ANALYZER_REVISION } from '@aipoch/notebook-analysis'
 import { canonicalJson, sha256, type CanonicalJson } from './provenance-canonical'
 
 // Bump for lineage construction/closure changes, independently of its JSON schema.

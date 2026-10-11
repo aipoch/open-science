@@ -3,9 +3,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
-import { analyzeNotebookCodeRisk } from './code-risk-analysis'
+import { analyzeNotebookCodeRisk } from '@aipoch/notebook-code-risk'
 import { objectLoop162 } from './code-risk-budget-fixtures'
-import * as parser from './dependency-analysis-parser'
+import * as parser from '@aipoch/notebook-syntax'
 import { NotebookRuntimeService, type NotebookExecutionApproval } from './runtime-service'
 
 configureTestRuntimeMetadata()

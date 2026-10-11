@@ -1,13 +1,14 @@
+import { NotebookDependencyAnalyzer } from './dependency-analysis-adapter'
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { expect, it } from 'vitest'
-import { analyzeRNotebookSource } from './dependency-analysis-r'
-import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
+import { analyzeRNotebookSource } from '@aipoch/notebook-analysis/r'
+import { analyzeNotebookSourceFileAccess } from '@aipoch/notebook-analysis'
 import cells from './reported-venn-device.fixture.json'
 import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { NotebookRunRecord } from '../../shared/notebook'
-import { NotebookDependencyAnalyzer } from './dependency-analysis'
+
 import { startWorkingFileObservation } from './working-file-observer'
 
 it.each([0, 11])('captures self-contained Venn device cell %s', async (index) => {

@@ -293,3 +293,20 @@ it.each([
   expect(plan.excluded).toContain('packages/connector-mcp-client')
   if (selected.length === 0) expect(plan.excluded).toContain('packages/diagnostics')
 })
+
+it('keeps Notebook package tests directional while retaining shared syntax consumers', () => {
+  const actual = JSON.parse(readFileSync('scripts/ci/package-test-boundaries.json', 'utf8'))
+  const syntax = 'packages/notebook-syntax'
+  const risk = 'packages/notebook-code-risk'
+  const analysis = 'packages/notebook-analysis'
+  expect(createPackageTestPlan(['src/main/notebook/runtime-service.ts'], actual).selected).toEqual(
+    []
+  )
+  expect(
+    createPackageTestPlan([`${analysis}/src/dependency-analysis.ts`], actual).selected
+  ).toEqual([analysis])
+  expect(createPackageTestPlan([`${risk}/src/index.ts`], actual).selected).toEqual([risk])
+  expect(
+    createPackageTestPlan([`${syntax}/assets/tree-sitter-python.wasm`], actual).selected
+  ).toEqual([syntax, risk, analysis])
+})

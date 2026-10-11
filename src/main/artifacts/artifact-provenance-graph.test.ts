@@ -1,3 +1,4 @@
+import { NotebookDependencyAnalyzer } from '../notebook/dependency-analysis-adapter'
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -15,7 +16,7 @@ import type {
   ScientificOutputEvidence
 } from '../../shared/execution-file-evidence'
 import type { NotebookRunRecord } from '../../shared/notebook'
-import { NotebookDependencyAnalyzer } from '../notebook/dependency-analysis'
+
 import { NotebookRunRepository } from '../notebook/repository'
 import { createFrameNotebookLane } from '../notebook/lane-identity'
 import { ArtifactProvenanceProducerCapture } from './provenance-producer-capture'

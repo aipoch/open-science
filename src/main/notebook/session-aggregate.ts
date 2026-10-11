@@ -26,7 +26,7 @@ import type { TransientViewImage } from './host-view-image-service'
 import { resolveProjectId, type ProjectIdScope } from '../../shared/project-scope'
 import { notebookLaneScope, type NotebookLaneIdentity } from './lane-identity'
 import type { NotebookHelperModuleInjection } from './helper-module-host'
-import type { NotebookSourceFileAccessContext } from './dependency-analysis-types'
+import type { NotebookSourceFileAccessContext } from '@aipoch/notebook-analysis/contracts'
 
 export type NotebookSessionResolvedInterpreter = {
   command: string

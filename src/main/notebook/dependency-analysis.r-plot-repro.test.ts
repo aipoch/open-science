@@ -1,3 +1,4 @@
+import { NotebookDependencyAnalyzer } from './dependency-analysis-adapter'
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -12,13 +13,13 @@ import {
   resolveArtifactReproducibilityExecutionPlan,
   sealArtifactReproducibilityRecipe
 } from '../artifacts/artifact-reproducibility-recipe'
-import { NotebookDependencyAnalyzer } from './dependency-analysis'
+
 import { EnvironmentStateTracker } from './environment-state-tracker'
 import { frameRRequest, parseLoopResponse } from './kernel-protocol'
 import { resolveMicromamba } from './micromamba'
 import { notebookPromptInputPath } from './prompt-input-materialization'
-import { analyzeRSources } from './dependency-analysis-r'
-import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
+import { analyzeRSources } from '@aipoch/notebook-analysis/r'
+import { analyzeNotebookSourceFileAccess } from '@aipoch/notebook-analysis'
 import { startWorkingFileObservation } from './working-file-observer'
 import { rCallbackPlot } from './reported-r-callback.fixture'
 import { combinedPlot } from './reported-r-composition.fixture'

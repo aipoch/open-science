@@ -28,6 +28,18 @@
     {
       "root": "packages/skills",
       "dependencies": []
+    },
+    {
+      "root": "packages/notebook-syntax",
+      "dependencies": []
+    },
+    {
+      "root": "packages/notebook-code-risk",
+      "dependencies": ["packages/notebook-syntax"]
+    },
+    {
+      "root": "packages/notebook-analysis",
+      "dependencies": ["packages/notebook-syntax"]
     }
   ]
 }

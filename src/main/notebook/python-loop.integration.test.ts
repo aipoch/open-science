@@ -1,3 +1,4 @@
+import { NotebookDependencyAnalyzer } from './dependency-analysis-adapter'
 import { once } from 'node:events'
 import { describe, it, expect } from 'vitest'
 import { notebookExecutionContextSchema } from '../../shared/notebook-execution-context'
@@ -27,7 +28,7 @@ import {
 } from './reported-python-callback.fixture'
 import { startWorkingFileObservation } from './working-file-observer'
 import type { NotebookRunRecord } from '../../shared/notebook'
-import { NotebookDependencyAnalyzer } from './dependency-analysis'
+
 import withVolcanoCells from './reported-with-volcano.fixture.json'
 import mixedVennCells from './reported-mixed-venn.fixture.json'
 import vennCounterCells from './reported-mixed-venn-counter.fixture.json'

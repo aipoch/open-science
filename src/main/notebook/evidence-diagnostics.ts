@@ -1,7 +1,7 @@
 import type { NotebookRunRecord } from '../../shared/notebook'
 import type { ExecutionFileEvidenceReason } from '../../shared/execution-file-evidence'
 import { createLogger, type Logger } from '@aipoch/diagnostics/node'
-import type { NotebookSourceFileAccessAnalysis } from './dependency-analysis-types'
+import type { NotebookSourceFileAccessAnalysis } from '@aipoch/notebook-analysis/contracts'
 
 const log = createLogger('notebook:evidence')
 const distinctReasons = (reasons: readonly string[] | undefined): string[] =>

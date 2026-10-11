@@ -1,3 +1,4 @@
+import { NotebookDependencyAnalyzer } from './dependency-analysis-adapter'
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { expect, it } from 'vitest'
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -5,10 +6,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { NotebookEnvironmentManifest, NotebookRunRecord } from '../../shared/notebook'
 import type { NotebookExecutionContext } from '../../shared/notebook-execution-context'
-import type { NotebookDependencyProjection } from './dependency-analysis-types'
-import { NotebookDependencyAnalyzer } from './dependency-analysis'
-import { analyzeRNotebookSource } from './dependency-analysis-r'
-import { projectNotebookDependencies } from './dependency-projection'
+import type { NotebookDependencyProjection } from '@aipoch/notebook-analysis/contracts'
+
+import { analyzeRNotebookSource } from '@aipoch/notebook-analysis/r'
+import { projectNotebookDependencies } from '@aipoch/notebook-analysis/projection'
 
 type RPackages = NonNullable<NotebookExecutionContext['rPackages']>
 const packages = (
