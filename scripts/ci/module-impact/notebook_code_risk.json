@@ -12,7 +12,8 @@
     "packages/notebook-code-risk/tsc.cjs",
     "packages/notebook-code-risk/tsconfig.json",
     "packages/notebook-code-risk/tsconfig.test.json",
-    "packages/notebook-code-risk/vitest.config.ts"
+    "packages/notebook-code-risk/vitest.config.ts",
+    "packages/notebook-code-risk/src/code-risk-analysis.native-python.test.ts"
   ],
   "interfacePaths": [
     "packages/notebook-code-risk/src/code-risk-budget-fixtures.ts",
@@ -26,7 +27,8 @@
   "testFiles": {
     "owner": [
       "packages/notebook-code-risk/src/code-risk-analysis.object-budget.test.ts",
-      "packages/notebook-code-risk/src/code-risk-analysis.test.ts"
+      "packages/notebook-code-risk/src/code-risk-analysis.test.ts",
+      "packages/notebook-code-risk/src/code-risk-analysis.native-python.test.ts"
     ],
     "contract": ["src/main/notebook/package-boundaries.architecture.test.ts"],
     "consumer": [
@@ -251,16 +253,15 @@
       "src/main/notebook/content-limits.test.ts",
       "src/main/notebook/cross-turn-input-repro.integration.test.ts",
       "src/main/notebook/delegated-lane-capability.test.ts",
-      "src/main/notebook/dependency-analysis.chord.test.ts",
-      "src/main/notebook/dependency-analysis.circlize.test.ts",
-      "src/main/notebook/dependency-analysis.filesystem-diagnostics.test.ts",
-      "src/main/notebook/dependency-analysis.iteration-snapshots.test.ts",
-      "src/main/notebook/dependency-analysis.lineage-regressions.test.ts",
-      "src/main/notebook/dependency-analysis.r-directory.test.ts",
-      "src/main/notebook/dependency-analysis.r-plot-repro.test.ts",
-      "src/main/notebook/dependency-analysis.structured-results.test.ts",
-      "src/main/notebook/dependency-analysis.venn-device.test.ts",
-      "src/main/notebook/dependency-projection.r-packages.test.ts",
+      "src/main/notebook/dependency-analysis.chord.integration.test.ts",
+      "src/main/notebook/dependency-analysis.circlize.integration.test.ts",
+      "src/main/notebook/dependency-analysis.filesystem-diagnostics.integration.test.ts",
+      "src/main/notebook/dependency-analysis.iteration-snapshots.integration.test.ts",
+      "src/main/notebook/dependency-analysis.lineage-regressions.integration.test.ts",
+      "src/main/notebook/dependency-analysis.r-directory.integration.test.ts",
+      "src/main/notebook/dependency-analysis.r-plot-repro.integration.test.ts",
+      "src/main/notebook/dependency-analysis.structured-results.integration.test.ts",
+      "src/main/notebook/dependency-analysis.venn-device.integration.test.ts",
       "src/main/notebook/e2e.certification.test.ts",
       "src/main/notebook/env-ipc.test.ts",
       "src/main/notebook/environment-discovery.test.ts",
@@ -285,9 +286,7 @@
       "src/main/notebook/host-model-service.test.ts",
       "src/main/notebook/host-sessions-service.test.ts",
       "src/main/notebook/host-view-image-service.test.ts",
-      "src/main/notebook/input-path-analysis.test.ts",
       "src/main/notebook/input-registry.test.ts",
-      "src/main/notebook/input-resource-analysis.test.ts",
       "src/main/notebook/input-resource-repro.integration.test.ts",
       "src/main/notebook/input-staging.test.ts",
       "src/main/notebook/ipc.test.ts",

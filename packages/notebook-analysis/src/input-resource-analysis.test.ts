@@ -1,6 +1,6 @@
-import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { describe, expect, it } from 'vitest'
-import { analyzeNotebookSourceFileAccess } from '@aipoch/notebook-analysis'
+
+import { analyzeNotebookSourceFileAccess } from './index'
 
 const analyzedPythonPath = (value: string): string =>
   process.platform === 'win32' ? value.replaceAll('/', '\\') : value
@@ -192,5 +192,3 @@ describe('documented input resource forms', () => {
     })
   })
 })
-
-configureTestRuntimeMetadata()

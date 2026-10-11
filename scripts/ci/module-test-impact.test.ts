@@ -1021,6 +1021,42 @@ describe('Notebook package module boundaries', () => {
     }
   })
 
+  it('owns pure path and package-projection regressions inside analysis', () => {
+    const units = [
+      'input-path-analysis.test.ts',
+      'input-resource-analysis.test.ts',
+      'dependency-projection.r-packages.test.ts'
+    ].map((name) => `packages/notebook-analysis/src/${name}`)
+    expect(manifest.modules.notebook_analysis_engine.testFiles.owner).toEqual(
+      expect.arrayContaining(units)
+    )
+    for (const module of Object.values(manifest.modules)) {
+      expect(
+        Object.values(module.testFiles)
+          .flat()
+          .filter((path) =>
+            units.some(
+              (unit) =>
+                path === unit.replace('packages/notebook-analysis/src/', 'src/main/notebook/')
+            )
+          )
+      ).toEqual([])
+    }
+    for (const path of [
+      'src/main/notebook/runtime-service.ts',
+      'src/main/notebook/dependency-analysis-adapter.ts',
+      'src/main/notebook/scientific-output-analysis.ts'
+    ]) {
+      const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph, manifest)
+      expect(plan.mode).toBe('selective')
+      expect(packageTests(plan.testFiles)).toEqual([])
+      expect(plan.testFiles).toContain('src/main/notebook/code-risk-admission.test.ts')
+      expect(plan.testFiles).toContain(
+        'src/main/notebook/dependency-analysis.venn-device.integration.test.ts'
+      )
+    }
+  })
+
   it.each([
     ['src/main/notebook/runtime-service.ts', 'src/main/notebook/runtime-service.test.ts'],
     [

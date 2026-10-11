@@ -188,19 +188,20 @@ jobs:
           src/main/literature/batch-jobs.test.ts
           src/main/literature/catalog.test.ts
           src/main/literature/catalog-capacity.test.ts
-          src/main/notebook/source-file-access-analysis.test.ts
-          src/main/notebook/source-file-access-analysis.additional-omics.test.ts
-          src/main/notebook/source-file-access-analysis.clinical-formats.test.ts
-          src/main/notebook/source-file-access-analysis.workflow-orchestration.test.ts
+          packages/notebook-analysis/src/source-file-access-analysis.test.ts
+          packages/notebook-analysis/src/source-file-access-analysis.additional-omics.test.ts
+          packages/notebook-analysis/src/source-file-access-analysis.clinical-formats.test.ts
+          packages/notebook-analysis/src/source-file-access-analysis.workflow-orchestration.test.ts
           src/main/session-package/archive.test.ts
           src/main/session-package/service.test.ts
           src/main/notebook/package-manager.test.ts
           src/main/notebook/package-process-sandbox.test.ts
           src/main/notebook/network-sandbox-owner.test.ts
-          src/main/notebook/dependency-analysis.test.ts
-          src/main/notebook/dependency-analysis.chord.test.ts
-          src/main/notebook/dependency-analysis.path-plot.test.ts
-          src/main/notebook/dependency-analysis.anndata.test.ts
+          packages/notebook-analysis/src/dependency-analysis.test.ts
+          src/main/notebook/dependency-analysis.chord.integration.test.ts
+          packages/notebook-analysis/src/dependency-analysis.chord.test.ts
+          packages/notebook-analysis/src/dependency-analysis.path-plot.test.ts
+          packages/notebook-analysis/src/dependency-analysis.anndata.test.ts
           src/main/artifacts/artifact-reproducibility-outputs.test.ts
           src/main/acp/context-usage-static-context.test.ts
           src/main/notebook/provisioner.test.ts

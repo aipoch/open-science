@@ -1,17 +1,28 @@
-import { createNotebookDependencyAnalyzer } from './dependency-analysis-adapter'
-import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
+import { NotebookDependencyAnalyzer } from './analysis-test-support'
+
 import { expect, it } from 'vitest'
+
 import { mkdtemp, rm } from 'node:fs/promises'
+
 import { tmpdir } from 'node:os'
+
 import { join } from 'node:path'
-import type { NotebookEnvironmentManifest, NotebookRunRecord } from '../../shared/notebook'
-import type { NotebookExecutionContext } from '../../shared/notebook-execution-context'
-import type { NotebookDependencyProjection } from '@aipoch/notebook-analysis/contracts'
 
-import { analyzeRNotebookSource } from '@aipoch/notebook-analysis'
-import { projectNotebookDependencies } from '@aipoch/notebook-analysis'
+import type { NotebookRunRecord } from './analysis-test-support'
 
-type RPackages = NonNullable<NotebookExecutionContext['rPackages']>
+import type { NotebookDependencyProjection } from './contracts'
+
+import { analyzeRNotebookSource } from './index'
+
+import { projectNotebookDependencies } from './index'
+
+type RPackages = {
+  before: string[]
+  after: string[]
+  reads: Array<{ name: string; package: string }>
+  complete: boolean
+}
+
 const packages = (
   before: string[],
   after = before,
@@ -22,6 +33,7 @@ const packages = (
   reads,
   complete: true
 })
+
 const run = (
   index: number,
   script: string,
@@ -44,7 +56,10 @@ const run = (
   workingFiles: [],
   environmentManifest: manifest(state)
 })
-const manifest = (state: ReturnType<typeof packages>): NotebookEnvironmentManifest => {
+
+const manifest = (
+  state: ReturnType<typeof packages>
+): NonNullable<NotebookRunRecord['environmentManifest']> => {
   const observation = { locale: 'C', timezone: 'UTC', threadLimits: {}, randomLibraries: [] }
   const executionContext = {
     schemaVersion: 1 as const,
@@ -71,6 +86,7 @@ const manifest = (state: ReturnType<typeof packages>): NotebookEnvironmentManife
     executionContext
   }
 }
+
 const project = async (runs: NotebookRunRecord[]): Promise<NotebookDependencyProjection> =>
   projectNotebookDependencies(
     await Promise.all(
@@ -178,12 +194,12 @@ it('invalidates cached projections when package evidence changes without a sourc
   const options = { storageRoot: root, repository: { readSessionRuns: async () => [record] } }
   const request = { projectId: 'p', sessionId: 's', completedRun: record }
   try {
-    const analyzer = createNotebookDependencyAnalyzer(options)
+    const analyzer = new NotebookDependencyAnalyzer(options)
     expect((await analyzer.project(request)).stalenessByRunId['run-0']?.state).toBe('clear')
     record.environmentManifest = manifest(
       packages(['readxl'], ['readxl'], [{ name: 'read_excel', package: 'readxl' }])
     )
-    for (const instance of [analyzer, createNotebookDependencyAnalyzer(options)]) {
+    for (const instance of [analyzer, new NotebookDependencyAnalyzer(options)]) {
       expect((await instance.project(request)).stalenessByRunId['run-0']).toMatchObject({
         state: 'unknown',
         reasons: expect.arrayContaining(['missing-package-load:readxl'])
@@ -208,5 +224,3 @@ it('recognizes explicit heatmap package setup even when the package was already 
   ])
   expect(result.stalenessByRunId['run-0']).toEqual({ state: 'clear' })
 })
-
-configureTestRuntimeMetadata()

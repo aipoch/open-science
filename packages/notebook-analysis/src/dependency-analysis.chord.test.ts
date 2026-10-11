@@ -1,27 +1,34 @@
-import { createNotebookDependencyAnalyzer } from './dependency-analysis-adapter'
-import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
-import { execFile } from 'node:child_process'
-import { createHash } from 'node:crypto'
-import { promisify } from 'node:util'
-import { startWorkingFileObservation } from './working-file-observer'
+import { NotebookDependencyAnalyzer } from './analysis-test-support'
+
 import { readFileSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+
 import { tmpdir } from 'node:os'
+
 import { join } from 'node:path'
+
 import { expect, it } from 'vitest'
-import { projectNotebookDependencies } from '@aipoch/notebook-analysis'
-import type { NotebookRunRecord } from '../../shared/notebook'
-import type { NotebookDependencyProjection } from '@aipoch/notebook-analysis/contracts'
-import { analyzePythonSources } from '@aipoch/notebook-analysis'
-import { analyzeNotebookSourceFileAccess } from '@aipoch/notebook-analysis'
+
+import { projectNotebookDependencies } from './index'
+
+import type { NotebookRunRecord } from './analysis-test-support'
+
+import type { NotebookDependencyProjection } from './contracts'
+
+import { analyzePythonSources } from './index'
+
+import { analyzeNotebookSourceFileAccess } from './index'
 
 const cells = readFileSync(join(__dirname, 'reported-python-chord.fixture.py'), 'utf8').split(
   '\n\n# %%\n\n'
 )
+
 const recordCells = readFileSync(
   join(__dirname, 'reported-python-chord-records.fixture.py'),
   'utf8'
 ).split('\n\n# %%\n\n')
+
 const polarChord = readFileSync(join(__dirname, 'reported-python-polar-chord.fixture.py'), 'utf8')
 
 const arcRibbon = readFileSync(join(__dirname, 'reported-python-arc-ribbon.fixture.py'), 'utf8')
@@ -30,6 +37,7 @@ const exploration = readFileSync(
   join(__dirname, 'reported-python-exploration.fixture.py'),
   'utf8'
 ).split('\n\n# %%\n\n')
+
 const cartesianChord = readFileSync(
   join(__dirname, 'reported-python-cartesian-chord.fixture.py'),
   'utf8'
@@ -51,13 +59,17 @@ const redrawCells = readFileSync(
 ).split('\n\n# %%\n\n')
 
 const matrixChord = readFileSync(join(__dirname, 'reported-python-matrix-chord.fixture.py'), 'utf8')
+
 const matrixInput =
   "import pandas as pd\ndf = pd.read_excel('inputs/edge-weights-222222222222.xlsx')"
+
 const analyzedPythonPath = (value: string): string =>
   process.platform === 'win32' ? value.replaceAll('/', '\\') : value
+
 const neighborChords = [0, 1].map((variant) =>
   readFileSync(join(__dirname, `reported-python-neighbor-chord-${variant}.fixture.py`), 'utf8')
 )
+
 it('reconstructs a numerical helper returning appended coordinate pairs', async () => {
   const script = `import numpy as np
 def curve(p0, p1, origin=(0, 0)):
@@ -285,6 +297,7 @@ it('keeps the escaped loop-variable warning in the original polar notebook', asy
     reasons: ['control-flow']
   })
 })
+
 it('analyzes the full polar notebook after removing its unused escaping read', async () => {
   expect((await project([independentPolarChord])).stalenessByRunId['run-0']).toEqual({
     state: 'clear'
@@ -297,6 +310,7 @@ it('analyzes the full polar notebook after removing its unused escaping read', a
     writes: ['chord_diagram.png']
   })
 })
+
 const run = (script: string, index: number): NotebookRunRecord => ({
   runId: `run-${index}`,
   cellId: `cell-${index}`,
@@ -313,11 +327,12 @@ const run = (script: string, index: number): NotebookRunRecord => ({
   outputs: [],
   workingFiles: []
 })
+
 const project = async (scripts: string[]): Promise<NotebookDependencyProjection> => {
   const root = await mkdtemp(join(tmpdir(), 'chord-analysis-'))
   const runs = scripts.map(run)
   try {
-    return await createNotebookDependencyAnalyzer({
+    return await new NotebookDependencyAnalyzer({
       storageRoot: root,
       repository: { readSessionRuns: async () => runs }
     }).project({
@@ -475,6 +490,7 @@ const setup =
 
 const helper =
   'def decorate(target, value):\n    angle = np.deg2rad(value * scale)\n    target.text(angle, 1, "label")\ndecorate(ax, 30)'
+
 it('tracks helper mutations and captured values without leaking its local names', async () => {
   const result = await project([setup, 'print(ax)', helper])
   expect(result.stalenessByRunId['run-2']).toEqual({ state: 'clear' })
@@ -509,87 +525,6 @@ it('tracks the output-buffer form of angle conversion', async () => {
   ])
   expect(result.stalenessByRunId['run-1']?.state).toBe('stale')
 })
-
-it
-  .skipIf(process.env.RUN_KERNEL !== '1' || !process.env.OPEN_SCIENCE_TEST_PYTHON)
-  .each([
-    `${cells[0]}\n${cells[6]}`,
-    recordCells.join('\n'),
-    independentPolarChord,
-    arcRibbon,
-    cartesianChord,
-    [workbookCells[5], workbookCells[6]].join('\n'),
-    [coloredChordCells[2], coloredChordCells[3]].join('\n'),
-    ...redrawCells,
-    subarcCells[5]!,
-    `${matrixInput}\n${matrixChord}`,
-    ...neighborChords
-  ])(
-  'captures Excel input and reproduces chord workflow %# in fresh Python processes',
-  async (script) => {
-    const root = await mkdtemp(join(tmpdir(), 'native-chord-'))
-    const python = process.env.OPEN_SCIENCE_TEST_PYTHON!
-    const hashes: string[] = []
-    try {
-      await mkdir(join(root, 'cache'), { recursive: true })
-      for (const name of ['original', 'replay']) {
-        const sessionRoot = join(root, name)
-        const dataRoot = join(sessionRoot, 'data')
-        await mkdir(join(dataRoot, 'inputs'), { recursive: true })
-        // Small synthetic fixture with the same schema: no user spreadsheet is loaded by the test runner.
-        await promisify(execFile)(
-          python,
-          [
-            '-c',
-            'import pandas as pd\npd.DataFrame([(f"Gene{i}",f"S{j}",float(i+j)) for i in range(1,7) for j in range(1,11)], columns=["from","to","value"]).to_excel("inputs/edge-weights-222222222222.xlsx",index=False,sheet_name="Sheet 1")'
-          ],
-          { cwd: dataRoot, timeout: 20000 }
-        )
-        if (name === 'original' && redrawCells.includes(script)) {
-          await writeFile(join(dataRoot, 'chord_diagram.png'), 'older published generation')
-        }
-        const observation = await startWorkingFileObservation({
-          dataRoot,
-          notebookSessionRoot: sessionRoot,
-          cwd: dataRoot,
-          code: script,
-          language: 'python',
-          runId: name
-        })
-        await promisify(execFile)(python, ['-c', script], {
-          cwd: dataRoot,
-          timeout: 30000,
-          env: {
-            ...process.env,
-            MPLBACKEND: 'Agg',
-            MPLCONFIGDIR: join(root, 'matplotlib'),
-            XDG_CACHE_HOME: join(root, 'cache')
-          }
-        })
-        const evidence = await observation.finish()
-        expect(evidence.fileEvidence).toMatchObject({
-          state: 'available',
-          fileReads: 'complete',
-          writerAttribution: 'complete',
-          reasonCodes: []
-        })
-        expect(evidence.confirmedReadPaths).toContain('data/inputs/edge-weights-222222222222.xlsx')
-        if (redrawCells.includes(script))
-          expect(evidence.confirmedReadPaths).not.toContain('data/chord_diagram.png')
-        expect(evidence.workingFiles.map((file) => file.relativePath)).toContain(
-          'data/chord_diagram.png'
-        )
-        const png = await readFile(join(dataRoot, 'chord_diagram.png'))
-        expect(png.subarray(1, 4).toString()).toBe('PNG')
-        hashes.push(createHash('sha256').update(png).digest('hex'))
-      }
-      expect(hashes[0]).toBe(hashes[1])
-    } finally {
-      await rm(root, { recursive: true, force: true })
-    }
-  },
-  90000
-)
 
 it('keeps loop temporaries that may read old kernel state uncertain', async () => {
   const result = await project([
@@ -721,6 +656,7 @@ it('retains later uncertainty for an unused loop binding and its possible input 
 it('analyzes the reported arc ribbon workflow without losing file evidence', async () => {
   expect((await project([arcRibbon])).stalenessByRunId['run-0']).toEqual({ state: 'clear' })
 })
+
 it('captures the reported arc ribbon Excel input and PNG output', async () => {
   expect(await analyzeNotebookSourceFileAccess('python', arcRibbon)).toMatchObject({
     readState: 'complete',
@@ -793,6 +729,7 @@ it.each(exploration.map((script, index) => ({ script, index })))(
     })
   }
 )
+
 it('analyzes reported cartesian chord', async () => {
   expect((await project([cartesianChord])).stalenessByRunId['run-0']).toEqual({ state: 'clear' })
   expect(await analyzeNotebookSourceFileAccess('python', cartesianChord)).toMatchObject({
@@ -897,6 +834,7 @@ it.each([0, 1, 2, 3, 5])('analyzes reported workbook cell %i', async (index) => 
     reads: ['inputs/edge-weights-222222222222.xlsx']
   })
 })
+
 it('analyzes reported workbook drawing after its successful matrix setup', async () => {
   const result = await project([workbookCells[5]!, workbookCells[6]!])
   expect(result.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
@@ -1006,7 +944,7 @@ it('restores workbook call shapes from the analysis cache', async () => {
     interpreter: { command: 'unused' }
   }
   try {
-    const initial = await createNotebookDependencyAnalyzer({
+    const initial = await new NotebookDependencyAnalyzer({
       storageRoot: root,
       repository
     }).project(request)
@@ -1015,7 +953,7 @@ it('restores workbook call shapes from the analysis cache', async () => {
     sidecar.projectionSnapshots = {}
     await writeFile(path, JSON.stringify(sidecar))
     let reanalyses = 0
-    const restored = await createNotebookDependencyAnalyzer({
+    const restored = await new NotebookDependencyAnalyzer({
       storageRoot: root,
       repository,
       analyze: async () => {
@@ -1040,6 +978,7 @@ it.each([0, 1, 2])('analyzes reported colored chord preparation cell %i', async 
     reads: ['inputs/edge-weights-222222222222.xlsx']
   })
 })
+
 it('analyzes the reported colored chord function and its workbook dependency', async () => {
   const result = await project([coloredChordCells[2]!, coloredChordCells[3]!])
   expect(result.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
@@ -1150,5 +1089,3 @@ it('captures scalar defaults before a later rebinding', async () => {
   ])
   expect(result.stalenessByRunId['run-0']).toEqual({ state: 'clear' })
 })
-
-configureTestRuntimeMetadata()

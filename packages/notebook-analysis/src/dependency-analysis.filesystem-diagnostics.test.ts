@@ -1,13 +1,8 @@
-import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
-import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { promisify } from 'node:util'
 import { expect, it } from 'vitest'
-import { analyzePythonSources } from '@aipoch/notebook-analysis'
-import { analyzeNotebookSourceFileAccess } from '@aipoch/notebook-analysis'
-import { startWorkingFileObservation } from './working-file-observer'
+
+import { analyzePythonSources } from './index'
+
+import { analyzeNotebookSourceFileAccess } from './index'
 
 const reportedSine = `import numpy as np
 import matplotlib.pyplot as plt
@@ -42,49 +37,6 @@ it('captures the reported sine plot with its variable-path diagnostic', async ()
   })
   expect((await analyzePythonSources([reportedSine]))[0]).toMatchObject({ state: 'available' })
 })
-
-it.skipIf(process.env.RUN_KERNEL !== '1' || !process.env.OPEN_SCIENCE_TEST_PYTHON)(
-  'captures the actual reported PNG after executing Python',
-  async () => {
-    const root = await mkdtemp(join(tmpdir(), 'native-sine-diagnostics-'))
-    const sessionRoot = join(root, 'notebook')
-    const dataRoot = join(sessionRoot, 'data')
-    try {
-      await mkdir(dataRoot, { recursive: true })
-      const observation = await startWorkingFileObservation({
-        dataRoot,
-        notebookSessionRoot: sessionRoot,
-        cwd: dataRoot,
-        code: reportedSine,
-        registeredInputFiles: [],
-        language: 'python',
-        runId: 'native-sine'
-      })
-      const { stdout } = await promisify(execFile)(
-        process.env.OPEN_SCIENCE_TEST_PYTHON!,
-        ['-c', reportedSine],
-        {
-          cwd: dataRoot,
-          timeout: 20000,
-          env: { ...process.env, MPLBACKEND: 'Agg', MPLCONFIGDIR: join(root, 'matplotlib') }
-        }
-      )
-      const image = await readFile(join(dataRoot, 'sine_wave.png'))
-      expect(image.subarray(1, 4).toString()).toBe('PNG')
-      expect(stdout).toContain(`Saved: sine_wave.png (${image.length} bytes)`)
-      const result = await observation.finish()
-      expect(result.fileEvidence).toMatchObject({ state: 'available' })
-      expect(result.workingFiles).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ relativePath: 'data/sine_wave.png', size: image.length })
-        ])
-      )
-    } finally {
-      await rm(root, { recursive: true, force: true })
-    }
-  },
-  30000
-)
 
 it.each([
   ['python', 'import os\npath="plot.png"\nprint(f"{path}: {os.path.getsize(path)}")'],
@@ -208,54 +160,3 @@ it('retains the imported callable identity without treating its alias as a built
   expect(facts.safeCallNames).toContain('print')
   expect(facts.safeCallNames).not.toContain('str')
 })
-
-it.skipIf(process.env.RUN_KERNEL !== '1').each(['python', 'r'] as const)(
-  'captures a native %s output followed by formatted filesystem diagnostics',
-  async (language) => {
-    const code =
-      language === 'python'
-        ? 'import os\nfrom pathlib import Path\nPath("summary.csv").write_text("group,n\\nCtrl,33\\nIRI,33\\n")\nprint(os.getcwd())\nprint(f"Saved: {Path(\'summary.csv\').resolve()}")\nprint(Path("summary.csv").stat().st_size)'
-        : 'writeLines(c("group,n","Ctrl,33","IRI,33"),"summary.csv")\nmessage(sprintf("Saved: %s",normalizePath("summary.csv")))\ncat("Bytes:",format(file.info("summary.csv")$size,big.mark=","))'
-    const root = await mkdtemp(join(tmpdir(), 'native-file-diagnostics-'))
-    const sessionRoot = join(root, 'notebook')
-    const dataRoot = join(sessionRoot, 'data')
-    try {
-      await mkdir(dataRoot, { recursive: true })
-      const observation = await startWorkingFileObservation({
-        dataRoot,
-        notebookSessionRoot: sessionRoot,
-        cwd: dataRoot,
-        code,
-        registeredInputFiles: [],
-        language,
-        runId: `native-${language}`
-      })
-      const command =
-        language === 'python'
-          ? process.env.OPEN_SCIENCE_TEST_PYTHON || 'python3'
-          : process.env.OPEN_SCIENCE_TEST_R_COMMAND || 'Rscript'
-      await promisify(execFile)(
-        command,
-        language === 'python' ? ['-c', code] : ['--vanilla', '-e', code],
-        {
-          cwd: dataRoot,
-          timeout: 15000
-        }
-      )
-      expect(await readFile(join(dataRoot, 'summary.csv'), 'utf8')).toBe(
-        'group,n\nCtrl,33\nIRI,33\n'
-      )
-      const result = await observation.finish()
-      expect(result.fileEvidence).toMatchObject({ state: 'available' })
-      expect(result.workingFiles).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ relativePath: 'data/summary.csv', size: 23 })
-        ])
-      )
-    } finally {
-      await rm(root, { recursive: true, force: true })
-    }
-  }
-)
-
-configureTestRuntimeMetadata()

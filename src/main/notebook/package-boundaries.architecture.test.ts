@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { dirname, resolve, sep } from 'node:path'
-import {
+import ts, {
   createModuleResolutionCache,
   preProcessFile,
   readConfigFile,
@@ -161,3 +161,88 @@ it('consumes Notebook packages only through exports and keeps packages independe
   }
   expect(violations).toEqual([])
 }, 60_000)
+
+it('keeps every host analysis and admission case connected to host behavior', () => {
+  // A file-level import check misses pure package cases mixed into an integration suite.
+  // Follow local helpers from each case, excluding fixtures, types and host test setup.
+  const paths = readdirSync(__dirname)
+    .filter(
+      (name) =>
+        /^dependency-analysis\..*\.integration\.test\.ts$/.test(name) ||
+        name === 'code-risk-admission.test.ts'
+    )
+    .map((name) => resolve(__dirname, name))
+  const program = ts.createProgram(paths, { noResolve: true, noLib: true })
+  const checker = program.getTypeChecker()
+  const violations: string[] = []
+  const callRoot = (node: ts.Node): string =>
+    ts.isCallExpression(node)
+      ? callRoot(node.expression)
+      : ts.isPropertyAccessExpression(node)
+        ? callRoot(node.expression)
+        : ts.isIdentifier(node)
+          ? node.text
+          : ''
+
+  for (const path of paths) {
+    const source = program.getSourceFile(path)!
+    const usesHost = (test: ts.Node): boolean => {
+      const visited = new Set<ts.Node>()
+      const visit = (node: ts.Node): boolean => {
+        if (visited.has(node) || ts.isTypeNode(node)) return false
+        visited.add(node)
+        if (ts.isIdentifier(node)) {
+          for (const declaration of checker.getSymbolAtLocation(node)?.declarations ?? []) {
+            if (declaration.getSourceFile() !== source) continue
+            if (ts.isImportSpecifier(declaration) || ts.isNamespaceImport(declaration)) {
+              let parent: ts.Node = declaration
+              while (!ts.isImportDeclaration(parent)) parent = parent.parent
+              const specifier = (parent.moduleSpecifier as ts.StringLiteral).text
+              if (
+                !parent.importClause?.isTypeOnly &&
+                !(ts.isImportSpecifier(declaration) && declaration.isTypeOnly) &&
+                specifier.startsWith('./') &&
+                !specifier.includes('fixture') &&
+                !specifier.includes('test-support') &&
+                existsSync(resolve(__dirname, `${specifier}.ts`))
+              )
+                return true
+            } else if (ts.isBindingElement(declaration)) {
+              let parent: ts.Node = declaration
+              while (ts.isBindingElement(parent) || ts.isObjectBindingPattern(parent))
+                parent = parent.parent
+              if (
+                ts.isVariableDeclaration(parent) &&
+                parent.initializer &&
+                visit(parent.initializer)
+              )
+                return true
+            } else if (ts.isVariableDeclaration(declaration)) {
+              if (declaration.initializer && visit(declaration.initializer)) return true
+            } else if (ts.isFunctionDeclaration(declaration) && declaration.body) {
+              if (visit(declaration.body)) return true
+            }
+          }
+        }
+        return ts.forEachChild(node, (child) => (visit(child) ? true : undefined)) === true
+      }
+      return visit(test)
+    }
+    const inspect = (node: ts.Node): void => {
+      if (
+        ts.isExpressionStatement(node) &&
+        ts.isCallExpression(node.expression) &&
+        ['it', 'test'].includes(callRoot(node.expression))
+      ) {
+        if (!usesHost(node)) {
+          const line = source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1
+          violations.push(`${path}:${line} tests only package behavior; move it into its package`)
+        }
+        return
+      }
+      ts.forEachChild(node, inspect)
+    }
+    inspect(source)
+  }
+  expect(violations).toEqual([])
+}, 30_000)

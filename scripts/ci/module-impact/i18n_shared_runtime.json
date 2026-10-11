@@ -666,7 +666,7 @@
       "src/main/notebook/real-notebook-lineage.integration.test.ts",
       "src/main/notebook/real-parquet-lineage.integration.test.ts",
       "src/main/notebook/r-connection-guard.test.ts",
-      "src/main/notebook/dependency-analysis.lineage-regressions.test.ts",
+      "src/main/notebook/dependency-analysis.lineage-regressions.integration.test.ts",
       "src/renderer/src/pages/workspace/previews/LibraryInboxPreview.test.tsx",
       "src/renderer/src/pages/workspace/SessionReplayEvidence.test.tsx",
       "src/renderer/src/pages/workspace/replay/ReplayToolRecord.test.tsx",

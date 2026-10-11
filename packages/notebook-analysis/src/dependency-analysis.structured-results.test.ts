@@ -1,17 +1,22 @@
-import { createNotebookDependencyAnalyzer } from './dependency-analysis-adapter'
-import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
-import { mkdtemp, readFile, writeFile, rm, mkdir } from 'node:fs/promises'
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
+import { NotebookDependencyAnalyzer } from './analysis-test-support'
+
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+
 import { tmpdir } from 'node:os'
+
 import { join } from 'node:path'
+
 import { expect, it, vi } from 'vitest'
-import type { NotebookRunRecord } from '../../shared/notebook'
-import { projectNotebookDependencies } from '@aipoch/notebook-analysis'
-import { analyzePythonSources } from '@aipoch/notebook-analysis'
-import { analyzeRSources } from '@aipoch/notebook-analysis'
-import { analyzeNotebookSourceFileAccess } from '@aipoch/notebook-analysis'
-import { startWorkingFileObservation } from './working-file-observer'
+
+import type { NotebookRunRecord } from './analysis-test-support'
+
+import { projectNotebookDependencies } from './index'
+
+import { analyzePythonSources } from './index'
+
+import { analyzeRSources } from './index'
+
+import { analyzeNotebookSourceFileAccess } from './index'
 
 const run = (script: string, kernelKind: 'python' | 'r', index: number): NotebookRunRecord => ({
   runId: `run-${index}`,
@@ -86,12 +91,10 @@ it.each([
   const repository = { readSessionRuns: async () => runs }
   const request = { projectId: 'project', sessionId: 'session', interpreter: { command: 'unused' } }
   try {
-    const first = await createNotebookDependencyAnalyzer({ storageRoot: root, repository }).project(
-      {
-        ...request,
-        completedRun: runs[1]
-      }
-    )
+    const first = await new NotebookDependencyAnalyzer({ storageRoot: root, repository }).project({
+      ...request,
+      completedRun: runs[1]
+    })
     expect(first.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
     const path = join(root, 'notebooks/project/session/cache/dependency-analysis.json')
     const sidecar = JSON.parse(await readFile(path, 'utf8'))
@@ -100,7 +103,7 @@ it.each([
     const analyze = vi.fn(async () => {
       throw new Error('valid ordered facts must be reusable')
     })
-    const reloaded = createNotebookDependencyAnalyzer({ storageRoot: root, repository, analyze })
+    const reloaded = new NotebookDependencyAnalyzer({ storageRoot: root, repository, analyze })
     expect(await reloaded.project(request)).toEqual(first)
     expect(analyze).not.toHaveBeenCalled()
   } finally {
@@ -192,11 +195,11 @@ it.each(['python', 'python-slice', 'r-vector', 'r-list', 'r-subset'] as const)(
     const repository = { readSessionRuns: async () => runs }
     const request = { projectId: 'project', sessionId: 'session' }
     try {
-      await createNotebookDependencyAnalyzer({ storageRoot: root, repository }).project({
+      await new NotebookDependencyAnalyzer({ storageRoot: root, repository }).project({
         ...request,
         completedRun: runs[0]
       })
-      const analyzer = createNotebookDependencyAnalyzer({ storageRoot: root, repository })
+      const analyzer = new NotebookDependencyAnalyzer({ storageRoot: root, repository })
       const context = await analyzer.sourceFileAccessContext({
         ...request,
         currentRunId: 'run-1',
@@ -229,7 +232,6 @@ it.each(['python', 'python-slice', 'r-vector', 'r-list', 'r-subset'] as const)(
   }
 )
 
-const rCommand = process.env.OPEN_SCIENCE_TEST_R_COMMAND
 it.each([
   '["inputs/unused.csv", "inputs/groups.csv"][1]',
   '("inputs/unused.csv", "inputs/groups.csv")[-1]',
@@ -260,117 +262,3 @@ it.each(['paths[1.5]', 'paths[0.0]', 'paths[True]', 'paths[index]', 'paths[20]']
     ).toBe('partial')
   }
 )
-
-const pythonCommand = process.env.OPEN_SCIENCE_TEST_PYTHON
-it.skipIf(!process.env.RUN_KERNEL || !pythonCommand)(
-  'captures inline Python selections and replays them in a fresh directory',
-  async () => {
-    const root = await mkdtemp(join(tmpdir(), 'python-inline-paths-'))
-    const script = `import pandas as pd
-df = pd.read_csv({"csv": "inputs/groups.csv"}["csv"])
-df.to_csv(("unused.csv", "copy.csv")[-1], index=False)`
-    try {
-      const outputs = []
-      for (const name of ['original', 'replay']) {
-        const notebookSessionRoot = join(root, name)
-        const dataRoot = join(notebookSessionRoot, 'data')
-        await mkdir(join(dataRoot, 'inputs'), { recursive: true })
-        await writeFile(join(dataRoot, 'inputs/groups.csv'), 'group\nCtrl\nIRI\n')
-        const observer = await startWorkingFileObservation({
-          dataRoot,
-          notebookSessionRoot,
-          cwd: dataRoot,
-          language: 'python',
-          code: script,
-          runId: name
-        })
-        await promisify(execFile)(pythonCommand!, ['-c', script], {
-          cwd: dataRoot,
-          timeout: 30_000
-        })
-        const files = await observer.finish()
-        expect(files.fileEvidence).toMatchObject({
-          state: 'available',
-          fileReads: 'complete',
-          writerAttribution: 'complete',
-          reasonCodes: []
-        })
-        expect(files.confirmedReadPaths).toEqual(['data/inputs/groups.csv'])
-        expect(files.workingFiles.map(({ relativePath }) => relativePath)).toContain(
-          'data/copy.csv'
-        )
-        outputs.push(await readFile(join(dataRoot, 'copy.csv'), 'utf8'))
-      }
-      expect(outputs).toEqual(['group\nCtrl\nIRI\n', 'group\nCtrl\nIRI\n'])
-    } finally {
-      await rm(root, { recursive: true, force: true })
-    }
-  }
-)
-
-it.skipIf(!process.env.RUN_KERNEL || !rCommand)(
-  'captures inline R input/output selection and replays it in a fresh directory',
-  async () => {
-    const root = await mkdtemp(join(tmpdir(), 'r-inline-paths-'))
-    const script = `paths <- file.path("inputs", c("unused.csv", "groups.csv"))
-df <- read.csv(paths[2])
-counts <- as.data.frame(table(df$group))
-write.csv(counts, list(csv="counts.csv", ignored="unused-output.csv")["csv"][[1]], row.names=FALSE)`
-    try {
-      const expressions = [
-        'c("inputs/unused.csv", "inputs/groups.csv")[2]',
-        'c(csv="inputs/groups.csv")["csv"]',
-        'list(csv="inputs/groups.csv")[1][[1]]',
-        'setNames(list("inputs/groups.csv"), c("csv"))$csv',
-        'list(csv="inputs/groups.csv")[["csv"]]',
-        'list(csv="inputs/groups.csv")$csv',
-        'file.path("inputs", c("unused.csv", "groups.csv"))[[2]]',
-        'setNames(nm=c("csv"), object=c("inputs/groups.csv"))[["csv"]]',
-        'structure(names=c("csv"), .Data=c("inputs/groups.csv"))[["csv"]]'
-      ]
-      const { stdout } = await promisify(execFile)(
-        rCommand!,
-        ['--vanilla', '-e', `cat(c(${expressions.join(',')}), sep="\\n")`],
-        { timeout: 30_000 }
-      )
-      expect(stdout.trim().split('\n')).toEqual(expressions.map(() => 'inputs/groups.csv'))
-      const contents = []
-      for (const name of ['original', 'replay']) {
-        const notebookSessionRoot = join(root, name)
-        const dataRoot = join(notebookSessionRoot, 'data')
-        await mkdir(join(dataRoot, 'inputs'), { recursive: true })
-        await writeFile(join(dataRoot, 'inputs/groups.csv'), 'group\nCtrl\nIRI\nCtrl\n')
-        const observer = await startWorkingFileObservation({
-          dataRoot,
-          notebookSessionRoot,
-          cwd: dataRoot,
-          language: 'r',
-          code: script,
-          runId: name
-        })
-        await promisify(execFile)(rCommand!, ['--vanilla', '-e', script], {
-          cwd: dataRoot,
-          timeout: 30_000
-        })
-        const files = await observer.finish()
-        expect(files.fileEvidence).toMatchObject({
-          state: 'available',
-          fileReads: 'complete',
-          writerAttribution: 'complete',
-          reasonCodes: []
-        })
-        expect(files.confirmedReadPaths).toEqual(['data/inputs/groups.csv'])
-        expect(files.workingFiles.map(({ relativePath }) => relativePath)).toContain(
-          'data/counts.csv'
-        )
-        contents.push(await readFile(join(dataRoot, 'counts.csv'), 'utf8'))
-      }
-      expect(contents[1]).toEqual(contents[0])
-      expect(contents[0]).toContain('"Ctrl",2')
-    } finally {
-      await rm(root, { recursive: true, force: true })
-    }
-  }
-)
-
-configureTestRuntimeMetadata()

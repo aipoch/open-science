@@ -1,8 +1,7 @@
 {
   "ownerPaths": [
     "src/main/notebook/artifact-source-scope.ts",
-    "src/main/notebook/dependency-analysis.r-plot-repro.test.ts",
-    "src/main/notebook/dev-web-reproducibility.fixture.json",
+    "src/main/notebook/dependency-analysis.r-plot-repro.integration.test.ts",
     "src/main/notebook/host-artifacts-service.test.ts",
     "src/main/notebook/host-artifacts-service.ts",
     "src/main/notebook/host-lineage-service.test.ts",
@@ -12,14 +11,13 @@
   ],
   "interfacePaths": [
     "src/main/notebook/artifact-source-scope.ts",
-    "src/main/notebook/dev-web-reproducibility.fixture.json",
     "src/main/notebook/host-artifacts-service.ts",
     "src/main/notebook/host-lineage-service.ts"
   ],
   "consumerModules": [],
   "testFiles": {
     "owner": [
-      "src/main/notebook/dependency-analysis.r-plot-repro.test.ts",
+      "src/main/notebook/dependency-analysis.r-plot-repro.integration.test.ts",
       "src/main/notebook/host-artifacts-service.test.ts",
       "src/main/notebook/host-lineage-service.test.ts",
       "src/main/notebook/local-rpc-server.artifacts.test.ts",
