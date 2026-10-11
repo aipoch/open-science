@@ -1,23 +1,24 @@
+import { createComputeExecution, createScpRunner, createSshRunner } from '@aipoch/compute/node'
 // RUN_COMPUTE_SLURM=1 COMPUTE_TEST_SSH_ALIAS=hpc-dev npx vitest run src/main/compute/slurm.real-ssh.integration.test.ts
+import {
+  JobPoller,
+  parseSbatchJobId,
+  quoteRemotePath,
+  recoverSlurmJob,
+  shellSingleQuote,
+  SshRunner
+} from '@aipoch/compute/node'
 import { randomUUID } from 'node:crypto'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { ComputeJob } from '../../shared/compute'
-import { createMigratedComputeTestDatabase } from './compute-integration.test-support'
 import { ComputeApprovalBroker } from './compute-approval-broker'
-import { ComputeJobCancellationReaper } from './compute-job-cancellation-owner'
-import { ComputeJobLifecycle } from './compute-job-lifecycle'
+import { createMigratedComputeTestDatabase } from './compute-integration.test-support'
 import { ComputeService } from './compute-service'
 import { SshConfigComputeConnectionBroker } from './connection-broker'
 import { harvestJob } from './harvest-engine'
-import { JobPoller } from './job-poller'
-import { ComputeJobDeletionOwner } from './job-deletion-owner'
 import { ComputeHostRepository } from './repository'
-import { quoteRemotePath, shellSingleQuote } from './remote-path-security'
-import { SystemScpRunner } from './scp-runner'
-import { SystemSshRunner } from './ssh-runner'
-import { parseSbatchJobId, recoverSlurmJob } from './slurm-driver'
 import { getJobHarvestDir } from './workspace-path'
 
 const alias = process.env['COMPUTE_TEST_SSH_ALIAS'] ?? ''
@@ -39,8 +40,12 @@ describe.skipIf(!run)('Slurm lifecycle on real SSH + scheduler', () => {
   const schedulerHeader = `#SBATCH --partition=${partition}\n#SBATCH --cpus-per-task=1\n#SBATCH --mem=128M\n`
 
   const makePoller = (): JobPoller =>
-    new JobPoller({ connectionBroker, hostRepository: hosts, jobRepository: db.repositories.jobs })
-  const remote = async (command: string): ReturnType<SystemSshRunner['run']> => {
+    createComputeExecution().createPoller({
+      connectionBroker,
+      hostRepository: hosts,
+      jobRepository: db.repositories.jobs
+    })
+  const remote = async (command: string): ReturnType<SshRunner['run']> => {
     const lease = await connectionBroker.acquire(scope.providerId, { intent: 'direct_command' })
     return lease.run(command, { timeoutMs: 30000, loginShell: true, maxOutputBytes: 8192 })
   }
@@ -79,8 +84,8 @@ describe.skipIf(!run)('Slurm lifecycle on real SSH + scheduler', () => {
     db = await createMigratedComputeTestDatabase('os-slurm-real-')
     hosts = new ComputeHostRepository(async () => db.client)
     await hosts.create({ sshAlias: alias, executionMode: 'slurm' })
-    const runner = new SystemSshRunner()
-    const scpRunner = new SystemScpRunner()
+    const runner = createSshRunner()
+    const scpRunner = createScpRunner()
     connectionBroker = new SshConfigComputeConnectionBroker({
       getHost: (id) => hosts.get(id),
       runner,
@@ -241,7 +246,7 @@ describe.skipIf(!run)('Slurm lifecycle on real SSH + scheduler', () => {
       data: { remoteHandle: null }
     })
     await service.cancelJob(submitted.job_id, scope)
-    const reaper = new ComputeJobCancellationReaper(
+    const reaper = createComputeExecution().createCancellationReaper(
       db.repositories.operations,
       db.repositories.jobs,
       connectionBroker
@@ -317,7 +322,7 @@ describe.skipIf(!run)('Slurm lifecycle on real SSH + scheduler', () => {
       'slurm_pending'
     )
     await service.cancelJob(submitted.job_id, scope)
-    const reaper = new ComputeJobCancellationReaper(
+    const reaper = createComputeExecution().createCancellationReaper(
       db.repositories.operations,
       db.repositories.jobs,
       connectionBroker
@@ -353,9 +358,8 @@ describe.skipIf(!run)('Slurm lifecycle on real SSH + scheduler', () => {
       where: { id: submitted.job_id },
       data: { remoteHandle: null }
     })
-    const owner = new ComputeJobDeletionOwner({
+    const owner = createComputeExecution().createDeletionOwner({
       jobRepository: db.repositories.jobs,
-      lifecycle: new ComputeJobLifecycle(db.repositories.jobs),
       hostRepository: hosts,
       connectionBroker
     })

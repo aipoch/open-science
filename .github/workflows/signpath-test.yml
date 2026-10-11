@@ -56,7 +56,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Download Windows build artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: windows-x64
           path: unsigned
@@ -76,7 +76,7 @@ jobs:
       # keeps the GitHub artifact as the EXE instead of wrapping it in the default ZIP container.
       - name: Upload raw installer for SignPath
         id: upload-unsigned-installer
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           path: ${{ steps.installer.outputs.path }}
           archive: false
@@ -137,7 +137,7 @@ jobs:
           "path=$($installers[0].FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       - name: Upload signed installer
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: signpath-test-windows-x64
           path: ${{ steps.signed-installer.outputs.path }}

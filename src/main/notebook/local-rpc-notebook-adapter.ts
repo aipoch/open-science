@@ -17,7 +17,8 @@ import {
   type RunNotebookCellRequest
 } from '../../shared/notebook'
 import type { ManageEnvironmentsRequest, ManageEnvironmentsResult } from '../../shared/notebook-env'
-import type { InstallRequest, InstallResult } from './package-manager'
+import type { InstallRequest } from '../../shared/notebook-env'
+import type { InstallResult } from '../../shared/notebook-env'
 import { shellRuntimeBindingSchema } from './shell-runtime'
 
 const provenanceContextSchema = z

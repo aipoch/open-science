@@ -7,12 +7,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const validateNotebookHelperExports = vi.hoisted(() => vi.fn().mockResolvedValue(undefined))
 
-vi.mock('../notebook/python-command', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../notebook/python-command')>()),
+vi.mock('@aipoch/environment', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aipoch/environment')>()),
   validateNotebookHelperExports
 }))
 
-import { envPrefix, pythonBin } from '../notebook/runtime-paths'
+import { envPrefix, pythonBin } from '@aipoch/environment'
 import { RegisteredSkillHelperCatalog } from './registered-helper-catalog'
 import type { RegisteredSkillPackage } from '@aipoch/skills'
 import { inspectSkillPackage } from '@aipoch/skills/sources'

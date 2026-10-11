@@ -876,9 +876,9 @@ Open-Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0C
       join(
         installDirectory,
         'resources',
-        'node_modules',
-        '.prisma',
-        'client',
+        'backend',
+        'resources',
+        'prisma-client',
         'query_engine-windows.dll.node'
       )
     ])
@@ -887,7 +887,7 @@ Open-Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0C
   it('requires exactly one native Windows Prisma engine', async () => {
     const installDirectory = await mkdtemp(join(tmpdir(), 'open-science-windows-engine-'))
     const resources = join(installDirectory, 'resources')
-    const prismaClient = join(resources, 'node_modules', '.prisma', 'client')
+    const prismaClient = join(resources, 'backend', 'resources', 'prisma-client')
     await mkdir(prismaClient, { recursive: true })
     await Promise.all([
       writeFile(join(installDirectory, 'open-science.exe'), ''),

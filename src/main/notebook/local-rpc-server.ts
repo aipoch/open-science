@@ -1,125 +1,62 @@
-import { markTrustedNotebookBindingPermissionPrompts } from './runtime-binding-admission'
-import { executionRecoveryContext } from './execution-recovery'
+import { createHash, randomUUID } from 'node:crypto'
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import {
   NotebookExecutionStopError,
   isNotebookKernelStopResolved,
   notebookErrorRecovery
 } from '../../shared/notebook-execution-error'
 import { artifactSaveRequestSchema } from '../artifacts/save-request'
-import { createHash, randomUUID } from 'node:crypto'
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
+import { executionRecoveryContext } from './execution-recovery'
+import { markTrustedNotebookBindingPermissionPrompts } from './runtime-binding-admission'
 
-import {
-  computeProbeSnapshot,
-  type AgentComputeHostSummary,
-  type ComputeHost,
-  type ComputeHostDetails
-} from '../../shared/compute'
-import type { HostLineageGraph, HostLineageVersion } from '../../shared/host-lineage'
-import { isCurrentInFlight } from '../../shared/in-flight-promise'
-import {
-  NotebookBackgroundRunError,
-  type NotebookRunProvenanceContext
-} from '../../shared/notebook'
-import type { HostArtifactCatalogItem } from '../../shared/project-files'
-import {
-  createArtifactVersionLocator,
-  parseArtifactVersionLocator
-} from '../../shared/artifact-provenance'
-import { createUploadVersionReference, parseUploadVersionReference } from '../../shared/uploads'
-import type { NotebookRpcConnection } from './mcp-server'
-import { NotebookControlCompletionCapturedError } from './execution-owner'
-import {
-  NOTEBOOK_LOCAL_RPC_METHODS,
-  isNotebookLocalRpcMethod,
-  opensNotebookInputRun,
-  resolveNotebookLocalRpcHandler,
-  markRuntimeBindingHostAdmission,
-  type NotebookLocalRpcCapability
-} from './local-rpc-notebook-adapter'
-import type {
-  NotebookInputRegistry,
-  NotebookInputRunLease,
-  PreparedNotebookTurnInputs,
-  RegisterNotebookTurnInputsRequest
-} from './input-registry'
-import type {
-  ConversationSkillImporter,
-  ConversationSkillImportRequest
-} from '../skills/conversation-import'
-import type {
-  ArtifactRpcCapabilityBinding,
-  SaveArtifactVersionRequest,
-  ArtifactWriteSourceScope,
-  ArtifactRpcMethod,
-  ArtifactWriteReservation,
-  ArtifactVersionFile,
-  CreateArtifactVersionRequest,
-  ReleaseArtifactWriteReservationRequest,
-  ReserveArtifactWriteRequest,
-  ReplayArtifactVersionRequest
-} from '../../shared/artifact-provenance'
-import {
-  sanitizeAgentUserChoiceRequest,
-  type AgentUserChoiceRequest,
-  type AgentUserChoiceResult
-} from '../../shared/elicitation'
+import { computeProbeSnapshot, type ComputeHost, type ComputeHostDetails } from '@aipoch/compute'
+import { type AgentComputeHostSummary } from '../../shared/compute'
+
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import {
   stripAgentsReservedParams,
   type TrustedCallingSession,
   type TrustedControlInvocationIdentity
 } from '../../shared/agents-contract'
-import {
-  NOTEBOOK_REPL_DEFAULT_TIMEOUT_MS,
-  NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS,
-  type NotebookExecutionRpcMethod
-} from '../../shared/notebook'
-import {
-  listenForLocalRpc,
-  localRpcServerLogFields,
-  type LocalRpcListenOptions
-} from '../local-rpc-transport'
-import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
-import {
-  LOCAL_RESOURCE_BUDGETS,
-  ResourceBudgetExceededError,
-  PendingRequestBudget,
-  PendingRequestLimitError,
-  readBoundedJsonBody
-} from '../resource-budget'
-import { PlanCommandError } from '../../shared/session-plan/contract'
-import type { HostLlmCallInput, HostLlmResult, HostLlmBatchItem } from './host-model-service'
 import type {
-  AuthenticatedDelegateCaller,
-  DurableDelegateRequest,
-  DurableDelegatedWork
-} from '../delegation/durable-delegated-work'
+  ArtifactRpcCapabilityBinding,
+  ArtifactRpcMethod,
+  ArtifactVersionFile,
+  ArtifactWriteReservation,
+  ArtifactWriteSourceScope,
+  CreateArtifactVersionRequest,
+  ReleaseArtifactWriteReservationRequest,
+  ReplayArtifactVersionRequest,
+  ReserveArtifactWriteRequest,
+  SaveArtifactVersionRequest
+} from '../../shared/artifact-provenance'
 import {
-  DELEGATION_INPUT_UNAVAILABLE_MESSAGE,
-  assertDelegateInputShape,
-  assertDelegateRequestShape
-} from '../delegation/delegated-work-admission'
-import { hostSdkHelp } from '../host-sdk/help'
-import {
-  projectHostCapabilities,
-  type HostCapabilityProjection
-} from '../host-sdk/capability-projection'
-import { parseCollectRpcCall, parseDelegateRpcCall } from '../host-sdk/delegate-contract'
+  createArtifactVersionLocator,
+  parseArtifactVersionLocator
+} from '../../shared/artifact-provenance'
 import { createNestedDelegateInvocationId } from '../../shared/delegated-caller-source'
-import { StructuredOutputError } from '../delegation/structured-output'
-import type {
-  HostViewImageContext,
-  HostViewImageResult,
-  TransientViewImage
-} from './host-view-image-service'
+import {
+  sanitizeAgentUserChoiceRequest,
+  type AgentUserChoiceRequest,
+  type AgentUserChoiceResult
+} from '../../shared/elicitation'
+import type { HostLineageGraph, HostLineageVersion } from '../../shared/host-lineage'
+import { isCurrentInFlight } from '../../shared/in-flight-promise'
 import {
   memoryAgentRememberRequestSchema,
   memoryAgentSearchRequestSchema,
   type MemoryAgentContext
 } from '../../shared/memory'
-import type { MemoryService } from '../memory/service'
-import { withDataRootWrite } from '../storage/migration-state'
-import { isRecord } from '../value-guards'
+import {
+  NOTEBOOK_REPL_DEFAULT_TIMEOUT_MS,
+  NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS,
+  NotebookBackgroundRunError,
+  type NotebookExecutionRpcMethod,
+  type NotebookRunProvenanceContext
+} from '../../shared/notebook'
+import type { HostArtifactCatalogItem } from '../../shared/project-files'
+import { PlanCommandError } from '../../shared/session-plan/contract'
+import { createUploadVersionReference, parseUploadVersionReference } from '../../shared/uploads'
 import type {
   OpenWslTerminalRequest,
   SelectWslProfileRequest,
@@ -128,6 +65,64 @@ import type {
   WslSetupStatus,
   WslSupportHandoff
 } from '../../shared/wsl-setup'
+import {
+  DELEGATION_INPUT_UNAVAILABLE_MESSAGE,
+  assertDelegateInputShape,
+  assertDelegateRequestShape
+} from '../delegation/delegated-work-admission'
+import type {
+  AuthenticatedDelegateCaller,
+  DurableDelegateRequest,
+  DurableDelegatedWork
+} from '../delegation/durable-delegated-work'
+import { StructuredOutputError } from '../delegation/structured-output'
+import {
+  projectHostCapabilities,
+  type HostCapabilityProjection
+} from '../host-sdk/capability-projection'
+import { parseCollectRpcCall, parseDelegateRpcCall } from '../host-sdk/delegate-contract'
+import { hostSdkHelp } from '../host-sdk/help'
+import {
+  listenForLocalRpc,
+  localRpcServerLogFields,
+  type LocalRpcListenOptions
+} from '../local-rpc-transport'
+import type { MemoryService } from '../memory/service'
+import {
+  LOCAL_RESOURCE_BUDGETS,
+  PendingRequestBudget,
+  PendingRequestLimitError,
+  ResourceBudgetExceededError,
+  readBoundedJsonBody
+} from '../resource-budget'
+import type {
+  ConversationSkillImportRequest,
+  ConversationSkillImporter
+} from '../skills/conversation-import'
+import { withDataRootWrite } from '../storage/migration-state'
+import { isRecord } from '../value-guards'
+import { NotebookControlCompletionCapturedError } from './execution-owner'
+import type { HostLlmBatchItem, HostLlmCallInput, HostLlmResult } from './host-model-service'
+import type {
+  HostViewImageContext,
+  HostViewImageResult,
+  TransientViewImage
+} from './host-view-image-service'
+import type {
+  NotebookInputRegistry,
+  NotebookInputRunLease,
+  PreparedNotebookTurnInputs,
+  RegisterNotebookTurnInputsRequest
+} from './input-registry'
+import {
+  NOTEBOOK_LOCAL_RPC_METHODS,
+  isNotebookLocalRpcMethod,
+  markRuntimeBindingHostAdmission,
+  opensNotebookInputRun,
+  resolveNotebookLocalRpcHandler,
+  type NotebookLocalRpcCapability
+} from './local-rpc-notebook-adapter'
+import type { NotebookRpcConnection } from './mcp-server'
 
 const log = createLogger('notebook:local-rpc')
 const MAX_COMPLETED_COMPUTE_SUBMISSIONS_PER_SESSION = 100
@@ -232,7 +227,7 @@ type NotebookLocalRpcServerOptions = {
       active_count: number
       queued_count: number
       provider_ceilings: Record<string, number>
-      queue_blocked_reason?: import('../../shared/compute').ComputeQueueBlockedReason
+      queue_blocked_reason?: import('@aipoch/compute').ComputeQueueBlockedReason
     }>
   }
   skillImporter?: Pick<ConversationSkillImporter, 'request'>

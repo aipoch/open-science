@@ -24,6 +24,7 @@ it('keeps all application consumers on the four public Skill package exports', (
     )
     .map((file) => resolve(root, file))
     .filter(existsSync)
+  const violations: string[] = []
   for (const file of new Set(files)) {
     if (!relative(packageRoot, file).startsWith('..')) continue
     const source = readFileSync(file, 'utf8')
@@ -36,24 +37,24 @@ it('keeps all application consumers on the four public Skill package exports', (
       for (const statement of ast.statements) {
         if (!ts.isExportDeclaration(statement) || !statement.moduleSpecifier) continue
         if (!ts.isStringLiteral(statement.moduleSpecifier)) continue
-        expect(
-          statement.moduleSpecifier.text,
-          `${file}: import package APIs directly instead of forwarding through the host`
-        ).not.toMatch(/^@aipoch\/skills(?:\/|$)/)
+        if (/^@aipoch\/skills(?:\/|$)/.test(statement.moduleSpecifier.text))
+          violations.push(
+            `${file}: import package APIs directly instead of forwarding through the host`
+          )
       }
     }
     for (const { fileName: spec } of imports) {
-      if (spec.startsWith('@aipoch/skills'))
-        expect(allowed.has(spec), `${file}: ${spec}`).toBe(true)
+      if (spec.startsWith('@aipoch/skills') && !allowed.has(spec))
+        violations.push(`${file}: ${spec}`)
       if (spec.startsWith('.') || isAbsolute(spec)) {
         const target = resolve(dirname(file), spec)
-        expect(
-          relative(packageRoot, target).startsWith('..'),
-          `${file}: relative package bypass ${spec}`
-        ).toBe(true)
+        if (!relative(packageRoot, target).startsWith('..'))
+          violations.push(`${file}: relative package bypass ${spec}`)
       }
     }
   }
+  // Report the complete scan once instead of constructing assertions for every repository import.
+  expect(violations).toEqual([])
 })
 
 it('keeps generic host networking independent from feature package types', () => {

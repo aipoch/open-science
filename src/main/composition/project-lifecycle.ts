@@ -1,5 +1,5 @@
-import { createSideChatCommandOwner, type SideChatCommandOwner } from '../side-chat/command-owner'
-import { registerSideChatIpcHandlers } from '../desktop-surface-declarations'
+import type { ComputeJobOwnerLiveness } from '@aipoch/compute/node'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import { LIFECYCLE_CHANNELS } from '../../shared/lifecycle-events'
 import { createAcpRuntime } from '../acp/runtime-composition'
 import { SideChatRelayOwner } from '../acp/side-chat-relay-owner'
@@ -11,12 +11,11 @@ import { ArtifactReproducibilityAttemptOwner } from '../artifacts/artifact-repro
 import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
 import { BackgroundResultDeliveryOwner } from '../background-result-delivery/owner'
 import { BookmarkRepository } from '../bookmarks/repository'
-import type { ComputeJobOwnerLiveness } from '../compute/job-deletion-owner'
 import { SessionEnabledComputeHostsOwner } from '../compute/session-enabled-hosts-owner'
-import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
+import { registerSideChatIpcHandlers } from '../desktop-surface-declarations'
 import {
-  createManagedFileVersionHandlers,
-  createManagedFileVersionCommandOwner
+  createManagedFileVersionCommandOwner,
+  createManagedFileVersionHandlers
 } from '../managed-file-versions/ipc'
 import { ManagedFileVersionService } from '../managed-file-versions/service'
 import type { NotebookRuntimeService } from '../notebook/runtime-service'
@@ -40,6 +39,7 @@ import {
   createDefaultReviewRepository,
   createDefaultSessionRepository
 } from '../session-persistence/ipc'
+import { createSideChatCommandOwner, type SideChatCommandOwner } from '../side-chat/command-owner'
 
 import { createMainPromptSideChatRelay } from '../side-chat/main-prompt-relay'
 import { SideChatRuntimeOwner } from '../side-chat/runtime-owner'
@@ -386,7 +386,7 @@ export async function composeProjectRecovery({
   }) => Promise<ComputeJobOwnerLiveness>
   projectDeletionCoordinator: ProjectDeletionCoordinator
   archiveCoordinator: ArchiveCoordinator
-  jobDeletionOwner: import('../compute/job-deletion-owner').ComputeJobDeletionOwner
+  jobDeletionOwner: import('@aipoch/compute/node').ComputeJobDeletionOwner
   runtime: ReturnType<typeof createAcpRuntime>
   sideChatRuntime: SideChatRuntimeOwner
   modules: ApplicationModuleBuilder

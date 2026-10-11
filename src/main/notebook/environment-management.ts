@@ -1,15 +1,11 @@
-import type {
-  NotebookEnvironmentLock,
-  NotebookKernelMetadata,
-  NotebookLanguage
-} from '../../shared/notebook'
-import type {
-  EnvironmentInfo,
-  ManageEnvironmentsRequest,
-  ManageEnvironmentsResult
-} from '../../shared/notebook-env'
+import type { InstallRequest as EnvironmentInstallRequest } from '@aipoch/environment'
+import type { EnvironmentRequestContext } from '../../shared/notebook-env'
+import type { NotebookEnvironmentLock } from '@aipoch/environment/contracts'
+import type { NotebookKernelMetadata, NotebookLanguage } from '../../shared/notebook'
+import type { EnvironmentInfo } from '@aipoch/environment/contracts'
+import type { ManageEnvironmentsRequest, ManageEnvironmentsResult } from '../../shared/notebook-env'
 import type { NotebookEnvironmentOperations } from './environment-operations'
-import { assertSafeEnvName, envPrefix } from './runtime-paths'
+import { assertSafeEnvName, envPrefix } from '@aipoch/environment'
 import type { NotebookRuntimeRepairOwner } from './runtime-repair'
 import type { NotebookSessionRuntimeBinding } from './session-aggregate'
 import { managedRuntimeIdentity } from './runtime-target'
@@ -19,7 +15,7 @@ type NotebookEnvironmentManager = {
     name: string,
     language: NotebookLanguage,
     packages?: string[],
-    request?: Extract<ManageEnvironmentsRequest, { action: 'create' }>,
+    request?: Pick<EnvironmentInstallRequest<EnvironmentRequestContext>, 'context' | 'cwd'>,
     signal?: AbortSignal
   ) => Promise<EnvironmentInfo>
   createNamedEnvironmentFromLock?: (
@@ -27,7 +23,7 @@ type NotebookEnvironmentManager = {
     language: NotebookLanguage,
     lock: NotebookEnvironmentLock,
     lockChecksum: string,
-    request?: { projectId?: string }
+    request?: Pick<EnvironmentInstallRequest<EnvironmentRequestContext>, 'context' | 'cwd'>
   ) => Promise<{ environment: EnvironmentInfo; reused: boolean }>
   listEnvironments: (signal?: AbortSignal) => EnvironmentInfo[] | Promise<EnvironmentInfo[]>
   removeEnvironment: (name: string) => void
@@ -95,7 +91,10 @@ class NotebookEnvironmentManagementOwner {
               name,
               request.language,
               request.packages,
-              request,
+              {
+                context: { projectId: request.projectId, sessionId: request.sessionId },
+                cwd: request.workspaceCwd
+              },
               signal
             )
             const { runtimeId } = managedRuntimeIdentity(
@@ -163,7 +162,7 @@ class NotebookEnvironmentManagementOwner {
         input.language,
         input.lock,
         input.lockChecksum,
-        input.projectId ? { projectId: input.projectId } : undefined
+        input.projectId ? { context: { projectId: input.projectId } } : undefined
       )
       return { environmentName: result.environment.name, reused: result.reused }
     })

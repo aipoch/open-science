@@ -1,17 +1,5 @@
+import type { SessionComputePolicy } from '@aipoch/compute'
 import { decodeSessionEnvelope } from '../../shared/session-persistence'
-
-export type SessionComputePolicy =
-  | { status: 'ready'; limit: number | null; revision: number }
-  | {
-      status: 'blocked'
-      reason:
-        | 'unavailable'
-        | 'identity-conflict'
-        | 'missing'
-        | 'deleted'
-        | 'unsupported-version'
-        | 'invalid-policy'
-    }
 
 // A read-only view of Session authority. It never repairs or materializes conversation content.
 export function decodeSessionComputePolicy(
@@ -44,11 +32,4 @@ export function decodeSessionComputePolicy(
     limit: limit === undefined ? null : (limit as number),
     revision: revision as number
   }
-}
-
-export type SessionComputePolicyAuthority = {
-  // Must be read-only and must not call back into Compute or catalog hydration. The dispatcher
-  // serializes this read with admission and policy writes; an adapter must not acquire their locks.
-  resolve(sessionId: string, projectId?: string): Promise<SessionComputePolicy>
-  save(sessionId: string, limit: number): Promise<void>
 }

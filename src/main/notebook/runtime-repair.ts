@@ -10,8 +10,8 @@ import {
   DEFAULT_R_ENV,
   readRepairRequiredReason,
   resolveEnvName
-} from './runtime-paths'
-import type { NotebookRuntimeRepairPolicy } from './runtime-repair-policy'
+} from '@aipoch/environment'
+import type { NotebookRuntimeRepairPolicy } from '@aipoch/environment'
 import type { NotebookSessionAggregate, NotebookSessionRuntimeBinding } from './session-aggregate'
 
 const REPAIR_QUARANTINE_FAILED = 'REPAIR_QUARANTINE_FAILED'

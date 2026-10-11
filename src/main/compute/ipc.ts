@@ -1,68 +1,78 @@
-import { desktopShellInteraction } from '../desktop-interaction'
+import { createComputeExecution } from '@aipoch/compute/node'
 import { randomUUID } from 'node:crypto'
 import { readdir } from 'node:fs/promises'
 import { join } from 'node:path'
+import { desktopShellInteraction } from '../desktop-interaction'
+import type { ArtifactResolver } from './compute-job-workflow-owner'
 
 import type {
-  ChangeComputeHostAuthenticationRequest,
   CancelComputeJobRequest,
+  ComputeExecutionMode,
+  ComputeHost,
+  DetailsAuthor,
+  ProbeResult,
   RetryComputeJobHarvestRequest,
+  SetComputeJobRemoteCleanupRequest
+} from '@aipoch/compute'
+import type {
+  ChangeComputeHostAuthenticationRequest,
   ChangeComputeHostAuthenticationResult,
   ComputeApprovalDecision,
-  ComputeHost,
   ComputeApprovalRequest,
-  ComputePasswordCapability,
-  ComputeExecutionMode,
   ComputeHostDeletionStatus,
   ComputeJob,
+  ComputeJobAnalysisTransition,
   ComputeJobsListFilter,
   ComputeJobsPendingNotificationFilter,
-  ComputeJobAnalysisTransition,
-  JobSummary,
+  ComputePasswordCapability,
   CreateComputeHostRequest,
   CreatePasswordComputeHostRequest,
   CreatePasswordComputeHostResult,
+  JobSummary,
   ResetPasswordComputeHostRequest,
-  ResetPasswordComputeHostResult,
-  SetComputeJobRemoteCleanupRequest,
-  DetailsAuthor,
-  ProbeResult
+  ResetPasswordComputeHostResult
 } from '../../shared/compute'
-import { computeProviderId } from '../../shared/compute'
-import type { DirListing, DownloadDest, LocalFile } from '../../shared/remote-fs'
-import { getProjectDbClient } from '../projects/prisma-client'
-import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
-import { resolveConfigRoot, resolveDataRoot } from '../storage-root'
-import { createSettingsComputeGrantPort } from '../settings/compute-grant-port'
-import { broadcastToRenderers } from '../renderer-broadcast'
-import type { TaskNotificationService } from '../notifications/task-notifications'
-import { buildComputeApprovalBroadcast } from '../notifications/electron-wiring'
-import { ComputeApprovalBroker, type ComputeApprovalContext } from './compute-approval-broker'
-import { ComputeService, type ArtifactResolver } from './compute-service'
-import { ConcurrencyManager } from './concurrency-manager'
-import type { SessionComputePolicyAuthority } from '../session-persistence/compute-policy'
-import { ComputeHostRepository } from './repository'
-import { ComputeJobRepository } from './job-repository'
-import { ComputeJobOperationRepository } from './compute-job-operation-repository'
-import { createComputeJobDeletionOwner, type ComputeJobDeletionOwner } from './job-deletion-owner'
-import { readSshConfigHostAliases } from './ssh-config'
-import { ComputeConnectionError, type ComputeConnectionBroker } from './connection-broker'
-import { dispatchJob } from './job-dispatcher'
-import { EnabledComputeHostsRegistry, enabledComputeHostsRegistry } from './enabled-hosts-registry'
-import { deleteComputeHost, type DeleteComputeHostOptions } from './compute-host-deletion-owner'
-import { SessionCacheOwner } from './session-cache-owner'
-import { getJobHarvestDir, workspaceRelativePath } from './workspace-path'
-import type { PermissionGrantRegistry } from '../permission-grants/registry'
+
+import { computeProviderId } from '@aipoch/compute'
+
+import type { SessionComputePolicyAuthority } from '@aipoch/compute'
 import {
-  createComputePermissionGrantAdapter,
-  type LegacyComputeGrantPort
-} from './permission-grant-adapter'
+  ComputeConnectionError,
+  ConcurrencyManager,
+  type ComputeJobDeletionOwner
+} from '@aipoch/compute/node'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
+import type { DirListing, DownloadDest, LocalFile } from '../../shared/remote-fs'
+import { buildComputeApprovalBroadcast } from '../notifications/electron-wiring'
+import type { TaskNotificationService } from '../notifications/task-notifications'
+import { getProjectDbClient } from '../projects/prisma-client'
+import { broadcastToRenderers } from '../renderer-broadcast'
+import { createSettingsComputeGrantPort } from '../settings/compute-grant-port'
+import { resolveConfigRoot, resolveDataRoot } from '../storage-root'
+import { ComputeApprovalBroker, type ComputeApprovalContext } from './compute-approval-broker'
+import { ComputeJobOperationRepository } from './compute-job-operation-repository'
+import { ComputeService } from './compute-service'
+import { type ComputeConnectionBroker } from './connection-broker'
+import { ComputeJobRepository } from './job-repository'
+import { ComputeHostRepository } from './repository'
+import { readSshConfigHostAliases } from './ssh-config'
+
+import type { PermissionGrantRegistry } from '../permission-grants/registry'
 import {
   createComputeAuthenticationRuntime,
   projectComputeCredentialStatus,
   type ComputeAuthenticationDependencies,
   type ComputeHostLifecycle
 } from './authentication-runtime'
+import { deleteComputeHost, type DeleteComputeHostOptions } from './compute-host-deletion-owner'
+import { dispatchComputeJob as dispatchJob } from './dispatch-evidence'
+import { EnabledComputeHostsRegistry, enabledComputeHostsRegistry } from './enabled-hosts-registry'
+import {
+  createComputePermissionGrantAdapter,
+  type LegacyComputeGrantPort
+} from './permission-grant-adapter'
+import { SessionCacheOwner } from './session-cache-owner'
+import { getJobHarvestDir, workspaceRelativePath } from './workspace-path'
 export const COMPUTE_JOB_UPDATED_CHANNEL = 'compute:job-updated'
 
 const log = createLogger('compute')
@@ -198,7 +208,7 @@ type ComputeHandlers = {
     active_count: number
     queued_count: number
     provider_ceilings: Record<string, number>
-    queue_blocked_reason?: import('../../shared/compute').ComputeQueueBlockedReason
+    queue_blocked_reason?: import('@aipoch/compute').ComputeQueueBlockedReason
   }>
   listDir: (providerId: string, path: string) => Promise<DirListing>
   download: (providerId: string, remotePath: string, dest: DownloadDest) => Promise<LocalFile>
@@ -224,7 +234,7 @@ type ComputeHandlers = {
   jobsList: (filter: ComputeJobsListFilter) => Promise<JobSummary[]>
   jobsCancel: (
     request: CancelComputeJobRequest
-  ) => Promise<import('../../shared/compute').JobStatusResult>
+  ) => Promise<import('@aipoch/compute').JobStatusResult>
   jobsRetryHarvest: (request: RetryComputeJobHarvestRequest) => Promise<void>
   jobsSetRemoteCleanup: (request: SetComputeJobRemoteCleanupRequest) => Promise<void>
   // Returns jobs with notifiedAt set and notificationConsumedAt null (issue 05 restart recovery).
@@ -349,24 +359,24 @@ const createComputeHandlers = (
       reportAuthenticationFailurePersistenceError: (error) =>
         log.warn('compute authentication breaker persistence failed', errorLogFields(error))
     })
+  const execution = injectedService?.execution ?? createComputeExecution()
   const concurrencyManager =
     !injectedService && jobRepository
-      ? new ConcurrencyManager(
-          jobRepository,
-          repository,
-          (queuedJobId, handleJobUpdated) =>
+      ? execution.createQueue({
+          jobs: jobRepository,
+          hosts: repository,
+          dispatch: (queuedJobId, handleJobUpdated) =>
             dispatchJob(queuedJobId, {
               connectionBroker,
               hostRepository: repository,
               jobRepository,
               onJobUpdated: handleJobUpdated,
-              storageRoot
+              storageRoot,
+              execution
             }),
-          onJobUpdated,
-          undefined,
-          undefined,
-          sessionLimitPersistence
-        )
+          publish: onJobUpdated,
+          sessionPolicy: sessionLimitPersistence
+        })
       : undefined
   const summarizeJob = async (
     job: ComputeJob,
@@ -386,6 +396,7 @@ const createComputeHandlers = (
   const service =
     injectedService ??
     new ComputeService({
+      execution,
       admitSessionWork,
       runner: sshRunner,
       repository,
@@ -401,7 +412,7 @@ const createComputeHandlers = (
       credentialVault
     })
   const jobDeletionOwner = jobRepository
-    ? createComputeJobDeletionOwner({
+    ? execution.createDeletionOwner({
         jobRepository,
         hostRepository: repository,
         connectionBroker,
@@ -691,7 +702,7 @@ export const createJobUpdatedBroadcaster =
     resultDelivery?: ComputeResultDeliveryProjection,
     scheduling?: (
       job: ComputeJob
-    ) => Promise<import('../../shared/compute').ComputeQueueBlockedReason | undefined>
+    ) => Promise<import('@aipoch/compute').ComputeQueueBlockedReason | undefined>
   ): ((job: ComputeJob) => void) =>
   (job) => {
     // Register the canonical nonterminal observation before any filesystem/Host lookup yields.
@@ -858,16 +869,16 @@ const createComputeIpcModule = (
   }
 }
 
+export { COMPUTE_JOBS_LIST_CHANNEL, installComputeIpcHandlers } from './electron-ipc-adapter'
+export type { ComputeIpcAdapter } from './electron-ipc-adapter'
 export {
   createComputeHandlers,
   createComputeIpcModule,
   createDefaultComputeHostRepository,
-  createDefaultComputeJobRepository,
   createDefaultComputeJobOperationRepository,
+  createDefaultComputeJobRepository,
   enabledComputeHostsRegistry
 }
-export { COMPUTE_JOBS_LIST_CHANNEL, installComputeIpcHandlers } from './electron-ipc-adapter'
-export type { ComputeIpcAdapter } from './electron-ipc-adapter'
 export type {
   ComputeHandlers,
   ComputeHostLifecycle,

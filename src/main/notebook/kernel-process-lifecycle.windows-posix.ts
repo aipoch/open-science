@@ -19,8 +19,8 @@ import {
   terminateOwnedPosixProcessGroupById,
   type ProcessTreeKillResult
 } from '../process-tree'
-import { readProcessStartToken } from './operation-recovery'
-import { bootTokenProvesReboot, isValidBootToken, readBootToken } from './operation-journal'
+import { readProcessStartToken } from '@aipoch/environment'
+import { bootTokenProvesReboot, isValidBootToken, readBootToken } from '@aipoch/environment'
 
 const OWNER_TOKEN_ENV = 'OPEN_SCIENCE_KERNEL_OWNER_TOKEN'
 const RECORD_VERSION = 1

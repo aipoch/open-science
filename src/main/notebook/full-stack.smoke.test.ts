@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { NotebookKernelExecutor } from './kernel-executor'
-import { installPackages } from './package-manager'
+import { installPackages } from '@aipoch/environment'
 
 // Full-stack wiring smoke: drives the real NotebookKernelExecutor + installPackages (the same
 // pieces the app wires through the MCP manage_packages tool and runtime-service) against an

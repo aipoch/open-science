@@ -19,7 +19,7 @@ import { EventEmitter } from 'node:events'
 
 import { registerOwnedPosixProcessGroup, terminateProcessTree } from '../process-tree'
 import { resolveWindowsPowerShellExecutable } from '../windows-powershell'
-import { bootTokenProvesReboot, isValidBootToken, readBootToken } from './operation-journal'
+import { bootTokenProvesReboot, isValidBootToken, readBootToken } from '@aipoch/environment'
 
 type ShellProcessOwnershipRecord = Readonly<{
   version: 1

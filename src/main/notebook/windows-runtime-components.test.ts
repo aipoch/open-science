@@ -72,7 +72,7 @@ describe('Windows runtime component preparation', () => {
     try {
       const { assertWindowsRuntimeComponentRelease: validate } =
         await import('./windows-runtime-components')
-      const { resolveRuntimeCdnBase } = await import('./runtime-paths')
+      const { resolveRuntimeCdnBase } = await import('./environment-resources')
       const trusted = 'https://cdn.fixture.test/fixture-app/notebook-runtime/component.tar.zst'
       const candidate = release()
       expect(resolveRuntimeCdnBase()).toBe('https://override.fixture.test/fixture-app')

@@ -1,3 +1,4 @@
+import { resolveNotebookMicromamba as resolveMicromamba } from './environment-resources'
 import { createHash } from 'node:crypto'
 import { restoreRRandomState } from './r-random-replay'
 import { validatePythonRandomState } from './python-random-replay'
@@ -9,20 +10,22 @@ import type {
   ArtifactReproducibilityEnvironmentRequirement,
   ArtifactReproducibilityRecipeStep
 } from '../../shared/artifact-provenance'
-import type { NotebookEnvironmentLock, NotebookHelperModuleEvidence } from '../../shared/notebook'
-import { parseNotebookEnvironmentLock } from './environment-lock'
+import type { NotebookEnvironmentLock } from '@aipoch/environment/contracts'
+import type { NotebookHelperModuleEvidence } from '../../shared/notebook'
+import { parseNotebookEnvironmentLock } from '@aipoch/environment'
 import { NotebookHelperModuleHost } from './helper-module-host'
 import { NotebookKernelExecutor, type NotebookKernelExecutorOptions } from './kernel-executor'
-import { createFromLockArgv, micromambaSpawnEnv, resolveMicromamba } from './micromamba'
-import { micromambaCacheLockKey, selectMicromambaCache } from './micromamba-cache'
-import { nativeLockRestoreState, restoreNativeEnvironmentLock } from './native-lock-restoration'
-import { prepareNotebookWorkloadCache } from './notebook-workload-cache-paths'
+import { createFromLockArgv, micromambaSpawnEnv } from '@aipoch/environment'
+import { micromambaCacheLockKey, selectMicromambaCache } from '@aipoch/environment'
+import { nativeLockRestoreState, restoreNativeEnvironmentLock } from '@aipoch/environment'
+import { prepareNotebookWorkloadCache } from '@aipoch/environment'
 import { sandboxedPackageSpawn } from './package-process-sandbox'
-import { withSharedCacheLocks } from './pkgs-cache-lock'
+import { withSharedCacheLocks } from '@aipoch/environment'
 import type { NotebookProcessSandbox } from './process-sandbox'
-import { runMicromamba, verifyExecutable } from './provisioner-runtime'
-import { verifyRestoredEnvironment } from './restored-environment-verification'
-import { buildManagedRuntimeProcessEnvironment } from './process-environment'
+import { runMicromamba } from './environment-process'
+import { verifyExecutable } from './environment-process'
+import { verifyRestoredEnvironment } from '@aipoch/environment'
+import { buildManagedRuntimeProcessEnvironment } from '@aipoch/environment'
 import { resolveLoopScriptPaths } from './runtime-service'
 import {
   normalizeRuntimeArchitecture,
@@ -30,7 +33,7 @@ import {
   pythonBin,
   rScriptBin,
   runtimeRoot
-} from './runtime-paths'
+} from '@aipoch/environment'
 import type {
   NotebookKernelEpochOwnership,
   NotebookSessionExecutionResult,
@@ -241,7 +244,8 @@ const restoreEnvironment = async (
   const platform = dependencies.platform ?? process.platform
   const conda = lock.components.find((component) => component.ecosystem === 'conda')!
 
-  const mm = dependencies.micromamba ?? resolveMicromamba()
+  const mm =
+    dependencies.micromamba ?? resolveMicromamba({ runtimeRoot: runtimeRoot(input.storageRoot) })
   if (!mm) throw new Error('Micromamba is unavailable for reproducibility execution.')
 
   const locksRoot = join(input.attemptRoot, 'locks')

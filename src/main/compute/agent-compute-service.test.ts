@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import type { ComputeHost } from '../../shared/compute'
+import type { ComputeHost } from '@aipoch/compute'
+
 import { AgentComputeService, type RawComputeService } from './agent-compute-service'
 
 type AgentComputeHarness = Readonly<{

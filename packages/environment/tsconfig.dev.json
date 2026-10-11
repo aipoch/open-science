@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "composite": true,
+    "noEmitOnError": true,
+    "tsBuildInfoFile": "./.cache/dev.tsbuildinfo"
+  },
+  "references": [
+    {
+      "path": "../diagnostics/tsconfig.dev.json"
+    }
+  ]
+}

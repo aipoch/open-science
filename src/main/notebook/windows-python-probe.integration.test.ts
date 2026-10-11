@@ -6,8 +6,8 @@ import {
   execWindowsPython,
   type WindowsPythonFixture
 } from './windows-python.test-support'
-import { defaultDiscoveryDeps, discoverInterpreters } from './environment-discovery'
-import { findPythonCommand, probeInterpreterVersion } from './python-command'
+import { defaultDiscoveryDeps, discoverInterpreters } from '@aipoch/environment'
+import { findPythonCommand, probeInterpreterVersion } from '@aipoch/environment'
 import { flushLogs, initLogger } from '@aipoch/diagnostics/node'
 
 // Host-only regression: uses production probes, real CPython venvs and real Windows subprocesses.

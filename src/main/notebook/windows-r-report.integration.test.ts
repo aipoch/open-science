@@ -10,14 +10,14 @@ import {
   windowsLaunch
 } from '../../../packages/notebook-network-sandbox/runtime/src/platform/windows-appcontainer'
 import { createRuntimeConfig } from '../../../packages/notebook-network-sandbox/src/config'
-import { windowsCondaPrefixForR } from './environment-discovery'
+import { windowsCondaPrefixForR } from '@aipoch/environment'
 import { kernelExecutableReadRoot } from './kernel-executable-read-root'
 import {
   buildNotebookKernelEnvironment,
   environmentPathRoots,
   normalizeRProcessLocale
-} from './process-environment'
-import { condaActivatedPath } from './runtime-paths'
+} from '@aipoch/environment'
+import { condaActivatedPath } from '@aipoch/environment'
 
 const rscript = process.env.OPEN_SCIENCE_TEST_RSCRIPT
 const run = promisify(execFile)

@@ -6,15 +6,17 @@ import type {
   EnvironmentCaptureTarget,
   EnvironmentStateTracker,
   PackageInspectionResult
-} from './environment-state-tracker'
+} from '@aipoch/environment'
 import { boundedFailureDiagnostic } from './failure-diagnostic'
 import { effectiveMirrorAsync, type ProbeDeps } from './mirror-probe'
 import { NotebookPackageAdmissionOwner } from './package-admission'
 import type { NotebookPackageAdmittedTarget } from './package-admission'
-import type { InstallDeps, InstallRequest, InstallResult, InstallSpawn } from './package-manager'
-import type { MicromambaWorkingCacheRetainer } from './windows-micromamba-working-cache'
-import { NotebookPackageMutationOwner } from './package-mutation'
-import type { NotebookRecoveryCoordinator } from './recovery-coordinator'
+import type { InstallDeps, InstallSpawn } from '@aipoch/environment'
+import type { InstallRequest } from '../../shared/notebook-env'
+import type { InstallResult } from '../../shared/notebook-env'
+import type { MicromambaWorkingCacheRetainer } from '@aipoch/environment'
+import { EnvironmentPackageMutationOwner } from '@aipoch/environment'
+import type { NotebookRecoveryCoordinator } from '@aipoch/environment'
 import {
   DEFAULT_ENV_VERSION,
   DEFAULT_PY_ENV,
@@ -22,10 +24,10 @@ import {
   envPrefix,
   pythonReady,
   rReady
-} from './runtime-paths'
+} from '@aipoch/environment'
 import type { NotebookRuntimeRepairOwner } from './runtime-repair'
-import type { NotebookRuntimeRepairPolicy } from './runtime-repair-policy'
-import type { MicromambaRunner } from './windows-micromamba-runner'
+import type { NotebookRuntimeRepairPolicy } from '@aipoch/environment'
+import type { MicromambaRunner } from '@aipoch/environment'
 import type {
   NotebookSessionAggregate,
   NotebookSessionResolvedInterpreter,
@@ -121,7 +123,7 @@ const packageOperationFailure = (error: unknown, target: RuntimeTargetReceipt): 
 /** Composes package inspection and mutation behind two stable operations. */
 class NotebookPackageOperations {
   private readonly admission: NotebookPackageAdmissionOwner
-  private readonly mutation: NotebookPackageMutationOwner
+  private readonly mutation: EnvironmentPackageMutationOwner
 
   constructor(private readonly options: NotebookPackageOperationsOptions) {
     this.admission = new NotebookPackageAdmissionOwner({
@@ -136,7 +138,7 @@ class NotebookPackageOperations {
       recovery: options.recovery,
       createEnvironmentCaptureTarget: options.createEnvironmentCaptureTarget
     })
-    this.mutation = new NotebookPackageMutationOwner({
+    this.mutation = new EnvironmentPackageMutationOwner({
       storageRoot: options.storageRoot,
       runtimeRoot: options.runtimeRoot,
       environmentOperations: options.environmentOperations,

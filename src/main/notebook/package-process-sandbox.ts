@@ -25,14 +25,11 @@ import {
 import type { PackageMirror } from '../../shared/mirror'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import { validateCustomAllowedDomain } from '../../shared/notebook-network'
-import {
-  defaultSpawn,
-  packageProcessTreeTerminated,
-  type InstallRequest,
-  type InstallSpawn
-} from './package-manager'
+import { defaultSpawn } from './environment-process'
+import { packageProcessTreeTerminated, type InstallSpawn } from '@aipoch/environment'
+import type { InstallRequest } from '../../shared/notebook-env'
 import { assertProcessTreeSupport, terminateProcessTree } from '../process-tree'
-import { buildNotebookKernelEnvironment, PIP_TRANSPORT_ENV_KEYS } from './process-environment'
+import { buildNotebookKernelEnvironment, PIP_TRANSPORT_ENV_KEYS } from '@aipoch/environment'
 import type { NotebookProcessSandbox } from './process-sandbox'
 import { kernelExecutableReadRoot } from './kernel-executable-read-root'
 

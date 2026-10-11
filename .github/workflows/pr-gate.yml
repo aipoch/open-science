@@ -61,7 +61,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
 
@@ -408,7 +408,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
       - name: Review dependency changes
@@ -470,7 +470,7 @@ jobs:
           min-severity: medium
           version: v1.30.1
       - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
           cache: npm
@@ -488,6 +488,10 @@ jobs:
         continue-on-error: true
         # Missing trusted selection retains full verification; host-only changes select none.
         run: npm run check:notebook-packages -- --ci
+      - name: Verify independent environment tarball
+        id: environment_package
+        continue-on-error: true
+        run: npm run check:environment-package -- --ci
       - name: Check Markdown formatting
         id: docs
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'docs') }}
@@ -602,7 +606,7 @@ jobs:
         run: node scripts/verify-runtime-bundle.mjs linux-64 linux-aarch64 osx-arm64 osx-64 win-64
       - name: Setup Node 22 for CLI compatibility
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'cli_sdk') }}
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 22
       - name: Test Node 22 CLI compatibility
@@ -624,6 +628,7 @@ jobs:
           FORMAT_OUTCOME: ${{ steps.format.outcome }}
           I18N_OUTCOME: ${{ steps.i18n.outcome }}
           INTERFACE_CONTRACTS_OUTCOME: ${{ steps.interface_contracts.outcome }}
+          ENVIRONMENT_PACKAGE_OUTCOME: ${{ steps.environment_package.outcome }}
           NOTEBOOK_PACKAGES_OUTCOME: ${{ steps.notebook_packages.outcome }}
           RUNTIME_BUNDLE_OUTCOME: ${{ steps.runtime_bundle.outcome }}
           LINT_OUTCOME: ${{ steps.lint.outcome }}
@@ -652,6 +657,7 @@ jobs:
           check i18n "$I18N_OUTCOME"
           check runtime_bundle "$RUNTIME_BUNDLE_OUTCOME"
           check notebook_packages "$NOTEBOOK_PACKAGES_OUTCOME"
+          check environment_package "$ENVIRONMENT_PACKAGE_OUTCOME"
           exit "$failed"
 
   unit_shard:
@@ -675,7 +681,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
           cache: npm
@@ -688,6 +694,9 @@ jobs:
           base: ${{ needs.preflight.outputs.base }}
           head: ${{ needs.preflight.outputs.head }}
           trusted-base: ${{ needs.preflight.outputs.trusted_base }}
+      - name: Verify isolated Compute package consumption
+        if: ${{ matrix.shard == 1 && !contains(env.OPEN_SCIENCE_CI_EXCLUDED_PACKAGE_ROOTS, 'packages/compute') }}
+        run: npm run check:compute-package
       - name: Test complete suite shard
         id: unit_macos_shard
         if: ${{ fromJSON(needs.preflight.outputs.plan).mode == 'full' || !contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_macos') }}
@@ -722,7 +731,7 @@ jobs:
           --outputFile=vitest-reports/blob-${{ matrix.shard }}.json
       - name: Upload full-suite blob report
         if: ${{ always() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: unit-portable-blob-${{ matrix.shard }}
           path: vitest-reports/
@@ -759,7 +768,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
           cache: npm
@@ -782,7 +791,7 @@ jobs:
         run: npm run test:affected -- --base "$BASE_SHA" --head "$HEAD_SHA" --coverage-changed "$BASE_SHA"
       - name: Download full-suite blob reports
         if: ${{ needs.unit_shard.result != 'skipped' }}
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           pattern: unit-portable-blob-*
           path: vitest-reports
@@ -809,7 +818,7 @@ jobs:
       - name: Upload Module coverage report
         if: ${{ always() && (steps.unit_macos_related.outcome != 'skipped' || steps.unit_macos_full.outcome != 'skipped' || steps.unit_macos_related_merge.outcome != 'skipped') }}
         continue-on-error: true
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: coverage-report
           path: coverage/
@@ -854,7 +863,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
           cache: npm
@@ -905,7 +914,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
           cache: npm
@@ -916,7 +925,7 @@ jobs:
         run: npm run typecheck:sandbox
       - name: Download Windows Notebook runtime
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' }}
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           artifact-ids: ${{ needs.windows_notebook_runtime.outputs.artifact_id }}
           path: packages/notebook-network-sandbox/vendor/windows-runtime/x64
@@ -944,7 +953,7 @@ jobs:
       - name: Upload rebuilt Windows sandbox native host
         if: ${{ steps.windows_sandbox_build.outcome == 'success' }}
         continue-on-error: true
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: windows-sandbox-host-x64
           path: packages/notebook-network-sandbox/vendor/windows/x64/notebook-appcontainer-host.exe
@@ -968,8 +977,8 @@ jobs:
           src/main/notebook/file-evidence-publication.integration.test.ts
           src/main/compute/compute-submission-evidence-recovery.integration.test.ts
           src/main/specialist/repository.test.ts
-          src/main/notebook/micromamba-cache-powershell.test.ts
-          src/main/notebook/micromamba-cache-acl.integration.test.ts
+          packages/environment/src/micromamba-cache-powershell.test.ts
+          packages/environment/src/micromamba-cache-acl.integration.test.ts
       - name: Test scheduled Windows validation regressions
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' }}
         env:
@@ -998,7 +1007,7 @@ jobs:
         run: |
           $env:OPEN_SCIENCE_TEST_PYTHON = python -c "import sys, pip, ensurepip; print(sys.executable)"
           if ($LASTEXITCODE -ne 0 -or -not $env:OPEN_SCIENCE_TEST_PYTHON) { throw 'Python with pip and ensurepip is required for wheel evidence tests.' }
-          npm test -- src/main/notebook/pip-wheel-evidence.test.ts src/main/notebook/pip-install-evidence.test.ts
+          npm test -- packages/environment/src/pip-wheel-evidence.test.ts packages/environment/src/pip-install-evidence.test.ts
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Test Windows notebook shell behavior
         id: windows_shell
@@ -1044,7 +1053,7 @@ jobs:
           src/main/acp/workspace-path.test.ts
           src/main/file-save.test.ts
           src/main/notebook/run-document-data-paths.test.ts
-          src/main/notebook/runtime-paths.test.ts
+          packages/environment/src/runtime-paths.test.ts
           src/main/session-persistence/conversation-export.test.ts
           src/main/session-persistence/data-path-roundtrip.test.ts
           src/main/settings/notebook-runtime-settings.test.ts
@@ -1104,7 +1113,7 @@ jobs:
           persist-credentials: false
       - name: Setup Node
         id: node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
           cache: npm
@@ -1120,7 +1129,7 @@ jobs:
         run: node scripts/ci/e2e-setup-snapshot.mjs pack "$RUNNER_TEMP/e2e-setup"
       - name: Upload E2E setup
         id: upload
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: e2e-setup-macos-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/e2e-setup/
@@ -1144,7 +1153,7 @@ jobs:
           persist-credentials: false
       - name: Setup Node
         id: node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
           cache: npm
@@ -1153,7 +1162,7 @@ jobs:
       - name: Build Electron application
         run: npm run build:e2e
       - name: Download Windows Notebook runtime
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           artifact-ids: ${{ needs.windows_notebook_runtime.outputs.artifact_id }}
           path: packages/notebook-network-sandbox/vendor/windows-runtime/x64
@@ -1165,7 +1174,7 @@ jobs:
         run: node scripts/ci/e2e-setup-snapshot.mjs pack "$RUNNER_TEMP/e2e-setup"
       - name: Upload E2E setup
         id: upload
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: e2e-setup-windows-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/e2e-setup/
@@ -1190,7 +1199,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: ${{ needs.macos_e2e_setup.outputs.node_version || '24' }}
           cache: ${{ (fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke' || (fromJSON(needs.preflight.outputs.plan).macosProfile == 'expanded' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_smoke_macos'))) && 'npm' || '' }}
@@ -1205,7 +1214,7 @@ jobs:
       # Artifact IDs survive failed-job reruns without selecting another producer attempt.
       - name: Download E2E setup
         if: ${{ !(fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke' || (fromJSON(needs.preflight.outputs.plan).macosProfile == 'expanded' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_smoke_macos'))) }}
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           artifact-ids: ${{ needs.macos_e2e_setup.outputs.artifact_id }}
           path: ${{ runner.temp }}/e2e-setup/
@@ -1264,7 +1273,7 @@ jobs:
       - name: Upload functional failure artifacts
         if: ${{ steps.e2e_functional_macos.outcome == 'failure' }}
         continue-on-error: true
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: functional-e2e-macos-${{ matrix.group }}-failure
           path: |
@@ -1283,7 +1292,7 @@ jobs:
       - name: Upload workspace failure artifacts
         if: ${{ steps.e2e_workspace_macos.outcome == 'failure' }}
         continue-on-error: true
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: workspace-e2e-macos-${{ matrix.group }}-failure
           path: |
@@ -1328,7 +1337,7 @@ jobs:
       - name: Upload accessibility diagnostics
         if: ${{ steps.e2e_accessibility_macos.outcome != 'skipped' }}
         continue-on-error: true
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: accessibility-macos-${{ matrix.group }}-diagnostics
           path: |
@@ -1347,7 +1356,7 @@ jobs:
       - name: Upload visual failure artifacts
         if: ${{ steps.e2e_visual_macos.outcome == 'failure' }}
         continue-on-error: true
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: visual-regression-macos-${{ matrix.group }}-failure
           path: |
@@ -1358,7 +1367,7 @@ jobs:
       - name: Upload E2E timing and blob reports
         if: ${{ always() }}
         continue-on-error: true
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: e2e-reports-macos-${{ matrix.group }}
           overwrite: true
@@ -1428,12 +1437,12 @@ jobs:
         with:
           persist-credentials: false
       - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: ${{ needs.windows_e2e_setup.outputs.node_version }}
           package-manager-cache: false
       - name: Download E2E setup
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           artifact-ids: ${{ needs.windows_e2e_setup.outputs.artifact_id }}
           path: ${{ runner.temp }}/e2e-setup/
@@ -1456,7 +1465,7 @@ jobs:
       - name: Upload functional failure artifacts
         if: ${{ steps.e2e_functional_windows.outcome == 'failure' }}
         continue-on-error: true
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: functional-e2e-windows-failure-${{ matrix.shard }}
           path: |
@@ -1467,7 +1476,7 @@ jobs:
       - name: Upload E2E timing and blob reports
         if: ${{ always() }}
         continue-on-error: true
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: e2e-reports-windows-${{ matrix.shard }}
           overwrite: true
@@ -1499,19 +1508,19 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
           cache: npm
       - name: Install report tools
         run: npm ci --ignore-scripts --no-audit --fund=false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           pattern: e2e-reports-*
           path: test-results/downloaded-e2e
       - name: Summarize timing and merge reports
         run: node scripts/ci/merge-e2e-reports.mjs
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: ${{ always() }}
         with:
           name: e2e-combined-report
@@ -1548,7 +1557,7 @@ jobs:
           ref: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.pull_request.base.sha || needs.preflight.outputs.base }}
       - name: Setup Node
         if: ${{ needs.preflight.result == 'success' }}
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
       - name: Evaluate deterministic gate from trusted base

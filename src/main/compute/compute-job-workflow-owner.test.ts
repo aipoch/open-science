@@ -1,26 +1,31 @@
-import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 
-import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { ComputeHost } from '../../shared/compute'
-import { createArtifactSaveFixture } from '../artifacts/save-test-fixtures'
+import type { ComputeHost } from '@aipoch/compute'
+
+import type {
+  ComputeConnectionBrokerAcquirer,
+  ComputeConnectionLease,
+  ResolvedSshTarget,
+  SshRunner
+} from '@aipoch/compute/node'
 import { writeArtifactFileForCurrentRun } from '../artifacts/mcp-server'
+import { createArtifactSaveFixture } from '../artifacts/save-test-fixtures'
 import { decodeDataPath } from '../storage/data-path'
+import type { ComputeApprovalBroker } from './compute-approval-broker'
 import {
   ComputeJobWorkflowOwner,
   createComputeArtifactResolver,
   resolveInputs
 } from './compute-job-workflow-owner'
-import type { ComputeApprovalBroker } from './compute-approval-broker'
 import type { ComputeHostRepository } from './repository'
-import type { ResolvedSshTarget, SshRunner } from './ssh-runner'
-import type { ComputeConnectionBrokerAcquirer, ComputeConnectionLease } from './connection-broker'
-import type { ConcurrencyManager } from './concurrency-manager'
-import { sharedDispatchTracker } from './dispatch-tracker'
-import { JobPoller } from './job-poller'
+
+import type { ConcurrencyManager } from '@aipoch/compute/node'
+import { createComputeExecution, type ComputeExecution } from '@aipoch/compute/node'
 import { UnencryptedComputeJobPersistenceApprovalRequiredError } from './job-repository'
 
 // ---------------------------------------------------------------------------
@@ -97,8 +102,8 @@ const makeRepo = (
 }
 
 // We use vi.mock for resolveSshTarget so the tests don't spawn ssh.
-vi.mock('./ssh-runner', async (importOriginal) => {
-  const orig = await importOriginal<typeof import('./ssh-runner')>()
+vi.mock('@aipoch/compute/node', async (importOriginal) => {
+  const orig = await importOriginal<typeof import('@aipoch/compute/node')>()
   return {
     ...orig,
     resolveSshTarget: vi.fn(() => Promise.resolve(fakeTarget))
@@ -131,7 +136,8 @@ const makeOwner = (
   artifactResolver?: { resolveArtifactPath(uri: string): Promise<string> },
   storageRoot?: string,
   concurrencyManager?: ConcurrencyManager,
-  observeBackgroundDispatch?: (dispatch: Promise<void>) => void
+  observeBackgroundDispatch?: (dispatch: Promise<void>) => void,
+  execution?: ComputeExecution
 ): ComputeJobWorkflowOwner =>
   new ComputeJobWorkflowOwner(
     brokerFromRunner(runner),
@@ -142,7 +148,8 @@ const makeOwner = (
     artifactResolver,
     storageRoot,
     concurrencyManager,
-    observeBackgroundDispatch
+    observeBackgroundDispatch,
+    execution
   )
 
 const makeJobRepo = (
@@ -201,7 +208,7 @@ const makeJobRepo = (
   const updateIfStatus = vi.fn(
     async (
       jobId: string,
-      expectedStatuses: readonly import('../../shared/compute').ComputeJobStatus[],
+      expectedStatuses: readonly import('@aipoch/compute').ComputeJobStatus[],
       updates: import('./job-repository').UpdateJobRequest
     ) => {
       const job = jobs.get(jobId)
@@ -345,6 +352,7 @@ describe('ComputeJobWorkflowOwner.submitJob', () => {
       }
     )
 
+    const execution = createComputeExecution()
     const submitted = await service.submitJob(
       'ssh:biowulf',
       'test unexpected dispatch failure',
@@ -361,11 +369,10 @@ describe('ComputeJobWorkflowOwner.submitJob', () => {
         [...jobs.values()].filter((job) => ['queued', 'submitted', 'running'].includes(job.status))
       )
     } as unknown as import('./job-repository').ComputeJobRepository
-    const poller = new JobPoller({
+    const poller = execution.createPoller({
       connectionBroker: brokerFromRunner(runner),
       hostRepository: hostRepo,
-      jobRepository: pollerRepository,
-      dispatchTracker: sharedDispatchTracker
+      jobRepository: pollerRepository
     })
 
     await poller.tick()
@@ -379,6 +386,7 @@ describe('ComputeJobWorkflowOwner.submitJob', () => {
   })
 
   it('tracks a committed submitted row through dispatcher registration', async () => {
+    const execution = createComputeExecution()
     const runner = makeFakeRunner({
       exitCode: 1,
       stdout: '',
@@ -406,9 +414,9 @@ describe('ComputeJobWorkflowOwner.submitJob', () => {
           const request = createCalls.mock.calls[0]?.[0] as
             import('./job-repository').CreateJobRequest | undefined
           expect(request).toBeDefined()
-          expect(sharedDispatchTracker.has(request!.id)).toBe(true)
+          expect(execution.isDispatching(request!.id)).toBe(true)
           const settled = vi.fn()
-          handoffWait = sharedDispatchTracker.waitFor([request!.id]).then(settled)
+          handoffWait = execution.waitForDispatch([request!.id]).then(settled)
           await Promise.resolve()
           expect(settled).not.toHaveBeenCalled()
           return 'submitted'
@@ -423,7 +431,9 @@ describe('ComputeJobWorkflowOwner.submitJob', () => {
       undefined,
       undefined,
       undefined,
-      concurrencyManager
+      concurrencyManager,
+      undefined,
+      execution
     )
 
     const result = await service.submitJob(
@@ -436,7 +446,7 @@ describe('ComputeJobWorkflowOwner.submitJob', () => {
 
     expect(handoffWait).toBeDefined()
     await handoffWait
-    expect(sharedDispatchTracker.has(result.job_id)).toBe(false)
+    expect(execution.isDispatching(result.job_id)).toBe(false)
   })
 
   it('returns job_id + remote_workdir immediately (before dispatch)', async () => {

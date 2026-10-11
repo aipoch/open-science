@@ -92,7 +92,7 @@ describe('macOS package smoke', () => {
     const appBundle = join(root, 'Open-Science.app')
     const executableDirectory = join(appBundle, 'Contents', 'MacOS')
     const resources = join(appBundle, 'Contents', 'Resources')
-    const prismaClient = join(resources, 'node_modules', '.prisma', 'client')
+    const prismaClient = join(resources, 'backend', 'resources', 'prisma-client')
     const processTreeNative = join(
       resources,
       'app.asar.unpacked',

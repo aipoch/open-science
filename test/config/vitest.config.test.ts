@@ -1,6 +1,6 @@
-import { availableParallelism, cpus } from 'node:os'
 import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
+import { availableParallelism, cpus } from 'node:os'
 import { describe, expect, it } from 'vitest'
 import WindowsTestSequencer from '../../scripts/ci/windows-test-sequencer'
 
@@ -16,8 +16,8 @@ import vitestConfig, {
   VITEST_DATABASE_TEST_GLOBS,
   VITEST_EXCLUDE_PATTERNS,
   VITEST_PORTABLE_CI_EXCLUDE_PATTERNS,
-  vitestExcludePatternsFor,
-  VITEST_PROCESS_TEST_GLOBS
+  VITEST_PROCESS_TEST_GLOBS,
+  vitestExcludePatternsFor
 } from '../../vitest.config'
 
 describe('Vitest discovery boundaries', () => {
@@ -154,15 +154,16 @@ it.each([
     )
     expect(probe.error).toBeUndefined()
     expect(probe.status, probe.stderr).toBe(0)
-    expect(JSON.parse(probe.stdout)).toEqual(
-      ['default', 'architecture', 'process', 'database'].map((name) => ({
+    expect(JSON.parse(probe.stdout)).toEqual([
+      ...['default', 'architecture', 'process', 'database'].map((name) => ({
         name,
         hookTimeout: profile === '1' ? 60_000 : 30_000,
         maxWorkers:
           profile === '1' || name !== 'default' ? 1 : resolveVitestMaxWorkers(undefined, override),
         testTimeout: 60_000
-      }))
-    )
+      })),
+      { name: 'compute', hookTimeout: 10000, testTimeout: 60000 }
+    ])
   }
 )
 

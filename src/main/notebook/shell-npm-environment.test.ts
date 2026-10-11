@@ -12,10 +12,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import {
-  prepareNotebookWorkloadCache,
-  removeNotebookWorkloadCache
-} from './notebook-workload-cache-paths'
+import { prepareNotebookWorkloadCache, removeNotebookWorkloadCache } from '@aipoch/environment'
 import {
   prepareShellNpmEnvironment,
   shellNpmPaths,

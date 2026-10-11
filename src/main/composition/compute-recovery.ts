@@ -1,12 +1,16 @@
+import {
+  createLogger,
+  diagnosticErrorFields,
+  errorLogFields,
+  type DiagnosticOperation
+} from '@aipoch/diagnostics/node'
 import { hasImmutableExecutionFileEvidenceReference } from '../../shared/execution-file-evidence'
 import type { LoadAllSessionsResult } from '../../shared/session-persistence'
 import { type ApplicationModuleBuilder } from '../application-runtime'
 import { ComputeJobResultDeliveryAdapter } from '../background-result-delivery/compute-adapter'
 import { broadcastJobUpdated, createComputeIpcModule, toJobSummary } from '../compute/ipc'
 import { createComputeJobRuntime } from '../compute/job-runtime'
-import { type DiagnosticOperation } from '@aipoch/diagnostics/node'
 import { QUIT_SHUTDOWN_BUDGET_MS } from '../lifecycle-shutdown'
-import { createLogger, diagnosticErrorFields, errorLogFields } from '@aipoch/diagnostics/node'
 import {
   reconcileComputeJobFileEvidence,
   recoverPublishedComputeJobFileEvidence,
@@ -38,7 +42,7 @@ export async function composeComputeRecovery({
   computeIpcModule: ReturnType<typeof createComputeIpcModule>
   computeService: ReturnType<typeof createComputeIpcModule>['computeService']
   connectionBroker: import('../compute/connection-broker').ComputeConnectionBroker
-  jobDeletionOwner: import('../compute/job-deletion-owner').ComputeJobDeletionOwner
+  jobDeletionOwner: import('@aipoch/compute/node').ComputeJobDeletionOwner
   jobRepository: import('../compute/job-repository').ComputeJobRepository
   operationRepository: import('../compute/compute-job-operation-repository').ComputeJobOperationRepository
   hostRepository: import('../compute/repository').ComputeHostRepository

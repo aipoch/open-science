@@ -1,20 +1,21 @@
+import type { ComputeAuthenticationMode, ComputeExecutionMode, ComputeHost } from '@aipoch/compute'
 import type {
   ChangeComputeHostAuthenticationRequest,
-  ComputeAuthenticationMode,
-  ComputeExecutionMode,
-  ComputeHost,
   CreatePasswordComputeHostRequest,
   ResetPasswordComputeHostRequest
 } from '../../shared/compute'
-import { computeProviderId, DETAILS_DOC_MAX_LENGTH } from '../../shared/compute'
+
+import { computeProviderId, DETAILS_DOC_MAX_LENGTH } from '@aipoch/compute'
+
 import {
   HostConnectionProfileValidationError,
   validateHostConnectionProfile
-} from '../../shared/compute-host-connection-profile'
+} from '@aipoch/compute'
+import { ComputeConnectionError } from '@aipoch/compute/node'
 import type { PasswordSshAdapter } from './connection-adapters'
-import { ComputeConnectionError } from './connection-broker'
+
+import { assertSafeSshAlias } from '@aipoch/compute/node'
 import type { CredentialVault } from './credential-vault'
-import { assertSafeSshAlias } from './remote-path-security'
 
 type CreatePasswordHostPersistence = Readonly<{
   operationId: string

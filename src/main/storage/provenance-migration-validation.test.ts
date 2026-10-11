@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { validateProvenanceMigrationState } from './provenance-migration-validation'
-import { operationJournalPath, RuntimeOperationJournal } from '../notebook/operation-journal'
+import { operationJournalPath, RuntimeOperationJournal } from '@aipoch/environment'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { ArtifactReproducibilityReceiptStore } from '../artifacts/artifact-reproducibility-receipts'
 

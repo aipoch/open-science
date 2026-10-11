@@ -6,8 +6,8 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { runEvidenceWorker } from './working-file-observer'
 import { NotebookKernelExecutor } from './kernel-executor'
 import { analyzePythonNotebookSource } from '@aipoch/notebook-analysis'
-import { resolveBundleDir } from './bundle-local'
-import { resolveMicromamba } from './micromamba'
+import { resolveBundleDir } from './environment-resources'
+import { resolveMicromamba } from '@aipoch/environment'
 
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>()

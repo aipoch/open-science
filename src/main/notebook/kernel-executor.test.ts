@@ -33,7 +33,7 @@ import {
   pythonBin,
   rBin,
   rScriptBin
-} from './runtime-paths'
+} from '@aipoch/environment'
 import { terminateProcessTree } from '../process-tree'
 import { TimeoutController } from './timeout-controller'
 import type { NotebookProcessSandbox } from './process-sandbox'
@@ -46,7 +46,7 @@ import { KernelProcessLifecycleOwner } from './kernel-process-lifecycle.windows-
 import { verifyReplayCapture } from './scientific-replay.test-support'
 import * as windowsNotebookRuntime from './windows-notebook-runtime'
 import { shellNpmPaths } from './shell-npm-environment'
-import { prepareNotebookWorkloadCache } from './notebook-workload-cache-paths'
+import { prepareNotebookWorkloadCache } from '@aipoch/environment'
 
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>()

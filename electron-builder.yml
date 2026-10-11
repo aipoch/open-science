@@ -10,7 +10,8 @@ beforePack: build/stage-desktop-runtime.cjs
 afterPack: build/adhoc-sign.cjs
 afterSign: build/sign-windows.cjs
 files:
-  - '!out/{backend,standalone,node-runtime}{,/**/*}'
+  # CLI release archives and staging files can remain after a prior packaging run.
+  - '!out/{backend,standalone,node-runtime,web,cli-artifacts}{,/**/*}'
   - '!**/.vscode/*'
   # Agent/AI tooling state lives in the project (.claude holds git worktrees — full nested repo
   # copies, easily >1GB — plus memory/logs; .codex is similar). electron-builder sweeps in everything
@@ -29,91 +30,34 @@ files:
   - '!electron.vite.config.{js,ts,mjs,cjs}'
   - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
-  - '!packages/open-science{,/**/*}'
+  # Installed local packages are already copied through their node_modules runtime entry points.
+  - '!packages{,/**/*}'
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
-  # Prisma is shipped via extraResources (see below), not inside the asar. Exclude it here so that at
-  # runtime `require('@prisma/client')` resolves the real copy in Contents/Resources/node_modules
-  # (app.asar's parent dir) instead of a broken in-asar copy that can't find its generated `.prisma`
-  # client — which otherwise crashes the main process at startup with
-  # "Cannot find module '.prisma/client/default'" (window never opens; dock icon bounces and quits).
-  - '!node_modules/@prisma/client{,/**/*}'
-  - '!node_modules/.prisma{,/**/*}'
-  # The bundled Claude native binary (~220MB) is never executed: the app spawns the ACP agent with
-  # CLAUDE_CODE_EXECUTABLE pointing at the user's system-installed claude, and claude-agent-acp only
-  # resolves this optional platform package when that env var is unset. Excluding it drops ~220MB.
-  # Wildcard every platform variant (darwin-arm64/-x64, linux-*, win32-*) so the exclusion holds no
-  # matter which OS the release job builds on — npm only installs the one matching the build host.
-  - '!node_modules/@anthropic-ai/claude-agent-sdk-*{,/**/*}'
+  # Business dependencies live in the ordinary Node backend. The Electron host only runs
+  # desktop integration; retaining these here duplicates the backend's native/PDF/AI payload.
+  - '!node_modules/{@prisma,.prisma,prisma,typescript}{,/**/*}'
+  - '!node_modules/{@huggingface,onnxruntime-*,pdfjs-dist,sharp,@img,@napi-rs,fontkit,pdf-lib,@embedpdf,@pdf-lib}{,/**/*}'
+  - '!node_modules/@aipoch/{pdf-structure,pdf-translation}{,/**/*}'
+  - '!node_modules/@anthropic-ai{,/**/*}'
+  - '!node_modules/@agentclientprotocol/claude-agent-acp{,/**/*}'
+  - '!node_modules/{tiktoken,js-tiktoken,web-tree-sitter,openchemlib,citeme-engine-wasm}{,/**/*}'
   # The internal Notebook sandbox is bundled into the main process by electron-vite. Keep its
   # vendored source/native trees out of app.asar; the executable resources are copied explicitly per
   # platform below so path resolution and code signing remain deterministic.
   - '!node_modules/@aipoch/notebook-network-sandbox{,/**/*}'
-  - '!packages/notebook-network-sandbox{,/**/*}'
-  # Skills ship through their installed package dependency, not a second source tree.
-  - '!packages/skills{,/**/*}'
-  # pdfjs-dist ships several redundant copies. The main process only loads `legacy/build` (text
-  # extraction) and needs `cmaps`/`standard_fonts` for CJK/CID PDFs; the renderer bundles its own
-  # copy via Vite. Drop the modern build, viewer, image decoders, TS types, and source maps
-  # (~16MB) so the packaged app carries only what runs.
-  - '!node_modules/pdfjs-dist/build{,/**/*}'
-  - '!node_modules/pdfjs-dist/web{,/**/*}'
-  - '!node_modules/pdfjs-dist/image_decoders{,/**/*}'
-  - '!node_modules/pdfjs-dist/types{,/**/*}'
-  - '!node_modules/pdfjs-dist/**/*.map'
-  # Local translation selects offline WASM CPU ONNX; retain WASM binaries, omit source maps.
-  - '!node_modules/@huggingface/transformers/**/*.map'
-  - '!node_modules/onnxruntime-{node,common,web}/**/*.map'
   # Micromamba is copied from this staging tree to the resources root by the platform-specific
   # extraResources entries below. Keep the staging copies out of app.asar and avoid shipping a
   # second, unused copy under app.asar.unpacked/resources/bin.
   - '!resources/bin{,/**/*}'
 asarUnpack:
-  - node_modules/@aipoch/pdf-translation/resources/**
   - node_modules/@aipoch/notebook-syntax/assets/**
   - node_modules/@aipoch/literature-citations/resources/**
   - resources/**
   - '!resources/bin{,/**/*}'
-  # The translation worker runs outside asar and resolves its WASM/font dependencies there.
-  - node_modules/@embedpdf/pdfium/**
-  - node_modules/fontkit/**
-  - node_modules/@pdf-lib/upng/**
-  - node_modules/@pdf-lib/standard-fonts/**
-  - node_modules/pako/**
-  - node_modules/unicode-trie/**
-  - node_modules/unicode-properties/**
-  - node_modules/tiny-inflate/**
-  - node_modules/restructure/**
-  - node_modules/fast-deep-equal/**
-  - node_modules/dfa/**
-  - node_modules/clone/**
-  - node_modules/base64-js/**
-  - node_modules/brotli/**
-  - node_modules/tslib/**
-  - node_modules/@swc/helpers/**
-  - node_modules/pdf-lib/**
+  # The desktop credential bridge still launches these helpers from the Electron host.
   - node_modules/@aipoch/credential-identity-probe-native/build/Release/credential_*
   - node_modules/@aipoch/process-tree-native/build/Release/*.node
   - node_modules/@aipoch/safe-file-publisher-native/build/Release/*.node
-  # sharp loads its platform N-API binding and libvips shared libraries by physical path.
-  - node_modules/pdfjs-dist/**
-  - node_modules/@napi-rs/**
-  - node_modules/detect-libc/**
-  - node_modules/semver/**
-  - node_modules/sharp/**
-  # Offline translation needs physical WASM assets; Transformers also imports native ONNX bindings.
-  - node_modules/@huggingface/**
-  - node_modules/onnxruntime-node/**
-  - node_modules/onnxruntime-common/**
-  - node_modules/onnxruntime-web/**
-  - node_modules/@img/**
-  # The ACP agent runs as a spawned child process, so its entry must live outside the asar.
-  - node_modules/@agentclientprotocol/claude-agent-acp/**
-# The Prisma generated client (`node_modules/.prisma`) is produced by `prisma generate` and is NOT a
-# declared dependency, so electron-builder's node_modules collector never bundles it into the asar.
-# It also loads a native query engine (.dylib.node) by path, which can't run from inside an asar. Ship
-# the client + generated code as plain files under Contents/Resources/node_modules; Node's normal
-# directory walk from app.asar finds them there. (@prisma/client v6 has zero runtime deps, so the
-# client + .prisma pair is self-contained.)
 # The micromamba binary is added per-platform below (mac/win/linux extraResources), not here, so
 # the two extraResources lists don't collide.
 extraResources:
@@ -131,10 +75,6 @@ extraResources:
   # Keep the copied third-party provider icon paths' MIT notice readable in every packaged app.
   - from: src/renderer/src/assets/provider-icons/LobeHub-icons-LICENSE
     to: LobeHub-icons-LICENSE
-  - from: node_modules/.prisma
-    to: node_modules/.prisma
-  - from: node_modules/@prisma/client
-    to: node_modules/@prisma/client
   # Ship the `open-science` CLI as plain files (not in the asar) so the installed command-line launcher
   # can run it with the app's own Electron in Node mode. Only the runtime .mjs files; tests are excluded.
   - from: cli
@@ -236,6 +176,8 @@ mac:
     - from: resources/bin/mac/${arch}/micromamba
       to: micromamba
 dmg:
+  # Bzip2 reduces the full desktop payload without changing the installed application.
+  format: UDBZ
   title: Open-Science
   background: build/dmg-background.png
   iconSize: 88

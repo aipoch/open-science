@@ -1,7 +1,7 @@
 import { SessionReproducibilityStore } from '../artifacts/session-reproducibility-store'
 import { sessionReproducibilityBatchSchema } from '../../shared/session-reproducibility'
 import { sha256 } from '../artifacts/provenance-canonical'
-import { parseNotebookEnvironmentLock } from '../notebook/environment-lock'
+import { parseNotebookEnvironmentLock } from '@aipoch/environment'
 import { assertPackageSourcePath } from './archive'
 import { isDeepStrictEqual } from 'node:util'
 import { mkdir, writeFile } from 'node:fs/promises'

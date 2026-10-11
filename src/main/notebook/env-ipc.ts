@@ -2,7 +2,7 @@ import type { NotebookLanguage } from '../../shared/notebook'
 import { ipcMainHandle } from '../ipc-handler-registry'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import type { NotebookEnvironmentLifecycle } from './environment-lifecycle-workflows'
-import type { ProvisionProgress } from './provisioner'
+import type { ProvisionProgress } from '@aipoch/environment'
 
 // Publishes progress through the application event hub so Electron and Web share one ordered event.
 export const broadcastNotebookEnvProgress = (progress: ProvisionProgress): void => {

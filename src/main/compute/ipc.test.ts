@@ -4,37 +4,40 @@ import { join } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type { ComputeHost } from '@aipoch/compute'
 import type {
   ComputeApprovalRequest,
-  ComputeHost,
   ComputeJob,
   CreateComputeHostRequest
 } from '../../shared/compute'
+
+import { ComputeConnectionError } from '@aipoch/compute/node'
 import type { DirListing, DownloadDest, LocalFile } from '../../shared/remote-fs'
 import { decodeRemoteFsError } from '../../shared/remote-fs'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import type { ComputeService } from './compute-service'
 import type { PasswordSshAdapter } from './connection-adapters'
-import { ComputeConnectionError, SshConfigComputeConnectionBroker } from './connection-broker'
-import type { CredentialVault } from './credential-vault'
+import { SshConfigComputeConnectionBroker } from './connection-broker'
+
+import type { PermissionGrantRegistry } from '../permission-grants/registry'
+import { addRendererBroadcastSink } from '../renderer-broadcast'
 import { ComputeApprovalBroker } from './compute-approval-broker'
+import type { CredentialVault } from './credential-vault'
 import { COMPUTE_IPC_CHANNELS } from './electron-ipc-adapter'
+import { EnabledComputeHostsRegistry } from './enabled-hosts-registry'
+import type { ComputeIpcAdapter, ComputeIpcModule } from './ipc'
 import {
+  broadcastJobUpdated,
   COMPUTE_JOB_UPDATED_CHANNEL,
   COMPUTE_JOBS_LIST_CHANNEL,
-  broadcastJobUpdated,
   createComputeHandlers,
   createComputeIpcModule,
   createJobUpdatedBroadcaster,
   installComputeIpcHandlers,
   toJobSummary
 } from './ipc'
-import type { ComputeIpcAdapter, ComputeIpcModule } from './ipc'
 import type { ComputeJobRepository } from './job-repository'
 import type { ComputeHostRepository } from './repository'
-import { EnabledComputeHostsRegistry } from './enabled-hosts-registry'
-import { addRendererBroadcastSink } from '../renderer-broadcast'
-import type { PermissionGrantRegistry } from '../permission-grants/registry'
 
 // ---------------------------------------------------------------------------
 // electron mock — captures ipcMain.handle registrations and stubs BrowserWindow

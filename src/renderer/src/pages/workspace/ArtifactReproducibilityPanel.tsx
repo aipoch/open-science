@@ -75,7 +75,7 @@ import type { ScientificOutputRisk } from '../../../../shared/execution-file-evi
 import type {
   NotebookEnvironmentLockDiagnostic,
   NotebookRunEnvironmentLockCapture
-} from '../../../../shared/notebook'
+} from '@aipoch/environment/contracts'
 import {
   displayGraph,
   filterDisplayGraph,

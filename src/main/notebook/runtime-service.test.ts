@@ -7,7 +7,7 @@ import { delimiter, dirname, join, posix, win32 } from 'node:path'
 import { afterEach, beforeAll, describe, expect, it, vi, type Mock } from 'vitest'
 import { NotebookBackgroundRunError } from '../../shared/notebook'
 import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
-import { EnvironmentLeaseManager } from './environment-lease-manager'
+import { EnvironmentLeaseManager } from '@aipoch/environment'
 import { markTrustedNotebookBindingPermissionPrompts } from './runtime-binding-admission'
 
 import type {
@@ -29,36 +29,33 @@ import {
   RuntimeOperationJournal,
   operationJournalPath,
   recordSpawnIntentSync
-} from './operation-journal'
-import { DefaultRuntimeProvisioner } from './provisioner'
-import * as environmentDiscovery from './environment-discovery'
+} from '@aipoch/environment'
+import { DefaultRuntimeProvisioner } from '@aipoch/environment'
+import * as environmentDiscovery from '@aipoch/environment'
 import {
   EnvironmentManifestPublicationError,
   type EnvironmentStateTracker
-} from './environment-state-tracker'
-import { CHILD_UNCONFIRMED } from './provisioner-runtime'
+} from '@aipoch/environment'
+import { CHILD_UNCONFIRMED } from '@aipoch/environment'
 import type {
   InstallDeps as InstallDepsForTest,
-  InstallRequest as InstallRequestForTest,
   InstallResult as InstallResultForTest
-} from './package-manager'
-import type { EnvironmentInfo, ProvisionProgress } from '../../shared/notebook-env'
+} from '@aipoch/environment'
+import type { InstallRequest as InstallRequestForTest } from '../../shared/notebook-env'
+import type { EnvironmentInfo, ProvisionProgress } from '@aipoch/environment/contracts'
+import { type NotebookEnvironmentPackageChange } from '@aipoch/environment/contracts'
+import { type NotebookEnvironmentManifest } from '../../shared/notebook'
 import {
   NOTEBOOK_STATE_HISTORY_FRAME_ID_LIMIT_BYTES,
   NOTEBOOK_STATE_HISTORY_PAGE_LIMIT,
   NOTEBOOK_STATE_TARGET_RUN_LIMIT,
-  type NotebookEnvironmentPackageChange,
-  type NotebookEnvironmentManifest,
   type NotebookEnvironmentStatus,
   type NotebookLanguage,
   type NotebookRunInputFile,
   type NotebookRunProvenanceContext
 } from '../../shared/notebook'
-import type {
-  DiscoveredInterpreter,
-  RuntimeEnablement,
-  RuntimeTargetReceipt
-} from '../../shared/notebook-runtime'
+import type { DiscoveredInterpreter } from '@aipoch/environment/contracts'
+import type { RuntimeEnablement, RuntimeTargetReceipt } from '../../shared/notebook-runtime'
 import {
   CompletionGateCoordinator,
   createCompletionGatedControlToolInterceptor
@@ -78,7 +75,7 @@ import {
   repairRegistryPath,
   writeReadyMarker,
   writeRReadyMarker
-} from './runtime-paths'
+} from '@aipoch/environment'
 import type { NotebookShellProcess } from './shell-process'
 import * as windowsNotebookRuntime from './windows-notebook-runtime'
 import { NOTEBOOK_CODE_LIMIT_BYTES } from './content-limits'

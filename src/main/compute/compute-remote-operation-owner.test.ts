@@ -16,20 +16,22 @@ import { basename, dirname, join } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { ComputeHost } from '../../shared/compute'
-import type { DownloadDest } from '../../shared/remote-fs'
-import type { ComputeApprovalBroker } from './compute-approval-broker'
+import type { ComputeHost } from '@aipoch/compute'
+
 import {
   ComputeConnectionError,
   type ComputeConnectionBrokerAcquirer,
   type ComputeConnectionLease
-} from './connection-broker'
+} from '@aipoch/compute/node'
+import type { DownloadDest } from '../../shared/remote-fs'
+import type { ComputeApprovalBroker } from './compute-approval-broker'
+
+import type { ResolvedSshTarget, SshRunner } from '@aipoch/compute/node'
+import { runScpTransfer, runScpUpload, type ScpRunner } from '@aipoch/compute/node'
+import { waitForDataRootWriters } from '../storage/migration-state'
 import { ComputeRemoteOperationOwner } from './compute-remote-operation-owner'
 import type { ComputeHostRepository } from './repository'
-import type { ResolvedSshTarget, SshRunner } from './ssh-runner'
-import { runScpTransfer, runScpUpload, type ScpRunner } from './scp-runner'
 import { SessionCacheOwner } from './session-cache-owner'
-import { waitForDataRootWriters } from '../storage/migration-state'
 
 const sampleHost = (overrides: Partial<ComputeHost> = {}): ComputeHost => ({
   id: 'host-1',
@@ -74,8 +76,8 @@ const makeRepo = (host: ComputeHost | null = sampleHost()): { repo: ComputeHostR
   } as unknown as ComputeHostRepository
 })
 
-vi.mock('./ssh-runner', async (importOriginal) => {
-  const original = await importOriginal<typeof import('./ssh-runner')>()
+vi.mock('@aipoch/compute/node', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@aipoch/compute/node')>()
   return {
     ...original,
     resolveSshTarget: vi.fn(() => Promise.resolve(fakeTarget))

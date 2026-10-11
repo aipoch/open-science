@@ -158,8 +158,6 @@
       "src/main/acp/runtime-composition.test.ts",
       "src/main/literature/library-tool-contracts.test.ts",
       "src/main/notebook/env-ipc.test.ts",
-      "src/main/notebook/provisioner.test.ts",
-      "src/main/notebook/recovery-coordinator.test.ts",
       "src/main/notebook/runtime-repair.test.ts",
       "src/main/application-event-flow.test.ts",
       "src/main/literature/smart-collections.test.ts",
@@ -367,7 +365,6 @@
       "src/main/compute/ipc.test.ts",
       "src/main/compute/job-poll-protocol.integration.test.ts",
       "src/main/compute/skill-provisioning.test.ts",
-      "src/main/compute/ssh-runner.test.ts",
       "src/main/compute/agent-compute-service.test.ts",
       "src/main/acp/runtime-activity.test.ts",
       "src/main/acp/shutdown-guard.test.ts",
@@ -416,7 +413,6 @@
       "src/main/compute/compute-password-auth.release.test.ts",
       "src/main/compute/application-commands.test.ts",
       "src/main/node-process-host.test.ts",
-      "src/main/notebook/micromamba.test.ts",
       "src/main/notebook/shell-process.test.ts",
       "src/main/notebook/windows-runtime-manager.test.ts",
       "src/main/notebook/working-file-observer.test.ts",
@@ -461,7 +457,9 @@
       "src/main/agents/production-completion-handoff.test.ts",
       "src/main/notebook/auto-mode-budget.integration.test.ts",
       "src/main/connectors/mcp-host-dependencies.test.ts",
-      "src/renderer/src/pages/literature/literature-localization.render.test.tsx"
+      "src/renderer/src/pages/literature/literature-localization.render.test.tsx",
+      "src/main/notebook/environment-provisioning.contract.test.ts",
+      "src/main/notebook/environment-recovery.contract.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

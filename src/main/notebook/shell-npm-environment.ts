@@ -1,7 +1,7 @@
 import { accessSync, constants, lstatSync, mkdirSync, realpathSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join, posix, win32 } from 'node:path'
 
-import { notebookWorkloadCacheRoot } from './notebook-workload-cache-paths'
+import { notebookWorkloadCacheRoot } from '@aipoch/environment'
 
 // POSIX npm launchers point outside PATH's bin directory in nvm and official Node installs.
 // Read only the selected npm package, never its surrounding Node installation or user directory.

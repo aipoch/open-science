@@ -1,8 +1,10 @@
+import { ComputeConnectionError } from '@aipoch/compute/node'
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
 import type { ComputeHostLifecycle } from './authentication-runtime'
 import type { ComputeApprovalBroker } from './compute-approval-broker'
-import { ComputeConnectionError, type ComputeConnectionBroker } from './connection-broker'
+import { type ComputeConnectionBroker } from './connection-broker'
+
 import type { ComputeJobRepository } from './job-repository'
 import type { ComputeHostRepository } from './repository'
 

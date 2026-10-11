@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
-import { assertSafeSshAlias } from './remote-path-security'
+import { assertSafeSshAlias } from '@aipoch/compute/node'
 
 // Pure parser: turns the text of a ~/.ssh/config into the list of concrete Host aliases a user can
 // register as a compute provider. It intentionally does NOT resolve HostName/User/etc. — the real

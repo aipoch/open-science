@@ -58,7 +58,9 @@ import type {
 } from '../../../../shared/artifact-reproducibility'
 import type {
   NotebookEnvironmentLockDiagnostic,
-  NotebookEnvironmentLockPartialReason,
+  NotebookEnvironmentLockPartialReason
+} from '@aipoch/environment/contracts'
+import type {
   NotebookInputFileSummary,
   NotebookOutput,
   NotebookRunRecord

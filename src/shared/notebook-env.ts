@@ -1,142 +1,18 @@
+import type { InstallRequest as EnvironmentInstallRequest } from '@aipoch/environment'
+
+export type EnvironmentRequestContext = { projectId?: string; sessionId?: string }
+// RPC/session identity is resolved and authorized by the host before invoking environment.
+export type InstallRequest = Omit<EnvironmentInstallRequest, 'cwd' | 'context'> &
+  EnvironmentRequestContext & { workspaceCwd?: string }
+
+import type { InstallResult as EnvironmentInstallResult } from '@aipoch/environment'
+import type { RuntimeTargetReceipt } from './notebook-runtime'
+export type InstallResult = EnvironmentInstallResult & { target?: RuntimeTargetReceipt }
+import type { EnvironmentInfo } from '@aipoch/environment/contracts'
 import type { NotebookLanguage } from './notebook'
 
 // Canonical wire shapes for the notebook runtime provisioning surface (contract §4). Renderer,
 // preload, and the main provisioner (Plan A) all import these so there is one source of truth.
-export type ProvisionScope = 'python' | 'r'
-export type ProvisionOperationScope = ProvisionScope | 'upgrade'
-
-export type ProvisionPhase =
-  | 'upgrade'
-  | 'upgrade-r'
-  | 'restore'
-  | 'fetch-python'
-  | 'fetch-r'
-  | 'create-python'
-  | 'create-r'
-  | 'verify-python'
-  | 'verify-r'
-  | 'python-ready'
-  | 'r-ready'
-  | 'done'
-  | 'error'
-
-// User-facing progress is a closed renderer-localized event. Unstructured failure details travel in
-// `diagnostic` instead, so machine diagnostics can never masquerade as translated product copy.
-export type ProvisionProgressEvent =
-  | { code: 'legacy-package-removed' }
-  | { code: 'environment-create'; environment: string }
-  | { code: 'python-ready' }
-  | { code: 'r-ready' }
-  | { code: 'updating-default-packages' }
-  | { code: 'updating-r-packages' }
-  | { code: 'default-environments-updated' }
-  | { code: 'restoring-environment'; environment: string }
-  | { code: 'runtime-restored' }
-  | { code: 'environment-ready'; environment: string }
-  | { code: 'preparing-packages'; environment: string }
-  | { code: 'retrying-short-cache'; environment: string }
-  | { code: 'repairing-windows-crash'; environment: string }
-  | { code: 'repairing-package-cache'; environment: string }
-  | { code: 'verifying-interpreter'; environment: string }
-  | { code: 'verifying-packages'; completed: number; total: number }
-  | { code: 'fetching-runtime-manifest' }
-  | { code: 'downloading-python-runtime' }
-  | { code: 'downloading-r-runtime' }
-  | { code: 'runtime-downloaded'; file: string }
-  | { code: 'runtime-pack-unavailable' }
-
-type ProvisionProgressBase = {
-  progress: number
-  // Correlates renderer-requested provision/repair progress with the originating IPC call. Automatic
-  // maintenance omits it so its terminal event cannot accidentally settle a queued explicit request.
-  operationId?: string
-  // Explicit at process boundaries so an automatic R provision is not inferred as a global upgrade.
-  scope?: ProvisionOperationScope
-  // Present for a provision triggered by one notebook run; other sessions remain visible and usable.
-  sessionId?: string
-  // `language` attributes an event to the env it concerns so the Settings UI can show python and R
-  // provisioning independently — the provisioner serializes the two runs, but neither card should look
-  // cancelled when the other is requested (undefined for language-agnostic events: upgrade/restore).
-  language?: NotebookLanguage
-  // Present during the pack-download phase so the UI can show speed/ETA/resume detail alongside the
-  // coarse `progress` fraction.
-  download?: import('./download-progress').DownloadProgress
-}
-
-export type ProvisionProgress =
-  | (ProvisionProgressBase & {
-      phase: Exclude<ProvisionPhase, 'error'>
-      event: ProvisionProgressEvent
-      diagnostic?: string
-    })
-  | (ProvisionProgressBase & {
-      phase: 'error'
-      diagnostic: string
-      event?: never
-    })
-
-export const isTerminalProvisionPhase = (phase: ProvisionPhase): boolean => {
-  switch (phase) {
-    case 'done':
-    case 'error':
-      return true
-    case 'upgrade':
-    case 'upgrade-r':
-    case 'restore':
-    case 'fetch-python':
-    case 'fetch-r':
-    case 'create-python':
-    case 'create-r':
-    case 'verify-python':
-    case 'verify-r':
-    case 'python-ready':
-    case 'r-ready':
-      return false
-    default:
-      return phase satisfies never
-  }
-}
-
-export type RuntimeBundleSource = {
-  kind: 'official' | 'override'
-  baseUrl: string
-}
-export type NotebookRecoveryStatus = {
-  checkedAt?: number
-  corruptJournal: boolean
-  operations: Array<{
-    operationId: string
-    runtimeId: string
-    targetPath?: string
-    reason: 'child-unconfirmed' | 'child-unrecorded' | 'archive-unconfirmed' | 'recovery-failed'
-  }>
-}
-
-export type ProvisionStatus = {
-  recovery?: NotebookRecoveryStatus
-  pythonReady: boolean
-  rReady: boolean
-  version: number
-  provisioning: boolean
-  bundleSource?: RuntimeBundleSource
-  // True when recovery quarantined the language's app-managed default prefix, or an explicit repair
-  // left its durable marker armed after failing. The env may still read as ready or may be absent, so
-  // the UI needs this signal to surface Reset instead of a healthy card or an ordinary setup retry.
-  pythonRepairRequired?: boolean
-  rRepairRequired?: boolean
-  pythonRecoveryBlocked?: boolean
-  rRecoveryBlocked?: boolean
-}
-
-// One named environment as surfaced by manage_environments(action:"list") and the UI's env selector.
-export type EnvironmentInfo = {
-  name: string
-  language: NotebookLanguage
-  ready: boolean
-  isDefault: boolean
-  sizeBytes?: number
-}
-
 // manage_environments tool request — discriminated on action (design D2).
 export type ManageEnvironmentsRequest =
   | {

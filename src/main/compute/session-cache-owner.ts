@@ -1,8 +1,8 @@
-import { lstat, mkdir, readdir, rename, rm } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
+import { lstat, mkdir, readdir, rename, rm } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 
-import type { ComputeJobSessionOwner } from './job-repository'
+import type { ComputeJobSessionOwner } from '@aipoch/compute'
 
 const PARTIAL_OPERATION_PREFIX = '.partial-'
 

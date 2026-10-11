@@ -1,23 +1,22 @@
+import {
+  createComputeExecution,
+  createJobCancellation,
+  createSshRunner
+} from '@aipoch/compute/node'
 // RUN_COMPUTE_CANCELLATION=1 COMPUTE_TEST_SSH_ALIAS=hpc-dev npx vitest run src/main/compute/cancellation.real-ssh.integration.test.ts
+import {
+  type ComputeConnectionBrokerAcquirer,
+  type ComputeConnectionLease
+} from '@aipoch/compute/node'
 import { execFile, spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { expect, it } from 'vitest'
 import { createMigratedComputeTestDatabase } from './compute-integration.test-support'
-import {
-  ComputeJobCancellationOwner,
-  ComputeJobCancellationReaper
-} from './compute-job-cancellation-owner'
-import {
-  SshConfigComputeConnectionBroker,
-  type ComputeConnectionBrokerAcquirer,
-  type ComputeConnectionLease
-} from './connection-broker'
-import { dispatchJob } from './job-dispatcher'
-import { JobPoller } from './job-poller'
-import { probeRemoteLaunch } from './remote-launch-recovery'
+import { SshConfigComputeConnectionBroker } from './connection-broker'
+
+import { probeRemoteLaunch, quoteRemotePath, shellSingleQuote } from '@aipoch/compute/node'
+import { dispatchComputeJob as dispatchJob } from './dispatch-evidence'
 import { ComputeHostRepository } from './repository'
-import { quoteRemotePath, shellSingleQuote } from './remote-path-security'
-import { SystemSshRunner } from './ssh-runner'
 
 const alias = process.env.COMPUTE_TEST_SSH_ALIAS ?? 'local-cancellation'
 const remoteEnabled =
@@ -58,7 +57,7 @@ it.skipIf(!enabled).each(['running', 'orphaned'] as const)(
     const broker: ComputeConnectionBrokerAcquirer = remoteEnabled
       ? new SshConfigComputeConnectionBroker({
           getHost: (id) => hosts.get(id),
-          runner: new SystemSshRunner()
+          runner: createSshRunner()
         })
       : { acquire: async () => ({ run: localRun }) as ComputeConnectionLease }
     const connection = await broker.acquire(scope.providerId, { intent: 'job_cleanup' })
@@ -116,7 +115,7 @@ print(json.dumps(found))`
         expect((await run(`kill -KILL -- -${handle.pid}`)).exitCode).toBe(0)
       }
       expect(await probeRemoteLaunch(connection, workdir)).toMatchObject({ kind: 'running' })
-      const poller = new JobPoller({
+      const poller = createComputeExecution().createPoller({
         connectionBroker: broker,
         hostRepository: hosts,
         jobRepository: db.repositories.jobs
@@ -124,11 +123,11 @@ print(json.dumps(found))`
       await poller.tick()
       await poller.tick()
       expect(await db.repositories.jobs.get(jobId)).toMatchObject({ status: 'running' })
-      await new ComputeJobCancellationOwner(
-        db.repositories.operations,
-        db.repositories.jobs
-      ).request(jobId, scope)
-      const reaper = new ComputeJobCancellationReaper(
+      await createJobCancellation(db.repositories.operations, db.repositories.jobs).request(
+        jobId,
+        scope
+      )
+      const reaper = createComputeExecution().createCancellationReaper(
         db.repositories.operations,
         db.repositories.jobs,
         broker

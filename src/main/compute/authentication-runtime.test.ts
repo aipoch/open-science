@@ -1,12 +1,14 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import type { ComputeHost } from '../../shared/compute'
+import type { ComputeHost } from '@aipoch/compute'
+
+import { ComputeConnectionError, type ComputeConnectionLease } from '@aipoch/compute/node'
 import {
   createComputeAuthenticationOwner,
   createComputeAuthenticationRuntime
 } from './authentication-runtime'
 import type { PasswordSshAdapter } from './connection-adapters'
-import { ComputeConnectionError, type ComputeConnectionLease } from './connection-broker'
+
 import { CredentialVault, type ComputeCredentialCipher } from './credential-vault'
 import type { ComputeHostRepository } from './repository'
 

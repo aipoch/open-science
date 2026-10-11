@@ -14,7 +14,7 @@ import type {
 } from '../../shared/artifact-provenance'
 import type { NotebookRunInputFile } from '../../shared/notebook'
 import { digestFileWithinBudget } from '../bounded-file-io'
-import { parseNotebookEnvironmentLock } from '../notebook/environment-lock'
+import { parseNotebookEnvironmentLock } from '@aipoch/environment'
 import { notebookHelperEvidenceKey } from '../notebook/helper-evidence'
 import { notebookPromptInputPath } from '../notebook/prompt-input-materialization'
 import { canonicalJson, sha256, type CanonicalJson } from './provenance-canonical'

@@ -132,7 +132,7 @@ const assertPackagedResources = async (appBundle) => {
     )
   ]
   for (const path of paths) await access(path)
-  const prismaRoot = join(resources, 'node_modules', '.prisma', 'client')
+  const prismaRoot = join(resources, 'backend', 'resources', 'prisma-client')
   const engines = await readdir(prismaRoot).catch(() => [])
   const nativeEngines = engines.filter(
     (name) => name.includes('query_engine-') && name.endsWith('.node')

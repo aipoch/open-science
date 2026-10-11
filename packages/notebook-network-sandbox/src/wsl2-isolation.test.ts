@@ -5,7 +5,7 @@ import {
   wsl2Launch,
   type Wsl2Launch
 } from '../runtime/src/platform/wsl2-isolation.js'
-import { notebookWorkloadCacheEnv } from '../../../src/main/notebook/notebook-workload-cache-paths.js'
+import { notebookWorkloadCacheEnv } from '@aipoch/environment'
 
 const mapped = new Map([
   ['C:\\Open-Science\\Workspace 路径', '/mnt/c/Open-Science/Workspace 路径'],

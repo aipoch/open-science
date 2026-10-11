@@ -496,12 +496,9 @@
       "src/main/notebook/network-sandbox-owner.test.ts",
       "src/main/notebook/no-legacy-bridge.test.ts",
       "src/main/notebook/package-cache-sandbox.integration.test.ts",
-      "src/main/notebook/package-mutation.test.ts",
       "src/main/notebook/package-operations.test.ts",
       "src/main/notebook/package-process-sandbox.windows.integration.test.ts",
       "src/main/notebook/process-tree-consumers.macos.integration.test.ts",
-      "src/main/notebook/provisioner.test.ts",
-      "src/main/notebook/recovery-coordinator.test.ts",
       "src/main/notebook/repl-loop.integration.test.ts",
       "src/main/notebook/reproduction-runtime.integration.test.ts",
       "src/main/notebook/reproduction-runtime.test.ts",
@@ -755,7 +752,9 @@
       "src/main/connectors/custom-mcp-config.test.ts",
       "src/main/connectors/mcp-host-dependencies.test.ts",
       "src/main/session-diagnostics/schema-compatibility.integration.test.ts",
-      "src/renderer/src/pages/literature/literature-localization.render.test.tsx"
+      "src/renderer/src/pages/literature/literature-localization.render.test.tsx",
+      "src/main/notebook/environment-provisioning.contract.test.ts",
+      "src/main/notebook/environment-recovery.contract.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

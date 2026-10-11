@@ -1,4 +1,4 @@
-import { RetryableHarvestError } from './job-harvest-scheduler'
+import { RetryableHarvestError } from '@aipoch/compute/node'
 /**
  * harvest-engine.ts — downloads a finished job's output files from the remote workdir.
  *
@@ -22,51 +22,48 @@ import { randomUUID } from 'node:crypto'
 import { access, mkdir, realpath, rename, rm, stat, statfs, unlink } from 'node:fs/promises'
 import { dirname, join, relative, resolve } from 'node:path'
 
+import {
+  classifyConnectionFailure,
+  ComputeConnectionError,
+  isConnectionStdoutTruncated,
+  type ComputeConnectionBrokerAcquirer,
+  type ComputeConnectionLease
+} from '@aipoch/compute/node'
 import type { ComputeJob, JobSummary } from '../../shared/compute'
 import {
   hasImmutableExecutionFileEvidenceReference,
   parseOwnedExecutionFileEvidenceSummary
 } from '../../shared/execution-file-evidence'
-import type { ComputeHostRepository } from './repository'
 import type { ComputeJobRepository } from './job-repository'
-import {
-  isConnectionStdoutTruncated,
-  classifyConnectionFailure,
-  ComputeConnectionError,
-  type ComputeConnectionBrokerAcquirer,
-  type ComputeConnectionLease
-} from './connection-broker'
-import {
-  quoteRemotePath,
-  SHELL_UNSAFE_CHARS,
-  validateRelativeTransferPath
-} from './remote-path-security'
+import type { ComputeHostRepository } from './repository'
+
 import {
   classifyFiles,
   HARVEST_MAX_FILE_MB,
   normalizeHarvestConfig,
+  normalizeRemoteMtimeToken,
+  parseRemoteFileStat,
+  quoteRemotePath,
+  remoteFileStatCommand,
+  sameRemoteFileSnapshot,
+  SHELL_UNSAFE_CHARS,
+  validateRelativeTransferPath,
   type FileEntry,
+  type HarvestConfig,
   type OutputDeclaration,
-  type HarvestConfig
-} from './harvest-classifier'
+  type RemoteFileSnapshot
+} from '@aipoch/compute/node'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
+import { toErrorMessage } from '../error-message'
 import { getNotebookSessionRoot } from '../notebook/repository'
-import { emitJobNotification } from './job-notifier'
 import {
   cleanupComputeJobFileEvidence,
   publishComputeJobFileEvidence,
   settleComputeJobFileEvidence
 } from '../notebook/working-file-observer'
 import { withDataRootWrite } from '../storage/migration-state'
-import { toErrorMessage } from '../error-message'
+import { emitJobNotification } from './job-notifier'
 import { getJobHarvestDir, workspaceRelativePath } from './workspace-path'
-import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
-import {
-  normalizeRemoteMtimeToken,
-  parseRemoteFileStat,
-  remoteFileStatCommand,
-  sameRemoteFileSnapshot,
-  type RemoteFileSnapshot
-} from './remote-file-snapshot'
 
 const MIB_BYTES = 1024 * 1024
 export const HARVEST_FREE_DISK_RESERVE_BYTES = 2 * 1024 * MIB_BYTES

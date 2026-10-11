@@ -6,7 +6,7 @@ import { windowsLaunch } from '../../../packages/notebook-network-sandbox/runtim
 import { createRuntimeConfig } from '../../../packages/notebook-network-sandbox/src/config'
 import catalog from './windows-runtime-catalog.json'
 import { probeWindowsRuntimeComponent } from './windows-runtime-probe'
-import { extractPackArchive } from './pack-archive'
+import { extractPackArchive } from '@aipoch/environment'
 import type { NotebookProcessSandbox } from './process-sandbox'
 import {
   WindowsRuntimeComponentStore,

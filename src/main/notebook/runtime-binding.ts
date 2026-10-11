@@ -1,9 +1,9 @@
 import { isDeepStrictEqual } from 'node:util'
-import type { EnvironmentLease } from './environment-lease-manager'
+import type { EnvironmentLease } from '@aipoch/environment'
 import type { NotebookLanguage } from '../../shared/notebook'
+import { type DiscoveredInterpreter } from '@aipoch/environment/contracts'
 import {
   isEnvEnabled,
-  type DiscoveredInterpreter,
   type NotebookRuntimeBinding,
   type RuntimeBindingOperationResult,
   type NotebookRuntimeBindings,
@@ -19,11 +19,11 @@ import {
   discoverInterpreters,
   rscriptFor,
   windowsCondaPrefixForR
-} from './environment-discovery'
+} from '@aipoch/environment'
 import { getRuntimeRoot, type NotebookRunRepository } from './repository'
-import { DEFAULT_PY_ENV, DEFAULT_R_ENV } from './runtime-paths'
+import { DEFAULT_PY_ENV, DEFAULT_R_ENV } from '@aipoch/environment'
 import { runtimeTargetReceipt } from './runtime-target'
-import type { NotebookRuntimeRepairPolicy } from './runtime-repair-policy'
+import type { NotebookRuntimeRepairPolicy } from '@aipoch/environment'
 import type {
   NotebookSessionAggregate,
   NotebookSessionResolvedInterpreter,

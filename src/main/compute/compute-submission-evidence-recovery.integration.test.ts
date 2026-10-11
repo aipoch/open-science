@@ -3,23 +3,16 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 
+import { createComputeExecution, type ComputeConnectionBrokerAcquirer } from '@aipoch/compute/node'
 import type { ComputeApprovalBroker } from './compute-approval-broker'
 import { createMigratedComputeTestDatabase } from './compute-integration.test-support'
 import { ComputeJobWorkflowOwner } from './compute-job-workflow-owner'
-import type { ComputeConnectionBrokerAcquirer } from './connection-broker'
-import { dispatchJob } from './job-dispatcher'
+
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { ComputeJobRepository } from './job-repository'
 import { ComputeHostRepository } from './repository'
-import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 
 configureTestRuntimeMetadata()
-
-// Keep the submission owner, SQLite persistence and evidence worker real. The remote dispatch
-// boundary is observed without starting a remote process.
-vi.mock('./job-dispatcher', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('./job-dispatcher')>()),
-  dispatchJob: vi.fn(async () => undefined)
-}))
 
 const readerScript = `
 param([string]$Receipt, [string]$Release)
@@ -59,6 +52,10 @@ describe.skipIf(process.platform !== 'win32')('Compute submission evidence recov
       const host = await hosts.create({ sshAlias: 'fixture-host', displayName: 'Fixture host' })
       const create = vi.spyOn(jobs, 'create')
       const publish = vi.fn()
+      // Keep the submission owner, evidence adapter and SQLite real. Observe only the remote
+      // execution boundary on the exact scope injected into this owner.
+      const execution = createComputeExecution()
+      const dispatchJob = vi.spyOn(execution, 'dispatchJob').mockResolvedValue(undefined)
       const owner = new ComputeJobWorkflowOwner(
         { acquire: vi.fn() } as unknown as ComputeConnectionBrokerAcquirer,
         hosts,
@@ -69,7 +66,9 @@ describe.skipIf(process.platform !== 'win32')('Compute submission evidence recov
         publish,
         undefined,
         root,
-        undefined
+        undefined,
+        undefined,
+        execution
       )
       const context = { projectId: 'project-1', sessionId: 'session-1' }
       const evidenceRoot = join(root, 'execution-file-evidence')
