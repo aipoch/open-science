@@ -346,7 +346,12 @@ export function executeModuleTestPlan(
             ? testFilters
             : ['__no_selected_module_tests__'])
       ]
-  const npmExecPath = environment.npm_execpath
+  // Windows environment snapshots (including test workers) have case-sensitive JS keys.
+  const npmExecPath =
+    environment.npm_execpath ??
+    (platform === 'win32'
+      ? Object.entries(environment).find(([key]) => key.toLowerCase() === 'npm_execpath')?.[1]
+      : undefined)
   if (platform === 'win32' && !npmExecPath) {
     throw new Error(
       'npm_execpath is unavailable on Windows; run this command through npm run test:module or npm run test:affected'

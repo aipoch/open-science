@@ -8242,7 +8242,11 @@ describe('notebook runtime service', () => {
     async (reaped) => {
       const root = await createStorageRoot()
       const cleanup = Promise.withResolvers<{ reaped: boolean }>()
-      const shutdown = vi.fn(() => cleanup.promise)
+      const shutdownStarted = Promise.withResolvers<void>()
+      const shutdown = vi.fn(() => {
+        shutdownStarted.resolve()
+        return cleanup.promise
+      })
       const restart = vi.fn(async () => undefined)
       const service = new NotebookRuntimeService({
         configRoot: root,
@@ -8261,7 +8265,8 @@ describe('notebook runtime service', () => {
       })
       const request = { sessionId: 'session-1', workspaceCwd: root }
       const restarting = service.restart(request)
-      await vi.waitFor(() => expect(shutdown).toHaveBeenCalledOnce())
+      await shutdownStarted.promise
+      expect(shutdown).toHaveBeenCalledOnce()
       expect(restart).not.toHaveBeenCalled()
       await expect(service.executeShell({ ...request, command: 'echo blocked' })).rejects.toThrow(
         'admission is closed'

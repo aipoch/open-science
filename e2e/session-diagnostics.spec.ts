@@ -32,6 +32,13 @@ test('exports selected diagnostics without changing the persisted session', asyn
   const application = (app as unknown as { application: ElectronApplication }).application
   const configRoot = await application.evaluate(() => process.env.OPEN_SCIENCE_CONFIG_ROOT!)
   const sourcePath = join(configRoot, 'sessions', identity.projectId, `${identity.sessionId}.json`)
+  // The reply can finish before its background title/description attempt is persisted.
+  await expect
+    .poll(async () => {
+      const saved = JSON.parse(await readFile(sourcePath, 'utf8'))
+      return saved.session.sessionDetailsGeneration?.status
+    })
+    .toMatch(/^(succeeded|failed|disabled|superseded)$/)
   const original = await readFile(sourcePath, 'utf8')
   const secret = 'diagnostic-e2e-credential-do-not-export'
   const evidence = JSON.stringify({

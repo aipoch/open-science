@@ -7,9 +7,9 @@ export const WINDOWS_TEST_SHARD_COUNT = 8
 // tests, including new directories, so this routing never limits Vitest's discovery. Groups are
 // sized from measured scheduled-run durations so each serial shard stays inside the job timeout.
 export const WINDOWS_TEST_MODULE_GROUPS = [
-  // 1: Session packages and renderer. Moving renderer out of the catch-all balances the
-  // measured 19-minute package shard against the catch-all that exceeded 60 minutes.
-  ['src/main/session-package/', 'src/main/archive/', 'src/renderer/'],
+  // 1: Session packages (26 minutes in run 38172974522). Combining these with the
+  // renderer exceeded 60 minutes; pages and other renderer tests now join groups 4 and 6.
+  ['src/main/session-package/', 'src/main/archive/'],
   // 2: Database and storage.
   ['src/main/database/', 'src/main/storage/', 'src/main/session-deletion/', 'src/main/local-fs/'],
   // 3: Session persistence, file versions and project files.
@@ -21,8 +21,14 @@ export const WINDOWS_TEST_MODULE_GROUPS = [
     'src/main/uploads/',
     'packages/safe-file-publisher-native/'
   ],
-  // 4: Research content.
-  ['src/main/literature/', 'src/main/memory/', 'src/main/tags/', 'src/main/bookmarks/'],
+  // 4: Research content (17 minutes) and renderer pages (26 minutes).
+  [
+    'src/main/literature/',
+    'src/main/memory/',
+    'src/main/tags/',
+    'src/main/bookmarks/',
+    'src/renderer/src/pages/'
+  ],
   // 5: Artifacts, review and skills.
   [
     'src/main/artifacts/',
@@ -32,7 +38,8 @@ export const WINDOWS_TEST_MODULE_GROUPS = [
     'src/main/specialist/',
     'src/main/agents/'
   ],
-  // 6: Agent and compute runtimes.
+  // 6: Agent and compute runtimes (18 minutes), plus other renderer tests (6 minutes).
+  // First match wins: the more specific renderer pages prefix above stays in group 4.
   [
     'src/main/acp/',
     'src/main/agent-framework/',
@@ -40,7 +47,8 @@ export const WINDOWS_TEST_MODULE_GROUPS = [
     'src/main/side-chat/',
     'src/main/session-plan/',
     'src/main/background-result-delivery/',
-    'src/main/compute/'
+    'src/main/compute/',
+    'src/renderer/'
   ],
   // 7: Notebook runtime and sandbox.
   [

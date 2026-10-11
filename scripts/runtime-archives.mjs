@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { access, chmod, cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { execFileSync } from 'node:child_process'
-import { join, resolve } from 'node:path'
+import { basename, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runtimeTargets, currentRuntimeTarget } from '../packages/open-science/runtime-package.mjs'
 import { verifyRuntimeSignatures } from './verify-runtime-signatures.mjs'
@@ -88,13 +88,13 @@ export async function packRuntimeArchive({
     )
     if (verifySignatures) await verifyRuntimeSignatures(destination)
     const filename = archiveFilename(version, target)
-    // Use the native tar implementation: bsdtar on Windows writes zip with -a.
+    // Keep Unicode parent directories out of Windows bsdtar's locale-encoded arguments.
     execFileSync(
       archiveTar,
       target.os === 'win32'
-        ? ['-a', '-cf', join(output, filename), '-C', temporary, stem]
-        : ['-czf', join(output, filename), '-C', temporary, stem],
-      { stdio: 'inherit' }
+        ? ['-a', '-cf', filename, '-C', basename(temporary), stem]
+        : ['-czf', filename, '-C', basename(temporary), stem],
+      { cwd: output, stdio: 'inherit' }
     )
     const report = { ...metadata, filename, sha256: await sha256(join(output, filename)) }
     await writeFile(join(output, `${target.id}.json`), JSON.stringify(report, null, 2) + '\n')
@@ -120,9 +120,9 @@ export async function collectRuntimeArchives(directory, version, sourceSha) {
       execFileSync(
         target.os === 'win32' && process.platform !== 'win32' ? 'unzip' : archiveTar,
         target.os === 'win32' && process.platform !== 'win32'
-          ? ['-p', path, entry]
-          : ['-xOf', path, entry],
-        { encoding: 'utf8' }
+          ? ['-p', filename, entry]
+          : ['-xOf', filename, entry],
+        { cwd: directory, encoding: 'utf8' }
       )
     )
     assert.deepEqual(

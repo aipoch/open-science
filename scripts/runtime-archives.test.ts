@@ -96,7 +96,11 @@ describe('standalone runtime archives', () => {
     expect(report.sha256).toBe(await sha256(join(options.output, report.filename)))
     const extracted = join(options.root, 'installed with spaces')
     await mkdir(extracted)
-    execFileSync(archiveTar, ['-xf', join(options.output, report.filename), '-C', extracted])
+    execFileSync(
+      archiveTar,
+      ['-xf', join('archives', report.filename), '-C', 'installed with spaces'],
+      { cwd: options.root }
+    )
     const installed = join(extracted, archiveStem('1.2.3', options.target))
     expect(await readFile(join(installed, 'backend/.hidden'), 'utf8')).toBe('.hidden')
     expect(await readFile(join(installed, 'backend/cli.mjs'), 'utf8')).toBe(

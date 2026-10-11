@@ -4453,9 +4453,13 @@ it('round-trips portable history without local Session selection links', async (
   ).toBeUndefined()
 })
 
-it.each(['upload', 'artifact'] as const)(
-  'exports shared %s PDF notes only by opt-in and keeps imported and forked notes inert',
-  async (kind) => {
+it.each(
+  (['upload', 'artifact'] as const).flatMap((kind) =>
+    (['opt-in', 'forwarding', 'receipt-only'] as const).map((scenario) => ({ kind, scenario }))
+  )
+)(
+  'preserves shared $kind PDF notes privacy through $scenario',
+  async ({ kind, scenario }) => {
     const source = await createProvenanceTestFixture()
     const target = await createProvenanceTestFixture()
     fixtures.push(source, target)
@@ -4576,42 +4580,48 @@ it.each(['upload', 'artifact'] as const)(
     })
     const scope = { projectId: 'project-1', sessionId: 'session-1' }
     try {
-      const plain = join(source.storageRoot, 'plain.science')
-      await exporter.exportTo(scope, plain)
-      const shared = join(source.storageRoot, 'shared.science')
-      await exporter.exportTo(scope, shared, {
-        selectFiles: async () => ({ excludedStorageKeys: [], includePdfNotes: true })
-      })
-      initDataRoot(target.storageRoot)
-      const plainSession = await importer.importFrom(plain)
-      expect((await importer.readPdfNotes(plainSession)).items).toEqual([])
-      const imported = await importer.importFrom(shared)
-      const snapshot = await importer.readPdfNotes(imported)
-      expect(snapshot.items.map((note) => note.note)).toEqual(['Shared private observation'])
-      expect(snapshot.readonlyIds).toEqual(snapshot.items.map((note) => note.id))
-      expect(await target.client.pdfAnnotation.count()).toBe(0)
-      const fork = await importer.fork(imported)
-      expect((await importer.readPdfNotes(fork)).items.map((note) => note.note)).toEqual([
-        'Shared private observation'
-      ])
-      const forwarded = join(target.storageRoot, 'forward.science')
-      await importer.exportTo(imported, forwarded, {
-        selectFiles: async (files) => ({
-          excludedStorageKeys: files.map((file) => file.storageKey),
-          includePdfNotes: true
+      if (scenario !== 'receipt-only') {
+        const plain = join(source.storageRoot, 'plain.science')
+        if (scenario === 'opt-in') await exporter.exportTo(scope, plain)
+        const shared = join(source.storageRoot, 'shared.science')
+        await exporter.exportTo(scope, shared, {
+          selectFiles: async () => ({ excludedStorageKeys: [], includePdfNotes: true })
         })
-      })
-      const excluded = await importer.importFrom(forwarded)
-      expect((await importer.readPdfNotes(excluded)).items).toEqual([])
-      const refork = join(target.storageRoot, 'fork.science')
-      await importer.exportTo(fork, refork, {
-        selectFiles: async () => ({ excludedStorageKeys: [], includePdfNotes: true })
-      })
-      const roundtrip = await importer.importFrom(refork)
-      expect((await importer.readPdfNotes(roundtrip)).items.map((note) => note.note)).toEqual([
-        'Shared private observation'
-      ])
-      expect(await target.client.pdfAnnotation.count()).toBe(0)
+        initDataRoot(target.storageRoot)
+        const imported = await importer.importFrom(shared)
+        const snapshot = await importer.readPdfNotes(imported)
+        expect(snapshot.items.map((note) => note.note)).toEqual(['Shared private observation'])
+        expect(snapshot.readonlyIds).toEqual(snapshot.items.map((note) => note.id))
+        expect(await target.client.pdfAnnotation.count()).toBe(0)
+        const fork = await importer.fork(imported)
+        expect((await importer.readPdfNotes(fork)).items.map((note) => note.note)).toEqual([
+          'Shared private observation'
+        ])
+        if (scenario === 'opt-in') {
+          const plainSession = await importer.importFrom(plain)
+          expect((await importer.readPdfNotes(plainSession)).items).toEqual([])
+          return
+        }
+        const forwarded = join(target.storageRoot, 'forward.science')
+        await importer.exportTo(imported, forwarded, {
+          selectFiles: async (files) => ({
+            excludedStorageKeys: files.map((file) => file.storageKey),
+            includePdfNotes: true
+          })
+        })
+        const excluded = await importer.importFrom(forwarded)
+        expect((await importer.readPdfNotes(excluded)).items).toEqual([])
+        const refork = join(target.storageRoot, 'fork.science')
+        await importer.exportTo(fork, refork, {
+          selectFiles: async () => ({ excludedStorageKeys: [], includePdfNotes: true })
+        })
+        const roundtrip = await importer.importFrom(refork)
+        expect((await importer.readPdfNotes(roundtrip)).items.map((note) => note.note)).toEqual([
+          'Shared private observation'
+        ])
+        expect(await target.client.pdfAnnotation.count()).toBe(0)
+        return
+      }
 
       const nativeImport = {
         nativeRefs: [{ id: '12R', pageNumber: 1 }],
@@ -4661,8 +4671,8 @@ it.each(['upload', 'artifact'] as const)(
       await Promise.all([exporter.close(), importer.close()])
     }
   },
-  // This opt-in/forward/fork/receipt journey performs several real validation-database imports.
-  // Match the other multi-import tests' hosted Windows I/O budget without relaxing other tests.
+  // Bound each privacy scenario separately: the combined journey exceeded this Windows budget
+  // while repeatedly migrating validation databases. Keep all real round trips and assertions.
   process.platform === 'win32' ? 120_000 : 60_000
 )
 

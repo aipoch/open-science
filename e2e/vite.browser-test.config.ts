@@ -27,7 +27,7 @@ export default defineConfig({
       include: [
         /node_modules/,
         /packages[\\/](?:connector-(?:core|builtins|mcp-client)|diagnostics|skills)[\\/]dist/,
-        /packages[\\/](?:notebook-analysis|environment|compute)[\\/]dist/
+        /packages[\\/](?:notebook-analysis|environment|compute|reproducibility|specialists)[\\/]dist/
       ]
     },
     outDir: resolve('out/browser-tests'),

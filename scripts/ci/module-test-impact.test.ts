@@ -685,6 +685,25 @@ describe('module test impact commands', () => {
     })
   })
 
+  it.each(['npm_execpath', 'NPM_EXECPATH', 'Npm_ExecPath'])(
+    'launches npm through Node with the Windows environment key %s',
+    (key) => {
+      const plan = createModuleTestPlan('upload_repository')
+      const spawn = vi.fn(() => ({ status: 0 }))
+      executeModuleTestPlan(plan, {
+        platform: 'win32',
+        environment: { [key]: '/npm/bin/npm-cli.js' },
+        nodeExecutable: '/node',
+        spawn
+      })
+      expect(spawn).toHaveBeenCalledWith(
+        '/node',
+        ['/npm/bin/npm-cli.js', 'test', '--', ...plan.testFiles],
+        expect.anything()
+      )
+    }
+  )
+
   it('prints the exact file list before invoking portable npm test arguments', () => {
     const plan = createModuleTestPlan('upload_repository')
     const spawn = vi.fn(() => ({ status: 0 }))

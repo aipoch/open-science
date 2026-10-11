@@ -44,6 +44,14 @@ test.beforeAll(async () => {
     configFile: false,
     root: process.cwd(),
     cacheDir: resolve('out/reproducibility-preview-vite'),
+    // Linked CommonJS contracts need prebundling just as in the production Web dev server.
+    optimizeDeps: {
+      include: [
+        '@aipoch/reproducibility/contracts',
+        '@aipoch/reproducibility/comparison',
+        '@aipoch/reproducibility/execution-context'
+      ]
+    },
     resolve: { alias: { '@': resolve('src/renderer/src') } },
     plugins: [
       {

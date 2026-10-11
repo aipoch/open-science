@@ -9,7 +9,7 @@ import {
   symlinkSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, normalize } from 'node:path'
 import { parse } from 'yaml'
 import { executeModuleTestPlan } from './module-test-impact.mjs'
 import { describe, expect, it } from 'vitest'
@@ -237,12 +237,14 @@ it('applies exclusions to real Vitest discovery across inherited projects while 
         )
       )
     expect(
-      list('1', [core, 'packages/compute', 'packages/durable-files']).map(({ file }) => file)
+      list('1', [core, 'packages/compute', 'packages/durable-files']).map(({ file }) =>
+        normalize(file)
+      )
     ).toEqual([join(fixture, 'src/host.test.ts')])
     // A trusted baseline predating these standalone packages must still discover the new package, exactly once.
     expect(
       list('1')
-        .map(({ file }) => file)
+        .map(({ file }) => normalize(file))
         .sort()
     ).toEqual(
       [
@@ -306,9 +308,9 @@ it.each(['dependencies', 'unavailable'] as const)(
       ).toBe(0)
       const report = JSON.parse(readFileSync(join(cwd, 'result.json'), 'utf8'))
       expect(report.numPassedTests).toBe(3)
-      expect(report.testResults.map(({ name }: { name: string }) => name).sort()).toEqual(
-        [core, providers, mcp].map((root) => join(cwd, root, 'contract.test.ts')).sort()
-      )
+      expect(
+        report.testResults.map(({ name }: { name: string }) => normalize(name)).sort()
+      ).toEqual([core, providers, mcp].map((root) => join(cwd, root, 'contract.test.ts')).sort())
     } finally {
       rmSync(cwd, { recursive: true, force: true })
     }

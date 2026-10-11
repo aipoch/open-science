@@ -65,16 +65,16 @@ describe('linked Compute package browser consumption', () => {
   it.each(['renderer', 'preload', 'web'] as const)(
     'bundles the public API with the %s production CJS policy',
     async (surface) => {
-      const entry = normalizePath(resolve('compute-browser-contract.js'))
+      const entry = resolve('compute-browser-contract.js')
       const result = await build({
         configFile: false,
         logLevel: 'silent',
         plugins: [
           {
             name: 'compute-browser-contract',
-            resolveId: (id) => (id === entry ? entry : undefined),
+            resolveId: (id) => (normalizePath(id) === normalizePath(entry) ? entry : undefined),
             load: (id) =>
-              id === entry
+              normalizePath(id) === normalizePath(entry)
                 ? `
           import { parseHostConnectionPort, isHostConnectionPortValid, computeProviderId } from '@aipoch/compute'
           export const actual = [parseHostConnectionPort(' 2222 '), isHostConnectionPortValid('0'), computeProviderId('cluster')]
@@ -109,16 +109,16 @@ describe('linked Reproducibility package browser consumption', () => {
   it.each(['renderer', 'web'] as const)(
     'bundles the public API with the %s production CJS policy',
     async (surface) => {
-      const entry = normalizePath(resolve('reproducibility-browser-contract.js'))
+      const entry = resolve('reproducibility-browser-contract.js')
       const result = await build({
         configFile: false,
         logLevel: 'silent',
         plugins: [
           {
             name: 'reproducibility-browser-contract',
-            resolveId: (id) => (id === entry ? entry : undefined),
+            resolveId: (id) => (normalizePath(id) === normalizePath(entry) ? entry : undefined),
             load: (id) =>
-              id === entry
+              normalizePath(id) === normalizePath(entry)
                 ? `
           import { outputComparisonPolicySchema as contractPolicy } from '@aipoch/reproducibility/contracts'
           import { outputComparisonPolicySchema } from '@aipoch/reproducibility/comparison'
