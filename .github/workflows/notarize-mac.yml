@@ -104,7 +104,7 @@ jobs:
 
       - name: Setup Node
         if: steps.gate.outputs.enabled == 'true'
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
 
@@ -117,7 +117,7 @@ jobs:
       # Call path (from_run): pull this run's signed artifacts for the arch (uploaded by build.yml).
       - name: Download signed mac artifact (from this run)
         if: steps.gate.outputs.enabled == 'true' && inputs.from_run
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: macos-${{ matrix.arch }}
           path: mac
@@ -127,7 +127,7 @@ jobs:
           steps.gate.outputs.enabled == 'true' &&
           inputs.from_run &&
           inputs.certified_build
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: certification-macos-${{ matrix.arch }}
           path: mac
@@ -290,7 +290,7 @@ jobs:
           steps.gate.outputs.enabled == 'true' &&
           inputs.from_run &&
           inputs.certified_build
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: certification-macos-${{ matrix.arch }}
           overwrite: true
@@ -306,7 +306,7 @@ jobs:
       # (v1 does full-zip mac updates), leaving the dmg, zip, and per-arch feed.
       - name: Re-emit stapled artifact (for publish)
         if: steps.gate.outputs.enabled == 'true' && inputs.from_run
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: macos-${{ matrix.arch }}
           overwrite: true
