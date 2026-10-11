@@ -1,14 +1,15 @@
 import type { NotebookLanguage } from '../../shared/notebook'
-import type { EnvPackage, RuntimeEnablement, RuntimeUsage } from '../../shared/notebook-runtime'
+import type { EnvPackage } from '@aipoch/environment/contracts'
+import type { RuntimeEnablement, RuntimeUsage } from '../../shared/notebook-runtime'
 import {
   defaultDiscoveryDeps,
   discoverInterpreters,
   rscriptFor,
   type DiscoveredInterpreter
-} from './environment-discovery'
-import { listEnvPackages } from './package-listing'
-import { discoverExternalRLibraries, resolveExternalRLibrary } from './external-r-library'
-import type { MicromambaRunner } from './windows-micromamba-runner'
+} from '@aipoch/environment'
+import { listEnvPackages } from '@aipoch/environment'
+import { discoverExternalRLibraries, resolveExternalRLibrary } from '@aipoch/environment'
+import type { MicromambaRunner } from '@aipoch/environment'
 import { isMigrationInProgress, withDataRootWrite } from '../storage/migration-state'
 import { createLogger } from '@aipoch/diagnostics/node'
 import { startDiagnosticOperation } from '@aipoch/diagnostics/node'

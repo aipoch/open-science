@@ -31,7 +31,7 @@ import type {
   ListArtifactReproducibilityReceiptsRequest
 } from '../../shared/artifact-reproducibility'
 import type { NotebookProcessSandbox } from '../notebook/process-sandbox'
-import { isChildUnconfirmedError } from '../notebook/provisioner-runtime'
+import { isChildUnconfirmedError } from '@aipoch/environment'
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import { startDiagnosticOperation } from '@aipoch/diagnostics/node'
 import {

@@ -19,7 +19,7 @@ import type {
   SessionUpsertEvent
 } from '../shared/lifecycle-events'
 import type { NotebookAvailableEvent, NotebookChangedEvent } from '../shared/notebook'
-import type { ProvisionProgress } from '../shared/notebook-env'
+import type { ProvisionProgress } from '@aipoch/environment/contracts'
 import type { NotificationInboxChanged } from '../shared/notifications'
 import type { PermissionGrantsChangedEvent } from '../shared/permission-grants'
 import type { ProjectBackgroundActivityChangedEvent } from '../shared/background-result-delivery'

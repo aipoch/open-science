@@ -6,7 +6,7 @@ import {
   type ProvisionProgress,
   type ProvisionScope,
   type ProvisionStatus
-} from '../../../shared/notebook-env'
+} from '@aipoch/environment/contracts'
 import { deriveProvisionUi, type ProvisionUiState } from '../pages/workspace/provisioning-view'
 
 // Per-language provisioning state, tracked ALONGSIDE the single-slot fields below. The provisioner

@@ -1,6 +1,6 @@
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
-import { isTerminalProvisionPhase, type ProvisionProgress } from './notebook-env'
+import { isTerminalProvisionPhase, type ProvisionProgress } from '@aipoch/environment/contracts'
 
 describe('ProvisionProgress contract', () => {
   it('rejects arbitrary progress phases at compile time', () => {

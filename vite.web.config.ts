@@ -25,7 +25,8 @@ export default defineConfig({
       '@aipoch/connector-mcp-client/oauth-redirect',
       '@aipoch/diagnostics',
       '@aipoch/skills/document',
-      '@aipoch/notebook-analysis/contracts'
+      '@aipoch/notebook-analysis/contracts',
+      '@aipoch/environment/contracts'
     ]
   },
   plugins: [react(), tailwindcss()],
@@ -36,7 +37,7 @@ export default defineConfig({
       include: [
         /node_modules/,
         /packages[\\/](?:connector-(?:core|mcp-client)|diagnostics|skills)[\\/]dist/,
-        /packages[\\/]notebook-analysis[\\/]dist/
+        /packages[\\/](?:notebook-analysis|environment)[\\/]dist/
       ]
     },
     emptyOutDir: true

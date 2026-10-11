@@ -26,11 +26,11 @@ import type {
   ArtifactVersionDescriptor,
   PersistedArtifactExecutionSnapshot
 } from '../../shared/artifact-provenance'
-import type { NotebookEnvironmentLock } from '../../shared/notebook'
+import type { NotebookEnvironmentLock } from '@aipoch/environment/contracts'
 import { englishNativeTranslator, type NativeTranslator } from '../locale/main-process-messages'
-import { parseNotebookEnvironmentLock } from '../notebook/environment-lock'
-import { nativeLockRestoreState, renvRestoreExpression } from '../notebook/native-lock-restoration'
-import { normalizeRuntimeArchitecture } from '../notebook/runtime-paths'
+import { parseNotebookEnvironmentLock } from '@aipoch/environment'
+import { nativeLockRestoreState, renvRestoreExpression } from '@aipoch/environment'
+import { normalizeRuntimeArchitecture } from '@aipoch/environment'
 import { decodeArtifactReproducibilityReceipt } from './artifact-reproducibility-receipts'
 import { sha256 } from './provenance-canonical'
 import { outputPreview } from './artifact-reproducibility-outputs'

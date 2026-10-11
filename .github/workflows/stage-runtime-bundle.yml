@@ -1,7 +1,7 @@
 name: Stage runtime bundle
 
 # Build the per-platform offline default-environment bundle and publish it to the CDN. The published
-# layout is the CURATED multi-version pack layout consumed by src/main/notebook/bundle-local.ts:
+# layout is the CURATED multi-version pack layout consumed by packages/environment/src/bundle-local.ts:
 # per-pack `<language>-<version>.tar.zst` archives (packId) and manifest.json — the same files the
 # local bundle adapter looks up under resources/default-envs. Run this by hand whenever
 # DEFAULT_ENV_VERSION or the default env specs change; the packaged app and this bundle are keyed by the
@@ -151,7 +151,7 @@ jobs:
         shell: bash
         run: |
           requested="$REQUESTED_VERSION"
-          current=$(node -e "const s=require('fs').readFileSync('src/main/notebook/runtime-paths.ts','utf8');process.stdout.write(String(s.match(/DEFAULT_ENV_VERSION\s*=\s*(\d+)/)[1]))")
+          current=$(node -e "const s=require('fs').readFileSync('packages/environment/src/runtime-paths.ts','utf8');process.stdout.write(String(s.match(/DEFAULT_ENV_VERSION\s*=\s*(\d+)/)[1]))")
           if ! [[ "$requested" =~ ^[1-9][0-9]*$ ]]; then
             echo "::error::version must be a positive integer"
             exit 1

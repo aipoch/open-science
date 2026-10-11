@@ -1,12 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import type { NotebookEnvironmentLock, NotebookKernelMetadata } from '../../shared/notebook'
+import type { NotebookEnvironmentLock } from '@aipoch/environment/contracts'
+import type { NotebookKernelMetadata } from '../../shared/notebook'
 import type { NotebookSessionRuntimeBinding } from './session-aggregate'
 import {
   NotebookEnvironmentManagementOwner,
   type NotebookEnvironmentManager
 } from './environment-management'
-import { envPrefix, pythonBin } from './runtime-paths'
+import { envPrefix, pythonBin } from '@aipoch/environment'
 
 type OwnerOptions = ConstructorParameters<typeof NotebookEnvironmentManagementOwner>[0]
 type EnvironmentSession =
@@ -227,7 +228,7 @@ describe('NotebookEnvironmentManagementOwner', () => {
       'python',
       importedLock(),
       checksum,
-      { projectId: 'project-2' }
+      { context: { projectId: 'project-2' } }
     )
   })
 
@@ -317,9 +318,8 @@ describe('NotebookEnvironmentManagementOwner', () => {
       'python',
       ['numpy'],
       expect.objectContaining({
-        projectId: 'project-1',
-        sessionId: 'session-1',
-        workspaceCwd: '/workspace'
+        context: { projectId: 'project-1', sessionId: 'session-1' },
+        cwd: '/workspace'
       }),
       cancellation.signal
     )

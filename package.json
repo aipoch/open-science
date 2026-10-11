@@ -3,7 +3,7 @@
   "productName": "Open-Science",
   "desktopName": "open-science.desktop",
   "version": "0.37.0",
-  "description": "Open-Science — an open-source, model-agnostic AI workbench for scientific discovery.",
+  "description": "Open-Science \u2014 an open-source, model-agnostic AI workbench for scientific discovery.",
   "main": "./out/main/index.js",
   "author": "aipoch",
   "license": "Apache-2.0",
@@ -85,10 +85,10 @@
     "build:connectors": "npm --prefix packages/connector-core run build && npm --prefix packages/connector-builtins run build && npm run build --prefix packages/connector-mcp-client",
     "check:connector-packages": "node scripts/check-connector-packages.mjs",
     "build:diagnostics": "npm --prefix packages/diagnostics run build",
-    "build:packages": "npm run build:connectors && npm run build:diagnostics && npm run build:pdf-packages && npm run build:skills && npm run build:notebook-analysis && npm run build:literature-packages",
+    "build:packages": "npm run build:connectors && npm run build:diagnostics && npm run build:pdf-packages && npm run build:skills && npm run build:notebook-analysis && npm run build:literature-packages && npm run build:environment",
     "check:diagnostics-package": "node scripts/check-diagnostics-package.mjs",
-    "prebuild:web": "npm run build:diagnostics && npm run build:pdf-packages && npm run build:literature-packages",
-    "pretypecheck:web": "npm run build:diagnostics && npm run build:pdf-packages && npm run build:literature-packages",
+    "prebuild:web": "npm run build:diagnostics && npm run build:pdf-packages && npm run build:literature-packages && npm run build:environment",
+    "pretypecheck:web": "npm run build:diagnostics && npm run build:pdf-packages && npm run build:literature-packages && npm run build:environment",
     "build:pdf-structure": "npm --prefix packages/pdf-structure run build",
     "build:pdf-packages": "npm --prefix packages/pdf-structure run build && npm --prefix packages/pdf-translation run build",
     "check:pdf-packages": "node scripts/check-package-isolation.mjs --packages=pdf-structure,pdf-translation",
@@ -99,7 +99,9 @@
     "build:packages:dev": "node scripts/build-dev-packages.mjs",
     "build:backend:dev": "npm run build:packages:dev && npm run build:backend-native && node scripts/build-backend.mjs",
     "build:literature-packages": "npm --prefix packages/literature-citations run build && npm --prefix packages/journal-catalog run build",
-    "check:literature-packages": "node scripts/check-package-isolation.mjs --packages=literature-citations,journal-catalog"
+    "check:literature-packages": "node scripts/check-package-isolation.mjs --packages=literature-citations,journal-catalog",
+    "build:environment": "npm --prefix packages/environment run build",
+    "check:environment-package": "node scripts/check-environment-package.mjs"
   },
   "dependencies": {
     "@agentclientprotocol/claude-agent-acp": "^0.70.0",
@@ -157,7 +159,8 @@
     "@aipoch/notebook-code-risk": "file:packages/notebook-code-risk",
     "@aipoch/notebook-analysis": "file:packages/notebook-analysis",
     "@aipoch/literature-citations": "file:packages/literature-citations",
-    "@aipoch/journal-catalog": "file:packages/journal-catalog"
+    "@aipoch/journal-catalog": "file:packages/journal-catalog",
+    "@aipoch/environment": "file:packages/environment"
   },
   "overrides": {
     "@huggingface/transformers": {

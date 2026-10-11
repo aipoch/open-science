@@ -13,7 +13,7 @@ import { join, win32 } from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { micromambaWorkingCachePaths } from '../src/main/notebook/micromamba-cache'
+import { micromambaWorkingCachePaths } from '@aipoch/environment'
 
 type Fixture = {
   sandbox: string

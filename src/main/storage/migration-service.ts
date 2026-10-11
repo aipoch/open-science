@@ -37,8 +37,8 @@ import {
   type MigrationMarker
 } from './migration-marker'
 import { waitForDataRootWriters } from './migration-state'
-import { DEFAULT_MAX_ENV_RELATIVE_PATH, PACK_PATH_BUDGET_FILE } from '../notebook/bundle-manifest'
-import { windowsDefaultEnvPrefixReserve } from '../notebook/runtime-paths'
+import { DEFAULT_MAX_ENV_RELATIVE_PATH, PACK_PATH_BUDGET_FILE } from '@aipoch/environment'
+import { windowsDefaultEnvPrefixReserve } from '@aipoch/environment'
 import { DATA_ROOT_DIRS, MIGRATABLE_DATA_DIRS } from './data-directories'
 import { directoryHasFiles, hasLegacyResearchData } from './location-evidence'
 import { readManagedWorkspaceOwnership } from './managed-workspace-ownership'

@@ -35,13 +35,13 @@ import {
   notebookWorkloadCacheEnv,
   notebookWorkloadCacheRoot,
   prepareNotebookWorkloadCache
-} from './notebook-workload-cache-paths'
+} from '@aipoch/environment'
 import {
   NOTEBOOK_DIAGNOSTIC_RESERVE_BYTES,
   NOTEBOOK_TEXT_LIMIT_BYTES,
   limitUtf8
 } from './content-limits'
-import { buildNotebookShellEnvironment, environmentPathRoots } from './process-environment'
+import { buildNotebookShellEnvironment, environmentPathRoots } from '@aipoch/environment'
 import {
   prepareShellNpmEnvironment,
   shellNpmPaths,

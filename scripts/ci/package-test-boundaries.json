@@ -48,6 +48,10 @@
     {
       "root": "packages/journal-catalog",
       "dependencies": []
+    },
+    {
+      "root": "packages/environment",
+      "dependencies": ["packages/diagnostics"]
     }
   ]
 }

@@ -3,12 +3,9 @@ import type { LocalModelCapability, LocalModelSnapshot } from '../local-models'
 
 import type { NotebookLanguage } from '../notebook'
 
-import type {
-  DiscoveredInterpreter,
-  EnvPackage,
-  RuntimeEnablement,
-  RuntimeUsage
-} from '../notebook-runtime'
+import type { DiscoveredInterpreter } from '@aipoch/environment/contracts'
+import type { EnvPackage } from '@aipoch/environment/contracts'
+import type { RuntimeEnablement, RuntimeUsage } from '../notebook-runtime'
 
 import {
   callable,

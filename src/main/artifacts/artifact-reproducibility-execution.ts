@@ -32,7 +32,7 @@ import {
 } from '../notebook/reproduction-runtime'
 import type { NotebookProcessSandbox } from '../notebook/process-sandbox'
 import { limitUtf8 } from '../notebook/content-limits'
-import { CHILD_UNCONFIRMED, isChildUnconfirmedError } from '../notebook/provisioner-runtime'
+import { CHILD_UNCONFIRMED, isChildUnconfirmedError } from '@aipoch/environment'
 import { redactRuntimeDiagnosticText } from '@aipoch/diagnostics/node'
 import { notebookHelperEvidenceKey } from '../notebook/helper-evidence'
 import {

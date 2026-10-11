@@ -1,9 +1,10 @@
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
-import { captureNotebookEnvironmentLock, decodeNotebookEnvironmentLock } from './environment-lock'
-import type { NotebookEnvironmentLock, NotebookEnvironmentManifest } from '../../shared/notebook'
-import { nativeLockRestoreState } from './native-lock-restoration'
+import { captureNotebookEnvironmentLock, decodeNotebookEnvironmentLock } from '@aipoch/environment'
+import type { NotebookEnvironmentLock } from '@aipoch/environment/contracts'
+import type { NotebookEnvironmentManifest } from '../../shared/notebook'
+import { nativeLockRestoreState } from '@aipoch/environment'
 
 const content = JSON.stringify({
   R: { Version: '4.4.3', Repositories: [{ Name: 'CRAN', URL: 'https://cloud.r-project.org' }] },

@@ -2,14 +2,16 @@ import type { ArtifactFile, ArtifactSourceFileObservation, ArtifactWriteSource }
 import type { NotebookExecutionContext } from './notebook-execution-context'
 import type { ArtifactLiteratureManifest, ArtifactLiteratureRequest } from './artifact-literature'
 import type {
+  NotebookRunEnvironmentCapture,
+  NotebookRunEnvironmentLockCapture
+} from '@aipoch/environment/contracts'
+import type {
   NotebookInputAssociation,
   NotebookInputAccessEvidence,
   NotebookHelperModuleEvidence,
   NotebookHelperEvidenceStatus,
   NotebookKernelKind,
   NotebookInputFileSummary,
-  NotebookRunEnvironmentCapture,
-  NotebookRunEnvironmentLockCapture,
   NotebookRunInputFile,
   NotebookRunStatus
 } from './notebook'

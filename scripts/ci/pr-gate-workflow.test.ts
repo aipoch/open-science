@@ -1735,8 +1735,8 @@ describe('PR Gate workflow', () => {
       'src/main/notebook/file-evidence-publication.integration.test.ts',
       'src/main/compute/compute-submission-evidence-recovery.integration.test.ts',
       'src/main/specialist/repository.test.ts',
-      'src/main/notebook/micromamba-cache-powershell.test.ts',
-      'src/main/notebook/micromamba-cache-acl.integration.test.ts'
+      'packages/environment/src/micromamba-cache-powershell.test.ts',
+      'packages/environment/src/micromamba-cache-acl.integration.test.ts'
     ]) {
       expect(runtime?.run).toContain(testFile)
     }
@@ -1812,7 +1812,7 @@ describe('PR Gate workflow', () => {
       'src/main/acp/workspace-path.test.ts',
       'src/main/file-save.test.ts',
       'src/main/notebook/run-document-data-paths.test.ts',
-      'src/main/notebook/runtime-paths.test.ts',
+      'packages/environment/src/runtime-paths.test.ts',
       'src/main/session-persistence/conversation-export.test.ts',
       'src/main/session-persistence/data-path-roundtrip.test.ts',
       'src/main/settings/notebook-runtime-settings.test.ts',

@@ -2,7 +2,7 @@ import { basename } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { BASE_PYTHON_PACKAGES, BASE_R_PACKAGES } from '../src/main/notebook/provisioner'
+import { BASE_PYTHON_PACKAGES, BASE_R_PACKAGES } from '@aipoch/environment'
 import {
   buildLockFromSolve,
   derivePackPathBudget,

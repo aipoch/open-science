@@ -23,11 +23,11 @@ import {
   sealArtifactReproducibilityRecipe
 } from '../artifacts/artifact-reproducibility-recipe'
 
-import { EnvironmentStateTracker } from './environment-state-tracker'
+import { EnvironmentStateTracker } from '@aipoch/environment'
 
 import { frameRRequest, parseLoopResponse } from './kernel-protocol'
 
-import { resolveMicromamba } from './micromamba'
+import { resolveMicromamba } from '@aipoch/environment'
 
 import { notebookPromptInputPath } from './prompt-input-materialization'
 

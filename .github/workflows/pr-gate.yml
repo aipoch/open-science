@@ -488,6 +488,10 @@ jobs:
         continue-on-error: true
         # Missing trusted selection retains full verification; host-only changes select none.
         run: npm run check:notebook-packages -- --ci
+      - name: Verify independent environment tarball
+        id: environment_package
+        continue-on-error: true
+        run: npm run check:environment-package -- --ci
       - name: Check Markdown formatting
         id: docs
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'docs') }}
@@ -624,6 +628,7 @@ jobs:
           FORMAT_OUTCOME: ${{ steps.format.outcome }}
           I18N_OUTCOME: ${{ steps.i18n.outcome }}
           INTERFACE_CONTRACTS_OUTCOME: ${{ steps.interface_contracts.outcome }}
+          ENVIRONMENT_PACKAGE_OUTCOME: ${{ steps.environment_package.outcome }}
           NOTEBOOK_PACKAGES_OUTCOME: ${{ steps.notebook_packages.outcome }}
           RUNTIME_BUNDLE_OUTCOME: ${{ steps.runtime_bundle.outcome }}
           LINT_OUTCOME: ${{ steps.lint.outcome }}
@@ -652,6 +657,7 @@ jobs:
           check i18n "$I18N_OUTCOME"
           check runtime_bundle "$RUNTIME_BUNDLE_OUTCOME"
           check notebook_packages "$NOTEBOOK_PACKAGES_OUTCOME"
+          check environment_package "$ENVIRONMENT_PACKAGE_OUTCOME"
           exit "$failed"
 
   unit_shard:
@@ -968,8 +974,8 @@ jobs:
           src/main/notebook/file-evidence-publication.integration.test.ts
           src/main/compute/compute-submission-evidence-recovery.integration.test.ts
           src/main/specialist/repository.test.ts
-          src/main/notebook/micromamba-cache-powershell.test.ts
-          src/main/notebook/micromamba-cache-acl.integration.test.ts
+          packages/environment/src/micromamba-cache-powershell.test.ts
+          packages/environment/src/micromamba-cache-acl.integration.test.ts
       - name: Test scheduled Windows validation regressions
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' }}
         env:
@@ -998,7 +1004,7 @@ jobs:
         run: |
           $env:OPEN_SCIENCE_TEST_PYTHON = python -c "import sys, pip, ensurepip; print(sys.executable)"
           if ($LASTEXITCODE -ne 0 -or -not $env:OPEN_SCIENCE_TEST_PYTHON) { throw 'Python with pip and ensurepip is required for wheel evidence tests.' }
-          npm test -- src/main/notebook/pip-wheel-evidence.test.ts src/main/notebook/pip-install-evidence.test.ts
+          npm test -- packages/environment/src/pip-wheel-evidence.test.ts packages/environment/src/pip-install-evidence.test.ts
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Test Windows notebook shell behavior
         id: windows_shell
@@ -1044,7 +1050,7 @@ jobs:
           src/main/acp/workspace-path.test.ts
           src/main/file-save.test.ts
           src/main/notebook/run-document-data-paths.test.ts
-          src/main/notebook/runtime-paths.test.ts
+          packages/environment/src/runtime-paths.test.ts
           src/main/session-persistence/conversation-export.test.ts
           src/main/session-persistence/data-path-roundtrip.test.ts
           src/main/settings/notebook-runtime-settings.test.ts

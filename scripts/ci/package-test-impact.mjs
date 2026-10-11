@@ -43,9 +43,7 @@ export function validatePackageTestRegistry(registry) {
   return registry
 }
 
-// Build upstream tarballs as prerequisites, but only run unit suites selected by trusted policy.
-export function notebookPackageVerificationPlan(selectedRoots, excludedRoots) {
-  const names = ['notebook-syntax', 'notebook-code-risk', 'notebook-analysis']
+function validateVerificationRoots(selectedRoots, excludedRoots) {
   for (const roots of [selectedRoots, excludedRoots]) {
     if (
       roots !== undefined &&
@@ -56,6 +54,12 @@ export function notebookPackageVerificationPlan(selectedRoots, excludedRoots) {
     )
       throw new Error('Invalid package verification roots')
   }
+}
+
+// Build upstream tarballs as prerequisites, but only run unit suites selected by trusted policy.
+export function notebookPackageVerificationPlan(selectedRoots, excludedRoots) {
+  const names = ['notebook-syntax', 'notebook-code-risk', 'notebook-analysis']
+  validateVerificationRoots(selectedRoots, excludedRoots)
   const tests = names.filter(
     (name) =>
       selectedRoots === undefined ||
@@ -69,6 +73,19 @@ export function notebookPackageVerificationPlan(selectedRoots, excludedRoots) {
     (name) => tests.includes(name) || (name === 'notebook-syntax' && tests.length > 0)
   )
   return { builds, tests }
+}
+
+// A new package is verified until the trusted registry explicitly excludes it.
+export function environmentPackageVerificationPlan(selectedRoots, excludedRoots) {
+  validateVerificationRoots(selectedRoots, excludedRoots)
+  const excluded =
+    selectedRoots !== undefined &&
+    !selectedRoots.includes('packages') &&
+    !selectedRoots.includes('packages/environment') &&
+    excludedRoots?.includes('packages/environment')
+  return excluded
+    ? { builds: [], tests: [] }
+    : { builds: ['diagnostics', 'environment'], tests: ['environment'] }
 }
 
 export function createPackageTestPlan(paths, registry) {

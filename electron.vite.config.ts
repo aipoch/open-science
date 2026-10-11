@@ -35,7 +35,7 @@ export default defineConfig(({ command }) => ({
         include: [
           /node_modules/,
           /packages[\\/](?:connector-(?:core|mcp-client)|diagnostics|skills)[\\/]dist/,
-          /packages[\\/]notebook-analysis[\\/]dist/
+          /packages[\\/](?:notebook-analysis|environment)[\\/]dist/
         ]
       },
       rollupOptions: {
@@ -60,7 +60,8 @@ export default defineConfig(({ command }) => ({
               '@aipoch/connector-mcp-client/oauth-redirect',
               '@aipoch/diagnostics',
               '@aipoch/skills/document',
-              '@aipoch/notebook-analysis/contracts'
+              '@aipoch/notebook-analysis/contracts',
+              '@aipoch/environment/contracts'
             ],
             entries: [
               '*.html',
@@ -112,7 +113,7 @@ export default defineConfig(({ command }) => ({
         include: [
           /node_modules/,
           /packages[\\/](?:connector-(?:core|mcp-client)|diagnostics|skills)[\\/]dist/,
-          /packages[\\/]notebook-analysis[\\/]dist/
+          /packages[\\/](?:notebook-analysis|environment)[\\/]dist/
         ]
       },
       rollupOptions: {

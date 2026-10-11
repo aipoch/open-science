@@ -309,7 +309,6 @@
       "src/main/artifacts/ipc.test.ts",
       "src/main/local-fs/service.test.ts",
       "src/main/notebook/kernel-executor.test.ts",
-      "src/main/notebook/micromamba.test.ts",
       "src/main/notebook/shell-process.test.ts",
       "src/main/notebook/windows-runtime-manager.test.ts",
       "src/main/notebook/working-file-observer.test.ts",

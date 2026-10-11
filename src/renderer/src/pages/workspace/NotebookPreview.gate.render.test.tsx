@@ -11,7 +11,7 @@ import type {
   NotebookRunRecord,
   NotebookSessionState
 } from '../../../../shared/notebook'
-import type { ProvisionStatus } from '../../../../shared/notebook-env'
+import type { ProvisionStatus } from '@aipoch/environment/contracts'
 import { createInitialNotebookEnvState, useNotebookEnvStore } from '../../stores/notebook-env-store'
 import { createInitialSettingsState, useSettingsStore } from '../../stores/settings-store'
 import { createInitialSessionState, useSessionStore } from '../../stores/session-store'

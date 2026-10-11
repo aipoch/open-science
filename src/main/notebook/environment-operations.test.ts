@@ -1,3 +1,4 @@
+import { verifyExecutable } from './environment-process'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -14,7 +15,7 @@ import {
   type NotebookLaneIdentity
 } from './lane-identity'
 import { NotebookSessionRegistry, type NotebookSessionRegistryMember } from './session-registry'
-import { NotebookRecoveryCoordinator } from './recovery-coordinator'
+import { NotebookRecoveryCoordinator } from '@aipoch/environment'
 
 let storageRoot: string | undefined
 
@@ -53,7 +54,9 @@ const createOwner = async (
   notifyChanged: ReturnType<typeof vi.fn>
   clearKernelTermination: ReturnType<typeof vi.fn>
 }> => {
-  const recovery = new NotebookRecoveryCoordinator(join(await createRoot(), 'runtime'))
+  const recovery = new NotebookRecoveryCoordinator(join(await createRoot(), 'runtime'), undefined, {
+    verifyExecutable
+  })
   const notifyChanged = vi.fn()
   const clearKernelTermination = vi.fn(async () => undefined)
   const bindings = {

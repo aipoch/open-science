@@ -25,7 +25,7 @@ import type { NotebookSessionSnapshot } from './session-aggregate'
 import type { NotebookLaneIdentity } from './lane-identity'
 import { resolveProjectId } from '../../shared/project-scope'
 import { NOTEBOOK_RENDERER_RUN_LIMIT } from './content-limits'
-import { DEFAULT_PY_ENV, DEFAULT_R_ENV } from './runtime-paths'
+import { DEFAULT_PY_ENV, DEFAULT_R_ENV } from '@aipoch/environment'
 import {
   unavailableNotebookDependencyProjection,
   type NotebookDependencyAnalyzer,

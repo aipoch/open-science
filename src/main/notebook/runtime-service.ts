@@ -1,3 +1,5 @@
+import { resolveNotebookMicromamba as resolveMicromamba } from './environment-resources'
+import { verifyExecutable, installEnvironmentPackages } from './environment-process'
 import type { NotebookDependencyAnalyzer } from '@aipoch/notebook-analysis'
 import { createNotebookDependencyAnalyzer } from './dependency-analysis-adapter'
 import { desktopFileInteraction } from '../desktop-interaction'
@@ -9,6 +11,7 @@ import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { isImportedResearchSession } from '../storage/session-package-state'
+import type { NotebookEnvironmentLock } from '@aipoch/environment/contracts'
 import type {
   NotebookCell,
   AbortNotebookCodeCellRequest,
@@ -25,7 +28,6 @@ import type {
   ExportNotebookKernelRequest,
   ExportNotebookResult,
   FinishNotebookCodeCellRequest,
-  NotebookEnvironmentLock,
   NotebookLanguage,
   NotebookNamespaceRequest,
   NotebookNamespaceSnapshot,
@@ -54,11 +56,8 @@ import {
   NOTEBOOK_STATE_TARGET_RUN_LIMIT,
   parseNotebookLanguage
 } from '../../shared/notebook'
-import type {
-  ManageEnvironmentsRequest,
-  ManageEnvironmentsResult,
-  ProvisionProgress
-} from '../../shared/notebook-env'
+import type { ProvisionProgress } from '@aipoch/environment/contracts'
+import type { ManageEnvironmentsRequest, ManageEnvironmentsResult } from '../../shared/notebook-env'
 import type { PackageMirror } from '../../shared/mirror'
 import { NotebookDataExecutionAdmissionOwner } from './data-execution-admission'
 import {
@@ -79,12 +78,9 @@ import { englishNativeTranslator, type NativeTranslator } from '../locale/main-p
 import type { ProbeDeps } from './mirror-probe'
 import { defaultShellRuntimeBinding, shellRuntimePlatform } from './shell-runtime'
 import { detachedShellMechanism } from './shell-detachment-policy.windows-posix'
-import {
-  installPackages as installPackagesDefault,
-  type InstallDeps,
-  type InstallRequest,
-  type InstallResult
-} from './package-manager'
+import type { InstallDeps } from '@aipoch/environment'
+import type { InstallRequest } from '../../shared/notebook-env'
+import { type InstallResult } from '../../shared/notebook-env'
 import {
   NotebookPackageOperations,
   type InspectPackagesRequest,
@@ -103,9 +99,9 @@ import {
   rBin,
   rScriptBin,
   resolveEnvName
-} from './runtime-paths'
+} from '@aipoch/environment'
+import type { DiscoveredInterpreter } from '@aipoch/environment/contracts'
 import type {
-  DiscoveredInterpreter,
   NotebookRuntimeBindings,
   NotebookRuntimeListing,
   RuntimeBindingOperationResult,
@@ -113,13 +109,13 @@ import type {
   RuntimeUsage
 } from '../../shared/notebook-runtime'
 import type { NotebookRuntimeSettings } from '../settings/capabilities'
-import { NotebookRecoveryCoordinator } from './recovery-coordinator'
+import { NotebookRecoveryCoordinator } from '@aipoch/environment'
 import { KernelProcessLifecycleOwner } from './kernel-process-lifecycle.windows-posix'
-import { managedNotebookWorkingCache } from './windows-micromamba-working-cache'
+import { managedNotebookWorkingCache } from '@aipoch/environment'
 import { NotebookRuntimeRepairOwner, type ExplicitRuntimeRepairTarget } from './runtime-repair'
-import { NotebookRuntimeRepairPolicy } from './runtime-repair-policy'
+import { NotebookRuntimeRepairPolicy } from '@aipoch/environment'
 import { NotebookEnvironmentOperations, type DefaultEnvProvisioner } from './environment-operations'
-import type { MicromambaRunner } from './windows-micromamba-runner'
+import type { MicromambaRunner } from '@aipoch/environment'
 import {
   type NotebookSessionAggregate,
   type NotebookSessionExecutionRequest,
@@ -131,8 +127,8 @@ import {
 } from './session-aggregate'
 import { NotebookSessionRegistry } from './session-registry'
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
-import { EnvironmentStateTracker, type EnvironmentCaptureTarget } from './environment-state-tracker'
-import { resolveMicromamba } from './micromamba'
+import { EnvironmentStateTracker, type EnvironmentCaptureTarget } from '@aipoch/environment'
+import {} from '@aipoch/environment'
 import { NotebookRuntimeBindingOwner } from './runtime-binding'
 import { readTrustedNotebookBindingPermissionPrompts } from './runtime-binding-admission'
 import type { RuntimeDiagnosticLogger } from '@aipoch/diagnostics/node'
@@ -821,11 +817,10 @@ class NotebookRuntimeService {
     })
     const workingCache = managedNotebookWorkingCache(options.platform, !options.installPackagesImpl)
     this.repairPolicy = new NotebookRuntimeRepairPolicy(runtimeRoot)
-    this.recoveryCoordinator = new NotebookRecoveryCoordinator(
-      runtimeRoot,
-      this.repairPolicy,
-      workingCache
-    )
+    this.recoveryCoordinator = new NotebookRecoveryCoordinator(runtimeRoot, this.repairPolicy, {
+      ...workingCache,
+      verifyExecutable
+    })
     this.mcpRpcConnectionResolver = options.getMcpRpcConnection
     const runtimeSettings = options.notebookRuntimeSettings ?? EMPTY_NOTEBOOK_RUNTIME_SETTINGS
     this.runtimeEnablementResolver = async (language) =>
@@ -975,7 +970,7 @@ class NotebookRuntimeService {
       environmentOperations: this.environmentOperations,
       recovery: this.recoveryCoordinator,
       environmentStateTracker: this.environmentStateTracker,
-      installPackages: options.installPackagesImpl ?? installPackagesDefault,
+      installPackages: options.installPackagesImpl ?? installEnvironmentPackages,
       ...(options.processSandbox
         ? {
             packageSpawn: (target, mirror) =>
@@ -2615,7 +2610,7 @@ class NotebookRuntimeService {
   // once recovery has settled, and when recovery was never kicked off (e.g. tests). Public so the
   // startup env gate and UI provision/repair handlers can share the SAME barrier (they touch prefixes
   // too, not just materialize/install).
-  recoveryStatus(): import('../../shared/notebook-env').NotebookRecoveryStatus {
+  recoveryStatus(): import('@aipoch/environment/contracts').NotebookRecoveryStatus {
     return this.recoveryCoordinator.status()
   }
 

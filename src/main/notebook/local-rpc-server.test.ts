@@ -2,7 +2,7 @@ import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import type { RequestPermissionRequest } from '@agentclientprotocol/sdk'
 import type { AcpPermissionRequest } from '../../shared/acp'
 import type { NotebookLanguage } from '../../shared/notebook'
-import type { DiscoveredInterpreter } from '../../shared/notebook-runtime'
+import type { DiscoveredInterpreter } from '@aipoch/environment/contracts'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 import type { NotebookRpcConnection } from './mcp-server'
 import { getAgentFramework } from '../agent-framework'
@@ -62,7 +62,7 @@ import {
   pythonBin,
   rBin,
   writeReadyMarker
-} from './runtime-paths'
+} from '@aipoch/environment'
 
 let storageRoot: string | undefined
 

@@ -1,7 +1,7 @@
 import { runtimeMetadataIfConfigured } from '../runtime-metadata'
 import { join } from 'node:path'
 import catalog from './windows-runtime-catalog.json'
-import { extractPackArchive } from './pack-archive'
+import { extractPackArchive } from '@aipoch/environment'
 import { resilientDownload } from '../net/resilient-download'
 import { netFetchStandard } from '../network-fetch'
 import {

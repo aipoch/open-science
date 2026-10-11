@@ -16,7 +16,7 @@ import {
 import {
   WINDOWS_CACHE_DANGEROUS_RIGHT_NAMES,
   WINDOWS_CACHE_TRUSTED_OWNER_SIDS
-} from '../src/main/notebook/micromamba-cache'
+} from '@aipoch/environment'
 
 describe('macOS native privacy purpose descriptions', () => {
   it.each([

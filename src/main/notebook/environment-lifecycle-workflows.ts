@@ -6,19 +6,24 @@ import {
   type NotebookLanguage
 } from '../../shared/notebook'
 import { withDataRootWrite } from '../storage/migration-state'
+import { serializeProvisioner } from '@aipoch/environment'
 import {
   logStartupGateFailure,
-  runLoggedRuntimeOperation,
-  serializeProvisioner
-} from './environment-operation-foundation'
+  runLoggedRuntimeOperation
+} from './environment-lifecycle-diagnostics'
 import {
   planStartupAction,
   type ProvisionProgress,
   type ProvisionStatus,
   type RuntimeProvisioner
-} from './provisioner'
+} from '@aipoch/environment'
 import { explicitRuntimeRepairTarget, type ExplicitRuntimeRepairTarget } from './runtime-repair'
-import { DEFAULT_ENV_VERSION, DEFAULT_PY_ENV, envPrefix, readReadyMarker } from './runtime-paths'
+import {
+  DEFAULT_ENV_VERSION,
+  DEFAULT_PY_ENV,
+  envPrefix,
+  readReadyMarker
+} from '@aipoch/environment'
 
 type NotebookEnvironmentLifecycle = {
   status: () => Promise<ProvisionStatus>
@@ -37,7 +42,7 @@ type NotebookEnvironmentLifecycleDeps = {
   root: string
   platform?: NodeJS.Platform
   projectProgress: (progress: ProvisionProgress) => void
-  recoveryStatus?: () => import('../../shared/notebook-env').NotebookRecoveryStatus
+  recoveryStatus?: () => import('@aipoch/environment/contracts').NotebookRecoveryStatus
   waitForRecovery?: () => Promise<void>
   assertProvisionAllowed?: (language: NotebookLanguage) => void
   onRepairStarting?: (

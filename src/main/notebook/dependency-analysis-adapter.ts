@@ -2,7 +2,7 @@ import { join } from 'node:path'
 import { NotebookDependencyAnalyzer } from '@aipoch/notebook-analysis'
 import { readNotebookFileGenerations } from './analysis-file-evidence'
 import { getNotebookSessionRoot, getRuntimeRoot } from './repository'
-import { envPrefix, pythonBin, resolveEnvName, rScriptBin } from './runtime-paths'
+import { envPrefix, pythonBin, resolveEnvName, rScriptBin } from '@aipoch/environment'
 
 type Options = ConstructorParameters<typeof NotebookDependencyAnalyzer>[0]
 

@@ -236,8 +236,6 @@
       "src/main/notebook/package-cache-sandbox.integration.test.ts",
       "src/main/notebook/package-process-sandbox.windows.integration.test.ts",
       "src/main/notebook/process-tree-consumers.macos.integration.test.ts",
-      "src/main/notebook/provisioner.test.ts",
-      "src/main/notebook/recovery-coordinator.test.ts",
       "src/main/notebook/repl-loop.integration.test.ts",
       "src/main/notebook/reproduction-runtime.integration.test.ts",
       "src/main/notebook/reproduction-runtime.test.ts",
@@ -464,7 +462,9 @@
       "src/main/agents/production-completion-handoff.test.ts",
       "src/main/notebook/working-file-observer-plain-host.test.ts",
       "src/main/notebook/auto-mode-budget.integration.test.ts",
-      "src/renderer/src/pages/literature/literature-localization.render.test.tsx"
+      "src/renderer/src/pages/literature/literature-localization.render.test.tsx",
+      "src/main/notebook/environment-provisioning.contract.test.ts",
+      "src/main/notebook/environment-recovery.contract.test.ts"
     ]
   },
   "capabilityOverlays": ["i18n_catalog"],
