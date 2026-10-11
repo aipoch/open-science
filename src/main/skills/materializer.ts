@@ -4,7 +4,7 @@ import { ClaudeCodeSkillMaterializer as Materializer } from '@aipoch/skills/proj
 import type { BundledSkill } from '@aipoch/skills'
 import { createLogger } from '@aipoch/diagnostics/node'
 import { COMPUTE_SKILL_ID } from '../compute/skill-doc'
-export * from '@aipoch/skills/projection'
+
 const log = createLogger('skills')
 // Marker line in an injected notice, used to keep injection idempotent.
 const COMPUTE_NOTICE_MARKER = 'Compute environment unavailable in this app'

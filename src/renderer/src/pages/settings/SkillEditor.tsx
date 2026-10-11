@@ -8,11 +8,8 @@ import { Dialog, RadioGroup } from 'radix-ui'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
 
-import type {
-  SkillDetailView,
-  SkillPackageFileInfo,
-  SkillReference
-} from '../../../../shared/settings'
+import type { SkillDetailView } from '../../../../shared/settings'
+import type { SkillPackageFileInfo, SkillReference } from '@aipoch/skills/document'
 import { serializePersonalSkillDocument } from '@aipoch/skills/document'
 import { isSkillPackageBudgetedPath, SKILL_IMPORT_LIMITS } from '@aipoch/skills/document'
 import { parseSkillDocument } from '@aipoch/skills/document'

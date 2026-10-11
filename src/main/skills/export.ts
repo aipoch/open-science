@@ -3,10 +3,9 @@ import { englishNativeTranslator, type NativeTranslator } from '../locale/main-p
 import { publishUserFile } from '../user-file-publisher'
 import { buildSkillExportArchive as buildArchive } from '@aipoch/skills/sources'
 import { validateSkillHelper } from './helper-validation'
-export { skillExportFileName } from '@aipoch/skills/sources'
+
 export const buildSkillExportArchive: typeof buildArchive = (skill, storageRoot) =>
   buildArchive(skill, storageRoot, validateSkillHelper)
-export type { SkillExportArchive } from '@aipoch/skills/sources'
 
 type SkillExportDialog = {
   showSaveDialog: (options: {

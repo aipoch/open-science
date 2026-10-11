@@ -37,7 +37,7 @@ vi.mock('electron', () => ({
   }
 }))
 
-import { SkillRegistry } from './registry'
+import { SkillRegistry } from '@aipoch/skills'
 import { SettingsRepository } from '../settings/repository'
 import { SkillCatalogModule } from './catalog'
 

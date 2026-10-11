@@ -18,7 +18,6 @@ import type {
 import { dirname, join, resolve, sep } from 'node:path'
 
 import type {
-  AgentHomeSkillView,
   CreateSkillRequest,
   DeleteSkillRequest,
   ImportSkillRequest,
@@ -36,13 +35,16 @@ import type {
   ScanRepoResult,
   SetSkillEnabledRequest,
   SetSkillsEnabledRequest,
-  SkillBundlePreviewResult,
   SkillDetailView,
   SkillImportPreviewContent,
-  SkillSource,
   SkillView,
   UpdateSkillRequest
 } from '../../shared/settings'
+import type {
+  AgentHomeSkillView,
+  SkillBundlePreviewResult,
+  SkillSource
+} from '@aipoch/skills/document'
 import { DEFAULT_AGENT_FRAMEWORK_ID, type AgentFrameworkId } from '../agent-framework'
 import { codeBuddyStorageDir } from '../agent-framework/codebuddy'
 import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
@@ -55,31 +57,30 @@ import {
   type FetchLike
 } from '@aipoch/skills/sources'
 import { decodeBoundedBase64, SKILL_IMPORT_LIMITS } from '@aipoch/skills/sources'
-import {
-  ClaudeCodeSkillMaterializer,
-  OS_SKILL_PREFIX,
-  type SkillMaterializationOptions
-} from './materializer'
+import { ClaudeCodeSkillMaterializer } from './materializer'
+import { OS_SKILL_PREFIX, type SkillMaterializationOptions } from '@aipoch/skills/projection'
 import { netFetch } from '../network-fetch'
-import { SkillRegistry, type BundledSkill } from './registry'
+import { resolveBundledSkillsRoot } from './resource-path'
+import { SkillRegistry, type BundledSkill } from '@aipoch/skills'
 import {
   readSkillFile,
   listSkillPackageFiles,
   skillReferencesFromPackageFiles
 } from '@aipoch/skills/sources'
-import { buildSkillExportArchive, type SkillExportArchive } from './export'
-import { SAFE_SKILL_NAME, UserSkillRepository, isReservedSkillName } from './user-skill-repository'
+import { buildSkillExportArchive } from './export'
+import type { SkillExportArchive } from '@aipoch/skills/sources'
+import { UserSkillRepository } from './user-skill-repository'
+import { SAFE_SKILL_NAME, isReservedSkillName } from '@aipoch/skills'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import type { SettingsRepository } from '../settings/repository'
 import type { StoredSettings } from '../settings/types'
 import { encryptKey, maskKey, tryDecryptKey } from '../settings/crypto'
 import {
   RegisteredSkillHelperCatalog,
-  type RegisteredHelperScope,
-  type RegisteredSkillPackage,
   validateRegisteredSkillPackages
 } from './registered-helper-catalog'
-import { isSkillEffectivelyEnabled, trustedSkillActivationPolicy } from './activation-policy'
+import type { RegisteredHelperScope, RegisteredSkillPackage } from '@aipoch/skills'
+import { isSkillEffectivelyEnabled, trustedSkillActivationPolicy } from '@aipoch/skills/document'
 
 type SkillCatalogEntry = {
   name: string
@@ -127,7 +128,7 @@ class SkillCatalogModule {
   private userSkillCatalogRead: Promise<BundledSkill[]> | undefined
 
   constructor(private readonly options: SkillCatalogModuleOptions) {
-    this.skillRegistry = options.skillRegistry ?? new SkillRegistry()
+    this.skillRegistry = options.skillRegistry ?? new SkillRegistry(resolveBundledSkillsRoot)
     this.userSkills =
       options.userSkills ??
       new UserSkillRepository(options.storageRoot, {

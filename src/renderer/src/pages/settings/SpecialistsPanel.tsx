@@ -62,7 +62,7 @@ import { useMarketplaceStore } from '@/stores/marketplace-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { useTagStore } from '@/stores/tag-store'
 import type { CreateSpecialistInput, SpecialistListItem } from '../../../../shared/specialist'
-import type { SkillSource } from '../../../../shared/settings'
+import type { SkillSource } from '@aipoch/skills/document'
 import { specialistPackageReportFromPreview } from '../../../../shared/specialist-package'
 import type {
   SpecialistDeletePreview,

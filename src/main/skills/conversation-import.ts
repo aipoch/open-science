@@ -9,9 +9,9 @@ import type {
   ConversationSkillImportResult,
   ConversationSkillImportSelection,
   ImportSkillResult,
-  ScannedSkillView,
-  SkillBundlePreviewResult
+  ScannedSkillView
 } from '../../shared/settings'
+import type { SkillBundlePreviewResult } from '@aipoch/skills/document'
 import { parseUploadVersionReference } from '../../shared/uploads'
 import type { ManagedFileVersionService } from '../managed-file-versions/service'
 import type { UploadRepository } from '../uploads/repository'

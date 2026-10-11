@@ -14,7 +14,7 @@ vi.mock('electron', () => ({
   }
 }))
 
-import { SkillRegistry, type BundledSkill } from './registry'
+import { SkillRegistry, type BundledSkill } from '@aipoch/skills'
 import type { UserSkillRepository } from './user-skill-repository'
 import { NotebookHelperModuleHost } from '../notebook/helper-module-host'
 import { NotebookKernelExecutor } from '../notebook/kernel-executor'

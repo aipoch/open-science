@@ -1,6 +1,6 @@
 import { SettingsService } from '../settings/service'
 import { SettingsRepository } from '../settings/repository'
-import { SkillRegistry } from '../skills/registry'
+import { SkillRegistry } from '@aipoch/skills'
 import { ClaudeCodeSkillMaterializer } from '../skills/materializer'
 import {
   loadSkillDocument,

@@ -14,7 +14,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { COMPUTE_SKILL_DIRECTORY } from '../compute/skill-doc'
-import type { BundledSkill } from './registry'
+import type { BundledSkill } from '@aipoch/skills'
 import { ClaudeCodeSkillMaterializer } from './materializer'
 
 const makeSkill = async (name: string): Promise<BundledSkill> => {

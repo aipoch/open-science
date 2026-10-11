@@ -15,7 +15,7 @@ import { join, relative } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ClaudeCodeSkillMaterializer } from '../skills/materializer'
-import type { BundledSkill } from '../skills/registry'
+import type { BundledSkill } from '@aipoch/skills'
 
 const renameSourceModes = vi.hoisted(() => [] as number[])
 

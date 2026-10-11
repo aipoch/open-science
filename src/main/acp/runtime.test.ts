@@ -58,7 +58,7 @@ import type { ModelReasoningEffort } from '../../shared/reasoning-effort'
 import { terminateProcessTree } from '../process-tree'
 import { AgentMcpHttpHost } from './mcp-http-host'
 import { SIDE_CHAT_SESSION_CAPABILITY_POLICY } from './session-capability-owner'
-import { SkillRegistry } from '../skills/registry'
+import { SkillRegistry } from '@aipoch/skills'
 import {
   claudeCodeFramework,
   codeBuddyFramework,

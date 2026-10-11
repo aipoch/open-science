@@ -14,7 +14,7 @@ vi.mock('electron', () => ({
   }
 }))
 
-import { SkillRegistry } from './registry'
+import { SkillRegistry } from '@aipoch/skills'
 import { AcpTurnSkillOwner } from '../acp/turn-skill-owner'
 import { loadSkillDocument } from './runtime-mcp-server'
 import type { FetchLike } from '@aipoch/skills/sources'

@@ -24,7 +24,7 @@ import {
   validateSpecialistSystemPrompt
 } from '../../../shared/specialist'
 import { parseSkillDocument } from '@aipoch/skills/document'
-import type { SkillSource } from '../../../shared/settings'
+import type { SkillSource } from '@aipoch/skills/document'
 import { createLogger } from '@aipoch/diagnostics/node'
 import type { SpecialistOrigin, StoredSpecialist, StoredSpecialists } from '../types'
 import { SpecialistRepository } from '../repository'
@@ -42,7 +42,7 @@ import {
   SpecialistPackageRollbackError,
   SpecialistPackageTransaction
 } from './transaction'
-import type { SpecialistPackageSkillPort, SpecialistPackageSkillSnapshot } from './skill-port'
+import type { SpecialistPackageSkillPort, SpecialistPackageSkillSnapshot } from '@aipoch/skills'
 import type { MarketplaceOperationCoordinator } from '../marketplace/operation-coordinator'
 
 const CANDIDATE_TTL_MS = 10 * 60 * 1000

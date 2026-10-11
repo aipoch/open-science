@@ -1,6 +1,6 @@
 import { InlineNotice } from '@/components/ui/inline-notice'
 import { ErrorNotice } from '@/components/error-notice'
-import type { SkillReplacementPreview } from '../../../../shared/settings'
+import type { SkillReplacementPreview } from '@aipoch/skills/document'
 import { Upload } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'

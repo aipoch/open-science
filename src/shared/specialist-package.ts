@@ -1,5 +1,4 @@
 import type { SpecialistPackageSkillDisposition } from '@aipoch/skills/document'
-export type { SpecialistPackageSkillDisposition } from '@aipoch/skills/document'
 
 export type SpecialistPackageSkillConflict = {
   localId: string
@@ -26,7 +25,7 @@ export type SpecialistPackageSkillPlan = SpecialistPackageSkillPreview & {
   filesToInstall: ReadonlyArray<{ path: string; bytes: Uint8Array }>
 }
 
-import type { SkillSource } from './settings'
+import type { SkillSource } from '@aipoch/skills/document'
 
 export const SPECIALIST_PACKAGE_SCHEMA_VERSION = 1 as const
 export const DEFAULT_BUNDLED_SKILL_VERSION = '0.1.0' as const

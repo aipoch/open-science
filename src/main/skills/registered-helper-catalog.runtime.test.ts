@@ -13,10 +13,8 @@ vi.mock('../notebook/python-command', async (importOriginal) => ({
 }))
 
 import { envPrefix, pythonBin } from '../notebook/runtime-paths'
-import {
-  RegisteredSkillHelperCatalog,
-  type RegisteredSkillPackage
-} from './registered-helper-catalog'
+import { RegisteredSkillHelperCatalog } from './registered-helper-catalog'
+import type { RegisteredSkillPackage } from '@aipoch/skills'
 import { inspectSkillPackage } from '@aipoch/skills/sources'
 
 const roots: string[] = []

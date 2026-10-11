@@ -15,7 +15,8 @@ import {
   type StoredSpecialists
 } from '../types'
 import { specialistContentModifiedSinceImport, specialistPayloadContentHash } from './validator'
-import { NOOP_SPECIALIST_PACKAGE_SKILL_PORT, type SpecialistPackageSkillPort } from './skill-port'
+import { NOOP_SPECIALIST_PACKAGE_SKILL_PORT } from './skill-port'
+import type { SpecialistPackageSkillPort } from '@aipoch/skills'
 
 type TransactionPhase = 'prepared' | 'committing' | 'committed' | 'rolling-back' | 'rolled-back'
 

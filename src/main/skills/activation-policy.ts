@@ -9,4 +9,3 @@ const APPLICATION_REQUIRED_SKILL_IDS = new Set(
 const isApplicationRequiredSkillId = (id: string): boolean => APPLICATION_REQUIRED_SKILL_IDS.has(id)
 
 export { APPLICATION_REQUIRED_SKILL_IDS, isApplicationRequiredSkillId }
-export { isSkillEffectivelyEnabled, trustedSkillActivationPolicy } from '@aipoch/skills/document'

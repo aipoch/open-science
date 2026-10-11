@@ -5,7 +5,8 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { BundledSkill } from '@aipoch/skills'
-import { HostSkillsService, type HostSkillsCatalog } from './host-skills-service'
+import { HostSkillsService } from './host-skills-service'
+import type { SkillAuthoringCatalog } from '@aipoch/skills'
 import { UserSkillRepository } from '@aipoch/skills'
 
 const roots: string[] = []
@@ -18,7 +19,7 @@ const makeFixture = async (): Promise<{
   service: HostSkillsService
   root: string
   userSkills: UserSkillRepository
-  catalog: HostSkillsCatalog
+  catalog: SkillAuthoringCatalog
   approveDelete: ReturnType<typeof vi.fn>
   reload: ReturnType<typeof vi.fn>
 }> => {
@@ -40,7 +41,7 @@ const makeFixture = async (): Promise<{
     sourceDir: featuredDir
   }
   const userSkills = new UserSkillRepository(root)
-  const catalog: HostSkillsCatalog = {
+  const catalog: SkillAuthoringCatalog = {
     list: async () => [featured, ...(await userSkills.list())],
     withSkillRead: async (id, read) => {
       if (id === featured.id) return read(featured)

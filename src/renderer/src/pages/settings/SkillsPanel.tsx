@@ -15,7 +15,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import type { SkillSource } from '../../../../shared/settings'
+import type { SkillSource } from '@aipoch/skills/document'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {

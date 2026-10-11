@@ -9,19 +9,7 @@ import type {
   SkillActivationPolicy,
   SkillSource
 } from '@aipoch/skills/document'
-export type {
-  AgentHomeSkillSource,
-  GitHubRepositorySearchView,
-  AgentHomeSkillRef,
-  SkillBundlePreviewResult,
-  SkippedSkill,
-  SkillBundlePreview,
-  SkillReplacementPreview,
-  SkillReference,
-  SkillActivationPolicy,
-  SkillSource
-} from '@aipoch/skills/document'
-export { GITHUB_REPOSITORY_SEARCH_TOO_LONG_MESSAGE } from '@aipoch/skills/document'
+
 // Shared model-settings & onboarding types crossing the main <-> renderer IPC boundary.
 //
 // The main process owns settings.json and all secret material. The renderer only ever receives the
@@ -1261,8 +1249,6 @@ export type ResolvedSkillDocument = {
   body: string
 }
 
-export type { SkillPackageFileInfo, SkillReferenceInfo } from '@aipoch/skills/document'
-
 export type SetSkillEnabledRequest = {
   id: string
   enabled: boolean
@@ -1400,10 +1386,6 @@ export type ConversationSkillImportResult = {
 export type ScanRepoRequest = {
   repo: string
 }
-
-// One skill found in a user-level source. Main returns renderer-safe metadata only: the source id and
-// slug are sufficient to request an import, while the absolute host path remains in the main process.
-export type { AgentHomeSkillView } from '@aipoch/skills/document'
 
 export type PreviewAgentHomeSkillRequest = AgentHomeSkillRef
 

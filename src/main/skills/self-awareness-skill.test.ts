@@ -2,7 +2,7 @@ import { join } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { SkillRegistry } from './registry'
+import { SkillRegistry } from '@aipoch/skills'
 
 const skillsRoot = join(__dirname, '..', '..', '..', 'resources', 'skills')
 

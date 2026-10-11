@@ -31,19 +31,18 @@ import type {
   ImportSkillZipBatchResult,
   ImportAgentHomeSkillsRequest,
   ImportAgentHomeSkillsResult,
-  AgentHomeSkillView,
   PreviewAgentHomeSkillRequest,
   PreviewGitHubSkillRequest,
   PreviewSkillZipRequest,
   ResolveSkillDocumentRequest,
   ResolvedSkillDocument,
-  SkillBundlePreviewResult,
   SkillImportPreviewContent,
   ScanRepoRequest,
   ScanRepoResult,
   ConversationSkillImportApprovalRequest,
   ConversationSkillImportApprovalResponse
 } from '../settings'
+import type { AgentHomeSkillView, SkillBundlePreviewResult } from '@aipoch/skills/document'
 
 import {
   callable,

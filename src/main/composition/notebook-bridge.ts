@@ -40,7 +40,8 @@ import { type SessionAuxiliaryTurnUsageRecord } from '../session-persistence/aux
 import type { SessionPersistenceCommands } from '../session-persistence/coordinator'
 import { createDefaultSessionRepository } from '../session-persistence/ipc'
 import { SettingsService } from '../settings/service'
-import { HostSkillsService, type HostSkillsCatalog } from '../skills/host-skills-service'
+import { HostSkillsService } from '../skills/host-skills-service'
+import type { SkillAuthoringCatalog } from '@aipoch/skills'
 import { SpecialistService } from '../specialist/service'
 import { resolveConfigRoot, resolveDataRoot } from '../storage-root'
 import { TagService } from '../tags/service'
@@ -115,7 +116,7 @@ export async function composeNotebookBridge({
   notebookRpcServer: NotebookLocalRpcServer
   imageInputCompatibility: ImageInputCompatibilityOwner
 }> {
-  const hostSkillsCatalog: HostSkillsCatalog = {
+  const hostSkillsCatalog: SkillAuthoringCatalog = {
     list: () => settingsService.listHostSkills(),
     withSkillRead: (id, read) => settingsService.withHostSkillRead(id, read),
     publishPersonalDirectory: (name, sourcePath, overwrite) =>

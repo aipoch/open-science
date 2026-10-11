@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import type { ComputeHost, CreateComputeHostRequest } from '../../shared/compute'
 import { ClaudeCodeSkillMaterializer } from '../skills/materializer'
-import type { BundledSkill } from '../skills/registry'
+import type { BundledSkill } from '@aipoch/skills'
 import { createComputeHandlers } from './ipc'
 import type { ComputeService } from './compute-service'
 import type { ComputeHostRepository } from './repository'

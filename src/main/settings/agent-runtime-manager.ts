@@ -50,7 +50,7 @@ import {
   syncMaterializedCustomServerSkillDocs
 } from '../connectors/provision'
 import { createLogger } from '@aipoch/diagnostics/node'
-import type { SkillDirectoryLayout } from '../skills/materializer'
+import type { SkillDirectoryLayout } from '@aipoch/skills/projection'
 import { writeAgentConfigFiles } from './agent-config-files'
 import { createDefaultDetectDeps, detectClaude, type ClaudeDetectDeps } from './claude-detect'
 import {

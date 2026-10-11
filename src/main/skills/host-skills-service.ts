@@ -1,17 +1,11 @@
 import {
   SkillAuthoringService,
   type SkillAuthoringCatalog,
-  type SkillAuthoringSummary,
-  type SkillAuthoringReadResult,
-  type SkillAuthoringValidationResult
+  type SkillAuthoringSummary
 } from '@aipoch/skills'
 import type { TrustedCallingSession } from '../../shared/agents-contract'
 import { validateSkillHelper } from './helper-validation'
 
-export type HostSkillsCatalog = SkillAuthoringCatalog
-export type HostSkillSummary = SkillAuthoringSummary
-export type HostSkillReadResult = SkillAuthoringReadResult
-export type HostSkillValidationResult = SkillAuthoringValidationResult
 export type HostSkillsResult =
   | Awaited<ReturnType<SkillAuthoringService['list' | 'read' | 'validate' | 'edit' | 'publish']>>
   | { status: 'declined'; operation: 'delete' }
@@ -19,9 +13,9 @@ export type HostSkillsResult =
 
 type Options = {
   storageRoot: string
-  catalog: HostSkillsCatalog
+  catalog: SkillAuthoringCatalog
   approveDelete?: (
-    request: { name: string; origin: HostSkillSummary['origin'] },
+    request: { name: string; origin: SkillAuthoringSummary['origin'] },
     context: TrustedCallingSession
   ) => Promise<boolean>
   onPublishedSkillsChanged?: () => Promise<void> | void

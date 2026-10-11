@@ -6,10 +6,8 @@ import { join } from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
-import {
-  RegisteredSkillHelperCatalog,
-  type RegisteredSkillPackage
-} from './registered-helper-catalog'
+import { RegisteredSkillHelperCatalog } from './registered-helper-catalog'
+import type { RegisteredSkillPackage } from '@aipoch/skills'
 import { NotebookHelperModuleHost } from '../notebook/helper-module-host'
 import { NotebookKernelExecutor } from '../notebook/kernel-executor'
 import { resolvePythonCommand } from '../notebook/python-command'

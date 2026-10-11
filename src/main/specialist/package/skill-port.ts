@@ -1,5 +1,4 @@
 import type { SpecialistPackageSkillPort } from '@aipoch/skills'
-export type { SpecialistPackageSkillPort, SpecialistPackageSkillSnapshot } from '@aipoch/skills'
 
 export const NOOP_SPECIALIST_PACKAGE_SKILL_PORT: SpecialistPackageSkillPort = {
   snapshot: async () => [],

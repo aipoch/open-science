@@ -3,7 +3,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { SkillBundlePreview } from '../../../../shared/settings'
+import type { SkillBundlePreview } from '@aipoch/skills/document'
 import { SkillImportApprovalDialog } from './SkillImportApprovalDialog'
 import { createInitialSkillImportState, useSkillImportStore } from '@/stores/skill-import-store'
 
