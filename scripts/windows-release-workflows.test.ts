@@ -651,7 +651,7 @@ describe('post-merge Windows validation', () => {
     expect(findStep(sign, 'Select unsigned NSIS installer').run).toContain('*-win-x64-setup.exe')
     expect(uploadUnsigned).toMatchObject({
       id: 'upload-unsigned-installer',
-      uses: 'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a',
+      uses: 'actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9',
       with: expect.objectContaining({ archive: false, 'if-no-files-found': 'error' })
     })
     expect(submit).toMatchObject({
@@ -930,7 +930,7 @@ describe('post-merge Windows validation', () => {
     expect(upgrade['continue-on-error']).toBeUndefined()
     expect(upgrade['timeout-minutes']).toBe(40)
     expect(findStep(upgrade, 'Setup Node')).toMatchObject({
-      uses: 'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
+      uses: 'actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1',
       with: { 'node-version': 24 }
     })
     expect(findStep(upgrade, 'Install dependencies').run).toBe(

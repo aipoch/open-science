@@ -7,7 +7,7 @@ import { expect, it } from 'vitest'
 
 const require = createRequire(import.meta.url)
 
-it.each(['diagnostics', 'skills'])(
+it.each(['compute', 'diagnostics', 'environment', 'notebook-analysis', 'skills'])(
   'bundles named imports from the local %s CommonJS package',
   (name) => {
     const root = mkdtempSync(join(tmpdir(), 'open-science-browser-commonjs-'))

@@ -64,6 +64,16 @@ test.beforeAll(async () => {
     cacheDir: resolve('out/replay-stage-vite'),
     resolve: { alias: { '@': resolve('src/renderer/src') } },
     plugins: [react(), tailwindcss()],
+    // Linked CommonJS packages need prebundling, as in the production renderer dev server.
+    optimizeDeps: {
+      entries: ['e2e/fixtures/replay-stage/index.html'],
+      include: [
+        '@aipoch/diagnostics',
+        '@aipoch/skills/document',
+        '@aipoch/notebook-analysis/contracts',
+        '@aipoch/environment/contracts'
+      ]
+    },
     server: { host: '127.0.0.1', port: 0, watch: null, hmr: false }
   })
   await server.listen()

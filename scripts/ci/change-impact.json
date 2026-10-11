@@ -87,6 +87,8 @@
         ".github/workflows/source-regression.yml",
         "scripts/backend-dependencies.mjs",
         "scripts/build-backend.mjs",
+        "scripts/windows-signing-policy.mjs",
+        "scripts/windows-signing-policy.test.ts",
         "scripts/wsl2-build-flags.mjs",
         "scripts/wsl2-build-flags.d.mts",
         "scripts/stage-backend.mjs",
@@ -321,6 +323,7 @@
         "packages/notebook-syntax/src/powershell.ts",
         "packages/notebook-analysis/src/*path*.ts",
         "src/main/notebook/environment-production.ts",
+        "src/main/notebook/environment-resources.ts",
         "src/main/notebook/environment-runner.ts",
         "packages/environment/src/micromamba-cache-powershell.test.ts",
         "packages/environment/src/micromamba-cache-acl.integration.test.ts"

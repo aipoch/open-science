@@ -729,6 +729,8 @@ describe('pull request change classification', () => {
     'e2e/playwright.accessibility.config.ts',
     'e2e/vite.browser-test.config.ts',
     'scripts/ci/change-impact.json',
+    'scripts/windows-signing-policy.mjs',
+    'scripts/windows-signing-policy.test.ts',
     '.github/workflows/pr-gate.yml'
   ])('selects the declared full plan for global gate input %s', (path) => {
     const plan = classifyChanges([{ path, status: 'modified' }])
@@ -779,6 +781,7 @@ describe('pull request change classification', () => {
     'src/main/notebook/windows-shell.ts',
     'packages/notebook-code-risk/src/index.ts',
     'src/main/notebook/runtime-service.ts',
+    'src/main/notebook/environment-resources.ts',
     'src/shared/tool-detail-sanitizer.ts',
     'src/shared/renderer-contract-catalog.ts',
     'src/shared/renderer-contracts/settings-preferences.ts'

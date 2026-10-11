@@ -26,8 +26,8 @@ export default defineConfig({
     commonjsOptions: {
       include: [
         /node_modules/,
-        /packages[\\/](?:connector-(?:core|builtins|mcp-client)|diagnostics|skills)[\\/]dist/,
-        /packages[\\/]notebook-analysis[\\/]dist/
+        /packages[\\/](?:connector-(?:core|builtins|mcp-client)|compute|diagnostics|skills)[\\/]dist/,
+        /packages[\\/](?:notebook-analysis|environment)[\\/]dist/
       ]
     },
     outDir: resolve('out/browser-tests'),

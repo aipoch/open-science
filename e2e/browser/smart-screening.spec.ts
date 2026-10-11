@@ -448,39 +448,54 @@ test('flies a batched result from beyond the preview over the previous pile cove
     ).screeningFixture.advance(4)
   )
   const pile = page.locator('[data-slot="screening-unmatched"]')
-  await expect(pile.locator('article[data-paper-id="paper-3"]')).toBeVisible()
-  await expect
-    .poll(() =>
-      pile
-        .locator('article[data-paper-id="paper-3"]')
-        .evaluate((node) => getComputedStyle(node).transform)
-    )
-    .toBe('none')
-  await page.evaluate(() => {
+  const settled = pile.locator('article:not([data-flight])')
+  await expect(pile.locator('[data-flight="true"]')).toHaveCount(0)
+  await expect(settled).toHaveAttribute('data-paper-id', 'paper-3')
+  const oldTitle = await settled.locator('p').textContent()
+  await expect(pile.locator('[data-slot="screening-pile-cover"] p')).toHaveText(oldTitle!)
+  const flight = await page.evaluate(async () => {
     const pile = document.querySelector('[data-slot="screening-unmatched"]')!
-    const oldTitle = pile.querySelector('article p')!.textContent
-    const right = pile.getBoundingClientRect().x
-    const deadline = performance.now() + 2000
-    const sample = (): void => {
-      const card = pile.querySelector('article[data-paper-id="paper-11"]')
-      if (card && card.getBoundingClientRect().x < right - 5) {
-        document.documentElement.dataset.batchFlight = 'true'
-        if (pile.querySelector('[data-slot="screening-pile-cover"] p')?.textContent !== oldTitle)
-          document.documentElement.dataset.coverChangedBeforeLanding = 'true'
+    // Hold the whole batch in flight: sibling arrivals may legitimately replace the cover.
+    const ready = new Promise<void>((resolve, reject) => {
+      const deadline = performance.now() + 2000
+      const sample = (): void => {
+        const cards = [...pile.querySelectorAll('article[data-flight="true"]')]
+        if (cards.length === 6 && cards.every((card) => card.getAnimations().length)) {
+          for (const card of cards) {
+            for (const animation of card.getAnimations()) {
+              animation.pause()
+              animation.currentTime = Number(animation.effect!.getComputedTiming().duration) / 2
+            }
+          }
+          resolve()
+          return
+        }
+        if (performance.now() > deadline) {
+          reject(new Error('The complete batch did not enter flight'))
+          return
+        }
+        requestAnimationFrame(sample)
       }
-      if (performance.now() < deadline) requestAnimationFrame(sample)
-    }
-    requestAnimationFrame(sample)
+      requestAnimationFrame(sample)
+    })
     ;(
       window as unknown as { screeningFixture: { advance: (n: number) => void } }
     ).screeningFixture.advance(8)
+    await ready
+    return {
+      x: pile.querySelector('article[data-paper-id="paper-11"]')!.getBoundingClientRect().x,
+      targetX: pile.getBoundingClientRect().x,
+      cover: pile.querySelector('[data-slot="screening-pile-cover"] p')!.textContent
+    }
   })
-  await expect(pile.locator('article[data-paper-id="paper-11"]')).toBeVisible()
-  await expect(page.locator('html')).toHaveAttribute('data-batch-flight', 'true')
-  await expect(page.locator('html')).not.toHaveAttribute(
-    'data-cover-changed-before-landing',
-    'true'
-  )
+  expect(flight.x).toBeLessThan(flight.targetX - 5)
+  expect(flight.cover).toBe(oldTitle)
+  await pile.evaluate((pile) => {
+    for (const card of pile.querySelectorAll('article[data-flight="true"]'))
+      for (const animation of card.getAnimations()) animation.finish()
+  })
+  await expect(pile.locator('[data-flight="true"]')).toHaveCount(0)
+  await expect(settled).toHaveAttribute('data-paper-id', 'paper-11')
 })
 
 test('flies all four committed papers per second concurrently into the same pile', async ({
