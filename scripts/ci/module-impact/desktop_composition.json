@@ -262,7 +262,6 @@
     "scripts/electron-vite-config.test.ts",
     "src/main/composition/notebook-approvals.ts",
     "scripts/electron-session-revision-retry.test.ts",
-    "scripts/windows-signing-policy.test.ts",
     "scripts/build-dev-packages.integration.test.ts",
     "scripts/build-backend.integration.test.ts",
     "scripts/dev-build-watch.integration.test.ts",
