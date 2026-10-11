@@ -423,7 +423,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       if (
         this.windowsRuntime &&
         status.kind === 'setupRequired' &&
-        (await this.windowsProtectionConfigured())
+        (await this.getOrCreateSandbox().isWindowsProtectionConfigured())
       ) {
         return this.recordStatus({ kind: 'error', reason: status.reasons[0] ?? 'runtimeFailure' })
       }

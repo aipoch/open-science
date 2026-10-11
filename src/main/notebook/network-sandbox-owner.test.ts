@@ -1163,6 +1163,36 @@ describe('NotebookNetworkSandboxOwner', () => {
     }
   })
 
+  it('keeps protected mode setup-required until protection is actually installed', async () => {
+    backend.status.mockResolvedValue({
+      kind: 'setupRequired',
+      platform: 'win32',
+      reasons: ['windowsProfileMissing']
+    })
+    backend.isWindowsProtectionConfigured.mockResolvedValue(false)
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: '/resources',
+      windowsRuntimeRoot: join(tmpdir(), 'missing-protection-runtime'),
+      getSettings: async () => ({
+        ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        windowsProtectionEnabled: true
+      }),
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn(),
+      platform: 'win32'
+    })
+    try {
+      await expect(owner.status()).resolves.toMatchObject({
+        kind: 'setupRequired',
+        platform: 'win32',
+        windowsProtectionEnabled: true
+      })
+      expect(backend.isWindowsProtectionConfigured).toHaveBeenCalledOnce()
+    } finally {
+      await owner.dispose()
+    }
+  })
+
   it('keeps standard execution offline and rejects stale capabilities in either switch direction', async () => {
     const prepare = vi
       .spyOn(WindowsNotebookRuntimeManager.prototype, 'prepare')
