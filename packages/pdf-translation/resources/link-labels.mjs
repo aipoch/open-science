@@ -1,4 +1,19 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type -- Shared worker/renderer JavaScript. */
+// Scan the suffix once; trying the list regex at every letter is quadratic on a failed tail.
+function trailingCaptionMarkers(text) {
+  let end = text.length
+  while (end > 0 && /\s/u.test(text[end - 1])) end--
+  if (end === 0 || !/[a-z]/u.test(text[end - 1])) return null
+  let start = end - 1
+  while (start > 0) {
+    let comma = start - 1
+    while (comma >= 0 && /\s/u.test(text[comma])) comma--
+    if (comma < 1 || !/[,，]/u.test(text[comma]) || !/[a-z]/u.test(text[comma - 1])) break
+    start = comma - 1
+  }
+  return { 0: text.slice(start), index: start }
+}
+
 // Canonical scientific identities and exact whole-paragraph link ownership.
 // No approximate matching: changing the referenced number is never equivalent.
 const labels =
@@ -85,7 +100,7 @@ export function pdfLinkAddressMatches(text) {
       /\b(?:https?:\/\/|www\.)(?:[A-Za-z\d._~:/?#@!$&'*+,;=%-]|(?<=[./?#&=-]) +(?=[A-Za-z\d]))+/gu
     )
   ]
-    .map((match) => ({ text: match[0].replace(/[.,;:]+$/u, ''), index: match.index }))
+    .map((match) => ({ text: match[0].replace(/(?<![.,;:])[.,;:]+$/u, ''), index: match.index }))
     .filter((match) => {
       try {
         const address = match.text.replace(/ /gu, '')
@@ -145,16 +160,17 @@ export function pdfLinkLabelKey(text) {
   )
   if (supplementaryTable)
     return 'supplementary-table:' + (supplementaryTable[1] ?? supplementaryTable[2])
-  if (/^[“”"][。.!?]?\s*\d+$/u.test(value)) return 'quoted-citation:' + value.match(/\d+$/u)[0]
-  if (/^(?:table|tab\.?|表)\d+$/u.test(value)) return 'table:' + value.match(/\d+$/u)[0]
-  if (/^(?:figure|fig\.?|图|圖)\d+$/u.test(value)) return 'figure:' + value.match(/\d+$/u)[0]
-  if (/^(?:theorem|定理)\d+$/u.test(value)) return 'theorem:' + value.match(/\d+$/u)[0]
+  if (/^[“”"][。.!?]?\s*\d+$/u.test(value))
+    return 'quoted-citation:' + value.match(/(?<!\d)\d+$/u)[0]
+  if (/^(?:table|tab\.?|表)\d+$/u.test(value)) return 'table:' + value.match(/(?<!\d)\d+$/u)[0]
+  if (/^(?:figure|fig\.?|图|圖)\d+$/u.test(value)) return 'figure:' + value.match(/(?<!\d)\d+$/u)[0]
+  if (/^(?:theorem|定理)\d+$/u.test(value)) return 'theorem:' + value.match(/(?<!\d)\d+$/u)[0]
   if (/^(?:(?:suppl\.|supplementary)appendix|补充附录|附录补充|補充附錄|附錄補充)$/u.test(value))
     return 'supplementary-appendix'
   // PDF fonts can extract a spacing accent before its letter, or a cedilla
   // after it. Compose those accents rather than dropping them from the identity.
   const citationValue = text
-    .replace(/\s+and\s+/gu, '&')
+    .replace(/(?<!\s)\s+and\s+/gu, '&')
     .replace(/¨([A-Za-z])/gu, '$1\u0308')
     .replace(/([A-Za-z])`([AEIOUaeiou])/gu, '$1$2\u0300')
     .replace(/([A-Za-z])¸/gu, '$1\u0327')
@@ -764,7 +780,7 @@ export function translatedPdfLinkFragment(source, translation, label, offset) {
     const reference = [...source.matchAll(labels)].find(
       (match) =>
         /^(?:table|figure):/u.test(pdfLinkLabelKey(match[0]) ?? '') &&
-        match[0].match(/\d+$/u)?.[0] === punctuated[1] &&
+        match[0].match(/(?<!\d)\d+$/u)?.[0] === punctuated[1] &&
         match.index + match[0].length - punctuated[1].length === offset &&
         !/^[.．][\p{L}\p{N}\p{M}_]/u.test(source.slice(match.index + match[0].length))
     )
@@ -777,7 +793,7 @@ export function translatedPdfLinkFragment(source, translation, label, offset) {
       const target = translatedPdfLinkLabel(source, translation, reference[0], reference.index),
         punctuation = target && translation[target.start + target.text.length]
       return target &&
-        target.text.match(/\d+$/u)?.[0] === punctuated[1] &&
+        target.text.match(/(?<!\d)\d+$/u)?.[0] === punctuated[1] &&
         /^[.．。]$/u.test(punctuation ?? '') &&
         !/^[.．][\p{L}\p{N}\p{M}_]/u.test(translation.slice(target.start + target.text.length))
         ? {
@@ -800,9 +816,8 @@ export function translatedPdfLinkFragment(source, translation, label, offset) {
     const caption = /^\s*(?:Table\s+|表\s*)(\d+)\b/iu,
       sourceCaption = source.match(caption),
       targetCaption = translation.match(caption),
-      markers = /[a-z](?:[,，]\s*[a-z])*\s*$/u,
-      from = source.match(markers),
-      to = translation.match(markers)
+      from = trailingCaptionMarkers(source),
+      to = trailingCaptionMarkers(translation)
     if (sourceCaption && sourceCaption[1] === targetCaption?.[1] && from && to) {
       const before = [...from[0].matchAll(/[a-z]/gu)],
         after = [...to[0].matchAll(/[a-z]/gu)],

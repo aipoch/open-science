@@ -1,6 +1,6 @@
 import type { PDFDocumentProxy } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import type { PdfTranslationPdfRequest } from '../../src/contracts.js'
-import { resolve } from 'node:path'
+import { resolve } from '../paths.js'
 import { pathToFileURL } from 'node:url'
 
 export const normalizedText = (text: string): string =>

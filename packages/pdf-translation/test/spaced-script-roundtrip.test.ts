@@ -1,4 +1,4 @@
-import { resolve } from 'node:path'
+import { resolve } from './paths.js'
 import { expect, it, onTestFinished } from 'vitest'
 import { PDFDocument, StandardFonts } from 'pdf-lib'
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'

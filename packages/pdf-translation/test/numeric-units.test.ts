@@ -228,3 +228,8 @@ describe('numeric unit bindings', () => {
     expect(missing('5 mg and 10 mg.', '5是剂量，另外还有10毫克。')).toEqual(['5 mg'])
   })
 })
+
+it('scans long digit runs without retrying scientific-power prefixes', () => {
+  const text = '0'.repeat(40_000) + ' x'
+  expect(missing(text, text)).toEqual([])
+})

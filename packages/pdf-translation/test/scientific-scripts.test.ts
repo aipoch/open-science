@@ -1,6 +1,6 @@
 import { readPdfTranslationCases } from './fixtures/read-cases.js'
 import { expect, it } from 'vitest'
-import { resolve } from 'node:path'
+import { resolve } from './paths.js'
 import { PDFDocument, StandardFonts } from 'pdf-lib'
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { PdfTranslationWriter } from '../src/writer.js'

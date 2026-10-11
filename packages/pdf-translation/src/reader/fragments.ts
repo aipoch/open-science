@@ -145,7 +145,7 @@ export function pdfTranslationLayoutFragments(
             )
         ),
       dateFields =
-        /^[\p{L} ]+:\s*\d{1,2}\s+\p{L}+\s+\d{4}(?:\s*\/\s*[\p{L} ]+:\s*\d{1,2}\s+\p{L}+\s+\d{4})+$/u.test(
+        /^\p{L}[\p{L} ]*:\s*\d{1,2}\s+\p{L}+\s+\d{4}(?:\s*\/\s*\p{L}[\p{L} ]*:\s*\d{1,2}\s+\p{L}+\s+\d{4})+$/u.test(
           unit.source.trim()
         )
     // Only a proven numbered table row or complete date fields may borrow a

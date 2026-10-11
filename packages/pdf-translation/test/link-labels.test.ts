@@ -1,11 +1,12 @@
 import { readPdfTranslationCases } from './fixtures/read-cases.js'
 import { expect, it } from 'vitest'
-import { resolve } from 'node:path'
+import { resolve } from './paths.js'
 import { readFileSync } from 'node:fs'
 import { PDFDocument, PDFName, PDFString, StandardFonts, type PDFDict } from 'pdf-lib'
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import {
   pdfLinkLabelKey,
+  pdfLinkAddressMatches,
   translatedPdfLinkLabel,
   translatedPdfLinkFragment,
   translatedPdfBracketedReference
@@ -1782,3 +1783,23 @@ it.each(
     expect(translatedPdfLinkFragment(source, translation, label, offset + 1)).toBeNull()
   }
 )
+
+// Long malformed PDF text must not retry the same punctuation/list suffix at every character.
+it('handles long failed address, citation and caption suffixes', () => {
+  const commas = ','.repeat(40_000)
+  expect(pdfLinkAddressMatches('https://example.org/' + commas)[0].text).toBe(
+    'https://example.org/'
+  )
+  expect(pdfLinkLabelKey('Wang' + '\t'.repeat(40_000) + 'and Quinn')).toBe('authors:Wang&Quinn')
+  for (const tail of ['a,'.repeat(20_000) + '!', '0'.repeat(40_000) + '!']) {
+    expect(
+      translatedPdfLinkFragment('Table 1 Baseline' + tail, '表1 基线' + tail, 'a', 16)
+    ).toBeNull()
+  }
+  const source = 'Table 1 Baselinea, b',
+    target = '表1 基线a， b'
+  expect(translatedPdfLinkFragment(source, target, 'b', source.lastIndexOf('b'))).toEqual({
+    start: target.lastIndexOf('b'),
+    text: 'b'
+  })
+})

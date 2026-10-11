@@ -6,6 +6,7 @@ import {
   pdfTranslationSourceIndices,
   nextPdfTranslationSourceIndex,
   normalizePdfTranslationText,
+  normalizePdfTranslationScriptMarkup,
   pdfTranslationHasCommentary,
   pdfTranslationIntroducesMathMarkup,
   pdfTranslationCopiesNeighborFormula,
@@ -681,4 +682,30 @@ it('rechecks numeric unit bindings on recovery without discarding valid neighbor
   expect(restored?.translations).toEqual(['标题', '剂量为5毫克。'])
   expect(pdfTranslationSourceIndices(restored!)).toEqual([0, 2])
   expect(checkpoint.translations).toHaveLength(3)
+})
+
+it('handles long malformed script, footnote and contact tokens without rescanning suffixes', () => {
+  for (const prefix of ['0'.repeat(40_000), 'A'.repeat(40_000)]) {
+    expect(normalizePdfTranslationScriptMarkup('Independent source', prefix + '<sup>!</sup>')).toBe(
+      prefix + '<sup>!</sup>'
+    )
+  }
+  expect(
+    pdfTranslationMissingCitationIdentities('Mean (SD)a', '(a' + '\t'.repeat(40_000) + '!')
+  ).toContain('a')
+  const punctuation = '!'.repeat(40_000)
+  expect(
+    pdfTranslationCopiesEnglishProse(
+      'This is the original text ' + punctuation,
+      'This is the original text ' + punctuation,
+      'Chinese'
+    )
+  ).toBe(true)
+  expect(
+    pdfTranslationCopiesEnglishProse(
+      'This is the original text ' + '0'.repeat(40_000),
+      '这是完整的翻译。',
+      'Chinese'
+    )
+  ).toBe(false)
 })

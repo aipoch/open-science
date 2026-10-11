@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { resolve } from 'node:path'
+import { resolve } from './paths.js'
 import { PDFDocument, PDFName, PDFString, StandardFonts } from 'pdf-lib'
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { TestCallerRegistry } from './support/callers.js'

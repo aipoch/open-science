@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { resolve } from '../paths.js'
 import { readPdfTranslationCases } from '../fixtures/read-cases'
 /* eslint-disable @typescript-eslint/explicit-function-return-type -- infer synthetic fixture helpers */
 import { expect, it as test } from 'vitest'

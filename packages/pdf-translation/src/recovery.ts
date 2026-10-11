@@ -315,7 +315,7 @@ export function pdfTranslationMissingCitationIdentities(
     /\((?:\d{1,3}%\s*)?(?:CI|SD|SE)\)([a-z](?:,\s*[a-z])*)\s*$/u.exec(source)
   if (tableFootnote) {
     const expected = tableFootnote[1].replace(/\s/gu, ''),
-      actual = /(?:[)）]\s*)([a-z](?:[,，]\s*[a-z])*)\s*[。.]?\s*$/u.exec(translation)
+      actual = /(?:[)）]\s*)([a-z](?:[,，]\s*[a-z])*)\s*(?:[。.]\s*)?$/u.exec(translation)
     if (actual?.[1].replace(/[\s，]/gu, (char) => (char === '，' ? ',' : '')) !== expected)
       missing.add(expected)
   }
@@ -532,7 +532,7 @@ export function pdfTranslationDropsStandaloneProperName(
 export function normalizePdfTranslationScriptMarkup(source: string, translation: string): string {
   if (/<\/?(?:sub|sup)\b/i.test(source)) return translation
   let result = translation.replace(
-    /([A-Za-z\p{Script=Greek}][A-Za-z\p{Script=Greek}\d]*|\d+)<(sub|sup)>([A-Za-z\p{Script=Greek}\d+−→-]{1,12})<\/\2>/gu,
+    /(?<![A-Za-z\p{Script=Greek}\d])([A-Za-z\p{Script=Greek}][A-Za-z\p{Script=Greek}\d]*|\d+)<(sub|sup)>([A-Za-z\p{Script=Greek}\d+−→-]{1,12})<\/\2>/gu,
     (literal, prefix: string, kind: string, suffix: string) => {
       if (kind === 'sub' && !/^[A-Za-z\p{Script=Greek}]/u.test(prefix)) return literal
       const escaped = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -915,6 +915,14 @@ export function normalizePdfTranslationText(source: string, translation: string)
   return result
 }
 
+// Email addresses occupy a complete non-space token. Tokenizing first avoids
+// rescanning every suffix when an ordinary long token contains no @ character.
+function withoutContactTokens(text: string): string {
+  return text.replace(/\S+/gu, (token) =>
+    token.slice(1, -1).includes('@') ? '' : token.replace(/https?:\/\/\S+/gu, '')
+  )
+}
+
 // Reject copied English prose and known ordinary scientific labels for Chinese targets.
 // Names, equations and unknown labels remain valid unchanged document content.
 export function pdfTranslationCopiesEnglishProse(
@@ -929,7 +937,7 @@ export function pdfTranslationCopiesEnglishProse(
     /\p{Script=Han}/u.test(source)
   )
     return false
-  const prose = source.replace(/https?:\/\/\S+|\S+@\S+/g, ''),
+  const prose = withoutContactTokens(source),
     words = prose.match(/\b[a-z]{2,}\b/g)?.length ?? 0,
     captionPrefix = /^(?:Figure|Fig\.|Table|Tab\.|图|圖|表)\s*\d+[a-z]?\s*[.:：、-]?\s*/iu,
     caption = captionPrefix.test(prose) && words >= 4,
@@ -957,7 +965,7 @@ export function pdfTranslationCopiesEnglishProse(
   const comparable = (value: string): string =>
     normalizePdfTranslationText(source, value)
       .replace(
-        /(\d+(?:\.\d+)?\s*[×·]\s*10)([⁰¹²³⁴⁵⁶⁷⁸⁹]{1,2})(?!\p{N})/gu,
+        /(?<![\d.])(\d+(?:\.\d+)?\s*[×·]\s*10)([⁰¹²³⁴⁵⁶⁷⁸⁹]{1,2})(?!\p{N})/gu,
         (_, base: string, raised: string) => base + '^' + raised.normalize('NFKC')
       )
       .normalize('NFKC')
@@ -975,11 +983,7 @@ export function pdfTranslationCopiesEnglishProse(
   // Recognized English prose still needs Chinese text when the model merely
   // repairs line hyphens, edits punctuation or paraphrases the source.
   if (!/\p{Script=Han}/u.test(text)) return true
-  return (
-    text
-      .replace(/https?:\/\/\S+|\S+@\S+/g, '')
-      .match(/[A-Za-z][A-Za-z0-9\s,;:'’"“”()[\]–—−%-]*/g) ?? []
-  ).some(
+  return (withoutContactTokens(text).match(/[A-Za-z][A-Za-z0-9\s,;:'’"“”()[\]–—−%-]*/g) ?? []).some(
     (clause) =>
       (clause.match(/\b[a-z]{2,}\b/g)?.length ?? 0) >= 8 &&
       /\b(?:is|are|was|were|has|have|had|should|must|can|could|will|would|included|showed|measured|reported|found)\b/i.test(

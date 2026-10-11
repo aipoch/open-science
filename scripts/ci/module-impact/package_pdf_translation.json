@@ -449,7 +449,8 @@
     "packages/pdf-translation/test/usage-admission.test.ts",
     "packages/pdf-translation/test/inference-adapter.test.ts",
     "scripts/pdf-package-fixtures.test.ts",
-    "packages/pdf-translation/test/support/checkpoint-memory.ts"
+    "packages/pdf-translation/test/support/checkpoint-memory.ts",
+    "packages/pdf-translation/test/paths.ts"
   ],
   "interfacePaths": [
     "packages/pdf-translation/src/index.ts",
@@ -458,7 +459,8 @@
     "packages/pdf-translation/src/reader.ts",
     "packages/pdf-translation/src/writer.ts",
     "packages/pdf-translation/src/public-storage.ts",
-    "packages/pdf-translation/src/resources.ts"
+    "packages/pdf-translation/src/resources.ts",
+    "packages/pdf-translation/test/paths.ts"
   ],
   "consumerModules": ["main_literature", "workspace_previews", "shared_application_contracts"],
   "testFiles": {

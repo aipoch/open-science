@@ -1,7 +1,8 @@
 import { createCanvas } from '@napi-rs/canvas'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
+import { resolve } from './paths.js'
 import {
   PDFArray,
   PDFDict,

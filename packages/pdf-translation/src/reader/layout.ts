@@ -3082,7 +3082,14 @@ function extractPage(page: PdfLayoutPage, runningHeaders: Set<string>): LayoutPa
       : false
     const python =
       pythonImport.test(start.text) &&
-      listing.filter((line) => /^[A-Za-z_][\w, ]*\s*=(?!=)/u.test(line.text)).length >= 2
+      listing.filter((line) => {
+        const equals = line.text.indexOf('=')
+        return (
+          equals > 0 &&
+          line.text[equals + 1] !== '=' &&
+          /^[A-Za-z_][\w, ]*$/u.test(line.text.slice(0, equals).trimEnd())
+        )
+      }).length >= 2
     const cpp =
       cppInclude.test(start.text) &&
       listing.filter((line) => cppInclude.test(line.text)).length >= 2 &&

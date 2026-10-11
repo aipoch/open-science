@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { resolve } from 'node:path'
+import { resolve } from './paths.js'
 import {
   PDFDocument,
   PDFHexString,

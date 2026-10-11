@@ -1,4 +1,4 @@
-import { resolve } from 'node:path'
+import { resolve } from './paths.js'
 import { createCanvas } from '@napi-rs/canvas'
 import { PDFDocument, PDFName, PDFString, StandardFonts, rgb } from 'pdf-lib'
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'

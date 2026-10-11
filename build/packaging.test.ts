@@ -297,13 +297,15 @@ process.stdout.write(JSON.stringify({ counts, modulePath: require.resolve('tikto
     expect(existsSync(join(repoRoot, 'resources/notebook/kernel_process_host.js'))).toBe(true)
     expect(existsSync(join(repoRoot, 'resources/notebook/file_evidence_worker.js'))).toBe(true)
     const yml = readFileSync(join(repoRoot, 'electron-builder.yml'), 'utf8')
-    expect(yml).toMatch(/asarUnpack:\s*\n\s*-\s*resources\/(\*\*|notebook\/\*\*)/)
+    expect(yml).toMatch(
+      /asarUnpack:\s*\n(?:[ \t]+-[^\n]*\n)*[ \t]+-\s*resources\/(\*\*|notebook\/\*\*)/
+    )
   })
 
   it('ships the versioned Specialist contribution template guidance unpacked from the asar', () => {
     expect(existsSync(join(repoRoot, 'resources/specialists/template/v1/README.txt'))).toBe(true)
     const yml = readFileSync(join(repoRoot, 'electron-builder.yml'), 'utf8')
-    expect(yml).toMatch(/asarUnpack:\s*\n\s*-\s*resources\/\*\*/)
+    expect(yml).toMatch(/asarUnpack:\s*\n(?:[ \t]+-[^\n]*\n)*[ \t]+-\s*resources\/\*\*/)
   })
 
   it('ships micromamba as a per-platform extraResource to Contents/Resources', () => {

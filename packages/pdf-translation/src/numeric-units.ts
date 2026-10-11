@@ -76,7 +76,7 @@ const normalize = (text: string): string =>
     // Read scientific powers before NFKC flattens superscripts. The owner may
     // already have converted the same power to ^ notation in the translation.
     .replace(
-      /(\d+(?:[.,]\d+)?)\s*[×·]\s*10(?:\^\(?([+−-]?\d{1,2})\)?|([⁻⁰¹²³⁴⁵⁶⁷⁸⁹]{1,3}))(?!\d)/gu,
+      /(?<![\d.,])(\d+(?:[.,]\d+)?)\s*[×·]\s*10(?:\^\(?([+−-]?\d{1,2})\)?|([⁻⁰¹²³⁴⁵⁶⁷⁸⁹]{1,3}))(?!\d)/gu,
       (_, coefficient: string, exponent: string, raised: string) =>
         coefficient +
         'e' +

@@ -1,10 +1,11 @@
 import { readFileSync } from 'node:fs'
+import { resolve } from './paths'
 
 // Each JSONL record is [path, value]. Containers precede their children; array
 // items (tokens, source lines, cells and grid rows) remain one compact record each.
 // Read afresh so tests that mutate a fixture cannot affect subsequent cases.
 export const readPdfFixture = (path: string): ReturnType<typeof JSON.parse> => {
-  const records = readFileSync(path, 'utf8').trim().split(/\r?\n/)
+  const records = readFileSync(resolve(path), 'utf8').trim().split(/\r?\n/)
   const [rootPath, root] = JSON.parse(records[0])
   if (!Array.isArray(rootPath) || rootPath.length !== 0) {
     throw new Error(`Missing fixture root: ${path}`)
