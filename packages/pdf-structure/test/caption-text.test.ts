@@ -803,12 +803,14 @@ it.each([
   'Figure 1 A review on model performance.',
   'Table 1 A report on measured values.',
   'Figure 1 A display showing the recorded values.',
-  'Figure 1 A contrast between the observed groups.'
+  'Figure 1 A contrast between the observed groups.',
+  'Figure 1 A complement to the standard model.',
+  'Figure 1 a complement to the standard model.'
 ])('preserves article-led noun titles: %s', (text) => {
   expect(captionKind(text)).toBe(text.startsWith('Table') ? 'table' : 'figure')
 })
 
-it.each(['reviews', 'displays', 'measures', 'lists', 'reports', 'shows', 'is'])(
+it.each(['reviews', 'displays', 'measures', 'lists', 'reports', 'shows', 'complements', 'is'])(
   'still rejects a finite verb after panel A: %s',
   (verb) => {
     expect(captionKind(`Figure 1 A ${verb} the measured responses.`)).toBeUndefined()
