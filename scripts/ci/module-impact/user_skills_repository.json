@@ -56,18 +56,9 @@
   "consumerModules": ["settings_service_facade"],
   "testFiles": {
     "owner": [
-      "packages/skills/src/user-skill-catalog-observer.test.ts",
-      "packages/skills/src/user-skill-compatibility-index.test.ts",
       "src/main/skills/user-skill-repository.architecture.test.ts",
-      "packages/skills/src/user-skill-repository.atomic.test.ts",
-      "packages/skills/src/user-skill-repository.test.ts",
-      "packages/skills/src/user-skill-integrity.regression.test.ts",
-      "packages/skills/src/materializer-integrity.regression.test.ts",
       "src/main/skills/env-management-skill.test.ts",
       "src/main/skills/export.test.ts",
-      "packages/skills/src/frontmatter.test.ts",
-      "packages/skills/src/github-import.test.ts",
-      "packages/skills/src/import-limits.test.ts",
       "src/main/skill-marketplace/install-queue.test.ts",
       "src/main/skill-marketplace/installation.test.ts",
       "src/main/skill-marketplace/service.test.ts",
@@ -80,13 +71,10 @@
       "src/main/skills/runtime-mcp-server.test.ts",
       "src/main/skills/self-awareness-skill.test.ts",
       "src/main/skills/skill-nudge-identity.test.ts",
-      "packages/skills/src/zip-extract.test.ts",
       "src/main/skills/package-boundary.architecture.test.ts"
     ],
     "contract": [
       "src/main/skills/host-skills-service.test.ts",
-      "packages/skills/src/skill-authoring-service.test.ts",
-      "packages/skills/src/skill-archive-sniffer.test.ts",
       "src/main/skills/catalog.test.ts",
       "src/renderer/web/api-installer.test.ts",
       "src/shared/renderer-contract-catalog.test.ts"
@@ -100,7 +88,6 @@
       "src/main/session-persistence/runtime-session-owner.test.ts",
       "src/main/session-plan/adversarial-session-plan.test.ts",
       "src/main/skills/conversation-import.test.ts",
-      "packages/skills/src/specialist-package-adapter.test.ts",
       "src/main/notebook/local-rpc-server.test.ts",
       "src/main/notebook/local-rpc-server.skill-import.test.ts",
       "src/main/notebook/local-rpc-server.skills.test.ts",

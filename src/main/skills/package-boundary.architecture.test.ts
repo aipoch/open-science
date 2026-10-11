@@ -27,7 +27,11 @@ it('keeps all application consumers on the four public Skill package exports', (
   for (const file of new Set(files)) {
     if (!relative(packageRoot, file).startsWith('..')) continue
     const source = readFileSync(file, 'utf8')
-    if (!relative(resolve(root, 'src'), file).startsWith('..')) {
+    const imports = ts.preProcessFile(source, true, true).importedFiles
+    if (
+      imports.some(({ fileName }) => fileName.startsWith('@aipoch/skills')) &&
+      !relative(resolve(root, 'src'), file).startsWith('..')
+    ) {
       const ast = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true)
       for (const statement of ast.statements) {
         if (!ts.isExportDeclaration(statement) || !statement.moduleSpecifier) continue
@@ -38,7 +42,7 @@ it('keeps all application consumers on the four public Skill package exports', (
         ).not.toMatch(/^@aipoch\/skills(?:\/|$)/)
       }
     }
-    for (const { fileName: spec } of ts.preProcessFile(source, true, true).importedFiles) {
+    for (const { fileName: spec } of imports) {
       if (spec.startsWith('@aipoch/skills'))
         expect(allowed.has(spec), `${file}: ${spec}`).toBe(true)
       if (spec.startsWith('.') || isAbsolute(spec)) {

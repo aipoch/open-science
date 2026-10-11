@@ -125,6 +125,22 @@ contracts. Record exact revisions, collection commands, counts and selection rea
 acceptance report. Required PR CI validates the actual Ubuntu/Windows execution; local collection
 and policy replay must not be reported as a measured CI-duration improvement.
 
+## Test dependency direction
+
+`npm --prefix packages/skills test` runs only this package's units and boundary checks. Repository
+module commands also verify downstream application integration; `test:module skill_package` is not
+an isolated package test command. Host modules must not register Skill package unit tests as their
+own owner, contract or consumer evidence. Package units remain owned by `skill_package`; host
+changes retain their application tests without pulling unchanged upstream units into local module
+plans or Ubuntu PR execution.
+
+Skill consumer registrations must have a static dependency path or an explicit edge in
+`scripts/ci/module-runtime-consumers.json`. This includes architecture tests that read package
+source from disk. Removing a stale registration never deletes the test or its actual owner.
+Type-only dependencies through shared application contracts remain in the conservative consumer
+graph, so a package change can still select many host tests. Skipping those edges would require a
+separate design for contract validation; independence does not imply zero downstream verification.
+
 ## Release-source boundary
 
 `releaseInstallation`, `previewReleaseUpdate` and `installRelease` accept a `SkillReleasePolicy`.

@@ -119,6 +119,14 @@ it('retains every statically reachable consumer test and declared runtime-loadin
         pending.push(consumer)
       }
     }
+    // Skill extraction records only actual downstream consumers. Filesystem/source-inspection
+    // contracts belong in module-runtime-consumers.json; type imports remain real graph edges.
+    if (id === 'skill_package') {
+      expect(
+        module.testFiles.consumer.filter((path) => !visited.has(path)),
+        'Skill consumer evidence needs a static or explicitly registered runtime/source-read path'
+      ).toEqual([])
+    }
     const declared = new Set(Object.values(module.testFiles).flat())
     for (const path of visited)
       if (isTest(path) && !declared.has(path)) missing.push(`${id} -> ${path}`)

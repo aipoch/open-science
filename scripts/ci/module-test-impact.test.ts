@@ -252,18 +252,41 @@ describe('module test impact commands', () => {
   })
 
   it('expands User Skill repository changes through Settings and cross-surface consumers', () => {
+    const manifest = loadModuleImpactManifest()
+    const packageTests = manifest.modules.skill_package.testFiles.owner
+    expect(packageTests.length).toBeGreaterThan(0)
+    // Check local module plans too: CI's package exclusions must not hide stale host evidence.
+    for (const [id, module] of Object.entries(manifest.modules)) {
+      if (id === 'skill_package') continue
+      expect(
+        Object.values(module.testFiles)
+          .flat()
+          .filter((path) => path.startsWith('packages/skills/')),
+        `${id} must not register unchanged upstream Skill package units`
+      ).toEqual([])
+    }
+    for (const path of [
+      'src/main/skills/catalog.ts',
+      'src/main/skill-marketplace/service.ts',
+      'src/renderer/src/pages/settings/SkillEditor.tsx',
+      'src/main/compute/skill-provisioning.ts'
+    ]) {
+      const hostPlan = createAffectedTestPlan([{ path, status: 'modified' }], {
+        status: 'unavailable-manifest-only',
+        testFiles: []
+      })
+      expect(hostPlan.mode, path).toBe('selective')
+      expect(
+        hostPlan.testFiles.some((file) => file.startsWith('packages/skills/')),
+        path
+      ).toBe(false)
+    }
     const direct = createModuleTestPlan('user_skills_repository')
     expect(direct.testFiles).toEqual(
       expect.arrayContaining([
-        'packages/skills/src/user-skill-catalog-observer.test.ts',
-        'packages/skills/src/user-skill-compatibility-index.test.ts',
         'src/main/skills/user-skill-repository.architecture.test.ts',
-        'packages/skills/src/user-skill-repository.atomic.test.ts',
-        'packages/skills/src/user-skill-repository.test.ts',
-        'packages/skills/src/skill-authoring-service.test.ts',
         'src/main/skills/host-skills-service.test.ts',
         'src/main/skills/conversation-import.test.ts',
-        'packages/skills/src/specialist-package-adapter.test.ts',
         'src/main/notebook/local-rpc-server.test.ts',
         'src/main/notebook/local-rpc-server.skill-import.test.ts',
         'src/main/notebook/local-rpc-server.skills.test.ts',
@@ -308,6 +331,9 @@ describe('module test impact commands', () => {
           `${prefix}user_skills_repository -> settings_service_facade -> workspace_runtime -> workspace_page`
         ])
       )
+      expect(
+        affected.testFiles.filter((file) => file.startsWith('packages/skills/')).sort()
+      ).toEqual(prefix ? [...packageTests].sort() : [])
       if (prefix) {
         expect(affected.reasonChains).toEqual(
           expect.arrayContaining([

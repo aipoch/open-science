@@ -116,5 +116,34 @@
   "packages/pdf-translation/resources/worker.mjs": [
     "packages/pdf-translation/src/writer.ts",
     "packages/pdf-translation/src/resources.ts"
+  ],
+  "resources/pdf-translation/worker.mjs": [],
+  "resources/pdf-structure/host.mjs": [],
+  "packages/skills/src/user-skill-repository.ts": [
+    "src/main/skills/user-skill-repository.architecture.test.ts"
+  ],
+  "packages/skills/src/user-skill-store.ts": [
+    "src/main/skills/user-skill-repository.architecture.test.ts"
+  ],
+  "packages/skills/src/agent-home-skill-owner.ts": [
+    "src/main/skills/user-skill-repository.architecture.test.ts"
+  ],
+  "packages/skills/src/skill-bundle-import-owner.ts": [
+    "src/main/skills/user-skill-repository.architecture.test.ts"
+  ],
+  "packages/skills/src/user-skill-import-contracts.ts": [
+    "src/main/skills/user-skill-repository.architecture.test.ts"
+  ],
+  "packages/skills/src/skill-mutation-owner.ts": [
+    "src/main/skills/user-skill-repository.architecture.test.ts"
+  ],
+  "packages/skills/src/skill-package-transaction-owner.ts": [
+    "src/main/skills/user-skill-repository.architecture.test.ts"
+  ],
+  "packages/skills/src/user-skill-catalog-observer.ts": [
+    "src/main/skills/user-skill-repository.architecture.test.ts"
+  ],
+  "packages/skills/src/user-skill-compatibility-index.ts": [
+    "src/main/skills/user-skill-repository.architecture.test.ts"
   ]
 }
