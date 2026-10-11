@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { WSL2_BASH_PREVIEW_MANIFEST } from '../src/shared/wsl2-preview-manifest'
 
 import {
+  captureStartupDialog,
   assertPackagedResources,
   assertDatabaseDowngradeBlocked,
   authenticatePackagedAppEndpoint,
@@ -46,6 +47,21 @@ import {
 } from './windows-installer-smoke.mjs'
 
 describe('Windows installer smoke plan', () => {
+  it('bounds bootstrap dialog diagnostics to the isolated child process', async () => {
+    const run = vi.fn().mockResolvedValue({ stdout: 'Startup error\nmissing helper\n' })
+    await expect(captureStartupDialog(123, { TEMP: 'isolated' }, run)).resolves.toBe(
+      'Startup error\nmissing helper'
+    )
+    expect(run).toHaveBeenCalledWith(
+      'powershell.exe',
+      expect.arrayContaining([expect.stringContaining('ProcessIdProperty')]),
+      { env: { TEMP: 'isolated', OPEN_SCIENCE_SMOKE_PROCESS_ID: '123' }, timeoutMs: 5_000 }
+    )
+    run.mockClear()
+    await expect(captureStartupDialog(undefined, {}, run)).resolves.toBe('')
+    expect(run).not.toHaveBeenCalled()
+  })
+
   it('bounds installation separately and preserves failures when no files were extracted', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-install-deadline-'))
     const installDirectory = join(root, 'installed app 程序')

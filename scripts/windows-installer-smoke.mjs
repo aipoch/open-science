@@ -977,6 +977,29 @@ const createUpgradeProfileGuard = (
   return { cleanup, shouldExpectDowngradeBlock: () => expectDowngradeBlock, verifyCycle }
 }
 
+const captureStartupDialog = async (pid, env, run = runProcess) => {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return ''
+  const result = await run(
+    'powershell.exe',
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      `Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName UIAutomationTypes
+$condition = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ProcessIdProperty, [int]$env:OPEN_SCIENCE_SMOKE_PROCESS_ID)
+$windows = [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, $condition)
+foreach ($window in $windows) {
+  $window.Current.Name
+  $text = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Text)
+  $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $text) | Select-Object -First 20 | ForEach-Object { $_.Current.Name }
+}`
+    ],
+    { env: { ...env, OPEN_SCIENCE_SMOKE_PROCESS_ID: String(pid) }, timeoutMs: 5_000 }
+  )
+  return result.stdout.trim()
+}
+
 const launchAndProbe = async ({
   installDirectory,
   expectedVersion,
@@ -1035,8 +1058,11 @@ const launchAndProbe = async ({
     if (onSqliteVersion) onSqliteVersion(parsePackagedSqliteVersion(output()))
     return configRoot
   } catch (error) {
+    // Bootstrap can stop in a native error box before file logging exists. Read only this
+    // isolated smoke process's dialog before termination, never unrelated desktop windows.
+    const dialog = await captureStartupDialog(child.pid, env).catch(() => '')
     await terminateProcessTree(child)
-    const processOutput = output().trim()
+    const processOutput = [output().trim(), dialog].filter(Boolean).join('\n')
     if (error instanceof Error && processOutput && !error.message.includes(processOutput)) {
       error.message += `\n${processOutput}`
     }
@@ -1888,6 +1914,7 @@ if (invokedAsScript) {
 }
 
 export {
+  captureStartupDialog,
   authenticatePackagedAppEndpoint,
   assertDatabaseDowngradeBlocked,
   assertWsl2RestartCleanupBlocked,
