@@ -151,7 +151,6 @@ jobs:
         run: >-
           npm test --prefix packages/notebook-analysis --
           .native.test.ts
-          --maxWorkers=1
 
       - name: Test real source runtime chain
         env:

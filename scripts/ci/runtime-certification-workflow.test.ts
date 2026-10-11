@@ -138,9 +138,7 @@ describe('runtime certification workflow', () => {
 
     const native = step(source, 'Test package native analysis regressions')
     expect(native.env).toEqual({ RUN_KERNEL: '1' })
-    expect(native.run).toBe(
-      'npm test --prefix packages/notebook-analysis -- .native.test.ts --maxWorkers=1'
-    )
+    expect(native.run).toBe('npm test --prefix packages/notebook-analysis -- .native.test.ts')
     expect(test.env).toEqual({ RUN_KERNEL: '1', RUN_REPRODUCTION_SMOKE: '1' })
     for (const file of [
       'repl-loop.integration.test.ts',
