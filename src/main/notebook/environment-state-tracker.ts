@@ -30,7 +30,13 @@ import { EnvironmentLockCaptureOwner, type EnvironmentLockWorkspace } from './en
 type EnvironmentExecFile = (
   command: string,
   args: string[],
-  options: { timeout: number; maxBuffer: number; env: NodeJS.ProcessEnv; signal?: AbortSignal }
+  options: {
+    timeout: number
+    maxBuffer: number
+    env: NodeJS.ProcessEnv
+    windowsHide: boolean
+    signal?: AbortSignal
+  }
 ) => Promise<{ stdout: string; stderr?: string }>
 
 const execFileAsync = promisify(execFile) as EnvironmentExecFile
@@ -893,6 +899,7 @@ const inspectInstalledDefault = async (
   ]
   const { stdout } = await execute(target.command, args, {
     ...(signal ? { signal } : {}),
+    windowsHide: true,
     timeout: INSPECTION_TIMEOUT_MS,
     maxBuffer: 16 * 1024 * 1024,
     env: environmentCaptureProcessEnv(
@@ -925,6 +932,7 @@ const captureFingerprintDefault = async (
       : ['--vanilla', '--slave', '-e', rInlineScript(R_FINGERPRINT_SCRIPT)])
   ]
   const { stdout } = await execute(target.command, args, {
+    windowsHide: true,
     timeout: INSPECTION_TIMEOUT_MS,
     maxBuffer: 8 * 1024 * 1024,
     env: environmentCaptureProcessEnv(target, process.env, platform)
@@ -1231,6 +1239,7 @@ class EnvironmentStateTracker {
           if (!command) throw new Error('Environment lock command is unavailable.')
           return (
             await this.execute(command, args, {
+              windowsHide: true,
               timeout: INSPECTION_TIMEOUT_MS,
               maxBuffer: 32 * 1024 * 1024,
               env: environmentCaptureProcessEnv(target, process.env, this.platform)

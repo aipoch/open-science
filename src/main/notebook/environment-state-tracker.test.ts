@@ -58,6 +58,54 @@ const readBinding = async (
 
 describe('EnvironmentStateTracker', () => {
   it.each(['python', 'r'] as const)(
+    'keeps %s fingerprint, inventory, and lock subprocesses hidden throughout a run',
+    async (language) => {
+      dataRoot = await mkdtemp(join(tmpdir(), 'notebook-hidden-environment-'))
+      const execute = vi.fn<NonNullable<EnvironmentStateTrackerOptions['execFile']>>(
+        async (_command, _args, options) => ({
+          stdout:
+            options.maxBuffer === 16 * 1024 * 1024
+              ? 'RUNTIME\t3.12\twin32\tx86_64\nPACKAGE\tdemo\t1.0\n'
+              : options.maxBuffer === 8 * 1024 * 1024
+                ? 'FILE\tstable\t1\t1\n'
+                : '1.0',
+          stderr: ''
+        })
+      )
+      const tracker = new EnvironmentStateTracker({
+        dataRoot,
+        platform: 'win32',
+        execFile: execute
+      })
+      const captureTarget = { ...target, language }
+      const prepared = await tracker.prepareRun(captureTarget)
+      const captured = await tracker.captureCompletedRun(
+        captureTarget,
+        {
+          packages: [
+            {
+              name: 'demo',
+              version: '1.0',
+              versionStatus: 'known',
+              ecosystem: language,
+              loadedState: 'loaded',
+              evidenceSources: []
+            }
+          ]
+        },
+        prepared
+      )
+      expect(captured.manifest.packages).toHaveLength(1)
+      expect(new Set(execute.mock.calls.map(([, , options]) => options.maxBuffer))).toEqual(
+        new Set([8, 16, 32].map((size) => size * 1024 * 1024))
+      )
+      for (const [, , options] of execute.mock.calls) {
+        expect(options.windowsHide).toBe(true)
+      }
+    }
+  )
+
+  it.each(['python', 'r'] as const)(
     'cancels a running fresh %s metadata subprocess',
     async (language) => {
       dataRoot = await mkdtemp(join(tmpdir(), 'cancel-package-inspection-'))
