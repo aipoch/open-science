@@ -38,6 +38,7 @@ import { connectDesktopRuntime, type DesktopRuntimeClient } from './desktop-runt
 import { installDesktopRuntimeElectronAdapter } from './desktop-runtime-electron-adapter'
 import { createDesktopNativeHandler } from './desktop-native-electron'
 import { handleOwnedBackendDisconnect } from './desktop-backend-exit'
+import { parseWebModeOptions } from './web-service/options'
 import { createDesktopPreviewProxy } from './desktop-preview-proxy'
 import type { DesktopShutdownWork } from './desktop-runtime-lifecycle'
 import { PackageFileOpenRelay, packagePathsFromArgv } from './session-package/file-open'
@@ -147,6 +148,7 @@ const buildZoomSafeApplicationMenu = (
 }
 
 async function startDesktop(): Promise<void> {
+  const { headless } = parseWebModeOptions(process.argv)
   configureRuntimeMetadata(() => ({
     version: app.getVersion(),
     locale: app.getLocale(),
@@ -393,7 +395,7 @@ async function startDesktop(): Promise<void> {
   })
   const attention = createDesktopAttentionController({
     platform: process.platform,
-    headless: false,
+    headless,
     isAppFocused: () => BrowserWindow.getAllWindows().some((window) => window.isFocused()),
     isMainWindowHidden: () => isMainWindowHidden(),
     getMainWindow: () => getMainWindow(),
@@ -405,7 +407,7 @@ async function startDesktop(): Promise<void> {
       notificationCtor: Notification,
       liveNotifications: new Set(),
       log: diagnostics.log,
-      headless: false,
+      headless,
       translate
     },
     isAppFocused: () => BrowserWindow.getAllWindows().some((window) => window.isFocused()),
@@ -662,6 +664,7 @@ async function startDesktop(): Promise<void> {
   app.removeListener('before-quit', holdStartupQuit)
   const lifecycle = installAppLifecycle({
     app,
+    createInitialWindow: !headless,
     createMainWindow: (options) => createMainWindow(options, translate),
     configureMainWindow,
     createTray: (handlers) =>

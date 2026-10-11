@@ -4,8 +4,65 @@ import { promisify } from 'node:util'
 import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import type { ElectronApplication } from 'playwright'
-import { launchEnvironment, launchOpenScience } from './fixtures/electron-app'
+import { _electron as electron, type ElectronApplication } from 'playwright'
+import { electronLaunchTarget, launchEnvironment, launchOpenScience } from './fixtures/electron-app'
+
+test('headless desktop creates no renderer and exits after Web shutdown', async () => {
+  test.skip(Boolean(process.env.OPEN_SCIENCE_E2E_EXECUTABLE), 'Source entry certification')
+  const root = await mkdtemp(join(tmpdir(), 'open-science-headless-lifetime-'))
+  const storageRoot = join(root, 'storage')
+  const profileRoot = join(root, 'profile')
+  await mkdir(storageRoot)
+  const target = electronLaunchTarget(profileRoot)
+  const env = {
+    ...launchEnvironment(storageRoot),
+    OPEN_SCIENCE_USER_DATA: profileRoot,
+    ...(process.platform === 'darwin'
+      ? {
+          NODE_OPTIONS: `--require=${JSON.stringify(resolve('e2e/fixtures/mock-node-credentials.cjs'))}`
+        }
+      : {})
+  }
+  let application: ElectronApplication | undefined
+  try {
+    application = await electron.launch({
+      ...target,
+      args: [...target.args, '--open-science-headless', '--serve=0'],
+      env
+    })
+    const child = application.process()
+    const logPath = join(profileRoot, 'logs', 'main.log')
+    // Main publishes readiness only after it installs the window/quit lifecycle.
+    await expect
+      .poll(() => readFile(logPath, 'utf8').catch(() => ''), { timeout: 60000 })
+      .toContain('Open-Science Web:')
+    expect(
+      await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)
+    ).toBe(0)
+    const { port } = JSON.parse(await readFile(join(storageRoot, 'web-service.json'), 'utf8'))
+    const token = (await readFile(join(storageRoot, 'web-token'), 'utf8')).trim()
+    const headers = { authorization: `Bearer ${token}` }
+    const health = await fetch(`http://127.0.0.1:${port}/api/bootstrap`, {
+      headers,
+      signal: AbortSignal.timeout(5000)
+    })
+    expect(health.ok).toBe(true)
+    await health.text()
+    const response = await fetch(`http://127.0.0.1:${port}/api/shutdown`, {
+      method: 'POST',
+      headers,
+      signal: AbortSignal.timeout(5000)
+    })
+    await response.text()
+    expect(response.status).toBe(202)
+    await expect.poll(() => child.exitCode, { timeout: 30000 }).toBe(0)
+    expect(child.signalCode).toBeNull()
+    application = undefined
+  } finally {
+    await application?.close()
+    await rm(root, { recursive: true, force: true })
+  }
+})
 
 for (const borrowed of [false, true]) {
   test(`desktop ${borrowed ? 'detaches from a CLI-owned' : 'stops its own'} ordinary Node runtime`, async () => {
