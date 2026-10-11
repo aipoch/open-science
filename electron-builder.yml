@@ -10,6 +10,8 @@ beforePack: build/stage-desktop-runtime.cjs
 afterPack: build/adhoc-sign.cjs
 afterSign: build/sign-windows.cjs
 files:
+  # Runtime code and resources are compiled/staged separately; repository tooling is not app data.
+  - '!{scripts,test,e2e,docs,release-notes,patches,prisma}{,/**/*}'
   # CLI release archives and staging files can remain after a prior packaging run.
   - '!out/{backend,standalone,node-runtime,web,cli-artifacts}{,/**/*}'
   - '!**/.vscode/*'

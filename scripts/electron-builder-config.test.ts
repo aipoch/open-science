@@ -36,19 +36,35 @@ describe('macOS native privacy purpose descriptions', () => {
 })
 
 describe('electron-builder local evidence exclusion', () => {
-  it('keeps prior CLI release artifacts out of a repeated desktop build', async () => {
+  it('keeps repository tooling and prior CLI artifacts out while retaining runtime resources', async () => {
     const config = load(readFileSync('electron-builder.yml', 'utf8')) as { files: string[] }
     const root = await mkdtemp(join(tmpdir(), 'desktop-cli-artifacts-'))
     const source = join(root, 'source')
     const destination = join(root, 'packaged')
-    const applicationFiles = ['out/main/index.js', 'out/renderer/index.html']
+    const applicationFiles = [
+      'out/main/index.js',
+      'out/renderer/index.html',
+      'resources/notebook/python_loop.py',
+      'resources/skills/skill-creator/scripts/utils.js',
+      'resources/specialists/template/v1/README.txt',
+      'resources/guides/wsl2.html'
+    ]
     const cliArtifacts = [
       'out/cli-artifacts/open-science-0.37.0-win32-x64.zip',
       'out/cli-artifacts/win32-x64.json',
       'out/cli-artifacts/.archive-fixture/backend/index.cjs'
     ]
+    const developmentFiles = [
+      'scripts/stage-backend.mjs',
+      'test/fixtures/paper.pdf',
+      'e2e/fixtures/data.csv',
+      'docs/design.md',
+      'release-notes/v0.37.0.md',
+      'patches/dependency.patch',
+      'prisma/schema.prisma'
+    ]
     try {
-      for (const file of [...applicationFiles, ...cliArtifacts]) {
+      for (const file of [...applicationFiles, ...cliArtifacts, ...developmentFiles]) {
         const target = join(source, file)
         await mkdir(join(target, '..'), { recursive: true })
         await writeFile(target, file)
@@ -58,7 +74,7 @@ describe('electron-builder local evidence exclusion', () => {
       ])
       for (const file of applicationFiles)
         expect(await readFile(join(destination, file), 'utf8')).toBe(file)
-      for (const file of cliArtifacts)
+      for (const file of [...cliArtifacts, ...developmentFiles])
         await expect(readFile(join(destination, file))).rejects.toMatchObject({ code: 'ENOENT' })
     } finally {
       await rm(root, { recursive: true, force: true })

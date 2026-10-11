@@ -99,6 +99,12 @@ export function backendDependencyIncludes(
     /^dist[\\/]ort-wasm-simd-threaded\.(?:jsep|jspi|asyncify)\.(?:mjs|wasm)$/.test(relativePath)
   )
     return false
+  // Package exports use the minified builds; these parallel development bundles are never loaded.
+  if (
+    name === 'onnxruntime-web' &&
+    /^dist[\\/]ort(?:\.(?:all|wasm|webgl|webgpu|jspi|node))?\.(?:mjs|js)$/.test(relativePath)
+  )
+    return false
   // The full tokenizer embeds its encodings in WASM; separate JSON/JS encoders belong to lite.
   if (name === 'tiktoken' && top === 'encoders') return false
   // xAI uses only the lightweight tokenizer and o200k_base, not the all-encoding entry point.
@@ -113,14 +119,26 @@ export function backendDependencyIncludes(
   if (name === 'onnxruntime-node' && top === 'bin' && parts[1] === 'napi-v6') {
     if (parts[2] && parts[2] !== platform) return false
     if (parts[3] && parts[3] !== arch) return false
+    // Linux npm installs download optional GPU providers; local translation selects WASM.
+    if (/^libonnxruntime_providers_(?:cuda|tensorrt)\.so$/.test(parts[4] ?? '')) return false
   }
   if (
     ![
+      '@aipoch/compute',
+      '@aipoch/connector-builtins',
+      '@aipoch/connector-core',
+      '@aipoch/connector-mcp-client',
+      '@aipoch/diagnostics',
+      '@aipoch/environment',
+      '@aipoch/notebook-analysis',
+      '@aipoch/notebook-code-risk',
+      '@aipoch/notebook-syntax',
       '@aipoch/pdf-structure',
       '@aipoch/pdf-translation',
       '@aipoch/literature-citations',
       '@aipoch/journal-catalog',
-      '@aipoch/literature-discovery'
+      '@aipoch/literature-discovery',
+      '@aipoch/skills'
     ].includes(manifest.name) ||
     !top
   )

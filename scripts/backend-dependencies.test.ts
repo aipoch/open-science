@@ -135,16 +135,81 @@ it.each(['/', '\\'])(
   }
 )
 
-it.each(['literature-citations', 'journal-catalog', 'literature-discovery'])(
-  'stages %s using its npm files boundary',
-  (name) => {
-    const manifest = JSON.parse(readFileSync(`packages/${name}/package.json`, 'utf8'))
-    for (const file of ['dist/index.js', 'package.json', 'LICENSE'])
-      expect(backendDependencyIncludes(manifest, file)).toBe(true)
-    for (const file of ['src/index.ts', 'test/packed-runtime.mjs', 'tsconfig.json'])
-      expect(backendDependencyIncludes(manifest, file)).toBe(false)
+it.each([
+  'compute',
+  'connector-builtins',
+  'connector-core',
+  'connector-mcp-client',
+  'diagnostics',
+  'environment',
+  'notebook-analysis',
+  'notebook-code-risk',
+  'notebook-syntax',
+  'literature-citations',
+  'literature-discovery',
+  'journal-catalog',
+  'skills'
+])('stages %s using its npm files boundary', (name) => {
+  const manifest = JSON.parse(readFileSync(`packages/${name}/package.json`, 'utf8'))
+  for (const separator of ['/', '\\']) {
+    for (const file of [
+      '',
+      'dist/index.js',
+      'package.json',
+      'LICENSE',
+      ...manifest.files.flatMap((path: string) => [path, `${path}/runtime.wasm`])
+    ])
+      expect(backendDependencyIncludes(manifest, file.replaceAll('/', separator)), file).toBe(true)
+    for (const file of [
+      'src/index.ts',
+      'test/packed-runtime.mjs',
+      '.cache/build.json',
+      'tsconfig.json'
+    ])
+      expect(backendDependencyIncludes(manifest, file.replaceAll('/', separator)), file).toBe(false)
+  }
+})
+
+it.each(['/', '\\'])(
+  'omits optional ONNX GPU providers but retains native loading (%s)',
+  (separator) => {
+    const includes = (file: string): boolean =>
+      backendDependencyIncludes(
+        { name: 'onnxruntime-node' },
+        `bin/napi-v6/linux/x64/${file}`.replaceAll('/', separator),
+        { platform: 'linux', arch: 'x64' }
+      )
+    for (const file of ['libonnxruntime_providers_cuda.so', 'libonnxruntime_providers_tensorrt.so'])
+      expect(includes(file), file).toBe(false)
+    for (const file of [
+      'onnxruntime_binding.node',
+      'libonnxruntime.so.1',
+      'libonnxruntime_providers_shared.so'
+    ])
+      expect(includes(file), file).toBe(true)
   }
 )
+
+it('retains ONNX JavaScript exports while omitting parallel development bundles', () => {
+  const manifest = JSON.parse(readFileSync('node_modules/onnxruntime-web/package.json', 'utf8'))
+  const paths = (value: unknown): string[] =>
+    typeof value === 'string' ? [value] : Object.values(value as object).flatMap(paths)
+  for (const separator of ['/', '\\']) {
+    for (const entry of paths(manifest.exports).filter((path) => /\.m?js$/.test(path))) {
+      // Alternate WASM glue is already excluded by the CPU-WASM packaging policy.
+      if (/ort-wasm-simd-threaded\.(?:jsep|jspi|asyncify)\./.test(entry)) continue
+      expect(
+        backendDependencyIncludes(manifest, entry.slice(2).replaceAll('/', separator)),
+        entry
+      ).toBe(true)
+    }
+    for (const file of ['ort.js', 'ort.mjs', 'ort.all.js', 'ort.webgl.mjs', 'ort.wasm.js'])
+      expect(
+        backendDependencyIncludes(manifest, `dist/${file}`.replaceAll('/', separator)),
+        file
+      ).toBe(false)
+  }
+})
 
 it.each(['darwin', 'linux', 'win32'] as const)(
   'ships only target ONNX binaries for %s',

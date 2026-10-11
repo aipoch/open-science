@@ -85,15 +85,7 @@ async function copyDependency(name, from, destinationParent = stage) {
   await cp(source, destination, {
     recursive: true,
     dereference: true,
-    filter: (path) => {
-      const dependencyPath = relative(source, path)
-      if (!backendDependencyIncludes(pkg, dependencyPath)) return false
-      const parts = dependencyPath.split(sep)
-      if (name === '@aipoch/skills' && parts[0]) {
-        return ['dist', 'package.json', 'README.md', 'LICENSE'].includes(parts[0])
-      }
-      return true
-    }
+    filter: (path) => backendDependencyIncludes(pkg, relative(source, path))
   })
   // These are prebuilt target artifacts. npm must not reinterpret them as a source installation.
   if (name.startsWith('@aipoch/') || name === '@prisma/client') {
@@ -182,6 +174,8 @@ const assertNoBuildIntermediates = async (directory) => {
 }
 await assertNoBuildIntermediates(join(stage, 'node_modules'))
 const nativeRequire = createRequire(join(stage, 'package.json'))
+// Transformers imports this native binding even with WASM inference; pruning must keep it loadable.
+nativeRequire('onnxruntime-node')
 for (const name of ['@aipoch/process-tree-native', '@aipoch/safe-file-publisher-native'])
   nativeRequire(name)
 for (const path of Object.values(nativeRequire('@aipoch/credential-identity-probe-native')))
