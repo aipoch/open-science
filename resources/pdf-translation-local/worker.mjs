@@ -1,12 +1,12 @@
 import { createInterface } from 'node:readline'
 import { readFile } from 'node:fs/promises'
-import { fileURLToPath } from 'node:url'
 
 // The bundled native ONNX runtime traps during inference under Electron's V8 sandbox.
 // Inject the supported WASM backend while retaining local file loading and the same model recipe.
 const ort = await import('onnxruntime-web/wasm')
 ort.env.wasm.numThreads = 1
-ort.env.wasm.wasmPaths = fileURLToPath(new URL('./', import.meta.resolve('onnxruntime-web/wasm')))
+// ONNX resolves its WASM module through import(); Windows drive paths are not module URLs.
+ort.env.wasm.wasmPaths = new URL('./', import.meta.resolve('onnxruntime-web/wasm')).href
 const createSession = ort.InferenceSession.create.bind(ort.InferenceSession)
 ort.InferenceSession.create = async (model, options) =>
   createSession(typeof model === 'string' ? new Uint8Array(await readFile(model)) : model, options)
