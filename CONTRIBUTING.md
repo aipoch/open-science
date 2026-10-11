@@ -580,8 +580,14 @@ that its base revision reached the module and its head revision no longer reache
 owner path through static imports or the union of base/head runtime-consumer declarations. The
 checker reads Git blobs as data, resolves public local-package exports and renderer aliases, and
 retains evidence when imports cannot be resolved, dynamic imports are computed, or the module
-requires full validation. Verified retirements appear in the Integrity summary. This exception
-does not remove owner/contract tests, interfaces, module consumer edges, or routing obligations.
+requires full validation. Verified retirements appear in the Integrity summary.
+Historical consumer entries for tests owned by a foreign package may also retire when complete
+source graphs for both revisions prove no path to the module, preserving the unique original
+package test owner and the union of runtime edges. Missing package manifests or incomplete
+evidence retain the registration. This does not authorize retirement of already-unproven host
+consumer contracts. These exceptions do not remove owner/contract tests, interfaces, module
+consumer edges, or routing obligations; they execute only from trusted-base code. Merge a policy
+change before proposing registration cleanup that depends on it.
 New explicit ownership cannot hide existing inferred test coverage. Unknown policy metadata and
 coverage reductions fail the check; owner approval alone does not waive these invariants.
 Module moves and consolidation must preserve surviving ownership, interfaces, test evidence and

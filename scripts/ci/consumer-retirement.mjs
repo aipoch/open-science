@@ -230,7 +230,28 @@ export function verifiedConsumerRetirements(
       )
         continue
       const owners = new Set([...owner.ownerPaths, ...current.ownerPaths])
-      if (!previousDependencies(test, owners).reachable) continue
+      const previous = previousDependencies(test, owners)
+      // Historical foreign-package entries can also be stale on both revisions.
+      // This is narrower than accepting arbitrary unproven host contracts: retain
+      // the test's unique original package owner, and demand complete evidence on
+      // BOTH revisions with all historical runtime edges included.
+      if (!previous.reachable) {
+        const root = /^packages\/[^/]+\//.exec(test)?.[0]
+        const packageOwners = Object.entries(baseManifest.modules).filter(
+          ([, module]) => module.ownerPaths.includes(test) && module.testFiles.owner.includes(test)
+        )
+        if (
+          !root ||
+          !previous.complete ||
+          !before.files.has(`${root}package.json`) ||
+          !after.files.has(`${root}package.json`) ||
+          [...owners].some((path) => path.startsWith(root)) ||
+          packageOwners.length !== 1 ||
+          !headManifest.modules[packageOwners[0][0]]?.ownerPaths.includes(test) ||
+          !headManifest.modules[packageOwners[0][0]]?.testFiles.owner.includes(test)
+        )
+          continue
+      }
       const result = currentDependencies(test, owners)
       if (result.complete && !result.reachable) retired.add(`${id}:${test}`)
     }

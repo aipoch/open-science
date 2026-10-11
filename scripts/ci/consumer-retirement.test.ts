@@ -17,7 +17,10 @@ afterEach(() => {
 // Each case creates and commits Git snapshots; allow slow Windows/CI filesystem operations.
 const owner = 'src/owner.ts'
 const consumer = 'src/consumer.test.ts'
-function fixture(options: { runtime?: boolean; full?: boolean; baseTest?: string } = {}) {
+function fixture(
+  options: { runtime?: boolean; full?: boolean; baseTest?: string; testPath?: string } = {}
+) {
+  const consumer = options.testPath ?? 'src/consumer.test.ts'
   const root = mkdtempSync(join(tmpdir(), 'consumer-retirement-'))
   roots.push(root)
   const git = (...args: string[]): string =>
@@ -49,6 +52,8 @@ function fixture(options: { runtime?: boolean; full?: boolean; baseTest?: string
   git('init', '-q')
   git('config', 'user.name', 'Fixture')
   git('config', 'user.email', 'fixture@example.test')
+  if (options.testPath?.startsWith('packages/'))
+    put('packages/client/package.json', JSON.stringify({ name: '@example/client' }))
   put(owner, 'export const value = 1')
   put('src/owner.test.ts', "import { value } from './owner'")
   put('src/independent.ts', 'export const value = 2')
@@ -252,4 +257,27 @@ it.each([
       )
     ).toEqual(stale ? [consumer] : [])
   }
+)
+
+it('retires a historical unrelated package consumer while keeping its owner suite', () => {
+  const state = fixture({ testPath: 'packages/client/consumer.test.ts', baseTest: 'export {}' })
+  expect(state.inspect('export const independent = true').ok).toBe(true)
+}, 30_000)
+
+it.each(['incomplete-base', 'lost-owner', 'runtime-edge'])(
+  'retains historical foreign-package coverage with %s evidence',
+  (scenario) => {
+    const testPath = 'packages/client/consumer.test.ts'
+    const state = fixture({
+      testPath,
+      baseTest: scenario === 'incomplete-base' ? "import './missing'" : 'export {}',
+      runtime: scenario === 'runtime-edge'
+    })
+    if (scenario === 'lost-owner') {
+      state.manifest.modules.downstream.testFiles.owner = []
+      state.manifest.modules.downstream.testFiles.contract = [testPath]
+    }
+    expect(state.inspect('export const independent = true').ok).toBe(false)
+  },
+  30_000
 )
