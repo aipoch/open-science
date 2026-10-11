@@ -450,7 +450,13 @@
     "packages/pdf-translation/test/inference-adapter.test.ts",
     "scripts/pdf-package-fixtures.test.ts",
     "packages/pdf-translation/test/support/checkpoint-memory.ts",
-    "packages/pdf-translation/test/paths.ts"
+    "packages/pdf-translation/test/paths.ts",
+    "packages/pdf-translation/test/checkpoint-workflow.test.ts",
+    "packages/pdf-translation/test/incremental.test.ts",
+    "packages/pdf-translation/test/pdf-cache.test.ts",
+    "packages/pdf-translation/test/usage.test.ts",
+    "packages/pdf-translation/test/workflow.test.ts",
+    "packages/pdf-translation/test/support/usage-memory.ts"
   ],
   "interfacePaths": [
     "packages/pdf-translation/src/index.ts",
@@ -525,13 +531,17 @@
       "packages/pdf-translation/test/writer.test.ts",
       "packages/pdf-translation/test/cache-isolation.test.ts",
       "packages/pdf-translation/test/usage-admission.test.ts",
-      "packages/pdf-translation/test/inference-adapter.test.ts"
+      "packages/pdf-translation/test/inference-adapter.test.ts",
+      "packages/pdf-translation/test/checkpoint-workflow.test.ts",
+      "packages/pdf-translation/test/incremental.test.ts",
+      "packages/pdf-translation/test/pdf-cache.test.ts",
+      "packages/pdf-translation/test/usage.test.ts",
+      "packages/pdf-translation/test/workflow.test.ts"
     ],
     "contract": ["scripts/pdf-package-fixtures.test.ts"],
     "consumer": [
       "scripts/pdf-translation-corpus.test.ts",
       "src/main/literature/pdf-translation/diagnostics.test.ts",
-      "src/main/literature/pdf-translation/incremental.test.ts",
       "src/main/literature/pdf-translation/pdf-cache.test.ts",
       "src/main/literature/pdf-translation/writer.test.ts",
       "src/main/literature/pdf-translation/ipc.test.ts",

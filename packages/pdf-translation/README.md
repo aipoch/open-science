@@ -62,3 +62,16 @@ root `npm test` still includes package tests.
 Extraction preserves checkpoint/usage table names, serialized formats, cache magic and paths,
 status values and source identity. No database migration, new state or historical-data conversion
 is introduced. The host retains schema ownership and cross-domain transaction boundaries.
+
+### Test ownership
+
+Keep translation acceptance/retry, batching/cancellation, incremental PDF output, cache policy,
+checkpoint reconciliation and usage accounting cases in `test/`. Use package-owned fixtures,
+caller leases and transactional memory repositories; these suites must run without application
+source, Electron or Prisma. Reopen a consumer to test stored progress, while retaining the admitted
+writer for operations whose contract includes in-memory reconciliation state.
+
+Application tests cover source/model/error conversion, real caller disconnection, database
+transactions and source bindings, data-root migration, usage projection, IPC and ASAR resource
+loading. A representative cache/output round trip checks the adapter; the domain-case matrix stays
+here. Renaming a host file to `*.integration.test.ts` does not transfer these responsibilities.

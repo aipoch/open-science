@@ -1724,7 +1724,8 @@
     "packages/pdf-structure/test/wrapped-mean-se.test.ts",
     "packages/pdf-structure/test/wrapped-sample-header-band.test.ts",
     "packages/pdf-structure/tsconfig.json",
-    "packages/pdf-structure/vitest.config.ts"
+    "packages/pdf-structure/vitest.config.ts",
+    "packages/pdf-structure/test/result-contract.test.ts"
   ],
   "interfacePaths": [
     "packages/pdf-structure/src/index.ts",
@@ -2227,7 +2228,8 @@
       "packages/pdf-structure/test/wrapped-figure-reference.test.ts",
       "packages/pdf-structure/test/wrapped-group-heading.test.ts",
       "packages/pdf-structure/test/wrapped-mean-se.test.ts",
-      "packages/pdf-structure/test/wrapped-sample-header-band.test.ts"
+      "packages/pdf-structure/test/wrapped-sample-header-band.test.ts",
+      "packages/pdf-structure/test/result-contract.test.ts"
     ],
     "contract": [],
     "consumer": [
@@ -2523,7 +2525,12 @@
       "src/renderer/src/pages/workspace/previews/renderers/use-pdf-translation-job.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-inline.test.ts",
       "scripts/pdf-translation-corpus.test.ts",
-      "src/main/literature/pdf-translation/diagnostics.test.ts"
+      "src/main/literature/pdf-translation/diagnostics.test.ts",
+      "packages/pdf-translation/test/checkpoint-workflow.test.ts",
+      "packages/pdf-translation/test/incremental.test.ts",
+      "packages/pdf-translation/test/pdf-cache.test.ts",
+      "packages/pdf-translation/test/usage.test.ts",
+      "packages/pdf-translation/test/workflow.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive"],

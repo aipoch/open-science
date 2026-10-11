@@ -1,4 +1,4 @@
-import { resolve } from 'node:path'
+import { resolve } from './paths.js'
 import { describe, expect, it } from 'vitest'
 import {
   PDFDocument,
@@ -16,9 +16,9 @@ import {
 } from 'pdf-lib'
 import { createCanvas } from '@napi-rs/canvas'
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
-import { PdfTranslationWriter } from './writer'
-import { ApplicationCallerLeaseRegistry } from '../../caller-lifecycle'
-import type { PdfTranslationPdfRequest } from '../../../shared/pdf-translation'
+import { PdfTranslationWriter } from '../src/writer.js'
+import { TestCallerRegistry } from './support/callers.js'
+import type { PdfTranslationPdfRequest } from '../src/public-contracts.js'
 
 const fragment = (
   pageNumber: number
@@ -53,10 +53,8 @@ describe('incremental translated PDF pages', () => {
       page.node.Resources()!.set(PDFName.of('ExtGState'), shared)
     }
     const data = await pdf.save(),
-      writer = new PdfTranslationWriter(() =>
-        resolve('packages/pdf-translation/resources/worker.mjs')
-      ),
-      caller = new ApplicationCallerLeaseRegistry().acquire({
+      writer = new PdfTranslationWriter(() => resolve('resources/worker.mjs')),
+      caller = new TestCallerRegistry().acquire({
         leaseId: 'shared-incremental',
         surface: 'electron'
       }),
@@ -201,10 +199,8 @@ describe('incremental translated PDF pages', () => {
     }
     pdf.catalog.set(PDFName.of('Outlines'), outlines)
     const data = await pdf.save(),
-      writer = new PdfTranslationWriter(() =>
-        resolve('packages/pdf-translation/resources/worker.mjs')
-      ),
-      caller = new ApplicationCallerLeaseRegistry().acquire({
+      writer = new PdfTranslationWriter(() => resolve('resources/worker.mjs')),
+      caller = new TestCallerRegistry().acquire({
         leaseId: 'reader',
         surface: 'electron'
       }),
@@ -284,10 +280,8 @@ describe('incremental translated PDF pages', () => {
     for (let number = 1; number <= 3; number++)
       pdf.addPage([600, 800]).drawPage(embedded, { x: 50, y: 450, xScale: 1.25, yScale: 1.25 })
     const data = await pdf.save(),
-      writer = new PdfTranslationWriter(() =>
-        resolve('packages/pdf-translation/resources/worker.mjs')
-      ),
-      caller = new ApplicationCallerLeaseRegistry().acquire({
+      writer = new PdfTranslationWriter(() => resolve('resources/worker.mjs')),
+      caller = new TestCallerRegistry().acquire({
         leaseId: 'reader',
         surface: 'electron'
       }),
@@ -340,7 +334,7 @@ describe('incremental translated PDF pages', () => {
   it.each([{ pageNumbers: [0] }, { pageNumbers: [4] }, { pageNumbers: [1, 1] }])(
     'rejects invalid replacement pages $pageNumbers before starting a worker',
     async ({ pageNumbers }) => {
-      const caller = new ApplicationCallerLeaseRegistry().acquire({
+      const caller = new TestCallerRegistry().acquire({
         leaseId: 'reader',
         surface: 'electron'
       })
@@ -367,7 +361,7 @@ describe('incremental translated PDF pages', () => {
   it.each(['partial', 'malformed'] as const)(
     'rejects an unsafe joined paragraph (%s)',
     async (mode) => {
-      const caller = new ApplicationCallerLeaseRegistry().acquire({
+      const caller = new TestCallerRegistry().acquire({
         leaseId: 'reader',
         surface: 'electron'
       })

@@ -1422,7 +1422,6 @@
       "src/main/pdf-annotations/native-import.benchmark.test.ts",
       "src/main/pdf-annotations/native-import.test.ts",
       "scripts/pdf-translation-corpus.test.ts",
-      "src/main/literature/pdf-translation/incremental.test.ts",
       "src/main/literature/pdf-translation/pdf-cache.test.ts",
       "src/main/literature/pdf-translation/writer.test.ts",
       "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-supporting-links.test.tsx",

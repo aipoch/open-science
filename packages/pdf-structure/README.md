@@ -76,3 +76,8 @@ Tests do not download weights. Standard npm dependency installation may require 
 The extraction resources and existing result format are unchanged by this move. No historical-data
 migration, new state enumeration, or cache-directory change is introduced. Fingerprints remain equal
 for identical model recipes, resource bytes and installed dependency versions.
+
+Result-schema and worker-decoding matrices belong to this package's `test/` directory, including
+geometry, source provenance, decoding budgets and historical optional fields. Host tests retain
+representative result/thumbnail cache round trips, source authority, model leases and process
+supervision. Do not duplicate every decoder case through the host cache or lifecycle owner.
