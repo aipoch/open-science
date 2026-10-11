@@ -261,7 +261,15 @@
     "scripts/electron-fixture-teardown.test.ts",
     "scripts/electron-vite-config.test.ts",
     "src/main/composition/notebook-approvals.ts",
-    "scripts/electron-session-revision-retry.test.ts"
+    "scripts/electron-session-revision-retry.test.ts",
+    "scripts/build-dev-packages.mjs",
+    "scripts/build-dev-packages.integration.test.ts",
+    "scripts/build-backend.integration.test.ts",
+    "scripts/dev-build-watch.mjs",
+    "scripts/dev-build-watch.d.mts",
+    "scripts/dev-build-watch.integration.test.ts",
+    "scripts/dev-build-watch.test.ts",
+    "tsconfig.packages.json"
   ],
   "interfacePaths": [
     "src/main/app-lifecycle.ts",
@@ -452,7 +460,11 @@
       "src/main/desktop-runtime-launcher.test.ts",
       "src/main/desktop-runtime-launcher.integration.test.ts",
       "src/main/desktop-runtime-lifecycle.test.ts",
-      "scripts/electron-session-revision-retry.test.ts"
+      "scripts/electron-session-revision-retry.test.ts",
+      "scripts/build-dev-packages.integration.test.ts",
+      "scripts/build-backend.integration.test.ts",
+      "scripts/dev-build-watch.integration.test.ts",
+      "scripts/dev-build-watch.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

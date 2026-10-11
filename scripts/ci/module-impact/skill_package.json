@@ -75,7 +75,8 @@
     "packages/skills/vitest.config.ts",
     "packages/skills/src/runtime-document.test.ts",
     "packages/skills/src/skill-release.ts",
-    "packages/skills/src/skill-release.test.ts"
+    "packages/skills/src/skill-release.test.ts",
+    "packages/skills/tsconfig.dev.json"
   ],
   "interfacePaths": [
     "packages/skills/src/index.ts",

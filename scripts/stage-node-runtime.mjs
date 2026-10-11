@@ -12,14 +12,38 @@ const root = resolve(import.meta.dirname, '..')
 export const nodeRuntime = JSON.parse(await readFile(join(root, 'build/node-runtime.json'), 'utf8'))
 const archiveLimit = 100 * 1024 * 1024
 export async function verifyNodeArchive(path, expected) {
+  if ((await fileDigest(path, archiveLimit)) !== expected)
+    throw new Error('Node runtime archive checksum mismatch.')
+}
+
+async function fileDigest(path, limit = Infinity) {
   const hash = createHash('sha256')
   let size = 0
   for await (const chunk of createReadStream(path)) {
     size += chunk.length
-    if (size > archiveLimit) throw new Error('Node runtime archive exceeds the download limit.')
+    if (size > limit) throw new Error('Node runtime archive exceeds the download limit.')
     hash.update(chunk)
   }
-  if (hash.digest('hex') !== expected) throw new Error('Node runtime archive checksum mismatch.')
+  return hash.digest('hex')
+}
+
+async function reusableRuntime(output, identity, executable) {
+  try {
+    const receipt = JSON.parse(await readFile(join(output, 'version.json'), 'utf8'))
+    if (!receipt || typeof receipt !== 'object') return false
+    if (Object.entries(identity).some(([key, value]) => receipt[key] !== value)) return false
+    for (const name of [executable, 'LICENSE']) {
+      const path = join(output, name)
+      const info = await stat(path)
+      if (!info.isFile() || !info.size || receipt.files?.[name] !== (await fileDigest(path)))
+        return false
+      if (process.platform !== 'win32' && name === 'node' && !(info.mode & 0o111)) return false
+    }
+    return true
+  } catch (error) {
+    if (error.code === 'ENOENT' || error instanceof SyntaxError) return false
+    throw error
+  }
 }
 
 export async function extractNodeRuntime(archive, output, platform, arch) {
@@ -59,7 +83,8 @@ export async function stageNodeRuntime({
   platform = process.platform,
   arch = process.arch,
   output = join(root, 'out/node-runtime', `${platform}-${arch}`),
-  cache = join(root, 'node_modules/.cache/node-runtime')
+  cache = join(root, 'node_modules/.cache/node-runtime'),
+  reuse = false
 } = {}) {
   const source = nodeRuntime.archives[`${platform}-${arch}`]
   if (!source) throw new Error(`No pinned Node runtime for ${platform}/${arch}.`)
@@ -100,13 +125,26 @@ export async function stageNodeRuntime({
       await dispatcher.close()
     }
   }
+  const identity = { version: nodeRuntime.version, platform, arch, sha256: source.sha256 }
+  const executable = platform === 'win32' ? 'node.exe' : 'node'
+  if (reuse && (await reusableRuntime(output, identity, executable))) return output
   await mkdir(dirname(output), { recursive: true })
   const temporary = await mkdtemp(join(dirname(output), '.node-runtime-'))
   try {
     await extractNodeRuntime(archive, temporary, platform, arch)
     await writeFile(
       join(temporary, 'version.json'),
-      JSON.stringify({ version: nodeRuntime.version, platform, arch, sha256: source.sha256 }) + '\n'
+      JSON.stringify({
+        ...identity,
+        files: Object.fromEntries(
+          await Promise.all(
+            [executable, 'LICENSE'].map(async (name) => [
+              name,
+              await fileDigest(join(temporary, name))
+            ])
+          )
+        )
+      }) + '\n'
     )
     await rm(output, { recursive: true, force: true })
     await rename(temporary, output)
@@ -117,6 +155,8 @@ export async function stageNodeRuntime({
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const [platform = process.platform, arch = process.arch] = process.argv.slice(2)
-  console.log(await stageNodeRuntime({ platform, arch }))
+  const [platform = process.platform, arch = process.arch] = process.argv
+    .slice(2)
+    .filter((arg) => arg !== '--reuse')
+  console.log(await stageNodeRuntime({ platform, arch, reuse: process.argv.includes('--reuse') }))
 }

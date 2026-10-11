@@ -51,9 +51,9 @@
     "check:claude-acp-patch": "node scripts/check-claude-acp-patch.mjs",
     "build:web": "npm run build:skills && npm run gen:web-api-map && node --max-old-space-size=8192 node_modules/vite/bin/vite.js build --config vite.web.config.ts",
     "start": "electron-vite preview",
-    "dev": "npm run build:backend -- --development && npm run stage:node-runtime && electron-vite dev",
+    "dev": "npm run build:backend:dev -- --development && npm run stage:node-runtime -- --reuse && electron-vite dev",
     "dev:native-send-now": "node scripts/dev-native-send-now.cjs",
-    "dev:web": "npm run build:backend && npm run build:web && node scripts/dev-web.cjs",
+    "dev:web": "npm run build:backend:dev && npm run gen:web-api-map && node --max-old-space-size=8192 node_modules/vite/bin/vite.js build --config vite.web.config.ts && node scripts/dev-web.cjs",
     "dev:headless": "npm run dev:web --",
     "cli": "node cli/index.mjs",
     "build": "npm run typecheck && npm run build:backend && electron-vite build && npm run build:web",
@@ -93,7 +93,9 @@
     "build:skills": "npm --prefix packages/skills run build",
     "test:skills": "npm --prefix packages/skills test",
     "build:notebook-analysis": "npm --prefix packages/notebook-syntax run build && npm --prefix packages/notebook-code-risk run build && npm --prefix packages/notebook-analysis run build",
-    "check:notebook-packages": "node scripts/check-notebook-packages.mjs"
+    "check:notebook-packages": "node scripts/check-notebook-packages.mjs",
+    "build:packages:dev": "node scripts/build-dev-packages.mjs",
+    "build:backend:dev": "npm run build:packages:dev && npm run build:backend-native && node scripts/build-backend.mjs"
   },
   "dependencies": {
     "@agentclientprotocol/claude-agent-acp": "^0.70.0",

@@ -13,7 +13,8 @@
     "packages/notebook-code-risk/tsconfig.json",
     "packages/notebook-code-risk/tsconfig.test.json",
     "packages/notebook-code-risk/vitest.config.ts",
-    "packages/notebook-code-risk/src/code-risk-analysis.native-python.test.ts"
+    "packages/notebook-code-risk/src/code-risk-analysis.native-python.test.ts",
+    "packages/notebook-code-risk/tsconfig.dev.json"
   ],
   "interfacePaths": [
     "packages/notebook-code-risk/src/code-risk-budget-fixtures.ts",

@@ -11,7 +11,8 @@
     "packages/notebook-analysis/tsconfig.json",
     "packages/notebook-analysis/tsconfig.test.json",
     "packages/notebook-analysis/vitest.config.ts",
-    "packages/notebook-analysis/src/analysis-contract-primitives.ts"
+    "packages/notebook-analysis/src/analysis-contract-primitives.ts",
+    "packages/notebook-analysis/tsconfig.dev.json"
   ],
   "interfacePaths": [
     "packages/notebook-analysis/src/contracts.ts",

@@ -91,3 +91,81 @@ it('rejects unsupported targets before downloading', async () => {
     'No pinned'
   )
 })
+
+it.each(['darwin', 'win32'])(
+  'reuses verified %s output and repairs stale or corrupt staging',
+  async (platform) => {
+    const directory = await temporary()
+    const arch = 'x64'
+    const key = `${platform}-${arch}`
+    const original = nodeRuntime.archives[key]
+    const name = `node-v${nodeRuntime.version}-${platform === 'win32' ? 'win' : platform}-${arch}`
+    const archive = join(directory, original.file)
+    if (platform === 'win32') {
+      await writeFile(
+        archive,
+        zipSync({
+          [`${name}/node.exe`]: strToU8('executable'),
+          [`${name}/LICENSE`]: strToU8('license')
+        })
+      )
+    } else {
+      await mkdir(join(directory, name, 'bin'), { recursive: true })
+      await writeFile(join(directory, name, 'bin/node'), 'executable')
+      await writeFile(join(directory, name, 'LICENSE'), 'license')
+      await createTar({ cwd: directory, file: archive, gzip: true }, [name])
+    }
+    // A locally generated archive exercises the real verification/extraction/reuse path offline.
+    nodeRuntime.archives[key] = {
+      ...original,
+      sha256: createHash('sha256')
+        .update(await readFile(archive))
+        .digest('hex')
+    }
+    const output = join(directory, 'output')
+    const options = { platform, arch, cache: directory, output, reuse: true }
+    const marker = join(output, 'unchanged-output')
+    const executable = join(output, platform === 'win32' ? 'node.exe' : 'node')
+    try {
+      await stageNodeRuntime(options)
+      await writeFile(marker, 'kept')
+      await stageNodeRuntime(options)
+      expect(await readFile(marker, 'utf8')).toBe('kept')
+      for (const target of [executable, join(output, 'LICENSE')]) {
+        await writeFile(target, 'corrupt')
+        await stageNodeRuntime(options)
+        await expect(readFile(marker)).rejects.toMatchObject({ code: 'ENOENT' })
+        expect(await readFile(executable, 'utf8')).toBe('executable')
+        expect(await readFile(join(output, 'LICENSE'), 'utf8')).toBe('license')
+        await writeFile(marker, 'kept')
+      }
+      const receiptPath = join(output, 'version.json')
+      const receipt = JSON.parse(await readFile(receiptPath, 'utf8'))
+      for (const stale of [
+        null,
+        {},
+        { ...receipt, version: 'old' },
+        { ...receipt, arch: 'old' },
+        { ...receipt, platform: 'old' },
+        { ...receipt, sha256: 'old' },
+        { ...receipt, files: undefined }
+      ]) {
+        await writeFile(receiptPath, JSON.stringify(stale))
+        await stageNodeRuntime(options)
+        await expect(readFile(marker)).rejects.toMatchObject({ code: 'ENOENT' })
+        await writeFile(marker, 'kept')
+      }
+      await rm(executable)
+      await stageNodeRuntime(options)
+      expect(await readFile(executable, 'utf8')).toBe('executable')
+      await writeFile(marker, 'kept')
+      // Release staging remains a fresh extraction, even when the receipt matches.
+      await stageNodeRuntime({ ...options, reuse: false })
+      await expect(readFile(marker)).rejects.toMatchObject({ code: 'ENOENT' })
+      await writeFile(archive, 'corrupt archive')
+      await expect(stageNodeRuntime(options)).rejects.toThrow('checksum mismatch')
+    } finally {
+      nodeRuntime.archives[key] = original
+    }
+  }
+)

@@ -26,7 +26,8 @@
     "packages/diagnostics/src/process-diagnostics.ts",
     "packages/diagnostics/src/process-diagnostics.test.ts",
     "packages/diagnostics/src/startup-error.ts",
-    "packages/diagnostics/src/startup-error.test.ts"
+    "packages/diagnostics/src/startup-error.test.ts",
+    "packages/diagnostics/tsconfig.dev.json"
   ],
   "interfacePaths": [
     "packages/diagnostics/package.json",

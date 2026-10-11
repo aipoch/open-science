@@ -1,6 +1,7 @@
 import { createRequire } from 'node:module'
 import { resolve } from 'path'
 import { nativeLocaleAssets } from './scripts/native-locale-assets'
+import { devBuildWatch } from './scripts/dev-build-watch.mjs'
 import { defineConfig } from 'electron-vite'
 import { normalizePath } from 'vite'
 import { fileViewerRenderers } from '@file-viewer/vite-plugin'
@@ -92,9 +93,10 @@ export default defineConfig(({ command }) => ({
       host: '127.0.0.1',
       // Don't watch git worktrees under .claude/worktrees — full source copies would trigger
       // needless rescans/HMR churn during dev.
-      watch: { ignored: ['**/.claude/**'] }
+      watch: { ignored: ['**/.claude/**', `${normalizePath(resolve('.worktree'))}/**`] }
     },
     plugins: [
+      devBuildWatch(),
       // Apply upstream CJS interop for the spreadsheet Worker without injecting renderer presets.
       fileViewerRenderers({
         formats: ['xls', 'xlsx'],

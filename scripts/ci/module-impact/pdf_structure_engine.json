@@ -1725,7 +1725,8 @@
     "packages/pdf-structure/test/wrapped-sample-header-band.test.ts",
     "packages/pdf-structure/tsconfig.json",
     "packages/pdf-structure/vitest.config.ts",
-    "packages/pdf-structure/test/result-contract.test.ts"
+    "packages/pdf-structure/test/result-contract.test.ts",
+    "packages/pdf-structure/tsconfig.dev.json"
   ],
   "interfacePaths": [
     "packages/pdf-structure/src/index.ts",
