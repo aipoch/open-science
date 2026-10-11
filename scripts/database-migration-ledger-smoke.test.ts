@@ -1,5 +1,5 @@
 import { createDatabaseAtReleasedManifest } from '../test/fixtures/application-database'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -12,6 +12,7 @@ import {
 import {
   assertApplicationMigrationLedger,
   parsePackagedSqliteVersion,
+  resolvePackagedSqliteVersion,
   seedLegacyDatabase,
   verifyLegacyProjectPreserved,
   writeDatabaseMigrationCertification
@@ -681,6 +682,47 @@ describe('packaged database migration ledger smoke', () => {
         },
         checks: { reopen: 'passed', specialPath: 'passed' }
       })
+    } finally {
+      await rm(root, { force: true, recursive: true })
+    }
+  })
+
+  it('resolves the SQLite version from the backend log when app output has none (#3358)', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-ledger-smoke-backend-log-'))
+    try {
+      await mkdir(join(root, 'logs'))
+      await writeFile(
+        join(root, 'logs', 'desktop-backend-1-1700000000000.log'),
+        '[main] database migration checking\n[main] database runtime verified: sqlite_version=3.46.0\n'
+      )
+      // Newest log first; an older log without the line must not win.
+      await writeFile(join(root, 'logs', 'desktop-backend-2-1700000001000.log'), 'starting\n')
+      await expect(resolvePackagedSqliteVersion('Open-Science Web: ready', root)).resolves.toBe(
+        '3.46.0'
+      )
+      // The app-output fallback still works when no config root has backend logs.
+      await expect(
+        resolvePackagedSqliteVersion(
+          '[main] database runtime verified: sqlite_version=3.47.0',
+          undefined
+        )
+      ).resolves.toBe('3.47.0')
+      // A config root without backend logs falls back to the app output too.
+      const empty = await mkdtemp(join(tmpdir(), 'open-science-ledger-smoke-empty-'))
+      try {
+        await expect(
+          resolvePackagedSqliteVersion(
+            '[main] database runtime verified: sqlite_version=3.47.1',
+            empty
+          )
+        ).resolves.toBe('3.47.1')
+      } finally {
+        await rm(empty, { force: true, recursive: true })
+      }
+      // Neither source has the line: the original error surfaces.
+      await expect(resolvePackagedSqliteVersion('no signal', empty)).rejects.toThrow(
+        'Packaged application did not report its SQLite runtime version.'
+      )
     } finally {
       await rm(root, { force: true, recursive: true })
     }

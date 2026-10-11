@@ -22,8 +22,8 @@ import { isDeepStrictEqual } from 'node:util'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import {
-  parsePackagedSqliteVersion,
   readDatabaseMigrationLedger,
+  resolvePackagedSqliteVersion,
   seedLegacyDatabase,
   verifyDatabaseMigrationLedger,
   verifyLegacyProjectPreserved,
@@ -1034,7 +1034,7 @@ const launchAndProbe = async ({
     const exitCode = await waitForShutdownExit(exit, child, output)
     if (exitCode !== 0) throw new Error(`Installed app exited with ${exitCode}.\n${output()}`)
     if (verifyLedger) await verifyDatabaseMigrationLedger(configRoot, expectedMigrationCount)
-    if (onSqliteVersion) onSqliteVersion(parsePackagedSqliteVersion(output()))
+    if (onSqliteVersion) onSqliteVersion(await resolvePackagedSqliteVersion(output(), configRoot))
     return configRoot
   } catch (error) {
     await terminateProcessTree(child)

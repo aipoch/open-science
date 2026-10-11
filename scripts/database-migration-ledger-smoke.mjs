@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 
 import { join } from 'node:path'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 
 import { PrismaClient } from '@prisma/client'
 
@@ -306,6 +306,27 @@ const parsePackagedSqliteVersion = (output) => {
   return sqliteVersion
 }
 
+// Since #3358 the database runs in the standalone Node backend, whose diagnostics go to
+// <configRoot>/logs/desktop-backend-*.log instead of the captured app stdout. Read the newest
+// backend log for the verified runtime line; the app-output parse remains for older layouts.
+const readBackendSqliteVersion = async (configRoot) => {
+  const names = (await readdir(join(configRoot, 'logs')).catch(() => []))
+    .filter((name) => /^desktop-backend-.*\.log$/.test(name))
+    .sort()
+  for (const name of names.reverse()) {
+    const content = await readFile(join(configRoot, 'logs', name), 'utf8').catch(() => '')
+    const version = content.match(
+      /\[main\] database runtime verified: sqlite_version=(\d+\.\d+\.\d+)/
+    )?.[1]
+    if (version) return version
+  }
+  return undefined
+}
+
+const resolvePackagedSqliteVersion = async (output, configRoot) =>
+  (configRoot ? await readBackendSqliteVersion(configRoot) : undefined) ??
+  parsePackagedSqliteVersion(output)
+
 const writeDatabaseMigrationCertification = async ({ output, sqliteVersions, checks }) => {
   const versions = [...new Set(sqliteVersions)]
   if (
@@ -335,6 +356,7 @@ export {
   assertApplicationMigrationLedger,
   parsePackagedSqliteVersion,
   readDatabaseMigrationLedger,
+  resolvePackagedSqliteVersion,
   seedLegacyDatabase,
   verifyDatabaseMigrationLedger,
   verifyLegacyProjectPreserved,
