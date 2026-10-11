@@ -69,20 +69,22 @@ it('pages alignment results and invalidates them after reference edits without m
 })
 
 it('shares and expires alignment scans while reporting duplicate identifiers as conflicts', async () => {
-  const { service, db, addReference, integration } = await setup()
+  const { service, client, addReference } = await setup()
   await service.run({ action: 'commit', ...(await preview(service)), skipProblems: false })
-  db.prepare('INSERT INTO Journal(id,name,normalizedName,issnsJson) VALUES(?,?,?,?)').run(
-    'conflicting-journal',
-    'Imaginary conflicted periodical',
-    'imaginary conflicted periodical',
-    '["1234-5679"]'
-  )
+  await client.saveJournals([
+    {
+      id: 'conflicting-journal',
+      name: 'Imaginary conflicted periodical',
+      aliases: [],
+      issns: ['1234-5679']
+    }
+  ])
   addReference('shared-identifier', { name: '', aliases: [], issns: ['1234-5679'] })
   const results = await Promise.all(
     Array.from({ length: 8 }, () => service.run({ action: 'audit', status: 'missing', offset: 0 }))
   )
   expect(new Set(results.map(({ alignment }) => alignment!.token)).size).toBe(1)
-  expect(integration.references.read).toHaveBeenCalledTimes(1)
+  expect(client.references.read).toHaveBeenCalledTimes(1)
   const token = results[0].alignment!.token
   const conflict = (await service.run({ action: 'audit', status: 'ambiguous', offset: 0, token }))
     .alignment!.rows[0]
@@ -97,11 +99,11 @@ it('shares and expires alignment scans while reporting duplicate identifiers as 
 })
 
 it('rejects a scan invalidated by a concurrent reference change and permits a fresh read', async () => {
-  const { service, addReference, integration } = await setup()
+  const { service, addReference, client } = await setup()
   await service.run({ action: 'commit', ...(await preview(service)), skipProblems: false })
   addReference('changing', { name: row().name, aliases: [], issns: [] })
-  const original = integration.references.read
-  vi.spyOn(integration.references, 'read').mockImplementationOnce(async (...args) => {
+  const original = client.references.read
+  vi.spyOn(client.references, 'read').mockImplementationOnce(async (...args) => {
     const result = await original(...args)
     service.referencesChanged()
     return result
@@ -115,7 +117,7 @@ it('rejects a scan invalidated by a concurrent reference change and permits a fr
 })
 
 it('isolates manual confirmation to the reviewed reference and restores automatic matching after unbinding', async () => {
-  const { service, addReference, createService, db, references } = await setup()
+  const { service, addReference, createService, bindings, references } = await setup()
   await service.run({ action: 'commit', ...(await preview(service)), skipProblems: false })
   const identity = { name: 'Unknown fictional review', aliases: [], issns: [] }
   addReference('first', identity)
@@ -171,12 +173,12 @@ it('isolates manual confirmation to the reviewed reference and restores automati
     datasetId: dataset.id,
     expectedRevision: dataset.revision
   })
-  expect(db.prepare('SELECT * FROM TestBinding').all()).toEqual([])
+  expect(bindings()).toEqual([])
   expect(references.size).toBe(2)
 })
 
 it('rejects missing targets and reference revisions changed after review', async () => {
-  const { service, addReference, db } = await setup()
+  const { service, addReference, bindings } = await setup()
   await service.run({ action: 'commit', ...(await preview(service)), skipProblems: false })
   const reference = addReference('guarded')
   const report = (await service.run({ action: 'audit', status: 'missing', offset: 0 })).alignment!
@@ -191,11 +193,11 @@ it('rejects missing targets and reference revisions changed after review', async
   await expect(service.run(request)).rejects.toThrow('no longer available')
   reference.metadataRevision++
   await expect(service.run(request)).rejects.toThrow('changed')
-  expect(db.prepare('SELECT * FROM TestBinding').all()).toEqual([])
+  expect(bindings()).toEqual([])
 })
 
 it('allows only one concurrent confirmation from the same reviewed state', async () => {
-  const { service, addReference, db } = await setup()
+  const { service, addReference, bindings } = await setup()
   await service.run({
     action: 'commit',
     ...(await preview(service, [
@@ -221,11 +223,11 @@ it('allows only one concurrent confirmation from the same reviewed state', async
   )
   expect(results.filter(({ status }) => status === 'fulfilled')).toHaveLength(1)
   expect(results.filter(({ status }) => status === 'rejected')).toHaveLength(1)
-  expect(db.prepare('SELECT * FROM TestBinding').all()).toHaveLength(1)
+  expect(bindings()).toHaveLength(1)
 })
 
 it('preserves successful binding changes when application notifications throw', async () => {
-  const { service, addReference, db, changed, integration } = await setup()
+  const { service, addReference, bindings, changed, integration } = await setup()
   await service.run({ action: 'commit', ...(await preview(service)), skipProblems: false })
   addReference('notify')
   const target = (await service.run({ action: 'candidates', query: 'Lunar' })).candidates![0]
@@ -242,7 +244,7 @@ it('preserves successful binding changes when application notifications throw', 
     expectedBindingRevision: null
   }
   await expect(service.run(request)).resolves.toEqual({})
-  expect(db.prepare('SELECT * FROM TestBinding').all()).toHaveLength(1)
+  expect(bindings()).toHaveLength(1)
   await expect(
     service.run({ action: 'audit', token: report.token, status: 'missing', offset: 0 })
   ).rejects.toThrow('expired')
@@ -256,7 +258,7 @@ it('preserves successful binding changes when application notifications throw', 
       expectedBindingRevision: bound.rows[0].bindingRevision
     })
   ).resolves.toEqual({})
-  expect(db.prepare('SELECT * FROM TestBinding').all()).toEqual([])
+  expect(bindings()).toEqual([])
   expect(integration.warn).toHaveBeenCalledTimes(2)
 })
 
@@ -287,7 +289,7 @@ it('bounds scan progress, isolates cancellation and rejects expired or invalidat
 })
 
 it('requires renewed deletion review when manual confirmations change', async () => {
-  const { service, addReference, db, references } = await setup()
+  const { service, addReference, bindings, references } = await setup()
   const saved = await service.run({
     action: 'commit',
     ...(await preview(service)),
@@ -321,7 +323,7 @@ it('requires renewed deletion review when manual confirmations change', async ()
       expectedRemovalDigest: before.digest
     })
   ).rejects.toThrow('changed')
-  expect(db.prepare('SELECT * FROM TestBinding').all()).toHaveLength(1)
+  expect(bindings()).toHaveLength(1)
   const reviewed = (
     await service.run({
       action: 'remove-preview',
@@ -336,7 +338,7 @@ it('requires renewed deletion review when manual confirmations change', async ()
     expectedRevision: dataset.revision,
     expectedRemovalDigest: reviewed.digest
   })
-  expect(db.prepare('SELECT * FROM TestBinding').all()).toEqual([])
+  expect(bindings()).toEqual([])
   expect(references.size).toBe(1)
 })
 
@@ -372,4 +374,24 @@ it('compares numeric filter equality by value while preserving text equality', a
         { datasetId: saved.datasets![0].id, fieldId, operator: 'equals', value }
       ])
     ).toEqual(expected)
+})
+
+it('uses the current database reference store when the opened database changes', async () => {
+  const first = await setup()
+  const second = await setup()
+  first.addReference('first-library')
+  second.addReference('second-library')
+  let database = first.client
+  const service = first.createService(async () => database)
+  expect(
+    (await service.run({ action: 'audit', status: 'missing', offset: 0 })).alignment!.rows.map(
+      ({ itemId }) => itemId
+    )
+  ).toEqual(['first-library'])
+  database = second.client
+  expect(
+    (await service.run({ action: 'audit', status: 'missing', offset: 0 })).alignment!.rows.map(
+      ({ itemId }) => itemId
+    )
+  ).toEqual(['second-library'])
 })

@@ -1,50 +1,68 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import assert from 'node:assert/strict'
-import { DatabaseSync } from 'node:sqlite'
 import * as journalApi from '@aipoch/journal-catalog'
 import { JournalAttributes } from '@aipoch/journal-catalog'
 import { readJournalFile, createJournalTemplate } from '@aipoch/journal-catalog/files'
 assert.equal('matchJournal' in journalApi, false)
 const template = await createJournalTemplate()
 assert.ok((await readJournalFile(template, 'template.xlsx')).rows.length > 0)
-const db = new DatabaseSync(':memory:')
-db.exec(`CREATE TABLE Journal(id TEXT PRIMARY KEY,name TEXT NOT NULL,normalizedName TEXT NOT NULL,aliasesJson TEXT NOT NULL DEFAULT '[]',issnsJson TEXT NOT NULL DEFAULT '[]',externalIdsJson TEXT NOT NULL DEFAULT '[]');
-CREATE TABLE JournalDataset(id TEXT PRIMARY KEY,name TEXT,source TEXT NOT NULL,year INTEGER NOT NULL,revision INTEGER NOT NULL DEFAULT 1,fieldsJson TEXT NOT NULL,importedAt INTEGER NOT NULL,UNIQUE(source,year));
-CREATE TABLE JournalDatasetEntry(datasetId TEXT NOT NULL REFERENCES JournalDataset(id) ON DELETE CASCADE,journalId TEXT NOT NULL REFERENCES Journal(id) ON DELETE CASCADE,valuesJson TEXT NOT NULL,sourceRow INTEGER NOT NULL,PRIMARY KEY(datasetId,journalId));`)
-const parameters = (values) =>
-  values.map((value) => (value instanceof Date ? value.getTime() : value))
-const database = {
-  async query({ text, values }) {
-    return db.prepare(text).all(...parameters(values))
+// A consumer can provide storage without a database engine or application tables.
+let state = { journals: [], datasets: [], entries: [] }
+const store = (data) => ({
+  async listJournals() {
+    return structuredClone(data.journals)
   },
-  async execute({ text, values }) {
-    return Number(db.prepare(text).run(...parameters(values)).changes)
+  async listDatasets() {
+    return data.datasets.map((dataset) => ({
+      ...dataset,
+      count: data.entries.filter((entry) => entry.datasetId === dataset.id).length
+    }))
+  },
+  async saveDatasetImport(dataset) {
+    data.datasets.push({ ...dataset, revision: 1 })
+  },
+  async saveJournals(journals) {
+    data.journals.push(...journals)
+  },
+  async saveEntries(entries) {
+    data.entries.push(...entries)
+  },
+  async readEntries({ datasetIds, journalIds }) {
+    return data.entries.filter(
+      (entry) =>
+        datasetIds.includes(entry.datasetId) &&
+        (!journalIds || journalIds.includes(entry.journalId))
+    )
+  },
+  references: {
+    read: async () => [],
+    bindings: async () => [],
+    bind: async () => {
+      throw Error('No host references')
+    }
+  }
+})
+const database = {
+  async listJournals() {
+    return store(state).listJournals()
+  },
+  async listDatasets() {
+    return store(state).listDatasets()
+  },
+  async readEntries(query) {
+    return store(state).readEntries(query)
   },
   async transaction(operation) {
-    db.exec('BEGIN')
-    try {
-      const result = await operation(database)
-      db.exec('COMMIT')
-      return result
-    } catch (error) {
-      db.exec('ROLLBACK')
-      throw error
-    }
+    const draft = structuredClone(state)
+    const result = await operation(store(draft))
+    state = draft
+    return result
   }
 }
 const service = new JournalAttributes(
   async () => database,
   () => {},
-  {
-    warn: () => {},
-    references: {
-      read: async () => [],
-      bindings: async () => [],
-      bind: async () => {
-        throw Error('No host references')
-      }
-    }
-  }
+  { warn: () => {} }
 )
 try {
   const { token } = await service.run({
@@ -83,5 +101,4 @@ try {
   assert.equal(result.matches[0].status, 'matched')
 } finally {
   await service.dispose()
-  db.close()
 }
