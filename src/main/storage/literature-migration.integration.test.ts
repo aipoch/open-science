@@ -1,3 +1,4 @@
+import { discoveryJobOptions } from '../literature/discovery-adapters'
 import { configureTestElectronHost } from '../../../test/runtime-host'
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
@@ -11,7 +12,7 @@ import { createProjectDbClient, migrateApplicationDatabase } from '../projects/p
 import { LiteratureAttachmentAuthority } from '../literature/attachment-authority'
 import { LiteratureCitationStyleLibrary } from '@aipoch/literature-citations/styles'
 import { LiteratureCitationFormatter } from '@aipoch/literature-citations'
-import { LiteratureBatchJobs } from '../literature/batch-jobs'
+import { LiteratureBatchJobs } from '@aipoch/literature-discovery'
 import { ContentRepository } from './content-repository'
 import { classifyDataRoot, commitDataRootSwitch, runDataRootMigration } from './migration-service'
 import { readMigrationMarker, scanInventory, writeMigrationMarker } from './migration-marker'
@@ -113,6 +114,7 @@ const style = `<style xmlns="http://purl.org/net/xbiblio/csl" version="1.0" clas
 <bibliography><layout><text variable="title"/></layout></bibliography></style>`
 const jobsAt = (dataRoot: string): LiteratureBatchJobs =>
   new LiteratureBatchJobs({
+    ...discoveryJobOptions,
     path: join(dataRoot, 'literature', 'batch-jobs.json'),
     catalog: { get: vi.fn() },
     metadata: { complete: vi.fn(), applyReviewed: vi.fn() },

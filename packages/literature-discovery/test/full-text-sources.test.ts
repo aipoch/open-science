@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import { findPmcPdfs, findUnpaywallPdfs, readFullTextProvider } from './full-text-sources'
+
+import { findPmcPdfs, findUnpaywallPdfs, readFullTextProvider } from '../src/full-text-sources.js'
 
 describe('additional full-text sources', () => {
   it.each(['10.1000/example', 'https://doi.org/10.1000/EXAMPLE'])(

@@ -5,7 +5,8 @@ import { literatureMetadataProviderLabel } from '../../../../../shared/literatur
 
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { Button } from '@/components/ui/button'
-import type { LiteratureItemView, LiteratureMetadataField } from '../../../../../shared/literature'
+import type { LiteratureItemView } from '../../../../../shared/literature'
+import type { LiteratureMetadataField } from '@aipoch/literature-discovery/contracts'
 import { LiteratureMetadataLookup } from './LiteratureMetadataLookup'
 import { useLiteratureMetadata } from '../workflows/useLiteratureMetadata'
 

@@ -26,9 +26,10 @@ import type {
 
 import type { LiteratureChangedEvent } from '../literature'
 
-import type { LiteratureJobRequest, LiteratureJobsResult } from '../literature-jobs'
+import type { LiteratureJobRequest, LiteratureJobsResult } from '@aipoch/literature-discovery/jobs'
 
-import type { LiteratureFullTextRequest, LiteratureFullTextResult } from '../literature'
+import type { LiteratureFullTextResult } from '../literature'
+import type { LiteratureFullTextRequest } from '@aipoch/literature-discovery/contracts'
 
 import type {
   LiteratureCatalogCommand,
@@ -44,7 +45,6 @@ import type {
   LiteratureItemView,
   LiteratureSourceRecordView,
   LiteratureItemInput,
-  LiteratureMetadataCompletionRequest,
   LiteratureMetadataCompletionResult,
   LiteraturePdfCancelImportRequest,
   LiteraturePdfImportReceipt,
@@ -52,6 +52,7 @@ import type {
   LiteratureRecordImportRequest,
   LiteratureRecordImportResult
 } from '../literature'
+import type { LiteratureMetadataCompletionRequest } from '@aipoch/literature-discovery/contracts'
 
 import {
   callable,

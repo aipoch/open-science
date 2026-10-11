@@ -1,13 +1,17 @@
 import { Readable } from 'node:stream'
+
 import { describe, expect, it, vi } from 'vitest'
-import type { LiteratureFullTextProgress } from '../../shared/literature'
-import { downloadFullText } from './full-text-download'
+
+import type { LiteratureFullTextProgress } from '../src/contracts.js'
+
+import { downloadFullText } from '../src/full-text-download.js'
 
 const fixture = vi.hoisted(() => ({
   headers: {} as Record<string, string>,
   status: 200,
   requests: 0
 }))
+
 vi.mock('node:https', () => ({
   get: (_url: URL, _options: unknown, callback: (response: Readable) => void) => {
     fixture.requests += 1

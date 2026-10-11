@@ -1,6 +1,12 @@
 import { Readable } from 'node:stream'
+
 import { beforeEach, expect, it, vi } from 'vitest'
-import { downloadFullText } from './full-text-download'
+
+import { downloadFullText as download } from '../src/full-text-download.js'
+const downloadFullText = (...args: Parameters<typeof download>): ReturnType<typeof download> =>
+  download(args[0], args[1], args[2], args[3], args[4], (proxy, address, port, signal) =>
+    fixture.tunnel(proxy, address, port, undefined, signal)
+  )
 
 const fixture = vi.hoisted(() => ({
   lookup: vi.fn(),
@@ -11,9 +17,11 @@ const fixture = vi.hoisted(() => ({
   location: '',
   blockEuropeRender: false
 }))
+
 vi.mock('node:dns/promises', () => ({ lookup: fixture.lookup }))
-vi.mock('@aipoch/notebook-network-sandbox', () => ({ tunnelThroughProxy: fixture.tunnel }))
+
 vi.mock('node:tls', () => ({ connect: fixture.tls }))
+
 vi.mock('node:https', async (original) => ({
   ...(await original<typeof import('node:https')>()),
   get: (

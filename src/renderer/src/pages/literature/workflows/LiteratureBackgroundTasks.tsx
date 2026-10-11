@@ -12,7 +12,7 @@ import {
   dialogTitleClassName,
   dialogDescriptionClassName
 } from '@/components/ui/dialog-chrome'
-import type { LiteratureJobSummary } from '../../../../../shared/literature-jobs'
+import type { LiteratureJobSummary } from '@aipoch/literature-discovery/jobs'
 
 export function LiteratureBackgroundTasks({
   onOpen,

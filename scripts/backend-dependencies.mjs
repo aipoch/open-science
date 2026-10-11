@@ -119,7 +119,8 @@ export function backendDependencyIncludes(
       '@aipoch/pdf-structure',
       '@aipoch/pdf-translation',
       '@aipoch/literature-citations',
-      '@aipoch/journal-catalog'
+      '@aipoch/journal-catalog',
+      '@aipoch/literature-discovery'
     ].includes(manifest.name) ||
     !top
   )

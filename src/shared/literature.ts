@@ -1,4 +1,10 @@
 import {
+  createMetadataCompletionResultSchema,
+  createFullTextResultSchema,
+  literatureMetadataCompletionRequestSchema,
+  literatureFullTextRequestSchema
+} from '@aipoch/literature-discovery/contracts'
+import {
   bibliographicRecordSchema,
   LITERATURE_ITEM_TYPES,
   LITERATURE_CITATION_LOCALES,
@@ -28,7 +34,6 @@ import {
   parseLiteratureAttachmentVersionReference
 } from './literature-attachment-reference'
 import { pdfAnnotationSchema, pdfAddToLiteratureRequestSchema } from './pdf-annotations'
-import { literatureFailureSchema } from './literature-failure'
 import { z } from 'zod'
 
 import { defineApplicationCommandContract, validationCodec } from './application-command-contract'
@@ -48,25 +53,6 @@ const LITERATURE_LIFECYCLE_STATES = ['active', 'deleted'] as const
 const LITERATURE_SORT_FIELDS = ['updated', 'created', 'title', 'year', 'rating'] as const
 const LITERATURE_SORT_DIRECTIONS = ['asc', 'desc'] as const
 const LITERATURE_IMPORT_STATUSES = ['ready', 'warning', 'existing', 'conflict', 'invalid'] as const
-const LITERATURE_METADATA_FIELDS = [
-  'title',
-  'abstract',
-  'authors',
-  'identifiers',
-  'publicationDate',
-  'year',
-  'journal',
-  'shortTitle',
-  'volume',
-  'issue',
-  'pages',
-  'publisher',
-  'issn',
-  'language',
-  'url'
-] as const
-const LITERATURE_METADATA_PROVIDERS = ['crossref', 'pubmed', 'europe-pmc', 'datacite'] as const
-
 const nonEmptyTextSchema = z.string().trim().min(1)
 const optionalTextSchema = z.string().trim().optional()
 const literatureFilterSchema = z
@@ -768,170 +754,12 @@ const literatureRecordImportResultSchema = z
   })
   .strict()
 
-const literatureMetadataCompletionRequestSchema = z.discriminatedUnion('mode', [
-  z
-    .object({
-      mode: z.literal('preview'),
-      itemId: nonEmptyTextSchema,
-      identifier: z
-        .object({ scheme: z.enum(['doi', 'pmid']), value: nonEmptyTextSchema })
-        .strict()
-        .optional()
-    })
-    .strict(),
-  z
-    .object({
-      mode: z.literal('commit'),
-      itemId: nonEmptyTextSchema,
-      reviewToken: z.string().uuid().optional(),
-      expectedMetadataRevision: z.number().int().positive(),
-      identifier: z
-        .object({ scheme: z.enum(['doi', 'pmid']), value: nonEmptyTextSchema })
-        .strict()
-        .optional(),
-      overwriteFields: z
-        .array(z.enum(LITERATURE_METADATA_FIELDS))
-        .max(LITERATURE_METADATA_FIELDS.length)
-    })
-    .strict()
-])
-
-const literatureMetadataValueSchema = z
-  .object({ field: z.enum(LITERATURE_METADATA_FIELDS), value: nonEmptyTextSchema })
-  .strict()
-
-const literatureMetadataConflictSchema = literatureMetadataValueSchema
-  .extend({ currentValue: nonEmptyTextSchema })
-  .strict()
-
-// Review versions describe replay semantics, not provider wire formats. V2 commits the
-// normalized proposal; source payloads are provenance only. Provider additions and optional,
-// defaulted fields should retain v2 when existing snapshots keep their meaning. Preserve
-// conflict choices, identifier replacement, revision checks and idempotency when evolving it.
-// New readers must keep reading earlier v2 snapshots; this is not a downgrade guarantee.
-const literatureMetadataCompletionResultSchema = z
-  .object({
-    mode: z.enum(['preview', 'commit']),
-    provider: z.enum(LITERATURE_METADATA_PROVIDERS),
-    sourceUrl: nonEmptyTextSchema,
-    item: literatureItemViewSchema,
-    filled: z.array(literatureMetadataValueSchema),
-    conflicts: z.array(literatureMetadataConflictSchema),
-    reviewToken: z.string().uuid().optional(),
-    reviewVersion: z.union([z.literal(1), z.literal(2)]).optional(),
-    proposal: literatureItemInputSchema.extend({ title: z.string() }).optional(),
-    sources: z.array(literatureSourceInputSchema).max(8).optional(),
-    failures: z.array(literatureFailureSchema).max(10).optional(),
-    source: literatureSourceInputSchema.optional()
-  })
-  .strict()
-
-const literatureFullTextCandidateSchema = z
-  .object({
-    id: nonEmptyTextSchema,
-    provider: z.enum(['europe-pmc', 'openalex', 'unpaywall', 'pmc', 'arxiv']),
-    url: z.string().url(),
-    sourceUrl: z.string().url().optional(),
-    source: nonEmptyTextSchema,
-    version: z.enum(['published', 'accepted', 'submitted']).optional(),
-    license: nonEmptyTextSchema.optional()
-  })
-  .strict()
-const literatureFullTextProgressSchema = z
-  .object({
-    receivedBytes: z.number().int().nonnegative(),
-    totalBytes: z.number().int().positive().optional(),
-    bytesPerSecond: z.number().nonnegative(),
-    phase: z.enum(['downloading', 'saving'])
-  })
-  .strict()
-export type LiteratureFullTextProgress = z.infer<typeof literatureFullTextProgressSchema>
-
-const literatureFullTextTransferSchema = z
-  .object({
-    id: nonEmptyTextSchema,
-    itemId: nonEmptyTextSchema,
-    candidate: literatureFullTextCandidateSchema,
-    status: z.enum(['running', 'succeeded', 'failed']),
-    progress: literatureFullTextProgressSchema,
-    attachmentId: nonEmptyTextSchema.optional(),
-    versionId: nonEmptyTextSchema.optional(),
-    retryAt: z.number().finite().nonnegative().optional()
-  })
-  .strict()
-export type LiteratureFullTextTransfer = z.infer<typeof literatureFullTextTransferSchema>
-
-const literatureFullTextRequestSchema = z.discriminatedUnion('mode', [
-  z
-    .object({
-      mode: z.literal('transfer'),
-      itemId: nonEmptyTextSchema,
-      acknowledgeId: nonEmptyTextSchema.optional()
-    })
-    .strict(),
-  z
-    .object({
-      mode: z.literal('progress'),
-      itemId: nonEmptyTextSchema,
-      candidateId: nonEmptyTextSchema
-    })
-    .strict(),
-  z.object({ mode: z.literal('search'), itemId: nonEmptyTextSchema }).strict(),
-  z
-    .object({
-      mode: z.literal('attach'),
-      itemId: nonEmptyTextSchema,
-      candidateId: nonEmptyTextSchema
-    })
-    .strict()
-])
-const literatureFullTextResultSchema = z.discriminatedUnion('mode', [
-  z
-    .object({
-      mode: z.literal('transfer'),
-      transfer: literatureFullTextTransferSchema.optional(),
-      item: literatureItemViewSchema.optional()
-    })
-    .strict(),
-  z
-    .object({
-      mode: z.literal('attach-error'),
-      reason: z.literal('rate-limited'),
-      retryAt: z.number().finite().nonnegative()
-    })
-    .strict(),
-  z
-    .object({ mode: z.literal('progress'), progress: literatureFullTextProgressSchema.optional() })
-    .strict(),
-  z
-    .object({
-      mode: z.literal('search'),
-      candidates: z.array(literatureFullTextCandidateSchema).max(10),
-      failures: z.array(literatureFailureSchema).max(10).optional(),
-      notices: z.array(
-        z.enum([
-          'missing-identifiers',
-          'openalex-not-configured',
-          'europe-pmc-unavailable',
-          'openalex-unavailable',
-          'unpaywall-not-configured',
-          'unpaywall-unavailable',
-          'pmc-unavailable',
-          'pmc-no-record'
-        ])
-      )
-    })
-    .strict(),
-  z
-    .object({
-      mode: z.literal('attach'),
-      item: literatureItemViewSchema,
-      transferId: nonEmptyTextSchema.optional()
-    })
-    .strict()
-])
-type LiteratureFullTextCandidate = z.infer<typeof literatureFullTextCandidateSchema>
-type LiteratureFullTextRequest = z.infer<typeof literatureFullTextRequestSchema>
+const literatureMetadataCompletionResultSchema = createMetadataCompletionResultSchema(
+  literatureItemViewSchema
+).extend({
+  proposal: literatureItemInputSchema.extend({ title: z.string() }).optional()
+})
+const literatureFullTextResultSchema = createFullTextResultSchema(literatureItemViewSchema)
 type LiteratureFullTextResult = z.infer<typeof literatureFullTextResultSchema>
 
 const literatureApplicationCommandContracts = Object.freeze({
@@ -1029,21 +857,15 @@ type LiteratureRecordImportError = z.infer<typeof literatureRecordImportErrorSch
 type LiteratureRecordImportEntry = z.infer<typeof literatureRecordImportEntrySchema>
 type LiteratureRecordImportReceipt = z.infer<typeof literatureRecordImportReceiptSchema>
 type LiteratureRecordImportResult = z.infer<typeof literatureRecordImportResultSchema>
-type LiteratureMetadataField = (typeof LITERATURE_METADATA_FIELDS)[number]
-type LiteratureMetadataCompletionRequest = z.infer<typeof literatureMetadataCompletionRequestSchema>
-type LiteratureMetadataValue = z.infer<typeof literatureMetadataValueSchema>
-type LiteratureMetadataConflict = z.infer<typeof literatureMetadataConflictSchema>
+
 type LiteratureMetadataCompletionResult = z.infer<typeof literatureMetadataCompletionResultSchema>
 
 export {
-  literatureFullTextCandidateSchema,
-  literatureFullTextProgressSchema,
   LITERATURE_ATTACHMENT_VERSION_REFERENCE_PREFIX,
   LITERATURE_COLLECTION_DESCRIPTION_MAX_LENGTH,
   LITERATURE_COLLECTION_NAME_MAX_LENGTH,
   LITERATURE_COLLECTION_NAME_CONFLICT,
   LITERATURE_INBOX_STATES,
-  LITERATURE_METADATA_FIELDS,
   LITERATURE_LIFECYCLE_STATES,
   LITERATURE_SORT_FIELDS,
   literatureCandidateInputSchema,
@@ -1073,7 +895,6 @@ export {
   literatureRecordImportResultSchema,
   literatureItemInputSchema,
   literatureItemViewSchema,
-  literatureMetadataCompletionRequestSchema,
   literatureMetadataCompletionResultSchema,
   literaturePdfImportReceiptSchema,
   literaturePdfCancelImportRequestSchema,
@@ -1083,8 +904,6 @@ export {
   parseLiteratureAttachmentVersionReference
 }
 export type {
-  LiteratureFullTextCandidate,
-  LiteratureFullTextRequest,
   LiteratureFullTextResult,
   LiteratureCatalogCommand,
   LiteratureCollectionView,
@@ -1104,11 +923,7 @@ export type {
   LiteratureItemInput,
   LiteratureItemView,
   LiteratureSourceRecordView,
-  LiteratureMetadataCompletionRequest,
   LiteratureMetadataCompletionResult,
-  LiteratureMetadataConflict,
-  LiteratureMetadataField,
-  LiteratureMetadataValue,
   LiteratureFormattedReference,
   LiteratureFormatReferencesRequest,
   LiteratureFormatReferencesResult,

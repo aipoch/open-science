@@ -1,9 +1,8 @@
-import { LiteratureProviderError } from './provider-error'
+import { LiteratureProviderError } from './provider-error.js'
 import { z } from 'zod'
 import { normalizeLiteratureIdentifierValue } from '@aipoch/literature-citations/contracts'
-import { type LiteratureFullTextCandidate } from '../../shared/literature'
-import { netFetchStandard } from '../network-fetch'
-import { fullTextUrl } from './full-text-download'
+import { type LiteratureFullTextCandidate } from './contracts.js'
+import { fullTextUrl } from './full-text-download.js'
 
 type Candidate = Omit<LiteratureFullTextCandidate, 'id'>
 type Identifiers = { doi?: string; pmid?: string; pmcid?: string }
@@ -12,7 +11,7 @@ const optionalText = z.string().nullish()
 // Discovery reads metadata only; PDFs are downloaded after the user selects a candidate.
 export const readFullTextProvider = async (
   url: string,
-  fetcher: typeof fetch = netFetchStandard
+  fetcher: typeof fetch = fetch
 ): Promise<string | undefined> => {
   const response = await fetcher(url, {
     redirect: 'error',

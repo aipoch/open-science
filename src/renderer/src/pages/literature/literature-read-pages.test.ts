@@ -4,7 +4,7 @@ import { readLiteratureSelectionPage } from './literature-read-pages'
 import { afterEach, expect, it, vi } from 'vitest'
 import { readLiteratureDisplayPage, readLiteratureJobPages } from './literature-read-pages'
 import { downloadLiteratureRecord } from './literature-read-pages'
-import type { LiteratureJobView } from '../../../../shared/literature-jobs'
+import type { LiteratureJobView } from '@aipoch/literature-discovery/jobs'
 
 afterEach(() => vi.restoreAllMocks())
 const job = (ids: string[], nextRowOffset?: number): LiteratureJobView => ({

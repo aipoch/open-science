@@ -3,10 +3,10 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   literatureItemInputSchema,
-  type LiteratureFullTextRequest,
   type LiteratureItemView
 } from '../../../../../shared/literature'
-import { LiteratureFullTextFinder } from '../../../../../main/literature/full-text-finder'
+import { type LiteratureFullTextRequest } from '@aipoch/literature-discovery/contracts'
+import { LiteratureFullTextFinder } from '@aipoch/literature-discovery'
 import { LiteratureFullTextLookup } from './LiteratureFullTextLookup'
 import { useSettingsStore } from '@/stores/settings-store'
 
@@ -120,11 +120,8 @@ describe('LiteratureFullTextLookup', () => {
         withPublishedContent: async (_request, acquire) =>
           acquire({
             id: 'blob',
-            path: 'unused',
-            storageKey: 'blob',
             sizeBytes: 10n,
-            checksum: 'a'.repeat(64),
-            contentType: 'application/pdf'
+            checksum: 'a'.repeat(64)
           })
       },
       openAlexKey: async () => undefined,

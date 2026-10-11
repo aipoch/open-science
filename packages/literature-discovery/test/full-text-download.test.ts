@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { downloadFullText, fullTextUrl, isPublicFullTextAddress } from './full-text-download'
+
+import {
+  downloadFullText,
+  fullTextUrl,
+  isPublicFullTextAddress
+} from '../src/full-text-download.js'
 
 describe('full-text download boundary', () => {
   it('rejects local, credential-bearing, non-HTTPS, and alternate-port links', async () => {

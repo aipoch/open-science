@@ -1,20 +1,24 @@
+import { discoveryJobOptions } from '../literature/discovery-adapters'
+import { inspectPdfPageCount } from '../uploads/attachment-media'
+import { tunnelThroughProxy } from '@aipoch/notebook-network-sandbox'
+import type { LiteratureItemView } from '../../shared/literature'
 import { JournalAttributes } from '../literature/journal-attributes'
 import { runtimeNetwork } from '../runtime-network'
 import { join } from 'node:path'
 import type { ApplicationEvents } from '../application-events'
 import { type ApplicationModuleBuilder } from '../application-runtime'
 import { AgentPdfAcquisition } from '../literature/agent-pdf-acquisition'
-import { LiteratureBatchJobs } from '../literature/batch-jobs'
+import { LiteratureBatchJobs } from '@aipoch/literature-discovery'
 import { LiteratureCatalog } from '../literature/catalog'
 import { LiteratureCitationDocument } from '../literature/citation-document'
 import { LiteratureCitationFormatter } from '@aipoch/literature-citations'
 import { LiteratureCitationStyleLibrary } from '@aipoch/literature-citations/styles'
 import { LiteratureDocumentReader } from '../literature/document-reader'
-import { downloadFullText } from '../literature/full-text-download'
-import { LiteratureFullTextFinder } from '../literature/full-text-finder'
-import { LiteratureMetadataEnricher } from '../literature/metadata-enricher'
+import { downloadFullText } from '@aipoch/literature-discovery/download'
+import { LiteratureFullTextFinder } from '@aipoch/literature-discovery'
+import { LiteratureMetadataEnricher } from '@aipoch/literature-discovery'
 import { LiteraturePdfImporter } from '../literature/pdf-importer'
-import { LiteratureReferenceResolver } from '../literature/reference-resolver'
+import { LiteratureReferenceResolver } from '@aipoch/literature-discovery'
 import { LiteratureSmartCollections } from '../literature/smart-collections'
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import { MemoryRepository } from '../memory/repository'
@@ -72,8 +76,8 @@ export async function composeResearchCatalog({
   literatureCitationFormatter: LiteratureCitationFormatter
   literatureCitationDocument: LiteratureCitationDocument
   literatureReferenceResolver: LiteratureReferenceResolver
-  literatureMetadataEnricher: LiteratureMetadataEnricher
-  literatureFullTextFinder: LiteratureFullTextFinder
+  literatureMetadataEnricher: LiteratureMetadataEnricher<LiteratureItemView>
+  literatureFullTextFinder: LiteratureFullTextFinder<LiteratureItemView>
   literaturePdfImporter: LiteraturePdfImporter
   literaturePdfAcquisition: AgentPdfAcquisition
   literatureBatchJobs: LiteratureBatchJobs
@@ -170,9 +174,12 @@ export async function composeResearchCatalog({
         const environment = parseSystemProxyRules(await runtimeNetwork().resolveProxy(target))
         return environment.HTTPS_PROXY ?? environment.ALL_PROXY
       },
-      signal
+      signal,
+      (proxy, address, port, signal) => tunnelThroughProxy(proxy, address, port, undefined, signal)
     )
   const literatureFullTextFinder = new LiteratureFullTextFinder({
+    fetch: netFetchStandard,
+    pageCount: inspectPdfPageCount,
     catalog: literatureCatalog,
     content: contentRepository,
     download: downloadLiteraturePdf,
@@ -196,6 +203,7 @@ export async function composeResearchCatalog({
     download: downloadLiteraturePdf
   })
   const literatureBatchJobs = new LiteratureBatchJobs({
+    ...discoveryJobOptions,
     path: join(resolveDataRoot(), 'literature', 'batch-jobs.json'),
     catalog: literatureCatalog,
     metadata: literatureMetadataEnricher,

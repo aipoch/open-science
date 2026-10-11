@@ -173,7 +173,6 @@
       "src/main/literature/library-mcp-server.test.ts",
       "src/main/literature/library-tool-contracts.test.ts",
       "src/main/literature/mcp-server.test.ts",
-      "src/main/literature/metadata-enricher.test.ts",
       "src/main/literature/migration-writers.test.ts",
       "src/main/literature/pdf-attachment-reliability.test.ts",
       "src/main/literature/pdf-elements-mcp.test.ts",
@@ -183,7 +182,6 @@
       "src/main/literature/pdf-structure/owner.test.ts",
       "src/main/literature/pdf-structure/reader.test.ts",
       "src/main/literature/pdf-structure/source-metadata.test.ts",
-      "src/main/literature/reference-resolver.test.ts",
       "src/main/literature/scale-regressions.test.ts",
       "src/main/literature/session-pdf-source-resolver.test.ts",
       "src/main/local-models/owner.test.ts",
@@ -463,7 +461,8 @@
       "src/main/notebook/auto-mode-budget.integration.test.ts",
       "src/renderer/src/pages/literature/literature-localization.render.test.tsx",
       "src/main/notebook/environment-provisioning.contract.test.ts",
-      "src/main/notebook/environment-recovery.contract.test.ts"
+      "src/main/notebook/environment-recovery.contract.test.ts",
+      "src/main/literature/batch-job-journal.test.ts"
     ]
   },
   "capabilityOverlays": ["i18n_catalog"],

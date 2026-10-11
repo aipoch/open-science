@@ -1,16 +1,20 @@
-import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
+import { mergePubmedMetadata } from '../src/metadata-merge.js'
+
 import { describe, expect, it, vi, type Mock } from 'vitest'
 
 import {
   literatureMetadataCompletionResultSchema,
-  type LiteratureItemInput,
-  type LiteratureItemView
-} from '../../shared/literature'
-import { LiteratureMetadataEnricher, mergePubmedMetadata } from './metadata-enricher'
+  type DiscoveryRecord,
+  type DiscoveryReference
+} from '../src/contracts.js'
+
+import { LiteratureMetadataEnricher } from '../src/metadata-enricher.js'
+
 import { toCslItem } from '@aipoch/literature-citations/csl'
+
 import { LiteratureCitationFormatter } from '@aipoch/literature-citations'
 
-const item: LiteratureItemInput = {
+const item: DiscoveryRecord = {
   itemType: 'journalArticle',
   title: 'A paper',
   abstract: '',
@@ -26,7 +30,7 @@ const item: LiteratureItemInput = {
   identifiers: [{ scheme: 'doi', value: '10.1000/example', isPrimary: true }]
 }
 
-const view: LiteratureItemView = {
+const view: DiscoveryReference = {
   id: 'item-1',
   item,
   attachments: [],
@@ -121,6 +125,31 @@ const pubmedResponse = {
     }
   }
 }
+
+const regressionEnricher = (
+  current: DiscoveryRecord,
+  response: Response
+): {
+  enricher: LiteratureMetadataEnricher
+  applyMetadata: Mock<(input: { item: DiscoveryRecord }) => Promise<DiscoveryReference>>
+} => {
+  const applyMetadata = vi.fn(async (input: { item: DiscoveryRecord }) => ({
+    ...view,
+    item: input.item
+  }))
+  const enricher = new LiteratureMetadataEnricher(
+    {
+      getMetadataCommitReceipt: async () => null,
+      get: vi.fn().mockResolvedValue({ ...view, item: current }),
+      applyMetadata
+    },
+    vi.fn().mockResolvedValue(response)
+  )
+  return { enricher, applyMetadata }
+}
+
+const crossref = (message: Record<string, unknown>): Response =>
+  new Response(JSON.stringify({ message }))
 
 describe('LiteratureMetadataEnricher', () => {
   it.each([
@@ -492,31 +521,6 @@ describe('LiteratureMetadataEnricher', () => {
     expect(applyMetadata).toHaveBeenCalledTimes(1)
   })
 })
-
-// Exercise the public review/commit boundary; the receiver observes the actual catalog payload.
-const regressionEnricher = (
-  current: LiteratureItemInput,
-  response: Response
-): {
-  enricher: LiteratureMetadataEnricher
-  applyMetadata: Mock<(input: { item: LiteratureItemInput }) => Promise<LiteratureItemView>>
-} => {
-  const applyMetadata = vi.fn(async (input: { item: LiteratureItemInput }) => ({
-    ...view,
-    item: input.item
-  }))
-  const enricher = new LiteratureMetadataEnricher(
-    {
-      getMetadataCommitReceipt: async () => null,
-      get: vi.fn().mockResolvedValue({ ...view, item: current }),
-      applyMetadata
-    },
-    vi.fn().mockResolvedValue(response)
-  )
-  return { enricher, applyMetadata }
-}
-const crossref = (message: Record<string, unknown>): Response =>
-  new Response(JSON.stringify({ message }))
 
 it('fills and commits the reported DOI structured JATS abstract as readable text', async () => {
   const doi = '10.1007/s11914-026-00956-3'
@@ -1274,5 +1278,3 @@ it('replays serialized v2 proposals independently of provider payload shape and 
     })
   )
 })
-
-configureTestRuntimeMetadata()

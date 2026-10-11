@@ -1,13 +1,8 @@
-import { literatureFailure } from './provider-error'
-import {
-  acquireDataRootWriter,
-  isMigrationPending,
-  withDataRootWrite
-} from '../storage/migration-state'
-import { ApplicationCommandError } from '../../shared/application-command-contract'
-import { LITERATURE_OVERSIZED_REFERENCE } from '../../shared/literature-export'
-import { boundedLiteraturePage, LITERATURE_PAGE_BYTES } from './response-page'
-import { LiteratureBatchJobJournal } from './batch-job-journal'
+import { literatureFailure } from './provider-error.js'
+import type { CheckpointStorage, WriteAdmission } from './ports.js'
+import type { DiscoveryReference } from './contracts.js'
+import { boundedLiteraturePage, LITERATURE_PAGE_BYTES } from './response-page.js'
+import { LiteratureBatchJobJournal } from './batch-job-journal.js'
 import {
   literatureJobRequestSchema,
   literatureJobProgress,
@@ -17,14 +12,16 @@ import {
   type LiteratureJobRequest,
   type LiteratureJobRow,
   type LiteratureJobsResult
-} from '../../shared/literature-jobs'
-import type { LiteratureCatalog } from './catalog'
-import type { LiteratureFullTextFinder } from './full-text-finder'
-import type { LiteratureMetadataEnricher } from './metadata-enricher'
+} from './jobs.js'
+import type { LiteratureFullTextFinder } from './full-text-finder.js'
+import type { LiteratureMetadataEnricher } from './metadata-enricher.js'
 
 type Options = {
   path: string
-  catalog: Pick<LiteratureCatalog, 'get'>
+  checkpoints: CheckpointStorage
+  admission: WriteAdmission
+  oversizedError: (id: string) => Error
+  catalog: { get(id: string): Promise<DiscoveryReference | undefined> }
   fullText: Pick<LiteratureFullTextFinder, 'run'>
   metadata: Pick<LiteratureMetadataEnricher, 'complete' | 'applyReviewed'>
   onError: (error: unknown) => void
@@ -44,7 +41,7 @@ export class LiteratureBatchJobs {
   private readonly cooldowns = new Map<string, number>()
   private readonly journal: LiteratureBatchJobJournal
   constructor(private readonly options: Options) {
-    this.journal = new LiteratureBatchJobJournal(options.path)
+    this.journal = new LiteratureBatchJobJournal(options.path, options.checkpoints)
   }
 
   private load(): Promise<void> {
@@ -122,12 +119,8 @@ export class LiteratureBatchJobs {
   ): LiteratureJobView {
     const { rows, ...fields } = job
     if (rowOffset >= rows.length) throw new Error('Invalid Literature task row offset.')
-    const page = boundedLiteraturePage(
-      view,
-      0,
-      view.length,
-      (row) =>
-        new ApplicationCommandError('command-failed', LITERATURE_OVERSIZED_REFERENCE + row.id)
+    const page = boundedLiteraturePage(view, 0, view.length, (row) =>
+      this.options.oversizedError(row.id)
     )
     const next = rowOffset + page.entries.length
     const nextRowOffset = next < rows.length ? next : undefined
@@ -368,7 +361,7 @@ export class LiteratureBatchJobs {
   private async kick(): Promise<void> {
     if (this.worker || this.closed) return
     // An admitted create/resume command may finish saving after migration closes admission.
-    if (isMigrationPending()) {
+    if (this.options.admission.isPending()) {
       for (const job of this.jobs) {
         if (job.state !== 'running') continue
         job.state = 'paused'
@@ -378,8 +371,9 @@ export class LiteratureBatchJobs {
       return
     }
     // A detached worker inherits the command's async context, but outlives its lease.
-    const release = acquireDataRootWriter()
-    this.worker = withDataRootWrite(() => this.drain())
+    const release = this.options.admission.acquireWriter()
+    this.worker = this.options.admission
+      .withWrite(() => this.drain())
       .catch((error: unknown) => {
         for (const job of this.jobs)
           if (job.state === 'running' || job.state === 'pausing') {
@@ -396,7 +390,10 @@ export class LiteratureBatchJobs {
       .finally(() => {
         this.worker = undefined
         release()
-        if (!isMigrationPending() && this.jobs.some(({ state }) => state === 'running'))
+        if (
+          !this.options.admission.isPending() &&
+          this.jobs.some(({ state }) => state === 'running')
+        )
           void this.kick().catch(this.options.onError)
       })
   }
@@ -411,7 +408,7 @@ export class LiteratureBatchJobs {
       job.updatedAt = Math.max(Date.now(), job.updatedAt + 1)
       for (const row of job.rows) {
         await this.commands
-        if (this.closed || isMigrationPending() || job.state !== 'running') break
+        if (this.closed || this.options.admission.isPending() || job.state !== 'running') break
         if (
           job.phase === 'search'
             ? row.status !== 'pending' ||
@@ -459,12 +456,12 @@ export class LiteratureBatchJobs {
         this.writes = this.writes.then(write, write)
         await this.writes
         this.journal.release(row)
-        if (job.state === 'running' && !this.closed && !isMigrationPending())
+        if (job.state === 'running' && !this.closed && !this.options.admission.isPending())
           await new Promise((resolve) => setTimeout(resolve, this.options.spacingMs ?? 350))
       }
       await this.commands
       job.state =
-        this.closed || isMigrationPending() || job.state !== 'running'
+        this.closed || this.options.admission.isPending() || job.state !== 'running'
           ? 'paused'
           : job.phase === 'search' &&
               job.rows.some(({ status }) => status === 'ready' || status === 'error')

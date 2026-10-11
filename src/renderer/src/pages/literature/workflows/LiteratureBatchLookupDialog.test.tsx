@@ -10,7 +10,7 @@ import type {
   LiteratureJob,
   LiteratureJobView,
   LiteratureJobRequest
-} from '../../../../../shared/literature-jobs'
+} from '@aipoch/literature-discovery/jobs'
 import { LiteratureBatchLookupDialog } from './LiteratureBatchLookupDialog'
 
 const item: LiteratureItemView = {

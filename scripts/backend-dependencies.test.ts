@@ -135,7 +135,7 @@ it.each(['/', '\\'])(
   }
 )
 
-it.each(['literature-citations', 'journal-catalog'])(
+it.each(['literature-citations', 'journal-catalog', 'literature-discovery'])(
   'stages %s using its npm files boundary',
   (name) => {
     const manifest = JSON.parse(readFileSync(`packages/${name}/package.json`, 'utf8'))

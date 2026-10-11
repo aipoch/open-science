@@ -21,7 +21,13 @@ export const verificationFamilies = [
   { script: 'verify:package', prefix: 'packages/skills', packages: ['skills'] },
   {
     script: 'check:package-isolation',
-    packages: ['pdf-structure', 'pdf-translation', 'literature-citations', 'journal-catalog']
+    packages: [
+      'pdf-structure',
+      'pdf-translation',
+      'literature-citations',
+      'journal-catalog',
+      'literature-discovery'
+    ]
   }
 ]
 

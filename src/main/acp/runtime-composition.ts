@@ -58,7 +58,7 @@ import type {
 import type { LiteratureDocumentReader } from '../literature/document-reader'
 import type { LiteratureAttachmentAuthority } from '../literature/attachment-authority'
 import type { LiteratureCatalog } from '../literature/catalog'
-import { LiteratureReferenceResolver } from '../literature/reference-resolver'
+import { LiteratureReferenceResolver } from '@aipoch/literature-discovery'
 import { netFetchStandard } from '../network-fetch'
 import { LiteratureCitationDocument } from '../literature/citation-document'
 import { LiteratureCitationFormatter } from '@aipoch/literature-citations'

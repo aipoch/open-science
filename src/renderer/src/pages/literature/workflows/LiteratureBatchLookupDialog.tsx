@@ -24,18 +24,16 @@ import {
   dialogDescriptionClassName,
   dialogFooterClassName
 } from '@/components/ui/dialog-chrome'
-import type { LiteratureItemView, LiteratureMetadataField } from '../../../../../shared/literature'
+import type { LiteratureItemView } from '../../../../../shared/literature'
+import type { LiteratureMetadataField } from '@aipoch/literature-discovery/contracts'
 import { formatBytes } from '../../../../../shared/update'
-import {
-  literatureJobProgress,
-  type LiteratureJobRequest
-} from '../../../../../shared/literature-jobs'
+import { literatureJobProgress, type LiteratureJobRequest } from '@aipoch/literature-discovery/jobs'
 
 type BatchLookupMode = 'metadata' | 'full-text'
 const progressClassName =
   'h-1.5 w-full overflow-hidden rounded-full [&::-webkit-progress-bar]:bg-muted [&::-webkit-progress-value]:bg-primary [&::-moz-progress-bar]:bg-primary'
-type Row = import('../../../../../shared/literature-jobs').LiteratureJobRowView
-type Job = import('../../../../../shared/literature-jobs').LiteratureJobView
+type Row = import('@aipoch/literature-discovery/jobs').LiteratureJobRowView
+type Job = import('@aipoch/literature-discovery/jobs').LiteratureJobView
 
 export const LiteratureBatchLookupDialog = ({
   itemIds,

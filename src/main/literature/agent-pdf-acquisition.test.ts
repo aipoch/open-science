@@ -10,7 +10,7 @@ import { LiteratureCatalog } from './catalog'
 import { expect, it, vi, type Mock } from 'vitest'
 import { literatureCandidateInputSchema } from '../../shared/literature'
 import { AgentPdfAcquisition } from './agent-pdf-acquisition'
-import { FullTextRateLimitError } from './full-text-download'
+import { FullTextRateLimitError } from '@aipoch/literature-discovery/download'
 
 const candidate = literatureCandidateInputSchema.parse({
   item: {

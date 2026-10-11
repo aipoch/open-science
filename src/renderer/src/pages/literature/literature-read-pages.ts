@@ -4,7 +4,7 @@ import type {
   LiteratureCatalogSearchPage,
   LiteratureCatalogSearchRequest
 } from '../../../../shared/literature'
-import type { LiteratureJobsResult } from '../../../../shared/literature-jobs'
+import type { LiteratureJobsResult } from '@aipoch/literature-discovery/jobs'
 
 // Transport pages may be smaller than the user's selected display page. Assemble that logical
 // page before publishing it, so a byte boundary cannot skip references in numbered navigation.

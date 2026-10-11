@@ -25,6 +25,16 @@ describe('independent package verification', () => {
       { script: 'check:package-isolation', packages: ['pdf-translation'] }
     ])
   })
+  it('builds citations without selecting its tests for discovery', () => {
+    const plan = verificationPlanFromArguments(['--packages=literature-discovery'], {})
+    expect(plan).toEqual({
+      builds: ['packages/literature-citations', 'packages/literature-discovery'],
+      tests: ['packages/literature-discovery']
+    })
+    expect(verificationCommands(plan)).toEqual([
+      { script: 'check:package-isolation', packages: ['literature-discovery'] }
+    ])
+  })
   it.each(['environment', 'compute'])('builds diagnostics without its tests for %s', (name) => {
     const plan = verificationPlanFromArguments([`--packages=${name}`], {})
     expect(plan).toEqual({

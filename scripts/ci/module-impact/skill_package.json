@@ -88,7 +88,10 @@
     "packages/skills/src/sources.ts",
     "packages/skills/src/projection.ts"
   ],
-  "consumerModules": ["user_skills_repository", "skill_marketplace"],
+  "consumerModules": [
+    "user_skills_repository",
+    "skill_marketplace"
+  ],
   "testFiles": {
     "owner": [
       "packages/skills/src/frontmatter.test.ts",
@@ -442,16 +445,11 @@
       "src/main/literature/duplicate-metadata.test.ts",
       "src/main/literature/duplicates.test.ts",
       "src/main/literature/export-roundtrip.test.ts",
-      "src/main/literature/full-text-download-progress.test.ts",
-      "src/main/literature/full-text-download.test.ts",
       "src/main/literature/full-text-finder.test.ts",
-      "src/main/literature/full-text-proxy.test.ts",
-      "src/main/literature/full-text-sources.test.ts",
       "src/main/literature/journal-attributes.test.ts",
       "src/main/literature/library-mcp-server.test.ts",
       "src/main/literature/library-tool-contracts.test.ts",
       "src/main/literature/mcp-server.test.ts",
-      "src/main/literature/metadata-enricher.test.ts",
       "src/main/literature/migration-writers.test.ts",
       "src/main/literature/pdf-attachment-reliability.test.ts",
       "src/main/literature/pdf-elements-mcp.test.ts",
@@ -469,7 +467,6 @@
       "src/main/literature/pdf-translation/pdf-cache.test.ts",
       "src/main/literature/pdf-translation/reader-ownership.test.ts",
       "src/main/literature/pdf-translation/usage.test.ts",
-      "src/main/literature/reference-resolver.test.ts",
       "src/main/literature/scale-regressions.test.ts",
       "src/main/literature/session-pdf-source-resolver.test.ts",
       "src/main/literature/smart-collections.test.ts",
@@ -1050,7 +1047,6 @@
       "src/renderer/src/pages/literature/literature-localization.render.test.tsx",
       "src/renderer/src/pages/literature/literature-read-pages.test.ts",
       "src/renderer/src/pages/literature/useLiteratureChanges.test.tsx",
-      "src/renderer/src/pages/literature/workflows/LiteratureBackgroundTasks.test.tsx",
       "src/renderer/src/pages/literature/workflows/LiteratureBatchLookupDialog.test.tsx",
       "src/renderer/src/pages/onboarding/AgentStep.render.test.tsx",
       "src/renderer/src/pages/onboarding/EnvironmentStep.render.test.tsx",
@@ -1465,6 +1461,10 @@
       "src/main/notebook/environment-process.contract.test.ts"
     ]
   },
-  "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
+  "capabilityOverlays": [
+    "windows_sensitive",
+    "e2e_regressions",
+    "e2e_delegation"
+  ],
   "fallbackCapability": "main_runtime"
 }

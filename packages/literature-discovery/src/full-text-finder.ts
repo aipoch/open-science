@@ -1,4 +1,4 @@
-import { literatureFailure } from './provider-error'
+import { literatureFailure } from './provider-error.js'
 import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -9,18 +9,17 @@ import type {
   LiteratureFullTextTransfer,
   LiteratureFullTextRequest,
   LiteratureFullTextResult,
-  LiteratureItemView
-} from '../../shared/literature'
+  DiscoveryReference
+} from './contracts.js'
 import {
   createLiteratureIdentifierUrl,
   normalizeLiteratureIdentifierValue
 } from '@aipoch/literature-citations/contracts'
 
-import type { LiteratureCatalog } from './catalog'
-import type { ContentRepository } from '../storage/content-repository'
-import { findPmcPdfs, findUnpaywallPdfs, readFullTextProvider } from './full-text-sources'
-import { inspectPdfPageCount, MAX_AUTO_EXTRACT_PDF_BYTES } from '../uploads/attachment-media'
-import { downloadFullText, FullTextRateLimitError, fullTextUrl } from './full-text-download'
+import type { FullTextCatalog, FullTextContent } from './ports.js'
+import { findPmcPdfs, findUnpaywallPdfs, readFullTextProvider } from './full-text-sources.js'
+const MAX_AUTO_EXTRACT_PDF_BYTES = 50 * 1024 * 1024
+import { downloadFullText, FullTextRateLimitError, fullTextUrl } from './full-text-download.js'
 
 const optionalText = z.string().nullish()
 const europeRecord = z.object({
@@ -58,17 +57,17 @@ const openAlexWork = z.object({
 })
 type SearchResult = Extract<LiteratureFullTextResult, { mode: 'search' }>
 type Candidate = Omit<LiteratureFullTextCandidate, 'id'>
-type Options = {
-  catalog: Pick<LiteratureCatalog, 'get' | 'attachContent'>
-  content: Pick<ContentRepository, 'withPublishedContent'>
+type Options<Item extends DiscoveryReference = DiscoveryReference> = {
+  catalog: FullTextCatalog<Item>
+  content: FullTextContent
   openAlexKey: () => Promise<string | undefined>
   contactEmail?: () => Promise<string | undefined>
   fetch?: typeof fetch
   download?: typeof downloadFullText
-  pageCount?: typeof inspectPdfPageCount
+  pageCount: (path: string) => Promise<number>
 }
 
-class LiteratureFullTextFinder {
+class LiteratureFullTextFinder<Item extends DiscoveryReference = DiscoveryReference> {
   private readonly candidates = new Map<
     string,
     { candidate: Candidate; itemId: string; revision: number; expires: number }
@@ -87,9 +86,9 @@ class LiteratureFullTextFinder {
         this.transfers.delete(itemId)
     }
   }
-  constructor(private readonly options: Options) {}
+  constructor(private readonly options: Options<Item>) {}
 
-  async discover(item: LiteratureItemView['item']): Promise<SearchResult> {
+  async discover(item: DiscoveryReference['item']): Promise<SearchResult> {
     return this.search({
       id: randomUUID(),
       item,
@@ -102,7 +101,7 @@ class LiteratureFullTextFinder {
     })
   }
 
-  async run(request: LiteratureFullTextRequest): Promise<LiteratureFullTextResult> {
+  async run(request: LiteratureFullTextRequest): Promise<LiteratureFullTextResult<Item>> {
     this.pruneTransfers()
     const task = this.transfers.get(request.itemId)?.snapshot
     if (request.mode === 'transfer') {
@@ -138,7 +137,7 @@ class LiteratureFullTextFinder {
     return raw === undefined ? undefined : JSON.parse(raw)
   }
 
-  private async search(item: LiteratureItemView): Promise<SearchResult> {
+  private async search(item: DiscoveryReference): Promise<SearchResult> {
     const identifiers = new Map(
       item.item.identifiers.map(({ scheme, value }) => [
         scheme,
@@ -346,9 +345,9 @@ class LiteratureFullTextFinder {
   }
 
   private async attach(
-    item: LiteratureItemView,
+    item: DiscoveryReference,
     candidateId: string
-  ): Promise<LiteratureFullTextResult> {
+  ): Promise<LiteratureFullTextResult<Item>> {
     const selected = this.candidates.get(candidateId)
     if (
       !selected ||
@@ -392,7 +391,7 @@ class LiteratureFullTextFinder {
       directory = await mkdtemp(join(tmpdir(), 'open-science-full-text-'))
       const path = join(directory, 'paper.pdf')
       await writeFile(path, bytes, { mode: 0o600 })
-      const pageCount = await (this.options.pageCount ?? inspectPdfPageCount)(path)
+      const pageCount = await this.options.pageCount(path)
       const current = await this.options.catalog.get(item.id)
       if (!current || current.id !== item.id || current.metadataRevision !== selected.revision)
         throw new Error('The reference changed during download. Search again.')

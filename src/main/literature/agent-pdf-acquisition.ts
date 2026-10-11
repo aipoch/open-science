@@ -5,8 +5,8 @@ import type { LiteratureCandidateOrigin } from '../../shared/literature'
 import type { LiteratureLibraryDiscovery } from './library-mcp-server'
 import type { LiteratureCatalog } from './catalog'
 import type { ContentRepository } from '../storage/content-repository'
-import type { LiteratureFullTextFinder } from './full-text-finder'
-import { downloadFullText, fullTextUrl } from './full-text-download'
+import type { LiteratureFullTextFinder } from '@aipoch/literature-discovery'
+import { downloadFullText, fullTextUrl } from '@aipoch/literature-discovery/download'
 import { inspectPdfPageCount, MAX_AUTO_EXTRACT_PDF_BYTES } from '../uploads/attachment-media'
 
 type Request = {
