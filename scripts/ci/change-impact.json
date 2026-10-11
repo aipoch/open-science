@@ -86,6 +86,8 @@
         ".github/actions/source-regression/**",
         ".github/workflows/source-regression.yml",
         "scripts/backend-dependencies.mjs",
+        "scripts/package-verification-plan.mjs",
+        "scripts/package-verification-plan.test.ts",
         "scripts/build-backend.mjs",
         "scripts/windows-signing-policy.mjs",
         "scripts/windows-signing-policy.test.ts",
