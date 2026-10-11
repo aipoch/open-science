@@ -294,8 +294,9 @@ describe('module test impact commands', () => {
       })
       const prefix = path.startsWith('packages/skills/') ? 'skill_package -> ' : ''
       expect([...affected.modules].sort()).toEqual([
+        ...(prefix ? ['settings_operations'] : []),
         'settings_service_facade',
-        ...(prefix ? ['skill_package'] : []),
+        ...(prefix ? ['skill_marketplace', 'skill_package'] : []),
         'user_skills_repository',
         'workspace_page',
         'workspace_runtime'
@@ -307,6 +308,21 @@ describe('module test impact commands', () => {
           `${prefix}user_skills_repository -> settings_service_facade -> workspace_runtime -> workspace_page`
         ])
       )
+      if (prefix) {
+        expect(affected.reasonChains).toEqual(
+          expect.arrayContaining([
+            'skill_package -> skill_marketplace',
+            'skill_package -> skill_marketplace -> settings_operations'
+          ])
+        )
+        expect(affected.testFiles).toEqual(
+          expect.arrayContaining([
+            'src/main/skill-marketplace/installation.test.ts',
+            'src/main/skill-marketplace/service.test.ts',
+            'src/main/settings/workflows.test.ts'
+          ])
+        )
+      }
       expect(affected.testFiles).toEqual(
         expect.arrayContaining([
           'packages/open-science/cli.test.ts',
