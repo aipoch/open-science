@@ -571,6 +571,13 @@ registrations can enter the normal merge queue after required checks pass, witho
 Trusted-base CI Integrity validates candidate registration data in both PRs and merge groups.
 It preserves surviving owner/interface/test paths, consumer edges, capability overlays, fallback
 routing and existing full-validation markers. References to actually deleted files may be removed.
+A surviving consumer test may leave `testFiles.consumer` only when the trusted checker proves
+that its base revision reached the module and its head revision no longer reaches any old or new
+owner path through static imports or the union of base/head runtime-consumer declarations. The
+checker reads Git blobs as data, resolves public local-package exports and renderer aliases, and
+retains evidence when imports cannot be resolved, dynamic imports are computed, or the module
+requires full validation. Verified retirements appear in the Integrity summary. This exception
+does not remove owner/contract tests, interfaces, module consumer edges, or routing obligations.
 New explicit ownership cannot hide existing inferred test coverage. Unknown policy metadata and
 coverage reductions fail the check; owner approval alone does not waive these invariants.
 Module moves and consolidation must preserve surviving ownership, interfaces, test evidence and

@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 
 import { execFileSync } from 'node:child_process'
+import { verifiedConsumerRetirements } from './consumer-retirement.mjs'
 import {
   moduleImpactRegistrationPath,
   isModuleImpactRegistrationPath,
@@ -33,7 +34,13 @@ function covered(path, manifest) {
 
 // Registration is data, but it becomes trusted routing after merge. Retain existing
 // evidence so an additive registration cannot quietly weaken later selective runs.
-function registrationViolations(baseManifest, headManifest, headFiles, changes = []) {
+function registrationViolations(
+  baseManifest,
+  headManifest,
+  headFiles,
+  changes = [],
+  retiredConsumers = new Set()
+) {
   // Compare checked-in routing only; local graph evidence must not mask lost coverage.
   const graph = { status: 'not-used', testFiles: [] }
   const violations = []
@@ -151,8 +158,12 @@ function registrationViolations(baseManifest, headManifest, headFiles, changes =
       )
     }
     for (const kind of testKinds) {
-      retain(base.testFiles[kind], head.testFiles[kind], `${id}.testFiles.${kind}`, (path) =>
-        headFiles.has(path)
+      retain(
+        base.testFiles[kind],
+        head.testFiles[kind],
+        `${id}.testFiles.${kind}`,
+        (path) =>
+          headFiles.has(path) && !(kind === 'consumer' && retiredConsumers.has(`${id}:${path}`))
       )
     }
     retain(
@@ -205,7 +216,8 @@ export function checkModuleOwnership({
   headManifest,
   baseFiles,
   headFiles,
-  changes
+  changes,
+  retiredConsumers = new Set()
 }) {
   validateModuleImpactManifest(baseManifest)
   const before = new Set(baseFiles)
@@ -215,7 +227,13 @@ export function checkModuleOwnership({
   const manifestChanged = changes.some(({ path, previousPath }) =>
     [path, previousPath].filter(Boolean).some(isModuleImpactRegistrationPath)
   )
-  const violations = registrationViolations(baseManifest, headManifest, after, changes)
+  const violations = registrationViolations(
+    baseManifest,
+    headManifest,
+    after,
+    changes,
+    retiredConsumers
+  )
   const legacyGaps = []
   for (const path of headFiles.filter(isModuleOwnershipPath)) {
     if (before.has(path) && !changed.has(path) && !manifestChanged) continue
@@ -237,7 +255,12 @@ export function checkModuleOwnership({
       legacyGaps.push(path)
     }
   }
-  return { ok: violations.length === 0, violations, legacyGaps }
+  return {
+    ok: violations.length === 0,
+    violations,
+    legacyGaps,
+    retiredConsumers: [...retiredConsumers]
+  }
 }
 
 export function moduleOwnershipFromRevisions(base, head, { cwd = process.cwd() } = {}) {
@@ -264,6 +287,9 @@ export function moduleOwnershipFromRevisions(base, head, { cwd = process.cwd() }
     headManifest,
     baseFiles,
     headFiles,
+    retiredConsumers: verifiedConsumerRetirements(mergeBase, head, baseManifest, headManifest, {
+      cwd
+    }),
     changes: parseNameStatus(git('diff', '--name-status', '-z', mergeBase, head))
   })
 }
