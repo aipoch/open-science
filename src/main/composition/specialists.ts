@@ -46,6 +46,7 @@ export async function composeSpecialistCatalog({
 }> {
   // Builtins are validated once at startup from read-only repository resources. Package imports use
   // the same repository while keeping their dynamic Connector/custom-Skill catalog separate.
+  // Builtins may reference catalog Skills but cannot bundle SKILL.md, so no parser is needed.
   const appVersion = runtimeMetadata().version
   const specialistSkills = await settingsService.listSpecialistSkillCatalog({ bundledOnly: true })
   composition.phase('specialist-catalog')

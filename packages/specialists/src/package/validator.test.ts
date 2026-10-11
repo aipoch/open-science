@@ -49,6 +49,31 @@ const validSpecialist = {
 }
 
 describe('validateSpecialistPackage', () => {
+  it.each([undefined, fixtureSkillParser])(
+    'rejects bundled Skills in builtin contributions regardless of parser injection (%s)',
+    (parser) => {
+      const result = validatePackage(
+        packageFiles(validManifest, validSpecialistJson, [
+          {
+            path: 'skills/analysis/SKILL.md',
+            bytes: encoder.encode('---\nname: analysis\n---\nReview evidence.')
+          }
+        ]),
+        catalog,
+        'builtin',
+        parser
+      )
+      expect(result.plan).toBeUndefined()
+      expect(result.preview.installable).toBe(false)
+      expect(result.preview.diagnostics).toContainEqual(
+        expect.objectContaining({
+          code: 'builtin.bundled-skills-forbidden',
+          severity: 'error'
+        })
+      )
+    }
+  )
+
   it('accepts only application metadata in manifest and author content in specialist.json', () => {
     const result = validateSpecialistPackage(
       packageFiles(validManifest, validSpecialistJson),
