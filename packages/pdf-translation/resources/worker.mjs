@@ -22,6 +22,8 @@ import {
 } from 'pdf-lib'
 import { engine } from './pdfium.mjs'
 import { nativeReadingOrder } from './reading-order.mjs'
+import { proveNumericGlyphSources } from './numeric-glyphs.mjs'
+import { createSourceFragmentRecovery } from './source-fragments.mjs'
 import { unwrapPageContainers } from './page-containers.mjs'
 import { translateFormLabels } from './form-labels.mjs'
 import { splitSharedTextRuns, recoverOverprintedTextSources } from './shared-text-runs.mjs'
@@ -1074,6 +1076,7 @@ async function generate({ data, units, pages, preserveUnsupported = false, selec
     )
   }
   const plans = []
+  const recoveredFragments = new WeakSet()
   const fragmentBounds = (fragment) => {
     const size = pages[fragment.pageNumber - 1],
       r = fragment.rect,
@@ -1143,6 +1146,13 @@ async function generate({ data, units, pages, preserveUnsupported = false, selec
       const { sources: overprintedSources, groups: overprintGroups } =
         recoverOverprintedTextSources(e, page, objects)
       for (const object of objects) object.text = overprintedSources.get(object.obj) ?? object.text
+      const numericGlyphSources = proveNumericGlyphSources(
+        e,
+        page,
+        nativePages[number - 1].node.Resources(),
+        objects
+      )
+      for (const object of objects) object.numericGlyphSource = numericGlyphSources.get(object.obj)
       recoverActualTextSources(number, objects, page)
       proveAsciiHyphens(page, objects)
       // Some publishers serialize an invisible discretionary hyphen as its own
@@ -1383,7 +1393,12 @@ async function generate({ data, units, pages, preserveUnsupported = false, selec
         // intersecting object proves the fragment's complete source text, own
         // that object and use its exact ink bounds.  Never apply this to a
         // substring of a shared object: neighboring units must stay untouched.
-        if (!unchanged && !selected.length) {
+        // Read-only recovery additionally needs numeric-font evidence or a box
+        // re-read from the original PDF item; generic region overlap stays strict.
+        if (
+          !selected.length ||
+          (unchanged && (unit.fragments.length === 1 || fragment.items?.length === 1))
+        ) {
           const fragmentSource =
             fragment.items?.map((item) => item.text).join('') ??
             (unit.fragments.length === 1 ? unit.source : undefined)
@@ -1397,7 +1412,10 @@ async function generate({ data, units, pages, preserveUnsupported = false, selec
               o.bounds[1] < sourceRect.top &&
               o.bounds[3] > sourceRect.bottom &&
               fragmentSource &&
-              sourceMatches(fragmentSource, o.text)
+              (unchanged
+                ? (o.numericGlyphSource || recoveredFragments.has(fragment)) &&
+                  sourceMatches(fragmentSource, o.numericGlyphSource ?? o.text)
+                : sourceMatches(fragmentSource, o.text))
           )
           if (exact.length === 1) {
             const object = exact[0]
@@ -1890,17 +1908,22 @@ async function generate({ data, units, pages, preserveUnsupported = false, selec
             )
           : []
         const matchingObjects = selected.map((native) => {
+          // A numeric glyph name proves the reader's spelling, not the glyph's
+          // meaning. Preserve the complete unit instead of repainting an alias.
+          check(unchanged || !native.numericGlyphSource, 'unsupported-layout')
           const object = {
             ...native,
-            text: leadingObjectPrefixes.has(native.i)
-              ? native.text.slice(leadingObjectPrefixes.get(native.i).length)
-              : zeroInkPositioningMarkers.has(native.i)
-                ? ''
-                : unchangedTransposeIndices.includes(native.i)
-                  ? 'ᵀ'
-                  : latinAccents.some((accent) => accent.indices.includes(native.i))
-                    ? latinText.get(native.i)
-                    : nativeMathSymbolText(native, nativeFontName(native))
+            text:
+              native.numericGlyphSource ??
+              (leadingObjectPrefixes.has(native.i)
+                ? native.text.slice(leadingObjectPrefixes.get(native.i).length)
+                : zeroInkPositioningMarkers.has(native.i)
+                  ? ''
+                  : unchangedTransposeIndices.includes(native.i)
+                    ? 'ᵀ'
+                    : latinAccents.some((accent) => accent.indices.includes(native.i))
+                      ? latinText.get(native.i)
+                      : nativeMathSymbolText(native, nativeFontName(native)))
           }
 
           const accent = [...accents, ...fractions].find((candidate) =>
@@ -5715,6 +5738,7 @@ async function generate({ data, units, pages, preserveUnsupported = false, selec
     }
     plans.push(...fitted.map((region) => ({ ...region, unit: originalUnit })))
   }
+  const fragmentRecovery = createSourceFragmentRecovery(data, pages)
   try {
     for (const unit of units) {
       try {
@@ -5736,6 +5760,21 @@ async function generate({ data, units, pages, preserveUnsupported = false, selec
         try {
           planUnit({ ...unit, translation: unit.source })
         } catch (fallbackError) {
+          if (fallbackError.failure?.code === 'source-mismatch') {
+            const recovered = await fragmentRecovery.recover(unit)
+            if (recovered) {
+              for (const fragment of recovered.fragments)
+                if (!unit.fragments.includes(fragment)) recoveredFragments.add(fragment)
+              try {
+                planUnit({ ...recovered, translation: unit.source })
+                if (unit.source !== unit.translation)
+                  diagnoseRetention(unit, error.failure.code, 'planning')
+                continue
+              } catch (recoveryError) {
+                if (recoveryError.failure?.code !== 'source-mismatch') throw recoveryError
+              }
+            }
+          }
           // Some publishers split one paragraph into multiple linked fragments;
           // PDFium cannot verify that aggregate as one unchanged region. Leave that
           // region untouched while retaining strict source checks for single regions.
@@ -5748,6 +5787,7 @@ async function generate({ data, units, pages, preserveUnsupported = false, selec
     }
   } finally {
     closePlanningPage()
+    await fragmentRecovery.close()
   }
   if (preserveUnsupported) {
     // Dense table rows may have overlapping extraction boxes. Keep both complete

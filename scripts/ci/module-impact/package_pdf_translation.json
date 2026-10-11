@@ -456,7 +456,12 @@
     "packages/pdf-translation/test/pdf-cache.test.ts",
     "packages/pdf-translation/test/usage.test.ts",
     "packages/pdf-translation/test/workflow.test.ts",
-    "packages/pdf-translation/test/support/usage-memory.ts"
+    "packages/pdf-translation/test/support/usage-memory.ts",
+    "packages/pdf-translation/resources/numeric-glyphs.mjs",
+    "packages/pdf-translation/resources/source-fragments.mjs",
+    "packages/pdf-translation/resources/source-fragments.d.mts",
+    "packages/pdf-translation/test/numeric-glyph-name-roundtrip.test.ts",
+    "packages/pdf-translation/test/fixtures/numeric-glyph-name-roundtrip.jsonl"
   ],
   "interfacePaths": [
     "packages/pdf-translation/src/index.ts",
@@ -536,7 +541,8 @@
       "packages/pdf-translation/test/incremental.test.ts",
       "packages/pdf-translation/test/pdf-cache.test.ts",
       "packages/pdf-translation/test/usage.test.ts",
-      "packages/pdf-translation/test/workflow.test.ts"
+      "packages/pdf-translation/test/workflow.test.ts",
+      "packages/pdf-translation/test/numeric-glyph-name-roundtrip.test.ts"
     ],
     "contract": ["scripts/pdf-package-fixtures.test.ts"],
     "consumer": [
