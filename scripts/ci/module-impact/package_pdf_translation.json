@@ -447,7 +447,8 @@
     "packages/pdf-translation/test/packed-runtime.mjs",
     "packages/pdf-translation/test/cache-isolation.test.ts",
     "packages/pdf-translation/test/usage-admission.test.ts",
-    "packages/pdf-translation/test/inference-adapter.test.ts"
+    "packages/pdf-translation/test/inference-adapter.test.ts",
+    "scripts/pdf-package-fixtures.test.ts"
   ],
   "interfacePaths": [
     "packages/pdf-translation/src/index.ts",

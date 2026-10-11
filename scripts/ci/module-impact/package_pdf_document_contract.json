@@ -1497,7 +1497,10 @@
       "packages/pdf-translation/test/owner.test.ts",
       "packages/pdf-translation/test/cache-isolation.test.ts",
       "packages/pdf-translation/test/usage-admission.test.ts",
-      "packages/pdf-translation/test/inference-adapter.test.ts"
+      "packages/pdf-translation/test/inference-adapter.test.ts",
+      "src/main/session-diagnostics/schema-compatibility.integration.test.ts",
+      "src/main/connectors/registry.test.ts",
+      "src/main/connectors/skill-doc.test.ts"
     ]
   },
   "capabilityOverlays": [],

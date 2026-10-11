@@ -260,7 +260,8 @@
     "scripts/electron-builder-config.test.ts",
     "scripts/electron-fixture-teardown.test.ts",
     "scripts/electron-vite-config.test.ts",
-    "src/main/composition/notebook-approvals.ts"
+    "src/main/composition/notebook-approvals.ts",
+    "scripts/electron-session-revision-retry.test.ts"
   ],
   "interfacePaths": [
     "src/main/app-lifecycle.ts",
@@ -450,7 +451,8 @@
       "scripts/stage-node-runtime.test.ts",
       "src/main/desktop-runtime-launcher.test.ts",
       "src/main/desktop-runtime-launcher.integration.test.ts",
-      "src/main/desktop-runtime-lifecycle.test.ts"
+      "src/main/desktop-runtime-lifecycle.test.ts",
+      "scripts/electron-session-revision-retry.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
