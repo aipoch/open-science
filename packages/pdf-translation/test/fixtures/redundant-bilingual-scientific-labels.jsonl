@@ -1,0 +1,10 @@
+{"name": "ordinary-label-removes-exact-redundant-english", "source": "Noise Strength", "translation": "噪声强度（Noise Strength）", "expected": "噪声强度", "owner": true}
+{"name": "ascii-parentheses-around-duplicate-label", "source": "Layer Type", "translation": "层类型 (Layer Type)", "expected": "层类型", "owner": true}
+{"name": "unknown-name-keeps-original-spelling", "source": "Example Shift", "translation": "示例偏移（Example Shift）", "expected": "示例偏移（Example Shift）", "owner": true}
+{"name": "acronym-in-label-remains-available", "source": "Without AB", "translation": "不使用（Without AB）", "expected": "不使用（Without AB）", "owner": true}
+{"name": "qualifier-is-not-an-exact-duplicate", "source": "Test Accuracy", "translation": "测试准确率（Test Accuracy average）", "expected": "测试准确率（Test Accuracy average）", "owner": true}
+{"name": "formula-label-keeps-identifier", "source": "log", "translation": "对数（log）", "expected": "对数（log）", "owner": true}
+{"name": "hyphenated-ordinary-label-removes-redundant-english", "source": "Mult-Adds", "translation": "乘加运算 (Mult-Adds)", "expected": "乘加运算", "owner": true}
+{"name": "hyphenated-task-label-removes-only-exact-copy", "source": "Object-Detection", "translation": "目标检测（Object-Detection）", "expected": "目标检测", "owner": true}
+{"name": "hyphenated-acronym-remains-available", "source": "AB-Params", "translation": "参数（AB-Params）", "expected": "参数（AB-Params）", "owner": true}
+{"name": "hyphenated-unknown-name-keeps-its-spelling", "source": "NimbusNet-Training", "translation": "训练（NimbusNet-Training）", "expected": "训练（NimbusNet-Training）", "owner": true}

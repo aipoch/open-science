@@ -120,14 +120,14 @@ describe('electron-builder local evidence exclusion', () => {
     for (const file of [
       'out/main/index.js',
       'out/renderer/index.html',
-      'resources/pdf-translation/worker.mjs',
+      'node_modules/@aipoch/pdf-translation/resources/worker.mjs',
       'resources/pdf-translation-local/worker.mjs',
       'node_modules/@huggingface/transformers/dist/transformers.node.mjs',
       'node_modules/onnxruntime-web/dist/ort.wasm.bundle.min.mjs',
       'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs',
       'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm',
-      'resources/pdf-translation/NotoSansSC-Regular.otf',
-      'resources/pdf-translation/OFL.txt',
+      'node_modules/@aipoch/pdf-translation/resources/NotoSansSC-Regular.otf',
+      'node_modules/@aipoch/pdf-translation/resources/OFL.txt',
       'resources/notebook/python_loop.py',
       'node_modules/fontkit/dist/main.cjs',
       'node_modules/@embedpdf/pdfium/dist/index.js',
@@ -144,14 +144,14 @@ describe('electron-builder local evidence exclusion', () => {
       config.asarUnpack
     ).createFilter()
     for (const file of [
-      'resources/pdf-translation/worker.mjs',
+      'node_modules/@aipoch/pdf-translation/resources/worker.mjs',
       'resources/pdf-translation-local/worker.mjs',
       'node_modules/@huggingface/transformers/dist/transformers.node.mjs',
       'node_modules/onnxruntime-web/dist/ort.wasm.bundle.min.mjs',
       'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs',
       'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm',
-      'resources/pdf-translation/NotoSansSC-Regular.otf',
-      'resources/pdf-translation/OFL.txt',
+      'node_modules/@aipoch/pdf-translation/resources/NotoSansSC-Regular.otf',
+      'node_modules/@aipoch/pdf-translation/resources/OFL.txt',
       'node_modules/@embedpdf/pdfium/dist/pdfium.wasm',
       'node_modules/fontkit/dist/main.cjs',
       'node_modules/pdf-lib/cjs/index.js'

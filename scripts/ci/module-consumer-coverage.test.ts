@@ -1,3 +1,4 @@
+import { localPackageSourcePaths } from './local-package-exports.mjs'
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { relative, resolve, sep } from 'node:path'
@@ -32,22 +33,7 @@ it('retains every statically reachable consumer test and declared runtime-loadin
     baseUrl: process.cwd(),
     // Resolve the local package inside this checkout, not a shared node_modules symlink.
     paths: {
-      '@aipoch/pdf-structure': ['packages/pdf-structure/src/index.ts'],
-      '@aipoch/pdf-structure/result': ['packages/pdf-structure/src/result.ts'],
-      // Graph-only source mapping of the explicit exports; runtime and typechecks use dist.
-      ...Object.fromEntries(
-        ['connector-core', 'connector-builtins', 'connector-mcp-client', 'diagnostics'].flatMap(
-          (name) => {
-            const manifest = JSON.parse(readFileSync(`packages/${name}/package.json`, 'utf8'))
-            return Object.entries(manifest.exports).map(([entry, target]) => [
-              entry === '.' ? manifest.name : `${manifest.name}/${entry.slice(2)}`,
-              [
-                `packages/${name}/${(target as { types: string }).types.replace('./dist/', 'src/').replace(/\.d\.ts$/, '.ts')}`
-              ]
-            ])
-          }
-        )
-      ),
+      ...localPackageSourcePaths(),
       '@aipoch/notebook-network-sandbox': ['packages/notebook-network-sandbox/src/index.ts'],
       '@aipoch/process-tree-native': ['packages/process-tree-native/index.d.ts'],
       '@aipoch/safe-file-publisher-native': ['packages/safe-file-publisher-native/index.d.ts'],

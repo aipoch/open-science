@@ -1,0 +1,4 @@
+{"name":"shuffled table rows","draws":[[40,700,6,"1"],[52,700,6,"TokA"],[77,700,6,"4.12"],[40,676,6,"4"],[52,676,6,"TokD"],[77,676,6,"1.89"],[40,692,6,"2"],[52,692,6,"TokB"],[77,692,6,"3.45"],[40,684,6,"3"],[52,684,6,"TokC"],[77,684,6,"2.67"]],"source":"1 TokA 4.12 2 TokB 3.45 3 TokC 2.67 4 TokD 1.89","bounds":[40,675,95,706],"roundtrip":true}
+{"name":"reversed stacked labels","draws":[[40,692,6,"TokenB"],[40,700,6,"TokenA"]],"source":"TokenA TokenB","bounds":[40,691,70,706]}
+{"name":"interleaved numeric labels","draws":[[40,700,6,"Group:"],[64,699.8,6,"1"],[80,699.8,6,"1"],[72,699.8,6,"2"],[88,699.8,6,"2"],[96,699.8,6,"3"]],"source":"Group: 1 2 1 2 3","bounds":[40,698,101,706]}
+{"name":"raised suffix painted first","draws":[[67,703,4,"X42R"],[40,700,6,"TokenA"]],"source":"TokenAX42R","bounds":[40,699,80,707]}

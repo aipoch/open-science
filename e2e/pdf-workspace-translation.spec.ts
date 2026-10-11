@@ -79,6 +79,7 @@ for (const source of ['upload', 'artifact'] as const) {
         .getByRole('group', { name: 'Translation progress' })
         .getByRole('button', { name: '2 Translated', exact: true })
     ).toBeVisible({ timeout: 60_000 })
+    await expect(panel.getByRole('button', { name: '0 Failed', exact: true })).toBeVisible()
     await expect(
       panel.getByRole('button', { name: 'View translated PDF', exact: true })
     ).toBeEnabled({ timeout: 60_000 })

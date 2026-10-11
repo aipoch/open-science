@@ -691,7 +691,11 @@ for (const variant of [
       expect(directRequests).toHaveLength(requestsBeforeRetry + 1)
       await expect(review).toBeVisible()
       expect(await oldCanvas!.evaluate((node) => node.isConnected)).toBe(true)
-      // Retranslating a completed page automatically publishes its updated PDF.
+      // This page is complete, so retranslation automatically publishes its replacement.
+      // The refresh control may briefly be busy before disappearing; do not race that transition.
+      await expect(
+        panel.getByRole('button', { name: 'Update PDF preview', exact: true })
+      ).toBeHidden({ timeout: 60000 })
       await expect(
         page.locator('[data-pdf-translated-page]').first().locator('[data-pdf-text-layer]')
       ).toContainText(replacementText, { timeout: 60000 })

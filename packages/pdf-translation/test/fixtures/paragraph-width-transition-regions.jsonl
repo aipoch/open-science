@@ -1,0 +1,3 @@
+{"name":"wide paragraph becoming narrow beside a figure keeps two regions","widths":[0.6,0.25],"regions":2}
+{"name":"narrow paragraph leaving a figure keeps two regions","widths":[0.25,0.6],"regions":2}
+{"name":"similar paragraph line widths still merge","widths":[0.6,0.55],"regions":1}

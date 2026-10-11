@@ -3886,7 +3886,9 @@ const SCAN_ROOTS = [
   join(SRC_ROOT, 'renderer', 'src'),
   join(SRC_ROOT, 'renderer', 'web'),
   join(SRC_ROOT, 'shared'),
-  join(SRC_ROOT, 'main')
+  join(SRC_ROOT, 'main'),
+  // Translation helpers supply English labels that host UI translates at the boundary.
+  join(SRC_ROOT, '..', 'packages', 'pdf-translation', 'src')
 ]
 
 const sourceFiles = (dir: string): string[] =>

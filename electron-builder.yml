@@ -66,6 +66,7 @@ files:
   # second, unused copy under app.asar.unpacked/resources/bin.
   - '!resources/bin{,/**/*}'
 asarUnpack:
+  - node_modules/@aipoch/pdf-translation/resources/**
   - resources/**
   - '!resources/bin{,/**/*}'
   # The translation worker runs outside asar and resolves its WASM/font dependencies there.

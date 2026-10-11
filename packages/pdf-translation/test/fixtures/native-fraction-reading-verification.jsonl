@@ -1,0 +1,12 @@
+{"name":"retained-fraction-reconstructs-dividing-rule","change":"none","accepted":true}
+{"name":"missing-dividing-rule-rejects-fraction-reading","change":"missing-rule","accepted":false}
+{"name":"moved-rule-rejects-fraction-reading","change":"moved-rule","accepted":false}
+{"name":"changed-denominator-rejects-fraction-reading","change":"changed-denominator","accepted":false}
+{"name":"scaled-glyph-rejects-retained-fraction-identity","change":"scaled-glyph","accepted":false}
+{"name":"flattened-count-does-not-pass-as-fraction","change":"flattened-expectation","accepted":false}
+{"name":"retained-variable-fraction-preserves-source-geometry","change":"none","numerator":"i","denominator":"rate","accepted":true}
+{"name":"retained-original-fraction-remains-explicit-fallback","change":"kept-original","accepted":true}
+{"name": "solid-image-mask-none-fraction-rule", "change": "mask-none", "accepted": true}
+{"name": "solid-image-mask-missing-fraction-rule", "change": "mask-missing", "accepted": false}
+{"name": "solid-image-mask-moved-fraction-rule", "change": "mask-moved", "accepted": false}
+{"name": "solid-image-mask-thicker-fraction-rule", "change": "mask-thicker", "accepted": false}

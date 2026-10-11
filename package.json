@@ -83,11 +83,13 @@
     "build:connectors": "npm --prefix packages/connector-core run build && npm --prefix packages/connector-builtins run build && npm run build --prefix packages/connector-mcp-client",
     "check:connector-packages": "node scripts/check-connector-packages.mjs",
     "build:diagnostics": "npm --prefix packages/diagnostics run build",
-    "build:packages": "npm run build:connectors && npm run build:diagnostics && npm run build:pdf-structure",
+    "build:packages": "npm run build:connectors && npm run build:diagnostics && npm run build:pdf-packages",
     "check:diagnostics-package": "node scripts/check-diagnostics-package.mjs",
-    "prebuild:web": "npm run build:diagnostics",
-    "pretypecheck:web": "npm run build:diagnostics",
-    "build:pdf-structure": "npm --prefix packages/pdf-structure run build"
+    "prebuild:web": "npm run build:diagnostics && npm run build:pdf-packages",
+    "pretypecheck:web": "npm run build:diagnostics && npm run build:pdf-packages",
+    "build:pdf-structure": "npm --prefix packages/pdf-structure run build",
+    "build:pdf-packages": "npm --prefix packages/pdf-document-contract run build && npm --prefix packages/pdf-structure run build && npm --prefix packages/pdf-translation run build",
+    "check:pdf-packages": "node scripts/check-package-isolation.mjs --packages=pdf-document-contract,pdf-structure,pdf-translation"
   },
   "dependencies": {
     "@agentclientprotocol/claude-agent-acp": "^0.70.0",
@@ -140,7 +142,9 @@
     "zod": "^4.6.5",
     "@aipoch/connector-mcp-client": "file:packages/connector-mcp-client",
     "@aipoch/diagnostics": "file:packages/diagnostics",
-    "@aipoch/pdf-structure": "file:packages/pdf-structure"
+    "@aipoch/pdf-structure": "file:packages/pdf-structure",
+    "@aipoch/pdf-translation": "file:packages/pdf-translation",
+    "@aipoch/pdf-document-contract": "file:packages/pdf-document-contract"
   },
   "overrides": {
     "@huggingface/transformers": {

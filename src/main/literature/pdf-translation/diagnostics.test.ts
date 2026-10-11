@@ -81,7 +81,7 @@ it('persists safe translation reasons and PDF fallback measurements in the diagn
       signal: caller.lease.signal
     })
     const output = await new PdfTranslationWriter(() =>
-      resolve('resources/pdf-translation/worker.mjs')
+      resolve('packages/pdf-translation/resources/worker.mjs')
     ).generateDetailed(
       {
         id: 'diagnostic-pdf',
@@ -201,7 +201,7 @@ it('returns every native layout failure while keeping diagnostic logs sampled', 
       }
     })
     const result = await new PdfTranslationWriter(() =>
-      resolve('resources/pdf-translation/worker.mjs')
+      resolve('packages/pdf-translation/resources/worker.mjs')
     ).generateDetailed(
       {
         id: 'all-layout-reports',

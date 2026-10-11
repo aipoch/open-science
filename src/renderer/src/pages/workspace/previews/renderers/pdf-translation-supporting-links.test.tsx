@@ -4,7 +4,7 @@ import { cleanup, renderHook, waitFor } from '@testing-library/react'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 import { usePdfTranslationDocument } from './use-pdf-translation-document'
 import { createPdfTranslationSource } from './pdf-translation'
-import { translatedPdfLinkFragment } from '../../../../../../../resources/pdf-translation/link-labels.mjs'
+import { translatedPdfLinkFragment } from '@aipoch/pdf-translation/reader'
 
 const { getDocument } = vi.hoisted(() => ({ getDocument: vi.fn() }))
 vi.mock('../pdfjs', () => ({ pdfjsLib: { getDocument, OPS: {} } }))

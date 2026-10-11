@@ -1,0 +1,10 @@
+{"name": "plot-decimal-tick-needs-no-translation", "source": "0.5", "sourceOnly": true}
+{"name": "negative-plot-tick-keeps-sign", "source": "−2.0", "sourceOnly": true}
+{"name": "equation-tail-keeps-native-power", "source": ")2", "sourceOnly": true}
+{"name": "standalone-formula-star-is-not-prose", "source": "∗", "sourceOnly": true}
+{"name": "unproven-single-letter-keeps-existing-classification", "source": "t", "sourceOnly": false}
+{"name": "numeric-citation-range-keeps-native-glyphs", "source": "[2–5]", "sourceOnly": true}
+{"name": "numeric-prose-label-remains-translatable", "source": "0.5 dropout", "sourceOnly": false}
+{"name": "figure-caption-label-remains-translatable", "source": "Figure 2", "sourceOnly": false}
+{"name": "single-han-label-remains-translatable", "source": "中", "sourceOnly": false}
+{"name":"standalone duration with measurement uncertainty needs no translation","source":"275±4.25s","sourceOnly":true}

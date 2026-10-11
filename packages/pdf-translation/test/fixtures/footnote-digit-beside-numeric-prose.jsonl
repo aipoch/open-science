@@ -1,0 +1,6 @@
+{"name":"exact native footnote does not collide with prose number","originalMarker":"1","changedAction":false,"accepted":true}
+{"name":"different native footnote cannot borrow prose digit","originalMarker":"2","changedAction":false,"accepted":false}
+{"name":"exact native footnote retains its destination","originalMarker":"1","changedAction":true,"accepted":false}
+{"name": "unicode-footnote-retains-original-paragraph-and-link", "originalMarker": "1", "changedAction": false, "accepted": true, "unicode": true}
+{"name": "unicode-footnote-cannot-change-the-number", "originalMarker": "2", "changedAction": false, "accepted": false, "unicode": true}
+{"name": "unicode-footnote-cannot-change-the-link-target", "originalMarker": "1", "changedAction": true, "accepted": false, "unicode": true}

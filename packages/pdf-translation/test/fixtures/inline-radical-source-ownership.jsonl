@@ -1,0 +1,7 @@
+{"name":"top-origin-root-stays-with-inline-radicand","rootY":92.1,"baseX":126,"base":"v","joined":true}
+{"name":"root-on-another-row-stays-independent","rootY":80,"baseX":126,"base":"v","joined":false}
+{"name":"distant-variable-does-not-claim-root","rootY":92.1,"baseX":129,"base":"v","joined":false}
+{"name":"neighboring-word-does-not-claim-root","rootY":92.1,"baseX":126,"base":"word","joined":false}
+{"name":"combined-radical-accent-keeps-indexed-radicand-in-formula","root":"√̂","rootY":92.1,"baseX":126,"base":"vt,i","joined":false,"preservedBase":true}
+{"name":"top-origin-root-stays-with-two-letter-product","rootY":92.1,"baseX":126,"base":"dT","joined":true}
+{"name": "raised-root-with-ordinary-font-metrics-follows-radicand", "rootY": 92.8, "baseX": 126, "base": "v", "joined": true, "fontDescent": -0.194}

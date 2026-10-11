@@ -53,7 +53,9 @@ describe('incremental translated PDF pages', () => {
       page.node.Resources()!.set(PDFName.of('ExtGState'), shared)
     }
     const data = await pdf.save(),
-      writer = new PdfTranslationWriter(() => resolve('resources/pdf-translation/worker.mjs')),
+      writer = new PdfTranslationWriter(() =>
+        resolve('packages/pdf-translation/resources/worker.mjs')
+      ),
       caller = new ApplicationCallerLeaseRegistry().acquire({
         leaseId: 'shared-incremental',
         surface: 'electron'
@@ -199,7 +201,9 @@ describe('incremental translated PDF pages', () => {
     }
     pdf.catalog.set(PDFName.of('Outlines'), outlines)
     const data = await pdf.save(),
-      writer = new PdfTranslationWriter(() => resolve('resources/pdf-translation/worker.mjs')),
+      writer = new PdfTranslationWriter(() =>
+        resolve('packages/pdf-translation/resources/worker.mjs')
+      ),
       caller = new ApplicationCallerLeaseRegistry().acquire({
         leaseId: 'reader',
         surface: 'electron'
@@ -280,7 +284,9 @@ describe('incremental translated PDF pages', () => {
     for (let number = 1; number <= 3; number++)
       pdf.addPage([600, 800]).drawPage(embedded, { x: 50, y: 450, xScale: 1.25, yScale: 1.25 })
     const data = await pdf.save(),
-      writer = new PdfTranslationWriter(() => resolve('resources/pdf-translation/worker.mjs')),
+      writer = new PdfTranslationWriter(() =>
+        resolve('packages/pdf-translation/resources/worker.mjs')
+      ),
       caller = new ApplicationCallerLeaseRegistry().acquire({
         leaseId: 'reader',
         surface: 'electron'

@@ -36,10 +36,10 @@ describe('module test impact commands', () => {
       expect(plan.capabilityOverlays).toEqual([])
       expect(plan.testFiles).toEqual(
         expect.arrayContaining([
-          'src/main/literature/pdf-translation/writer.test.ts',
+          'packages/pdf-translation/test/writer.test.ts',
           'src/main/settings/provider-text-generation.test.ts',
-          'src/renderer/src/pages/workspace/previews/renderers/pdf-translation-extraction.test.ts',
-          'src/shared/pdf-translation-recovery.test.ts',
+          'packages/pdf-translation/test/reader/pdf-translation-extraction.test.ts',
+          'packages/pdf-translation/test/recovery.test.ts',
           'test/pdf-translation-native-verification.test.ts'
         ])
       )

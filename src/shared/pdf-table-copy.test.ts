@@ -132,3 +132,37 @@ describe('PDF table copy', () => {
     expect(() => pdfTableGrid({ ...table, rowCount: 1_000_000 }, '?')).toThrow('display limits')
   })
 })
+
+it('separates criteria while preserving bullet paragraphs in the copied table', () => {
+  // Extraction of these native paragraphs is owned by pdf-structure's source-grid suite.
+  // The host owns HTML clipboard escaping and paragraph serialization of its public table.
+  const criteria: Table = {
+    rowCount: 2,
+    columnCount: 2,
+    cells: [
+      { row: 0, column: 0, rowSpan: 1, columnSpan: 1, text: '• Age > 50 y', regions: [] },
+      {
+        row: 0,
+        column: 1,
+        rowSpan: 1,
+        columnSpan: 1,
+        text: 'Criteria\n• Additional use',
+        regions: []
+      },
+      {
+        row: 1,
+        column: 0,
+        rowSpan: 1,
+        columnSpan: 1,
+        text: 'Disease\n⋄ Type 2 diabetes mellitus',
+        regions: []
+      }
+    ],
+    unassignedText: [],
+    issues: []
+  }
+  const html = copyPdfTable(criteria, 'html', '')
+  expect(html).toContain('Age &gt; 50 y')
+  expect(html).toContain('• Additional use')
+  expect(html).toContain('⋄ Type 2 diabetes mellitus')
+})

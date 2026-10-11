@@ -1,0 +1,5 @@
+{"name": "standalone-kernel-size-parameter-keeps-letter-prefix", "source": "s1x1", "sourceOnly": true}
+{"name": "standalone-expansion-parameter-keeps-letter-prefix", "source": "e3x3", "sourceOnly": true}
+{"name": "multiplication-sign-parameter-keeps-native-symbol", "source": "q3×3", "sourceOnly": true}
+{"name": "parameter-definition-stays-translatable", "source": "We use e3x3 filters in this layer.", "sourceOnly": false}
+{"name": "word-with-size-suffix-is-not-a-bare-parameter", "source": "layer3x3", "sourceOnly": false}

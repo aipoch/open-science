@@ -287,7 +287,7 @@ test('prepares a Library PDF through real IPC and cached table provenance', asyn
       (attachmentVersionId) => window.api.pdfStructure.readCached({ attachmentVersionId, page: 1 }),
       version.id
     )
-  ).toBeUndefined()
+  ).toBeNull() // The desktop runtime JSON transport encodes an absent result as null.
   await prepare(false)
   await close()
   expect((await cache.clear()).retained).toEqual([])

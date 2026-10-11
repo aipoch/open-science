@@ -63,7 +63,7 @@ it.skipIf(!process.env.PDF_TRANSLATION_CORPUS)(
     const registry = new ApplicationCallerLeaseRegistry()
     onTestFinished(() => registry.dispose())
     const caller = registry.acquire({ leaseId: 'real-pdf-corpus', surface: 'electron' })
-    const writer = new PdfTranslationWriter(() => resolve('resources/pdf-translation/worker.mjs'))
+    const writer = new PdfTranslationWriter()
     const reports = []
     for (const fixture of corpus) {
       const bytes = new Uint8Array(await readFile(resolve(directory, `${fixture.id}.pdf`)))

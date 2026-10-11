@@ -1,4 +1,5 @@
-import { resolve } from 'node:path'
+import { join } from 'node:path'
+import { pdfTranslationResourceDirectory } from '@aipoch/pdf-translation/resources'
 import { pathToFileURL } from 'node:url'
 import type { PDFDocumentProxy } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import type { PdfTranslationPdfRequest } from '../src/shared/pdf-translation'
@@ -101,7 +102,7 @@ export async function verifyPdfPreservation(
   )
     throw new Error('Pixel check pages must identify existing pages')
   const { engine } = await import(
-    pathToFileURL(resolve('resources/pdf-translation/pdfium.mjs')).href
+    pathToFileURL(join(pdfTranslationResourceDirectory(), 'pdfium.mjs')).href
   )
   const native = await engine()
   const before = native.open(await original.getData())

@@ -1,0 +1,5 @@
+{"name":"expectation with attached maximum index remains mathematical text","source":"E[maxj∈[n] zj] − log(n)","sourceOnly":true}
+{"name":"attached minimum index in an inequality remains mathematical text","source":"exp(z)) ≥ E[minj∈[n] zj]","sourceOnly":true}
+{"name":"sentence around an indexed extremum remains translatable","source":"The expected value E[maxj∈[n] zj] bounds the result.","sourceOnly":false}
+{"name":"leading condition before an indexed extremum remains translatable","source":"where maxj∈[n] zj ≥ 0","sourceOnly":false}
+{"name":"adjacent named function is not split off as a prose tail","source":"E[maxj∈[n] zj] − log(n)","parts":["E[maxj∈[n] zj] − ","log(n)"],"sourceOnly":true}

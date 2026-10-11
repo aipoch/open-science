@@ -1,6 +1,7 @@
 import type { PDFDocumentProxy } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import type { PdfTranslationPdfRequest } from '../src/shared/pdf-translation'
-import { resolve } from 'node:path'
+import { join } from 'node:path'
+import { pdfTranslationResourceDirectory } from '@aipoch/pdf-translation/resources'
 import { pathToFileURL } from 'node:url'
 
 export const normalizedText = (text: string): string =>
@@ -238,7 +239,7 @@ export async function verifyPdfUnits(
   )
   if (radicalPages.length || fractionPages.length) {
     const { engine } = await import(
-      pathToFileURL(resolve('resources/pdf-translation/pdfium.mjs')).href
+      pathToFileURL(join(pdfTranslationResourceDirectory(), 'pdfium.mjs')).href
     )
     const native = await engine(),
       input = native.open(await document.getData()),

@@ -1,21 +1,16 @@
+import { pdfTranslationResourceDirectory } from '@aipoch/pdf-translation/resources'
 import { join } from 'node:path'
-import { runtimeMetadata } from '../../runtime-metadata'
-import { toUnpackedAsarPath } from '../../skills/resource-path'
-import { PdfTranslationWriter } from './writer'
-import { PdfTranslationPdfCache } from './pdf-cache'
-import { pdfTranslationCacheRevision } from './cache-revision'
-import { resolveDataRoot } from '../../storage-root'
 import {
   PdfTranslationError,
-  type PdfTranslationRunResult,
-  type PdfTranslationCheckpointRequest,
-  type PdfTranslationSelectEditionRequest,
-  type PdfTranslationPdfRequest,
-  type PdfTranslationSaveSnapshotRequest,
-  type PdfTranslationRecordLayoutRequest,
   type PdfTranslationBeginRequest,
+  type PdfTranslationCheckpointRequest,
+  type PdfTranslationOperationRequest,
+  type PdfTranslationPdfRequest,
+  type PdfTranslationRecordLayoutRequest,
   type PdfTranslationRunRequest,
-  type PdfTranslationOperationRequest
+  type PdfTranslationRunResult,
+  type PdfTranslationSaveSnapshotRequest,
+  type PdfTranslationSelectEditionRequest
 } from '../../../shared/pdf-translation'
 import {
   defineApplicationCommand,
@@ -24,7 +19,13 @@ import {
   type ApplicationCommandInstallation,
   type ApplicationCommandRegistrar
 } from '../../application-command-router'
+import { runtimeMetadata } from '../../runtime-metadata'
+import { toUnpackedAsarPath } from '../../skills/resource-path'
+import { resolveDataRoot } from '../../storage-root'
+import { pdfTranslationCacheRevision } from './cache-revision'
 import type { PdfTranslationOwner } from './index'
+import { PdfTranslationPdfCache } from './pdf-cache'
+import { PdfTranslationWriter } from './writer'
 
 export const pdfTranslationApplicationCommandGroup = defineApplicationCommandGroup(
   'pdf-translation',
@@ -91,8 +92,7 @@ export const pdfTranslationApplicationCommandGroup = defineApplicationCommandGro
 export function createPdfTranslationHandlers(
   owner: PdfTranslationOwner
 ): ApplicationCommandHandlers<typeof pdfTranslationApplicationCommandGroup.commands> {
-  const resources = (): string =>
-    toUnpackedAsarPath(join(runtimeMetadata().applicationPath, 'resources', 'pdf-translation'))
+  const resources = (): string => toUnpackedAsarPath(pdfTranslationResourceDirectory())
   const writer = new PdfTranslationPdfCache({
     root: resolveDataRoot,
     revision: () => pdfTranslationCacheRevision(resources(), runtimeMetadata().version),

@@ -1,7 +1,7 @@
 import { verifiedPdfLatinAccentText } from './pdf-translation-latin-accents'
 import { pdfTranslationLayoutFragments } from './pdf-translation-fragments'
 import { getPdfTranslationTextContent } from './pdf-translation-text-content'
-import { resolveInlineFractions } from '../../../../../../../resources/pdf-translation/math-fractions.mjs'
+import { resolveInlineFractions } from '@aipoch/pdf-translation/reader'
 import {
   pdfLinkLabelKey,
   pdfLinkLabelMatches,
@@ -9,7 +9,7 @@ import {
   translatedPdfBracketedReference,
   translatedPdfLinkFragment,
   translatedPdfLinkLabel
-} from '../../../../../../../resources/pdf-translation/link-labels.mjs'
+} from '@aipoch/pdf-translation/reader'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist'
 import { pdfjsLib } from '../pdfjs'

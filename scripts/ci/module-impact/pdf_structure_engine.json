@@ -1731,7 +1731,12 @@
     "packages/pdf-structure/src/result.ts",
     "packages/pdf-structure/src/types.ts"
   ],
-  "consumerModules": ["main_literature", "shared_application_contracts"],
+  "consumerModules": [
+    "main_literature",
+    "shared_application_contracts",
+    "package_pdf_translation",
+    "workspace_previews"
+  ],
   "testFiles": {
     "owner": [
       "packages/pdf-structure/test/algorithm-association.test.ts",
@@ -2231,7 +2236,7 @@
       "src/main/literature/pdf-structure/agent-reader.test.ts",
       "src/renderer/src/pages/workspace/previews/renderers/PdfFiguresView.render.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/pdf-figure-selections.test.ts",
-      "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-table-source.test.ts",
+      "packages/pdf-translation/test/reader/pdf-translation-table-source.test.ts",
       "src/shared/pdf-table-copy.test.ts",
       "src/main/application-command-composition.test.ts",
       "src/main/compute/application-commands.test.ts",
@@ -2342,7 +2347,6 @@
       "src/main/settings/workflows.test.ts",
       "src/main/runtime-state-ownership.architecture.test.ts",
       "src/main/settings/workflows/connectors-diagnostic.test.ts",
-      "src/main/connectors/application.test.ts",
       "src/main/ipc-surfaces/settings.test.ts",
       "src/main/settings/file-commands.test.ts",
       "src/main/reviewer/model-runtime-owner.test.ts",
@@ -2505,7 +2509,21 @@
       "src/main/acp/approved-handoff-outcome.test.ts",
       "src/main/acp/application-commands.test.ts",
       "src/main/acp/runtime-composition.test.ts",
-      "src/main/literature/pdf-structure/engine-adapter.test.ts"
+      "src/main/literature/pdf-structure/engine-adapter.test.ts",
+      "src/main/composition/connector-application.test.ts",
+      "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-supporting-links.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-angle-delimiters.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-narrow-hat.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-numeric-token-links.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/use-pdf-translation-document.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/PdfTranslatedPage.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationControls.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationView.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-agent.test.ts",
+      "src/renderer/src/pages/workspace/previews/renderers/use-pdf-translation-job.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-inline.test.ts",
+      "scripts/pdf-translation-corpus.test.ts",
+      "src/main/literature/pdf-translation/diagnostics.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive"],

@@ -1,0 +1,5 @@
+{"name": "prose-word-before-multiple-linked-citations", "prefix": "analysis [7, 11", "preserved": false}
+{"name": "prose-word-before-single-linked-citation", "prefix": "method [4", "preserved": false}
+{"name": "compact-array-index-remains-formula", "prefix": "values[4", "preserved": true}
+{"name": "spaced-named-function-remains-formula", "prefix": "log [4", "preserved": true}
+{"name": "variable-index-remains-formula", "prefix": "x [4", "preserved": true}

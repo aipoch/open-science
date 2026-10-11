@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { packageTestExcludePatterns } from './scripts/ci/package-test-impact.mjs'
 import { availableParallelism, cpus } from 'node:os'
 import { basename, dirname, resolve } from 'path'
@@ -260,7 +261,15 @@ export default defineConfig({
       // text for the CI log, lcov for upload/tooling, html for local inspection.
       reporter: ['text', 'lcov', 'html'],
       reportsDirectory: './coverage',
-      include: ['src/**/*.{ts,tsx}'],
+      include: [
+        'src/**/*.{ts,tsx}',
+        ...JSON.parse(
+          readFileSync(
+            new URL('./scripts/ci/package-test-boundaries.json', import.meta.url),
+            'utf8'
+          )
+        ).packages.map(({ root }: { root: string }) => `${root}/src/**/*.{ts,tsx}`)
+      ],
       // Exclude non-logic files so coverage reflects testable code, not wiring/types.
       exclude: VITEST_COVERAGE_EXCLUDE_PATTERNS,
       // Keep the full-suite gate about one point below the measured main baseline. Selective

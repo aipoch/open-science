@@ -1,0 +1,8 @@
+{"name": "admission-late-resolve-after-resume", "phase": "admission", "outcome": "resolve", "replacement": "resume"}
+{"name": "admission-late-resolve-after-new-translation", "phase": "admission", "outcome": "resolve", "replacement": "new-translation"}
+{"name": "admission-late-reject-after-resume", "phase": "admission", "outcome": "reject", "replacement": "resume"}
+{"name": "admission-late-reject-after-new-translation", "phase": "admission", "outcome": "reject", "replacement": "new-translation"}
+{"name": "paragraph-late-resolve-after-resume", "phase": "paragraph", "outcome": "resolve", "replacement": "resume"}
+{"name": "paragraph-late-resolve-after-new-translation", "phase": "paragraph", "outcome": "resolve", "replacement": "new-translation"}
+{"name": "paragraph-late-reject-after-resume", "phase": "paragraph", "outcome": "reject", "replacement": "resume"}
+{"name": "paragraph-late-reject-after-new-translation", "phase": "paragraph", "outcome": "reject", "replacement": "new-translation"}

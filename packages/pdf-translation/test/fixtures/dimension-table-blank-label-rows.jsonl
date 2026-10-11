@@ -1,0 +1,4 @@
+{"name":"dimension-cells-and-blank-row-label-remain-independent","rows":[{"label":"Stage A","values":["32 \u00d7 32","2","1","128"]},{"values":["16 \u00d7 16","1","3","256"]},{"label":"Stage B","values":["8 \u00d7 8","2","1","512"]}]}
+{"name":"numeric-magnitude-suffixes-are-preserved-without-translation","rows":[{"label":"Variant A (g = 2)","values":["16 \u00d7 16","2","1","120M"]},{"label":"Variant B (g = 4)","values":["8 \u00d7 8","1","3","240M"]}]}
+{"name": "two-numeric-columns-keep-model-labels-in-their-own-row", "rows": [{"label": "Variant A (g = 2)", "values": ["24.8", "26.1"]}, {"label": "Variant B (g = 4)", "values": ["22.5", "23.6"]}]}
+{"name": "timing-units-stay-in-their-own-numeric-table-cell", "rows": [{"label": "Variant A (g = 2)", "values": ["43.2", "38M", "15.2ms", "87.4ms"]}, {"label": "Variant B (g = 4)", "values": ["32.6", "140M", "37.8ms", "1.2s"]}]}

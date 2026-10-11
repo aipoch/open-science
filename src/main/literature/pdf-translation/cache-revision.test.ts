@@ -14,7 +14,7 @@ async function fixture(): Promise<string> {
     await writeFile(join(directory, 'index.js'), '')
   }
   await writeFile(join(root, 'node_modules/@embedpdf/pdfium/pdfium.wasm'), 'wasm')
-  const resources = join(root, 'resources/pdf-translation')
+  const resources = join(root, 'packages/pdf-translation/resources')
   await mkdir(resources, { recursive: true })
   await writeFile(join(resources, 'worker.mjs'), 'worker')
   await writeFile(join(resources, 'layout.mjs'), 'layout')
