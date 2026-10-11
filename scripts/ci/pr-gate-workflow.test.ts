@@ -947,7 +947,8 @@ describe('PR Gate workflow', () => {
       ({ name }) => name === 'Enforce selected static checks'
     )
 
-    expect(workflow.jobs.static['timeout-minutes']).toBe(20)
+    // All-package isolation measured about 17 minutes before the existing static checks.
+    expect(workflow.jobs.static['timeout-minutes']).toBe(30)
     expect(actionlint).toMatchObject({
       id: 'actionlint',
       'continue-on-error': true
