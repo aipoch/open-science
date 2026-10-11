@@ -1283,7 +1283,6 @@
       "src/main/skills/host-skills-service.test.ts",
       "src/main/skill-marketplace/installation.test.ts",
       "src/main/skill-marketplace/service.test.ts",
-      "scripts/electron-session-revision-retry.test.ts",
       "src/main/notebook/dependency-analysis-adapter.test.ts",
       "src/main/notebook/powershell-search-parser.test.ts",
       "src/main/notebook/analysis-file-evidence.test.ts",
