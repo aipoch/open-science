@@ -9,8 +9,10 @@ import {
 } from '@/components/ui/select'
 import { SlidersHorizontal } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import type { JournalDataset } from '../../../../../shared/journal-attributes'
-import type { LiteratureCollectionView, LiteratureItemType } from '../../../../../shared/literature'
+import type { JournalDataset } from '@aipoch/journal-catalog/contracts'
+
+import type { LiteratureItemType } from '@aipoch/literature-citations/contracts'
+import type { LiteratureCollectionView } from '../../../../../shared/literature'
 import type { SmartCollectionView } from '../../../../../shared/literature-smart-collections'
 import { JournalDatasetChoices, LiteratureColumnCustomizer } from './LiteratureColumnCustomizer'
 import { LiteratureFilters } from './LiteratureFilters'

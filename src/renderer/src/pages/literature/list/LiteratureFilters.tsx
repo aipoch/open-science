@@ -28,14 +28,15 @@ import { TagFilter } from '../../settings/ResourceTagControls'
 import { CollectionOptionHelp } from '../collections/CollectionOptionHelp'
 import { LiteratureYearFilter } from './LiteratureYearFilter'
 import type { YearFilterState } from './useLiteratureYearFilter'
-import type { LiteratureItemType } from '../../../../../shared/literature'
+import type { LiteratureItemType } from '@aipoch/literature-citations/contracts'
+
 import {
   JOURNAL_ATTRIBUTE_FILTER_MAX,
   journalDatasetLabel,
   type JournalAttributeFilter,
   type JournalDataset,
   type JournalField
-} from '../../../../../shared/journal-attributes'
+} from '@aipoch/journal-catalog/contracts'
 
 type FixedField = 'tags' | 'type' | 'year' | 'pdf'
 type Field = {

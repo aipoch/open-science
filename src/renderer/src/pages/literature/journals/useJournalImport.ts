@@ -8,9 +8,10 @@ import {
   type JournalField,
   type JournalImportRow,
   type JournalResult
-} from '../../../../../shared/journal-attributes'
+} from '@aipoch/journal-catalog/contracts'
+
 import { refreshJournalAttributes } from './journal-attribute-store'
-import { importJournalBundle, readJournalBundle } from './journal-bundle'
+import { importJournalBundle, readJournalBundle } from '@aipoch/journal-catalog/files'
 import {
   journalColumns,
   suggestJournalHeader,
@@ -18,7 +19,7 @@ import {
   suggestJournalYear,
   type JournalColumn,
   type JournalSheet
-} from './journal-import-file'
+} from '@aipoch/journal-catalog/files'
 
 const REVIEW_PAGE_SIZE = 25
 

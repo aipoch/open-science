@@ -1,6 +1,10 @@
 import { z } from 'zod'
 
-import { LITERATURE_CITATION_LOCALES, LITERATURE_CITATION_STYLES } from '../../shared/literature'
+import {
+  LITERATURE_CITATION_LOCALES,
+  LITERATURE_CITATION_STYLES
+} from '@aipoch/literature-citations/contracts'
+
 import {
   NOTEBOOK_MCP_SERVER_NAME,
   notebookRpcToolsForEnvironment,

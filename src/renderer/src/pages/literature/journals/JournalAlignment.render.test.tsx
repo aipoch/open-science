@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { JournalAlignment } from './JournalAlignment'
 import { JournalAttributes } from '../JournalAttributes'
 import { literatureItemInputSchema } from '../../../../../shared/literature'
-import type { JournalResult, JournalRequest } from '../../../../../shared/journal-attributes'
+import type { JournalResult, JournalRequest } from '@aipoch/journal-catalog/contracts'
 
 afterEach(cleanup)
 const report: NonNullable<JournalResult['alignment']> = {

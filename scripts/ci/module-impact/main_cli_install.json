@@ -416,7 +416,6 @@
       "src/main/compute/compute-password-auth.release.test.ts",
       "src/main/compute/application-commands.test.ts",
       "src/main/node-process-host.test.ts",
-      "src/main/literature/citation-style-library.test.ts",
       "src/main/notebook/micromamba.test.ts",
       "src/main/notebook/shell-process.test.ts",
       "src/main/notebook/windows-runtime-manager.test.ts",
@@ -461,7 +460,8 @@
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/agents/production-completion-handoff.test.ts",
       "src/main/notebook/auto-mode-budget.integration.test.ts",
-      "src/main/connectors/mcp-host-dependencies.test.ts"
+      "src/main/connectors/mcp-host-dependencies.test.ts",
+      "src/renderer/src/pages/literature/literature-localization.render.test.tsx"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

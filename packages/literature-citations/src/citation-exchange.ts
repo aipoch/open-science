@@ -1,4 +1,4 @@
-import type { CslItem, CslName } from '../../shared/literature-csl'
+import type { CslItem, CslName } from './csl.js'
 
 // citeme-engine-wasm 0.3.8 exposes BibTeX month and day components as zero-based values.
 // Keep the correction at this format boundary; RIS and CSL dates are one-based.

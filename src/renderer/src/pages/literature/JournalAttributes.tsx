@@ -6,7 +6,8 @@ import {
   journalChoices,
   journalDatasetLabel,
   type JournalAttribute
-} from '../../../../shared/journal-attributes'
+} from '@aipoch/journal-catalog/contracts'
+
 import type { LiteratureItemInput } from '../../../../shared/literature'
 import { TAG_COLORS } from '@/pages/settings/tag-presentation'
 import type { TagColorKey } from '../../../../shared/tags'

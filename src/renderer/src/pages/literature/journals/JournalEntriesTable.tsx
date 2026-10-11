@@ -6,7 +6,8 @@ import {
   type JournalDataset,
   type JournalField,
   type JournalResult
-} from '../../../../../shared/journal-attributes'
+} from '@aipoch/journal-catalog/contracts'
+
 import { JournalColumnHeader } from './JournalColumnHeader'
 import { JournalEntryRow } from './JournalEntryRow'
 import { LiteraturePagination } from '../list/LiteraturePagination'

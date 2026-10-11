@@ -3,7 +3,8 @@ import type { ElectronApplication, Page } from 'playwright'
 import { open } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from './fixtures/electron-app'
-import type { JournalResult } from '../src/shared/journal-attributes'
+import type { JournalResult } from '@aipoch/journal-catalog/contracts'
+
 import { literatureItemInputSchema } from '../src/shared/literature'
 
 // Independently authored fixtures; never use user spreadsheets or provider datasets.

@@ -596,7 +596,8 @@
       "src/main/connectors/mcp-host-dependencies.test.ts",
       "src/main/session-diagnostics/schema-compatibility.integration.test.ts",
       "src/main/literature/pdf-structure/engine-adapter.test.ts",
-      "src/main/notebook/artifact-analysis-contract.integration.test.ts"
+      "src/main/notebook/artifact-analysis-contract.integration.test.ts",
+      "src/renderer/src/pages/literature/literature-localization.render.test.tsx"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

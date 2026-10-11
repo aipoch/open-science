@@ -1,11 +1,11 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import type { LiteratureItemType } from '@aipoch/literature-citations/contracts'
 import type {
   LiteratureCatalogSearchPage,
   LiteratureCatalogSearchRequest,
   LiteratureCollectionView,
   LiteratureInboxCandidateView,
-  LiteratureItemType,
   LiteratureItemView,
   LiteratureProjectCountView
 } from '../../../../../shared/literature'

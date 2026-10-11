@@ -3,11 +3,8 @@ import { cn } from '@/lib/utils'
 import { LoaderCircle } from 'lucide-react'
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
-import type {
-  LiteratureCollectionView,
-  LiteratureItemType,
-  LiteratureItemView
-} from '../../../../../shared/literature'
+import type { LiteratureItemType } from '@aipoch/literature-citations/contracts'
+import type { LiteratureCollectionView, LiteratureItemView } from '../../../../../shared/literature'
 import type { SmartCollectionView } from '../../../../../shared/literature-smart-collections'
 import { LiteratureItemRow, LiteratureRowActions } from './LiteratureItemRow'
 import { LiteratureSelectPageCheckbox } from './LiteratureSelection'

@@ -30,7 +30,8 @@ import {
   journalDatasetLabel,
   selectJournalDatasets,
   type JournalDataset
-} from '../../../../shared/journal-attributes'
+} from '@aipoch/journal-catalog/contracts'
+
 import { type TagColorKey } from '../../../../shared/tags'
 import { CollectionOptionHelp } from './collections/CollectionOptionHelp'
 import { JournalColumnEditor } from './journals/JournalColumnEditor'

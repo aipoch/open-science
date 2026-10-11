@@ -61,8 +61,8 @@ import type { LiteratureCatalog } from '../literature/catalog'
 import { LiteratureReferenceResolver } from '../literature/reference-resolver'
 import { netFetchStandard } from '../network-fetch'
 import { LiteratureCitationDocument } from '../literature/citation-document'
-import { LiteratureCitationFormatter } from '../literature/citation-formatter'
-import { LiteratureLatexBundle } from '../literature/latex-bundle'
+import { LiteratureCitationFormatter } from '@aipoch/literature-citations'
+import { LiteratureLatexBundle } from '@aipoch/literature-citations/documents'
 import {
   LITERATURE_LIBRARY_SEARCH_DEFAULT_LIMIT,
   type LiteratureLibraryScope

@@ -8,10 +8,8 @@ import type {
   ArtifactLiteratureManifest,
   ArtifactLiteratureReference
 } from '../../../../shared/artifact-literature'
-import type {
-  LiteratureCitationStyleView,
-  LiteratureFormattedReference
-} from '../../../../shared/literature'
+import type { LiteratureCitationStyleView } from '@aipoch/literature-citations/contracts'
+import type { LiteratureFormattedReference } from '../../../../shared/literature'
 import { Button } from '@/components/ui/button'
 import {
   Select,

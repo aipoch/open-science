@@ -25,7 +25,8 @@ import {
   type JournalDataset,
   type JournalField,
   type JournalResult
-} from '../../../../../shared/journal-attributes'
+} from '@aipoch/journal-catalog/contracts'
+
 import { TAG_COLOR_KEYS, type TagColorKey } from '../../../../../shared/tags'
 import { JournalAttributeValue } from '../JournalAttributes'
 import { JournalFieldRow } from './JournalFieldRow'

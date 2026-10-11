@@ -355,16 +355,16 @@ type AcpRuntimeOptions = {
     formatReferences?: (request: {
       projectId: string
       itemIds: readonly string[]
-      styleId: import('../../shared/literature').LiteratureCitationStyle
-      locale: import('../../shared/literature').LiteratureCitationLocale
+      styleId: import('@aipoch/literature-citations/contracts').LiteratureCitationStyle
+      locale: import('@aipoch/literature-citations/contracts').LiteratureCitationLocale
     }) => Promise<LiteratureLibraryFormatReferencesResult>
     formatCitationDocument?: (request: {
       projectId: string
       sessionId: string
       workspaceCwd: string
       filename: string
-      styleId: import('../../shared/literature').LiteratureCitationStyle
-      locale: import('../../shared/literature').LiteratureCitationLocale
+      styleId: import('@aipoch/literature-citations/contracts').LiteratureCitationStyle
+      locale: import('@aipoch/literature-citations/contracts').LiteratureCitationLocale
     }) => Promise<
       LiteratureLibraryFormatDocumentResult & {
         contentBase64: string

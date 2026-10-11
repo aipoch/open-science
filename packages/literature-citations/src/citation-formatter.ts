@@ -12,21 +12,21 @@ import {
   LITERATURE_RECORD_IMPORT_MAX_RECORDS,
   type LiteratureCitationLocale,
   type LiteratureCitationStyle,
-  type LiteratureItemInput,
-  type LiteratureRecordImportEntry,
+  type BibliographicRecord,
+  type CitationImportWarning,
   type LiteratureRecordImportFormat
-} from '../../shared/literature'
-import { fromCslItem, toCslItem } from '../../shared/literature-csl'
-import { exportRisFields, importRisFields, normalizeBibtexEntry } from './citation-exchange'
+} from './contracts.js'
+import { fromCslItem, toCslItem } from './csl.js'
+import { exportRisFields, importRisFields, normalizeBibtexEntry } from './citation-exchange.js'
 import {
   citationResourceDirectory,
   type LiteratureCitationStyleLibrary
-} from './citation-style-library'
+} from './citation-style-library.js'
 
 const require = createRequire(import.meta.url)
 
 // Keep imported keys and the established LaTeX fallback stable across export paths.
-const citationKey = (id: string, item: LiteratureItemInput): string => {
+const citationKey = (id: string, item: BibliographicRecord): string => {
   const stored = item.citationKey?.trim()
   if (stored && /^[A-Za-z0-9][A-Za-z0-9_:.+-]{0,127}$/u.test(stored)) return stored
   return id
@@ -34,20 +34,20 @@ const citationKey = (id: string, item: LiteratureItemInput): string => {
 
 type CitationOutputFormat = 'bibtex' | 'ris'
 type FormattedReference = Readonly<{ itemId: string; reference: string; inText: string }>
-type CitationReference = Readonly<{ id: string; item: LiteratureItemInput }>
+type CitationReference = Readonly<{ id: string; item: BibliographicRecord }>
 type CitationImportError = Readonly<{ preview: string; error: string }>
 type ParsedCitationRecords = Readonly<{
   format: LiteratureRecordImportFormat
-  items: LiteratureItemInput[]
+  items: BibliographicRecord[]
   errors: CitationImportError[]
-  warnings?: LiteratureRecordImportEntry['warnings'][]
+  warnings?: CitationImportWarning[][]
   truncated: boolean
   scannedEntries: number
 }>
 
 type NbibRecord = Array<{ field: string; value: string }>
 
-const citationStyleExample: LiteratureItemInput = {
+const citationStyleExample: BibliographicRecord = {
   itemType: 'journalArticle',
   title: 'Genome Editing in Human Cells',
   abstract: '',
@@ -99,11 +99,11 @@ const parseNbibRecords = (input: string): NbibRecord[] | undefined => {
 const nbibCreators = (
   record: NbibRecord
 ): {
-  creators: LiteratureItemInput['creators']
+  creators: BibliographicRecord['creators']
   uncertain: string[]
 } => {
   const authors = record.filter(({ field }) => ['FAU', 'AU', 'CN'].includes(field))
-  const creators: LiteratureItemInput['creators'] = []
+  const creators: BibliographicRecord['creators'] = []
   const uncertain: string[] = []
   for (let index = 0; index < authors.length; index += 1) {
     let { field, value } = authors[index]!
@@ -159,9 +159,9 @@ const parseNbib = (input: string): ParsedCitationRecords | undefined => {
   const records = parseNbibRecords(input)
   if (!records) return undefined
   const limited = records.slice(0, LITERATURE_RECORD_IMPORT_MAX_RECORDS)
-  const items: LiteratureItemInput[] = []
+  const items: BibliographicRecord[] = []
   const errors: CitationImportError[] = []
-  const warnings: LiteratureRecordImportEntry['warnings'][] = []
+  const warnings: CitationImportWarning[][] = []
   for (const record of limited) {
     const title = nbibText(record, 'TI')
     const pmid = nbibText(record, 'PMID')
@@ -178,7 +178,7 @@ const parseNbib = (input: string): ParsedCitationRecords | undefined => {
     const issn = nbibValues(record, 'IS')
       .map((value) => value.replace(/\s+\([^)]*\)\s*$/u, '').trim())
       .find(Boolean)
-    const identifiers: LiteratureItemInput['identifiers'] = [
+    const identifiers: BibliographicRecord['identifiers'] = [
       ...(pmid ? [{ scheme: 'pmid' as const, value: pmid, isPrimary: true }] : []),
       ...(doi ? [{ scheme: 'doi' as const, value: doi, isPrimary: !pmid }] : []),
       ...(pmcid ? [{ scheme: 'pmcid' as const, value: pmcid, isPrimary: false }] : []),

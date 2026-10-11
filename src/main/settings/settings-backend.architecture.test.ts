@@ -1593,7 +1593,8 @@ describe('Settings backend ownership architecture', () => {
       'src/main/acp/auto-operation-policy.test.ts',
       'src/main/connectors/custom-mcp-config.test.ts',
       'src/main/connectors/mcp-host-dependencies.test.ts',
-      'src/main/session-diagnostics/schema-compatibility.integration.test.ts'
+      'src/main/session-diagnostics/schema-compatibility.integration.test.ts',
+      'src/renderer/src/pages/literature/literature-localization.render.test.tsx'
     ])
     expect(
       [

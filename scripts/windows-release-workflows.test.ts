@@ -851,7 +851,9 @@ describe('post-merge Windows validation', () => {
       findStep(regression.jobs.p0, 'Apply manual launch tooling').run?.trim().split('\n')
     ).toEqual([
       'cp .regression-tooling/e2e/fixtures/electron-app.ts e2e/fixtures/electron-app.ts',
-      'cp .regression-tooling/scripts/ci/run-macos-packaged-e2e.sh scripts/ci/run-macos-packaged-e2e.sh'
+      'cp .regression-tooling/scripts/ci/run-macos-packaged-e2e.sh scripts/ci/run-macos-packaged-e2e.sh',
+      'cp .regression-tooling/e2e/certification/notebook-lifecycle.spec.ts e2e/certification/notebook-lifecycle.spec.ts',
+      'cp .regression-tooling/e2e/certification/remote-pairing.spec.ts e2e/certification/remote-pairing.spec.ts'
     ])
     expect(findStep(regression.jobs.visual, 'Checkout source revision').with?.ref).toBe(
       "${{ github.event_name == 'workflow_dispatch' && github.sha || needs.source.outputs.sha }}"

@@ -10194,8 +10194,7 @@ describe('LiteratureLibraryPage', () => {
     const { migrateApplicationDatabase } =
       await import('../../../../main/database/migration-service')
     const { LiteratureCatalog } = await import('../../../../main/literature/catalog')
-    const { LiteratureCitationFormatter } =
-      await import('../../../../main/literature/citation-formatter')
+    const { LiteratureCitationFormatter } = await import('@aipoch/literature-citations')
     const root = await mkdtemp(join(tmpdir(), 'literature-export-pagination-'))
     const client = createProjectDbClient(root)
     try {

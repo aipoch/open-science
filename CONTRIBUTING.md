@@ -624,6 +624,14 @@ and owner approval precede normal merge-queue admission. Never remove the Integr
 trigger while its check is required; the `required-check-triggers` rule rejects a PR Gate or CI
 Integrity revision that drops its `merge_group` or pull request trigger.
 
+Trusted policy may retire a historical cross-package contract test registration only when
+its existing package selector already excludes that test package for every owner path. Both Git
+snapshots must retain the test's unique owner and owner-test evidence, and complete static plus
+base-and-head runtime dependencies must show no path to the original owner. Candidate registry
+changes cannot authorize an exclusion. Missing evidence, real downstream dependencies, global
+owners and full-validation markers retain the registration. This removes redundant routing data,
+not the test or its package's coverage. Owner/interface registrations remain protected.
+
 Keep required code-owner review and stale-approval dismissal enabled while relying on this policy.
 CI Integrity checks exact module ownership under `src/` and `packages/`, covering all tracked code,
 native sources, runtime helpers, assets and fixtures regardless of file extension.

@@ -25,7 +25,7 @@ import {
   SelectTrigger,
   SelectValue
 } from '@/components/ui/select'
-import { JOURNAL_FIELD_KINDS, type JournalField } from '../../../../../shared/journal-attributes'
+import { JOURNAL_FIELD_KINDS, type JournalField } from '@aipoch/journal-catalog/contracts'
 
 const typeIcons = { text: Type, number: Hash, singleSelect: List, multiSelect: ListChecks }
 

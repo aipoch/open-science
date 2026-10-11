@@ -849,7 +849,8 @@
       "src/main/notebook/kernel-lineage-recovery.integration.test.ts",
       "src/main/notebook/artifact-analysis-contract.integration.test.ts",
       "src/main/notebook/artifact-r-reproduction.integration.test.ts",
-      "src/main/notebook/working-file-observer.write-scope.integration.test.ts"
+      "src/main/notebook/working-file-observer.write-scope.integration.test.ts",
+      "src/renderer/src/pages/literature/literature-localization.render.test.tsx"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

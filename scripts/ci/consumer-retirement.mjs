@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { posix, resolve } from 'node:path'
 import ts from 'typescript'
 import { localPackageSourcePaths } from './local-package-exports.mjs'
+import { createPackageTestPlan, validatePackageTestRegistry } from './package-test-impact.mjs'
 
 // Read immutable Git objects, never materialize or execute candidate code. A bounded
 // batch also avoids one subprocess per dependency when inspecting a renderer cone.
@@ -270,4 +271,101 @@ export function provablyStaleConsumerTests(owner, inspect) {
     const result = inspect(test, owners)
     return result.complete && !result.reachable
   })
+}
+
+// Historical cross-package contract evidence can also be redundant: the trusted selector already
+// excludes that package for every owner edit. This is not permission to reduce coverage
+// based only on a candidate registry or an absent static import.
+export function verifiedExcludedPackageTests(
+  base,
+  head,
+  baseManifest,
+  headManifest,
+  { cwd = process.cwd() } = {}
+) {
+  const candidates = Object.entries(baseManifest.modules).flatMap(([id, owner]) => {
+    const current = headManifest.modules[id]
+    return current
+      ? owner.testFiles.contract
+          .filter((test) => !current.testFiles.contract.includes(test))
+          .map((test) => ({ id, test, owner, current }))
+      : []
+  })
+  if (!candidates.length) return new Set()
+  try {
+    const before = snapshot(base, cwd),
+      after = snapshot(head, cwd)
+    const registry = validatePackageTestRegistry(
+      JSON.parse(before.read('scripts/ci/package-test-boundaries.json'))
+    )
+    const manifests = registry.packages.map((entry) => ({
+      ...entry,
+      manifest: JSON.parse(before.read(`${entry.root}/package.json`))
+    }))
+    for (const entry of manifests) {
+      if (!entry.manifest.name || !entry.manifest.scripts?.test) return new Set()
+      const dependencies = {
+        ...entry.manifest.dependencies,
+        ...entry.manifest.devDependencies,
+        ...entry.manifest.peerDependencies,
+        ...entry.manifest.optionalDependencies
+      }
+      if (
+        manifests.some(
+          (upstream) =>
+            upstream.root !== entry.root &&
+            Object.hasOwn(dependencies, upstream.manifest.name) &&
+            !entry.dependencies.includes(upstream.root)
+        )
+      )
+        return new Set()
+    }
+    const runtimeEdges = [before, after].flatMap((source) => {
+      const text = source.read('scripts/ci/module-runtime-consumers.json')
+      return text ? Object.entries(JSON.parse(text)) : []
+    })
+    const previousDependencies = createConsumerDependencyReader(before, runtimeEdges)
+    const currentDependencies = createConsumerDependencyReader(after, runtimeEdges)
+    const retired = new Set()
+    for (const { id, test, owner, current } of candidates) {
+      const root = registry.packages.find((entry) => test.startsWith(entry.root + '/'))?.root
+      if (
+        !root ||
+        !/\.(test|spec)\.[cm]?[jt]sx?$/.test(test) ||
+        owner.fullTestReason ||
+        current.fullTestReason
+      )
+        continue
+      // Keep a unique owner, independent owner-test coverage and the actual test file.
+      const owning = (manifest) =>
+        Object.entries(manifest.modules).filter(
+          ([, m]) => m.ownerPaths.includes(test) && m.testFiles.owner.includes(test)
+        )
+      const previousOwners = owning(baseManifest),
+        currentOwners = owning(headManifest)
+      if (
+        !before.files.has(test) ||
+        !after.files.has(test) ||
+        previousOwners.length !== 1 ||
+        currentOwners.length !== 1 ||
+        previousOwners[0][0] !== currentOwners[0][0] ||
+        previousOwners[0][0] === id
+      )
+        continue
+      const owners = new Set([...owner.ownerPaths, ...current.ownerPaths])
+      if (
+        !owners.size ||
+        [...owners].some((path) => !/^(src|packages)\//.test(path)) ||
+        !createPackageTestPlan([...owners], registry).excluded.includes(root)
+      )
+        continue
+      const previous = previousDependencies(test, owners)
+      const result = currentDependencies(test, owners)
+      if (previous.complete && !previous.reachable && result.complete && !result.reachable)
+        retired.add(`${id}:contract:${test}`)
+    }
+    return retired
+  } catch {
+    return new Set()
+  }
 }

@@ -237,7 +237,7 @@ for (const e of entries) {
       `import assert from 'node:assert/strict';\nfor(const spec of ${JSON.stringify(specs)}) await import(spec);\nawait assert.rejects(import('${e.manifest.name}/src/index.js'),{code:'ERR_PACKAGE_PATH_NOT_EXPORTED'});\n`
     )
     await run(process.execPath, ['check.mjs'], consumer, 'consumer-' + name + '-runtime')
-    if (name === 'pdf-translation') {
+    if (['pdf-translation', 'literature-citations', 'journal-catalog'].includes(name)) {
       await cp(join(root, e.root, 'test/packed-runtime.mjs'), join(consumer, 'packed-runtime.mjs'))
       await run(process.execPath, ['packed-runtime.mjs'], consumer, 'consumer-' + name + '-worker')
     }
@@ -253,7 +253,11 @@ for (const e of entries) {
         ? ['contracts', 'text', 'reader'].map((entry) => e.manifest.name + '/' + entry)
         : name === 'pdf-structure'
           ? [e.manifest.name + '/result']
-          : []
+          : name === 'literature-citations'
+            ? ['contracts', 'csl', 'exchange'].map((entry) => e.manifest.name + '/' + entry)
+            : name === 'journal-catalog'
+              ? ['contracts', 'files'].map((entry) => e.manifest.name + '/' + entry)
+              : []
     if (browserEntries.length) {
       await writeFile(
         join(consumer, 'browser.ts'),

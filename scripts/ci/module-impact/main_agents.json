@@ -307,7 +307,6 @@
       "src/main/settings/service.test.ts",
       "src/main/storage/migration-service.test.ts",
       "src/main/artifacts/ipc.test.ts",
-      "src/main/literature/citation-style-library.test.ts",
       "src/main/local-fs/service.test.ts",
       "src/main/notebook/kernel-executor.test.ts",
       "src/main/notebook/micromamba.test.ts",
@@ -357,7 +356,8 @@
       "src/main/side-chat/application-commands.test.ts",
       "src/main/artifacts/artifact-reproducibility-commands.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
-      "src/main/connectors/mcp-host-dependencies.test.ts"
+      "src/main/connectors/mcp-host-dependencies.test.ts",
+      "src/renderer/src/pages/literature/literature-localization.render.test.tsx"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

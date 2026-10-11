@@ -17,7 +17,7 @@ import { cn } from '@/lib/utils'
 import {
   LITERATURE_CSL_MAX_BYTES,
   type LiteratureCitationStyleView
-} from '../../../../shared/literature'
+} from '@aipoch/literature-citations/contracts'
 
 type CitationStylesViewProps = Readonly<{
   styles?: LiteratureCitationStyleView[]

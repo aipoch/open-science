@@ -4,7 +4,8 @@ import {
   type JournalDataset,
   type JournalField,
   type JournalResult
-} from '../../../../../shared/journal-attributes'
+} from '@aipoch/journal-catalog/contracts'
+
 import { refreshJournalAttributes } from './journal-attribute-store'
 
 const JOURNAL_IDENTITY_COLUMNS_KEY = 'open-science:journal-identity-columns'

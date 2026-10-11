@@ -1,7 +1,10 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 
 import { execFileSync } from 'node:child_process'
-import { verifiedConsumerRetirements } from './consumer-retirement.mjs'
+import {
+  verifiedConsumerRetirements,
+  verifiedExcludedPackageTests
+} from './consumer-retirement.mjs'
 import {
   moduleImpactRegistrationPath,
   isModuleImpactRegistrationPath,
@@ -39,7 +42,8 @@ function registrationViolations(
   headManifest,
   headFiles,
   changes = [],
-  retiredConsumers = new Set()
+  retiredConsumers = new Set(),
+  retiredPackageTests = new Set()
 ) {
   // Compare checked-in routing only; local graph evidence must not mask lost coverage.
   const graph = { status: 'not-used', testFiles: [] }
@@ -163,7 +167,9 @@ function registrationViolations(
         head.testFiles[kind],
         `${id}.testFiles.${kind}`,
         (path) =>
-          headFiles.has(path) && !(kind === 'consumer' && retiredConsumers.has(`${id}:${path}`))
+          headFiles.has(path) &&
+          !(kind === 'consumer' && retiredConsumers.has(`${id}:${path}`)) &&
+          !retiredPackageTests.has(`${id}:${kind}:${path}`)
       )
     }
     retain(
@@ -217,7 +223,8 @@ export function checkModuleOwnership({
   baseFiles,
   headFiles,
   changes,
-  retiredConsumers = new Set()
+  retiredConsumers = new Set(),
+  retiredPackageTests = new Set()
 }) {
   validateModuleImpactManifest(baseManifest)
   const before = new Set(baseFiles)
@@ -232,7 +239,8 @@ export function checkModuleOwnership({
     headManifest,
     after,
     changes,
-    retiredConsumers
+    retiredConsumers,
+    retiredPackageTests
   )
   const legacyGaps = []
   for (const path of headFiles.filter(isModuleOwnershipPath)) {
@@ -259,7 +267,8 @@ export function checkModuleOwnership({
     ok: violations.length === 0,
     violations,
     legacyGaps,
-    retiredConsumers: [...retiredConsumers]
+    retiredConsumers: [...retiredConsumers],
+    retiredPackageTests: [...retiredPackageTests]
   }
 }
 
@@ -288,6 +297,9 @@ export function moduleOwnershipFromRevisions(base, head, { cwd = process.cwd() }
     baseFiles,
     headFiles,
     retiredConsumers: verifiedConsumerRetirements(mergeBase, head, baseManifest, headManifest, {
+      cwd
+    }),
+    retiredPackageTests: verifiedExcludedPackageTests(mergeBase, head, baseManifest, headManifest, {
       cwd
     }),
     changes: parseNameStatus(git('diff', '--name-status', '-z', mergeBase, head))

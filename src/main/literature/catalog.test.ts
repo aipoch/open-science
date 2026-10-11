@@ -6,8 +6,8 @@ import { join } from 'node:path'
 import type { PrismaClient } from '@prisma/client'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
+import { createLiteratureIdentifierUrl } from '@aipoch/literature-citations/contracts'
 import {
-  createLiteratureIdentifierUrl,
   literatureCatalogSearchRequestSchema,
   literatureCatalogCommandSchema,
   type LiteratureCollectionView,
@@ -16,12 +16,12 @@ import {
   LITERATURE_IMPORT_IDENTITY_CONFLICT,
   type LiteratureCandidateInput
 } from '../../shared/literature'
-import { toCslItem } from '../../shared/literature-csl'
+import { toCslItem } from '@aipoch/literature-citations/csl'
 import { buildLiteratureMergeItem } from '../../renderer/src/pages/literature/duplicates/literature-merge'
 import { migrateApplicationDatabase } from '../database/migration-service'
 import { createProjectDbClient } from '../projects/prisma-client'
 import { LiteratureCatalog, normalizeIdentifier } from './catalog'
-import { LiteratureCitationFormatter } from './citation-formatter'
+import { LiteratureCitationFormatter } from '@aipoch/literature-citations'
 import { ProjectRepository } from '../projects/repository'
 import { TagRepository } from '../tags/repository'
 import { TagResourceCatalog } from '../tags/resource-catalog'

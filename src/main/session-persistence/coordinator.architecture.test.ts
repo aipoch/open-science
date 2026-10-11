@@ -1846,7 +1846,8 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/agents/production-completion-handoff.test.ts',
       'src/main/notebook/auto-mode-budget.integration.test.ts',
       'src/main/session-diagnostics/schema-compatibility.integration.test.ts',
-      'src/main/notebook/artifact-analysis-contract.integration.test.ts'
+      'src/main/notebook/artifact-analysis-contract.integration.test.ts',
+      'src/renderer/src/pages/literature/literature-localization.render.test.tsx'
     ])
     expect(sessionPersistence.capabilityOverlays).toEqual([
       'windows_sensitive',

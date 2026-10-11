@@ -761,6 +761,7 @@ it('withholds unknown PDF placement counts until validation and keeps a verified
 })
 
 it('keeps every long-document row reachable while mounting only the selected paragraph body', async () => {
+  vi.useFakeTimers()
   const units = Array.from({ length: 768 }, (_, index) => {
     const source = `Original paragraph ${index + 1}`
     return {
@@ -828,6 +829,9 @@ it('keeps every long-document row reachable while mounting only the selected par
       fireEvent.click(within(rowElements[767]).getByRole('button', { name: 'Copy' }))
     )
     expect(writeText).toHaveBeenCalledWith(last.translation)
+    expect(within(rowElements[767]).getByRole('button', { name: 'Copied' })).toBeTruthy()
+    await act(async () => vi.advanceTimersByTimeAsync(1500))
+    expect(within(rowElements[767]).getByRole('button', { name: 'Copy' })).toBeTruthy()
     fireEvent.click(
       within(rowElements[767]).getByRole('button', { name: 'Locate paragraph on page 96' })
     )
@@ -855,5 +859,7 @@ it('keeps every long-document row reachable while mounting only the selected par
     else Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView')
     if (previousClipboard) Object.defineProperty(navigator, 'clipboard', previousClipboard)
     else Reflect.deleteProperty(navigator, 'clipboard')
+    cleanup()
+    vi.useRealTimers()
   }
 })

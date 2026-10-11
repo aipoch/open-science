@@ -13,9 +13,9 @@ import {
 import { cn } from '@/lib/utils'
 import type {
   LiteratureCitationStyle,
-  LiteratureCitationStyleView,
-  LiteratureFormatReferencesResult
-} from '../../../../../shared/literature'
+  LiteratureCitationStyleView
+} from '@aipoch/literature-citations/contracts'
+import type { LiteratureFormatReferencesResult } from '../../../../../shared/literature'
 
 type CitationCopyKind = 'bibtex' | 'inText' | 'reference' | 'ris'
 

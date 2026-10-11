@@ -9,7 +9,7 @@ import {
 } from './journals/journal-attribute-store'
 import { literatureItemInputSchema } from '../../../../shared/literature'
 import type { LiteratureChangedEvent } from '../../../../shared/literature'
-import type { JournalRequest } from '../../../../shared/journal-attributes'
+import type { JournalRequest } from '@aipoch/journal-catalog/contracts'
 
 afterEach(() => {
   cleanup()

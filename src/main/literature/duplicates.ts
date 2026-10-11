@@ -1,4 +1,5 @@
-import { LITERATURE_IDENTITY_SCHEMES, type LiteratureDuplicateGroup } from '../../shared/literature'
+import { LITERATURE_IDENTITY_SCHEMES } from '@aipoch/literature-citations/contracts'
+import { type LiteratureDuplicateGroup } from '../../shared/literature'
 
 type DuplicateCandidate = {
   id: string

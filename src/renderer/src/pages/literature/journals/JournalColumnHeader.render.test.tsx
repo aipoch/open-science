@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { Hash } from 'lucide-react'
 import { ActionMenuProvider } from '@/components/action-menu'
 import { JournalColumnHeader } from './JournalColumnHeader'
-import type { JournalField } from '../../../../../shared/journal-attributes'
+import type { JournalField } from '@aipoch/journal-catalog/contracts'
 
 afterEach(cleanup)
 Element.prototype.scrollIntoView = vi.fn()

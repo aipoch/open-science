@@ -1,9 +1,7 @@
 import { LiteratureProviderError } from './provider-error'
 import { z } from 'zod'
-import {
-  normalizeLiteratureIdentifierValue,
-  type LiteratureFullTextCandidate
-} from '../../shared/literature'
+import { normalizeLiteratureIdentifierValue } from '@aipoch/literature-citations/contracts'
+import { type LiteratureFullTextCandidate } from '../../shared/literature'
 import { netFetchStandard } from '../network-fetch'
 import { fullTextUrl } from './full-text-download'
 

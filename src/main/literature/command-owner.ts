@@ -1,11 +1,12 @@
+import { withCitationStyleErrors } from './citation-errors'
 import type { JournalAttributes } from './journal-attributes'
 import { withDataRootWrite } from '../storage/migration-state'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import { transactLiterature } from './transact'
 import type { LiteratureCommandOwner } from './application-commands'
 import type { LiteratureBatchJobs } from './batch-jobs'
-import type { LiteratureCitationStyleLibrary } from './citation-style-library'
-import type { LiteratureCitationFormatter } from './citation-formatter'
+import type { LiteratureCitationStyleLibrary } from '@aipoch/literature-citations/styles'
+import type { LiteratureCitationFormatter } from '@aipoch/literature-citations'
 import type { LiteratureReferenceResolver } from './reference-resolver'
 import type { LiteratureMetadataEnricher } from './metadata-enricher'
 import type { LiteratureFullTextFinder } from './full-text-finder'
@@ -75,28 +76,29 @@ export const createLiteratureCommandOwner = ({
 }: LiteratureCommandServices): LiteratureCommandOwner => ({
   journals: (request) => journalAttributes.run(request),
   jobs: (request) => literatureBatchJobs.run(request),
-  citationStyles: async (request) => {
-    if (request.kind === 'preview') {
-      const [styles, preview] = await Promise.all([
-        literatureCitationStyles.list(),
-        literatureCitationFormatter.formatStyleExample(request.styleId)
-      ])
-      return { styles, preview: { styleId: request.styleId, ...preview } }
-    }
-    let changedStyleId: string | undefined
-    if (request.kind === 'import') {
-      changedStyleId = await literatureCitationStyles.import(request.content)
-      literatureCitationFormatter.invalidateStyles()
-    } else if (request.kind === 'delete') {
-      await literatureCitationStyles.delete(request.styleId)
-      changedStyleId = request.styleId
-      literatureCitationFormatter.invalidateStyles()
-    }
-    return {
-      styles: await literatureCitationStyles.list(),
-      ...(changedStyleId ? { changedStyleId } : {})
-    }
-  },
+  citationStyles: (request) =>
+    withCitationStyleErrors(async () => {
+      if (request.kind === 'preview') {
+        const [styles, preview] = await Promise.all([
+          literatureCitationStyles.list(),
+          literatureCitationFormatter.formatStyleExample(request.styleId)
+        ])
+        return { styles, preview: { styleId: request.styleId, ...preview } }
+      }
+      let changedStyleId: string | undefined
+      if (request.kind === 'import') {
+        changedStyleId = await literatureCitationStyles.import(request.content)
+        literatureCitationFormatter.invalidateStyles()
+      } else if (request.kind === 'delete') {
+        await literatureCitationStyles.delete(request.styleId)
+        changedStyleId = request.styleId
+        literatureCitationFormatter.invalidateStyles()
+      }
+      return {
+        styles: await literatureCitationStyles.list(),
+        ...(changedStyleId ? { changedStyleId } : {})
+      }
+    }),
   lookupMetadata: async (doi) => {
     const [resolved] = await literatureReferenceResolver.resolve([
       doi.startsWith('pmid:') ? doi : 'doi:' + doi

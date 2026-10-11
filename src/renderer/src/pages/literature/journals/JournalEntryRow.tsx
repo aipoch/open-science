@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { JournalAttributeValue } from '../JournalAttributes'
 import { LiteratureTextTooltip } from '../LiteratureTable'
-import type { JournalDataset, JournalResult } from '../../../../../shared/journal-attributes'
+import type { JournalDataset, JournalResult } from '@aipoch/journal-catalog/contracts'
 
 type Entry = NonNullable<JournalResult['entries']>[number]
 type Draft = Pick<Entry, 'id' | 'values'>

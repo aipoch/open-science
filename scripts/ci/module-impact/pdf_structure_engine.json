@@ -2530,7 +2530,8 @@
       "packages/pdf-translation/test/incremental.test.ts",
       "packages/pdf-translation/test/pdf-cache.test.ts",
       "packages/pdf-translation/test/usage.test.ts",
-      "packages/pdf-translation/test/workflow.test.ts"
+      "packages/pdf-translation/test/workflow.test.ts",
+      "src/renderer/src/pages/literature/literature-localization.render.test.tsx"
     ]
   },
   "capabilityOverlays": ["windows_sensitive"],

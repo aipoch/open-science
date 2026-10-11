@@ -6,7 +6,7 @@ import {
   type JournalImportRow,
   type JournalRequest,
   type JournalResult
-} from '../../../../../shared/journal-attributes'
+} from './contracts.js'
 
 type JournalApi = (request: JournalRequest) => Promise<JournalResult>
 const checkCancelled = (cancelled: () => boolean): void => {

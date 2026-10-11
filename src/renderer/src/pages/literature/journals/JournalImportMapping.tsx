@@ -9,10 +9,15 @@ import {
 } from '@/components/ui/select'
 import { Eye, EyeOff } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { type JournalDataset, type JournalField } from '../../../../../shared/journal-attributes'
+import { type JournalDataset, type JournalField } from '@aipoch/journal-catalog/contracts'
+
 import { JournalImportColumn } from './JournalImportColumn'
 import { LiteratureTable, LiteratureTextTooltip } from '../LiteratureTable'
-import { suggestJournalHeader, type JournalColumn, type JournalSheet } from './journal-import-file'
+import {
+  suggestJournalHeader,
+  type JournalColumn,
+  type JournalSheet
+} from '@aipoch/journal-catalog/files'
 
 export function JournalImportMapping({
   file,

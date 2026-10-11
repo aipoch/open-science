@@ -13,7 +13,8 @@ import type {
   LiteratureItemInput,
   LiteratureItemView
 } from '../../../../../shared/literature'
-import { LITERATURE_RECORD_IMPORT_MAX_BYTES } from '../../../../../shared/literature'
+import { LITERATURE_RECORD_IMPORT_MAX_BYTES } from '@aipoch/literature-citations/contracts'
+
 import { formatUploadSizeLimit } from '../../../../../shared/uploads'
 import { stageComposerFile } from '../../workspace/composer-upload-transfer'
 import { type LiteratureDetailController } from '../detail/LiteratureDetailController'

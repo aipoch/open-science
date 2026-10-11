@@ -1,5 +1,5 @@
 import type { LiteratureItemInput } from '../../../../shared/literature'
-import { normalizeLiteratureIdentifierValue } from '../../../../shared/literature'
+import { normalizeLiteratureIdentifierValue } from '@aipoch/literature-citations/contracts'
 
 const creatorNames = (item: LiteratureItemInput): string[] =>
   item.creators.map((creator) =>

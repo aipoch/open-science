@@ -174,3 +174,24 @@ describe('Literature command workflows', () => {
     )
   })
 })
+
+it('maps package style errors to the existing application command error envelope', async () => {
+  const { CitationStyleError } = await import('@aipoch/literature-citations')
+  const { toApplicationCommandErrorEnvelope } =
+    await import('../../shared/application-command-contract')
+  const owner = createLiteratureCommandOwner({
+    literatureCitationStyles: {
+      import: async () => {
+        throw new CitationStyleError('csl-undefined-macro', 'Unknown macro', { macro: 'missing' })
+      }
+    }
+  } as unknown as Services)
+  const error = await owner
+    .citationStyles({ kind: 'import', content: '<style/>' })
+    .catch((error) => error)
+  expect(toApplicationCommandErrorEnvelope(error)).toEqual({
+    code: 'csl-undefined-macro',
+    message: 'Unknown macro',
+    parameters: { macro: 'missing' }
+  })
+})

@@ -1,12 +1,12 @@
 import {
-  literatureItemInputSchema,
+  bibliographicRecordSchema,
   normalizeLiteratureIdentifierValue,
   preferredLiteratureIdentifier,
   type LiteratureCreatorInput,
   type LiteratureIdentifierInput,
-  type LiteratureItemInput,
+  type BibliographicRecord,
   type LiteratureItemType
-} from './literature'
+} from './contracts.js'
 
 const CSL_ITEM_TYPES: Record<LiteratureItemType, string> = {
   journalArticle: 'article-journal',
@@ -106,7 +106,7 @@ const creatorsFor = (
   return names.length > 0 ? names : undefined
 }
 
-const issuedDate = (item: LiteratureItemInput): CslDate | undefined => {
+const issuedDate = (item: BibliographicRecord): CslDate | undefined => {
   // PubMed DP uses English month abbreviations. Normalize only unambiguous dates;
   // seasons and ranges retain the existing year fallback, and the original text is untouched.
   const months = [
@@ -161,7 +161,7 @@ const accessedDate = (accessedAt: number | undefined): CslDate | undefined => {
 }
 
 const identifierFor = (
-  item: LiteratureItemInput,
+  item: BibliographicRecord,
   scheme: 'doi' | 'isbn' | 'issn' | 'pmid' | 'pmcid' | 'arxiv'
 ): string | undefined => {
   const identifier = preferredLiteratureIdentifier(item.identifiers, scheme)
@@ -170,12 +170,12 @@ const identifierFor = (
     : undefined
 }
 
-const typeField = (item: LiteratureItemInput, key: string): string | undefined => {
+const typeField = (item: BibliographicRecord, key: string): string | undefined => {
   const value = item.typeFields[key]
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
 }
 
-const toCslItem = (id: string, item: LiteratureItemInput): CslItem => {
+const toCslItem = (id: string, item: BibliographicRecord): CslItem => {
   const author = creatorsFor(item.creators, 'author')
   const editor = creatorsFor(item.creators, 'editor')
   const translator = creatorsFor(item.creators, 'translator')
@@ -299,7 +299,7 @@ const identifiersFromCsl = (item: Record<string, unknown>): LiteratureIdentifier
   })
 }
 
-const fromCslItem = (value: Record<string, unknown>): LiteratureItemInput => {
+const fromCslItem = (value: Record<string, unknown>): BibliographicRecord => {
   const issued = dateParts(value.issued)
   const accessed = dateParts(value.accessed)
   const accessedAt = accessed
@@ -317,7 +317,7 @@ const fromCslItem = (value: Record<string, unknown>): LiteratureItemInput => {
     ].filter((entry): entry is [string, string] => Boolean(entry[1]))
   )
 
-  return literatureItemInputSchema.parse({
+  return bibliographicRecordSchema.parse({
     itemType: LITERATURE_ITEM_TYPES_BY_CSL[stringField(value, 'type')] ?? 'document',
     title: stringField(value, 'title'),
     abstract: stringField(value, 'abstract'),

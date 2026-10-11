@@ -7,6 +7,42 @@ import { expect, it } from 'vitest'
 
 const require = createRequire(import.meta.url)
 
+it.each(['diagnostics', 'skills'])(
+  'bundles named imports from the local %s CommonJS package',
+  (name) => {
+    const root = mkdtempSync(join(tmpdir(), 'open-science-browser-commonjs-'))
+    try {
+      const fixtureRoot = join(root, 'e2e/browser/fixture')
+      const packageRoot = join(root, 'packages', name, 'dist')
+      mkdirSync(fixtureRoot, { recursive: true })
+      mkdirSync(packageRoot, { recursive: true })
+      writeFileSync(join(packageRoot, 'index.js'), 'exports.fixtureValue = "local package export"')
+      writeFileSync(
+        join(fixtureRoot, 'index.html'),
+        '<title>local package</title><script type="module" src="./main.js"></script>'
+      )
+      writeFileSync(
+        join(fixtureRoot, 'main.js'),
+        `import { fixtureValue } from '../../../packages/${name}/dist/index.js'; document.body.textContent = fixtureValue`
+      )
+      const run = spawnSync(
+        process.execPath,
+        [
+          join(dirname(require.resolve('vite/package.json')), 'bin/vite.js'),
+          'build',
+          '--config',
+          resolve('e2e/vite.browser-test.config.ts')
+        ],
+        { cwd: root, encoding: 'utf8', timeout: 20_000 }
+      )
+      expect(run.status, run.stderr).toBe(0)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  },
+  30_000
+)
+
 it('builds newly added browser fixture pages without falling back to the default page', () => {
   const root = mkdtempSync(join(tmpdir(), 'open-science-browser-entry-'))
   const fixtureRoot = join(root, 'e2e/browser/fixture')

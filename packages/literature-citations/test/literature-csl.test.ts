@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
-import type { LiteratureItemInput } from './literature'
-import { fromCslItem, toCslItem } from './literature-csl'
+import type { BibliographicRecord } from '../src/contracts.js'
+import { fromCslItem, toCslItem } from '../src/csl.js'
 
-const item = (overrides: Partial<LiteratureItemInput> = {}): LiteratureItemInput => ({
+const item = (overrides: Partial<BibliographicRecord> = {}): BibliographicRecord => ({
   itemType: 'journalArticle',
   title: 'A useful paper',
   abstract: '',
@@ -68,7 +68,7 @@ describe('toCslItem', () => {
   it.each([false, true])(
     'selects a deterministic legacy DOI with primary flags=%s',
     (isPrimary) => {
-      const identifiers: LiteratureItemInput['identifiers'] = [
+      const identifiers: BibliographicRecord['identifiers'] = [
         { scheme: 'doi', value: '10.1234/z', isPrimary },
         { scheme: 'doi', value: '10.1234/a', isPrimary }
       ]

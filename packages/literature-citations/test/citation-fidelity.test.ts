@@ -1,4 +1,3 @@
-import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
@@ -7,22 +6,17 @@ import { createEngine } from 'citeme-engine-wasm'
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
 import { describe, expect, it } from 'vitest'
 
-import type { ArtifactLiteratureManifest } from '../../shared/artifact-literature'
-import type { LiteratureItemView } from '../../shared/literature'
-import { toCslItem } from '../../shared/literature-csl'
-import { LiteratureCitationDocument } from './citation-document'
-import { LiteratureCitationFormatter } from './citation-formatter'
-import { citationResourceDirectory } from './citation-style-library'
-import { LiteratureLatexBundle } from './latex-bundle'
+import type { CitationManifest } from '../src/document-contracts.js'
+import type { CitationDocumentRecord } from '../src/document-contracts.js'
+import { toCslItem } from '../src/csl.js'
+import { LiteratureCitationDocument } from '../src/citation-document.js'
+import { LiteratureCitationFormatter } from '../src/index.js'
+import { citationResourceDirectory } from '../src/citation-style-library.js'
+import { LiteratureLatexBundle } from '../src/documents.js'
 
-const record = (id = 'library-id', author = 'Alpha'): LiteratureItemView => ({
+const record = (id = 'library-id', author = 'Alpha'): CitationDocumentRecord => ({
   id,
   metadataRevision: 1,
-  createdAt: 0,
-  updatedAt: 0,
-  projectIds: [],
-  collectionIds: [],
-  attachments: [],
   item: {
     itemType: 'journalArticle',
     title: `${author} paper`,
@@ -60,9 +54,9 @@ const visibleText = (xml: string): string =>
     .map((match) => unescapeXml(match[1]!))
     .join('')
 const manifest = (
-  items: LiteratureItemView[],
-  citations: ArtifactLiteratureManifest['citations']
-): ArtifactLiteratureManifest => ({
+  items: CitationDocumentRecord[],
+  citations: CitationManifest['citations']
+): CitationManifest => ({
   schemaVersion: 1,
   styleId: 'apa',
   locale: 'en-US',
@@ -260,5 +254,3 @@ describe('Citation fidelity through document and export boundaries', () => {
     ).toBe(true)
   })
 })
-
-configureTestRuntimeMetadata()

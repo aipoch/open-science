@@ -4,11 +4,10 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, expect, it, vi } from 'vitest'
 import { LiteratureFilters } from './LiteratureFilters'
 import { useLiteratureYearFilter } from './useLiteratureYearFilter'
-import type {
-  JournalAttributeFilter,
-  JournalDataset
-} from '../../../../../shared/journal-attributes'
-import type { LiteratureItemType } from '../../../../../shared/literature'
+import type { JournalAttributeFilter, JournalDataset } from '@aipoch/journal-catalog/contracts'
+
+import type { LiteratureItemType } from '@aipoch/literature-citations/contracts'
+
 vi.mock('../../settings/ResourceTagControls', () => ({ TagFilter: () => <span /> }))
 afterEach(cleanup)
 const dataset: JournalDataset = {

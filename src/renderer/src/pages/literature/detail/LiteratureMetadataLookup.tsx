@@ -13,7 +13,7 @@ import {
   SelectValue
 } from '@/components/ui/select'
 import type { LiteratureItemView } from '../../../../../shared/literature'
-import { normalizeLiteratureIdentifierValue } from '../../../../../shared/literature'
+import { normalizeLiteratureIdentifierValue } from '@aipoch/literature-citations/contracts'
 
 const DOI_EXAMPLE = '10.1000/example'
 const PMID_EXAMPLE = '12345678'

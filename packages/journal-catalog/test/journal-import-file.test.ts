@@ -5,7 +5,7 @@ import {
   suggestJournalHeader,
   suggestJournalSource,
   suggestJournalYear
-} from './journal-import-file'
+} from '../src/journal-import-file.js'
 import { utils, write } from 'styled-exceljs'
 
 const bytes = (value: string): ArrayBuffer => new TextEncoder().encode(value).buffer

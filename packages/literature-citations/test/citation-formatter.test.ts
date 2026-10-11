@@ -1,17 +1,20 @@
-import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { LITERATURE_CITATION_STYLES, type LiteratureItemInput } from '../../shared/literature'
-import { LiteratureCitationFormatter } from './citation-formatter'
-import { toCslItem } from '../../shared/literature-csl'
-import { importRisFields } from './citation-exchange'
-import { citationResourceDirectory, LiteratureCitationStyleLibrary } from './citation-style-library'
+import { LITERATURE_CITATION_STYLES } from '../src/contracts.js'
+import { type BibliographicRecord } from '../src/contracts.js'
+import { LiteratureCitationFormatter } from '../src/index.js'
+import { toCslItem } from '../src/csl.js'
+import { importRisFields } from '../src/citation-exchange.js'
+import {
+  citationResourceDirectory,
+  LiteratureCitationStyleLibrary
+} from '../src/citation-style-library.js'
 
-const reference: LiteratureItemInput = {
+const reference: BibliographicRecord = {
   itemType: 'journalArticle',
   title: 'Corrective Retrieval Augmented Generation',
   abstract: '',
@@ -533,5 +536,3 @@ JT  - Second Journal
     expect(parsed.truncated).toBe(true)
   })
 })
-
-configureTestRuntimeMetadata()

@@ -9,9 +9,9 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   return { ...actual, readFile: vi.fn(actual.readFile) }
 })
 
-import { LiteratureCitationFormatter } from './citation-formatter'
+import { LiteratureCitationFormatter } from '../src/index.js'
 
-import { LiteratureCitationStyleLibrary } from './citation-style-library'
+import { LiteratureCitationStyleLibrary } from '../src/citation-style-library.js'
 
 const roots: string[] = []
 
@@ -225,6 +225,7 @@ it.each([
   ],
   ['csl-unsupported-style', '<style/>'],
   ['csl-missing-metadata', independentStyle().replace(/<title>.*?<\/title>/u, '')],
+  ['csl-missing-metadata', independentStyle().replace(/<id>.*?<\/id>/u, '')],
   [
     'csl-dependent-style',
     independentStyle().replace(
@@ -245,5 +246,3 @@ it.each([
   })
   await expect(readdir(stylesDirectory)).rejects.toMatchObject({ code: 'ENOENT' })
 })
-
-;(await import('../../../test/runtime-metadata')).configureTestRuntimeMetadata()

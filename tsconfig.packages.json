@@ -30,6 +30,12 @@
     },
     {
       "path": "./packages/notebook-analysis/tsconfig.dev.json"
+    },
+    {
+      "path": "./packages/literature-citations/tsconfig.dev.json"
+    },
+    {
+      "path": "./packages/journal-catalog/tsconfig.dev.json"
     }
   ]
 }

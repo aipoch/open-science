@@ -5,6 +5,15 @@ set -euo pipefail
 [[ "${GITHUB_ACTIONS:-}" == true && "${RUNNER_OS:-}" == macOS ]]
 [[ -n "${RUNNER_TEMP:-}" && -x "${OPEN_SCIENCE_E2E_EXECUTABLE:-}" && $# -gt 0 ]]
 
+# The ordinary Node backend reads OSCrypt through its own native helper, not Electron.
+# Resolve only the helper shipped beside this executable; never trust a source-tree copy.
+contents=$(cd "$(dirname "$OPEN_SCIENCE_E2E_EXECUTABLE")/.." && pwd)
+credential_helper="$contents/Resources/backend/node_modules/@aipoch/credential-identity-probe-native/build/Release/credential_secret"
+if [[ ! -x "$credential_helper" ]]; then
+  echo "Packaged credential helper is missing or not executable: $credential_helper" >&2
+  exit 1
+fi
+
 original_search_list=$(security list-keychains -d user)
 original_keychains=()
 while IFS= read -r entry; do
@@ -34,8 +43,10 @@ security create-keychain -p "$password" "$keychain"
 security set-keychain-settings -lut 3600 "$keychain"
 security unlock-keychain -p "$password" "$keychain"
 security list-keychains -d user -s "$keychain"
-# Seed only this signed test executable's real OSCrypt identity. Source E2E has a separate mock.
+# Seed the real OSCrypt identity for this package's Electron and backend secret helper only.
+# Source E2E has a separate mock; packaged E2E continues to exercise real Keychain access.
 security add-generic-password -a 'Open-Science Key' -s 'Open-Science Safe Storage' \
-  -w "$(openssl rand -base64 32)" -T "$OPEN_SCIENCE_E2E_EXECUTABLE" "$keychain"
+  -w "$(openssl rand -base64 32)" -T "$OPEN_SCIENCE_E2E_EXECUTABLE" \
+  -T "$credential_helper" "$keychain"
 
 "$@"

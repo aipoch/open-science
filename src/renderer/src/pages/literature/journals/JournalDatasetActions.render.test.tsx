@@ -2,7 +2,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { JournalDatasetActions } from './JournalDatasetActions'
-import type { JournalDataset } from '../../../../../shared/journal-attributes'
+import type { JournalDataset } from '@aipoch/journal-catalog/contracts'
 
 afterEach(cleanup)
 const dataset: JournalDataset = {

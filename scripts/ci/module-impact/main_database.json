@@ -515,7 +515,8 @@
       "src/main/agents/production-completion-handoff.test.ts",
       "src/main/session-diagnostics/schema-compatibility.integration.test.ts",
       "src/main/session-diagnostics/collector.test.ts",
-      "src/main/session-diagnostics/database.test.ts"
+      "src/main/session-diagnostics/database.test.ts",
+      "src/renderer/src/pages/literature/literature-localization.render.test.tsx"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

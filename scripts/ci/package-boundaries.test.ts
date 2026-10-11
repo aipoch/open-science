@@ -157,6 +157,25 @@ it('every module plan excludes unrelated upstream package tests', async () => {
   expect(violations).toEqual([])
 })
 
+it('module evidence follows independent package dependency direction', async () => {
+  const { loadModuleImpactManifest } = await import('./load-module-impact.mjs')
+  const { modules } = loadModuleImpactManifest()
+  const violations: string[] = []
+  for (const [id, module] of Object.entries(modules) as [
+    string,
+    { ownerPaths: string[]; testFiles: Record<string, string[]>; consumerModules: string[] }
+  ][]) {
+    const { excluded } = createPackageTestPlan(module.ownerPaths, registry)
+    for (const test of Object.values(module.testFiles).flat())
+      if (excluded.some((root) => test.startsWith(root + '/'))) violations.push(`${id} -> ${test}`)
+    for (const consumer of module.consumerModules)
+      for (const path of modules[consumer].ownerPaths)
+        if (excluded.some((root) => path.startsWith(root + '/')))
+          violations.push(`${id} -> module ${consumer} -> ${path}`)
+  }
+  expect(violations).toEqual([])
+})
+
 it('PDF workflow sources contain no application source taxonomy or database adapter', () => {
   const sources = files('packages/pdf-translation/src').filter((path) => path.endsWith('.ts'))
   for (const file of sources) {
@@ -169,13 +188,20 @@ it('PDF workflow sources contain no application source taxonomy or database adap
 
 it('local module and affected plans obey the same downstream package direction as Ubuntu', async () => {
   const { createModuleTestPlan, createAffectedTestPlan } = await import('./module-test-impact.mjs')
-  for (const id of ['main_pdf_translation', 'workspace_previews'])
+  for (const id of [
+    'main_pdf_translation',
+    'workspace_previews',
+    'main_literature',
+    'page_literature'
+  ])
     expect(
       createModuleTestPlan(id).testFiles.filter((path) => path.startsWith('packages/'))
     ).toEqual([])
   for (const path of [
     'src/main/literature/pdf-translation/index.ts',
-    'src/renderer/src/pages/workspace/previews/renderers/PdfPreview.tsx'
+    'src/renderer/src/pages/workspace/previews/renderers/PdfPreview.tsx',
+    'src/main/literature/command-owner.ts',
+    'src/main/literature/journal-attributes.ts'
   ]) {
     const plan = createAffectedTestPlan([{ path, status: 'modified' }], {
       status: 'unavailable',
