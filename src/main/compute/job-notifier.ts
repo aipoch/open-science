@@ -1,3 +1,4 @@
+import { createComputeExecution } from '@aipoch/compute/node'
 /**
  * job-notifier.ts — emits compute_done notifications for finished jobs.
  *
@@ -198,3 +199,27 @@ export const emitJobNotification = async (
 
   broadcast(summary)
 }
+
+/** Attach the host's durable notification claim, file projection and renderer delivery. */
+export const createNotifyingJobPoller = (
+  deps: Omit<import('@aipoch/compute/node').JobPollerDeps, 'notifyJob'> & {
+    jobRepository: ComputeJobRepository
+    hostRepository: ComputeHostRepository
+    execution?: import('@aipoch/compute/node').ComputeExecution
+    storageRoot?: string
+    broadcast?: (summary: JobSummary) => void
+  }
+): import('@aipoch/compute/node').JobPoller =>
+  (deps.execution ?? createComputeExecution()).createPoller({
+    ...deps,
+    notifyJob:
+      deps.broadcast && deps.storageRoot
+        ? (job) =>
+            emitJobNotification(job, {
+              jobRepository: deps.jobRepository,
+              hostRepository: deps.hostRepository,
+              storageRoot: deps.storageRoot!,
+              broadcast: deps.broadcast!
+            })
+        : undefined
+  })

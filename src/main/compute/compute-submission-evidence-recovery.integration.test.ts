@@ -3,21 +3,22 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 
+import type { ComputeConnectionBrokerAcquirer } from '@aipoch/compute/node'
 import type { ComputeApprovalBroker } from './compute-approval-broker'
 import { createMigratedComputeTestDatabase } from './compute-integration.test-support'
 import { ComputeJobWorkflowOwner } from './compute-job-workflow-owner'
-import type { ComputeConnectionBrokerAcquirer } from './connection-broker'
-import { dispatchJob } from './job-dispatcher'
+
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
+import { dispatchComputeJob as dispatchJob } from './dispatch-evidence'
 import { ComputeJobRepository } from './job-repository'
 import { ComputeHostRepository } from './repository'
-import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 
 configureTestRuntimeMetadata()
 
 // Keep the submission owner, SQLite persistence and evidence worker real. The remote dispatch
 // boundary is observed without starting a remote process.
-vi.mock('./job-dispatcher', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('./job-dispatcher')>()),
+vi.mock('@aipoch/compute/node', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aipoch/compute/node')>()),
   dispatchJob: vi.fn(async () => undefined)
 }))
 

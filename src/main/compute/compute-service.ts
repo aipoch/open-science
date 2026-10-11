@@ -1,18 +1,31 @@
 import type {
-  ComputeHost,
   ComputeExecutionMode,
+  ComputeHost,
   ComputeHostDetails,
-  ComputeJob,
   DetailsAuthor,
-  ExecResult,
-  JobResult,
   ProbeResult,
   RetryComputeJobHarvestRequest,
   SubmitJobResult
-} from '../../shared/compute'
+} from '@aipoch/compute'
+import { createJobCancellation } from '@aipoch/compute/node'
+import type { ComputeJob, ExecResult, JobResult } from '../../shared/compute'
+
+import type { ConcurrencyManager, ScpRunner, SessionStatus, SshRunner } from '@aipoch/compute/node'
+import {
+  ComputeJobCancellationOwner,
+  createComputeExecution,
+  type ComputeExecution
+} from '@aipoch/compute/node'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import type { DirListing, DownloadDest, LocalFile } from '../../shared/remote-fs'
+import { cleanupComputeJobFileEvidence } from '../notebook/working-file-observer'
+import {
+  createSshConfigCompatibilityBroker,
+  projectComputeCredentialStatus
+} from './authentication-runtime'
 import type { ComputeApprovalBroker } from './compute-approval-broker'
 import { ComputeHostProfileOwner } from './compute-host-profile-owner'
+import type { ComputeJobOperationRepository } from './compute-job-operation-repository'
 import {
   ComputeJobWorkflowOwner,
   type ArtifactResolver,
@@ -20,35 +33,16 @@ import {
   type RawInputSpec
 } from './compute-job-workflow-owner'
 import { ComputeRemoteOperationOwner } from './compute-remote-operation-owner'
-import type { ConcurrencyManager, SessionStatus } from './concurrency-manager'
 import type { ComputeConnectionBroker } from './connection-broker'
 import type { CredentialVault } from './credential-vault'
 import type { ComputeJobRepository } from './job-repository'
-import { ComputeJobCancellationOwner } from './compute-job-cancellation-owner'
-import type { ComputeJobOperationRepository } from './compute-job-operation-repository'
 import type { ComputeHostRepository } from './repository'
-import type { ScpRunner } from './scp-runner'
-import type { SshRunner } from './ssh-runner'
 import { SessionCacheOwner } from './session-cache-owner'
-import { cleanupComputeJobFileEvidence } from '../notebook/working-file-observer'
-import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
-import {
-  createSshConfigCompatibilityBroker,
-  projectComputeCredentialStatus
-} from './authentication-runtime'
-
-export { parseProbeOutput } from './compute-host-profile-owner'
-export type { ProbeScriptOutput } from './compute-host-profile-owner'
-export { createComputeArtifactResolver, resolveInputs } from './compute-job-workflow-owner'
-export type {
-  ArtifactResolver,
-  ComputeJobReadScope,
-  RawInputSpec
-} from './compute-job-workflow-owner'
 
 const log = createLogger('compute')
 
 export type ComputeServiceDependencies = Readonly<{
+  execution?: ComputeExecution
   admitSessionWork?: (projectId: string, sessionId: string) => () => void
   runner: SshRunner
   repository: ComputeHostRepository
@@ -68,6 +62,7 @@ export type ComputeServiceDependencies = Readonly<{
 
 // Stable facade composed from private host-profile, remote-operation and job workflows.
 export class ComputeService {
+  readonly execution: ComputeExecution
   private readonly hostProfiles: ComputeHostProfileOwner
   private readonly remoteOperations: ComputeRemoteOperationOwner
   private readonly jobWorkflow: ComputeJobWorkflowOwner
@@ -94,6 +89,7 @@ export class ComputeService {
       connectionBroker,
       credentialVault
     } = dependencies
+    this.execution = dependencies.execution ?? createComputeExecution()
     this.repository = repository
     this.concurrencyManager = concurrencyManager
     this.credentialVault = credentialVault
@@ -116,11 +112,13 @@ export class ComputeService {
       onJobUpdated,
       artifactResolver,
       storageRoot,
-      concurrencyManager
+      concurrencyManager,
+      undefined,
+      this.execution
     )
     this.jobCancellation =
       operationRepository && jobRepository
-        ? new ComputeJobCancellationOwner(operationRepository, jobRepository)
+        ? createJobCancellation(operationRepository, jobRepository)
         : undefined
   }
 
@@ -249,7 +247,7 @@ export class ComputeService {
   async getJobStatus(
     jobId: string,
     scope?: ComputeJobReadScope
-  ): Promise<import('../../shared/compute').JobStatusResult> {
+  ): Promise<import('@aipoch/compute').JobStatusResult> {
     return this.jobWorkflow.getJobStatus(jobId, scope)
   }
 
@@ -260,7 +258,7 @@ export class ComputeService {
   async cancelJob(
     jobId: string,
     scope: ComputeJobReadScope
-  ): Promise<import('../../shared/compute').JobStatusResult> {
+  ): Promise<import('@aipoch/compute').JobStatusResult> {
     if (!this.jobCancellation) {
       throw new Error('ComputeJobOperationRepository is required to call cancelJob.')
     }

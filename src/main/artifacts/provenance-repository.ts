@@ -431,7 +431,7 @@ class ArtifactProvenanceRepository {
                 activity_id: job.id,
                 provider_id: job.providerId,
                 shape: job.shape,
-                status: job.status as import('../../shared/compute').ComputeJobStatus,
+                status: job.status as import('@aipoch/compute').ComputeJobStatus,
                 file_evidence: {
                   state: fileEvidence?.state ?? 'unavailable',
                   ...(fileEvidence?.evidenceId ? { evidence_id: fileEvidence.evidenceId } : {}),

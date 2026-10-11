@@ -1,11 +1,12 @@
-import { builtinConnectorRegistry } from '../connectors/registry'
-import { describe, it, expect, afterEach, vi } from 'vitest'
+import type { ComputeHost } from '@aipoch/compute'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AgentComputeService } from '../compute/agent-compute-service'
 import { ComputeService } from '../compute/compute-service'
 import type { ComputeHostRepository } from '../compute/repository'
+import { builtinConnectorRegistry } from '../connectors/registry'
 import { ConnectorService } from '../connectors/service'
 import { NotebookLocalRpcServer } from './local-rpc-server'
-import type { ComputeHost } from '../../shared/compute'
+
 import type { SpecialistView } from '../../shared/specialist'
 
 const fakeConnector = {

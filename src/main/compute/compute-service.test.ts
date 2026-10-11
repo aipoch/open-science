@@ -1,20 +1,25 @@
-import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { access, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 
 import { describe, expect, it, vi } from 'vitest'
 
-import type { ComputeHost, ComputeJob } from '../../shared/compute'
+import type { ComputeHost } from '@aipoch/compute'
+import type { ComputeJob } from '../../shared/compute'
+
+import type {
+  ConcurrencyManager,
+  ResolvedSshTarget,
+  ScpRunner,
+  SshRunner
+} from '@aipoch/compute/node'
 import { beginComputeJobFileEvidence } from '../notebook/working-file-observer'
 import type { ComputeApprovalBroker } from './compute-approval-broker'
-import { ComputeService } from './compute-service'
 import type { ComputeJobOperationRepository } from './compute-job-operation-repository'
-import type { ConcurrencyManager } from './concurrency-manager'
-import type { CreateJobRequest, ComputeJobRepository } from './job-repository'
+import { ComputeService } from './compute-service'
+import type { ComputeJobRepository, CreateJobRequest } from './job-repository'
 import type { ComputeHostRepository } from './repository'
-import type { ScpRunner } from './scp-runner'
-import type { ResolvedSshTarget, SshRunner } from './ssh-runner'
 
 const sampleHost = (overrides: Partial<ComputeHost> = {}): ComputeHost => ({
   id: 'host-1',
@@ -82,8 +87,8 @@ const makeRepo = (
   }
 }
 
-vi.mock('./ssh-runner', async (importOriginal) => {
-  const original = await importOriginal<typeof import('./ssh-runner')>()
+vi.mock('@aipoch/compute/node', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@aipoch/compute/node')>()
   return {
     ...original,
     resolveSshTarget: vi.fn(() => Promise.resolve(fakeTarget))

@@ -118,7 +118,6 @@
       "src/main/compute/session-catalog-hydration.integration.test.ts",
       "src/main/compute/skill-provisioning.test.ts",
       "src/main/compute/slurm.real-ssh.integration.test.ts",
-      "src/main/compute/ssh-runner.test.ts",
       "src/main/composition/connector-application.test.ts",
       "src/main/credential-identity/recovery.test.ts",
       "src/main/data-content-application-commands.test.ts",

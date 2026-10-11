@@ -1,34 +1,34 @@
-import { nodeRuntimeEnvironment } from '../node-process-host'
-import { runtimeMetadata } from '../runtime-metadata'
+import { createSshRunner } from '@aipoch/compute/node'
 import { randomUUID } from 'node:crypto'
 import { chmod, mkdtemp, rm } from 'node:fs/promises'
 import { createServer } from 'node:net'
-import { platform, tmpdir } from 'node:os'
+import { homedir, platform, tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { nodeRuntimeEnvironment } from '../node-process-host'
+import { runtimeMetadata } from '../runtime-metadata'
 
-import type { ComputeHost } from '../../shared/compute'
+import type { ComputeHost } from '@aipoch/compute'
+
 import {
-  ComputeConnectionError,
   classifyConnectionFailure,
+  ComputeConnectionError,
   type AcquireComputeConnectionRequest,
   type ComputeConnectionAdapter,
   type ComputeConnectionLease
-} from './connection-broker'
-import type { CredentialVault } from './credential-vault'
+} from '@aipoch/compute/node'
+
 import {
   buildScpUploadArgs,
-  resolveScpBinary,
-  type BoundedScpResult,
-  type ScpRunner
-} from './scp-runner'
-import {
-  resolveSshTarget,
   readEffectiveConfig,
+  resolveScpBinary,
   resolveSshBinary,
-  SystemSshRunner,
+  resolveSshTarget,
+  SshRunner,
+  type BoundedScpResult,
   type ResolvedSshTarget,
-  type SshRunner
-} from './ssh-runner'
+  type ScpRunner
+} from '@aipoch/compute/node'
+import type { CredentialVault } from './credential-vault'
 
 type AskpassEnvironment = Readonly<{
   env: NodeJS.ProcessEnv
@@ -312,8 +312,11 @@ const createAskpassEnvironment = async (
 class PasswordSshAdapter implements ComputeConnectionAdapter {
   constructor(
     private readonly vault: CredentialVault,
-    private readonly runner: SshRunner = new SystemSshRunner(),
-    private readonly resolveTarget: typeof resolveSshTarget = resolveSshTarget,
+    private readonly runner: SshRunner = createSshRunner(),
+    private readonly resolveTarget: typeof resolveSshTarget = (alias, overrides, readConfig) =>
+      resolveSshTarget(alias, overrides, readConfig, {
+        controlDirectory: join(homedir(), '.ssh', 'ctrl')
+      }),
     private readonly readConfig: (alias: string) => Promise<Record<string, string>> = (alias) =>
       readEffectiveConfig(alias, resolveSshBinary()),
     private readonly createAskpass: (
@@ -556,4 +559,4 @@ class PasswordSshAdapter implements ComputeConnectionAdapter {
   }
 }
 
-export { PasswordSshAdapter, createAskpassEnvironment }
+export { createAskpassEnvironment, PasswordSshAdapter }

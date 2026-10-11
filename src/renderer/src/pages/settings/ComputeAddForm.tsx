@@ -2,8 +2,10 @@ import { InlineNotice } from '@/components/ui/inline-notice'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import type { ComputeAuthenticationMode, ComputeExecutionMode } from '../../../../shared/compute'
-import { DETAILS_DOC_MAX_LENGTH } from '../../../../shared/compute'
+import type { ComputeAuthenticationMode, ComputeExecutionMode } from '@aipoch/compute'
+
+import { DETAILS_DOC_MAX_LENGTH } from '@aipoch/compute'
+
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -16,16 +18,16 @@ import {
 import { Textarea } from '@/components/ui/textarea'
 import { useComputeStore } from '@/stores/compute-store'
 import {
+  computeAuthenticationErrorCopy,
+  getComputeAuthenticationStrategy,
+  type ComputeAuthenticationValues
+} from './compute-authentication-form'
+import {
   ComputeAdvancedSettings,
   ComputeAuthenticationFields,
   ComputeAuthenticationIntroduction,
   ComputeAuthenticationSection
 } from './ComputeAuthenticationSection'
-import {
-  computeAuthenticationErrorCopy,
-  getComputeAuthenticationStrategy,
-  type ComputeAuthenticationValues
-} from './compute-authentication-form'
 import { ComputeExecutionModeField } from './ComputeExecutionModeField'
 
 type ComputeAddFormProps = {

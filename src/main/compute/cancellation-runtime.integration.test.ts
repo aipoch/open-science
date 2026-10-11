@@ -1,9 +1,9 @@
+import { createComputeExecution, createJobCancellation } from '@aipoch/compute/node'
 import { afterEach, expect, it, vi } from 'vitest'
 
 import type { ComputeJob } from '../../shared/compute'
-import type { ComputeConnectionBroker } from './connection-broker'
-import { ComputeJobCancellationOwner } from './compute-job-cancellation-owner'
 import { createMigratedComputeTestDatabase } from './compute-integration.test-support'
+import type { ComputeConnectionBroker } from './connection-broker'
 import type { harvestJob } from './harvest-engine'
 import { createComputeJobRuntime } from './job-runtime'
 import type { ComputeHostRepository } from './repository'
@@ -40,7 +40,7 @@ it('publishes cancellation and keeps cancelling other jobs while result collecti
         exit_code_path: `${workdir}/exit_code`
       })
     })
-    await new ComputeJobCancellationOwner(operations, jobs).request(id, scope)
+    await createJobCancellation(operations, jobs).request(id, scope)
   }
   let release!: () => void
   const collection = new Promise<void>((resolve) => {
@@ -55,6 +55,7 @@ it('publishes cancellation and keeps cancelling other jobs while result collecti
   const runtime = createComputeJobRuntime(
     {
       computeService: {
+        execution: createComputeExecution(),
         bindJobHarvestRetry: () => () => undefined,
         handleJobUpdated: vi.fn(),
         handleJobCancellationConfirmed: confirmed,

@@ -1,8 +1,16 @@
+import type {
+  ClaimedComputeJobOperation,
+  ComputeJobOperationKind,
+  ComputeJobOperationOutcome,
+  ComputeJobOperationPhase,
+  ComputeJobOperationRecord,
+  ComputeJobOperationScope
+} from '@aipoch/compute'
 import { randomUUID } from 'node:crypto'
 
 import type { Prisma, PrismaClient } from '@prisma/client'
 
-import type { ComputeJobStatus } from '../../shared/compute'
+import type { ComputeJobStatus } from '@aipoch/compute'
 
 // Match upload publication's admission budget on the shared single-connection SQLite client.
 // Execution deadlines and rollback behavior remain Prisma defaults.
@@ -28,37 +36,6 @@ const runOperationTransaction = async <Result>(
 
 type OperationClient = Pick<PrismaClient, '$transaction' | 'computeJobOperation'>
 type OperationClientProvider = () => Promise<OperationClient>
-
-type ComputeJobOperationKind = 'cancel'
-type ComputeJobOperationPhase = 'active' | 'settled'
-type ComputeJobOperationOutcome = 'fulfilled' | 'superseded'
-
-type ComputeJobOperationRecord = Readonly<{
-  id: string
-  jobId: string
-  kind: ComputeJobOperationKind
-  phase: ComputeJobOperationPhase
-  outcome: ComputeJobOperationOutcome | null
-  revision: number
-  attemptCount: number
-  eligibleAt: Date | null
-  claimToken: string | null
-  claimExpiresAt: Date | null
-  createdAt: Date
-  settledAt: Date | null
-  updatedAt: Date
-}>
-
-type ComputeJobOperationScope = Readonly<{
-  projectId: string
-  sessionId: string
-  providerId: string
-}>
-
-type ClaimedComputeJobOperation = Readonly<{
-  operation: ComputeJobOperationRecord
-  jobId: string
-}>
 
 const ACTIVE_STATUSES = ['queued', 'submitted', 'running'] as const
 const TERMINAL_STATUSES = ['success', 'failed', 'timeout', 'error'] as const
@@ -411,13 +388,4 @@ class ComputeJobOperationRepository {
 }
 
 export { ComputeJobOperationRepository }
-export type {
-  ClaimedComputeJobOperation,
-  ComputeJobOperationKind,
-  ComputeJobOperationOutcome,
-  ComputeJobOperationPhase,
-  ComputeJobOperationRecord,
-  ComputeJobOperationScope,
-  OperationClient,
-  OperationClientProvider
-}
+export type { OperationClient, OperationClientProvider }

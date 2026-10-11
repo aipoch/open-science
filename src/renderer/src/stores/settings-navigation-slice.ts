@@ -1,4 +1,5 @@
-import type { ComputeAuthenticationErrorCode } from '../../../shared/compute'
+import type { ComputeAuthenticationErrorCode } from '@aipoch/compute'
+
 import {
   settingsPanelRoute,
   type SettingsPanelId,

@@ -1,37 +1,39 @@
-import { runtimeMetadata } from '../runtime-metadata'
-import { mkdir, mkdtemp, rename, stat as fsStat, rm } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
+import { stat as fsStat, mkdir, mkdtemp, rename, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
+import { runtimeMetadata } from '../runtime-metadata'
 
-import type { ComputeCallError, ComputeHost, ExecResult } from '../../shared/compute'
-import type { DirListing, DownloadDest, LocalFile, RemoteFsError } from '../../shared/remote-fs'
-import { classifyRemoteError, parseFindListing } from '../../shared/remote-fs'
-import type { ComputeApprovalBroker } from './compute-approval-broker'
+import type { ComputeHost } from '@aipoch/compute'
+import type { ComputeCallError, ExecResult } from '../../shared/compute'
+
 import {
   ComputeConnectionError,
   type ComputeConnectionBrokerAcquirer,
   type ComputeConnectionLease
-} from './connection-broker'
-import type { ComputeHostRepository } from './repository'
-import { quoteRemotePath, shellSingleQuote } from './remote-path-security'
-import type { SessionCacheOwner } from './session-cache-owner'
-import { withDataRootWrite } from '../storage/migration-state'
-import { redactSensitiveText } from '@aipoch/diagnostics'
+} from '@aipoch/compute/node'
+import type { DirListing, DownloadDest, LocalFile, RemoteFsError } from '../../shared/remote-fs'
+import { classifyRemoteError, parseFindListing } from '../../shared/remote-fs'
+import type { ComputeApprovalBroker } from './compute-approval-broker'
+
 import {
   MAX_DOWNLOAD_BYTES,
   MAX_IMPORT_BYTES,
   inferMimeType,
-  resolveDestFilename,
-  validateImportPath
-} from './scp-runner'
-import {
   parseRemoteFileStat,
+  quoteRemotePath,
   remoteFileStatCommand,
+  resolveDestFilename,
   sameRemoteFileSnapshot,
+  shellSingleQuote,
+  validateImportPath,
   type RemoteFileSnapshot,
   type RemoteFileStat
-} from './remote-file-snapshot'
+} from '@aipoch/compute/node'
+import { redactSensitiveText } from '@aipoch/diagnostics'
+import { withDataRootWrite } from '../storage/migration-state'
+import type { ComputeHostRepository } from './repository'
+import type { SessionCacheOwner } from './session-cache-owner'
 
 const CALL_COMMAND_DEFAULT_TIMEOUT_MS = 60_000
 const CALL_COMMAND_MAX_OUTPUT_BYTES = 64 * 1024

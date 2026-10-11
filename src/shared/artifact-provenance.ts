@@ -22,7 +22,7 @@ import type {
   PersistedToolActivity
 } from './session-persistence'
 import type { ArtifactVersionReviewProjection } from './reviewer'
-import type { ComputeJobStatus } from './compute'
+import type { ComputeJobStatus } from '@aipoch/compute'
 import type {
   ExecutionFileEvidenceReason,
   ScientificOutputRisk,

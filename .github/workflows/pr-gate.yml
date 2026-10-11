@@ -694,6 +694,9 @@ jobs:
           base: ${{ needs.preflight.outputs.base }}
           head: ${{ needs.preflight.outputs.head }}
           trusted-base: ${{ needs.preflight.outputs.trusted_base }}
+      - name: Verify isolated Compute package consumption
+        if: ${{ matrix.shard == 1 && !contains(env.OPEN_SCIENCE_CI_EXCLUDED_PACKAGE_ROOTS, 'packages/compute') }}
+        run: npm run check:compute-package
       - name: Test complete suite shard
         id: unit_macos_shard
         if: ${{ fromJSON(needs.preflight.outputs.plan).mode == 'full' || !contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_macos') }}

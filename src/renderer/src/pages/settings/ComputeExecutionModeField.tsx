@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next'
 
-import type { ComputeExecutionMode } from '../../../../shared/compute'
+import type { ComputeExecutionMode } from '@aipoch/compute'
+
 import { Label } from '@/components/ui/label'
 import {
   Select,

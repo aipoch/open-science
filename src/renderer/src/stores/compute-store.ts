@@ -1,16 +1,14 @@
 import { create } from 'zustand'
 
+import type { ComputeExecutionMode, ComputeHost, ProbeResult } from '@aipoch/compute'
 import type {
   ChangeComputeHostAuthenticationRequest,
   ComputeApprovalDecision,
   ComputeApprovalRequest,
-  ComputeHost,
-  ComputeExecutionMode,
   CreateComputeHostRequest,
   CreatePasswordComputeHostRequest,
-  ResetPasswordComputeHostRequest,
   DeleteComputeHostRequest,
-  ProbeResult
+  ResetPasswordComputeHostRequest
 } from '../../../shared/compute'
 
 type ComputeApprovalBase = {

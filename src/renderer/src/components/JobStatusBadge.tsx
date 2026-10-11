@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next'
 
-import type { ComputeJobCancellationStatus, ComputeJobStatus } from '../../../shared/compute'
+import type { ComputeJobCancellationStatus, ComputeJobStatus } from '@aipoch/compute'
 
 // Maps job status to badge styling. Follows design.md §6 badge pattern (same conventions as ReviewCard).
 // Terminal statuses consolidate under semantic groups: success=Done, error/failed/timeout=Failed.

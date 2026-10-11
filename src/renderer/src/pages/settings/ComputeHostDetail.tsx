@@ -1,6 +1,6 @@
-import { fieldErrorClassName } from '@/components/ui/notice-chrome'
-import { InlineNotice } from '@/components/ui/inline-notice'
 import { ErrorNotice } from '@/components/error-notice'
+import { InlineNotice } from '@/components/ui/inline-notice'
+import { fieldErrorClassName } from '@/components/ui/notice-chrome'
 import {
   ChevronDown,
   ChevronUp,
@@ -17,24 +17,25 @@ import { useTranslation } from 'react-i18next'
 import {
   DETAILS_DOC_MAX_LENGTH,
   type ComputeAuthenticationErrorCode,
-  type ComputeExecutionMode,
-  type ComputePasswordCapability
-} from '../../../../shared/compute'
+  type ComputeExecutionMode
+} from '@aipoch/compute'
+import { type ComputePasswordCapability } from '../../../../shared/compute'
+
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { cn } from '@/lib/utils'
 import { formatDisplayNumber } from '@/lib/locale-format'
+import { cn } from '@/lib/utils'
 import { useComputeStore } from '@/stores/compute-store'
 import { useSettingsStore } from '@/stores/settings-store'
-import { ComputePasswordResetSection } from './ComputePasswordResetSection'
 import { probedLabel } from './compute-probed-label'
 import {
   computeRuntimeRecoveryAction,
   computeRuntimeRecoveryCopy
 } from './compute-runtime-recovery'
-import { SettingsSection } from './SettingsLayout'
-import { ComputeHostAuthenticationDetail } from './ComputeHostAuthenticationDetail'
 import { ComputeExecutionModeField } from './ComputeExecutionModeField'
+import { ComputeHostAuthenticationDetail } from './ComputeHostAuthenticationDetail'
+import { ComputePasswordResetSection } from './ComputePasswordResetSection'
+import { SettingsSection } from './SettingsLayout'
 
 type ComputeHostDetailProps = {
   providerId: string

@@ -1,10 +1,11 @@
 import { expect, it, vi } from 'vitest'
+import { createNotifyingJobPoller } from './job-notifier'
 
-import type { ComputeConnectionBrokerAcquirer } from './connection-broker'
+import type { ComputeConnectionBrokerAcquirer } from '@aipoch/compute/node'
+
 import { createMigratedComputeTestDatabase } from './compute-integration.test-support'
 import { harvestJob } from './harvest-engine'
 import { emitJobNotification } from './job-notifier'
-import { JobPoller } from './job-poller'
 import type { ComputeHostRepository } from './repository'
 
 it('broadcasts once when harvest and recovery notification entrances overlap', async () => {
@@ -96,7 +97,7 @@ it('recovers a finalized harvest whose notifier claim was interrupted', async ()
       leftOnRemote: '[]'
     })
     const broadcast = vi.fn()
-    await new JobPoller({
+    await createNotifyingJobPoller({
       connectionBroker: { acquire: vi.fn() } as unknown as ComputeConnectionBrokerAcquirer,
       hostRepository: { get: vi.fn(async () => null) } as unknown as ComputeHostRepository,
       jobRepository,

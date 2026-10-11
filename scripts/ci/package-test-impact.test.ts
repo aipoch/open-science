@@ -286,9 +286,9 @@ it.each([
   ['src/main/session-diagnostics/notebook.ts', []],
   [
     'packages/diagnostics/src/diagnostic-redaction.ts',
-    ['packages/diagnostics', 'packages/environment']
+    ['packages/diagnostics', 'packages/environment', 'packages/compute']
   ],
-  ['packages/diagnostics/src/node.ts', ['packages/diagnostics', 'packages/environment']]
+  ['packages/diagnostics/src/node.ts', ['packages/diagnostics', 'packages/environment', 'packages/compute']]
 ])('applies the real diagnostics registration to %s', (path, selected) => {
   const registered = JSON.parse(readFileSync('scripts/ci/package-test-boundaries.json', 'utf8'))
   const plan = createPackageTestPlan([path], registered)

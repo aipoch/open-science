@@ -5,11 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ComposerAgentControlsMenu } from './ComposerAgentControlsMenu'
 
-import type { ComputeHost } from '../../../../shared/compute'
+import type { ComputeHost } from '@aipoch/compute'
+
 import { i18next } from '@/i18n'
 import { createInitialComputeState, useComputeStore } from '@/stores/compute-store'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
-
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 // Select events fired through the mocked menu items, so tests can assert preventDefault

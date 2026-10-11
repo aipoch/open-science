@@ -1,18 +1,18 @@
+import { createComputeExecution } from '@aipoch/compute/node'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { SshRunner } from './ssh-runner'
-import type { ComputeApprovalBroker } from './compute-approval-broker'
-import { createMigratedComputeTestDatabase } from './compute-integration.test-support'
+import type { SshRunner } from '@aipoch/compute/node'
 import {
   ComputeConnectionError,
-  type ComputeConnectionBroker,
   type ComputeConnectionBrokerAcquirer,
   type ComputeConnectionLease
-} from './connection-broker'
+} from '@aipoch/compute/node'
+import type { ComputeApprovalBroker } from './compute-approval-broker'
+import { createMigratedComputeTestDatabase } from './compute-integration.test-support'
+import { type ComputeConnectionBroker } from './connection-broker'
+
 import { ComputeService } from './compute-service'
-import { DispatchTracker } from './dispatch-tracker'
 import { ComputeJobRepository } from './job-repository'
-import { JobPoller } from './job-poller'
 import { ComputeHostRepository } from './repository'
 
 const successfulRun = (stdout: string): Awaited<ReturnType<ComputeConnectionLease['run']>> => ({
@@ -99,11 +99,10 @@ describe('ambiguous Compute Job dispatch recovery', () => {
       )
     )
     const connectionBroker = serviceBroker(run)
-    const poller = new JobPoller({
+    const poller = createComputeExecution().createPoller({
       connectionBroker,
       hostRepository,
-      jobRepository,
-      dispatchTracker: new DispatchTracker()
+      jobRepository
     })
 
     await poller.tick()
@@ -139,12 +138,13 @@ describe('ambiguous Compute Job dispatch recovery', () => {
       )
     )
 
-    await new JobPoller({
-      connectionBroker: serviceBroker(run),
-      hostRepository,
-      jobRepository,
-      dispatchTracker: new DispatchTracker()
-    }).tick()
+    await createComputeExecution()
+      .createPoller({
+        connectionBroker: serviceBroker(run),
+        hostRepository,
+        jobRepository
+      })
+      .tick()
 
     await expect(service.getJobStatus('job-lsof')).resolves.toMatchObject({ status: 'running' })
   })
@@ -174,11 +174,11 @@ describe('ambiguous Compute Job dispatch recovery', () => {
       }))
     }
     const harvest = vi.fn(async () => undefined)
-    const poller = new JobPoller({
+    const poller = createComputeExecution().createPoller({
       connectionBroker,
       hostRepository,
       jobRepository,
-      dispatchTracker: new DispatchTracker(),
+
       harvestFn: harvest
     })
 
@@ -220,13 +220,15 @@ describe('ambiguous Compute Job dispatch recovery', () => {
     }
     const harvest = vi.fn(async () => undefined)
 
-    await new JobPoller({
-      connectionBroker,
-      hostRepository,
-      jobRepository,
-      dispatchTracker: new DispatchTracker(),
-      harvestFn: harvest
-    }).tick()
+    await createComputeExecution()
+      .createPoller({
+        connectionBroker,
+        hostRepository,
+        jobRepository,
+
+        harvestFn: harvest
+      })
+      .tick()
 
     await expect(service.getJobStatus('job-vanished')).resolves.toMatchObject({ status: 'failed' })
     const recovered = await jobRepository.get('job-vanished')
@@ -259,13 +261,15 @@ describe('ambiguous Compute Job dispatch recovery', () => {
     }
     const harvest = vi.fn(async () => undefined)
 
-    await new JobPoller({
-      connectionBroker,
-      hostRepository,
-      jobRepository,
-      dispatchTracker: new DispatchTracker(),
-      harvestFn: harvest
-    }).tick()
+    await createComputeExecution()
+      .createPoller({
+        connectionBroker,
+        hostRepository,
+        jobRepository,
+
+        harvestFn: harvest
+      })
+      .tick()
 
     await expect(service.getJobStatus('job-incomplete-protocol')).resolves.toMatchObject({
       status: 'submitted'
@@ -292,12 +296,13 @@ describe('ambiguous Compute Job dispatch recovery', () => {
     })
     const acquire = vi.fn<ComputeConnectionBrokerAcquirer['acquire']>()
 
-    await new JobPoller({
-      connectionBroker: { acquire },
-      hostRepository,
-      jobRepository,
-      dispatchTracker: new DispatchTracker()
-    }).tick()
+    await createComputeExecution()
+      .createPoller({
+        connectionBroker: { acquire },
+        hostRepository,
+        jobRepository
+      })
+      .tick()
 
     await expect(service.getJobStatus('job-queued')).resolves.toMatchObject({ status: 'queued' })
     expect(acquire).not.toHaveBeenCalled()
@@ -397,12 +402,13 @@ describe('ambiguous Compute Job dispatch recovery', () => {
       status: 'submitted'
     })
 
-    await new JobPoller({
-      connectionBroker,
-      hostRepository,
-      jobRepository,
-      dispatchTracker: new DispatchTracker()
-    }).tick()
+    await createComputeExecution()
+      .createPoller({
+        connectionBroker,
+        hostRepository,
+        jobRepository
+      })
+      .tick()
 
     await expect(dispatchingService.getJobStatus(submitted.job_id)).resolves.toMatchObject({
       status: 'running'
@@ -451,14 +457,16 @@ describe('ambiguous Compute Job dispatch recovery', () => {
     const harvest = vi.fn(async () => undefined)
     const onJobUpdated = vi.fn()
 
-    await new JobPoller({
-      connectionBroker: serviceBroker(run),
-      hostRepository,
-      jobRepository,
-      harvestFn: harvest,
-      onJobUpdated,
-      makeNonce: () => nonce
-    }).tick()
+    await createComputeExecution()
+      .createPoller({
+        connectionBroker: serviceBroker(run),
+        hostRepository,
+        jobRepository,
+        harvestFn: harvest,
+        onJobUpdated,
+        makeNonce: () => nonce
+      })
+      .tick()
 
     await expect(service.getJobStatus(jobId)).resolves.toMatchObject({ status: 'running' })
     expect(onJobUpdated).toHaveBeenCalledWith(
@@ -650,11 +658,10 @@ describe('ambiguous Compute Job dispatch recovery', () => {
       }))
     }
 
-    const poller = new JobPoller({
+    const poller = createComputeExecution().createPoller({
       connectionBroker,
       hostRepository,
-      jobRepository,
-      dispatchTracker: new DispatchTracker()
+      jobRepository
     })
 
     await poller.tick()
@@ -695,11 +702,10 @@ describe('ambiguous Compute Job dispatch recovery', () => {
       .mockRejectedValueOnce(new ComputeConnectionError('timeout'))
       .mockResolvedValueOnce(successfulRun(pendingOutput))
       .mockResolvedValueOnce(successfulRun(pendingOutput))
-    const poller = new JobPoller({
+    const poller = createComputeExecution().createPoller({
       connectionBroker: serviceBroker(run),
       hostRepository,
-      jobRepository,
-      dispatchTracker: new DispatchTracker()
+      jobRepository
     })
 
     await poller.tick()
@@ -731,12 +737,13 @@ describe('ambiguous Compute Job dispatch recovery', () => {
     })
     const acquire = vi.fn<ComputeConnectionBrokerAcquirer['acquire']>()
 
-    await new JobPoller({
-      connectionBroker: { acquire },
-      hostRepository,
-      jobRepository,
-      dispatchTracker: new DispatchTracker()
-    }).tick()
+    await createComputeExecution()
+      .createPoller({
+        connectionBroker: { acquire },
+        hostRepository,
+        jobRepository
+      })
+      .tick()
 
     await expect(service.getJobStatus('job-legacy')).resolves.toMatchObject({ status: 'submitted' })
     await expect(jobRepository.get('job-legacy')).resolves.toMatchObject({

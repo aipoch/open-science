@@ -1,3 +1,4 @@
+import { createComputeExecution, createScpRunner, createSshRunner } from '@aipoch/compute/node'
 // Environment-gated release certification for a real password-capable SSH Host. It is skipped by
 // default and requires an alias that also has a working SSH-configuration login for switch coverage.
 //
@@ -16,6 +17,7 @@ import { join } from 'node:path'
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
+import { readEffectiveConfig, resolveSshBinary } from '@aipoch/compute/node'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { ComputeApprovalBroker } from './compute-approval-broker'
 import { PasswordSshAdapter } from './connection-adapters'
@@ -24,10 +26,7 @@ import { CredentialVault, type ComputeCredentialCipher } from './credential-vaul
 import { harvestJob } from './harvest-engine'
 import { createComputeHandlers } from './ipc'
 import { ComputeJobRepository } from './job-repository'
-import { JobPoller } from './job-poller'
 import { ComputeHostRepository } from './repository'
-import { SystemScpRunner } from './scp-runner'
-import { readEffectiveConfig, resolveSshBinary, SystemSshRunner } from './ssh-runner'
 
 const alias = process.env['COMPUTE_PASSWORD_TEST_ALIAS'] ?? ''
 const username = process.env['COMPUTE_PASSWORD_TEST_USERNAME'] ?? ''
@@ -75,8 +74,8 @@ describeIf('Compute password authentication real SSH certification', () => {
     }
     const repository = new ComputeHostRepository(() => Promise.resolve(client))
     const jobRepository = new ComputeJobRepository(() => Promise.resolve(client))
-    const runner = new SystemSshRunner()
-    const scpRunner = new SystemScpRunner()
+    const runner = createSshRunner()
+    const scpRunner = createScpRunner()
     const vault = new CredentialVault(repository, testCipher, 'linux')
     const passwordAdapter = new PasswordSshAdapter(
       vault,
@@ -184,7 +183,7 @@ describeIf('Compute password authentication real SSH certification', () => {
       { timeoutSeconds: 60 },
       { sessionId: 'password-e2e-session', projectId: 'password-e2e-project' }
     )
-    const poller = new JobPoller({
+    const poller = createComputeExecution().createPoller({
       connectionBroker: restartedBroker,
       hostRepository: repository,
       jobRepository

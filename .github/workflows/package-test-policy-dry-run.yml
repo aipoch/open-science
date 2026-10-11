@@ -40,11 +40,13 @@ jobs:
         run: |
           set -euo pipefail
           fixture="$RUNNER_TEMP/package-policy-fixture"
-          mkdir -p "$fixture/scripts/ci" "$fixture/packages/core/src" "$fixture/src"
+          mkdir -p "$fixture/scripts/ci" "$fixture/packages/core/src" "$fixture/packages/compute/src" "$fixture/src"
           cp scripts/ci/package-test-impact.mjs "$fixture/scripts/ci/"
-          echo '{"schemaVersion":1,"packages":[{"root":"packages/core","dependencies":[]}]}' > "$fixture/scripts/ci/package-test-boundaries.json"
+          echo '{"schemaVersion":1,"packages":[{"root":"packages/core","dependencies":[]},{"root":"packages/compute","dependencies":[]}]}' > "$fixture/scripts/ci/package-test-boundaries.json"
           echo '{"name":"fixture-core","scripts":{"test":"vitest run"}}' > "$fixture/packages/core/package.json"
-          touch "$fixture/packages/core/src/core.test.ts" "$fixture/src/host.test.ts"
+          echo '{"name":"fixture-compute","scripts":{"test":"vitest run"}}' > "$fixture/packages/compute/package.json"
+          echo "export default { root: '$fixture/packages/compute', test: { name: 'compute', include: ['src/**/*.test.ts'] } }" > "$fixture/packages/compute/vitest.config.ts"
+          touch "$fixture/packages/core/src/core.test.ts" "$fixture/packages/compute/src/compute.test.ts" "$fixture/src/host.test.ts"
           git -C "$fixture" init -q
           git -C "$fixture" -c user.name=CI -c user.email=ci@example.invalid add .
           git -C "$fixture" -c user.name=CI -c user.email=ci@example.invalid commit -qm baseline
@@ -88,5 +90,9 @@ jobs:
           import assert from 'node:assert/strict'
           import { readFileSync } from 'node:fs'
           const files = JSON.parse(readFileSync(`${process.env.RUNNER_TEMP}/package-policy-files.json`, 'utf8'))
-          assert.equal(files.length, 2)
+          assert.deepEqual(files.map(({ file }) => file).sort(), [
+            'packages/core/src/core.test.ts',
+            'packages/compute/src/compute.test.ts',
+            'src/host.test.ts'
+          ].map(file => `${process.env.RUNNER_TEMP}/package-policy-fixture/${file}`).sort())
           JS

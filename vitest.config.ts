@@ -1,8 +1,8 @@
 import { readFileSync } from 'node:fs'
-import { packageTestExcludePatterns } from './scripts/ci/package-test-impact.mjs'
 import { availableParallelism, cpus } from 'node:os'
 import { basename, dirname, resolve } from 'path'
-import { defineConfig, configDefaults } from 'vitest/config'
+import { configDefaults, defineConfig } from 'vitest/config'
+import { packageTestExcludePatterns } from './scripts/ci/package-test-impact.mjs'
 import WindowsTestSequencer from './scripts/ci/windows-test-sequencer'
 
 const testRoot = resolve('.')
@@ -208,12 +208,17 @@ export default defineConfig({
       ? 1
       : resolveVitestMaxWorkers(undefined, process.env.OPEN_SCIENCE_TEST_MAX_WORKERS),
     projects: [
+      // Standalone package configuration owns its setup, concurrency and native shell tests.
+      ...(packageTestExcludePatterns(process.env).includes('packages/compute/**')
+        ? []
+        : ['packages/compute/vitest.config.ts']),
       {
         extends: true,
         test: {
           name: 'default',
           exclude: [
             ...VITEST_EXCLUDE_PATTERNS,
+            'packages/compute/**',
             ...VITEST_ARCHITECTURE_TEST_GLOBS,
             ...VITEST_DATABASE_TEST_GLOBS,
             ...VITEST_PROCESS_TEST_GLOBS
@@ -225,7 +230,7 @@ export default defineConfig({
         test: {
           name: 'architecture',
           include: [...VITEST_ARCHITECTURE_TEST_GLOBS],
-          exclude: [...VITEST_EXCLUDE_PATTERNS],
+          exclude: [...VITEST_EXCLUDE_PATTERNS, 'packages/compute/**'],
           isolate: false,
           fileParallelism: false,
           maxWorkers: 1,
@@ -237,7 +242,7 @@ export default defineConfig({
         test: {
           name: 'process',
           include: [...VITEST_PROCESS_TEST_GLOBS],
-          exclude: [...VITEST_EXCLUDE_PATTERNS],
+          exclude: [...VITEST_EXCLUDE_PATTERNS, 'packages/compute/**'],
           isolate: true,
           fileParallelism: false,
           maxWorkers: 1
@@ -248,7 +253,7 @@ export default defineConfig({
         test: {
           name: 'database',
           include: [...VITEST_DATABASE_TEST_GLOBS],
-          exclude: [...VITEST_EXCLUDE_PATTERNS],
+          exclude: [...VITEST_EXCLUDE_PATTERNS, 'packages/compute/**'],
           isolate: true,
           fileParallelism: false,
           maxWorkers: 1,

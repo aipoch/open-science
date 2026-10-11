@@ -1,16 +1,17 @@
+import { createComputeExecution } from '@aipoch/compute/node'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { ConcurrencyManager } from './concurrency-manager'
-import { ComputeJobRepository } from './job-repository'
+import { ComputeConnectionError, type ComputeConnectionBrokerAcquirer } from '@aipoch/compute/node'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
-import { ComputeConnectionError, type ComputeConnectionBrokerAcquirer } from './connection-broker'
-import { dispatchJob } from './job-dispatcher'
+import { ComputeJobRepository } from './job-repository'
+
 import { ComputeJobOperationRepository } from './compute-job-operation-repository'
-import { ComputeHostRepository } from './repository'
 import { OptionalSecureStorageStringProtection, type SecureStorageCipher } from './credential-vault'
+import { dispatchComputeJob as dispatchJob } from './dispatch-evidence'
+import { ComputeHostRepository } from './repository'
 
 // Exercises ComputeJobRepository against the current application schema in a real SQLite database.
 // Schema migration behavior is owned by src/main/database/migration-service.test.ts.
@@ -75,7 +76,11 @@ describe('ComputeJob repository (SQLite integration)', () => {
       })
     }
     const decrypt = vi.spyOn(cipher, 'decryptString')
-    const manager = new ConcurrencyManager(repo, hosts, async () => {})
+    const manager = createComputeExecution().createQueue({
+      jobs: repo,
+      hosts: hosts,
+      dispatch: async () => {}
+    })
     expect(await manager.getStatus('s')).toEqual({
       active_count: 0,
       queued_count: 0,

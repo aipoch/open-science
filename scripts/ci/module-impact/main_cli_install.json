@@ -365,7 +365,6 @@
       "src/main/compute/ipc.test.ts",
       "src/main/compute/job-poll-protocol.integration.test.ts",
       "src/main/compute/skill-provisioning.test.ts",
-      "src/main/compute/ssh-runner.test.ts",
       "src/main/compute/agent-compute-service.test.ts",
       "src/main/acp/runtime-activity.test.ts",
       "src/main/acp/shutdown-guard.test.ts",

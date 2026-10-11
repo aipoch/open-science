@@ -15,8 +15,9 @@ vi.mock('electron', () => ({
   }
 }))
 
-import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
+import type { SshRunner } from '@aipoch/compute/node'
 import { errorLogFields } from '@aipoch/diagnostics/node'
+import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { ComputeHostProfileOwner } from './compute-host-profile-owner'
 import { PasswordSshAdapter } from './connection-adapters'
 import { SshConfigComputeConnectionBroker } from './connection-broker'
@@ -25,11 +26,10 @@ import {
   OptionalSecureStorageStringProtection,
   type ComputeCredentialCipher
 } from './credential-vault'
+import { dispatchComputeJob as dispatchJob } from './dispatch-evidence'
 import { createComputeHandlers } from './ipc'
-import { dispatchJob } from './job-dispatcher'
 import { ComputeJobRepository } from './job-repository'
 import { ComputeHostRepository } from './repository'
-import type { SshRunner } from './ssh-runner'
 
 const protectedTestCipher: ComputeCredentialCipher = {
   isEncryptionAvailable: () => true,
