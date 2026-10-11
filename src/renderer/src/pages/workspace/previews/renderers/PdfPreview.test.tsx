@@ -28,13 +28,21 @@ import { useSessionStore } from '@/stores/session-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import { createPreviewResourceKey } from '../preview-resource-key'
-import { createPdfTranslationSource } from './pdf-translation'
-import * as pdfTranslations from './pdf-translation'
-import { PdfGenerationError } from '../../../../../../shared/pdf-translation'
-import type { PdfTranslationCheckpoint } from '../../../../../../shared/pdf-translation'
+import { createPdfTranslationSource } from '@aipoch/pdf-translation/reader'
+import * as pdfTranslations from '@aipoch/pdf-translation/reader'
+import {
+  PdfGenerationError,
+  type PdfTranslationCheckpoint
+} from '@aipoch/pdf-translation/contracts'
+
 import { renderPdfNativeLinks } from './pdf-native-links'
 import * as translationJobs from './use-pdf-translation-job'
-import type { PdfDocumentSource } from '../../../../../../shared/pdf-bookmarks'
+import type { PdfDocumentSource } from '@aipoch/pdf-document-contract'
+
+// Keep the real reader behavior while allowing the layout-admission spy below.
+vi.mock('@aipoch/pdf-translation/reader', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aipoch/pdf-translation/reader')>())
+}))
 
 vi.mock('./pdf-native-links', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./pdf-native-links')>()),

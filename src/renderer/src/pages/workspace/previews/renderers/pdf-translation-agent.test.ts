@@ -5,8 +5,8 @@ import {
   LOCAL_TARGET,
   createPdfTranslationAgentExecutor
 } from './pdf-translation-agent'
-import { createPdfTranslationSource } from './pdf-translation'
-import { pdfTranslationFailure } from '../../../../../../shared/pdf-translation'
+import { createPdfTranslationSource } from '@aipoch/pdf-translation/reader'
+import { pdfTranslationFailure } from '@aipoch/pdf-translation/contracts'
 
 const source = createPdfTranslationSource({
   resourceRequestKey: 'paper/version',

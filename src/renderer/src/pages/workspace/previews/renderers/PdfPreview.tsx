@@ -1,7 +1,7 @@
 import { PdfTranslationExport } from './PdfTranslationExport'
 import { usePdfTranslationCheckpoint } from './use-pdf-translation-checkpoint'
 import { restorePdfTranslationJob } from './use-pdf-translation-job'
-import { isPdfTranslationLanguageSupported } from '../../../../../../shared/pdf-translation-languages'
+import { isPdfTranslationLanguageSupported } from '@aipoch/pdf-translation/text'
 import {
   usePdfTranslationDocument,
   type PdfTranslationArtifact
@@ -96,10 +96,7 @@ import {
   type PdfAnnotation
 } from '../../../../../../shared/annotations'
 import { parseLiteratureAttachmentVersionReference } from '../../../../../../shared/literature'
-import {
-  sanitizePdfDocumentSource,
-  type PdfDocumentSource
-} from '../../../../../../shared/pdf-bookmarks'
+import { sanitizePdfDocumentSource, type PdfDocumentSource } from '@aipoch/pdf-document-contract'
 import { joinPdfTextItems } from '../../../../../../shared/pdf-text'
 
 import { PreviewErrorCard, PreviewLoadingContent } from '../PreviewFallback'
@@ -169,7 +166,7 @@ import {
   type PdfTranslationResults,
   type PdfTranslationSource,
   type PdfTranslationUnit
-} from './pdf-translation'
+} from '@aipoch/pdf-translation/reader'
 import { PdfTranslationActionHint } from './PdfTranslationActionHint'
 import { PdfTranslationControls } from './PdfTranslationControls'
 import { PdfTranslationPreparation } from './PdfTranslationPreparation'

@@ -8,7 +8,7 @@ import { ErrorNotice } from '@/components/error-notice'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type { PdfPreparationState } from './use-pdf-translation-preparation'
-import type { PdfTranslationExclusionReason } from './pdf-translation-extraction'
+import type { PdfTranslationExclusionReason } from '@aipoch/pdf-translation/reader'
 
 export function PdfTranslationPreparation({
   state,

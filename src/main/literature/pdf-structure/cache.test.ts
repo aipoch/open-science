@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { defaultFileDurability } from '../../storage/file-durability'
 import { PdfStructureCache } from './cache'
-import type { PdfStructureResult } from './result'
+import type { PdfStructureResult } from '@aipoch/pdf-structure/result'
 
 const png = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADElEQVQImWP4//8/AAX+Av5Y8msOAAAAAElFTkSuQmCC',

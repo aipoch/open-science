@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { ApplicationCallerLeaseRegistry, bindCallerLeaseToEvent } from '../../caller-lifecycle'
 import { PdfTranslationOwner } from './index'
 import { registerPdfTranslationIpc } from './ipc'
-import { PdfTranslationError } from '../../../shared/pdf-translation'
+import { PdfTranslationError } from '@aipoch/pdf-translation/contracts'
 import { PdfTranslationPdfCache } from './pdf-cache'
 
 const handlers = vi.hoisted(() => new Map<string, (...args: never[]) => unknown>())

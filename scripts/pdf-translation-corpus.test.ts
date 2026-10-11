@@ -5,8 +5,11 @@ import { resolve } from 'node:path'
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { ApplicationCallerLeaseRegistry } from '../src/main/caller-lifecycle'
 import { PdfTranslationWriter } from '../src/main/literature/pdf-translation/writer'
-import { extractPdfTranslationSource } from '../src/renderer/src/pages/workspace/previews/renderers/pdf-translation-extraction'
-import { pdfTranslationLayoutFragments } from '../src/renderer/src/pages/workspace/previews/renderers/pdf-translation-fragments'
+import {
+  extractPdfTranslationSource,
+  pdfTranslationLayoutFragments
+} from '@aipoch/pdf-translation/reader'
+
 import { verifyPdfUnits } from '../test/pdf-translation-native-verification'
 import { verifyPdfPreservation } from '../test/pdf-translation-preservation'
 

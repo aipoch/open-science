@@ -1,4 +1,4 @@
-import { PdfTranslationError, type PdfTranslationApiModel } from '../../../shared/pdf-translation'
+import { PdfTranslationError, type PdfTranslationApiModel } from '@aipoch/pdf-translation/contracts'
 import { pdfTranslationApiModels } from '../../../shared/pdf-translation-models'
 import { resolveProviderEffectiveModel } from '../../../shared/provider-reasoning-effort'
 import type { SettingsSnapshot } from '../../../shared/settings'

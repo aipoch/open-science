@@ -18,7 +18,7 @@ import { createCanvas } from '@napi-rs/canvas'
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { PdfTranslationWriter } from './writer'
 import { ApplicationCallerLeaseRegistry } from '../../caller-lifecycle'
-import type { PdfTranslationPdfRequest } from '../../../shared/pdf-translation'
+import type { PdfTranslationPdfRequest } from '@aipoch/pdf-translation/contracts'
 
 const fragment = (
   pageNumber: number

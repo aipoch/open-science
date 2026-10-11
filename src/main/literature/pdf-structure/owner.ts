@@ -11,7 +11,7 @@ import {
   parsePdfStructureResult,
   type PdfStructureIdentity,
   type PdfStructureResult
-} from './result'
+} from '@aipoch/pdf-structure/result'
 import { PdfStructureSourceAuthority, type PdfStructureSourceRequest } from './source'
 import { PdfStructureCache, type PdfStructureCacheClearResult } from './cache'
 
@@ -23,7 +23,6 @@ export type PdfStructureProgress = Readonly<{
 }>
 
 import type { PdfStructureEngine } from '@aipoch/pdf-structure'
-export type { PdfStructureEngine } from '@aipoch/pdf-structure'
 
 type Dependencies = {
   sources: PdfStructureSourceAuthority

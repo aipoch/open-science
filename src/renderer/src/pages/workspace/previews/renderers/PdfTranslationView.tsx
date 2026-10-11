@@ -1,6 +1,6 @@
 /* Hallmark · component: translation reading · theme: existing Open-Science tokens */
 import type { PDFDocumentProxy } from 'pdfjs-dist'
-import type { PdfTranslationLayoutFailure } from '../../../../../../shared/pdf-translation'
+import type { PdfTranslationLayoutFailure } from '@aipoch/pdf-translation/contracts'
 import { PdfTranslatedPage } from './PdfTranslatedPage'
 import { Collapsible } from 'radix-ui'
 import {
@@ -41,7 +41,7 @@ import {
   isCurrentTranslation,
   type PdfTranslation,
   type PdfTranslationUnit
-} from './pdf-translation'
+} from '@aipoch/pdf-translation/reader'
 
 const TranslationParagraph = memo(function TranslationParagraph({
   unit,

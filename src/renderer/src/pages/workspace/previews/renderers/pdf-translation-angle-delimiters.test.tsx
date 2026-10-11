@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { cleanup, renderHook, waitFor } from '@testing-library/react'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 import { usePdfTranslationDocument } from './use-pdf-translation-document'
-import { createPdfTranslationSource } from './pdf-translation'
+import { createPdfTranslationSource } from '@aipoch/pdf-translation/reader'
 
 const { getDocument } = vi.hoisted(() => ({ getDocument: vi.fn() }))
 vi.mock('../pdfjs', () => ({ pdfjsLib: { getDocument, OPS: {} } }))

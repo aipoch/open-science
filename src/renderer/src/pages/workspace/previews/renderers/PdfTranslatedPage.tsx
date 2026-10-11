@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 import { useNearViewport } from '../useNearViewport'
 import { renderPdfTranslationInline, type PdfInlineLayout } from './pdf-translation-inline'
-import type { PdfTranslation } from './pdf-translation'
+import type { PdfTranslation } from '@aipoch/pdf-translation/reader'
 
 export function PdfTranslatedPage({
   document,

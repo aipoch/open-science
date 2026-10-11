@@ -5,9 +5,9 @@ import type { PdfAnnotationsChangedEvent } from '../pdf-annotations'
 import type {
   ParsePdfStructureRequest,
   ReadCachedPdfStructureRequest,
-  ReadPdfStructureThumbnailRequest,
-  PdfStructureResult
+  ReadPdfStructureThumbnailRequest
 } from '../pdf-structure'
+import type { PdfStructureResult } from '@aipoch/pdf-structure/result'
 
 import type {
   SourcePreviewContextMenuRequest,

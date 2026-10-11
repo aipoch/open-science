@@ -4,9 +4,12 @@ import { join } from 'node:path'
 import sharp from 'sharp'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { PdfStructureCache } from './cache'
-import { checkPdfStructureDecodingBudget } from '../../../shared/pdf-structure'
+import {
+  checkPdfStructureDecodingBudget,
+  parsePdfStructureResult,
+  type PdfStructureIdentity
+} from '@aipoch/pdf-structure/result'
 import { readWorkerResult } from '@aipoch/pdf-structure'
-import { parsePdfStructureResult, type PdfStructureIdentity } from './result'
 
 const identity: PdfStructureIdentity = {
   extractionId: '00000000-0000-4000-8000-000000000001',

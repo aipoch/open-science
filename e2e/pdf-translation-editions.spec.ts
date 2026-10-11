@@ -3,19 +3,21 @@ import { expect } from '@playwright/test'
 import { PDFDocument, StandardFonts } from 'pdf-lib'
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import type { Page } from 'playwright'
-import { extractPdfTranslationSource } from '../src/renderer/src/pages/workspace/previews/renderers/pdf-translation-extraction'
 import {
+  extractPdfTranslationSource,
   getPdfTranslationLayoutSnapshot,
   rememberPdfTranslationExtraction
-} from '../src/renderer/src/pages/workspace/previews/renderers/pdf-translation-snapshot'
+} from '@aipoch/pdf-translation/reader'
+
 import { literatureItemInputSchema } from '../src/shared/literature'
-import type { PdfTranslationLayoutSnapshot } from '../src/shared/pdf-translation-snapshot'
 import type {
-  PdfTranslationBeginRequest,
+  PdfTranslationLayoutSnapshot,
   PdfTranslationCheckpoint,
   PdfTranslationCheckpointRequest,
   PdfTranslationEdition
-} from '../src/shared/pdf-translation'
+} from '@aipoch/pdf-translation/contracts'
+import type { PdfTranslationBeginRequest } from '../src/shared/pdf-translation'
+
 import { test } from './fixtures/electron-app'
 
 const sources = ['Measurement 1 examines cell growth.', 'Measurement 2 examines cell growth.']

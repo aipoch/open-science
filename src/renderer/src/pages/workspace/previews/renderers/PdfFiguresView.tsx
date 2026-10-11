@@ -43,9 +43,9 @@ import {
 } from '../../../../../../shared/local-models'
 import {
   PDF_CLEANUP_PENDING,
-  type PdfStructureSource,
-  type PdfStructureResult
+  type PdfStructureSource
 } from '../../../../../../shared/pdf-structure'
+import { type PdfStructureResult } from '@aipoch/pdf-structure/result'
 import { copyPdfTable, pdfTableLayout } from '../../../../../../shared/pdf-table-copy'
 
 const formatBytes = (bytes: number): string => `${(bytes / 1024 ** 2).toFixed(1)} MiB`

@@ -2,7 +2,7 @@ import '@/assets/main.css'
 import { createRoot } from 'react-dom/client'
 import { initI18n } from '@/i18n'
 import { PdfFiguresView } from '@/pages/workspace/previews/renderers/PdfFiguresView'
-import type { PdfStructureResult } from '../../../src/shared/pdf-structure'
+import type { PdfStructureResult } from '@aipoch/pdf-structure/result'
 
 const cell = (
   row: number,

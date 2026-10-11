@@ -8,12 +8,12 @@ import type {
   PdfTranslationPdfResult,
   PdfTranslationSaveSnapshotRequest,
   PdfTranslationRecordLayoutRequest,
-  PdfTranslationBeginRequest,
   PdfTranslationBeginResult,
   PdfTranslationRunRequest,
   PdfTranslationRunResult,
   PdfTranslationOperationRequest
-} from '../pdf-translation'
+} from '@aipoch/pdf-translation/contracts'
+import type { PdfTranslationBeginRequest } from '../pdf-translation'
 
 import type { JournalRequest, JournalResult } from '../journal-attributes'
 

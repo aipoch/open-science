@@ -1,4 +1,7 @@
-import { formatPdfTranslationGlossary } from '../../../../../../shared/pdf-translation'
+import {
+  formatPdfTranslationGlossary,
+  type PdfTranslationEdition
+} from '@aipoch/pdf-translation/contracts'
 import { useId, useState } from 'react'
 import { useSettingsStore } from '@/stores/settings-store'
 import * as AlertDialog from '@/components/ui/alert-dialog'
@@ -13,7 +16,7 @@ import {
 } from '@/components/ui/dialog-chrome'
 import { Info, LoaderCircle, Trash2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import type { PdfTranslationEdition } from '../../../../../../shared/pdf-translation'
+
 import { Button } from '@/components/ui/button'
 import { ErrorNotice } from '@/components/error-notice'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'

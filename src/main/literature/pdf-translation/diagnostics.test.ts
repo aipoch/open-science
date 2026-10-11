@@ -9,7 +9,7 @@ import { initLogger, flushLogs } from '@aipoch/diagnostics/node'
 import { PdfTranslationOwner } from './index'
 import { ProviderTextGenerationError } from '../../settings/provider-text-generation'
 import { PdfTranslationWriter } from './writer'
-import { extractPdfTranslationSource } from '../../../renderer/src/pages/workspace/previews/renderers/pdf-translation-extraction'
+import { extractPdfTranslationSource } from '@aipoch/pdf-translation/reader'
 vi.mock('electron', () => ({ net: {} }))
 
 it('persists safe translation reasons and PDF fallback measurements in the diagnostic log', async () => {

@@ -20,7 +20,7 @@ import type {
   PdfTranslationPdfRequest,
   PdfTranslationPdfResult,
   PdfTranslationRecordLayoutRequest
-} from '../../../shared/pdf-translation'
+} from '@aipoch/pdf-translation/contracts'
 
 const roots: string[] = []
 afterEach(async () => {

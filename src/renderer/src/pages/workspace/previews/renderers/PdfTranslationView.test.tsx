@@ -6,7 +6,7 @@ import {
   PdfTranslationSidebar,
   PdfTranslationView
 } from './PdfTranslationView'
-import type { PdfTranslation } from './pdf-translation'
+import type { PdfTranslation } from '@aipoch/pdf-translation/reader'
 
 afterEach(() => {
   cleanup()

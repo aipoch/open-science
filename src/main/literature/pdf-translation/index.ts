@@ -6,9 +6,9 @@ import {
 import {
   pdfTranslationAgentModelSchema,
   type PdfTranslationAgentModel,
-  type PdfTranslationBeginRequest,
-  type PdfTranslationBeginResult
+  type PdfTranslationBeginRequest
 } from '../../../shared/pdf-translation'
+import { type PdfTranslationBeginResult } from '@aipoch/pdf-translation/contracts'
 import { isPdfTranslationApiProvider } from '../../../shared/pdf-translation-models'
 import {
   providerErrorDetails,

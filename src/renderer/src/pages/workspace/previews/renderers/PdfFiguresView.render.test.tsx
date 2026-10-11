@@ -6,7 +6,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { i18next } from '@/i18n'
 import { PdfFiguresView } from './PdfFiguresView'
 import { groupPdfFigureSelections } from './pdf-figure-selections'
-import type { PdfStructureResult } from '../../../../../../shared/pdf-structure'
+import type { PdfStructureResult } from '@aipoch/pdf-structure/result'
 import type { LocalModelSnapshot } from '../../../../../../shared/local-models'
 import { LOCAL_MODEL_NOT_INSTALLED, PDF_MODEL_CHANGED } from '../../../../../../shared/local-models'
 

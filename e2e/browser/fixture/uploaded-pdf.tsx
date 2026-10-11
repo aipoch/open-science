@@ -3,10 +3,8 @@ import { useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { initI18n } from '@/i18n'
 import { PdfPreviewRenderer } from '@/pages/workspace/previews/renderers/PdfPreview'
-import type {
-  ParsePdfStructureRequest,
-  PdfStructureResult
-} from '../../../src/shared/pdf-structure'
+import type { ParsePdfStructureRequest } from '../../../src/shared/pdf-structure'
+import type { PdfStructureResult } from '@aipoch/pdf-structure/result'
 
 // Real PDF.js preview and production reader UI; extraction/IPC are controlled fixtures.
 const content =

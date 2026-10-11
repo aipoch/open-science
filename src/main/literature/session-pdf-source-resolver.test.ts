@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { SessionPdfSourceResolver } from './session-pdf-source-resolver'
-import type { PdfDocumentSource } from '../../shared/pdf-bookmarks'
+import type { PdfDocumentSource } from '@aipoch/pdf-document-contract'
 import { createUploadVersionReference } from '../../shared/uploads'
 import { createArtifactVersionLocator } from '../../shared/artifact-provenance'
 

@@ -1,4 +1,5 @@
-import { PdfTranslationError, type PdfTranslationAgentModel } from '../../../shared/pdf-translation'
+import { PdfTranslationError } from '@aipoch/pdf-translation/contracts'
+import { type PdfTranslationAgentModel } from '../../../shared/pdf-translation'
 import { pdfTranslationAgentModels } from '../../../shared/pdf-translation-models'
 import type { SettingsSnapshot } from '../../../shared/settings'
 import type { ExplicitAgentBackendTarget } from '../../settings/backend-target'

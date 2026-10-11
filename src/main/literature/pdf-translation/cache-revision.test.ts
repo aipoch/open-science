@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
-import { pdfTranslationCacheRevision } from './cache-revision'
+import { pdfTranslationCacheRevision } from '@aipoch/pdf-translation/storage'
 
 let root: string
 async function fixture(): Promise<string> {

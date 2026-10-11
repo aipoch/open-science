@@ -1,7 +1,10 @@
-import { getPdfTranslationTextContent } from './pdf-translation-text-content'
+import {
+  getPdfTranslationTextContent,
+  isCurrentTranslation,
+  type PdfTranslationUnit
+} from '@aipoch/pdf-translation/reader'
 import type { PDFPageProxy } from 'pdfjs-dist'
 import { pdfjsLib } from '../pdfjs'
-import { isCurrentTranslation, type PdfTranslationUnit } from './pdf-translation'
 
 export type PdfInlineRect = { x: number; y: number; width: number; height: number }
 export type PdfInlineLayout = {

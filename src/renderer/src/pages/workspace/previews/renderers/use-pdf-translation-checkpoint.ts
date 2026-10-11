@@ -6,7 +6,7 @@ import {
   type PdfTranslationCheckpointRequest,
   type PdfTranslationCheckpoint,
   type PdfTranslationEdition
-} from '../../../../../../shared/pdf-translation'
+} from '@aipoch/pdf-translation/contracts'
 
 export function usePdfTranslationCheckpoint(
   source: PdfTranslationCheckpointRequest | undefined,

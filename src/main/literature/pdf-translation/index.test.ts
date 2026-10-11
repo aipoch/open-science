@@ -3,7 +3,7 @@ import { readPdfTranslationCases } from '../../../../test/fixtures/pdf-translati
 import { describe, expect, it, vi } from 'vitest'
 import { PdfTranslationOwner } from './index'
 import type { PdfTranslationCheckpoints } from './checkpoints'
-import type { PdfTranslationCheckpoint } from '../../../shared/pdf-translation'
+import type { PdfTranslationCheckpoint } from '@aipoch/pdf-translation/contracts'
 import { ApplicationCallerLeaseRegistry } from '../../caller-lifecycle'
 import type { ExplicitAgentBackendTarget } from '../../settings/backend-target'
 import {
@@ -2290,7 +2290,7 @@ describe('application-owned local translation', () => {
     const target = {
       modelId: 'qwen3-0.6b-q8',
       revision: 'qwen3-q8-runtime-1'
-    } as import('./local').PdfTranslationLocalTarget
+    } as import('@aipoch/pdf-translation').PdfTranslationLocalTarget
     const localRunner = {
       acquireTarget: vi.fn(async () => target),
       run: vi.fn(async (request: { signal: AbortSignal; prompt: string; systemPrompt: string }) => {

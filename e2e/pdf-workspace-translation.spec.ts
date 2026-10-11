@@ -1,7 +1,7 @@
 import { expect } from '@playwright/test'
 import { PDFDocument, StandardFonts } from 'pdf-lib'
 import type { Page } from 'playwright'
-import type { PdfDocumentSource } from '../src/shared/pdf-bookmarks'
+import type { PdfDocumentSource } from '@aipoch/pdf-document-contract'
 import { test } from './fixtures/electron-app'
 import { createProject, sendPrompt } from './certification/helpers'
 

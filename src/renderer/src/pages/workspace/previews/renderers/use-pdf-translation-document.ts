@@ -1,25 +1,28 @@
-import { verifiedPdfLatinAccentText } from './pdf-translation-latin-accents'
-import { pdfTranslationLayoutFragments } from './pdf-translation-fragments'
-import { getPdfTranslationTextContent } from './pdf-translation-text-content'
-import { resolveInlineFractions } from '@aipoch/pdf-translation/reader'
 import {
+  verifiedPdfLatinAccentText,
+  pdfTranslationLayoutFragments,
+  getPdfTranslationTextContent,
+  resolveInlineFractions,
   pdfLinkLabelKey,
   pdfLinkLabelMatches,
   pdfLinkAddressMatches,
   translatedPdfBracketedReference,
   translatedPdfLinkFragment,
-  translatedPdfLinkLabel
+  translatedPdfLinkLabel,
+  isPdfTranslationResultExtension,
+  type PdfTranslationResults
 } from '@aipoch/pdf-translation/reader'
+
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist'
 import { pdfjsLib } from '../pdfjs'
-import { isPdfTranslationResultExtension, type PdfTranslationResults } from './pdf-translation'
+
 import {
   pdfGenerationFailure,
   type PdfGenerationFailure,
   type PdfTranslationLayoutFailure,
   type PdfTranslationRecordLayoutRequest
-} from '../../../../../../shared/pdf-translation'
+} from '@aipoch/pdf-translation/contracts'
 
 /** A generated file belongs to exactly one accepted result snapshot, never a filename alone. */
 export type PdfTranslationArtifact = Readonly<{ results: PdfTranslationResults; data: Uint8Array }>

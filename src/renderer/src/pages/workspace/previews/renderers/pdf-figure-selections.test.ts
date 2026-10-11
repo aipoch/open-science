@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { expect, it } from 'vitest'
 import { groupPdfFigureSelections } from './pdf-figure-selections'
 import { copyPdfTable } from '../../../../../../shared/pdf-table-copy'
-import type { PdfStructureResult } from '../../../../../../shared/pdf-structure'
+import type { PdfStructureResult } from '@aipoch/pdf-structure/result'
 
 const batch = (page: number): PdfStructureResult => {
   const region = { page, x: 0.1, y: 0.1, width: 0.8, height: 0.5 }

@@ -3,7 +3,7 @@ import { PdfStructureReader } from './reader'
 import { createWebCallerContext } from '../../caller-context'
 import { ApplicationCallerLeaseRegistry } from '../../caller-lifecycle'
 import type { PdfStructureOwner } from './owner'
-import type { PdfStructureResult } from './result'
+import type { PdfStructureResult } from '@aipoch/pdf-structure/result'
 
 const request = {
   attachmentVersionId: 'version-1',

@@ -1,4 +1,3 @@
-export * from '@aipoch/pdf-translation/contracts'
 import { z } from 'zod'
 import {
   pdfTranslationAgentModelSchema as packageAgentModelSchema,

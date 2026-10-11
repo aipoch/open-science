@@ -2,7 +2,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, act } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { PdfTranslationEditions } from './PdfTranslationEditions'
-import type { PdfTranslationEdition } from '../../../../../../shared/pdf-translation'
+import type { PdfTranslationEdition } from '@aipoch/pdf-translation/contracts'
 import { useSettingsStore } from '@/stores/settings-store'
 if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = vi.fn()
 if (!Element.prototype.hasPointerCapture) Element.prototype.hasPointerCapture = () => false

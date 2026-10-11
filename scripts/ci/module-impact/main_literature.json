@@ -65,7 +65,6 @@
     "src/main/literature/pdf-structure/owner.ts",
     "src/main/literature/pdf-structure/reader.test.ts",
     "src/main/literature/pdf-structure/reader.ts",
-    "src/main/literature/pdf-structure/result.ts",
     "src/main/literature/pdf-structure/source-metadata.test.ts",
     "src/main/literature/pdf-structure/source.ts",
     "src/main/literature/pdf-structure/worker-result.test.ts",

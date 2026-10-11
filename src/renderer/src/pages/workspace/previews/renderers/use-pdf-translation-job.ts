@@ -1,34 +1,34 @@
-import { pdfTranslationBatchSourceIndices } from '../../../../../../shared/pdf-translation-batching'
+import {
+  pdfTranslationBatchSourceIndices,
+  reconcilePdfTranslationCheckpoint,
+  pdfTranslationSourceIndices
+} from '@aipoch/pdf-translation/text'
 import {
   providerErrorDetails,
   providerTextGenerationFailure,
   type ProviderTextGenerationFailure
 } from '../../../../../../shared/provider-text-generation-failure'
+
 import {
-  reconcilePdfTranslationCheckpoint,
-  pdfTranslationSourceIndices
-} from '../../../../../../shared/pdf-translation-recovery'
-import type {
-  PdfTranslationCheckpoint,
-  PdfTranslationGlossary,
-  PdfTranslationBlockFailure,
-  PdfTranslationLayoutFailure,
-  PdfTranslationApiModel,
-  PdfTranslationAgentModel,
-  PdfTranslationCheckpointReference
-} from '../../../../../../shared/pdf-translation'
-import {
+  type PdfTranslationCheckpoint,
+  type PdfTranslationGlossary,
+  type PdfTranslationBlockFailure,
+  type PdfTranslationLayoutFailure,
+  type PdfTranslationApiModel,
+  type PdfTranslationCheckpointReference,
   PdfTranslationError,
   pdfTranslationGlossarySchema,
   isPdfTranslationFailureRetryable,
-  pdfTranslationAgentModelSchema,
   pdfTranslationFailure,
   type PdfTranslationFailure,
   type PdfTranslationModel
-} from '../../../../../../shared/pdf-translation'
+} from '@aipoch/pdf-translation/contracts'
+import type { PdfTranslationAgentModel } from '../../../../../../shared/pdf-translation'
+
+import { pdfTranslationAgentModelSchema } from '../../../../../../shared/pdf-translation'
 import { useCallback, useLayoutEffect, useRef, useState } from 'react'
-import type { PdfTranslationResults, PdfTranslationSource } from './pdf-translation'
-import type { PdfDocumentSource } from '../../../../../../shared/pdf-bookmarks'
+import type { PdfTranslationResults, PdfTranslationSource } from '@aipoch/pdf-translation/reader'
+import type { PdfDocumentSource } from '@aipoch/pdf-document-contract'
 
 export type PdfTranslationTarget = Readonly<{
   id: string

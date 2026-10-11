@@ -10,9 +10,9 @@ import { callerLeaseOwnershipKey } from '../../caller-lifecycle'
 import type {
   ParsePdfStructureRequest,
   ReadCachedPdfStructureRequest,
-  ReadPdfStructureThumbnailRequest,
-  PdfStructureResult
+  ReadPdfStructureThumbnailRequest
 } from '../../../shared/pdf-structure'
+import type { PdfStructureResult } from '@aipoch/pdf-structure/result'
 import type { PdfStructureOwner } from './owner'
 import type { PdfStructureSourceRequest } from './source'
 

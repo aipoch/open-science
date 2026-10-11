@@ -5,7 +5,6 @@ import {
   type PdfRegionSelector,
   type PdfTextSelector
 } from './annotations'
-export { sanitizePdfDocumentSource, type PdfDocumentSource } from '@aipoch/pdf-document-contract'
 
 export type PdfBookmarkSource = PdfDocumentSource & Readonly<{ projectId: string }>
 

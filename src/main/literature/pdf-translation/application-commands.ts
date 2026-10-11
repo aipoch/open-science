@@ -2,7 +2,6 @@ import { pdfTranslationResourceDirectory } from '@aipoch/pdf-translation/resourc
 import { join } from 'node:path'
 import {
   PdfTranslationError,
-  type PdfTranslationBeginRequest,
   type PdfTranslationCheckpointRequest,
   type PdfTranslationOperationRequest,
   type PdfTranslationPdfRequest,
@@ -11,7 +10,8 @@ import {
   type PdfTranslationRunResult,
   type PdfTranslationSaveSnapshotRequest,
   type PdfTranslationSelectEditionRequest
-} from '../../../shared/pdf-translation'
+} from '@aipoch/pdf-translation/contracts'
+import { type PdfTranslationBeginRequest } from '../../../shared/pdf-translation'
 import {
   defineApplicationCommand,
   defineApplicationCommandGroup,
@@ -22,7 +22,7 @@ import {
 import { runtimeMetadata } from '../../runtime-metadata'
 import { toUnpackedAsarPath } from '../../skills/resource-path'
 import { resolveDataRoot } from '../../storage-root'
-import { pdfTranslationCacheRevision } from './cache-revision'
+import { pdfTranslationCacheRevision } from '@aipoch/pdf-translation/storage'
 import type { PdfTranslationOwner } from './index'
 import { PdfTranslationPdfCache } from './pdf-cache'
 import { PdfTranslationWriter } from './writer'

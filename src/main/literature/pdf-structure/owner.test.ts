@@ -17,12 +17,13 @@ import {
 } from '../../storage/migration-state'
 import type { LiteratureAttachmentAuthority } from '../attachment-authority'
 import type { ResolvedSessionPdfVersion } from '../session-pdf-source-resolver'
-import { createPdfStructureOwner, type PdfStructureEngine } from './owner'
+import { createPdfStructureOwner } from './owner'
+import { type PdfStructureEngine } from '@aipoch/pdf-structure'
 import {
   parsePdfStructureResult,
   type PdfStructureIdentity,
   type PdfStructureResult
-} from './result'
+} from '@aipoch/pdf-structure/result'
 import { PdfStructureSourceAuthority, type PdfStructureSourceRequest } from './source'
 
 vi.mock('electron', () => ({

@@ -5,12 +5,12 @@ import type { Page } from 'playwright'
 import { PDFDocument, StandardFonts } from 'pdf-lib'
 import { createProjectDbClient } from '../src/main/projects/prisma-client'
 import { literatureItemInputSchema } from '../src/shared/literature'
+import type { PdfTranslationBeginRequest } from '../src/shared/pdf-translation'
 import type {
-  PdfTranslationBeginRequest,
   PdfTranslationBeginResult,
   PdfTranslationCheckpoint,
   PdfTranslationRunResult
-} from '../src/shared/pdf-translation'
+} from '@aipoch/pdf-translation/contracts'
 import { test } from './fixtures/electron-app'
 
 // Real built main/preload/IPC/SQLite with a deterministic local provider. These tests

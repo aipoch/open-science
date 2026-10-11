@@ -9,8 +9,12 @@ import {
   usePdfTranslationDocument,
   type PdfTranslationArtifact
 } from './use-pdf-translation-document'
-import { createPdfTranslationSource, type PdfTranslationResults } from './pdf-translation'
-import { extractPdfTranslationSource } from './pdf-translation-extraction'
+import {
+  createPdfTranslationSource,
+  type PdfTranslationResults,
+  extractPdfTranslationSource
+} from '@aipoch/pdf-translation/reader'
+
 import {
   PDFDocument,
   StandardFonts,
@@ -24,7 +28,7 @@ import {
   type PdfTranslationPdfRequest,
   type PdfTranslationPdfResult,
   type PdfTranslationRecordLayoutRequest
-} from '../../../../../../shared/pdf-translation'
+} from '@aipoch/pdf-translation/contracts'
 const { getDocument, operators } = vi.hoisted(() => ({ getDocument: vi.fn(), operators: {} }))
 vi.mock('../pdfjs', () => ({ pdfjsLib: { getDocument, OPS: operators } }))
 afterEach(() => {

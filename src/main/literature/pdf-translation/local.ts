@@ -8,11 +8,11 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { LOCAL_MODEL_NOT_INSTALLED } from '../../../shared/local-models'
-import { PdfTranslationError } from '../../../shared/pdf-translation'
+import { PdfTranslationError } from '@aipoch/pdf-translation/contracts'
 import type { LocalModelOwner, LocalModelUse } from '../../local-models/owner'
 import { nodeRuntimeEnvironment } from '../../node-process-host'
 import { registerOwnedPosixProcessGroup, terminateProcessTree } from '../../process-tree'
-export type { PdfTranslationLocalRuntime, PdfTranslationLocalTarget } from '@aipoch/pdf-translation'
+
 const RUNTIME = 'transformers-4-2-0-ort-web-1-26-0-dev-20260416-b7804b056c-wasm-v1'
 const TIMEOUT_MS = 180_000
 

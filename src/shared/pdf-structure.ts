@@ -5,13 +5,7 @@ import { z } from 'zod'
 import { defineApplicationCommandContract } from './application-command-contract'
 
 import { decodePdfStructureResult, type PdfStructureResult } from '@aipoch/pdf-structure/result'
-export {
-  parsePdfStructureResult,
-  checkPdfStructureDecodingBudget,
-  pdfTextRunsSchema,
-  pdfTableSourceItemsSchema
-} from '@aipoch/pdf-structure/result'
-export type { PdfStructureResult, PdfStructureIdentity } from '@aipoch/pdf-structure/result'
+
 const id = z.string().regex(/^[a-z0-9-]{1,80}$/)
 
 const managedSource = z

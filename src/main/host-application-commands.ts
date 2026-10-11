@@ -22,9 +22,9 @@ import { pdfStructureCommandContracts } from '../shared/pdf-structure'
 import type {
   ParsePdfStructureRequest,
   ReadCachedPdfStructureRequest,
-  ReadPdfStructureThumbnailRequest,
-  PdfStructureResult
+  ReadPdfStructureThumbnailRequest
 } from '../shared/pdf-structure'
+import type { PdfStructureResult } from '@aipoch/pdf-structure/result'
 import type { PdfStructureReader } from './literature/pdf-structure/reader'
 import type { ArtifactPreviewResult, ReadArtifactPreviewRequest } from '../shared/artifacts'
 import type {

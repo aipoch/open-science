@@ -1,16 +1,15 @@
-import { getPdfTranslationLayoutSnapshot } from './pdf-translation-snapshot'
-import type {
-  PdfTranslationBeginRequest,
-  PdfTranslationBeginResult,
-  PdfTranslationRunRequest,
-  PdfTranslationRunResult,
-  PdfTranslationOperationRequest,
-  PdfTranslationCheckpointReference
-} from '../../../../../../shared/pdf-translation'
+import { getPdfTranslationLayoutSnapshot } from '@aipoch/pdf-translation/reader'
+import type { PdfTranslationBeginRequest } from '../../../../../../shared/pdf-translation'
 import {
+  type PdfTranslationBeginResult,
+  type PdfTranslationRunRequest,
+  type PdfTranslationRunResult,
+  type PdfTranslationOperationRequest,
+  type PdfTranslationCheckpointReference,
   PdfTranslationError,
   pdfTranslationBlockFailureSchema
-} from '../../../../../../shared/pdf-translation'
+} from '@aipoch/pdf-translation/contracts'
+
 import type {
   PdfTranslationExecutor,
   PdfTranslationTarget,

@@ -5,7 +5,7 @@ import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { PdfStructureCache } from '../src/main/literature/pdf-structure/cache'
 import { createPdfStructureEngine } from '../src/main/literature/pdf-structure/engine'
 import { literatureItemInputSchema } from '../src/shared/literature'
-import type { PdfStructureResult } from '../src/shared/pdf-structure'
+import type { PdfStructureResult } from '@aipoch/pdf-structure/result'
 import { test } from './fixtures/electron-app'
 
 function textPdf(pageCount = 2): Buffer {

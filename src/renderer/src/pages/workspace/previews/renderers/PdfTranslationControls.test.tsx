@@ -2,7 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { PdfTranslationControls } from './PdfTranslationControls'
-import { createPdfTranslationSource } from './pdf-translation'
+import { createPdfTranslationSource } from '@aipoch/pdf-translation/reader'
 import type { PdfTranslationJob } from './use-pdf-translation-job'
 import { useSettingsStore } from '@/stores/settings-store'
 import type { ProviderView } from '../../../../../../shared/settings'

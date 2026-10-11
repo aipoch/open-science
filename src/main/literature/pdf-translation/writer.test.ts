@@ -7,7 +7,7 @@ import { dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import { PDFDocument, StandardFonts } from 'pdf-lib'
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { expect, it } from 'vitest'
-import { type PdfTranslationPdfRequest } from '../../../shared/pdf-translation'
+import { type PdfTranslationPdfRequest } from '@aipoch/pdf-translation/contracts'
 import { ApplicationCallerLeaseRegistry } from '../../caller-lifecycle'
 import { PdfTranslationWriter } from './writer'
 

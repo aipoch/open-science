@@ -2,8 +2,8 @@
 import { readPdfTranslationCases } from '../../../../../../../test/fixtures/pdf-translation/read-cases'
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
-import { PdfTranslationError } from '../../../../../../shared/pdf-translation'
-import { createPdfTranslationSource } from './pdf-translation'
+import { PdfTranslationError } from '@aipoch/pdf-translation/contracts'
+import { createPdfTranslationSource } from '@aipoch/pdf-translation/reader'
 import {
   restorePdfTranslationJob,
   usePdfTranslationJob,

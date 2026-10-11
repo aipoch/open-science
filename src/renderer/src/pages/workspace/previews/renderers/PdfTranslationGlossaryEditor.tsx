@@ -3,8 +3,8 @@ import { Plus, Trash2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import type { PdfTranslationGlossary } from '../../../../../../shared/pdf-translation'
-import { glossaryError } from './pdf-translation-glossary'
+import type { PdfTranslationGlossary } from '@aipoch/pdf-translation/contracts'
+import { glossaryError } from '@aipoch/pdf-translation/reader'
 
 export function PdfTranslationGlossaryEditor({
   value,

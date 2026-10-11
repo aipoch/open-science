@@ -24,11 +24,11 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { Input } from '@/components/ui/input'
 import { PdfTranslationGlossaryEditor } from './PdfTranslationGlossaryEditor'
-import { glossaryError } from './pdf-translation-glossary'
+import { glossaryError } from '@aipoch/pdf-translation/reader'
 import {
   formatPdfTranslationGlossary,
   pdfTranslationGlossarySchema
-} from '../../../../../../shared/pdf-translation'
+} from '@aipoch/pdf-translation/contracts'
 import * as Dialog from '@/components/ui/dialog'
 import {
   dialogOverlayClassName,
@@ -52,7 +52,7 @@ import { ErrorNotice } from '@/components/error-notice'
 import {
   PDF_TRANSLATION_LANGUAGES,
   isPdfTranslationLanguageSupported
-} from '../../../../../../shared/pdf-translation-languages'
+} from '@aipoch/pdf-translation/text'
 import { PdfTranslationActionHint } from './PdfTranslationActionHint'
 import { LocalPdfTranslationModel } from './LocalPdfTranslationModel'
 import { useLocalPdfTranslationModel } from './use-pdf-translation-agent'

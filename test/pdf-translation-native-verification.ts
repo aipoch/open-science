@@ -1,5 +1,5 @@
 import type { PDFDocumentProxy } from 'pdfjs-dist/legacy/build/pdf.mjs'
-import type { PdfTranslationPdfRequest } from '../src/shared/pdf-translation'
+import type { PdfTranslationPdfRequest } from '@aipoch/pdf-translation/contracts'
 import { join } from 'node:path'
 import { pdfTranslationResourceDirectory } from '@aipoch/pdf-translation/resources'
 import { pathToFileURL } from 'node:url'

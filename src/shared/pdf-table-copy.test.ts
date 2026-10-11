@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { copyPdfTable, pdfTableGrid, pdfTableLayout } from './pdf-table-copy'
-import type { PdfStructureResult } from './pdf-structure'
+import type { PdfStructureResult } from '@aipoch/pdf-structure/result'
 
 type Table = NonNullable<PdfStructureResult['elements'][number]['table']>
 const table: Table = {

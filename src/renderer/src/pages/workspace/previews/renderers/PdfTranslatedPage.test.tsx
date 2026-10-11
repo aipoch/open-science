@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 import { PdfTranslatedPage } from './PdfTranslatedPage'
 import { renderPdfTranslationInline } from './pdf-translation-inline'
-import type { PdfTranslation } from './pdf-translation'
+import type { PdfTranslation } from '@aipoch/pdf-translation/reader'
 vi.mock('../useNearViewport', () => ({ useNearViewport: () => [() => undefined, true] }))
 vi.mock('./pdf-translation-inline', () => ({ renderPdfTranslationInline: vi.fn() }))
 afterEach(() => {
