@@ -267,7 +267,8 @@
     "scripts/dev-build-watch.integration.test.ts",
     "scripts/dev-build-watch.test.ts",
     "src/main/windows-executable-trust.ts",
-    "src/main/windows-executable-trust.test.ts"
+    "src/main/windows-executable-trust.test.ts",
+    "scripts/windows-signing-policy.test.ts"
   ],
   "interfacePaths": [
     "src/main/app-lifecycle.ts",
