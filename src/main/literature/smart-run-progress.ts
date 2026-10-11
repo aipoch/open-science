@@ -1,24 +1,12 @@
 import type { PrismaClient } from '@prisma/client'
-import { z } from 'zod'
-import {
-  smartRunProgressSchema,
-  type SmartRunProgress,
-  type SmartRunProgressRow
-} from '../../shared/literature-smart-collections'
-
-const resultSchema = z.object({
-  answer: z.object({
-    verdict: z.enum(['match', 'no-match', 'uncertain']),
-    model: z.string().optional()
-  })
-})
+import type { ScreeningProgressData } from '@aipoch/literature-screening'
 
 /** Read one coherent, bounded projection of committed work, without changing the run. */
 export async function readSmartRunProgress(
   client: PrismaClient,
   collectionId: string,
   runId: string
-): Promise<SmartRunProgress> {
+): Promise<ScreeningProgressData> {
   return client.$transaction(async (tx) => {
     const run = await tx.literatureSmartRun.findFirstOrThrow({
       where: { id: runId, collectionId },
@@ -42,7 +30,7 @@ export async function readSmartRunProgress(
       WHERE runId = ${runId} AND deferred = 0
       GROUP BY outcome
     `
-    const counts: SmartRunProgress['counts'] = {
+    const counts: ScreeningProgressData['counts'] = {
       match: 0,
       review: 0,
       noMatch: 0,
@@ -103,35 +91,13 @@ export async function readSmartRunProgress(
         })
       ).map((row) => [row.itemId, row.decision])
     )
-    const project = (row: (typeof outcomes)[number]): SmartRunProgressRow => {
-      let verdict: SmartRunProgressRow['verdict']
-      if (row.state === 'done' && row.resultJson) {
-        try {
-          const result = resultSchema.safeParse(JSON.parse(row.resultJson))
-          if (result.success && result.data.answer.model !== 'insufficient-evidence')
-            verdict = result.data.answer.verdict
-        } catch {
-          // Older/incomplete run details stay unavailable; never infer them from current results.
-        }
-      }
-      const override = overrides.get(row.itemId)
-      return {
-        id: row.itemId,
-        title: titles.get(row.itemId) ?? null,
-        state: smartRunProgressSchema.shape.candidates.element.shape.state.parse(row.state),
-        ...(verdict ? { verdict } : {}),
-        ...(row.evaluatedAt ? { evaluatedAt: row.evaluatedAt.getTime() } : {}),
-        ...(override === 'include' || override === 'exclude' ? { override } : {})
-      }
-    }
-    return smartRunProgressSchema.parse({
-      runId,
+    return {
       state: run.state,
-      total: Object.values(counts).reduce((sum, count) => sum + count, 0),
-      done: counts.match + counts.review + counts.noMatch + counts.unavailable + counts.error,
       counts,
-      candidates: candidates.map(project),
-      outcomes: outcomes.map(project)
-    })
+      candidates,
+      outcomes,
+      titles: [...titles].map(([id, title]) => ({ id, title })),
+      overrides: [...overrides].map(([itemId, decision]) => ({ itemId, decision }))
+    }
   })
 }

@@ -3,7 +3,7 @@ import { createContext } from 'react'
 // Only action controls subscribe; pending writes do not invalidate full table rows.
 export const SmartDecisionPendingContext = createContext(false)
 
-import type { SmartCollectionView } from '../../../../../shared/literature-smart-collections'
+import type { SmartCollectionView } from '@aipoch/literature-screening/contracts'
 
 // One owner for live progress and the last settled table summary. A write invalidates
 // reads both before and after its receipt; reads during a write cannot publish stale counts.

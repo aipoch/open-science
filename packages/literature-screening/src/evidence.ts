@@ -1,13 +1,10 @@
 import { createHash } from 'node:crypto'
-import { Prisma, type PrismaClient } from '@prisma/client'
-import type { SmartEvidence, SmartEvidenceMode } from '../../shared/literature-smart-collections'
-import type { LiteratureDocumentReader } from './document-reader'
+import type { ScreeningStore, ScreeningDocument, ReadScreeningEvidence } from './ports.js'
+import type { SmartEvidence, SmartEvidenceMode } from './contracts.js'
 
-type Client = PrismaClient | Prisma.TransactionClient
-type EvidenceVersion = Prisma.LiteratureAttachmentVersionGetPayload<Record<string, never>>
-export type ReadSmartEvidence = (
-  request: Parameters<LiteratureDocumentReader['classificationEvidence']>[0]
-) => ReturnType<LiteratureDocumentReader['classificationEvidence']>
+type Client = ScreeningStore
+type EvidenceVersion = ScreeningDocument
+export type ReadSmartEvidence = ReadScreeningEvidence
 
 // Metadata-only freshness checks do not parse PDFs or send model requests.
 // null means a batch already checked that no version exists; undefined requests a live lookup.
@@ -20,15 +17,11 @@ export async function smartInput(
   digest: string
   version: EvidenceVersion | undefined
 }> {
-  const attachment =
-    mode === 'full-text' && loadedVersion === undefined
-      ? await client.literatureAttachment.findFirst({
-          where: { itemId: item.id, kind: 'fullText' },
-          orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
-          include: { versions: { orderBy: { versionNumber: 'desc' }, take: 1 } }
-        })
-      : undefined
-  const version = loadedVersion ?? attachment?.versions[0]
+  const version =
+    loadedVersion ??
+    (mode === 'full-text' && loadedVersion === undefined
+      ? ((await client.documents([item.id]))[0]?.document ?? undefined)
+      : undefined)
   const signature =
     mode === 'abstract'
       ? [item.title, item.abstract]

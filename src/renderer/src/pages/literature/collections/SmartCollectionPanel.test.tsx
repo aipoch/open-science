@@ -11,7 +11,7 @@ const SmartCollectionPanel = (
   const [state] = useState(createSmartCollectionState)
   return <Panel {...props} state={state} />
 }
-import type { SmartCollectionView } from '../../../../../shared/literature-smart-collections'
+import type { SmartCollectionView } from '@aipoch/literature-screening/contracts'
 
 const { configure } = vi.hoisted(() => ({ configure: vi.fn() }))
 vi.mock('@/stores/settings-store', () => ({

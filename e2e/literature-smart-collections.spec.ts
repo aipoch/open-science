@@ -1,4 +1,4 @@
-import type { SmartCollectionView } from '../src/shared/literature-smart-collections'
+import type { SmartCollectionView } from '@aipoch/literature-screening/contracts'
 import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
 

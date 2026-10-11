@@ -68,6 +68,10 @@
     {
       "root": "packages/reproducibility",
       "dependencies": ["packages/environment", "packages/diagnostics", "packages/notebook-analysis"]
+    },
+    {
+      "root": "packages/literature-screening",
+      "dependencies": []
     }
   ]
 }

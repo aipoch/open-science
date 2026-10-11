@@ -20,7 +20,7 @@ import type {
   LiteratureItemInput,
   LiteratureItemView
 } from '../../../../shared/literature'
-import type { SmartCollectionView } from '../../../../shared/literature-smart-collections'
+import type { SmartCollectionView } from '@aipoch/literature-screening/contracts'
 import type { Project } from '../../../../shared/projects'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { createInitialSessionState, useSessionStore } from '@/stores/session-store'

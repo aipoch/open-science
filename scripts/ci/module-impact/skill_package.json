@@ -1009,8 +1009,6 @@
       "src/renderer/src/pages/literature/collections/SmartCollectionDecision.test.tsx",
       "src/renderer/src/pages/literature/collections/SmartCollectionDraftPreview.test.tsx",
       "src/renderer/src/pages/literature/collections/SmartCollectionPanel.test.tsx",
-      "src/renderer/src/pages/literature/collections/SmartCollectionProcess.test.tsx",
-      "src/renderer/src/pages/literature/collections/smart-collection-state.test.ts",
       "src/renderer/src/pages/literature/detail/LiteratureAttachments.render.test.tsx",
       "src/renderer/src/pages/literature/detail/LiteratureDetailController.test.ts",
       "src/renderer/src/pages/literature/detail/LiteratureFullTextLookup.render.test.tsx",

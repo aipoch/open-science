@@ -17,7 +17,10 @@ import {
   literatureCitationStylePreviewSchema,
   literatureCitationStyleViewSchema
 } from '@aipoch/literature-citations/contracts'
-import { SMART_RULE_STORAGE_MAX_LENGTH, serializedSmartRuleSchema } from './smart-collection-rule'
+import {
+  SMART_RULE_STORAGE_MAX_LENGTH,
+  serializedSmartRuleSchema
+} from '@aipoch/literature-screening/rules'
 import {
   smartCollectionCommandSchemas,
   smartHistorySchema,
@@ -27,7 +30,7 @@ import {
   smartCollectionRowSchema,
   smartEvidenceModeSchema,
   smartScopeSchema
-} from './literature-smart-collections'
+} from '@aipoch/literature-screening/contracts'
 import {
   LITERATURE_ATTACHMENT_VERSION_REFERENCE_PREFIX,
   createLiteratureAttachmentVersionReference,

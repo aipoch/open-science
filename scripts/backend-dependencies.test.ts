@@ -147,6 +147,7 @@ it.each([
   'notebook-syntax',
   'literature-citations',
   'literature-discovery',
+  'literature-screening',
   'journal-catalog',
   'reproducibility',
   'skills'

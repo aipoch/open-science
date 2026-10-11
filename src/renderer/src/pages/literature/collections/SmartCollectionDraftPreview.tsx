@@ -8,7 +8,7 @@ import type {
   SmartCollectionPreview,
   SmartScope,
   SmartEvidenceMode
-} from '../../../../../shared/literature-smart-collections'
+} from '@aipoch/literature-screening/contracts'
 import { SmartCollectionAssessment } from './SmartCollectionDecision'
 
 /** Draft results never enter the collection's persisted assessments or counts. */

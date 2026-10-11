@@ -1,29 +1,21 @@
 import {
   AutomaticClassificationPausedError,
   type AutomaticClassificationPauseReason
-} from '../../shared/classification'
-import { saveSmartRuleVersion } from './smart-rule-history'
-import { readSmartRunProgress } from './smart-run-progress'
-import type { ClassificationUsageContext } from '../../shared/classification'
+} from './classification.js'
+import { readSmartRunProgress } from './progress.js'
+import type { ClassificationUsageContext } from './classification.js'
 import {
   smartRulePrompt,
   formatSmartRule,
   parseSmartRule,
   serializedSmartRuleSchema
-} from '../../shared/smart-collection-rule'
-import { smartInput, readSmartEvidence, type ReadSmartEvidence } from './smart-evidence'
-import {
-  ClassificationEvaluationError,
-  classificationFailureCategories
-} from '../../shared/classification'
+} from './rules.js'
+import { smartInput, readSmartEvidence, type ReadSmartEvidence } from './evidence.js'
+import { ClassificationEvaluationError, classificationFailureCategories } from './classification.js'
 import { randomUUID } from 'node:crypto'
-import { Prisma, type PrismaClient } from '@prisma/client'
 import { z } from 'zod'
-import type { ClassifyLiterature, ClassificationSnapshot } from '../../shared/classification'
-import {
-  LITERATURE_COLLECTION_NAME_CONFLICT,
-  type LiteratureCatalogReceipt
-} from '../../shared/literature'
+import type { ClassifyLiterature } from './classification.js'
+import type { ScreeningReceipt as LiteratureCatalogReceipt } from './contracts.js'
 import {
   type SmartCollectionCommand,
   type SmartCollectionPreview,
@@ -36,8 +28,9 @@ import {
   smartScopeSchema,
   smartRunSnapshotSchema,
   SMART_COLLECTION_RESUME_UNAVAILABLE
-} from '../../shared/literature-smart-collections'
-import { acquireDataRootWriter } from '../storage/migration-state'
+} from './contracts.js'
+import type { ScreeningStore, ScreeningDatabase, ScreeningDefinition } from './ports.js'
+import type { ScreeningClassifier } from './classification.js'
 
 const checkpointSchema = z.array(
   z.object({
@@ -56,7 +49,7 @@ const savedResultSchema = z.object({
   })
 })
 type Checkpoint = z.infer<typeof checkpointSchema>
-type Client = PrismaClient | Prisma.TransactionClient
+type Client = ScreeningStore
 
 function matchesDecisionSource(
   row: { decisionSource?: 'ai' | 'manual' },
@@ -116,14 +109,11 @@ export class LiteratureSmartCollections {
   }
 
   constructor(
-    private readonly getClient: () => Promise<PrismaClient>,
-    private readonly classifier: {
-      subscribe?: (listener: () => void) => () => void
-      snapshot: () => Promise<ClassificationSnapshot>
-      classifyLiterature: ClassifyLiterature
-    },
+    private readonly getClient: () => Promise<ScreeningDatabase>,
+    private readonly classifier: ScreeningClassifier,
     private readonly onChanged: (id: string) => void,
-    private readonly readEvidence?: ReadSmartEvidence
+    private readonly readEvidence?: ReadSmartEvidence,
+    private readonly acquireWriter: () => () => void = () => () => {}
   ) {}
 
   private automaticTimer?: ReturnType<typeof setTimeout>
@@ -152,9 +142,7 @@ export class LiteratureSmartCollections {
           this.automaticDirty = false
           const client = await this.getClient()
           if (!(await this.policy()).configured) return
-          const collections = await client.literatureSmartCollection.findMany({
-            where: { autoUpdate: true }
-          })
+          const collections = await client.listCollections(true)
           for (const { collectionId, automaticPauseReason } of collections) {
             if (this.disposed) return
             if (this.active.has(collectionId)) {
@@ -208,24 +196,14 @@ export class LiteratureSmartCollections {
     this.reads.clear()
     this.scopeReads.clear()
     const client = await this.getClient()
-    const current = await client.literatureSmartCollection.findUnique({ where: { collectionId } })
+    const current = await client.definition(collectionId)
     if (!current) return
-    const outdated = await client.literatureSmartRun.findFirst({
-      where: {
-        collectionId,
-        state: { in: ['queued', 'running'] },
-        ruleRevision: { not: current.ruleRevision }
-      }
-    })
+    const outdated = await client.hasOutdatedRun(collectionId, current.ruleRevision)
     if (outdated) this.active.get(collectionId)?.abort()
     if (current.autoUpdate) this.schedule()
   }
   private async checkpoint(client: Client, runId: string, unfinished = false): Promise<Checkpoint> {
-    const rows = await client.literatureSmartRunItem.findMany({
-      where: { runId, ...(unfinished ? { state: { not: 'done' } } : {}) },
-      select: { itemId: true, digest: true, state: true, failure: true, deferred: true },
-      orderBy: { itemId: 'asc' }
-    })
+    const rows = await client.runItems({ runId, unfinished })
     return checkpointSchema.parse(
       rows.map((row) => ({
         id: row.itemId,
@@ -237,51 +215,21 @@ export class LiteratureSmartCollections {
     )
   }
   async policy(): Promise<{ key: string; configured: boolean }> {
-    const snapshot = await this.classifier.snapshot()
-    const binding = snapshot.smartCollections
-    const service = snapshot.services.find((entry) => entry.id === binding?.serviceId)
-    return {
-      key: JSON.stringify([
-        binding?.serviceId,
-        binding?.modelId,
-        service?.adapter,
-        service?.baseUrl,
-        'literature-choice-v1'
-      ]),
-      configured: Boolean(binding && service?.configured)
-    }
+    const { key, configured } = await this.classifier.policy()
+    return { key, configured }
   }
-  async scope(
-    client: Client,
-    scope: SmartScope
-  ): Promise<Prisma.LiteratureItemWhereInput | undefined> {
-    const available = { deletedAt: null, mergedIntoItemId: null }
-    if (scope.kind === 'library') return available
-    if (scope.kind === 'collection') {
-      const source = await client.literatureCollection.findUnique({
-        where: { id: scope.id },
-        include: { smart: true }
-      })
-      if (!source || source.smart) return undefined
-      return { ...available, collections: { some: { collectionId: scope.id } } }
-    }
-    const project = await client.project.findFirst({ where: { id: scope.id, deletedAt: null } })
-    if (!project || (await client.projectDeletionIntent.count({ where: { projectId: scope.id } })))
-      return undefined
-    return { ...available, projects: { some: { projectId: scope.id } } }
+  async scope(client: Client, scope: SmartScope): Promise<SmartScope | undefined> {
+    return (await client.scopeAvailable(scope)) ? scope : undefined
   }
   private async definition(
     client: Client,
     id: string
   ): Promise<{
-    definition: Prisma.LiteratureSmartCollectionGetPayload<{ include: { collection: true } }>
+    definition: ScreeningDefinition
     scope: SmartScope
-    where: Prisma.LiteratureItemWhereInput | undefined
+    where: SmartScope | undefined
   }> {
-    const definition = await client.literatureSmartCollection.findUnique({
-      where: { collectionId: id },
-      include: { collection: true }
-    })
+    const definition = await client.definition(id)
     if (!definition) throw new Error('Smart collection is unavailable.')
     const scope = smartScopeSchema.parse({
       kind: definition.scopeKind,
@@ -294,48 +242,13 @@ export class LiteratureSmartCollections {
     Promise<Awaited<ReturnType<LiteratureSmartCollections['scanRows']>>>
   >()
 
-  // Metadata scans share one SQLite connection. Temporary triggers track only relevant
-  // local writes; data_version still catches all commits from external connections.
+  // Reuse scans only within the same database identity and committed revision.
+  // Transaction-scoped readers bypass this cache to observe their own writes.
+  private scopeReadClient?: ScreeningDatabase
   private readonly scopeReads = new Map<
     string,
     Awaited<ReturnType<LiteratureSmartCollections['scanRows']>>
   >()
-  private scopeReadClient?: Client
-  private scopeVersionReady?: Promise<void>
-
-  private async initializeScopeVersion(client: PrismaClient): Promise<void> {
-    await client.$transaction(async (tx) => {
-      await tx.$executeRawUnsafe(
-        'CREATE TEMP TABLE IF NOT EXISTS SmartScopeVersion (version INTEGER NOT NULL)'
-      )
-      await tx.$executeRawUnsafe(
-        'INSERT INTO SmartScopeVersion SELECT 0 WHERE NOT EXISTS (SELECT 1 FROM SmartScopeVersion)'
-      )
-      // Fixed application identifiers only; no user input is interpolated into SQL.
-      for (const table of [
-        'LiteratureItem',
-        'LiteratureCollection',
-        'LiteratureCollectionItem',
-        'LiteratureSmartCollection',
-        'LiteratureSmartAssessment',
-        'LiteratureSmartOverride',
-        'LiteratureSmartRun',
-        'LiteratureSmartRunItem',
-        'LiteratureAttachment',
-        'LiteratureAttachmentVersion',
-        'ProjectLiterature',
-        'Project',
-        'ProjectDeletionIntent'
-      ]) {
-        for (const operation of ['INSERT', 'UPDATE', 'DELETE']) {
-          await tx.$executeRawUnsafe(`CREATE TEMP TRIGGER IF NOT EXISTS "SmartScope_${table}_${operation}"
-            AFTER ${operation} ON main."${table}" BEGIN
-            UPDATE SmartScopeVersion SET version = version + 1; END`)
-        }
-      }
-    })
-  }
-
   private async rows(
     id: string,
     client?: Client,
@@ -346,22 +259,11 @@ export class LiteratureSmartCollections {
     const root = await this.getClient()
     if (client && client !== root) return this.scanRows(id, client, itemIds, details, projectId)
     const cacheable = !details && !itemIds && !projectId
-    const version = async (): Promise<string> => {
-      const [state] = await root.$queryRaw<{ changes: bigint; version: bigint }[]>`
-        SELECT SmartScopeVersion.version AS changes, data_version AS version
-        FROM temp.SmartScopeVersion, pragma_data_version
-      `
-      return `${state.changes}:${state.version}`
-    }
     if (this.scopeReadClient !== root) {
       this.scopeReads.clear()
       this.scopeReadClient = root
-      this.scopeVersionReady = this.initializeScopeVersion(root).catch((error) => {
-        this.scopeReadClient = undefined
-        throw error
-      })
     }
-    await this.scopeVersionReady
+    const version = (): Promise<string> => root.revision()
     const before = cacheable ? await version() : undefined
     const policy = await this.policy()
     const key = JSON.stringify([id, itemIds, details, projectId, policy, before])
@@ -422,10 +324,7 @@ export class LiteratureSmartCollections {
     const policy = await this.policy()
     const rows: SmartCollectionView['rows'] = []
     const digests = new Map<string, string>()
-    const lastRun = await client.literatureSmartRun.findFirst({
-      where: { collectionId: id },
-      orderBy: { createdAt: 'desc' }
-    })
+    const lastRun = await client.latestRuns(id).then((runs) => runs[0])
     const reusableCheckpoint =
       lastRun?.abandonedAt === null &&
       lastRun.ruleRevision === definition.ruleRevision &&
@@ -437,79 +336,34 @@ export class LiteratureSmartCollections {
     )
     const evidenceMode = smartEvidenceModeSchema.parse(definition.evidenceMode)
     let cursor: string | undefined
-    // ponytail: freshness scans scope metadata in 200-record pages; add indexed input digests
-    // if many large smart scopes make catalog reads too expensive. No abstracts are retained here.
+    // Scan bounded pages without retaining abstracts or document content.
     while (where) {
-      const items = await client.literatureItem.findMany({
-        where:
-          itemIds || projectId
-            ? {
-                AND: [
-                  where,
-                  ...(itemIds ? [{ id: { in: itemIds } }] : []),
-                  ...(projectId ? [{ projects: { some: { projectId } } }] : [])
-                ]
-              }
-            : where,
-        orderBy: { id: 'asc' },
-        take: 200,
-        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-        select: {
-          id: true,
-          title: true,
-          abstract: true,
-          smartAssessments: {
-            where: { collectionId: id },
-            select: {
-              ruleRevision: true,
-              inputDigest: true,
-              policyKey: true,
-              model: true,
-              verdict: true,
-              evaluatedAt: details,
-              probabilitiesJson: details,
-              evidenceJson: details
-            }
-          },
-          smartOverrides: { where: { collectionId: id } }
-        }
+      const items = await client.papers(where, {
+        itemIds,
+        projectId,
+        after: cursor,
+        limit: 200,
+        collectionId: id,
+        details
       })
       const ruleVersions = details
         ? new Map(
             (
-              await client.literatureSmartRuleRevision.findMany({
-                where: {
-                  collectionId: id,
-                  revision: {
-                    in: [
-                      ...new Set(
-                        items.flatMap((item) =>
-                          item.smartAssessments.map((assessment) => assessment.ruleRevision)
-                        )
-                      )
-                    ]
-                  }
-                }
-              })
+              await client.ruleVersions(id, [
+                ...new Set(
+                  items.flatMap((item) =>
+                    item.smartAssessments.map((assessment) => assessment.ruleRevision)
+                  )
+                )
+              ])
             ).map((version) => [version.revision, version])
           )
         : new Map()
       const versions = new Map(
         evidenceMode === 'full-text' && items.length
-          ? (
-              await client.literatureItem.findMany({
-                where: { id: { in: items.map((item) => item.id) } },
-                select: {
-                  id: true,
-                  attachments: {
-                    where: { kind: 'fullText' },
-                    orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
-                    take: 1,
-                    select: { versions: { orderBy: { versionNumber: 'desc' }, take: 1 } }
-                  }
-                }
-              })
-            ).map((item) => [item.id, item.attachments[0]?.versions[0]] as const)
+          ? (await client.documents(items.map((item) => item.id))).map(
+              (item) => [item.itemId, item.document] as const
+            )
           : []
       )
       for (const item of items) {
@@ -624,8 +478,7 @@ export class LiteratureSmartCollections {
   ): Promise<SmartCollectionView['rows']> {
     if (!itemIds.length) return []
     client ??= await this.getClient()
-    if (!(await client.literatureSmartCollection.findUnique({ where: { collectionId: id } })))
-      return []
+    if (!(await client.definition(id))) return []
     return (await this.rows(id, client, itemIds)).rows
   }
   async members(
@@ -635,8 +488,7 @@ export class LiteratureSmartCollections {
     source: 'all' | 'ai' | 'manual' = 'all'
   ): Promise<string[] | undefined> {
     client ??= await this.getClient()
-    if (!(await client.literatureSmartCollection.count({ where: { collectionId: id } })))
-      return undefined
+    if (!(await client.definition(id))) return undefined
     return (await this.rows(id, client, undefined, false)).rows
       .filter((row) => matchesDecisionSource(row, source))
       .filter((row) =>
@@ -655,9 +507,7 @@ export class LiteratureSmartCollections {
   ): Promise<string[]> {
     client ??= await this.getClient()
     if (projectId && !(await this.scope(client, { kind: 'project', id: projectId }))) return []
-    const collections = await client.literatureSmartCollection.findMany({
-      select: { collectionId: true }
-    })
+    const collections = await client.listCollections()
     const result: string[] = []
     for (const { collectionId } of collections) {
       const { rows } = await this.rows(
@@ -675,9 +525,7 @@ export class LiteratureSmartCollections {
     const memberships = new Map<string, string[]>()
     if (!itemIds.length) return memberships
     client ??= await this.getClient()
-    const collections = await client.literatureSmartCollection.findMany({
-      select: { collectionId: true }
-    })
+    const collections = await client.listCollections()
     for (const { collectionId } of collections) {
       const { rows } = await this.rows(collectionId, client, itemIds, false)
       for (const row of rows) {
@@ -703,23 +551,12 @@ export class LiteratureSmartCollections {
       false
     )
     const client = await this.getClient()
-    const run = await client.literatureSmartRun.findFirst({
-      where: { collectionId: id },
-      orderBy: { createdAt: 'desc' }
-    })
+    const run = await client.latestRuns(id).then((runs) => runs[0])
     if (run && ['queued', 'running'].includes(run.state) && !this.active.has(id)) {
-      await client.literatureSmartRun.update({
-        where: { id: run.id },
-        data: { state: 'interrupted' }
-      })
+      await client.updateRun(run.id, { state: 'interrupted' })
       run.state = 'interrupted'
     }
-    const runUsage = run
-      ? await client.classificationUsage.aggregate({
-          where: { runId: run.id },
-          _sum: { inputTokens: true, outputTokens: true }
-        })
-      : undefined
+    const runUsage = run ? await client.usage(run.id) : undefined
     const runSnapshot = (() => {
       try {
         return smartRunSnapshotSchema.safeParse(JSON.parse(run?.snapshotJson ?? 'null')).data
@@ -729,31 +566,14 @@ export class LiteratureSmartCollections {
     })()
     const runUsageScenarios =
       run && ['cancelled', 'interrupted', 'failed'].includes(run.state)
-        ? await client.classificationUsage.findMany({
-            where: { runId: run.id },
-            distinct: ['scenario'],
-            select: { scenario: true }
-          })
+        ? (runUsage?.scenarios ?? [])
         : []
-    const usageIncomplete = run
-      ? (await client.classificationUsage.count({
-          where: { runId: run.id, usageIncomplete: true }
-        })) > 0
-      : false
+    const usageIncomplete = runUsage?.incomplete ?? false
     // Summary refreshes need bounded counts, not every checkpoint/digest in a long run.
     // Full checkpoint validation remains in the execution and resume paths.
-    const runCounts = run
-      ? await client.$queryRaw<Array<{ state: string; count: bigint }>>`
-          SELECT state, COUNT(*) AS count FROM LiteratureSmartRunItem
-          WHERE runId = ${run.id} AND deferred = 0 GROUP BY state
-        `
-      : []
+    const runCounts = run ? await client.runCounts(run.id) : []
     const runFailure = runCounts.some((group) => group.state === 'error')
-      ? await client.literatureSmartRunItem.findFirst({
-          where: { runId: run!.id, deferred: false, state: 'error' },
-          orderBy: { itemId: 'asc' },
-          select: { failure: true }
-        })
+      ? await client.runFailure(run!.id)
       : undefined
     const inView = (row: (typeof rows)[number], decision: typeof filter): boolean =>
       decision === 'all' ||
@@ -782,19 +602,8 @@ export class LiteratureSmartCollections {
       if (row.override) overrides++
       if (row.verdict === 'pending' || row.verdict === 'stale' || row.verdict === 'error') pending++
     }
-    const snapshot = await this.classifier.snapshot()
-    const sourceName =
-      scope.kind === 'library'
-        ? ''
-        : scope.kind === 'collection'
-          ? ((
-              await client.literatureCollection.findUnique({
-                where: { id: scope.id },
-                select: { name: true }
-              })
-            )?.name ?? '')
-          : ((await client.project.findUnique({ where: { id: scope.id }, select: { name: true } }))
-              ?.name ?? '')
+    const snapshot = await this.classifier.policy()
+    const sourceName = scope.kind === 'library' ? '' : await client.sourceName(scope)
     return {
       scope,
       ruleRevision: definition.ruleRevision,
@@ -809,7 +618,7 @@ export class LiteratureSmartCollections {
           ? (definition.automaticPauseRunId ?? undefined)
           : undefined,
       sourceName,
-      model: snapshot.smartCollections?.modelId,
+      model: snapshot.model,
       overrides,
       sourceAvailable: Boolean(where),
       configured: policy.configured,
@@ -843,8 +652,8 @@ export class LiteratureSmartCollections {
                 0
               ),
               total: runCounts.reduce((sum, group) => sum + Number(group.count), 0),
-              inputTokens: Number(runUsage?._sum.inputTokens ?? 0n),
-              outputTokens: Number(runUsage?._sum.outputTokens ?? 0n),
+              inputTokens: Number(runUsage?.inputTokens ?? 0n),
+              outputTokens: Number(runUsage?.outputTokens ?? 0n),
               usageIncomplete,
               failure: runFailure?.failure
                 ? z.enum(classificationFailureCategories).parse(runFailure.failure)
@@ -920,12 +729,7 @@ export class LiteratureSmartCollections {
     const client = await this.getClient()
     const where = await this.scope(client, command.scope)
     if (!where) throw new Error('Collection source is unavailable.')
-    const items = await client.literatureItem.findMany({
-      where,
-      orderBy: { id: 'asc' },
-      take: 4,
-      select: { id: true, title: true, abstract: true }
-    })
+    const items = await client.papers(where, { limit: 4 })
     const results = await Promise.allSettled(
       items.map(async (item) => {
         controller.signal.throwIfAborted()
@@ -994,22 +798,11 @@ export class LiteratureSmartCollections {
     }
     if (command.kind === 'read-smart-history') {
       const client = await this.getClient()
-      const definition = await client.literatureSmartCollection.findUniqueOrThrow({
-        where: { collectionId: command.collectionId },
-        select: { ruleRevision: true }
+      const definition = await client.definition(command.collectionId).then((value) => {
+        if (!value) throw new Error('Smart collection is unavailable.')
+        return value
       })
-      const items = await client.literatureSmartRunItem.findMany({
-        where: {
-          itemId: command.itemId,
-          state: 'done',
-          resultJson: { not: null },
-          run: { collectionId: command.collectionId }
-        },
-        include: { run: { include: { rule: true } } },
-        orderBy: [{ evaluatedAt: 'desc' }, { runId: 'desc' }],
-        skip: command.offset,
-        take: 21
-      })
+      const items = await client.history(command.collectionId, command.itemId, command.offset)
       return {
         kind: 'collection',
         id: command.collectionId,
@@ -1050,7 +843,7 @@ export class LiteratureSmartCollections {
     if (command.kind === 'preview-smart-collection') {
       if (this.previews.has(command.requestId)) throw new Error('Preview is already running.')
       const controller = new AbortController()
-      const release = acquireDataRootWriter()
+      const release = this.acquireWriter()
       this.previews.set(command.requestId, controller)
       const work = this.preview(command, controller)
       this.previewWork.add(work)
@@ -1070,39 +863,17 @@ export class LiteratureSmartCollections {
     if (command.kind === 'create-smart-collection') {
       serializedSmartRuleSchema.parse(command.description)
       const name = command.name.normalize('NFKC').trim().replace(/\s+/gu, ' ')
-      const row = await client
-        .$transaction(async (tx) => {
-          if (!(await this.scope(tx, command.scope)))
-            throw new Error('Collection source is unavailable.')
-          const last = await tx.literatureCollection.findFirst({
-            where: { parentId: null },
-            orderBy: { sortOrder: 'desc' },
-            select: { sortOrder: true }
-          })
-          const created = await tx.literatureCollection.create({
-            data: {
-              name,
-              nameKey: name.toLowerCase(),
-              description: formatSmartRule(parseSmartRule(command.description)!),
-              sortOrder: (last?.sortOrder ?? -1) + 1,
-              smart: {
-                create: {
-                  evidenceMode: command.evidenceMode ?? 'abstract',
-                  autoUpdate: command.autoUpdate ?? false,
-                  scopeKind: command.scope.kind,
-                  scopeId: command.scope.kind === 'library' ? null : command.scope.id
-                }
-              }
-            }
-          })
-          await saveSmartRuleVersion(tx, created.id)
-          return created
+      const row = await client.transaction(async (tx) => {
+        if (!(await this.scope(tx, command.scope)))
+          throw new Error('Collection source is unavailable.')
+        return tx.createCollection({
+          name,
+          description: formatSmartRule(parseSmartRule(command.description)!),
+          scope: command.scope,
+          evidenceMode: command.evidenceMode ?? 'abstract',
+          autoUpdate: command.autoUpdate ?? false
         })
-        .catch((error: unknown) => {
-          if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002')
-            throw new Error(LITERATURE_COLLECTION_NAME_CONFLICT)
-          throw error
-        })
+      })
       this.changed(row.id)
       if (command.autoUpdate) this.schedule()
       return { kind: 'collection', id: row.id, smart: await this.view(row.id) }
@@ -1112,12 +883,7 @@ export class LiteratureSmartCollections {
     const id = command.collectionId
     const { definition } = await this.definition(client, id)
     if (command.action === 'resume-automatic') {
-      const [latest, previous] = await client.literatureSmartRun.findMany({
-        where: { collectionId: id },
-        orderBy: { createdAt: 'desc' },
-        select: { id: true, state: true, abandonedAt: true, createdAt: true },
-        take: 2
-      })
+      const [latest, previous] = await client.latestRuns(id, 2)
       const resumeOwnedRun =
         latest?.id === definition.automaticPauseRunId &&
         latest.abandonedAt === null &&
@@ -1129,10 +895,9 @@ export class LiteratureSmartCollections {
             latest.state === 'failed')) &&
         definition.automaticPauseReason !== 'run-limit' &&
         Boolean(
-          await client.literatureSmartRunItem.findFirst({
-            where: { runId: latest.id, deferred: false, state: { in: ['pending', 'error'] } },
-            select: { itemId: true }
-          })
+          await client
+            .runItems({ runId: latest.id, deferred: false, states: ['pending', 'error'] })
+            .then((items) => items[0])
         )
       return this.execute(
         {
@@ -1153,11 +918,11 @@ export class LiteratureSmartCollections {
     if (command.action === 'cancel') {
       const controller = this.active.get(id)
       controller?.abort()
-      const cancelled = await client.literatureSmartRun.updateMany({
-        where: { collectionId: id, state: 'queued' },
-        data: { state: 'cancelled' }
-      })
-      if (cancelled.count && this.active.get(id) === controller) this.active.delete(id)
+      const cancelled = await client.updateRuns(
+        { collectionId: id, states: ['queued'] },
+        { state: 'cancelled' }
+      )
+      if (cancelled && this.active.get(id) === controller) this.active.delete(id)
       this.changed(id)
     } else if (command.action === 'abandon') {
       if (!command.runId) {
@@ -1167,46 +932,41 @@ export class LiteratureSmartCollections {
           this.active.has(id)
         )
           return { kind: 'collection', id }
-        const cleared = await client.literatureSmartCollection.updateMany({
-          where: {
-            collectionId: id,
-            automaticPauseReason: definition.automaticPauseReason,
-            automaticPauseRunId: null
-          },
-          data: { automaticPauseReason: null }
-        })
-        if (cleared.count) this.changed(id)
+        const cleared = await client.updatePause(
+          id,
+          { automaticPauseReason: definition.automaticPauseReason, automaticPauseRunId: null },
+          { automaticPauseReason: null }
+        )
+        if (cleared) this.changed(id)
         return { kind: 'collection', id }
       }
-      const run = await client.literatureSmartRun.findFirst({
-        where: {
-          id: command.runId,
-          collectionId: id,
-          state: { in: ['cancelled', 'interrupted', 'failed', 'completed'] }
-        },
-        select: { id: true, state: true, abandonedAt: true }
+      const run = await client.findRun({
+        id: command.runId,
+        collectionId: id,
+        states: ['cancelled', 'interrupted', 'failed', 'completed']
       })
       if (run) {
-        await client.$transaction(async (tx) => {
-          const abandoned = await tx.literatureSmartRun.updateMany({
-            where: { id: run.id, state: run.state, abandonedAt: null },
-            data: {
+        await client.transaction(async (tx) => {
+          const abandoned = await tx.updateRuns(
+            { id: run.id, states: [run.state], abandoned: false },
+            {
               state:
                 run.state === 'interrupted' || run.state === 'failed' ? 'cancelled' : run.state,
               abandonedAt: new Date()
             }
-          })
-          if ((abandoned.count || run.abandonedAt) && definition.automaticPauseRunId === run.id) {
-            await tx.literatureSmartCollection.updateMany({
-              where: { collectionId: id, automaticPauseRunId: run.id },
-              data: { automaticPauseReason: null, automaticPauseRunId: null }
-            })
+          )
+          if ((abandoned || run.abandonedAt) && definition.automaticPauseRunId === run.id) {
+            await tx.updatePause(
+              id,
+              { automaticPauseRunId: run.id },
+              { automaticPauseReason: null, automaticPauseRunId: null }
+            )
           }
         })
         this.changed(id)
       }
     } else if (command.action === 'reset-overrides') {
-      await client.literatureSmartOverride.deleteMany({ where: { collectionId: id } })
+      await client.clearOverrides(id)
       this.changed(id)
       this.schedule()
     } else if (command.action === 'override') {
@@ -1214,15 +974,10 @@ export class LiteratureSmartCollections {
       if (!itemIds.length || itemIds.length > 100 || !command.decision)
         throw new Error('A decision and between 1 and 100 papers are required.')
       const decision = command.decision
-      const result = await client.$transaction(
+      const result = await client.transaction(
         async (tx) => {
           const { where } = await this.definition(tx, id)
-          const eligible = where
-            ? await tx.literatureItem.findMany({
-                where: { AND: [where, { id: { in: itemIds } }] },
-                select: { id: true }
-              })
-            : []
+          const eligible = where ? await tx.papers(where, { itemIds }) : []
           const valid = new Set(eligible.map((item) => item.id))
           const saved = itemIds.filter((itemId) => valid.has(itemId))
           const failed = itemIds.filter((itemId) => !valid.has(itemId))
@@ -1230,16 +985,10 @@ export class LiteratureSmartCollections {
             throw new Error('Paper is outside the collection scope.')
           if (saved.length) {
             if (decision === 'automatic') {
-              await tx.literatureSmartOverride.deleteMany({
-                where: { collectionId: id, itemId: { in: saved } }
-              })
+              await tx.clearOverrides(id, saved)
             } else {
               const updatedAt = new Date()
-              await tx.$executeRaw(Prisma.sql`
-              INSERT INTO LiteratureSmartOverride (collectionId, itemId, decision, updatedAt)
-              VALUES ${Prisma.join(saved.map((itemId) => Prisma.sql`(${id}, ${itemId}, ${decision}, ${updatedAt})`))}
-              ON CONFLICT(collectionId, itemId) DO UPDATE SET decision = excluded.decision, updatedAt = excluded.updatedAt
-            `)
+              await tx.saveOverrides(id, saved, decision, updatedAt)
             }
           }
           return { saved, failed }
@@ -1290,7 +1039,7 @@ export class LiteratureSmartCollections {
           finish()
         }
         try {
-          releaseWriter = acquireDataRootWriter()
+          releaseWriter = this.acquireWriter()
           const {
             rows,
             definition,
@@ -1315,11 +1064,7 @@ export class LiteratureSmartCollections {
           let run: { id: string }
           let checkpoint: Checkpoint
           if (command.action === 'resume') {
-            const [previous, older] = await client.literatureSmartRun.findMany({
-              where: { collectionId: id },
-              orderBy: { createdAt: 'desc' },
-              take: 2
-            })
+            const [previous, older] = await client.latestRuns(id, 2)
             let snapshot: ReturnType<typeof smartRunSnapshotSchema.parse> | undefined
             try {
               snapshot = smartRunSnapshotSchema.parse(JSON.parse(previous?.snapshotJson ?? 'null'))
@@ -1339,7 +1084,7 @@ export class LiteratureSmartCollections {
               snapshot.evidenceMode !== definition.evidenceMode ||
               snapshot.scope.kind !== definition.scopeKind ||
               (snapshot.scope.kind !== 'library' && snapshot.scope.id !== definition.scopeId) ||
-              snapshot.model !== (await this.classifier.snapshot()).smartCollections?.modelId
+              snapshot.model !== (await this.classifier.policy()).model
             )
               throw new Error(SMART_COLLECTION_RESUME_UNAVAILABLE)
             checkpoint = await this.checkpoint(client, previous.id)
@@ -1349,9 +1094,10 @@ export class LiteratureSmartCollections {
               current.some((row) => digests.get(row.id) !== row.digest)
             )
               throw new Error(SMART_COLLECTION_RESUME_UNAVAILABLE)
-            const completed = await client.literatureSmartRunItem.findMany({
-              where: { runId: previous.id, deferred: false, state: 'done' },
-              select: { resultJson: true, evaluatedAt: true }
+            const completed = await client.runItems({
+              runId: previous.id,
+              deferred: false,
+              states: ['done']
             })
             if (
               completed.some((row) => {
@@ -1368,11 +1114,7 @@ export class LiteratureSmartCollections {
               throw new Error(SMART_COLLECTION_RESUME_UNAVAILABLE)
             // Retain the existing run ID, snapshot, usage and committed per-paper results.
             // The regular worker rechecks input digests again before dispatch and commit.
-            const usage = await client.classificationUsage.findMany({
-              where: { runId: previous.id },
-              distinct: ['scenario'],
-              select: { scenario: true }
-            })
+            const usage = await client.usage(previous.id).then((usage) => usage.scenarios)
             const hasAutomaticUsage = usage.some(
               (entry) => entry.scenario === 'literature-automatic'
             )
@@ -1402,31 +1144,28 @@ export class LiteratureSmartCollections {
             )
               throw new Error(SMART_COLLECTION_RESUME_UNAVAILABLE)
             controller.signal.throwIfAborted()
-            await client.$transaction(async (tx) => {
+            await client.transaction(async (tx) => {
               if (automatic) {
-                const reserved = await tx.literatureSmartCollection.updateMany({
-                  where: {
-                    collectionId: id,
+                const reserved = await tx.updatePause(
+                  id,
+                  {
                     autoUpdate: true,
                     automaticPauseReason: definition.automaticPauseReason,
                     automaticPauseRunId: definition.automaticPauseRunId
                   },
-                  data: {
-                    automaticPauseReason: 'interrupted',
-                    automaticPauseRunId: previous.id
-                  }
-                })
-                if (!reserved.count) throw new Error(SMART_COLLECTION_RESUME_UNAVAILABLE)
+                  { automaticPauseReason: 'interrupted', automaticPauseRunId: previous.id }
+                )
+                if (!reserved) throw new Error(SMART_COLLECTION_RESUME_UNAVAILABLE)
               }
-              const resumed = await tx.literatureSmartRun.updateMany({
-                where: { id: previous.id, state: previous.state },
-                data: { state: 'queued', updatedAt: new Date() }
-              })
-              if (!resumed.count) throw new Error(SMART_COLLECTION_RESUME_UNAVAILABLE)
-              await tx.literatureSmartRunItem.updateMany({
-                where: { runId: previous.id, deferred: false, state: 'error' },
-                data: { state: 'pending', failure: null }
-              })
+              const resumed = await tx.updateRuns(
+                { id: previous.id, states: [previous.state] },
+                { state: 'queued', updatedAt: new Date() }
+              )
+              if (!resumed) throw new Error(SMART_COLLECTION_RESUME_UNAVAILABLE)
+              await tx.updateRunItems(
+                { runId: previous.id, deferred: false, states: ['error'] },
+                { state: 'pending', failure: null }
+              )
             })
             for (const row of current) {
               if (row.state === 'error') {
@@ -1478,10 +1217,11 @@ export class LiteratureSmartCollections {
             }
             if (automatic && !checkpoint.some((row) => row.state === 'pending' && !row.deferred)) {
               if (resumeAutomatic)
-                await client.literatureSmartCollection.update({
-                  where: { collectionId: id },
-                  data: { automaticPauseReason: null, automaticPauseRunId: null }
-                })
+                await client.updatePause(
+                  id,
+                  {},
+                  { automaticPauseReason: null, automaticPauseRunId: null }
+                )
               release?.()
               release = undefined
               this.active.delete(id)
@@ -1490,46 +1230,36 @@ export class LiteratureSmartCollections {
             }
             controller.signal.throwIfAborted()
             const nextRunId = randomUUID()
-            run = await client.$transaction(
+            run = await client.transaction(
               async (tx) => {
                 if (automatic) {
                   // Fail closed across crashes: only a successful terminal write clears this pause.
-                  const reserved = await tx.literatureSmartCollection.updateMany({
-                    where: {
-                      collectionId: id,
-                      autoUpdate: true,
-                      automaticPauseReason: definition.automaticPauseReason
-                    },
-                    data: {
-                      automaticPauseReason: 'interrupted',
-                      automaticPauseRunId: nextRunId
-                    }
-                  })
-                  if (!reserved.count) throw new AutomaticClassificationPausedError('interrupted')
+                  const reserved = await tx.updatePause(
+                    id,
+                    { autoUpdate: true, automaticPauseReason: definition.automaticPauseReason },
+                    { automaticPauseReason: 'interrupted', automaticPauseRunId: nextRunId }
+                  )
+                  if (!reserved) throw new AutomaticClassificationPausedError('interrupted')
                 }
-                return tx.literatureSmartRun.create({
-                  data: {
-                    id: nextRunId,
-                    collectionId: id,
-                    kind: command.action === 'preview' ? 'preview' : 'refresh',
-                    state: 'queued',
-                    ruleRevision: definition.ruleRevision,
-                    policyKey: policy.key,
-                    items: {
-                      create: checkpoint.map(({ id, ...entry }) => ({ itemId: id, ...entry }))
+                return tx.createRun({
+                  id: nextRunId,
+                  collectionId: id,
+                  kind: command.action === 'preview' ? 'preview' : 'refresh',
+                  state: 'queued',
+                  ruleRevision: definition.ruleRevision,
+                  policyKey: policy.key,
+                  items: checkpoint.map(({ id, ...entry }) => ({ itemId: id, ...entry })),
+                  snapshotJson: JSON.stringify({
+                    description: definition.collection.description,
+                    scope: {
+                      kind: definition.scopeKind,
+                      ...(definition.scopeId ? { id: definition.scopeId } : {})
                     },
-                    snapshotJson: JSON.stringify({
-                      description: definition.collection.description,
-                      scope: {
-                        kind: definition.scopeKind,
-                        ...(definition.scopeId ? { id: definition.scopeId } : {})
-                      },
-                      evidenceMode: definition.evidenceMode,
-                      model: (await this.classifier.snapshot()).smartCollections?.modelId,
-                      action: command.action,
-                      ...(selected ? { selectedCount: selected.size } : {})
-                    })
-                  }
+                    evidenceMode: definition.evidenceMode,
+                    model: (await this.classifier.policy()).model,
+                    action: command.action,
+                    ...(selected ? { selectedCount: selected.size } : {})
+                  })
                 })
               },
               { maxWait: 30000 }
@@ -1580,16 +1310,13 @@ export class LiteratureSmartCollections {
     // A queued cancellation is already durable and must not re-enter running.
     if (controller.signal.aborted) return
     const client = await this.getClient()
-    const run = await client.literatureSmartRun.findUniqueOrThrow({
-      where: { id: runId },
-      include: { rule: true }
-    })
+    const run = await client.run(runId)
     if (controller.signal.aborted || run.state === 'cancelled') return
     let progressTimer: ReturnType<typeof setTimeout> | undefined
     let persistenceFailed = false
     let pauseReason: AutomaticClassificationPauseReason | undefined
     try {
-      await client.literatureSmartRun.update({ where: { id: runId }, data: { state: 'running' } })
+      await client.updateRun(runId, { state: 'running' })
       const pending = checkpoint.filter((row) => row.state === 'pending' && !row.deferred)
       let stop = false
       type Evaluation = {
@@ -1618,9 +1345,7 @@ export class LiteratureSmartCollections {
             throw new ClassificationEvaluationError('configuration')
 
           controller.signal.throwIfAborted()
-          const item =
-            where &&
-            (await client.literatureItem.findFirst({ where: { AND: [where, { id: row.id }] } }))
+          const item = where && (await client.paper(where, row.id))
           if (
             !item ||
             (await smartInput(client, item, smartEvidenceModeSchema.parse(definition.evidenceMode)))
@@ -1688,16 +1413,7 @@ export class LiteratureSmartCollections {
         }
       }
       let invalidated = false
-      let resolvedModel = (
-        await client.literatureSmartAssessment.findFirst({
-          where: {
-            collectionId: run.collectionId,
-            policyKey: run.policyKey,
-            model: { not: 'insufficient-evidence' }
-          },
-          select: { model: true }
-        })
-      )?.model
+      let resolvedModel = await client.resolvedModel(run.collectionId, run.policyKey)
       let completed = 0
       let lastProgressAt = -Infinity
       const publishProgress = (): void => {
@@ -1719,12 +1435,9 @@ export class LiteratureSmartCollections {
       }
       const flush = async (): Promise<void> => {
         if (!completed) return
-        await client.literatureSmartRun.update({
-          where: { id: runId },
-          data: {
-            ...(resolvedModel ? { model: resolvedModel } : {}),
-            updatedAt: new Date()
-          }
+        await client.updateRun(runId, {
+          ...(resolvedModel ? { model: resolvedModel } : {}),
+          updatedAt: new Date()
         })
         completed = 0
         this.reads.clear()
@@ -1738,24 +1451,20 @@ export class LiteratureSmartCollections {
           if (answer.model !== 'insufficient-evidence') {
             if (resolvedModel && resolvedModel !== answer.model) {
               invalidated = true
-              await client.literatureSmartAssessment.updateMany({
-                where: { collectionId: run.collectionId, policyKey: run.policyKey },
-                data: { policyKey: `obsolete:${run.id}` }
-              })
+              await client.invalidateAssessments(
+                run.collectionId,
+                run.policyKey,
+                `obsolete:${run.id}`
+              )
               throw new ClassificationEvaluationError('configuration')
             }
             resolvedModel = answer.model
           }
-          // Result writes share the single SQLite connection with parallel usage records.
-          // Match their admission wait instead of failing after Prisma's two-second default.
-          await client.$transaction(
+          // Give result commits the same admission window as concurrent usage writes.
+          await client.transaction(
             async (tx) => {
               const current = await this.definition(tx, run.collectionId)
-              const paper =
-                current.where &&
-                (await tx.literatureItem.findFirst({
-                  where: { AND: [current.where, { id: row.id }] }
-                }))
+              const paper = current.where && (await tx.paper(current.where, row.id))
               if (
                 controller.signal.aborted ||
                 (await this.policy()).key !== run.policyKey ||
@@ -1780,20 +1489,16 @@ export class LiteratureSmartCollections {
                 evidenceJson: JSON.stringify(evidence),
                 evaluatedAt: new Date()
               }
-              await tx.literatureSmartAssessment.upsert({
-                where: { collectionId_itemId: { collectionId: run.collectionId, itemId: row.id } },
-                create: { collectionId: run.collectionId, itemId: row.id, ...data },
-                update: data
-              })
-              await tx.literatureSmartRunItem.update({
-                where: { runId_itemId: { runId, itemId: row.id } },
-                data: {
+              await tx.saveAssessment(run.collectionId, row.id, data)
+              await tx.updateRunItems(
+                { runId, itemId: row.id },
+                {
                   state: 'done',
                   failure: null,
                   resultJson: JSON.stringify({ answer, evidence }),
                   evaluatedAt: data.evaluatedAt
                 }
-              })
+              )
             },
             { maxWait: 30000 }
           )
@@ -1812,10 +1517,10 @@ export class LiteratureSmartCollections {
           else if (!controller.signal.aborted && !(error instanceof ClassificationEvaluationError))
             persistenceFailed = true
           try {
-            await client.literatureSmartRunItem.update({
-              where: { runId_itemId: { runId, itemId: row.id } },
-              data: { state: row.state, failure: row.failure ?? null }
-            })
+            await client.updateRunItems(
+              { runId, itemId: row.id },
+              { state: row.state, failure: row.failure ?? null }
+            )
           } catch {
             persistenceFailed = true
           }
@@ -1834,16 +1539,13 @@ export class LiteratureSmartCollections {
       await flush()
       if (persistenceFailed) throw new Error('Could not save classification progress.')
       controller.signal.throwIfAborted()
-      await client.literatureSmartRun.update({
-        where: { id: runId },
-        data: {
-          state: checkpoint.some((row) => !row.deferred && row.state === 'error')
-            ? 'failed'
-            : pauseReason
-              ? 'interrupted'
-              : 'completed',
-          updatedAt: new Date()
-        }
+      await client.updateRun(runId, {
+        state: checkpoint.some((row) => !row.deferred && row.state === 'error')
+          ? 'failed'
+          : pauseReason
+            ? 'interrupted'
+            : 'completed',
+        updatedAt: new Date()
       })
     } catch (error) {
       if (!controller.signal.aborted && !(error instanceof ClassificationEvaluationError))
@@ -1853,38 +1555,32 @@ export class LiteratureSmartCollections {
         if (pending) {
           pending.state = 'error'
           pending.failure = error.category
-          await client.literatureSmartRunItem.update({
-            where: { runId_itemId: { runId, itemId: pending.id } },
-            data: { state: 'error', failure: pending.failure }
-          })
+          await client.updateRunItems(
+            { runId, itemId: pending.id },
+            { state: 'error', failure: pending.failure }
+          )
         }
       }
-      await client.literatureSmartRun.updateMany({
-        where: { id: runId },
-        data: {
-          state: controller.signal.aborted ? 'cancelled' : 'failed',
-          updatedAt: new Date()
-        }
-      })
+      await client.updateRuns(
+        { id: runId },
+        { state: controller.signal.aborted ? 'cancelled' : 'failed', updatedAt: new Date() }
+      )
     } finally {
       // The queue's terminal notification always publishes the final state.
       if (progressTimer) clearTimeout(progressTimer)
       if (automatic) {
         try {
-          await client.literatureSmartCollection.updateMany({
-            where: {
-              collectionId: run.collectionId,
-              automaticPauseReason: 'interrupted',
-              automaticPauseRunId: run.id
-            },
-            data: {
+          await client.updatePause(
+            run.collectionId,
+            { automaticPauseReason: 'interrupted', automaticPauseRunId: run.id },
+            {
               automaticPauseReason: persistenceFailed
                 ? 'storage-error'
                 : (pauseReason ?? (controller.signal.aborted ? 'interrupted' : null)),
               automaticPauseRunId:
                 persistenceFailed || pauseReason || controller.signal.aborted ? run.id : null
             }
-          })
+          )
         } catch {
           /* Prearmed durable pause stays set when storage is unavailable. */
         }

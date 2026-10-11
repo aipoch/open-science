@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { SmartCollectionCells, type SmartCollectionCellActions } from './SmartCollectionDecision'
-import type { SmartCollectionRow } from '../../../../../shared/literature-smart-collections'
+import type { SmartCollectionRow } from '@aipoch/literature-screening/contracts'
 
 const renders = vi.hoisted(() => ({ assessments: 0 }))
 vi.mock('@/components/ui/popover', async (importOriginal) => {

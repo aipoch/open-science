@@ -6,7 +6,7 @@ import {
   SmartCollectionAssessment,
   SmartCollectionDecisionActions
 } from './SmartCollectionDecision'
-import type { SmartCollectionRow } from '../../../../../shared/literature-smart-collections'
+import type { SmartCollectionRow } from '@aipoch/literature-screening/contracts'
 afterEach(cleanup)
 
 const assessedRow = (

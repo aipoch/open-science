@@ -23,7 +23,7 @@ import type {
   SmartCollectionView,
   SmartRunProgress,
   SmartRunProgressRow
-} from '../../../../../shared/literature-smart-collections'
+} from '@aipoch/literature-screening/contracts'
 
 type PaperOrigin = { x: number; y: number; width: number }
 

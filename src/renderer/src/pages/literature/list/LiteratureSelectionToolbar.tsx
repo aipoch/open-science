@@ -17,7 +17,7 @@ import {
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { LiteratureCollectionView, LiteratureItemView } from '../../../../../shared/literature'
-import type { SmartCollectionView } from '../../../../../shared/literature-smart-collections'
+import type { SmartCollectionView } from '@aipoch/literature-screening/contracts'
 import { LiteratureBatchDestinationMenus } from '../collections/LiteratureBatchDestinationMenus'
 import { type BatchLookupMode } from '../workflows/LiteratureBatchLookupDialog'
 import { LiteratureHoverDropdown, LiteratureHoverMenuGroup } from '../LiteratureHoverMenus'

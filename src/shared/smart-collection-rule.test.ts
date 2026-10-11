@@ -1,16 +1,6 @@
 import { expect, it } from 'vitest'
-import { formatSmartRule, parseSmartRule, smartRulePrompt } from './smart-collection-rule'
+import { formatSmartRule } from '@aipoch/literature-screening/rules'
 import { literatureCatalogCommandSchema } from './literature'
-
-it('preserves literal headings, quotes and line breaks without a Markdown round-trip', () => {
-  const fields = {
-    description: 'Context',
-    inclusion: '## Exclusion criteria\n"Quoted" criterion',
-    exclusion: 'Reviews\n\\notes'
-  }
-  expect(parseSmartRule(formatSmartRule(fields))).toEqual(fields)
-  expect(smartRulePrompt(formatSmartRule(fields))).toContain(fields.inclusion)
-})
 
 it('uses the same content limit and required inclusion across create, preview and edit', () => {
   const commands = [

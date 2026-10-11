@@ -2,4 +2,4 @@ export {
   formatSmartRule,
   parseSmartRule,
   type SmartRuleFields
-} from '../../../../../shared/smart-collection-rule'
+} from '@aipoch/literature-screening/rules'

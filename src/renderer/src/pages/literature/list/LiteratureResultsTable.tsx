@@ -5,7 +5,7 @@ import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { LiteratureItemType } from '@aipoch/literature-citations/contracts'
 import type { LiteratureCollectionView, LiteratureItemView } from '../../../../../shared/literature'
-import type { SmartCollectionView } from '../../../../../shared/literature-smart-collections'
+import type { SmartCollectionView } from '@aipoch/literature-screening/contracts'
 import { LiteratureItemRow, LiteratureRowActions } from './LiteratureItemRow'
 import { LiteratureSelectPageCheckbox } from './LiteratureSelection'
 import {

@@ -51,6 +51,9 @@
     },
     {
       "path": "./packages/reproducibility/tsconfig.dev.json"
+    },
+    {
+      "path": "./packages/literature-screening/tsconfig.dev.json"
     }
   ]
 }

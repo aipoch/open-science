@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { LiteratureCollectionView } from '../../../../../shared/literature'
-import type { SmartCollectionView } from '../../../../../shared/literature-smart-collections'
+import type { SmartCollectionView } from '@aipoch/literature-screening/contracts'
 import type { LiteratureDetailController } from '../detail/LiteratureDetailController'
 import { shouldConfirmSmartReevaluation } from './smart-collection-preferences'
 import type { SmartCollectionState } from './smart-collection-state'

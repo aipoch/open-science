@@ -2,7 +2,7 @@ import {
   AUTOMATIC_CLASSIFICATION_RUN_LIMIT,
   AUTOMATIC_CLASSIFICATION_DAY_LIMIT
 } from '../../../../../shared/classification'
-import { SMART_COLLECTION_RESUME_UNAVAILABLE } from '../../../../../shared/literature-smart-collections'
+import { SMART_COLLECTION_RESUME_UNAVAILABLE } from '@aipoch/literature-screening/contracts'
 import type { SmartCollectionState } from './smart-collection-state'
 import { SmartCollectionIcon } from '@/components/app-icons/custom-glyphs'
 import { formatSmartRule, parseSmartRule } from './smart-rule-fields'
@@ -35,10 +35,7 @@ import { ErrorNotice } from '@/components/error-notice'
 import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
 import { ActionMenuProvider, ActionMenuTarget, useActionMenu } from '@/components/action-menu'
 import { useSettingsStore } from '@/stores/settings-store'
-import type {
-  SmartCollectionView,
-  SmartScope
-} from '../../../../../shared/literature-smart-collections'
+import type { SmartCollectionView, SmartScope } from '@aipoch/literature-screening/contracts'
 
 const catalog = {
   bibtex: { labelKey: 'BibTeX', icon: FileText },

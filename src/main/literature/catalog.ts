@@ -5,12 +5,9 @@ import {
   serializedSmartRuleSchema,
   formatSmartRule,
   parseSmartRule
-} from '../../shared/smart-collection-rule'
-import {
-  smartScopeSchema,
-  smartEvidenceModeSchema
-} from '../../shared/literature-smart-collections'
-import type { LiteratureSmartCollections } from './smart-collections'
+} from '@aipoch/literature-screening/rules'
+import { smartScopeSchema, smartEvidenceModeSchema } from '@aipoch/literature-screening/contracts'
+import type { LiteratureScreening } from './screening-adapter'
 import type { JournalAttributes } from './journal-attributes'
 import { deletePdfAnnotations, readAnnotations } from '../pdf-annotations/repository'
 import { ensureBinding } from '../pdf-annotations/document-store'
@@ -946,7 +943,7 @@ class LiteratureCatalog {
         if (attachmentIds.length) throw new Error('Literature attachment removal is unavailable.')
       }),
     private readonly onChanged?: (event: LiteratureChangedEvent) => void,
-    private readonly smart?: LiteratureSmartCollections,
+    private readonly smart?: LiteratureScreening,
     private readonly journalAttributes?: JournalAttributes
   ) {}
 

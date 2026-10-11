@@ -1,6 +1,6 @@
-import { automaticClassificationPauseReasons } from './classification'
-import { serializedSmartRuleSchema } from './smart-collection-rule'
-import { classificationFailureCategories } from './classification'
+import { automaticClassificationPauseReasons } from './classification.js'
+import { serializedSmartRuleSchema } from './rules.js'
+import { classificationFailureCategories } from './classification.js'
 import { z } from 'zod'
 const id = z.string().trim().min(1).max(512)
 export const SMART_COLLECTION_RESUME_UNAVAILABLE = 'SMART_COLLECTION_RESUME_UNAVAILABLE'
@@ -283,3 +283,15 @@ export const smartRunProgressSchema = z
   .strict()
 export type SmartRunProgress = z.infer<typeof smartRunProgressSchema>
 export type SmartRunProgressRow = z.infer<typeof smartRunProgressRowSchema>
+
+export type ScreeningReceipt = {
+  kind: 'collection'
+  id: string
+  smart?: SmartCollectionView
+  smartPreview?: SmartCollectionPreview
+  smartDecisions?: SmartCollectionRow[]
+  smartDecisionBatch?: { saved: string[]; failed: string[] }
+  smartRefreshFailed?: boolean
+  smartHistory?: z.infer<typeof smartHistorySchema>
+  smartRunProgress?: SmartRunProgress
+}

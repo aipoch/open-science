@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest'
 import { createSmartCollectionState } from './smart-collection-state'
-import type { SmartCollectionView } from '../../../../../shared/literature-smart-collections'
+import type { SmartCollectionView } from '@aipoch/literature-screening/contracts'
 const summary = (match: number): SmartCollectionView =>
   ({ counts: { match }, matches: match }) as SmartCollectionView
 it('rejects reads from before and during a committed decision, including reverse returns', () => {

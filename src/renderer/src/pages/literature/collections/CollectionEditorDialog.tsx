@@ -2,7 +2,7 @@ import {
   AUTOMATIC_CLASSIFICATION_RUN_LIMIT,
   AUTOMATIC_CLASSIFICATION_DAY_LIMIT
 } from '../../../../../shared/classification'
-import { SMART_RULE_MAX_LENGTH } from '../../../../../shared/smart-collection-rule'
+import { SMART_RULE_MAX_LENGTH } from '@aipoch/literature-screening/rules'
 import { formatSmartRule, parseSmartRule, type SmartRuleFields } from './smart-rule-fields'
 import { CollectionOptionHelp } from './CollectionOptionHelp'
 import { SmartCollectionDraftPreview } from './SmartCollectionDraftPreview'
@@ -16,10 +16,7 @@ import {
   SelectGroup,
   SelectLabel
 } from '@/components/ui/select'
-import type {
-  SmartScope,
-  SmartEvidenceMode
-} from '../../../../../shared/literature-smart-collections'
+import type { SmartScope, SmartEvidenceMode } from '@aipoch/literature-screening/contracts'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import { useLiteratureChanges } from '../useLiteratureChanges'
 import * as Dialog from '@/components/ui/dialog'

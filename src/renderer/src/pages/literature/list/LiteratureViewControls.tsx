@@ -13,7 +13,7 @@ import type { JournalDataset } from '@aipoch/journal-catalog/contracts'
 
 import type { LiteratureItemType } from '@aipoch/literature-citations/contracts'
 import type { LiteratureCollectionView } from '../../../../../shared/literature'
-import type { SmartCollectionView } from '../../../../../shared/literature-smart-collections'
+import type { SmartCollectionView } from '@aipoch/literature-screening/contracts'
 import { JournalDatasetChoices, LiteratureColumnCustomizer } from './LiteratureColumnCustomizer'
 import { LiteratureFilters } from './LiteratureFilters'
 import { setJournalSourceYear } from '../journals/journal-attribute-store'

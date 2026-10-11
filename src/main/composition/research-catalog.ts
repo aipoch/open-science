@@ -19,7 +19,7 @@ import { LiteratureFullTextFinder } from '@aipoch/literature-discovery'
 import { LiteratureMetadataEnricher } from '@aipoch/literature-discovery'
 import { LiteraturePdfImporter } from '../literature/pdf-importer'
 import { LiteratureReferenceResolver } from '@aipoch/literature-discovery'
-import { LiteratureSmartCollections } from '../literature/smart-collections'
+import { createLiteratureScreening } from '../literature/screening-adapter'
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import { MemoryRepository } from '../memory/repository'
 import { MemoryService } from '../memory/service'
@@ -111,7 +111,7 @@ export async function composeResearchCatalog({
     applicationEvents
   )
   let smartCollectionRevision = 0
-  const smartCollections = new LiteratureSmartCollections(
+  const smartCollections = createLiteratureScreening(
     () => getProjectDbClient(configRoot),
     settingsService.classification,
     (id) =>

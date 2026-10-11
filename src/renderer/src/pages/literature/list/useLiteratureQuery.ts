@@ -9,7 +9,7 @@ import type {
   LiteratureItemView,
   LiteratureProjectCountView
 } from '../../../../../shared/literature'
-import type { SmartCollectionView } from '../../../../../shared/literature-smart-collections'
+import type { SmartCollectionView } from '@aipoch/literature-screening/contracts'
 import { type LibrarySection } from './LiteratureLibrarySidebar'
 import { useLiteratureEntries } from './useLiteratureEntries'
 import { useLiteratureTable } from './useLiteratureTable'

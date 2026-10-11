@@ -28,7 +28,8 @@ export const verificationFamilies = [
       'pdf-translation',
       'literature-citations',
       'journal-catalog',
-      'literature-discovery'
+      'literature-discovery',
+      'literature-screening'
     ]
   }
 ]

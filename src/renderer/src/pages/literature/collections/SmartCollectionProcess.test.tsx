@@ -4,10 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { SmartCollectionProcess } from './SmartCollectionProcess'
 import { createSmartCollectionState } from './smart-collection-state'
 import { WEB_EVENT_CONNECTION_STATE_EVENT } from '../../../../../shared/web-event-connection'
-import type {
-  SmartCollectionView,
-  SmartRunProgress
-} from '../../../../../shared/literature-smart-collections'
+import type { SmartCollectionView, SmartRunProgress } from '@aipoch/literature-screening/contracts'
 
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 afterEach(cleanup)

@@ -14,7 +14,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip'
 import { classificationFailureText } from './smart-collection-decisions'
 import { useTranslation } from 'react-i18next'
-import type { SmartCollectionRow } from '../../../../../shared/literature-smart-collections'
+import type { SmartCollectionRow } from '@aipoch/literature-screening/contracts'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 

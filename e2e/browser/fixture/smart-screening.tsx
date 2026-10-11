@@ -14,7 +14,7 @@ import type {
   SmartCollectionView,
   SmartRunProgress,
   SmartRunProgressRow
-} from '../../../src/shared/literature-smart-collections'
+} from '@aipoch/literature-screening/contracts'
 
 const parameters = new URLSearchParams(location.search)
 const chinese = parameters.get('lang') === 'zh-Hans'
