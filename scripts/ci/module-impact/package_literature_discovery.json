@@ -243,7 +243,6 @@
       "src/main/artifacts/repository.characterization.test.ts",
       "src/main/artifacts/repository.rollback.test.ts",
       "src/main/artifacts/repository.test.ts",
-      "src/main/artifacts/reproduction-preflight.test.ts",
       "src/main/artifacts/resumed-finalization-ownership.test.ts",
       "src/main/artifacts/reviewer-turn-file-evidence-reader.test.ts",
       "src/main/artifacts/ro-crate-export.test.ts",
@@ -1318,7 +1317,8 @@
       "src/main/notebook/environment-provisioning.contract.test.ts",
       "src/main/notebook/environment-recovery.contract.test.ts",
       "src/main/notebook/environment-restoration-sandbox.contract.test.ts",
-      "src/main/notebook/environment-startup.contract.test.ts"
+      "src/main/notebook/environment-startup.contract.test.ts",
+      "src/main/artifacts/reproducibility-host.test.ts"
     ]
   },
   "capabilityOverlays": [],
