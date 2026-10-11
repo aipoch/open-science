@@ -287,3 +287,256 @@ it.each(['ordinary-list', 'missing-icon', 'wrong-order', 'prose', 'table'])(
     ).toBeUndefined()
   }
 )
+import { OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
+const { collectClosedFigureFrames } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-graphics.mjs')).href
+)
+const { nativeCaptionedPlotBand } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-figure-native-plot-bands.mjs')).href
+)
+const closedSixFaces = (): ReturnType<typeof JSON.parse> => {
+  const page = {
+      pageNumber: 1,
+      width: 600,
+      height: 800,
+      invalidGraphicsBounds: 0,
+      lines: [] as ReturnType<typeof JSON.parse>[],
+      graphicsBounds: [] as ReturnType<typeof JSON.parse>[]
+    },
+    operators: ReturnType<typeof JSON.parse> = { fnArray: [], argsArray: [] },
+    viewport = { width: 600, height: 800, rotation: 0, transform: [1, 0, 0, -1, 0, 800] },
+    tokens: ReturnType<typeof JSON.parse>[] = [],
+    add = (op: number, args: ReturnType<typeof JSON.parse>): void => {
+      operators.fnArray.push(op)
+      operators.argsArray.push(args)
+    },
+    paint = (points: number[], op = OPS.stroke): void => {
+      const xs: number[] = [],
+        ys: number[] = []
+      for (let n = 0; n < points.length;) {
+        const command = points[n++],
+          count = command === 4 ? 0 : 2
+        for (let i = 0; i < count; i += 2) {
+          xs.push(points[n + i])
+          ys.push(points[n + i + 1])
+        }
+        n += count
+      }
+      const extra = op === OPS.stroke ? 0.5 : 0,
+        rect = [
+          Math.min(...xs) - extra,
+          800 - Math.max(...ys) - extra,
+          Math.max(...xs) + extra,
+          800 - Math.min(...ys) + extra
+        ]
+      page.graphicsBounds.push({
+        kind: 'path',
+        operationIndex: operators.fnArray.length,
+        normalizedRect: rect.map(
+          (v, n) =>
+            ((n < 2 ? Math.floor : Math.ceil)((v * 256) / (n % 2 ? 800 : 600)) + (n < 2 ? 0 : 1)) /
+            256
+        )
+      })
+      add(OPS.constructPath, [
+        op,
+        [new Float32Array(points)],
+        new Float32Array([Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)])
+      ])
+    },
+    frame = (r: number[]): void => {
+      const [l, t, x, b] = r
+      paint([0, l, 800 - b, 1, x, 800 - b, 1, x, 800 - t, 1, l, 800 - t, 4], OPS.fillStroke)
+    },
+    text = (str: string, left: number, top: number, font: number, rotated = false): void => {
+      const width = str.length * font * 0.5,
+        rect = rotated
+          ? [left, top, left + font, top + width]
+          : [left, top, left + width, top + font],
+        baseline = rect[3],
+        token = {
+          text: str,
+          rect,
+          baseline,
+          height: font,
+          horizontal: !rotated,
+          sourceItem: { pageNumber: 1, index: tokens.length, text: str }
+        }
+      tokens.push(token)
+      if (!rotated)
+        page.lines.push({ text: str, x: left, y: top, width, height: font, fontSize: font })
+      add(OPS.beginText, null)
+      add(OPS.setFont, ['anonymous-font', font])
+      add(OPS.setTextMatrix, [
+        new Float32Array(
+          rotated ? [0, 1, -1, 0, left + font, 800 - baseline] : [1, 0, 0, 1, left, 800 - baseline]
+        )
+      ])
+      add(OPS.showText, [
+        [...str].map((c) => ({
+          originalCharCode: c.charCodeAt(0),
+          fontChar: c,
+          unicode: c,
+          width: 500,
+          isSpace: c === ' ',
+          isInFont: true
+        }))
+      ])
+      add(OPS.endText, null)
+    }
+  add(OPS.setLineWidth, [1])
+  for (let row = 0; row < 2; row++)
+    for (let column = 0; column < 3; column++) {
+      const left = 90 + column * 160,
+        top = 80 + row * 155,
+        right = left + 100,
+        bottom = top + 100
+      frame([left, top, right, bottom])
+      text(`Panel ${row * 3 + column + 1}`, left + 32.5, top - 20, 10)
+      for (let n = 0; n < 3; n++) {
+        text(String(n), left + 15 + n * 30, bottom + 5, 6)
+        text(String(n), left - 12, top + 10 + n * 30, 6)
+        paint([0, left + 10, 800 - top - 20 - n * 15, 1, right - 10, 800 - top - 35 - n * 15])
+      }
+      text('rate', left - 25, top + 25, 6, true)
+    }
+  const caption = {
+    page: 1,
+    lines: ['Figure 1: Complete native plate.'],
+    rect: [60, 355, 220, 365]
+  }
+  text(caption.lines[0], 60, 355, 10)
+  const frames = collectClosedFigureFrames(operators, viewport)
+  return {
+    page,
+    caption,
+    captions: [caption],
+    frames,
+    tokens,
+    rules: [],
+    context: { operators, viewport }
+  }
+}
+const sixFaceProof = (f: ReturnType<typeof JSON.parse>): ReturnType<typeof JSON.parse> =>
+  nativeCaptionedPlotBand(
+    f.page,
+    f.caption,
+    f.captions,
+    [],
+    f.rules,
+    f.frames,
+    f.tokens,
+    undefined,
+    f.context
+  )
+
+it('recovers all six independently closed faces with whole-font matrices and complete paint indices', () => {
+  const f = closedSixFaces(),
+    before = structuredClone(f),
+    proof = sixFaceProof(f)
+  expect(proof?.graphicsCount).toBe(6)
+  expect(proof?.rect[1]).toBe(60)
+  expect(proof?.rect[3]).toBeGreaterThan(340)
+  expect(f).toEqual(before)
+})
+it('preserves an already complete owner of the six-face source', () => {
+  const f = closedSixFaces()
+  expect(
+    nativeCaptionedPlotBand(
+      f.page,
+      f.caption,
+      f.captions,
+      [],
+      f.rules,
+      f.frames,
+      f.tokens,
+      [50, 50, 550, 350],
+      f.context
+    )
+  ).toBeUndefined()
+})
+it('accounts for every independently clipped empty paint without a page-count exemption', () => {
+  const f = closedSixFaces(),
+    o = f.context.operators
+  o.fnArray.push(OPS.save, OPS.clip, OPS.constructPath, OPS.constructPath, OPS.restore)
+  o.argsArray.push(
+    null,
+    null,
+    [
+      OPS.endPath,
+      [new Float32Array([0, 90, 620, 1, 190, 620, 1, 190, 720, 1, 90, 720, 4])],
+      new Float32Array([90, 620, 190, 720])
+    ],
+    [
+      OPS.stroke,
+      [new Float32Array([0, 100, 570, 1, 180, 590])],
+      new Float32Array([100, 570, 180, 590])
+    ],
+    null
+  )
+  f.page.invalidGraphicsBounds = 1
+  expect(sixFaceProof(f)?.graphicsCount).toBe(6)
+  f.page.invalidGraphicsBounds = 0
+  expect(sixFaceProof(f)?.graphicsCount).not.toBe(6)
+})
+it.each([
+  'missing-font',
+  'wrong-origin',
+  'wrong-height',
+  'wrong-baseline',
+  'moved-matrix',
+  'nested-text-state',
+  'missing-glyph',
+  'shifted-paint-index',
+  'missing-paint',
+  'changed-paint-box',
+  'changed-source-paint-box',
+  'open-face',
+  'duplicate-caption',
+  'foreign-prose',
+  'alpha',
+  'curved-clip'
+])('refuses incomplete six-face source proof: %s', (reason) => {
+  const f = closedSixFaces(),
+    o = f.context.operators,
+    at = o.fnArray.indexOf(OPS.setTextMatrix)
+  if (reason === 'missing-font') f.tokens.splice(1, 1)
+  if (reason === 'wrong-origin') f.tokens[1].sourceItem.text = 'Different'
+  if (reason === 'wrong-height') f.tokens[1].height -= 1
+  if (reason === 'wrong-baseline') f.tokens[1].baseline -= 1
+  if (reason === 'moved-matrix') o.argsArray[at][0][4] += 1
+  if (reason === 'nested-text-state') {
+    o.fnArray.splice(at, 0, OPS.save, OPS.restore)
+    o.argsArray.splice(at, 0, null, null)
+    f.page.graphicsBounds = f.page.graphicsBounds.map((g) => ({
+      ...g,
+      operationIndex: g.operationIndex >= at ? g.operationIndex + 2 : g.operationIndex
+    }))
+  }
+  if (reason === 'missing-glyph') o.argsArray[o.fnArray.indexOf(OPS.showText)][0].pop()
+  if (reason === 'shifted-paint-index') f.page.graphicsBounds[0].operationIndex++
+  if (reason === 'missing-paint') f.page.graphicsBounds.pop()
+  if (reason === 'changed-paint-box') f.page.graphicsBounds[0].normalizedRect[0] += 0.01
+  if (reason === 'changed-source-paint-box')
+    o.argsArray[o.fnArray.indexOf(OPS.constructPath)][2][0] += 1
+  if (reason === 'open-face') f.frames.pop()
+  if (reason === 'duplicate-caption') f.page.lines.push({ ...f.page.lines.at(-1) })
+  if (reason === 'foreign-prose') {
+    const t = f.tokens[1]
+    t.text = 'A foreign paragraph.'
+    t.sourceItem.text = t.text
+  }
+  if (reason === 'alpha') {
+    o.fnArray.push(OPS.setGState)
+    o.argsArray.push([[['ca', 0.5]]])
+  }
+  if (reason === 'curved-clip') {
+    o.fnArray.push(OPS.clip, OPS.constructPath)
+    o.argsArray.push(null, [
+      OPS.endPath,
+      [new Float32Array([0, 90, 700, 2, 100, 700, 190, 700, 190, 720, 4])],
+      new Float32Array([90, 700, 190, 720])
+    ])
+  }
+  expect(sixFaceProof(f)?.graphicsCount).not.toBe(6)
+})

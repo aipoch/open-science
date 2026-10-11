@@ -208,6 +208,76 @@ export function reconcileNativeTieredHeader({
   measuredRuns = []
 }) {
   if (!rows.length || !columnRects.length || headerRows.some((r, i) => r !== i)) return 0
+  // Preserve an already complete native grouped header. A fallback based on
+  // the parent word's width must not narrow its independently proved children.
+  const headerCells = cells.filter((c) => headerRows.includes(c.row)),
+    plannedSpans = recordGrid?.spans?.filter((s) => headerRows.includes(s.row)),
+    mergedSpans = plannedSpans?.filter((s) => s.rowSpan * (s.colSpan ?? 1) > 1),
+    mergedCells = headerCells.filter((c) => c.rowSpan * c.colSpan > 1),
+    sameSpan = (c, s) =>
+      c.row === s.row &&
+      c.column === s.column &&
+      c.rowSpan === s.rowSpan &&
+      c.colSpan === (s.colSpan ?? 1),
+    headerTokens = headerCells.flatMap((c) => c.sourceTokens ?? []),
+    headerOwners =
+      recordGrid?.ownedTokens instanceof Set
+        ? headerCells.flatMap((c) =>
+            (c.sourceTokens ?? []).map((t) => {
+              // sourceTokens are the existing internal geometry projection;
+              // sourceItems separately retain each original whole-font origin.
+              const matches = [...recordGrid.ownedTokens].filter(
+                (i) =>
+                  !i.sourceToken &&
+                  i.sourceItem &&
+                  i.sourceItem.text === i.text &&
+                  i.text === t.text &&
+                  i.baseline === t.baseline &&
+                  i.height === t.height &&
+                  i.rect.every((v, n) => v === t.rect[n]) &&
+                  c.sourceRects?.some((r) => i.rect.every((v, n) => v === r[n])) &&
+                  c.sourceItems?.some(
+                    (s) =>
+                      s.pageNumber === i.sourceItem.pageNumber &&
+                      s.index === i.sourceItem.index &&
+                      s.text === i.sourceItem.text
+                  )
+              )
+              return matches.length === 1 ? matches[0] : undefined
+            })
+          )
+        : []
+  if (
+    !recordGrid?.nativeTieredHeader &&
+    recordGrid?.completeSpans &&
+    recordGrid.ownedTokens instanceof Set &&
+    headerRows.length >= 2 &&
+    recordGrid.headerRows?.length === headerRows.length &&
+    headerRows.every(
+      (r, n) =>
+        recordGrid.headerRows[n] === r &&
+        rows[r]?.rect?.every(Number.isFinite) &&
+        rows[r].rect[3] > rows[r].rect[1] &&
+        (!n || rows[headerRows[n - 1]].rect[3] <= rows[r].rect[1])
+    ) &&
+    plannedSpans?.filter((s) => s.rowSpan === 1 && s.colSpan >= 2).length >= 2 &&
+    plannedSpans.every((s) => headerCells.some((c) => sameSpan(c, s))) &&
+    mergedCells.length === mergedSpans.length &&
+    mergedCells.every((c) => mergedSpans.some((s) => sameSpan(c, s))) &&
+    unassigned.length === 0 &&
+    headerCells.every(
+      (c) =>
+        c.sourceTokens?.length &&
+        c.sourceTokens.length === c.sourceItems?.length &&
+        c.sourceTokens.length === c.sourceRects?.length
+    ) &&
+    headerOwners.every(Boolean) &&
+    new Set(headerOwners).size === headerTokens.length &&
+    [...recordGrid.ownedTokens].filter(
+      (i) => i.baseline >= rows[0].rect[1] && i.baseline < rows[headerRows.at(-1)].rect[3]
+    ).length === headerTokens.length
+  )
+    return 0
   const heights = pageItems
     .filter((i) => i.height > 0)
     .map((i) => i.height)

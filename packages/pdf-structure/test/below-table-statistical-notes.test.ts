@@ -50,3 +50,41 @@ it('does not treat an ordinary data interpretation as a statistical-format note'
   )
   expect(associateTableNotes(page, [{ rect: [40, 100, 450, 295] }])[0]).toEqual([])
 })
+
+const citedSymbolPage = (): ReturnType<typeof JSON.parse> => ({
+  pageNumber: 1,
+  width: 600,
+  height: 800,
+  graphicsBounds: [],
+  lines: [
+    { text: 'Record amber (*)', x: 50, y: 180, width: 110, height: 10, fontSize: 10 },
+    {
+      text: '(*) These observations exclude the auxiliary measurement.',
+      x: 55,
+      y: 205,
+      width: 260,
+      height: 10,
+      fontSize: 10
+    }
+  ]
+})
+
+it('retains a whole parenthesized symbol note cited inside one native closing fence', () => {
+  const p = citedSymbolPage(),
+    before = structuredClone(p)
+  const notes = associateTableNotes(p, [{ rect: [45, 100, 330, 200] }], [[45, 200, 330, 200]])
+  expect(notes[0].map((n: { text: string }) => n.text)).toEqual([p.lines[1].text])
+  expect(p).toEqual(before)
+})
+
+it.each(['uncited marker', 'missing fence', 'foreign column'])(
+  'declines an isolated parenthesized note without %s',
+  (variant) => {
+    const p = citedSymbolPage(),
+      rules = [[45, 200, 330, 200]]
+    if (variant === 'uncited marker') p.lines[0].text = 'Record amber'
+    if (variant === 'missing fence') rules.splice(0)
+    if (variant === 'foreign column') p.lines[1].x = 350
+    expect(associateTableNotes(p, [{ rect: [45, 100, 330, 200] }], rules)[0]).toEqual([])
+  }
+)

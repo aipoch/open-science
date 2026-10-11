@@ -12,6 +12,157 @@ const { associateTableCaptions } = await import(
 const fixture = (): ReturnType<typeof JSON.parse> =>
   readPdfFixture(resolve('test/fixtures/source-grids/native-caption-context-ownership.jsonl'))
 
+it('keeps an indented unpunctuated finite reference inside its native body paragraph', () => {
+  const row = (text: string, x: number, y: number, width = 430): ReturnType<typeof JSON.parse> => ({
+    text,
+    x,
+    y,
+    width,
+    height: 10,
+    fontSize: 10
+  })
+  const p = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    invalidGraphicsBounds: 0,
+    graphicsBounds: [],
+    lines: [
+      row('A complete preceding body paragraph ends here.', 70, 188, 210),
+      row(
+        'Fig. 5 expresses the complete comparison for the independent observations.',
+        81,
+        200,
+        419
+      ),
+      row('The corresponding records are described in this body paragraph.', 70, 212),
+      row('The final body sentence completes the analysis.', 70, 224, 240)
+    ]
+  }
+  expect(findCaptionCandidates([p])).toEqual([])
+  const detached = structuredClone(p)
+  detached.lines[0].y = 150
+  expect(findCaptionCandidates([detached])).toHaveLength(1)
+  const punctuated = structuredClone(p)
+  punctuated.lines[1].text = 'Fig. 5: This figure expresses the complete comparison.'
+  expect(findCaptionCandidates([punctuated])).toHaveLength(1)
+})
+
+it('keeps the complete earlier right caption out of a later pipe-delimited left caption', () => {
+  const row = (text: string, x: number, y: number): ReturnType<typeof JSON.parse> => ({
+    text,
+    x,
+    y,
+    width: 240,
+    height: 10,
+    fontSize: 10
+  })
+  const right = [
+    row('Fig. 6 | Independently measured right-side observations.', 310, 176),
+    row('Its second complete caption row describes the panel.', 310, 188),
+    row('The third physical row remains owned by this caption.', 310, 200),
+    row('The right caption ends with complete observations.', 310, 212)
+  ]
+  const left = [
+    row('Fig. 5 | Independently measured left-side observations.', 50, 200),
+    row('The complete left caption ends with its own records.', 50, 212)
+  ]
+  const p = { pageNumber: 1, width: 600, height: 800, lines: [...right, ...left] }
+  const actual = findCaptionCandidates([p])
+  expect(actual.map((c: { lines: string[] }) => c.lines)).toEqual([
+    right.map((l) => l.text),
+    left.map((l) => l.text)
+  ])
+  const genuineFlow = { ...p, lines: [...left, ...right.slice(2)] }
+  expect(findCaptionCandidates([genuineFlow])[0].lines).toEqual(
+    [...left, ...right.slice(2)].map((l) => l.text)
+  )
+})
+
+it('refuses numbered references inside a complete tight native paragraph continuation', () => {
+  for (const [previous, reference] of [
+    [
+      'The complete comparison with the baseline is found in the',
+      'Table 2. For qualitative examples, we use complete records.'
+    ],
+    [
+      'The complete system is described in the appendix (see',
+      'Supplemental Fig. S3 in SI Appendix).'
+    ],
+    [
+      'Our experimental scheme is schematically illustrated in',
+      'Fig. 2a. Two independent carriers are held within the frame.'
+    ],
+    ['We list the complete states for each experiment presented in', 'Table I and Table II.']
+  ]) {
+    const row = (text: string, y: number): ReturnType<typeof JSON.parse> => ({
+      text,
+      x: 80,
+      y,
+      width: 400,
+      fontSize: 10,
+      height: 10
+    })
+    const p = {
+      pageNumber: 1,
+      width: 600,
+      height: 800,
+      invalidGraphicsBounds: 0,
+      graphicsBounds: [],
+      lines: [row(previous, 200), row(reference, 212)]
+    }
+    expect(findCaptionCandidates([p])).toHaveLength(0)
+    const detached = structuredClone(p)
+    detached.lines[0].y = 150
+    expect(findCaptionCandidates([detached])).toHaveLength(1)
+  }
+})
+
+it('refuses a panel reference continuing the unique one-em indented body opening', () => {
+  const row = (
+    text: string,
+    x: number,
+    y: number,
+    width: number
+  ): ReturnType<typeof JSON.parse> => ({
+    text,
+    x,
+    y,
+    width,
+    fontSize: 10,
+    height: 10
+  })
+  const p = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    invalidGraphicsBounds: 0,
+    graphicsBounds: [],
+    lines: [
+      row('Our independent experimental scheme is illustrated in', 90, 200, 390),
+      row('Fig. 2a. Two independent carriers are held within the frame', 80, 212, 400),
+      row('and every separate source observation remains within the same frame', 80, 224, 400),
+      row('throughout the complete measurement.', 80, 236, 300)
+    ]
+  }
+  expect(findCaptionCandidates([p])).toHaveLength(0)
+  for (const mutate of [
+    (p: ReturnType<typeof JSON.parse>): void => {
+      p.lines[0].x += 5
+    },
+    (p: ReturnType<typeof JSON.parse>): void => {
+      p.lines[2].x += 20
+    },
+    (p: ReturnType<typeof JSON.parse>): void => {
+      p.lines.push({ ...p.lines[0] })
+    }
+  ]) {
+    const q = structuredClone(p)
+    mutate(q)
+    expect(findCaptionCandidates([q])).toHaveLength(1)
+  }
+})
+
 const centeredCaptionStack = (): ReturnType<typeof JSON.parse> => {
   const row = (
     text: string,
@@ -987,4 +1138,348 @@ it.each([
     )
   ).toBe(true)
   expect(page).toEqual(before)
+})
+
+it('keeps finite contextual references outside independent painted-title recovery', () => {
+  for (const text of [
+    'Figure 3: Where the independent records are measured.',
+    'Figure 3: Where the records terminate. Rows are measured independently.',
+    'Fig. 3: Where the independent records are measured.',
+    'Figure 3. Where the independent records are measured.',
+    'Figure 3: In the control. We report the results.'
+  ])
+    expect(captionKind(text)).toBeUndefined()
+})
+
+const completePointerContinuation = (repeated: boolean): ReturnType<typeof JSON.parse> => ({
+  pageNumber: 1,
+  width: 600,
+  height: 800,
+  graphicsBounds: [],
+  lines: [
+    {
+      text: 'Separate source observations describe the complete independent',
+      x: 60,
+      y: 300,
+      width: 240,
+      height: 10,
+      fontSize: 10
+    },
+    {
+      text: repeated
+        ? 'records across the separately measured native grid of'
+        : 'records and the separately measured findings shown in',
+      x: 50,
+      y: 312,
+      width: 250,
+      height: 10,
+      fontSize: 10
+    },
+    {
+      text: repeated
+        ? 'Fig. 4. Fig. 4 shows the complete measured native records.'
+        : 'Figure 4 and the separate measured native records continue.',
+      x: 50,
+      y: 324,
+      width: 250,
+      height: 10,
+      fontSize: 10
+    },
+    {
+      text: 'The remaining source observations terminate independently.',
+      x: 50,
+      y: 336,
+      width: 230,
+      height: 10,
+      fontSize: 10
+    }
+  ]
+})
+
+it.each([false, true])(
+  'refuses a tightly led native body pointer under two complete preceding rows (repeated=%s)',
+  (repeated) => {
+    const page = completePointerContinuation(repeated),
+      before = structuredClone(page)
+    expect(captionKind(page.lines[2].text)).toBe('figure')
+    expect(findCaptionCandidates([page])).toEqual([])
+    expect(page).toEqual(before)
+  }
+)
+
+it.each([false, true])(
+  'retains an independent caption when its native paragraph proof is incomplete (repeated=%s)',
+  (repeated) => {
+    for (const missing of [
+      'previous',
+      'earlier',
+      'preposition',
+      'closed-paragraph',
+      'font',
+      'right-edge',
+      'leading',
+      'separator',
+      'plate'
+    ]) {
+      const page = completePointerContinuation(repeated)
+      if (missing === 'previous') page.lines.splice(1, 1)
+      if (missing === 'earlier') page.lines.splice(0, 1)
+      if (missing === 'preposition')
+        page.lines[1].text = 'A complete independent caption begins below these native records.'
+      if (missing === 'closed-paragraph') page.lines[0].text += '.'
+      if (missing === 'font') page.lines[1].fontSize = 12
+      if (missing === 'right-edge') page.lines[1].width -= 20
+      if (missing === 'leading') page.lines[1].y -= 2.5
+      if (missing === 'plate')
+        page.graphicsBounds.push({
+          kind: 'image',
+          normalizedRect: [50 / 600, 280 / 800, 300 / 600, 320 / 800]
+        })
+      const separators = missing === 'separator' ? new Map([[1, [[50, 322, 300, 322]]]]) : new Map()
+      const before = structuredClone(page)
+      expect(
+        findCaptionCandidates([page], separators).some((caption: { lines: string[] }) =>
+          caption.lines[0].startsWith(repeated ? 'Fig. 4.' : 'Figure 4 and')
+        )
+      ).toBe(true)
+      expect(page).toEqual(before)
+    }
+  }
+)
+
+const wrappedUnnumberedReferencePage = (): ReturnType<typeof JSON.parse> => ({
+  pageNumber: 1,
+  width: 600,
+  height: 800,
+  graphicsBounds: [],
+  lines: [
+    ['Separate native observations describe the whole range of the', 100],
+    ['figure. Figure 2a shows the independent source records.', 112],
+    ['The independent source observations continue in ordinary prose.', 124]
+  ].map(([text, y]) => ({ text, x: 60, y, width: 480, height: 10, fontSize: 10 }))
+})
+
+it.each(['translates', 'verifies'])(
+  'refuses an unpunctuated numbered figure subject with the finite narrative verb %s',
+  (verb) => {
+    const page = wrappedUnnumberedReferencePage()
+    page.lines[1].text = `Figure 2 ${verb} the independent source records.`
+    const before = structuredClone(page)
+    expect(captionKind(page.lines[1].text)).toBeUndefined()
+    expect(findCaptionCandidates([page])).toEqual([])
+    expect(page).toEqual(before)
+  }
+)
+
+it('refuses a lowercase wrapped figure noun only with complete native body continuation', () => {
+  const page = wrappedUnnumberedReferencePage(),
+    before = structuredClone(page)
+  expect(captionKind(page.lines[1].text)).toBe('figure')
+  expect(findCaptionCandidates([page])).toEqual([])
+  expect(page).toEqual(before)
+})
+
+it.each([
+  'previous',
+  'following',
+  'cue',
+  'font',
+  'right-edge',
+  'column',
+  'leading',
+  'uppercase',
+  'separator',
+  'plate',
+  'foreign',
+  'invalid-graphic'
+])('retains the wrapped unnumbered title without its %s body witness', (missing) => {
+  const page = wrappedUnnumberedReferencePage(),
+    start = page.lines[1]
+  if (missing === 'previous') page.lines.splice(0, 1)
+  if (missing === 'following') page.lines.splice(2, 1)
+  if (missing === 'cue')
+    page.lines[0].text = 'Separate native observations terminate independently.'
+  if (missing === 'font') page.lines[0].fontSize = 9
+  if (missing === 'right-edge') page.lines[0].width -= 30
+  if (missing === 'column') page.lines[0].x += 260
+  if (missing === 'leading') page.lines[0].y -= 5
+  if (missing === 'uppercase') start.text = start.text.replace(/^figure/, 'Figure')
+  if (missing === 'foreign')
+    page.lines.push({
+      text: 'Independent foreign source text.',
+      x: 250,
+      y: 107,
+      width: 150,
+      height: 8.5,
+      fontSize: 8.5
+    })
+  if (missing === 'invalid-graphic')
+    page.graphicsBounds.push({ kind: 'image', normalizedRect: [0.1, 0.1, 0.1, 0.2] })
+  if (missing === 'plate')
+    page.graphicsBounds.push({
+      kind: 'image',
+      normalizedRect: [60 / 600, 105 / 800, 540 / 600, 125 / 800]
+    })
+  const rules = missing === 'separator' ? new Map([[1, [[60, 111, 540, 111]]]]) : new Map()
+  const before = structuredClone(page)
+  expect(
+    findCaptionCandidates([page], rules).some(
+      (caption: { lines: string[] }) => caption.lines[0] === start.text
+    )
+  ).toBe(true)
+  expect(page).toEqual(before)
+})
+
+it.each([
+  'Figure 2: Verifies the independently measured records.',
+  'Figure 2: Translates the independently measured coordinates.',
+  'Figure 2. Translation of independent measured coordinates.',
+  'Figure. Complete independent measured response.',
+  'figure. Complete independent measured response.'
+])('preserves the independently titled caption %s without a nearby graphic', (text) => {
+  const page = wrappedUnnumberedReferencePage()
+  page.lines = [{ text, x: 60, y: 300, width: 480, height: 10, fontSize: 10 }]
+  const before = structuredClone(page)
+  expect(captionKind(text)).toBe('figure')
+  expect(findCaptionCandidates([page])).toEqual([
+    { page: 1, lines: [text], rect: [60, 300, 540, 310] }
+  ])
+  expect(page).toEqual(before)
+})
+
+const panelRangeReferencePage = (text: string): ReturnType<typeof JSON.parse> => ({
+  pageNumber: 1,
+  width: 600,
+  height: 800,
+  graphicsBounds: [],
+  lines: [{ text, x: 60, y: 200, width: 460, height: 10, fontSize: 10 }]
+})
+
+it.each([
+  'Fig. 2 (a)-(c) shows independent observations.',
+  'Figure 2 (a) - (c) show independent observations.',
+  'Figure 2 (a)-(c) further shows independent observations.'
+])('refuses the complete panel-range finite narrative subject %s', (text) => {
+  const page = panelRangeReferencePage(text),
+    before = structuredClone(page)
+  expect(captionKind(text)).toBeUndefined()
+  expect(findCaptionCandidates([page])).toEqual([])
+  expect(page).toEqual(before)
+})
+
+it.each(['paragraph', 'graphic'])(
+  'refuses the complete panel-range narrative with a nearby %s',
+  (context) => {
+    const page = panelRangeReferencePage('Fig. 2 (a)-(c) shows independent observations.')
+    if (context === 'paragraph')
+      page.lines.unshift({
+        text: 'The complete source paragraph continues independently.',
+        x: 60,
+        y: 188,
+        width: 460,
+        height: 10,
+        fontSize: 10
+      })
+    if (context === 'graphic')
+      page.graphicsBounds.push({ kind: 'image', normalizedRect: [0.1, 0.1, 0.9, 0.2] })
+    const before = structuredClone(page)
+    expect(findCaptionCandidates([page])).toEqual([])
+    expect(page).toEqual(before)
+  }
+)
+
+it.each([
+  'Fig. 2 (a)-(c). Independent measured observations.',
+  'Fig. 2 (a)-(c): Independent measured observations.',
+  'Fig. 2 (a)-(c) Independent measured observations.',
+  'Fig. 2. Panels (a)-(c) show independent observations.',
+  'Fig. 2 (a)-(c) showscale of independent observations.',
+  'Fig. 2 (a)-(c) Shown independent observations.',
+  'Fig. 2 (a)-(c shows independent observations.',
+  'Fig. 2 (a)- shows independent observations.',
+  'Fig. 2 (left)-(right) shows independent observations.'
+])('preserves range titles and incomplete or unsupported range syntax: %s', (text) => {
+  const page = panelRangeReferencePage(text),
+    before = structuredClone(page)
+  expect(captionKind(text)).toBe('figure')
+  expect(findCaptionCandidates([page])).toEqual([
+    { page: 1, lines: [text], rect: [60, 200, 520, 210] }
+  ])
+  expect(page).toEqual(before)
+})
+
+it.each([
+  'Fig. 2 shows independent observations.',
+  'Fig. 2 (a) shows independent observations.',
+  'Fig. 2 (a), (c) shows independent observations.'
+])('keeps the existing single-panel and list finite-reference refusal: %s', (text) => {
+  const page = panelRangeReferencePage(text),
+    before = structuredClone(page)
+  expect(captionKind(text)).toBeUndefined()
+  expect(findCaptionCandidates([page])).toEqual([])
+  expect(page).toEqual(before)
+})
+
+it.each([
+  [
+    'The complete uncertainty comparison is described here (see',
+    'Table 4 for the independent standard errors.',
+    12
+  ],
+  ['As shown in', 'Figure 3.8, the measured gradient flows differ substantially.', 13.2]
+])('rejects a source-closed body pointer after %s', (ending, reference, step) => {
+  const row = (text: string, y: number, fontSize = 10): ReturnType<typeof JSON.parse> => ({
+    text,
+    x: 60,
+    y,
+    width: 480,
+    height: fontSize,
+    fontSize
+  })
+  const p = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    invalidGraphicsBounds: 0,
+    graphicsBounds: [],
+    lines: [
+      row('A complete preceding body row proves the native cadence.', 200 - 2 * Number(step)),
+      row(`The complete measured result is explained here. ${ending}`, 200 - Number(step)),
+      row(String(reference), 200),
+      row('The complete body paragraph continues with independent records.', 200 + Number(step))
+    ]
+  }
+  expect(findCaptionCandidates([p])).toEqual([])
+  for (const control of ['font', 'duplicate', 'rule']) {
+    const changed = structuredClone(p),
+      rules: number[][] = []
+    if (control === 'font') changed.lines[1].fontSize = 12
+    if (control === 'duplicate') changed.lines.push(structuredClone(changed.lines[1]))
+    if (control === 'rule') rules.push([60, 199, 540, 199])
+    expect(findCaptionCandidates([changed], new Map([[1, rules]]))).toHaveLength(1)
+  }
+})
+
+it('rejects an unpunctuated reflecting subject while preserving a real punctuated title', () => {
+  const row = (text: string): ReturnType<typeof JSON.parse> => ({
+    text,
+    x: 60,
+    y: 200,
+    width: 480,
+    height: 10,
+    fontSize: 10
+  })
+  const p = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    lines: [row('Fig. 6 also reflects this measured background clutter.')]
+  }
+  expect(findCaptionCandidates([p])).toEqual([])
+  for (const text of [
+    'Fig. 6: Reflections under noise.',
+    'Figure 6. Reflects an independent optical surface.',
+    'Table 4: For the standard errors.'
+  ])
+    expect(captionKind(text)).toBeTruthy()
 })

@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type, no-control-regex, no-useless-escape */
+import { isDeepStrictEqual as navigationSourceExact } from 'node:util'
 import { inside } from './literature-pdf-table-geometry.mjs'
 import { area, intersection } from './literature-pdf-page-geometry.mjs'
 import { hasNativeNonTableLayout } from './literature-pdf-native-non-table-layout.mjs'
@@ -2211,6 +2212,233 @@ function isFlatSupplementalContentsDirectory(table, items, rules) {
   )
 }
 
+// Mixed supplemental navigation has complete native title/page pairs, not
+// detector row counts. This five-input classifier does not verify operators.
+function isNativeMixedSupplementalContentsDirectory(
+  table,
+  caption,
+  items = [],
+  rules = [],
+  graphics = []
+) {
+  const rect = (r) =>
+    Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && r[0] < r[2] && r[1] < r[3]
+  const intersects = (a, b) => a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1]
+  const key = (o) => `${o?.pageNumber}:${o?.index}`
+  const literal = (s) => s.replace(/\s/gu, '')
+  if (
+    caption ||
+    !rect(table?.cropRect) ||
+    !Array.isArray(table.grid) ||
+    table.grid.length < 4 ||
+    table.grid.some(
+      (r) => !Array.isArray(r) || r.length !== 2 || r.some((v) => typeof v !== 'string')
+    ) ||
+    !Array.isArray(table.cells) ||
+    !table.cells.length ||
+    !Array.isArray(table.unassigned) ||
+    table.unassigned.some((v) => typeof v !== 'string') ||
+    !Array.isArray(table.clipped) ||
+    table.clipped.length ||
+    !Array.isArray(items) ||
+    !items.length ||
+    !Array.isArray(rules) ||
+    !Array.isArray(graphics)
+  )
+    return false
+  const source = items.filter((i) => typeof i?.text === 'string' && i.text.trim())
+  if (
+    !source.length ||
+    source.some(
+      (i) =>
+        !rect(i.rect) ||
+        !Number.isFinite(i.height) ||
+        i.height <= 0 ||
+        !Number.isFinite(i.baseline) ||
+        typeof i.horizontal !== 'boolean' ||
+        !Number.isSafeInteger(i.sourceItem?.pageNumber) ||
+        i.sourceItem.pageNumber < 1 ||
+        !Number.isSafeInteger(i.sourceItem.index) ||
+        i.sourceItem.index < 0 ||
+        i.sourceItem.text !== i.text
+    )
+  )
+    return false
+  if (
+    new Set(source.map((i) => key(i.sourceItem))).size !== source.length ||
+    new Set(source.map((i) => i.sourceItem.pageNumber)).size !== 1
+  )
+    return false
+  const crop = table.cropRect,
+    local = source.filter((i) => intersects(i.rect, crop))
+  if (
+    local.length < 14 ||
+    local.some(
+      (i) =>
+        !i.horizontal ||
+        i.rect[0] < crop[0] ||
+        i.rect[1] < crop[1] ||
+        i.rect[2] > crop[2] ||
+        i.rect[3] > crop[3] ||
+        Math.abs(i.rect[3] - i.baseline) > 0.02 ||
+        Math.abs(i.rect[3] - i.rect[1] - i.height) > 0.02
+    )
+  )
+    return false
+  const em = local[0].height
+  if (local.some((i) => Math.abs(i.height - em) > 0.02)) return false
+  const rows = []
+  for (const f of [...local].sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])) {
+    const row = rows.at(-1)
+    if (row && Math.abs(row[0].baseline - f.baseline) < 0.02) row.push(f)
+    else rows.push([f])
+  }
+  if (rows.some((g) => g.length !== 2) || rows.length < 7) return false
+  const pairs = rows.map((g) => [...g].sort((a, b) => a.rect[0] - b.rect[0]))
+  const [first] = pairs,
+    last = pairs.at(-1),
+    heads = source.filter((i) => /^contents$/iu.test(i.text.trim()))
+  if (heads.length !== 1) return false
+  const heading = heads[0],
+    band = [crop[0], heading.rect[1], crop[2], crop[3]]
+  if (
+    !heading.horizontal ||
+    heading.rect[0] < crop[0] ||
+    heading.rect[2] > crop[2] ||
+    heading.rect[3] >= crop[1] ||
+    heading.sourceItem.index >= first[0].sourceItem.index ||
+    heading.height < em * 0.75 ||
+    heading.height > em * 1.5 ||
+    first[0].rect[1] - heading.rect[3] > em * 3 ||
+    first[0].rect[1] - heading.rect[3] < em * 0.5
+  )
+    return false
+  if (source.some((i) => i !== heading && !local.includes(i) && intersects(i.rect, band)))
+    return false
+  if (
+    rules.some(
+      (r) =>
+        !Array.isArray(r) ||
+        r.length !== 4 ||
+        !r.every(Number.isFinite) ||
+        r[0] > r[2] ||
+        r[1] > r[3] ||
+        intersects(r, band)
+    )
+  )
+    return false
+  if (
+    graphics.some(
+      (g) => !g || !['path', 'image'].includes(g.kind) || !rect(g.rect) || intersects(g.rect, band)
+    )
+  )
+    return false
+  if (
+    pairs.some(
+      ([label, page], n) =>
+        !/^\d{1,4}$/u.test(page.text.trim()) ||
+        Number(page.text.trim()) < 1 ||
+        page.rect[0] < crop[0] + (crop[2] - crop[0]) * 0.8 ||
+        page.rect[0] - label.rect[2] < em * 2 ||
+        Math.abs(page.rect[2] - first[1].rect[2]) > em * 0.02 ||
+        label.sourceItem.index >= page.sourceItem.index ||
+        (n &&
+          (Number(page.text) < Number(pairs[n - 1][1].text) ||
+            pairs[n - 1][1].sourceItem.index >= label.sourceItem.index ||
+            label.rect[1] <= pairs[n - 1][0].rect[3]))
+    )
+  )
+    return false
+  let parent = 0,
+    child = 0,
+    children = 0,
+    majorLeft,
+    childLeft
+  for (const [n, [label]] of pairs.entries()) {
+    if (n === 0 && /^references$/iu.test(label.text.trim())) continue
+    const major = /^S([1-9]\d*)\.\s+\p{L}\S*(?:\s+\S+)*$/u.exec(label.text.trim()),
+      nested = /^([1-9]\d*)\.([1-9]\d*)\.\s+\p{L}\S*(?:\s+\S+)*$/u.exec(label.text.trim())
+    if (major) {
+      if (Number(major[1]) !== parent + 1 || (parent && child === 0)) return false
+      parent++
+      child = 0
+      majorLeft ??= label.rect[0]
+      if (Math.abs(label.rect[0] - majorLeft) > 0.02) return false
+    } else if (nested) {
+      if (!parent || Number(nested[1]) !== parent || Number(nested[2]) !== child + 1) return false
+      child++
+      children++
+      childLeft ??= label.rect[0]
+      if (
+        Math.abs(label.rect[0] - childLeft) > 0.02 ||
+        childLeft - majorLeft < em * 0.25 ||
+        childLeft - majorLeft > em
+      )
+        return false
+    } else return false
+  }
+  if (parent < 3 || child === 0 || children < 3) return false
+  if (/^references$/iu.test(first[0].text.trim()) && Math.abs(first[0].rect[0] - majorLeft) > 0.02)
+    return false
+  const claimed = new Set()
+  for (const cell of table.cells) {
+    if (
+      !cell ||
+      typeof cell.text !== 'string' ||
+      !Array.isArray(cell.sourceItems) ||
+      !Array.isArray(cell.sourceRects) ||
+      cell.sourceItems.length !== cell.sourceRects.length ||
+      (!cell.sourceItems.length && cell.text.trim())
+    )
+      return false
+    const owned = []
+    for (const [n, origin] of cell.sourceItems.entries()) {
+      const matches = local.filter(
+        (f) =>
+          navigationSourceExact(f.sourceItem, origin) &&
+          navigationSourceExact(f.rect, cell.sourceRects[n])
+      )
+      if (matches.length !== 1 || claimed.has(key(origin))) return false
+      claimed.add(key(origin))
+      owned.push(matches[0])
+    }
+    if (
+      literal(cell.text) !==
+      literal(
+        [...owned]
+          .sort((a, b) => a.sourceItem.index - b.sourceItem.index)
+          .map((f) => f.text)
+          .join('')
+      )
+    )
+      return false
+    if (cell.sourceTokens !== undefined) {
+      if (!Array.isArray(cell.sourceTokens) || cell.sourceTokens.length !== owned.length)
+        return false
+      const matched = new Set()
+      for (const t of cell.sourceTokens) {
+        const matches = owned.filter(
+          (f) =>
+            t?.text === f.text &&
+            navigationSourceExact(t.rect, f.rect) &&
+            t.baseline === f.baseline &&
+            t.height === f.height &&
+            (!t.sourceItem || navigationSourceExact(t.sourceItem, f.sourceItem))
+        )
+        if (matches.length !== 1 || matched.has(matches[0])) return false
+        matched.add(matches[0])
+      }
+    }
+  }
+  const residual = local.filter((f) => !claimed.has(key(f.sourceItem)))
+  if (
+    !navigationSourceExact(residual.map((f) => f.text).sort(), [...table.unassigned].sort()) ||
+    new Set(residual.map((f) => f.text)).size !== residual.length
+  )
+    return false
+  return claimed.size + residual.length === local.length && last[1].rect[3] <= crop[3]
+}
+
 // Hierarchical contents pages are often emitted as a two-column table: the
 // section label is followed by a dotted leader and a printed page number. A
 // page-level Contents heading plus repeated navigation-shaped rows is a
@@ -2746,6 +2974,87 @@ function isNativeSingleDisplayParagraph(table, caption, items, rules, graphics =
   return true
 }
 
+// Foreign page citations cannot own a complete independently ruled grid. Keep
+// all other non-table and crop-boundary guards; localize only reference context
+// after every native font and literal cell has one complete source owner.
+function nativeClosedTableReferenceItems(table, items, rules) {
+  if (
+    !Array.isArray(rules) ||
+    table.unassigned?.length ||
+    table.grid.length < 3 ||
+    table.grid[0].length < 3 ||
+    table.grid.some(
+      (row) => row.length !== table.grid[0].length || row.some((text) => !text.trim())
+    ) ||
+    table.cells?.length !== table.grid.length * table.grid[0].length
+  )
+    return
+  const proof = proveNativeAssignedClosedTableFrame(table, items, rules)
+  if (!proof) return
+  const same = (a, b) =>
+    a?.length === 4 && b?.length === 4 && a.every((v, n) => Math.abs(v - b[n]) < 0.02)
+  const literal = (text) => text.replace(/\s/gu, '')
+  const owners = new Set()
+  const rowFonts = table.grid.map(() => [])
+  for (const cell of table.cells) {
+    if (
+      !Number.isInteger(cell.row) ||
+      !Number.isInteger(cell.column) ||
+      cell.row < 0 ||
+      cell.row >= table.grid.length ||
+      cell.column < 0 ||
+      cell.column >= table.grid[0].length ||
+      cell.rowSpan !== 1 ||
+      cell.colSpan !== 1 ||
+      owners.has(`${cell.row}:${cell.column}`) ||
+      !cell.sourceRects?.length ||
+      cell.rect?.length !== 4 ||
+      !cell.rect.every(Number.isFinite)
+    )
+      return
+    owners.add(`${cell.row}:${cell.column}`)
+    const fonts = cell.sourceRects.map((rect) =>
+      proof.sourceTokens.find((item) => same(item.rect, rect))
+    )
+    if (
+      fonts.some(
+        (font) =>
+          !font?.sourceItem ||
+          literal(font.sourceItem.text) !== literal(font.text) ||
+          font.rect[0] < cell.rect[0] - 0.02 ||
+          font.rect[2] > cell.rect[2] + 0.02 ||
+          !Number.isFinite(font.baseline)
+      ) ||
+      literal(fonts.map((font) => font.text).join('')) !== literal(cell.text) ||
+      literal(cell.text) !== literal(table.grid[cell.row][cell.column])
+    )
+      return
+    rowFonts[cell.row].push(...fonts)
+  }
+  // Model row boxes can shave off ascenders or a wrapped font. The complete
+  // native row envelopes must still be independent, ordered and non-overlapping.
+  const nativeRows = rowFonts.map((fonts) => [
+    Math.min(...fonts.map((font) => font.rect[1])),
+    Math.max(...fonts.map((font) => font.rect[3]))
+  ])
+  if (nativeRows.some((row, index) => index && row[0] <= nativeRows[index - 1][1] + 0.02)) return
+  // A padded detector may touch a complete note below the closing line. It
+  // cannot exclude a partial native font or text crossing the source frame.
+  if (
+    (table.clipped ?? []).some(
+      (item) =>
+        item.rect?.length !== 4 ||
+        !item.rect.every(Number.isFinite) ||
+        item.rect[1] <= proof.cropRect[3] + 0.02 ||
+        !items.some(
+          (font) => font.horizontal && same(font.rect, item.rect) && font.text === item.text
+        )
+    )
+  )
+    return
+  return proof.sourceTokens
+}
+
 // Detection confidence alone also accepts affiliations and prose. Like the upstream
 // content-supported row/column refinement, require evidence from source text.
 // ponytail: uncaptioned single-column or single-row tables remain ambiguous with lists;
@@ -2810,6 +3119,16 @@ export function hasTableEvidence(table, caption, pageItems = [], sourceRules, so
   if (!caption && isHierarchicalContentsDirectory(table, pageItems, sourceRules)) return false
   if (!caption && isLetteredContentsDirectory(table, pageItems)) return false
   if (!caption && isFlatSupplementalContentsDirectory(table, pageItems, sourceRules ?? []))
+    return false
+  if (
+    isNativeMixedSupplementalContentsDirectory(
+      table,
+      caption,
+      pageItems,
+      sourceRules ?? [],
+      sourceGraphics
+    )
+  )
     return false
   // A supplementary-materials directory names several external tables. Its
   // neighboring entry is not a caption for the directory or nearby references.
@@ -3009,14 +3328,16 @@ export function hasTableEvidence(table, caption, pageItems = [], sourceRules, so
   // two-column grid. These candidates commonly cross the crop boundary and
   // leave source text unassigned. Keep a measured comparison or a captioned
   // table above, but reject the unstructured shapes before they reach output.
-  const referenceHeading = pageItems.some((item) =>
+  const referenceItems = nativeClosedTableReferenceItems(table, pageItems, sourceRules) ?? pageItems
+  const referenceText = referenceItems.map((item) => item.text).join(' ')
+  const referenceHeading = referenceItems.some((item) =>
     /^(?:References|Bibliography)\s*:?$/i.test(item.text.trim())
   )
-  const numberedReferenceMarkers = pageItems.filter((item) =>
+  const numberedReferenceMarkers = referenceItems.filter((item) =>
     /^\d+[.)]?$/.test(item.text.trim())
   ).length
-  const sourceReferenceMarkers = (sourceText.match(/(?:^|\s)\d+\.\s/g) ?? []).length
-  const citationYears = (sourceText.match(/\b(?:19|20)\d{2}\b/g) ?? []).length
+  const sourceReferenceMarkers = (referenceText.match(/(?:^|\s)\d+\.\s/g) ?? []).length
+  const citationYears = (referenceText.match(/\b(?:19|20)\d{2}\b/g) ?? []).length
   const citationUrls = (cropText.match(/https?:\/\/|doi\.org/gi) ?? []).length
   const referenceLikeGrid = table.grid.every((row) => row.length <= 6)
   const numberedCitationRows = table.grid.filter((row) => {

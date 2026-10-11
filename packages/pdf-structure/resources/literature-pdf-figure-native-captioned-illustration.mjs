@@ -1,8 +1,14 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
-import { OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
+import { OPS, Util } from 'pdfjs-dist/legacy/build/pdf.mjs'
+import { collectClosedFigureFrames } from './literature-pdf-graphics.mjs'
+import { tableTextToken } from './literature-pdf-orientation.mjs'
 import { area, intersection, union, lineRect } from './literature-pdf-page-geometry.mjs'
 import { nativeTableDividerGraphic } from './literature-pdf-native-owned-figure-labels.mjs'
 import { captionKind, groupPageLines } from './literature-pdf-caption-group.mjs'
+import {
+  nativeTopParagraphTail,
+  completeNativeNodeGlyphProgram
+} from './literature-pdf-figure-native-plot-bands.mjs'
 
 const contains = (a, b, tolerance = 0) =>
   b[0] >= a[0] - tolerance &&
@@ -28,7 +34,7 @@ const blocked = (rect, caption, captions, tables) =>
 // Three independently painted source rasters can have two native title rows.
 // Complete raw text/image operations, unique source-font rows, and one caption
 // jointly own the plate; missing evidence retains every legacy matcher.
-function nativeKeyedRasterTextProfile(context, page) {
+function nativeKeyedRasterTextProfile(context, page, completeRasterPlate = false) {
   const nums = (a, n) => Array.isArray(a) && a.length === n && a.every(Number.isFinite)
   const ops = context?.operators,
     vp = context?.viewport
@@ -53,21 +59,30 @@ function nativeKeyedRasterTextProfile(context, page) {
     return
   let ctm = [1, 0, 0, 1, 0, 0],
     text = false,
-    literal = ''
+    literal = '',
+    textMatrix = [1, 0, 0, 1, 0, 0],
+    size = 0,
+    x = 0,
+    y = 0,
+    lineX = 0,
+    lineY = 0
   const saved = [],
-    images = []
+    images = [],
+    glyphs = []
   const empty = (a) => a == null || (Array.isArray(a) && a.length === 0)
   for (let i = 0; i < ops.fnArray.length; i++) {
     const op = ops.fnArray[i],
       a = ops.argsArray[i]
     if (op === OPS.save) {
       if (!empty(a) || text) return
-      saved.push([...ctm])
+      saved.push({ matrix: [...ctm], size })
       continue
     }
     if (op === OPS.restore) {
       if (!empty(a) || text || !saved.length) return
-      ctm = saved.pop()
+      const state = saved.pop()
+      ctm = state.matrix
+      size = state.size
       continue
     }
     if (op === OPS.transform) {
@@ -103,6 +118,7 @@ function nativeKeyedRasterTextProfile(context, page) {
       )
         return
       images.push({
+        operationIndex: i,
         id: a[0],
         width: a[1],
         height: a[2],
@@ -112,7 +128,14 @@ function nativeKeyedRasterTextProfile(context, page) {
       continue
     }
     if (op === OPS.setFillRGBColor || op === OPS.setStrokeRGBColor) {
-      if (!Array.isArray(a) || a.length !== 1 || a[0] !== '#000000') return
+      if (
+        !Array.isArray(a) ||
+        a.length !== 1 ||
+        (completeRasterPlate
+          ? typeof a[0] !== 'string' || !/^#[0-9a-f]{6}$/iu.test(a[0]) || /^#ffffff$/iu.test(a[0])
+          : a[0] !== '#000000')
+      )
+        return
       continue
     }
     if (op === OPS.dependency) {
@@ -122,6 +145,10 @@ function nativeKeyedRasterTextProfile(context, page) {
     if (op === OPS.beginText) {
       if (text || !empty(a)) return
       text = true
+      if (completeRasterPlate) {
+        textMatrix = [1, 0, 0, 1, 0, 0]
+        x = y = lineX = lineY = 0
+      }
       continue
     }
     if (op === OPS.endText) {
@@ -140,10 +167,33 @@ function nativeKeyedRasterTextProfile(context, page) {
         a[1] <= 0
       )
         return
+      if (completeRasterPlate) size = a[1]
       continue
     }
     if (op === OPS.moveText) {
       if (!text || !nums(a, 2)) return
+      if (completeRasterPlate) {
+        x = lineX += a[0]
+        y = lineY += a[1]
+      }
+      continue
+    }
+    if (completeRasterPlate && op === OPS.setTextMatrix) {
+      const matrix =
+        Array.isArray(a) && a.length === 1 && a[0] instanceof Float32Array
+          ? Array.from(a[0])
+          : undefined
+      if (
+        !text ||
+        !nums(matrix, 6) ||
+        matrix[0] <= 0 ||
+        matrix[3] <= 0 ||
+        matrix[1] !== 0 ||
+        matrix[2] !== 0
+      )
+        return
+      textMatrix = matrix
+      x = y = lineX = lineY = 0
       continue
     }
     if (op === OPS.showText) {
@@ -151,6 +201,7 @@ function nativeKeyedRasterTextProfile(context, page) {
       for (const g of a[0]) {
         if (typeof g === 'number') {
           if (!Number.isFinite(g)) return
+          if (completeRasterPlate) x -= (g * size) / 1000
           continue
         }
         if (
@@ -169,6 +220,18 @@ function nativeKeyedRasterTextProfile(context, page) {
           g.vmetric != null
         )
           return
+        if (completeRasterPlate) {
+          if (!(size > 0)) return
+          const width = (g.width * size) / 1000,
+            left = ctm[0] * (textMatrix[0] * x + textMatrix[4]) + ctm[4],
+            right = left + ctm[0] * textMatrix[0] * width,
+            baseline = page.height - ctm[3] * (textMatrix[3] * y + textMatrix[5]) - ctm[5],
+            height = ctm[3] * textMatrix[3] * size
+          if (![left, right, baseline, height].every(Number.isFinite) || !(height > 0)) return
+          for (const char of g.unicode.replace(/\s/gu, ''))
+            glyphs.push({ char, left, right, baseline, height })
+          x += width
+        }
         literal += g.unicode
       }
       continue
@@ -184,7 +247,7 @@ function nativeKeyedRasterTextProfile(context, page) {
     new Set(images.map((i) => i.id)).size !== images.length
   )
     return
-  return { images, literal: literal.replace(/\s/gu, '') }
+  return { images, literal: literal.replace(/\s/gu, ''), glyphs }
 }
 
 export function nativeCaptionedKeyedRasterTriple(
@@ -260,7 +323,8 @@ export function nativeCaptionedKeyedRasterTriple(
     samePage.some((c) => c !== caption && overlap(c.rect, caption.rect))
   )
     return
-  const rawProfile = nativeKeyedRasterTextProfile(operatorContext, page)
+  const sixImagePlate = page.graphicsBounds.length === 6 && samePage.length === 1 && !tables.length
+  const rawProfile = nativeKeyedRasterTextProfile(operatorContext, page, sixImagePlate)
   if (!rawProfile) return
   const images = page.graphicsBounds.map((g) => {
     if (
@@ -331,6 +395,140 @@ export function nativeCaptionedKeyedRasterTriple(
   const row = images
     .filter((i) => i.source[1] >= lowerBound && i.source[3] < caption.rect[1])
     .sort((a, b) => a.source[0] - b.source[0])
+  if (sixImagePlate && row.length !== 6) return
+  // A complete six-raster plate has no native text within or between its
+  // images. Bind every native image operation before using the repeated
+  // rows; an unowned font, extra image, caption or table retains the matcher.
+  if (sixImagePlate && row.length === 6) {
+    const literal = compact(caption.lines.join('')),
+      at = rawProfile.literal.indexOf(literal)
+    if (at < 0 || rawProfile.literal.indexOf(literal, at + 1) >= 0) return
+    // Match whole original source fonts to independent raw glyph positions.
+    // Removed margin fonts need not join the caption, but no source font may
+    // borrow an equal literal from another baseline or a different matrix.
+    const native = rawProfile.glyphs.map((g) => g.char).join(''),
+      assigned = new Set()
+    for (const token of tokens.filter((t) => t.text.trim())) {
+      const value = compact(token.text),
+        count = Array.from(value).length,
+        matches = []
+      if (
+        !token.horizontal ||
+        ![token.height, token.baseline, token.fontDescent].every(Number.isFinite) ||
+        token.height <= 0 ||
+        token.fontDescent > 0 ||
+        token.fontDescent < -1 ||
+        Math.abs(token.baseline - token.rect[3]) > 0.02 ||
+        Math.abs(token.height - token.rect[3] + token.rect[1]) > 0.02
+      )
+        return
+      for (let from = native.indexOf(value); from >= 0; from = native.indexOf(value, from + 1)) {
+        const first = Array.from(native.slice(0, from)).length,
+          glyphs = rawProfile.glyphs.slice(first, first + count)
+        if (
+          glyphs.length === count &&
+          Math.abs(glyphs[0].left - token.rect[0]) <= 0.02 &&
+          Math.abs(glyphs.at(-1).right - token.rect[2]) <= 0.02 &&
+          glyphs.every(
+            (g, n) =>
+              Math.abs(g.baseline - token.baseline) <= 0.02 &&
+              Math.abs(g.height - token.height) <= 0.02 &&
+              g.left >= token.rect[0] - 0.02 &&
+              g.right <= token.rect[2] + 0.02 &&
+              (n === 0 || g.left >= glyphs[n - 1].left - 0.02)
+          )
+        )
+          matches.push({ first, glyphs })
+      }
+      if (
+        matches.length !== 1 ||
+        matches[0].glyphs.some((_, n) => assigned.has(matches[0].first + n))
+      )
+        return
+      for (let n = 0; n < count; n++) assigned.add(matches[0].first + n)
+    }
+    if (
+      images.some(
+        (image, n) => image.graphic.operationIndex !== operationBindings[n][0].operationIndex
+      )
+    )
+      return
+    // Recorded graphics use a conservative grid. Native image transforms
+    // supply the independent complete boxes, including their white margins.
+    const whole = row.map((image) => ({
+      ...image,
+      source: operationBindings[images.indexOf(image)][0].rect
+    }))
+    const ordered = whole
+      .slice()
+      .sort((a, b) => a.source[1] - b.source[1] || a.source[0] - b.source[0])
+    const bands = []
+    for (const image of ordered) {
+      const band = bands.find((b) => Math.abs(b[0].source[1] - image.source[1]) <= em)
+      if (band) band.push(image)
+      else bands.push([image])
+    }
+    if (bands.length !== 3 || bands.some((b) => b.length !== 2)) return
+    for (const band of bands) band.sort((a, b) => a.source[0] - b.source[0])
+    const first = bands[0][0].source,
+      width = first[2] - first[0],
+      height = first[3] - first[1],
+      sourceBounds = union(whole.map((i) => i.source)),
+      paintBounds = union(row.map((i) => i.paint))
+    if (existingOwnedRect != null && contains(existingOwnedRect, paintBounds)) return
+    if (
+      width < em * 12 ||
+      height < em * 12 ||
+      sourceBounds[1] < page.height * 0.04 ||
+      caption.rect[1] - paintBounds[3] > em * 6 ||
+      paintBounds[3] >= caption.rect[1] ||
+      sourceBounds[2] - sourceBounds[0] > page.width * 0.9 ||
+      Math.min(paintBounds[2], caption.rect[2]) - Math.max(paintBounds[0], caption.rect[0]) <
+        (paintBounds[2] - paintBounds[0]) * 0.8 ||
+      (existingOwnedRect != null && !contains(sourceBounds, existingOwnedRect, em)) ||
+      tokens.some((t) => t.text.trim() && overlap(t.rect, sourceBounds)) ||
+      page.lines.some((l) => l.text.trim() && overlap(lineRect(l), sourceBounds)) ||
+      tokens.some(
+        (t) =>
+          !captionFonts.includes(t) &&
+          t.text.trim() &&
+          t.rect[1] < caption.rect[1] &&
+          t.rect[3] > sourceBounds[3]
+      ) ||
+      rawProfile.glyphs.some(
+        (g, n) =>
+          !assigned.has(n) &&
+          (overlap([g.left, g.baseline - g.height, g.right, g.baseline], sourceBounds) ||
+            overlap([g.left, g.baseline - g.height, g.right, g.baseline], caption.rect) ||
+            (g.baseline - g.height < caption.rect[1] && g.baseline > sourceBounds[3]))
+      )
+    )
+      return
+    for (let n = 0; n < bands.length; n++) {
+      const band = bands[n]
+      if (
+        band.some((i, c) => {
+          const r = i.source,
+            anchor = bands[0][c].source
+          return (
+            Math.abs(r[2] - r[0] - width) > em * 2 ||
+            Math.abs(r[3] - r[1] - height) > em * 2 ||
+            Math.abs(r[0] - anchor[0]) > em * 2 ||
+            Math.abs(r[2] - anchor[2]) > em * 2 ||
+            Math.abs(r[1] - band[0].source[1]) > em ||
+            Math.abs(r[3] - band[0].source[3]) > em ||
+            (c > 0 &&
+              (r[0] <= band[c - 1].source[2] || r[0] - band[c - 1].source[2] > width * 0.5)) ||
+            (n > 0 &&
+              (r[1] <= bands[n - 1][c].source[3] ||
+                r[1] - bands[n - 1][c].source[3] > height * 0.5))
+          )
+        })
+      )
+        return
+    }
+    return { caption, rect: sourceBounds, graphicsCount: 6, reason: 'native-complete-raster-plate' }
+  }
   if (row.length !== 3) return
   const painted = union(row.map((i) => i.paint)),
     rawBounds = union(row.map((i) => i.source))
@@ -982,7 +1180,31 @@ function nativeLowerKeyedRasterRow(page, caption, captions, tables, images, toke
       .sort((x, y) => x.rect[0] - y.rect[0])
   })
   if (groups.some((g) => !g?.length)) return
-  const labels = groups.flat()
+  const labels = groups.flat(),
+    parameterLabels =
+      row.length === 2 &&
+      groups.every(
+        (g, n) =>
+          g.length === 3 &&
+          g[0].text.trim() === `(${keysForRow[n]})` &&
+          /^\p{L}$/u.test(g[1].text.trim()) &&
+          g[1].text.trim() === groups[0][1].text.trim() &&
+          /^=\s*[+−-]?\d+(?:\.\d+)?$/.test(g[2].text.trim()) &&
+          g.every(
+            (t) =>
+              !t.sourceToken &&
+              t.sourceItem?.text === t.text &&
+              t.sourceItem.pageNumber === page.pageNumber &&
+              tokens.filter(
+                (other) =>
+                  other.sourceItem?.pageNumber === page.pageNumber &&
+                  other.sourceItem?.index === t.sourceItem.index
+              ).length === 1 &&
+              Number.isInteger(t.sourceItem.index) &&
+              t.sourceItem.index >= 0
+          )
+      ) &&
+      new Set(labels.map((t) => t.sourceItem?.index)).size === labels.length
   if (
     lower.some((t) => !labels.includes(t)) ||
     groups.some((g, n) => {
@@ -996,11 +1218,12 @@ function nativeLowerKeyedRasterRow(page, caption, captions, tables, images, toke
         key.text.trim()[1] !== keysForRow[n] ||
         title.length < 5 ||
         title.length > 90 ||
-        !(
-          row.length === 3
-            ? /^\([abc]\)\s+\p{L}[\p{L}\p{M}\p{Sk}\p{N}\s,()+−\-–]*\.$/u
-            : /^\([ab]\)\s+\p{L}[\p{L}\p{M}\p{Sk}\p{N}\s,()+−\-–]*$/u
-        ).test(title) ||
+        (!parameterLabels &&
+          !(
+            row.length === 3
+              ? /^\([abc]\)\s+\p{L}[\p{L}\p{M}\p{Sk}\p{N}\s,()+−\-–]*\.$/u
+              : /^\([ab]\)\s+\p{L}[\p{L}\p{M}\p{Sk}\p{N}\s,()+−\-–]*$/u
+          ).test(title)) ||
         r[1] - row[n].rect[3] > font * 2 ||
         caption.rect[1] - r[3] > font * 2 ||
         Math.abs((r[0] + r[2] - row[n].rect[0] - row[n].rect[2]) / 2) > font * 2 ||
@@ -1024,7 +1247,14 @@ function nativeLowerKeyedRasterRow(page, caption, captions, tables, images, toke
   )
     return
   const normalized = (text) => text.replace(/\s+/g, ''),
-    rect = union([bounds, ...labels.map((t) => t.rect)])
+    rect = union([
+      bounds,
+      ...labels.map((t) =>
+        parameterLabels
+          ? [t.rect[0], t.rect[1], t.rect[2], t.baseline - t.fontDescent * t.height]
+          : t.rect
+      )
+    ])
   if (
     tokens.some(
       (t) =>
@@ -2292,6 +2522,342 @@ export function nativeCaptionedVectorDiagram(page, caption, captions, tables) {
   }
 }
 
+// A caption-below tree has no raster or common outer frame. Only a complete
+// native program can qualify it: every populated enclosure belongs to one
+// directed tree, every connector has one independently painted arrowhead, and
+// every whole original font in the plate belongs to exactly one enclosure.
+// Missing source, clipping, invisible/white paint and unrelated components
+// retain the legacy association instead of widening a nominal graphics box.
+export function nativeCaptionedConnectedNodes(page, caption, captions, tables, tokens, context) {
+  const valid = (r) => Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && area(r) > 0
+  const numeric = (a, n) =>
+    (Array.isArray(a) || ArrayBuffer.isView(a)) && a.length === n && a.every(Number.isFinite)
+  const nearRect = (a, b) => a.every((v, n) => Math.abs(v - b[n]) < 0.0001)
+  const literal = (s) => s.replace(/\s/gu, '')
+  const content = context?.content,
+    viewport = context?.viewport,
+    operators = context?.operators
+  if (
+    page?.renderRotation !== 0 ||
+    page.invalidGraphicsBounds !== 0 ||
+    caption?.page !== page.pageNumber ||
+    !valid(caption.rect) ||
+    !Array.isArray(page.graphicsBounds) ||
+    !Array.isArray(content?.items) ||
+    !content.styles ||
+    !viewport ||
+    !Array.isArray(operators?.fnArray) ||
+    !Array.isArray(operators?.argsArray) ||
+    typeof viewport.convertToViewportPoint !== 'function' ||
+    !Array.isArray(page.lines) ||
+    !Array.isArray(captions) ||
+    !Array.isArray(tables) ||
+    !Array.isArray(caption.lines) ||
+    !caption.lines.every((l) => typeof l === 'string') ||
+    captions.filter((c) => c === caption).length !== 1 ||
+    captions.some((c) => !valid(c?.rect)) ||
+    tables.some((r) => !valid(r)) ||
+    !Array.isArray(tokens) ||
+    !/^figure\s+\d+\s*[:.]\s/u.test(caption.lines?.[0]?.toLowerCase() ?? '')
+  )
+    return
+  const complete = content.items.flatMap((item, index) =>
+    typeof item.str === 'string' && item.str.trim()
+      ? [
+          {
+            ...tableTextToken(item, viewport, 0),
+            sourceItem: { pageNumber: page.pageNumber, index, text: item.str }
+          }
+        ]
+      : []
+  )
+  const frames = collectClosedFigureFrames(operators, viewport)
+  if (!completeNativeNodeGlyphProgram(page, complete, frames, context)) return
+  const subset = new Set()
+  for (const token of tokens) {
+    const index = token.sourceItem?.index,
+      original = complete.find((t) => t.sourceItem.index === index)
+    if (
+      !original ||
+      subset.has(index) ||
+      token.text !== original.text ||
+      token.sourceItem.pageNumber !== page.pageNumber ||
+      token.sourceItem.text !== original.text ||
+      !valid(token.rect) ||
+      !nearRect(token.rect, original.rect) ||
+      !Number.isFinite(token.height) ||
+      !Number.isFinite(token.baseline) ||
+      Math.abs(token.height - original.height) > 1e-7 ||
+      Math.abs(token.baseline - original.baseline) > 1e-7 ||
+      token.horizontal !== original.horizontal
+    )
+      return
+    subset.add(index)
+  }
+  const font = captionFont(page, caption)
+  if (!(font > 0) || !Number.isFinite(font)) return
+  const captionFonts = complete.filter((t) => intersection(t.rect, caption.rect) > 0)
+  if (
+    !captionFonts.length ||
+    captionFonts.some((t) => !contains(caption.rect, t.rect, 0.0001)) ||
+    literal(captionFonts.map((t) => t.text).join('')) !== literal(caption.lines.join(' '))
+  )
+    return
+  let matrix = [1, 0, 0, 1, 0, 0],
+    fill = '#000000',
+    stroke = '#000000',
+    lineWidth = 1
+  const stack = [],
+    paths = [],
+    glyphPaint = []
+  for (let i = 0; i < operators.fnArray.length; i++) {
+    const op = operators.fnArray[i],
+      a = operators.argsArray[i]
+    if (op === OPS.save) stack.push({ matrix: [...matrix], fill, stroke, lineWidth })
+    else if (op === OPS.restore) ({ matrix, fill, stroke, lineWidth } = stack.pop())
+    else if (op === OPS.transform) matrix = Util.transform(matrix, a)
+    else if (op === OPS.setFillRGBColor) fill = a[0].toLowerCase()
+    else if (op === OPS.setStrokeRGBColor) stroke = a[0].toLowerCase()
+    else if (op === OPS.setLineWidth) lineWidth = a[0]
+    else if (op === OPS.setDash && (a[0].length || a[1] !== 0)) return
+    else if (op === OPS.showText) {
+      if (!/^#[0-7][0-9a-f][0-7][0-9a-f][0-7][0-9a-f]$/u.test(fill)) return
+      for (const glyph of a[0])
+        if (typeof glyph !== 'number')
+          for (const char of literal(glyph.unicode)) glyphPaint.push({ index: i, fill, char })
+    } else if (op === OPS.constructPath && a[0] !== OPS.endPath) {
+      if (
+        ![OPS.stroke, OPS.fillStroke].includes(a[0]) ||
+        stroke !== '#000000' ||
+        (a[0] === OPS.fillStroke && fill === '#ffffff') ||
+        lineWidth > 1
+      )
+        return
+      const program = a[1][0],
+        commands = [],
+        points = [],
+        transform = Util.transform(viewport.transform, matrix)
+      for (let n = 0; n < program.length;) {
+        const command = program[n++],
+          count = command === 0 || command === 1 ? 2 : command === 2 ? 6 : 0
+        commands.push(command)
+        for (let k = 0; k < count; k += 2) {
+          const p = [program[n + k], program[n + k + 1]]
+          Util.applyTransform(p, transform)
+          points.push(p)
+        }
+        n += count
+      }
+      const rect = [
+        Math.min(...points.map((p) => p[0])),
+        Math.min(...points.map((p) => p[1])),
+        Math.max(...points.map((p) => p[0])),
+        Math.max(...points.map((p) => p[1]))
+      ]
+      const measured = page.graphicsBounds.filter((g) => g.operationIndex === i)
+      if (
+        measured.length !== 1 ||
+        measured[0].kind !== 'path' ||
+        !numeric(measured[0].normalizedRect, 4)
+      )
+        return
+      const paint = measured[0].normalizedRect.map(
+          (v, n) => v * (n % 2 ? page.height : page.width)
+        ),
+        cell = Math.max(page.width, page.height) / 256
+      if (
+        !valid(paint) ||
+        !contains(paint, rect, 0.01) ||
+        paint.some((v, n) => Math.abs(v - rect[n]) > cell * 3 + lineWidth)
+      )
+        return
+      paths.push({
+        index: i,
+        commands,
+        points,
+        rect,
+        paint,
+        fill,
+        fillStroke: a[0] === OPS.fillStroke
+      })
+    }
+  }
+  if (paths.length !== page.graphicsBounds.length) return
+  const nodes = paths.filter(
+    (p) =>
+      p.fillStroke &&
+      /^#[8-f][0-9a-f][8-f][0-9a-f][8-f][0-9a-f]$/u.test(p.fill) &&
+      p.commands.join(',') === '0,1,2,1,2,1,2,1,2,4,0' &&
+      frames.filter((r) => nearRect(r, p.rect)).length === 1 &&
+      p.rect[3] < caption.rect[1] &&
+      p.rect[2] - p.rect[0] > font * 5 &&
+      p.rect[3] - p.rect[1] > font &&
+      p.rect[3] - p.rect[1] < font * 3
+  )
+  if (nodes.length < 4 || nodes.length > 24) return
+  const band = union(nodes.map((n) => n.paint))
+  if (
+    band[2] - band[0] < page.width * 0.6 ||
+    band[3] - band[1] < font * 6 ||
+    caption.rect[1] - band[3] < font * 0.2 ||
+    caption.rect[1] - band[3] > font * 3 ||
+    blocked(band, caption, captions, tables) ||
+    nodes.some((node, n) =>
+      nodes.some((other, k) => k !== n && intersection(node.rect, other.rect) > 0)
+    )
+  )
+    return
+  const ownedFonts = complete.filter((t) => intersection(t.rect, band) > 0)
+  if (
+    ownedFonts.some(
+      (t) =>
+        !subset.has(t.sourceItem.index) ||
+        !t.horizontal ||
+        t.height < font * 0.5 ||
+        t.height > font * 1.2 ||
+        t.text.length > 80 ||
+        nodes.filter((n) => contains(n.rect, t.rect, 0.0001)).length !== 1
+    ) ||
+    nodes.some((n) => ownedFonts.filter((t) => contains(n.rect, t.rect, 0.0001)).length !== 1)
+  )
+    return
+  let offset = 0
+  const fontPaint = new Map()
+  for (const token of complete) {
+    const length = Array.from(literal(token.text)).length
+    fontPaint.set(token, glyphPaint.slice(offset, offset + length))
+    offset += length
+  }
+  if (offset !== glyphPaint.length) return
+  for (const token of ownedFonts) {
+    const item = content.items[token.sourceItem.index],
+      style = content.styles[item.fontName],
+      node = nodes.find((n) => contains(n.rect, token.rect, 0.0001)),
+      painted = fontPaint.get(token)
+    if (
+      !style ||
+      style.vertical !== false ||
+      !Number.isFinite(style.ascent) ||
+      !(style.ascent > 0) ||
+      style.ascent > 1 ||
+      !Number.isFinite(style.descent) ||
+      style.descent > 0 ||
+      style.descent < -0.5 ||
+      painted.some((g) => g.fill !== '#000000' || g.index <= node.index)
+    )
+      return
+    const ink = [
+      token.rect[0],
+      token.baseline - style.ascent * token.height,
+      token.rect[2],
+      token.baseline - style.descent * token.height
+    ]
+    const inset = [
+      node.rect[0] + token.height * 0.25,
+      node.rect[1] + token.height * 0.1,
+      node.rect[2] - token.height * 0.25,
+      node.rect[3] - token.height * 0.1
+    ]
+    if (
+      !contains(inset, ink) ||
+      paths.some((p) => p.index > painted[0].index && intersection(p.rect, ink) > 0)
+    )
+      return
+  }
+  const inside = paths.filter((p) => intersection(p.paint, band) > 0),
+    lines = inside.filter((p) => !p.fillStroke && p.commands.join(',') === '0,1'),
+    heads = inside.filter((p) => p.fillStroke && p.commands.join(',') === '0,1,1,1,4')
+  if (
+    lines.length !== nodes.length - 1 ||
+    heads.length !== lines.length ||
+    inside.length !== nodes.length + lines.length + heads.length ||
+    inside.some((p) => !contains(band, p.paint))
+  )
+    return
+  const distance = (p, r) =>
+      Math.hypot(Math.max(r[0] - p[0], 0, p[0] - r[2]), Math.max(r[1] - p[1], 0, p[1] - r[3])),
+    usedHeads = new Set(),
+    edges = []
+  for (const line of lines) {
+    const [start, end] = line.points,
+      direction = [end[0] - start[0], end[1] - start[1]],
+      length = Math.hypot(...direction),
+      from = nodes.filter((n) => distance(start, n.rect) < font * 0.15),
+      matching = heads.filter(
+        (h) =>
+          Math.min(...h.points.map((p) => Math.hypot(p[0] - end[0], p[1] - end[1]))) < font * 0.1
+      )
+    if (
+      from.length !== 1 ||
+      matching.length !== 1 ||
+      usedHeads.has(matching[0]) ||
+      length < font * 2
+    )
+      return
+    const head = matching[0],
+      projected = head.points
+        .map((p) => ({
+          p,
+          d: ((p[0] - end[0]) * direction[0] + (p[1] - end[1]) * direction[1]) / length
+        }))
+        .sort((a, b) => b.d - a.d),
+      tip = projected[0].p,
+      to = nodes.filter((n) => distance(tip, n.rect) < font * 0.2)
+    if (
+      to.length !== 1 ||
+      to[0] === from[0] ||
+      projected[0].d <= 0 ||
+      projected[0].d - projected[1].d < font * 0.1 ||
+      Math.max(head.rect[2] - head.rect[0], head.rect[3] - head.rect[1]) > font ||
+      nodes.some((node) => {
+        if (node === from[0] || node === to[0]) return false
+        // Clip the exact straight segment against every third enclosure.
+        let low = 0,
+          high = 1
+        for (const [p, q] of [
+          [-direction[0], start[0] - node.rect[0]],
+          [direction[0], node.rect[2] - start[0]],
+          [-direction[1], start[1] - node.rect[1]],
+          [direction[1], node.rect[3] - start[1]]
+        ]) {
+          if (p === 0) {
+            if (q < 0) return false
+          } else if (p < 0) low = Math.max(low, q / p)
+          else high = Math.min(high, q / p)
+        }
+        return low <= high
+      })
+    )
+      return
+    usedHeads.add(head)
+    edges.push([from[0], to[0]])
+  }
+  const roots = nodes.filter((node) => !edges.some(([, to]) => to === node)),
+    reached = new Set(roots)
+  if (roots.length !== 1 || nodes.some((node) => edges.filter(([, to]) => to === node).length > 1))
+    return
+  for (let pass = 0; pass < nodes.length; pass++)
+    for (const [from, to] of edges) if (reached.has(from)) reached.add(to)
+  if (reached.size !== nodes.length) return
+  const rect = union([...inside.map((p) => p.paint), ...ownedFonts.map((t) => t.rect)])
+  if (
+    blocked(rect, caption, captions, tables) ||
+    complete.some((t) => intersection(t.rect, rect) > 0 && !ownedFonts.includes(t)) ||
+    page.lines.some((l) => {
+      if (intersection(lineRect(l), rect) <= 0) return false
+      const fonts = ownedFonts.filter((t) => contains(lineRect(l), t.rect, 0.0001))
+      return (
+        !fonts.length ||
+        !contains(rect, lineRect(l), 0.0001) ||
+        literal(fonts.map((t) => t.text).join('')) !== literal(l.text)
+      )
+    }) ||
+    paths.some((p) => !inside.includes(p) && intersection(p.paint, rect) > 0)
+  )
+    return
+  return { caption, rect, graphicsCount: inside.length }
+}
+
 // A narrow-column vector plate can contain only boxes, arrows, and short
 // labels.  It has no raster witness and therefore cannot use the broad
 // architecture-plate recognizer above.  Keep this fallback strict: require a
@@ -2409,7 +2975,14 @@ export function nativeCaptionedVectorGrid(page, caption, captions, tables) {
 // unresolved, but repeated axes with numeric ticks are a stronger visual
 // witness than paragraph rules. Keep this fallback limited to a horizontal
 // strip of similarly sized path clusters immediately above a figure caption.
-export function nativeCaptionedVectorChartStrip(page, caption, captions, tables) {
+export function nativeCaptionedVectorChartStrip(
+  page,
+  caption,
+  captions,
+  tables,
+  nativeTokens = [],
+  closedFrames = []
+) {
   if (!/^figure\s+(?:[A-Z]\.)?\d+(?:\.\d+)?\s*[:.]/i.test(caption.lines?.[0] ?? '')) return
   const font = captionFont(page, caption)
   if (!(font > 0) || !Number.isFinite(font)) return
@@ -2447,6 +3020,108 @@ export function nativeCaptionedVectorChartStrip(page, caption, captions, tables)
     return groupBottom - groupTop >= font * 4 && Math.abs(groupTop - top) <= font * 2
   })
   if (!aligned || caption.rect[1] - bottom > Math.max(72, font * 6)) return
+  // A complete closed four-face row can follow a native body paragraph. Its
+  // final short line is not a chart title. Only original whole fonts and the
+  // paragraph's independently aligned predecessors can exclude that line;
+  // the legacy path-only selector keeps its existing behavior without them.
+  const stripBounds = [
+    Math.min(...groups.map((group) => group.left)),
+    top,
+    Math.max(...groups.map((group) => group.right)),
+    bottom
+  ]
+  const faces = closedFrames
+    .filter(
+      (r) =>
+        r?.length === 4 &&
+        r.every(Number.isFinite) &&
+        r[2] - r[0] > font * 4 &&
+        r[3] - r[1] > font * 4 &&
+        contains(stripBounds, r, Math.max(page.width, page.height) / 128)
+    )
+    .sort((a, b) => a[0] - b[0])
+  const wholeLine = (line) => {
+    const rect = lineRect(line)
+    const source = nativeTokens.filter(
+      (t) => t.text?.trim() && intersection(t.rect ?? [], rect) > 0
+    )
+    return (
+      source.length > 0 &&
+      source.every(
+        (t) =>
+          t.rect?.length === 4 &&
+          t.rect.every(Number.isFinite) &&
+          area(t.rect) > 0 &&
+          contains(rect, t.rect, 1e-7) &&
+          t.horizontal === true &&
+          Number.isFinite(t.height) &&
+          Math.abs(t.height - line.fontSize) < 1e-7 &&
+          Number.isSafeInteger(t.sourceItem?.index) &&
+          t.sourceItem?.pageNumber === page.pageNumber &&
+          t.sourceItem?.text === t.text
+      ) &&
+      union(source.map((t) => t.rect)).every((v, n) => Math.abs(v - rect[n]) < 1e-7) &&
+      source
+        .map((t) => t.text)
+        .join('')
+        .replace(/\s/gu, '') === line.text.replace(/\s/gu, '')
+    )
+  }
+  const closedRow =
+    nativeTokens.length > 0 &&
+    faces.length === 4 &&
+    faces.every(
+      (r, n) =>
+        Math.abs(r[1] - faces[0][1]) < font * 0.1 &&
+        Math.abs(r[3] - faces[0][3]) < font * 0.1 &&
+        Math.abs(r[2] - r[0] - faces[0][2] + faces[0][0]) < font * 0.1 &&
+        (!n || r[0] > faces[n - 1][2])
+    )
+  const excludedProse = closedRow
+    ? page.lines.filter(
+        (line) =>
+          nativeTopParagraphTail(line, stripBounds, page.lines.filter(wholeLine)) &&
+          wholeLine(line) &&
+          line.fontSize > font &&
+          !paths.some((r) => intersection(r, lineRect(line)) > 0)
+      )
+    : []
+  // A paragraph's final formula can be split into ordinary and raised native
+  // lines. Keep its complete original fragments with the already proved body
+  // row, rather than leaving an exponent or terminal punctuation in the crop.
+  for (let pass = 0; pass < page.lines.length; pass++) {
+    const additions = page.lines.filter(
+      (line) =>
+        !excludedProse.includes(line) &&
+        wholeLine(line) &&
+        line.y + line.height < top &&
+        !paths.some((r) => intersection(r, lineRect(line)) > 0) &&
+        excludedProse.some((body) => {
+          const right = Math.max(
+            body.x + body.width,
+            ...excludedProse
+              .filter(
+                (part) =>
+                  part.fontSize >= body.fontSize * 0.6 &&
+                  part.fontSize <= body.fontSize &&
+                  part.y + part.height <= body.y + body.height + 1e-7 &&
+                  body.y + body.height - part.y - part.height < body.fontSize * 0.6
+              )
+              .map((part) => part.x + part.width)
+          )
+          return (
+            line.fontSize >= body.fontSize * 0.6 &&
+            line.fontSize <= body.fontSize &&
+            line.y + line.height <= body.y + body.height + 1e-7 &&
+            body.y + body.height - line.y - line.height < body.fontSize * 0.6 &&
+            line.x >= right - body.fontSize * 0.05 &&
+            line.x - right < body.fontSize * 0.2
+          )
+        })
+    )
+    if (!additions.length) break
+    excludedProse.push(...additions)
+  }
   const band = [
     Math.min(...groups.map((group) => group.left)) - font * 5,
     top - font * 2,
@@ -2476,6 +3151,7 @@ export function nativeCaptionedVectorChartStrip(page, caption, captions, tables)
       line.y + line.height <= band[3] + font * 2 &&
       line.x >= band[0] &&
       line.x + line.width <= band[2] &&
+      !excludedProse.includes(line) &&
       !captions.some((other) => intersection(other.rect, lineRect(line)) > 0)
   )
   if (labels.length < groups.length) return
@@ -2496,6 +3172,7 @@ export function nativeCaptionedVectorChartStrip(page, caption, captions, tables)
       line.y + line.height >= rect[1] - font * 3 &&
       line.x + line.width > rect[0] &&
       line.x < rect[2] &&
+      !excludedProse.includes(line) &&
       !captions.some((other) => intersection(other.rect, lineRect(line)) > 0)
   )
   const completeRect = union([rect, ...legendPaths, ...legendLabels.map(lineRect)])
@@ -2504,7 +3181,8 @@ export function nativeCaptionedVectorChartStrip(page, caption, captions, tables)
     caption,
     rect: completeRect,
     graphicsCount: paths.length + legendPaths.length,
-    reason: 'native-vector-chart-strip'
+    reason: 'native-vector-chart-strip',
+    ...(excludedProse.length ? { excludedProseLines: excludedProse } : {})
   }
 }
 

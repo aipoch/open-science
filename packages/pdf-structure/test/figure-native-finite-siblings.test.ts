@@ -669,6 +669,195 @@ it.each([
   expect(f).toEqual(before)
 })
 
+const completeSixRasterPlate = (): ReturnType<typeof JSON.parse> => {
+  const page: ReturnType<typeof JSON.parse> = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    invalidGraphicsBounds: 0,
+    lines: [],
+    graphicsBounds: []
+  }
+  const operators: ReturnType<typeof JSON.parse> = { fnArray: [], argsArray: [] }
+  const op = (code: number, args: ReturnType<typeof JSON.parse>): void => {
+    operators.fnArray.push(code)
+    operators.argsArray.push(args)
+  }
+  for (let row = 0; row < 3; row++)
+    for (let column = 0; column < 2; column++) {
+      const x = 80 + column * 240,
+        y = 60 + row * 200
+      op(OPS.save, [])
+      op(OPS.transform, [190, 0, 0, 180, x, 800 - y - 180])
+      page.graphicsBounds.push({
+        kind: 'image',
+        operationIndex: operators.fnArray.length,
+        imageHash: String.fromCharCode(97 + row * 2 + column).repeat(64),
+        normalizedRect: [x - 1, y - 1, x + 191, y + 181].map((v, n) => v / (n % 2 ? 800 : 600)),
+        paintedNormalizedRect: [x + 10, y + 10, x + 180, y + 170].map(
+          (v, n) => v / (n % 2 ? 800 : 600)
+        )
+      })
+      op(OPS.paintImageXObject, [`image-${row}-${column}`, 1900, 1800])
+      op(OPS.restore, [])
+    }
+  const text = 'Figure 3. Complete native comparisons across six independent source panels.'
+  const caption = { page: 1, lines: [text], rect: [100, 650, 100 + text.length * 5, 660] }
+  const token = {
+    text,
+    rect: [...caption.rect],
+    height: 10,
+    baseline: 660,
+    horizontal: true,
+    fontDescent: -0.2
+  }
+  page.lines.push({ text, x: 100, y: 650, width: text.length * 5, height: 10, fontSize: 10 })
+  op(OPS.setFillRGBColor, ['#0000ff'])
+  op(OPS.beginText, [])
+  op(OPS.setFont, ['native-font', 10])
+  op(OPS.setTextMatrix, [new Float32Array([1, 0, 0, 1, 100, 140])])
+  for (const part of [text.slice(0, 30), text.slice(30)])
+    op(OPS.showText, [
+      Array.from(part).map((unicode) => ({
+        unicode,
+        fontChar: unicode,
+        width: 500,
+        originalCharCode: unicode.codePointAt(0),
+        isInFont: true,
+        accent: null
+      }))
+    ])
+  op(OPS.endText, [])
+  return {
+    page,
+    captions: [caption],
+    nativeTokens: [token],
+    tableRects: [],
+    operatorContext: {
+      operators,
+      viewport: { scale: 1, rotation: 0, width: 600, height: 800, transform: [1, 0, 0, -1, 0, 800] }
+    }
+  }
+}
+
+it('recovers all six complete native raster boxes with uniquely bound caption glyph packets', () => {
+  const f = completeSixRasterPlate(),
+    before = structuredClone(f)
+  const recover = (rect?: number[]): ReturnType<typeof JSON.parse> =>
+    nativeCaptionedKeyedRasterTriple(
+      f.page,
+      f.captions[0],
+      f.captions,
+      f.tableRects,
+      f.nativeTokens,
+      f.operatorContext,
+      rect
+    )
+  expect(recover([81, 461, 269, 639])).toMatchObject({ rect: [80, 60, 510, 640], graphicsCount: 6 })
+  expect(recover([90, 70, 500, 630])).toBeUndefined()
+  expect(f).toEqual(before)
+})
+
+it.each([
+  'raw-literal',
+  'raw-matrix',
+  'raw-font-size',
+  'raw-advance',
+  'duplicate-caption',
+  'raw-unowned-font',
+  'index-mismatch',
+  'duplicate-image',
+  'foreign-font',
+  'foreign-table',
+  'caption-crossing-source',
+  'partial-caption-font',
+  'three-images-above-caption',
+  'image-clip',
+  'image-alpha',
+  'image-form',
+  'native-white-text',
+  'untyped-matrix'
+])('requires complete six-raster source and raw caption proof: %s', (reason) => {
+  const f = completeSixRasterPlate(),
+    ops = f.operatorContext.operators
+  const matrix = ops.argsArray[ops.fnArray.indexOf(OPS.setTextMatrix)][0]
+  const glyphs = ops.argsArray[ops.fnArray.indexOf(OPS.showText)][0]
+  if (reason === 'raw-literal') glyphs[0].unicode = 'X'
+  if (reason === 'raw-matrix') matrix[4] += 2
+  if (reason === 'raw-font-size') ops.argsArray[ops.fnArray.indexOf(OPS.setFont)][1] += 1
+  if (reason === 'raw-advance') glyphs[2].width += 100
+  if (reason === 'duplicate-caption') {
+    const at = ops.fnArray.indexOf(OPS.endText)
+    const shows = ops.argsArray.filter((_: unknown, i: number) => ops.fnArray[i] === OPS.showText)
+    ops.fnArray.splice(at, 0, OPS.setTextMatrix, OPS.showText, OPS.showText)
+    ops.argsArray.splice(
+      at,
+      0,
+      [new Float32Array([1, 0, 0, 1, 100, 140])],
+      ...structuredClone(shows)
+    )
+  }
+  if (reason === 'raw-unowned-font') {
+    const at = ops.fnArray.indexOf(OPS.endText)
+    ops.fnArray.splice(at, 0, OPS.setTextMatrix, OPS.showText)
+    ops.argsArray.splice(
+      at,
+      0,
+      [new Float32Array([1, 0, 0, 1, 100, 400])],
+      [[{ ...glyphs[0], unicode: 'X' }]]
+    )
+  }
+  if (reason === 'index-mismatch') f.page.graphicsBounds[0].operationIndex += 1
+  if (reason === 'duplicate-image')
+    f.page.graphicsBounds[1].imageHash = f.page.graphicsBounds[0].imageHash
+  if (reason === 'foreign-font')
+    f.nativeTokens.push({
+      ...f.nativeTokens[0],
+      text: 'Body',
+      rect: [280, 250, 300, 260],
+      baseline: 260
+    })
+  if (reason === 'foreign-table') f.tableRects.push([80, 60, 270, 240])
+  if (reason === 'caption-crossing-source') {
+    matrix[5] = 165
+    f.captions[0].rect[1] -= 25
+    f.captions[0].rect[3] -= 25
+    f.nativeTokens[0].rect[1] -= 25
+    f.nativeTokens[0].rect[3] -= 25
+    f.nativeTokens[0].baseline -= 25
+    f.page.lines[0].y -= 25
+  }
+  if (reason === 'partial-caption-font') f.nativeTokens[0].rect[0] += 1
+  if (reason === 'three-images-above-caption')
+    for (let i = 3; i < 6; i++) f.page.graphicsBounds[i].normalizedRect[3] = 750 / 800
+  if (reason === 'image-clip' || reason === 'image-alpha' || reason === 'image-form') {
+    ops.fnArray.push(
+      reason === 'image-clip'
+        ? OPS.clip
+        : reason === 'image-alpha'
+          ? OPS.setGState
+          : OPS.paintFormXObjectBegin
+    )
+    ops.argsArray.push(reason === 'image-alpha' ? [[['ca', 0.5]]] : [])
+  }
+  if (reason === 'native-white-text')
+    ops.argsArray[ops.fnArray.indexOf(OPS.setFillRGBColor)] = ['#ffffff']
+  if (reason === 'untyped-matrix')
+    ops.argsArray[ops.fnArray.indexOf(OPS.setTextMatrix)][0] = Array.from(matrix)
+  const before = structuredClone(f)
+  expect(
+    nativeCaptionedKeyedRasterTriple(
+      f.page,
+      f.captions[0],
+      f.captions,
+      f.tableRects,
+      f.nativeTokens,
+      f.operatorContext
+    )
+  ).toBeUndefined()
+  expect(f).toEqual(before)
+})
+
 const completePaintedRasterRows = (): ReturnType<typeof JSON.parse> => {
   const norm = (rect: number[]): number[] => rect.map((value, i) => value / (i % 2 ? 800 : 600))
   const caption = {

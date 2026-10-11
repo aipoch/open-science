@@ -106,3 +106,138 @@ it.each([
   const caption = variant === 'caption' ? { lines: ['Table 1: Explicit data.'] } : undefined
   expect(hasTableEvidence(f.table, caption, f.items, rules)).toBe(true)
 })
+
+const mixedDirectory = (): ReturnType<typeof JSON.parse> => {
+  let index = 0
+  const whole = (
+    text: string,
+    x: number,
+    y: number,
+    width: number
+  ): ReturnType<typeof JSON.parse> => ({
+    ...token(text, [x, y, x + width, y + 10]),
+    sourceItem: { pageNumber: 1, index: index++, text }
+  })
+  const items = [whole('Contents', 200, 55, 60)],
+    entries = [['References', '2']]
+  for (let n = 1; n <= 3; n++)
+    entries.push(
+      [`S${n}. Anonymous section`, String(n * 2 + 2)],
+      [`${n}.1. Anonymous subsection`, String(n * 2 + 2)]
+    )
+  const cells: ReturnType<typeof JSON.parse>[] = [],
+    grid: string[][] = []
+  for (const [row, [text, target]] of entries.entries()) {
+    const y = 90 + row * 22,
+      label = whole(text, /^\d\./u.test(text) ? 25 : 20, y, 220),
+      page = whole(target, 434, y, 6)
+    items.push(label, page)
+    grid.push([text, target])
+    for (const [column, f] of [label, page].entries())
+      cells.push({
+        row,
+        column,
+        rowSpan: 1,
+        colSpan: 1,
+        text: f.text,
+        rect: [...f.rect],
+        sourceRects: [[...f.rect]],
+        sourceItems: [f.sourceItem],
+        sourceTokens: [{ text: f.text, rect: [...f.rect], baseline: f.baseline, height: f.height }]
+      })
+  }
+  return {
+    table: { cropRect: [10, 80, 450, 245], grid, cells, unassigned: [], clipped: [], issues: [] },
+    items,
+    rules: [],
+    graphics: [],
+    caption: undefined
+  }
+}
+const changeMixedLabel = (f: ReturnType<typeof JSON.parse>, index: number, text: string): void => {
+  const item = f.items[index]
+  item.text = item.sourceItem.text = text
+  for (const cell of f.table.cells)
+    if (cell.sourceItems.includes(item.sourceItem)) {
+      cell.text = cell.sourceTokens[0].text = text
+      f.table.grid[cell.row][cell.column] = text
+    }
+}
+it.each([false, true])(
+  'rejects a source-owned mixed supplemental Contents directory (residual=%s)',
+  (residual) => {
+    const f = mixedDirectory()
+    if (residual) {
+      const pair = f.table.cells.filter((c: ReturnType<typeof JSON.parse>) => c.row === 2)
+      f.table.cells = f.table.cells.filter((c: ReturnType<typeof JSON.parse>) => c.row !== 2)
+      f.table.unassigned = pair.map((c: ReturnType<typeof JSON.parse>) => c.text)
+    }
+    const before = structuredClone(f)
+    expect(hasTableEvidence(f.table, f.caption, f.items, f.rules, f.graphics)).toBe(false)
+    expect(f).toEqual(before)
+  }
+)
+it.each([
+  'missing heading',
+  'duplicate heading',
+  'distant heading',
+  'occupied corridor',
+  'skipped major',
+  'wrong child parent',
+  'skipped child',
+  'decreasing page',
+  'fractional page',
+  'misaligned page',
+  'caption',
+  'internal rule',
+  'internal image',
+  'missing carrier',
+  'duplicate identity',
+  'extra carrier',
+  'partial carrier',
+  'missing claim',
+  'unknown residual',
+  'numeric data'
+])('retains an ambiguous mixed navigation candidate with %s', (variant) => {
+  const f = mixedDirectory()
+  if (variant === 'missing heading') f.items.shift()
+  if (variant === 'duplicate heading')
+    f.items.push({
+      ...structuredClone(f.items[0]),
+      sourceItem: { pageNumber: 1, index: 99, text: 'Contents' }
+    })
+  if (variant === 'distant heading') f.items[0].rect = [200, 10, 260, 20]
+  if (variant === 'occupied corridor' || variant === 'extra carrier') {
+    const y = variant === 'occupied corridor' ? 68 : 150
+    f.items.push({
+      ...token('Foreign prose', [20, y, 100, y + 10]),
+      sourceItem: { pageNumber: 1, index: 99, text: 'Foreign prose' }
+    })
+  }
+  if (variant === 'skipped major') changeMixedLabel(f, 7, 'S8. Anonymous section')
+  if (variant === 'wrong child parent') changeMixedLabel(f, 9, '1.1. Anonymous subsection')
+  if (variant === 'skipped child') changeMixedLabel(f, 5, '1.3. Anonymous subsection')
+  if (variant === 'decreasing page') changeMixedLabel(f, 8, '1')
+  if (variant === 'fractional page') changeMixedLabel(f, 8, '1.5')
+  if (variant === 'misaligned page') {
+    const item = f.items[8]
+    item.rect = item.rect.map((v: number, n: number) => v - (n % 2 ? 0 : 1))
+    const cell = f.table.cells[7]
+    cell.rect = [...item.rect]
+    cell.sourceRects = [[...item.rect]]
+    cell.sourceTokens[0].rect = [...item.rect]
+  }
+  if (variant === 'caption') f.caption = { lines: ['Table 1: Explicit data.'] }
+  if (variant === 'internal rule') f.rules.push([10, 150, 450, 150])
+  if (variant === 'internal image') f.graphics.push({ kind: 'image', rect: [100, 140, 110, 150] })
+  if (variant === 'missing carrier') f.items.splice(5, 1)
+  if (variant === 'duplicate identity') f.items[4].sourceItem.index = f.items[2].sourceItem.index
+  if (variant === 'partial carrier') f.items[1].rect[0] = 0
+  if (variant === 'missing claim') f.table.cells[2].sourceItems = []
+  if (variant === 'unknown residual') f.table.unassigned.push('Unknown residual')
+  if (variant === 'numeric data')
+    for (let n = 1; n < f.items.length; n += 2) changeMixedLabel(f, n, `Measured value ${n}`)
+  const before = structuredClone(f)
+  expect(hasTableEvidence(f.table, f.caption, f.items, f.rules, f.graphics)).toBe(true)
+  expect(f).toEqual(before)
+})

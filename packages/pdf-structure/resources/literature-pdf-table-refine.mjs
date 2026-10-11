@@ -1,11 +1,18 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
-import { recoverCaptionedRuledTables as recoverExistingCaptionedRuledTables } from './literature-pdf-table-regions.mjs'
+import {
+  recoverCaptionedRuledTables as recoverExistingCaptionedRuledTables,
+  recoverNativeClosedProseSymbolRows,
+  recoverNativeCaptionedTwoFieldRows
+} from './literature-pdf-table-regions.mjs'
 import { reconcileNativeFinalCellBounds } from './literature-pdf-native-final-cell-bounds.mjs'
 import {
   proveCaptionedNativeDefinitionFrame,
   proveNativeAssignedClosedTableFrame
 } from './literature-pdf-table-evidence.mjs'
-import { recoverNativeHeaderOwnershipGrid } from './literature-pdf-native-header-ownership.mjs'
+import {
+  recoverNativeHeaderOwnershipGrid,
+  recoverNativeTwoTierParentHeaderGrid
+} from './literature-pdf-native-header-ownership.mjs'
 import { recoverNativeMeasuredGutterTokens } from './literature-pdf-native-measured-gutters.mjs'
 import {
   recoverNativePrintedLaneTokens,
@@ -51,7 +58,8 @@ import {
   nativeWholeFontOrigins,
   nativeCellOriginsMatch,
   nativeChangedCellOrigins,
-  nativeRecoveredCellOrigins
+  nativeRecoveredCellOrigins,
+  recoverNativeFirstRecordContinuations
 } from './literature-pdf-native-leaf-record-repair.mjs'
 import { recoverNativeScalarRecordPlan } from './literature-pdf-native-scalar-record-grid.mjs'
 import { recoverNativeTextRecordGrid } from './literature-pdf-native-text-record-grid.mjs'
@@ -93,7 +101,10 @@ import {
   recoverSmallCompleteRecordGrid
 } from './literature-pdf-native-complete-record-grid.mjs'
 import { proveNativeClosedMathOrder } from './literature-pdf-native-closed-math-order.mjs'
-import { recoverNativeEqualFontStackRecordGrid } from './literature-pdf-native-stacked-uncertainty.mjs'
+import {
+  recoverNativeEqualFontStackRecordGrid,
+  recoverNativeFusedStackedScalarOwners
+} from './literature-pdf-native-stacked-uncertainty.mjs'
 import {
   proveNativeScientificLeafGutters,
   recoverNativeScientificLeafRecordGrid
@@ -1465,9 +1476,21 @@ export function refineTable(
   rules = [],
   observedRuns = [],
   adjacent,
-  rulePaintBounds
+  rulePaintBounds,
+  nativeRecordContext
 ) {
   const terminalRecordSeed = table
+  const nativeTwoTierParentHeader = recoverNativeTwoTierParentHeaderGrid(
+    table,
+    pageItems,
+    captions,
+    rules,
+    nativeRecordContext
+  )
+  const nativeClosedRecords =
+    recoverNativeClosedProseSymbolRows(table, pageItems, rules, nativeRecordContext) ??
+    recoverNativeCaptionedTwoFieldRows(table, pageItems, captions, rules, nativeRecordContext)
+  if (nativeClosedRecords) table = rebaseTableCrop(table, nativeClosedRecords.cropRect)
   const alignedLiteralColumns = recoverNativeAlignedLiteralLeafColumns(
     table,
     pageItems,
@@ -2149,8 +2172,10 @@ export function refineTable(
     sourceRules
   )
   const recordGrid =
+    nativeTwoTierParentHeader ??
+    nativeClosedRecords ??
     indicatorRecordPlan?.grid ??
-    recoverNativeProseLaneRecords(table, pageItems, captions, sourceRules) ??
+    recoverNativeProseLaneRecords(table, pageItems, captions, sourceRules, nativeRecordContext) ??
     recoverNativeIndexedDirectoryGrid(table, pageItems, sourceRules) ??
     recoverCompleteNativeLeafRecords(table, pageItems, captions, sourceRules) ??
     recoverNativeSegmentedStubRecords(table, pageItems, captions, sourceRules) ??
@@ -12143,7 +12168,9 @@ export function refineTable(
     rowlessNativeRecords ??
     captionWidthNativeRecords ??
     observedLiteralNativeRecords ??
-    recoverNativePrintedLeafPlan(table, pageItems, captions, sourceRules, observedRuns) ??
+    (!nativeTwoTierParentHeader
+      ? recoverNativePrintedLeafPlan(table, pageItems, captions, sourceRules, observedRuns)
+      : undefined) ??
     recoverNativeLiteralKeyedPeers(table, pageItems, captions, sourceRules, outputCells) ??
     recoverNativeCenteredLiteralPeers(table, pageItems, captions, sourceRules, outputCells) ??
     recoverNativeCompactLiteralRecords(table, pageItems, captions, sourceRules, observedRuns) ??
@@ -12175,7 +12202,9 @@ export function refineTable(
     recoverNativeRuledFieldFaces(table, pageItems, captions, sourceRules) ??
     recoverNativeMeasuredFourLeafRecords(table, pageItems, captions, sourceRules, observedRuns) ??
     recoverNativeTinyConfigurationRecords(table, pageItems, sourceRules) ??
-    recoverNativeProvedHeaderRecords(table, pageItems, captions, sourceRules, observedRuns) ??
+    (!nativeTwoTierParentHeader
+      ? recoverNativeProvedHeaderRecords(table, pageItems, captions, sourceRules, observedRuns)
+      : undefined) ??
     recoverNativeOperatorRecords(items, table.cropRect) ??
     recoverNativeAcquisitionRecords(items, table.cropRect, sourceRules) ??
     recoverNativeRuledMetricRecords(table, pageItems, sourceRules) ??
@@ -12894,6 +12923,40 @@ export function refineTable(
     outputCells.splice(outputCells.indexOf(cell), 1, ...replacements)
     for (const c of replacements) grid[c.row][c.column] = c.text
     repairs.push(proof.repair)
+  }
+  const fusedStackedScalar = recoverNativeFusedStackedScalarOwners(
+    { cropRect: outputCrop, readingRotation: table.readingRotation, cells: outputCells, grid },
+    pageItems,
+    sourceRules,
+    observedRuns,
+    nativeRecordContext
+  )
+  if (fusedStackedScalar) {
+    const { donor, target, label, targetTokens, runs, donorOrigins, targetOrigins } =
+      fusedStackedScalar
+    const left = {
+      ...donor,
+      ...donorOrigins,
+      text: label.text,
+      sourceTokens: [label],
+      sourceRects: [label.rect]
+    }
+    const right = {
+      ...target,
+      ...targetOrigins,
+      text: runs.map((r) => r.text).join(''),
+      textRuns: runs,
+      sourceTokens: targetTokens,
+      sourceRects: targetTokens.map((i) => i.rect)
+    }
+    if (left.sourceItems === undefined) delete left.sourceItems
+    if (right.sourceItems === undefined) delete right.sourceItems
+    outputCells = outputCells.map((cell) =>
+      cell === donor ? left : cell === target ? right : cell
+    )
+    grid[left.row][left.column] = left.text
+    grid[right.row][right.column] = right.text
+    repairs.push('native-measured-prose-scalar-cell-split')
   }
   const assignedFrame = proveNativeAssignedClosedTableFrame(
     { cropRect: outputCrop, grid, cells: outputCells },
@@ -13624,6 +13687,32 @@ export function refineTable(
     repairs.push('native-calibrated-wrapped-leaf-owners-recovered')
   }
 
+  const firstContinuations = recoverNativeFirstRecordContinuations(
+    {
+      ...table,
+      cropRect: outputCrop,
+      cells: outputCells,
+      grid,
+      unassigned,
+      clipped: outputClipped,
+      notes
+    },
+    pageItems,
+    captions,
+    sourceRules,
+    nativeRecordContext
+  )
+  if (firstContinuations) {
+    const replacements = new Map(
+      firstContinuations.replacements.map((p) => [p.cell, p.replacement])
+    )
+    outputCells = outputCells.map((c) => replacements.get(c) ?? c)
+    for (const { replacement } of firstContinuations.replacements)
+      grid[replacement.row][replacement.column] = replacement.text
+    unassigned.splice(0, unassigned.length)
+    issues.delete('unassigned-source-text')
+    repairs.push('native-first-record-continuations-recovered')
+  }
   const result = {
     id: table.id,
     cropRect: outputCrop,
@@ -14663,7 +14752,12 @@ function recoverNativeSectionScalarPeers(table, items, captions, rules, runs) {
     head =
       proveNativePeerScalarLeafHeader(table, items, captions, rules, runs) ??
       proveNativePrintedHeaderAtColumns(table, items, captions, rules, columns, runs)
-  if (!head) return
+  if (
+    !head ||
+    head.columns.length !== columns.length ||
+    head.headerCells.some((c) => c.column + (c.colSpan ?? 1) > columns.length)
+  )
+    return
   const characters = (a) =>
     [
       ...a

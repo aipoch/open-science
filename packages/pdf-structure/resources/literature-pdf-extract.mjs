@@ -59,7 +59,10 @@ import {
   recoverNativeFencedGroupLabels,
   recoverNativeExistingWholeRecordRows,
   recoverNativeBlankFirstLeafOwners,
-  recoverNativeStackedSharedCaptionParts
+  recoverNativeStackedSharedCaptionParts,
+  recoverNativeSectionedOrdinaryRecordOwners,
+  recoverNativeVisualFractionCrop,
+  recoverNativeTaggedHeaderGroupOwners
 } from './literature-pdf-native-leaf-record-repair.mjs'
 import {
   deduplicateTableRegions,
@@ -67,7 +70,8 @@ import {
 } from './literature-pdf-table-regions.mjs'
 import {
   splitRuledComparisonSections,
-  groupRuledComparisonSections
+  groupRuledComparisonSections,
+  recoverNativeHeterogeneousRuledParts
 } from './literature-pdf-ruled-narrative-grid.mjs'
 import {
   isFigureRiskTable,
@@ -132,7 +136,10 @@ import {
   recoverNativeScientificLeafRecordGrid
 } from './literature-pdf-native-scientific-leaf-gutters.mjs'
 import { recoverNativeMeanDeviationRecords } from './literature-pdf-native-mean-deviation-records.mjs'
-import { findCaptionedNativePartialRuleTable } from './literature-pdf-native-header-grid.mjs'
+import {
+  findCaptionedNativePartialRuleTable,
+  recoverNativePairedHeaderRecordOwners
+} from './literature-pdf-native-header-grid.mjs'
 import { isNativeFrontMatterRegion } from './literature-pdf-front-matter.mjs'
 import {
   originalRect,
@@ -269,6 +276,81 @@ const captionValue = (c) =>
         ...(c.regions ? { regions: c.regions } : {})
       }
     : undefined
+// Keep renderer evidence local to the original page; no font objects or binaries
+// cross the worker result boundary. Unsupported or incomplete evidence is optional.
+const nativeFontSource = (page, content, caption = false) => {
+  try {
+    const ids = Object.keys(content.styles)
+    if (!ids.length || ids.length > 64) return undefined
+    const fonts = []
+    for (const id of ids) {
+      const font = page.commonObjs.get(id)
+      if (
+        font.loadedName !== id ||
+        ['missingFile', 'isType3Font'].some((key) => typeof font[key] !== 'boolean') ||
+        ['vertical', 'remeasure'].some(
+          (key) => font[key] !== undefined && typeof font[key] !== 'boolean'
+        )
+      )
+        return undefined
+      fonts.push({
+        id,
+        missingFile: font.missingFile,
+        isType3Font: font.isType3Font,
+        vertical: !!font.vertical,
+        remeasure: !!font.remeasure,
+        ...(caption ? { fontMatrix: Array.from(font.fontMatrix) } : {})
+      })
+    }
+    const glyphPaths = []
+    let pathValues = 0
+    for (const [id, value] of page.commonObjs) {
+      if (!ids.some((fontId) => id.startsWith(`${fontId}_path_`))) continue
+      const path = value.path
+      if (
+        !(
+          path instanceof Float32Array ||
+          (typeof Float16Array !== 'undefined' && path instanceof Float16Array)
+        ) ||
+        path.length > 8192 ||
+        (pathValues += path.length) > 1000000 ||
+        glyphPaths.length >= 4096
+      )
+        return undefined
+      const coordinates = Array.from(path)
+      if (!coordinates.every(Number.isFinite)) return undefined
+      glyphPaths.push({ id, path: coordinates })
+    }
+    return { fonts, glyphPaths }
+  } catch {
+    return undefined
+  }
+}
+const nativeMarkedSource = async (page, content) => {
+  try {
+    const structureTree = await page.getStructTree()
+    if (!structureTree) return undefined
+    const pending = [structureTree]
+    let nodes = 0,
+      hasTable = false
+    while (pending.length) {
+      const node = pending.pop()
+      if (++nodes > 10000 || !node || typeof node !== 'object') return undefined
+      hasTable ||= node.role === 'Table'
+      if (Array.isArray(node.children)) pending.push(...node.children)
+    }
+    if (!hasTable) return undefined
+    const fontSource = nativeFontSource(page, content)
+    if (!fontSource) return undefined
+    return {
+      structureTree,
+      markedContent: await page.getTextContent({ includeMarkedContent: true }),
+      ...fontSource
+    }
+  } catch {
+    return undefined
+  }
+}
 // Neighbor geometry may own the first half of a caption outside this job.
 // Prove its graphic locally before suppressing a caption-only tail; never
 // publish the auxiliary figure as a newly processed page.
@@ -373,6 +455,7 @@ try {
       )
       const viewport = page.getViewport({ scale: 1.5, rotation: pageGeometry.renderRotation })
       const originalContent = await page.getTextContent()
+      const markedSource = await nativeMarkedSource(page, originalContent)
       const sourceContent = {
         ...originalContent,
         items: originalContent.items.map((item, index) =>
@@ -420,16 +503,38 @@ try {
         captions,
         ruledCaptions,
         pageGeometry,
-        rules.map((rect) => rect.map((v) => v / 1.5))
+        rules.map((rect) => rect.map((v) => v / 1.5)),
+        sourceFigureTokens.map((i) => ({
+          ...i,
+          rect: i.rect.map((v) => v / 1.5),
+          height: i.height / 1.5,
+          baseline: i.baseline / 1.5
+        }))
       )
       // Use original native single-glyph items after ruled caption recovery.
       // Preserve the canonical caption object; serialization joins its new lines.
+      const captionFontSource = sourceFigureTokens.some((t) => t.text === 'ˆ')
+        ? nativeFontSource(page, originalContent, true)
+        : undefined
+      const captionSource = captionFontSource
+        ? {
+            content: sourceContent,
+            operators,
+            viewport: {
+              width: viewport.width,
+              height: viewport.height,
+              transform: Array.from(viewport.transform)
+            },
+            ...captionFontSource
+          }
+        : undefined
       for (const caption of captions.filter((c) => c.page === pageNumber)) {
         const accentLines = recoverNativeCaptionOverlayAccentLines(
           pageGeometry,
           caption,
           sourceFigureTokens,
-          1.5
+          1.5,
+          captionSource
         )
         if (accentLines) caption.lines = accentLines
       }
@@ -987,6 +1092,20 @@ try {
         baseline: token.baseline / 1.5,
         height: token.height / 1.5
       }))
+      const nativeEvidenceGraphics = pageGeometry.graphicsBounds.map((graphic) => ({
+        kind: graphic.kind,
+        rect: graphic.normalizedRect.map(
+          (value, axis) => value * (axis % 2 ? pageGeometry.height : pageGeometry.width) * 1.5
+        )
+      }))
+      const nativeRecordContext = {
+        operators,
+        viewport,
+        sourceContent,
+        content: sourceContent,
+        rulePaintBounds,
+        nativeEvidenceGraphics
+      }
       const refined = pageInference.tables.map((raw) =>
         refineTable(
           raw,
@@ -996,7 +1115,8 @@ try {
           rules,
           measuredRuns,
           pairedTextContexts.get(raw.id),
-          rulePaintBounds
+          rulePaintBounds,
+          nativeRecordContext
         )
       )
       // Use recovered row extents, not the padded inference crop, for caption distance.
@@ -1179,7 +1299,8 @@ try {
           rules,
           measuredRuns,
           pairedTextContexts.get(refined[index].id),
-          rulePaintBounds
+          rulePaintBounds,
+          nativeRecordContext
         )
       }
       // Cell row extents omit border rules; the full detected crop owns those rules too.
@@ -1204,7 +1325,7 @@ try {
           rules.map((r) => r.map((v) => v / 1.5)),
           closedFrames,
           nativeFigureTokens,
-          { operators, viewport: nativeViewport }
+          { operators, viewport: nativeViewport, content: sourceContent }
         )
       ].filter((f) => f.rect)
       // A side-by-side detector can attach a caption to a narrow crop that
@@ -1282,12 +1403,45 @@ try {
         tokens,
         rules
       )
-      const nativeEvidenceGraphics = pageGeometry.graphicsBounds.map((graphic) => ({
-        kind: graphic.kind,
-        rect: graphic.normalizedRect.map(
-          (value, axis) => value * (axis % 2 ? pageGeometry.height : pageGeometry.width) * 1.5
+      // A rowless first body can be complete before evidence admission. Only
+      // this empty seed enters the native two-rule/page-boundary proof here;
+      // existing populated record repairs retain their later call below.
+      for (const [index, table] of refined.entries()) {
+        if (
+          table.rows.length ||
+          table.grid.length ||
+          table.cells.length ||
+          notes[index].length ||
+          pageGeometry.invalidGraphicsBounds !== 0
         )
-      }))
+          continue
+        const seeds = pageInference.tables.filter((seed) => seed.id === table.id),
+          association = associations[index]
+        if (seeds.length !== 1 || seeds[0].readingRotation !== 0 || !association.caption) continue
+        const recovered = recoverNativeFourFieldOrdinaryRecordOwners(
+          {
+            ...table,
+            page: pageNumber,
+            caption: captionValue(association.caption),
+            captionIssue: association.reason,
+            sourceViewport: { width: viewport.width, height: viewport.height, scale: 1.5 }
+          },
+          tokens,
+          pageCaptions,
+          rules,
+          measuredRuns,
+          rulePaintBounds,
+          nativeEvidenceGraphics,
+          { operators, viewport }
+        )
+        if (!recovered) continue
+        refined[index] = recovered
+        association.caption = {
+          ...association.caption,
+          lines: recovered.caption.lines,
+          rect: recovered.caption.rect
+        }
+      }
       const hasSourceTableEvidence = (table, index) =>
         nativeDefinitionTails.has(table.id) ||
         hasTableEvidence(table, associations[index].caption, tokens, rules, nativeEvidenceGraphics)
@@ -1554,7 +1708,7 @@ try {
         rules.map((r) => r.map((v) => v / 1.5)),
         closedFrames,
         nativeFigureTokens,
-        { operators, viewport: nativeViewport }
+        { operators, viewport: nativeViewport, content: sourceContent }
       )
       let pageFigures =
         localFigures.length || recognizedTableRects.length
@@ -1937,6 +2091,27 @@ try {
         })
         return canonical.every(Boolean) ? canonical : [table]
       })
+      const wholeOwnerFonts = nativeTextTokens(
+        sourceContent,
+        viewport,
+        pageGeometry.renderRotation,
+        true
+      )
+      const wholeOwnerContext = {
+        ...nativeRecordContext,
+        nativeEvidenceGraphics: originalPages.get(pageNumber).graphicsBounds.map((graphic) => ({
+          kind: graphic.kind,
+          rect: graphic.normalizedRect.map(
+            (value, axis) =>
+              value *
+              (axis % 2
+                ? originalPages.get(pageNumber).height
+                : originalPages.get(pageNumber).width) *
+              1.5
+          )
+        }))
+      }
+      const taggedOwnerContext = { ...wholeOwnerContext, nativeMarkedSource: markedSource }
       const fencedPageTables = independentPageTables.map((table) => {
         const seeds = pageInference.tables.filter((seed) => seed.id === table.id)
         if (
@@ -1954,7 +2129,24 @@ try {
             measuredRuns,
             rulePaintBounds,
             nativeEvidenceGraphics,
-            { operators, viewport }
+            {
+              ...nativeRecordContext,
+              // Native paint closure includes the original margin paths even
+              // when the positional graphics omit repeated page decorations.
+              nativeEvidenceGraphics: originalPages
+                .get(pageNumber)
+                .graphicsBounds.map((graphic) => ({
+                  kind: graphic.kind,
+                  rect: graphic.normalizedRect.map(
+                    (value, axis) =>
+                      value *
+                      (axis % 2
+                        ? originalPages.get(pageNumber).height
+                        : originalPages.get(pageNumber).width) *
+                      1.5
+                  )
+                }))
+            }
           ) ?? table
         const records =
           recoverNativeExistingWholeRecordRows(
@@ -1977,7 +2169,7 @@ try {
             nativeEvidenceGraphics,
             { operators, viewport }
           ) ?? records
-        return (
+        const ordinary =
           recoverNativeFourFieldOrdinaryRecordOwners(
             blank,
             tokens,
@@ -1988,6 +2180,41 @@ try {
             nativeEvidenceGraphics,
             { operators, viewport }
           ) ?? blank
+        const sectioned =
+          recoverNativeSectionedOrdinaryRecordOwners(
+            ordinary,
+            wholeOwnerFonts,
+            pageCaptions,
+            rules,
+            wholeOwnerContext
+          ) ?? ordinary
+        const visualCrop =
+          sectioned !== ordinary &&
+          recoverNativeVisualFractionCrop(sectioned, wholeOwnerFonts, rules, wholeOwnerContext)
+        const visual = visualCrop
+          ? Object.create(Object.getPrototypeOf(sectioned), {
+              ...Object.getOwnPropertyDescriptors(sectioned),
+              cropRect: {
+                ...Object.getOwnPropertyDescriptor(sectioned, 'cropRect'),
+                value: visualCrop
+              }
+            })
+          : sectioned
+        const paired =
+          recoverNativePairedHeaderRecordOwners(
+            visual,
+            wholeOwnerFonts,
+            pageCaptions,
+            rules,
+            wholeOwnerContext
+          ) ?? visual
+        return (
+          recoverNativeTaggedHeaderGroupOwners(
+            paired,
+            wholeOwnerFonts,
+            rules,
+            taggedOwnerContext
+          ) ?? paired
         )
       })
       for (let table of groupRuledComparisonSections(
@@ -2005,7 +2232,14 @@ try {
       )) {
         const mixedSections =
           !table.parts &&
-          (recoverNativeMixedSectionParts(table, tokens, pageCaptions, rules, measuredRuns) ??
+          (recoverNativeHeterogeneousRuledParts(
+            table,
+            tokens,
+            pageCaptions,
+            rules,
+            nativeRecordContext
+          ) ??
+            recoverNativeMixedSectionParts(table, tokens, pageCaptions, rules, measuredRuns) ??
             recoverNativeIndependentPanelParts(table, tokens, pageCaptions, rules, measuredRuns) ??
             recoverNativeStackedSharedCaptionParts(
               table,

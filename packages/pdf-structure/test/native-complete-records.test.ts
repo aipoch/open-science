@@ -37,7 +37,7 @@ const examples = readFileSync(resolve('test/fixtures/native-complete-records.jso
   .split('\n')
   .map((line) => JSON.parse(line))
 const fixture = (kind: string): ReturnType<typeof JSON.parse> =>
-  structuredClone(examples.find((f) => f.kind === kind))
+  structuredClone(examples.find((f: ReturnType<typeof JSON.parse>) => f.kind === kind))
 const run = (f: ReturnType<typeof fixture>): ReturnType<typeof refineTable> => {
   const table =
     f.table ?? recoverCaptionedRuledTables(f.items, f.rules, f.captions, 1, [], f.runs)[0]
@@ -48,6 +48,2442 @@ const characters = (text: string): string => [...text.replace(/\s/gu, '')].sort(
 const lateFencedGroupHelpers = await import(
   pathToFileURL(resolve('resources/literature-pdf-native-leaf-record-repair.mjs')).href
 )
+
+// Small synthetic source, including real marked/Tj and opaque rectangular paint
+// programs. Tag-child positions intentionally disagree with the native columns.
+const taggedHeaderGroupSource = (): ReturnType<typeof JSON.parse> => {
+  const viewport = { width: 256, height: 256, transform: [1, 0, 0, -1, 0, 256] },
+    content: ReturnType<typeof JSON.parse> = { items: [], styles: { f: { vertical: false } } },
+    operators: ReturnType<typeof JSON.parse> = { fnArray: [OPS.dependency], argsArray: [['f']] },
+    marked: ReturnType<typeof JSON.parse>[] = [],
+    items: ReturnType<typeof JSON.parse>[] = [],
+    graphics: ReturnType<typeof JSON.parse>[] = [],
+    rules: ReturnType<typeof JSON.parse>[] = [],
+    paint = new Map(),
+    taggedRows: ReturnType<typeof JSON.parse>[][] = Array.from({ length: 6 }, () => []),
+    grid = Array.from({ length: 5 }, () => Array(5).fill('')),
+    cells: ReturnType<typeof JSON.parse>[] = [],
+    edges = [32, 58, 82, 107, 132, 157, 182]
+  let mcid = 0
+  const emit = (op: number, args: unknown): void => {
+    operators.fnArray.push(op)
+    operators.argsArray.push(args)
+  }
+  const box = (r: number[], clip = false, color = '#000000'): void => {
+    if (clip) emit(OPS.eoClip, null)
+    else emit(OPS.setFillRGBColor, [color])
+    const [left, top, right, bottom] = r,
+      p = [
+        0,
+        left,
+        256 - bottom,
+        1,
+        right,
+        256 - bottom,
+        1,
+        right,
+        256 - top,
+        1,
+        left,
+        256 - top,
+        4
+      ]
+    emit(OPS.constructPath, [
+      clip ? OPS.endPath : OPS.eoFill,
+      [new Float32Array(p)],
+      new Float32Array([left, 256 - bottom, right, 256 - top])
+    ])
+    if (!clip)
+      graphics.push({
+        kind: 'path',
+        rect: r.map((v, k) => (k < 2 ? Math.floor(v) : Math.ceil(v)) + (k < 2 ? 0 : 1))
+      })
+  }
+  box([0, 5, 256, 256], true)
+  const draw = (
+    text: string,
+    x: number,
+    baseline: number,
+    row?: number,
+    role = 'TD',
+    size = 10
+  ): ReturnType<typeof JSON.parse> => {
+    const sourceItem = { pageNumber: 1, index: content.items.length, text },
+      raw = {
+        str: text,
+        dir: 'ltr',
+        width: (text.length * size) / 2,
+        height: size,
+        fontName: 'f',
+        transform: [size, 0, 0, size, x, 256 - baseline],
+        sourceItem
+      },
+      font = {
+        text,
+        sourceItem,
+        rect: [x, baseline - size, x + (text.length * size) / 2, baseline],
+        baseline,
+        height: size,
+        horizontal: true,
+        fontDescent: 0
+      },
+      id = mcid++
+    content.items.push(raw)
+    items.push(font)
+    emit(OPS.beginMarkedContentProps, ['Span', id])
+    marked.push({ type: 'beginMarkedContentProps', id: `p1_mc${id}`, tag: 'Span' })
+    const originalRaw: ReturnType<typeof JSON.parse> = { ...raw }
+    delete originalRaw.sourceItem
+    marked.push(originalRaw)
+    emit(OPS.setFont, ['f', size])
+    emit(OPS.beginText, null)
+    emit(OPS.setTextMatrix, [new Float32Array([1, 0, 0, 1, x, 256 - baseline])])
+    emit(OPS.showText, [
+      [...text].map((unicode) => ({
+        unicode,
+        fontChar: unicode,
+        originalCharCode: unicode.codePointAt(0),
+        width: 500,
+        isInFont: true,
+        isSpace: false,
+        accent: null
+      }))
+    ])
+    emit(OPS.endText, null)
+    emit(OPS.endMarkedContent, null)
+    marked.push({ type: 'endMarkedContent' })
+    if (row !== undefined)
+      taggedRows[row].push({ role, children: [{ type: 'content', id: `p1_mc${id}` }] })
+    return font
+  }
+  draw('T', 5, 14)
+  const parents = [
+    draw('P', 70, 48, 0, 'TH'),
+    draw('Q', 110, 48, 0, 'TH'),
+    draw('R', 175, 48, 0, 'TH')
+  ]
+  const add = (row: number, column: number, fs: ReturnType<typeof JSON.parse>[]): void => {
+    const text = fs.map((f) => f.text).join('')
+    grid[row][column] = text
+    cells.push({
+      row,
+      column,
+      rowSpan: 1,
+      colSpan: 1,
+      text,
+      sourceRects: fs.map((f) => [...f.rect]),
+      ...(fs.length ? { sourceItems: fs.map((f) => structuredClone(f.sourceItem)) } : {})
+    })
+  }
+  for (let column = 0; column < 5; column++)
+    add(0, column, [draw(String.fromCharCode(65 + column), 30 + column * 40, 75, 1)])
+  for (let row = 1; row < 5; row++) {
+    if (row === 2) add(row, 0, [draw('G', 35, 116, 2, 'TH')])
+    else if (row === 3) add(row, 0, [draw('H', 35, 150, 4, 'TH')])
+    else add(row, 0, [])
+    if (row === 4)
+      taggedRows[5].push(
+        { role: 'TH', children: [] },
+        { role: 'TD', children: [] },
+        { role: 'TD', children: [] }
+      )
+    for (let column = 1; column < 5; column++) {
+      if (row === 1 && column === 2) {
+        const base = draw('x', 105, 100, 2),
+          script = draw('2', 110, 96, 2, 'TD', 6),
+          scriptTag = taggedRows[2].pop()
+        taggedRows[2].at(-1).children.push(...scriptTag.children)
+        add(row, column, [base, script])
+      } else
+        add(row, column, [
+          draw(`${row}${column}`, 65 + column * 40 - 40, edges[row + 1] + 18, row + 1)
+        ])
+    }
+  }
+  for (const y of [32, 82, 132, 182]) {
+    const segments =
+      y === 32
+        ? [
+            [20.5, 59.5],
+            [60.5, 99.5],
+            [100.5, 139.5],
+            [140.5, 219.5]
+          ]
+        : Array.from({ length: 5 }, (_, c) => [20.5 + c * 40, 59.5 + c * 40])
+    for (const [left, right] of segments) {
+      rules.push([left, y, right, y])
+      box([left, y - 0.125, right, y + 0.125])
+      paint.set(rules.at(-1), [left, y - 0.125, right, y + 0.125])
+    }
+  }
+  for (const y of [107, 157])
+    for (let c = 1; c < 5; c++) {
+      rules.push([20.5 + c * 40, y, 59.5 + c * 40, y])
+      box([20.5 + c * 40, y - 0.125, 59.5 + c * 40, y + 0.125])
+      paint.set(rules.at(-1), [20.5 + c * 40, y - 0.125, 59.5 + c * 40, y + 0.125])
+    }
+  const table = {
+    page: 1,
+    cropRect: [20, 30, 220, 185],
+    grid,
+    cells,
+    unassigned: parents.map((f) => f.text),
+    caption: { text: 'Values', rect: [20, 190, 100, 200] },
+    notes: [],
+    issues: ['unassigned-source-text', 'existing-diagnostic'],
+    repairs: ['existing-repair'],
+    sourceViewport: viewport,
+    rows: grid.map((_, n) => ({ rect: [20, edges[n + 1], 220, edges[n + 2]] }))
+  }
+  cells.find((c) => c.row === 1 && c.column === 2).textRuns = [
+    { text: 'x', position: 'normal' },
+    { text: '2', position: 'superscript' }
+  ]
+  const glyphPaths = [...new Set(items.flatMap((f) => [...f.text]))].map((char) => ({
+    id: `f_path_${char}`,
+    path: [0, 0, 0, 1, 0.45, 0, 1, 0.45, 0.8, 1, 0, 0.8, 4]
+  }))
+  return {
+    table,
+    items,
+    rules,
+    context: {
+      content,
+      sourceContent: content,
+      operators,
+      viewport,
+      nativeEvidenceGraphics: graphics,
+      rulePaintBounds: paint,
+      nativeMarkedSource: {
+        structureTree: {
+          role: 'Root',
+          children: [
+            { role: 'Table', children: taggedRows.map((children) => ({ role: 'TR', children })) }
+          ]
+        },
+        markedContent: { items: marked, styles: content.styles },
+        fonts: [
+          { id: 'f', missingFile: false, isType3Font: false, vertical: false, remeasure: false }
+        ],
+        glyphPaths
+      }
+    }
+  }
+}
+
+it('restores tagged header groups through complete native visible ownership', () => {
+  const f = taggedHeaderGroupSource(),
+    before = structuredClone(f.table),
+    result =
+      lateFencedGroupHelpers.recoverNativeTaggedHeaderGroupOwners?.(
+        f.table,
+        f.items,
+        f.rules,
+        f.context
+      ) ?? f.table
+  expect(result.grid).toHaveLength(6)
+  expect(
+    result.cells
+      .filter((c: ReturnType<typeof JSON.parse>) => c.row === 0)
+      .map((c: ReturnType<typeof JSON.parse>) => [c.column, c.colSpan, c.text])
+  ).toEqual([
+    [1, 1, 'P'],
+    [2, 1, 'Q'],
+    [3, 2, 'R']
+  ])
+  expect(
+    result.cells
+      .filter((c: ReturnType<typeof JSON.parse>) => ['G', 'H'].includes(c.text))
+      .map((c: ReturnType<typeof JSON.parse>) => [c.row, c.column, c.rowSpan])
+  ).toEqual([
+    [2, 0, 2],
+    [4, 0, 2]
+  ])
+  expect(result.unassigned).toEqual([])
+  expect(f.table).toEqual(before)
+  for (const cell of before.cells) {
+    if (!cell.text && cell.column === 0) continue
+    const expected = {
+      ...cell,
+      row: cell.text === 'G' ? 2 : cell.row + 1,
+      ...(cell.text === 'G' || cell.text === 'H' ? { rowSpan: 2 } : {})
+    }
+    expect(
+      result.cells.find(
+        (c: ReturnType<typeof JSON.parse>) => c.row === expected.row && c.column === expected.column
+      )
+    ).toEqual(expected)
+  }
+  for (const field of ['cropRect', 'caption', 'notes']) expect(result[field]).toEqual(before[field])
+  expect(result.issues).toEqual(['existing-diagnostic'])
+  expect(result.repairs).toEqual([...before.repairs, 'native-tagged-header-group-owners-recovered'])
+})
+
+it('rejects tagged parent ink that crosses into a different native parent domain', () => {
+  const f = taggedHeaderGroupSource(),
+    before = structuredClone(f.table),
+    outline = f.context.nativeMarkedSource.glyphPaths.find(
+      (p: ReturnType<typeof JSON.parse>) => p.id === 'f_path_P'
+    )
+  // Raw metrics and the tag still place P in column 1, but its actual glyph
+  // paints inside the separate, two-column R parent domain.
+  outline.path = [0, 10, 0, 1, 10.45, 0, 1, 10.45, 0.8, 1, 10, 0.8, 4]
+  expect(
+    lateFencedGroupHelpers.recoverNativeTaggedHeaderGroupOwners?.(
+      f.table,
+      f.items,
+      f.rules,
+      f.context
+    )
+  ).toBeUndefined()
+  expect(f.table).toEqual(before)
+})
+
+it('preserves tagged parent ink overhang within its complete native parent domain', () => {
+  const f = taggedHeaderGroupSource(),
+    reference = lateFencedGroupHelpers.recoverNativeTaggedHeaderGroupOwners?.(
+      f.table,
+      f.items,
+      f.rules,
+      f.context
+    ),
+    before = structuredClone(f.table),
+    outline = f.context.nativeMarkedSource.glyphPaths.find(
+      (p: ReturnType<typeof JSON.parse>) => p.id === 'f_path_P'
+    )
+  // Ink extends beyond both metric edges while staying within P's native fence.
+  outline.path = [0, -0.2, 0, 1, 0.7, 0, 1, 0.7, 0.8, 1, -0.2, 0.8, 4]
+  // R spans two leaf columns: its valid ink can cross their internal gutter.
+  f.context.nativeMarkedSource.glyphPaths.find(
+    (p: ReturnType<typeof JSON.parse>) => p.id === 'f_path_R'
+  ).path = [0, -0.7, 0, 1, 0.7, 0, 1, 0.7, 0.8, 1, -0.7, 0.8, 4]
+  expect(reference).toBeDefined()
+  expect(
+    lateFencedGroupHelpers.recoverNativeTaggedHeaderGroupOwners?.(
+      f.table,
+      f.items,
+      f.rules,
+      f.context
+    )
+  ).toEqual(reference)
+  expect(f.table).toEqual(before)
+})
+
+it.each([
+  [
+    'rejects tagged fences hidden on an earlier same-fill background',
+    false,
+    [20, 30, 220, 35],
+    [19, 29, 221, 36]
+  ],
+  [
+    'preserves tagged fences after a complete opaque background repaint',
+    true,
+    [20, 30, 220, 35],
+    [19, 29, 221, 36]
+  ],
+  [
+    'rejects tagged parent ink hidden on an earlier same-fill background',
+    false,
+    [69, 39, 76, 49],
+    [68, 38, 77, 50]
+  ],
+  [
+    'preserves tagged parent ink after a complete opaque background repaint',
+    true,
+    [69, 39, 76, 49],
+    [68, 38, 77, 50]
+  ]
+] as const)('%s', (_name, restoreContrast, blackBackground, whiteRepaint) => {
+  const f = taggedHeaderGroupSource(),
+    reference = lateFencedGroupHelpers.recoverNativeTaggedHeaderGroupOwners?.(
+      f.table,
+      f.items,
+      f.rules,
+      f.context
+    ),
+    before = structuredClone(f.table),
+    prefix: ReturnType<typeof JSON.parse> = { fnArray: [], argsArray: [], graphics: [] }
+  for (const [rect, color] of [
+    [[...blackBackground], '#000000'],
+    ...(restoreContrast ? [[[...whiteRepaint], '#ffffff']] : [])
+  ] as [number[], string][]) {
+    const [left, top, right, bottom] = rect
+    prefix.fnArray.push(OPS.setFillRGBColor, OPS.constructPath)
+    prefix.argsArray.push(
+      [color],
+      [
+        OPS.eoFill,
+        [
+          new Float32Array([
+            0,
+            left,
+            256 - bottom,
+            1,
+            right,
+            256 - bottom,
+            1,
+            right,
+            256 - top,
+            1,
+            left,
+            256 - top,
+            4
+          ])
+        ],
+        new Float32Array([left, 256 - bottom, right, 256 - top])
+      ]
+    )
+    prefix.graphics.push({
+      kind: 'path',
+      rect: rect.map((v, k) => (k < 2 ? Math.floor(v) : Math.ceil(v)) + (k < 2 ? 0 : 1))
+    })
+  }
+  prefix.fnArray.push(OPS.setFillRGBColor)
+  prefix.argsArray.push(['#000000'])
+  // Both backgrounds are painted after the native clip but before source text
+  // and fences. The positive repaints the complete strip and its surrounding gap.
+  f.context.operators.fnArray.splice(3, 0, ...prefix.fnArray)
+  f.context.operators.argsArray.splice(3, 0, ...prefix.argsArray)
+  f.context.nativeEvidenceGraphics.unshift(...prefix.graphics)
+  expect(lateRules(f.context.operators, f.context.viewport)).toEqual(f.rules)
+  const result = lateFencedGroupHelpers.recoverNativeTaggedHeaderGroupOwners?.(
+    f.table,
+    f.items,
+    f.rules,
+    f.context
+  )
+  expect(reference).toBeDefined()
+  if (restoreContrast) expect(result).toEqual(reference)
+  else expect(result).toBeUndefined()
+  expect(f.table).toEqual(before)
+})
+
+it('preserves tagged ownership across a native thin black endpoint join', () => {
+  const f = taggedHeaderGroupSource(),
+    reference = lateFencedGroupHelpers.recoverNativeTaggedHeaderGroupOwners?.(
+      f.table,
+      f.items,
+      f.rules,
+      f.context
+    ),
+    before = structuredClone(f.table)
+  f.context.operators.fnArray.push(OPS.setFillRGBColor, OPS.constructPath)
+  f.context.operators.argsArray.push(
+    ['#000000'],
+    [
+      OPS.eoFill,
+      [
+        new Float32Array([
+          0, 219.494, 223.875, 1, 219.506, 223.875, 1, 219.506, 224.125, 1, 219.494, 224.125, 4
+        ])
+      ],
+      new Float32Array([219.494, 223.875, 219.506, 224.125])
+    ]
+  )
+  f.context.nativeEvidenceGraphics.push({ kind: 'path', rect: [219, 31, 221, 34] })
+  const result = lateFencedGroupHelpers.recoverNativeTaggedHeaderGroupOwners?.(
+    f.table,
+    f.items,
+    f.rules,
+    f.context
+  )
+  expect(reference).toBeDefined()
+  expect(result).toEqual(reference)
+  expect(f.table).toEqual(before)
+})
+
+it('preserves tagged ownership when a native outline returns exactly to its start', () => {
+  const f = taggedHeaderGroupSource(),
+    reference = lateFencedGroupHelpers.recoverNativeTaggedHeaderGroupOwners?.(
+      f.table,
+      f.items,
+      f.rules,
+      f.context
+    ),
+    outline = f.context.nativeMarkedSource.glyphPaths.find(
+      (p: ReturnType<typeof JSON.parse>) => p.id === 'f_path_P'
+    )
+  outline.path.splice(-1, 1, 1, 0, 0)
+  expect(reference).toBeDefined()
+  expect(
+    lateFencedGroupHelpers.recoverNativeTaggedHeaderGroupOwners?.(
+      f.table,
+      f.items,
+      f.rules,
+      f.context
+    )
+  ).toEqual(reference)
+})
+
+it.each([
+  ['retraced line', [0, 0, 0, 1, 0.45, 0.8, 1, 0, 0, 4]],
+  [
+    'opposite contours',
+    [
+      0, 0, 0, 1, 0.45, 0, 1, 0.45, 0.8, 1, 0, 0.8, 4, 0, 0, 0, 1, 0, 0.8, 1, 0.45, 0.8, 1, 0.45, 0,
+      4
+    ]
+  ],
+  ['retraced quadratic', [0, 0, 0, 3, 0.2, 0.8, 0.45, 0, 3, 0.2, 0.8, 0, 0, 4]],
+  ['retraced cubic', [0, 0, 0, 2, 0, 0.8, 0.45, 0.8, 0.45, 0, 2, 0.45, 0.8, 0, 0.8, 0, 0, 4]],
+  [
+    'disjoint reverse contours with ambiguous total area',
+    [
+      0, 0, 0, 1, 0.2, 0, 1, 0.2, 0.8, 1, 0, 0.8, 4, 0, 0.25, 0, 1, 0.25, 0.8, 1, 0.45, 0.8, 1,
+      0.45, 0, 4
+    ]
+  ],
+  [
+    'nearly cancelling contours',
+    [
+      0,
+      0,
+      0,
+      1,
+      0.45,
+      0,
+      1,
+      0.45,
+      0.8,
+      1,
+      0,
+      0.8,
+      4,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0.8,
+      1,
+      0.45 + Number.EPSILON,
+      0.8,
+      1,
+      0.45 + Number.EPSILON,
+      0,
+      4
+    ]
+  ]
+])('refuses tagged filled-ink evidence with %s', (_name, path) => {
+  const f = taggedHeaderGroupSource(),
+    before = structuredClone(f.table)
+  f.context.nativeMarkedSource.glyphPaths.find(
+    (p: ReturnType<typeof JSON.parse>) => p.id === 'f_path_P'
+  ).path = path
+  expect(
+    lateFencedGroupHelpers.recoverNativeTaggedHeaderGroupOwners(
+      f.table,
+      f.items,
+      f.rules,
+      f.context
+    )
+  ).toBeUndefined()
+  expect(f.table).toEqual(before)
+})
+
+it.each([
+  ['quadratic', [0, 0, 0, 3, 0.2, 0.8, 0.45, 0, 4]],
+  ['cubic', [0, 0, 0, 2, 0, 0.8, 0.45, 0.8, 0.45, 0, 4]]
+])('preserves tagged filled-ink evidence for a normal %s outline', (_name, path) => {
+  const f = taggedHeaderGroupSource(),
+    reference = lateFencedGroupHelpers.recoverNativeTaggedHeaderGroupOwners(
+      f.table,
+      f.items,
+      f.rules,
+      f.context
+    )
+  f.context.nativeMarkedSource.glyphPaths.find(
+    (p: ReturnType<typeof JSON.parse>) => p.id === 'f_path_P'
+  ).path = path
+  expect(reference).toBeDefined()
+  expect(
+    lateFencedGroupHelpers.recoverNativeTaggedHeaderGroupOwners(
+      f.table,
+      f.items,
+      f.rules,
+      f.context
+    )
+  ).toEqual(reference)
+})
+
+it.each([
+  ['painted whitespace', true, false, 'P', false, false],
+  ['painted isSpace glyph', true, true, 'P', false, false],
+  ['painted space fontChar', true, true, ' ', false, false],
+  ['missing whitespace outline', true, true, 'Z', false, false],
+  ['empty native whitespace path', true, true, ' ', true, false],
+  ['native font skips missing glyph', false, false, 'P', false, false],
+  ['native whitespace clip outside target', true, false, 'P', false, true]
+])(
+  'checks tagged whitespace ink for %s',
+  (_name, isInFont, isSpace, fontChar, emptyPath, outsideClip) => {
+    const f = taggedHeaderGroupSource(),
+      before = structuredClone(f.table),
+      sourceItem = { pageNumber: 1, index: f.context.content.items.length, text: ' ' },
+      raw = {
+        str: ' ',
+        dir: 'ltr',
+        width: 5,
+        height: 10,
+        fontName: 'f',
+        transform: [10, 0, 0, 10, 70, 208],
+        sourceItem
+      },
+      marked: ReturnType<typeof JSON.parse> = { ...raw }
+    delete marked.sourceItem
+    f.context.content.items.push(raw)
+    f.context.nativeMarkedSource.markedContent.items.push(
+      { type: 'beginMarkedContentProps', tag: 'Artifact' },
+      marked,
+      { type: 'endMarkedContent' }
+    )
+    if (fontChar === ' ')
+      f.context.nativeMarkedSource.glyphPaths.push({
+        id: 'f_path_ ',
+        path: emptyPath ? [] : [0, 0, 0, 1, 0.45, 0, 1, 0.45, 0.8, 1, 0, 0.8, 4]
+      })
+    if (outsideClip) {
+      f.context.operators.fnArray.push(OPS.eoClip, OPS.constructPath)
+      f.context.operators.argsArray.push(null, [
+        OPS.endPath,
+        [new Float32Array([0, 0, 236, 1, 10, 236, 1, 10, 251, 1, 0, 251, 4])],
+        new Float32Array([0, 236, 10, 251])
+      ])
+    }
+    f.context.operators.fnArray.push(
+      OPS.beginMarkedContentProps,
+      OPS.setFillRGBColor,
+      OPS.setFont,
+      OPS.beginText,
+      OPS.setTextMatrix,
+      OPS.showText,
+      OPS.endText,
+      OPS.setFillRGBColor,
+      OPS.endMarkedContent
+    )
+    f.context.operators.argsArray.push(
+      ['Artifact', null],
+      ['#ffffff'],
+      ['f', 10],
+      null,
+      [new Float32Array([1, 0, 0, 1, 70, 208])],
+      [
+        [
+          {
+            unicode: ' ',
+            fontChar,
+            originalCharCode: 32,
+            width: 500,
+            isInFont,
+            isSpace,
+            accent: null
+          }
+        ]
+      ],
+      null,
+      ['#000000'],
+      null
+    )
+    const result = lateFencedGroupHelpers.recoverNativeTaggedHeaderGroupOwners(
+      f.table,
+      f.items,
+      f.rules,
+      f.context
+    )
+    if (emptyPath || !isInFont || outsideClip) expect(result?.grid).toHaveLength(6)
+    else expect(result).toBeUndefined()
+    expect(f.table).toEqual(before)
+  }
+)
+
+it.each([
+  ['clip', 1000],
+  ['target crop', 16]
+])(
+  'refuses tagged selected ink outside its %s despite contained nominal metrics',
+  (_name, shift) => {
+    const f = taggedHeaderGroupSource(),
+      before = structuredClone(f.table)
+    f.context.nativeMarkedSource.glyphPaths.find(
+      (p: ReturnType<typeof JSON.parse>) => p.id === 'f_path_P'
+    ).path = [0, shift, 0, 1, +shift + 0.45, 0, 1, +shift + 0.45, 0.8, 1, shift, 0.8, 4]
+    expect(
+      lateFencedGroupHelpers.recoverNativeTaggedHeaderGroupOwners(
+        f.table,
+        f.items,
+        f.rules,
+        f.context
+      )
+    ).toBeUndefined()
+    expect(f.table).toEqual(before)
+  }
+)
+
+it.each([
+  [
+    'white header overhang',
+    '#ffffff',
+    [0, -16.1, -1.9, 1, -15.4, -1.9, 1, -15.4, -0.9, 1, -16.1, -0.9, 4],
+    false
+  ],
+  [
+    'black header overhang',
+    '#000000',
+    [0, -16.1, -1.9, 1, -15.4, -1.9, 1, -15.4, -0.9, 1, -16.1, -0.9, 4],
+    false
+  ],
+  [
+    'white supporting-rule overhang',
+    '#ffffff',
+    [0, -17, -0.3, 1, -13, -0.3, 1, -13, -0.1, 1, -17, -0.1, 4],
+    false
+  ],
+  ['missing late outline', '#ffffff', null, false],
+  ['empty late outline', '#ffffff', [], true],
+  ['missing late outline outside clip', '#ffffff', null, true, true],
+  [
+    'zero-area late outline remains potentially painted',
+    '#ffffff',
+    [
+      0, -16.1, -1.9, 1, -15.4, -1.9, 1, -15.4, -0.9, 1, -16.1, -0.9, 4, 0, -16.1, -1.9, 1, -16.1,
+      -0.9, 1, -15.4, -0.9, 1, -15.4, -1.9, 4
+    ],
+    false
+  ],
+  [
+    'ordinary paint outside target',
+    '#ffffff',
+    [0, 0, 0, 1, 0.45, 0, 1, 0.45, 0.8, 1, 0, 0.8, 4],
+    true
+  ]
+])('checks tagged late ordinary glyph ink for %s', (_name, color, path, accepted, outsideClip) => {
+  const f = taggedHeaderGroupSource(),
+    before = structuredClone(f.table),
+    sourceItem = { pageNumber: 1, index: f.context.content.items.length, text: 'Z' },
+    raw = {
+      str: 'Z',
+      dir: 'ltr',
+      width: 5,
+      height: 10,
+      fontName: 'f',
+      transform: [10, 0, 0, 10, 230, 226],
+      sourceItem
+    },
+    marked: ReturnType<typeof JSON.parse> = { ...raw }
+  delete marked.sourceItem
+  f.context.content.items.push(raw)
+  f.items.push({
+    text: 'Z',
+    sourceItem,
+    rect: [230, 20, 235, 30],
+    baseline: 30,
+    height: 10,
+    horizontal: true,
+    fontDescent: 0
+  })
+  f.context.nativeMarkedSource.markedContent.items.push(
+    { type: 'beginMarkedContentProps', tag: 'Artifact' },
+    marked,
+    { type: 'endMarkedContent' }
+  )
+  if (path) f.context.nativeMarkedSource.glyphPaths.push({ id: 'f_path_Z', path })
+  if (outsideClip) {
+    f.context.operators.fnArray.push(OPS.eoClip, OPS.constructPath)
+    f.context.operators.argsArray.push(null, [
+      OPS.endPath,
+      [new Float32Array([0, 225, 216, 1, 240, 216, 1, 240, 246, 1, 225, 246, 4])],
+      new Float32Array([225, 216, 240, 246])
+    ])
+  }
+  f.context.operators.fnArray.push(
+    OPS.beginMarkedContentProps,
+    OPS.setFillRGBColor,
+    OPS.setFont,
+    OPS.beginText,
+    OPS.setTextMatrix,
+    OPS.showText,
+    OPS.endText,
+    OPS.setFillRGBColor,
+    OPS.endMarkedContent
+  )
+  f.context.operators.argsArray.push(
+    ['Artifact', null],
+    [color],
+    ['f', 10],
+    null,
+    [new Float32Array([1, 0, 0, 1, 230, 226])],
+    [
+      [
+        {
+          unicode: 'Z',
+          fontChar: 'Z',
+          originalCharCode: 90,
+          width: 500,
+          isInFont: true,
+          isSpace: false,
+          accent: null
+        }
+      ]
+    ],
+    null,
+    ['#000000'],
+    null
+  )
+  const result = lateFencedGroupHelpers.recoverNativeTaggedHeaderGroupOwners(
+    f.table,
+    f.items,
+    f.rules,
+    f.context
+  )
+  if (accepted) expect(result?.grid).toHaveLength(6)
+  else expect(result).toBeUndefined()
+  expect(f.table).toEqual(before)
+})
+
+it('preserves the bound production reconciliation provider in tagged header groups', () => {
+  const f = taggedHeaderGroupSource(),
+    fonts = f.items
+      .filter(
+        (item: ReturnType<typeof JSON.parse>) =>
+          item.rect[0] >= 20 && item.rect[2] <= 220 && item.rect[1] >= 30 && item.rect[3] <= 185
+      )
+      .map((item: ReturnType<typeof JSON.parse>) => {
+        const token = { ...item }
+        delete token.fontDescent
+        return token
+      })
+  Object.defineProperty(f.table.unassigned, 'reconciliationItems', { value: fonts })
+  f.table.captionIssue = undefined
+  for (const cell of f.table.cells.filter(
+    (c: ReturnType<typeof JSON.parse>) => !c.text && c.column === 0
+  )) {
+    const row = f.table.rows[cell.row].rect
+    cell.rect = [20.5, row[1] + 0.5, 59.5, row[3] - 0.5]
+    cell.origin = 'model-grid'
+    cell.sourceTokens = []
+  }
+  const witness = Object.getOwnPropertyDescriptor(f.table.unassigned, 'reconciliationItems'),
+    result = lateFencedGroupHelpers.recoverNativeTaggedHeaderGroupOwners?.(
+      f.table,
+      f.items,
+      f.rules,
+      f.context
+    )
+  expect(result).toBeDefined()
+  expect(result.grid).toHaveLength(6)
+  expect(Object.getOwnPropertyDescriptor(result.unassigned, 'reconciliationItems')).toEqual(witness)
+  expect(Object.hasOwn(result, 'captionIssue')).toBe(true)
+  expect(result.captionIssue).toBeUndefined()
+})
+
+it('rejects unbound tagged reconciliation and opaque getters without reading them', () => {
+  const f = taggedHeaderGroupSource()
+  Object.defineProperty(f.table.unassigned, 'reconciliationItems', {
+    value: [structuredClone(f.items[0])]
+  })
+  expect(
+    lateFencedGroupHelpers.recoverNativeTaggedHeaderGroupOwners?.(
+      f.table,
+      f.items,
+      f.rules,
+      f.context
+    )
+  ).toBeUndefined()
+  const opaque = taggedHeaderGroupSource()
+  let calls = 0
+  Object.defineProperty(opaque.table.cells[0], 'privatePayload', {
+    get() {
+      calls++
+      return 'opaque'
+    }
+  })
+  expect(
+    lateFencedGroupHelpers.recoverNativeTaggedHeaderGroupOwners?.(
+      opaque.table,
+      opaque.items,
+      opaque.rules,
+      opaque.context
+    )
+  ).toBeUndefined()
+  expect(calls).toBe(0)
+  const provider = taggedHeaderGroupSource(),
+    token = provider.items[1],
+    sourceItem = token.sourceItem
+  Object.defineProperty(provider.table.unassigned, 'reconciliationItems', { value: [{ ...token }] })
+  Object.defineProperty(token, 'sourceItem', {
+    enumerable: true,
+    get() {
+      calls++
+      return sourceItem
+    }
+  })
+  expect(
+    lateFencedGroupHelpers.recoverNativeTaggedHeaderGroupOwners?.(
+      provider.table,
+      provider.items,
+      provider.rules,
+      provider.context
+    )
+  ).toBeUndefined()
+  expect(calls).toBe(0)
+})
+
+it.each([
+  'missing evidence',
+  'missing font',
+  'missing file',
+  'type3',
+  'vertical font',
+  'remeasured font',
+  'nonfinite outline',
+  'clipped outline',
+  'missing outline',
+  'empty selected outline',
+  'open selected outline',
+  'move-only selected outline',
+  'wrong derived font geometry',
+  'duplicate MCID',
+  'changed TR',
+  'late white paint',
+  'mixed white glyph fill',
+  'changed quantized geometry',
+  'opaque blank',
+  'array metadata',
+  'wrong native column',
+  'missing parent fence',
+  'forged fence center',
+  'late white fence paint',
+  'late black fence cover',
+  'unknown model blank origin',
+  'model blank token metadata',
+  'nonfinite model blank rectangle'
+])('refuses tagged header groups with %s', (kind) => {
+  const f = taggedHeaderGroupSource(),
+    source = f.context.nativeMarkedSource
+  if (kind === 'missing evidence') delete f.context.nativeMarkedSource
+  if (kind === 'missing font') source.fonts = []
+  if (kind === 'missing file') source.fonts[0].missingFile = true
+  if (kind === 'type3') source.fonts[0].isType3Font = true
+  if (kind === 'vertical font') source.fonts[0].vertical = true
+  if (kind === 'remeasured font') source.fonts[0].remeasure = true
+  if (kind === 'nonfinite outline')
+    source.glyphPaths.find((p: ReturnType<typeof JSON.parse>) => p.id === 'f_path_T').path[1] = NaN
+  if (kind === 'clipped outline')
+    source.glyphPaths.find((p: ReturnType<typeof JSON.parse>) => p.id === 'f_path_T').path[8] = 1
+  if (kind === 'missing outline')
+    source.glyphPaths = source.glyphPaths.filter(
+      (p: ReturnType<typeof JSON.parse>) => p.id !== 'f_path_T'
+    )
+  if (kind === 'empty selected outline')
+    source.glyphPaths.find((p: ReturnType<typeof JSON.parse>) => p.id === 'f_path_P').path = []
+  if (kind === 'open selected outline')
+    source.glyphPaths.find((p: ReturnType<typeof JSON.parse>) => p.id === 'f_path_P').path.pop()
+  if (kind === 'move-only selected outline')
+    source.glyphPaths.find((p: ReturnType<typeof JSON.parse>) => p.id === 'f_path_P').path = [
+      0, 0, 0
+    ]
+  if (kind === 'wrong derived font geometry')
+    [f.items[1].rect, f.items[2].rect] = [f.items[2].rect, f.items[1].rect]
+  if (
+    kind.startsWith('unknown model blank') ||
+    kind.startsWith('model blank') ||
+    kind.startsWith('nonfinite model blank')
+  ) {
+    const cell = f.table.cells.find(
+        (c: ReturnType<typeof JSON.parse>) => !c.text && c.column === 0
+      ),
+      row = f.table.rows[cell.row].rect
+    cell.rect = [20.5, row[1] + 0.5, 59.5, row[3] - 0.5]
+    cell.origin = 'model-grid'
+    cell.sourceTokens = []
+    if (kind === 'unknown model blank origin') cell.origin = 'foreign'
+    if (kind === 'model blank token metadata') cell.sourceTokens.privatePayload = 'opaque'
+    if (kind === 'nonfinite model blank rectangle') cell.rect[0] = NaN
+  }
+  const rows = source.structureTree.children[0].children
+  if (kind === 'duplicate MCID')
+    rows[0].children[1].children[0].id = rows[0].children[0].children[0].id
+  if (kind === 'changed TR') [rows[2], rows[3]] = [rows[3], rows[2]]
+  if (kind === 'late white paint') {
+    f.context.operators.fnArray.push(OPS.setFillRGBColor, OPS.constructPath)
+    f.context.operators.argsArray.push(
+      ['#ffffff'],
+      [
+        OPS.eoFill,
+        [new Float32Array([0, 20, 121, 1, 220, 121, 1, 220, 176, 1, 20, 176, 4])],
+        new Float32Array([20, 121, 220, 176])
+      ]
+    )
+    f.context.nativeEvidenceGraphics.push({ kind: 'path', rect: [20, 80, 221, 136] })
+  }
+  if (kind === 'mixed white glyph fill') {
+    const font = f.items[1],
+      raw = f.context.content.items[1],
+      marked = source.markedContent.items.find(
+        (item: ReturnType<typeof JSON.parse>) => item.str === 'P'
+      ),
+      operators = f.context.operators,
+      index = operators.fnArray.findIndex(
+        (code: number, n: number) =>
+          code === OPS.showText && operators.argsArray[n][0][0].unicode === 'P'
+      ),
+      glyph = operators.argsArray[index][0][0]
+    font.text = font.sourceItem.text = raw.str = marked.str = 'PP'
+    font.rect[2] += 5
+    raw.width = marked.width = 10
+    f.table.unassigned[0] = 'PP'
+    operators.fnArray.splice(
+      index,
+      1,
+      OPS.showText,
+      OPS.setFillRGBColor,
+      OPS.showText,
+      OPS.setFillRGBColor
+    )
+    operators.argsArray.splice(index, 1, [[glyph]], ['#ffffff'], [[{ ...glyph }]], ['#000000'])
+  }
+  if (kind === 'changed quantized geometry') f.context.nativeEvidenceGraphics[0].rect[0] += 4
+  if (kind === 'forged fence center') {
+    const rule = f.rules.find((r: number[]) => r[1] === 132 && r[0] > 60 && r[0] < 100)
+    rule[1] += 0.5
+    rule[3] += 0.5
+  }
+  if (kind === 'late white fence paint' || kind === 'late black fence cover') {
+    f.context.operators.fnArray.push(OPS.setFillRGBColor, OPS.constructPath)
+    f.context.operators.argsArray.push(
+      [kind === 'late white fence paint' ? '#ffffff' : '#000000'],
+      [
+        OPS.eoFill,
+        [new Float32Array([0, 59, 122, 1, 101, 122, 1, 101, 126, 1, 59, 126, 4])],
+        new Float32Array([59, 122, 101, 126])
+      ]
+    )
+    f.context.nativeEvidenceGraphics.push({ kind: 'path', rect: [59, 130, 102, 135] })
+  }
+  if (kind === 'opaque blank')
+    f.table.cells.find(
+      (c: ReturnType<typeof JSON.parse>) => c.row === 1 && c.column === 0
+    ).privatePayload = { keep: true }
+  if (kind === 'array metadata') f.table.grid.privatePayload = true
+  if (kind === 'wrong native column') {
+    const left = f.table.cells.find(
+        (c: ReturnType<typeof JSON.parse>) => c.row === 4 && c.column === 1
+      ),
+      right = f.table.cells.find(
+        (c: ReturnType<typeof JSON.parse>) => c.row === 4 && c.column === 3
+      )
+    ;[left.column, right.column] = [right.column, left.column]
+    ;[f.table.grid[4][1], f.table.grid[4][3]] = [f.table.grid[4][3], f.table.grid[4][1]]
+  }
+  if (kind === 'missing parent fence') {
+    const removed = f.rules.find((r: number[]) => r[1] === 32 && r[0] > 140)
+    f.context.rulePaintBounds.delete(removed)
+    f.rules = f.rules.filter((r: number[]) => r !== removed)
+    const index = f.context.operators.fnArray.findIndex(
+      (op: number, n: number) =>
+        op === OPS.constructPath &&
+        f.context.operators.argsArray[n][2][0] === 140.5 &&
+        f.context.operators.argsArray[n][2][3] === 224.125
+    )
+    expect(index).toBeGreaterThan(0)
+    f.context.operators.fnArray.splice(index, 1)
+    f.context.operators.argsArray.splice(index, 1)
+    f.context.nativeEvidenceGraphics = f.context.nativeEvidenceGraphics.filter(
+      (g: ReturnType<typeof JSON.parse>) => !(g.rect[0] === 140 && g.rect[1] === 31)
+    )
+  }
+  const before = structuredClone(f.table)
+  expect(
+    lateFencedGroupHelpers.recoverNativeTaggedHeaderGroupOwners?.(
+      f.table,
+      f.items,
+      f.rules,
+      f.context
+    )
+  ).toBeUndefined()
+  expect(f.table).toEqual(before)
+})
+
+// Full native sections include two missing scalar pairs and one displaced peer.
+// Ordinary printed order, rather than the model's blank band, establishes rows.
+const residualSectionedRecords = (): ReturnType<typeof JSON.parse> => {
+  const viewport = {
+      width: 250,
+      height: 250,
+      scale: 1,
+      rotation: 0,
+      transform: [1, 0, 0, -1, 0, 250]
+    },
+    content: ReturnType<typeof JSON.parse> = { items: [], styles: { f: { vertical: false } } },
+    operators: ReturnType<typeof JSON.parse> = {
+      fnArray: [OPS.dependency, OPS.setLineWidth],
+      argsArray: [['f'], [0.5]]
+    },
+    items: ReturnType<typeof JSON.parse>[] = [],
+    grid = Array.from({ length: 10 }, () => ['', '']),
+    cells: ReturnType<typeof JSON.parse>[] = [],
+    fences = [20, 40, 60, 120, 140, 225]
+  const draw = (text: string, x: number, baseline: number): ReturnType<typeof JSON.parse> => {
+    const sourceItem = { pageNumber: 1, index: content.items.length, text },
+      f = {
+        text,
+        rect: [x, baseline - 10, x + text.length * 5, baseline],
+        baseline,
+        height: 10,
+        horizontal: true,
+        sourceItem
+      }
+    items.push(f)
+    content.items.push({
+      str: text,
+      width: text.length * 5,
+      height: 10,
+      fontName: 'f',
+      transform: [10, 0, 0, 10, x, 250 - baseline],
+      sourceItem
+    })
+    operators.fnArray.push(OPS.setFont, OPS.beginText, OPS.setTextMatrix, OPS.showText, OPS.endText)
+    operators.argsArray.push(
+      ['f', 10],
+      null,
+      [new Float32Array([1, 0, 0, 1, x, 250 - baseline])],
+      [
+        [...text].map((unicode) => ({
+          unicode,
+          fontChar: unicode,
+          originalCharCode: unicode.codePointAt(0),
+          width: 500,
+          isInFont: true,
+          accent: null,
+          operatorListId: null,
+          isSpace: unicode === ' '
+        }))
+      ],
+      null
+    )
+    return f
+  }
+  const caption = draw('Table 1: Values.', 10, 12),
+    captions = [{ page: 1, rect: caption.rect, lines: [caption.text] }]
+  const add = (row: number, column: number, fs: ReturnType<typeof JSON.parse>[]): void => {
+    grid[row][column] = fs.map((f) => f.text).join(' ')
+    cells.push({
+      row,
+      column,
+      rowSpan: 1,
+      colSpan: 1,
+      text: grid[row][column],
+      sourceRects: fs.map((f) => f.rect),
+      ...(fs.length ? { sourceItems: fs.map((f) => f.sourceItem) } : {})
+    })
+  }
+  for (const [row, text, baseline] of [
+    [0, 'Field', 35],
+    [1, 'Alpha', 55],
+    [5, 'Beta', 135]
+  ] as const) {
+    add(row, 0, [draw(text, 15, baseline)])
+    add(row, 1, row ? [] : [draw('Value', 160, baseline)])
+  }
+  const residual: ReturnType<typeof JSON.parse>[] = []
+  for (const [row, text, value, baseline, missing] of [
+    [2, 'First', '11', 75, false],
+    [3, 'Missing', '12', 95, true],
+    [4, 'Last', '13', 115, false],
+    [6, 'Begin', '21', 155, false],
+    [7, 'Absent', '22', 175, true],
+    [8, 'Moved', '23', 195, false],
+    [9, 'End', '24', 215, false]
+  ] as const) {
+    const pair = [draw(text, 15, baseline), draw(value, 160, baseline)]
+    if (missing) residual.push(...pair)
+    else for (let col = 0; col < 2; col++) add(row === 8 ? 7 : row, col, [pair[col]])
+  }
+  for (const row of [3, 8]) for (let col = 0; col < 2; col++) add(row, col, [])
+  cells.sort((a, b) => a.row - b.row || a.column - b.column)
+  for (const y of fences) {
+    operators.fnArray.push(OPS.constructPath)
+    operators.argsArray.push([
+      OPS.stroke,
+      [new Float32Array([0, 10, 250 - y, 1, 220, 250 - y])],
+      new Float32Array([10, 250 - y, 220, 250 - y])
+    ])
+  }
+  const rules = fences.map((y) => [10, y, 220, y]),
+    paint = new Map(rules.map((r) => [r.join(','), [r[0], r[1] - 0.25, r[2], r[3] + 0.25]])),
+    graphics = rules.map((r) => ({
+      kind: 'path',
+      rect: [r[0] - 0.25, r[1] - 0.25, r[2] + 0.25, r[3] + 0.25].map(
+        (v, k) =>
+          ((k < 2 ? Math.floor((v / 250) * 256) : Math.ceil((v / 250) * 256) + 1) * 250) / 256
+      )
+    })),
+    table = {
+      page: 1,
+      grid,
+      cells,
+      cropRect: [9, 19, 221, 226],
+      caption: captions[0],
+      sourceViewport: { width: 250, height: 250, scale: 1 },
+      unassigned: residual.map((f) => f.text),
+      clipped: [],
+      notes: [],
+      issues: ['unassigned-source-text', 'span-conflicts-with-source-columns'],
+      repairs: []
+    },
+    context = {
+      viewport,
+      content,
+      operators,
+      rulePaintBounds: paint,
+      nativeEvidenceGraphics: graphics
+    }
+  return { table, items, rules, captions, context }
+}
+const residualSectionedOutput = (f: ReturnType<typeof JSON.parse>): ReturnType<typeof JSON.parse> =>
+  lateFencedGroupHelpers.recoverNativeSectionedOrdinaryRecordOwners(
+    f.table,
+    f.items,
+    f.captions,
+    f.rules,
+    f.context
+  )
+
+it('recovers only complete residual section pairs and preserves the displaced ordinary donor', () => {
+  const f = residualSectionedRecords(),
+    before = structuredClone(f.table),
+    donor = f.table.cells.find((c: ReturnType<typeof JSON.parse>) => c.text === 'Moved')
+  donor.opaque = { diagnostic: ['keep'] }
+  donor.textRuns = [{ text: donor.text, position: 'normal', bold: true }]
+  const result = residualSectionedOutput(f)
+  expect(result).toBeDefined()
+  expect(result.grid[3]).toEqual(['Missing', '12'])
+  expect(result.grid[7]).toEqual(['Absent', '22'])
+  expect(result.grid[8]).toEqual(['Moved', '23'])
+  expect(result.cells.find((c: ReturnType<typeof JSON.parse>) => c.text === 'Moved')).toEqual({
+    ...donor,
+    row: 8
+  })
+  expect(
+    result.cells.filter((c: ReturnType<typeof JSON.parse>) => ![3, 7, 8].includes(c.row))
+  ).toEqual(before.cells.filter((c: ReturnType<typeof JSON.parse>) => ![3, 7, 8].includes(c.row)))
+  expect(result.unassigned).toEqual([])
+  expect(result.issues).toEqual(['span-conflicts-with-source-columns'])
+  expect(result.cropRect).toBe(f.table.cropRect)
+  expect(
+    lateFencedGroupHelpers.nativeWholeOwnerRepairPacket(f.table, f.items, f.rules, f.context)
+  ).toBeUndefined()
+  expect(f.table.grid).toEqual(before.grid)
+})
+
+it('preserves a uniquely owned clipped carrier outside the residual sections', () => {
+  const f = residualSectionedRecords(),
+    header = f.table.cells[0],
+    original = { text: header.text, rect: header.sourceRects[0] }
+  f.table.clipped.push(original)
+  const result = residualSectionedOutput(f)
+  expect(result).toBeDefined()
+  expect(result.clipped).toBe(f.table.clipped)
+  expect(result.clipped[0]).toBe(original)
+  expect(result.cells[0]).toBe(header)
+})
+
+const internalResidualSectionedRecords = (
+  ordinaryProvider = false
+): ReturnType<typeof JSON.parse> => {
+  const f = residualSectionedRecords()
+  f.context.content.styles.f.descent = -0.2
+  for (const item of f.items) item.fontDescent = -0.2
+  for (const c of f.table.cells)
+    c.sourceTokens = (c.sourceItems ?? []).map((o: ReturnType<typeof JSON.parse>) =>
+      f.items.find((item: ReturnType<typeof JSON.parse>) => item.sourceItem.index === o.index)
+    )
+  const first = f.table.cells[0],
+    second = f.table.cells[1]
+  first.colSpan = 2
+  first.text = `${first.text} ${second.text}`
+  first.sourceItems.push(...second.sourceItems)
+  first.sourceRects.push(...second.sourceRects)
+  first.sourceTokens.push(...second.sourceTokens)
+  first.sourceTokens.reverse()
+  f.table.cells.splice(1, 1)
+  f.table.grid[0] = [first.text, '']
+  Object.defineProperty(f.table.unassigned, 'reconciliationItems', {
+    value: f.items
+      .filter((item: ReturnType<typeof JSON.parse>) => item !== f.items[0])
+      .map((item: ReturnType<typeof JSON.parse>) => {
+        if (!ordinaryProvider) return item
+        const original = { ...item }
+        delete original.fontDescent
+        return original
+      }),
+    writable: false,
+    configurable: false,
+    enumerable: false
+  })
+  return f
+}
+
+it('preserves the ordinary production reconciliation provider with full metric source proof', () => {
+  const f = internalResidualSectionedRecords(true),
+    witness = Object.getOwnPropertyDescriptor(f.table.unassigned, 'reconciliationItems'),
+    result = residualSectionedOutput(f)
+  expect(result).toBeDefined()
+  expect(result.grid[3]).toEqual(['Missing', '12'])
+  expect(result.grid[7]).toEqual(['Absent', '22'])
+  expect(Object.getOwnPropertyDescriptor(result.unassigned, 'reconciliationItems')).toEqual(witness)
+})
+
+it.each([
+  'missing-baseline',
+  'unknown-field',
+  'wrong-metric',
+  'wrong-origin',
+  'wrong-literal',
+  'wrong-rect',
+  'wrong-order'
+])('refuses incomplete ordinary reconciliation provider: %s', (kind) => {
+  const f = internalResidualSectionedRecords(true),
+    witness = Object.getOwnPropertyDescriptor(f.table.unassigned, 'reconciliationItems')!.value
+  if (kind === 'missing-baseline') delete witness[0].baseline
+  if (kind === 'unknown-field') witness[0].diagnostic = 1
+  if (kind === 'wrong-metric') witness[0].fontDescent = -0.4
+  if (kind === 'wrong-origin') witness[0].sourceItem = { ...witness[0].sourceItem, index: 999 }
+  if (kind === 'wrong-literal') witness[0].text = 'Foreign'
+  if (kind === 'wrong-rect') witness[0].rect = [1, 2, 3, 4]
+  if (kind === 'wrong-order') witness.reverse()
+  expect(residualSectionedOutput(f)).toBeUndefined()
+})
+
+it.each([false, true])(
+  'retains complete internal source arrays with independent order (tokens only: %s)',
+  (tokensOnly) => {
+    const f = internalResidualSectionedRecords(),
+      header = f.table.cells[0],
+      witness = Object.getOwnPropertyDescriptor(f.table.unassigned, 'reconciliationItems')
+    if (tokensOnly) for (const c of f.table.cells) delete c.sourceItems
+    const result = residualSectionedOutput(f)
+    expect(result).toBeDefined()
+    expect(result.cells[0]).toBe(header)
+    expect(result.cells[0].sourceTokens).toBe(header.sourceTokens)
+    expect(Object.getOwnPropertyDescriptor(result.unassigned, 'reconciliationItems')).toEqual(
+      witness
+    )
+    expect(result.grid[3]).toEqual(['Missing', '12'])
+    expect(result.grid[7]).toEqual(['Absent', '22'])
+    expect(result.grid[8]).toEqual(['Moved', '23'])
+  }
+)
+
+it.each([
+  'duplicate-token',
+  'missing-token',
+  'foreign-token',
+  'origin-conflict',
+  'glyph-conflict',
+  'rect-conflict',
+  'witness-missing'
+])('refuses incomplete independent internal source arrays: %s', (kind) => {
+  const f = internalResidualSectionedRecords(),
+    header = f.table.cells[0]
+  header.sourceTokens = header.sourceTokens.map((item: ReturnType<typeof JSON.parse>) =>
+    structuredClone(item)
+  )
+  if (kind === 'duplicate-token') header.sourceTokens[1] = header.sourceTokens[0]
+  if (kind === 'missing-token') header.sourceTokens.pop()
+  if (kind === 'foreign-token') header.sourceTokens[0] = f.items[0]
+  if (kind === 'origin-conflict') header.sourceTokens[0].sourceItem.index += 1
+  if (kind === 'glyph-conflict') header.sourceTokens[0].text = 'Other'
+  if (kind === 'rect-conflict') header.sourceTokens[0].rect[0] += 1
+  if (kind === 'witness-missing')
+    Object.getOwnPropertyDescriptor(f.table.unassigned, 'reconciliationItems')!.value.pop()
+  expect(residualSectionedOutput(f)).toBeUndefined()
+})
+
+it.each([
+  'duplicate-origin',
+  'missing-source',
+  'literal-conflict',
+  'rich-conflict',
+  'blank-opaque',
+  'blank-array-opaque',
+  'hidden-payload',
+  'ambiguous-row',
+  'crossing-column',
+  'missing-rule',
+  'clip',
+  'extra-residual',
+  'reordered-source',
+  'clipped-target',
+  'clipped-unknown',
+  'internal-rule',
+  'sparse-grid',
+  'sparse-source',
+  'null-cell',
+  'malformed-source-array'
+])('refuses incomplete residual section ownership: %s', (kind) => {
+  const f = residualSectionedRecords(),
+    donor = f.table.cells.find((c: ReturnType<typeof JSON.parse>) => c.text === 'Moved'),
+    blank = f.table.cells.find((c: ReturnType<typeof JSON.parse>) => c.row === 8 && c.column === 0)
+  if (kind === 'duplicate-origin') donor.sourceItems[0] = f.table.cells[0].sourceItems[0]
+  if (kind === 'missing-source') delete donor.sourceItems
+  if (kind === 'literal-conflict') {
+    donor.text = 'Changed'
+    f.table.grid[7][0] = donor.text
+  }
+  if (kind === 'rich-conflict') donor.textRuns = [{ text: 'Moved', position: 'superscript' }]
+  if (kind === 'blank-opaque') blank.diagnostic = { keep: 1 }
+  if (kind === 'blank-array-opaque') blank.sourceRects.diagnostic = 1
+  if (kind === 'hidden-payload') Object.defineProperty(donor, 'hidden', { value: 1 })
+  if (kind === 'ambiguous-row')
+    f.items.find((i: ReturnType<typeof JSON.parse>) => i.text === 'Absent').baseline = 195
+  if (kind === 'crossing-column')
+    f.items.find((i: ReturnType<typeof JSON.parse>) => i.text === 'Absent').rect[2] = 170
+  if (kind === 'missing-rule') f.rules.splice(2, 1)
+  if (kind === 'clip') {
+    f.context.operators.fnArray.push(OPS.clip)
+    f.context.operators.argsArray.push(null)
+  }
+  if (kind === 'extra-residual') f.table.unassigned.push('Unknown')
+  if (kind === 'reordered-source') donor.sourceItems[0].index = donor.sourceItems[0].index + 1
+  if (kind === 'clipped-target')
+    f.table.clipped.push({ text: donor.text, rect: donor.sourceRects[0] })
+  if (kind === 'clipped-unknown')
+    f.table.clipped.push({ text: 'Unknown', rect: donor.sourceRects[0] })
+  if (kind === 'internal-rule') f.rules.push([20, 85, 200, 85])
+  if (kind === 'sparse-grid') delete f.table.grid[3][0]
+  if (kind === 'sparse-source') delete donor.sourceItems[0]
+  if (kind === 'null-cell') f.table.cells[0] = null
+  if (kind === 'malformed-source-array') donor.sourceTokens = false
+  expect(residualSectionedOutput(f)).toBeUndefined()
+})
+
+// Two complete native groups contain three independent scalar records each.
+// The first centered multiline stub starts one row late; the second is correct.
+const centeredMultilineOwners = (): ReturnType<typeof JSON.parse> => {
+  const viewport = {
+      width: 250,
+      height: 220,
+      scale: 1,
+      rotation: 0,
+      transform: [1, 0, 0, -1, 0, 220]
+    },
+    content: ReturnType<typeof JSON.parse> = { items: [], styles: { f: { vertical: false } } },
+    operators: ReturnType<typeof JSON.parse> = {
+      fnArray: [OPS.dependency, OPS.setLineWidth],
+      argsArray: [['f'], [0.5]]
+    },
+    items: ReturnType<typeof JSON.parse>[] = [],
+    cells: ReturnType<typeof JSON.parse>[] = [],
+    grid = Array.from({ length: 7 }, () => Array(3).fill('')),
+    cuts = [10, 80, 140, 220],
+    fences = [20, 40, 115, 190]
+  const draw = (text: string, x: number, baseline: number): ReturnType<typeof JSON.parse> => {
+    const sourceItem = { pageNumber: 1, index: content.items.length, text },
+      f = {
+        text,
+        rect: [x, baseline - 10, x + text.length * 5, baseline],
+        baseline,
+        height: 10,
+        horizontal: true,
+        sourceItem
+      }
+    items.push(f)
+    content.items.push({
+      str: text,
+      width: text.length * 5,
+      height: 10,
+      fontName: 'f',
+      transform: [10, 0, 0, 10, x, 220 - baseline],
+      sourceItem
+    })
+    operators.fnArray.push(OPS.setFont, OPS.beginText, OPS.setTextMatrix, OPS.showText, OPS.endText)
+    operators.argsArray.push(
+      ['f', 10],
+      null,
+      [new Float32Array([1, 0, 0, 1, x, 220 - baseline])],
+      [
+        [...text].map((unicode) => ({
+          unicode,
+          fontChar: unicode,
+          originalCharCode: unicode.codePointAt(0),
+          width: 500,
+          isInFont: true,
+          accent: null,
+          operatorListId: null,
+          isSpace: unicode === ' '
+        }))
+      ],
+      null
+    )
+    return f
+  }
+  const captionFont = draw('Table 1: Values.', 10, 12),
+    captions = [{ page: 1, rect: captionFont.rect, lines: [captionFont.text] }]
+  const add = (
+    row: number,
+    column: number,
+    fonts: ReturnType<typeof JSON.parse>[],
+    rowSpan = 1
+  ): void => {
+    const text = fonts.map((f) => f.text).join(' ')
+    grid[row][column] = text
+    cells.push({
+      row,
+      column,
+      rowSpan,
+      colSpan: 1,
+      rect: [
+        cuts[column],
+        row ? [45, 65, 85, 120, 145, 165][row - 1] : 20,
+        cuts[column + 1],
+        row ? [64, 84, 110, 144, 164, 185][row + rowSpan - 2] : 40
+      ],
+      text,
+      sourceTokens: fonts,
+      sourceRects: fonts.map((f) => f.rect),
+      sourceItems: fonts.map((f) => f.sourceItem),
+      origin: 'model-grid'
+    })
+  }
+  for (let c = 0; c < 3; c++) {
+    const font = draw(['Group', 'N', 'Value'][c], cuts[c] + 5, 35)
+    add(0, c, [{ ...font, sourceToken: font }])
+  }
+  for (let g = 0; g < 2; g++) {
+    const groupFonts = [
+      draw(['Alpha', 'Beta'][g], 20, 77 + g * 75),
+      draw('family', 20, 89 + g * 75)
+    ]
+    if (!g) add(1, 0, [])
+    add(g ? 4 : 2, 0, groupFonts, g ? 3 : 2)
+    for (let r = 0; r < 3; r++)
+      for (let c = 1; c < 3; c++)
+        add(1 + g * 3 + r, c, [
+          draw(String(c === 1 ? r + 1 : 20 + g * 3 + r), cuts[c] + 5, 60 + g * 75 + r * 20)
+        ])
+  }
+  const rules = fences.map((y) => [10, y, 220, y]),
+    paint = new Map(rules.map((r) => [r.join(','), [r[0], r[1] - 0.25, r[2], r[3] + 0.25]]))
+  for (const y of fences) {
+    operators.fnArray.push(OPS.constructPath)
+    operators.argsArray.push([
+      OPS.stroke,
+      [new Float32Array([0, 10, 220 - y, 1, 220, 220 - y])],
+      new Float32Array([10, 220 - y, 220, 220 - y])
+    ])
+  }
+  const graphics = rules.map((r) => ({
+      kind: 'path',
+      rect: [r[0] - 0.25, r[1] - 0.25, r[2] + 0.25, r[3] + 0.25].map(
+        (v, k) =>
+          ((k < 2
+            ? Math.floor((v / (k % 2 ? 220 : 250)) * 256)
+            : Math.ceil((v / (k % 2 ? 220 : 250)) * 256) + 1) *
+            (k % 2 ? 220 : 250)) /
+          256
+      )
+    })),
+    context = {
+      content,
+      operators,
+      viewport,
+      rulePaintBounds: paint,
+      nativeEvidenceGraphics: graphics
+    },
+    table = {
+      page: 1,
+      grid,
+      cells,
+      readingRotation: 0,
+      cropRect: [9, 19, 221, 191],
+      sourceViewport: { width: 250, height: 220, scale: 1 },
+      caption: captions[0],
+      notes: [],
+      unassigned: [],
+      clipped: [],
+      issues: []
+    }
+  return { table, items, captions, rules, paint, graphics, context }
+}
+const centeredMultilineOutput = (f: ReturnType<typeof JSON.parse>): ReturnType<typeof JSON.parse> =>
+  lateFencedGroupHelpers.recoverNativeFencedGroupLabels(
+    f.table,
+    f.items,
+    f.captions,
+    f.rules,
+    [],
+    f.paint,
+    f.graphics,
+    f.context
+  )
+
+it('repairs only the late centered multiline stub owner with complete native groups', () => {
+  const f = centeredMultilineOwners(),
+    previous = structuredClone(f.table),
+    result = centeredMultilineOutput(f)
+  expect(result).toBeDefined()
+  expect(
+    result.cells.find(
+      (c: ReturnType<typeof JSON.parse>) => c.column === 0 && c.text === 'Alpha family'
+    )
+  ).toMatchObject({ row: 1, rowSpan: 3 })
+  expect(
+    result.cells.filter((c: ReturnType<typeof JSON.parse>) => c.column > 0 || c.row === 0)
+  ).toEqual(
+    previous.cells.filter((c: ReturnType<typeof JSON.parse>) => c.column > 0 || c.row === 0)
+  )
+  expect(result.cells.find((c: ReturnType<typeof JSON.parse>) => c.text === 'Beta family')).toEqual(
+    previous.cells.find((c: ReturnType<typeof JSON.parse>) => c.text === 'Beta family')
+  )
+  expect(result.cropRect).toEqual(previous.cropRect)
+  expect(f.table).toEqual(previous)
+})
+
+it.each([
+  'hidden-table',
+  'hidden-cell',
+  'hidden-source',
+  'blank-origin',
+  'blank-rect',
+  'blank-unknown',
+  'blank-array-metadata',
+  'stub-rect-metadata',
+  'stub-order',
+  'stub-superscript',
+  'duplicate-origin',
+  'missing-origin',
+  'unknown-wrapper',
+  'horizontal-mismatch',
+  'descent-mismatch',
+  'nonfinite-font',
+  'clipped',
+  'clipping-operator',
+  'missing-fence'
+])('refuses incomplete late centered multiline ownership: %s', (control) => {
+  const f = centeredMultilineOwners(),
+    blank = f.table.cells.find((c: ReturnType<typeof JSON.parse>) => c.row === 1 && c.column === 0),
+    stub = f.table.cells.find((c: ReturnType<typeof JSON.parse>) => c.text === 'Alpha family'),
+    body = f.table.cells.find((c: ReturnType<typeof JSON.parse>) => c.row === 1 && c.column === 1),
+    header = f.table.cells.find((c: ReturnType<typeof JSON.parse>) => c.row === 0 && c.column === 0)
+  if (control === 'hidden-table') Object.defineProperty(f.table, 'opaque', { value: 1 })
+  else if (control === 'hidden-cell') Object.defineProperty(stub, 'opaque', { value: 1 })
+  else if (control === 'hidden-source')
+    Object.defineProperty(header.sourceTokens[0], 'opaque', { value: 1 })
+  else if (control === 'blank-origin') blank.origin = { unknownDiagnostic: 1 }
+  else if (control === 'blank-rect') blank.rect = [1, 1, 2, 2]
+  else if (control === 'blank-unknown') blank.opaque = { value: 1 }
+  else if (control === 'blank-array-metadata') blank.sourceTokens.opaque = { value: 1 }
+  else if (control === 'stub-rect-metadata') stub.rect.opaque = { value: 1 }
+  else if (control === 'stub-order') {
+    stub.text = 'family Alpha'
+    f.table.grid[2][0] = stub.text
+  } else if (control === 'stub-superscript')
+    stub.textRuns = [{ text: stub.text, position: 'superscript' }]
+  else if (control === 'duplicate-origin') body.sourceItems = header.sourceItems
+  else if (control === 'missing-origin') {
+    body.sourceTokens = body.sourceTokens.map((token: ReturnType<typeof JSON.parse>) => {
+      const next = { ...token }
+      delete next.sourceItem
+      return next
+    })
+    delete body.sourceItems
+  } else if (control === 'unknown-wrapper') header.sourceTokens[0].opaque = 1
+  else if (control === 'horizontal-mismatch')
+    body.sourceTokens = body.sourceTokens.map((token: ReturnType<typeof JSON.parse>) => ({
+      ...token,
+      horizontal: false
+    }))
+  else if (control === 'descent-mismatch')
+    body.sourceTokens = body.sourceTokens.map((token: ReturnType<typeof JSON.parse>) => ({
+      ...token,
+      fontDescent: 1
+    }))
+  else if (control === 'nonfinite-font') f.items[1].baseline = NaN
+  else if (control === 'clipped') f.table.clipped = [{ text: 'foreign', rect: [1, 2, 3, 4] }]
+  else if (control === 'clipping-operator') {
+    f.context.operators.fnArray.push(OPS.clip)
+    f.context.operators.argsArray.push(null)
+  } else if (control === 'missing-fence') f.rules.splice(2, 1)
+  expect(centeredMultilineOutput(f)).toBeUndefined()
+})
+
+// Two six-leaf blocks share four inset parent underlines. Three parent donors
+// start on their second leaf; their original complete payloads must survive.
+const repeatedParentOwners = (): ReturnType<typeof JSON.parse> => {
+  const viewport = {
+      width: 600,
+      height: 260,
+      scale: 1,
+      rotation: 0,
+      transform: [1, 0, 0, -1, 0, 260],
+      convertToViewportPoint: (x: number, y: number): number[] => [x, 260 - y]
+    },
+    content: ReturnType<typeof JSON.parse> = { items: [], styles: { f: { vertical: false } } },
+    operators: ReturnType<typeof JSON.parse> = {
+      fnArray: [OPS.dependency, OPS.setLineWidth],
+      argsArray: [['f'], [0.5]]
+    },
+    items: ReturnType<typeof JSON.parse>[] = [],
+    cuts = [10, 50, 80, 120, 180, 220, 280, 320, 350, 390, 450, 490, 550],
+    rowCuts = [5, 35, 60, 85, 105, 125, 145, 165, 190],
+    cells: ReturnType<typeof JSON.parse>[] = [],
+    grid = Array.from({ length: 8 }, () => Array(12).fill('')),
+    rules = [
+      ...[10, 60, 105, 145, 185].map((y) => [10, y, 550, y]),
+      ...[82, 182, 352, 452].map((x) => [x, 35, x + 96, 35])
+    ]
+  const draw = (
+    text: string,
+    x: number,
+    baseline: number,
+    height = 10
+  ): ReturnType<typeof JSON.parse> => {
+    const width = (text.length * height) / 2,
+      sourceItem = { pageNumber: 1, index: content.items.length, text },
+      font = {
+        text,
+        rect: [x, baseline - height, x + width, baseline],
+        baseline,
+        height,
+        horizontal: true,
+        sourceItem
+      }
+    content.items.push({
+      str: text,
+      width,
+      height,
+      fontName: 'f',
+      transform: [height, 0, 0, height, x, 260 - baseline],
+      sourceItem
+    })
+    operators.fnArray.push(OPS.setFont, OPS.beginText, OPS.setTextMatrix, OPS.showText, OPS.endText)
+    operators.argsArray.push(
+      ['f', height],
+      null,
+      [new Float32Array([1, 0, 0, 1, x, 260 - baseline])],
+      [
+        [...text].map((unicode) => ({
+          unicode,
+          fontChar: unicode,
+          originalCharCode: unicode.codePointAt(0),
+          width: 500,
+          isInFont: true,
+          accent: null,
+          operatorListId: null,
+          isSpace: unicode === ' '
+        }))
+      ],
+      null
+    )
+    items.push(font)
+    return font
+  }
+  const cell = (
+    row: number,
+    column: number,
+    fonts: ReturnType<typeof JSON.parse>[],
+    colSpan = 1
+  ): void => {
+    const text = fonts.map((f) => f.text).join('')
+    cells.push({
+      row,
+      column,
+      rowSpan: 1,
+      colSpan,
+      text,
+      rect: [cuts[column], rowCuts[row], cuts[column + colSpan], rowCuts[row + 1]],
+      origin: fonts.length ? 'source-ruled-stub' : 'model-grid',
+      sourceRects: fonts.map((f) => f.rect),
+      sourceItems: fonts.map((f) => f.sourceItem),
+      sourceTokens: fonts.map(({ text, rect, baseline, height }) => ({
+        text,
+        rect,
+        baseline,
+        height
+      })),
+      ...(fonts.length === 2
+        ? {
+            textRuns: [
+              { text: fonts[0].text, position: 'normal' },
+              { text: fonts[1].text, position: 'superscript' }
+            ]
+          }
+        : {})
+    })
+    grid[row][column] = text
+  }
+  const parents = [
+    [draw('Method A', 125, 30)],
+    [draw('Method B', 225, 30), draw('2', 265, 25, 7)],
+    [draw('Method A', 395, 30)],
+    [draw('Method B', 495, 30), draw('2', 535, 25, 7)]
+  ]
+  for (const c of [0, 1, 2, 6, 7, 8, 10]) cell(0, c, [])
+  for (const [n, c] of [3, 4, 9, 11].entries()) cell(0, c, parents[n], c === 4 ? 2 : 1)
+  for (let c = 0; c < 12; c++)
+    cell(
+      1,
+      c,
+      [0, 1, 6, 7].includes(c) ? [] : [draw(c % 2 ? 'band' : 'avg', cuts[c] + (c % 2 ? 10 : 0), 50)]
+    )
+  for (let row = 2; row < 8; row++)
+    for (let c = 0; c < 12; c++)
+      cell(row, c, [
+        draw(
+          c % 6 === 0 ? 'x' : c % 2 && c % 6 !== 1 ? '[3,4]' : '2',
+          cuts[c] + (c % 2 && c % 6 !== 1 ? 10 : 5),
+          80 + (row - 2) * 20
+        )
+      ])
+  operators.fnArray.push(OPS.setStrokeRGBColor)
+  operators.argsArray.push(['#000000'])
+  for (const [left, y, right] of rules) {
+    operators.fnArray.push(OPS.constructPath)
+    operators.argsArray.push([
+      OPS.stroke,
+      [[0, left, 260 - y, 1, right, 260 - y]],
+      [left, 260 - y, right, 260 - y]
+    ])
+  }
+  const table = {
+    id: 'anonymous-repeated-parents',
+    page: 1,
+    cropRect: [5, 5, 555, 190],
+    sourceViewport: { width: 600, height: 260, scale: 1 },
+    grid,
+    cells: cells.sort((a, b) => a.row - b.row || a.column - b.column),
+    rows: rowCuts.slice(1).map((bottom, r) => ({ rect: [5, rowCuts[r], 555, bottom] })),
+    notes: [],
+    unassigned: [],
+    clipped: [],
+    repairs: [],
+    opaque: { preserve: 'all payloads' }
+  }
+  const context = {
+    content,
+    operators,
+    viewport,
+    rulePaintBounds: new Map(
+      rules.map((r) => [r.join(','), [r[0], r[1] - 0.25, r[2], r[3] + 0.25]])
+    ),
+    nativeEvidenceGraphics: rules.map((r) => ({
+      kind: 'path',
+      rect: [r[0] - 0.25, r[1] - 0.25, r[2] + 0.25, r[3] + 0.25].map(
+        (v, k) =>
+          ((k < 2
+            ? Math.floor((v / (k % 2 ? 260 : 600)) * 256)
+            : Math.ceil((v / (k % 2 ? 260 : 600)) * 256) + 1) *
+            (k % 2 ? 260 : 600)) /
+          256
+      )
+    }))
+  }
+  return { table, items, rules, context }
+}
+
+const repeatedParentOutput = (f: ReturnType<typeof JSON.parse>): ReturnType<typeof JSON.parse> =>
+  lateFencedGroupHelpers.recoverNativeSectionedOrdinaryRecordOwners(
+    f.table,
+    f.items,
+    [],
+    f.rules,
+    f.context
+  )
+
+it('moves only the three inset ruled parent owners and their empty covered placeholders', () => {
+  const f = repeatedParentOwners(),
+    before = structuredClone(f.table),
+    result = repeatedParentOutput(f)
+  expect(
+    lateFencedGroupHelpers.nativeWholeOwnerRepairPacket(f.table, f.items, f.rules, f.context)
+  ).toBeDefined()
+  expect(result).toBeDefined()
+  expect(result.cells).toHaveLength(before.cells.length - 3)
+  expect(
+    result.cells
+      .filter((c: ReturnType<typeof JSON.parse>) => c.row === 0 && c.text)
+      .map((c: ReturnType<typeof JSON.parse>) => [c.column, c.colSpan])
+  ).toEqual([
+    [2, 2],
+    [4, 2],
+    [8, 2],
+    [10, 2]
+  ])
+  expect(result.cells.filter((c: ReturnType<typeof JSON.parse>) => c.row > 0)).toEqual(
+    before.cells.filter((c: ReturnType<typeof JSON.parse>) => c.row > 0)
+  )
+  expect(
+    result.cells.find((c: ReturnType<typeof JSON.parse>) => c.row === 0 && c.column === 4)
+  ).toEqual(before.cells.find((c: ReturnType<typeof JSON.parse>) => c.row === 0 && c.column === 4))
+  for (const [oldCol, newCol] of [
+    [3, 2],
+    [9, 8],
+    [11, 10]
+  ]) {
+    const donor = before.cells.find(
+        (c: ReturnType<typeof JSON.parse>) => c.row === 0 && c.column === oldCol
+      ),
+      changed = result.cells.find(
+        (c: ReturnType<typeof JSON.parse>) => c.row === 0 && c.column === newCol
+      )
+    expect({ ...changed, column: donor.column, colSpan: donor.colSpan, rect: donor.rect }).toEqual(
+      donor
+    )
+  }
+  expect({ ...result, cells: before.cells, grid: before.grid, repairs: before.repairs }).toEqual(
+    before
+  )
+  expect(f.table).toEqual(before)
+})
+
+const changeRepeatedParentRules = (f: ReturnType<typeof JSON.parse>): void => {
+  const op = f.context.operators
+  for (let n = op.fnArray.length - 1; n >= 0; n--)
+    if (op.fnArray[n] === OPS.constructPath) {
+      op.fnArray.splice(n, 1)
+      op.argsArray.splice(n, 1)
+    }
+  for (const [left, top, right, bottom] of f.rules) {
+    op.fnArray.push(OPS.constructPath)
+    op.argsArray.push([
+      OPS.stroke,
+      [[0, left, 260 - top, 1, right, 260 - bottom]],
+      [
+        Math.min(left, right),
+        Math.min(260 - top, 260 - bottom),
+        Math.max(left, right),
+        Math.max(260 - top, 260 - bottom)
+      ]
+    ])
+  }
+  f.context.rulePaintBounds = new Map()
+  expect(lateRules(op, f.context.viewport, f.context.rulePaintBounds)).toEqual(f.rules)
+  f.context.nativeEvidenceGraphics = f.rules.map((r: number[]) => ({
+    kind: 'path',
+    rect: [r[0] - 0.25, r[1] - 0.25, r[2] + 0.25, r[3] + 0.25].map(
+      (v, k) =>
+        ((k < 2
+          ? Math.floor((v / (k % 2 ? 260 : 600)) * 256)
+          : Math.ceil((v / (k % 2 ? 260 : 600)) * 256) + 1) *
+          (k % 2 ? 260 : 600)) /
+        256
+    )
+  }))
+}
+
+it.each([
+  'missing underline',
+  'overlapping underline',
+  'missing section fence',
+  'unequal record sections',
+  'noncoextensive opening fence'
+])('refuses inset ruled parent owners with %s despite a complete source program', (kind) => {
+  const f = repeatedParentOwners()
+  if (kind === 'missing underline') f.rules.splice(5, 1)
+  if (kind === 'overlapping underline') f.rules[5][2] = 200
+  if (kind === 'missing section fence') f.rules.splice(2, 1)
+  if (kind === 'unequal record sections') f.rules[2][1] = f.rules[2][3] = 135
+  if (kind === 'noncoextensive opening fence') f.rules[0][2] += 1
+  changeRepeatedParentRules(f)
+  expect(
+    lateFencedGroupHelpers.nativeWholeOwnerRepairPacket(f.table, f.items, f.rules, f.context)
+  ).toBeDefined()
+  const before = structuredClone(f.table)
+  expect(repeatedParentOutput(f)).toBeUndefined()
+  expect(f.table).toEqual(before)
+})
+
+it.each([
+  'unknown blank payload',
+  'foreign blank origin',
+  'missing blank rectangle',
+  'orphan blank rectangle',
+  'nonfinite blank rectangle',
+  'nonadjacent blank rectangle',
+  'opaque repair tag',
+  'parent text order',
+  'rich script order',
+  'false rich position',
+  'duplicate source',
+  'wrong parent slot',
+  'missing packet',
+  'unsupported operation'
+])('refuses inset ruled parent owners with %s atomically', (kind) => {
+  const f = repeatedParentOwners(),
+    blank = f.table.cells.find((c: ReturnType<typeof JSON.parse>) => c.row === 0 && c.column === 2),
+    donor = f.table.cells.find((c: ReturnType<typeof JSON.parse>) => c.row === 0 && c.column === 3),
+    rich = f.table.cells.find((c: ReturnType<typeof JSON.parse>) => c.row === 0 && c.column === 11)
+  if (kind === 'unknown blank payload') blank.diagnostic = { preserve: true }
+  if (kind === 'foreign blank origin') blank.origin = 'unrecognized'
+  if (kind === 'missing blank rectangle') delete blank.rect
+  if (kind === 'orphan blank rectangle') delete donor.rect
+  if (kind === 'nonfinite blank rectangle') blank.rect[0] = NaN
+  if (kind === 'nonadjacent blank rectangle') blank.rect[2]--
+  if (kind === 'opaque repair tag') f.table.repairs = [{ preserve: 'diagnostic' }]
+  if (kind === 'parent text order') {
+    donor.text = [...donor.text].reverse().join('')
+    f.table.grid[0][3] = donor.text
+  }
+  if (kind === 'rich script order') rich.textRuns.reverse()
+  if (kind === 'false rich position') rich.textRuns[1].position = 'normal'
+  if (kind === 'duplicate source') donor.sourceItems[0] = rich.sourceItems[0]
+  if (kind === 'wrong parent slot') {
+    donor.column = 2
+    blank.column = 3
+    f.table.grid[0][2] = donor.text
+    f.table.grid[0][3] = ''
+  }
+  if (kind === 'missing packet') f.context = {}
+  if (kind === 'unsupported operation') {
+    f.context.operators.fnArray.push(OPS.setLineJoin)
+    f.context.operators.argsArray.push([0])
+  }
+  if (
+    [
+      'unknown blank payload',
+      'foreign blank origin',
+      'missing blank rectangle',
+      'orphan blank rectangle',
+      'nonfinite blank rectangle',
+      'nonadjacent blank rectangle',
+      'opaque repair tag',
+      'parent text order',
+      'rich script order',
+      'false rich position',
+      'wrong parent slot'
+    ].includes(kind)
+  )
+    expect(
+      lateFencedGroupHelpers.nativeWholeOwnerRepairPacket(f.table, f.items, f.rules, f.context)
+    ).toBeDefined()
+  const before = structuredClone(f.table)
+  expect(repeatedParentOutput(f)).toBeUndefined()
+  expect(f.table).toEqual(before)
+})
+
+it('preserves serialized inset parent sources and rejects accessor payloads without evaluating them', () => {
+  const f = repeatedParentOwners()
+  for (const c of f.table.cells) {
+    delete c.rect
+    delete c.sourceTokens
+    delete c.origin
+  }
+  const result = repeatedParentOutput(f)
+  expect(result).toBeDefined()
+  expect(
+    result.cells
+      .flatMap((c: ReturnType<typeof JSON.parse>) => c.sourceItems)
+      .sort(
+        (a: ReturnType<typeof JSON.parse>, b: ReturnType<typeof JSON.parse>) => a.index - b.index
+      )
+  ).toEqual(f.items.map((i: ReturnType<typeof JSON.parse>) => i.sourceItem))
+  const blank = f.table.cells.find(
+    (c: ReturnType<typeof JSON.parse>) => c.row === 0 && c.column === 2
+  )
+  let reads = 0
+  Object.defineProperty(blank, 'diagnostic', {
+    enumerable: true,
+    get: () => {
+      reads++
+      return 'opaque'
+    }
+  })
+  expect(repeatedParentOutput(f)).toBeUndefined()
+  expect(reads).toBe(0)
+})
+
+it('preserves already recovered inset parents through refine and transports the repaired worker provenance', async () => {
+  const f = repeatedParentOwners(),
+    cuts = [10, 50, 80, 120, 180, 220, 280, 320, 350, 390, 450, 490, 550],
+    objects = [
+      ...cuts.slice(1).map((right, c) => ({
+        label: 'table column',
+        score: 1,
+        rect: [cuts[c] - 5, 0, right - 5, 185]
+      })),
+      ...f.table.rows.map((r: ReturnType<typeof JSON.parse>) => ({
+        label: 'table row',
+        score: 1,
+        rect: r.rect.map((v: number, n: number) => v - f.table.cropRect[n % 2])
+      })),
+      { label: 'table spanning cell', score: 1, rect: [175, 0, 275, 30] },
+      { label: 'table column header', score: 1, rect: [0, 0, 550, 55] }
+    ],
+    refined = refineTable(
+      { ...f.table, structure: { objects }, columnCount: 12, rowCount: 8 },
+      f.items,
+      [],
+      [],
+      f.rules,
+      [],
+      undefined,
+      f.context.rulePaintBounds,
+      f.context
+    ),
+    input = { ...refined, page: 1, sourceViewport: f.table.sourceViewport, notes: [] },
+    result = repeatedParentOutput(f)
+  // This smaller input is already proved by the older refine header recovery.
+  // The late branch must leave it alone; the original page replay exercises
+  // the late repair after refine, while this worker reads its compact donor.
+  expect(repeatedParentOutput({ ...f, table: input })).toBeUndefined()
+  expect(
+    input.cells
+      .filter((c: ReturnType<typeof JSON.parse>) => c.row === 0 && c.text)
+      .map((c: ReturnType<typeof JSON.parse>) => [c.column, c.colSpan])
+  ).toEqual([
+    [2, 2],
+    [4, 2],
+    [8, 2],
+    [10, 2]
+  ])
+  expect(result).toBeDefined()
+  expect(
+    result.cells
+      .filter((c: ReturnType<typeof JSON.parse>) => c.row === 0 && c.text)
+      .map((c: ReturnType<typeof JSON.parse>) => [c.column, c.colSpan])
+  ).toEqual([
+    [2, 2],
+    [4, 2],
+    [8, 2],
+    [10, 2]
+  ])
+  expect(result.cells.filter((c: ReturnType<typeof JSON.parse>) => c.row > 0)).toEqual(
+    f.table.cells.filter((c: ReturnType<typeof JSON.parse>) => c.row > 0)
+  )
+  const scratch = await mkdtemp(join(tmpdir(), 'pdf-inset-parents-')),
+    identity = {
+      extractionId: '00000000-0000-4000-8000-000000000001',
+      engineFingerprint: 'b'.repeat(64),
+      sourceChecksum: 'c'.repeat(64),
+      sourceSizeBytes: 100,
+      requestedPages: [1]
+    }
+  try {
+    await mkdir(join(scratch, 'thumbnails'))
+    await writeFile(
+      join(scratch, 'thumbnails/anonymous-repeated-parents.png'),
+      Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADElEQVQImWP4//8/AAX+Av5Y8msOAAAAAElFTkSuQmCC',
+        'base64'
+      )
+    )
+    const cells = result.cells.map(
+      ({
+        row,
+        column,
+        rowSpan,
+        colSpan,
+        text,
+        textRuns,
+        sourceItems,
+        sourceRects
+      }: ReturnType<typeof JSON.parse>) => ({
+        row,
+        column,
+        rowSpan,
+        colSpan,
+        text,
+        ...(textRuns ? { textRuns } : {}),
+        ...(sourceItems?.length ? { sourceItems } : {}),
+        sourceRects
+      })
+    )
+    await writeFile(
+      join(scratch, 'structure.json'),
+      JSON.stringify({
+        sourceSha256: identity.sourceChecksum,
+        pageCount: 1,
+        requestedPages: [1],
+        processedPages: [1],
+        pages: [{ page: 1, width: 600, height: 260, rotation: 0 }],
+        figures: [],
+        algorithms: [],
+        tables: [
+          {
+            id: result.id,
+            page: 1,
+            region: [5 / 600, 5 / 260, 555 / 600, 190 / 260],
+            thumbnail: 'thumbnails/anonymous-repeated-parents.png',
+            sourceViewport: result.sourceViewport,
+            grid: result.grid,
+            cells,
+            unassigned: [],
+            notes: [],
+            issues: []
+          }
+        ],
+        navigation: { entries: [] }
+      })
+    )
+    const read = await readWorkerResult(scratch, identity, new Map()),
+      actual = read.elements[0].table!
+    expect(actual.rowCount).toBe(8)
+    expect(actual.columnCount).toBe(12)
+    expect(actual.cells).toEqual(
+      cells.map((c: ReturnType<typeof JSON.parse>) => ({
+        row: c.row,
+        column: c.column,
+        rowSpan: c.rowSpan,
+        columnSpan: c.colSpan,
+        text: c.text,
+        ...(c.textRuns ? { textRuns: c.textRuns } : {}),
+        ...(c.sourceItems?.length ? { sourceItems: c.sourceItems } : {}),
+        regions: c.sourceRects.map((r: number[]) => ({
+          page: 1,
+          x: r[0] / 600,
+          y: r[1] / 260,
+          width: r[2] / 600 - r[0] / 600,
+          height: r[3] / 260 - r[1] / 260
+        }))
+      }))
+    )
+  } finally {
+    await rm(scratch, { recursive: true, force: true })
+  }
+})
+
+// Two source-fenced sections calibrate ordinary records; only one donor owns
+// two complete baselines. Keep this generated example smaller than a PDF page.
+const sectionedMergedRecord = (): ReturnType<typeof JSON.parse> => {
+  const viewport = {
+      width: 300,
+      height: 240,
+      scale: 1,
+      rotation: 0,
+      transform: [1, 0, 0, -1, 0, 240],
+      convertToViewportPoint: (x: number, y: number): number[] => [x, 240 - y]
+    },
+    content = { items: [] as ReturnType<typeof JSON.parse>[], styles: { f: { vertical: false } } },
+    operators = {
+      fnArray: [OPS.dependency, OPS.setLineWidth],
+      argsArray: [['f'], [0.5]] as ReturnType<typeof JSON.parse>[]
+    },
+    items: ReturnType<typeof JSON.parse>[] = []
+  const draw = (text: string, x: number, baseline: number): ReturnType<typeof JSON.parse> => {
+    const sourceItem = { pageNumber: 1, index: content.items.length, text },
+      rect = [x, baseline - 10, x + text.length * 5, baseline],
+      item = { text, rect, baseline, height: 10, horizontal: true, sourceItem }
+    content.items.push({
+      str: text,
+      width: text.length * 5,
+      height: 10,
+      fontName: 'f',
+      transform: [10, 0, 0, 10, x, 240 - baseline],
+      sourceItem
+    })
+    operators.fnArray.push(OPS.setFont, OPS.beginText, OPS.setTextMatrix, OPS.showText, OPS.endText)
+    operators.argsArray.push(
+      ['f', 10],
+      null,
+      [new Float32Array([1, 0, 0, 1, x, 240 - baseline])],
+      [
+        [...text].map((unicode) => ({
+          unicode,
+          fontChar: unicode,
+          originalCharCode: unicode.codePointAt(0),
+          width: 500,
+          isInFont: true,
+          operatorListId: null
+        }))
+      ],
+      null
+    )
+    items.push(item)
+    return item
+  }
+  const cells: ReturnType<typeof JSON.parse>[] = [],
+    grid: string[][] = []
+  const cell = (
+    row: number,
+    column: number,
+    fonts: ReturnType<typeof JSON.parse>[],
+    colSpan = 1
+  ): void => {
+    const text = fonts.map((f: ReturnType<typeof JSON.parse>) => f.text).join(' ')
+    cells.push({
+      row,
+      column,
+      rowSpan: 1,
+      colSpan,
+      text,
+      sourceRects: fonts.map((f: ReturnType<typeof JSON.parse>) => f.rect),
+      sourceItems: fonts.map((f: ReturnType<typeof JSON.parse>) => f.sourceItem),
+      opaque: { keep: true }
+    })
+    grid[row] ??= ['', '', '', '']
+    grid[row][column] = text
+  }
+  for (let c = 0; c < 4; c++)
+    cell(0, c, [draw(['Name', 'One', 'Two', 'Three'][c], [20, 145, 200, 250][c], 35)])
+  for (let section = 0; section < 2; section++) {
+    const row = 1 + section * 4,
+      y = 55 + section * 85
+    cell(row, 0, [draw(section ? 'Beta' : 'Alpha', 95, y)], 4)
+    for (let r = 0; r < 3; r++) {
+      const target = section === 1 && r === 2 ? row + 2 : row + 1 + r
+      for (let c = 0; c < 4; c++) {
+        const f = draw(
+            c === 0 ? `Item${r + 1}` : String((r + 1) * (c + 1)),
+            [20, 145, 200, 250][c],
+            y + 20 + r * 20
+          ),
+          old = cells.find((v: ReturnType<typeof JSON.parse>) => v.row === target && v.column === c)
+        if (old) {
+          old.text += ' ' + f.text
+          old.sourceItems.push(f.sourceItem)
+          old.sourceRects.push(f.rect)
+          grid[target][c] = old.text
+        } else cell(target, c, [f])
+      }
+    }
+  }
+  const ys = [20, 40, 60, 125, 145, 210],
+    paint = new Map(),
+    graphics: ReturnType<typeof JSON.parse>[] = []
+  for (const y of ys) {
+    operators.fnArray.push(OPS.constructPath)
+    operators.argsArray.push([
+      OPS.stroke,
+      [new Float32Array([0, 15, 240 - y, 1, 285, 240 - y])],
+      new Float32Array([15, 240 - y, 285, 240 - y])
+    ])
+    const q = (v: number, n: number): number =>
+      ((n < 2
+        ? Math.floor((v / (n % 2 ? 240 : 300)) * 256)
+        : Math.ceil((v / (n % 2 ? 240 : 300)) * 256) + 1) *
+        (n % 2 ? 240 : 300)) /
+      256
+    graphics.push({ kind: 'path', rect: [14.75, y - 0.25, 285.25, y + 0.25].map(q) })
+  }
+  const rules = lateRules(operators, viewport, paint)
+  return {
+    table: {
+      page: 1,
+      sourceViewport: { width: 300, height: 240, scale: 1 },
+      cropRect: [15, 20, 285, 210],
+      grid,
+      cells,
+      unassigned: [],
+      clipped: [],
+      notes: [],
+      issues: [],
+      opaque: { keep: ['table'] }
+    },
+    items,
+    rules,
+    context: {
+      operators,
+      content,
+      viewport,
+      rulePaintBounds: paint,
+      nativeEvidenceGraphics: graphics
+    }
+  }
+}
+const { collectTableRules: lateRules } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-graphics.mjs')).href
+)
+const sectionedRecordOutput = (f: ReturnType<typeof JSON.parse>): ReturnType<typeof JSON.parse> =>
+  lateFencedGroupHelpers.recoverNativeSectionedOrdinaryRecordOwners?.(
+    f.table,
+    f.items,
+    [],
+    f.rules,
+    f.context
+  )
+
+it('separates a section-calibrated four-field donor without changing other owners', () => {
+  const f = sectionedMergedRecord(),
+    before = structuredClone(f.table),
+    out = sectionedRecordOutput(f)
+  expect(out).toBeDefined()
+  expect(out.grid.slice(-2)).toEqual([
+    ['Item2', '4', '6', '8'],
+    ['Item3', '6', '9', '12']
+  ])
+  expect(out.cells.filter((c: ReturnType<typeof JSON.parse>) => c.row < 6)).toEqual(
+    before.cells.filter((c: ReturnType<typeof JSON.parse>) => c.row < 6)
+  )
+  expect({ ...out, cells: before.cells, grid: before.grid }).toEqual(before)
+  expect(
+    out.cells
+      .flatMap((c: ReturnType<typeof JSON.parse>) => c.sourceItems)
+      .map((i: ReturnType<typeof JSON.parse>) => i.index)
+      .sort((a: number, b: number) => a - b)
+  ).toEqual(
+    f.items
+      .map((i: ReturnType<typeof JSON.parse>) => i.sourceItem.index)
+      .sort((a: number, b: number) => a - b)
+  )
+  expect(f.table).toEqual(before)
+})
+it.each(['missing packet', 'duplicate claim', 'missing rule', 'rich donor', 'foreign source'])(
+  'refuses a section-calibrated donor with %s atomically',
+  (kind) => {
+    const f = sectionedMergedRecord()
+    if (kind === 'missing packet') f.context = {}
+    if (kind === 'duplicate claim')
+      f.table.cells.at(-1).sourceItems[1] = f.table.cells.at(-1).sourceItems[0]
+    if (kind === 'missing rule') f.rules.splice(4, 1)
+    if (kind === 'rich donor')
+      f.table.cells.at(-1).textRuns = [{ text: f.table.cells.at(-1).text, position: 'superscript' }]
+    if (kind === 'foreign source') f.table.cells.at(-1).sourceItems[0].index = 999
+    const before = structuredClone(f.table)
+    expect(sectionedRecordOutput(f)).toBeUndefined()
+    expect(f.table).toEqual(before)
+  }
+)
+
+it('repairs the internal section donor when model bounds clip both complete records', () => {
+  const f = sectionedMergedRecord()
+  f.table.rows = f.table.grid.map((_row: string[], row: number) => {
+    const fonts = f.table.cells
+      .filter((c: ReturnType<typeof JSON.parse>) => c.row === row)
+      .flatMap((c: ReturnType<typeof JSON.parse>) => c.sourceItems)
+      .map((o: ReturnType<typeof JSON.parse>) =>
+        f.items.find((i: ReturnType<typeof JSON.parse>) => i.sourceItem.index === o.index)
+      )
+    return {
+      rect: [
+        15,
+        Math.min(...fonts.map((i: ReturnType<typeof JSON.parse>) => i.rect[1])),
+        285,
+        Math.max(...fonts.map((i: ReturnType<typeof JSON.parse>) => i.rect[3]))
+      ],
+      opaque: { keep: 'row' }
+    }
+  })
+  for (const c of f.table.cells) {
+    c.sourceTokens = c.sourceItems.map((o: ReturnType<typeof JSON.parse>) =>
+      structuredClone(
+        f.items.find((i: ReturnType<typeof JSON.parse>) => i.sourceItem.index === o.index)
+      )
+    )
+    c.rect = [15, f.table.rows[c.row].rect[1], 285, f.table.rows[c.row].rect[3]]
+  }
+  const row = f.table.grid.length - 1
+  f.table.rows[row].rect.splice(1, 1, 177)
+  f.table.rows[row].rect[3] = 193
+  for (const c of f.table.cells.filter((c: ReturnType<typeof JSON.parse>) => c.row === row)) {
+    c.rect[1] = 177
+    c.rect[3] = 193
+  }
+  const before = structuredClone(f.table),
+    out = sectionedRecordOutput(f)
+  expect(out).toBeDefined()
+  expect(out.grid.slice(-2)).toEqual([
+    ['Item2', '4', '6', '8'],
+    ['Item3', '6', '9', '12']
+  ])
+  expect(out.cells.filter((c: ReturnType<typeof JSON.parse>) => c.row < row)).toEqual(
+    before.cells.filter((c: ReturnType<typeof JSON.parse>) => c.row < row)
+  )
+  expect(out.rows.slice(0, row)).toEqual(before.rows.slice(0, row))
+  expect({ ...out, cells: before.cells, grid: before.grid, rows: before.rows }).toEqual(before)
+  expect(f.table).toEqual(before)
+})
 // This source-calibrated family keeps complete old field owners. The second
 // variant has an internal label column and three ordinary paragraph lines.
 const sourceFencedExistingLabels = (internal: boolean): ReturnType<typeof JSON.parse> => {
@@ -11576,6 +14012,591 @@ const recoverMeasuredFourFieldRecords = (
     f.operatorContext
   )
 
+// Independent printed key/value lines survive an old group-sized model row.
+// The middle field is printed only at group starts; its other slots stay blank.
+const measuredNumberedRecords = (): ReturnType<typeof JSON.parse> => {
+  const operators: ReturnType<typeof JSON.parse> = { fnArray: [], argsArray: [] },
+    content: ReturnType<typeof JSON.parse> = { items: [], styles: {} },
+    viewport = {
+      width: 450,
+      height: 600,
+      scale: 1.5,
+      rotation: 0,
+      transform: [1.5, 0, 0, -1.5, 0, 600],
+      convertToViewportPoint: (x: number, y: number): number[] => [x * 1.5, 600 - y * 1.5]
+    },
+    emit = (op: number, args: ReturnType<typeof JSON.parse>): void => {
+      operators.fnArray.push(op)
+      operators.argsArray.push(args)
+    },
+    rules = [
+      [24, 5, 420, 5],
+      [24, 40, 420, 40],
+      [24, 65, 420, 65],
+      [24, 156, 420, 156]
+    ],
+    paint: [string, number[]][] = [],
+    graphics: ReturnType<typeof JSON.parse>[] = []
+  emit(OPS.setStrokeRGBColor, ['#000000'])
+  emit(OPS.setLineWidth, [1])
+  for (const [n, rule] of rules.entries()) {
+    emit(OPS.constructPath, [
+      OPS.stroke,
+      [[0, 16, (600 - rule[1]) / 1.5, 1, 280, (600 - rule[1]) / 1.5]]
+    ])
+    const ink = [24, rule[1] - 0.75, 420, rule[1] + 0.75]
+    paint.push([rule.join(','), ink])
+    if (n)
+      graphics.push({
+        kind: 'path',
+        rect: [23.25, ink[1], 420.75, ink[3]].map(
+          (v, k) =>
+            ((k < 2
+              ? Math.floor((v / (k % 2 ? 600 : 450)) * 256)
+              : Math.ceil((v / (k % 2 ? 600 : 450)) * 256) + 1) *
+              (k % 2 ? 600 : 450)) /
+            256
+        )
+      })
+  }
+  const add = (text: string, column: number, baseline: number, width: number): void => {
+    const x = [30, 110, 200][column],
+      size = 10 / 1.5,
+      index = content.items.length
+    emit(OPS.beginText, null)
+    emit(OPS.setFont, ['ordinary', size])
+    emit(OPS.setTextMatrix, [1, 0, 0, 1, x / 1.5, (600 - baseline) / 1.5])
+    emit(OPS.showText, [
+      [...text].map((unicode) => ({
+        unicode,
+        width: (width * 1000) / (10 * text.length),
+        isInFont: true,
+        isSpace: false
+      }))
+    ])
+    emit(OPS.endText, null)
+    content.items.push({
+      str: text,
+      width: width / 1.5,
+      height: size,
+      dir: 'ltr',
+      fontName: 'ordinary',
+      transform: [size, 0, 0, size, x / 1.5, (600 - baseline) / 1.5],
+      sourceItem: { pageNumber: 1, index, text }
+    })
+  }
+  for (const [n, text] of ['Key', 'Group', 'Value'].entries()) add(text, n, 60, 30)
+  for (const [n, baseline] of [78, 90, 102, 120, 132, 144].entries()) {
+    add(String(n + 1), 0, baseline, 12)
+    if (n === 0 || n === 3) add(n ? 'Beta' : 'Alpha', 1, baseline, 30)
+    add(`Value${n}`, 2, baseline, 90)
+  }
+  const runs = measureOrdinaryPrograms(content, operators, viewport),
+    items = runs.map((r: ReturnType<typeof JSON.parse>, index: number) => ({
+      text: r.text,
+      rect: r.rect,
+      baseline: r.baseline,
+      height: r.height,
+      horizontal: true,
+      inlineSymbol: false,
+      sourceItem: { pageNumber: 1, index, text: r.text }
+    })),
+    cells: ReturnType<typeof JSON.parse>[] = [],
+    cuts = [20, 90, 180, 420],
+    bands = [
+      [50, 61],
+      [68, 105],
+      [110, 149]
+    ]
+  for (let row = 0; row < 3; row++)
+    for (let column = 0; column < 3; column++) {
+      const fonts = items.filter(
+          (f: ReturnType<typeof JSON.parse>) =>
+            f.rect[0] === [30, 110, 200][column] &&
+            (row === 0
+              ? f.baseline === 60
+              : row === 1
+                ? f.baseline > 65 && f.baseline < 110
+                : f.baseline >= 110)
+        ),
+        sourceTokens = fonts.map((f: ReturnType<typeof JSON.parse>) => ({
+          text: f.text,
+          rect: f.rect,
+          baseline: f.baseline,
+          height: f.height
+        }))
+      cells.push({
+        row,
+        column,
+        rowSpan: 1,
+        colSpan: 1,
+        rect: [cuts[column], bands[row][0], cuts[column + 1], bands[row][1]],
+        origin: 'model-grid',
+        text: fonts.map((f: ReturnType<typeof JSON.parse>) => f.text).join(' '),
+        sourceTokens,
+        sourceRects: fonts.map((f: ReturnType<typeof JSON.parse>) => f.rect),
+        sourceItems: fonts.map((f: ReturnType<typeof JSON.parse>) => f.sourceItem)
+      })
+    }
+  cells[0].opaque = { identity: 'retained header' }
+  const caption = {
+      page: 1,
+      text: 'Table 1: Example',
+      lines: ['Table 1: Example'],
+      rect: [20, 10, 100, 20]
+    },
+    table = {
+      id: 'numbered-records',
+      page: 1,
+      cropRect: [20, 35, 420, 158],
+      cells,
+      rows: bands.map((b) => ({ rect: [20, b[0], 420, b[1]], origin: 'model' })),
+      grid: bands.map((_b, row) => cells.filter((c) => c.row === row).map((c) => c.text)),
+      notes: [],
+      issues: [],
+      unassigned: [],
+      clipped: [],
+      repairs: ['existing'],
+      selectedTextItems: items.length,
+      caption,
+      sourceViewport: { width: 450, height: 600, scale: 1.5 },
+      opaque: { identity: 'retained table' }
+    }
+  const { convertToViewportPoint: _method, ...plainViewport } = viewport
+  void _method
+  return {
+    table,
+    items,
+    runs,
+    rules,
+    paint,
+    graphics,
+    captions: [{ ...caption, rect: caption.rect.map((n) => n * 1.5) }],
+    operatorContext: { operators, viewport: plainViewport }
+  }
+}
+
+// Two physical numeric-peer records end the original page. No closing rule,
+// neighboring-page header, or detector column is used to establish owners.
+const measuredTwoRuleFirstBody = (): ReturnType<typeof JSON.parse> => {
+  const operators: ReturnType<typeof JSON.parse> = { fnArray: [], argsArray: [] },
+    content: ReturnType<typeof JSON.parse> = { items: [], styles: {} },
+    viewport = {
+      width: 900,
+      height: 1200,
+      scale: 1.5,
+      rotation: 0,
+      transform: [1.5, 0, 0, -1.5, 0, 1200],
+      convertToViewportPoint: (x: number, y: number): number[] => [x * 1.5, 1200 - y * 1.5]
+    },
+    emit = (op: number, args: ReturnType<typeof JSON.parse>): void => {
+      operators.fnArray.push(op)
+      operators.argsArray.push(args)
+    },
+    rules = [
+      [80, 1000, 850, 1000],
+      [80, 1030, 850, 1030]
+    ],
+    paint: [string, number[]][] = [],
+    graphics: ReturnType<typeof JSON.parse>[] = []
+  emit(OPS.setStrokeRGBColor, ['#000000'])
+  emit(OPS.setLineWidth, [1])
+  for (const rule of rules) {
+    emit(OPS.constructPath, [
+      OPS.stroke,
+      [[0, rule[0] / 1.5, (1200 - rule[1]) / 1.5, 1, rule[2] / 1.5, (1200 - rule[1]) / 1.5]]
+    ])
+    const ink = [rule[0], rule[1] - 0.75, rule[2], rule[1] + 0.75]
+    paint.push([rule.join(','), ink])
+    graphics.push({
+      kind: 'path',
+      rect: [ink[0] - 0.75, ink[1], ink[2] + 0.75, ink[3]].map(
+        (v, k) =>
+          ((k < 2
+            ? Math.floor((v / (k % 2 ? 1200 : 900)) * 256)
+            : Math.ceil((v / (k % 2 ? 1200 : 900)) * 256) + 1) *
+            (k % 2 ? 1200 : 900)) /
+          256
+      )
+    })
+  }
+  const add = (text: string, x: number, baseline: number, width: number): void => {
+    const size = 16 / 1.5,
+      index = content.items.length
+    emit(OPS.beginText, null)
+    emit(OPS.setFont, ['ordinary', size])
+    emit(OPS.setTextMatrix, [1, 0, 0, 1, x / 1.5, (1200 - baseline) / 1.5])
+    emit(OPS.showText, [
+      [...text].map((unicode) => ({
+        unicode,
+        width: (width * 1000) / (16 * text.length),
+        isInFont: true,
+        accent: null,
+        isSpace: unicode === ' '
+      }))
+    ])
+    emit(OPS.endText, null)
+    content.items.push({
+      str: text,
+      width: width / 1.5,
+      height: size,
+      dir: 'ltr',
+      fontName: 'ordinary',
+      transform: [size, 0, 0, size, x / 1.5, (1200 - baseline) / 1.5],
+      sourceItem: { pageNumber: 1, index, text }
+    })
+  }
+  const first = 'Table 1: Example ordinary measurements for two conditions and several'
+  emit(OPS.dependency, ['ordinary'])
+  add(first, 100, 958, 740)
+  add('reported estimates', 80, 980, 120)
+  const literal = [
+    ['Condition', 'Estimator', 'Mean bias', 'Mean error', 'Coverage'],
+    ['Plain case', 'Method A', '0.012', '0.108', '0.945'],
+    ['Plain case', 'Method B', '0.286', '0.402', '0.746']
+  ]
+  literal.forEach((row, r) =>
+    row.forEach((text, c) =>
+      add(text, [80, 230, 390, 530, 675][c], [1022, 1055, 1077][r], [100, 110, 80, 80, 110][c])
+    )
+  )
+  const runs = measureOrdinaryPrograms(content, operators, viewport),
+    items = runs.map((r: ReturnType<typeof JSON.parse>, index: number) => ({
+      text: r.text,
+      rect: r.rect,
+      baseline: r.baseline,
+      height: r.height,
+      horizontal: true,
+      inlineSymbol: false,
+      sourceItem: { pageNumber: 1, index, text: r.text }
+    })),
+    caption = {
+      page: 1,
+      text: first,
+      lines: [first],
+      rect: [100, 942, 840, 958].map((n) => n / 1.5)
+    },
+    table = {
+      id: 'two-rule-first-body',
+      page: 1,
+      cropRect: [70, 999, 860, 1090],
+      rows: [],
+      cells: [],
+      grid: [],
+      issues: ['missing-row-or-column', 'overlapping-predicted-columns', 'unassigned-source-text'],
+      unassigned: literal.flat(),
+      clipped: [],
+      repairs: ['existing'],
+      notes: [],
+      caption,
+      sourceViewport: { width: 900, height: 1200, scale: 1.5 },
+      opaque: { identity: 'retained empty seed' }
+    }
+  const { convertToViewportPoint: _method, ...plainViewport } = viewport
+  void _method
+  return {
+    table,
+    items,
+    runs,
+    rules,
+    paint,
+    graphics,
+    literal,
+    captions: [{ ...caption, rect: caption.rect.map((n) => n * 1.5) }],
+    operatorContext: { operators, viewport: plainViewport }
+  }
+}
+
+it('recovers two-rule first-body records with complete caption and native origins', () => {
+  const f = measuredTwoRuleFirstBody(),
+    before = structuredClone(f),
+    result = recoverMeasuredFourFieldRecords(f)
+  expect(result?.grid).toEqual(f.literal)
+  expect(result?.cells).toHaveLength(15)
+  expect(result?.caption.lines).toEqual([f.table.caption.lines[0], 'reported estimates'])
+  expect(result?.cells.flatMap((c: ReturnType<typeof JSON.parse>) => c.sourceItems)).toEqual(
+    f.items.slice(2).map((i: ReturnType<typeof JSON.parse>) => i.sourceItem)
+  )
+  expect(result?.cells.flatMap((c: ReturnType<typeof JSON.parse>) => c.sourceRects)).toEqual(
+    f.items.slice(2).map((i: ReturnType<typeof JSON.parse>) => i.rect)
+  )
+  expect(result?.opaque).toEqual(f.table.opaque)
+  expect(result?.issues).toEqual([])
+  expect(result?.unassigned).toEqual([])
+  expect(result?.repairs).toEqual(['existing', 'native-rowless-two-rule-records'])
+  expect(
+    result?.cells.every((c: ReturnType<typeof JSON.parse>) => c.rowSpan === 1 && c.colSpan === 1)
+  ).toBe(true)
+  expect(
+    panelRefineHelpers.hasTableEvidence(
+      result,
+      { ...result.caption, rect: result.caption.rect.map((n: number) => n * 1.5) },
+      f.items,
+      f.rules,
+      f.graphics
+    )
+  ).toBe(true)
+  expect(recoverMeasuredFourFieldRecords({ ...f, table: result })).toBeUndefined()
+  expect(f).toEqual(before)
+})
+
+it('recovers two-rule first-body from the current refine-generated reconciliation witness', () => {
+  const f = measuredTwoRuleFirstBody(),
+    seed = {
+      id: f.table.id,
+      cropRect: f.table.cropRect,
+      readingRotation: 0,
+      structure: {
+        objects: [
+          [20, 130],
+          [140, 280],
+          [290, 390],
+          [350, 440],
+          [400, 540],
+          [550, 680]
+        ].map(([a, b]) => ({ label: 'table column', rect: [a, 36, b, 74], score: 0.9 }))
+      }
+    },
+    refined = refineTable(
+      seed,
+      f.items,
+      f.captions,
+      [],
+      f.rules,
+      f.runs,
+      undefined,
+      new Map(f.paint)
+    )
+  expect(refined.rows).toEqual([])
+  expect(refined.grid).toEqual([])
+  expect(refined.cells).toEqual([])
+  const descriptor = Object.getOwnPropertyDescriptor(refined.unassigned, 'reconciliationItems')
+  expect(descriptor).toMatchObject({ writable: false, enumerable: false, configurable: false })
+  expect(descriptor?.value).toEqual(f.items.slice(2))
+  f.table = {
+    ...refined,
+    page: 1,
+    caption: f.table.caption,
+    sourceViewport: f.table.sourceViewport
+  }
+  const result = recoverMeasuredFourFieldRecords(f)
+  expect(result?.grid).toEqual(f.literal)
+  expect(result?.cells.flatMap((c: ReturnType<typeof JSON.parse>) => c.sourceItems)).toEqual(
+    f.items.slice(2).map((i: ReturnType<typeof JSON.parse>) => i.sourceItem)
+  )
+  expect(Object.getOwnPropertyDescriptor(f.table.unassigned, 'reconciliationItems')).toEqual(
+    descriptor
+  )
+})
+
+it.each([
+  'incomplete record',
+  'prose peer',
+  'duplicate origin',
+  'glyph width',
+  'TJ advance',
+  'raw footer',
+  'foreign font',
+  'foreign graphic',
+  'missing carrier',
+  'extra rule',
+  'rule width',
+  'white caption',
+  'alpha state',
+  'Type3 glyph',
+  'unknown font program',
+  'incomplete caption',
+  'ambiguous caption',
+  'opaque diagnostic',
+  'opaque empty row array',
+  'opaque source font',
+  'opaque caption lines',
+  'opaque unassigned array',
+  'enumerable reconciliation',
+  'mismatched reconciliation',
+  'duplicate reconciliation',
+  'opaque clone'
+])('refuses two-rule first-body projection atomically with %s', (control) => {
+  const f = measuredTwoRuleFirstBody(),
+    ops = f.operatorContext.operators,
+    glyphOp = ops.fnArray.indexOf(OPS.showText)
+  if (control === 'incomplete record') {
+    const removed = f.items.pop()
+    f.table.unassigned.pop()
+    f.runs = f.runs.filter(
+      (r: ReturnType<typeof JSON.parse>) =>
+        r.text !== removed.text || r.baseline !== removed.baseline
+    )
+  }
+  if (control === 'prose peer') {
+    f.items.at(-1).text = 'unknown'
+    f.items.at(-1).sourceItem.text = 'unknown'
+    f.table.unassigned[f.table.unassigned.length - 1] = 'unknown'
+  }
+  if (control === 'duplicate origin')
+    f.items.at(-1).sourceItem.index = f.items.at(-2).sourceItem.index
+  if (control === 'glyph width') ops.argsArray[glyphOp][0][0].width += 20
+  if (control === 'TJ advance') ops.argsArray[glyphOp][0].unshift(20)
+  if (control === 'raw footer') {
+    ops.fnArray.push(OPS.beginText, OPS.setFont, OPS.setTextMatrix, OPS.showText, OPS.endText)
+    ops.argsArray.push(
+      null,
+      ['ordinary', 16 / 1.5],
+      [1, 0, 0, 1, 400 / 1.5, 80 / 1.5],
+      [[{ unicode: '9', width: 500, isInFont: true, accent: null }]],
+      null
+    )
+  }
+  if (control === 'foreign font')
+    f.items.push({
+      ...structuredClone(f.items.at(-1)),
+      rect: [80, 1130, 140, 1146],
+      baseline: 1146
+    })
+  if (control === 'foreign graphic') f.graphics.push({ kind: 'path', rect: [80, 1120, 850, 1122] })
+  if (control === 'missing carrier') f.graphics.pop()
+  if (control === 'extra rule') f.rules.push([80, 1100, 850, 1100])
+  if (control === 'rule width') ops.argsArray[ops.fnArray.indexOf(OPS.setLineWidth)] = [2]
+  if (control === 'white caption') {
+    ops.fnArray.unshift(OPS.setFillRGBColor)
+    ops.argsArray.unshift(['#ffffff'])
+  }
+  if (control === 'alpha state') {
+    ops.fnArray.push(OPS.setGState)
+    ops.argsArray.push([[['ca', 0]]])
+  }
+  if (control === 'Type3 glyph') ops.argsArray[glyphOp][0][0].operatorListId = 'unknown'
+  if (control === 'unknown font program')
+    ops.fnArray.forEach((op: number, n: number) => {
+      if (op === OPS.setFont) ops.argsArray[n][0] = 'unknown-font-program'
+    })
+  if (control === 'incomplete caption') f.items.splice(1, 1)
+  if (control === 'ambiguous caption') f.captions.push(structuredClone(f.captions[0]))
+  if (control === 'opaque diagnostic') f.table.issues[0] = { text: 'missing-row-or-column' }
+  if (control === 'opaque empty row array') f.table.rows.opaque = { retained: true }
+  if (control === 'opaque source font')
+    f.items.at(-1).textRuns = [{ text: 'unknown', position: 'superscript' }]
+  if (control === 'opaque caption lines') f.table.caption.lines.opaque = { retained: true }
+  if (control === 'opaque unassigned array') f.table.unassigned.opaque = { retained: true }
+  if (control === 'enumerable reconciliation')
+    Object.defineProperty(f.table.unassigned, 'reconciliationItems', {
+      value: f.items.slice(2),
+      enumerable: true
+    })
+  if (control === 'mismatched reconciliation')
+    Object.defineProperty(f.table.unassigned, 'reconciliationItems', {
+      value: [...f.items.slice(2, 16), f.items[0]],
+      enumerable: false
+    })
+  if (control === 'duplicate reconciliation')
+    Object.defineProperty(f.table.unassigned, 'reconciliationItems', {
+      value: [...f.items.slice(2, 16), f.items[2]],
+      enumerable: false
+    })
+  if (control === 'opaque clone') f.table.opaque.effect = () => undefined
+  const before = {
+    table: { ...f.table },
+    items: structuredClone(f.items),
+    ops: structuredClone(ops)
+  }
+  expect(recoverMeasuredFourFieldRecords(f)).toBeUndefined()
+  expect(f.table).toEqual(before.table)
+  expect(f.items).toEqual(before.items)
+  expect(ops).toEqual(before.ops)
+})
+
+it('recovers numbered whole records while conserving native owners and printed blank fields', () => {
+  const f = measuredNumberedRecords(),
+    before = structuredClone(f),
+    result = recoverMeasuredFourFieldRecords(f)
+  expect(result?.grid).toEqual([
+    ['Key', 'Group', 'Value'],
+    ['1', 'Alpha', 'Value0'],
+    ['2', '', 'Value1'],
+    ['3', '', 'Value2'],
+    ['4', 'Beta', 'Value3'],
+    ['5', '', 'Value4'],
+    ['6', '', 'Value5']
+  ])
+  expect(result.cells).toHaveLength(21)
+  expect(result.cells.slice(0, 3)).toEqual(f.table.cells.slice(0, 3))
+  expect(result.cells.filter((c: ReturnType<typeof JSON.parse>) => !c.text)).toHaveLength(4)
+  expect(
+    result.cells.every((c: ReturnType<typeof JSON.parse>) => c.rowSpan === 1 && c.colSpan === 1)
+  ).toBe(true)
+  expect(
+    result.cells
+      .flatMap((c: ReturnType<typeof JSON.parse>) => c.sourceItems ?? [])
+      .sort(
+        (a: ReturnType<typeof JSON.parse>, b: ReturnType<typeof JSON.parse>) => a.index - b.index
+      )
+  ).toEqual(f.items.map((i: ReturnType<typeof JSON.parse>) => i.sourceItem))
+  expect(result.opaque).toEqual(f.table.opaque)
+  expect(result.caption).toEqual(f.table.caption)
+  expect(result.cropRect).toEqual(f.table.cropRect)
+  expect(f).toEqual(before)
+  expect(recoverMeasuredFourFieldRecords({ ...f, table: result })).toBeUndefined()
+})
+
+it.each([
+  'missing font',
+  'missing program',
+  'incomplete program',
+  'wrong glyph width',
+  'missing origin',
+  'duplicate owner',
+  'different baseline',
+  'foreign font',
+  'missing paint',
+  'foreign paint',
+  'clip',
+  'invisible text',
+  'white rule',
+  'wrong stroke width',
+  'ambiguous caption',
+  'opaque donor',
+  'linked row',
+  'rich donor',
+  'noncloneable header'
+])('refuses numbered whole-record projection atomically with %s', (control) => {
+  const f = measuredNumberedRecords(),
+    donor = f.table.cells[3],
+    stream = f.runs.find((r: ReturnType<typeof JSON.parse>) => r.text === '1'),
+    ops = f.operatorContext.operators
+  if (control === 'missing font') f.items.splice(3, 1)
+  if (control === 'missing program') f.runs.splice(f.runs.indexOf(stream), 1)
+  if (control === 'incomplete program') stream.literalGlyphs[0] = '9'
+  if (control === 'wrong glyph width') ops.argsArray[stream.glyphRuns[0]][0][0].width *= 2
+  if (control === 'missing origin') donor.sourceItems.pop()
+  if (control === 'duplicate owner') {
+    donor.sourceTokens.push(donor.sourceTokens[0])
+    donor.sourceRects.push(donor.sourceRects[0])
+  }
+  if (control === 'different baseline') f.items[4].baseline += 1
+  if (control === 'foreign font') f.items.push({ ...f.items[3], text: 'foreign' })
+  if (control === 'missing paint') f.graphics.pop()
+  if (control === 'foreign paint') f.graphics.push({ kind: 'path', rect: [30, 80, 40, 90] })
+  if (control === 'clip') {
+    ops.fnArray[0] = OPS.clip
+    ops.argsArray[0] = null
+  }
+  if (control === 'invisible text') {
+    ops.fnArray[0] = OPS.setTextRenderingMode
+    ops.argsArray[0] = [3]
+  }
+  if (control === 'white rule') ops.argsArray[0] = ['#ffffff']
+  if (control === 'wrong stroke width') ops.argsArray[1] = [20]
+  if (control === 'ambiguous caption') f.captions.push(structuredClone(f.captions[0]))
+  if (control === 'opaque donor') donor.opaque = { retained: true }
+  if (control === 'linked row') f.table.rows[1].identity = 'do not duplicate'
+  if (control === 'rich donor') donor.textRuns = [{ text: donor.text, position: 'superscript' }]
+  if (control === 'noncloneable header') f.table.cells[0].opaque = () => undefined
+  const before = control === 'noncloneable header' ? undefined : structuredClone(f)
+  expect(recoverMeasuredFourFieldRecords(f)).toBeUndefined()
+  if (before) expect(f).toEqual(before)
+  else expect(typeof f.table.cells[0].opaque).toBe('function')
+})
+
 it('recovers measured four-field continuation and terminal owners with whole peer payloads', () => {
   const f = measuredFourFieldRecords(),
     before = structuredClone(f)
@@ -12084,4 +15105,1455 @@ it.each([
   const before = structuredClone(f)
   expect(recoverStackedSharedCaption(f)).toBeUndefined()
   expect(f).toEqual(before)
+})
+
+// Three populated group starts and ten complete scalar peers exercise the
+// late section plan after the ordinary source header has already been proved.
+const anonymousSectionPeerGrid = (): ReturnType<typeof JSON.parse> => {
+  const items: ReturnType<typeof JSON.parse>[] = [],
+    xs = [20, 100, 160, 220, 280, 340, 400],
+    header = ['Group', 'Value', 'First', 'Second', 'Third', 'Fourth', 'Fifth']
+  const add = (text: string, x: number, y: number): number =>
+    items.push({
+      text,
+      rect: [x, y - 10, x + text.length * 5, y],
+      height: 10,
+      baseline: y,
+      horizontal: true,
+      sourceItem: { pageNumber: 1, index: items.length, text }
+    })
+  header.forEach((s, n) => add(s, xs[n], 34))
+  const bodyYs = [56, 76, 96, 116, 136, 166, 186, 206, 226, 246, 276, 296, 316]
+  for (let n = 0; n < bodyYs.length; n++) {
+    const y = bodyYs[n]
+    if ([0, 5, 10].includes(n)) add(['Alpha', 'Bravo', 'Delta'][[0, 5, 10].indexOf(n)], 20, y)
+    for (let c = 1; c < 7; c++) add(String(11 + n + c), xs[c], y)
+  }
+  const cropRect = [10, 19, 450, 332],
+    ys = [19, 40, ...bodyYs.map((y) => y + 10)],
+    cuts = [10, 80, 145, 205, 265, 325, 385, 450]
+  const table = {
+    id: 'page-1-table-1',
+    cropRect,
+    rowCount: 14,
+    columnCount: 7,
+    structure: {
+      objects: [
+        ...ys
+          .slice(1)
+          .map((y, n) => ({ label: 'table row', score: 1, rect: [0, ys[n] - 19, 440, y - 19] })),
+        ...cuts.slice(1).map((x, n) => ({
+          label: 'table column',
+          score: 1,
+          rect: [cuts[n] - 10, 0, x - 10, 313]
+        })),
+        { label: 'table column header', score: 1, rect: [0, 0, 440, 21] }
+      ]
+    }
+  }
+  return {
+    items,
+    table,
+    captions: [{ page: 1, rect: [10, 0, 130, 10], lines: ['Table 1: Records.'] }],
+    rules: [20, 40, 150, 260, 330].map((y) => [10, y, 450, y]),
+    runs: []
+  }
+}
+
+it('preserves seven physical leaves when a six-field section plan proves seven headers', () => {
+  const f = anonymousSectionPeerGrid()
+  const result = run(f)
+  expect(result.repairs).not.toContain('native-section-scalar-peer-records-recovered')
+  expect(result.grid).toHaveLength(14)
+  expect(result.grid.every((row: string[]) => row.length === 7)).toBe(true)
+  expect(result.grid[1]).toEqual(['Alpha', '12', '13', '14', '15', '16', '17'])
+  expect(result.grid[6]).toEqual(['Bravo', '17', '18', '19', '20', '21', '22'])
+  expect(result.grid[11]).toEqual(['Delta', '22', '23', '24', '25', '26', '27'])
+  expect(
+    result.cells
+      .filter((c: ReturnType<typeof JSON.parse>) => [1, 6, 11].includes(c.row))
+      .every((c: ReturnType<typeof JSON.parse>) => c.colSpan === 1)
+  ).toBe(true)
+  expect(characters(result.grid.flat().join(''))).toBe(
+    characters(f.items.map((i: ReturnType<typeof JSON.parse>) => i.text).join(''))
+  )
+})
+
+it('keeps the complete six-leaf section recovery at the same producer seam', () => {
+  const f = anonymousSectionPeerGrid()
+  f.items = f.items.filter(
+    (i: ReturnType<typeof JSON.parse>) =>
+      i.sourceItem.index !== 0 && !([56, 166, 276].includes(i.baseline) && /^\d/u.test(i.text))
+  )
+  const result = run(f)
+  expect(result.repairs).toContain('native-section-scalar-peer-records-recovered')
+  expect(result.grid).toHaveLength(14)
+  expect(result.grid.every((row: string[]) => row.length === 6)).toBe(true)
+  expect(result.grid[1]).toEqual(['Alpha', '', '', '', '', ''])
+  expect(result.grid[2]).toEqual(['13', '14', '15', '16', '17', '18'])
+  expect(characters(result.grid.flat().join(''))).toBe(
+    characters(f.items.map((i: ReturnType<typeof JSON.parse>) => i.text).join(''))
+  )
+})
+
+it('refuses the late section plan with an incomplete physical header', () => {
+  const f = anonymousSectionPeerGrid()
+  f.items = f.items.filter((i: ReturnType<typeof JSON.parse>) => i.sourceItem.index !== 6)
+  const result = run(f)
+  expect(result.repairs).not.toContain('native-section-scalar-peer-records-recovered')
+  expect(result.grid[1]).toEqual(['Alpha', '12', '13', '14', '15', '16', '17'])
+  expect(characters(result.grid.flat().join(''))).toBe(
+    characters(f.items.map((i: ReturnType<typeof JSON.parse>) => i.text).join(''))
+  )
+})
+
+it.each([6, 8])('does not admit the mismatched section plan through a %i-column model', (count) => {
+  const f = anonymousSectionPeerGrid()
+  f.table.columnCount = count
+  f.table.structure.objects = f.table.structure.objects.filter(
+    (o: ReturnType<typeof JSON.parse>) => o.label !== 'table column'
+  )
+  for (let c = 0; c < count; c++)
+    f.table.structure.objects.push({
+      label: 'table column',
+      score: 1,
+      rect: [(440 * c) / count, 0, (440 * (c + 1)) / count, 313]
+    })
+  const before = structuredClone(f)
+  const result = run(f)
+  expect(result.repairs).not.toContain('native-section-scalar-peer-records-recovered')
+  expect(f).toEqual(before)
+})
+
+// The late producer receives already-complete cells plus the original raw page.
+// These unequal scopes have two physical header baselines and whole annotations.
+const unequalFirstBaselineGroups = (): ReturnType<typeof JSON.parse> => {
+  const items: ReturnType<typeof JSON.parse>[] = [],
+    cells: ReturnType<typeof JSON.parse>[] = [],
+    ops: ReturnType<typeof JSON.parse> = {
+      fnArray: [OPS.dependency, OPS.setLineWidth],
+      argsArray: [['font'], [0.5]]
+    },
+    content: ReturnType<typeof JSON.parse> = {
+      items: [],
+      styles: { font: { ascent: 1, descent: 0, vertical: false } }
+    },
+    viewport = { width: 500, height: 400, scale: 1, rotation: 0, transform: [1, 0, 0, -1, 0, 400] },
+    cuts = [20, 80, 145, 205, 265, 325, 385, 450],
+    fences = [20, 48, 110, 190, 288]
+  const draw = (text: string, x: number, y: number, h = 10): ReturnType<typeof JSON.parse> => {
+    const sourceItem = { pageNumber: 1, index: content.items.length, text },
+      token = {
+        text,
+        rect: [x, y - h, x + (text.length * h) / 2, y],
+        height: h,
+        baseline: y,
+        horizontal: true,
+        sourceItem
+      }
+    items.push(token)
+    content.items.push({
+      str: text,
+      fontName: 'font',
+      transform: [h, 0, 0, h, x, 400 - y],
+      width: (text.length * h) / 2,
+      height: h,
+      dir: 'ltr',
+      sourceItem
+    })
+    ops.fnArray.push(OPS.setFont, OPS.beginText, OPS.setTextMatrix, OPS.showText, OPS.endText)
+    ops.argsArray.push(
+      ['font', h],
+      null,
+      [new Float32Array([1, 0, 0, 1, x, 400 - y])],
+      [
+        [...text].map((unicode) => ({
+          unicode,
+          fontChar: unicode,
+          originalCharCode: unicode.codePointAt(0),
+          width: 500,
+          isInFont: true,
+          operatorListId: null
+        }))
+      ],
+      null
+    )
+    return token
+  }
+  const cell = (
+    row: number,
+    column: number,
+    tokens: ReturnType<typeof JSON.parse>[],
+    rect: number[]
+  ): ReturnType<typeof JSON.parse> => {
+    const result: ReturnType<typeof JSON.parse> = {
+      row,
+      column,
+      rowSpan: 1,
+      colSpan: 1,
+      rect,
+      text: tokens.map((t) => t.text).join(' '),
+      sourceTokens: tokens.map((t) => ({
+        text: t.text,
+        rect: t.rect,
+        baseline: t.baseline,
+        height: t.height
+      })),
+      sourceRects: tokens.map((t) => t.rect),
+      origin: 'model-grid'
+    }
+    if (tokens.length) result.sourceItems = tokens.map((t) => t.sourceItem)
+    cells.push(result)
+    return result
+  }
+  const title = draw('Table 1: Records.', 20, 12)
+  for (let c = 0; c < 7; c++) {
+    const x = [22, 100, 160, 220, 280, 340, 400][c]
+    cell(
+      0,
+      c,
+      [draw(c ? 'Field' : 'Group', x, 32), draw('unit', x, 44)],
+      [cuts[c], 20, cuts[c + 1], 48]
+    )
+  }
+  let row = 1
+  const ys = [
+    [64, 82, 100],
+    [126, 144, 162, 180],
+    [206, 224, 242, 260, 278]
+  ]
+  for (let g = 0; g < 3; g++)
+    for (let local = 0; local < ys[g].length; local++) {
+      const y = ys[g][local],
+        top = local ? (ys[g][local - 1] + y - 10) / 2 : fences[g + 1],
+        bottom = local === ys[g].length - 1 ? fences[g + 2] : (y + ys[g][local + 1] - 10) / 2
+      cell(row, 0, local ? [] : [draw(['Alpha', 'Bravo', 'Delta'][g], 22, y)], [
+        cuts[0],
+        top,
+        cuts[1],
+        bottom
+      ])
+      for (let c = 1; c < 7; c++) {
+        const base = draw(String(11 + row + c), [22, 100, 160, 220, 280, 340, 400][c], y),
+          fonts = [base]
+        if (c === 1 && local === 0) fonts.push(draw('*', base.rect[2], y - 3, 7.5))
+        const out = cell(row, c, fonts, [cuts[c], top, cuts[c + 1], bottom])
+        if (fonts.length > 1) {
+          out.text = fonts.map((t) => t.text).join('')
+          out.textRuns = [
+            { text: base.text, position: 'normal' },
+            { text: '*', position: 'superscript' }
+          ]
+        }
+        out.opaquePeer = { preserve: row + c }
+      }
+      row++
+    }
+  for (const y of fences) {
+    ops.fnArray.push(OPS.constructPath)
+    ops.argsArray.push([
+      OPS.stroke,
+      [new Float32Array([0, 20, 400 - y, 1, 450, 400 - y])],
+      new Float32Array([20, 400 - y, 450, 400 - y])
+    ])
+  }
+  const rules = fences.map((y) => [20, y, 450, y]),
+    paint = new Map(rules.map((r) => [r.join(','), [r[0], r[1] - 0.25, r[2], r[3] + 0.25]])),
+    graphics = rules.map((r) => ({
+      kind: 'path',
+      rect: [r[0] - 0.25, r[1] - 0.25, r[2] + 0.25, r[3] + 0.25].map(
+        (v, k) =>
+          ((k < 2
+            ? Math.floor((v / (k % 2 ? 400 : 500)) * 256)
+            : Math.ceil((v / (k % 2 ? 400 : 500)) * 256) + 1) *
+            (k % 2 ? 400 : 500)) /
+          256
+      )
+    })),
+    caption = { page: 1, rect: title.rect, lines: ['Table 1: Records.'] },
+    grid = Array.from({ length: 13 }, () => Array(7).fill(''))
+  for (const c of cells) grid[c.row][c.column] = c.text
+  const table = {
+      id: 'page-1-table-1',
+      page: 1,
+      cropRect: [20, 20, 450, 288],
+      grid,
+      cells,
+      caption,
+      sourceViewport: { width: 500, height: 400, scale: 1 },
+      notes: [{ text: 'Keep note.' }],
+      unassigned: [],
+      clipped: [],
+      issues: [],
+      opaque: { preserve: true }
+    },
+    context = {
+      operators: ops,
+      content,
+      sourceContent: content,
+      viewport,
+      rulePaintBounds: paint,
+      nativeEvidenceGraphics: graphics
+    }
+  return { table, items, captions: [caption], rules, paint, graphics, context }
+}
+const firstBaselineGroupOutput = (
+  f: ReturnType<typeof JSON.parse>
+): ReturnType<typeof JSON.parse> =>
+  lateFencedGroupHelpers.recoverNativeFencedGroupLabels(
+    f.table,
+    f.items,
+    f.captions,
+    f.rules,
+    [],
+    f.paint,
+    f.graphics,
+    f.context
+  )
+
+// A short centered whole-font title occupies its own closed band. The model
+// assigns it to an ordinary leaf; the existing final producer seam must use
+// the full native packet rather than the title's words or length.
+const closedSectionSource = (): ReturnType<typeof JSON.parse> => {
+  const items: ReturnType<typeof JSON.parse>[] = [],
+    content: ReturnType<typeof JSON.parse> = {
+      items: [],
+      styles: { font: { ascent: 1, descent: 0, vertical: false } }
+    },
+    operators: ReturnType<typeof JSON.parse> = {
+      fnArray: [OPS.dependency, OPS.setLineWidth],
+      argsArray: [['font'], [0.5]]
+    },
+    viewport = { width: 250, height: 150, scale: 1, rotation: 0, transform: [1, 0, 0, -1, 0, 150] },
+    draw = (text: string, x: number, y: number): void => {
+      const sourceItem = { pageNumber: 1, index: content.items.length, text }
+      items.push({
+        text,
+        rect: [x, y - 10, x + text.length * 5, y],
+        height: 10,
+        baseline: y,
+        horizontal: true,
+        sourceItem
+      })
+      content.items.push({
+        str: text,
+        fontName: 'font',
+        transform: [10, 0, 0, 10, x, 150 - y],
+        height: 10,
+        width: text.length * 5,
+        dir: 'ltr',
+        sourceItem
+      })
+      operators.fnArray.push(
+        OPS.setFont,
+        OPS.beginText,
+        OPS.setTextMatrix,
+        OPS.showText,
+        OPS.endText
+      )
+      operators.argsArray.push(
+        ['font', 10],
+        null,
+        [new Float32Array([1, 0, 0, 1, x, 150 - y])],
+        [
+          [...text].map((unicode) => ({
+            unicode,
+            fontChar: unicode,
+            originalCharCode: unicode.codePointAt(0),
+            width: 500,
+            isInFont: true,
+            operatorListId: null
+          }))
+        ],
+        null
+      )
+    },
+    cuts = [20, 80, 140, 200],
+    fences = [20, 40, 60, 80, 100]
+  draw('Table 1: Values.', 20, 12)
+  for (let c = 0; c < 3; c++) draw(['A', 'B', 'C'][c], cuts[c] + 4, 35)
+  draw('Gamma', 94, 55)
+  for (let row = 0; row < 2; row++)
+    for (let c = 0; c < 3; c++) draw(String(11 + row * 3 + c), cuts[c] + 4, 75 + row * 20)
+  for (const y of fences) {
+    operators.fnArray.push(OPS.constructPath)
+    operators.argsArray.push([
+      OPS.stroke,
+      [new Float32Array([0, 20, 150 - y, 1, 200, 150 - y])],
+      new Float32Array([20, 150 - y, 200, 150 - y])
+    ])
+  }
+  const rules = fences.map((y) => [20, y, 200, y]),
+    paint = new Map(rules.map((r) => [r.join(','), [r[0], r[1] - 0.25, r[2], r[3] + 0.25]])),
+    graphics = rules.map((r) => ({
+      kind: 'path',
+      rect: [r[0] - 0.25, r[1] - 0.25, r[2] + 0.25, r[3] + 0.25].map(
+        (v, k) =>
+          ((k < 2
+            ? Math.floor((v / (k % 2 ? 150 : 250)) * 256)
+            : Math.ceil((v / (k % 2 ? 150 : 250)) * 256) + 1) *
+            (k % 2 ? 150 : 250)) /
+          256
+      )
+    })),
+    captions = [{ page: 1, rect: items[0].rect, lines: [items[0].text] }],
+    model = {
+      id: 'page-1-table-1',
+      cropRect: [20, 20, 200, 100],
+      readingRotation: 0,
+      structure: {
+        objects: [
+          ...cuts.slice(1).map((right, c) => ({
+            label: 'table column',
+            rect: [cuts[c] - 20, 0, right - 20, 80],
+            score: 0.9
+          })),
+          ...fences.slice(1).map((bottom, r) => ({
+            label: 'table row',
+            rect: [0, fences[r] - 20, 180, bottom - 20],
+            score: 0.9
+          })),
+          { label: 'table column header', rect: [0, 0, 180, 20], score: 0.9 }
+        ]
+      }
+    },
+    context = {
+      operators,
+      content,
+      sourceContent: content,
+      viewport,
+      rulePaintBounds: paint,
+      nativeEvidenceGraphics: graphics
+    }
+  const refined = refineTable(model, items, captions, [], rules, [], undefined, paint, context)
+  return {
+    model,
+    items,
+    captions,
+    rules,
+    paint,
+    graphics,
+    context,
+    table: {
+      ...refined,
+      page: 1,
+      caption: captions[0],
+      sourceViewport: { width: 250, height: 150, scale: 1 }
+    }
+  }
+}
+const closedSectionOutput = (f: ReturnType<typeof JSON.parse>): ReturnType<typeof JSON.parse> =>
+  lateFencedGroupHelpers.recoverNativeFencedGroupLabels(
+    f.table,
+    f.items,
+    f.captions,
+    f.rules,
+    [],
+    f.paint,
+    f.graphics,
+    f.context
+  )
+
+it('repairs a short full-width section at the actual refine to final-group seam', () => {
+  const f = closedSectionSource(),
+    before = structuredClone(f.table),
+    out = closedSectionOutput(f)
+  expect(f.table.cells.find((c) => c.text === 'Gamma')?.colSpan).toBe(1)
+  expect(out?.cells.find((c) => c.text === 'Gamma')).toMatchObject({
+    column: 0,
+    colSpan: 3,
+    rowSpan: 1
+  })
+  expect(out?.cells.filter((c) => c.text !== 'Gamma')).toEqual(
+    before.cells.filter((c) => c.row !== 1)
+  )
+  expect(out?.grid[1]).toEqual(['Gamma', '', ''])
+  expect(Object.getOwnPropertyDescriptor(out.unassigned, 'reconciliationItems')).toEqual(
+    Object.getOwnPropertyDescriptor(f.table.unassigned, 'reconciliationItems')
+  )
+  expect({ ...out, cells: before.cells, grid: before.grid }).toEqual(before)
+  expect(f.table).toEqual(before)
+})
+
+it('refuses incomplete source, split title lanes, foreign donors and opaque blank metadata atomically', () => {
+  for (const change of [
+    (f: ReturnType<typeof JSON.parse>) => {
+      f.context = {}
+    },
+    (f: ReturnType<typeof JSON.parse>) => {
+      const a: ReturnType<typeof JSON.parse> = [...f.table.unassigned]
+      Object.defineProperty(a, 'reconciliationItems', { value: [], enumerable: true })
+      f.table.unassigned = a
+    },
+    (f: ReturnType<typeof JSON.parse>) => {
+      const a: ReturnType<typeof JSON.parse> = [...f.table.unassigned]
+      Object.defineProperty(a, 'reconciliationItems', { value: [structuredClone(f.items[0])] })
+      f.table.unassigned = a
+    },
+    (f: ReturnType<typeof JSON.parse>) => {
+      f.table.cells.find((c) => c.text === 'Gamma').sourceItems = {}
+    },
+    (f: ReturnType<typeof JSON.parse>) => {
+      f.table.cells.find((c) => c.text === 'Gamma').sourceTokens = {}
+    },
+    (f: ReturnType<typeof JSON.parse>) => {
+      f.table.cells.find((c) => c.text === 'Gamma').sourceTokens[0].opaque = { preserve: true }
+    },
+    (f: ReturnType<typeof JSON.parse>) => {
+      f.context.operators.fnArray[0] = OPS.save
+    },
+    (f: ReturnType<typeof JSON.parse>) => {
+      f.rules.push([100, 40, 100, 60])
+    },
+    (f: ReturnType<typeof JSON.parse>) => {
+      f.table.cells.find((c) => c.text === 'Gamma').sourceItems[0].index++
+    },
+    (f: ReturnType<typeof JSON.parse>) => {
+      f.table.cells.find((c) => c.row === 1 && c.column === 0).opaque = { preserve: true }
+    },
+    (f: ReturnType<typeof JSON.parse>) => {
+      f.table.cells.find((c) => c.text === 'Gamma').textRuns = [
+        { text: 'Gamma', position: 'normal', opaque: 1 }
+      ]
+    },
+    (f: ReturnType<typeof JSON.parse>) => {
+      f.captions[0].lines = ['Table 1: Value.']
+    },
+    (f: ReturnType<typeof JSON.parse>) => {
+      f.table.cells.find((c) => c.row === 2 && c.column === 1).sourceItems[0].index++
+    },
+    (f: ReturnType<typeof JSON.parse>) => {
+      f.table.cells.find((c) => c.row === 1 && c.column === 0).sourceItems = [
+        { pageNumber: 1, index: 999, text: 'foreign' }
+      ]
+    },
+    (f: ReturnType<typeof JSON.parse>) => {
+      f.table.unassigned.push('Gamma')
+    }
+  ]) {
+    const f = closedSectionSource()
+    change(f)
+    const before = structuredClone(f.table)
+    expect(closedSectionOutput(f)).toBeUndefined()
+    expect(f.table).toEqual(before)
+  }
+})
+
+it('preserves cloneable title metadata and refuses nested accessor payloads without reading them', () => {
+  const f = closedSectionSource(),
+    donor = f.table.cells.find((c) => c.text === 'Gamma')
+  donor.opaque = { preserve: ['literal'] }
+  donor.textRuns = [{ text: 'Gamma', position: 'normal' }]
+  const before = structuredClone(f.table),
+    out = closedSectionOutput(f)
+  expect(out?.cells.find((c) => c.text === 'Gamma')?.opaque).toEqual(donor.opaque)
+  expect(out?.cells.find((c) => c.text === 'Gamma')?.textRuns).toEqual(donor.textRuns)
+  expect(f.table).toEqual(before)
+  let reads = 0
+  Object.defineProperty(donor.opaque, 'foreign', {
+    enumerable: true,
+    get: () => {
+      reads++
+      return 'hidden'
+    }
+  })
+  expect(closedSectionOutput(f)).toBeUndefined()
+  expect(reads).toBe(0)
+})
+
+it('projects only first-baseline group spans across three unequal closed source scopes', () => {
+  const f = unequalFirstBaselineGroups(),
+    before = structuredClone(f)
+  expect(
+    lateFencedGroupHelpers.proveNativeCompleteRuledSourcePacket(
+      f.items,
+      f.rules,
+      f.context,
+      f.table.cropRect
+    )
+  ).toBe(true)
+  const result = firstBaselineGroupOutput(f)
+  expect(result).toBeDefined()
+  expect(
+    result.cells
+      .filter((c: ReturnType<typeof JSON.parse>) => c.column === 0 && c.row > 0 && c.text)
+      .map((c: ReturnType<typeof JSON.parse>) => c.rowSpan)
+  ).toEqual([3, 4, 5])
+  expect(
+    result.cells.filter((c: ReturnType<typeof JSON.parse>) => c.column !== 0 || c.row === 0)
+  ).toEqual(
+    f.table.cells.filter((c: ReturnType<typeof JSON.parse>) => c.column !== 0 || c.row === 0)
+  )
+  for (const k of Object.keys(f.table))
+    if (!['cells', 'grid'].includes(k)) expect(result[k]).toEqual(f.table[k])
+  expect(result.cells.flatMap((c: ReturnType<typeof JSON.parse>) => c.sourceItems ?? [])).toEqual(
+    f.table.cells.flatMap((c: ReturnType<typeof JSON.parse>) => c.sourceItems ?? [])
+  )
+  expect(result.cells.flatMap((c: ReturnType<typeof JSON.parse>) => c.sourceTokens)).toEqual(
+    f.table.cells.flatMap((c: ReturnType<typeof JSON.parse>) => c.sourceTokens)
+  )
+  expect(f).toEqual(before)
+})
+
+it('preserves pure normal label runs and cloneable label metadata during first-baseline grouping', () => {
+  const f = unequalFirstBaselineGroups(),
+    label = f.table.cells.find((c: ReturnType<typeof JSON.parse>) => c.row === 1 && c.column === 0)
+  label.textRuns = [{ text: label.text, position: 'normal' }]
+  label.opaque = { preserve: ['literal'] }
+  const result = firstBaselineGroupOutput(f),
+    next = result?.cells.find((c: ReturnType<typeof JSON.parse>) => c.row === 1 && c.column === 0)
+  expect(next?.textRuns).toEqual(label.textRuns)
+  expect(next?.opaque).toEqual(label.opaque)
+})
+
+it.each([
+  'missing packet',
+  'raw position',
+  'foreign paint',
+  'missing fence',
+  'opaque blank',
+  'foreign blank origin',
+  'foreign origin',
+  'moved label',
+  'unknown label run',
+  'dagger donor'
+])('refuses first-baseline groups without atomic source closure: %s', (variant) => {
+  const f = unequalFirstBaselineGroups(),
+    ops = f.context.operators,
+    label = f.table.cells.find((c: ReturnType<typeof JSON.parse>) => c.row === 1 && c.column === 0),
+    blank = f.table.cells.find((c: ReturnType<typeof JSON.parse>) => c.row === 2 && c.column === 0)
+  if (variant === 'missing packet') delete f.context.content
+  if (variant === 'raw position') ops.argsArray[ops.fnArray.indexOf(OPS.setTextMatrix)][0][4] += 100
+  if (variant === 'foreign paint') {
+    ops.fnArray.push(OPS.beginText, OPS.setTextMatrix, OPS.showText, OPS.endText)
+    ops.argsArray.push(
+      null,
+      [new Float32Array([1, 0, 0, 1, 100, 300])],
+      [
+        [
+          {
+            unicode: 'x',
+            fontChar: 'x',
+            originalCharCode: 120,
+            width: 500,
+            isInFont: true,
+            operatorListId: null
+          }
+        ]
+      ],
+      null
+    )
+  }
+  if (variant === 'missing fence') f.rules.splice(2, 1)
+  if (variant === 'opaque blank') blank.opaque = { preserve: true }
+  if (variant === 'foreign blank origin')
+    blank.sourceItems = [{ pageNumber: 1, index: 0, text: 'Table 1: Records.' }]
+  if (variant === 'foreign origin') label.sourceItems[0].index = 0
+  if (variant === 'moved label') {
+    for (const k of ['text', 'sourceTokens', 'sourceRects', 'sourceItems']) {
+      const old = label[k]
+      label[k] = blank[k]
+      blank[k] = old
+    }
+    f.table.grid[1][0] = label.text
+    f.table.grid[2][0] = blank.text
+  }
+  if (variant === 'unknown label run')
+    label.textRuns = [{ text: label.text, position: 'normal', opaque: { preserve: true } }]
+  if (variant === 'dagger donor') {
+    const c = f.table.cells.find(
+      (c: ReturnType<typeof JSON.parse>) => c.row === 1 && c.column === 1
+    )
+    c.sourceItems[1].index = 0
+  }
+  const before = structuredClone(f)
+  expect(firstBaselineGroupOutput(f)).toBeUndefined()
+  expect(f).toEqual(before)
+})
+
+it('refuses a first-baseline blank accessor without evaluating or discarding it', () => {
+  const f = unequalFirstBaselineGroups(),
+    blank = f.table.cells.find((c: ReturnType<typeof JSON.parse>) => c.row === 2 && c.column === 0)
+  let reads = 0
+  const getter = (): string => {
+    reads++
+    return 'preserve me'
+  }
+  Object.defineProperty(blank, 'opaque', { enumerable: true, configurable: true, get: getter })
+  expect(firstBaselineGroupOutput(f)).toBeUndefined()
+  expect(reads).toBe(0)
+  expect(Object.getOwnPropertyDescriptor(blank, 'opaque')?.get).toBe(getter)
+})
+
+const { collectTableRules: collectMiddleRecordRules } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-graphics.mjs')).href
+)
+const { tableTextToken: middleRecordToken } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-orientation.mjs')).href
+)
+
+const anonymousMergedMiddleSource = (includeMarginRule = false): ReturnType<typeof JSON.parse> => {
+  const viewport = {
+      width: 900,
+      height: 450,
+      scale: 1.5,
+      rotation: 0,
+      transform: [1.5, 0, 0, -1.5, 0, 450],
+      convertToViewportPoint: (x: number, y: number) => [x * 1.5, 450 - y * 1.5]
+    },
+    source: ReturnType<typeof JSON.parse> = {
+      items: [],
+      styles: { font: { ascent: 1, descent: 0, vertical: false } }
+    },
+    ops: ReturnType<typeof JSON.parse> = {
+      fnArray: [OPS.dependency, OPS.setFillRGBColor, OPS.setLineWidth],
+      argsArray: [['font'], ['#000000'], [0.5]]
+    },
+    cuts = [20, 110, 200, 290, 380, 470, 560]
+  const draw = (str: string, x: number, y: number, h = 10): void => {
+    const sourceItem = { pageNumber: 1, index: source.items.length, text: str }
+    source.items.push({
+      str,
+      fontName: 'font',
+      transform: [h, 0, 0, h, x, 300 - y],
+      height: h,
+      width: (str.length * h) / 2,
+      dir: 'ltr',
+      sourceItem
+    })
+    ops.fnArray.push(OPS.setFont, OPS.beginText, OPS.setTextMatrix, OPS.showText, OPS.endText)
+    ops.argsArray.push(
+      ['font', h],
+      null,
+      [new Float32Array([1, 0, 0, 1, x, 300 - y])],
+      [
+        [...str].map((unicode) => ({
+          unicode,
+          fontChar: unicode,
+          originalCharCode: unicode.codePointAt(0),
+          width: 500,
+          isInFont: true,
+          operatorListId: null
+        }))
+      ],
+      null
+    )
+  }
+  draw('Table 1: Values.', 20, 30)
+  for (let c = 0; c < 6; c++) draw(['Name', 'Setting', 'A', 'B', 'C', 'D'][c], cuts[c] + 4, 54)
+  const record = (
+    stub: string,
+    condition: string,
+    y: number,
+    n: number,
+    split = false,
+    stubX = cuts[0] + 4
+  ): void => {
+    if (stub) draw(stub, stubX, y)
+    draw(condition, cuts[1] + 4, y)
+    for (let c = 2; c < 5; c++) draw(String(n + c) + '.1', cuts[c] + 4, y)
+    if (split) {
+      let x = cuts[5] + 4
+      for (const text of ['−', '0', '.', '2%']) {
+        draw(text, x, y)
+        x += text.length * 5
+      }
+    } else draw(String(n + 5) + '.1', cuts[5] + 4, y)
+  }
+  record('AlphaX', 'Plain', 72, 1, false, 83.5)
+  record('Beta', 'Plain', 90, 2)
+  draw('Gamma', cuts[0] + 4, 126)
+  record('', 'Plain', 108, 3)
+  record('', 'Varied (a)', 126, 4, true)
+  record('', 'Varied (b)', 144, 5)
+  record('Omega', 'Plain', 162, 6)
+  for (const y of includeMarginRule ? [10, 40, 58, 180] : [40, 58, 180]) {
+    ops.fnArray.push(OPS.constructPath)
+    ops.argsArray.push([
+      OPS.stroke,
+      [new Float32Array([0, 20, 300 - y, 1, 560, 300 - y])],
+      new Float32Array([20, 300 - y, 560, 300 - y])
+    ])
+  }
+  const tokens = source.items.map((i: ReturnType<typeof JSON.parse>) =>
+      middleRecordToken(i, viewport, 0)
+    ),
+    paint = new Map(),
+    rules = collectMiddleRecordRules(ops, viewport, paint),
+    graphics = rules.map((r: number[]) => {
+      const p = [...paint.get(r.join(','))],
+        radius = (p[3] - p[1]) / 2
+      p[0] -= radius
+      p[2] += radius
+      return {
+        kind: 'path',
+        rect: p.map(
+          (v: number, k: number) =>
+            ((k < 2
+              ? Math.floor((v / (k % 2 ? 450 : 900)) * 256)
+              : Math.ceil((v / (k % 2 ? 450 : 900)) * 256) + 1) *
+              (k % 2 ? 450 : 900)) /
+            256
+        )
+      }
+    }),
+    captions = [{ page: 1, rect: tokens[0].rect, lines: [tokens[0].text] }],
+    edges = [58, 81, 97, 151, 180],
+    crop = [30, 60, 840, 270],
+    model = {
+      id: 'page-1-table-1',
+      cropRect: crop,
+      readingRotation: 0,
+      structure: {
+        objects: [
+          ...cuts.slice(1).map((right, c) => ({
+            label: 'table column',
+            rect: [cuts[c] * 1.5 - 30, 27, right * 1.5 - 30, 210],
+            score: 0.9
+          })),
+          ...edges.slice(1).map((bottom, r) => ({
+            label: 'table row',
+            rect: [0, edges[r] * 1.5 - 60, 810, bottom * 1.5 - 60],
+            score: 0.9
+          }))
+        ]
+      }
+    },
+    context = {
+      operators: ops,
+      content: source,
+      sourceContent: source,
+      viewport,
+      rulePaintBounds: paint,
+      nativeEvidenceGraphics: graphics
+    },
+    runs = measureOrdinaryPrograms(source, ops, viewport)
+  const modelColumns = model.structure.objects.filter(
+    (o: ReturnType<typeof JSON.parse>) => o.label === 'table column'
+  )
+  modelColumns[0].rect[2] = 113.75 * 1.5 - 30
+  modelColumns[1].rect[0] = 113.75 * 1.5 - 30
+  const refined = refineTable(model, tokens, captions, [], rules, runs, undefined, paint, context),
+    table = {
+      ...refined,
+      page: 1,
+      caption: { page: 1, rect: captions[0].rect.map((v) => v / 1.5), lines: captions[0].lines },
+      sourceViewport: { width: 900, height: 450, scale: 1.5 }
+    }
+  return { table, tokens, captions, rules, runs, paint, graphics, context, model }
+}
+const middleRecordResult = (
+  f: ReturnType<typeof anonymousMergedMiddleSource>
+): ReturnType<typeof JSON.parse> =>
+  lateFencedGroupHelpers.recoverNativeFencedGroupLabels(
+    f.table,
+    f.tokens,
+    f.captions,
+    f.rules,
+    f.runs,
+    f.paint,
+    f.graphics,
+    f.context
+  )
+
+it('restores three complete middle records through the actual producer seam', () => {
+  const f = anonymousMergedMiddleSource(),
+    before = structuredClone(f.table),
+    out = middleRecordResult(f)
+  expect(f.tokens).toHaveLength(44)
+  expect(f.table.grid).toHaveLength(5)
+  expect(out).toBeDefined()
+  expect(out.grid).toHaveLength(7)
+  expect(out.grid.slice(3, 6).map((r: string[]) => r[0])).toEqual(['', 'Gamma', ''])
+  expect(
+    out.cells.every((c: ReturnType<typeof JSON.parse>) => c.rowSpan === 1 && c.colSpan === 1)
+  ).toBe(true)
+  expect(f.table).toEqual(before)
+  for (const c of f.table.cells.filter((c: ReturnType<typeof JSON.parse>) => c.row !== 3))
+    expect(
+      out.cells.find(
+        (t: ReturnType<typeof JSON.parse>) =>
+          t.row === (c.row > 3 ? c.row + 2 : c.row) && t.column === c.column
+      )
+    ).toEqual({ ...c, row: c.row > 3 ? c.row + 2 : c.row })
+  const fonts = (t: ReturnType<typeof JSON.parse>): string[] =>
+    t.cells
+      .flatMap((c: ReturnType<typeof JSON.parse>) => c.sourceTokens)
+      .map((t: ReturnType<typeof JSON.parse>) => JSON.stringify(t))
+      .sort()
+  expect(fonts(out)).toEqual(fonts(f.table))
+  const { cells: oldCells, rows: oldRows, grid: oldGrid, ...oldMetadata } = f.table
+  const { cells: newCells, rows: newRows, grid: newGrid, ...newMetadata } = out
+  expect(newMetadata).toEqual(oldMetadata)
+  expect(oldCells.length + 12).toBe(newCells.length)
+  expect(oldRows.length + 2).toBe(newRows.length)
+  expect(oldGrid.length + 2).toBe(newGrid.length)
+  const witness = Object.getOwnPropertyDescriptor(f.table.unassigned, 'reconciliationItems'),
+    next = Object.getOwnPropertyDescriptor(out.unassigned, 'reconciliationItems')
+  expect(next).toEqual(witness)
+  expect(next?.value).toBe(witness?.value)
+})
+
+it('preserves normal field runs and untouched opaque payloads when projecting middle records', () => {
+  const f = anonymousMergedMiddleSource()
+  f.table.foreign = { retained: [1, { value: 'safe' }] }
+  f.table.rows[4].foreign = { retained: [2] }
+  const unaffected = f.table.cells.find(
+    (c: ReturnType<typeof JSON.parse>) => c.row === 4 && c.column === 2
+  )
+  unaffected.foreign = { retained: [3] }
+  for (const c of f.table.cells.filter((c: ReturnType<typeof JSON.parse>) => c.row === 3))
+    c.textRuns = [{ text: c.text, position: 'normal' }]
+  const out = middleRecordResult(f)
+  expect(out).toBeDefined()
+  expect(out.foreign).toEqual(f.table.foreign)
+  expect(out.rows[6]).toEqual(f.table.rows[4])
+  expect(
+    out.cells.find((c: ReturnType<typeof JSON.parse>) => c.row === 6 && c.column === 2)
+  ).toEqual({ ...unaffected, row: 6 })
+  for (const c of out.cells.filter((c: ReturnType<typeof JSON.parse>) => c.row >= 3 && c.row <= 5))
+    expect(c.textRuns).toEqual(c.text ? [{ text: c.text, position: 'normal' }] : [])
+  expect(
+    out.cells
+      .filter((c: ReturnType<typeof JSON.parse>) => c.column === 0 && (c.row === 3 || c.row === 5))
+      .every(
+        (c: ReturnType<typeof JSON.parse>) =>
+          !Object.hasOwn(c, 'sourceItems') && c.sourceTokens.length === 0
+      )
+  ).toBe(true)
+})
+
+it.each([
+  'missing packet',
+  'white text',
+  'unknown cell payload',
+  'unknown row payload',
+  'missing row rectangle',
+  'invalid row rectangle',
+  'unknown run payload',
+  'foreign origin',
+  'partial header alias',
+  'body alias',
+  'between baselines'
+])('refuses middle-record projection with %s', (kind) => {
+  const f = anonymousMergedMiddleSource(),
+    cell = f.table.cells.find((c: ReturnType<typeof JSON.parse>) => c.row === 3 && c.column === 2)
+  if (kind === 'missing packet') f.context.operators = undefined
+  if (kind === 'white text') f.context.operators.argsArray[1] = ['#ffffff']
+  if (kind === 'unknown cell payload') cell.foreign = { scope: 'unknown' }
+  if (kind === 'unknown row payload') f.table.rows[3].foreign = { scope: 'unknown' }
+  if (kind === 'missing row rectangle') delete f.table.rows[3].rect
+  if (kind === 'invalid row rectangle') f.table.rows[3].rect = [0, NaN, 1, 2]
+  if (kind === 'unknown run payload')
+    cell.textRuns = [{ text: cell.text, position: 'normal', foreign: 1 }]
+  if (kind === 'foreign origin') cell.sourceItems[0].index = 9999
+  if (kind === 'partial header alias')
+    f.table.cells.find(
+      (c: ReturnType<typeof JSON.parse>) => c.row === 0 && c.column === 0
+    ).sourceTokens[0].sourceToken.text = 'Partial'
+  if (kind === 'body alias')
+    cell.sourceTokens[0].sourceToken = structuredClone(cell.sourceTokens[0])
+  if (kind === 'between baselines')
+    f.table.cells.find(
+      (c: ReturnType<typeof JSON.parse>) => c.row === 3 && c.column === 0
+    ).sourceTokens[0].baseline += 3
+  const snapshot = structuredClone(f.table)
+  expect(middleRecordResult(f)).toBeUndefined()
+  expect(f.table).toEqual(snapshot)
+})
+
+it('rejects opaque accessor payloads without evaluating them for middle records', () => {
+  const f = anonymousMergedMiddleSource()
+  let reads = 0
+  Object.defineProperty(
+    f.table.cells.find((c: ReturnType<typeof JSON.parse>) => c.row === 3 && c.column === 2),
+    'foreign',
+    {
+      enumerable: true,
+      get() {
+        reads++
+        return 'unknown'
+      }
+    }
+  )
+  expect(middleRecordResult(f)).toBeUndefined()
+  expect(reads).toBe(0)
+})
+
+it('binds complete original paint while keeping repeated margin graphics filtered for prior branches', () => {
+  const f = anonymousMergedMiddleSource(true)
+  expect(f.context.nativeEvidenceGraphics).toHaveLength(4)
+  f.graphics = f.graphics.slice(1)
+  expect(f.graphics).toHaveLength(3)
+  expect(f.table.grid).toHaveLength(5)
+  const out = middleRecordResult(f)
+  expect(out).toBeDefined()
+  expect(out.grid).toHaveLength(7)
+  expect(out.cropRect).toEqual(f.table.cropRect)
+  expect(out.cells.filter((c: ReturnType<typeof JSON.parse>) => c.row === 0)).toEqual(
+    f.table.cells.filter((c: ReturnType<typeof JSON.parse>) => c.row === 0)
+  )
+})
+
+it.each(['missing', 'incomplete', 'contradicting'])(
+  'refuses a %s complete original paint context',
+  (kind) => {
+    const f = anonymousMergedMiddleSource(true)
+    f.graphics = f.graphics.slice(1)
+    if (kind === 'missing') delete f.context.nativeEvidenceGraphics
+    if (kind === 'incomplete') f.context.nativeEvidenceGraphics = f.graphics
+    if (kind === 'contradicting') f.context.nativeEvidenceGraphics[0].rect[1] += 1
+    const before = structuredClone(f.table)
+    expect(middleRecordResult(f)).toBeUndefined()
+    expect(f.table).toEqual(before)
+  }
+)
+
+// Complete native glyph/paint and original owners, across two semantic rows.
+const { isDeepStrictEqual: visualExact } = await import('node:util')
+const { tableTextToken: visualTableToken } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-orientation.mjs')).href
+)
+function visualFractionFixture(
+  options: Record<string, boolean | number> = {}
+): ReturnType<typeof JSON.parse> {
+  const viewport = {
+      scale: 1,
+      rotation: 0,
+      width: 220,
+      height: 220,
+      transform: [1, 0, 0, -1, 0, 220],
+      convertToViewportPoint: (x: number, y: number): number[] => [x, 220 - y]
+    },
+    fnArray: number[] = [],
+    argsArray: ReturnType<typeof JSON.parse>[] = [],
+    items: ReturnType<typeof JSON.parse>[] = [],
+    styles: Record<string, ReturnType<typeof JSON.parse>> = {},
+    cells: ReturnType<typeof JSON.parse>[] = [],
+    push = (c: number, a: ReturnType<typeof JSON.parse> = null): void => {
+      fnArray.push(c)
+      argsArray.push(a)
+    }
+  const deps = ['ordinary', 'script', 'tiny', 'delimiter']
+  for (const f of deps)
+    styles[f] = { fontFamily: 'sans-serif', ascent: 0.8, descent: -0.2, vertical: false }
+  push(OPS.dependency, deps)
+  const line = (x: number, y: number, end: number): void => {
+    const py = 220 - y,
+      p = new Float32Array([0, x, py, 1, end, py]),
+      box = new Float32Array([x, py, end, py])
+    push(OPS.setLineWidth, [0.4])
+    push(OPS.constructPath, [OPS.stroke, [p], box])
+  }
+  line(10, 10, 196)
+  line(10, 30, 196)
+  line(10, 120, 196)
+  if (!options.footerAfterWholeComponent) line(10, 212, 196)
+  const specs: [string, number, number, number, string, number | null, number | null, number?][] = [
+    ['label', 20, 55, 10, 'ordinary', 0, 0],
+    ['value', 100, 55, 10, 'ordinary', 0, 1],
+    ['item', 20, (options.ordinaryBaseline as number) ?? 159, 10, 'ordinary', 1, 0],
+    ['ordinary', 150, options.ordinaryBaseline ?? 159, 10, 'ordinary', 1, 1, 45],
+    ['symbol', 20, 185, 10, 'ordinary', 2, 0],
+    ['v', 100, 185, 10, 'ordinary', 2, 1],
+    ['[', 108, 165, 10, 'delimiter', 1, 1, 4],
+    ['1', 114, 185, 10, 'ordinary', 2, 1, 5],
+    ['−', 120, 185, 10, 'ordinary', 2, 1, 5],
+    ['(', 129, 170, 10, 'delimiter', 1, 1, 5],
+    ['1', 134, 185, 10, 'ordinary', 2, 1, 5],
+    ['−', 140, 185, 10, 'ordinary', 2, 1, 5],
+    ['u', 154, 177, 6.8, 'script', 2, 1, 4],
+    ['−', 158, 177, 6.8, 'script', 2, 1, 4],
+    ['u', 162, 177, 6.8, 'script', 2, 1, 4],
+    ['i', 166, 178, 4.8, 'tiny', 2, 1, 10],
+    ['u', 149, 191, 6.8, 'script', 2, 1, 4],
+    ['j', 153, 192, 4.8, 'tiny', 2, 1, 8],
+    ['−', 162, 191, 6.8, 'script', 2, 1, 5],
+    ['u', 167, 191, 6.8, 'script', 2, 1, 4],
+    ['i', 171, 192, 4.8, 'tiny', 2, 1, 8],
+    [')', 180, options.mismatchedPair ? 171 : 170, 10, 'delimiter', null, null, 5],
+    ['5', 185, (options.exponentBaseline as number) ?? 172, 6.8, 'script', null, null, 3.4],
+    [']', 189, 165, 10, 'delimiter', null, null, 4]
+  ]
+  if (options.foreignFont) specs.push(['x', 191, 80, 10, 'ordinary', null, null, 3])
+  if (options.secondPair)
+    specs.push(['[', 120, 95, 10, 'delimiter', 0, 1, 4], [']', 145, 95, 10, 'delimiter', 0, 1, 4])
+  push(OPS.beginText)
+  for (let n = 0; n < specs.length; n++) {
+    if (n === 16) {
+      push(OPS.endText)
+      line(149, 180, 179)
+      if (options.secondFraction) line(149, 140, 179)
+      if (options.foreignPath) line(185, 80, 194)
+      push(OPS.beginText)
+    }
+    const [text, x, baseline, height, font, row, column, width = text.length * 4] = specs[n],
+      index = items.length,
+      origin = { pageNumber: 1, index, text },
+      raw = {
+        str: text,
+        dir: 'ltr',
+        width,
+        height,
+        transform: [height, 0, 0, height, x, 220 - baseline],
+        fontName: font,
+        hasEOL: false,
+        sourceItem: origin
+      }
+    items.push(raw)
+    push(OPS.setFont, [font, height])
+    push(OPS.setTextMatrix, [1, 0, 0, 1, x, 220 - baseline])
+    push(OPS.showText, [
+      [...text].map((char) => ({
+        unicode: char,
+        fontChar: char,
+        originalCharCode: char.codePointAt(0),
+        width: (width / text.length / height) * 1000,
+        isInFont: true,
+        accent: null
+      }))
+    ])
+    if (row !== null) {
+      let cell = cells.find((c) => c.row === row && c.column === column)
+      if (!cell)
+        cells.push(
+          (cell = {
+            row,
+            column,
+            rowSpan: 1,
+            colSpan: 1,
+            text: '',
+            sourceItems: [],
+            sourceRects: []
+          })
+        )
+      cell.text += (cell.text ? ' ' : '') + text
+      cell.sourceItems.push(origin)
+      cell.sourceRects.push([x, baseline - height, x + width, baseline])
+    }
+  }
+  push(OPS.endText)
+  if (options.footerAfterWholeComponent) {
+    if (options.interposedFooterPath) line(70, 3, 80)
+    if (options.foreignFooterPaint) line(20, 209, 100)
+    if (options.interposedFooterFont || options.foreignFooterFont) {
+      const baseline = options.foreignFooterFont ? 209 : 3,
+        str = 'x',
+        sourceItem = { pageNumber: 1, index: items.length, text: str }
+      items.push({
+        str,
+        dir: 'ltr',
+        width: 3,
+        height: 2,
+        transform: [2, 0, 0, 2, 70, 220 - baseline],
+        fontName: 'ordinary',
+        hasEOL: false,
+        sourceItem
+      })
+      push(OPS.beginText)
+      push(OPS.setFont, ['ordinary', 2])
+      push(OPS.setTextMatrix, [1, 0, 0, 1, 70, 220 - baseline])
+      push(OPS.showText, [
+        [
+          {
+            unicode: 'x',
+            fontChar: 'x',
+            originalCharCode: 120,
+            width: 1500,
+            isInFont: true,
+            accent: null
+          }
+        ]
+      ])
+      push(OPS.endText)
+    }
+    line(10, 212, 196)
+    if (options.secondFooter) line(10, 216, 196)
+  }
+  const operators = { fnArray, argsArray },
+    content = { items, styles },
+    paint = new Map(),
+    rules = lateRules(operators, viewport, paint),
+    fonts = items.map((i) => ({
+      ...visualTableToken(i, viewport, 0),
+      fontDescent: styles[i.fontName].descent
+    })),
+    graphics = [...paint.values()].map((b) => ({
+      kind: 'path',
+      rect: b.map(
+        (v, k) =>
+          ((k < 2 ? Math.floor((v / 220) * 256) : Math.ceil((v / 220) * 256) + 1) * 220) / 256
+      )
+    })),
+    context = {
+      content,
+      sourceContent: content,
+      operators,
+      viewport,
+      rulePaintBounds: paint,
+      nativeEvidenceGraphics: graphics
+    },
+    table: ReturnType<typeof JSON.parse> = {
+      cropRect: [5, 5, 172, 206],
+      cells,
+      grid: [
+        ['label', 'value'],
+        ['item', 'ordinary [ ('],
+        ['symbol', 'v 1 − 1 − u−ui uj−ui']
+      ],
+      unassigned: [],
+      opaque: { retained: true }
+    },
+    candidate = [5, 5, 196.5, 206]
+  for (const c of cells) table.grid[c.row][c.column] = c.text
+  for (const c of cells)
+    c.sourceTokens = c.sourceItems
+      .map((o: ReturnType<typeof JSON.parse>) => {
+        const f = fonts.find((f) => visualExact(f.sourceItem, o))
+        return { text: f.text, rect: f.rect, baseline: f.baseline, height: f.height }
+      })
+      .reverse()
+  if (options.badTokenHeight) cells.at(-1).sourceTokens[0].height += 0.01
+  if (options.duplicateToken) cells.at(-1).sourceTokens[0] = cells.at(-1).sourceTokens[1]
+  if (options.missingToken) cells.at(-1).sourceTokens.pop()
+  if (options.foreignTokenOrigin)
+    cells.at(-1).sourceTokens[0].sourceItem = {
+      pageNumber: 1,
+      index: 999,
+      text: cells.at(-1).sourceTokens[0].text
+    }
+  if (options.unknownToken) cells.at(-1).sourceTokens[0].unknownFontMetric = 1
+  if (options.horizontalToken) cells.at(-1).sourceTokens[0].horizontal = false
+  if (options.badRow) cells.at(-1).row = -1
+  if (options.outOfGridRow) cells.at(-1).row = table.grid.length
+  if (options.badColumn) cells.at(-1).column = -1
+  if (options.outOfGridColumn) cells.at(-1).column = table.grid[0].length
+  if (options.badSpan) cells.at(-1).colSpan = 0
+  if (options.outOfGridSpan) cells.at(-1).rowSpan = 2
+  if (options.unsafeRow) cells.at(-1).row = Number.MAX_SAFE_INTEGER + 1
+  if (options.raggedGrid) table.grid[0].pop()
+  if (options.holeGrid) delete table.grid[1][1]
+  if (options.gridTextMismatch) table.grid.at(-1)[1] = 'foreign'
+  if (options.cropOpaque) table.cropRect.unknownDiagnostic = { preserved: true }
+  if (options.cropHidden)
+    Object.defineProperty(table.cropRect, 'hiddenDiagnostic', {
+      value: { preserved: true },
+      enumerable: false
+    })
+  if (options.candidateOpaque) candidate.unknownDiagnostic = true
+  const rc = fonts
+    .filter((f) =>
+      cells.some((c) =>
+        c.sourceItems.some((o: ReturnType<typeof JSON.parse>) => visualExact(o, f.sourceItem))
+      )
+    )
+    .map((f) => ({
+      text: f.text,
+      sourceItem: f.sourceItem,
+      rect: f.rect,
+      baseline: f.baseline,
+      height: f.height,
+      horizontal: f.horizontal,
+      inlineSymbol: f.inlineSymbol
+    }))
+  if (options.missingRecon) rc.pop()
+  if (options.duplicateRecon) rc[0] = rc[1]
+  if (options.foreignRecon) rc[0].sourceItem = { ...rc[0].sourceItem, index: 999 }
+  if (options.metricRecon) rc[0].fontDescent = 1
+  if (options.unknownRecon) rc[0].unknownFontMetric = 1
+  Object.defineProperty(table.unassigned, 'reconciliationItems', {
+    value: rc,
+    writable: false,
+    enumerable: false,
+    configurable: false
+  })
+  if (options.crossLeaf)
+    cells
+      .find((c) => c.row === 1 && c.column === 1)
+      .sourceItems.forEach((o: ReturnType<typeof JSON.parse>, n: number) => {
+        if (o.text === '[') {
+          const f = fonts.find((f) => visualExact(f.sourceItem, o))
+          cells.find((c) => c.row === 1 && c.column === 0).sourceItems.push(o)
+          cells.find((c) => c.row === 1 && c.column === 0).sourceRects.push(f.rect)
+          cells.find((c) => c.row === 1 && c.column === 1).sourceItems.splice(n, 1)
+          cells.find((c) => c.row === 1 && c.column === 1).sourceRects.splice(n, 1)
+        }
+      })
+  if (options.duplicateSource) {
+    cells[0].sourceItems.push(cells[0].sourceItems[0])
+    cells[0].sourceRects.push(cells[0].sourceRects[0])
+  }
+  if (options.foreignOrigin) cells[0].sourceItems[0] = { ...cells[0].sourceItems[0], index: 999 }
+  if (options.removeSource) {
+    cells[0].sourceItems.splice(0, 1)
+    cells[0].sourceRects.splice(0, 1)
+  }
+  if (options.rawConversion) {
+    const terminal = items.find((i) => i.str === '5'),
+      opIndex = argsArray.findIndex(
+        (a, n) => fnArray[n] === OPS.showText && a[0][0]?.unicode === '5'
+      )
+    terminal.str = '５'
+    terminal.sourceItem.text = '５'
+    argsArray[opIndex][0][0].unicode = '5'
+  }
+  if (options.mask) push(OPS.setGState, [[['ca', 0]]])
+  return { table, fonts, rules, context, candidate }
+}
+const visualCropOutput = (f: ReturnType<typeof JSON.parse>): number[] | undefined =>
+  lateFencedGroupHelpers.recoverNativeVisualFractionCrop?.(f.table, f.fonts, f.rules, f.context)
+
+it('completes a uniquely owned native fraction crop without changing semantic owners', () => {
+  const f = visualFractionFixture(),
+    before = structuredClone(f.table),
+    descriptor = Object.getOwnPropertyDescriptor(f.table.unassigned, 'reconciliationItems'),
+    value = structuredClone(descriptor?.value)
+  expect(visualCropOutput(f)).toEqual([5, 5, 196.5, 206])
+  expect(f.table).toEqual(before)
+  expect(Object.getOwnPropertyDescriptor(f.table.unassigned, 'reconciliationItems')).toEqual(
+    descriptor
+  )
+  expect(descriptor?.value).toEqual(value)
+  expect(
+    f.table.cells
+      .find((c: ReturnType<typeof JSON.parse>) => c.row === 1 && c.column === 1)
+      .sourceItems.some((i: ReturnType<typeof JSON.parse>) => i.text === '[')
+  ).toBe(true)
+  expect(
+    f.table.cells
+      .find((c: ReturnType<typeof JSON.parse>) => c.row === 2 && c.column === 1)
+      .sourceItems.some((i: ReturnType<typeof JSON.parse>) => i.text === 'u')
+  ).toBe(true)
+})
+
+it.each([
+  ['native-second-fraction', { secondFraction: true }],
+  ['missing-reconciliation-item', { missingRecon: true }],
+  ['duplicate-reconciliation-item', { duplicateRecon: true }],
+  ['foreign-reconciliation-origin', { foreignRecon: true }],
+  ['supplied-reconciliation-metric-conflict', { metricRecon: true }],
+  ['unknown-reconciliation-provider-field', { unknownRecon: true }],
+  ['old-crop-opaque-payload', { cropOpaque: true }],
+  ['old-crop-hidden-payload', { cropHidden: true }],
+  ['negative-row', { badRow: true }],
+  ['out-of-grid-row', { outOfGridRow: true }],
+  ['negative-column', { badColumn: true }],
+  ['out-of-grid-column', { outOfGridColumn: true }],
+  ['zero-span', { badSpan: true }],
+  ['span-exceeds-grid', { outOfGridSpan: true }],
+  ['unsafe-integer-row', { unsafeRow: true }],
+  ['ragged-grid', { raggedGrid: true }],
+  ['hole-in-grid', { holeGrid: true }],
+  ['grid-cell-text-mismatch', { gridTextMismatch: true }],
+  ['native-other-record-in-component-band', { ordinaryBaseline: 175 }],
+  ['internal-token-wrong-height', { badTokenHeight: true }],
+  ['internal-token-duplicate', { duplicateToken: true }],
+  ['internal-token-missing', { missingToken: true }],
+  ['internal-token-foreign-origin', { foreignTokenOrigin: true }],
+  ['internal-token-unknown-field', { unknownToken: true }],
+  ['internal-token-horizontal-conflict', { horizontalToken: true }],
+  ['native-exponent-far-above', { exponentBaseline: 80 }],
+  ['native-exponent-below-component', { exponentBaseline: 202 }],
+  ['native-foreign-strip-font', { foreignFont: true }],
+  ['native-foreign-strip-path', { foreignPath: true }],
+  ['native-second-delimiter-pair', { secondPair: true }],
+  ['native-mismatched-delimiter-y', { mismatchedPair: true }],
+  ['claimed-opening-other-leaf', { crossLeaf: true }],
+  ['duplicate-native-source-claim', { duplicateSource: true }],
+  ['foreign-native-source-origin', { foreignOrigin: true }],
+  ['missing-native-source-claim', { removeSource: true }],
+  ['unknown-width-character-conversion', { rawConversion: true }],
+  ['transparent-paint-state', { mask: true }]
+] as [string, Record<string, boolean | number>][])(
+  'refuses a native fraction visual crop with %s',
+  (name, options) => {
+    const f = visualFractionFixture(options),
+      before = structuredClone(f.table)
+    expect(visualCropOutput(f)).toBeUndefined()
+    expect(f.table).toEqual(before)
+  }
+)
+
+it('refuses native crop getters before reading the original rectangle', () => {
+  const f = visualFractionFixture(),
+    crop = f.table.cropRect
+  let reads = 0
+  Object.defineProperty(f.table, 'cropRect', {
+    get() {
+      reads++
+      return crop
+    },
+    configurable: true
+  })
+  expect(visualCropOutput(f)).toBeUndefined()
+  expect(reads).toBe(0)
+})
+
+it.each([
+  ['grid', false],
+  ['grid', true],
+  ['cells', false],
+  ['cells', true],
+  ['unassigned', false],
+  ['unassigned', true]
+] as [string, boolean][])(
+  'refuses native visual table %s accessors without reading them (throw=%s)',
+  (field, throws) => {
+    const f = visualFractionFixture({ footerAfterWholeComponent: true }),
+      value = f.table[field]
+    let reads = 0
+    Object.defineProperty(f.table, field, {
+      get() {
+        reads++
+        if (throws) throw new Error('native visual table accessor read')
+        return value
+      },
+      configurable: true
+    })
+    expect(
+      lateFencedGroupHelpers.proveNativeCompleteRuledSourcePacket(
+        f.fonts,
+        f.rules,
+        f.context,
+        f.candidate
+      )
+    ).toBe(true)
+    expect(visualCropOutput(f)).toBeUndefined()
+    expect(reads).toBe(0)
+    expect(Object.getOwnPropertyDescriptor(f.table, field)?.get).toBeTypeOf('function')
+  }
+)
+
+it('completes only the measured closing-rule paint after a whole native visual component', () => {
+  const f = visualFractionFixture({ footerAfterWholeComponent: true }),
+    before = structuredClone(f.table),
+    descriptor = Object.getOwnPropertyDescriptor(f.table.unassigned, 'reconciliationItems'),
+    value = structuredClone(descriptor?.value)
+  expect(visualCropOutput(f)).toEqual([5, 5, 196.5, 212.2])
+  expect(f.table).toEqual(before)
+  expect(Object.getOwnPropertyDescriptor(f.table.unassigned, 'reconciliationItems')).toEqual(
+    descriptor
+  )
+  expect(descriptor?.value).toEqual(value)
+})
+
+it.each([
+  'secondFooter',
+  'foreignFooterPaint',
+  'foreignFooterFont',
+  'interposedFooterPath',
+  'interposedFooterFont'
+])('keeps the qualified right-only crop when footer evidence has %s', (kind) => {
+  const f = visualFractionFixture({ footerAfterWholeComponent: true, [kind]: true }),
+    before = structuredClone(f.table)
+  expect(
+    lateFencedGroupHelpers.proveNativeCompleteRuledSourcePacket(
+      f.fonts,
+      f.rules,
+      f.context,
+      f.candidate
+    )
+  ).toBe(true)
+  expect(visualCropOutput(f)).toEqual([5, 5, 196.5, 206])
+  expect(f.table).toEqual(before)
 })

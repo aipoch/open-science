@@ -7,6 +7,10 @@ import {
 import { captionKind } from './literature-pdf-caption-group.mjs'
 import { union, isAdjacentTableScript } from './literature-pdf-table-geometry.mjs'
 import {
+  nativeWholeOwnerRepairPacket,
+  nativeWholeOwnerRepairCell
+} from './literature-pdf-native-leaf-record-repair.mjs'
+import {
   tableSourceItems,
   readSourceRow,
   hasUniqueRecordTokens,
@@ -15,6 +19,295 @@ import {
   recoverClosedNativeHeaderBands,
   recoverSharedSampleCountHeaderBands
 } from './literature-pdf-source-records.mjs'
+
+// Repeated native parent underlines and complete scalar records establish two
+// leaves per parent independently of model lanes. Only two finite donor shapes
+// qualify: a collapsed header/first record, or one collapsed terminal leaf pair.
+export function recoverNativePairedHeaderRecordOwners(table, items, _captions, rules, context) {
+  if (![5, 6].includes(table?.grid?.[0]?.length) || table.grid.length < 2 || table.grid.length > 14)
+    return
+  const p = nativeWholeOwnerRepairPacket(table, items, rules, context)
+  if (!p || ![5, 6].includes(p.columns)) return
+  const box = (fs) => union(fs),
+    at = (r, c) => table.cells.find((x) => x.row === r && x.column === c),
+    local = rules.filter(
+      (r) => r[1] === r[3] && r[1] >= table.cropRect[1] - 0.2 && r[1] <= table.cropRect[3] + 0.2
+    ),
+    full = local
+      .filter((r) => r[0] <= box(p.fonts)[0] && r[2] >= box(p.fonts)[2])
+      .sort((a, b) => a[1] - b[1])
+  if (
+    full.length !== 3 ||
+    full.some((r) => Math.abs(r[0] - full[0][0]) > 0.02 || Math.abs(r[2] - full[0][2]) > 0.02)
+  )
+    return
+  const parents = local.filter((r) => !full.includes(r)).sort((a, b) => a[0] - b[0]),
+    count = parents.length,
+    merged = p.columns === 5,
+    columnCount = 1 + count * 2
+  if (
+    (merged ? count !== 2 : count !== 3) ||
+    local.length !== count + 3 ||
+    parents.some(
+      (r, n) =>
+        r[1] <= full[0][1] ||
+        r[1] >= full[1][1] ||
+        Math.abs(r[1] - parents[0][1]) > 0.02 ||
+        r[0] <= full[0][0] ||
+        r[2] >= full[0][2] ||
+        (n && r[0] <= parents[n - 1][2])
+    ) ||
+    rules.some(
+      (r) =>
+        r[0] === r[2] &&
+        r[0] > full[0][0] &&
+        r[0] < full[0][2] &&
+        r[1] < full[2][1] &&
+        r[3] > full[0][1]
+    )
+  )
+    return
+  const upper = p.fonts.filter((f) => f.rect[1] > full[0][1] && f.rect[3] < parents[0][1]),
+    lower = p.fonts.filter((f) => f.rect[1] > parents[0][1] && f.rect[3] < full[1][1]),
+    body = p.groups.filter((g) => g.every((f) => f.rect[1] > full[1][1] && f.rect[3] < full[2][1]))
+  if (
+    !upper.length ||
+    !lower.length ||
+    body.length < 2 ||
+    body.length > 12 ||
+    !hasUniqueRecordTokens(p.fonts, [upper, lower, ...body])
+  )
+    return
+  const upperStub = upper.filter((f) => f.rect[2] < parents[0][0]),
+    lowerStub = lower.filter((f) => f.rect[2] < parents[0][0]),
+    parentFonts = parents.map((r) => upper.filter((f) => f.rect[0] >= r[0] && f.rect[2] <= r[2])),
+    leafFonts = parents.map((r) =>
+      lower
+        .filter((f) => f.rect[0] >= r[0] && f.rect[2] <= r[2])
+        .sort((a, b) => a.rect[0] - b.rect[0])
+    )
+  if (
+    (merged
+      ? upperStub.length !== 1 || lowerStub.length !== 0
+      : upperStub.length !== 0 || lowerStub.length !== 1) ||
+    parentFonts.some(
+      (fs) => !fs.length || fs.length > 2 || !fs.some((f) => /\p{L}/u.test(f.text))
+    ) ||
+    !hasUniqueRecordTokens(upper, [...(upperStub.length ? [upperStub] : []), ...parentFonts]) ||
+    leafFonts.some((fs) => fs.length !== 2 || fs[0].rect[2] >= fs[1].rect[0]) ||
+    !hasUniqueRecordTokens(lower, [...(lowerStub.length ? [lowerStub] : []), ...leafFonts])
+  )
+    return
+  const compact = (t) => t.replace(/\s/gu, ''),
+    profile = leafFonts[0].map((f) => compact(f.text))
+  if (
+    profile[0] === profile[1] ||
+    leafFonts.some((fs) => fs.some((f, n) => compact(f.text) !== profile[n]))
+  )
+    return
+  const records = body.map((g) => {
+    const stub = g.filter((f) => f.rect[2] < parents[0][0]),
+      pairs = parents.map((r) =>
+        g
+          .filter((f) => f.rect[0] >= r[0] && f.rect[2] <= r[2])
+          .sort((a, b) => a.rect[0] - b.rect[0])
+      )
+    if (
+      !stub.length ||
+      stub.length > 3 ||
+      pairs.some(
+        (fs) =>
+          fs.length !== 2 ||
+          fs[0].rect[2] >= fs[1].rect[0] ||
+          fs.some((f) => !/^\d+(?:\.\d+)?(?:\/\d+(?:\.\d+)?)*%?$/.test(f.text.trim())) ||
+          Math.abs(fs[0].baseline - fs[1].baseline) > 0.02
+      ) ||
+      !hasUniqueRecordTokens(g, [stub, ...pairs])
+    )
+      return
+    const baseline = pairs[0][0].baseline
+    if (
+      pairs.some((fs) => Math.abs(fs[0].baseline - baseline) > 0.02) ||
+      !stub.some((f) => Math.abs(f.baseline - baseline) < 0.02) ||
+      stub.some(
+        (f) =>
+          Math.abs(f.baseline - baseline) > 0.02 &&
+          !stub.some((b) => b !== f && isAdjacentTableScript(f, b))
+      )
+    )
+      return
+    return [stub, ...pairs.flat().map((f) => [f])]
+  })
+  if (records.some((r) => !r)) return
+  const boundaries = parents.map((_r, n) => {
+    const left = [leafFonts[n][0], ...records.map((r) => r[1 + n * 2][0])],
+      right = [leafFonts[n][1], ...records.map((r) => r[2 + n * 2][0])],
+      a = Math.max(...left.map((f) => f.rect[2])),
+      b = Math.min(...right.map((f) => f.rect[0]))
+    return a < b ? (a + b) / 2 : undefined
+  })
+  if (boundaries.some((v) => v === undefined)) return
+  const stubRight = Math.max(
+      ...[...upperStub, ...lowerStub, ...records.flatMap((r) => r[0])].map((f) => f.rect[2])
+    ),
+    firstLeft = Math.min(
+      ...leafFonts.flat().map((f) => f.rect[0]),
+      ...records.flatMap((r) => r.slice(1).flat()).map((f) => f.rect[0])
+    )
+  if (stubRight >= firstLeft) return
+  const cuts = [full[0][0], (stubRight + firstLeft) / 2]
+  for (let n = 0; n < count; n++) {
+    cuts.push(boundaries[n])
+    cuts.push(n === count - 1 ? full[0][2] : (parents[n][2] + parents[n + 1][0]) / 2)
+  }
+  if (
+    records.some((r) =>
+      r.some((fs, c) => fs.some((f) => f.rect[0] < cuts[c] || f.rect[2] > cuts[c + 1]))
+    ) ||
+    leafFonts.some((fs, n) =>
+      fs.some((f, k) => f.rect[0] < cuts[1 + n * 2 + k] || f.rect[2] > cuts[2 + n * 2 + k])
+    )
+  )
+    return
+  const exact = (donor, fs) =>
+      donor &&
+      p.owners.get(donor).length === fs.length &&
+      fs.every((f) => p.owners.get(donor).includes(f)),
+    basic = (c) => c && c.rowSpan === 1 && c.colSpan === 1,
+    top = full[0][1],
+    tier = parents[0][1],
+    middle = full[1][1],
+    bottom = full[2][1],
+    bodyEdges = [middle, ...body.slice(1).map((g, n) => (box(body[n])[3] + box(g)[1]) / 2), bottom],
+    edges = [top, tier, ...bodyEdges],
+    replacements = []
+  if (merged) {
+    if (
+      table.grid.length !== records.length ||
+      table.cells.length !== records.length * columnCount ||
+      table.cells.some((c) => !basic(c)) ||
+      !exact(at(0, 0), [...upperStub, ...records[0][0]]) ||
+      records.slice(1).some((r, n) => r.some((fs, c) => !exact(at(n + 1, c), fs)))
+    )
+      return
+    for (let n = 0; n < count; n++)
+      for (let k = 0; k < 2; k++)
+        if (
+          !exact(at(0, 1 + n * 2 + k), [
+            ...(k ? [] : parentFonts[n]),
+            leafFonts[n][k],
+            ...records[0][1 + n * 2 + k]
+          ])
+        )
+          return
+    const stub = nativeWholeOwnerRepairCell(
+      at(0, 0),
+      upperStub,
+      0,
+      0,
+      [cuts[0], top, cuts[1], middle],
+      { rowSpan: 2, colSpan: 1 },
+      p.owners.get(at(0, 0))
+    )
+    if (!stub) return
+    replacements.push(stub)
+    for (let n = 0; n < count; n++) {
+      replacements.push(
+        nativeWholeOwnerRepairCell(
+          at(0, 1 + n * 2),
+          parentFonts[n],
+          0,
+          1 + n * 2,
+          [cuts[1 + n * 2], top, cuts[3 + n * 2], tier],
+          { rowSpan: 1, colSpan: 2 }
+        )
+      )
+      for (let k = 0; k < 2; k++)
+        replacements.push(
+          nativeWholeOwnerRepairCell(
+            at(0, 1 + n * 2 + k),
+            [leafFonts[n][k]],
+            1,
+            1 + n * 2 + k,
+            [cuts[1 + n * 2 + k], tier, cuts[2 + n * 2 + k], middle],
+            { rowSpan: 1, colSpan: 1 }
+          )
+        )
+    }
+    for (let c = 0; c < columnCount; c++)
+      replacements.push(
+        nativeWholeOwnerRepairCell(
+          at(0, c),
+          records[0][c],
+          2,
+          c,
+          [cuts[c], bodyEdges[0], cuts[c + 1], bodyEdges[1]],
+          { rowSpan: 1, colSpan: 1 },
+          p.owners.get(at(0, c))
+        )
+      )
+    if (replacements.some((c) => !c)) return
+    replacements.push(
+      ...table.cells.filter((c) => c.row > 0).map((c) => ({ ...c, row: c.row + 2 }))
+    )
+  } else {
+    if (
+      table.grid.length !== records.length + 2 ||
+      !exact(at(0, 0), []) ||
+      !exact(at(1, 0), lowerStub) ||
+      [0, 1].some(
+        (n) => !exact(at(0, 1 + n * 2), parentFonts[n]) || at(0, 1 + n * 2).colSpan !== 2
+      ) ||
+      !basic(at(0, 5)) ||
+      !exact(at(0, 5), parentFonts[2])
+    )
+      return
+    for (let r = 1; r < table.grid.length; r++) {
+      const fields = r === 1 ? [lowerStub, ...leafFonts.flat().map((f) => [f])] : records[r - 2]
+      if (
+        fields.slice(0, 5).some((fs, c) => !basic(at(r, c)) || !exact(at(r, c), fs)) ||
+        !basic(at(r, 5)) ||
+        !exact(at(r, 5), fields.slice(5).flat())
+      )
+        return
+      for (let c = 5; c < 7; c++)
+        replacements.push(
+          nativeWholeOwnerRepairCell(
+            at(r, 5),
+            fields[c],
+            r,
+            c,
+            [
+              cuts[c],
+              at(r, 5).rect?.[1] ?? edges[r],
+              cuts[c + 1],
+              at(r, 5).rect?.[3] ?? edges[r + 1]
+            ],
+            { rowSpan: 1, colSpan: 1 }
+          )
+        )
+    }
+    if (replacements.some((c) => !c)) return
+    replacements.push({ ...at(0, 5), colSpan: 2 }, ...table.cells.filter((c) => c.column < 5))
+  }
+  const out = {
+    ...table,
+    cells: replacements.sort((a, b) => a.row - b.row || a.column - b.column),
+    grid: Array.from({ length: records.length + 2 }, () => Array(columnCount).fill(''))
+  }
+  for (const c of out.cells) out.grid[c.row][c.column] = c.text
+  if (merged && table.rows) {
+    if (!table.rows[0]?.rect || table.rows.length !== table.grid.length) return
+    out.rows = [
+      ...edges.slice(1, 4).map((y, n) => ({
+        ...table.rows[0],
+        rect: [table.rows[0].rect[0], edges[n], table.rows[0].rect[2], y]
+      })),
+      ...table.rows.slice(1)
+    ]
+  }
+  return nativeWholeOwnerRepairPacket(out, items, rules, context) ? out : undefined
+}
 
 const nativeHorizontalFields = (items, gap) => {
   const groups = []

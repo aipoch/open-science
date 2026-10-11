@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 // Shared offline association; candidate geometry does not prove semantic correctness.
 import assert from 'node:assert/strict'
+import { OPS, Util } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import {
   connectFigureGraphics,
   enclosedFigureFrame,
@@ -12,6 +13,7 @@ import {
 } from './literature-pdf-figure-connectivity.mjs'
 import {
   captionKind,
+  findCaptionCandidates,
   nativePhotographCaption,
   groupPageLines,
   groupNativeCaptionFragments
@@ -30,11 +32,15 @@ import {
 import { nativeRasterCaptionColumn } from './literature-pdf-native-raster-column.mjs'
 import { nativeOpenAxisArray } from './literature-pdf-native-open-axis-array.mjs'
 import { nativeCompleteAxisFigure } from './literature-pdf-figure-complete-axis-ownership.mjs'
-import { nativeConnectedKeyedLegend } from './literature-pdf-figure-connected-keyed-legend.mjs'
+import {
+  nativeConnectedKeyedLegend,
+  nativeFiniteTopRowKeyedLegend
+} from './literature-pdf-figure-connected-keyed-legend.mjs'
 import { nativeAttachedPlotLabels } from './literature-pdf-figure-native-plot-labels.mjs'
 import {
   nativeCaptionedTextIllustration,
   nativeCaptionedVectorDiagram,
+  nativeCaptionedConnectedNodes,
   nativeCaptionedVectorGrid,
   nativeCaptionedVectorTableGrid,
   nativeCaptionedVectorChartStrip,
@@ -625,6 +631,864 @@ function associateFlowchart(page, captions, tableRects) {
   return undefined
 }
 
+// Recover a classifier-rejected title only from a complete independently
+// painted native font program and its single adjacent raster carrier.
+function nativeCaptionPaintPackets(page, context) {
+  const ops = context?.operators,
+    viewport = context?.viewport
+  const numbers = (a, n) => Array.isArray(a) && a.length === n && a.every(Number.isFinite)
+  const near = (a, b) => a.every((v, n) => Math.abs(v - b[n]) < 1e-5)
+  if (
+    !Array.isArray(ops?.fnArray) ||
+    !Array.isArray(ops.argsArray) ||
+    ops.fnArray.length !== ops.argsArray.length ||
+    ops.fnArray.length > 2000 ||
+    !numbers(viewport?.transform, 6) ||
+    !near(viewport.transform, [1, 0, 0, -1, 0, page.height]) ||
+    viewport.scale !== 1 ||
+    viewport.rotation !== 0 ||
+    viewport.width !== page.width ||
+    viewport.height !== page.height
+  )
+    return
+  let matrix = [1, 0, 0, 1, 0, 0],
+    text = false,
+    font,
+    size,
+    origin = [0, 0],
+    cursor = 0
+  const stack = [],
+    packets = [],
+    images = []
+  for (let i = 0; i < ops.fnArray.length; i++) {
+    const op = ops.fnArray[i],
+      a = ops.argsArray[i]
+    if (op === OPS.save) {
+      if (text) return
+      stack.push([...matrix])
+    } else if (op === OPS.restore) {
+      if (text || !stack.length) return
+      matrix = stack.pop()
+    } else if (op === OPS.transform) {
+      if (text || !numbers(a, 6) || a[1] !== 0 || a[2] !== 0 || a[0] <= 0 || a[3] <= 0) return
+      matrix = [
+        matrix[0] * a[0],
+        0,
+        0,
+        matrix[3] * a[3],
+        matrix[0] * a[4] + matrix[4],
+        matrix[3] * a[5] + matrix[5]
+      ]
+      if (!matrix.every(Number.isFinite)) return
+    } else if (op === OPS.beginText) {
+      if (text || !near(matrix, [1, 0, 0, 1, 0, 0])) return
+      text = true
+      origin = [0, 0]
+      cursor = 0
+    } else if (op === OPS.endText) {
+      if (!text) return
+      text = false
+    } else if (op === OPS.setFont) {
+      if (
+        !text ||
+        !Array.isArray(a) ||
+        a.length !== 2 ||
+        typeof a[0] !== 'string' ||
+        !a[0] ||
+        !Number.isFinite(a[1]) ||
+        a[1] <= 0 ||
+        a[1] > 100
+      )
+        return
+      ;[font, size] = a
+    } else if (op === OPS.moveText) {
+      if (!text || !numbers(a, 2)) return
+      origin = [origin[0] + a[0], origin[1] + a[1]]
+      cursor = origin[0]
+    } else if (op === OPS.showText) {
+      if (
+        !text ||
+        !font ||
+        !size ||
+        !Array.isArray(a) ||
+        a.length !== 1 ||
+        !Array.isArray(a[0]) ||
+        a[0].length > 1000
+      )
+        return
+      let first,
+        last,
+        literal = ''
+      for (const glyph of a[0]) {
+        if (typeof glyph === 'number') {
+          if (!Number.isFinite(glyph) || Math.abs(glyph) > 10000) return
+          cursor -= (glyph * size) / 1000
+          continue
+        }
+        if (
+          !glyph ||
+          typeof glyph.unicode !== 'string' ||
+          !glyph.unicode ||
+          glyph.isInFont !== true ||
+          glyph.operatorListId !== undefined ||
+          glyph.accent !== null ||
+          !Number.isFinite(glyph.width) ||
+          glyph.width <= 0 ||
+          glyph.width > 5000
+        )
+          return
+        if (first === undefined) first = cursor
+        literal += glyph.unicode
+        cursor += (glyph.width * size) / 1000
+        last = cursor
+      }
+      if (
+        first === undefined ||
+        !(last > first) ||
+        ![first, last, ...origin].every(Number.isFinite)
+      )
+        return
+      packets.push({
+        font,
+        literal,
+        height: size,
+        baseline: page.height - origin[1],
+        rect: [first, page.height - origin[1] - size, last, page.height - origin[1]],
+        operationIndex: i
+      })
+    } else if (op === OPS.paintImageXObject) {
+      if (
+        text ||
+        !Array.isArray(a) ||
+        a.length !== 3 ||
+        typeof a[0] !== 'string' ||
+        !a[0] ||
+        !Number.isSafeInteger(a[1]) ||
+        a[1] <= 0 ||
+        !Number.isSafeInteger(a[2]) ||
+        a[2] <= 0
+      )
+        return
+      images.push({
+        operationIndex: i,
+        rect: [
+          matrix[4],
+          page.height - matrix[5] - matrix[3],
+          matrix[4] + matrix[0],
+          page.height - matrix[5]
+        ]
+      })
+    } else if (op === OPS.setGState) {
+      // This profile paints at default opaque alpha. Only disabling the
+      // soft mask preserves that proof; unknown state entries fail closed.
+      if (
+        text ||
+        !Array.isArray(a) ||
+        a.length !== 1 ||
+        !Array.isArray(a[0]) ||
+        a[0].length !== 1 ||
+        !Array.isArray(a[0][0]) ||
+        a[0][0].length !== 2 ||
+        a[0][0][0] !== 'SMask' ||
+        a[0][0][1] !== false
+      )
+        return
+    } else if (op === OPS.setFillRGBColor || op === OPS.setStrokeRGBColor) {
+      // The complete native packet family is monochrome on white. Do not
+      // infer visible glyph ink from advances under an unknown paint color.
+      if (!Array.isArray(a) || a.length !== 1 || a[0] !== '#000000') return
+    } else if (op === OPS.dependency) {
+      if (
+        !Array.isArray(a) ||
+        !a.length ||
+        a.length > 100 ||
+        a.some((id) => typeof id !== 'string' || !id)
+      )
+        return
+    } else if (op === OPS.setDash) {
+      if (
+        text ||
+        !Array.isArray(a) ||
+        a.length !== 2 ||
+        !Array.isArray(a[0]) ||
+        a[0].length ||
+        a[1] !== 0
+      )
+        return
+    } else if (op === OPS.setLineCap) {
+      if (text || !Array.isArray(a) || a.length !== 1 || a[0] !== 0) return
+    } else if (op === OPS.setLineWidth) {
+      if (text || !numbers(a, 1) || a[0] <= 0 || a[0] > 10) return
+    } else if (op === OPS.constructPath) {
+      const packed = (value) => {
+        if (Array.isArray(value) || ArrayBuffer.isView(value)) return Array.from(value)
+        // Private JSON source receipts preserve typed-array coordinates as
+        // sequential numeric keys. Validate that exact serialization too.
+        if (
+          value &&
+          typeof value === 'object' &&
+          Object.keys(value).every((key, n) => key === String(n))
+        )
+          return Object.values(value)
+      }
+      const path = packed(a?.[1]?.[0]),
+        bounds = packed(a?.[2])
+      if (
+        text ||
+        !Array.isArray(a) ||
+        a.length !== 3 ||
+        a[0] !== OPS.stroke ||
+        !Array.isArray(a[1]) ||
+        a[1].length !== 1 ||
+        !numbers(path, 6) ||
+        path[0] !== 0 ||
+        path[3] !== 1 ||
+        path[2] !== path[5] ||
+        path[4] <= path[1] ||
+        !numbers(bounds, 4) ||
+        !near(bounds, [path[1], path[2], path[4], path[5]])
+      )
+        return
+    } else return
+  }
+  if (text || stack.length) return
+  return { packets, images }
+}
+
+function recoverNativePunctuatedRasterCaption(page, candidates, tables, rules, tokens, context) {
+  const validRect = (r) =>
+    Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && area(r) > 0
+  const contains = (a, b, tolerance = 1e-7) =>
+    b.every((v, n) => (n < 2 ? v >= a[n] - tolerance : v <= a[n] + tolerance))
+  const glyphs = (s) => s.replace(/\s+/gu, '')
+  const near = (a, b) => a.every((v, n) => Math.abs(v - b[n]) < 1e-5)
+  if (
+    !page?.lines?.length ||
+    page.invalidGraphicsBounds !== 0 ||
+    !tokens?.length ||
+    !page.graphicsBounds?.length ||
+    tables.length
+  )
+    return []
+  const profile = nativeCaptionPaintPackets(page, context)
+  if (!profile || profile.images.length !== 1) return []
+  const images = page.graphicsBounds.filter((g) => g.kind === 'image')
+  if (images.length !== 1) return []
+  const image = images[0]
+  if (
+    !image.imageHash ||
+    !validRect(image.normalizedRect) ||
+    !validRect(image.paintedNormalizedRect) ||
+    !contains(image.normalizedRect, image.paintedNormalizedRect)
+  )
+    return []
+  const rect = image.paintedNormalizedRect.map((v, n) => v * (n % 2 ? page.height : page.width))
+  const painted = profile.images[0]
+  const recorded = image.normalizedRect.map((v, n) => v * (n % 2 ? page.height : page.width))
+  if (
+    image.operationIndex !== painted.operationIndex ||
+    !contains(recorded, painted.rect, 1e-5) ||
+    !near(
+      image.normalizedRect,
+      painted.rect.map(
+        (v, n) =>
+          (n < 2
+            ? Math.floor((v * 256) / (n % 2 ? page.height : page.width))
+            : Math.ceil((v * 256) / (n % 2 ? page.height : page.width)) + 1) / 256
+      )
+    ) ||
+    !contains(painted.rect, rect)
+  )
+    return []
+  const runs = groupPageLines(page, rules),
+    results = []
+  for (const start of runs) {
+    const label = /^(Figure\s+[A-Z]?\d+(?:\.\d+)*:)\s+\p{L}/u.exec(start.text)
+    if (
+      !label ||
+      captionKind(start.text) ||
+      start.right - start.x < page.width * 0.5 ||
+      candidates.some(
+        (c) =>
+          c.page === page.pageNumber &&
+          intersection(c.rect, [start.x, start.y, start.right, start.bottom]) > 0
+      )
+    )
+      continue
+    const em = start.fontSize,
+      gap = start.y - rect[3]
+    if (
+      !(em > 0) ||
+      rect[2] - rect[0] < em * 8 ||
+      rect[3] - rect[1] < em * 8 ||
+      gap < 0 ||
+      gap > em * 2 ||
+      rect[0] < start.x - em ||
+      rect[2] > start.right + em
+    )
+      continue
+    const following = runs
+      .filter(
+        (r) => r.y > start.y && r.y - start.y < em * 14 && r.right > start.x && r.x < start.right
+      )
+      .sort((a, b) => a.y - b.y)
+    const lead = following[0]?.y - start.y,
+      rows = [start]
+    if (lead < em || lead > em * 1.3) continue
+    for (const row of following) {
+      const prior = rows.at(-1)
+      if (
+        rows.length >= 12 ||
+        ![row.x, row.y, row.right, row.bottom, row.fontSize].every(Number.isFinite) ||
+        Math.abs(row.fontSize - em) > em * 0.01 ||
+        Math.abs(row.x - start.x) > em * 0.05 ||
+        row.right > start.right + em * 0.05 ||
+        Math.abs(row.y - prior.y - lead) > em * 0.02 ||
+        captionKind(row.text) ||
+        /^(?:Figure|Fig\.?|Table|Tab\.?)\s+\w+/i.test(row.text)
+      )
+        break
+      rows.push(row)
+      if (/[.!?]$/.test(row.text) && row.right - row.x < (start.right - start.x) * 0.95) break
+    }
+    if (
+      rows.length < 3 ||
+      !/[.!?]$/.test(rows.at(-1).text) ||
+      rows.slice(1, -1).some((r) => r.right - r.x < (start.right - start.x) * 0.95)
+    )
+      continue
+    const captionRect = union(rows.map((r) => [r.x, r.y, r.right, r.bottom]))
+    const envelope = union([rect, captionRect])
+    if (
+      page.graphicsBounds.some(
+        (g) =>
+          g !== image &&
+          intersection(
+            g.normalizedRect.map((v, n) => v * (n % 2 ? page.height : page.width)),
+            envelope
+          ) > 0
+      ) ||
+      rules.some(
+        (r) =>
+          r[1] === r[3] &&
+          r[1] > rect[1] &&
+          r[1] < captionRect[3] &&
+          r[2] > envelope[0] &&
+          r[0] < envelope[2]
+      ) ||
+      candidates.some((c) => c.page === page.pageNumber && intersection(c.rect, envelope) > 0)
+    )
+      continue
+    const fonts = tokens.filter(
+      (t) => t.rect?.every(Number.isFinite) && intersection(t.rect, captionRect) > 0
+    )
+    if (
+      !fonts.length ||
+      fonts.some(
+        (t) =>
+          !t.horizontal ||
+          !validRect(t.rect) ||
+          ![t.height, t.baseline, t.fontDescent].every(Number.isFinite) ||
+          t.fontDescent > 0 ||
+          t.fontDescent < -1 ||
+          t.sourceItem?.pageNumber !== page.pageNumber ||
+          t.sourceItem?.text !== t.text ||
+          !contains(captionRect, t.rect, em * 0.02)
+      )
+    )
+      continue
+    const bound = fonts.map((t) =>
+      profile.packets.filter(
+        (p) =>
+          glyphs(p.literal) === glyphs(t.text) &&
+          near(p.rect, t.rect) &&
+          Math.abs(p.height - t.height) < 1e-5 &&
+          Math.abs(p.baseline - t.baseline) < 1e-5
+      )
+    )
+    if (
+      bound.some((ps) => ps.length !== 1) ||
+      new Set(bound.map((ps) => ps[0].operationIndex)).size !== fonts.length ||
+      new Set(fonts.map((t) => t.sourceItem.index)).size !== fonts.length
+    )
+      continue
+    const paintedFonts = profile.packets.filter((p) => intersection(p.rect, captionRect) > 0)
+    if (
+      paintedFonts.length !== fonts.length ||
+      paintedFonts.some((p) => !bound.some((ps) => ps[0] === p))
+    )
+      continue
+    const packets = rows.map((r) =>
+      fonts
+        .filter((t) => Math.abs(t.baseline - r.bottom) < em * 0.01)
+        .sort((a, b) => a.rect[0] - b.rect[0])
+    )
+    if (
+      packets.flat().length !== fonts.length ||
+      packets.some((ts, n) => glyphs(ts.map((t) => t.text).join('')) !== glyphs(rows[n].text))
+    )
+      continue
+    const ordered = fonts
+      .map((t, n) => ({ token: t, paint: bound[n][0] }))
+      .sort((a, b) => a.paint.operationIndex - b.paint.operationIndex)
+    const parent = ordered[0],
+      first = ordered[1]
+    if (
+      parent?.token.text !== label[1] ||
+      !first ||
+      first.paint.font === parent.paint.font ||
+      Math.abs(first.token.fontDescent - parent.token.fontDescent) < 0.002
+    )
+      continue
+    const title = []
+    let n = 1
+    for (; n < ordered.length; n++) {
+      const entry = ordered[n]
+      if (
+        entry.paint.font !== first.paint.font ||
+        entry.token.fontDescent !== first.token.fontDescent ||
+        Math.abs(entry.token.height - em) > em * 0.01 ||
+        n > 3
+      )
+        break
+      title.push(entry.token.text)
+      if (/[.!?]$/.test(entry.token.text)) {
+        n++
+        break
+      }
+    }
+    if (
+      !title.length ||
+      !/[.!?]$/.test(title.at(-1)) ||
+      ordered[n]?.paint.font !== parent.paint.font ||
+      ordered[n]?.token.fontDescent !== parent.token.fontDescent
+    )
+      continue
+    // Classification alias only: a whole hyphenated noun is one lexical
+    // token. The independently painted title ends before body explanation.
+    if (
+      captionKind(
+        `${label[1]} ${title.join(' ').replace(/\p{L}+(?:[-\u2010-\u2015]\p{L}+)+/gu, '__compound__')}`
+      ) !== 'figure'
+    )
+      continue
+    const whole = union(
+      fonts.map((t) => [t.rect[0], t.rect[1], t.rect[2], t.baseline - t.fontDescent * t.height])
+    )
+    if (
+      tokens.some(
+        (t) =>
+          !fonts.includes(t) &&
+          t.rect?.every(Number.isFinite) &&
+          intersection(t.rect, union([captionRect, whole])) > 0
+      ) ||
+      page.lines.some(
+        (l) =>
+          intersection(lineRect(l), envelope) > 0 &&
+          !rows.some(
+            (r) =>
+              glyphs(r.text) === glyphs(l.text) && near([r.x, r.y, r.right, r.bottom], lineRect(l))
+          )
+      )
+    )
+      continue
+    results.push({
+      caption: {
+        page: page.pageNumber,
+        lines: rows.map((r) => r.text),
+        rect: union([captionRect, whole])
+      },
+      rect,
+      graphicsCount: 1
+    })
+  }
+  return results.length === 1 ? results : []
+}
+
+// Only two native closed frames may complete titles above an already resolved
+// raster grid. Detached result labels remain outside this admission.
+function nativeRasterClosedFrameTitles(
+  page,
+  figure,
+  captions,
+  tables,
+  frames,
+  fonts,
+  foreignOwns,
+  operatorContext
+) {
+  const validRect = (r) =>
+    Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && r[2] > r[0] && r[3] > r[1]
+  const insideRect = (outer, inner) =>
+    inner.every((v, n) => (n < 2 ? v >= outer[n] : v <= outer[n]))
+  if (
+    !page ||
+    !figure ||
+    figure.reason !== 'native-raster-composite-grid' ||
+    !validRect(figure.rect) ||
+    page.invalidGraphicsBounds !== 0 ||
+    !Number.isFinite(page.width) ||
+    !Number.isFinite(page.height) ||
+    page.width <= 0 ||
+    page.height <= 0 ||
+    ![captions, tables, frames, fonts].every(Array.isArray) ||
+    !frames.every(validRect) ||
+    !fonts.length
+  )
+    return
+  const owner = figure.caption,
+    rect = figure.rect,
+    origins = new Set()
+  if (!owner || captions.filter((c) => c === owner).length !== 1 || !validRect(owner.rect)) return
+  for (const f of fonts) {
+    if (
+      !f ||
+      typeof f.text !== 'string' ||
+      !f.text.trim() ||
+      !validRect(f.rect) ||
+      ![f.height, f.baseline].every(Number.isFinite) ||
+      f.height <= 0 ||
+      typeof f.horizontal !== 'boolean' ||
+      f.sourceItem?.pageNumber !== page.pageNumber ||
+      !Number.isSafeInteger(f.sourceItem.index) ||
+      f.sourceItem.index < 0 ||
+      f.sourceItem.text !== f.text
+    )
+      return
+    const k = f.sourceItem.index
+    if (origins.has(k)) return
+    if (operatorContext && operatorContext.content?.items?.[k]?.str !== f.text) return
+    origins.add(k)
+  }
+  const captionFonts = fonts.filter((f) => intersection(owner.rect, f.rect) / area(f.rect) > 0.95)
+  if (!captionFonts.length) return
+  const font = Math.max(...captionFonts.map((f) => f.height))
+  if (!(font > 0)) return
+  const candidates = frames.filter(
+    (f) =>
+      f[1] < rect[1] &&
+      rect[1] - f[1] <= font &&
+      f[3] <= rect[3] &&
+      f[3] - f[1] >= font * 10 &&
+      f[2] - f[0] >= font * 8 &&
+      intersection(f, rect) / area(f) >= 0.9
+  )
+  if (candidates.length !== 2) return
+  const pair = candidates.slice().sort((a, b) => a[0] - b[0])
+  if (
+    intersection(pair[0], pair[1]) !== 0 ||
+    Math.abs(pair[0][1] - pair[1][1]) > font * 0.1 ||
+    Math.abs(pair[0][3] - pair[1][3]) > font * 0.1 ||
+    pair[1][0] - pair[0][2] > font
+  )
+    return
+  if (
+    !Array.isArray(page.graphicsBounds) ||
+    page.graphicsBounds.some(
+      (g) => !g || !['image', 'path'].includes(g.kind) || !validRect(g.normalizedRect)
+    )
+  )
+    return
+  const images = page.graphicsBounds
+    .filter((g) => g.kind === 'image')
+    .map((g) =>
+      (g.paintedNormalizedRect || g.normalizedRect).map(
+        (v, n) => v * (n % 2 ? page.height : page.width)
+      )
+    )
+  if (
+    !images.every(validRect) ||
+    !pair.every((f) => images.filter((r) => insideRect(f, r)).length >= 2)
+  )
+    return
+  const titles = pair.map((frame) =>
+    fonts.filter(
+      (t) =>
+        t.horizontal &&
+        insideRect(frame, t.rect) &&
+        t.rect[1] < rect[1] &&
+        t.rect[3] <= rect[1] + font * 0.3 &&
+        t.height >= font * 0.5 &&
+        t.height <= font * 0.8 &&
+        t.text.length >= 12 &&
+        t.text.length <= 100 &&
+        t.rect[2] - t.rect[0] >= font * 5 &&
+        Math.abs((t.rect[0] + t.rect[2] - frame[0] - frame[2]) / 2) <= font * 2
+    )
+  )
+  if (!titles.every((t) => t.length === 1)) return
+  const selected = titles.flat(),
+    target = [
+      Math.min(rect[0], ...pair.map((f) => f[0])),
+      Math.min(rect[1], ...pair.map((f) => f[1])),
+      rect[2],
+      rect[3]
+    ]
+  if (foreignOwns(target)) return
+  if (
+    captions.some(
+      (c) => c.page === page.pageNumber && c !== owner && intersection(c.rect, target) > 0
+    ) ||
+    tables.some((t) => intersection(t, target) > 0)
+  )
+    return
+  for (const f of fonts) {
+    if (intersection(f.rect, target) > intersection(f.rect, rect) && !selected.includes(f)) return
+  }
+  // Border ink and the renderer's quantized footprint need their specific
+  // source paint. A large overlapping path is never an ownership witness.
+  const specificPaint = nativeRasterFramePaints(page, pair, operatorContext)
+  for (const g of page.graphicsBounds || []) {
+    if (!['path', 'image'].includes(g.kind) || !validRect(g.normalizedRect)) return
+    const r = g.normalizedRect.map((v, n) => v * (n % 2 ? page.height : page.width))
+    if (
+      intersection(r, target) > intersection(r, rect) &&
+      !pair.some((f) => insideRect(f, r)) &&
+      !specificPaint?.has(g)
+    )
+      return
+  }
+  return target
+}
+
+// A bounded first-paint prefix, not a general paint interpreter. Unknown state
+// leaves the old crop intact. The geometry probe's 1.5-scale, 256-bin recorder
+// is the existing source of these rectangles; never bind arbitrary later
+// optimized-render operation indices to the original operator list.
+function nativeRasterFramePaints(page, frames, context) {
+  const { operators, viewport, content } = context ?? {}
+  if (
+    !Array.isArray(operators?.fnArray) ||
+    !Array.isArray(operators.argsArray) ||
+    operators.fnArray.length !== operators.argsArray.length ||
+    !Array.isArray(content?.items) ||
+    !content.items.length ||
+    !Array.isArray(viewport?.transform) ||
+    !viewport.transform.every(Number.isFinite) ||
+    viewport.width !== page.width ||
+    viewport.height !== page.height
+  )
+    return
+  const rectPath = (args) => {
+    const p = args?.[1]?.length === 1 ? args[1][0] : undefined
+    if (
+      !p ||
+      p.length !== 13 ||
+      p[0] !== 0 ||
+      p[12] !== 4 ||
+      ![3, 6, 9].every((n) => p[n] === 1) ||
+      !Array.from(p).every(Number.isFinite)
+    )
+      return
+    const points = [0, 3, 6, 9].map((n) => [p[n + 1], p[n + 2]])
+    const r = [
+      Math.min(...points.map((p) => p[0])),
+      Math.min(...points.map((p) => p[1])),
+      Math.max(...points.map((p) => p[0])),
+      Math.max(...points.map((p) => p[1]))
+    ]
+    if (
+      r[2] <= r[0] ||
+      r[3] <= r[1] ||
+      new Set(points.map((p) => p.join(','))).size !== 4 ||
+      points.some((p, n) => {
+        const q = points[(n + 1) % 4]
+        return p[0] !== q[0] && p[1] !== q[1]
+      }) ||
+      !(Array.isArray(args[2]) || args[2] instanceof Float32Array) ||
+      args[2].length !== 4 ||
+      !Array.from(args[2]).every(Number.isFinite) ||
+      !r.every((v, n) => v === args[2][n])
+    )
+      return
+    return r
+  }
+  const quantize = (r) =>
+    r.map(
+      (v, n) =>
+        (n < 2
+          ? Math.floor(((v * 1.5) / Math.ceil((n % 2 ? page.height : page.width) * 1.5)) * 256)
+          : Math.ceil(((v * 1.5) / Math.ceil((n % 2 ? page.height : page.width) * 1.5)) * 256) +
+            1) / 256
+    )
+  const matrixRect = (r, m) => {
+    if (!m.every(Number.isFinite) || m[1] !== 0 || m[2] !== 0 || m[0] === 0 || m[3] === 0) return
+    const a = [r[0], r[1]],
+      b = [r[2], r[3]]
+    Util.applyTransform(a, m)
+    Util.applyTransform(b, m)
+    return [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[0], b[0]), Math.max(a[1], b[1])]
+  }
+  let transform = [1, 0, 0, 1, 0, 0],
+    group,
+    clip,
+    alpha = 1,
+    white = false,
+    pendingClip = false,
+    first
+  const states = []
+  const fn = operators.fnArray,
+    args = operators.argsArray
+  for (let i = 0; i < fn.length; i++) {
+    const op = fn[i],
+      a = args[i]
+    if (op === OPS.transform) {
+      if (
+        group ||
+        clip ||
+        pendingClip ||
+        !Array.isArray(a) ||
+        a.length !== 6 ||
+        !a.every(Number.isFinite)
+      )
+        return
+      transform = Util.transform(transform, a)
+    } else if (op === OPS.save) states.push([...transform])
+    else if (op === OPS.beginGroup) {
+      if (
+        group ||
+        !a?.[0] ||
+        a[0].matrix !== null ||
+        a[0].smask !== null ||
+        a[0].isolated !== false ||
+        a[0].knockout !== false ||
+        !Array.isArray(a[0].bbox) ||
+        a[0].bbox.length !== 4 ||
+        !a[0].bbox.every(Number.isFinite)
+      )
+        return
+      group = a[0].bbox
+    } else if (op === OPS.paintFormXObjectBegin) {
+      if (!group || a?.[0] != null || a?.[1] != null) return
+      states.push([...transform])
+    } else if (op === OPS.beginMarkedContent) {
+      if (a?.[0]?.name !== 'Artifact') return
+    } else if (op === OPS.clip || op === OPS.eoClip) {
+      if (pendingClip || clip) return
+      pendingClip = true
+    } else if (op === OPS.setGState) {
+      if (!Array.isArray(a?.[0])) return
+      for (const [key, value] of a[0]) {
+        if (key === 'ca') {
+          if (value !== 1) return
+          alpha = value
+        } else if (key === 'BM') {
+          if (value !== 'source-over') return
+        } else return
+      }
+    } else if (op === OPS.setFillRGBColor) {
+      white = a?.length === 1 && a[0] === '#ffffff'
+      if (!white) return
+    } else if (op === OPS.constructPath) {
+      const r = rectPath(a)
+      if (!r) return
+      if (a[0] === OPS.endPath) {
+        if (!pendingClip || clip) return
+        clip = r
+        pendingClip = false
+        continue
+      }
+      if (
+        ![OPS.fill, OPS.eoFill].includes(a[0]) ||
+        !group ||
+        !clip ||
+        pendingClip ||
+        alpha !== 1 ||
+        !white
+      )
+        return
+      first = { index: i, rect: r, matrix: Util.transform(viewport.transform, transform) }
+      break
+    } else return
+  }
+  if (!first) return
+  const outer = matrixRect(group, first.matrix),
+    clipped = matrixRect(clip, first.matrix),
+    paint = matrixRect(first.rect, first.matrix)
+  if (!outer || !clipped || !paint) return
+  const effective = [
+    Math.max(paint[0], clipped[0]),
+    Math.max(paint[1], clipped[1]),
+    Math.min(paint[2], clipped[2]),
+    Math.min(paint[3], clipped[3])
+  ]
+  const q = quantize(effective),
+    outerQ = quantize(outer)
+  if (
+    !q.every((v, n) => v === outerQ[n]) ||
+    !frames.every((f) => f.every((v, n) => (n < 2 ? v >= effective[n] : v <= effective[n])))
+  )
+    return
+  const background = page.graphicsBounds.filter(
+    (g) =>
+      g.kind === 'path' &&
+      g.operationIndex === first.index &&
+      g.normalizedRect.every((v, n) => v === q[n])
+  )
+  if (background.length !== 1 || page.graphicsBounds[0] !== background[0]) return
+  const owned = new Set(background)
+  const activeMatrices = new Map()
+  // Only graphics-state transforms are followed after the first paint. The
+  // unchanged native collector has already established each closed frame.
+  for (let i = first.index + 1; i < fn.length; i++) {
+    const op = fn[i],
+      a = args[i]
+    if (op === OPS.save) states.push([...transform])
+    else if (op === OPS.restore || op === OPS.paintFormXObjectEnd) {
+      if (!states.length) return
+      transform = states.pop()
+    } else if (op === OPS.transform) {
+      if (!Array.isArray(a) || a.length !== 6 || !a.every(Number.isFinite)) return
+      transform = Util.transform(transform, a)
+    } else if (op === OPS.paintFormXObjectBegin) {
+      states.push([...transform])
+      if (a?.[0] != null) {
+        if (!Array.isArray(a[0]) || a[0].length !== 6 || !a[0].every(Number.isFinite)) return
+        transform = Util.transform(transform, a[0])
+      }
+    } else if (op === OPS.beginGroup && a?.[0]?.matrix != null) return
+    else if (op === OPS.constructPath && a?.[0] === OPS.stroke)
+      activeMatrices.set(i, Util.transform(viewport.transform, transform))
+  }
+  if (states.length) return
+  for (const frame of frames) {
+    const matches = []
+    for (let i = first.index + 1; i < fn.length; i++) {
+      if (
+        fn[i] !== OPS.constructPath ||
+        args[i]?.[0] !== OPS.stroke ||
+        fn[i - 4] !== OPS.save ||
+        fn[i - 3] !== OPS.setLineWidth ||
+        fn[i - 2] !== OPS.setStrokeRGBColor ||
+        fn[i - 1] !== OPS.setDash ||
+        fn[i + 1] !== OPS.restore
+      )
+        continue
+      const r = rectPath(args[i]),
+        width = args[i - 3]?.[0]
+      if (!r || !(width > 0) || !Number.isFinite(width)) continue
+      if (!activeMatrices.get(i)?.every((v, n) => v === first.matrix[n])) continue
+      const center = matrixRect(r, first.matrix)
+      if (!center || !center.every((v, n) => v === frame[n])) continue
+      const ink = matrixRect(
+          r.map((v, n) => v + (n < 2 ? -width / 2 : width / 2)),
+          first.matrix
+        ),
+        footprint = quantize(ink)
+      const graphics = page.graphicsBounds.filter(
+        (g) =>
+          g.kind === 'path' &&
+          g.operationIndex === i &&
+          g.normalizedRect.every((v, n) => v === footprint[n])
+      )
+      if (graphics.length === 1) matches.push(graphics[0])
+    }
+    if (matches.length !== 1 || owned.has(matches[0])) return
+    owned.add(matches[0])
+  }
+  return owned
+}
+
 export function associateFigures(
   page,
   candidates,
@@ -642,6 +1506,17 @@ export function associateFigures(
     closedFrames,
     nativeTokens
   )
+  if (!associated.length) {
+    const recovered = recoverNativePunctuatedRasterCaption(
+      page,
+      candidates,
+      tableRects,
+      rules,
+      nativeTokens,
+      operatorContext
+    )
+    if (recovered.length) return recovered
+  }
   // Completion must use the same independently proved margin-free source as
   // face association, or complete native plot bands can reattach a running head.
   const nativeHead = page.graphicsBounds
@@ -662,6 +1537,29 @@ export function associateFigures(
       )
     }
   return associated.map((figure, figureIndex) => {
+    // Complete native enclosures and their unique directed connectors own
+    // every node label. Preserve this whole component before generic padding.
+    const connectedNodes = nativeCaptionedConnectedNodes(
+      page,
+      figure.caption,
+      candidates,
+      tableRects,
+      nativeTokens,
+      operatorContext
+    )
+    if (connectedNodes) return { ...figure, ...connectedNodes, issue: undefined }
+    // A complete native form independently owns its keyed top-row legend.
+    // Preserve that proved form boundary through final figure completion.
+    const finiteTopRowLegend = nativeFiniteTopRowKeyedLegend(
+      page,
+      figure.caption,
+      candidates,
+      tableRects,
+      nativeTokens,
+      figure.rect,
+      operatorContext
+    )
+    if (finiteTopRowLegend) return { ...figure, ...finiteTopRowLegend, issue: undefined }
     // This bounded raster family already proves every whole font and painted
     // carrier. Generic detached-label padding would attach unrelated margin
     // furniture outside its complete native source ownership.
@@ -675,8 +1573,13 @@ export function associateFigures(
     if (pairedRaster) return { ...figure, ...pairedRaster, issue: undefined }
     // Prefer complete, independently proved source faces over a matcher that
     // stops at the panel nearest the caption.
+    // Completion must preserve the native face's already proved prose exclusion.
+    // Original graphics and fonts still establish the whole painted plot extent.
+    const plotPage = figure.excludedProseLines?.length
+      ? { ...page, lines: page.lines.filter((line) => !figure.excludedProseLines.includes(line)) }
+      : page
     const closedPlots = nativeCaptionedPlotBand(
-      page,
+      plotPage,
       figure.caption,
       candidates,
       tableRects,
@@ -860,6 +1763,17 @@ export function associateFigures(
         associated.some(
           (other, n) => n !== figureIndex && other.rect && intersection(other.rect, r) > 0
         )
+      const frameTitles = nativeRasterClosedFrameTitles(
+        page,
+        candidate,
+        candidates,
+        tableRects,
+        closedFrames,
+        nativeTokens,
+        foreignOwns,
+        operatorContext
+      )
+      if (frameTitles) candidate = { ...candidate, rect: frameTitles }
       const labels =
         nativeOwnedRasterTitleRows(
           page,
@@ -1887,6 +2801,21 @@ function associateFigureFaces(
     // descriptive continuation may contain a finite verb without turning
     // that independently accepted title into an inline prose reference.
     let kind = captionKind(c.lines[0])
+    // A finite verb remains conservative in the text-only classifier. Reuse
+    // the same complete native caption proof that admitted an isolated colon
+    // title, binding every line and its rectangle instead of adding a marker.
+    if (kind === undefined && /^Figure\s+[A-Z]?\d+:\s+(?:As|For|In)\b/u.test(c.lines[0])) {
+      const native = findCaptionCandidates([page], new Map([[page.pageNumber, rules]]))
+      if (
+        native.filter(
+          (candidate) =>
+            candidate.lines.length === c.lines.length &&
+            candidate.lines.every((line, index) => line === c.lines[index]) &&
+            candidate.rect.every((value, axis) => value === c.rect[axis])
+        ).length === 1
+      )
+        kind = 'figure'
+    }
     // A tight label-only first line needs its immediate descriptive title.
     // Keep this fallback exclusive to printed ordinals; later caption prose
     // cannot reclassify either a rejected reference or an accepted title.
@@ -2017,7 +2946,14 @@ function associateFigureFaces(
           nativeCaptionedWorkflowPanel(page, caption, captions, tableRects) ??
           nativeCaptionedVectorDiagram(page, caption, captions, tableRects) ??
           nativeCaptionedVectorTableGrid(page, caption, captions, tableRects) ??
-          nativeCaptionedVectorChartStrip(page, caption, captions, tableRects) ??
+          nativeCaptionedVectorChartStrip(
+            page,
+            caption,
+            captions,
+            tableRects,
+            nativeTokens,
+            closedFrames
+          ) ??
           nativeCaptionedVectorGrid(page, caption, captions, tableRects)
       )
       .filter(Boolean)
@@ -3595,7 +4531,9 @@ function associateFigureFaces(
       page,
       caption,
       pageCaptions,
-      tableRects
+      tableRects,
+      nativeTokens,
+      closedFrames
     )
     if (vectorChartStrip) return vectorChartStrip
     const vectorBarChart = nativeCaptionedVectorBarChart(

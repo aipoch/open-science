@@ -3,6 +3,256 @@ import { captionKind } from './literature-pdf-caption-group.mjs'
 import { area, intersection as intersect } from './literature-pdf-page-geometry.mjs'
 import { inside, isAdjacentTableScript, rebaseTableCrop } from './literature-pdf-table-geometry.mjs'
 import { clusterTableRulePositions } from './literature-pdf-table-rules.mjs'
+import {
+  proveNativeCompleteRuledSourcePacket,
+  nativeWholeFontOrigins,
+  nativeCompleteRuledPaintCrop
+} from './literature-pdf-native-leaf-record-repair.mjs'
+
+// A closed three-leaf prose/sign/prose body owns each physical record locally.
+// Full-width section rows are witnessed by the absence of both inner fences,
+// never by a previous page's title or an inferred logical continuation.
+export function recoverNativeClosedProseSymbolRows(table, items, rules, context) {
+  const crop = table?.cropRect,
+    valid = (r) =>
+      Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && r[0] < r[2] && r[1] < r[3]
+  if (!valid(crop) || !Array.isArray(items) || !Array.isArray(rules)) return
+  const near = rules.filter((r) => r[0] === r[2] && r[1] >= crop[1] - 2 && r[3] <= crop[3] + 2),
+    xs = [...new Set(near.map((r) => r[0]))].sort((a, b) => a - b)
+  if (xs.length !== 4) return
+  const horizontal = rules.filter(
+    (r) =>
+      r[1] === r[3] &&
+      Math.abs(r[0] - xs[0]) < 0.4 &&
+      Math.abs(r[2] - xs[3]) < 0.4 &&
+      r[1] >= crop[1] - 2 &&
+      r[1] <= crop[3] + 2
+  )
+  const ys = [...new Set(horizontal.map((r) => r[1]))].sort((a, b) => a - b)
+  if (ys.length < 6 || ys.length > 40) return
+  const frame = [
+    Math.min(...horizontal.map((r) => r[0])),
+    ys[0],
+    Math.max(...horizontal.map((r) => r[2])),
+    ys.at(-1)
+  ]
+  if (!proveNativeCompleteRuledSourcePacket(items, rules, context, frame)) return
+  const native = items.filter(
+    (i) =>
+      i.rect[0] < frame[2] && i.rect[2] > frame[0] && i.rect[1] < frame[3] && i.rect[3] > frame[1]
+  )
+  if (
+    native.some((i) => i.rect[0] < frame[0] || i.rect[2] > frame[2] || i.rect[3] > frame[3]) ||
+    !nativeWholeFontOrigins(native)
+  )
+    return
+  const spans = [],
+    groups = [],
+    rowEdges = [...ys]
+  let records = 0
+  for (let row = 0; row < ys.length - 1; row++) {
+    const top = ys[row],
+      bottom = ys[row + 1],
+      fence = (x) =>
+        near.filter((r) => Math.abs(r[0] - x) < 0.01 && r[1] <= top + 0.4 && r[3] >= bottom - 0.4)
+          .length
+    if (!fence(xs[0]) || !fence(xs[3])) return
+    const inner = [fence(xs[1]), fence(xs[2])],
+      fonts = native.filter((i) => i.baseline > top && i.baseline < bottom)
+    if (!fonts.length) return
+    groups.push(fonts)
+    if (inner.every((n) => n === 0)) {
+      if (
+        fonts.length !== 1 ||
+        !/^\p{L}[\p{L}\s-]{2,}$/u.test(fonts[0].text) ||
+        Math.abs((fonts[0].rect[0] + fonts[0].rect[2] - xs[0] - xs[3]) / 2) > fonts[0].height * 0.4
+      )
+        return
+      // Preserve the whole nominal title font even when its upper metric
+      // reaches just past the native rule. Its preceding complete record must
+      // end before that font; moving the empty boundary never splits any ink.
+      if (fonts[0].rect[3] > bottom || fonts[0].rect[1] < (row ? ys[row - 1] : crop[1])) return
+      rowEdges[row] = Math.min(top, fonts[0].rect[1])
+      spans.push({ row, column: 0, rowSpan: 1, colSpan: 3 })
+      continue
+    }
+    if (inner.some((n) => n !== 1)) return
+    if (fonts.some((i) => i.rect[1] < top || i.rect[3] > bottom)) return
+    const lanes = [0, 1, 2].map((c) =>
+      fonts.filter((i) => i.rect[0] >= xs[c] && i.rect[2] <= xs[c + 1])
+    )
+    if (
+      lanes.flat().length !== fonts.length ||
+      lanes.some((l) => !l.length) ||
+      lanes[1].length !== 1 ||
+      !/^[+−-]$/u.test(lanes[1][0].text) ||
+      !lanes[0].some((i) => /\p{L}{3}/u.test(i.text)) ||
+      !lanes[2].some((i) => /\p{L}{3}/u.test(i.text))
+    )
+      return
+    records++
+  }
+  if (
+    records < 4 ||
+    spans.length < 1 ||
+    spans.length > 3 ||
+    new Set(groups.flat()).size !== native.length ||
+    groups.some((g, n) => g.some((i) => i.rect[1] < rowEdges[n] || i.rect[3] > rowEdges[n + 1]))
+  )
+    return
+  frame[1] = rowEdges[0]
+  const completeCrop = nativeCompleteRuledPaintCrop(
+    frame,
+    [...horizontal, ...near],
+    context,
+    native
+  )
+  if (!completeCrop) return
+  return {
+    cropRect: completeCrop,
+    rows: rowEdges.slice(1).map((y, n) => [frame[0], rowEdges[n], frame[2], y]),
+    columns: xs.slice(1).map((x, n) => [xs[n], frame[1], x, frame[3]]),
+    headerRows: spans.filter((s) => s.row === 0).map((s) => s.row),
+    spans,
+    completeSpans: true,
+    ownedTokens: new Set(native),
+    repair: 'native-body-records-recovered'
+  }
+}
+
+// A complete two-field statistics body needs its own caption, three enclosing
+// horizontal rules, every central-value anchor and every whole script font.
+// This supplies physical row/column ownership; script serialization stays in
+// the existing cell-text proof and never guesses scientific values.
+export function recoverNativeCaptionedTwoFieldRows(table, items, captions, rules, context) {
+  const crop = table?.cropRect
+  if (
+    !Array.isArray(crop) ||
+    crop.length !== 4 ||
+    !crop.every(Number.isFinite) ||
+    !Array.isArray(items) ||
+    !Array.isArray(captions) ||
+    !Array.isArray(rules)
+  )
+    return
+  const horizontal = rules
+    .filter(
+      (r) =>
+        r[1] === r[3] &&
+        r[1] >= crop[1] - 20 &&
+        r[1] <= crop[3] + 20 &&
+        Math.abs(r[0] - crop[0]) < 20 &&
+        Math.abs(r[2] - crop[2]) < 20
+    )
+    .sort((a, b) => a[1] - b[1])
+  if (
+    horizontal.length !== 3 ||
+    horizontal.some(
+      (r) => Math.abs(r[0] - horizontal[0][0]) > 0.01 || Math.abs(r[2] - horizontal[0][2]) > 0.01
+    )
+  )
+    return
+  const [top, divider, bottom] = horizontal,
+    frame = [top[0], top[1], top[2], bottom[1]]
+  if (!proveNativeCompleteRuledSourcePacket(items, rules, context, frame)) return
+  const native = items.filter(
+    (i) =>
+      i.rect[0] < frame[2] && i.rect[2] > frame[0] && i.rect[1] < frame[3] && i.rect[3] > frame[1]
+  )
+  if (!native.length || native.some((i) => !inside(frame, i)) || !nativeWholeFontOrigins(native))
+    return
+  const h = Math.max(...native.map((i) => i.height)),
+    titles = captions.filter(
+      (c) =>
+        c.page === native[0].sourceItem.pageNumber &&
+        captionKind(c.lines?.[0]) === 'table' &&
+        c.rect?.[3] <= top[1] &&
+        top[1] - c.rect[3] < h * 3 &&
+        c.rect[2] > frame[0] &&
+        c.rect[0] < frame[2]
+    )
+  if (titles.length !== 1 || captions.some((c) => c.rect[1] < frame[3] && c.rect[3] > frame[1]))
+    return
+  const header = native.filter((i) => i.rect[3] < divider[1]),
+    body = native.filter((i) => i.rect[1] > divider[1])
+  if (
+    header.length + body.length !== native.length ||
+    !header.length ||
+    divider[1] - top[1] > h * 3
+  )
+    return
+  const anchors = body
+    .filter(
+      (i) =>
+        i.height === h &&
+        /^\p{L}[\p{L}. -]*$/u.test(i.text) &&
+        i.rect[2] < frame[0] + (frame[2] - frame[0]) * 0.4
+    )
+    .sort((a, b) => a.baseline - b.baseline)
+  if (
+    anchors.length < 3 ||
+    anchors.length > 12 ||
+    anchors.some((i, n) => n && i.baseline - anchors[n - 1].baseline < h)
+  )
+    return
+  const central = anchors.map((a) =>
+    body.filter(
+      (i) =>
+        i !== a &&
+        i.height === h &&
+        Math.abs(i.baseline - a.baseline) < h * 0.02 &&
+        /^\d+(?:\.\d+)?$/u.test(i.text)
+    )
+  )
+  if (central.some((g) => g.length !== 1)) return
+  const left = Math.max(...anchors.map((i) => i.rect[2])),
+    right = Math.min(...central.map((g) => g[0].rect[0]))
+  if (right - left < h * 0.5) return
+  const cut = (left + right) / 2,
+    groups = anchors.map((a) => body.filter((i) => Math.abs(i.baseline - a.baseline) < h * 0.5))
+  if (
+    groups.flat().length !== body.length ||
+    new Set(groups.flat()).size !== body.length ||
+    groups.some(
+      (g, n) =>
+        g.filter((i) => i.rect[2] <= cut).length !== 1 ||
+        !g.includes(anchors[n]) ||
+        g.some((i) => i.rect[0] < cut && i.rect[2] > cut) ||
+        !g.some((i) => i.rect[0] >= cut && i.height < h && /^[+−-]/u.test(i.text))
+    )
+  )
+    return
+  if (
+    header.some((i) => i.rect[0] < cut && i.rect[2] > cut) ||
+    !header.some((i) => i.rect[2] <= cut && /\p{L}/u.test(i.text)) ||
+    !header.some((i) => i.rect[0] >= cut && /\p{L}/u.test(i.text))
+  )
+    return
+  const bounds = groups.map((g) => [
+    Math.min(...g.map((i) => i.rect[1])),
+    Math.max(...g.map((i) => i.rect[3]))
+  ])
+  if (bounds.some((b, n) => n && b[0] <= bounds[n - 1][1])) return
+  const ys = [
+      top[1],
+      divider[1],
+      ...bounds.slice(1).map((b, n) => (bounds[n][1] + b[0]) / 2),
+      bottom[1]
+    ],
+    cuts = [frame[0], cut, frame[2]]
+  const completeCrop = nativeCompleteRuledPaintCrop(frame, horizontal, context, native)
+  if (!completeCrop) return
+  return {
+    cropRect: completeCrop,
+    rows: ys.slice(1).map((y, n) => [frame[0], ys[n], frame[2], y]),
+    columns: cuts.slice(1).map((x, n) => [cuts[n], frame[1], x, frame[3]]),
+    headerRows: [0],
+    spans: [],
+    completeSpans: true,
+    ownedTokens: new Set(native),
+    repair: 'native-body-records-recovered'
+  }
+}
 
 // A detector can start a lower table above its title when an upper table ends
 // close to the next caption.  Keep the lower region bounded by its explicit
@@ -657,7 +907,7 @@ export function recoverRuledTable(items, rules, pageNumber, caption = undefined)
 // pair, the horizontal rule span plus the surviving interior column rules still
 // prove a separate table. Reconstruct row bands from native text baselines so
 // the fallback preserves every visible row without broadening ordinary prose.
-function recoverCaptionedOpenRuleTable(items, rules, pageNumber, caption) {
+function recoverCaptionedOpenRuleTable(items, rules, pageNumber, caption, captions) {
   const overlap = (a, b) => Math.max(0, Math.min(a[2], b[2]) - Math.max(a[0], b[0]))
   const cluster = (values, tolerance = 1.5) =>
     values
@@ -697,6 +947,29 @@ function recoverCaptionedOpenRuleTable(items, rules, pageNumber, caption) {
   const left = Math.min(...horizontal.map((rule) => rule[0]))
   const right = Math.max(...horizontal.map((rule) => rule[2]))
   if (!(right > left) || overlap([left, top, right, bottom], caption.rect) < (right - left) * 0.5)
+    return
+  // Centered titles of different widths need not share a left edge. The first
+  // surviving rule can therefore belong to a later, narrower table. Refuse
+  // that fallback when a distinct explicit title intervenes before its entire
+  // rule frame; ordinary continuation titles and neighboring columns remain
+  // eligible. Do not remove any existing detector-owned table.
+  const number = /^Table\s+(\d+[A-Z]?)\s*[:.]/i.exec(caption.lines?.[0] ?? '')?.[1]
+  if (
+    number &&
+    captions.some((other) => {
+      const nextNumber = /^Table\s+(\d+[A-Z]?)\s*[:.]/i.exec(other.lines?.[0] ?? '')?.[1]
+      return (
+        other !== caption &&
+        other.page === caption.page &&
+        nextNumber &&
+        nextNumber.toLowerCase() !== number.toLowerCase() &&
+        other.rect[1] > caption.rect[3] &&
+        other.rect[3] <= top + 2 &&
+        overlap(other.rect, [left, top, right, bottom]) >=
+          Math.min(other.rect[2] - other.rect[0], right - left) * 0.5
+      )
+    })
+  )
     return
   const verticalSegments = rules.filter(
     (rule) =>
@@ -1149,7 +1422,7 @@ export function recoverCaptionedRuledTables(
     const ruled = recoverRuledTable(items, bounded, pageNumber, caption)
     const openRule = hasCompleteCaptionedTable(caption)
       ? undefined
-      : recoverCaptionedOpenRuleTable(items, bounded, pageNumber, caption)
+      : recoverCaptionedOpenRuleTable(items, bounded, pageNumber, caption, candidates)
     const recovered =
       openRule &&
       (!ruled ||

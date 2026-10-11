@@ -8,6 +8,154 @@ const { refineTable } = await import(
 const { mergeDuplicateSourceRows } = await import(
   pathToFileURL(resolve('resources/literature-pdf-table-row-repair.mjs')).href
 )
+const { removeEmptyOverlappingRows } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-table-row-repair.mjs')).href
+)
+const { recoverCaptionedRuledTables } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-table-regions.mjs')).href
+)
+
+const separatedCaptionedFrames = (): ReturnType<typeof JSON.parse> => {
+  const captions = [
+    { page: 1, lines: ['Table 1: First settings'], rect: [120, 10, 200, 20] },
+    { page: 1, lines: ['Table 2: Second settings'], rect: [110, 160, 210, 170] },
+    { page: 1, lines: ['Table 3: Final settings'], rect: [90, 330, 230, 340] }
+  ]
+  const rules = [25, 45, 140, 175, 195, 310].map((y) => [40, y, 260, y])
+  rules.push(...[345, 365, 425].map((y) => [121, y, 199, y]))
+  const token = (text: string, x: number, y: number): object => ({
+    text,
+    rect: [x, y, x + 12, y + 8],
+    baseline: y + 8,
+    height: 8,
+    horizontal: true
+  })
+  const items = [30, 60, 90, 120, 180, 210, 240, 290].flatMap((y, n) => [
+    token('Setting', 50, y),
+    token(String(n + 10), n % 2 ? 185 : 170, y)
+  ])
+  items.push(
+    ...[350, 375, 395, 415].flatMap((y, n) => [
+      token(n ? 'Value' : 'Header', 125, y),
+      token(String(n + 20), 175, y)
+    ])
+  )
+  const existing = [
+    [38, 15, 262, 142],
+    [38, 172, 262, 312],
+    [119, 344, 201, 427]
+  ].map((cropRect) => ({
+    cropRect,
+    structure: {
+      objects: [
+        ...[0, 1, 2, 3].map(() => ({ label: 'table row' })),
+        ...[0, 1].map(() => ({ label: 'table column' }))
+      ]
+    }
+  }))
+  return { captions, rules, items, existing }
+}
+
+it('does not recover a narrow later frame under an earlier centered table title', () => {
+  const f = separatedCaptionedFrames(),
+    before = structuredClone(f)
+  expect(recoverCaptionedRuledTables(f.items, f.rules, f.captions, 1, f.existing)).toEqual([])
+  expect(f).toEqual(before)
+})
+
+it.each(['same-number', 'neighboring-column', 'below-frame', 'reference-without-delimiter'])(
+  'preserves the open-rule fallback without a distinct intervening title: %s',
+  (mutation) => {
+    const f = separatedCaptionedFrames()
+    // Keep the first caption and the one immediately above the narrow frame.
+    f.captions.splice(1, 1)
+    const later = f.captions[1]
+    if (mutation === 'same-number') later.lines = ['Table 1: Continued settings']
+    if (mutation === 'neighboring-column') later.rect = [270, 330, 350, 340]
+    if (mutation === 'below-frame') later.rect = [90, 430, 230, 440]
+    if (mutation === 'reference-without-delimiter') later.lines = ['Table 3 has further settings']
+    expect(recoverCaptionedRuledTables(f.items, f.rules, f.captions, 1, f.existing)).toHaveLength(1)
+  }
+)
+
+const emptySourceSeam = (): ReturnType<typeof JSON.parse> => {
+  const rows = [
+    { rect: [0, 0, 300, 10], origin: 'model' },
+    { rect: [0, 15, 300, 30], origin: 'model' },
+    { rect: [0, 31.5, 300, 32.05], origin: 'source-text' },
+    { rect: [0, 31.9, 300, 45], origin: 'model' }
+  ]
+  const items = [20, 32].flatMap((y, n) =>
+    ['Record ' + n, '12', '34'].map((text, c) => ({
+      text,
+      rect: [c * 100 + 5, y, c * 100 + 45, y + 10],
+      baseline: y + 10,
+      height: 10,
+      horizontal: true
+    }))
+  )
+  const cells = [1, 3].flatMap((row, n) =>
+    items.slice(n * 3, n * 3 + 3).map((item, column) => ({
+      row,
+      column,
+      rowSpan: 1,
+      colSpan: 1,
+      text: item.text,
+      sourceRects: [item.rect],
+      origin: 'source-text'
+    }))
+  )
+  cells.push(
+    ...[0, 1, 2].map((column) => ({
+      row: 2,
+      column,
+      rowSpan: 1,
+      colSpan: 1,
+      text: '',
+      sourceRects: [],
+      origin: 'model-grid'
+    }))
+  )
+  return { rows, cells, items, rules: [], repairs: [] }
+}
+
+it('removes only a source-derived empty sliver at the next complete native baseline', () => {
+  const f = emptySourceSeam()
+  const owners = f.cells.filter((c) => c.text).map((c) => structuredClone(c.sourceRects))
+  removeEmptyOverlappingRows(f)
+  expect(f.rows).toHaveLength(3)
+  expect(f.cells.filter((c) => c.text).map((c) => c.sourceRects)).toEqual(owners)
+  expect(f.items).toHaveLength(6)
+  expect(f.repairs).toEqual(['empty-overlapping-row-removed'])
+})
+
+it.each(['rule', 'large', 'gap', 'ink', 'incomplete', 'misaligned', 'opaque-origin'])(
+  'preserves a source-derived empty band with %s evidence',
+  (mutation) => {
+    const f = emptySourceSeam()
+    if (mutation === 'rule') f.rules.push([0, 32, 300, 32])
+    if (mutation === 'large') f.rows[2].rect[1] = 30.5
+    if (mutation === 'gap') f.rows[2].rect[3] = 31.9
+    if (mutation === 'ink')
+      f.items.push({
+        text: 'x',
+        rect: [5, 31.7, 10, 32.2],
+        baseline: 32.2,
+        height: 0.5,
+        horizontal: true
+      })
+    if (mutation === 'incomplete')
+      f.cells.find((c) => c.row === 3 && c.column === 1).sourceRects = []
+    if (mutation === 'misaligned') {
+      f.items[4].rect[3] += 2
+      f.items[4].baseline += 2
+    }
+    if (mutation === 'opaque-origin') f.rows[2].origin = 'unknown'
+    const before = structuredClone(f)
+    removeEmptyOverlappingRows(f)
+    expect(f).toEqual(before)
+  }
+)
 it('restores complete source records claimed by overlapping model bands', () => {
   const x = readPdfFixture(resolve('test/fixtures/source-grids/overlapping-native-records.jsonl'))
   const table = refineTable(x.table, x.tokens, x.captions, [], x.rules)

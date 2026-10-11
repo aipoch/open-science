@@ -2302,7 +2302,34 @@ export function associateTableNotes(page, tables, rules = []) {
       }
       continue
     }
-    const explicitNote = startsNote(start.text)
+    const parenthesizedMarker = /^\(([*†‡])\)\s+\p{L}/u.exec(start.text)?.[1],
+      parenthesizedOwners = tables.map(({ rect }) =>
+        Boolean(
+          parenthesizedMarker &&
+          start.text.length >= 20 &&
+          /\.$/u.test(start.text) &&
+          start.x >= rect[0] - start.fontSize &&
+          start.right <= rect[2] + start.fontSize &&
+          rules.some(
+            (r) =>
+              r[1] === r[3] &&
+              Math.abs(r[0] - rect[0]) < start.fontSize &&
+              Math.abs(r[2] - rect[2]) < start.fontSize &&
+              Math.abs(r[1] - rect[3]) < start.fontSize &&
+              start.y > r[1] &&
+              start.y - r[1] < start.fontSize
+          ) &&
+          page.lines.some(
+            (l) =>
+              l.text.includes('(' + parenthesizedMarker + ')') &&
+              l.x >= rect[0] - 0.1 &&
+              l.x + l.width <= rect[2] + 0.1 &&
+              l.y >= rect[1] &&
+              l.y + l.height <= rect[3]
+          )
+        )
+      )
+    const explicitNote = startsNote(start.text) || parenthesizedOwners.some(Boolean)
     if (
       dottedDefinitions(start.text).length >= 3 &&
       !tables.some(({ rect }) => ruledDefinitionKeys(start, rect))
@@ -2469,6 +2496,7 @@ export function associateTableNotes(page, tables, rules = []) {
             touchesRuledBottom(start, rect)) &&
           (!changeDefinition(start.text) || citedSymbol(start, rect)) &&
           (!requiresCitation || citedDefinitions[index]) &&
+          (!parenthesizedMarker || parenthesizedOwners[index]) &&
           (!noteTailDefinitions.some(Boolean) || noteTailDefinitions[index]) &&
           gap <=
             Math.max(
