@@ -191,13 +191,20 @@ it('applies exclusions to real Vitest discovery across inherited projects while 
       'src/host.test.ts',
       'packages/core/src/core.test.ts',
       'packages/core/src/core.architecture.test.ts',
-      'packages/core/src/core.integration.test.ts'
+      'packages/core/src/core.integration.test.ts',
+      'packages/compute/src/compute.test.ts',
+      'packages/compute/src/compute.architecture.test.ts',
+      'packages/compute/src/compute.integration.test.ts'
     ]) {
       const file = join(fixture, path)
       mkdirSync(join(file, '..'), { recursive: true })
       writeFileSync(file, 'import { it } from "vitest"; it("fixture", () => {})\n')
     }
-    const list = (portable: string): Array<{ file: string }> =>
+    writeFileSync(
+      join(fixture, 'packages/compute/vitest.config.ts'),
+      `export default {root: ${JSON.stringify(join(fixture, 'packages/compute'))}, test: {name:'compute',include:['src/**/*.test.ts']}}`
+    )
+    const list = (portable: string, excluded = [core]): Array<{ file: string }> =>
       JSON.parse(
         execFileSync(
           process.execPath,
@@ -217,13 +224,30 @@ it('applies exclusions to real Vitest discovery across inherited projects while 
             env: {
               ...process.env,
               VITEST_PORTABLE_CI: portable,
-              OPEN_SCIENCE_CI_EXCLUDED_PACKAGE_ROOTS: JSON.stringify([core])
+              OPEN_SCIENCE_CI_EXCLUDED_PACKAGE_ROOTS: JSON.stringify(excluded)
             }
           }
         )
       )
-    expect(list('1').map(({ file }) => file)).toEqual([join(fixture, 'src/host.test.ts')])
-    expect(list('0')).toHaveLength(4)
+    expect(list('1', [core, 'packages/compute']).map(({ file }) => file)).toEqual([
+      join(fixture, 'src/host.test.ts')
+    ])
+    // A trusted baseline predating Compute must still discover the new package, exactly once.
+    expect(
+      list('1')
+        .map(({ file }) => file)
+        .sort()
+    ).toEqual(
+      [
+        'src/host.test.ts',
+        'packages/compute/src/compute.test.ts',
+        'packages/compute/src/compute.architecture.test.ts',
+        'packages/compute/src/compute.integration.test.ts'
+      ]
+        .map((file) => join(fixture, file))
+        .sort()
+    )
+    expect(list('0')).toHaveLength(7)
   } finally {
     rmSync(fixture, { recursive: true, force: true })
   }

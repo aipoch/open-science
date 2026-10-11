@@ -38,6 +38,7 @@
       "scripts/electron-app-fixture.test.ts",
       "scripts/electron-fixture-teardown.test.ts",
       "scripts/electron-session-revision-retry.test.ts",
+      "scripts/electron-vite-config.test.ts",
       "scripts/stage-default-envs.test.ts",
       "src/main/acp/agent-connection-adapter.test.ts",
       "src/main/acp/agent-process.test.ts",

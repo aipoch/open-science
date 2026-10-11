@@ -23,6 +23,7 @@ export default defineConfig({
   optimizeDeps: {
     include: [
       '@aipoch/connector-mcp-client/oauth-redirect',
+      '@aipoch/compute',
       '@aipoch/diagnostics',
       '@aipoch/skills/document',
       '@aipoch/notebook-analysis/contracts',
@@ -36,7 +37,7 @@ export default defineConfig({
     commonjsOptions: {
       include: [
         /node_modules/,
-        /packages[\\/](?:connector-(?:core|mcp-client)|diagnostics|skills)[\\/]dist/,
+        /packages[\\/](?:connector-(?:core|mcp-client)|compute|diagnostics|skills)[\\/]dist/,
         /packages[\\/](?:notebook-analysis|environment)[\\/]dist/
       ]
     },
