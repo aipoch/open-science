@@ -170,8 +170,11 @@ export async function dispatchJob(jobId: string, deps: DispatcherDeps): Promise<
       await lifecycle.dispatchError(jobId, { errorCode: error.code, stderrTail: error.message })
     }
   } finally {
-    await deps.finalizeDispatchError?.(jobId)
-    tracker.end(jobId)
+    try {
+      await deps.finalizeDispatchError?.(jobId)
+    } finally {
+      tracker.end(jobId)
+    }
   }
 }
 

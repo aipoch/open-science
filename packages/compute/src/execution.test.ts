@@ -24,6 +24,37 @@ describe('execution scope ownership', () => {
     expect(a.isDispatching('job')).toBe(false)
   })
 
+  it.each([false, true])(
+    'releases dispatch after a finalizer rejection without releasing another handoff: %s',
+    async (withHandoff) => {
+      const scope = createComputeExecution()
+      const release = withHandoff ? scope.holdDispatch('job') : undefined
+      const failure = new Error('Evidence receipt could not be written')
+      const finalizeDispatchError = vi.fn(async () => {
+        throw failure
+      })
+      const dispatch = scope.dispatchJob('job', {
+        connectionBroker: { acquire: vi.fn() },
+        hostRepository: { get: async () => null } as unknown as ComputeHostRepository,
+        jobRepository: { get: async () => null } as unknown as ComputeJobRepository,
+        finalizeDispatchError
+      })
+      expect(scope.isDispatching('job')).toBe(true)
+      const settled = vi.fn()
+      const drain = scope.waitForDispatch(['job']).then(settled)
+      await expect(dispatch).rejects.toBe(failure)
+      expect(finalizeDispatchError).toHaveBeenCalledExactlyOnceWith('job')
+      if (withHandoff) {
+        expect(scope.isDispatching('job')).toBe(true)
+        expect(settled).not.toHaveBeenCalled()
+        release!()
+      }
+      expect(scope.isDispatching('job')).toBe(false)
+      await drain
+      expect(settled).toHaveBeenCalledOnce()
+    }
+  )
+
   it('shares the submission handoff with its poller, while a restarted scope recovers the row', async () => {
     const scope = createComputeExecution()
     const release = scope.holdDispatch('job')
