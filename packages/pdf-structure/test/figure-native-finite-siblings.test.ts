@@ -1623,7 +1623,9 @@ it.each([30, 700])(
     ])
     expect(figure.rect).toBeUndefined()
     expect(figure.issue).toBe('text-dominant-graphics')
-  }
+  },
+  // This 160k-path overflow regression takes ~6s alone; isolated CI runs share CPU with other tests.
+  60_000
 )
 
 it('keeps the complete native ink boundary when excluding prose before a dense plate', () => {
