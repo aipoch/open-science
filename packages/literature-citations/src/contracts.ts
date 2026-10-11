@@ -56,18 +56,35 @@ const LITERATURE_IMPORT_WARNINGS = [
 
 type LiteratureIdentifierScheme = (typeof LITERATURE_IDENTIFIER_SCHEMES)[number]
 
+// Suffix matching must not retry an unbounded tail at every possible starting point.
+// Dot-based suffixes historically stopped at line terminators; keep that behavior.
+const lastLineBreak = (value: string): number =>
+  Math.max(
+    value.lastIndexOf('\n'),
+    value.lastIndexOf('\r'),
+    value.lastIndexOf('\u2028'),
+    value.lastIndexOf('\u2029')
+  )
+
+const stripDoiCopyright = (value: string): string => {
+  // The separator after Copyright may itself be the final line break.
+  const start = Math.max(0, lastLineBreak(value) - 'Copyright'.length)
+  const suffix = /Copyright(?:\s|$)/iu.exec(value.slice(start))
+  return suffix ? value.slice(0, start + suffix.index) : value
+}
+
 const normalizeLiteratureIdentifierValue = (
   scheme: LiteratureIdentifierScheme,
   value: string
 ): string => {
   const trimmed = value.trim()
   if (scheme === 'doi') {
-    return trimmed
-      .replace(/^doi:\s*/iu, '')
-      .replace(/^https?:\/\/(?:dx\.)?doi\.org\//iu, '')
-      .replace(/Copyright(?:\s.*)?$/iu, '')
-      .replace(/[.,;:)}\]]+$/gu, '')
-      .trim()
+    const candidate = stripDoiCopyright(
+      trimmed.replace(/^doi:\s*/iu, '').replace(/^https?:\/\/(?:dx\.)?doi\.org\//iu, '')
+    )
+    let end = candidate.length
+    while (end > 0 && '.,;:)}]'.includes(candidate[end - 1])) end--
+    return candidate.slice(0, end).trim()
   }
   if (scheme === 'pmid') {
     const candidate = trimmed.replace(/^PMID\s*:\s*/iu, '')
@@ -88,10 +105,13 @@ const normalizeLiteratureIdentifierValue = (
     return digits ? `PMC${digits}` : valueWithoutUrl.toUpperCase()
   }
   if (scheme === 'arxiv') {
-    return trimmed
+    const candidate = trimmed
       .replace(/^arxiv:\s*/iu, '')
       .replace(/^https?:\/\/(?:www\.)?arxiv\.org\/(?:abs|pdf)\//iu, '')
-      .replace(/[?#].*$/u, '')
+    const start = lastLineBreak(candidate) + 1
+    const suffix = /[?#]/u.exec(candidate.slice(start))
+    const withoutQuery = suffix ? candidate.slice(0, start + suffix.index) : candidate
+    return withoutQuery
       .replace(/\.pdf$/iu, '')
       .replace(/v\d+$/iu, '')
       .trim()

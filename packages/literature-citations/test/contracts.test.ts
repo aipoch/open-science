@@ -52,3 +52,46 @@ describe('Literature identifier links', () => {
     ).toEqual({ scheme: 'doi', value: '10.1234/example', isPrimary: true })
   })
 })
+
+describe('identifier suffix scanning', () => {
+  it.each([
+    ['10.1234/exampleCOPYRIGHT', '10.1234/example'],
+    ['10.1234/exampleCopyright\tPublisher notice', '10.1234/example'],
+    ['10.1234/Copyrighted', '10.1234/Copyrighted'],
+    ['10.1234/aCopyrightx Copyright owner', '10.1234/aCopyrightx'],
+    ['10.1234/aCopyright\nowner', '10.1234/a'],
+    ['10.1234/aCopyright owner\nretained', '10.1234/aCopyright owner\nretained'],
+    ['10.1234/aCopyright owner\nlastCopyright owner', '10.1234/aCopyright owner\nlast'],
+    ['10.1234/aCopyright\r\nretained', '10.1234/aCopyright\r\nretained'],
+    ['10.1234/aCopyright\u2028owner', '10.1234/a'],
+    ['10.1234/aCopyright owner\u2029retained', '10.1234/aCopyright owner\u2029retained'],
+    ['doi: 10.1234/a(b).,;:)}]', '10.1234/a(b'],
+    ['10.1234/a)b', '10.1234/a)b']
+  ])('preserves DOI suffix semantics for %j', (input, expected) => {
+    expect(normalizeLiteratureIdentifierValue('doi', input)).toBe(expected)
+  })
+
+  it.each([
+    ['https://arxiv.org/pdf/2401.12345v2.pdf?download=1#page=2', '2401.12345'],
+    ['arxiv:2401.12345v2#page=2?download=1', '2401.12345'],
+    ['2401.12345?keep\nrest#remove', '2401.12345?keep\nrest'],
+    ['2401.12345#keep\u2028rest?remove', '2401.12345#keep\u2028rest'],
+    ['2401.12345?keep\rrest', '2401.12345?keep\rrest'],
+    ['2401.12345#keep\u2029rest', '2401.12345#keep\u2029rest']
+  ])('preserves arXiv suffix semantics for %j', (input, expected) => {
+    expect(normalizeLiteratureIdentifierValue('arxiv', input)).toBe(expected)
+  })
+
+  it('handles long punctuation and suffix near misses without repeated tail matching', () => {
+    const punctuation = '10.1234/' + ')'.repeat(100_000)
+    expect(normalizeLiteratureIdentifierValue('doi', punctuation)).toBe('10.1234/')
+    expect(normalizeLiteratureIdentifierValue('doi', punctuation + 'x')).toBe(punctuation + 'x')
+    const copyright = '10.1234/' + 'Copyright\t'.repeat(10_000) + '\nkeep'
+    expect(normalizeLiteratureIdentifierValue('doi', copyright)).toBe(copyright)
+    const fragments = '2401.12345' + '#'.repeat(100_000)
+    expect(normalizeLiteratureIdentifierValue('arxiv', fragments)).toBe('2401.12345')
+    expect(normalizeLiteratureIdentifierValue('arxiv', fragments + '\nkeep')).toBe(
+      fragments + '\nkeep'
+    )
+  })
+})
