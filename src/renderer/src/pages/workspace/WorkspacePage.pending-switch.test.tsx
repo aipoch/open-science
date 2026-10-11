@@ -9,7 +9,6 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type * as React from 'react'
-
 import { useNavigationStore } from '@/stores/navigation-store'
 import {
   createInitialPreviewWorkbenchState,
@@ -24,7 +23,6 @@ import {
 } from '@/stores/session-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
-
 import { type ComposerDoc } from './composer/composer-doc'
 import {
   markWorkspaceReviewHistoryLoaded,
@@ -34,7 +32,6 @@ import type {
   CompletionHandoffLifecycleEvent,
   SpecialistListItem
 } from '../../../../shared/specialist'
-
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 // Capture all props WorkspacePage passes to ConversationPanel.

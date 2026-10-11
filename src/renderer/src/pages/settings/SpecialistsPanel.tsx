@@ -61,13 +61,11 @@ import { useSettingsStore } from '@/stores/settings-store'
 import { useMarketplaceStore } from '@/stores/marketplace-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { useTagStore } from '@/stores/tag-store'
-import type { CreateSpecialistInput, SpecialistListItem } from '../../../../shared/specialist'
+import type { CreateSpecialistInput } from '@aipoch/specialists'
+import type { SpecialistListItem } from '../../../../shared/specialist'
 import type { SkillSource } from '@aipoch/skills/document'
-import { specialistPackageReportFromPreview } from '../../../../shared/specialist-package'
-import type {
-  SpecialistDeletePreview,
-  SpecialistDeleteResult
-} from '../../../../shared/specialist-package'
+import { specialistPackageReportFromPreview } from '@aipoch/specialists'
+import type { SpecialistDeletePreview, SpecialistDeleteResult } from '@aipoch/specialists'
 import { SpecialistEditor } from './SpecialistEditor'
 import { MarketplaceManagedSpecialistDetail } from './MarketplaceManagedSpecialistDetail'
 import { SpecialistMarketplace, type SpecialistMarketplaceView } from './SpecialistMarketplace'

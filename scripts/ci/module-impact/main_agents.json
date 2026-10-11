@@ -260,7 +260,6 @@
       "src/main/specialist/package/reported-regressions.test.ts",
       "src/main/specialist/package/service.test.ts",
       "src/main/specialist/package/transaction.test.ts",
-      "src/main/specialist/repository.test.ts",
       "src/main/specialist/service.test.ts",
       "src/main/specialist/session-binding.test.ts",
       "src/main/specialist/session-reconfiguration.test.ts",

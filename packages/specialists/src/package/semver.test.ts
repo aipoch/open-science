@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
-
-import { compareSemver } from './semver'
+import { compareSemver } from '../package/semver'
 
 describe('compareSemver', () => {
   it('orders major, minor, and patch versions', () => {

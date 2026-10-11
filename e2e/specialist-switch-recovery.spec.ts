@@ -35,7 +35,10 @@ test('deterministic OpenCode Electron Notebook handoffs settle and repeated pick
   for (const [index, target] of ['SPECIALIST_SWITCH_FIXTURE', 'Main Agent'].entries()) {
     await composer.fill(`Run specialist switch regression: ${target}`)
     await page.getByRole('button', { name: 'Send message', exact: true }).click()
-    await page.getByRole('button', { name: 'Allow once', exact: true }).click()
+    await page
+      .getByRole('group', { name: `Permission request: Switch to ${target}?`, exact: true })
+      .getByRole('button', { name: 'Allow', exact: true })
+      .click()
     await composer.fill(`Retained handoff draft ${index}`)
     await expect(
       page.getByText(`Specialist switch execution completed: ${target}`, { exact: false })

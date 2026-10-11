@@ -65,7 +65,7 @@ import {
   suppressNextAutoReview,
   clearSuppressNextAutoReview
 } from '@/lib/acp/workspace-events'
-import { resolveEffectiveSpecialistSkills } from '../../../../shared/specialist'
+import { resolveEffectiveSpecialistSkills } from '@aipoch/specialists'
 import { registerNotebookWhenProjectActive } from './notebook-preview-availability'
 import { invalidateSessionNotebookCache } from './session-notebook-data'
 import { hasCurrentRunningDelegatedAttempt } from '../../../../shared/delegated-work-projection'

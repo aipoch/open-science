@@ -1,17 +1,12 @@
+import { fixtureSkillParser as parseSkillDocument } from '../../test/fixtures'
 import { link, mkdir, mkdtemp, open, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-
 import { zipSync } from 'fflate'
 import { describe, expect, it } from 'vitest'
-
-import {
-  SPECIALIST_PACKAGE_ARCHIVE_LIMITS,
-  type SpecialistPackageCatalogSnapshot
-} from '../../../shared/specialist-package'
-import { validateSpecialistDirectory } from './directory-adapter'
-import { validateSpecialistZip } from './zip-adapter'
-import { UserSkillSpecialistPackageAdapter } from '@aipoch/skills'
+import { SPECIALIST_PACKAGE_ARCHIVE_LIMITS, type SpecialistPackageCatalogSnapshot } from '../index'
+import { validateSpecialistDirectory } from '../node'
+import { validateSpecialistZip } from '../node'
 
 const fixtureRoot = join(import.meta.dirname, 'test-fixtures', 'valid')
 const invalidFixtureRoot = join(import.meta.dirname, 'test-fixtures', 'invalid')
@@ -26,71 +21,6 @@ const catalog: SpecialistPackageCatalogSnapshot = {
 }
 
 describe('Specialist package source adapters', () => {
-  it('reads a complete stable Skill directory for export without sidecar metadata', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'specialist-export-snapshot-'))
-    try {
-      const skill = join(root, 'skills', 'personal', 'analysis-tools')
-      await mkdir(join(skill, 'references'), { recursive: true })
-      await writeFile(
-        join(skill, 'SKILL.md'),
-        '---\nname: analysis-tools\ndescription: Analyze data\n---\nUse the tools.'
-      )
-      await writeFile(join(skill, 'references', 'guide.md'), 'Complete reference.')
-      await writeFile(
-        join(skill, '.specialist-package.json'),
-        JSON.stringify({
-          id: 'analysis-tools',
-          version: '1.2.3',
-          contentHash: 'stale-sidecar-hash',
-          standalone: false,
-          ownerIds: ['research-synth']
-        })
-      )
-
-      const adapter = new UserSkillSpecialistPackageAdapter(root)
-      const snapshot = await adapter.exportSnapshot(['analysis-tools'])
-
-      expect(snapshot).toEqual([
-        expect.objectContaining({
-          localId: 'analysis-tools',
-          name: 'analysis-tools',
-          version: '1.2.3',
-          files: [
-            expect.objectContaining({ path: 'references/guide.md' }),
-            expect.objectContaining({ path: 'SKILL.md' })
-          ]
-        })
-      ])
-      expect(snapshot[0].files.map((file) => file.path)).not.toContain('.specialist-package.json')
-    } finally {
-      await rm(root, { recursive: true, force: true })
-    }
-  })
-
-  it('exports a Personal Skill with its immutable name instead of the storage source prefix', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'specialist-export-snapshot-'))
-    try {
-      const skill = join(root, 'skills', 'personal', 'literature-review')
-      await mkdir(skill, { recursive: true })
-      await writeFile(
-        join(skill, 'SKILL.md'),
-        '---\nname: literature-review\ndescription: Review literature\n---\nReview.'
-      )
-
-      const adapter = new UserSkillSpecialistPackageAdapter(root)
-      const snapshot = await adapter.exportSnapshot(['personal-literature-review'])
-
-      expect(snapshot).toEqual([
-        expect.objectContaining({
-          localId: 'personal-literature-review',
-          name: 'literature-review'
-        })
-      ])
-    } finally {
-      await rm(root, { recursive: true, force: true })
-    }
-  })
-
   it('rejects ZIP entries marked as symbolic links', async () => {
     const zip = zipSync({
       'manifest.json': new Uint8Array(await readFile(join(fixtureRoot, 'manifest.json'))),
@@ -108,7 +38,7 @@ describe('Specialist package source adapters', () => {
     zip[centralOffset + 5] = 3
     view.setUint32(centralOffset + 38, 0o120777 << 16, true)
 
-    const result = validateSpecialistZip(zip, catalog)
+    const result = validateSpecialistZip(zip, catalog, parseSkillDocument)
 
     expect(result.preview.installable).toBe(false)
     expect(result.preview.diagnostics).toContainEqual(
@@ -122,7 +52,7 @@ describe('Specialist package source adapters', () => {
   it('rejects an oversized compressed archive before attempting to unzip it', () => {
     const actual = SPECIALIST_PACKAGE_ARCHIVE_LIMITS.compressedBytes + 1
 
-    const result = validateSpecialistZip(new Uint8Array(actual), catalog)
+    const result = validateSpecialistZip(new Uint8Array(actual), catalog, parseSkillDocument)
 
     expect(result.preview).toMatchObject({
       installable: false,
@@ -150,7 +80,7 @@ describe('Specialist package source adapters', () => {
       'skills/large/reference.bin': [new Uint8Array(actual), { level: 0 }]
     })
 
-    const result = validateSpecialistZip(zip, catalog)
+    const result = validateSpecialistZip(zip, catalog, parseSkillDocument)
 
     expect(result.preview.installable).toBe(false)
     expect(result.preview.archive).toMatchObject({ uncompressedBytes: actual + 4, fileCount: 3 })
@@ -172,7 +102,7 @@ describe('Specialist package source adapters', () => {
       'skills/unsafe-link': [encoder.encode('/private/secret'), { os: 3, attrs: 0o120777 << 16 }]
     })
 
-    const result = validateSpecialistZip(zip, catalog)
+    const result = validateSpecialistZip(zip, catalog, parseSkillDocument)
 
     expect(result.preview.installable).toBe(false)
     expect(result.preview.diagnostics).toContainEqual(
@@ -197,7 +127,7 @@ describe('Specialist package source adapters', () => {
       'skills/case.md': encoder.encode('x')
     })
 
-    const result = validateSpecialistZip(zip, catalog)
+    const result = validateSpecialistZip(zip, catalog, parseSkillDocument)
     const codes = result.preview.diagnostics.map((item) => item.code)
 
     expect(codes).toEqual(
@@ -226,10 +156,11 @@ describe('Specialist package source adapters', () => {
       'specialist.json': encoder.encode('{}'),
       ...entries
     }
-    const atLimit = validateSpecialistZip(zipSync(base), catalog)
+    const atLimit = validateSpecialistZip(zipSync(base), catalog, parseSkillDocument)
     const aboveLimit = validateSpecialistZip(
       zipSync({ ...base, 'skills/example/references/overflow.md': new Uint8Array() }),
-      catalog
+      catalog,
+      parseSkillDocument
     )
 
     expect(atLimit.preview.diagnostics).not.toContainEqual(
@@ -251,7 +182,7 @@ describe('Specialist package source adapters', () => {
       'skills/example/references/bomb.txt': new Uint8Array(4 * 1024 * 1024)
     })
 
-    const result = validateSpecialistZip(zip, catalog)
+    const result = validateSpecialistZip(zip, catalog, parseSkillDocument)
 
     expect(result.preview.diagnostics).toContainEqual(
       expect.objectContaining({
@@ -273,8 +204,13 @@ describe('Specialist package source adapters', () => {
       'attachments/guide.pdf': encoder.encode('attachment')
     })
 
-    const directory = await validateSpecialistDirectory(fixtureRoot, catalog)
-    const archive = validateSpecialistZip(zip, catalog)
+    const directory = await validateSpecialistDirectory(
+      fixtureRoot,
+      catalog,
+      undefined,
+      parseSkillDocument
+    )
+    const archive = validateSpecialistZip(zip, catalog, parseSkillDocument)
 
     expect(directory.preview.installable).toBe(true)
     expect(archive.preview.installable).toBe(true)
@@ -303,7 +239,7 @@ describe('Specialist package source adapters', () => {
       '__MACOSX/openscience-specialist-template/._specialist.json': new Uint8Array([4, 5, 6])
     })
 
-    const archive = validateSpecialistZip(zip, catalog)
+    const archive = validateSpecialistZip(zip, catalog, parseSkillDocument)
 
     expect(archive.preview.installable).toBe(true)
     expect(archive.preview.summary).toMatchObject({
@@ -329,7 +265,7 @@ describe('Specialist package source adapters', () => {
       '__MACOSX/openscience-specialist-template/._manifest.json': new Uint8Array([1, 2, 3])
     })
 
-    const archive = validateSpecialistZip(zip, catalog)
+    const archive = validateSpecialistZip(zip, catalog, parseSkillDocument)
 
     expect(archive.preview.installable).toBe(true)
     expect(archive.preview.diagnostics).not.toContainEqual(
@@ -346,8 +282,13 @@ describe('Specialist package source adapters', () => {
       'run.sh': new Uint8Array(await readFile(join(invalidFixtureRoot, 'run.sh')))
     })
 
-    const directory = await validateSpecialistDirectory(invalidFixtureRoot, catalog)
-    const archive = validateSpecialistZip(zip, catalog)
+    const directory = await validateSpecialistDirectory(
+      invalidFixtureRoot,
+      catalog,
+      undefined,
+      parseSkillDocument
+    )
+    const archive = validateSpecialistZip(zip, catalog, parseSkillDocument)
     const expected = {
       severity: 'warning',
       code: 'package.executable-content-present',
@@ -368,8 +309,13 @@ describe('Specialist package source adapters', () => {
       )
     })
 
-    const directory = await validateSpecialistDirectory(multiErrorFixtureRoot, catalog)
-    const archive = validateSpecialistZip(zip, catalog)
+    const directory = await validateSpecialistDirectory(
+      multiErrorFixtureRoot,
+      catalog,
+      undefined,
+      parseSkillDocument
+    )
+    const archive = validateSpecialistZip(zip, catalog, parseSkillDocument)
 
     expect(directory.preview.diagnostics).toEqual(archive.preview.diagnostics)
     expect(
@@ -396,7 +342,7 @@ describe('Specialist package source adapters', () => {
         join(root, 'skills', 'analysis-tools', 'assets', 'linked.txt')
       )
 
-      const result = await validateSpecialistDirectory(root, catalog)
+      const result = await validateSpecialistDirectory(root, catalog, undefined, parseSkillDocument)
 
       expect(result.preview.installable).toBe(false)
       expect(result.preview.diagnostics).toEqual([
@@ -433,8 +379,18 @@ describe('Specialist package source adapters', () => {
       await writePackage(atLimitRoot, extraAtLimit)
       await writePackage(aboveLimitRoot, extraAtLimit + 1)
 
-      const atLimit = await validateSpecialistDirectory(atLimitRoot, catalog)
-      const aboveLimit = await validateSpecialistDirectory(aboveLimitRoot, catalog)
+      const atLimit = await validateSpecialistDirectory(
+        atLimitRoot,
+        catalog,
+        undefined,
+        parseSkillDocument
+      )
+      const aboveLimit = await validateSpecialistDirectory(
+        aboveLimitRoot,
+        catalog,
+        undefined,
+        parseSkillDocument
+      )
 
       expect(atLimit.preview.diagnostics).not.toContainEqual(
         expect.objectContaining({ code: 'package.archive-file-count-exceeded' })
@@ -473,7 +429,7 @@ describe('Specialist package source adapters', () => {
       await handle.truncate(actual)
       await handle.close()
 
-      const result = await validateSpecialistDirectory(root, catalog)
+      const result = await validateSpecialistDirectory(root, catalog, undefined, parseSkillDocument)
 
       expect(result.preview.installable).toBe(false)
       expect(result.preview.diagnostics).toContainEqual(

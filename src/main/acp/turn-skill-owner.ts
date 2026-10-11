@@ -1,7 +1,6 @@
 import { join } from 'node:path'
-
 import type { AgentFrameworkId } from '../../shared/settings'
-import type { EffectiveSpecialistSkills } from '../../shared/specialist'
+import type { EffectiveSpecialistSkills } from '@aipoch/specialists'
 import type { ResolvedAgentBackend } from '../agent-framework'
 import { createLogger } from '@aipoch/diagnostics/node'
 import type {
@@ -14,6 +13,7 @@ import {
 } from '../skills/runtime-mcp-server'
 import { AcpSessionPresentationPolicy } from './session-presentation-policy'
 import type { SessionCapabilityPolicy } from './session-capability-owner'
+
 const log = createLogger('acp-turn-skill-owner')
 const presentation = new AcpSessionPresentationPolicy()
 type AcpTurnSkillHooks = Readonly<{

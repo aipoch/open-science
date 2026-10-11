@@ -51,6 +51,7 @@
     "@types/node": "^22.19.1",
     "@types/js-yaml": "^4.0.9",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.11",
+    "esbuild": "^0.28.2"
   }
 }

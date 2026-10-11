@@ -36,7 +36,7 @@ export default defineConfig(({ command }) => ({
       commonjsOptions: {
         include: [
           /node_modules/,
-          /packages[\\/](?:connector-(?:core|mcp-client)|compute|diagnostics|skills)[\\/]dist/,
+          /packages[\\/](?:connector-(?:core|mcp-client)|compute|diagnostics|skills|specialists)[\\/]dist/,
           /packages[\\/](?:notebook-analysis|environment)[\\/]dist/
         ]
       },
@@ -64,7 +64,8 @@ export default defineConfig(({ command }) => ({
               '@aipoch/diagnostics',
               '@aipoch/skills/document',
               '@aipoch/notebook-analysis/contracts',
-              '@aipoch/environment/contracts'
+              '@aipoch/environment/contracts',
+              '@aipoch/specialists'
             ],
             entries: [
               '*.html',
@@ -115,7 +116,7 @@ export default defineConfig(({ command }) => ({
       commonjsOptions: {
         include: [
           /node_modules/,
-          /packages[\\/](?:connector-(?:core|mcp-client)|compute|diagnostics|skills)[\\/]dist/,
+          /packages[\\/](?:connector-(?:core|mcp-client)|compute|diagnostics|skills|specialists)[\\/]dist/,
           /packages[\\/](?:notebook-analysis|environment)[\\/]dist/
         ]
       },

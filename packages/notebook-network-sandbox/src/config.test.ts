@@ -5,10 +5,6 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { createRuntimeConfig, normalizePolicy } from './config.js'
 import type { NotebookNetworkSandboxOptions } from './types.js'
-import {
-  buildNotebookNetworkPolicy,
-  DEFAULT_NOTEBOOK_NETWORK_SETTINGS
-} from '../../../src/shared/notebook-network.js'
 
 const createOptions = (
   overrides: Partial<NotebookNetworkSandboxOptions> = {}
@@ -23,14 +19,6 @@ const createOptions = (
 })
 
 describe('Notebook network sandbox configuration', () => {
-  it('accepts the real application default policy including label wildcards', () => {
-    expect(() =>
-      createRuntimeConfig(
-        createOptions({ policy: buildNotebookNetworkPolicy(DEFAULT_NOTEBOOK_NETWORK_SETTINGS) })
-      )
-    ).not.toThrow()
-  })
-
   it('normalizes domain policy without changing wildcard or port semantics', () => {
     expect(
       normalizePolicy({

@@ -27,7 +27,8 @@ export default defineConfig({
       '@aipoch/diagnostics',
       '@aipoch/skills/document',
       '@aipoch/notebook-analysis/contracts',
-      '@aipoch/environment/contracts'
+      '@aipoch/environment/contracts',
+      '@aipoch/specialists'
     ]
   },
   plugins: [react(), tailwindcss()],
@@ -37,7 +38,7 @@ export default defineConfig({
     commonjsOptions: {
       include: [
         /node_modules/,
-        /packages[\\/](?:connector-(?:core|mcp-client)|compute|diagnostics|skills)[\\/]dist/,
+        /packages[\\/](?:connector-(?:core|mcp-client)|compute|diagnostics|skills|specialists)[\\/]dist/,
         /packages[\\/](?:notebook-analysis|environment)[\\/]dist/
       ]
     },

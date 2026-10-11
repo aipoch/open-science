@@ -1,13 +1,12 @@
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-
 import type {
   BuiltinSpecialistRegistryEntry,
   BuiltinSpecialistRegistryResult,
   PackageDiagnostic,
   SpecialistPackageCatalogSnapshot
-} from '../../shared/specialist-package'
-import { resolveBundledSpecialistsRoot } from './builtin-resource-path'
+} from './archive-contracts'
+import { missingSkillDocumentParser, type SkillDocumentParser } from './ports'
 import { validateSpecialistDirectory } from './package/directory-adapter'
 
 const SAFE_DIRECTORY = /^[a-z0-9-]+$/
@@ -29,7 +28,8 @@ const parseRegistryManifest = (value: unknown): string[] | undefined => {
 export class BuiltinSpecialistRegistry {
   constructor(
     private readonly catalog: SpecialistPackageCatalogSnapshot,
-    private readonly root = resolveBundledSpecialistsRoot()
+    private readonly root: string,
+    private readonly parseSkillDocument: SkillDocumentParser = missingSkillDocumentParser
   ) {}
 
   async load(): Promise<BuiltinSpecialistRegistryResult> {
@@ -72,7 +72,8 @@ export class BuiltinSpecialistRegistry {
       const result = await validateSpecialistDirectory(
         join(this.root, directory),
         this.catalog,
-        'builtin'
+        'builtin',
+        this.parseSkillDocument
       )
       diagnostics.push(...result.preview.diagnostics)
       if (!result.plan || result.preview.diagnostics.some((item) => item.severity === 'error'))

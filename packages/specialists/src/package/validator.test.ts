@@ -1,7 +1,7 @@
+import { fixtureSkillParser } from '../../test/fixtures'
 import { describe, expect, it } from 'vitest'
-
-import type { SpecialistPackageCatalogSnapshot } from '../../../shared/specialist-package'
-import { validateSpecialistPackage } from './validator'
+import type { SpecialistPackageCatalogSnapshot } from '../archive-contracts'
+import { validateSpecialistPackage as validatePackage } from '../package/validator'
 
 const encoder = new TextEncoder()
 const overlongSkillName = 'a'.repeat(65)
@@ -612,3 +612,9 @@ describe('validateSpecialistPackage', () => {
     })
   })
 })
+
+function validateSpecialistPackage(
+  ...args: Parameters<typeof validatePackage>
+): ReturnType<typeof validatePackage> {
+  return validatePackage(args[0], args[1], args[2], fixtureSkillParser)
+}

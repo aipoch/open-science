@@ -13,7 +13,8 @@ import { useThemeStore } from '@/stores/theme-store'
 import { CONNECTOR_CATALOG } from '../../../src/main/connectors/catalog'
 import manifest from '../../../resources/skills/manifest.json'
 import type { SkillView, ConnectorsSnapshot } from '../../../src/shared/settings'
-import type { SpecialistView, UpdateSpecialistInput } from '../../../src/shared/specialist'
+import type { SpecialistView } from '../../../src/shared/specialist'
+import type { UpdateSpecialistInput } from '@aipoch/specialists'
 
 const query = new URLSearchParams(location.search)
 const locale = query.get('locale') === 'zh-Hans' ? 'zh-Hans' : 'en'

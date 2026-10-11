@@ -3,11 +3,10 @@ import { join } from 'node:path'
 import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-
 import { SpecialistDocumentDegradedError, SpecialistRepository } from './repository'
 import { sanitizeSpecialist } from './repository'
 import { SPECIALISTS_FILE_VERSION, type StoredSpecialist } from './types'
-import { emptyFullAccessConfig, emptySelectedConfig } from '../../shared/specialist'
+import { emptyFullAccessConfig, emptySelectedConfig } from './contracts'
 
 // ---------------------------------------------------------------------------
 // Sanitization unit tests

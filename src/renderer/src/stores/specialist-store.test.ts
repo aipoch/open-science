@@ -1,11 +1,9 @@
+import { createSpecialistService } from '../../../main/specialist/service'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { SpecialistService } from '../../../main/specialist/service'
-import { SpecialistRepository } from '../../../main/specialist/repository'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-
-import type { SpecialistExportPreview } from '../../../shared/specialist-package'
+import type { SpecialistExportPreview } from '@aipoch/specialists'
 import { useSpecialistStore } from './specialist-store'
 
 const setSpecialistApi = (api: Partial<Window['api']['specialist']>): void => {
@@ -461,7 +459,7 @@ describe('S04 and S05 catalog recovery regressions', () => {
 it('S05 a committed create remains successful even when catalog enrichment fails', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'specialist-create-receipt-'))
   try {
-    const service = new SpecialistService(new SpecialistRepository(directory))
+    const service = createSpecialistService(directory)
     setSpecialistApi({
       create: (input) => service.create(input),
       list: vi.fn().mockRejectedValue(new Error('catalog enrichment unavailable'))

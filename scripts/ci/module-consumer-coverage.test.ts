@@ -130,9 +130,9 @@ it('retains every statically reachable consumer test and declared runtime-loadin
         pending.push(consumer)
       }
     }
-    // Reject proven stale Skill consumers, but preserve evidence whose dependency cone is opaque.
+    // Reject proven stale package consumers, but preserve evidence whose dependency cone is opaque.
     // This matches Integrity: native or dynamic loading cannot prove safe retirement.
-    if (id === 'skill_package') {
+    if (['skill_package', 'specialist_package'].includes(id)) {
       expect(
         provablyStaleConsumerTests(
           {
@@ -141,7 +141,7 @@ it('retains every statically reachable consumer test and declared runtime-loadin
           },
           inspectConsumer
         ),
-        'Skill consumer evidence must have a dependency path or incomplete dependency evidence'
+        `${id} consumer evidence must have a dependency path or incomplete dependency evidence`
       ).toEqual([])
     }
     const declared = new Set(Object.values(module.testFiles).flat())

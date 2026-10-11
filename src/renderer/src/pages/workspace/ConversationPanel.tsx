@@ -18,6 +18,7 @@ import { useAnnotationDrop } from './annotations/use-annotation-drop'
 import { mentionProjectFile } from './project-file-mention'
 import { useProjectFileMentionDrop } from './use-project-file-mention-drop'
 import { UnavailablePlanNotice } from './session-plan/UnavailablePlanNotice'
+
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
@@ -25,7 +26,6 @@ import type {
   ConnectorCredentialRequest,
   SessionAgentConfiguration
 } from '../../../../shared/settings'
-
 import type {
   AcpPermissionGrant,
   AcpPermissionRequest,
@@ -81,7 +81,7 @@ import {
   X
 } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { resolveEffectiveSpecialistSkills } from '../../../../shared/specialist'
+import { resolveEffectiveSpecialistSkills } from '@aipoch/specialists'
 import {
   isUnsupportedCodexAcpVersionError,
   isCodexCliCompatibilityError
@@ -91,7 +91,6 @@ import {
   type AnnotationValidationError,
   type TextAnnotation
 } from '../../../../shared/annotations'
-
 import { ProjectPackageDropZone } from '@/components/ProjectPackageDropZone'
 import { DiagnosticDetails } from '@/components/diagnostic-details'
 import { ErrorNotice } from '@/components/error-notice'
@@ -115,7 +114,6 @@ import {
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { ConnectorCredentialControls } from '@/pages/settings/ConnectorCredentialDialog'
-
 import { ComposerEditor } from './composer/ComposerEditor'
 import { FileTypeIcon } from './file-type-icon'
 import { FOCUS_COMPOSER_EVENT } from './composer-focus-events'

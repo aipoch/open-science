@@ -5,7 +5,7 @@ import type {
   SpecialistCapabilityMode,
   SpecialistFullAccessConfig,
   SpecialistSelectedConfig
-} from '../../shared/specialist'
+} from './contracts'
 
 export type SpecialistOrigin = 'local' | 'imported' | 'marketplace'
 

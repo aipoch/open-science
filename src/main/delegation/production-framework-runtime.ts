@@ -1,10 +1,9 @@
-import { resolveEffectiveSpecialistSkills } from '../../shared/specialist'
+import { resolveEffectiveSpecialistSkills } from '@aipoch/specialists'
 import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-server'
 import { DelegatedProcessOwnership } from './process-ownership'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { chmod, lstat, mkdir, readdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
-
 import {
   materializeSessionConversationGraph,
   type PersistedChatSession

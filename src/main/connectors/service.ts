@@ -19,9 +19,9 @@ import type { PermissionGrantScope } from '../../shared/permission-grants'
 import type { ApprovalDecision, ConnectorApprovalScope } from '../../shared/settings'
 import {
   CONNECTOR_TOOL_PATTERN_MAX_LENGTH,
-  CONNECTOR_TOOL_RULE_MAX_COUNT,
-  type SpecialistView
-} from '../../shared/specialist'
+  CONNECTOR_TOOL_RULE_MAX_COUNT
+} from '@aipoch/specialists'
+import { type SpecialistView } from '../../shared/specialist'
 
 type McpClientManagerLike = {
   listTools(config: CustomMcpServerConfig, signal?: AbortSignal): Promise<Array<{ name: string }>>

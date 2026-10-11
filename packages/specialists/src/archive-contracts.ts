@@ -1,4 +1,4 @@
-import type { SpecialistPackageSkillDisposition } from '@aipoch/skills/document'
+import type { SpecialistPackageSkillDisposition } from './ports'
 
 export type SpecialistPackageSkillConflict = {
   localId: string
@@ -25,7 +25,7 @@ export type SpecialistPackageSkillPlan = SpecialistPackageSkillPreview & {
   filesToInstall: ReadonlyArray<{ path: string; bytes: Uint8Array }>
 }
 
-import type { SkillSource } from '@aipoch/skills/document'
+import type { SkillSource } from './ports'
 
 export const SPECIALIST_PACKAGE_SCHEMA_VERSION = 1 as const
 export const DEFAULT_BUNDLED_SKILL_VERSION = '0.1.0' as const
@@ -49,10 +49,6 @@ export const SPECIALIST_PACKAGE_ARCHIVE_LIMITS: SpecialistPackageArchiveLimits =
 
 export type SpecialistPackageSource = 'zip' | 'directory' | 'builtin'
 export type PackageDiagnosticSeverity = 'error' | 'warning' | 'info'
-
-export type ContributionTemplateExportResult = { saved: boolean }
-export type SpecialistPackageReportSaveResult = { saved: boolean }
-export type SpecialistExportSaveResult = { saved: boolean }
 
 export type SpecialistExportSkillChoice = {
   id: string
@@ -213,7 +209,7 @@ export type SpecialistPackageSkillConflictResolution = {
 }
 
 export type SpecialistPackageInstallResult =
-  | { status: 'installed'; specialist: import('./specialist').SpecialistView }
+  | { status: 'installed'; specialist: import('./contracts').SpecialistView }
   | {
       status: 'failed'
       code:
@@ -299,9 +295,9 @@ export type BuiltinSpecialistRegistryEntry = SpecialistPackagePayload & {
   version: string
   iconKey?: string
   colorKey?: string
-  capabilityMode: import('./specialist').SpecialistCapabilityMode
-  fullAccess: import('./specialist').SpecialistFullAccessConfig
-  selectedCapabilities: import('./specialist').SpecialistSelectedConfig
+  capabilityMode: import('./contracts').SpecialistCapabilityMode
+  fullAccess: import('./contracts').SpecialistFullAccessConfig
+  selectedCapabilities: import('./contracts').SpecialistSelectedConfig
 }
 
 export type BuiltinSpecialistRegistryResult = {

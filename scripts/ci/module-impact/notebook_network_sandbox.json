@@ -74,7 +74,8 @@
     "scripts/windows-installer-smoke.test.ts",
     "scripts/check-windows-notebook-runtime.test.ts",
     "scripts/windows-runtime-cdn.test.ts",
-    "scripts/windows-release-workflows.test.ts"
+    "scripts/windows-release-workflows.test.ts",
+    "packages/notebook-network-sandbox/test/cache-environment.ts"
   ],
   "interfacePaths": [
     "packages/notebook-network-sandbox/src/index.ts",

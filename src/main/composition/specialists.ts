@@ -1,3 +1,5 @@
+import { createHostSpecialistPackages } from '../specialist/package/environment'
+import { resolveBundledSpecialistsRoot } from '../specialist/builtin-resource-path'
 import { runtimeMetadata } from '../runtime-metadata'
 import { SPECIALIST_IPC } from '../../shared/specialist'
 import { createAcpRuntime } from '../acp/runtime-composition'
@@ -14,15 +16,14 @@ import { SettingsRepository } from '../settings/repository'
 import { SettingsService } from '../settings/service'
 import { netFetchWithManualRedirect } from '../network-fetch'
 import { UserSkillSpecialistPackageAdapter } from '@aipoch/skills'
-import { BuiltinSpecialistRegistry } from '../specialist/builtin-registry'
+import { BuiltinSpecialistRegistry } from '@aipoch/specialists/node'
 import { OFFICIAL_MARKETPLACE_SOURCE } from '../specialist/marketplace/official-source'
 import { MarketplaceOperationCoordinator } from '../specialist/marketplace/operation-coordinator'
 import { MarketplaceRepository } from '../specialist/marketplace/repository'
 import { MarketplaceService } from '../specialist/marketplace/service'
 import { composeBuiltinSkillCatalog } from '../specialist/package/builtin-skill-catalog'
-import { SpecialistPackageService } from '../specialist/package/service'
-import { SpecialistRepository } from '../specialist/repository'
-import { SpecialistService } from '../specialist/service'
+import { SpecialistPackageService } from '@aipoch/specialists/node'
+import { createHostSpecialistDomain, type SpecialistService } from '../specialist/service'
 import { SessionBindingService } from '../specialist/session-binding'
 import {
   SessionSpecialistReconfiguration,
@@ -32,55 +33,50 @@ import { resolveConfigRoot } from '../storage-root'
 import { TagService } from '../tags/service'
 
 export async function composeSpecialistCatalog({
-  specialistPackageRecovery,
   settingsService,
   composition
 }: {
-  specialistPackageRecovery: {
-    current: (<T>(operation: () => Promise<T>) => Promise<T>) | undefined
-  }
   settingsService: SettingsService
   composition: DiagnosticOperation
 }): Promise<{
-  specialistRepository: SpecialistRepository
+  specialistDomain: ReturnType<typeof createHostSpecialistDomain>
   specialistService: SpecialistService
   marketplaceRepository: MarketplaceRepository
   marketplaceOperationCoordinator: MarketplaceOperationCoordinator
 }> {
   // Builtins are validated once at startup from read-only repository resources. Package imports use
   // the same repository while keeping their dynamic Connector/custom-Skill catalog separate.
-  const specialistRepository = new SpecialistRepository(resolveConfigRoot())
   const appVersion = runtimeMetadata().version
   const specialistSkills = await settingsService.listSpecialistSkillCatalog({ bundledOnly: true })
   composition.phase('specialist-catalog')
-  const builtinRegistry = new BuiltinSpecialistRegistry({
-    appVersion,
-    builtinSkills: composeBuiltinSkillCatalog(appVersion, specialistSkills),
-    skills: specialistSkills.map((skill) => {
-      return {
-        id: skill.id,
-        name: skill.frameworkName,
-        builtin: skill.source === 'featured',
-        displayName: skill.displayName,
-        source: skill.source,
-        mainEnabled: skill.mainEnabled
-      }
-    }),
-    connectorIds: ALL_CONNECTOR_IDS,
-    protectedSpecialistIds: ['reviewer'],
-    protectedSpecialistNames: ['Reviewer']
-  })
-  const specialistService = new SpecialistService(
-    specialistRepository,
-    builtinRegistry,
-    (operation) => specialistPackageRecovery.current?.(operation) ?? operation()
+  const builtinRegistry = new BuiltinSpecialistRegistry(
+    {
+      appVersion,
+      builtinSkills: composeBuiltinSkillCatalog(appVersion, specialistSkills),
+      skills: specialistSkills.map((skill) => {
+        return {
+          id: skill.id,
+          name: skill.frameworkName,
+          builtin: skill.source === 'featured',
+          displayName: skill.displayName,
+          source: skill.source,
+          mainEnabled: skill.mainEnabled
+        }
+      }),
+      connectorIds: ALL_CONNECTOR_IDS,
+      protectedSpecialistIds: ['reviewer'],
+      protectedSpecialistNames: ['Reviewer']
+    },
+    resolveBundledSpecialistsRoot()
   )
+  const specialistDomain = createHostSpecialistDomain(resolveConfigRoot(), builtinRegistry)
+  const specialistService = specialistDomain.catalog
   const marketplaceRepository = new MarketplaceRepository(resolveConfigRoot())
   const marketplaceOperationCoordinator = new MarketplaceOperationCoordinator()
   await specialistService.ensureBuiltinCatalogReady()
   composition.phase('builtin-specialists')
   return {
-    specialistRepository,
+    specialistDomain,
     specialistService,
     marketplaceRepository,
     marketplaceOperationCoordinator
@@ -93,7 +89,7 @@ export async function composeSpecialistPackages({
   settingsRepository,
   settingsService,
   requestSkillCatalogRefresh,
-  specialistRepository,
+  specialistDomain,
   specialistService,
   marketplaceRepository,
   marketplaceOperationCoordinator,
@@ -107,7 +103,7 @@ export async function composeSpecialistPackages({
   settingsRepository: SettingsRepository
   settingsService: SettingsService
   requestSkillCatalogRefresh: () => void
-  specialistRepository: SpecialistRepository
+  specialistDomain: ReturnType<typeof createHostSpecialistDomain>
   specialistService: SpecialistService
   marketplaceRepository: MarketplaceRepository
   marketplaceOperationCoordinator: MarketplaceOperationCoordinator
@@ -119,9 +115,9 @@ export async function composeSpecialistPackages({
   specialistPackageService: SpecialistPackageService
   marketplaceService: MarketplaceService
 }> {
-  const specialistPackageService = new SpecialistPackageService({
+  const specialistPackageService = createHostSpecialistPackages({
     storageDir: resolveConfigRoot(),
-    repository: specialistRepository,
+    domain: specialistDomain,
     catalog: async () => {
       const appVersion = runtimeMetadata().version
       const [skills, packageSkills, connectorSettings] = await Promise.all([
@@ -160,7 +156,10 @@ export async function composeSpecialistPackages({
         protectedSpecialistIds: ['reviewer'],
         protectedSpecialistNames: ['Reviewer']
       }
-      const builtinSpecialists = await new BuiltinSpecialistRegistry(baseCatalog).load()
+      const builtinSpecialists = await new BuiltinSpecialistRegistry(
+        baseCatalog,
+        resolveBundledSpecialistsRoot()
+      ).load()
       return {
         ...baseCatalog,
         protectedSpecialistIds: [
@@ -178,7 +177,7 @@ export async function composeSpecialistPackages({
     },
     skillPort: specialistPackageSkillAdapter,
     skillSettings: settingsRepository,
-    marketplaceOperationCoordinator,
+    operationCoordinator: marketplaceOperationCoordinator,
     onSpecialistDeleted: (specialistId) =>
       marketplaceRepository.removeInstallationsForSpecialist(specialistId),
     onSkillsDeleted: async (skillIds) => {

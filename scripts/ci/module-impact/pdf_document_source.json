@@ -1030,8 +1030,6 @@
       "src/renderer/src/pages/workspace/workspace-conversation-timeline.test.ts",
       "src/renderer/src/pages/workspace/workspace-skill-load.test.ts",
       "src/shared/acp.test.ts",
-      "packages/open-science/cli.test.ts",
-      "packages/open-science/client.test.ts",
       "src/renderer/src/pages/workspace/ComposerContextUsage.render.test.tsx",
       "src/main/literature/pdf-translation/api-target.test.ts",
       "src/main/literature/pdf-translation/diagnostics.test.ts",

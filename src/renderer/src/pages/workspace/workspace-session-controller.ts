@@ -7,7 +7,6 @@ import {
   type FormEvent
 } from 'react'
 import { useTranslation } from 'react-i18next'
-
 import type {
   DeleteSessionRequest,
   SessionDeletionResult
@@ -26,7 +25,6 @@ import {
   hydratePersistedSessionIfPresent,
   loadPersistedSession
 } from '@/lib/session-persistence/session-persistence'
-
 import {
   getWorkspaceSpecialistBarrierSnapshot,
   isWorkspaceSpecialistBarrierInFlight,

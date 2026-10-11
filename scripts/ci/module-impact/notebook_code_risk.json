@@ -32,8 +32,6 @@
     ],
     "contract": ["src/main/notebook/package-boundaries.architecture.test.ts"],
     "consumer": [
-      "packages/notebook-network-sandbox/src/wsl2-isolation.integration.test.ts",
-      "packages/notebook-network-sandbox/src/wsl2-isolation.test.ts",
       "scripts/electron-app-fixture.test.ts",
       "scripts/electron-builder-config.test.ts",
       "scripts/electron-fixture-teardown.test.ts",

@@ -24,10 +24,7 @@ import type {
   TrustedCallingSession
 } from '../../shared/agents-contract'
 import type { SpecialistView } from '../../shared/specialist'
-import type {
-  SpecialistDeleteRequest,
-  SpecialistDeleteResult
-} from '../../shared/specialist-package'
+import type { SpecialistDeleteRequest, SpecialistDeleteResult } from '@aipoch/specialists'
 import type { SpecialistService } from '../specialist/service'
 import { AgentsSafeError, agentsPublicError, formatAgentsError } from './agents-error'
 

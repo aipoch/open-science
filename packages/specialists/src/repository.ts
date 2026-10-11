@@ -1,8 +1,7 @@
-import { AgentsSafeError, agentsPublicError } from '../agents/agents-error'
+import { SpecialistError, specialistError } from './errors'
 import { join } from 'node:path'
-
-import { createLogger } from '@aipoch/diagnostics/node'
-import { readDurableJsonFile, writeDurableJsonFile } from '../storage/durable-json-file'
+import { silentLogger, type SpecialistLogger } from './ports'
+import { readDurableJsonFile, writeDurableJsonFile } from './durable-json-file'
 import {
   createEmptySpecialists,
   SPECIALISTS_FILE_VERSION,
@@ -20,20 +19,18 @@ import {
   type SpecialistFullAccessConfig,
   type SpecialistSelectedConfig,
   type ConnectorToolRule
-} from '../../shared/specialist'
+} from './contracts'
 
 const SPECIALISTS_FILE = 'specialists.json'
 
-const log = createLogger('specialist.repository')
-
-export class SpecialistIdConflictError extends AgentsSafeError {
+export class SpecialistIdConflictError extends SpecialistError {
   constructor(readonly specialistId: string) {
     super(`Specialist with id ${specialistId} already exists.`)
     this.name = 'SpecialistIdConflictError'
   }
 }
 
-export class SpecialistDocumentDegradedError extends AgentsSafeError {
+export class SpecialistDocumentDegradedError extends SpecialistError {
   readonly code = 'SPECIALIST_DOCUMENT_DEGRADED' as const
 
   constructor(readonly integrity: Extract<SpecialistDocumentIntegrity, { status: 'degraded' }>) {
@@ -308,7 +305,10 @@ type SpecialistReadSnapshot = {
   invalidCapabilityIds: ReadonlySet<string>
 }
 
-const sanitizeSpecialistsWithIntegrity = (v: unknown): SpecialistReadSnapshot => {
+const sanitizeSpecialistsWithIntegrity = (
+  v: unknown,
+  log: SpecialistLogger = silentLogger
+): SpecialistReadSnapshot => {
   const invalidCapabilityIds = new Set<string>()
   const issues: SpecialistDocumentIntegrityIssue[] = []
   if (!isRecord(v)) {
@@ -368,11 +368,14 @@ const sanitizeSpecialists = (v: unknown): StoredSpecialists =>
 // ---------------------------------------------------------------------------
 
 // Owns durable reads/writes of specialists.json. Uses atomic write (tmp + rename)
-// and serializes concurrent mutations through a queue — identical to SettingsRepository.
+// and serializes concurrent mutations through a queue.
 export class SpecialistRepository {
   private saveQueue: Promise<void> = Promise.resolve()
 
-  constructor(private readonly storageDir: string) {}
+  constructor(
+    private readonly storageDir: string,
+    private readonly log: SpecialistLogger = silentLogger
+  ) {}
 
   private get filePath(): string {
     return join(this.storageDir, SPECIALISTS_FILE)
@@ -396,7 +399,7 @@ export class SpecialistRepository {
   async getAllWithIntegrity(): Promise<SpecialistReadSnapshot> {
     try {
       const result = await readDurableJsonFile(this.filePath, (contents) =>
-        sanitizeSpecialistsWithIntegrity(JSON.parse(contents) as unknown)
+        sanitizeSpecialistsWithIntegrity(JSON.parse(contents) as unknown, this.log)
       )
       return result.status === 'found'
         ? result.value
@@ -407,7 +410,7 @@ export class SpecialistRepository {
           }
     } catch (err) {
       const parseFailure = err instanceof SyntaxError
-      log.error(
+      this.log.error(
         parseFailure
           ? 'failed to parse specialists file — aborting to prevent data loss'
           : 'failed to read specialists file — aborting to prevent data loss',
@@ -428,7 +431,7 @@ export class SpecialistRepository {
         throw new SpecialistIdConflictError(specialist.id)
       }
       if (doc.specialists.some((s) => s.name === specialist.name)) {
-        throw agentsPublicError(`Specialist with name "${specialist.name}" already exists.`)
+        throw specialistError(`Specialist with name "${specialist.name}" already exists.`)
       }
       return { ...doc, specialists: [...doc.specialists, specialist] }
     })
@@ -442,15 +445,15 @@ export class SpecialistRepository {
   ): Promise<StoredSpecialists> {
     return this.mutate((doc) => {
       const index = doc.specialists.findIndex((s) => s.id === id)
-      if (index < 0) throw agentsPublicError(`Specialist ${id} not found.`)
+      if (index < 0) throw specialistError(`Specialist ${id} not found.`)
       const current = doc.specialists[index]
       if (current.revision !== expectedRevision) {
-        throw agentsPublicError(
-          `Revision conflict: expected ${expectedRevision}, found ${current.revision}. Read the current Specialist with host.agents.get({ name }) before deciding whether to apply the update again.`
+        throw specialistError(
+          `Revision conflict: expected ${expectedRevision}, found ${current.revision}. Read the current Specialist before retrying the update.`
         )
       }
       if (patch.name !== undefined && patch.name !== current.name) {
-        throw agentsPublicError('Specialist name is immutable.')
+        throw specialistError('Specialist name is immutable.')
       }
       const updated: StoredSpecialist = {
         ...current,
@@ -469,9 +472,9 @@ export class SpecialistRepository {
   async setEnabled(id: string, enabled: boolean): Promise<StoredSpecialists> {
     return this.mutate((doc) => {
       const index = doc.specialists.findIndex((s) => s.id === id)
-      if (index < 0) throw agentsPublicError(`Specialist ${id} not found.`)
+      if (index < 0) throw specialistError(`Specialist ${id} not found.`)
       if (enabled && doc.specialists[index].setupPending) {
-        throw agentsPublicError('Complete Specialist setup before enabling it.')
+        throw specialistError('Complete Specialist setup before enabling it.')
       }
       const specialists = [...doc.specialists]
       specialists[index] = {
@@ -487,10 +490,10 @@ export class SpecialistRepository {
   async delete(id: string, expectedRevision?: number): Promise<StoredSpecialists> {
     return this.mutate((doc) => {
       const current = doc.specialists.find((s) => s.id === id)
-      if (!current) throw agentsPublicError(`Specialist ${id} not found.`)
+      if (!current) throw specialistError(`Specialist ${id} not found.`)
       if (expectedRevision !== undefined && current.revision !== expectedRevision) {
-        throw agentsPublicError(
-          `Revision conflict: expected ${expectedRevision}, found ${current.revision}. Read the current Specialist with host.agents.get({ name }) before deciding whether to apply the update again.`
+        throw specialistError(
+          `Revision conflict: expected ${expectedRevision}, found ${current.revision}. Read the current Specialist before retrying the update.`
         )
       }
       return { ...doc, specialists: doc.specialists.filter((s) => s.id !== id) }
@@ -521,7 +524,7 @@ export class SpecialistRepository {
     const run = this.saveQueue.then(async () => {
       const current = await this.readWritableDocument()
       if (JSON.stringify(current) !== JSON.stringify(expected)) {
-        throw agentsPublicError('Specialist document changed during package transaction.')
+        throw specialistError('Specialist document changed during package transaction.')
       }
       await this.write(replacement)
     })

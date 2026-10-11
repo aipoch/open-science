@@ -17,7 +17,7 @@ vi.mock('@aipoch/diagnostics/node', async (importOriginal) => {
 
 import type { AcpCreateSessionResponse } from '../../shared/acp'
 import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
-import type { EffectiveSpecialistSkills } from '../../shared/specialist'
+import type { EffectiveSpecialistSkills } from '@aipoch/specialists'
 import { claudeCodeFramework, codexFramework, opencodeFramework } from '../agent-framework'
 import {
   shellRuntimeAgentContract,

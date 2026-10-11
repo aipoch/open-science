@@ -6,7 +6,6 @@ import { createInterface } from 'node:readline'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
-
 import { NotebookLocalRpcServer } from '../notebook/local-rpc-server'
 import { NotebookRuntimeService } from '../notebook/runtime-service'
 import { NotebookRunRepository } from '../notebook/repository'
@@ -19,10 +18,9 @@ import { AgentsService, type AgentsCatalogSource } from './agents-service'
 import { createSpecialistService } from '../specialist/service'
 import {
   resolveEffectiveSpecialistSkills,
-  filterSpecialistConnectorSkills,
-  type SpecialistSkillCatalogEntry,
-  type SpecialistView
-} from '../../shared/specialist'
+  type SpecialistSkillCatalogEntry
+} from '@aipoch/specialists'
+import { filterSpecialistConnectorSkills, type SpecialistView } from '../../shared/specialist'
 
 // Run with: RUN_KERNEL=1 npx vitest run src/main/agents/agents-repl.runtime-consumption.integration.test.ts
 //

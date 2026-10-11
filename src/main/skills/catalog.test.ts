@@ -1,8 +1,8 @@
+import { SpecialistStorageFixture } from '../../../test/specialist-fixtures'
 import { configureTestElectronHost } from '../../../test/runtime-host'
 import { chmod, mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { strToU8, zipSync } from 'fflate'
 
@@ -20,14 +20,13 @@ import { loadSkillDocument } from './runtime-mcp-server'
 import { buildSkillExportArchive, type FetchLike } from '@aipoch/skills/sources'
 import { UserSkillRepository } from './user-skill-repository'
 import { UserSkillSpecialistPackageAdapter } from '@aipoch/skills'
-import { SpecialistRepository } from '../specialist/repository'
-import { SPECIALISTS_FILE_VERSION } from '../specialist/types'
 import { SettingsRepository } from '../settings/repository'
 import { SettingsDocumentStore } from '../settings/document-store'
 import { SkillCatalogModule } from './catalog'
 import * as skillExport from './export'
 import { marketplaceContentDigest, type MarketplacePackage } from '../skill-marketplace/package'
 import { createHash } from 'node:crypto'
+
 const sha256 = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex')
 const SPECIALIST_PACKAGE_SKILL_METADATA = '.specialist-package.json'
 import { marketplaceEntry } from '../../shared/__fixtures__/skill-marketplace'
@@ -190,7 +189,7 @@ describe('SkillCatalogModule', () => {
     const settings = new SettingsRepository(settingsStore, (operation) =>
       adapter.runMutationExclusive(operation)
     )
-    const specialists = new SpecialistRepository(root)
+    const specialists = new SpecialistStorageFixture(root)
     const initial = new UserSkillRepository(root)
     await initial.createPersonal({ name: 'example', description: 'Shared', body: 'original' })
     let promoted!: () => void
@@ -236,16 +235,15 @@ describe('SkillCatalogModule', () => {
       })
     const preview = await repo.previewMarketplaceUpdate(pkg, [], impact)
     const updating = repo.installMarketplace(pkg, null, [], preview.token, impact, (operation) =>
-      specialists.withReadLock(operation)
+      specialists.domain.withReadLock(operation)
     )
     await ready
     // Observe the protected write entry points rather than eventual filesystem completion.
-    const specialistRead = vi.spyOn(specialists, 'getAllWithIntegrity')
     const settingsMutation = vi.spyOn(settingsStore, 'mutate')
     let specialistWritten = false,
       settingsWritten = false
-    const specialistWrite = specialists
-      .replaceAll({ version: SPECIALISTS_FILE_VERSION, specialists: [] })
+    const specialistWrite = specialists.domain.catalog
+      .create({ name: 'Concurrent Specialist' })
       .then(() => {
         specialistWritten = true
       })
@@ -253,7 +251,6 @@ describe('SkillCatalogModule', () => {
       settingsWritten = true
     })
     await new Promise<void>((resolve) => setImmediate(resolve))
-    expect(specialistRead).not.toHaveBeenCalled()
     expect(settingsMutation).not.toHaveBeenCalled()
     expect(specialistWritten).toBe(false)
     expect(settingsWritten).toBe(false)
@@ -262,9 +259,7 @@ describe('SkillCatalogModule', () => {
     await Promise.all([specialistWrite, settingsWrite])
     expect(specialistWritten).toBe(true)
     expect(settingsWritten).toBe(true)
-    expect(specialistRead).toHaveBeenCalled()
     expect(settingsMutation).toHaveBeenCalledExactlyOnceWith(expect.any(Function))
-    specialistRead.mockRestore()
     settingsMutation.mockRestore()
     expect(await initial.body('personal-example')).toContain('Updated')
   })

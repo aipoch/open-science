@@ -37,7 +37,8 @@ describe('electron-vite renderer dependency optimization', () => {
         '@aipoch/diagnostics',
         '@aipoch/skills/document',
         '@aipoch/notebook-analysis/contracts',
-        '@aipoch/environment/contracts'
+        '@aipoch/environment/contracts',
+        '@aipoch/specialists'
       ],
       entries: [
         '*.html',

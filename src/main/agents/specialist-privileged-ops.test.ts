@@ -1,10 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
-
 import { applyDelete } from './specialist-privileged-ops'
 import type { AgentDeletedResult, AgentDeclinedResult } from './specialist-privileged-ops'
 import type { ApprovalResult } from '../../shared/agents-contract'
 import type { SpecialistView } from '../../shared/specialist'
-import type { SpecialistDeleteResult } from '../../shared/specialist-package'
+import type { SpecialistDeleteResult } from '@aipoch/specialists'
 import type { SpecialistService } from '../specialist/service'
 
 const profile = (overrides: Partial<SpecialistView> = {}): SpecialistView => ({

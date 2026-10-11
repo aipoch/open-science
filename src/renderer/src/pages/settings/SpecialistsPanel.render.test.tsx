@@ -3,7 +3,6 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { fireEvent } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-
 import { SpecialistsPanel } from './SpecialistsPanel'
 import { clickRadixMenuItem, openRadixMenu } from './test-utils'
 import { i18next } from '@/i18n'
@@ -13,7 +12,7 @@ import { useSpecialistStore } from '@/stores/specialist-store'
 import { resetMarketplaceStoreForTests, useMarketplaceStore } from '@/stores/marketplace-store'
 import { createInitialTagState, useTagStore } from '@/stores/tag-store'
 import type { SpecialistListItem } from '../../../../shared/specialist'
-import type { SpecialistExportPreview } from '../../../../shared/specialist-package'
+import type { SpecialistExportPreview } from '@aipoch/specialists'
 
 const navigationMock = vi.hoisted(() => ({
   startCustomizeConversation: vi.fn()

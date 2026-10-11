@@ -31,11 +31,11 @@ import type {
   CreateSpecialistInput,
   SpecialistCapabilityMode,
   SpecialistFullAccessConfig,
-  SpecialistView,
   SpecialistSelectedConfig,
   UpdateSpecialistInput
-} from '../../shared/specialist'
-import { emptyFullAccessConfig, emptySelectedConfig } from '../../shared/specialist'
+} from '@aipoch/specialists'
+import type { SpecialistView } from '../../shared/specialist'
+import { emptyFullAccessConfig, emptySelectedConfig } from '@aipoch/specialists'
 import type { ApprovalGateway } from '../../shared/agents-contract'
 import { AgentsSafeError, agentsPublicError, formatAgentsError } from './agents-error'
 

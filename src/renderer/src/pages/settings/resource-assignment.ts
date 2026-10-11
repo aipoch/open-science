@@ -1,4 +1,5 @@
-import type { SpecialistListItem, UpdateSpecialistInput } from '../../../../shared/specialist'
+import type { SpecialistListItem } from '../../../../shared/specialist'
+import type { UpdateSpecialistInput } from '@aipoch/specialists'
 
 export type AssignableResource = {
   id: string

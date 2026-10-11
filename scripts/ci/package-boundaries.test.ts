@@ -3,6 +3,7 @@ import { builtinModules } from 'node:module'
 import { relative, resolve, sep } from 'node:path'
 import ts from 'typescript'
 import { expect, it } from 'vitest'
+import { packageTestRegistrationViolations } from './package-test-policy.mjs'
 import { localPackageSourcePaths } from './local-package-exports.mjs'
 import { createPackageTestPlan, validatePackageTestRegistry } from './package-test-impact.mjs'
 
@@ -137,25 +138,51 @@ it('host consumers use only public package names and exported subpaths', () => {
   // Match the consumer-coverage guard's allowance for a repository-wide scan under CI load.
 }, 60_000)
 
-it('every module plan excludes unrelated upstream package tests', async () => {
+it('module evidence never pulls in upstream or unrelated package tests', async () => {
   const { loadModuleImpactManifest } = await import('./load-module-impact.mjs')
-  const { createModuleTestPlan } = await import('./module-test-impact.mjs')
-  const manifest = loadModuleImpactManifest()
+  expect(packageTestRegistrationViolations(loadModuleImpactManifest(), registry)).toEqual([])
+})
+
+// Cover packages still outside the independent-suite registry as well. Tests and
+// fixtures must not import host code, even when the test compiles a source string.
+it('all package tests and fixtures keep relative dependencies inside their package', () => {
   const violations: string[] = []
-  // Validate executed coverage while the trusted retirement policy permits cleanup of
-  // historical redundant registrations. Full-validation owners retain their fallback.
-  for (const [id, module] of Object.entries(manifest.modules) as [
-    string,
-    { ownerPaths: string[] }
-  ][]) {
-    const plan = createModuleTestPlan(id, manifest)
-    if (plan.mode === 'full') continue
-    const { excluded } = createPackageTestPlan(module.ownerPaths, registry)
-    for (const test of plan.testFiles)
-      if (excluded.some((root) => test.startsWith(root + '/'))) violations.push(`${id} -> ${test}`)
+  for (const file of files('packages').filter(
+    (path) =>
+      /\.[cm]?[jt]sx?$/.test(path) &&
+      (/\.(test|spec)\./.test(path) || /\/(test|tests|test-fixtures)\//.test(path))
+  )) {
+    const root = resolve(file.split('/').slice(0, 2).join('/'))
+    const text = readFileSync(file, 'utf8')
+    const inspect = (source: string): void => {
+      for (const { fileName: specifier } of ts.preProcessFile(source, true, true).importedFiles) {
+        if (!specifier.startsWith('.')) continue
+        const target = relative(root, resolve(file, '..', specifier))
+          .split(sep)
+          .join('/')
+        if (target === '..' || target.startsWith('../')) violations.push(`${file} -> ${specifier}`)
+      }
+    }
+    inspect(text)
+    const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true)
+    const visit = (node: ts.Node): void => {
+      if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) inspect(node.text)
+      if (
+        ts.isCallExpression(node) &&
+        node.arguments[0] &&
+        ts.isStringLiteral(node.arguments[0]) &&
+        ['vi.mock', 'vi.doMock', 'vi.importActual', 'jest.mock'].includes(
+          node.expression.getText(source)
+        )
+      ) {
+        inspect(`import ${JSON.stringify(node.arguments[0].text)}`)
+      }
+      ts.forEachChild(node, visit)
+    }
+    visit(source)
   }
   expect(violations).toEqual([])
-})
+}, 60_000)
 
 it('module evidence follows independent package dependency direction', async () => {
   const { loadModuleImpactManifest } = await import('./load-module-impact.mjs')
@@ -214,6 +241,40 @@ it('local module and affected plans obey the same downstream package direction a
   const plan = createModuleTestPlan('package_pdf_translation')
   expect(plan.testFiles.some((path) => path.startsWith('packages/pdf-translation/'))).toBe(true)
   expect(plan.testFiles.some((path) => path.startsWith('packages/pdf-structure/'))).toBe(false)
+})
+
+it('host-only selective plans never include package-owned unit suites', async () => {
+  const { loadModuleImpactManifest } = await import('./load-module-impact.mjs')
+  const { createAffectedTestPlan, createModuleTestPlan } = await import('./module-test-impact.mjs')
+  const manifest = loadModuleImpactManifest()
+  let checked = 0
+  for (const [id, module] of Object.entries(manifest.modules) as [
+    string,
+    { ownerPaths: string[] }
+  ][]) {
+    if (module.ownerPaths.some((path) => path.startsWith('packages/'))) continue
+    const source = module.ownerPaths.find(
+      (path) =>
+        path.startsWith('src/') && /\.[cm]?tsx?$/.test(path) && !/\.(test|spec)\./.test(path)
+    )
+    if (!source) continue
+    for (const plan of [
+      createModuleTestPlan(id, manifest),
+      createAffectedTestPlan(
+        [{ path: source, status: 'modified' }],
+        { status: 'not-requested', testFiles: [] },
+        manifest
+      )
+    ]) {
+      if (plan.mode !== 'selective') continue
+      checked += 1
+      expect(
+        plan.testFiles.filter((path: string) => path.startsWith('packages/')),
+        `${id}: ${source}`
+      ).toEqual([])
+    }
+  }
+  expect(checked).toBeGreaterThan(0)
 })
 
 it('host source edits never select unchanged upstream PDF package implementation tests', async () => {
@@ -295,4 +356,24 @@ it('Compute host edits never register or select upstream Compute units', async (
         : []
     )
   }
+})
+
+it('every module plan excludes unrelated upstream package tests', async () => {
+  const { loadModuleImpactManifest } = await import('./load-module-impact.mjs')
+  const { createModuleTestPlan } = await import('./module-test-impact.mjs')
+  const manifest = loadModuleImpactManifest()
+  const violations: string[] = []
+  // Validate executed coverage while the trusted retirement policy permits cleanup of
+  // historical redundant registrations. Full-validation owners retain their fallback.
+  for (const [id, module] of Object.entries(manifest.modules) as [
+    string,
+    { ownerPaths: string[] }
+  ][]) {
+    const plan = createModuleTestPlan(id, manifest)
+    if (plan.mode === 'full') continue
+    const { excluded } = createPackageTestPlan(module.ownerPaths, registry)
+    for (const test of plan.testFiles)
+      if (excluded.some((root) => test.startsWith(root + '/'))) violations.push(`${id} -> ${test}`)
+  }
+  expect(violations).toEqual([])
 })

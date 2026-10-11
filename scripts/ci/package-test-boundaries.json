@@ -60,6 +60,10 @@
     {
       "root": "packages/literature-discovery",
       "dependencies": ["packages/literature-citations"]
+    },
+    {
+      "root": "packages/specialists",
+      "dependencies": []
     }
   ]
 }

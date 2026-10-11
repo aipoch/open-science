@@ -1,6 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { strToU8 } from 'fflate'
-
 import {
   SPECIALIST_PACKAGE_ARCHIVE_LIMITS,
   specialistPackageReportFromPreview,
@@ -18,17 +17,18 @@ import {
   type SpecialistExportRequest,
   SPECIALIST_PACKAGE_SCHEMA_VERSION,
   type SpecialistPackageValidationPlan
-} from '../../../shared/specialist-package'
+} from '../archive-contracts'
+import { validateSpecialistDescription, validateSpecialistSystemPrompt } from '../contracts'
 import {
-  validateSpecialistDescription,
-  validateSpecialistSystemPrompt
-} from '../../../shared/specialist'
-import { parseSkillDocument } from '@aipoch/skills/document'
-import type { SkillSource } from '@aipoch/skills/document'
-import { createLogger } from '@aipoch/diagnostics/node'
+  missingSkillDocumentParser,
+  type SkillDocumentParser,
+  type SkillEnablementPort,
+  type ExclusiveRunner
+} from '../ports'
+import type { SkillSource } from '../ports'
+import { silentLogger, type SpecialistLogger } from '../ports'
 import type { SpecialistOrigin, StoredSpecialist, StoredSpecialists } from '../types'
 import { SpecialistRepository } from '../repository'
-import type { SettingsRepository } from '../../settings/repository'
 import { validateSpecialistZip } from './zip-adapter'
 import { compareSemver } from './semver'
 import { buildDeterministicSpecialistZip } from './contribution-template'
@@ -42,11 +42,9 @@ import {
   SpecialistPackageRollbackError,
   SpecialistPackageTransaction
 } from './transaction'
-import type { SpecialistPackageSkillPort, SpecialistPackageSkillSnapshot } from '@aipoch/skills'
-import type { MarketplaceOperationCoordinator } from '../marketplace/operation-coordinator'
+import type { SpecialistPackageSkillPort, SpecialistPackageSkillSnapshot } from '../ports'
 
 const CANDIDATE_TTL_MS = 10 * 60 * 1000
-const log = createLogger('specialist.package.service')
 
 class SpecialistDeleteSelectionError extends Error {
   constructor(readonly code: 'protected-skill' | 'stale-preview') {
@@ -68,18 +66,27 @@ type Candidate = {
   origin: SpecialistOrigin
 }
 
-type SpecialistPackageServiceOptions = {
+export type SpecialistPackageServiceOptions = {
   storageDir: string
+  logger?: SpecialistLogger
   repository: SpecialistRepository
   catalog: () => Promise<SpecialistPackageCatalogSnapshot>
+  exportFileName?: typeof specialistExportFileName
   token?: () => string
   now?: () => Date
   onCommitted?: () => void
   onSpecialistDeleted?: (specialistId: string) => Promise<void>
   onSkillsDeleted?: (skillIds: readonly string[]) => Promise<void>
   onResourcesDeleted?: (specialistId: string, skillIds: readonly string[]) => Promise<void>
-  marketplaceOperationCoordinator?: MarketplaceOperationCoordinator
-  skillSettings?: Pick<SettingsRepository, 'getSettings' | 'setSkillsEnabled'>
+  operationCoordinator?: ExclusiveRunner
+  skillSettings?: SkillEnablementPort
+  disableNewSkills?: boolean
+  parseSkillDocument?: SkillDocumentParser
+  overwriteDiagnostic?: (
+    existing: StoredSpecialist,
+    origin: SpecialistOrigin
+  ) => PackageDiagnostic | undefined
+  preservePresentation?: (origin: SpecialistOrigin) => boolean
   skillPort?: SpecialistPackageSkillPort
 }
 
@@ -128,13 +135,14 @@ export const specialistExportFileName = (
     .slice(0, 80)
     .replace(/-+$/g, '')
   const identity = fileStem || fallbackId.replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-+|-+$/g, '')
-  return `open-science-specialist-${identity || 'export'}-v${version}.zip`
+  return `specialist-${identity || 'export'}-v${version}.zip`
 }
 
 const normalizeExportedSkillDocument = (
   bytes: Uint8Array,
   id: string,
-  version?: string
+  version: string | undefined,
+  parseSkillDocument: SkillDocumentParser
 ): Uint8Array => {
   const document = parseSkillDocument(new TextDecoder('utf-8', { fatal: true }).decode(bytes))
   if (!document.hasFrontmatter) throw new Error(`Skill ${id} has no frontmatter.`)
@@ -202,6 +210,7 @@ export class SpecialistSkillDeletionProtectedError extends Error {
 class SpecialistPackageImpactConflictError extends Error {}
 
 export class SpecialistPackageService {
+  private readonly log: SpecialistLogger
   private readonly candidates = new Map<string, Candidate>()
   private readonly deletePreviews = new Map<string, SpecialistDeletePreview>()
   private readonly transaction: SpecialistPackageTransaction
@@ -209,13 +218,16 @@ export class SpecialistPackageService {
   private readonly now: () => Date
 
   constructor(private readonly options: SpecialistPackageServiceOptions) {
+    this.log = options.logger ?? silentLogger
     this.transaction = new SpecialistPackageTransaction(
       options.storageDir,
       options.repository,
       randomUUID,
       options.skillPort,
       (specialistId, skillIds) => this.cleanupDeletedRelationships(specialistId, skillIds),
-      options.skillSettings
+      options.skillSettings,
+      options.disableNewSkills,
+      this.log
     )
     this.token = options.token ?? randomUUID
     this.now = options.now ?? (() => new Date())
@@ -355,8 +367,8 @@ export class SpecialistPackageService {
     for (const cleanup of [
       {
         run: () => this.options.onSpecialistDeleted?.(specialistId),
-        message: 'post-delete Marketplace provenance cleanup failed',
-        code: 'package-delete-marketplace-provenance-cleanup-failed'
+        message: 'post-delete external relationship cleanup failed',
+        code: 'package-delete-relationship-cleanup-failed'
       },
       {
         run: () => this.options.onSkillsDeleted?.(skillIds),
@@ -365,15 +377,15 @@ export class SpecialistPackageService {
       },
       {
         run: () => this.options.onResourcesDeleted?.(specialistId, skillIds),
-        message: 'post-delete Tag cleanup failed',
-        code: 'package-delete-tag-cleanup-failed'
+        message: 'post-delete resource cleanup failed',
+        code: 'package-delete-resource-cleanup-failed'
       }
     ]) {
       try {
         await cleanup.run()
       } catch (error) {
         failure ??= error
-        log.warn(cleanup.message, { code: cleanup.code, specialistId, error })
+        this.log.warn(cleanup.message, { code: cleanup.code, specialistId, error })
       }
     }
     if (failure) throw failure
@@ -383,7 +395,7 @@ export class SpecialistPackageService {
     try {
       this.options.onCommitted?.()
     } catch {
-      log.warn('post-delete Specialist catalog refresh failed', {
+      this.log.warn('post-delete Specialist catalog refresh failed', {
         code: 'package-delete-refresh-failed',
         specialistId
       })
@@ -392,8 +404,8 @@ export class SpecialistPackageService {
 
   async deleteSpecialist(request: SpecialistDeleteRequest): Promise<SpecialistDeleteResult> {
     const operation = (): Promise<SpecialistDeleteResult> => this.deleteSpecialistExclusive(request)
-    return this.options.marketplaceOperationCoordinator
-      ? this.options.marketplaceOperationCoordinator.runExclusive(operation)
+    return this.options.operationCoordinator
+      ? this.options.operationCoordinator.runExclusive(operation)
       : operation()
   }
 
@@ -489,7 +501,7 @@ export class SpecialistPackageService {
     // renderer's prior capability so another window can finish its own confirmation flow.
     this.clearCandidates(ownerId)
     const catalog = await this.validationCatalog()
-    const result = validateSpecialistZip(archiveBytes, catalog)
+    const result = validateSpecialistZip(archiveBytes, catalog, this.options.parseSkillDocument)
     const token = this.token()
     const diagnostics = [...result.preview.diagnostics]
     let overwrite: SpecialistPackageCandidatePreview['overwrite']
@@ -502,14 +514,9 @@ export class SpecialistPackageService {
         (specialist) => specialist.id === result.plan?.specialistId
       )
       if (existing) {
-        if (existing.origin === 'marketplace' && origin !== 'marketplace') {
-          diagnostics.push({
-            severity: 'error',
-            code: 'specialist.overwrite-marketplace-managed',
-            message:
-              'Marketplace-managed Specialists can only be updated from their Marketplace source.',
-            relatedId: existing.id
-          })
+        const policyDiagnostic = this.options.overwriteDiagnostic?.(existing, origin)
+        if (policyDiagnostic) {
+          diagnostics.push(policyDiagnostic)
           installable = false
           governanceBlocked = true
         }
@@ -692,7 +699,7 @@ export class SpecialistPackageService {
       specialistId: specialist.id,
       name: specialist.displayName ?? specialist.name,
       version: specialist.packageVersion,
-      fileName: specialistExportFileName(
+      fileName: (this.options.exportFileName ?? specialistExportFileName)(
         specialist.displayName ?? specialist.name,
         specialist.packageVersion,
         specialist.id
@@ -810,7 +817,12 @@ export class SpecialistPackageService {
       for (const file of skill.files) {
         files[`skills/${skill.name}/${file.path}`] =
           file.path === 'SKILL.md'
-            ? normalizeExportedSkillDocument(file.bytes, skill.name, skill.version)
+            ? normalizeExportedSkillDocument(
+                file.bytes,
+                skill.name,
+                skill.version,
+                this.options.parseSkillDocument ?? missingSkillDocumentParser
+              )
             : file.bytes
       }
     }
@@ -819,12 +831,16 @@ export class SpecialistPackageService {
       ...catalog,
       skills: catalog.skills.filter((skill) => !request.includedSkillIds.includes(skill.id))
     }
-    const validation = validateSpecialistZip(archiveBytes, validationCatalog)
+    const validation = validateSpecialistZip(
+      archiveBytes,
+      validationCatalog,
+      this.options.parseSkillDocument
+    )
     if (!validation.preview.installable) {
       throw new Error('Specialist export has blocking validation errors.')
     }
     return {
-      fileName: specialistExportFileName(
+      fileName: (this.options.exportFileName ?? specialistExportFileName)(
         specialist.displayName ?? specialist.name,
         specialist.packageVersion,
         specialist.id
@@ -937,7 +953,11 @@ export class SpecialistPackageService {
     let specialist: Extract<SpecialistPackageInstallResult, { status: 'installed' }>['specialist']
     try {
       const catalog = await this.validationCatalog()
-      const liveValidation = validateSpecialistZip(candidate.archiveBytes, catalog)
+      const liveValidation = validateSpecialistZip(
+        candidate.archiveBytes,
+        catalog,
+        this.options.parseSkillDocument
+      )
       if (catalog.protectedSpecialistIds.includes(candidate.plan.specialistId)) {
         return { status: 'failed', code: 'protected-target' }
       }
@@ -992,7 +1012,11 @@ export class SpecialistPackageService {
           ? { expectedRevision: candidate.overwrite.expectedRevision }
           : undefined,
         (document) => this.assertApprovedImpact(resolvedPlan, document),
-        { ...options, origin: candidate.origin }
+        {
+          ...options,
+          origin: candidate.origin,
+          preservePresentation: this.options.preservePresentation?.(candidate.origin)
+        }
       )
     } catch (error) {
       return {
@@ -1012,7 +1036,7 @@ export class SpecialistPackageService {
     try {
       this.options.onCommitted?.()
     } catch {
-      log.warn('post-commit Specialist package refresh failed', {
+      this.log.warn('post-commit Specialist package refresh failed', {
         code: 'package-refresh-failed',
         specialistId: specialist.id
       })

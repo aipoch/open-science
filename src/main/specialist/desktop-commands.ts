@@ -11,7 +11,7 @@ import { runtimeMetadata } from '../runtime-metadata'
 import { publishUserFile } from '../user-file-publisher'
 import type { NativeTranslator } from '../locale/main-process-messages'
 import type { SpecialistService } from './service'
-import type { SpecialistPackageService } from './package/service'
+import type { SpecialistPackageService } from '@aipoch/specialists/node'
 import type { MarketplaceService } from './marketplace/service'
 import type { SessionBindingService } from './session-binding'
 import {
@@ -28,10 +28,7 @@ import type {
   DuplicateSpecialistRequest,
   ResolveSessionSpecialistRequest
 } from '../../shared/specialist'
-import type {
-  SpecialistExportRequest,
-  SpecialistDeleteRequest
-} from '../../shared/specialist-package'
+import type { SpecialistExportRequest, SpecialistDeleteRequest } from '@aipoch/specialists'
 import type {
   InspectGitHubMarketplaceSourceRequest,
   AddMarketplaceSourceRequest,

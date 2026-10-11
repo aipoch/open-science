@@ -11,7 +11,7 @@ import {
   createAcpBackedSpecialistBridge
 } from '../agents/specialist-approval-gateway'
 import { SettingsService } from '../settings/service'
-import { SpecialistPackageService } from '../specialist/package/service'
+import { SpecialistPackageService } from '@aipoch/specialists/node'
 import { SpecialistService } from '../specialist/service'
 import { SessionBindingService } from '../specialist/session-binding'
 import { SessionSpecialistReconfiguration } from '../specialist/session-reconfiguration'

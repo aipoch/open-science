@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto'
-
 import {
   DEFAULT_BUNDLED_SKILL_VERSION,
   SPECIALIST_PACKAGE_SCHEMA_VERSION,
@@ -11,14 +10,14 @@ import {
   type SpecialistPackageSource,
   type SpecialistPackageValidationPlan,
   type SpecialistPackageValidationResult
-} from '../../../shared/specialist-package'
-import { parseSkillDocument } from '@aipoch/skills/document'
+} from '../archive-contracts'
+import { missingSkillDocumentParser, type SkillDocumentParser } from '../ports'
 import {
   validateSpecialistDescription,
   validateSpecialistDisplayName,
   validateSpecialistPublicName,
   validateSpecialistSystemPrompt
-} from '../../../shared/specialist'
+} from '../contracts'
 
 export type SpecialistPackageFile = { path: string; bytes: Uint8Array }
 
@@ -436,7 +435,8 @@ const filesContentHash = (files: readonly SpecialistPackageFile[]): string => {
 const planBundledSkills = (
   packageFiles: readonly SpecialistPackageFile[],
   catalog: SpecialistPackageCatalogSnapshot,
-  diagnostics: PackageDiagnostic[]
+  diagnostics: PackageDiagnostic[],
+  parseSkillDocument: SkillDocumentParser
 ): SpecialistPackageSkillPlan[] => {
   const skillFiles = packageFiles.filter(
     (file) => file.path === 'skills' || file.path.startsWith('skills/')
@@ -487,6 +487,16 @@ const planBundledSkills = (
         root,
         id
       )
+      continue
+    }
+    if (parseSkillDocument === missingSkillDocumentParser) {
+      diagnostics.push({
+        severity: 'error',
+        code: 'skill.parser-required',
+        message: 'A Skill document parser is required for bundled Skills.',
+        path: `${root}/SKILL.md`,
+        relatedId: id
+      })
       continue
     }
     let skillDocument: ReturnType<typeof parseSkillDocument> | undefined
@@ -594,7 +604,8 @@ const deepFreeze = <T>(value: T): T => {
 export const validateSpecialistPackage = (
   files: readonly SpecialistPackageFile[],
   catalog: SpecialistPackageCatalogSnapshot,
-  source: SpecialistPackageSource
+  source: SpecialistPackageSource,
+  parseSkillDocument: SkillDocumentParser = missingSkillDocumentParser
 ): SpecialistPackageValidationResult => {
   const diagnostics: PackageDiagnostic[] = []
   const isNoise = (path: string): boolean =>
@@ -702,7 +713,7 @@ export const validateSpecialistPackage = (
     )
   }
 
-  const skillPlans = planBundledSkills(packageFiles, catalog, diagnostics)
+  const skillPlans = planBundledSkills(packageFiles, catalog, diagnostics, parseSkillDocument)
   const bundledSkillIds = skillPlans.map((skill) => skill.id)
   const bundledSkillLocalIdByName = new Map(
     skillPlans.map((skill) => [skill.id, skill.localId ?? skill.id] as const)

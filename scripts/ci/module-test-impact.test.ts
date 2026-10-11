@@ -362,9 +362,10 @@ describe('module test impact commands', () => {
           ])
         )
       }
+      expect(affected.testFiles).not.toContain('packages/open-science/cli.test.ts')
+      expect(affected.testFiles).not.toContain('packages/open-science/client.test.ts')
       expect(affected.testFiles).toEqual(
         expect.arrayContaining([
-          'packages/open-science/cli.test.ts',
           'src/main/acp/task-agent-port.test.ts',
           'src/main/notebook/local-rpc-notebook-adapter.test.ts',
           'src/main/notebook/local-rpc-server.mcpcall.test.ts',

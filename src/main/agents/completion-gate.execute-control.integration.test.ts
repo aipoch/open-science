@@ -337,8 +337,10 @@ describe('completion gate through the real host.agents SDK and executeControl se
     const connectorStarted = deferred()
     const finishConnector = deferred<unknown>()
     const finishHandoff = deferred()
-    const firstSettled = vi.fn()
-    const retrySettled = vi.fn()
+    const firstSettlement = deferred()
+    const retrySettlement = deferred()
+    const firstSettled = vi.fn(() => firstSettlement.resolve())
+    const retrySettled = vi.fn(() => retrySettlement.resolve())
     const harness = await createExecuteControlHarness({
       connectorCall: async () => {
         connectorStarted.resolve()
@@ -369,10 +371,11 @@ describe('completion gate through the real host.agents SDK and executeControl se
       expect(firstSettled).not.toHaveBeenCalled()
       expect(retrySettled).not.toHaveBeenCalled()
       finishConnector.resolve({ done: true })
-      await vi.waitFor(() => {
-        expect(firstSettled).toHaveBeenCalledOnce()
-        expect(retrySettled).toHaveBeenCalledOnce()
-      })
+      // Observe both notifications while handoff is still blocked. The test timeout bounds real
+      // process/RPC cleanup without imposing vi.waitFor's shorter polling deadline on it.
+      await Promise.all([firstSettlement.promise, retrySettlement.promise])
+      expect(firstSettled).toHaveBeenCalledOnce()
+      expect(retrySettled).toHaveBeenCalledOnce()
       expect(harness.deliverToCurrentPrompt).not.toHaveBeenCalled()
       finishHandoff.resolve()
       expect(await firstResult).toBeInstanceOf(NotebookControlCompletionCapturedError)

@@ -340,8 +340,6 @@
       "src/main/composition/reviewer.test.ts",
       "src/main/session-persistence/runtime-session-owner.test.ts",
       "src/main/session-plan/adversarial-session-plan.test.ts",
-      "packages/notebook-network-sandbox/src/wsl2-isolation.integration.test.ts",
-      "packages/notebook-network-sandbox/src/wsl2-isolation.test.ts",
       "scripts/electron-builder-config.test.ts",
       "scripts/stage-default-envs.test.ts",
       "scripts/windows-runtime-cache-uninstall.test.ts",

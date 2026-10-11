@@ -147,8 +147,6 @@
       "packages/notebook-analysis/src/source-file-access-analysis.workflow-orchestration.test.ts",
       "packages/notebook-code-risk/src/code-risk-analysis.object-budget.test.ts",
       "packages/notebook-code-risk/src/code-risk-analysis.test.ts",
-      "packages/notebook-network-sandbox/src/wsl2-isolation.integration.test.ts",
-      "packages/notebook-network-sandbox/src/wsl2-isolation.test.ts",
       "scripts/electron-app-fixture.test.ts",
       "scripts/electron-builder-config.test.ts",
       "scripts/electron-fixture-teardown.test.ts",

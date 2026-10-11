@@ -43,6 +43,15 @@ describe('disabled automatic domain access', () => {
 })
 
 describe('notebook network policy', () => {
+  it('passes the application default policy to the sandbox including label wildcards', () => {
+    expect(() =>
+      createRuntimeConfig({
+        policy: buildNotebookNetworkPolicy(DEFAULT_NOTEBOOK_NETWORK_SETTINGS),
+        resources: { root: '/resources' }
+      })
+    ).not.toThrow()
+  })
+
   it('enables every Open-Science domain group by default', () => {
     const policy = buildNotebookNetworkPolicy(DEFAULT_NOTEBOOK_NETWORK_SETTINGS)
 

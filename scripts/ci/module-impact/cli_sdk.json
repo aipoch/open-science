@@ -10,7 +10,7 @@
     "packages/open-science/codex-login.mjs",
     "packages/open-science/codex-login.test.ts",
     "packages/open-science/config-root.mjs",
-    "packages/open-science/connector-types.test.ts",
+    "cli/connector-contract.test.ts",
     "packages/open-science/connector.test.ts",
     "packages/open-science/index.d.ts",
     "packages/open-science/index.mjs",
@@ -22,7 +22,8 @@
     "packages/open-science/appimage-launcher.mjs",
     "packages/open-science/appimage-launcher.test.ts",
     "packages/open-science/runtime-package.mjs",
-    "packages/open-science/locate-backend.test.ts"
+    "packages/open-science/locate-backend.test.ts",
+    "packages/open-science/test/fixtures.ts"
   ],
   "interfacePaths": [
     "packages/open-science/cli.mjs",
@@ -43,7 +44,7 @@
       "packages/open-science/client-discovery.test.ts",
       "packages/open-science/client.test.ts",
       "packages/open-science/codex-login.test.ts",
-      "packages/open-science/connector-types.test.ts",
+      "cli/connector-contract.test.ts",
       "packages/open-science/connector.test.ts",
       "packages/open-science/appimage-launcher.test.ts",
       "packages/open-science/locate-backend.test.ts"

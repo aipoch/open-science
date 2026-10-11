@@ -5,7 +5,7 @@ import {
   wsl2Launch,
   type Wsl2Launch
 } from '../runtime/src/platform/wsl2-isolation.js'
-import { notebookWorkloadCacheEnv } from '@aipoch/environment'
+import { cacheEnvironmentFixture } from '../test/cache-environment.js'
 
 const mapped = new Map([
   ['C:\\Open-Science\\Workspace 路径', '/mnt/c/Open-Science/Workspace 路径'],
@@ -67,8 +67,9 @@ describe('WSL2 sandbox adapter', () => {
   })
 
   it('compiles Windows policy into a gateway-only bwrap Bash launch', async () => {
-    const runtimeRoot = 'C:\\Open-Science\\runtime 路径'
-    const cacheEnvironment = notebookWorkloadCacheEnv(runtimeRoot)
+    const cacheEnvironment = cacheEnvironmentFixture(
+      'C:\\Open-Science\\runtime 路径\\cache\\notebook'
+    )
     const cacheRoot = cacheEnvironment.OPEN_SCIENCE_NOTEBOOK_CACHE_DIR!
     const npmPrefix = 'C:\\Open-Science\\runtime 路径\\npm\\linux-x64'
     const mapPath = vi.fn(async (path: string) => {

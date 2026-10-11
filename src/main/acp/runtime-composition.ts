@@ -6,7 +6,6 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { readFile, stat } from 'node:fs/promises'
 import { basename, extname, join } from 'node:path'
-
 import type { AcpPermissionRequest, AcpRuntimeEvent, AcpStateUpdate } from '../../shared/acp'
 import type { ShellRuntimeBinding } from '../../shared/notebook'
 import { DEFAULT_ARTIFACT_PROJECT_ID, type ArtifactFile } from '../../shared/artifacts'
@@ -18,10 +17,8 @@ import {
   MAIN_DURABLE_CONTINUATION_LIFECYCLE_CLIENT_ID,
   MAIN_PERMISSION_WAIT_LIFECYCLE_CLIENT_ID
 } from '../../shared/lifecycle-events'
-import {
-  filterSpecialistConnectorSkills,
-  resolveEffectiveSpecialistSkills
-} from '../../shared/specialist'
+import { filterSpecialistConnectorSkills } from '../../shared/specialist'
+import { resolveEffectiveSpecialistSkills } from '@aipoch/specialists'
 import type { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
 import { ArtifactRepository } from '../artifacts/repository'
 import type { ArtifactRunRegistry } from '../artifacts/run-registry'

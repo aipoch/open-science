@@ -1,6 +1,6 @@
+import { missingSkillDocumentParser, type SkillDocumentParser } from '../ports'
 import { lstat, readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
-
 import {
   SPECIALIST_PACKAGE_ARCHIVE_LIMITS,
   type PackageDiagnostic,
@@ -8,7 +8,7 @@ import {
   type SpecialistPackageCatalogSnapshot,
   type SpecialistPackageSource,
   type SpecialistPackageValidationResult
-} from '../../../shared/specialist-package'
+} from '../archive-contracts'
 import { validateSpecialistPackage, type SpecialistPackageFile } from './validator'
 
 const LIMITS = SPECIALIST_PACKAGE_ARCHIVE_LIMITS
@@ -130,7 +130,8 @@ const scanDirectory = async (
 export const validateSpecialistDirectory = async (
   root: string,
   catalog: SpecialistPackageCatalogSnapshot,
-  source: Extract<SpecialistPackageSource, 'directory' | 'builtin'> = 'directory'
+  source: Extract<SpecialistPackageSource, 'directory' | 'builtin'> = 'directory',
+  parseSkillDocument: SkillDocumentParser = missingSkillDocumentParser
 ): Promise<SpecialistPackageValidationResult> => {
   try {
     const scanned = await scanDirectory(root)
@@ -143,7 +144,7 @@ export const validateSpecialistDirectory = async (
         }
       }
     }
-    const result = validateSpecialistPackage(scanned.files, catalog, source)
+    const result = validateSpecialistPackage(scanned.files, catalog, source, parseSkillDocument)
     return {
       ...result,
       preview: {

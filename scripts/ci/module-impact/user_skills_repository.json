@@ -508,7 +508,6 @@
       "src/main/side-chat/runtime-owner.test.ts",
       "src/main/specialist/application-commands.test.ts",
       "src/main/specialist/ipc.test.ts",
-      "src/main/specialist/package/adapters.test.ts",
       "src/main/specialist/package/reported-regressions.test.ts",
       "src/main/specialist/service.test.ts",
       "src/main/specialist/specialist-identity-injection.test.ts",

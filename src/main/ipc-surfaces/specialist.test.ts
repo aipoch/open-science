@@ -30,7 +30,7 @@ vi.mock('electron', () => ({
 
 import { SPECIALIST_IPC } from '../../shared/specialist'
 import { SPECIALIST_MARKETPLACE_IPC } from '../../shared/specialist-marketplace'
-import { SPECIALIST_PACKAGE_ARCHIVE_LIMITS } from '../../shared/specialist-package'
+import { SPECIALIST_PACKAGE_ARCHIVE_LIMITS } from '@aipoch/specialists'
 import { disposeIpcHandlerRegistry, ipcMainHandle } from '../ipc-handler-registry'
 import { createSpecialistElectronSurface } from './specialist'
 

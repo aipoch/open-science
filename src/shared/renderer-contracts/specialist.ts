@@ -1,17 +1,14 @@
 import type {
   ContributionTemplateExportResult,
   SpecialistPackageReportSaveResult,
-  SpecialistExportPreview,
-  SpecialistExportRequest,
   SpecialistExportSaveResult
-} from '../specialist-package'
-
+} from '../specialist'
+import type { SpecialistExportPreview, SpecialistExportRequest } from '@aipoch/specialists'
 import type {
   BeginUploadTransferRequest,
   UploadTransferRequest,
   UploadTransferStatus
 } from '../uploads'
-
 import type {
   CreateSpecialistRequest,
   UpdateSpecialistRequest,
@@ -27,7 +24,6 @@ import type {
   CompletionHandoffLifecycleEvent,
   CompletionHandoffCommand
 } from '../specialist'
-
 import type {
   SpecialistPackageCandidatePreview,
   SpecialistPackageInstallRequest,
@@ -35,8 +31,7 @@ import type {
   SpecialistDeletePreview,
   SpecialistDeleteRequest,
   SpecialistDeleteResult
-} from '../specialist-package'
-
+} from '@aipoch/specialists'
 import type {
   AddMarketplaceSourceRequest,
   CancelMarketplaceCandidateRequest,
@@ -54,7 +49,6 @@ import type {
   PrepareMarketplaceInstallRequest,
   RemoveMarketplaceSourceRequest
 } from '../specialist-marketplace'
-
 import {
   callable,
   ELECTRON,

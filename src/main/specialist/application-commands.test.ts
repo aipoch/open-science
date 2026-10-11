@@ -1,3 +1,5 @@
+import { SpecialistStorageFixture } from '../../../test/specialist-fixtures'
+import { createHostSpecialistPackages } from './package/environment'
 import { specialistDesktopCommandGroup } from './desktop-commands'
 import { englishNativeTranslator } from '../locale/main-process-messages'
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
@@ -19,14 +21,13 @@ import { ApplicationCallerLeaseRegistry } from '../caller-lifecycle'
 import { createCallerContext, createWebCallerContext } from '../caller-context'
 import { createUploadCommandOwner } from '../uploads/command-owner'
 import { UploadRepository } from '../uploads/repository'
-import { SpecialistRepository } from './repository'
 import { SpecialistService } from './service'
-import { SpecialistPackageService } from './package/service'
+import { SpecialistPackageService } from '@aipoch/specialists/node'
 import {
   SPECIALIST_PACKAGE_ARCHIVE_LIMITS,
   type SpecialistPackageCandidatePreview,
   type SpecialistPackageInstallResult
-} from '../../shared/specialist-package'
+} from '@aipoch/specialists'
 import type { SpecialistCatalogSnapshot } from '../../shared/specialist'
 
 const native = vi.hoisted(() => ({ chooseFiles: vi.fn(), chooseSavePath: vi.fn() }))
@@ -97,11 +98,11 @@ const fixture = async (
   const root = await mkdtemp(join(tmpdir(), 'specialist-web-'))
   cleanup.push(() => rm(root, { recursive: true, force: true }))
   const uploads = createUploadCommandOwner(new UploadRepository(root))
-  const repository = new SpecialistRepository(root)
-  const service = new SpecialistService(repository)
-  const packages = new SpecialistPackageService({
+  const repository = new SpecialistStorageFixture(root)
+  const service = repository.domain.catalog
+  const packages = createHostSpecialistPackages({
     storageDir: root,
-    repository,
+    domain: repository.domain,
     catalog: async () => {
       await beforeCatalog()
       return {

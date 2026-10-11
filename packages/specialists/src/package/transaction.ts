@@ -1,13 +1,12 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { readFile, rename, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
-
-import type { SpecialistPackageValidationPlan } from '../../../shared/specialist-package'
-import type { SpecialistView } from '../../../shared/specialist'
-import { emptyFullAccessConfig } from '../../../shared/specialist'
-import { createLogger } from '@aipoch/diagnostics/node'
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
+import type { SpecialistPackageValidationPlan } from '../archive-contracts'
+import type { SpecialistView } from '../contracts'
+import { emptyFullAccessConfig } from '../contracts'
+import { silentLogger, type SpecialistLogger } from '../ports'
 import { SpecialistRepository } from '../repository'
-import { SettingsRepository } from '../../settings/repository'
+import { missingSkillEnablement, type SkillEnablementPort } from '../ports'
 import {
   SPECIALISTS_FILE_VERSION,
   type SpecialistOrigin,
@@ -16,7 +15,7 @@ import {
 } from '../types'
 import { specialistContentModifiedSinceImport, specialistPayloadContentHash } from './validator'
 import { NOOP_SPECIALIST_PACKAGE_SKILL_PORT } from './skill-port'
-import type { SpecialistPackageSkillPort } from '@aipoch/skills'
+import type { SpecialistPackageSkillPort } from '../ports'
 
 type TransactionPhase = 'prepared' | 'committing' | 'committed' | 'rolling-back' | 'rolled-back'
 
@@ -34,8 +33,6 @@ type TransactionJournal = {
   before?: StoredSpecialists
   after?: StoredSpecialists
 }
-
-const log = createLogger('specialist.package.transaction')
 
 const documentDigest = (document: StoredSpecialists): string =>
   createHash('sha256').update(JSON.stringify(document)).digest('hex')
@@ -75,10 +72,9 @@ export class SpecialistPackageTransaction {
       specialistId: string,
       skillIds: readonly string[]
     ) => Promise<void>,
-    private readonly skillSettings: Pick<
-      SettingsRepository,
-      'getSettings' | 'setSkillsEnabled'
-    > = new SettingsRepository(storageDir)
+    private readonly skillSettings: SkillEnablementPort = missingSkillEnablement,
+    private readonly disableNewSkills = false,
+    private readonly log: SpecialistLogger = silentLogger
   ) {
     this.journalPath = join(storageDir, 'specialist-package-transaction.json')
     this.beforeDataPath = join(storageDir, 'specialist-package-transaction.before.json')
@@ -138,6 +134,22 @@ export class SpecialistPackageTransaction {
       ) {
         throw new Error('Invalid Specialist package transaction journal.')
       }
+      if (
+        this.skillPort === NOOP_SPECIALIST_PACKAGE_SKILL_PORT &&
+        journal.phase !== 'rolled-back'
+      ) {
+        // Without the external owner, recovery is safe only when the durable evidence proves
+        // that this transaction cannot have staged, published or released any Skill files.
+        const { before, after } = await this.readTransactionData(journal)
+        const ownsSkills = [before, after].some((document) =>
+          document.specialists.some(
+            (profile) => profile.id === journal.specialistId && profile.ownedSkillIds.length > 0
+          )
+        )
+        if (ownsSkills || journal.deleteSkillIds?.length || journal.newlyDisabledSkillIds?.length) {
+          throw new Error('A Skill transaction participant is required for recovery.')
+        }
+      }
       const settle = async (): Promise<void> => {
         if (journal.phase === 'committed') {
           retryableCommitted = true
@@ -187,7 +199,7 @@ export class SpecialistPackageTransaction {
         ? this.skillPort.runMutationExclusive(settle)
         : settle())
       await this.cleanupTransactionData()
-      log.info('recovered specialist package transaction', {
+      this.log.info('recovered specialist package transaction', {
         transactionId: journal.transactionId,
         specialistId: journal.specialistId
       })
@@ -203,7 +215,11 @@ export class SpecialistPackageTransaction {
     archiveDigest: string,
     overwrite?: { expectedRevision: number },
     assertApprovedImpact?: (document: Readonly<StoredSpecialists>) => Promise<void>,
-    options?: { activateAfterInstall?: boolean; origin?: SpecialistOrigin }
+    options?: {
+      activateAfterInstall?: boolean
+      origin?: SpecialistOrigin
+      preservePresentation?: boolean
+    }
   ): Promise<SpecialistView> {
     const run = this.queue.then(async () => {
       await this.recoverNow()
@@ -256,9 +272,8 @@ export class SpecialistPackageTransaction {
           packageVersion: plan.packageVersion
         }
       }
-      if (options?.origin === 'marketplace' && existing?.iconKey) stored.iconKey = existing.iconKey
-      if (options?.origin === 'marketplace' && existing?.colorKey)
-        stored.colorKey = existing.colorKey
+      if (options?.preservePresentation && existing?.iconKey) stored.iconKey = existing.iconKey
+      if (options?.preservePresentation && existing?.colorKey) stored.colorKey = existing.colorKey
       stored.importBaseline!.contentDigest = specialistPayloadContentHash(stored)
       const after: StoredSpecialists = {
         version: SPECIALISTS_FILE_VERSION,
@@ -300,11 +315,11 @@ export class SpecialistPackageTransaction {
         skillMutationBegun = true
         const commit = async (): Promise<void> => {
           await assertApprovedImpact?.(before)
-          const disabled = new Set((await this.skillSettings.getSettings()).disabledSkillIds ?? [])
+          const disabled = new Set(await this.skillSettings.disabledSkillIds())
           journal.newlyDisabledSkillIds = [
             ...new Set(
               plan.skills
-                .filter((skill) => skill.disposition === 'install')
+                .filter((skill) => this.disableNewSkills && skill.disposition === 'install')
                 .map((skill) => skill.localId ?? skill.id)
             )
           ].filter((id) => !disabled.has(id))
@@ -319,7 +334,7 @@ export class SpecialistPackageTransaction {
           await this.writeJournal(journal)
           await this.skillPort.recover(transactionId, 'commit')
           await this.cleanupTransactionData()
-          log.info('committed specialist package transaction', {
+          this.log.info('committed specialist package transaction', {
             transactionId: journal.transactionId,
             specialistId: stored.id
           })
@@ -449,6 +464,7 @@ export class SpecialistPackageTransaction {
   }
 
   private async writeJournal(journal: TransactionJournal): Promise<void> {
+    await mkdir(dirname(this.journalPath), { recursive: true })
     const temporary = `${this.journalPath}.tmp`
     await writeFile(temporary, `${JSON.stringify(journal)}\n`, 'utf8')
     await rename(temporary, this.journalPath)
@@ -458,6 +474,7 @@ export class SpecialistPackageTransaction {
     before: StoredSpecialists,
     after: StoredSpecialists
   ): Promise<void> {
+    await mkdir(dirname(this.journalPath), { recursive: true })
     await writeFile(this.beforeDataPath, `${JSON.stringify(before)}\n`, 'utf8')
     await writeFile(this.afterDataPath, `${JSON.stringify(after)}\n`, 'utf8')
   }

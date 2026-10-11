@@ -7,7 +7,6 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as acp from '@agentclientprotocol/sdk'
-
 import { AcpRuntime } from './runtime.test-utils'
 import { AcpRuntimeCoordinator } from './runtime-coordinator'
 import { createCodexCompletionGateRuntime } from './codex-completion-handoff'
@@ -22,11 +21,8 @@ import { ArtifactRepository } from '../artifacts/repository'
 import { ConnectorService } from '../connectors/service'
 import { NotebookLocalRpcServer } from '../notebook/local-rpc-server'
 import type { NotebookRuntimeService } from '../notebook/runtime-service'
-import {
-  emptyFullAccessConfig,
-  emptySelectedConfig,
-  type SpecialistView
-} from '../../shared/specialist'
+import { emptyFullAccessConfig, emptySelectedConfig } from '@aipoch/specialists'
+import { type SpecialistView } from '../../shared/specialist'
 
 class FakeAgentProcess extends EventEmitter {
   stdin = new PassThrough()

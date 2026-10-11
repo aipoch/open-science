@@ -3,10 +3,10 @@ import ts from 'typescript'
 import { expect, it } from 'vitest'
 
 it('publishes the complete safe Connector and credential contracts', () => {
-  const path = resolve('packages/open-science/connector-contract.fixture.ts').split(sep).join('/')
+  const path = resolve('cli/connector-contract.fixture.ts').split(sep).join('/')
   const source = `
-    import type { OpenScienceClient } from './index'
-    import type * as Shared from '../../src/shared/settings'
+    import type { OpenScienceClient } from '../packages/open-science/index'
+    import type * as Shared from '../src/shared/settings'
     type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false
     type Assert<T extends true> = T
     type List = Assert<Equal<Awaited<ReturnType<OpenScienceClient['listConnectors']>>, Shared.ConnectorsSnapshot>>

@@ -1,11 +1,10 @@
 import type { ActiveSession, ClientConnection } from '@agentclientprotocol/sdk'
-
 import type { AcpCreateSessionResponse } from '../../shared/acp'
 import {
   normalizePermissionProfile,
   type PermissionProfileId
 } from '../../shared/permission-profiles'
-import type { EffectiveSpecialistSkills } from '../../shared/specialist'
+import type { EffectiveSpecialistSkills } from '@aipoch/specialists'
 import { startDiagnosticOperation } from '@aipoch/diagnostics/node'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import type { AcpBackendGenerationView } from './backend-generation-owner'

@@ -2,7 +2,6 @@
 import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-
 import type {
   CompletionHandoffLifecycleEvent,
   SpecialistListItem
@@ -19,9 +18,7 @@ import {
   useSessionStore,
   type ChatSession
 } from '@/stores/session-store'
-
 import { useWorkspaceSessionController } from './workspace-session-controller'
-
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const session = (overrides: Partial<ChatSession> = {}): ChatSession => ({

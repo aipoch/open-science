@@ -541,8 +541,7 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/vision-model-owner.ts',
       'src/main/settings/xai-provider-account-owner.ts',
       'src/main/skills/catalog.ts',
-      'src/main/specialist/package/service.ts',
-      'src/main/specialist/package/transaction.ts',
+      'src/main/specialist/package/environment.ts',
       'src/main/storage/initialize-location.ts'
     ])
     expect(importersOf(settingsPaths.recordCodec)).toEqual([
@@ -793,7 +792,7 @@ describe('Settings backend ownership architecture', () => {
       'src/main/composition/settings-bootstrap.ts',
       'src/main/settings/compute-grant-port.ts',
       'src/main/settings/service.ts',
-      'src/main/specialist/package/transaction.ts',
+      'src/main/specialist/package/environment.ts',
       'src/main/storage/initialize-location.ts'
     ])
     const computeIpc = readSource(resolve(projectRoot, 'src/main/compute/ipc.ts'))

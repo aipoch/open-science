@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
-import { PUBLIC_TERMINAL_FIXTURE } from '../../test/fixtures/renderer-contract-certification'
+import { PUBLIC_TERMINAL_FIXTURE } from './test/fixtures'
 import {
   CliUsageError,
   initCommand,

@@ -13,7 +13,7 @@ import {
   type SpecialistPackageInstallRequest,
   type SpecialistPackageCandidatePreview,
   type SpecialistPackageInstallResult
-} from '../../shared/specialist-package'
+} from '@aipoch/specialists'
 import {
   type BeginUploadTransferRequest,
   type UploadTransferRequest,
@@ -42,7 +42,7 @@ import {
 } from '../application-command-router'
 import type { UploadCommandOwner } from '../uploads/command-owner'
 import type { SpecialistService } from './service'
-import type { SpecialistPackageService } from './package/service'
+import type { SpecialistPackageService } from '@aipoch/specialists/node'
 import type { MarketplaceService } from './marketplace/service'
 import type { SessionSpecialistReconfiguration } from './session-reconfiguration'
 

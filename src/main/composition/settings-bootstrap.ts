@@ -27,7 +27,6 @@ import { SettingsInstallCoordinator } from '../settings/settings-install-coordin
 import { SettingsSnapshotCommitOwner } from '../settings/settings-snapshot-commit-owner'
 import { netFetchStandard } from '../network-fetch'
 import { UserSkillSpecialistPackageAdapter } from '@aipoch/skills'
-import { SpecialistRepository } from '../specialist/repository'
 import { SpecialistService } from '../specialist/service'
 import { resolveConfigRoot, resolveDataRoot } from '../storage-root'
 import { initializeDataLocation } from '../storage/initialize-location'
@@ -41,7 +40,7 @@ export async function composeSettingsBootstrap({
   applicationEvents,
   permissionApprovalPresence,
   getRuntimeRef,
-  getSpecialistRepository,
+  getSpecialistDomain,
   getSpecialistService,
   mainEntryPath,
   settingsStore,
@@ -51,7 +50,7 @@ export async function composeSettingsBootstrap({
   applicationEvents: ApplicationEvents
   permissionApprovalPresence: PermissionApprovalPresence
   getRuntimeRef: () => { current: ReturnType<typeof createAcpRuntime> | undefined }
-  getSpecialistRepository: () => SpecialistRepository
+  getSpecialistDomain: () => { withReadLock<T>(operation: () => Promise<T>): Promise<T> }
   getSpecialistService: () => SpecialistService
   mainEntryPath: string
   settingsStore: import('../settings/document-store').SettingsDocumentStore | undefined
@@ -291,7 +290,7 @@ export async function composeSettingsBootstrap({
           throw new Error('Specialist impact inspection is unavailable.')
         return snapshot.items
       },
-      withMarketplaceImpactLock: (operation) => getSpecialistRepository().withReadLock(operation),
+      withMarketplaceImpactLock: (operation) => getSpecialistDomain().withReadLock(operation),
       withUserSkillRecoveryBarrier: (operation) =>
         specialistPackageRecovery.current?.(operation) ?? operation(),
       applyNotebookNetwork: async (settings) => notebookNetworkSandbox.applySettings(settings),

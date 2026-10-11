@@ -13,6 +13,7 @@
 //  - The SpecialistService and catalog services remain authoritative; nothing is copied here.
 
 import type { ConnectorReadModel } from '../connectors/read-model'
+
 export type { ConnectorReadModel } from '../connectors/read-model'
 import type { SpecialistService } from '../specialist/service'
 import type { SessionBindingService } from '../specialist/session-binding'
@@ -29,10 +30,7 @@ import { executeAgentsMutation, type AgentsMutationCatalog } from './agents-muta
 import { SwitchOperation, SwitchCommitSequencer, type SwitchParams } from './switch-operation'
 import { applyDelete } from './specialist-privileged-ops'
 import type { HandoffApprovalContext } from '../../shared/handoff-lifecycle'
-import type {
-  SpecialistDeleteRequest,
-  SpecialistDeleteResult
-} from '../../shared/specialist-package'
+import type { SpecialistDeleteRequest, SpecialistDeleteResult } from '@aipoch/specialists'
 import { AgentsSafeError, agentsPublicError, formatAgentsError } from './agents-error'
 import { applyNameOrIdFilter } from './name-or-id-filter'
 

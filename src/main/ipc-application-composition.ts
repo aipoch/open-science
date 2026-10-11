@@ -48,16 +48,13 @@ import {
 } from './composition/specialists'
 import { composeStorageStartup } from './composition/storage-startup'
 import { composeUploadStorage } from './composition/upload-storage'
-
 import { type ApplicationCommandComposition } from './application-command-composition'
 import { createApplicationEventModule, type ApplicationEventSource } from './application-events'
 import { type ApplicationModuleBuilder } from './application-runtime'
 import { registerApplicationCommandComposition } from './composition/application-commands'
-
 import { createAcpRuntime } from './acp/runtime-composition'
 import { ArchiveCoordinator } from './archive/coordinator'
 import { SessionEnabledComputeHostsOwner } from './compute/session-enabled-hosts-owner'
-
 import type { SessionSummary } from '../shared/session-persistence'
 import { type AppIconPreview, type AppIconVariant } from '../shared/settings'
 import { registerReviewerComposition } from './composition/reviewer'
@@ -222,7 +219,7 @@ export const createApplicationModules = async (
     applicationEvents,
     permissionApprovalPresence,
     getRuntimeRef: () => runtimeRef,
-    getSpecialistRepository: () => specialistCatalog.specialistRepository,
+    getSpecialistDomain: () => specialistCatalog.specialistDomain,
     getSpecialistService: () => specialistCatalog.specialistService,
     mainEntryPath,
     settingsStore,

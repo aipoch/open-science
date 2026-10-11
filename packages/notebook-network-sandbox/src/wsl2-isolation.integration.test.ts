@@ -11,7 +11,7 @@ import {
   wsl2Launch,
   type Wsl2Launch
 } from '../runtime/src/platform/wsl2-isolation.js'
-import { notebookWorkloadCacheEnv } from '@aipoch/environment'
+import { cacheEnvironmentFixture } from '../test/cache-environment.js'
 import { CommandGateway } from '../runtime/src/gateway/command-gateway.js'
 
 const distro = process.env.OPEN_SCIENCE_WSL_DISTRO
@@ -108,7 +108,7 @@ describe.runIf(enabled)('WSL2 sandbox real profile', () => {
       gatewayCredentials,
       pathEnvironment: {
         OPEN_SCIENCE_HANDOFF_DIR: handoff,
-        ...notebookWorkloadCacheEnv(join(root, 'runtime'))
+        ...cacheEnvironmentFixture(cache)
       },
       filesystem: {
         // Application credential roots sit outside the Notebook's explicit grants.
@@ -321,7 +321,7 @@ printf sibling > sibling.txt
       gatewayCredentials,
       pathEnvironment: {
         OPEN_SCIENCE_HANDOFF_DIR: handoff,
-        ...notebookWorkloadCacheEnv(join(root, 'runtime'))
+        ...cacheEnvironmentFixture(cache)
       },
       filesystem: {
         privateRoot: root,

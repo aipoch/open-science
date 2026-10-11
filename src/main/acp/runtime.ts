@@ -10,7 +10,6 @@ import type {
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
-
 import {
   ACP_RESTORED_PERMISSION_CLEAR_FAILED_EVENT_TITLE,
   ACP_RESTORED_PERMISSION_REARMED_EVENT_TITLE,
@@ -51,7 +50,7 @@ import {
   type ElicitationField,
   type PendingElicitationRequest
 } from '../../shared/elicitation'
-import type { EffectiveSpecialistSkills } from '../../shared/specialist'
+import type { EffectiveSpecialistSkills } from '@aipoch/specialists'
 import type { SideChatSendMessageRequest, SideChatSendMessageResult } from '../../shared/side-chat'
 import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
 import type { ApprovedSwitchReadBack, ClaudeCodeReplayInput } from '../agents/claude-code-handoff'

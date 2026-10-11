@@ -4,23 +4,22 @@ import {
   uploadSpecialistZip
 } from '../lib/specialist-package-upload'
 import { create, type StoreApi } from 'zustand'
+import type { SpecialistListItem, SpecialistView } from '../../../shared/specialist'
 import type {
-  SpecialistListItem,
   SpecialistDocumentIntegrity,
-  SpecialistView,
   CreateSpecialistInput,
   UpdateSpecialistInput,
   ConnectorToolRule
-} from '../../../shared/specialist'
+} from '@aipoch/specialists'
 import type {
   SpecialistPackageCandidatePreview,
   SpecialistPackageInstallResult,
   SpecialistExportPreview,
-  SpecialistExportSaveResult,
   SpecialistDeletePreview,
   SpecialistDeleteResult,
   SpecialistPackageInstallRequest
-} from '../../../shared/specialist-package'
+} from '@aipoch/specialists'
+import type { SpecialistExportSaveResult } from '../../../shared/specialist'
 
 // Draft key for the create-specialist form; edit drafts are keyed by specialist id.
 export const CREATE_SPECIALIST_DRAFT_KEY = '__create__'

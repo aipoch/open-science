@@ -1,7 +1,6 @@
 import * as acp from '@agentclientprotocol/sdk'
 import type { ActiveSession, ClientConnection, SessionConfigOption } from '@agentclientprotocol/sdk'
 import { resolve } from 'node:path'
-
 import type {
   AcpCreateSessionResponse,
   AcpResumeSessionRequest,
@@ -11,7 +10,7 @@ import {
   DEFAULT_PERMISSION_PROFILE,
   normalizePermissionProfile
 } from '../../shared/permission-profiles'
-import type { EffectiveSpecialistSkills } from '../../shared/specialist'
+import type { EffectiveSpecialistSkills } from '@aipoch/specialists'
 import { createLogger, diagnosticErrorFields, errorLogFields } from '@aipoch/diagnostics/node'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
 import type { AcpProviderSessionAdopter } from './provider-session-adopter'
