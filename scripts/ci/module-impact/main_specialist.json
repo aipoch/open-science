@@ -267,7 +267,7 @@
       "src/main/skills/conversation-import.test.ts",
       "packages/skills/src/skill-authoring-service.test.ts",
       "src/main/skills/host-skills-service.test.ts",
-      "packages/skills/src/marketplace-installation.test.ts",
+      "src/main/skill-marketplace/installation.test.ts",
       "packages/skills/src/materializer-integrity.regression.test.ts",
       "packages/skills/src/skill-archive-sniffer.test.ts",
       "packages/skills/src/specialist-package-adapter.test.ts",

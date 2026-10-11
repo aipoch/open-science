@@ -1,15 +1,15 @@
 import { createHash } from 'node:crypto'
 import { inflateRawSync } from 'node:zlib'
 import { z } from 'zod'
-import { skillMarketplaceStableVersionPattern } from './skill-marketplace'
+import { skillMarketplaceStableVersionPattern } from '../../shared/skill-marketplace'
 import {
   isAppOwnedSkillRootFile,
   isSkillPackageIgnoredPath,
   SKILL_IMPORT_LIMITS as limits
-} from './skill-import-limits'
-import { parseSkillDocument } from './frontmatter'
-import type { FetchedSkillFile } from './github-import'
-import { marketplacePath, sha256 } from './marketplace-protocol'
+} from '@aipoch/skills/sources'
+import { parseSkillDocument } from '@aipoch/skills/document'
+import type { FetchedSkillFile } from '@aipoch/skills/sources'
+import { marketplacePath, sha256 } from './protocol'
 
 const hash = z.string().regex(/^[a-f0-9]{64}$/)
 export const marketplaceReceiptSchema = z.strictObject({

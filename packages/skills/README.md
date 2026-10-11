@@ -10,7 +10,7 @@ No Electron, Prisma, Notebook installation or application source is required.
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | `@aipoch/skills`            | Repository, bundled registry, catalog merge, observation, draft service, helper catalog and Specialist transaction participant |
 | `@aipoch/skills/document`   | Browser-safe document parsing/serialization, identity, activation rules and DTOs                                               |
-| `@aipoch/skills/sources`    | GitHub/archive/marketplace transport and validation, install queue and export bytes                                            |
+| `@aipoch/skills/sources`    | GitHub/archive imports, release-source contracts, safe package validation and export bytes                                     |
 | `@aipoch/skills/projection` | Filesystem projections and bounded runtime document reading                                                                    |
 
 Import only these names. Internal filenames are not supported APIs. One CommonJS implementation
@@ -25,8 +25,8 @@ const catalog = mergeSkillCatalog(await bundled.list(), await user.list())
 ```
 
 The host provides storage/bundled roots, authenticated network functions, Python helper validation,
-permissions and application policy. `SkillMarketplaceService` accepts a standard fetch function;
-use a host transport when cookies, proxies or redirect handling require application policy.
+permissions and application policy. Marketplace transport, catalog protocol, trust roots, cache and
+batch lifecycle belong to the consuming application.
 Projection hooks provide the host's Compute notice and exact legacy-directory cleanup. Package
 projection never infers host capabilities from Skill content.
 
@@ -86,13 +86,13 @@ shortcuts. Application networking uses the standard Fetch contract; package tran
 | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
 | `SkillAuthoringService`: draft files, safe editing, validation, publication, deletion and mutation serialization | `host.skills` request parsing, session identity, deletion approval/decline, model guidance and post-commit refresh |
 | Skill installation plans, content/version preconditions, ownership records and transaction recovery              | Specialist preview choices, Main Agent enablement, consumer names and cross-domain coordination                    |
-| Marketplace verification, diffs and confirmation fingerprints                                                    | Usage impact display and an opaque usage revision recalculated under the existing impact lock                      |
+| Source-neutral release installation, diffs and confirmation fingerprints                                         | Marketplace verification/receipt codec/version policy, usage display and a revision checked under the impact lock  |
 | Safe projected-directory reading and copying                                                                     | Framework directory defaults, MCP discovery budgets and Agent Home display labels                                  |
 
 Use `runMutationExclusive` to keep an authoring operation serialized across a host approval decision;
 resolve a deletion target before asking and delete that stable target only after approval. All
 instances sharing the draft root use one mutation owner. Do not move file writes back into the host.
-Marketplace guard callbacks receive the installed Skill ID and its recorded owner IDs; return a
+Release guard callbacks receive the installed Skill ID and its recorded owner IDs; return a
 stable revision covering every usage relationship the user approved. Keep the impact lock held
 through revalidation and commit. Display DTOs are composed by the host, never persisted by this guard.
 
@@ -124,3 +124,17 @@ Run the package checks above, then from the repository root run focused host tes
 contracts. Record exact revisions, collection commands, counts and selection reasons in the local
 acceptance report. Required PR CI validates the actual Ubuntu/Windows execution; local collection
 and policy replay must not be reported as a measured CI-duration improvement.
+
+## Release-source boundary
+
+`releaseInstallation`, `previewReleaseUpdate` and `installRelease` accept a `SkillReleasePolicy`.
+The source owns its metadata namespace, receipt codec, wire digest, version ordering and diff label.
+The repository owns path safety, local-change detection, confirmation fingerprints, atomic package
+and receipt promotion, locking and recovery. Source callbacks must be deterministic and validate
+their own receipt fields; they must not write Skill files. The namespace cannot replace core source
+fields. Receipts for another namespace cannot authorize an update.
+
+The application Marketplace adapter retains the historical `.source.json.marketplace` representation
+and its exact digest algorithm. This refactor does not migrate existing data. Package tests use a
+fictional local publisher with a different version grammar and no official market fixtures. Boundary
+tests reject Marketplace symbols, URLs and protocol identifiers in package source/tests/scripts.

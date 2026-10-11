@@ -8,11 +8,6 @@
     "packages/skills/scripts/consumer-smoke.mjs",
     "packages/skills/scripts/typescript.mjs",
     "packages/skills/scripts/verify-package.mjs",
-    "packages/skills/src/__fixtures__/marketplace/README.md",
-    "packages/skills/src/__fixtures__/marketplace/abstract-trimmer.json",
-    "packages/skills/src/__fixtures__/marketplace/marketplace.json",
-    "packages/skills/src/__fixtures__/marketplace/marketplace.json.sig",
-    "packages/skills/src/__fixtures__/marketplace/release-index.json",
     "packages/skills/src/activation-policy.ts",
     "packages/skills/src/agent-home-skill-catalog.test.ts",
     "packages/skills/src/agent-home-skill-catalog.ts",
@@ -36,14 +31,6 @@
     "packages/skills/src/import-limits.test.ts",
     "packages/skills/src/import-limits.ts",
     "packages/skills/src/index.ts",
-    "packages/skills/src/marketplace-install-queue.test.ts",
-    "packages/skills/src/marketplace-install-queue.ts",
-    "packages/skills/src/marketplace-installation.test.ts",
-    "packages/skills/src/marketplace-package.ts",
-    "packages/skills/src/marketplace-protocol.ts",
-    "packages/skills/src/marketplace-service.test.ts",
-    "packages/skills/src/marketplace-service.ts",
-    "packages/skills/src/marketplace-source.ts",
     "packages/skills/src/materializer-integrity.regression.test.ts",
     "packages/skills/src/materializer.ts",
     "packages/skills/src/personal-skill-document.ts",
@@ -59,7 +46,6 @@
     "packages/skills/src/skill-files.ts",
     "packages/skills/src/skill-frontmatter.ts",
     "packages/skills/src/skill-import-limits.ts",
-    "packages/skills/src/skill-marketplace.ts",
     "packages/skills/src/skill-mutation-owner.ts",
     "packages/skills/src/skill-name.ts",
     "packages/skills/src/skill-package-compatibility.ts",
@@ -87,7 +73,9 @@
     "packages/skills/tsconfig.json",
     "packages/skills/tsconfig.test.json",
     "packages/skills/vitest.config.ts",
-    "packages/skills/src/runtime-document.test.ts"
+    "packages/skills/src/runtime-document.test.ts",
+    "packages/skills/src/skill-release.ts",
+    "packages/skills/src/skill-release.test.ts"
   ],
   "interfacePaths": [
     "packages/skills/src/index.ts",
@@ -95,16 +83,13 @@
     "packages/skills/src/sources.ts",
     "packages/skills/src/projection.ts"
   ],
-  "consumerModules": ["user_skills_repository"],
+  "consumerModules": ["user_skills_repository", "skill_marketplace"],
   "testFiles": {
     "owner": [
       "packages/skills/src/frontmatter.test.ts",
       "packages/skills/src/github-import.test.ts",
       "packages/skills/src/skill-authoring-service.test.ts",
       "packages/skills/src/import-limits.test.ts",
-      "packages/skills/src/marketplace-install-queue.test.ts",
-      "packages/skills/src/marketplace-installation.test.ts",
-      "packages/skills/src/marketplace-service.test.ts",
       "packages/skills/src/materializer-integrity.regression.test.ts",
       "packages/skills/src/skill-archive-sniffer.test.ts",
       "packages/skills/src/specialist-package-adapter.test.ts",
@@ -118,7 +103,8 @@
       "packages/skills/src/helper-validation.test.ts",
       "packages/skills/src/durable-json-file.test.ts",
       "packages/skills/src/agent-home-skill-catalog.test.ts",
-      "packages/skills/src/runtime-document.test.ts"
+      "packages/skills/src/runtime-document.test.ts",
+      "packages/skills/src/skill-release.test.ts"
     ],
     "contract": [
       "src/main/skills/catalog.test.ts",
@@ -1692,7 +1678,11 @@
       "src/shared/uploads.test.ts",
       "test/pdf-translation-native-verification.test.ts",
       "test/pdf-translation-preservation.test.ts",
-      "src/main/skills/host-skills-service.test.ts"
+      "src/main/skills/host-skills-service.test.ts",
+      "src/main/skill-marketplace/install-queue.test.ts",
+      "src/main/skill-marketplace/installation.test.ts",
+      "src/main/skill-marketplace/service.test.ts",
+      "src/main/session-diagnostics/schema-compatibility.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],

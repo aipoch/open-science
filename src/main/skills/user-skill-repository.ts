@@ -1,7 +1,7 @@
-import { UserSkillRepository as Repository } from '@aipoch/skills'
+import { MarketplaceSkillRepository as Repository } from '../skill-marketplace/installation'
 import { validateSkillHelper } from './helper-validation'
 export {
-  MarketplaceInstallConflict,
+  SkillReleaseInstallConflict as MarketplaceInstallConflict,
   parseUserSkillId,
   SAFE_SKILL_DIRECTORY_NAME,
   SAFE_SKILL_NAME,

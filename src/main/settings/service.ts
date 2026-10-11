@@ -13,7 +13,7 @@ import { homedir } from 'node:os'
 import { z } from 'zod'
 import { MarketplaceInstallConflict } from '../skills/user-skill-repository'
 import { SkillMarketplaceService } from '../skills/marketplace-service'
-import { SkillMarketplaceInstallQueue } from '@aipoch/skills/sources'
+import { SkillMarketplaceInstallQueue } from '../skill-marketplace/install-queue'
 import type {
   SkillMarketplaceCatalog,
   SkillMarketplaceCatalogRequest,
@@ -22,7 +22,7 @@ import type {
   SkillMarketplaceInstallRequest,
   SkillMarketplaceInstallResult,
   SkillMarketplaceResult
-} from '@aipoch/skills/document'
+} from '../../shared/skill-marketplace'
 import type { SkillMarketplaceDetail } from '../../shared/skill-marketplace'
 import { readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'

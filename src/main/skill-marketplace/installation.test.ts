@@ -3,15 +3,15 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { zipSync } from 'fflate'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { UserSkillRepository } from './user-skill-repository'
+import { MarketplaceSkillRepository as UserSkillRepository } from './installation'
 import {
   marketplaceContentDigest,
   marketplaceReceiptSchema,
   verifyMarketplacePackage,
   type MarketplacePackage
-} from './marketplace-package'
-import { sha256 } from './marketplace-protocol'
-import { UserSkillSpecialistPackageAdapter } from './specialist-package-adapter'
+} from './package'
+import { sha256 } from './protocol'
+import { UserSkillSpecialistPackageAdapter } from '@aipoch/skills'
 
 const roots: string[] = []
 afterEach(async () => {

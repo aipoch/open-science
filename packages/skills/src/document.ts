@@ -19,28 +19,12 @@ export type {
   AgentHomeSkillView,
   AgentHomeSkillImportResult
 } from './types'
-export {
-  skillMarketplaceCategories,
-  skillMarketplaceRepository,
-  skillMarketplaceStableVersionPattern
-} from './skill-marketplace'
 export type {
-  SkillMarketplaceEntry,
-  SkillMarketplaceCatalog,
-  SkillMarketplaceCatalogRequest,
-  SkillMarketplaceDetailRequest,
-  SkillMarketplaceConflictReason,
-  SkillMarketplaceUpdateGuard,
-  SkillMarketplaceUpdatePreview,
-  SkillMarketplaceInstallation,
-  SkillMarketplaceInstallRequest,
-  SkillMarketplaceInstallResult,
-  SkillMarketplaceBatchRequest,
-  SkillMarketplaceBatch,
-  SkillMarketplaceBatchStartResult,
-  SkillMarketplaceDetail,
-  SkillMarketplaceResult
-} from './skill-marketplace'
+  SkillReleaseConflictReason,
+  SkillReleaseUpdateGuard,
+  SkillReleaseUpdatePreview,
+  SkillReleaseInstallation
+} from './skill-release'
 
 export { isSkillEffectivelyEnabled, trustedSkillActivationPolicy } from './activation-policy'
 export type {

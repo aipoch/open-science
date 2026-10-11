@@ -1,17 +1,17 @@
 import { readFileSync } from 'node:fs'
 import { verify } from 'node:crypto'
 import { zipSync } from 'fflate'
-import { marketplaceContentDigest } from './marketplace-package'
+import { marketplaceContentDigest } from './package'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { SkillMarketplaceService } from './marketplace-service'
-import { OFFICIAL_SKILL_MARKETPLACE_SOURCE as source } from './marketplace-source'
+import { SkillMarketplaceService } from './service'
+import { OFFICIAL_SKILL_MARKETPLACE_SOURCE as source } from './source'
 import {
   sha256,
   verifyMarketplaceDetail,
   verifyMarketplaceIndex,
   verifyMarketplaceRoot,
   type MarketplaceRoot
-} from './marketplace-protocol'
+} from './protocol'
 
 vi.mock('node:crypto', async (original) => {
   const actual = await original<typeof import('node:crypto')>()

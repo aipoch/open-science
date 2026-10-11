@@ -54,7 +54,11 @@ export default defineConfig(({ command }) => ({
             // Regenerate lazy chunks so a persisted Electron page cannot request stale hashes.
             force: true,
             // file: links resolve outside node_modules and need explicit CJS prebundling.
-            include: ['@aipoch/connector-mcp-client/oauth-redirect', '@aipoch/diagnostics', '@aipoch/skills/document'],
+            include: [
+              '@aipoch/connector-mcp-client/oauth-redirect',
+              '@aipoch/diagnostics',
+              '@aipoch/skills/document'
+            ],
             entries: [
               '*.html',
               'src/**/*.worker.ts',

@@ -19,10 +19,6 @@ export type {
   ScannedSkill
 } from './github-import'
 export { SKILL_IMPORT_LIMITS, decodeBoundedBase64 } from './import-limits'
-export { SkillMarketplaceService } from './marketplace-service'
-export { SkillMarketplaceInstallQueue } from './marketplace-install-queue'
-export { marketplaceContentDigest, verifyMarketplacePackage } from './marketplace-package'
-export type { MarketplaceReceipt, MarketplacePackage } from './marketplace-package'
 export { isImportableSkillArchive, isImportableSkillArchivePath } from './skill-archive-sniffer'
 export type { ArchiveReader } from './skill-archive-sniffer'
 export {
@@ -44,3 +40,11 @@ export {
   readSkillFile
 } from './skill-files'
 export type { SkillPackageFileInfo, SkillReferenceInfo } from './skill-files'
+
+export type {
+  SkillReleaseReceipt,
+  InstalledSkillReleaseReceipt,
+  SkillReleasePackage,
+  SkillReleasePolicy
+} from './skill-release'
+export { isAppOwnedSkillRootFile, isSkillPackageIgnoredPath } from './skill-import-limits'

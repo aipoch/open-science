@@ -1,5 +1,6 @@
 const hiddenImplementation = '@aipoch/skills/dist/skill-mutation-owner'
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { mkdtemp, rm, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -9,7 +10,7 @@ import {
   SkillAuthoringService,
   UserSkillRepository,
   UserSkillSpecialistPackageAdapter,
-  MarketplaceInstallConflict
+  SkillReleaseInstallConflict
 } from '@aipoch/skills'
 import { parseSkillDocument } from '@aipoch/skills/document'
 import { buildSkillExportArchive } from '@aipoch/skills/sources'
@@ -17,7 +18,7 @@ import { ClaudeCodeSkillMaterializer, loadSkillDocumentContent } from '@aipoch/s
 
 const require = createRequire(import.meta.url)
 assert.equal(require('@aipoch/skills').UserSkillRepository, UserSkillRepository)
-assert.equal(require('@aipoch/skills').MarketplaceInstallConflict, MarketplaceInstallConflict)
+assert.equal(require('@aipoch/skills').SkillReleaseInstallConflict, SkillReleaseInstallConflict)
 assert.throws(() => require(hiddenImplementation), {
   code: 'ERR_PACKAGE_PATH_NOT_EXPORTED'
 })
@@ -99,6 +100,52 @@ try {
     await authoring.delete(target.id)
   })
   assert.deepEqual(await repository.list(), [])
+  const files = [
+    {
+      relativePath: 'SKILL.md',
+      content: Buffer.from(
+        '---\nname: released\ndescription: Release\n---\ninstalled from a local channel'
+      )
+    }
+  ]
+  // eslint-disable-next-line @typescript-eslint/explicit-function-return-type -- Plain JavaScript runs in the clean consumer without a TypeScript loader.
+  const digest = (files) => createHash('sha256').update(JSON.stringify(files)).digest('hex')
+  // eslint-disable-next-line @typescript-eslint/explicit-function-return-type -- Plain JavaScript validates the public runtime contract.
+  const parse = (value) => {
+    assert.equal(value.id, 'released')
+    assert.equal(value.version, 'edition-one')
+    assert.equal(typeof value.contentSha256, 'string')
+    assert.equal(typeof value.descriptorSha256, 'string')
+    return value
+  }
+  const policy = {
+    metadataKey: 'local-publisher',
+    diffLabel: 'Incoming',
+    parseRelease: parse,
+    parseReceipt: (value) => {
+      parse(value)
+      assert.equal(typeof value.installedContentSha256, 'string')
+      return value
+    },
+    contentDigest: digest,
+    isNewerVersion: () => false
+  }
+  const release = {
+    files,
+    receipt: {
+      id: 'released',
+      version: 'edition-one',
+      contentSha256: digest(files),
+      descriptorSha256: 'local-descriptor'
+    }
+  }
+  assert.equal((await repository.installRelease(policy, release, null, [])).status, 'imported')
+  assert.equal(
+    (await new UserSkillRepository(root).releaseInstallation(policy, 'released', 'edition-one', []))
+      .kind,
+    'installed'
+  )
+  await repository.delete('imported-released')
   console.log(
     'Public CJS/ESM identity, shared locking, create/read/update/archive/import/projection/delete passed.'
   )

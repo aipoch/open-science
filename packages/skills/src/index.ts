@@ -1,6 +1,6 @@
 export {
   UserSkillRepository,
-  MarketplaceInstallConflict,
+  SkillReleaseInstallConflict,
   parseUserSkillId
 } from './user-skill-repository'
 export type { ImportOutcome, UserSkillRepositoryOptions } from './user-skill-repository'

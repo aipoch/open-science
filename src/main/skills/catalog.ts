@@ -6,8 +6,11 @@ import {
 import type { SpecialistListItem } from '../../shared/specialist'
 import { realpath } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import type { MarketplacePackage } from '@aipoch/skills/sources'
-import type { SkillMarketplaceEntry, SkillMarketplaceInstallation } from '@aipoch/skills/document'
+import type { MarketplacePackage } from '../skill-marketplace/package'
+import type {
+  SkillMarketplaceEntry,
+  SkillMarketplaceInstallation
+} from '../../shared/skill-marketplace'
 import type {
   SkillMarketplaceUpdateImpact,
   SkillMarketplaceUpdatePreview

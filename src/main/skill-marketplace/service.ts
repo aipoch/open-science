@@ -6,22 +6,22 @@ import type {
   SkillMarketplaceDetailRequest,
   SkillMarketplaceBatchRequest,
   SkillMarketplaceResult
-} from './skill-marketplace'
-import { createLogger } from './diagnostics'
+} from '../../shared/skill-marketplace'
+import { createLogger } from '@aipoch/diagnostics/node'
 import {
   marketplaceReceiptSchema,
   verifyMarketplacePackage,
   type MarketplacePackage
-} from './marketplace-package'
+} from './package'
 import {
   toMarketplaceEntry,
   verifyMarketplaceDetail,
   verifyMarketplaceIndex,
   verifyMarketplaceRoot,
   type MarketplaceRoot
-} from './marketplace-protocol'
-import { sha256 } from './marketplace-protocol'
-import { OFFICIAL_SKILL_MARKETPLACE_SOURCE as source } from './marketplace-source'
+} from './protocol'
+import { sha256 } from './protocol'
+import { OFFICIAL_SKILL_MARKETPLACE_SOURCE as source } from './source'
 
 const CATALOG_TTL_MS = 5 * 60 * 1000
 const DETAIL_CACHE_LIMIT = 128

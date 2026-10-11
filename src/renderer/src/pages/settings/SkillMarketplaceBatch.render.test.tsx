@@ -3,7 +3,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SkillMarketplaceBatchControls } from './SkillMarketplaceBatch'
-import type { SkillMarketplaceBatch } from '@aipoch/skills/document'
+import type { SkillMarketplaceBatch } from '../../../../shared/skill-marketplace'
 
 const running: SkillMarketplaceBatch = {
   id: 'batch',

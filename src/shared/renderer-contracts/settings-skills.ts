@@ -9,7 +9,7 @@ import type {
   SkillMarketplaceInstallRequest,
   SkillMarketplaceInstallResult,
   SkillMarketplaceResult
-} from '@aipoch/skills/document'
+} from '../skill-marketplace'
 import type { SkillMarketplaceDetail } from '../skill-marketplace'
 
 import type {

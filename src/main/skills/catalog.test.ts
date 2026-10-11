@@ -25,7 +25,7 @@ import { SPECIALISTS_FILE_VERSION } from '../specialist/types'
 import { SettingsRepository } from '../settings/repository'
 import { SettingsDocumentStore } from '../settings/document-store'
 import { SkillCatalogModule } from './catalog'
-import { marketplaceContentDigest, type MarketplacePackage } from '@aipoch/skills/sources'
+import { marketplaceContentDigest, type MarketplacePackage } from '../skill-marketplace/package'
 import { createHash } from 'node:crypto'
 const sha256 = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex')
 const SPECIALIST_PACKAGE_SKILL_METADATA = '.specialist-package.json'

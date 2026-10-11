@@ -886,7 +886,7 @@
       "src/main/skills/env-management-skill.test.ts",
       "src/main/skills/export.test.ts",
       "packages/skills/src/skill-authoring-service.test.ts",
-      "packages/skills/src/marketplace-installation.test.ts",
+      "src/main/skill-marketplace/installation.test.ts",
       "packages/skills/src/materializer-integrity.regression.test.ts",
       "src/main/skills/materializer.test.ts",
       "src/main/skills/registered-helper-catalog.test.ts",

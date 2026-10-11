@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import assert from 'node:assert/strict'
-import { cp, mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, readdir, writeFile, access } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
@@ -43,6 +43,9 @@ const [packed] = JSON.parse(
 for (const file of packed.files) {
   assert.match(file.path, /^(?:dist\/|README\.md$|LICENSE$|package\.json$)/)
   if (file.path.endsWith('.js') || file.path.endsWith('.d.ts')) {
+    await access(
+      join(source, 'src', file.path.slice('dist/'.length).replace(/(?:\.d)?\.ts$|\.js$/, '.ts'))
+    )
     const content = await readFile(join(source, file.path), 'utf8')
     assert.ok(!content.includes(root), `Absolute checkout reference in ${file.path}`)
     assert.ok(

@@ -101,3 +101,12 @@ it('keeps host session, approval and usage-display contracts out of package impl
     )
   }
 })
+
+it('does not embed a marketplace protocol, source, queue or host market contract', () => {
+  for (const file of [...files(join(root, 'src')), ...files(join(root, 'scripts'))]) {
+    if (!/\.[cm]?[jt]s$/.test(file)) continue
+    expect(readFileSync(file, 'utf8'), relative(root, file)).not.toMatch(
+      /marketplace|openscience-skills|statics\.aipoch\.com/i
+    )
+  }
+})

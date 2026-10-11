@@ -79,7 +79,7 @@ import type {
   SkillMarketplaceCatalogRequest,
   SkillMarketplaceBatchRequest,
   SkillMarketplaceInstallRequest
-} from '@aipoch/skills/document'
+} from '../../shared/skill-marketplace'
 import type { SettingsWorkflows } from './workflows'
 import { createLogger } from '@aipoch/diagnostics/node'
 import { broadcastToRenderers } from '../renderer-broadcast'

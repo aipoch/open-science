@@ -1,9 +1,9 @@
 import { describe, expect, it, vi, type Mock } from 'vitest'
-import { SkillMarketplaceInstallQueue } from './marketplace-install-queue'
+import { SkillMarketplaceInstallQueue } from './install-queue'
 import type {
   SkillMarketplaceBatchRequest,
   SkillMarketplaceInstallResult
-} from './skill-marketplace'
+} from '../../shared/skill-marketplace'
 
 const request: SkillMarketplaceBatchRequest = {
   snapshotId: 'a'.repeat(64),

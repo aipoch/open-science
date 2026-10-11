@@ -1,4 +1,4 @@
-import type { SkillMarketplaceCatalog, SkillMarketplaceEntry } from '@aipoch/skills/document'
+import type { SkillMarketplaceCatalog, SkillMarketplaceEntry } from '../skill-marketplace'
 import type { SkillMarketplaceDetail } from '../skill-marketplace'
 
 // Renderer tests only. Production data always comes through the verified main-process owner.

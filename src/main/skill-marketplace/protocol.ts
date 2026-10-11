@@ -1,7 +1,10 @@
 import { createHash, createPublicKey, verify } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
-import { skillMarketplaceCategories, type SkillMarketplaceEntry } from './skill-marketplace'
+import {
+  skillMarketplaceCategories,
+  type SkillMarketplaceEntry
+} from '../../shared/skill-marketplace'
 
 // Protocol v1: aipoch/openscience-skill-marketplace/protocol/schemas (Apache-2.0).
 // Wire names stay at this boundary. Unknown fields fail closed until explicitly supported.

@@ -55,7 +55,7 @@ import type { ClassificationSettingsOwner } from './classification-settings'
 import type {
   SkillMarketplaceCatalogRequest,
   SkillMarketplaceDetailRequest
-} from '@aipoch/skills/document'
+} from '../../shared/skill-marketplace'
 import type { SettingsSnapshotCommitOwner } from './settings-snapshot-commit-owner'
 import {
   readAppIconVariant,

@@ -2,14 +2,14 @@ import { SkillMarketplaceUpdateDialog } from './SkillMarketplaceUpdateDialog'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { CircleCheck, ChevronDown, Download, LoaderCircle, Trash2 } from 'lucide-react'
 import { useSettingsStore } from '@/stores/settings-store'
-import { skillMarketplaceStableVersionPattern } from '@aipoch/skills/document'
+import { skillMarketplaceStableVersionPattern } from '../../../../shared/skill-marketplace'
 import type {
   SkillMarketplaceCatalog,
   SkillMarketplaceCatalogRequest,
   SkillMarketplaceInstallation,
   SkillMarketplaceInstallResult,
   SkillMarketplaceResult
-} from '@aipoch/skills/document'
+} from '../../../../shared/skill-marketplace'
 import type {
   SkillMarketplaceUpdatePreview,
   SkillMarketplaceDetail

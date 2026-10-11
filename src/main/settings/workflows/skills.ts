@@ -14,7 +14,7 @@ import type { SettingsService } from '../service'
 import type {
   SkillMarketplaceInstallRequest,
   SkillMarketplaceBatchRequest
-} from '@aipoch/skills/document'
+} from '../../../shared/skill-marketplace'
 
 type SkillSettingsWorkflowStore = Pick<
   SettingsService,

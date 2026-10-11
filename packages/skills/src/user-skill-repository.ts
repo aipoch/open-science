@@ -12,12 +12,12 @@ import type { BundledSkill } from './registry'
 import { SkillBundleImportOwner } from './skill-bundle-import-owner'
 import { SkillPackageTransactionOwner } from './skill-package-transaction-owner'
 import type { ImportOutcome, ParsedSkillPreview } from './user-skill-import-contracts'
-import type { MarketplacePackage } from './marketplace-package'
+import type { SkillReleasePackage, SkillReleasePolicy } from './skill-release'
 import type {
-  SkillMarketplaceInstallation,
-  SkillMarketplaceUpdateGuard,
-  SkillMarketplaceUpdatePreview
-} from './skill-marketplace'
+  SkillReleaseInstallation,
+  SkillReleaseUpdateGuard,
+  SkillReleaseUpdatePreview
+} from './skill-release'
 import { UserSkillCompatibilityIndex } from './user-skill-compatibility-index'
 import {
   SAFE_SKILL_DIRECTORY_NAME,
@@ -33,7 +33,7 @@ import {
 } from './user-skill-store'
 
 export type { ImportOutcome } from './user-skill-import-contracts'
-export { MarketplaceInstallConflict } from './skill-bundle-import-owner'
+export { SkillReleaseInstallConflict } from './skill-bundle-import-owner'
 
 export type UserSkillRepositoryOptions = {
   validatePromotion?: (list: () => Promise<BundledSkill[]>) => Promise<void>
@@ -171,24 +171,27 @@ class UserSkillRepository {
     return this.bundleImports.previewZip(zip)
   }
 
-  marketplaceInstallation(
+  releaseInstallation(
+    policy: SkillReleasePolicy,
     id: string,
     version: string,
     reservedNames: readonly string[],
     localSkills?: readonly BundledSkill[]
-  ): Promise<SkillMarketplaceInstallation> {
-    return this.bundleImports.marketplaceInstallation(id, version, reservedNames, localSkills)
+  ): Promise<SkillReleaseInstallation> {
+    return this.bundleImports.releaseInstallation(policy, id, version, reservedNames, localSkills)
   }
 
-  installMarketplace(
-    pkg: MarketplacePackage,
+  installRelease(
+    policy: SkillReleasePolicy,
+    pkg: SkillReleasePackage,
     expectedVersion: string | null,
     reservedNames: readonly string[],
     updateToken?: string,
-    impact?: SkillMarketplaceUpdateGuard,
+    impact?: SkillReleaseUpdateGuard,
     withImpactLock?: <T>(operation: () => Promise<T>) => Promise<T>
   ): Promise<ImportOutcome> {
-    return this.bundleImports.installMarketplace(
+    return this.bundleImports.installRelease(
+      policy,
       pkg,
       expectedVersion,
       reservedNames,
@@ -198,12 +201,13 @@ class UserSkillRepository {
     )
   }
 
-  previewMarketplaceUpdate(
-    pkg: MarketplacePackage,
+  previewReleaseUpdate(
+    policy: SkillReleasePolicy,
+    pkg: SkillReleasePackage,
     reservedNames: readonly string[],
-    impact?: SkillMarketplaceUpdateGuard
-  ): Promise<SkillMarketplaceUpdatePreview> {
-    return this.bundleImports.previewMarketplaceUpdate(pkg, reservedNames, impact)
+    impact?: SkillReleaseUpdateGuard
+  ): Promise<SkillReleaseUpdatePreview> {
+    return this.bundleImports.previewReleaseUpdate(policy, pkg, reservedNames, impact)
   }
 
   async importFromZip(

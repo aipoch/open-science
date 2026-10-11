@@ -60,6 +60,8 @@ it('excludes unchanged upstream Skill units for host edits while preserving cons
   )
   for (const path of [
     'src/main/skills/host-skills-service.ts',
+    'src/main/skill-marketplace/service.ts',
+    'src/main/skill-marketplace/installation.ts',
     'src/renderer/src/pages/settings/SkillEditor.tsx'
   ]) {
     const plan = createPackageTestPlan([path], registry)

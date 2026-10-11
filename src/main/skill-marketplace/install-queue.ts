@@ -1,13 +1,13 @@
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
-import { skillMarketplaceStableVersionPattern } from './skill-marketplace'
+import { skillMarketplaceStableVersionPattern } from '../../shared/skill-marketplace'
 import type {
   SkillMarketplaceBatch,
   SkillMarketplaceBatchRequest,
   SkillMarketplaceBatchStartResult,
   SkillMarketplaceInstallRequest,
   SkillMarketplaceInstallResult
-} from './skill-marketplace'
+} from '../../shared/skill-marketplace'
 
 const batchRequest = z
   .strictObject({
