@@ -876,6 +876,44 @@ describe('build verification throughput', () => {
     }
   })
 
+  it('reuses Release packages for diagnostic smoke without builds or publication', () => {
+    const release = workflow('release.yml')
+    const smoke = workflow('package-smoke.yml')
+    expect(release.on?.workflow_dispatch).toMatchObject({
+      inputs: { package_smoke_run_id: { type: 'string', default: '' } }
+    })
+    for (const name of ['release-preflight', 'build']) {
+      expect(release.jobs[name].if).toBe(
+        "${{ github.event_name != 'workflow_dispatch' || !inputs.package_smoke_run_id }}"
+      )
+    }
+    expect(release.jobs['package-smoke-dry-run']).toEqual({
+      if: "${{ github.event_name == 'workflow_dispatch' && inputs.package_smoke_run_id != '' }}",
+      uses: './.github/workflows/package-smoke.yml',
+      with: { artifact_run_id: '${{ inputs.package_smoke_run_id }}', require_windows_signing: true }
+    })
+    expect(smoke.on?.workflow_call).toMatchObject({
+      inputs: { artifact_run_id: { type: 'string', default: '' } }
+    })
+    expect(step(smoke.jobs.smoke, 'Download packaged artifacts').with).toMatchObject({
+      'run-id': '${{ inputs.artifact_run_id || github.run_id }}',
+      'github-token': '${{ github.token }}'
+    })
+    for (const name of [
+      'Record platform certification evidence',
+      'Upload platform certification evidence'
+    ]) {
+      expect(step(smoke.jobs.smoke, name).if).toBe(
+        '${{ !inputs.install_only && !inputs.artifact_run_id }}'
+      )
+    }
+    for (const name of ['publish', 'notarize-mac', 'cli-artifacts']) {
+      expect(release.jobs[name].if).toContain("github.event_name == 'push'")
+    }
+    expect(release.jobs.regression.needs).toEqual(['build', 'package-smoke'])
+    expect(release.jobs['release-sbom-poc'].needs).toBe('publish')
+  })
+
   it('keeps reusable build workflows read-only, caller-scoped, and time-bounded', () => {
     const build = workflow('build.yml')
     const notarize = workflow('notarize-mac.yml')

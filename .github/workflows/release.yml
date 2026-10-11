@@ -9,6 +9,10 @@ on:
       - 'v*'
   workflow_dispatch:
     inputs:
+      package_smoke_run_id:
+        description: Diagnostic package smoke using an existing Release run; skips build/tests and publication, overriding verify_only.
+        type: string
+        default: ''
       verify_only:
         description: Verify tests and coverage without building or publishing packages.
         type: boolean
@@ -25,6 +29,7 @@ concurrency:
 
 jobs:
   release-preflight:
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.package_smoke_run_id }}
     name: Release preflight
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -107,6 +112,7 @@ jobs:
   # secrets: inherit forwards the optional signing/notarization secrets. macOS is signed but NOT
   # notarized here — notarization is decoupled into the notarize-mac job below.
   build:
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.package_smoke_run_id }}
     needs: release-preflight
     uses: ./.github/workflows/build.yml
     permissions:
@@ -116,6 +122,15 @@ jobs:
       verify_only: ${{ github.event_name == 'workflow_dispatch' && inputs.verify_only }}
       sign_windows: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
     secrets: inherit
+
+  # Reuse the real package gates on existing Release bytes without rebuilding or publishing.
+  # Cross-run diagnostics deliberately emit no release certification for this tooling revision.
+  package-smoke-dry-run:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.package_smoke_run_id != '' }}
+    uses: ./.github/workflows/package-smoke.yml
+    with:
+      artifact_run_id: ${{ inputs.package_smoke_run_id }}
+      require_windows_signing: true
 
   # Exercise the exact uploaded packages in separate native jobs. A failed matrix leg can be retried
   # against the immutable build artifact without repeating installation, packaging, or signing.

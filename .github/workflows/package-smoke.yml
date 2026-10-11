@@ -10,6 +10,10 @@ name: Package Smoke
 on:
   workflow_call:
     inputs:
+      artifact_run_id:
+        description: Reuse a same-repository build run for a diagnostic smoke; emit no release certification
+        type: string
+        default: ''
       install_only:
         description: Skip artifact download and package execution; only install dependencies
         type: boolean

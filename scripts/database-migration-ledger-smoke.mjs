@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 
 import { join } from 'node:path'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 
 import { PrismaClient } from '@prisma/client'
 
@@ -306,6 +306,25 @@ const parsePackagedSqliteVersion = (output) => {
   return sqliteVersion
 }
 
+const readDesktopSqliteVersion = async (configRoot, desktopPid) => {
+  if (!Number.isSafeInteger(desktopPid) || desktopPid <= 0) {
+    throw new Error('Packaged desktop process did not provide a valid PID.')
+  }
+  // Desktop redirects Node output to a per-launch log. Never accept a previous smoke cycle's
+  // evidence: a reopen must independently verify the packaged SQLite runtime again.
+  const logs = join(configRoot, 'logs')
+  const pattern = new RegExp(`^desktop-backend-${desktopPid}-\\d+\\.log$`)
+  const entries = (await readdir(logs, { withFileTypes: true })).filter(
+    (entry) => entry.isFile() && pattern.test(entry.name)
+  )
+  if (entries.length !== 1) {
+    throw new Error(
+      `Expected one backend log for desktop PID ${desktopPid}, found ${entries.length}.`
+    )
+  }
+  return parsePackagedSqliteVersion(await readFile(join(logs, entries[0].name), 'utf8'))
+}
+
 const writeDatabaseMigrationCertification = async ({ output, sqliteVersions, checks }) => {
   const versions = [...new Set(sqliteVersions)]
   if (
@@ -334,6 +353,7 @@ const writeDatabaseMigrationCertification = async ({ output, sqliteVersions, che
 export {
   assertApplicationMigrationLedger,
   parsePackagedSqliteVersion,
+  readDesktopSqliteVersion,
   readDatabaseMigrationLedger,
   seedLegacyDatabase,
   verifyDatabaseMigrationLedger,

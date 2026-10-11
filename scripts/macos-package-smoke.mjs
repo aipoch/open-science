@@ -7,7 +7,7 @@ import { basename, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 import {
-  parsePackagedSqliteVersion,
+  readDesktopSqliteVersion,
   seedLegacyDatabase,
   verifyDatabaseMigrationLedger,
   verifyLegacyProjectPreserved,
@@ -222,7 +222,7 @@ const launchAndProbe = async ({ executable, expectedVersion, env, userDataRoot }
     ])
     terminateSpawnedProcessGroup(child)
     if (exitCode !== 0) throw new Error(`Packaged macOS app exited with ${exitCode}.\n${output}`)
-    return parsePackagedSqliteVersion(output)
+    return await readDesktopSqliteVersion(env.OPEN_SCIENCE_E2E_STORAGE_ROOT, child.pid)
   } catch (error) {
     child.kill('SIGKILL')
     terminateSpawnedProcessGroup(child)

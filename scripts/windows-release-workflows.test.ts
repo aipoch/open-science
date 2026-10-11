@@ -1115,7 +1115,9 @@ if ($artifactSaveBase -eq $artifactSaveCommit) {
     expect(release.jobs['windows-runtime-sign']).toBeUndefined()
     expect(release.jobs['windows-runtime-cdn']).toBeUndefined()
     expect(release.jobs.build.needs).toBe('release-preflight')
-    expect(release.jobs.build.if).toBeUndefined()
+    expect(release.jobs.build.if).toBe(
+      "${{ github.event_name != 'workflow_dispatch' || !inputs.package_smoke_run_id }}"
+    )
     expect(release.jobs.build.with?.sign_windows).toBe(
       "${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}"
     )
