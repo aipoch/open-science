@@ -444,9 +444,9 @@ const packagedResourcePaths = (installDirectory, { includeWslPreview = true } = 
   join(
     installDirectory,
     'resources',
-    'node_modules',
-    '.prisma',
-    'client',
+    'backend',
+    'resources',
+    'prisma-client',
     'query_engine-windows.dll.node'
   )
 ]
@@ -875,7 +875,7 @@ const assertPackagedResources = async (installDirectory, { certifyWslPreview = t
   })) {
     if (!(await pathExists(path))) throw new Error(`Packaged Windows resource is missing: ${path}`)
   }
-  const prismaRoot = join(installDirectory, 'resources', 'node_modules', '.prisma', 'client')
+  const prismaRoot = join(installDirectory, 'resources', 'backend', 'resources', 'prisma-client')
   const engines = await readdir(prismaRoot)
   const nativeEngines = engines.filter(
     (name) => name.includes('query_engine-') && name.endsWith('.node')

@@ -44,6 +44,10 @@ describe('electron-builder local evidence exclusion', () => {
     const files = [
       'out/backend/index.cjs',
       'node_modules/zod/package.json',
+      'node_modules/onnxruntime-node/bin/napi-v6/linux/arm64/onnxruntime_binding.node',
+      'node_modules/pdfjs-dist/legacy/build/pdf.mjs',
+      'node_modules/@aipoch/pdf-translation/resources/worker.mjs',
+      'resources/prisma-client/index.js',
       'node_modules/.prisma/client/default.js',
       'node_modules/@aipoch/process-tree-native/build/Release/process_tree.node',
       'node_modules/parent/node_modules/child/package.json'
@@ -120,43 +124,52 @@ describe('electron-builder local evidence exclusion', () => {
     for (const file of [
       'out/main/index.js',
       'out/renderer/index.html',
-      'node_modules/@aipoch/pdf-translation/resources/worker.mjs',
       'resources/pdf-translation-local/worker.mjs',
-      'node_modules/@huggingface/transformers/dist/transformers.node.mjs',
-      'node_modules/onnxruntime-web/dist/ort.wasm.bundle.min.mjs',
-      'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs',
-      'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm',
-      'node_modules/@aipoch/pdf-translation/resources/NotoSansSC-Regular.otf',
-      'node_modules/@aipoch/pdf-translation/resources/OFL.txt',
       'resources/notebook/python_loop.py',
-      'node_modules/fontkit/dist/main.cjs',
-      'node_modules/@embedpdf/pdfium/dist/index.js',
-      'node_modules/pdf-lib/cjs/index.js',
-      'docs/design.md',
+      'node_modules/@aipoch/credential-identity-probe-native/build/Release/credential_secret',
+      'node_modules/@aipoch/diagnostics/dist/node.js',
+      'node_modules/i18next/index.js',
+      'node_modules/electron-updater/out/main.js',
       'package.json',
       'LICENSE'
     ])
       expect(filter(join(process.cwd(), file), { isDirectory: () => false } as Stats)).toBe(true)
-    const unpack = new FileMatcher(
-      process.cwd(),
-      process.cwd(),
-      (value) => value,
-      config.asarUnpack
-    ).createFilter()
-    for (const file of [
-      'node_modules/@aipoch/pdf-translation/resources/worker.mjs',
-      'resources/pdf-translation-local/worker.mjs',
-      'node_modules/@huggingface/transformers/dist/transformers.node.mjs',
-      'node_modules/onnxruntime-web/dist/ort.wasm.bundle.min.mjs',
-      'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs',
-      'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm',
-      'node_modules/@aipoch/pdf-translation/resources/NotoSansSC-Regular.otf',
-      'node_modules/@aipoch/pdf-translation/resources/OFL.txt',
-      'node_modules/@embedpdf/pdfium/dist/pdfium.wasm',
-      'node_modules/fontkit/dist/main.cjs',
-      'node_modules/pdf-lib/cjs/index.js'
-    ])
-      expect(unpack(join(process.cwd(), file), { isDirectory: () => false } as Stats)).toBe(true)
+    for (const directory of [
+      'out/web',
+      'packages/pdf-structure',
+      'packages/pdf-translation',
+      'packages/skills',
+      'node_modules/@prisma/client',
+      'node_modules/.prisma',
+      'node_modules/prisma',
+      'node_modules/typescript',
+      'node_modules/tiktoken',
+      'node_modules/js-tiktoken',
+      'node_modules/web-tree-sitter',
+      'node_modules/openchemlib',
+      'node_modules/citeme-engine-wasm',
+      'node_modules/@aipoch/pdf-structure',
+      'node_modules/@aipoch/pdf-translation',
+      'node_modules/@huggingface/transformers',
+      'node_modules/onnxruntime-node',
+      'node_modules/onnxruntime-web',
+      'node_modules/pdfjs-dist',
+      'node_modules/sharp',
+      'node_modules/@img/sharp-darwin-arm64',
+      'node_modules/@napi-rs/canvas',
+      'node_modules/fontkit',
+      'node_modules/pdf-lib',
+      'node_modules/@embedpdf/pdfium',
+      'node_modules/@anthropic-ai/claude-agent-sdk',
+      'node_modules/@agentclientprotocol/claude-agent-acp'
+    ]) {
+      expect(filter(join(process.cwd(), directory), { isDirectory: () => true } as Stats)).toBe(
+        false
+      )
+      expect(
+        filter(join(process.cwd(), directory, 'index.js'), { isDirectory: () => false } as Stats)
+      ).toBe(false)
+    }
   })
 })
 
@@ -178,13 +191,15 @@ describe('electron-builder native image processing', () => {
     }
   )
 
-  it('ships sharp and its platform binary outside the ASAR archive', () => {
+  it('keeps desktop native helpers while business dependencies live only in the backend', () => {
     const config = load(readFileSync(join(process.cwd(), 'electron-builder.yml'), 'utf8')) as {
       asarUnpack?: string[]
     }
 
-    expect(config.asarUnpack).toContain('node_modules/sharp/**')
-    expect(config.asarUnpack).toContain('node_modules/@img/**')
+    expect(config.asarUnpack).not.toContain('node_modules/sharp/**')
+    expect(config.asarUnpack).toContain(
+      'node_modules/@aipoch/credential-identity-probe-native/build/Release/credential_*'
+    )
     expect(config.asarUnpack).toContain(
       'node_modules/@aipoch/process-tree-native/build/Release/*.node'
     )
@@ -199,7 +214,7 @@ describe('electron-builder native image processing', () => {
     }
 
     expect(config.files).toContain('!node_modules/@aipoch/notebook-network-sandbox{,/**/*}')
-    expect(config.files).toContain('!packages/notebook-network-sandbox{,/**/*}')
+    expect(config.files).toContain('!packages{,/**/*}')
     expect(config.win?.extraResources).toContainEqual({
       from: 'packages/notebook-network-sandbox/vendor/windows/${arch}/notebook-appcontainer-host.exe',
       to: 'notebook-network-sandbox/windows/${arch}/notebook-appcontainer-host.exe'
