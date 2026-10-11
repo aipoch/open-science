@@ -127,8 +127,6 @@ jobs:
       - name: Smoke test Windows installer
         if: ${{ !inputs.install_only && matrix.platform == 'win' }}
         timeout-minutes: 20
-        env:
-          OPEN_SCIENCE_PACKAGE_STARTUP_TRACE: ${{ inputs.artifact_run_id && '1' || '' }}
         run: node scripts/windows-installer-smoke.mjs --installer-dir dist
 
       - name: Install Windows package for AppContainer certification

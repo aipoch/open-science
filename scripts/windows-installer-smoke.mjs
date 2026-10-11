@@ -977,51 +977,6 @@ const createUpgradeProfileGuard = (
   return { cleanup, shouldExpectDowngradeBlock: () => expectDowngradeBlock, verifyCycle }
 }
 
-const observeStartupExceptions = async (output) => {
-  const endpoint = await waitFor(
-    'the isolated startup inspector',
-    () => output().match(/ws:\/\/127\.0\.0\.1:\d+\/[^\s]+/u)?.[0],
-    5_000
-  )
-  const socket = new WebSocket(endpoint)
-  const replies = new Map()
-  const exceptions = []
-  let sequence = 0
-  const command = async (method, params = {}) => {
-    const id = ++sequence
-    replies.set(id, undefined)
-    socket.send(JSON.stringify({ id, method, params }))
-    try {
-      const reply = await waitFor(method, () => replies.get(id), 5_000)
-      if (reply.error) throw new Error(JSON.stringify(reply.error))
-    } finally {
-      replies.delete(id)
-    }
-  }
-  socket.addEventListener('error', () => {})
-  socket.addEventListener('message', (event) => {
-    const message = JSON.parse(event.data)
-    if (replies.has(message.id)) replies.set(message.id, message)
-    if (message.method === 'Debugger.paused') {
-      if (message.params.data?.description) {
-        exceptions.push(message.params.data.description)
-        if (exceptions.length > 10) exceptions.shift()
-      }
-      socket.send(JSON.stringify({ id: ++sequence, method: 'Debugger.resume' }))
-    }
-  })
-  try {
-    await waitFor('startup inspector connection', () => socket.readyState === 1, 5_000)
-    await command('Debugger.enable')
-    await command('Debugger.setPauseOnExceptions', { state: 'all' })
-    await command('Runtime.runIfWaitingForDebugger')
-    return { read: () => exceptions.join('\n'), close: () => socket.close() }
-  } catch (error) {
-    socket.close()
-    throw error
-  }
-}
-
 const launchAndProbe = async ({
   installDirectory,
   expectedVersion,
@@ -1034,12 +989,10 @@ const launchAndProbe = async ({
 }) => {
   const executable = join(installDirectory, APP_EXECUTABLE)
 
-  const traceStartup = env.OPEN_SCIENCE_PACKAGE_STARTUP_TRACE === '1'
-  const child = spawn(
-    executable,
-    [...(traceStartup ? ['--inspect-brk=0'] : []), '--open-science-headless', '--serve=0'],
-    { env, windowsHide: true }
-  )
+  const child = spawn(executable, ['--open-science-headless', '--serve=0'], {
+    env,
+    windowsHide: true
+  })
   let stdout = ''
   let stderr = ''
   child.stdout?.setEncoding('utf8')
@@ -1052,10 +1005,8 @@ const launchAndProbe = async ({
   })
   const output = () => `${stdout}${stderr ? `\n${stderr}` : ''}`
   const exit = observeChildExit(child)
-  let startupTrace
 
   try {
-    if (traceStartup) startupTrace = await observeStartupExceptions(output)
     const { endpoint, auth } = await Promise.race([
       waitFor('the installed app web service', async () => {
         return authenticatePackagedAppEndpoint(output(), [
@@ -1067,7 +1018,6 @@ const launchAndProbe = async ({
         throw new Error(`Installed app exited before becoming healthy (${code}).\n${output()}`)
       })
     ])
-    startupTrace?.close()
     const response = await fetchWithTimeout(`${endpoint}/api/bootstrap?${auth}`)
     if (!response.ok)
       throw new Error(`Installed app health probe returned HTTP ${response.status}.`)
@@ -1085,15 +1035,12 @@ const launchAndProbe = async ({
     if (onSqliteVersion) onSqliteVersion(parsePackagedSqliteVersion(output()))
     return configRoot
   } catch (error) {
-    const processOutput = [output().trim(), startupTrace?.read()].filter(Boolean).join('\n')
-    startupTrace?.close()
     await terminateProcessTree(child)
+    const processOutput = output().trim()
     if (error instanceof Error && processOutput && !error.message.includes(processOutput)) {
       error.message += `\n${processOutput}`
     }
     throw error
-  } finally {
-    startupTrace?.close()
   }
 }
 
@@ -1769,6 +1716,8 @@ const main = async () => {
     mkdir(env.APPDATA, { recursive: true }),
     mkdir(env.LOCALAPPDATA, { recursive: true }),
     mkdir(env.TEMP, { recursive: true }),
+    // Windows resolves the Downloads known folder against this isolated USERPROFILE.
+    mkdir(join(profileDirectory, 'Downloads'), { recursive: true }),
     ...(options.wslCertificationProfile
       ? [mkdir(certificationStorageRoot, { recursive: true })]
       : [])
@@ -1941,7 +1890,6 @@ if (invokedAsScript) {
 }
 
 export {
-  observeStartupExceptions,
   authenticatePackagedAppEndpoint,
   assertDatabaseDowngradeBlocked,
   assertWsl2RestartCleanupBlocked,
