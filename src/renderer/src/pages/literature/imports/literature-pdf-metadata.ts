@@ -4,9 +4,9 @@ import type { TFunction } from 'i18next'
 import {
   createLiteratureIdentifierUrl,
   normalizeLiteratureIdentifierValue,
-  type LiteratureCreatorInput,
-  type LiteratureItemInput
-} from '../../../../../shared/literature'
+  type LiteratureCreatorInput
+} from '@aipoch/literature-citations/contracts'
+import { type LiteratureItemInput } from '../../../../../shared/literature'
 import { joinPdfTextItems, type PdfTextItem } from '../../../../../shared/pdf-text'
 
 const MAX_LOCAL_PDF_METADATA_BYTES = 50 * 1024 * 1024

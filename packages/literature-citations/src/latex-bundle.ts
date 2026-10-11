@@ -3,18 +3,18 @@ import { createHash } from 'node:crypto'
 import { strToU8, zipSync } from 'fflate'
 
 import {
-  artifactLiteratureRequestSchema,
-  type ArtifactCitationInput,
-  type ArtifactLiteratureSidecar
-} from '../../shared/artifact-literature'
-import type { LiteratureItemView } from '../../shared/literature'
-import { citationKey, LiteratureCitationFormatter } from './citation-formatter'
+  citationRequestSchema,
+  type CitationInput,
+  type CitationSidecar
+} from './document-contracts.js'
+import type { CitationDocumentRecord } from './document-contracts.js'
+import { citationKey, LiteratureCitationFormatter } from './citation-formatter.js'
 
 const CITATION_MARKER_PATTERN = /\{\{cite:([A-Za-z0-9._-]{1,512})\}\}/gu
 const BIBLIOGRAPHY_MARKER = '{{bibliography}}'
 
 type LatexBundleCatalog = Pick<
-  { getMany(itemIds: readonly string[]): Promise<LiteratureItemView[]> },
+  { getMany(itemIds: readonly string[]): Promise<CitationDocumentRecord[]> },
   'getMany'
 >
 
@@ -27,7 +27,7 @@ type PreparedLatexBundle = Readonly<{
   content: Uint8Array
   citationCount: number
   referenceCount: number
-  sidecar: ArtifactLiteratureSidecar
+  sidecar: CitationSidecar
 }>
 
 const sha256 = (value: string | Uint8Array): string =>
@@ -79,7 +79,7 @@ class LiteratureLatexBundle {
       throw new Error('LaTeX document must add references.bib as its bibliography resource.')
     }
 
-    const citations: ArtifactCitationInput[] = []
+    const citations: CitationInput[] = []
     let citationIndex = 0
     let latex = request.content.replace(CITATION_MARKER_PATTERN, (_marker, itemId: string) => {
       citations.push({ citationId: `open-science-latex-${++citationIndex}`, itemId })
@@ -116,7 +116,7 @@ class LiteratureLatexBundle {
       },
       { level: 6 }
     )
-    const literature = artifactLiteratureRequestSchema.parse({
+    const literature = citationRequestSchema.parse({
       styleId: 'biblatex',
       locale: 'en-US',
       citations

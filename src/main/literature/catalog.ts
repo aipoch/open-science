@@ -1,4 +1,5 @@
-import { journalBindingIdentity } from '../../shared/journal-attributes'
+import { journalBindingIdentity } from '@aipoch/journal-catalog/contracts'
+
 import { saveSmartRuleVersion } from './smart-rule-history'
 import {
   serializedSmartRuleSchema,
@@ -33,6 +34,13 @@ import { searchTitleRank } from '../../shared/search-text'
 
 import {
   LITERATURE_IDENTITY_SCHEMES,
+  normalizeLiteratureIdentifierValue,
+  normalizeLiteratureIdentifierPreferences,
+  type LiteratureCreatorInput,
+  type LiteratureIdentifierInput,
+  type LiteratureIdentifierScheme
+} from '@aipoch/literature-citations/contracts'
+import {
   LITERATURE_IMPORT_IDENTITY_CONFLICT,
   LITERATURE_COLLECTION_NAME_CONFLICT,
   LITERATURE_COLLECTION_DESCRIPTION_MAX_LENGTH,
@@ -42,8 +50,6 @@ import {
   type LiteraturePdfProvenance,
   literatureCandidateOriginSchema,
   literatureItemInputSchema,
-  normalizeLiteratureIdentifierValue,
-  normalizeLiteratureIdentifierPreferences,
   type LiteratureCatalogCommand,
   type LiteratureChangedEvent,
   type LiteratureDuplicatePolicy,
@@ -53,9 +59,6 @@ import {
   type LiteratureCatalogSearchPage,
   type LiteratureCatalogSearchRequest,
   type LiteratureCandidateInput,
-  type LiteratureCreatorInput,
-  type LiteratureIdentifierInput,
-  type LiteratureIdentifierScheme,
   type LiteratureInboxCandidateView,
   type LiteratureInboxState,
   type LiteratureItemInput,

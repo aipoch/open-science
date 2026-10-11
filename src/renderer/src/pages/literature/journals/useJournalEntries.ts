@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { parseApplicationCommandError } from '../../../../../shared/application-command-contract'
-import { type JournalDataset, type JournalResult } from '../../../../../shared/journal-attributes'
-import { type JournalSheet } from './journal-import-file'
+import { type JournalDataset, type JournalResult } from '@aipoch/journal-catalog/contracts'
+
+import { type JournalSheet } from '@aipoch/journal-catalog/files'
 
 /** Keep each loaded page tied to its dataset and query; preserve unchanged snapshot identity. */
 export function useJournalEntries({

@@ -63,7 +63,7 @@ import { type AppIconPreview, type AppIconVariant } from '../shared/settings'
 import { registerReviewerComposition } from './composition/reviewer'
 import { type DiagnosticOperation } from '@aipoch/diagnostics/node'
 
-import { type ShutdownStepOutcome } from './lifecycle-shutdown'
+import { QUIT_SHUTDOWN_BUDGET_MS, type ShutdownStepOutcome } from './lifecycle-shutdown'
 import { type NativeTranslator } from './locale/main-process-messages'
 import type { PreviewProtocolRegistrar } from './managed-preview-protocol'
 import { TaskNotificationService } from './notifications/task-notifications'
@@ -549,6 +549,14 @@ export const createApplicationModules = async (
     modules,
     composition
   })
+  // Reverse disposal must cancel journal writes before draining Compute tasks that can
+  // be waiting for the same database lock. The journal owner is lazy until commands open.
+  await modules.add(researchCatalog.journalAttributes, (owner) => ({
+    name: 'literature-journal-attributes',
+    capability: owner,
+    dispose: () => owner.dispose(),
+    disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS
+  }))
   const sideChatCommands = await composeProjectRecovery({
     declareElectronAdapter,
     applicationEvents,

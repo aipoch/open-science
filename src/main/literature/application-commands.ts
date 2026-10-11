@@ -1,10 +1,7 @@
 import type { PdfAddToLiteratureRequest } from '../../shared/pdf-annotations'
 import { pdfAddToLiteratureContract } from '../../shared/literature'
-import {
-  journalAttributesContract,
-  type JournalRequest,
-  type JournalResult
-} from '../../shared/journal-attributes'
+import { type JournalRequest, type JournalResult } from '@aipoch/journal-catalog/contracts'
+import { journalAttributesContract } from '../../shared/journal-attributes'
 import { withDataRootWrite } from '../storage/migration-state'
 import {
   literatureExportRecordContract,

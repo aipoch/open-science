@@ -17,7 +17,7 @@ import type {
 } from '../pdf-translation'
 import type { PdfTranslationBeginRequest } from '../pdf-translation'
 
-import type { JournalRequest, JournalResult } from '../journal-attributes'
+import type { JournalRequest, JournalResult } from '@aipoch/journal-catalog/contracts'
 
 import type {
   LiteratureExportRecordRequest,

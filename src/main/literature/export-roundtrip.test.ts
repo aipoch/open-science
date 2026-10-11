@@ -7,7 +7,7 @@ import { literatureItemInputSchema } from '../../shared/literature'
 import { migrateApplicationDatabase } from '../database/migration-service'
 import { createProjectDbClient } from '../projects/prisma-client'
 import { LiteratureCatalog } from './catalog'
-import { LiteratureCitationFormatter } from './citation-formatter'
+import { LiteratureCitationFormatter } from '@aipoch/literature-citations'
 
 const reference = literatureItemInputSchema.parse({
   itemType: 'journalArticle',

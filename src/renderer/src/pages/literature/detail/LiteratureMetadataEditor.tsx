@@ -13,9 +13,9 @@ import {
   LITERATURE_ITEM_TYPES,
   type LiteratureCreatorInput,
   type LiteratureIdentifierInput,
-  type LiteratureItemInput,
   type LiteratureItemType
-} from '../../../../../shared/literature'
+} from '@aipoch/literature-citations/contracts'
+import { type LiteratureItemInput } from '../../../../../shared/literature'
 
 type LiteratureMetadataEditorProps = Readonly<{
   item: LiteratureItemInput

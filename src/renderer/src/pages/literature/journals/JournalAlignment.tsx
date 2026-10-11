@@ -22,7 +22,7 @@ import type {
   JournalMatchStatus,
   JournalRequest,
   JournalResult
-} from '../../../../../shared/journal-attributes'
+} from '@aipoch/journal-catalog/contracts'
 
 const externalIdText = (identity: JournalIdentity): string =>
   (identity.externalIds ?? []).map(({ namespace, value }) => `${namespace}:${value}`).join(', ')

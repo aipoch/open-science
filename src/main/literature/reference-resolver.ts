@@ -6,7 +6,7 @@ import {
 } from '../../shared/literature'
 import type { LiteratureFailure } from '../../shared/literature-failure'
 import { normalizeIdentifier } from './catalog'
-import { LiteratureCitationFormatter } from './citation-formatter'
+import { LiteratureCitationFormatter } from '@aipoch/literature-citations'
 import {
   metadataProposalSchema,
   mergeMetadata,

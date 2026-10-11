@@ -4,11 +4,8 @@ import type { useFileDropZone } from '@/hooks/useFileDropZone'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 import { Download, FilePlus2, LoaderCircle, Upload } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import type {
-  LiteratureCollectionView,
-  LiteratureItemType,
-  LiteratureItemView
-} from '../../../../../shared/literature'
+import type { LiteratureItemType } from '@aipoch/literature-citations/contracts'
+import type { LiteratureCollectionView, LiteratureItemView } from '../../../../../shared/literature'
 import { createLiteratureAttachmentVersionReference } from '../../../../../shared/literature'
 import type { SmartCollectionView } from '../../../../../shared/literature-smart-collections'
 import { ResourceTagSummary } from '../../settings/ResourceTagControls'

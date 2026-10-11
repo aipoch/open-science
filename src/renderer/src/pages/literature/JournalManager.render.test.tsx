@@ -9,7 +9,7 @@ import type {
   JournalDataset,
   JournalRequest,
   JournalResult
-} from '../../../../shared/journal-attributes'
+} from '@aipoch/journal-catalog/contracts'
 
 const valueRender = vi.hoisted(() => vi.fn())
 vi.mock('./JournalAttributes', async () => {
@@ -434,7 +434,7 @@ it.each([false, true])(
         }
       }
     )
-    const imported: import('../../../../shared/journal-attributes').JournalImportRow[] = []
+    const imported: import('@aipoch/journal-catalog/contracts').JournalImportRow[] = []
     const saveBlobFile = vi
       .fn<(request: { data: ArrayBuffer; suggestedName: string }) => Promise<void>>()
       .mockResolvedValue(undefined)

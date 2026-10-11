@@ -14,7 +14,7 @@ import {
 import { JournalAlignment } from './JournalAlignment'
 import { CollectionOptionHelp } from '../collections/CollectionOptionHelp'
 import { LiteratureErrorNotice } from '../LiteratureErrorNotice'
-import { journalDatasetLabel, type JournalDataset } from '../../../../../shared/journal-attributes'
+import { journalDatasetLabel, type JournalDataset } from '@aipoch/journal-catalog/contracts'
 
 function MenuTrigger({
   disabled,

@@ -2,13 +2,14 @@ import { Button } from '@/components/ui/button'
 import * as Checkbox from '@radix-ui/react-checkbox'
 import { Check, Type } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { missingJournalValue, type JournalResult } from '../../../../../shared/journal-attributes'
+import { missingJournalValue, type JournalResult } from '@aipoch/journal-catalog/contracts'
+
 import { CollectionOptionHelp } from '../collections/CollectionOptionHelp'
 import { JournalAttributeValue } from '../JournalAttributes'
 import { LiteratureErrorNotice } from '../LiteratureErrorNotice'
 import { LiteratureTable, LiteratureTextTooltip } from '../LiteratureTable'
 import { journalFieldKindIcons } from './journal-field-icons'
-import { type JournalColumn } from './journal-import-file'
+import { type JournalColumn } from '@aipoch/journal-catalog/files'
 
 export function JournalImportReview({
   review,

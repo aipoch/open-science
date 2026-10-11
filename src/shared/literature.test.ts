@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-  createLiteratureAttachmentVersionReference,
   createLiteratureIdentifierUrl,
+  literatureIdentifierInputSchema,
+  normalizeLiteratureIdentifierValue
+} from '@aipoch/literature-citations/contracts'
+import {
+  createLiteratureAttachmentVersionReference,
   literatureApplicationCommandContracts,
   literatureCatalogCommandSchema,
   literatureCatalogSearchRequestSchema,
@@ -10,8 +14,6 @@ import {
   literatureCitationStylesRequestSchema,
   literatureFormatDocumentRequestSchema,
   literatureFormatReferencesRequestSchema,
-  literatureIdentifierInputSchema,
-  normalizeLiteratureIdentifierValue,
   parseLiteratureAttachmentVersionReference
 } from './literature'
 

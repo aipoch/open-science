@@ -401,7 +401,6 @@
       "src/main/notebook/runtime-service.test.ts",
       "src/main/settings/connector-settings.test.ts",
       "src/main/settings/provider-accounts.test.ts",
-      "src/main/literature/citation-style-library.test.ts",
       "src/main/local-fs/service.test.ts",
       "src/main/notebook/micromamba.test.ts",
       "src/main/notebook/shell-process.test.ts",

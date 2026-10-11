@@ -16,7 +16,8 @@ import {
   selectJournalDatasets,
   type JournalDataset,
   type JournalSourceYears
-} from '../../../../../shared/journal-attributes'
+} from '@aipoch/journal-catalog/contracts'
+
 import { cn } from '@/lib/utils'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 

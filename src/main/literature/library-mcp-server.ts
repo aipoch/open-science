@@ -5,10 +5,12 @@ import { z } from 'zod'
 import {
   LITERATURE_CITATION_LOCALES,
   LITERATURE_CITATION_STYLES,
+  type LiteratureCitationLocale,
+  type LiteratureCitationStyle
+} from '@aipoch/literature-citations/contracts'
+import {
   literatureItemInputSchema,
   literatureSourceInputSchema,
-  type LiteratureCitationLocale,
-  type LiteratureCitationStyle,
   type LiteratureItemView
 } from '../../shared/literature'
 import {

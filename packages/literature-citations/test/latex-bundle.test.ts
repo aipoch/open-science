@@ -1,17 +1,12 @@
 import { strFromU8, unzipSync } from 'fflate'
 import { describe, expect, it, vi } from 'vitest'
 
-import type { LiteratureItemView } from '../../shared/literature'
-import { LiteratureLatexBundle } from './latex-bundle'
+import type { CitationDocumentRecord } from '../src/document-contracts.js'
+import { LiteratureLatexBundle } from '../src/documents.js'
 
-const item = (id: string, citationKey?: string): LiteratureItemView => ({
+const item = (id: string, citationKey?: string): CitationDocumentRecord => ({
   id,
   metadataRevision: 2,
-  createdAt: 0,
-  updatedAt: 0,
-  projectIds: ['project-1'],
-  collectionIds: [],
-  attachments: [],
   item: {
     itemType: 'journalArticle',
     title: 'A useful paper',

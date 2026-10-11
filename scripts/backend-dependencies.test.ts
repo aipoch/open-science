@@ -115,3 +115,14 @@ it.each(['/', '\\'])(
     ).toBe(true)
   }
 )
+
+it.each(['literature-citations', 'journal-catalog'])(
+  'stages %s using its npm files boundary',
+  (name) => {
+    const manifest = JSON.parse(readFileSync(`packages/${name}/package.json`, 'utf8'))
+    for (const file of ['dist/index.js', 'package.json', 'LICENSE'])
+      expect(backendDependencyIncludes(manifest, file)).toBe(true)
+    for (const file of ['src/index.ts', 'test/packed-runtime.mjs', 'tsconfig.json'])
+      expect(backendDependencyIncludes(manifest, file)).toBe(false)
+  }
+)

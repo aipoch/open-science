@@ -1,6 +1,6 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 import { Worker } from 'node:worker_threads'
 import { monitorEventLoopDelay } from 'node:perf_hooks'
 import { setImmediate, setTimeout } from 'node:timers/promises'
@@ -9,8 +9,9 @@ import { expect, it } from 'vitest'
 import { createProjectDbClient } from '../projects/prisma-client'
 import { migrateApplicationDatabase } from '../database/migration-service'
 import { JournalAttributes } from './journal-attributes'
-import type { JournalField, JournalImportRow } from '../../shared/journal-attributes'
-import type { JournalSheet } from '../../renderer/src/pages/literature/journals/journal-import-file'
+import type { JournalField, JournalImportRow } from '@aipoch/journal-catalog/contracts'
+
+import type { JournalSheet } from '@aipoch/journal-catalog/files'
 
 // Opt-in scale acceptance; every name, header and value is independently invented.
 // JOURNAL_SCALE_PROFILE=rows|wide|text|history|xlsx JOURNAL_SCALE_REPORT=/absolute/report.json
@@ -102,7 +103,7 @@ it.runIf(Boolean(profileName))(
       const parserPath = join(root, 'parser.mjs')
       await build({
         stdin: {
-          contents: `import { parentPort, workerData } from 'node:worker_threads'; import { readJournalFile } from ${JSON.stringify(resolve('src/renderer/src/pages/literature/journals/journal-import-file.ts'))}; parentPort.postMessage(await readJournalFile(workerData.bytes, workerData.name));`,
+          contents: `import { parentPort, workerData } from 'node:worker_threads'; import { readJournalFile } from '@aipoch/journal-catalog/files'; parentPort.postMessage(await readJournalFile(workerData.bytes, workerData.name));`,
           resolveDir: process.cwd(),
           loader: 'ts'
         },

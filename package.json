@@ -3,7 +3,7 @@
   "productName": "Open-Science",
   "desktopName": "open-science.desktop",
   "version": "0.37.0",
-  "description": "Open-Science \u2014 an open-source, model-agnostic AI workbench for scientific discovery.",
+  "description": "Open-Science — an open-source, model-agnostic AI workbench for scientific discovery.",
   "main": "./out/main/index.js",
   "author": "aipoch",
   "license": "Apache-2.0",
@@ -83,17 +83,19 @@
     "build:connectors": "npm --prefix packages/connector-core run build && npm --prefix packages/connector-builtins run build && npm run build --prefix packages/connector-mcp-client",
     "check:connector-packages": "node scripts/check-connector-packages.mjs",
     "build:diagnostics": "npm --prefix packages/diagnostics run build",
-    "build:packages": "npm run build:connectors && npm run build:diagnostics && npm run build:pdf-packages && npm run build:skills && npm run build:notebook-analysis",
+    "build:packages": "npm run build:connectors && npm run build:diagnostics && npm run build:pdf-packages && npm run build:skills && npm run build:notebook-analysis && npm run build:literature-packages",
     "check:diagnostics-package": "node scripts/check-diagnostics-package.mjs",
-    "prebuild:web": "npm run build:diagnostics && npm run build:pdf-packages",
-    "pretypecheck:web": "npm run build:diagnostics && npm run build:pdf-packages",
+    "prebuild:web": "npm run build:diagnostics && npm run build:pdf-packages && npm run build:literature-packages",
+    "pretypecheck:web": "npm run build:diagnostics && npm run build:pdf-packages && npm run build:literature-packages",
     "build:pdf-structure": "npm --prefix packages/pdf-structure run build",
     "build:pdf-packages": "npm --prefix packages/pdf-structure run build && npm --prefix packages/pdf-translation run build",
     "check:pdf-packages": "node scripts/check-package-isolation.mjs --packages=pdf-structure,pdf-translation",
     "build:skills": "npm --prefix packages/skills run build",
     "test:skills": "npm --prefix packages/skills test",
     "build:notebook-analysis": "npm --prefix packages/notebook-syntax run build && npm --prefix packages/notebook-code-risk run build && npm --prefix packages/notebook-analysis run build",
-    "check:notebook-packages": "node scripts/check-notebook-packages.mjs"
+    "check:notebook-packages": "node scripts/check-notebook-packages.mjs",
+    "build:literature-packages": "npm --prefix packages/literature-citations run build && npm --prefix packages/journal-catalog run build",
+    "check:literature-packages": "node scripts/check-package-isolation.mjs --packages=literature-citations,journal-catalog"
   },
   "dependencies": {
     "@agentclientprotocol/claude-agent-acp": "^0.70.0",
@@ -117,7 +119,6 @@
     "@rc-component/qrcode": "^2.0.0",
     "@xmldom/xmldom": "0.8.15",
     "ajv": "^8.20.0",
-    "citeme-engine-wasm": "0.3.8",
     "diff": "9.0.0",
     "electron-updater": "^6.3.9",
     "fflate": "0.8.3",
@@ -150,7 +151,9 @@
     "@aipoch/skills": "file:packages/skills",
     "@aipoch/notebook-syntax": "file:packages/notebook-syntax",
     "@aipoch/notebook-code-risk": "file:packages/notebook-code-risk",
-    "@aipoch/notebook-analysis": "file:packages/notebook-analysis"
+    "@aipoch/notebook-analysis": "file:packages/notebook-analysis",
+    "@aipoch/literature-citations": "file:packages/literature-citations",
+    "@aipoch/journal-catalog": "file:packages/journal-catalog"
   },
   "overrides": {
     "@huggingface/transformers": {

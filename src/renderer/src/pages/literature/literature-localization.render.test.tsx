@@ -7,16 +7,19 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 
 import { i18next } from '@/i18n'
-import { LiteratureCitationStyleLibrary } from '../../../../main/literature/citation-style-library'
+import { LiteratureCitationStyleLibrary } from '@aipoch/literature-citations/styles'
+import { withCitationStyleErrors } from '../../../../main/literature/citation-errors'
 import {
   toApplicationCommandErrorEnvelope,
   unwrapApplicationCommandOutcome
 } from '../../../../shared/application-command-contract'
 import {
-  LITERATURE_COLLECTION_NAME_CONFLICT,
   LITERATURE_ITEM_TYPES,
+  type LiteratureItemType
+} from '@aipoch/literature-citations/contracts'
+import {
+  LITERATURE_COLLECTION_NAME_CONFLICT,
   literatureItemInputSchema,
-  type LiteratureItemType,
   type LiteratureItemView
 } from '../../../../shared/literature'
 import {
@@ -237,10 +240,10 @@ const importInvalidStyle = async (
   const root = await mkdtemp(join(tmpdir(), 'literature-i18n-'))
   roots.push(root)
   const library = new LiteratureCitationStyleLibrary(join(root, 'styles'))
-  const citationStyles = vi.fn(async (request: { kind: string; content: string }) => {
+  const citationStyles = vi.fn(async (request: { kind: 'import'; content: string }) => {
     expect(request.kind).toBe('import')
     try {
-      await library.import(request.content)
+      await withCitationStyleErrors(() => library.import(request.content))
       return { styles: [] }
     } catch (cause) {
       const error = JSON.parse(JSON.stringify(toApplicationCommandErrorEnvelope(cause)))

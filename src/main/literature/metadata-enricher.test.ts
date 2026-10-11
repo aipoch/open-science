@@ -7,8 +7,8 @@ import {
   type LiteratureItemView
 } from '../../shared/literature'
 import { LiteratureMetadataEnricher, mergePubmedMetadata } from './metadata-enricher'
-import { toCslItem } from '../../shared/literature-csl'
-import { LiteratureCitationFormatter } from './citation-formatter'
+import { toCslItem } from '@aipoch/literature-citations/csl'
+import { LiteratureCitationFormatter } from '@aipoch/literature-citations'
 
 const item: LiteratureItemInput = {
   itemType: 'journalArticle',
@@ -601,7 +601,7 @@ it.each([false, true])('replaces an existing abstract only when selected: %s', a
 })
 
 it('retains editors and translators in the author-only commit payload and citation', async () => {
-  const { toCslItem } = await import('../../shared/literature-csl')
+  const { toCslItem } = await import('@aipoch/literature-citations/csl')
   const creators = ['editor', 'author', 'translator', 'editor'].map((creatorType, index) => ({
     creatorType,
     nameMode: 'person' as const,

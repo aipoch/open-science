@@ -1,12 +1,10 @@
-import { runtimeMetadataIfConfigured } from '../runtime-metadata'
 import { createHash, randomUUID } from 'node:crypto'
-import { existsSync } from 'node:fs'
 import { mkdir, readFile, readdir, rename, rm, unlink, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { ApplicationCommandError } from '../../shared/application-command-contract'
+import { CitationStyleError } from './errors.js'
 
 import { SaxesParser } from 'saxes'
 import { createEngine } from 'citeme-engine-wasm'
@@ -15,28 +13,16 @@ import {
   LITERATURE_CITATION_STYLES,
   LITERATURE_CSL_MAX_BYTES,
   type LiteratureCitationStyleView
-} from '../../shared/literature'
+} from './contracts.js'
 
-const here = typeof __dirname === 'string' ? __dirname : dirname(fileURLToPath(import.meta.url))
 const CSL_NAMESPACE = 'http://purl.org/net/xbiblio/csl'
 const CUSTOM_STYLE_ID = /^custom:([a-f0-9]{64})$/u
 const require = createRequire(import.meta.url)
 
 type CitationStyleSource = LiteratureCitationStyleView & Readonly<{ content: string }>
 
-const citationResourceDirectory = (): string => {
-  const resourcesPath = runtimeMetadataIfConfigured()?.resourcesPath
-  const candidates = [
-    join(here, '../../../resources/citation'),
-    join(here, '../../resources/citation'),
-    join(process.cwd(), 'resources/citation'),
-    resourcesPath ? join(resourcesPath, 'app.asar.unpacked', 'resources', 'citation') : undefined,
-    resourcesPath ? join(resourcesPath, 'resources', 'citation') : undefined
-  ]
-  const found = candidates.find((candidate) => candidate && existsSync(join(candidate, 'apa.csl')))
-  if (!found) throw new Error('Citation resources are unavailable.')
-  return found
-}
+const citationResourceDirectory = (): string =>
+  fileURLToPath(new URL('../resources/', import.meta.url))
 
 const normalizeXmlText = (value: string): string => value.replace(/\s+/gu, ' ').trim()
 
@@ -46,7 +32,7 @@ const parseCitationStyle = (
   source: LiteratureCitationStyleView['source']
 ): CitationStyleSource => {
   if (Buffer.byteLength(content, 'utf8') > LITERATURE_CSL_MAX_BYTES) {
-    throw new ApplicationCommandError('csl-file-too-large', 'The CSL file must be 1 MB or smaller.')
+    throw new CitationStyleError('csl-file-too-large', 'The CSL file must be 1 MB or smaller.')
   }
 
   let depth = 0
@@ -62,10 +48,10 @@ const parseCitationStyle = (
   const parser = new SaxesParser({ xmlns: true })
 
   parser.on('error', () => {
-    throw new ApplicationCommandError('csl-invalid-xml', 'The selected file is not valid CSL XML.')
+    throw new CitationStyleError('csl-invalid-xml', 'The selected file is not valid CSL XML.')
   })
   parser.on('doctype', () => {
-    throw new ApplicationCommandError(
+    throw new CitationStyleError(
       'csl-unsupported-doctype',
       'CSL files with a document type declaration are not supported.'
     )
@@ -81,7 +67,7 @@ const parseCitationStyle = (
         tag.uri !== CSL_NAMESPACE ||
         !/^1\.0(?:\.\d+)?$/u.test(version ?? '')
       ) {
-        throw new ApplicationCommandError(
+        throw new CitationStyleError(
           'csl-unsupported-style',
           'The selected file must be an independent CSL 1.0 style.'
         )
@@ -136,20 +122,20 @@ const parseCitationStyle = (
   try {
     parser.write(content).close()
   } catch (error) {
-    if (error instanceof ApplicationCommandError) throw error
-    throw new ApplicationCommandError('csl-invalid-xml', 'The selected file is not valid CSL XML.')
+    if (error instanceof CitationStyleError) throw error
+    throw new CitationStyleError('csl-invalid-xml', 'The selected file is not valid CSL XML.')
   }
 
   const title = normalizeXmlText(captured.title)
   const canonicalId = normalizeXmlText(captured.id)
   if (!rootSeen || !title || !canonicalId) {
-    throw new ApplicationCommandError(
+    throw new CitationStyleError(
       'csl-missing-metadata',
       'The CSL style must include a title and an id.'
     )
   }
   if (dependent) {
-    throw new ApplicationCommandError(
+    throw new CitationStyleError(
       'csl-dependent-style',
       'Dependent CSL styles are not supported yet. Import an independent style.'
     )
@@ -157,14 +143,14 @@ const parseCitationStyle = (
 
   for (const name of macroReferences) {
     if (!macros.has(name))
-      throw new ApplicationCommandError(
+      throw new CitationStyleError(
         'csl-undefined-macro',
         `The CSL style references an undefined macro: ${name}`,
         { macro: name }
       )
   }
   if (!citation || !bibliography) {
-    throw new ApplicationCommandError(
+    throw new CitationStyleError(
       'csl-missing-sections',
       'Open-Science requires CSL styles with both citation and bibliography sections.'
     )
@@ -257,10 +243,7 @@ class LiteratureCitationStyleLibrary {
     try {
       engine.loadStyle(styleId, content)
     } catch {
-      throw new ApplicationCommandError(
-        'csl-invalid-xml',
-        'The selected file is not valid CSL XML.'
-      )
+      throw new CitationStyleError('csl-invalid-xml', 'The selected file is not valid CSL XML.')
     } finally {
       engine.free()
     }

@@ -6,7 +6,8 @@ import {
   type JournalAttributeFilter,
   type JournalDataset,
   type JournalSourceYears
-} from '../../../../../shared/journal-attributes'
+} from '@aipoch/journal-catalog/contracts'
+
 import {
   LITERATURE_TABLE_PREFERENCES_KEY,
   literatureTableColumnWidths,

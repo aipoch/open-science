@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import { ArtifactLiteratureDetailDialog } from './ArtifactLiteratureDetailDialog'
 import { literatureItemInputSchema } from '../../../../shared/literature'
-import type { JournalRequest } from '../../../../shared/journal-attributes'
+import type { JournalRequest } from '@aipoch/journal-catalog/contracts'
 
 afterEach(() => {
   cleanup()

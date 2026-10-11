@@ -4,11 +4,8 @@ import { useTranslation } from 'react-i18next'
 import { Check, Paperclip } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import type {
-  LiteratureItemInput,
-  LiteratureItemType,
-  LiteratureItemView
-} from '../../../../../shared/literature'
+import type { LiteratureItemType } from '@aipoch/literature-citations/contracts'
+import type { LiteratureItemInput, LiteratureItemView } from '../../../../../shared/literature'
 import {
   literatureMergeRows,
   buildLiteratureMergeItem,

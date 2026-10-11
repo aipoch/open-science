@@ -26,11 +26,8 @@ import {
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 import { useNavigationStore } from '@/stores/navigation-store'
-import type {
-  LiteratureItemInput,
-  LiteratureItemType,
-  LiteratureItemView
-} from '../../../../../shared/literature'
+import type { LiteratureItemType } from '@aipoch/literature-citations/contracts'
+import type { LiteratureItemInput, LiteratureItemView } from '../../../../../shared/literature'
 import { ResourceTagBadges, ResourceTagMenu } from '../../settings/ResourceTagControls'
 import { LiteratureSelectionStore } from './literature-selection'
 import { LiteratureSelectionCheckbox } from './LiteratureSelection'

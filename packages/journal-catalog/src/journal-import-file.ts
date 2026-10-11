@@ -7,7 +7,7 @@ import {
   missingJournalValue,
   normalizeIssn,
   type JournalField
-} from '../../../../../shared/journal-attributes'
+} from './contracts.js'
 
 export type JournalSheet = {
   names: string[]

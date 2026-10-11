@@ -32,21 +32,39 @@
     "src/main/credential-identity/probe.ts",
     "src/main/credential-identity/windows-profile-key.ts"
   ],
-  "resources/citation/NOTICE.md": ["src/main/literature/citation-style-library.ts"],
-  "resources/citation/american-medical-association.csl": [
-    "src/main/literature/citation-style-library.ts"
+  "packages/literature-citations/resources/NOTICE.md": [
+    "packages/literature-citations/src/citation-style-library.ts"
   ],
-  "resources/citation/apa.csl": ["src/main/literature/citation-style-library.ts"],
-  "resources/citation/chicago-author-date.csl": ["src/main/literature/citation-style-library.ts"],
-  "resources/citation/harvard-cite-them-right.csl": [
-    "src/main/literature/citation-style-library.ts"
+  "packages/literature-citations/resources/american-medical-association.csl": [
+    "packages/literature-citations/src/citation-style-library.ts"
   ],
-  "resources/citation/ieee.csl": ["src/main/literature/citation-style-library.ts"],
-  "resources/citation/locales-en-US.xml": ["src/main/literature/citation-style-library.ts"],
-  "resources/citation/locales-zh-CN.xml": ["src/main/literature/citation-style-library.ts"],
-  "resources/citation/mla.csl": ["src/main/literature/citation-style-library.ts"],
-  "resources/citation/nature.csl": ["src/main/literature/citation-style-library.ts"],
-  "resources/citation/vancouver.csl": ["src/main/literature/citation-style-library.ts"],
+  "packages/literature-citations/resources/apa.csl": [
+    "packages/literature-citations/src/citation-style-library.ts"
+  ],
+  "packages/literature-citations/resources/chicago-author-date.csl": [
+    "packages/literature-citations/src/citation-style-library.ts"
+  ],
+  "packages/literature-citations/resources/harvard-cite-them-right.csl": [
+    "packages/literature-citations/src/citation-style-library.ts"
+  ],
+  "packages/literature-citations/resources/ieee.csl": [
+    "packages/literature-citations/src/citation-style-library.ts"
+  ],
+  "packages/literature-citations/resources/locales-en-US.xml": [
+    "packages/literature-citations/src/citation-style-library.ts"
+  ],
+  "packages/literature-citations/resources/locales-zh-CN.xml": [
+    "packages/literature-citations/src/citation-style-library.ts"
+  ],
+  "packages/literature-citations/resources/mla.csl": [
+    "packages/literature-citations/src/citation-style-library.ts"
+  ],
+  "packages/literature-citations/resources/nature.csl": [
+    "packages/literature-citations/src/citation-style-library.ts"
+  ],
+  "packages/literature-citations/resources/vancouver.csl": [
+    "packages/literature-citations/src/citation-style-library.ts"
+  ],
   "resources/compute-askpass-win.cjs": ["src/main/compute/connection-adapters.ts"],
   "resources/compute-askpass.cjs": ["src/main/compute/connection-adapters.ts"],
   "resources/compute-askpass.sh": ["src/main/compute/connection-adapters.ts"],

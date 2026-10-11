@@ -169,13 +169,20 @@ it('PDF workflow sources contain no application source taxonomy or database adap
 
 it('local module and affected plans obey the same downstream package direction as Ubuntu', async () => {
   const { createModuleTestPlan, createAffectedTestPlan } = await import('./module-test-impact.mjs')
-  for (const id of ['main_pdf_translation', 'workspace_previews'])
+  for (const id of [
+    'main_pdf_translation',
+    'workspace_previews',
+    'main_literature',
+    'page_literature'
+  ])
     expect(
       createModuleTestPlan(id).testFiles.filter((path) => path.startsWith('packages/'))
     ).toEqual([])
   for (const path of [
     'src/main/literature/pdf-translation/index.ts',
-    'src/renderer/src/pages/workspace/previews/renderers/PdfPreview.tsx'
+    'src/renderer/src/pages/workspace/previews/renderers/PdfPreview.tsx',
+    'src/main/literature/command-owner.ts',
+    'src/main/literature/journal-attributes.ts'
   ]) {
     const plan = createAffectedTestPlan([{ path, status: 'modified' }], {
       status: 'unavailable',

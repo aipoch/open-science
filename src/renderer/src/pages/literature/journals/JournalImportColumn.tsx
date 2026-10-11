@@ -16,10 +16,11 @@ import {
   JOURNAL_EXTERNAL_ID_NAMESPACES,
   JOURNAL_FIELD_KINDS,
   type JournalField
-} from '../../../../../shared/journal-attributes'
+} from '@aipoch/journal-catalog/contracts'
+
 import { LiteratureTextTooltip } from '../LiteratureTable'
 import { journalFieldKindIcons } from './journal-field-icons'
-import { type JournalColumn } from './journal-import-file'
+import { type JournalColumn } from '@aipoch/journal-catalog/files'
 
 export function JournalImportColumn({
   column,

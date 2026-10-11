@@ -5,7 +5,7 @@ import {
   literatureItemInputSchema,
   type LiteratureItemInput
 } from '../../../../../shared/literature'
-import { toCslItem } from '../../../../../shared/literature-csl'
+import { toCslItem } from '@aipoch/literature-citations/csl'
 import { LiteratureMetadataEditor } from './LiteratureMetadataEditor'
 
 afterEach(cleanup)

@@ -18,8 +18,8 @@ import {
 } from 'lucide-react'
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { createLiteratureIdentifierUrl } from '@aipoch/literature-citations/contracts'
 import {
-  createLiteratureIdentifierUrl,
   type LiteratureCatalogSearchPage,
   type LiteratureInboxCandidateView
 } from '../../../../../shared/literature'

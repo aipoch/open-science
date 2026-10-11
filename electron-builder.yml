@@ -70,6 +70,7 @@ files:
 asarUnpack:
   - node_modules/@aipoch/pdf-translation/resources/**
   - node_modules/@aipoch/notebook-syntax/assets/**
+  - node_modules/@aipoch/literature-citations/resources/**
   - resources/**
   - '!resources/bin{,/**/*}'
   # The translation worker runs outside asar and resolves its WASM/font dependencies there.

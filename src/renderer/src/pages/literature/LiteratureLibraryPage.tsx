@@ -105,9 +105,11 @@ import { useTagStore } from '@/stores/tag-store'
 import type {
   LiteratureCitationStyle,
   LiteratureCitationStyleView,
+  LiteratureItemType
+} from '@aipoch/literature-citations/contracts'
+import type {
   LiteratureCollectionView,
   LiteratureInboxCandidateView,
-  LiteratureItemType,
   LiteratureItemView,
   LiteratureMetadataField
 } from '../../../../shared/literature'

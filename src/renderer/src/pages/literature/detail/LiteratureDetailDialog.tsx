@@ -23,10 +23,9 @@ import { useSyncExternalStore } from 'react'
 import { useTranslation } from 'react-i18next'
 import type {
   LiteratureCitationStyleView,
-  LiteratureItemType,
-  LiteratureItemView,
-  LiteratureMetadataField
-} from '../../../../../shared/literature'
+  LiteratureItemType
+} from '@aipoch/literature-citations/contracts'
+import type { LiteratureItemView, LiteratureMetadataField } from '../../../../../shared/literature'
 import { LiteratureCitationPanel } from './LiteratureCitationPanel'
 import type { LiteratureDetailController } from './LiteratureDetailController'
 import { type LiteratureDetailSnapshot } from './LiteratureDetailController'

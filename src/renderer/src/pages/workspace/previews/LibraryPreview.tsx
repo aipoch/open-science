@@ -33,11 +33,13 @@ import { useNavigationStore } from '@/stores/navigation-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import { cn } from '@/lib/utils'
 import {
-  createLiteratureAttachmentVersionReference,
   createLiteratureIdentifierUrl,
-  type LiteratureItemView,
-  type LiteratureCatalogSearchPage,
   type LiteratureItemType
+} from '@aipoch/literature-citations/contracts'
+import {
+  createLiteratureAttachmentVersionReference,
+  type LiteratureItemView,
+  type LiteratureCatalogSearchPage
 } from '../../../../../shared/literature'
 import { oversizedLiteratureReference } from '../../../../../shared/literature-export'
 import { readLiteratureDisplayPage } from '../../literature/literature-read-pages'

@@ -4,9 +4,10 @@ import {
   journalDatasetLabel,
   type JournalDataset,
   type JournalResult
-} from '../../../../../shared/journal-attributes'
+} from '@aipoch/journal-catalog/contracts'
+
 import { refreshJournalAttributes } from './journal-attribute-store'
-import { exportJournalBundle } from './journal-bundle'
+import { exportJournalBundle } from '@aipoch/journal-catalog/files'
 import { useJournalEditing } from './useJournalEditing'
 
 /** Own revision-checked dataset removal and cancellable bundle export. */

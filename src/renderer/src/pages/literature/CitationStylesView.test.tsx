@@ -3,7 +3,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { useState } from 'react'
 import { afterEach, expect, it, vi } from 'vitest'
 
-import type { LiteratureCitationStyleView } from '../../../../shared/literature'
+import type { LiteratureCitationStyleView } from '@aipoch/literature-citations/contracts'
+
 import { CitationStylesView } from './CitationStylesView'
 
 afterEach(cleanup)

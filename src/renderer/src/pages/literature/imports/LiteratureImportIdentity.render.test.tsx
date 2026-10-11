@@ -3,9 +3,9 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import {
   LITERATURE_ITEM_TYPES,
-  literatureItemInputSchema,
   type LiteratureItemType
-} from '../../../../../shared/literature'
+} from '@aipoch/literature-citations/contracts'
+import { literatureItemInputSchema } from '../../../../../shared/literature'
 import { LiteratureRecordImportDialog } from './LiteratureRecordImportDialog'
 import { LiteratureMetadataEditor } from '../detail/LiteratureMetadataEditor'
 

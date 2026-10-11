@@ -18,7 +18,8 @@ import type {
   LiteratureFullTextResult,
   LiteratureItemView
 } from '../../../../../shared/literature'
-import { createLiteratureIdentifierUrl } from '../../../../../shared/literature'
+import { createLiteratureIdentifierUrl } from '@aipoch/literature-citations/contracts'
+
 import { formatBytes } from '../../../../../shared/update'
 import { LiteratureOpenAlexCredential } from './LiteratureOpenAlexCredential'
 import { UnpaywallCredentialForm } from '../../settings/UnpaywallCredentialForm'

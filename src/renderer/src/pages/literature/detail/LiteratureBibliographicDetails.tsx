@@ -3,11 +3,12 @@ import { JournalAttributes } from '../JournalAttributes'
 import { LiteratureSources } from '../LiteratureSources'
 
 import { ExternalTextLink } from '@/components/ExternalTextLink'
-import type { LiteratureItemType, LiteratureItemView } from '../../../../../shared/literature'
+import type { LiteratureItemType } from '@aipoch/literature-citations/contracts'
+import type { LiteratureItemView } from '../../../../../shared/literature'
 import {
   createLiteratureIdentifierUrl,
   normalizeLiteratureIdentifierValue
-} from '../../../../../shared/literature'
+} from '@aipoch/literature-citations/contracts'
 
 import {
   fullCreatorLabel,

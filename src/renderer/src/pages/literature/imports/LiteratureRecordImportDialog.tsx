@@ -11,10 +11,10 @@ import { LiteratureImportDialogFrame } from './LiteratureImportDialogFrame'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { LiteratureDuplicatePolicyField } from './LiteratureDuplicatePolicyField'
+import type { LiteratureItemType } from '@aipoch/literature-citations/contracts'
 import type {
   LiteratureItemInput,
   LiteratureDuplicatePolicy,
-  LiteratureItemType,
   LiteratureRecordImportResult
 } from '../../../../../shared/literature'
 

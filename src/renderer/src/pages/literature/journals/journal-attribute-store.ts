@@ -8,7 +8,8 @@ import {
   type JournalAttribute,
   type JournalDataset,
   type JournalIdentity
-} from '../../../../../shared/journal-attributes'
+} from '@aipoch/journal-catalog/contracts'
+
 import type { LiteratureItemInput } from '../../../../../shared/literature'
 
 type ResolutionIdentity = Extract<JournalRequest, { action: 'resolve' }>['identities'][number]

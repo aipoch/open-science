@@ -24,7 +24,7 @@ import {
   literatureApplicationCommands,
   registerLiteratureApplicationCommands
 } from './application-commands'
-import { LiteratureCitationStyleLibrary } from './citation-style-library'
+import { LiteratureCitationStyleLibrary } from '@aipoch/literature-citations/styles'
 import { LiteratureBatchJobs } from './batch-jobs'
 import { LiteratureFullTextIndex } from './full-text-index'
 import { literatureItemInputSchema } from '../../shared/literature'

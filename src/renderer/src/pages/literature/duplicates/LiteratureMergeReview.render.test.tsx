@@ -4,8 +4,10 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, expect, it } from 'vitest'
 import {
   LITERATURE_ITEM_TYPES,
+  type LiteratureItemType
+} from '@aipoch/literature-citations/contracts'
+import {
   literatureItemInputSchema,
-  type LiteratureItemType,
   type LiteratureItemView
 } from '../../../../../shared/literature'
 import { LiteratureMergeReview } from './LiteratureMergeReview'

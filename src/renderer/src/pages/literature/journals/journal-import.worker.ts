@@ -1,4 +1,4 @@
-import { readJournalFile } from './journal-import-file'
+import { readJournalFile } from '@aipoch/journal-catalog/files'
 
 self.onmessage = async (
   event: MessageEvent<{ bytes: ArrayBuffer; name: string; sheet?: string }>

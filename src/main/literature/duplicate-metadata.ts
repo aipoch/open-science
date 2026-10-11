@@ -1,7 +1,9 @@
 import { isDeepStrictEqual } from 'node:util'
 import {
   LITERATURE_IDENTITY_SCHEMES,
-  normalizeLiteratureIdentifierValue,
+  normalizeLiteratureIdentifierValue
+} from '@aipoch/literature-citations/contracts'
+import {
   literatureItemInputSchema,
   type LiteratureItemView,
   type LiteratureMergeStrategy,

@@ -2,10 +2,8 @@ import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { Check, RotateCcw, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import type {
-  LiteratureInboxCandidateView,
-  LiteratureItemType
-} from '../../../../../shared/literature'
+import type { LiteratureItemType } from '@aipoch/literature-citations/contracts'
+import type { LiteratureInboxCandidateView } from '../../../../../shared/literature'
 import {
   LiteratureSelectionBoundary,
   LiteratureSelectionCheckbox,

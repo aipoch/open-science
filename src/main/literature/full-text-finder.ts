@@ -14,7 +14,8 @@ import type {
 import {
   createLiteratureIdentifierUrl,
   normalizeLiteratureIdentifierValue
-} from '../../shared/literature'
+} from '@aipoch/literature-citations/contracts'
+
 import type { LiteratureCatalog } from './catalog'
 import type { ContentRepository } from '../storage/content-repository'
 import { findPmcPdfs, findUnpaywallPdfs, readFullTextProvider } from './full-text-sources'

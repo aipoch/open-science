@@ -1,3 +1,16 @@
+import {
+  bibliographicRecordSchema,
+  LITERATURE_ITEM_TYPES,
+  LITERATURE_CITATION_LOCALES,
+  LITERATURE_CSL_MAX_BYTES,
+  LITERATURE_RECORD_IMPORT_FORMATS,
+  LITERATURE_RECORD_IMPORT_MAX_BYTES,
+  LITERATURE_RECORD_IMPORT_MAX_RECORDS,
+  LITERATURE_IMPORT_WARNINGS,
+  literatureIdentifierInputSchema,
+  literatureCitationStylePreviewSchema,
+  literatureCitationStyleViewSchema
+} from '@aipoch/literature-citations/contracts'
 import { SMART_RULE_STORAGE_MAX_LENGTH, serializedSmartRuleSchema } from './smart-collection-rule'
 import {
   smartCollectionCommandSchemas,
@@ -20,47 +33,12 @@ import { z } from 'zod'
 
 import { defineApplicationCommandContract, validationCodec } from './application-command-contract'
 import { uploadedAttachmentSchema } from './uploads'
-import { JOURNAL_ATTRIBUTE_FILTER_MAX, journalAttributeFilterSchema } from './journal-attributes'
+import {
+  JOURNAL_ATTRIBUTE_FILTER_MAX,
+  journalAttributeFilterSchema
+} from '@aipoch/journal-catalog/contracts'
 
-const LITERATURE_ITEM_TYPES = [
-  'journalArticle',
-  'review',
-  'preprint',
-  'conferencePaper',
-  'book',
-  'bookSection',
-  'thesis',
-  'report',
-  'dataset',
-  'standard',
-  'patent',
-  'webpage',
-  'document'
-] as const
-
-const LITERATURE_IDENTITY_SCHEMES = ['doi', 'pmid', 'pmcid', 'arxiv'] as const
-const LITERATURE_IDENTIFIER_SCHEMES = [
-  ...LITERATURE_IDENTITY_SCHEMES,
-  'isbn',
-  'issn',
-  'other'
-] as const
 const LITERATURE_INBOX_STATES = ['pending', 'accepted', 'dismissed'] as const
-const LITERATURE_CITATION_STYLES = [
-  'apa',
-  'mla',
-  'chicago-author-date',
-  'vancouver',
-  'ieee',
-  'nature',
-  'american-medical-association',
-  'harvard-cite-them-right'
-] as const
-const LITERATURE_CITATION_LOCALES = ['en-US', 'zh-CN'] as const
-const LITERATURE_CSL_MAX_BYTES = 1024 * 1024
-const LITERATURE_RECORD_IMPORT_FORMATS = ['bibtex', 'ris', 'nbib'] as const
-const LITERATURE_RECORD_IMPORT_MAX_BYTES = 32 * 1024 * 1024
-const LITERATURE_RECORD_IMPORT_MAX_RECORDS = 1_000
 export const LITERATURE_IMPORT_IDENTITY_CONFLICT =
   'Import contains conflicting identifiers. Keep separate copies or correct the source file.'
 const LITERATURE_COLLECTION_NAME_CONFLICT = 'literature_collection_name_conflict'
@@ -70,12 +48,6 @@ const LITERATURE_LIFECYCLE_STATES = ['active', 'deleted'] as const
 const LITERATURE_SORT_FIELDS = ['updated', 'created', 'title', 'year', 'rating'] as const
 const LITERATURE_SORT_DIRECTIONS = ['asc', 'desc'] as const
 const LITERATURE_IMPORT_STATUSES = ['ready', 'warning', 'existing', 'conflict', 'invalid'] as const
-const LITERATURE_IMPORT_WARNINGS = [
-  'missing-authors',
-  'missing-year',
-  'missing-container-title',
-  'uncertain-author-name'
-] as const
 const LITERATURE_METADATA_FIELDS = [
   'title',
   'abstract',
@@ -94,73 +66,6 @@ const LITERATURE_METADATA_FIELDS = [
   'url'
 ] as const
 const LITERATURE_METADATA_PROVIDERS = ['crossref', 'pubmed', 'europe-pmc', 'datacite'] as const
-
-type LiteratureIdentifierScheme = (typeof LITERATURE_IDENTIFIER_SCHEMES)[number]
-
-const normalizeLiteratureIdentifierValue = (
-  scheme: LiteratureIdentifierScheme,
-  value: string
-): string => {
-  const trimmed = value.trim()
-  if (scheme === 'doi') {
-    return trimmed
-      .replace(/^doi:\s*/iu, '')
-      .replace(/^https?:\/\/(?:dx\.)?doi\.org\//iu, '')
-      .replace(/Copyright(?:\s.*)?$/iu, '')
-      .replace(/[.,;:)}\]]+$/gu, '')
-      .trim()
-  }
-  if (scheme === 'pmid') {
-    const candidate = trimmed.replace(/^PMID\s*:\s*/iu, '')
-    return (
-      /^https?:\/\/(?:www\.)?pubmed\.ncbi\.nlm\.nih\.gov\/(\d+)\/?(?:[?#].*)?$/iu.exec(
-        candidate
-      )?.[1] ?? candidate
-    )
-  }
-  if (scheme === 'pmcid') {
-    const candidate = trimmed.replace(/^PMCID\s*:\s*/iu, '')
-    const fromUrl =
-      /^https?:\/\/(?:pmc\.ncbi\.nlm\.nih\.gov\/articles\/(PMC\d+)|(?:www\.)?ncbi\.nlm\.nih\.gov\/pmc\/articles\/(PMC\d+))\/?(?:[?#].*)?$/iu.exec(
-        candidate
-      )
-    const valueWithoutUrl = fromUrl?.[1] ?? fromUrl?.[2] ?? candidate
-    const digits = /^(?:PMC)?(\d+)$/iu.exec(valueWithoutUrl)?.[1]
-    return digits ? `PMC${digits}` : valueWithoutUrl.toUpperCase()
-  }
-  if (scheme === 'arxiv') {
-    return trimmed
-      .replace(/^arxiv:\s*/iu, '')
-      .replace(/^https?:\/\/(?:www\.)?arxiv\.org\/(?:abs|pdf)\//iu, '')
-      .replace(/[?#].*$/u, '')
-      .replace(/\.pdf$/iu, '')
-      .replace(/v\d+$/iu, '')
-      .trim()
-  }
-  return trimmed
-}
-
-const createLiteratureIdentifierUrl = (
-  scheme: LiteratureIdentifierScheme,
-  value: string
-): string | undefined => {
-  const normalized = normalizeLiteratureIdentifierValue(scheme, value)
-  if (scheme === 'doi' && /^10\.\d{4,9}\/\S+$/u.test(normalized)) {
-    const encoded = normalized.split('/').map(encodeURIComponent).join('/')
-    return `https://doi.org/${encoded}`
-  }
-  if (scheme === 'pmid' && /^\d+$/u.test(normalized)) {
-    return `https://pubmed.ncbi.nlm.nih.gov/${normalized}/`
-  }
-  if (scheme === 'pmcid' && /^PMC\d+$/u.test(normalized)) {
-    return `https://pmc.ncbi.nlm.nih.gov/articles/${normalized}/`
-  }
-  if (scheme === 'arxiv' && /^(?:\d{4}\.\d{4,5}|[a-z][a-z.-]*\/\d{7})$/iu.test(normalized)) {
-    const encoded = normalized.split('/').map(encodeURIComponent).join('/')
-    return `https://arxiv.org/abs/${encoded}`
-  }
-  return undefined
-}
 
 const nonEmptyTextSchema = z.string().trim().min(1)
 const optionalTextSchema = z.string().trim().optional()
@@ -186,64 +91,10 @@ const literatureFilterSchema = z
     ({ yearFrom, yearTo }) => yearFrom === undefined || yearTo === undefined || yearFrom <= yearTo,
     { message: 'The start year must not be after the end year.' }
   )
-
-const literaturePersonCreatorSchema = z
-  .object({
-    nameMode: z.literal('person'),
-    givenName: z.string().trim().default(''),
-    familyName: z.string().trim().default(''),
-    creatorType: nonEmptyTextSchema
-  })
-  .refine(({ familyName, givenName }) => familyName.length > 0 || givenName.length > 0, {
-    message: 'A person creator requires a given or family name.'
-  })
-
-const literatureOrganizationCreatorSchema = z
-  .object({
-    nameMode: z.literal('organization'),
-    literalName: nonEmptyTextSchema,
-    creatorType: nonEmptyTextSchema
-  })
-  .strict()
-
-const literatureCreatorInputSchema = z.discriminatedUnion('nameMode', [
-  literaturePersonCreatorSchema,
-  literatureOrganizationCreatorSchema
-])
-
-const literatureIdentifierInputSchema = z
-  .object({
-    scheme: z.enum(LITERATURE_IDENTIFIER_SCHEMES),
-    value: nonEmptyTextSchema,
-    isPrimary: z.boolean().default(false)
-  })
-  .strict()
-  .transform((identifier) => ({
-    ...identifier,
-    value: normalizeLiteratureIdentifierValue(identifier.scheme, identifier.value)
-  }))
-  .refine(({ value }) => value.length > 0, { message: 'Literature identifier is empty.' })
-
-const literatureItemInputSchema = z
-  .object({
-    itemType: z.enum(LITERATURE_ITEM_TYPES),
-    title: nonEmptyTextSchema,
-    abstract: z.string().trim().default(''),
-    issuedText: z.string().trim().default(''),
-    issuedYear: z.number().int().min(0).max(9999).optional(),
-    containerTitle: z.string().trim().default(''),
-    shortTitle: z.string().trim().default(''),
-    language: z.string().trim().default(''),
-    rights: z.string().trim().default(''),
-    url: z.string().trim().default(''),
-    accessedAt: z.number().int().nonnegative().optional(),
-    citationKey: optionalTextSchema,
-    extra: z.string().default(''),
+const literatureItemInputSchema = bibliographicRecordSchema
+  .extend({
     rating: z.number().int().min(0).max(5).optional(),
-    personalNote: z.string().trim().max(10_000).optional(),
-    typeFields: z.record(z.string(), z.unknown()).default({}),
-    creators: z.array(literatureCreatorInputSchema).default([]),
-    identifiers: z.array(literatureIdentifierInputSchema).default([])
+    personalNote: z.string().trim().max(10_000).optional()
   })
   .strict()
 
@@ -769,21 +620,6 @@ const literatureFormatReferencesRequestSchema = z
   })
   .strict()
 
-const literatureCitationStylePreviewSchema = z
-  .object({ inText: nonEmptyTextSchema, reference: nonEmptyTextSchema })
-  .strict()
-
-const literatureCitationStyleViewSchema = z
-  .object({
-    id: nonEmptyTextSchema,
-    title: nonEmptyTextSchema,
-    source: z.enum(['built-in', 'custom']),
-    summary: optionalTextSchema,
-    rights: optionalTextSchema,
-    preview: literatureCitationStylePreviewSchema.optional()
-  })
-  .strict()
-
 const literatureCitationStylesRequestSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('list') }).strict(),
   z
@@ -1161,44 +997,7 @@ const literatureApplicationCommandContracts = Object.freeze({
     validationCodec(literatureCatalogReceiptSchema)
   )
 })
-
-type LiteratureItemType = z.infer<typeof literatureItemInputSchema>['itemType']
-type LiteratureIdentityScheme = (typeof LITERATURE_IDENTITY_SCHEMES)[number]
 type LiteratureInboxState = (typeof LITERATURE_INBOX_STATES)[number]
-type LiteratureCreatorInput = z.infer<typeof literatureCreatorInputSchema>
-type LiteratureIdentifierInput = z.infer<typeof literatureIdentifierInputSchema>
-// A preferred identifier is scoped to its scheme. Legacy ties use normalized value order.
-export function preferredLiteratureIdentifier(
-  identifiers: readonly LiteratureIdentifierInput[],
-  scheme: LiteratureIdentifierScheme
-): LiteratureIdentifierInput | undefined {
-  return identifiers
-    .filter((identifier) => identifier.scheme === scheme)
-    .sort((a, b) => {
-      const priority = Number(b.isPrimary) - Number(a.isPrimary)
-      const left = normalizeLiteratureIdentifierValue(scheme, a.value).toLowerCase()
-      const right = normalizeLiteratureIdentifierValue(scheme, b.value).toLowerCase()
-      return (
-        priority ||
-        (left < right ? -1 : left > right ? 1 : a.value < b.value ? -1 : a.value > b.value ? 1 : 0)
-      )
-    })[0]
-}
-
-export function normalizeLiteratureIdentifierPreferences<T extends LiteratureIdentifierInput>(
-  identifiers: readonly T[]
-): T[] {
-  const preferred = new Map(
-    [...new Set(identifiers.map(({ scheme }) => scheme))].map((scheme) => [
-      scheme,
-      preferredLiteratureIdentifier(identifiers, scheme)
-    ])
-  )
-  return identifiers.map((identifier) => ({
-    ...identifier,
-    isPrimary: identifier.isPrimary && preferred.get(identifier.scheme) === identifier
-  }))
-}
 
 type LiteratureItemInput = z.infer<typeof literatureItemInputSchema>
 type LiteratureSourceInput = z.infer<typeof literatureSourceInputSchema>
@@ -1218,9 +1017,6 @@ type LiteratureCatalogReceipt = z.infer<typeof literatureCatalogReceiptSchema>
 type LiteraturePdfImportRequest = z.infer<typeof literaturePdfImportRequestSchema>
 type LiteraturePdfImportReceipt = z.infer<typeof literaturePdfImportReceiptSchema>
 type LiteraturePdfCancelImportRequest = z.infer<typeof literaturePdfCancelImportRequestSchema>
-type LiteratureCitationStyle = string
-type LiteratureCitationLocale = (typeof LITERATURE_CITATION_LOCALES)[number]
-type LiteratureCitationStyleView = z.infer<typeof literatureCitationStyleViewSchema>
 type LiteratureCitationStylesRequest = z.infer<typeof literatureCitationStylesRequestSchema>
 type LiteratureCitationStylesResult = z.infer<typeof literatureCitationStylesResultSchema>
 type LiteratureFormatReferencesRequest = z.infer<typeof literatureFormatReferencesRequestSchema>
@@ -1228,7 +1024,6 @@ type LiteratureFormattedReference = z.infer<typeof literatureFormattedReferenceS
 type LiteratureFormatReferencesResult = z.infer<typeof literatureFormatReferencesResultSchema>
 type LiteratureFormatDocumentRequest = z.infer<typeof literatureFormatDocumentRequestSchema>
 type LiteratureFormatDocumentResult = z.infer<typeof literatureFormatDocumentResultSchema>
-type LiteratureRecordImportFormat = (typeof LITERATURE_RECORD_IMPORT_FORMATS)[number]
 type LiteratureRecordImportRequest = z.infer<typeof literatureRecordImportRequestSchema>
 type LiteratureRecordImportError = z.infer<typeof literatureRecordImportErrorSchema>
 type LiteratureRecordImportEntry = z.infer<typeof literatureRecordImportEntrySchema>
@@ -1244,23 +1039,13 @@ export {
   literatureFullTextCandidateSchema,
   literatureFullTextProgressSchema,
   LITERATURE_ATTACHMENT_VERSION_REFERENCE_PREFIX,
-  LITERATURE_CITATION_LOCALES,
-  LITERATURE_CITATION_STYLES,
-  LITERATURE_CSL_MAX_BYTES,
   LITERATURE_COLLECTION_DESCRIPTION_MAX_LENGTH,
   LITERATURE_COLLECTION_NAME_MAX_LENGTH,
   LITERATURE_COLLECTION_NAME_CONFLICT,
-  LITERATURE_IDENTITY_SCHEMES,
-  LITERATURE_IDENTIFIER_SCHEMES,
   LITERATURE_INBOX_STATES,
-  LITERATURE_IMPORT_WARNINGS,
-  LITERATURE_ITEM_TYPES,
   LITERATURE_METADATA_FIELDS,
   LITERATURE_LIFECYCLE_STATES,
   LITERATURE_SORT_FIELDS,
-  LITERATURE_RECORD_IMPORT_FORMATS,
-  LITERATURE_RECORD_IMPORT_MAX_BYTES,
-  LITERATURE_RECORD_IMPORT_MAX_RECORDS,
   literatureCandidateInputSchema,
   literatureCandidateOriginSchema,
   literatureAttachmentVersionViewSchema,
@@ -1273,8 +1058,6 @@ export {
   LITERATURE_COLLECTION_REVISION_CONFLICT,
   literatureCollectionViewSchema,
   literatureFilterSchema,
-  literatureCreatorInputSchema,
-  literatureIdentifierInputSchema,
   literatureInboxCandidateViewSchema,
   literatureFormatReferencesRequestSchema,
   literatureFormatReferencesResultSchema,
@@ -1283,7 +1066,6 @@ export {
   literatureFormattedReferenceSchema,
   literatureCitationStylesRequestSchema,
   literatureCitationStylesResultSchema,
-  literatureCitationStyleViewSchema,
   literatureRecordImportErrorSchema,
   literatureRecordImportEntrySchema,
   literatureRecordImportReceiptSchema,
@@ -1295,12 +1077,10 @@ export {
   literatureMetadataCompletionResultSchema,
   literaturePdfImportReceiptSchema,
   literaturePdfCancelImportRequestSchema,
-  createLiteratureIdentifierUrl,
   createLiteratureAttachmentVersionReference,
   literaturePdfImportRequestSchema,
   literatureSourceInputSchema,
-  parseLiteratureAttachmentVersionReference,
-  normalizeLiteratureIdentifierValue
+  parseLiteratureAttachmentVersionReference
 }
 export type {
   LiteratureFullTextCandidate,
@@ -1313,19 +1093,12 @@ export type {
   LiteratureCatalogReceipt,
   LiteratureCatalogSearchPage,
   LiteratureCatalogSearchRequest,
-  LiteratureCitationLocale,
-  LiteratureCitationStyle,
-  LiteratureCitationStyleView,
   LiteratureCitationStylesRequest,
   LiteratureCitationStylesResult,
   LiteratureCandidateInput,
   LiteratureAttachmentVersionView,
   LiteratureAttachmentView,
   LiteratureCandidateOrigin,
-  LiteratureCreatorInput,
-  LiteratureIdentifierInput,
-  LiteratureIdentifierScheme,
-  LiteratureIdentityScheme,
   LiteratureInboxState,
   LiteratureInboxCandidateView,
   LiteratureItemInput,
@@ -1336,7 +1109,6 @@ export type {
   LiteratureMetadataConflict,
   LiteratureMetadataField,
   LiteratureMetadataValue,
-  LiteratureItemType,
   LiteratureFormattedReference,
   LiteratureFormatReferencesRequest,
   LiteratureFormatReferencesResult,
@@ -1344,7 +1116,6 @@ export type {
   LiteratureFormatDocumentResult,
   LiteratureRecordImportError,
   LiteratureRecordImportEntry,
-  LiteratureRecordImportFormat,
   LiteratureRecordImportReceipt,
   LiteratureRecordImportRequest,
   LiteratureRecordImportResult,

@@ -1,6 +1,6 @@
 import { useRef, type RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { LiteratureCitationStyle } from '../../../../../shared/literature'
+import type { LiteratureCitationStyle } from '@aipoch/literature-citations/contracts'
 
 const LITERATURE_BATCH_COMMAND_SIZE = 200
 

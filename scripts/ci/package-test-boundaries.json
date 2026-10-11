@@ -40,6 +40,14 @@
     {
       "root": "packages/notebook-analysis",
       "dependencies": ["packages/notebook-syntax"]
+    },
+    {
+      "root": "packages/literature-citations",
+      "dependencies": []
+    },
+    {
+      "root": "packages/journal-catalog",
+      "dependencies": []
     }
   ]
 }

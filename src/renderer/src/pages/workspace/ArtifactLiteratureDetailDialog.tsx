@@ -21,10 +21,9 @@ import type { ArtifactLiteratureReference } from '../../../../shared/artifact-li
 import {
   createLiteratureIdentifierUrl,
   normalizeLiteratureIdentifierValue,
-  type LiteratureItemInput,
-  type LiteratureItemType,
-  type LiteratureItemView
-} from '../../../../shared/literature'
+  type LiteratureItemType
+} from '@aipoch/literature-citations/contracts'
+import { type LiteratureItemInput, type LiteratureItemView } from '../../../../shared/literature'
 
 type ArtifactLiteratureDetailDialogProps = Readonly<{
   snapshotOnly?: boolean
