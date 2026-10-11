@@ -31,7 +31,8 @@ The dispatcher reuses the Connector, Diagnostics, Notebook, Skills and PDF/Liter
 Prerequisites need compilation; only selected packages need their own unit suites. Installed
 consumers retain public declarations, private-import rejection, browser entries, CJS/ESM identity
 where supported, actual execution and resource checks. PDF worker assets, Notebook grammars and
-Skills locking/lifecycle checks are not replaced with import smoke tests. Consumer environments
+Skills locking/lifecycle checks are not replaced with import smoke tests. PDF Structure caps workers
+by available CPUs, as the host does, so dense-vector stress tests retain their original timeout. Consumer environments
 remove host resolution hooks and CI test exclusions.
 
 Online installation is the default. `--offline` requires a populated npm cache; a missing cached
