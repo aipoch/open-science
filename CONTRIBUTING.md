@@ -595,7 +595,9 @@ invalid data. Candidate scripts never authorize selective routing.
 The exact consumer-evidence guard also retains entries when a dependency cone is incomplete
 (for example, a generated native addon or computed import). Absence from a static graph alone
 must not demand removal that trusted Integrity cannot verify. Fully resolved obsolete consumers
-are still rejected; missing consumer coverage is still required.
+are still rejected; missing consumer coverage is still required. Package boundary checks inspect
+the executable test plan: retained historical registrations must not make host-only source edits
+run unchanged upstream package units.
 
 Introducing this exception changes protected policy files and therefore still needs owner approval.
 It can then enter the normal queue; no bootstrap bypass is required when its checks pass.

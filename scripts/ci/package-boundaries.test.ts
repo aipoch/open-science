@@ -137,16 +137,24 @@ it('host consumers use only public package names and exported subpaths', () => {
   // Match the consumer-coverage guard's allowance for a repository-wide scan under CI load.
 }, 60_000)
 
-it('host PDF modules never register upstream PDF package implementation tests', async () => {
+it('host source edits never select unchanged upstream PDF package implementation tests', async () => {
   const { loadModuleImpactManifest } = await import('./load-module-impact.mjs')
+  const { createAffectedTestPlan } = await import('./module-test-impact.mjs')
   const { modules } = loadModuleImpactManifest()
   const violations: string[] = []
-  for (const [id, module] of Object.entries(modules) as [
-    string,
-    { ownerPaths: string[]; testFiles: Record<string, string[]> }
-  ][]) {
+  for (const [id, module] of Object.entries(modules) as [string, { ownerPaths: string[] }][]) {
     if (module.ownerPaths.some((path) => path.startsWith('packages/pdf-'))) continue
-    for (const test of Object.values(module.testFiles).flat())
+    const source = module.ownerPaths.find(
+      (path) => path.startsWith('src/') && !path.includes('.test.')
+    )
+    if (!source) continue
+    // Integrity retains historical registration evidence. Package boundaries apply to the
+    // executable plan, including stale graph suggestions, rather than to raw evidence records.
+    const plan = createAffectedTestPlan([{ path: source, status: 'modified' }], {
+      status: 'not-used',
+      testFiles: []
+    })
+    for (const test of plan.testFiles)
       if (/^packages\/pdf-(translation|structure)\//.test(test)) violations.push(`${id} -> ${test}`)
   }
   expect(violations).toEqual([])
