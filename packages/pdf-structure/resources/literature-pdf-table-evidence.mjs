@@ -1701,6 +1701,8 @@ function hasOnlyRuledFooterDamage(table, caption, items, rules) {
   if (!caption?.rect || !rules?.length || !table.cells?.length) return false
   if (table.grid.flat().some((text) => /[\u0000-\u001f�]/u.test(text))) return false
   const valid = (r) => r?.length === 4 && r.every(Number.isFinite) && r[2] > r[0] && r[3] > r[1]
+  const captionRect = caption.rect.map((v) => v * (table.sourceViewport?.scale ?? 1.5))
+  if (!valid(captionRect)) return false
   const source = table.cells.flatMap((cell) => cell.sourceRects ?? [])
   if (!source.length || source.some((r) => !valid(r))) return false
   const same = (a, b) => a.every((v, n) => Math.abs(v - b[n]) < 0.02)
@@ -1756,21 +1758,37 @@ function hasOnlyRuledFooterDamage(table, caption, items, rules) {
       i.rect[1] > closing[0][1] &&
       intersection(i.rect, table.cropRect) > 0
   )
-  const remaining = footer.map((i) => i.text)
-  for (const text of table.unassigned ?? []) {
-    const index = remaining.indexOf(text)
+  const remaining = [...footer],
+    clipped = []
+  for (const item of table.clipped ?? []) {
+    if (!valid(item.rect)) return false
+    const index = remaining.findIndex((i) => i.text === item.text && same(i.rect, item.rect))
     if (index < 0) return false
-    remaining.splice(index, 1)
+    clipped.push(...remaining.splice(index, 1))
   }
+  // Diagnostics may overlap for one glyph. Match unassigned text to otherwise
+  // unexplained sources first, while retaining multiplicity within each category.
+  const unassignedSources = [...remaining, ...clipped]
+  for (const text of table.unassigned ?? []) {
+    const index = unassignedSources.findIndex((i) => i.text === text)
+    if (index < 0) return false
+    unassignedSources.splice(index, 1)
+  }
+  if (unassignedSources.some((i) => !clipped.includes(i))) return false
   const bodyItems = items.filter(
     (i) => i.text?.trim() && valid(i.rect) && intersection(i.rect, frame) > 0
   )
   return (
     bodyItems.length === owned.length &&
     bodyItems.every((i) => owned.includes(i)) &&
-    (table.clipped ?? []).every(
-      (i) => valid(i.rect) && footer.some((font) => font.text === i.text && same(font.rect, i.rect))
-    )
+    items
+      .filter((i) => i.text?.trim() && valid(i.rect) && intersection(i.rect, table.cropRect) > 0)
+      .every(
+        (i) =>
+          owned.includes(i) ||
+          footer.includes(i) ||
+          i.rect.every((v, n) => (n < 2 ? v >= captionRect[n] - 0.02 : v <= captionRect[n] + 0.02))
+      )
   )
 }
 

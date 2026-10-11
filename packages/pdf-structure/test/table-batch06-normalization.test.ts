@@ -183,3 +183,31 @@ it.each(['body-replacement', 'body-control', 'unassigned-above', 'unknown-unassi
     expect(hasTableEvidence(f.table, f.caption, f.tokens, f.rules)).toBe(false)
   }
 )
+
+it.each(['unknown-footer', 'duplicate-clipped', 'repeated-text-above-frame'])(
+  'rejects incomplete footer source accounting: %s',
+  (change) => {
+    const f = ruledMeasurements()
+    if (change === 'unknown-footer')
+      f.tokens.push({ text: 'lost', rect: [110, 89, 120, 96], horizontal: true, height: 7 })
+    if (change === 'duplicate-clipped') f.table.clipped.push({ ...f.table.clipped[0] })
+    if (change === 'repeated-text-above-frame') {
+      f.tokens[6].rect = [20, 16, 25, 19]
+      f.tokens.push({ text: '0', rect: [110, 89, 115, 96], horizontal: true, height: 7 })
+    }
+    expect(hasTableEvidence(f.table, f.caption, f.tokens, f.rules)).toBe(false)
+  }
+)
+
+it('allows overlapping footer diagnostics without consuming another identical source', () => {
+  const f = ruledMeasurements()
+  f.table.clipped.push(f.tokens[6])
+  expect(hasTableEvidence(f.table, f.caption, f.tokens, f.rules)).toBe(true)
+})
+
+it('allows caption glyphs to overlap detector padding above the opening rule', () => {
+  const f = ruledMeasurements()
+  f.caption.rect[3] = 18 / 1.5
+  f.tokens.push({ text: 'measurements', rect: [20, 11, 85, 18], horizontal: true, height: 7 })
+  expect(hasTableEvidence(f.table, f.caption, f.tokens, f.rules)).toBe(true)
+})

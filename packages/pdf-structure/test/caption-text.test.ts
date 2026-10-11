@@ -794,3 +794,23 @@ it.each([
 ])('preserves noun titles and punctuated captions: %s', (text) => {
   expect(captionKind(text)).toBe('figure')
 })
+
+it.each([
+  'Figure 1 A review of the workflow.',
+  'Figure 1 A display of the measured responses.',
+  'Figure 1 A measure of uncertainty.',
+  'Table 1 A list of model parameters.',
+  'Figure 1 A review on model performance.',
+  'Table 1 A report on measured values.',
+  'Figure 1 A display showing the recorded values.',
+  'Figure 1 A contrast between the observed groups.'
+])('preserves article-led noun titles: %s', (text) => {
+  expect(captionKind(text)).toBe(text.startsWith('Table') ? 'table' : 'figure')
+})
+
+it.each(['reviews', 'displays', 'measures', 'lists', 'reports', 'shows', 'is'])(
+  'still rejects a finite verb after panel A: %s',
+  (verb) => {
+    expect(captionKind(`Figure 1 A ${verb} the measured responses.`)).toBeUndefined()
+  }
+)
