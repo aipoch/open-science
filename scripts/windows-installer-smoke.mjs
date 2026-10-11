@@ -36,7 +36,9 @@ const ARTIFACT_MCP_SERVER_ARG = '--open-science-artifact-mcp'
 const NOTEBOOK_MCP_SERVER_ARG = '--open-science-notebook-mcp'
 const CONFIG_DIRECTORY = '.open-science'
 const PROCESS_TIMEOUT_MS = 120_000
-const INSTALLATION_TIMEOUT_MS = 5 * 60_000
+// The silent NSIS install unpacks a 650 MB+ payload; loaded CI runners exceeded the generic
+// process budget twice, so the installer gets its own ceiling (the step budget is 10 minutes).
+const INSTALLER_TIMEOUT_MS = 300_000
 const STARTUP_TIMEOUT_MS = 60_000
 const SHUTDOWN_TIMEOUT_MS = 60_000
 const HTTP_REQUEST_TIMEOUT_MS = 15_000
@@ -1182,7 +1184,7 @@ const installApplication = async (installer, installDirectory, env, run = runPro
   try {
     await run(installer, ['/S', `/D=${installDirectory}`], {
       env,
-      timeoutMs: INSTALLATION_TIMEOUT_MS
+      timeoutMs: INSTALLER_TIMEOUT_MS
     })
   } finally {
     const entries = await readdir(installDirectory).catch(() => [])
