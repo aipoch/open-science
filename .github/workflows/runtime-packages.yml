@@ -11,6 +11,10 @@ on:
         type: string
         default: ''
         description: Repack signed desktop artifacts from this run instead of rebuilding.
+      verify_desktop_only:
+        type: boolean
+        default: false
+        description: Manual dry-run of extraction and signatures only; allows a prior desktop run.
       target:
         type: string
         default: all
@@ -31,10 +35,13 @@ jobs:
           DISTRIBUTION: ${{ inputs.distribution }}
           TARGET: ${{ inputs.target }}
           DESKTOP_RUN: ${{ inputs.desktop_run_id }}
+          VERIFY_DESKTOP_ONLY: ${{ inputs.verify_desktop_only }}
         run: |
           node <<'JS'
           const fs = require('node:fs');
-          if (process.env.DESKTOP_RUN && process.env.DESKTOP_RUN !== process.env.GITHUB_RUN_ID) throw new Error('Desktop inputs must belong to this release run');
+          const verifyOnly = process.env.VERIFY_DESKTOP_ONLY === 'true';
+          if (verifyOnly && (process.env.GITHUB_EVENT_NAME !== 'workflow_dispatch' || !/^[1-9][0-9]*$/.test(process.env.DESKTOP_RUN) || process.env.DISTRIBUTION !== 'archive')) throw new Error('Desktop verification requires manual archive dispatch and a source run');
+          if (process.env.DESKTOP_RUN && process.env.DESKTOP_RUN !== process.env.GITHUB_RUN_ID && !verifyOnly) throw new Error('Desktop inputs must belong to this release run');
           if (!['archive', 'npm'].includes(process.env.DISTRIBUTION)) throw new Error('Unsupported distribution');
           if (process.env.DESKTOP_RUN && process.env.DISTRIBUTION !== 'archive') throw new Error('Only archives are published with Release');
           const targets = [
@@ -70,11 +77,12 @@ jobs:
         with:
           node-version: 24
       - name: Linux native and test prerequisites
-        if: runner.os == 'Linux'
+        if: ${{ !inputs.verify_desktop_only && runner.os == 'Linux' }}
         run: |
           sudo apt-get update
           sudo apt-get install -y libsecret-1-dev libdbus-1-dev pkg-config gnome-keyring dbus-user-session bubblewrap python3-venv
       - name: Install build dependencies without Electron setup
+        if: ${{ !inputs.verify_desktop_only }}
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
           node scripts/prepare-shadcn-patch.mjs
@@ -115,25 +123,25 @@ jobs:
         if: inputs.desktop_run_id == '' && inputs.distribution == 'archive'
         run: npm run stage:node-runtime
       - name: Pack standalone archive
-        if: inputs.distribution == 'archive'
+        if: ${{ !inputs.verify_desktop_only && inputs.distribution == 'archive' }}
         run: npm run pack:runtime-archive
       - name: Pack ordinary Node runtime
-        if: inputs.distribution == 'npm'
+        if: ${{ !inputs.verify_desktop_only && inputs.distribution == 'npm' }}
         run: npm run pack:npm-release
       - name: Verify npm publish input without publication
-        if: inputs.distribution == 'npm'
+        if: ${{ !inputs.verify_desktop_only && inputs.distribution == 'npm' }}
         run: |
           for package in out/npm-artifacts/*.tgz; do
             npm publish "$package" --dry-run --access public --ignore-scripts
           done
       - name: Verify native npm installation
-        if: runner.os != 'Linux' && inputs.distribution == 'npm'
+        if: ${{ !inputs.verify_desktop_only && runner.os != 'Linux' && inputs.distribution == 'npm' }}
         run: npm run test:npm-installed
       - name: Verify extracted standalone archive
-        if: runner.os != 'Linux' && inputs.distribution == 'archive'
+        if: ${{ !inputs.verify_desktop_only && runner.os != 'Linux' && inputs.distribution == 'archive' }}
         run: npm run test:runtime-archive-installed
       - name: Verify headless Linux install and real Notebook lifecycle
-        if: runner.os == 'Linux'
+        if: ${{ !inputs.verify_desktop_only && runner.os == 'Linux' }}
         env:
           DISTRIBUTION: ${{ inputs.distribution }}
         run: |
@@ -153,15 +161,15 @@ jobs:
             fi
           '
       - name: Setup minimum supported Node
-        if: inputs.distribution == 'npm'
+        if: ${{ !inputs.verify_desktop_only && inputs.distribution == 'npm' }}
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22.13.0
       - name: Verify installed native ABI on minimum Node
-        if: inputs.distribution == 'npm'
+        if: ${{ !inputs.verify_desktop_only && inputs.distribution == 'npm' }}
         run: npm run test:npm-installed
       - name: Upload verified native npm tarballs
-        if: inputs.distribution == 'npm'
+        if: ${{ !inputs.verify_desktop_only && inputs.distribution == 'npm' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: npm-${{ matrix.id }}
@@ -170,7 +178,7 @@ jobs:
           retention-days: 5
 
       - name: Upload verified CLI archive
-        if: inputs.distribution == 'archive'
+        if: ${{ !inputs.verify_desktop_only && inputs.distribution == 'archive' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: cli-${{ matrix.id }}
@@ -179,7 +187,7 @@ jobs:
           retention-days: 5
 
   publication-check:
-    if: inputs.target == 'all'
+    if: ${{ !inputs.verify_desktop_only && inputs.target == 'all' }}
     needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 10

@@ -42,13 +42,25 @@ export async function verifyRuntimeSignatures(directory) {
       if (entry.isDirectory()) await visit(file)
       else if (entry.isFile()) {
         const handle = await open(file, 'r')
-        const header = Buffer.alloc(4)
+        const header = Buffer.alloc(16)
+        let bytesRead
         try {
-          await handle.read(header, 0, 4, 0)
+          const result = await handle.read(header, 0, header.length, 0)
+          bytesRead = result.bytesRead
         } finally {
           await handle.close()
         }
         if (!isMachO(header)) continue
+        assert.equal(bytesRead, header.length, `Truncated Mach-O header: ${file}`)
+        // mach_header.filetype is at offset 12 in both 32- and 64-bit thin headers.
+        // MH_OBJECT (1) is linker input, not a signed runtime image. Keep universal
+        // binaries and every other Mach-O type subject to the existing checks.
+        const magic = header.subarray(0, 4).toString('hex')
+        if (
+          (['feedface', 'feedfacf'].includes(magic) && header.readUInt32BE(12) === 1) ||
+          (['cefaedfe', 'cffaedfe'].includes(magic) && header.readUInt32LE(12) === 1)
+        )
+          continue
         // Check each loose binary, including Apple's notarization record for its code hash.
         execFileSync('codesign', ['--verify', '--strict', '--check-notarization', file], {
           stdio: 'pipe'
