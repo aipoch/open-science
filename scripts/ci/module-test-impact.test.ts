@@ -99,8 +99,10 @@ describe('module test impact commands', () => {
         expect.anything()
       )
       spawn.mockClear()
-      // Ordinary local invocations still do no work for an empty selection.
-      executeModuleTestPlan(plan, { spawn })
+      // Ordinary local invocations still do no work for an empty selection. Pass a controlled
+      // environment: under CI the job exports OPEN_SCIENCE_CI_SELECTED_PACKAGE_ROOTS, and an
+      // ambient non-empty selection would make the plan spawn despite the empty module list.
+      executeModuleTestPlan(plan, { spawn, environment: {} })
       expect(spawn).not.toHaveBeenCalled()
     } finally {
       write.mockRestore()
