@@ -160,7 +160,12 @@ test('prepares a Library PDF through real IPC and cached table provenance', asyn
     await expect(page.getByRole('tooltip')).toContainText(
       'not translation completeness or accuracy.'
     )
-    await report.getByRole('button', { name: 'Full-text preparation', exact: true }).hover()
+    // Close the hover tooltip without sending Escape to the translation sidebar.
+    await information.click()
+    await page.mouse.move(0, 0)
+    await expect(
+      page.getByRole('tooltip').filter({ hasText: 'not translation completeness or accuracy.' })
+    ).toBeHidden()
     await expect(page.getByRole('group', { name: 'PDF rendition' })).toHaveCount(0)
   }
   const close = async (): Promise<void> => {

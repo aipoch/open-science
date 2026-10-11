@@ -471,7 +471,7 @@ export async function startDesktopRuntimeTransport(options: {
               respond({
                 protocolVersion: WEB_RPC_PROTOCOL_VERSION,
                 ok: true,
-                result: result ?? null
+                result
               })
             } catch (error) {
               respond({
@@ -535,7 +535,7 @@ export async function startDesktopRuntimeTransport(options: {
               respond({
                 protocolVersion: WEB_RPC_PROTOCOL_VERSION,
                 ok: true,
-                result: result ?? null
+                result
               }),
             (error: unknown) =>
               respond({

@@ -1,6 +1,6 @@
-import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { expect } from '@playwright/test'
 import type { Page } from 'playwright'
 import { applySessionConversationCommands } from '../src/shared/session-conversation-command'
@@ -134,10 +134,7 @@ const seedDelegatedWork = async (
       const bridge = globalThis as unknown as {
         api: {
           sessions: {
-            saveManifest: (request: {
-              lastProjectId: string
-              lastSessionId: string
-            }) => Promise<void>
+            saveManifest: (request: { lastSessionId: string }) => Promise<void>
             saveSession: (session: Record<string, unknown>) => Promise<void>
           }
         }
@@ -295,7 +292,6 @@ const seedDelegatedWork = async (
       }
       await bridge.api.sessions.saveSession(session)
       await bridge.api.sessions.saveManifest({
-        lastProjectId: projectId,
         lastSessionId: sessionId
       })
     },
@@ -1317,6 +1313,8 @@ test('recovers a post-fence receipt persistence failure as uncertain after proce
   await app.completeOnboarding()
   let page = await app.configureFakeAgent()
   const projectId = await createProject(page, 'Reliable failure window release gate')
+  const { profile } = await app.captureBrandState()
+  const storageRoot = join(dirname(profile), 'storage')
 
   await sendPrompt(
     page,
@@ -1324,31 +1322,44 @@ test('recovers a post-fence receipt persistence failure as uncertain after proce
     'Reliable post-fence source turn completed.',
     120_000
   )
-  await expect(page.getByText('Persistence sabotage released.')).toBeVisible({ timeout: 120_000 })
+  // Persistence failure suppresses renderer updates. Observe the fault out of band, then
+  // inspect durable bytes without queuing a load behind the intentionally unfinished turn.
+  await expect
+    .poll(() =>
+      readFile(join(storageRoot, 'e2e-handoff-captures', 'post-fence-released'), 'utf8').catch(
+        (error: NodeJS.ErrnoException) => {
+          if (error.code === 'ENOENT') return ''
+          throw error
+        }
+      )
+    )
+    .toBe('released')
   let sessionId: string | undefined
   await expect
     .poll(async () => {
-      const durable = await page.evaluate(async (projectId) => {
-        const loaded = await window.api.sessions.loadAll()
-        const session = loaded.sessions.find((candidate) => candidate.projectId === projectId)
-        const command = session?.runtimeContext?.delegatedWork?.messageCommands?.find(
-          ({ requestId }) => requestId === 'e2e-child-post-fence'
-        )
-        return {
-          sessionId: session?.id,
-          sessionStatus: session?.status,
-          dispatchStartedAt:
-            command?.receipt.status === 'queued' ? command.receipt.dispatchStartedAt : undefined
-        }
-      }, projectId)
-      sessionId = durable.sessionId
+      const directory = join(storageRoot, 'sessions', projectId)
+      const files = await readdir(directory)
+      const file = files.find((name) => name.endsWith('.json'))
+      if (!file) return undefined
+      const { session } = JSON.parse(await readFile(join(directory, file), 'utf8')) as {
+        session: PersistedChatSession
+      }
+      sessionId = session.id
+      const command = session.runtimeContext?.delegatedWork?.messageCommands?.find(
+        ({ requestId }) => requestId === 'e2e-child-post-fence'
+      )
       return {
-        sessionStatus: durable.sessionStatus,
-        dispatchStarted: typeof durable.dispatchStartedAt === 'number'
+        sessionStatus: session.status,
+        dispatchStarted:
+          command?.receipt.status === 'queued' &&
+          typeof command.receipt.dispatchStartedAt === 'number'
       }
     })
     .toEqual({ sessionStatus: 'running', dispatchStarted: true })
   expect(sessionId).toEqual(expect.any(String))
+  const log = await readFile(await app.captureMainLog('post-fence-persistence.log'), 'utf8')
+  expect(log).toContain('EACCES')
+  expect(log).toContain(`${sessionId}.json`)
   page = await app.restartAfterCrash()
   await openProjectSession(page, 'Reliable failure window release gate', RELIABLE_FAILURE_PROMPT)
   const messageId = await page.evaluate(

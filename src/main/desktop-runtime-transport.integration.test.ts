@@ -113,6 +113,28 @@ it('keeps notification clicks on the authenticated attachment and clears them on
 })
 
 describe('desktop projection of application commands and events', () => {
+  it.each([undefined, null, false, 0])(
+    'preserves the command result %s for renderer and host callers',
+    async (result) => {
+      const commands = { commandNames: () => ['projects:list'], invoke: async () => result }
+      const server = await startDesktopRuntimeTransport({
+        version: 'test',
+        events: new ApplicationEventHub(),
+        commands,
+        hostCommands: commands
+      })
+      cleanups.push(server.close)
+      const client = await connectDesktopRuntime({
+        endpoint: server.endpoint,
+        onEvent: vi.fn(),
+        onDisconnect: vi.fn()
+      })
+      cleanups.push(async () => client.close())
+      await expect(client.invoke(randomUUID(), 'projects:list', [])).resolves.toBe(result)
+      await expect(client.invokeHost('projects:list')).resolves.toBe(result)
+    }
+  )
+
   it('connects the desktop client to the real transport and rejects pending calls on disconnect', async () => {
     const events = new ApplicationEventHub()
     const observed = vi.fn()

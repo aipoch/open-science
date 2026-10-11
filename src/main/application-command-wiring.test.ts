@@ -260,6 +260,19 @@ describe('production application command wiring', () => {
     )
   })
 
+  it('wakes durable delegated messages after command saves without holding the write gate', () => {
+    const source = compact(domain('command-dependencies'))
+    expect(source).toContain(
+      'sessionSurfaces.sessionDetailsOwner.afterSessionSaved(result.session)'
+    )
+    expect(source).toContain(
+      'void delegation.delegatedWork.root.wakeMessages?.(result.session.id).catch('
+    )
+    expect(source.indexOf('wakeMessages?.(result.session.id)')).toBeGreaterThan(
+      source.indexOf('sessionSurfaces.sessionDetailsOwner.afterSessionSaved(result.session)')
+    )
+  })
+
   it('routes background deletion through the tested owner recovery sequence', () => {
     expect(compact(domain('project-lifecycle'))).toContain(
       'recoverDeletionWork({ recoverOrphanJobs: () => jobDeletionOwner.reconcileOrphanJobs(isComputeJobOwnerLive), replaySessionProjection: () => sessionRepository.reconcilePendingSessionProjection(), recoverProjects: () => projectDeletionCoordinator.recoverPendingDeletions() })'

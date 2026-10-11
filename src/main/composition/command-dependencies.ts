@@ -18,7 +18,7 @@ import { type ApplicationCommandCompositionDependencies } from '../application-c
 import { createCliCommandOwner } from '../cli-install/ipc'
 import { createGithubCommandOwner } from '../github-ipc'
 import { createLiteratureCommandOwner } from '../literature/command-owner'
-import { errorLogFields } from '../logger'
+import { createLogger, diagnosticErrorFields, errorLogFields } from '../logger'
 import { createLogsCommandOwner } from '../logs-ipc'
 import { ManagedFileVersionService } from '../managed-file-versions/service'
 import { createRuntimeWorkflows } from '../notebook/runtime-workflows'
@@ -381,6 +381,13 @@ export function composeCommandDependencies({
               )
             : await sessionSurfaces.sessionPersistenceHandlers.saveSession(session, options)
           sessionSurfaces.sessionDetailsOwner.afterSessionSaved(result.session)
+          // Wake outside save completion: delivery may need the caller's data-root write gate.
+          void delegation.delegatedWork.root.wakeMessages?.(result.session.id).catch((error) => {
+            createLogger('delegation:messages').warn(
+              'message wake after Session activation failed',
+              diagnosticErrorFields(error)
+            )
+          })
           return result
         },
         deleteSession: (request) => artifactSurfaces.sessionDeletionOwner.delete(request)

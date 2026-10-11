@@ -3044,6 +3044,10 @@ if (process.argv.includes('--version')) {
             await delay(1_000)
           } finally {
             await restoreWrites()
+            await writeFile(
+              join(process.env.OPEN_SCIENCE_E2E_HANDOFF_CAPTURE_ROOT, 'post-fence-released'),
+              'released'
+            )
           }
           await context.client.notify(acp.methods.client.session.update, {
             sessionId: context.params.sessionId,

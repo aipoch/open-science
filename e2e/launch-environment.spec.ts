@@ -46,9 +46,15 @@ test('enables Session CPU tracing only for an active local performance profile',
   expect(profiled.OPEN_SCIENCE_PERF_SESSION_TRACE).toBe('1')
 })
 
-test('enables the basic password store only for Linux E2E profiles', () => {
+test('uses the native secret-service password store for Linux E2E profiles', () => {
   expect(electronLaunchTarget('profile-root', {}, 'linux')).toEqual({
-    args: ['--user-data-dir=profile-root', '--password-store=basic', expect.any(String)]
+    args: [
+      '--user-data-dir=profile-root',
+      '--password-store=gnome-libsecret',
+      '--require',
+      expect.stringContaining('node-runtime-preload.cjs'),
+      expect.any(String)
+    ]
   })
   expect(electronLaunchTarget('profile-root', {}, 'darwin')).toEqual({
     args: [
@@ -56,11 +62,18 @@ test('enables the basic password store only for Linux E2E profiles', () => {
       '--use-mock-keychain',
       '--require',
       expect.stringContaining('mock-credential-identity.cjs'),
+      '--require',
+      expect.stringContaining('node-runtime-preload.cjs'),
       expect.any(String)
     ]
   })
   expect(electronLaunchTarget('profile-root', {}, 'win32')).toEqual({
-    args: ['--user-data-dir=profile-root', expect.any(String)]
+    args: [
+      '--user-data-dir=profile-root',
+      '--require',
+      expect.stringContaining('node-runtime-preload.cjs'),
+      expect.any(String)
+    ]
   })
 })
 
@@ -74,11 +87,17 @@ test('launches packaged and source applications with the expected Linux argument
       'linux'
     )
   ).toEqual({
-    args: ['--user-data-dir=profile-root', '--password-store=basic'],
+    args: ['--user-data-dir=profile-root', '--password-store=gnome-libsecret'],
     executablePath: '/artifacts/Open-Science.app/Contents/MacOS/Open-Science'
   })
   expect(electronLaunchTarget('profile-root', {}, 'linux')).toEqual({
-    args: ['--user-data-dir=profile-root', '--password-store=basic', expect.any(String)]
+    args: [
+      '--user-data-dir=profile-root',
+      '--password-store=gnome-libsecret',
+      '--require',
+      expect.stringContaining('node-runtime-preload.cjs'),
+      expect.any(String)
+    ]
   })
 })
 

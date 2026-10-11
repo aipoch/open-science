@@ -141,6 +141,8 @@ test('resolves journals through real IPC in two windows and persists colors outs
   await expect(
     primary.getByRole('button', { name: 'Remote editorial band', exact: true })
   ).toBeVisible()
+  // Cancelling the stale draft reloads entries; finish that read before stopping the backend.
+  await expect(primary.getByRole('combobox', { name: 'Journals per page' })).toBeEnabled()
   const restored = await app.restart()
   const stored = await restored.evaluate(() => window.api.literature.journals({ action: 'list' }))
   expect(

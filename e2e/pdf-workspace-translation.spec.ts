@@ -75,7 +75,9 @@ for (const source of ['upload', 'artifact'] as const) {
     await panel.getByLabel('Preferred translation 1', { exact: true }).fill(glossary.target)
     await panel.getByRole('button', { name: 'Translate document', exact: true }).click()
     await expect(
-      panel.getByRole('button', { name: /Translation settings.*Text translation complete/ })
+      panel
+        .getByRole('group', { name: 'Translation progress' })
+        .getByRole('button', { name: '2 Translated', exact: true })
     ).toBeVisible({ timeout: 60_000 })
     await expect(
       panel.getByRole('button', { name: 'View translated PDF', exact: true })
@@ -142,7 +144,9 @@ for (const source of ['upload', 'artifact'] as const) {
     await expect(page.locator('[data-pdf-preview-root]')).toHaveCount(0)
     await openTranslation(page, source)
     await expect(
-      panel.getByRole('button', { name: /Translation settings.*Text translation complete/ })
+      panel
+        .getByRole('group', { name: 'Translation progress' })
+        .getByRole('button', { name: '2 Translated', exact: true })
     ).toBeVisible({ timeout: 30_000 })
     await expect(panel.getByRole('button', { name: 'Compare PDFs', exact: true })).toBeEnabled({
       timeout: 60_000

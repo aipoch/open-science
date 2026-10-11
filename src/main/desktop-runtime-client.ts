@@ -26,6 +26,13 @@ import { parseApplicationCommandError } from '../shared/application-command-cont
 import { connectToDesktopEndpoint, type DesktopEndpoint } from './desktop-connection'
 import { parseRpcJson, stringifyRpcJson } from './rpc-json'
 
+// JSON omits an undefined result. The private desktop transport preserves that Electron
+// return value; public Web responses retain their required JSON result contract.
+const responseSchema = z.discriminatedUnion('ok', [
+  webRpcResponseSchema.options[0].partial({ result: true }),
+  webRpcResponseSchema.options[1]
+])
+
 const bootstrapSchema = webRpcBootstrapSchema
   .pick({
     rpcProtocolVersion: true,
@@ -205,7 +212,7 @@ export async function connectDesktopRuntime(options: {
       if (frame && typeof frame === 'object' && 'kind' in frame && frame.kind === 'response') {
         const { id, kind: _kind, ...body } = frame as Record<string, unknown>
         void _kind
-        const response = webRpcResponseSchema.parse(body)
+        const response = responseSchema.parse(body)
         if (typeof id !== 'number' || !pending.has(id))
           throw new Error('Unexpected desktop response identity.')
         const request = pending.get(id)!

@@ -13,7 +13,6 @@ import {
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { createInterface } from 'node:readline'
-import { fileURLToPath } from 'node:url'
 import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import {
   _electron as electron,
@@ -916,24 +915,21 @@ class ElectronAppHarness implements ElectronApp {
 
   async openAdditionalRenderer(): Promise<Page> {
     const next = this.runningApplication.waitForEvent('window')
-    await this.runningApplication.evaluate(
-      ({ BrowserWindow }, preload) => {
-        const source = BrowserWindow.getAllWindows().find((window) =>
-          window.webContents.getURL().includes('index.html')
-        )!
-        const window = new BrowserWindow({
-          show: false,
-          webPreferences: {
-            preload,
-            contextIsolation: true,
-            nodeIntegration: false,
-            sandbox: true
-          }
-        })
-        void window.loadURL(source.webContents.getURL())
-      },
-      fileURLToPath(new URL('../preload/index.js', this.page.url()))
-    )
+    await this.runningApplication.evaluate(({ app }) => {
+      const { createRequire } = process.getBuiltinModule('node:module')
+      const { join, sep } = process.getBuiltinModule('node:path')
+      const { realpathSync } = process.getBuiltinModule('node:fs')
+      const mainRoot = realpathSync(join(app.getAppPath(), 'out', 'main'))
+      const require = createRequire(join(app.getAppPath(), 'package.json'))
+      const module = Object.values(require.cache).find(
+        (entry) =>
+          typeof entry?.filename === 'string' &&
+          entry.filename.startsWith(mainRoot + sep) &&
+          typeof entry.exports?.createMainWindow === 'function'
+      )
+      if (!module) throw new Error('Built main-window factory is not loaded.')
+      module.exports.createMainWindow()
+    })
     const page = await next
     await page.waitForFunction(() => Boolean(window.api?.databaseStartup))
     await waitForRendererReady(page)
@@ -1127,17 +1123,10 @@ class ElectronAppHarness implements ElectronApp {
   async configureSessionPackageDialogs(options?: { availableBytes?: number }): Promise<string> {
     const archive = join(this.testRoot, 'research.science')
     if (options?.availableBytes !== undefined)
-      await this.runningApplication.evaluate((_electron, freeBytes) => {
-        const fs = process.getBuiltinModule('node:fs/promises')
-        fs.statfs = new Proxy(fs.statfs, {
-          apply: async (original, receiver, args) => {
-            const stats = await Reflect.apply(original, receiver, args)
-            stats.bavail = typeof stats.bavail === 'bigint' ? BigInt(freeBytes) : freeBytes
-            stats.bsize = typeof stats.bsize === 'bigint' ? 1n : 1
-            return stats
-          }
-        })
-      }, options.availableBytes)
+      await writeFile(
+        join(this.roots.storageRoot, 'e2e-available-disk-bytes'),
+        String(options.availableBytes)
+      )
     await this.runningApplication.evaluate(({ dialog }, archive) => {
       dialog.showSaveDialog = async () => ({ canceled: false, filePath: archive })
       dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [archive] })

@@ -1,15 +1,16 @@
 import { test, expect } from 'vitest'
 import { buildSync } from 'esbuild'
+import { runInNewContext } from 'node:vm'
 import { createRequire } from 'node:module'
 import { mkdtemp, mkdir, writeFile, rm, realpath } from 'node:fs/promises'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync, readFileSync } from 'node:fs'
 import { nativeLocaleAssets } from './native-locale-assets'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { captureNativeQuitDialog } from '../e2e/fixtures/native-quit-dialog'
 import type { App, Dialog } from 'electron'
 
-test('captures real native translations when the catalog is inlined into an arbitrary main bundle', async () => {
+test('captures the live native translator through the source preload with an arbitrary main bundle', async () => {
   const fixture = await realpath(await mkdtemp(join(tmpdir(), 'native-quit-bundle-')))
   const require = createRequire(join(fixture, 'package.json'))
   const previousRoot = process.env.OPEN_SCIENCE_STORAGE_ROOT
@@ -33,7 +34,7 @@ test('captures real native translations when the catalog is inlined into an arbi
     buildSync({
       stdin: {
         contents:
-          "export { LocalePreferenceOwner } from './src/main/locale/owner'; export { createElectronCloseConfirm } from './src/main/window-close-confirm'",
+          "export { createNativeI18n } from './src/main/locale/main-process-messages'; export { createElectronCloseConfirm } from './src/main/window-close-confirm'",
         resolveDir: resolve('.')
       },
       outfile: bundle,
@@ -55,19 +56,21 @@ test('captures real native translations when the catalog is inlined into an arbi
       } as never,
       {} as never
     )
-    // Electron can cache synthetic modules without a filename (and entries are not necessarily
-    // complete NodeJS.Module objects). These precede the real bundle in cache traversal order.
-    for (const [index, filename] of [undefined, null, 42, {}].entries()) {
-      require.cache[join(main, `synthetic-${index}`)] = {
-        ...(filename === undefined ? {} : { filename }),
-        exports: {
-          LocalePreferenceOwner: () => {
-            throw new Error('Synthetic export must be skipped')
-          }
-        }
-      } as unknown as NodeJS.Module
-    }
-    require(bundle)
+    const moduleLoader = { _load: (id: string) => require(id) }
+    const fixtureGlobal: Record<string, unknown> = {}
+    const preload = resolve('e2e/fixtures/node-runtime-preload.cjs')
+    runInNewContext(readFileSync(preload, 'utf8'), {
+      require: (id: string) =>
+        id === 'node:module'
+          ? moduleLoader
+          : id === 'electron'
+            ? { app: { isPackaged: false } }
+            : require(id),
+      process: { versions: { electron: 'test' }, env: { OPEN_SCIENCE_E2E_STORAGE_ROOT: config } },
+      __filename: preload,
+      globalThis: fixtureGlobal
+    })
+    const { createNativeI18n, createElectronCloseConfirm } = moduleLoader._load(bundle)
     const { dialog } = require('electron') as { dialog: Dialog }
     process.env.OPEN_SCIENCE_STORAGE_ROOT = config
     for (const [locale, expected] of [
@@ -89,6 +92,13 @@ test('captures real native translations when the catalog is inlined into an arbi
       ]
     ] as const) {
       await writeFile(join(config, 'settings.json'), JSON.stringify({ localePreference: locale }))
+      const i18n = createNativeI18n(locale)
+      createElectronCloseConfirm(
+        () => undefined,
+        { get: async () => undefined, set: async () => undefined },
+        i18n.t.bind(i18n)
+      )
+      Object.assign(globalThis, fixtureGlobal)
       expect(
         await captureNativeQuitDialog({ app: { getAppPath: () => fixture } as App, dialog })
       ).toEqual({
@@ -97,6 +107,7 @@ test('captures real native translations when the catalog is inlined into an arbi
       })
     }
   } finally {
+    Reflect.deleteProperty(globalThis, '__openScienceNativeQuitFixture')
     if (previousRoot === undefined) delete process.env.OPEN_SCIENCE_STORAGE_ROOT
     else process.env.OPEN_SCIENCE_STORAGE_ROOT = previousRoot
     for (const key of Object.keys(require.cache))

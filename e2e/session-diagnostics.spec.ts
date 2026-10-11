@@ -39,7 +39,11 @@ test('exports selected diagnostics without changing the persisted session', asyn
     diagnosticFixture: { apiKey: secret }
   })
   await writeFile(sourcePath, evidence)
-  const logsRoot = await application.evaluate(({ app }) => app.getPath('logs'))
+  const logsRoot = await application.evaluate(() => {
+    const root = process.env.OPEN_SCIENCE_CONFIG_ROOT ?? process.env.OPEN_SCIENCE_STORAGE_ROOT
+    if (!root) throw new Error('Isolated backend config root is unavailable.')
+    return process.getBuiltinModule('node:path').join(root, 'logs')
+  })
   await mkdir(logsRoot, { recursive: true })
   await writeFile(
     join(logsRoot, 'main.1.log'),

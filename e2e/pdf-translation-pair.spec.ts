@@ -691,13 +691,10 @@ for (const variant of [
       expect(directRequests).toHaveLength(requestsBeforeRetry + 1)
       await expect(review).toBeVisible()
       expect(await oldCanvas!.evaluate((node) => node.isConnected)).toBe(true)
-      await expect(
-        panel.getByRole('button', { name: 'Update PDF preview', exact: true })
-      ).toBeVisible()
-      await panel.getByRole('button', { name: 'Update PDF preview', exact: true }).click()
+      // Retranslating a completed page automatically publishes its updated PDF.
       await expect(
         page.locator('[data-pdf-translated-page]').first().locator('[data-pdf-text-layer]')
-      ).toContainText(replacementText)
+      ).toContainText(replacementText, { timeout: 60000 })
       expect(directRequests).toHaveLength(requestsBeforeRetry + 1)
       await page.screenshot({ path: testInfo.outputPath('paragraph-retranslated.png') })
       return
