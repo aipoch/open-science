@@ -138,6 +138,7 @@ export function backendDependencyIncludes(
       '@aipoch/literature-citations',
       '@aipoch/journal-catalog',
       '@aipoch/literature-discovery',
+      '@aipoch/reproducibility',
       '@aipoch/skills'
     ].includes(manifest.name) ||
     !top

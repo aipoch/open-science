@@ -148,6 +148,7 @@ it.each([
   'literature-citations',
   'literature-discovery',
   'journal-catalog',
+  'reproducibility',
   'skills'
 ])('stages %s using its npm files boundary', (name) => {
   const manifest = JSON.parse(readFileSync(`packages/${name}/package.json`, 'utf8'))
@@ -168,6 +169,18 @@ it.each([
     ])
       expect(backendDependencyIncludes(manifest, file.replaceAll('/', separator)), file).toBe(false)
   }
+})
+
+it.each(['/', '\\'])('retains reproduction exports and comparison worker (%s)', (separator) => {
+  const manifest = JSON.parse(readFileSync('packages/reproducibility/package.json', 'utf8'))
+  const exports = Object.values(manifest.exports).flatMap((entry) =>
+    Object.values(entry as Record<string, string>)
+  )
+  for (const file of [...exports, './dist/output-comparison-worker.js'])
+    expect(
+      backendDependencyIncludes(manifest, file.slice(2).replaceAll('/', separator)),
+      file
+    ).toBe(true)
 })
 
 it.each(['/', '\\'])(
