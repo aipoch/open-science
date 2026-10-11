@@ -93,8 +93,25 @@ it.each(['/', '\\'])('stages the PDF npm runtime without source fixtures (%s)', 
     'test/fixtures/case.jsonl',
     'node_modules/sharp/index.js',
     '.git/config',
+    'resources/obj.target/worker.o',
     'tsconfig.json'
   ])
     expect(backendDependencyIncludes(pdfManifest, path.split('/').join(separator))).toBe(false)
   expect(backendDependencyIncludes(pdfManifest, '')).toBe(true)
 })
+
+it.each(['/', '\\'])(
+  'keeps native build intermediates out of the staged dependency closure (%s)',
+  (separator) => {
+    const manifest = { name: 'native-addon' }
+    expect(
+      backendDependencyIncludes(
+        manifest,
+        ['build', 'Release', 'obj.target', 'addon.o'].join(separator)
+      )
+    ).toBe(false)
+    expect(
+      backendDependencyIncludes(manifest, ['build', 'Release', 'addon.node'].join(separator))
+    ).toBe(true)
+  }
+)
