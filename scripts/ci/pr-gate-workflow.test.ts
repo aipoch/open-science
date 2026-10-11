@@ -1745,7 +1745,7 @@ describe('PR Gate workflow', () => {
     )
     for (const file of [
       'src/main/notebook/windows-shell.integration.test.ts',
-      'src/main/notebook/powershell-search-parser.windows.test.ts',
+      'src/main/notebook/powershell-search-parser.windows.integration.test.ts',
       'src/main/notebook/shell-search-scope.test.ts'
     ])
       expect(shell?.run).toContain(file)

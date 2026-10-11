@@ -833,7 +833,7 @@
       "src/main/notebook/package-process-sandbox.windows.integration.test.ts",
       "src/main/notebook/pip-install-evidence.test.ts",
       "src/main/notebook/pip-wheel-evidence.test.ts",
-      "src/main/notebook/powershell-search-parser.windows.test.ts",
+      "src/main/notebook/powershell-search-parser.windows.integration.test.ts",
       "src/main/notebook/process-tree-consumers.macos.integration.test.ts",
       "src/main/notebook/provisioner-runtime.test.ts",
       "src/main/notebook/provisioner.startup.test.ts",

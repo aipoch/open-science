@@ -990,7 +990,7 @@
       "src/main/notebook/pip-wheel-evidence.test.ts",
       "src/main/artifacts/artifact-reproducibility-receipts.test.ts",
       "src/main/notebook/windows-python-probe.integration.test.ts",
-      "src/main/notebook/powershell-search-parser.windows.test.ts",
+      "src/main/notebook/powershell-search-parser.windows.integration.test.ts",
       "src/main/notebook/content-limits.test.ts",
       "src/main/notebook/configured-shell-runtime.test.ts",
       "src/renderer/src/pages/workspace/WorkspaceActivityGroup.annotations.test.tsx",
