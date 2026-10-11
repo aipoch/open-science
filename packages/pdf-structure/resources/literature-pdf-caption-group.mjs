@@ -294,7 +294,7 @@ export function captionKind(text) {
   // Panel-qualified figure references at the start of a paragraph are not
   // captions when the next sentence reads as ordinary prose.
   if (
-    /^(?:Fig\.?|Figure)\s+[A-Z]?\d+[A-Za-z]\.[\s]+(?:The|This|These|Those|Our|Their|It|They|Results?)\b[^.!?]{0,90}\b(?:is|are|was|were|has|have|had|does|do|did|shows?|demonstrates?|indicates?|describes?|reveals?|suggests?|compares?|contains?|includes?|uses?|achieves?|improves?|changes?|remains?|represents?|provides?|illustrates?)\b/i.test(
+    /^(?:Fig\.?|Figure)\s+[A-Z]?\d+\s*[A-Za-z]\.[\s]+(?:The|This|These|Those|Our|Their|It|They|Results?)\b[^.!?]{0,90}\b(?:is|are|was|were|has|have|had|does|do|did|shows?|demonstrates?|indicates?|describes?|reveals?|suggests?|compares?|contains?|includes?|uses?|achieves?|improves?|changes?|remains?|represents?|provides?|illustrates?)\b/i.test(
       text
     ) ||
     /^(?:Fig\.?|Figure)\s+[A-Z]?\d+\s+and\s+(?:Fig\.?|Figure)\s+[A-Z]?\d+\.[\s]+(?:As|For|In|When|Where|Since|Because|The|This|These|Those)\b/i.test(
@@ -322,7 +322,7 @@ export function captionKind(text) {
   const narrativeReferenceLabel =
     '(?:(?:Supplementary|Supplemental)\\s+)?(?:Table|Tab\\.?|Chart|Fig\\.?|Figure)\\s+(?:[A-Z]?\\d+(?:\\.\\d+)?|[A-Z][.-]\\d+(?:\\.\\d+)*|[IVXLCDM]+)'
   const narrativeReferencePanel =
-    '(?:\\s*\\((?:[A-Za-z]|left|right|top|bottom|middle|center|centre)\\)(?:\\s*(?:,|and|&)\\s*\\((?:[A-Za-z]|left|right|top|bottom|middle|center|centre)\\))*)?'
+    '(?:\\s+[A-Za-z](?=\\s)|\\s*\\((?:[A-Za-z]|left|right|top|bottom|middle|center|centre)\\)(?:\\s*(?:,|and|&)\\s*\\((?:[A-Za-z]|left|right|top|bottom|middle|center|centre)\\))*)?'
   const narrativeReferenceVerb =
     '(?:is|are|was|were|has|have|had|shows?|shown|presents?|presented|compares?|compared(?=\\s+(?:the|these|those|this|that|our)\\b)|contrasts?|measures?|reports?|reported|confirms?|reveals?|illustrat(?:es?|ed)|visuali[sz](?:es?|ed)|analy[sz](?:es?|ed)|provides?|plots|gives?|follows?|splits?|separates?|breaks?|lists?|decomposes?|contains?|depict(?:s|ed)?|represents?|reiterates?|reviews?|summari[sz](?:e(?:s|d)?|ing)|indicates?|suggests?|describes?|demonstrates?|displays?|exhibits?|achieves?|carr(?:y|ies|ied)|extends?|preserves?|retains?|grounds?|defines?|makes?|sets?|adds?|complements?|uses?(?=\\s+(?:one|a|an|the|our|this|these|those|its|their|\\d+)\\b)|examines?|var(?:y|ies|ied)|evaluates?|isolates?|paves?|introduces?)'
   const narrativeReference = new RegExp(
@@ -403,7 +403,7 @@ export function captionKind(text) {
   // ordinary numbered captions before assigning ownership.
   // A closing parenthesis ends an inline cross-reference, not a caption.
   if (
-    /^(?:(?:Supplementary|Supplemental)\s+)?(?:Fig\.?|Figure|Table)\s+[A-Z]?\d+(?:\s+[A-Z](?:\s*(?:[+,&/–-]|and)\s*[A-Z])*)?(?:\s+and\s+(?:(?:Supplementary|Supplemental)\s+)?(?:Fig\.?|Figure|Table)\s+[A-Z]?\d+)?\)\./i.test(
+    /^(?:(?:Supplementary|Supplemental)\s+)?(?:Fig\.?|Figure|Table)\s+[A-Z]?\d+(?:\s+[A-Z](?:\s*(?:[+,&/–-]|and)\s*[A-Z])*)?(?:\s+and\s+(?:(?:Supplementary|Supplemental)\s+)?(?:Fig\.?|Figure|Table)\s+[A-Z]?\d+)?\)[.,]/i.test(
       text
     )
   )

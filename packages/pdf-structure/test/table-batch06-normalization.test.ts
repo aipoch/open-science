@@ -98,3 +98,88 @@ it('marks an open narrative row that reaches the page crop edge', () => {
     reason: 'open-row-at-crop-bottom'
   })
 })
+
+// Synthetic geometry preserves only a ruled body and detector padding touching notes.
+const ruledMeasurements = (columns = 2): ReturnType<typeof JSON.parse> => {
+  const tokens = [],
+    cells = [],
+    grid = []
+  for (let row = 0; row < 3; row++) {
+    const values = [`q${row}/qR`, ...Array(columns - 1).fill('2.4 × 10−3 ± 8%')]
+    grid.push(values)
+    for (const [column, text] of values.entries()) {
+      const rect = [20 + column * 90, 30 + row * 20, 85 + column * 90, 40 + row * 20]
+      tokens.push({ text, rect, horizontal: true, height: 10 })
+      cells.push({ row, column, rowSpan: 1, colSpan: 1, text, rect, sourceRects: [rect] })
+    }
+  }
+  const notes = Array.from({ length: 10 }, (_, i) => ({
+    text: i % 2 ? 'x' : '0',
+    rect: [20 + i * 8, i % 2 ? 92 : 89, 25 + i * 8, i % 2 ? 102 : 96],
+    horizontal: true,
+    height: i % 2 ? 10 : 7
+  }))
+  return {
+    table: {
+      cropRect: [10, 15, columns * 90, 97],
+      grid,
+      cells,
+      rows: grid.map((_, row) => ({ rect: [10, 30 + row * 20, columns * 90, 40 + row * 20] })),
+      unassigned: notes.filter((_, i) => i % 2 === 0).map((i) => i.text),
+      clipped: notes.filter((_, i) => i % 2 === 1),
+      issues: ['text-crosses-crop-boundary', 'unassigned-source-text']
+    },
+    caption: {
+      lines: ['Table 1. Relative measurements.'],
+      rect: [10 / 1.5, 0, (columns * 90) / 1.5, 10 / 1.5]
+    },
+    tokens: [...tokens, ...notes],
+    rules: [
+      [15, 20, columns * 90 - 5, 20],
+      [15, 85, columns * 90 - 5, 85]
+    ]
+  }
+}
+
+it.each([2, 3])(
+  'keeps a %s-column ruled measurement body when only its notes touch detector padding',
+  (columns) => {
+    const f = ruledMeasurements(columns)
+    expect(hasTableEvidence(f.table, f.caption, f.tokens, f.rules)).toBe(true)
+  }
+)
+
+it.each(['no-closing-rule', 'unowned-body', 'crossing-note', 'missing-source', 'no-caption'])(
+  'retains damaged-formula rejection without complete body ownership: %s',
+  (change) => {
+    const f = ruledMeasurements()
+    if (change === 'no-closing-rule') f.rules.pop()
+    if (change === 'unowned-body')
+      f.tokens.push({ text: 'lost', rect: [90, 55, 100, 65], height: 10, horizontal: true })
+    if (change === 'crossing-note') f.tokens.at(-1).rect[1] = 84
+    if (change === 'missing-source') f.tokens.shift()
+    if (change === 'no-caption') f.caption = undefined
+    expect(hasTableEvidence(f.table, f.caption, f.tokens, f.rules)).toBe(false)
+  }
+)
+
+it.each(['body-replacement', 'body-control', 'unassigned-above', 'unknown-unassigned'])(
+  'does not excuse non-footer damage as padding: %s',
+  (change) => {
+    const f = ruledMeasurements()
+    if (change.startsWith('body-')) {
+      const text = change === 'body-replacement' ? 'q�/�R' : 'q\u0001/\u0002R'
+      for (let row = 0; row < 3; row++) {
+        f.table.grid[row][0] = text
+        f.table.cells[row * 2].text = text
+        f.tokens[row * 2].text = text
+      }
+    }
+    if (change === 'unassigned-above') {
+      for (const token of f.tokens.slice(6).filter((_, i) => i % 2 === 0))
+        token.rect = [20, 16, 25, 19]
+    }
+    if (change === 'unknown-unassigned') f.table.unassigned.push('missing body word')
+    expect(hasTableEvidence(f.table, f.caption, f.tokens, f.rules)).toBe(false)
+  }
+)

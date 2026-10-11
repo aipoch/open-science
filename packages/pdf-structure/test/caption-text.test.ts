@@ -776,3 +776,21 @@ it('excludes a figure reference continuing a double-spaced manuscript paragraph'
   ).fontSize += 2
   expect(findCaptionCandidates([differentFont])).toHaveLength(1)
 })
+
+it.each([
+  'Fig. 1 D illustrates the measured response.',
+  'Fig. 1 A), can be assigned to the initial state.',
+  'Fig. 1 C. The benefit of this model is a simpler fit.',
+  'Fig. 4 A is explained by the fitted parameters.',
+  'Figure 2 b shows the observed values.'
+])('rejects a separated panel letter before a narrative verb: %s', (text) => {
+  expect(captionKind(text)).toBeUndefined()
+})
+
+it.each([
+  'Figure 1 A comparison of the measured responses.',
+  'Figure 2 D: Measured response.',
+  'Figure 3. A shows the measured response.'
+])('preserves noun titles and punctuated captions: %s', (text) => {
+  expect(captionKind(text)).toBe('figure')
+})

@@ -2036,3 +2036,32 @@ it('keeps an unpunctuated table number with its indented title above a native ru
   ])
   expect(findCaptionCandidates([page])[0].lines).toEqual(['Table 1'])
 })
+
+it('keeps stacked raster and vector panels under one caption beside a separated-letter reference', () => {
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    invalidGraphicsBounds: 0,
+    lines: [
+      {
+        text: 'Fig. 1 D illustrates the measured response.',
+        x: 310,
+        y: 55,
+        width: 235,
+        height: 10,
+        fontSize: 10
+      },
+      { text: 'FIGURE 1 Response panels (A–D).', x: 50, y: 610, width: 240, height: 8, fontSize: 8 }
+    ],
+    graphicsBounds: [
+      { kind: 'image', normalizedRect: [80 / 600, 60 / 800, 260 / 600, 450 / 800] },
+      { kind: 'path', normalizedRect: [80 / 600, 440 / 800, 260 / 600, 590 / 800] }
+    ]
+  }
+  const captions = findCaptionCandidates([page])
+  const figures = associateFigures(page, captions)
+  expect(captions).toHaveLength(1)
+  expect(figures).toHaveLength(1)
+  expect(figures[0].rect).toEqual([80, 60, 260, 590])
+})

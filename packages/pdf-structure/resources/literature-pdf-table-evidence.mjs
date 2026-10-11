@@ -1694,6 +1694,86 @@ function isNativeFormulaSystem(table, caption) {
   return formulaRows.length >= 3 && ordinals.length >= 1 && symbolic >= 3 && prose <= 1
 }
 
+// Detector padding can include a note below a complete ruled body. Those
+// glyphs are not evidence of damaged cell math. Prove source ownership inside
+// both rules instead of accepting a table merely because it has a caption.
+function hasOnlyRuledFooterDamage(table, caption, items, rules) {
+  if (!caption?.rect || !rules?.length || !table.cells?.length) return false
+  if (table.grid.flat().some((text) => /[\u0000-\u001f�]/u.test(text))) return false
+  const valid = (r) => r?.length === 4 && r.every(Number.isFinite) && r[2] > r[0] && r[3] > r[1]
+  const source = table.cells.flatMap((cell) => cell.sourceRects ?? [])
+  if (!source.length || source.some((r) => !valid(r))) return false
+  const same = (a, b) => a.every((v, n) => Math.abs(v - b[n]) < 0.02)
+  const matches = source.map((r) => items.filter((i) => valid(i.rect) && same(r, i.rect)))
+  if (matches.some((m) => m.length !== 1)) return false
+  const owned = matches.map(([i]) => i)
+  if (new Set(owned).size !== owned.length || owned.some((i) => !i.horizontal || !(i.height > 0)))
+    return false
+  const height = Math.max(...owned.map((i) => i.height)),
+    tolerance = height * 0.1
+  const body = [
+    Math.min(...source.map((r) => r[0])),
+    Math.min(...source.map((r) => r[1])),
+    Math.max(...source.map((r) => r[2])),
+    Math.max(...source.map((r) => r[3]))
+  ]
+  const edges = joinHorizontalTableRules(rules).filter(
+    (r) =>
+      r.every(Number.isFinite) &&
+      r[1] === r[3] &&
+      r[0] <= body[0] + tolerance &&
+      r[2] >= body[2] - tolerance &&
+      r[0] >= table.cropRect[0] - tolerance &&
+      r[2] <= table.cropRect[2] + tolerance
+  )
+  const opening = edges.filter(
+    (r) =>
+      r[1] <= body[1] + tolerance &&
+      body[1] - r[1] <= height &&
+      r[1] >= table.cropRect[1] - tolerance &&
+      caption.rect[3] * (table.sourceViewport?.scale ?? 1.5) < r[1]
+  )
+  const closing = edges.filter(
+    (r) => r[1] > body[3] && r[1] - body[3] <= height && r[1] < table.cropRect[3]
+  )
+  if (
+    opening.length !== 1 ||
+    closing.length !== 1 ||
+    Math.abs(opening[0][0] - closing[0][0]) > tolerance ||
+    Math.abs(opening[0][2] - closing[0][2]) > tolerance
+  )
+    return false
+  const frame = [
+    opening[0][0] - tolerance,
+    opening[0][1] - tolerance,
+    opening[0][2] + tolerance,
+    closing[0][1]
+  ]
+  const footer = items.filter(
+    (i) =>
+      i.text?.trim() &&
+      valid(i.rect) &&
+      i.rect[1] > closing[0][1] &&
+      intersection(i.rect, table.cropRect) > 0
+  )
+  const remaining = footer.map((i) => i.text)
+  for (const text of table.unassigned ?? []) {
+    const index = remaining.indexOf(text)
+    if (index < 0) return false
+    remaining.splice(index, 1)
+  }
+  const bodyItems = items.filter(
+    (i) => i.text?.trim() && valid(i.rect) && intersection(i.rect, frame) > 0
+  )
+  return (
+    bodyItems.length === owned.length &&
+    bodyItems.every((i) => owned.includes(i)) &&
+    (table.clipped ?? []).every(
+      (i) => valid(i.rect) && footer.some((font) => font.text === i.text && same(font.rect, i.rect))
+    )
+  )
+}
+
 // Some appendix equations have enough aligned glyphs to be emitted as a
 // detector table, but they do not contain a tabular record.  Captionless
 // displays are already covered by isNativeFormulaSystem; this conservative
@@ -3151,7 +3231,10 @@ export function hasTableEvidence(table, caption, pageItems = [], sourceRules, so
   if (isNativeAssignedMatrixDisplay(table, caption, pageItems, sourceRules)) return false
   if (isNativeFormulaSystem(table, caption)) return false
   if (isNativeContinuousMathDisplay(table, caption, pageItems, sourceRules ?? [])) return false
-  if (isDamagedNativeFormulaLayout(table, caption)) {
+  if (
+    isDamagedNativeFormulaLayout(table, caption) &&
+    !hasOnlyRuledFooterDamage(table, caption, pageItems, sourceRules)
+  ) {
     const nativeFrame =
       nativeCaption &&
       sourceRules &&
