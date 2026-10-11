@@ -65,7 +65,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.ref.outputs.tag }}
-        run: gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir dist-assets
+        run: |
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir dist-assets
+          # Standalone CLI runtime archives distribute via npm/GitHub release downloads, not the
+          # website CDN — keep them out of the mirrored asset set.
+          rm -f dist-assets/open-science-*-darwin-*.tar.gz \
+            dist-assets/open-science-*-linux-*-gnu.tar.gz \
+            dist-assets/open-science-*-win32-x64.zip
 
       # A dry-run exercises the real manifest/feed transforms without downloading every installer.
       # SHA256SUMS and updater feeds are small; sparse files reproduce each installer's published name
