@@ -980,7 +980,7 @@ const createUpgradeProfileGuard = (
 const captureStartupDialog = async (pid, env, run = runProcess) => {
   if (!Number.isSafeInteger(pid) || pid <= 0) return ''
   const result = await run(
-    'powershell.exe',
+    'pwsh.exe',
     [
       '-NoProfile',
       '-NonInteractive',
@@ -1088,11 +1088,26 @@ const launchAndProbe = async ({
   } catch (error) {
     // Bootstrap can stop in a native error box before file logging exists. Read only this
     // isolated smoke process's dialog before termination, never unrelated desktop windows.
+    const dependencyProbe = await runProcess(
+      executable,
+      [
+        '-e',
+        `const load = require('node:module').createRequire(${JSON.stringify(join(installDirectory, 'resources', 'app.asar', 'out', 'main', 'index.js'))});
+const helper = load('@aipoch/credential-identity-probe-native');
+console.log('Packaged credential helper exports:', Object.keys(helper));
+require('node:fs').accessSync(helper.secretExecutablePath.replace(/app\\.asar([/\\\\])/u, 'app.asar.unpacked$1'));
+console.log('Packaged credential helper exists.');`
+      ],
+      { env: { ...env, ELECTRON_RUN_AS_NODE: '1' }, timeoutMs: 5_000 }
+    ).then(
+      (result) => result.stdout.trim(),
+      (probeError) => `Packaged credential dependency probe failed: ${probeError.message}`
+    )
     const dialog = await captureStartupDialog(child.pid, env).catch(
       (diagnosticError) => `Startup dialog capture failed: ${diagnosticError.message}`
     )
     await terminateProcessTree(child)
-    const processOutput = [output().trim(), dialog].filter(Boolean).join('\n')
+    const processOutput = [output().trim(), dependencyProbe, dialog].filter(Boolean).join('\n')
     if (error instanceof Error && processOutput && !error.message.includes(processOutput)) {
       error.message += `\n${processOutput}`
     }

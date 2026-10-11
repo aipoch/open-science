@@ -53,7 +53,7 @@ describe('Windows installer smoke plan', () => {
       'Startup error\nmissing helper'
     )
     expect(run).toHaveBeenCalledWith(
-      'powershell.exe',
+      'pwsh.exe',
       expect.arrayContaining([expect.stringContaining('GetWindowThreadProcessId')]),
       { env: { TEMP: 'isolated', OPEN_SCIENCE_SMOKE_PROCESS_ID: '123' }, timeoutMs: 5_000 }
     )
