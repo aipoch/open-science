@@ -39,6 +39,9 @@
     },
     {
       "path": "./packages/environment/tsconfig.dev.json"
+    },
+    {
+      "path": "./packages/compute/tsconfig.dev.json"
     }
   ]
 }
