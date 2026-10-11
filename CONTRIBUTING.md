@@ -70,29 +70,14 @@ for native build prerequisites, secure-storage requirements and host capability 
 npm run dev
 ```
 
-Development prepares the local TypeScript packages with one incremental solution build. Unchanged
-packages reuse their JavaScript and declarations, and the pinned Node executable is reused after
-integrity checks. `npm run build:packages:dev` runs that package preparation on its own.
+Development reuses unchanged package builds and the verified Node runtime. Package edits rebuild
+automatically; renderer package edits reload the page and may reset transient state. React keeps HMR.
 
-The desktop dev server watches package sources and the Node backend. Successful package edits
-rebuild affected projects; linked CommonJS renderer packages trigger Vite re-optimization and a page
-reload. Ordinary React edits keep HMR. A package reload can reset transient page state. Build errors
-are reported in the terminal and do not request a reload.
+For backend/main/preload changes, wait for a successful build, quit the app normally, stop the dev
+command, then run `npm run dev` again. Web/headless development has no live reload.
 
-Backend and Electron main/preload changes require a manual restart. After the terminal reports that
-the build is ready, quit the development app normally, stop the dev command, and run `npm run dev`
-again. The watcher does not terminate a running Agent/Notebook task or an attached Node server.
-Stopping only the dev terminal can leave the independent Node backend running; do not kill a PID
-read from its state files. Web/headless development reuses incremental package preparation but
-continues to serve built Web assets, without desktop HMR.
-
-When adding a buildable local package, add a `tsconfig.dev.json` extending its standalone tsconfig,
-enable `composite` and `noEmitOnError`, and store `tsBuildInfoFile` in `.cache/dev.tsbuildinfo`.
-Reference other local development configs for its declared dependencies and peer dependencies,
-then add it to the root `tsconfig.packages.json`. The development graph test checks this registration.
-Standalone package builds and `prepack` keep using their own configs and public npm exports.
-Development outputs and caches are disposable; missing outputs are rebuilt, and outputs of removed
-sources are pruned after a successful build. Release builds retain their existing preparation.
+For a new local package, follow an existing `tsconfig.dev.json`, reference its local dependencies,
+and add it to `tsconfig.packages.json`. Use `npm run build:packages:dev` to build packages alone.
 
 Native credential helpers build incrementally in development. On macOS, keep
 `packages/credential-identity-probe-native/build/` between launches: a clean rebuild can change
