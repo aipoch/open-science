@@ -31,9 +31,7 @@
   ],
   "testFiles": {
     "owner": [],
-    "contract": [
-      "src/main/notebook/package-boundaries.architecture.test.ts"
-    ],
+    "contract": ["src/main/notebook/package-boundaries.architecture.test.ts"],
     "consumer": [
       "packages/notebook-analysis/src/dependency-analysis-parser-unavailable.test.ts",
       "packages/notebook-analysis/src/dependency-analysis.aggregate-volcano.test.ts",
@@ -1475,7 +1473,8 @@
       "packages/reproducibility/src/r-random-replay.test.ts",
       "packages/reproducibility/src/scientific-output-comparison.test.ts",
       "packages/reproducibility/src/recipe.test.ts",
-      "src/main/artifacts/reproducibility-host.test.ts"
+      "src/main/artifacts/reproducibility-host.test.ts",
+      "scripts/electron-vite-config.test.ts"
     ]
   },
   "capabilityOverlays": [

@@ -42,6 +42,12 @@ report `reaped: true` only after all owned processes have stopped. Ambiguous tea
 attempt and fails closed. A runtime factory that fails after spawning a process must clean it up or
 report the existing environment `CHILD_UNCONFIRMED` error.
 
+`projectArtifactReproducibility(graph, runs)` describes graph-derived candidate frontiers.
+`projectCapturedArtifactReproducibility(snapshot)` additionally applies the captured recipe's
+eligibility, blocking reasons and available input evidence. It returns `undefined` without a graph
+and exposes entity identities rather than private storage keys. The host only assembles this result
+with its public snapshot metadata.
+
 ## Compatibility
 
 Existing recipe, execution-context and comparison schema versions, checksums, comparator identifiers,

@@ -34,9 +34,7 @@
     "packages/reproducibility/README.md",
     "packages/reproducibility/src/output-files.test.ts"
   ],
-  "interfacePaths": [
-    "packages/reproducibility/src/index.ts"
-  ],
+  "interfacePaths": ["packages/reproducibility/src/index.ts"],
   "consumerModules": [
     "notebook_execution",
     "artifact_provenance",
@@ -497,8 +495,6 @@
       "src/main/artifacts/reproducibility-host.test.ts"
     ]
   },
-  "capabilityOverlays": [
-    "windows_sensitive"
-  ],
+  "capabilityOverlays": ["windows_sensitive"],
   "fallbackCapability": "main_runtime"
 }

@@ -37,7 +37,7 @@ export default defineConfig(({ command }) => ({
         include: [
           /node_modules/,
           /packages[\\/](?:connector-(?:core|mcp-client)|compute|diagnostics|skills|specialists)[\\/]dist/,
-          /packages[\\/](?:notebook-analysis|environment)[\\/]dist/
+          /packages[\\/](?:notebook-analysis|environment|reproducibility)[\\/]dist/
         ]
       },
       rollupOptions: {
@@ -65,7 +65,10 @@ export default defineConfig(({ command }) => ({
               '@aipoch/skills/document',
               '@aipoch/notebook-analysis/contracts',
               '@aipoch/environment/contracts',
-              '@aipoch/specialists'
+              '@aipoch/specialists',
+              '@aipoch/reproducibility/contracts',
+              '@aipoch/reproducibility/comparison',
+              '@aipoch/reproducibility/execution-context'
             ],
             entries: [
               '*.html',
@@ -117,7 +120,7 @@ export default defineConfig(({ command }) => ({
         include: [
           /node_modules/,
           /packages[\\/](?:connector-(?:core|mcp-client)|compute|diagnostics|skills|specialists)[\\/]dist/,
-          /packages[\\/](?:notebook-analysis|environment)[\\/]dist/
+          /packages[\\/](?:notebook-analysis|environment|reproducibility)[\\/]dist/
         ]
       },
       rollupOptions: {

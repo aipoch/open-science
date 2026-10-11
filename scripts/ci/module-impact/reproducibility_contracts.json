@@ -1277,7 +1277,8 @@
       "packages/reproducibility/src/scientific-output-comparison.test.ts",
       "packages/reproducibility/src/recipe.test.ts",
       "src/renderer/src/pages/workspace/OutputComparison.test.tsx",
-      "src/main/artifacts/reproducibility-host.test.ts"
+      "src/main/artifacts/reproducibility-host.test.ts",
+      "scripts/electron-vite-config.test.ts"
     ]
   },
   "capabilityOverlays": [],

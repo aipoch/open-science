@@ -6,6 +6,7 @@ import type {
   ProvenanceNotebookRun
 } from '../../shared/artifact-provenance'
 import { artifactProvenanceGraphValue } from './artifact-provenance-graph'
+import { parseArtifactExecutionSnapshot } from './provenance-execution-snapshot-decoder'
 import { reproductionRecipes } from './reproducibility-host'
 
 const checksum = (character: string): string => character.repeat(64)
@@ -168,57 +169,31 @@ const inputFiles: PersistedArtifactExecutionSnapshot['inputFiles'] = [
 ]
 
 describe('provenance graph and replay recipe contract', () => {
-  it('persists only a blocked identity when a valid graph would exceed the recipe budget', () => {
-    const value = graph()
-    const middle = value.entities.find((entity) => entity.entityId === 'file-generation:middle')
-    if (middle?.kind !== 'file-generation') throw new Error('Missing middle fixture.')
-    const generatedIndex = value.edges.findIndex(
-      (edge) => edge.kind === 'generated' && edge.entityId === middle.entityId
-    )
-    const usedIndex = value.edges.findIndex(
-      (edge) => edge.kind === 'used' && edge.entityId === middle.entityId
-    )
-    value.entities = value.entities.filter((entity) => entity !== middle)
-    value.edges = value.edges.filter((_, index) => index !== generatedIndex && index !== usedIndex)
-    for (let index = 0; index < 1_400; index += 1) {
-      const generationId = `intermediate-${index.toString().padStart(4, '0')}`
-      const entityId = `file-generation:${generationId}`
-      value.entities.push({
-        ...middle,
-        entityId,
-        generationId,
-        relativePath: `intermediate/${generationId}.csv`
-      })
-      value.edges.push(
-        {
-          kind: 'generated',
-          activityId: 'run-1',
-          entityId,
-          authority: 'authoritative',
-          evidenceSource: 'runtime-observation'
-        },
-        {
-          kind: 'used',
-          activityId: 'run-2',
-          entityId,
-          authority: 'authoritative',
-          evidenceSource: 'runtime-observation'
-        }
-      )
-    }
-
-    expect(artifactProvenanceGraphValue(value)).toBe(true)
-    expect(
-      reproductionRecipes.sealArtifactReproducibilityRecipe({
-        provenanceGraph: value,
-        inputFiles,
-        runs: [run('run-1', 0), run('run-2', 1)]
-      })
-    ).toMatchObject({
-      steps: [],
-      frontiers: [],
-      environmentRequirements: [],
-      capture: { state: 'blocked', reasonCodes: ['recipe-budget-exceeded'] }
+  it('round-trips a package-sealed recipe through the host snapshot decoder', () => {
+    const provenanceGraph = graph()
+    const runs = [run('run-1', 0), run('run-2', 1)]
+    expect(artifactProvenanceGraphValue(provenanceGraph)).toBe(true)
+    const reproducibilityRecipe = reproductionRecipes.sealArtifactReproducibilityRecipe({
+      provenanceGraph,
+      inputFiles,
+      runs
     })
+    const persisted: PersistedArtifactExecutionSnapshot = {
+      schemaVersion: 2,
+      rootFrameId: 'frame-1',
+      agentFrameId: 'frame-1',
+      messageBranchId: 'branch-1',
+      terminalPromptMessageId: 'prompt-1',
+      producerRunId: 'run-2',
+      producerRunIndex: 1,
+      createdAt: '2026-09-02T00:00:00.000Z',
+      inputFiles,
+      runs,
+      provenanceGraph,
+      reproducibilityRecipe
+    }
+    expect(parseArtifactExecutionSnapshot(JSON.stringify(persisted)).reproducibilityRecipe).toEqual(
+      reproducibilityRecipe
+    )
   })
 })

@@ -12,7 +12,10 @@ export type {
   ExecuteArtifactReproducibilityDependencies,
   ExecuteArtifactReproducibilityInput
 } from './execution'
-export { projectArtifactReproducibility } from './projection'
+export {
+  projectArtifactReproducibility,
+  projectCapturedArtifactReproducibility
+} from './projection'
 export {
   validateReproductionContext,
   validateReproductionDiskSpace,

@@ -28,7 +28,10 @@ export default defineConfig({
       '@aipoch/skills/document',
       '@aipoch/notebook-analysis/contracts',
       '@aipoch/environment/contracts',
-      '@aipoch/specialists'
+      '@aipoch/specialists',
+      '@aipoch/reproducibility/contracts',
+      '@aipoch/reproducibility/comparison',
+      '@aipoch/reproducibility/execution-context'
     ]
   },
   plugins: [react(), tailwindcss()],
@@ -39,7 +42,7 @@ export default defineConfig({
       include: [
         /node_modules/,
         /packages[\\/](?:connector-(?:core|mcp-client)|compute|diagnostics|skills|specialists)[\\/]dist/,
-        /packages[\\/](?:notebook-analysis|environment)[\\/]dist/
+        /packages[\\/](?:notebook-analysis|environment|reproducibility)[\\/]dist/
       ]
     },
     emptyOutDir: true

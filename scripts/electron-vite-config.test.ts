@@ -38,7 +38,10 @@ describe('electron-vite renderer dependency optimization', () => {
         '@aipoch/skills/document',
         '@aipoch/notebook-analysis/contracts',
         '@aipoch/environment/contracts',
-        '@aipoch/specialists'
+        '@aipoch/specialists',
+        '@aipoch/reproducibility/contracts',
+        '@aipoch/reproducibility/comparison',
+        '@aipoch/reproducibility/execution-context'
       ],
       entries: [
         '*.html',
@@ -97,6 +100,52 @@ describe('linked Compute package browser consumption', () => {
         2222,
         false,
         'ssh:cluster'
+      ])
+    }
+  )
+})
+
+describe('linked Reproducibility package browser consumption', () => {
+  it.each(['renderer', 'web'] as const)(
+    'bundles the public API with the %s production CJS policy',
+    async (surface) => {
+      const entry = normalizePath(resolve('reproducibility-browser-contract.js'))
+      const result = await build({
+        configFile: false,
+        logLevel: 'silent',
+        plugins: [
+          {
+            name: 'reproducibility-browser-contract',
+            resolveId: (id) => (id === entry ? entry : undefined),
+            load: (id) =>
+              id === entry
+                ? `
+          import { outputComparisonPolicySchema as contractPolicy } from '@aipoch/reproducibility/contracts'
+          import { outputComparisonPolicySchema } from '@aipoch/reproducibility/comparison'
+          import { notebookExecutionContextSchema } from '@aipoch/reproducibility/execution-context'
+          export const actual = [contractPolicy === outputComparisonPolicySchema, outputComparisonPolicySchema.safeParse({}).success, notebookExecutionContextSchema.safeParse({}).success]
+        `
+                : undefined
+          }
+        ],
+        build: {
+          write: false,
+          minify: false,
+          commonjsOptions: (surface === 'web' ? webConfig : resolvedConfig[surface])?.build
+            ?.commonjsOptions,
+          lib: { entry, name: 'ReproducibilityContract', formats: ['iife'] }
+        }
+      })
+      const outputs = (Array.isArray(result) ? result : [result]).flatMap((output) =>
+        'output' in output ? output.output : []
+      )
+      const chunk = outputs.find((output) => output.type === 'chunk')
+      expect(chunk).toBeDefined()
+      // A browser-like realm has no require, process or Node globals; execute the actual bundle.
+      expect(runInNewContext(chunk!.code + '; ReproducibilityContract.actual')).toEqual([
+        true,
+        false,
+        false
       ])
     }
   )

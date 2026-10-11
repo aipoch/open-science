@@ -1,4 +1,5 @@
 import type {
+  ReproductionSnapshot,
   ArtifactProvenanceGraph,
   ArtifactProvenanceGraphActivity,
   ArtifactProvenanceGraphEntity,
@@ -254,4 +255,48 @@ export const projectArtifactReproducibility = (
     includedNotebookRunCount,
     skippedRunCount: runs.length - includedNotebookRunCount
   }
+}
+
+// Apply the captured recipe without exposing private evidence locations.
+export const projectCapturedArtifactReproducibility = (
+  execution: Pick<ReproductionSnapshot, 'provenanceGraph' | 'runs' | 'reproducibilityRecipe'>
+): ArtifactReproducibilityProjection | undefined => {
+  const reproducibility = execution.provenanceGraph
+    ? projectArtifactReproducibility(execution.provenanceGraph, execution.runs)
+    : undefined
+  if (reproducibility) {
+    const recipe = execution.reproducibilityRecipe
+    const captureCheckReasonCodes = recipe?.capture.reasonCodes ?? ['compute-recipe-unavailable']
+    reproducibility.checkReasonCodes = captureCheckReasonCodes
+    reproducibility.startFrontiers = reproducibility.startFrontiers.map((frontier) => {
+      const recipeFrontier = recipe?.frontiers.find(
+        (candidate) => candidate.frontierId === frontier.frontierId
+      )
+      const executable =
+        recipe?.capture.state === 'sealed' &&
+        recipeFrontier !== undefined &&
+        recipeFrontier.reasonCodes.length === 0 &&
+        recipeFrontier.stepIds.length > 0
+      return {
+        ...frontier,
+        crossingEntityIds: [
+          ...new Set([
+            ...frontier.crossingEntityIds,
+            ...(recipeFrontier?.crossingFiles.map((file) => file.entityId) ?? [])
+          ])
+        ],
+        eligibility: executable ? 'available' : 'blocked',
+        checkReasonCodes: recipeFrontier?.reasonCodes ?? captureCheckReasonCodes,
+        ...(recipeFrontier
+          ? {
+              unavailableEntityIds: frontier.crossingEntityIds.filter(
+                (entityId) =>
+                  !recipeFrontier.crossingFiles.some((file) => file.entityId === entityId)
+              )
+            }
+          : {})
+      }
+    })
+  }
+  return reproducibility
 }

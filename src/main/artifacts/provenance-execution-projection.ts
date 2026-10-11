@@ -3,49 +3,13 @@ import type {
   PersistedArtifactExecutionSnapshot,
   ProvenanceExecutionInputFile
 } from '../../shared/artifact-provenance'
-import { projectArtifactReproducibility } from '@aipoch/reproducibility'
+import { projectCapturedArtifactReproducibility } from '@aipoch/reproducibility'
 
 export const projectPublicArtifactExecutionSnapshot = (
   persisted: PersistedArtifactExecutionSnapshot,
   inputFiles: ProvenanceExecutionInputFile[]
 ): ArtifactExecutionSnapshot => {
-  const reproducibility = persisted.provenanceGraph
-    ? projectArtifactReproducibility(persisted.provenanceGraph, persisted.runs)
-    : undefined
-  if (reproducibility) {
-    const recipe = persisted.reproducibilityRecipe
-    const captureCheckReasonCodes = recipe?.capture.reasonCodes ?? ['compute-recipe-unavailable']
-    reproducibility.checkReasonCodes = captureCheckReasonCodes
-    reproducibility.startFrontiers = reproducibility.startFrontiers.map((frontier) => {
-      const recipeFrontier = recipe?.frontiers.find(
-        (candidate) => candidate.frontierId === frontier.frontierId
-      )
-      const executable =
-        recipe?.capture.state === 'sealed' &&
-        recipeFrontier !== undefined &&
-        recipeFrontier.reasonCodes.length === 0 &&
-        recipeFrontier.stepIds.length > 0
-      return {
-        ...frontier,
-        crossingEntityIds: [
-          ...new Set([
-            ...frontier.crossingEntityIds,
-            ...(recipeFrontier?.crossingFiles.map((file) => file.entityId) ?? [])
-          ])
-        ],
-        eligibility: executable ? 'available' : 'blocked',
-        checkReasonCodes: recipeFrontier?.reasonCodes ?? captureCheckReasonCodes,
-        ...(recipeFrontier
-          ? {
-              unavailableEntityIds: frontier.crossingEntityIds.filter(
-                (entityId) =>
-                  !recipeFrontier.crossingFiles.some((file) => file.entityId === entityId)
-              )
-            }
-          : {})
-      }
-    })
-  }
+  const reproducibility = projectCapturedArtifactReproducibility(persisted)
   return {
     schemaVersion: persisted.schemaVersion,
     rootFrameId: persisted.rootFrameId,

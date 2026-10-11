@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import type { ArtifactProvenanceGraph, ProvenanceNotebookRun } from './evidence'
-import { projectArtifactReproducibility } from './index'
+import type {
+  ArtifactProvenanceGraph,
+  ProvenanceNotebookRun,
+  ReproductionSnapshot
+} from './evidence'
+import { projectArtifactReproducibility, projectCapturedArtifactReproducibility } from './index'
 
 const checksum = (character: string): string => character.repeat(64)
 
@@ -491,5 +495,91 @@ describe('projectArtifactReproducibility', () => {
     ]
 
     expect(projectArtifactReproducibility(value, []).outputGroups[0]?.label).toBe('maps/elevation')
+  })
+})
+
+describe('captured recipe projection', () => {
+  it('uses the sealed recipe to expose only executable frontiers to the renderer', () => {
+    const value = graph()
+    const runs = [run('run-1', 0), run('run-2', 1)]
+    const execution: ReproductionSnapshot = {
+      inputFiles: [],
+      runs,
+      provenanceGraph: value,
+      reproducibilityRecipe: {
+        schemaVersion: 1,
+        recipeId: checksum('d'),
+        targetVersionId: 'version-1',
+        targetEntityId: value.targetEntityId,
+        targetChecksum: checksum('c'),
+        graphChecksum: checksum('e'),
+        steps: [],
+        frontiers: [
+          {
+            frontierId: 'original-inputs',
+            claimScope: 'end-to-end',
+            stepIds: ['step:run-1', 'step:run-2'],
+            crossingFiles: [],
+            reasonCodes: ['environment-lock-missing']
+          },
+          {
+            frontierId: 'checkpoint:run-1',
+            claimScope: 'downstream-only',
+            afterActivityId: 'run-1',
+            stepIds: ['step:run-2'],
+            crossingFiles: [],
+            reasonCodes: []
+          }
+        ],
+        environmentRequirements: [],
+        capture: { state: 'sealed', reasonCodes: [] }
+      }
+    }
+
+    const projected = projectCapturedArtifactReproducibility(execution)
+    expect(projected?.startFrontiers[0]?.unavailableEntityIds).toEqual(['registered-input:input-1'])
+    expect(projected?.startFrontiers[1]?.unavailableEntityIds).toEqual(['file-generation:middle'])
+    execution.reproducibilityRecipe!.frontiers[0]!.crossingFiles.push({
+      entityId: 'file-generation:middle',
+      checksum: checksum('b'),
+      sizeBytes: 200,
+      contentStorageKey: 'private/blob',
+      materializationPath: 'middle.csv'
+    })
+    const withWorkingFile = projectCapturedArtifactReproducibility(execution)
+    expect(withWorkingFile?.startFrontiers[0]?.crossingEntityIds).toEqual([
+      'registered-input:input-1',
+      'file-generation:middle'
+    ])
+    expect(JSON.stringify(withWorkingFile)).not.toContain('private/blob')
+    expect(projected?.checkReasonCodes).toEqual([])
+    expect(
+      projected?.startFrontiers.map(({ frontierId, eligibility, checkReasonCodes }) => ({
+        frontierId,
+        eligibility,
+        checkReasonCodes
+      }))
+    ).toEqual([
+      {
+        frontierId: 'original-inputs',
+        eligibility: 'blocked',
+        checkReasonCodes: ['environment-lock-missing']
+      },
+      { frontierId: 'checkpoint:run-1', eligibility: 'available', checkReasonCodes: [] },
+      { frontierId: 'checkpoint:run-2', eligibility: 'blocked', checkReasonCodes: [] }
+    ])
+
+    const executionWithoutRecipe = { ...execution }
+    delete executionWithoutRecipe.reproducibilityRecipe
+    const withoutRecipe = projectCapturedArtifactReproducibility(executionWithoutRecipe)
+    expect(withoutRecipe?.checkReasonCodes).toEqual(['compute-recipe-unavailable'])
+    expect(withoutRecipe?.startFrontiers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eligibility: 'blocked',
+          checkReasonCodes: ['compute-recipe-unavailable']
+        })
+      ])
+    )
   })
 })

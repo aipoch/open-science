@@ -77,7 +77,7 @@ try {
 import assert from 'node:assert/strict'
 import {createRequire} from 'node:module'
 import {realpathSync} from 'node:fs'
-import {compareReproducedContent, validatePythonRandomState, createReproductionRecipes} from '@aipoch/reproducibility'
+import {compareReproducedContent, validatePythonRandomState, createReproductionRecipes, projectCapturedArtifactReproducibility} from '@aipoch/reproducibility'
 import {outputComparisonPolicySchema, type ArtifactReproducibilityRecipe} from '@aipoch/reproducibility/contracts'
 import {outputComparisonPolicySchema as comparisonSchema} from '@aipoch/reproducibility/comparison'
 import {notebookExecutionContextSchema} from '@aipoch/reproducibility/execution-context'
@@ -92,6 +92,7 @@ assert.equal(notebookExecutionContextSchema.safeParse({}).success,false)
 for (const suffix of ['/src/index', '/dist/index.js', '/recipe', '/package.json'])
  assert.throws(()=>require('@aipoch/reproducibility'+suffix),{code:'ERR_PACKAGE_PATH_NOT_EXPORTED'})
 assert.equal(validatePythonRandomState(undefined),undefined)
+assert.equal(projectCapturedArtifactReproducibility({runs: []}),undefined)
 assert.equal(outputComparisonPolicySchema.safeParse({}).success,false)
 const recipes=createReproductionRecipes({inputPath: name=>name,fileIO:{digestFile:async()=>{throw Error('Not used')}}})
 assert.equal(recipes.artifactReproducibilityRecipeValue({}),false)

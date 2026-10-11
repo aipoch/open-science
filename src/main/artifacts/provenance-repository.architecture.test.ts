@@ -35,12 +35,11 @@ import { loadModuleImpactManifest } from '../../../scripts/ci/load-module-impact
 
 const productionFiles = [
   'artifact-provenance-graph.ts',
-  'artifact-reproducibility-execution.ts',
+  'reproducibility-host.ts',
   'artifact-reproducibility-export.ts',
   'artifact-reproducibility-ipc.ts',
   'artifact-reproducibility-lifecycle.ts',
   'artifact-reproducibility-receipts.ts',
-  'artifact-reproducibility-recipe.ts',
   'provenance-canonical.ts',
   'provenance-content-status.ts',
   'compute-output-evidence.ts',
@@ -53,7 +52,6 @@ const productionFiles = [
   'provenance-producer-capture.ts',
   'provenance-read-model.ts',
   'provenance-reproducibility-execution-evidence.ts',
-  'provenance-reproducibility-projection.ts',
   'provenance-repository.ts',
   'reviewer-turn-file-evidence-reader.ts',
   'provenance-staging-recovery.ts',
@@ -416,12 +414,10 @@ describe('Artifact Provenance repository architecture', () => {
 
     expect(module.ownerPaths).toEqual([
       'src/main/artifacts/artifact-provenance-graph.ts',
-      'src/main/artifacts/artifact-reproducibility-execution.ts',
       'src/main/artifacts/artifact-reproducibility-export.ts',
       'src/main/artifacts/artifact-reproducibility-ipc.ts',
       'src/main/artifacts/artifact-reproducibility-lifecycle.ts',
       'src/main/artifacts/artifact-reproducibility-receipts.ts',
-      'src/main/artifacts/artifact-reproducibility-recipe.ts',
       'src/main/artifacts/compute-output-evidence.ts',
       'src/main/artifacts/provenance-canonical.ts',
       'src/main/artifacts/provenance-content-status.ts',
@@ -435,7 +431,6 @@ describe('Artifact Provenance repository architecture', () => {
       'src/main/artifacts/provenance-read-model.ts',
       'src/main/artifacts/provenance-repository.ts',
       'src/main/artifacts/provenance-reproducibility-execution-evidence.ts',
-      'src/main/artifacts/provenance-reproducibility-projection.ts',
       'src/main/artifacts/provenance-staging-recovery.ts',
       'src/main/artifacts/provenance-storage-contract.ts',
       'src/main/artifacts/provenance-storage.ts',
@@ -473,9 +468,6 @@ describe('Artifact Provenance repository architecture', () => {
       'src/main/artifacts/literature-manifest.ts',
       'src/main/artifacts/mcp-server.test.ts',
       'src/main/artifacts/mcp-server.ts',
-      'src/main/artifacts/output-comparison-worker.ts',
-      'src/main/artifacts/output-comparison.test.ts',
-      'src/main/artifacts/output-comparison.ts',
       'src/main/artifacts/prepared-literature-sidecar.test.ts',
       'src/main/artifacts/prepared-literature-sidecar.ts',
       'src/main/artifacts/provenance-analysis-revision.test.ts',
@@ -501,15 +493,11 @@ describe('Artifact Provenance repository architecture', () => {
       'src/main/artifacts/repository.characterization.test.ts',
       'src/main/artifacts/reproducibility-notebook-lifecycle.ts',
       'src/main/artifacts/reproducibility-source.ts',
-      'src/main/artifacts/reproduction-preflight.test.ts',
-      'src/main/artifacts/reproduction-preflight.ts',
       'src/main/artifacts/reviewer-turn-file-evidence-reader.test.ts',
       'src/main/artifacts/run-registry.ts',
       'src/main/artifacts/save-request.test.ts',
       'src/main/artifacts/save-request.ts',
       'src/main/artifacts/save-test-fixtures.ts',
-      'src/main/artifacts/scientific-output-comparison.test.ts',
-      'src/main/artifacts/scientific-output-comparison.ts',
       'src/main/artifacts/session-reproducibility-store.test.ts',
       'src/main/artifacts/session-reproducibility-store.ts',
       'src/main/artifacts/session-reproducibility.test.ts',
@@ -522,7 +510,9 @@ describe('Artifact Provenance repository architecture', () => {
       'src/main/artifacts/resumed-finalization-ownership.test.ts',
       'src/main/artifacts/export-filename.ts',
       'src/main/artifacts/artifact-reproducibility-commands.test.ts',
-      'src/main/artifacts/artifact-reproducibility-commands.ts'
+      'src/main/artifacts/artifact-reproducibility-commands.ts',
+      'src/main/artifacts/reproducibility-host.ts',
+      'src/main/artifacts/reproducibility-host.test.ts'
     ])
     expect(module.interfacePaths).toEqual([
       'src/main/artifacts/provenance-message-snapshot.ts',
@@ -534,7 +524,6 @@ describe('Artifact Provenance repository architecture', () => {
       'src/main/artifacts/artifact-reproducibility-ipc.ts',
       'src/main/artifacts/artifact-reproducibility-lifecycle.ts',
       'src/main/artifacts/artifact-reproducibility-receipts.ts',
-      'src/main/artifacts/artifact-reproducibility-recipe.ts',
       'src/main/artifacts/artifact-test-fixtures.ts',
       'src/main/artifacts/code-reconstruction.ts',
       'src/main/artifacts/content-type.ts',
@@ -546,7 +535,6 @@ describe('Artifact Provenance repository architecture', () => {
       'src/main/artifacts/provenance-execution-evidence.ts',
       'src/main/artifacts/provenance-message-finalization.ts',
       'src/main/artifacts/provenance-reproducibility-execution-evidence.ts',
-      'src/main/artifacts/provenance-reproducibility-projection.ts',
       'src/main/artifacts/provenance-snapshot-decoder.ts',
       'src/main/artifacts/provenance-storage.ts',
       'src/main/artifacts/provenance-test-fixtures.ts',
@@ -561,7 +549,8 @@ describe('Artifact Provenance repository architecture', () => {
       'src/main/notebook/reproduction-runtime.ts',
       'src/renderer/src/pages/workspace/ArtifactReproducibilityPanel.tsx',
       'src/main/artifacts/ro-crate-export.ts',
-      'src/main/artifacts/artifact-reproducibility-commands.ts'
+      'src/main/artifacts/artifact-reproducibility-commands.ts',
+      'src/main/artifacts/reproducibility-host.ts'
     ])
     expect(module.consumerModules).toEqual(['session_persistence'])
     expect(module.testFiles.owner).toEqual([
@@ -590,17 +579,14 @@ describe('Artifact Provenance repository architecture', () => {
       'src/main/artifacts/content-type.test.ts',
       'src/main/artifacts/durability.test.ts',
       'src/main/artifacts/literature-manifest.test.ts',
-      'src/main/artifacts/output-comparison.test.ts',
       'src/main/artifacts/prepared-literature-sidecar.test.ts',
       'src/main/artifacts/provenance-analysis-revision.test.ts',
       'src/main/artifacts/provenance-helper-evidence.test.ts',
       'src/main/artifacts/provenance-snapshot-decoder.test.ts',
       'src/main/artifacts/provenance-version-kind.test.ts',
       'src/main/artifacts/repository.characterization.test.ts',
-      'src/main/artifacts/reproduction-preflight.test.ts',
       'src/main/artifacts/ro-crate-export.test.ts',
       'src/main/artifacts/save-request.test.ts',
-      'src/main/artifacts/scientific-output-comparison.test.ts',
       'src/main/artifacts/session-reproducibility-store.test.ts',
       'src/main/artifacts/session-reproducibility.test.ts',
       'src/main/artifacts/storage-access.context.test.ts',
@@ -617,7 +603,8 @@ describe('Artifact Provenance repository architecture', () => {
       'src/preload/index.test.ts',
       'src/shared/renderer-contract-catalog.test.ts',
       'src/shared/renderer-surface-inventory.test.ts',
-      'src/shared/renderer-surface-matrix.test.ts'
+      'src/shared/renderer-surface-matrix.test.ts',
+      'src/main/artifacts/reproducibility-host.test.ts'
     ])
     expect(module.testFiles.consumer).toEqual([
       'src/main/storage/wsl-npm-migration.integration.test.ts',
