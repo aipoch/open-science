@@ -281,3 +281,155 @@ it.each(['incomplete-base', 'lost-owner', 'runtime-edge'])(
   },
   30_000
 )
+function packageFixture() {
+  const state = fixture()
+  const test = 'packages/independent/src/index.test.ts'
+  const source = 'packages/independent/src/index.ts'
+  const registry = {
+    schemaVersion: 1,
+    packages: [{ root: 'packages/independent', dependencies: [] as string[] }]
+  }
+  state.put(source, 'export const value = 1')
+  state.put(test, "import { value } from './index'")
+  state.put(
+    'packages/independent/package.json',
+    JSON.stringify({
+      name: '@example/independent',
+      scripts: { test: 'vitest run' },
+      exports: { '.': { default: './dist/index.js' } }
+    })
+  )
+  state.put('scripts/ci/package-test-boundaries.json', JSON.stringify(registry))
+  Object.assign(state.manifest.modules, {
+    independent: {
+      ownerPaths: [source, test, 'packages/independent/package.json'],
+      interfacePaths: [source],
+      testFiles: { owner: [test], contract: [], consumer: [] },
+      consumerModules: [],
+      capabilityOverlays: [],
+      fallbackCapability: 'main_runtime'
+    }
+  })
+  state.manifest.modules.upstream.testFiles.contract.push(test)
+  const save = () => state.put('scripts/ci/module-impact.json', JSON.stringify(state.manifest))
+  save()
+  state.git('add', '.')
+  state.git('commit', '-qm', 'independent package baseline')
+  const base = state.git('rev-parse', 'HEAD')
+  const retire = (before = base) => {
+    state.manifest.modules.upstream.testFiles.contract =
+      state.manifest.modules.upstream.testFiles.contract.filter((path) => path !== test)
+    save()
+    state.git('add', '.')
+    state.git('commit', '-qm', 'retire excluded package evidence')
+    return moduleOwnershipFromRevisions(before, state.git('rev-parse', 'HEAD'), { cwd: state.root })
+  }
+  return { ...state, test, source, registry, base, save, retire }
+}
+
+it('retires historical contract evidence only when trusted selection already excludes its independent package', () => {
+  const state = packageFixture()
+  expect(state.retire()).toMatchObject({
+    ok: true,
+    retiredPackageTests: [`upstream:contract:${state.test}`]
+  })
+}, 30_000)
+
+it.each([
+  "import '../../../src/owner'",
+  "import './missing'",
+  'import(process.env.TARGET)',
+  "vi.mock('../../../src/owner')"
+])(
+  'keeps package evidence for reachable or incomplete candidate %s',
+  (source) => {
+    const state = packageFixture()
+    state.put(state.test, source)
+    expect(state.retire().ok).toBe(false)
+  },
+  30_000
+)
+
+it('does not use candidate registry additions to authorize a retirement', () => {
+  const state = packageFixture()
+  state.put(
+    'scripts/ci/package-test-boundaries.json',
+    JSON.stringify({ schemaVersion: 1, packages: [] })
+  )
+  state.git('add', '.')
+  state.git('commit', '-qm', 'package was not trusted')
+  const base = state.git('rev-parse', 'HEAD')
+  state.put('scripts/ci/package-test-boundaries.json', JSON.stringify(state.registry))
+  expect(state.retire(base).ok).toBe(false)
+}, 30_000)
+
+it('retains declared runtime evidence from either snapshot', () => {
+  for (const existing of [false, true]) {
+    const state = packageFixture()
+    state.put('scripts/ci/module-runtime-consumers.json', JSON.stringify({ [owner]: [state.test] }))
+    let base = state.base
+    if (existing) {
+      state.git('add', '.')
+      state.git('commit', '-qm', 'base runtime relationship')
+      base = state.git('rev-parse', 'HEAD')
+      state.put('scripts/ci/module-runtime-consumers.json', '{}')
+    }
+    expect(state.retire(base).ok).toBe(false)
+  }
+}, 30_000)
+
+it('retains package evidence if its own test registration is removed', () => {
+  const state = packageFixture()
+  const independent = (
+    state.manifest.modules as Record<string, typeof state.manifest.modules.downstream>
+  ).independent
+  independent.testFiles.owner = []
+  independent.testFiles.contract = [state.test]
+  expect(state.retire().ok).toBe(false)
+}, 30_000)
+
+it('does not retire excluded package evidence from full or global owners', () => {
+  const full = packageFixture()
+  full.manifest.modules.upstream.fullTestReason = 'Dynamic consumers'
+  expect(full.retire().ok).toBe(false)
+  const global = packageFixture()
+  global.put('scripts/build.mjs', 'export {}')
+  global.manifest.modules.upstream.ownerPaths.push('scripts/build.mjs')
+  expect(global.retire().ok).toBe(false)
+}, 30_000)
+
+it('retains evidence for selected downstream packages and missing dependency registrations', () => {
+  for (const declared of [true, false]) {
+    const state = packageFixture()
+    const upstreamRoot = 'packages/owner'
+    state.put(`${upstreamRoot}/src/index.ts`, 'export const value = 1')
+    state.put(
+      `${upstreamRoot}/package.json`,
+      JSON.stringify({
+        name: '@example/owner',
+        scripts: { test: 'vitest run' },
+        exports: { '.': { default: './dist/index.js' } }
+      })
+    )
+    state.put(
+      'packages/independent/package.json',
+      JSON.stringify({
+        name: '@example/independent',
+        scripts: { test: 'vitest run' },
+        dependencies: { '@example/owner': '1.0.0' },
+        exports: { '.': { default: './dist/index.js' } }
+      })
+    )
+    state.registry.packages.push({ root: upstreamRoot, dependencies: [] })
+    if (declared) state.registry.packages[0].dependencies.push(upstreamRoot)
+    state.put('scripts/ci/package-test-boundaries.json', JSON.stringify(state.registry))
+    state.manifest.modules.upstream.ownerPaths.push(
+      `${upstreamRoot}/src/index.ts`,
+      `${upstreamRoot}/package.json`
+    )
+    state.save()
+    state.git('add', '.')
+    state.git('commit', '-qm', 'real package dependency')
+    expect(state.retire(state.git('rev-parse', 'HEAD')).ok).toBe(false)
+  }
+}, 30_000)
