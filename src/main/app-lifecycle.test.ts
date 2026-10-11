@@ -933,6 +933,26 @@ describe('installAppLifecycle', () => {
     expect(windows[0].focused).toBe(true)
   })
 
+  it('exits on a system-latched quit even when the renderer persistence flush fails', async () => {
+    // Owned-backend clean exits (web /api/shutdown) latch the system trigger: the backend is
+    // already gone, so the renderer flush cannot succeed and must not block the exit.
+    markApplicationShutdownTrigger('system')
+    const flushSessionPersistence = vi.fn(async () => 'renderer-failed' as const)
+    const { app, closeOpts, prepareForQuit, abortQuitPreparation, shutdownBackends, windows } =
+      setup({ flushSessionPersistence })
+    closeOpts[0].requestQuit()
+
+    app.emit('before-quit')
+    await flush()
+
+    expect(flushSessionPersistence).toHaveBeenCalled()
+    expect(prepareForQuit).toHaveBeenCalledOnce()
+    expect(shutdownBackends).toHaveBeenCalledOnce()
+    expect(abortQuitPreparation).not.toHaveBeenCalled()
+    expect(app.exit).toHaveBeenCalledExactlyOnceWith(0)
+    expect(windows[0].visible).toBe(true)
+  })
+
   it.each(['send-failed', 'timeout', 'renderer-failed'] as const)(
     'aborts ordinary quit and asks for consent when the renderer persistence preflight returns %s',
     async (outcome) => {
