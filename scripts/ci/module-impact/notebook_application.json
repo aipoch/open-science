@@ -524,7 +524,6 @@
       "src/main/notebook/environment-lifecycle-workflows.test.ts",
       "src/main/notebook/environment-management.test.ts",
       "src/main/notebook/environment-operations.test.ts",
-      "src/main/notebook/external-environment-lock.test.ts",
       "src/main/notebook/host-artifacts-service.test.ts",
       "src/main/notebook/kernel-executor.test.ts",
       "src/main/notebook/kernel-process-lifecycle.test.ts",

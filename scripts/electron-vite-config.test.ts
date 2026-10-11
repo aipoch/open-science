@@ -32,7 +32,8 @@ describe('electron-vite renderer dependency optimization', () => {
         '@aipoch/connector-mcp-client/oauth-redirect',
         '@aipoch/diagnostics',
         '@aipoch/skills/document',
-        '@aipoch/notebook-analysis/contracts'
+        '@aipoch/notebook-analysis/contracts',
+        '@aipoch/environment/contracts'
       ],
       entries: [
         '*.html',

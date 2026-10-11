@@ -149,7 +149,8 @@ vi.mock('pdfjs-dist/legacy/build/pdf.mjs', () => ({
 // (shutdown calls terminate, awaits it, and gets back a { reaped } result). It defaults to a clean
 // reaped:true; a dedicated test overrides one call with reaped:false to pin the AND-accumulation into
 // the shutdown result (so dropping that accumulation in the runtime is caught).
-vi.mock('../process-tree', () => ({
+vi.mock('../process-tree', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../process-tree')>()),
   terminateProcessTree: vi.fn(async (child?: { kill?: () => void }) => {
     child?.kill?.()
     return { reaped: true }

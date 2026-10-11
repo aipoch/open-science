@@ -19,7 +19,7 @@ vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
   errorLogFields: (error: unknown) => ({ error })
 }))
 vi.mock('../notebook/runtime-service', () => ({ NotebookRuntimeService: class {} }))
-vi.mock('@aipoch/environment', async (importOriginal) => ({
+vi.mock('../notebook/environment-production', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../notebook/environment-production')>()),
   createProductionProvisioner: mocks.createProvisioner
 }))

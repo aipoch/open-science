@@ -772,7 +772,6 @@
       "src/main/notebook/environment-management.test.ts",
       "src/main/notebook/environment-operations.test.ts",
       "src/main/notebook/evidence-diagnostics.test.ts",
-      "src/main/notebook/external-environment-lock.test.ts",
       "src/main/notebook/full-stack.smoke.test.ts",
       "src/main/notebook/heatmap-loop.integration.test.ts",
       "src/main/notebook/helper-module-host.test.ts",

@@ -1,10 +1,10 @@
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
-import { captureNotebookEnvironmentLock, decodeNotebookEnvironmentLock } from '@aipoch/environment'
-import type { NotebookEnvironmentLock } from '@aipoch/environment/contracts'
-import type { NotebookEnvironmentManifest } from '../../shared/notebook'
-import { nativeLockRestoreState } from '@aipoch/environment'
+import { captureNotebookEnvironmentLock, decodeNotebookEnvironmentLock } from './index'
+import type { NotebookEnvironmentLock } from './contracts'
+import type { NotebookEnvironmentManifest } from './contracts'
+import { nativeLockRestoreState } from './index'
 
 const content = JSON.stringify({
   R: { Version: '4.4.3', Repositories: [{ Name: 'CRAN', URL: 'https://cloud.r-project.org' }] },
@@ -59,6 +59,29 @@ const manifest: NotebookEnvironmentManifest = {
 }
 
 describe('conditional external environment locks', () => {
+  it.each(['version', 'installerVersion'] as const)(
+    'rejects long malformed %s without ambiguous version matching',
+    (field) => {
+      const externalRuntime = {
+        ...lock.externalRuntime,
+        [field]: '1.2.3' + '0'.repeat(25000) + '!'
+      }
+      expect(
+        decodeNotebookEnvironmentLock(JSON.stringify({ ...lock, externalRuntime })).status
+      ).toBe('corrupt')
+    }
+  )
+
+  it.each(['3.12.7', '3.12.7rc1', '3.12.7+build.2', '3.12.7000', '3.12.7-rc.1'])(
+    'preserves accepted external version spelling %s',
+    (version) => {
+      const externalRuntime = { version, installerVersion: version }
+      expect(
+        decodeNotebookEnvironmentLock(JSON.stringify({ ...lock, externalRuntime })).status
+      ).toBe('valid')
+    }
+  )
+
   it('accepts an explicit native prerequisite and never disguises it as a v1 Conda lock', () => {
     expect(decodeNotebookEnvironmentLock(JSON.stringify(lock)).status).toBe('valid')
     expect(nativeLockRestoreState(lock, manifest.packages).state).toBe('ready')

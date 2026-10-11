@@ -44,7 +44,6 @@
       "src/main/notebook/environment-management.test.ts",
       "src/main/notebook/environment-recovery.contract.test.ts",
       "src/main/notebook/environment-restoration-sandbox.contract.test.ts",
-      "src/main/notebook/external-environment-lock.test.ts",
       "src/main/notebook/local-rpc-server.test.ts",
       "src/main/notebook/reproduction-runtime.integration.test.ts",
       "src/main/notebook/reproduction-runtime.test.ts",
@@ -1340,7 +1339,11 @@
       "src/main/notebook/environment-resources.test.ts",
       "src/main/notebook/windows-runtime-components.test.ts",
       "src/main/notebook/environment-process.contract.test.ts",
-      "packages/environment/src/pip-wheel-evidence.test.ts"
+      "packages/environment/src/pip-wheel-evidence.test.ts",
+      "packages/notebook-network-sandbox/src/wsl2-isolation.integration.test.ts",
+      "packages/notebook-network-sandbox/src/wsl2-isolation.test.ts",
+      "scripts/verify-runtime-bundle.test.ts",
+      "packages/environment/src/external-environment-lock.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive"],

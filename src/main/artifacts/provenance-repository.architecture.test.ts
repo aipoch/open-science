@@ -769,7 +769,6 @@ describe('Artifact Provenance repository architecture', () => {
       'src/main/notebook/artifact-analysis-contract.integration.test.ts',
       'src/main/notebook/artifact-r-reproduction.integration.test.ts',
       'src/main/notebook/e2e.certification.test.ts',
-      'src/main/notebook/environment-state-tracker.test.ts',
       'src/main/notebook/host-artifacts-service.test.ts',
       'src/main/notebook/host-mcp.integration.test.ts',
       'src/main/notebook/host-model-service.test.ts',
@@ -997,7 +996,8 @@ describe('Artifact Provenance repository architecture', () => {
       'src/main/session-plan/session-plan-turn-outcome.test.ts',
       'src/main/acp/specialist-switch-recovery.integration.test.ts',
       'src/main/agents/production-completion-handoff.test.ts',
-      'src/renderer/src/pages/literature/literature-localization.render.test.tsx'
+      'src/renderer/src/pages/literature/literature-localization.render.test.tsx',
+      'src/main/notebook/environment-capture.contract.test.ts'
     ])
     expect(module.capabilityOverlays).toEqual([
       'windows_sensitive',

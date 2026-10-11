@@ -441,10 +441,10 @@ const environmentLockValue = (value: unknown): NotebookEnvironmentLock | undefin
       : components.some((component) => component.ecosystem === 'conda') ||
         !recordValue(lock.externalRuntime) ||
         !hasOnlyKeys(recordValue(lock.externalRuntime)!, ['version', 'installerVersion']) ||
-        !/^\d+\.\d+\.\d+(?:[a-z0-9.+-]*)?$/iu.test(
+        !/^\d+\.\d+\.\d+(?:[a-z.+-][a-z0-9.+-]*)?$/iu.test(
           String(recordValue(lock.externalRuntime)?.version ?? '')
         ) ||
-        !/^\d+\.\d+(?:[a-z0-9.+-]*)?$/iu.test(
+        !/^\d+\.\d+(?:[a-z.+-][a-z0-9.+-]*)?$/iu.test(
           String(recordValue(lock.externalRuntime)?.installerVersion ?? '')
         ) ||
         !['win32', 'darwin', 'linux'].includes(String(lock.platform)) ||

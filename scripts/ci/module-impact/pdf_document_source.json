@@ -802,7 +802,6 @@
       "src/main/background-result-delivery/source-resolver.test.ts",
       "src/main/notebook/environment-operations.test.ts",
       "src/main/notebook/evidence-diagnostics.test.ts",
-      "src/main/notebook/external-environment-lock.test.ts",
       "src/main/notebook/ipynb-export.test.ts",
       "src/main/notebook/package-admission.test.ts",
       "src/main/notebook/run-document-data-paths.test.ts",

@@ -22,9 +22,7 @@ const discoveryState = vi.hoisted(() => ({
 }))
 
 vi.mock('@aipoch/environment', async (importOriginal) => ({
-  rscriptFor: (await importOriginal<typeof import('@aipoch/environment')>()).rscriptFor,
-  windowsCondaPrefixForR: (await importOriginal<typeof import('@aipoch/environment')>())
-    .windowsCondaPrefixForR,
+  ...(await importOriginal<typeof import('@aipoch/environment')>()),
   defaultDiscoveryDeps: (
     runtimeRoot: string,
     getManualInterpreters: (language: NotebookLanguage) => string[]

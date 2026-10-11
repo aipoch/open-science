@@ -493,7 +493,6 @@
       "src/main/notebook/runtime-repair.test.ts",
       "src/main/notebook/application-commands.test.ts",
       "src/main/application-event-flow.test.ts",
-      "src/main/notebook/external-environment-lock.test.ts",
       "src/main/notebook/artifact-r-reproduction.integration.test.ts",
       "src/main/artifacts/artifact-reproducibility-receipts.test.ts",
       "src/main/artifacts/artifact-reproducibility-recipe.test.ts",

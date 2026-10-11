@@ -104,7 +104,10 @@ jobs:
       # staging-irrelevant postinstall (prisma generate + electron-builder native rebuild); staging only
       # needs these JS/WASM deps plus the micromamba fetched below.
       - name: Install dependencies
-        run: npm ci --ignore-scripts --no-audit
+        run: |
+          npm ci --ignore-scripts --no-audit
+          npm run build:diagnostics
+          npm run build:environment
 
       # micromamba comes from the pinned official GitHub release asset (see fetch-micromamba.mjs), not
       # our CDN, so staging never depends on a chicken-and-egg CDN state. Fetch the RUNNER's native
@@ -142,8 +145,7 @@ jobs:
           echo "staged ${#archives[@]} pack archives for ${{ matrix.subdir }}"
           [ "${#archives[@]}" -gt 0 ]
 
-      # Read DEFAULT_ENV_VERSION straight from its source of truth so the CDN path always matches the
-      # version segment the app/build keys off (runtime-paths.ts DEFAULT_ENV_VERSION).
+      # Read the public package version so the CDN path matches the runtime contract.
       - name: Resolve bundle version
         id: ver
         env:
@@ -151,7 +153,7 @@ jobs:
         shell: bash
         run: |
           requested="$REQUESTED_VERSION"
-          current=$(node -e "const s=require('fs').readFileSync('packages/environment/src/runtime-paths.ts','utf8');process.stdout.write(String(s.match(/DEFAULT_ENV_VERSION\s*=\s*(\d+)/)[1]))")
+          current=$(node -p "require('@aipoch/environment').DEFAULT_ENV_VERSION")
           if ! [[ "$requested" =~ ^[1-9][0-9]*$ ]]; then
             echo "::error::version must be a positive integer"
             exit 1

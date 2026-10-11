@@ -86,7 +86,7 @@ import { createRequire } from 'node:module'
 import { realpathSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { EnvironmentLeaseManager, EnvironmentStateTracker, installPackages, parseNotebookEnvironmentLock, decodeNotebookEnvironmentLock } from '@aipoch/environment'
+import { EnvironmentLeaseManager, EnvironmentStateTracker, installPackages, parseNotebookEnvironmentLock, decodeNotebookEnvironmentLock, validateNotebookHelperExports } from '@aipoch/environment'
 import type { NotebookEnvironmentManifest } from '@aipoch/environment/contracts'
 const require = createRequire(import.meta.url)
 assert.ok(realpathSync(require.resolve('@aipoch/environment')).startsWith(process.cwd()))
@@ -112,6 +112,7 @@ assert.equal(manifest.executionContext?.consumer, 'independent')
 assert.deepEqual(JSON.parse(await readFile(capture.storagePath,'utf8')), manifest)
 const installed = await installPackages({language:'python',packages:['example'],usePip:true},{storageRoot:process.cwd(),interpreter:{command:'python'},spawn:async () => ({code:0,stdout:'installed',stderr:''})})
 assert.equal(installed.ok,true)
+await validateNotebookHelperExports('isolated-consumer', 'def value(): return 42', ['value'])
 console.log('Independent environment tarball: exports, types, leases, manifest persistence and injected installation passed.')
 `
   )

@@ -264,7 +264,7 @@ const NOTEBOOK_HELPER_VALIDATION_TIMEOUT_MS = 15_000
 export const validateNotebookHelperExports = async (
   helperId: string,
   source: string,
-  exports: readonly string[],
+  exportNames: readonly string[],
   deps: { python?: PythonCommand; env?: NodeJS.ProcessEnv; trustedSource?: boolean } = {}
 ): Promise<void> => {
   const python = deps.python ?? (await resolvePythonCommand())
@@ -309,7 +309,11 @@ export const validateNotebookHelperExports = async (
     })
     child.stdin.end(
       Buffer.from(
-        JSON.stringify({ source, exports, trustedSource: deps.trustedSource ?? false }),
+        JSON.stringify({
+          source,
+          exports: exportNames,
+          trustedSource: deps.trustedSource ?? false
+        }),
         'utf8'
       ).toString('base64')
     )

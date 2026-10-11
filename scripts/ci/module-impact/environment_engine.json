@@ -83,7 +83,8 @@
     "packages/environment/src/provisioner.startup.test.ts",
     "packages/environment/src/runtime-relocation.ts",
     "packages/environment/src/package-version-comparison.ts",
-    "packages/environment/src/environment-lock.ts"
+    "packages/environment/src/environment-lock.ts",
+    "packages/environment/src/external-environment-lock.test.ts"
   ],
   "interfacePaths": ["packages/environment/src/index.ts"],
   "consumerModules": [
@@ -139,7 +140,8 @@
       "packages/environment/src/bundle-manifest.test.ts",
       "packages/environment/src/environment-lease-manager.test.ts",
       "packages/environment/src/runtime-relocation.test.ts",
-      "packages/environment/src/provisioner.startup.test.ts"
+      "packages/environment/src/provisioner.startup.test.ts",
+      "packages/environment/src/external-environment-lock.test.ts"
     ],
     "contract": [],
     "consumer": [
@@ -163,7 +165,6 @@
       "src/main/notebook/environment-lifecycle-workflows.test.ts",
       "src/main/notebook/environment-management.test.ts",
       "src/main/notebook/environment-operations.test.ts",
-      "src/main/notebook/external-environment-lock.test.ts",
       "src/main/notebook/full-stack.smoke.test.ts",
       "src/main/notebook/kernel-executor.test.ts",
       "src/main/notebook/kernel-process-lifecycle.test.ts",
@@ -657,7 +658,10 @@
       "src/main/artifacts/provenance-analysis-revision.test.ts",
       "src/renderer/src/pages/workspace/ArtifactProvenancePanel.render.test.tsx",
       "src/main/artifacts/artifact-reproducibility-ipc.test.ts",
-      "src/main/artifacts/artifact-reproducibility-export.test.ts"
+      "src/main/artifacts/artifact-reproducibility-export.test.ts",
+      "packages/notebook-network-sandbox/src/wsl2-isolation.integration.test.ts",
+      "packages/notebook-network-sandbox/src/wsl2-isolation.test.ts",
+      "scripts/verify-runtime-bundle.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],
