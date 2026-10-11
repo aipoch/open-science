@@ -62,7 +62,7 @@ it('signs a verified runtime artifact without granting CDN publication access', 
   })
   expect(workflow.permissions).toEqual({ actions: 'read', contents: 'read', 'id-token': 'write' })
   expect(sign).toMatchObject({
-    environment: 'windows-runtime-signing',
+    environment: 'windows-signing',
     permissions: { actions: 'read', contents: 'read', 'id-token': 'write' }
   })
   expect(sign.outputs).toEqual({ artifact_id: '${{ steps.upload.outputs.artifact-id }}' })

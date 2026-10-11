@@ -43,9 +43,9 @@ jobs:
     name: Sign Windows Notebook runtime
     runs-on: windows-2022
     timeout-minutes: 30
-    # Runtime preparation is signed from main under its own protected environment. The application
-    # release environment remains tag-only and is used by build.yml for installer signing.
-    environment: windows-runtime-signing
+    # Runtime and installer PEs are signed from the same Azure Trusted Signing environment; the
+    # OIDC federated credential and signing variables are scoped to windows-signing.
+    environment: windows-signing
     permissions:
       actions: read
       contents: read
@@ -182,7 +182,7 @@ jobs:
             'AZURE_SIGNING_PUBLISHER'
           )) {
             if ([string]::IsNullOrWhiteSpace((Get-Item "env:$name").Value)) {
-              throw "Missing windows-runtime-signing variable: $name"
+              throw "Missing windows-signing variable: $name"
             }
           }
 
