@@ -36,6 +36,35 @@ describe('macOS native privacy purpose descriptions', () => {
 })
 
 describe('electron-builder local evidence exclusion', () => {
+  it('keeps prior CLI release artifacts out of a repeated desktop build', async () => {
+    const config = load(readFileSync('electron-builder.yml', 'utf8')) as { files: string[] }
+    const root = await mkdtemp(join(tmpdir(), 'desktop-cli-artifacts-'))
+    const source = join(root, 'source')
+    const destination = join(root, 'packaged')
+    const applicationFiles = ['out/main/index.js', 'out/renderer/index.html']
+    const cliArtifacts = [
+      'out/cli-artifacts/open-science-0.37.0-win32-x64.zip',
+      'out/cli-artifacts/win32-x64.json',
+      'out/cli-artifacts/.archive-fixture/backend/index.cjs'
+    ]
+    try {
+      for (const file of [...applicationFiles, ...cliArtifacts]) {
+        const target = join(source, file)
+        await mkdir(join(target, '..'), { recursive: true })
+        await writeFile(target, file)
+      }
+      await copyFiles([
+        new FileMatcher(source, destination, (value) => value, ['**/*', ...config.files])
+      ])
+      for (const file of applicationFiles)
+        expect(await readFile(join(destination, file), 'utf8')).toBe(file)
+      for (const file of cliArtifacts)
+        await expect(readFile(join(destination, file))).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('copies the ordinary Node backend dependency tree through the real builder filter', async () => {
     const config = load(readFileSync('electron-builder.yml', 'utf8')) as {
       extraResources: Array<{ from: string; to: string; filter?: string[] }>

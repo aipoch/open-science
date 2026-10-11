@@ -10,7 +10,8 @@ beforePack: build/stage-desktop-runtime.cjs
 afterPack: build/adhoc-sign.cjs
 afterSign: build/sign-windows.cjs
 files:
-  - '!out/{backend,standalone,node-runtime,web}{,/**/*}'
+  # CLI release archives and staging files can remain after a prior packaging run.
+  - '!out/{backend,standalone,node-runtime,web,cli-artifacts}{,/**/*}'
   - '!**/.vscode/*'
   # Agent/AI tooling state lives in the project (.claude holds git worktrees — full nested repo
   # copies, easily >1GB — plus memory/logs; .codex is similar). electron-builder sweeps in everything
