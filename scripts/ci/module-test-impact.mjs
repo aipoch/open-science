@@ -364,7 +364,7 @@ function argumentValue(arguments_, name) {
   return index === -1 ? undefined : arguments_[index + 1]
 }
 
-export function runModuleTestCli(arguments_ = process.argv.slice(2), options = {}) {
+export async function runModuleTestCli(arguments_ = process.argv.slice(2), options = {}) {
   const separator = arguments_.indexOf('--')
   const forwardedArguments = separator === -1 ? [] : arguments_.slice(separator + 1)
   if (separator !== -1) arguments_ = arguments_.slice(0, separator)
@@ -395,7 +395,27 @@ export function runModuleTestCli(arguments_ = process.argv.slice(2), options = {
     head,
     ...options
   })
-  const plan = createAffectedTestPlan(changes, graph, manifest, registrationModules)
+  let plan = createAffectedTestPlan(changes, graph, manifest, registrationModules)
+  // Keep preflight dependency-free; refine only the installed test runner's package-only plan.
+  if (
+    plan.mode === 'selective' &&
+    changes.length &&
+    changes.every(({ path }) => path.startsWith('packages/'))
+  ) {
+    try {
+      const { refinePackageHostTests } = await import('./package-host-test-impact.mjs')
+      plan = refinePackageHostTests(plan, changes, manifest, {
+        base,
+        head,
+        graphTests: graph.testFiles,
+        ...options
+      })
+    } catch {
+      plan.reasonChains.push(
+        'package host evidence unavailable -> retain complete declared selection'
+      )
+    }
+  }
   if (arguments_.includes('--explain')) {
     process.stdout.write(formatModuleTestPlan(plan))
     return 0
@@ -438,7 +458,7 @@ const isDirectExecution =
 
 if (isDirectExecution) {
   try {
-    process.exitCode = runModuleTestCli()
+    process.exitCode = await runModuleTestCli()
   } catch (error) {
     console.error(error instanceof Error ? error.message : error)
     process.exitCode = 1

@@ -3,7 +3,8 @@
 import { execFileSync } from 'node:child_process'
 import {
   verifiedConsumerRetirements,
-  verifiedExcludedPackageTests
+  verifiedExcludedPackageTests,
+  verifiedPdfTextOwnerSplit
 } from './consumer-retirement.mjs'
 import {
   moduleImpactRegistrationPath,
@@ -43,7 +44,8 @@ function registrationViolations(
   headFiles,
   changes = [],
   retiredConsumers = new Set(),
-  retiredPackageTests = new Set()
+  retiredPackageTests = new Set(),
+  boundedOwnerSplits = new Set()
 ) {
   // Compare checked-in routing only; local graph evidence must not mask lost coverage.
   const graph = { status: 'not-used', testFiles: [] }
@@ -158,7 +160,10 @@ function registrationViolations(
         base[field],
         head[field],
         `${id}.${field}`,
-        (path) => headFiles.has(path) && !movedPathOwner(path, base)
+        (path) =>
+          headFiles.has(path) &&
+          !boundedOwnerSplits.has(`${id}:${path}`) &&
+          !movedPathOwner(path, base)
       )
     }
     for (const kind of testKinds) {
@@ -224,7 +229,8 @@ export function checkModuleOwnership({
   headFiles,
   changes,
   retiredConsumers = new Set(),
-  retiredPackageTests = new Set()
+  retiredPackageTests = new Set(),
+  boundedOwnerSplits = new Set()
 }) {
   validateModuleImpactManifest(baseManifest)
   const before = new Set(baseFiles)
@@ -240,7 +246,8 @@ export function checkModuleOwnership({
     after,
     changes,
     retiredConsumers,
-    retiredPackageTests
+    retiredPackageTests,
+    boundedOwnerSplits
   )
   const legacyGaps = []
   for (const path of headFiles.filter(isModuleOwnershipPath)) {
@@ -268,7 +275,8 @@ export function checkModuleOwnership({
     violations,
     legacyGaps,
     retiredConsumers: [...retiredConsumers],
-    retiredPackageTests: [...retiredPackageTests]
+    retiredPackageTests: [...retiredPackageTests],
+    boundedOwnerSplits: [...boundedOwnerSplits]
   }
 }
 
@@ -300,6 +308,9 @@ export function moduleOwnershipFromRevisions(base, head, { cwd = process.cwd() }
       cwd
     }),
     retiredPackageTests: verifiedExcludedPackageTests(mergeBase, head, baseManifest, headManifest, {
+      cwd
+    }),
+    boundedOwnerSplits: verifiedPdfTextOwnerSplit(mergeBase, head, baseManifest, headManifest, {
       cwd
     }),
     changes: parseNameStatus(git('diff', '--name-status', '-z', mergeBase, head))

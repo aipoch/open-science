@@ -420,6 +420,10 @@ ${(result.retiredPackageTests ?? []).map((entry) => `- <code>${escapeHtml(entry)
 ### Historical module ownership gaps (nonblocking)
 
 ${(result.legacyGaps ?? []).map((path) => `- <code>${escapeHtml(path)}</code>`).join('\n') || '- None'}
+
+### Verified bounded owner splits
+
+${(result.boundedOwnerSplits ?? []).map((entry) => `- <code>${escapeHtml(entry)}</code>`).join('\n') || '- None'}
 `
 }
 
@@ -432,6 +436,7 @@ export function runCiIntegrityCli(arguments_ = process.argv.slice(2), environmen
   result.legacyGaps = ownership.legacyGaps
   result.retiredConsumers = ownership.retiredConsumers
   result.retiredPackageTests = ownership.retiredPackageTests
+  result.boundedOwnerSplits = ownership.boundedOwnerSplits
   result.ok = result.ok && ownership.ok
 
   if (environment.GITHUB_STEP_SUMMARY) {

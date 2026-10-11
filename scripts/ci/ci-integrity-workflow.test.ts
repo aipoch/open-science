@@ -74,7 +74,7 @@ describe('CI Integrity workflow', () => {
       }
     })
     expect(step('Setup Node')).toMatchObject({
-      uses: 'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
+      uses: 'actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1',
       with: { 'node-version': 24, cache: 'npm' }
     })
     expect(step('Install trusted parsing toolchain').run).toBe('npm ci --ignore-scripts --no-audit')

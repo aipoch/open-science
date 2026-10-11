@@ -112,53 +112,56 @@ describe('module test impact commands', () => {
   it.each([
     ['--shard=2/3', '--reporter=blob', '--outputFile=vitest-reports/blob-2.json'],
     ['--merge-reports=vitest-reports', '--passWithNoTests']
-  ])('preserves module selection and changed coverage when forwarding %j', (...vitestArguments) => {
-    const spawn = vi.fn(() => ({ status: 0 }))
-    const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
-    const source = 'src/main/notebook/mcp-server.ts'
-    const plan = createAffectedTestPlan([{ path: source, status: 'modified' }], {
-      status: 'unavailable-manifest-only',
-      testFiles: []
-    })
-    try {
-      runModuleTestCli(
-        [
-          'affected',
-          '--base',
-          'base',
-          '--head',
-          'head',
-          '--coverage-changed',
-          'base',
-          '--',
-          ...vitestArguments
-        ],
-        {
-          execute: (command: string, args: string[]) => {
-            if (command === 'git' && args[0] === 'merge-base') return 'base\n'
-            if (command === 'git' && args[0] === 'diff') return Buffer.from(`M\0${source}\0`)
-            throw new Error('CodeGraph unavailable in CI')
-          },
-          spawn,
-          environment: { npm_execpath: '/npm/bin/npm-cli.js' }
-        }
-      )
-      const merging = vitestArguments[0].startsWith('--merge-reports')
-      expect(spawn.mock.calls[0]?.[1]).toEqual([
-        '/npm/bin/npm-cli.js',
-        ...(merging ? ['exec', '--', 'vitest', 'run'] : ['test', '--']),
-        '--coverage',
-        `--coverage.include=${source}`,
-        ...vitestArguments,
-        ...(merging ? [] : plan.testFiles)
-      ])
-      expect(spawn.mock.calls[0]?.[2]?.env).toMatchObject({
-        VITEST_CHANGED_COVERAGE_THRESHOLDS: '1'
+  ])(
+    'preserves module selection and changed coverage when forwarding %j',
+    async (...vitestArguments) => {
+      const spawn = vi.fn(() => ({ status: 0 }))
+      const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+      const source = 'src/main/notebook/mcp-server.ts'
+      const plan = createAffectedTestPlan([{ path: source, status: 'modified' }], {
+        status: 'unavailable-manifest-only',
+        testFiles: []
       })
-    } finally {
-      write.mockRestore()
+      try {
+        await runModuleTestCli(
+          [
+            'affected',
+            '--base',
+            'base',
+            '--head',
+            'head',
+            '--coverage-changed',
+            'base',
+            '--',
+            ...vitestArguments
+          ],
+          {
+            execute: (command: string, args: string[]) => {
+              if (command === 'git' && args[0] === 'merge-base') return 'base\n'
+              if (command === 'git' && args[0] === 'diff') return Buffer.from(`M\0${source}\0`)
+              throw new Error('CodeGraph unavailable in CI')
+            },
+            spawn,
+            environment: { npm_execpath: '/npm/bin/npm-cli.js' }
+          }
+        )
+        const merging = vitestArguments[0].startsWith('--merge-reports')
+        expect(spawn.mock.calls[0]?.[1]).toEqual([
+          '/npm/bin/npm-cli.js',
+          ...(merging ? ['exec', '--', 'vitest', 'run'] : ['test', '--']),
+          '--coverage',
+          `--coverage.include=${source}`,
+          ...vitestArguments,
+          ...(merging ? [] : plan.testFiles)
+        ])
+        expect(spawn.mock.calls[0]?.[2]?.env).toMatchObject({
+          VITEST_CHANGED_COVERAGE_THRESHOLDS: '1'
+        })
+      } finally {
+        write.mockRestore()
+      }
     }
-  })
+  )
 
   it('selects the standalone workflow contract instead of the global fallback', () => {
     const plan = createAffectedTestPlan(
@@ -695,7 +698,7 @@ describe('module test impact commands', () => {
     write.mockRestore()
   })
 
-  it('pins coverage to the PR diff when checkout contains newer main changes', () => {
+  it('pins coverage to the PR diff when checkout contains newer main changes', async () => {
     const cwd = mkdtempSync(resolve(tmpdir(), 'module-coverage-'))
     const git = (...args: string[]): string =>
       execFileSync('git', args, { cwd, encoding: 'utf8' }).trim()
@@ -722,15 +725,18 @@ describe('module test impact commands', () => {
       // Vitest coverage.changed compares with checkout HEAD, including this unrelated file.
       expect(git('diff', '--name-only', `${base}...HEAD`)).toContain('src/main-only.ts')
       const spawn = vi.fn(() => ({ status: 0 }))
-      runModuleTestCli(['affected', '--base', base, '--head', head, '--coverage-changed', base], {
-        cwd,
-        execute: (command: string, args: string[]) => {
-          if (command === 'codegraph') throw new Error('CodeGraph unavailable in CI')
-          return execFileSync(command, args, { cwd, encoding: 'utf8' })
-        },
-        spawn,
-        environment: { npm_execpath: '/npm/bin/npm-cli.js' }
-      })
+      await runModuleTestCli(
+        ['affected', '--base', base, '--head', head, '--coverage-changed', base],
+        {
+          cwd,
+          execute: (command: string, args: string[]) => {
+            if (command === 'codegraph') throw new Error('CodeGraph unavailable in CI')
+            return execFileSync(command, args, { cwd, encoding: 'utf8' })
+          },
+          spawn,
+          environment: { npm_execpath: '/npm/bin/npm-cli.js' }
+        }
+      )
       const args = spawn.mock.calls[0]?.[1]
       expect(args).toContain(`--coverage.include=${changed}`)
       expect(args).not.toContain('--coverage.changed')
@@ -752,11 +758,11 @@ describe('module test impact commands', () => {
       diff: 'R100\0src/renderer/src/stores/session-store-persistence-merge.ts\0src/renderer/src/stores/renamed.ts\0',
       include: 'src/renderer/src/stores/renamed.ts'
     }
-  ])('scopes coverage for $name', ({ diff, include }) => {
+  ])('scopes coverage for $name', async ({ diff, include }) => {
     const spawn = vi.fn(() => ({ status: 0 }))
     const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
     try {
-      runModuleTestCli(
+      await runModuleTestCli(
         ['affected', '--base', 'base', '--head', 'head', '--coverage-changed', 'base'],
         {
           execute: (command: string, args: string[]) => {
@@ -775,7 +781,7 @@ describe('module test impact commands', () => {
     }
   })
 
-  it.each(['same', 'different'])('keeps coverage pinned with a %s baseline', (baseline) => {
+  it.each(['same', 'different'])('keeps coverage pinned with a %s baseline', async (baseline) => {
     const base = '1'.repeat(40)
     const head = '2'.repeat(40)
     const coverageBase = baseline === 'same' ? base : '3'.repeat(40)
@@ -799,7 +805,7 @@ describe('module test impact commands', () => {
     )
 
     expect(
-      runModuleTestCli(
+      await runModuleTestCli(
         ['affected', '--base', base, '--head', head, '--coverage-changed', coverageBase],
         {
           cwd: '/repo',

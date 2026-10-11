@@ -779,6 +779,7 @@ describe('pull request change classification', () => {
     'src/main/notebook/windows-shell.ts',
     'packages/notebook-code-risk/src/index.ts',
     'src/main/notebook/runtime-service.ts',
+    'src/main/notebook/environment-resources.ts',
     'src/shared/tool-detail-sanitizer.ts',
     'src/shared/renderer-contract-catalog.ts',
     'src/shared/renderer-contracts/settings-preferences.ts'

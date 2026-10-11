@@ -7,7 +7,7 @@ import { createPackageTestPlan, validatePackageTestRegistry } from './package-te
 
 // Read immutable Git objects, never materialize or execute candidate code. A bounded
 // batch also avoids one subprocess per dependency when inspecting a renderer cone.
-function snapshot(revision, cwd) {
+export function sourceSnapshot(revision, cwd) {
   const git = (...args) => execFileSync('git', args, { cwd, maxBuffer: 128 * 1024 * 1024 })
   const entries = new Map(
     git('ls-tree', '-r', '-z', revision)
@@ -55,7 +55,7 @@ function snapshot(revision, cwd) {
   return { files: new Set(entries.keys()), read }
 }
 
-export function createConsumerDependencyReader(source, runtimeEdges) {
+export function createConsumerDependencyReader(source, runtimeEdges, { staticOnly = false } = {}) {
   const root = resolve('/__module_evidence__').replaceAll('\\', '/')
   const key = (path) => posix.relative(root, path.replaceAll('\\', '/'))
   const directories = new Set([root])
@@ -130,6 +130,28 @@ export function createConsumerDependencyReader(source, runtimeEdges) {
     const ast = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true)
     if (ast.parseDiagnostics.length) result.complete = false
     const visit = (node) => {
+      // Test pruning needs stronger evidence than registration auditing: these globals
+      // can reach IPC, external processes or filesystem resources without an import edge.
+      if (
+        staticOnly &&
+        ts.isIdentifier(node) &&
+        [
+          'window',
+          'globalThis',
+          'process',
+          'fetch',
+          'Worker',
+          'WebSocket',
+          'XMLHttpRequest',
+          'eval',
+          'Function',
+          'require',
+          'document',
+          'navigator',
+          'self'
+        ].includes(node.text)
+      )
+        result.complete = false
       if (ts.isCallExpression(node)) {
         const expression = node.expression.getText(ast)
         if (
@@ -165,6 +187,22 @@ export function createConsumerDependencyReader(source, runtimeEdges) {
       ).resolvedModule?.resolvedFileName
       if (resolved && source.files.has(key(resolved))) result.paths.add(key(resolved))
       else if (
+        (staticOnly &&
+          ![
+            'vitest',
+            'react',
+            'react/jsx-runtime',
+            'react-dom',
+            'react-dom/client',
+            'react-dom/server',
+            '@testing-library/react',
+            '@testing-library/user-event',
+            'node:path',
+            'node:url',
+            'node:util',
+            'node:assert',
+            'node:assert/strict'
+          ].includes(spec)) ||
         spec.startsWith('.') ||
         spec.startsWith('/') ||
         spec.startsWith('@/') ||
@@ -187,6 +225,8 @@ export function createConsumerDependencyReader(source, runtimeEdges) {
       visited.add(path)
       const next = dependencies(path)
       complete &&= next.complete
+      // Static-only callers retain uncertain tests; no further traversal can permit omission.
+      if (staticOnly && !complete) return { reachable: false, complete: false }
       pending.push(...next.paths)
     }
     return { reachable: false, complete }
@@ -212,8 +252,8 @@ export function verifiedConsumerRetirements(
   })
   if (!candidates.length) return new Set()
   try {
-    const before = snapshot(base, cwd),
-      after = snapshot(head, cwd)
+    const before = sourceSnapshot(base, cwd),
+      after = sourceSnapshot(head, cwd)
     // Preserve trusted dynamic/source-read evidence even if the candidate deletes it.
     const runtimeEdges = [before, after].flatMap((source) => {
       const text = source.read('scripts/ci/module-runtime-consumers.json')
@@ -273,6 +313,101 @@ export function provablyStaleConsumerTests(owner, inspect) {
   })
 }
 
+// A reviewed one-time boundary correction, not a general exemption for shared contracts.
+// The original full owner and all of its evidence remain protected by the ordinary checker.
+export function verifiedPdfTextOwnerSplit(
+  base,
+  head,
+  baseManifest,
+  headManifest,
+  { cwd = process.cwd() } = {}
+) {
+  const originalId = 'shared_application_contracts'
+  const paths = ['src/shared/pdf-text.ts', 'src/shared/pdf-text.test.ts']
+  const original = baseManifest.modules[originalId]
+  const remaining = headManifest.modules[originalId]
+  const target = headManifest.modules.pdf_text
+  if (!original?.fullTestReason || !remaining || !target || baseManifest.modules.pdf_text)
+    return new Set()
+  try {
+    // This transition may only change registration data, never the code used as proof.
+    const changed = execFileSync('git', ['diff', '--name-only', '-z', base, head], { cwd })
+      .toString()
+      .split('\0')
+      .filter(Boolean)
+    if (changed.some((path) => !/^scripts\/ci\/module-impact\/[a-z][a-z0-9_]*\.json$/.test(path)))
+      return new Set()
+    if (
+      target.fullTestReason !== undefined ||
+      target.ownerPaths.length !== paths.length ||
+      !paths.every(
+        (path) =>
+          original.ownerPaths.includes(path) &&
+          target.ownerPaths.includes(path) &&
+          !remaining.ownerPaths.includes(path)
+      ) ||
+      !target.interfacePaths.includes(paths[0]) ||
+      !paths
+        .filter((path) => original.interfacePaths.includes(path))
+        .every((path) => target.interfacePaths.includes(path)) ||
+      !target.testFiles.owner.includes(paths[1]) ||
+      target.fallbackCapability !== original.fallbackCapability ||
+      !original.capabilityOverlays.every((overlay) =>
+        target.capabilityOverlays.includes(overlay)
+      ) ||
+      !original.consumerModules.every((consumer) => target.consumerModules.includes(consumer))
+    )
+      return new Set()
+    const before = sourceSnapshot(base, cwd),
+      after = sourceSnapshot(head, cwd)
+    if (
+      !paths.every(
+        (path) => before.read(path) !== undefined && before.read(path) === after.read(path)
+      )
+    )
+      return new Set()
+    const edges = [before, after].flatMap((source) =>
+      Object.entries(JSON.parse(source.read('scripts/ci/module-runtime-consumers.json')))
+    )
+    const inspectors = [before, after].map((source) =>
+      createConsumerDependencyReader(source, edges, { staticOnly: true })
+    )
+    // PDF text is a pure utility. If its boundary acquires opaque inputs, retain full.
+    if (inspectors.some((inspect) => !inspect(paths[0], new Set()).complete)) return new Set()
+    const evidence = new Set(Object.values(target.testFiles).flat())
+    const originalEvidence = Object.values(original.testFiles).flat()
+    if (originalEvidence.some((test) => !evidence.has(test))) return new Set()
+    const owners = new Set(paths)
+    // Keep the existing trusted package direction: host-only edits do not run independent
+    // upstream package suites. Candidate registry changes are forbidden in this transition.
+    const excludedPackages = createPackageTestPlan(
+      paths,
+      JSON.parse(before.read('scripts/ci/package-test-boundaries.json'))
+    ).excluded
+    const tests = new Set(
+      [before, after].flatMap((source) =>
+        [...source.files].filter(
+          (path) => !path.startsWith('e2e/') && /\.(test|spec)\.[cm]?[jt]sx?$/.test(path)
+        )
+      )
+    )
+    for (const test of tests) {
+      if (evidence.has(test)) continue
+      if (excludedPackages.some((root) => test.startsWith(root + '/'))) continue
+      if (
+        inspectors.some((inspect) => {
+          const result = inspect(test, owners)
+          return result.reachable || !result.complete
+        })
+      )
+        return new Set()
+    }
+    return new Set(paths.map((path) => `${originalId}:${path}`))
+  } catch {
+    return new Set()
+  }
+}
+
 // Historical cross-package contract evidence can also be redundant: the trusted selector already
 // excludes that package for every owner edit. This is not permission to reduce coverage
 // based only on a candidate registry or an absent static import.
@@ -293,8 +428,8 @@ export function verifiedExcludedPackageTests(
   })
   if (!candidates.length) return new Set()
   try {
-    const before = snapshot(base, cwd),
-      after = snapshot(head, cwd)
+    const before = sourceSnapshot(base, cwd),
+      after = sourceSnapshot(head, cwd)
     const registry = validatePackageTestRegistry(
       JSON.parse(before.read('scripts/ci/package-test-boundaries.json'))
     )

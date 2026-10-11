@@ -570,6 +570,15 @@ Ubuntu PR tests skip unchanged upstream packages while retaining host integratio
 shared changes or uncertain evidence retain all package tests. Local `npm test` stays complete.
 Registry changes require CI owner review.
 
+For pure registered-package edits, `test:affected` can further omit host tests added only
+by downstream module expansion. It preserves directly declared owner/contract/consumer
+evidence, downstream package suites, CodeGraph-selected tests and platform capabilities.
+Exclusion requires complete dependency evidence in the merge base, PR head and actual
+checkout, with the union of declared runtime edges. External runtime inputs, unresolved
+imports, dirty checkouts and missing evidence retain the broader plan. Mixed host/package
+edits retain ordinary module selection. The installed test runner explains exclusions;
+the dependency-free preflight continues to report conservative module and platform scope.
+
 ### CI control-plane approval
 
 CI workflows, local actions, CI scripts, Dependabot configuration and CODEOWNERS itself have
@@ -609,6 +618,14 @@ preserved policy/evidence against the merge base, and adds evidence to the trust
 dropping newer mainline registrations. Changed records select their module evidence, including new
 tests. Unsupported or invalid registrations retain full portable routing; Integrity still blocks
 invalid data. Candidate scripts never authorize selective routing.
+
+One reviewed ownership correction can move `src/shared/pdf-text.ts` and its test from
+`shared_application_contracts` to `pdf_text`. Trusted Integrity permits this only in a
+registration-only revision with unchanged source, a provably static utility, all original
+test evidence and routing obligations retained, and every reachable or uncertain test
+registered in the new owner. The original shared owner keeps its full-validation marker
+and surviving evidence. This is not a general exception for shared files or package edits;
+merge the protected policy before proposing the registration split.
 The exact consumer-evidence guard also retains entries when a dependency cone is incomplete
 (for example, a generated native addon or computed import). Absence from a static graph alone
 must not demand removal that trusted Integrity cannot verify. Fully resolved obsolete consumers
