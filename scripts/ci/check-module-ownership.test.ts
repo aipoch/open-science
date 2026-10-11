@@ -38,6 +38,13 @@ const manifest = (): Manifest => ({
   }
 })
 const files = [source, test, manifestPath]
+const packageConfigs = [
+  'packages/example/tsconfig.json',
+  'packages/example/tsconfig.dev.json',
+  'packages/example/tsconfig.test.json',
+  'packages/example/package.json',
+  'packages/example/package-lock.json'
+]
 const check = (overrides: Record<string, unknown> = {}): ReturnType<typeof checkModuleOwnership> =>
   checkModuleOwnership({
     baseManifest: manifest(),
@@ -49,6 +56,21 @@ const check = (overrides: Record<string, unknown> = {}): ReturnType<typeof check
   })
 
 describe('module ownership admission', () => {
+  it.each(packageConfigs)('accepts package-root configuration without registration: %s', (path) => {
+    expect(
+      check({ headFiles: [...files, path], changes: [{ path, status: 'added' }] })
+    ).toMatchObject({ ok: true, violations: [] })
+  })
+
+  it('preserves existing configuration ownership evidence', () => {
+    const path = packageConfigs[0]
+    const baseManifest = manifest()
+    baseManifest.modules.sample.ownerPaths.push(path)
+    expect(
+      check({ baseManifest, baseFiles: [...files, path], headFiles: [...files, path] }).violations
+    ).toContainEqual(expect.objectContaining({ rule: 'module-registration-regression' }))
+  })
+
   it('accepts explicit ownership with intentional full validation', () => {
     const headManifest = manifest()
     headManifest.modules.sample.fullTestReason = 'Dynamic consumers require full validation'
@@ -70,7 +92,15 @@ describe('module ownership admission', () => {
     'packages/native/src/new.cc',
     'packages/native/src/new.rs',
     'src/main/notebook/fixture.py',
-    'src/main/notebook/fixture.R'
+    'src/main/notebook/fixture.R',
+    'packages/example/runtime.json',
+    'packages/example/src/tsconfig.json',
+    'packages/example/test/package.json',
+    'packages/example/fixtures/tsconfig.dev.json',
+    'packages/example/resources/package-lock.json',
+    'packages/example/tsconfig.dev.jsonl',
+    'src/shared/i18n/locales/de.json',
+    'src/main/package.json'
   ])('blocks an unregistered new code file: %s', (path) => {
     expect(
       check({ headFiles: [...files, path], changes: [{ path, status: 'added' }] })
@@ -316,6 +346,7 @@ it('reads candidate JSON only and blocks additions through the actual CI Integri
     git('add', '.')
     git('commit', '--quiet', '-m', 'base')
     const base = git('rev-parse', 'HEAD')
+    for (const path of packageConfigs) put(path, '{}\n')
     put(fresh, 'throw new Error("candidate code must not execute")\n')
     put(
       'scripts/ci/check-module-ownership.mjs',
@@ -341,6 +372,18 @@ it('reads candidate JSON only and blocks additions through the actual CI Integri
     expect(moduleOwnershipFromRevisions(base, git('rev-parse', 'HEAD'), { cwd: root }).ok).toBe(
       true
     )
+    const accepted = spawnSync(
+      process.execPath,
+      [
+        resolve('scripts/ci/check-ci-integrity.mjs'),
+        '--base',
+        base,
+        '--head',
+        git('rev-parse', 'HEAD')
+      ],
+      { cwd: root, encoding: 'utf8', env: { ...process.env, GITHUB_STEP_SUMMARY: '' } }
+    )
+    expect(accepted.status, accepted.stdout + accepted.stderr).toBe(0)
     // An attacker cannot disable the new invariant by editing the candidate checker.
     updated.modules.sample.fallbackCapability = 'renderer_view'
     put(manifestPath, JSON.stringify(updated))

@@ -15,8 +15,7 @@
     "packages/connector-core/src/engine.test.ts",
     "packages/connector-core/src/index.ts",
     "packages/connector-core/README.md",
-    "packages/connector-core/tsc.cjs",
-    "packages/connector-core/tsconfig.dev.json"
+    "packages/connector-core/tsc.cjs"
   ],
   "interfacePaths": [
     "packages/connector-core/src/abortable-delay.ts",

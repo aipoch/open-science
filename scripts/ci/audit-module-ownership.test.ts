@@ -28,6 +28,21 @@ const packageRegistry = JSON.parse(readFileSync('scripts/ci/package-test-boundar
 const graph = { status: 'unavailable-manifest-only', testFiles: [] }
 
 describe('complete module ownership', () => {
+  it.each([
+    'tsconfig.json',
+    'tsconfig.dev.json',
+    'tsconfig.test.json',
+    'package.json',
+    'package-lock.json'
+  ])('exempts package-root %s from inventory without skipping test selection', (name) => {
+    const path = `packages/unregistered/${name}`
+    expect(isModuleOwnershipPath(path)).toBe(false)
+    expect(auditModuleOwnership(manifest, [...files, path]).missing).toEqual([])
+    const changes = [{ path, status: 'added' }]
+    expect(classifyChanges(changes)).toMatchObject({ mode: 'full' })
+    expect(createAffectedTestPlan(changes, graph)).toMatchObject({ mode: 'full' })
+  })
+
   it('covers existing JSONL regression readers without registering individual fixtures', () => {
     const fixtures = files.filter(
       (path) => path.startsWith('test/fixtures/pdf-translation/') && path.endsWith('.jsonl')

@@ -17,8 +17,7 @@
     "packages/connector-mcp-client/tsc.cjs",
     "packages/connector-mcp-client/tsconfig.json",
     "packages/connector-mcp-client/tsconfig.test.json",
-    "packages/connector-mcp-client/vitest.config.ts",
-    "packages/connector-mcp-client/tsconfig.dev.json"
+    "packages/connector-mcp-client/vitest.config.ts"
   ],
   "interfacePaths": [
     "packages/connector-mcp-client/src/client-manager.ts",

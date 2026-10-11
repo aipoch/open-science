@@ -152,8 +152,7 @@
     "packages/connector-builtins/tsc.cjs",
     "packages/connector-builtins/tsconfig.json",
     "packages/connector-builtins/tsconfig.test.json",
-    "packages/connector-builtins/vitest.config.ts",
-    "packages/connector-builtins/tsconfig.dev.json"
+    "packages/connector-builtins/vitest.config.ts"
   ],
   "interfacePaths": [
     "packages/connector-builtins/package.json",

@@ -19,8 +19,7 @@
     "packages/notebook-syntax/tsconfig.json",
     "packages/notebook-syntax/tsconfig.test.json",
     "packages/notebook-syntax/vitest.config.ts",
-    "packages/notebook-syntax/src/unavailable.test.ts",
-    "packages/notebook-syntax/tsconfig.dev.json"
+    "packages/notebook-syntax/src/unavailable.test.ts"
   ],
   "interfacePaths": [
     "packages/notebook-syntax/src/index.ts",

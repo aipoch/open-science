@@ -456,8 +456,7 @@
     "packages/pdf-translation/test/pdf-cache.test.ts",
     "packages/pdf-translation/test/usage.test.ts",
     "packages/pdf-translation/test/workflow.test.ts",
-    "packages/pdf-translation/test/support/usage-memory.ts",
-    "packages/pdf-translation/tsconfig.dev.json"
+    "packages/pdf-translation/test/support/usage-memory.ts"
   ],
   "interfacePaths": [
     "packages/pdf-translation/src/index.ts",
