@@ -79,7 +79,9 @@ if (process.env.KEYCHAIN_TEST_SCENARIO === 'restore-failure' && args.includes('-
           }[scenario]
         )
         if (scenario === 'missing-helper') {
-          expect(result.stderr).toContain('Packaged credential helper is missing or not executable:')
+          expect(result.stderr).toContain(
+            'Packaged credential helper is missing or not executable:'
+          )
           expect(readdirSync(root)).not.toContain('calls.jsonl')
           expect(readdirSync(root)).not.toContain('ran')
           return
