@@ -1,3 +1,7 @@
+import {
+  createConsumerDependencyReader,
+  provablyStaleConsumerTests
+} from './consumer-retirement.mjs'
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
@@ -216,3 +220,36 @@ it('does not analyze symlinks as regular source even when blob contents match', 
     }).ok
   ).toBe(false)
 }, 30_000)
+
+it.each([
+  ['disconnected imports', "import './independent'", [] as string[], true],
+  ['reachable imports', "import './owner'", [] as string[], false],
+  ['computed import', 'import(globalThis.target)', [] as string[], false],
+  [
+    'generated native addon',
+    "require('./build/Release/process_tree_native.node')",
+    [] as string[],
+    false
+  ],
+  ['missing local source', "import './missing'", [] as string[], false],
+  ['registered runtime edge', "import './independent'", [consumer], false]
+])(
+  'only rejects provably stale consumer evidence: %s',
+  (_name, source, runtimeConsumers, stale) => {
+    const sources = new Map([
+      [owner, 'export const value = 1'],
+      [consumer, source],
+      ['src/independent.ts', 'export const value = 2']
+    ])
+    const inspect = createConsumerDependencyReader(
+      { files: new Set(sources.keys()), read: (path: string) => sources.get(path) },
+      [[owner, runtimeConsumers]]
+    )
+    expect(
+      provablyStaleConsumerTests(
+        { ownerPaths: [owner], testFiles: { consumer: [consumer] } },
+        inspect
+      )
+    ).toEqual(stale ? [consumer] : [])
+  }
+)

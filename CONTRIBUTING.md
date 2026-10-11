@@ -592,6 +592,11 @@ preserved policy/evidence against the merge base, and adds evidence to the trust
 dropping newer mainline registrations. Changed records select their module evidence, including new
 tests. Unsupported or invalid registrations retain full portable routing; Integrity still blocks
 invalid data. Candidate scripts never authorize selective routing.
+The exact consumer-evidence guard also retains entries when a dependency cone is incomplete
+(for example, a generated native addon or computed import). Absence from a static graph alone
+must not demand removal that trusted Integrity cannot verify. Fully resolved obsolete consumers
+are still rejected; missing consumer coverage is still required.
+
 Introducing this exception changes protected policy files and therefore still needs owner approval.
 It can then enter the normal queue; no bootstrap bypass is required when its checks pass.
 

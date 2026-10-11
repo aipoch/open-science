@@ -54,7 +54,7 @@ function snapshot(revision, cwd) {
   return { files: new Set(entries.keys()), read }
 }
 
-function dependencyReader(source, runtimeEdges) {
+export function createConsumerDependencyReader(source, runtimeEdges) {
   const root = resolve('/__module_evidence__').replaceAll('\\', '/')
   const key = (path) => posix.relative(root, path.replaceAll('\\', '/'))
   const directories = new Set([root])
@@ -218,8 +218,8 @@ export function verifiedConsumerRetirements(
       const text = source.read('scripts/ci/module-runtime-consumers.json')
       return text ? Object.entries(JSON.parse(text)) : []
     })
-    const previousDependencies = dependencyReader(before, runtimeEdges)
-    const currentDependencies = dependencyReader(after, runtimeEdges)
+    const previousDependencies = createConsumerDependencyReader(before, runtimeEdges)
+    const currentDependencies = createConsumerDependencyReader(after, runtimeEdges)
     const retired = new Set()
     for (const { id, test, owner, current } of candidates) {
       if (
@@ -239,4 +239,14 @@ export function verifiedConsumerRetirements(
     // Missing/unsupported evidence retains the original registration obligation.
     return new Set()
   }
+}
+
+// Absence from an import graph is only a proof when the entire consumer cone is understood.
+// Keep uncertain evidence (including generated native addons) rather than demand its deletion.
+export function provablyStaleConsumerTests(owner, inspect) {
+  const owners = new Set(owner.ownerPaths)
+  return owner.testFiles.consumer.filter((test) => {
+    const result = inspect(test, owners)
+    return result.complete && !result.reachable
+  })
 }
