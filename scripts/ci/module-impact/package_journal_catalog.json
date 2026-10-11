@@ -12,7 +12,9 @@
     "packages/journal-catalog/src/ports.ts",
     "packages/journal-catalog/src/search.ts",
     "packages/journal-catalog/src/sql.ts",
+    "packages/journal-catalog/test/alignment.test.ts",
     "packages/journal-catalog/test/catalog.test.ts",
+    "packages/journal-catalog/test/fixtures.ts",
     "packages/journal-catalog/test/journal-import-file.test.ts",
     "packages/journal-catalog/test/packed-runtime.mjs",
     "packages/journal-catalog/test/sql.test.ts",
@@ -22,11 +24,13 @@
   "interfacePaths": [
     "packages/journal-catalog/src/index.ts",
     "packages/journal-catalog/src/contracts.ts",
-    "packages/journal-catalog/src/files.ts"
+    "packages/journal-catalog/src/files.ts",
+    "packages/journal-catalog/test/fixtures.ts"
   ],
   "consumerModules": [],
   "testFiles": {
     "owner": [
+      "packages/journal-catalog/test/alignment.test.ts",
       "packages/journal-catalog/test/catalog.test.ts",
       "packages/journal-catalog/test/journal-import-file.test.ts",
       "packages/journal-catalog/test/sql.test.ts"

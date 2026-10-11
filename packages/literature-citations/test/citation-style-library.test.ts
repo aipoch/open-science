@@ -225,6 +225,7 @@ it.each([
   ],
   ['csl-unsupported-style', '<style/>'],
   ['csl-missing-metadata', independentStyle().replace(/<title>.*?<\/title>/u, '')],
+  ['csl-missing-metadata', independentStyle().replace(/<id>.*?<\/id>/u, '')],
   [
     'csl-dependent-style',
     independentStyle().replace(

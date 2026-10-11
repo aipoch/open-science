@@ -30,6 +30,7 @@
     "packages/literature-citations/test/citation-fidelity.test.ts",
     "packages/literature-citations/test/citation-formatter.test.ts",
     "packages/literature-citations/test/citation-style-library.test.ts",
+    "packages/literature-citations/test/contracts.test.ts",
     "packages/literature-citations/test/latex-bundle.test.ts",
     "packages/literature-citations/test/literature-csl.test.ts",
     "packages/literature-citations/test/packed-runtime.mjs",
@@ -52,6 +53,7 @@
       "packages/literature-citations/test/citation-fidelity.test.ts",
       "packages/literature-citations/test/citation-formatter.test.ts",
       "packages/literature-citations/test/citation-style-library.test.ts",
+      "packages/literature-citations/test/contracts.test.ts",
       "packages/literature-citations/test/latex-bundle.test.ts",
       "packages/literature-citations/test/literature-csl.test.ts"
     ],

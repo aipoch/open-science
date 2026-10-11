@@ -1,8 +1,5 @@
-/* Fixture builders preserve inferred mock signatures for behavioral assertions. */
-/* eslint-disable @typescript-eslint/explicit-function-return-type */
-import { DatabaseSync, type SQLInputValue } from 'node:sqlite'
-import { afterEach, expect, it, vi } from 'vitest'
-import { JournalAttributes, type JournalDatabase, type JournalIntegration } from '../src/index.js'
+import { expect, it, vi } from 'vitest'
+import type { JournalDatabase, JournalReader } from '../src/index.js'
 import {
   journalIdentityFromItem,
   journalColumnKey,
@@ -15,101 +12,7 @@ import {
   type JournalResult
 } from '../src/contracts.js'
 
-const cleanups: Array<() => Promise<void>> = []
-afterEach(async () => {
-  for (const close of cleanups.splice(0).reverse()) await close()
-  vi.useRealTimers()
-})
-async function setup() {
-  const db = new DatabaseSync(':memory:')
-  db.exec(`PRAGMA foreign_keys=ON;
- CREATE TABLE Journal(id TEXT PRIMARY KEY,name TEXT NOT NULL,normalizedName TEXT NOT NULL,aliasesJson TEXT NOT NULL DEFAULT '[]',issnsJson TEXT NOT NULL DEFAULT '[]',externalIdsJson TEXT NOT NULL DEFAULT '[]');
- CREATE TABLE JournalDataset(id TEXT PRIMARY KEY,name TEXT,source TEXT NOT NULL,year INTEGER NOT NULL,revision INTEGER NOT NULL DEFAULT 1,fieldsJson TEXT NOT NULL,importedAt INTEGER NOT NULL,UNIQUE(source,year));
- CREATE TABLE JournalDatasetEntry(datasetId TEXT NOT NULL REFERENCES JournalDataset(id) ON DELETE CASCADE,journalId TEXT NOT NULL REFERENCES Journal(id) ON DELETE CASCADE,valuesJson TEXT NOT NULL,sourceRow INTEGER NOT NULL,PRIMARY KEY(datasetId,journalId));`)
-  let queue = Promise.resolve()
-  const client: JournalDatabase = {
-    async query<T>({ text, values }: import('../src/ports.js').JournalStatement) {
-      return db
-        .prepare(text)
-        .all(
-          ...(values.map((value) =>
-            value instanceof Date ? value.getTime() : value
-          ) as SQLInputValue[])
-        ) as T
-    },
-    async execute({ text, values }) {
-      return Number(
-        db
-          .prepare(text)
-          .run(
-            ...(values.map((value) =>
-              value instanceof Date ? value.getTime() : value
-            ) as SQLInputValue[])
-          ).changes
-      )
-    },
-    async transaction<T>(operation: (tx: JournalDatabase) => Promise<T>) {
-      const preceding = queue
-      let release!: () => void
-      queue = new Promise<void>((resolve) => {
-        release = resolve
-      })
-      await preceding
-      db.exec('BEGIN')
-      try {
-        const value = await operation(client)
-        db.exec('COMMIT')
-        return value
-      } catch (error) {
-        db.exec('ROLLBACK')
-        throw error
-      } finally {
-        release()
-      }
-    }
-  }
-  const integration: JournalIntegration = {
-    warn: vi.fn(),
-    references: {
-      read: async () => [],
-      bindings: async () => [],
-      bind: async () => {
-        throw Error('Unexpected cross-domain write')
-      }
-    }
-  }
-  const changed = vi.fn(),
-    service = new JournalAttributes(async () => client, changed, integration)
-  cleanups.push(async () => {
-    await service.dispose()
-    db.close()
-  })
-  return { service, client, changed }
-}
-// Entirely fictional fixtures, authored independently of user-supplied files and headings.
-const fields = [
-  { id: 'signal', label: 'Signal index', kind: 'number' as const, colors: {}, visible: true },
-  { id: 'band', label: 'Editorial band', kind: 'singleSelect' as const, colors: {}, visible: true }
-]
-const definition = { source: 'Fictional evaluation', year: 2031, fields }
-const row = (overrides: Partial<JournalImportRow> = {}): JournalImportRow => ({
-  row: 2,
-  name: 'Imaginary Review of Lunar Gardens',
-  aliases: ['Imag. Lunar Gard.'],
-  issns: ['1234-5679'],
-  values: { signal: '<0.5', band: 'Gold' },
-  ...overrides
-})
-async function preview(
-  service: JournalAttributes,
-  rows = [row()],
-  options: Partial<Extract<JournalRequest, { action: 'begin' }>> = {}
-): Promise<{ token: string; digest: string }> {
-  const { token } = await service.run({ action: 'begin', definition, policy: 'fill', ...options })
-  await service.run({ action: 'append', token: token!, offset: 0, rows })
-  const result = await service.run({ action: 'preview', token: token!, offset: 0 })
-  return { token: token!, digest: result.digest! }
-}
+import { setup, fields, definition, row, preview } from './fixtures.js'
 it('validates identifiers and preserves qualified numbers without inventing precision', () => {
   expect(normalizeIssn('1234 5679')).toBe('1234-5679')
   expect(normalizeIssn('1234-5678')).toBeUndefined()
@@ -943,3 +846,595 @@ it('waits for an in-flight transaction to roll back before disposal completes', 
   expect(await client.query({ text: 'SELECT * FROM Journal', values: [] })).toEqual([])
   expect(changed).not.toHaveBeenCalled()
 })
+
+it('previews without writes, persists selected attributes, resolves identity, and removes only the dataset', async () => {
+  const { service, changed, createService } = await setup()
+  const draft = await preview(service)
+  expect((await service.run({ action: 'list' })).datasets).toEqual([])
+  const saved = await service.run({ action: 'commit', ...draft, skipProblems: false })
+  expect(saved.imported).toBe(1)
+  expect(changed).toHaveBeenCalledTimes(1)
+  const restarted = createService()
+  const result = await restarted.run({
+    action: 'resolve',
+    identities: [
+      { name: 'Another spelling', aliases: [], issns: ['12345679'] },
+      { name: 'imag. lunar gard.', aliases: [], issns: [] }
+    ]
+  })
+  expect(result.matches?.map((match) => match.status)).toEqual(['matched', 'matched'])
+  expect(result.matches?.[0].attributes[0].value).toBe('<0.5')
+  const dataset = saved.datasets![0]
+  await service.run({ action: 'remove', datasetId: dataset.id, expectedRevision: dataset.revision })
+  expect(
+    (
+      await service.run({
+        action: 'resolve',
+        identities: [{ name: row().name, aliases: [], issns: [] }]
+      })
+    ).matches?.[0].status
+  ).toBe('missing')
+})
+
+it('persists a display name without changing matching or source grouping, and preserves it on reimport', async () => {
+  const { service, changed, createService } = await setup()
+  const saved = await service.run({
+    action: 'commit',
+    ...(await preview(service)),
+    skipProblems: false
+  })
+  const dataset = saved.datasets![0]
+  const rename = {
+    action: 'rename' as const,
+    datasetId: dataset.id,
+    expectedRevision: dataset.revision
+  }
+  await expect(service.run({ ...rename, name: '   ' })).rejects.toThrow()
+  await expect(service.run({ ...rename, name: 'x'.repeat(101) })).rejects.toThrow()
+  const result = await service.run({ ...rename, name: '  My journal rankings  ' })
+  expect(result.datasets![0]).toMatchObject({
+    id: dataset.id,
+    name: 'My journal rankings',
+    source: dataset.source,
+    year: dataset.year,
+    revision: dataset.revision + 1,
+    count: dataset.count,
+    fields: dataset.fields
+  })
+  expect(changed).toHaveBeenCalledTimes(2)
+  await expect(service.run({ ...rename, name: 'Stale edit' })).rejects.toThrow(
+    'Journal data changed'
+  )
+  const restarted = createService()
+  expect((await restarted.run({ action: 'list' })).datasets![0].name).toBe('My journal rankings')
+  const match = await restarted.run({
+    action: 'resolve',
+    identities: [{ name: row().name, aliases: [], issns: row().issns }]
+  })
+  expect(match.matches![0].status).toBe('matched')
+  expect(match.matches![0].attributes[0].value).toBe('<0.5')
+  const updated = await preview(service, [row()], {
+    datasetId: dataset.id,
+    expectedRevision: result.datasets![0].revision
+  })
+  expect(
+    (await service.run({ action: 'commit', ...updated, skipProblems: false })).datasets![0].name
+  ).toBe('My journal rankings')
+})
+
+it('imports external-ID-only rows only when they identify an existing journal', async () => {
+  const { service, db } = await setup()
+  await service.run({
+    action: 'commit',
+    ...(await preview(service, [
+      row({ externalIds: [{ namespace: 'jcr', value: 'known' }] }),
+      row({
+        row: 3,
+        name: 'Imaginary Other Review',
+        aliases: [],
+        issns: [],
+        externalIds: [{ namespace: 'nlm', value: 'other' }]
+      })
+    ])),
+    skipProblems: false
+  })
+  const rows = [
+    [{ namespace: 'JCR', value: 'known' }],
+    [{ namespace: 'jcr', value: 'unknown' }],
+    [{ namespace: 'scopus', value: 'known' }],
+    [],
+    [
+      { namespace: 'jcr', value: 'known' },
+      { namespace: 'nlm', value: 'other' }
+    ]
+  ].map((externalIds, index) =>
+    row({
+      row: index + 2,
+      name: '',
+      aliases: [],
+      issns: [],
+      externalIds,
+      values: { signal: '9.4' }
+    })
+  )
+  const draft = await preview(service, rows, { definition: { ...definition, year: 2032 } })
+  const reviewed = await service.run({ action: 'preview', token: draft.token, offset: 0 })
+  expect(reviewed.rows?.map(({ status }) => status)).toEqual([
+    'matched',
+    'invalid',
+    'invalid',
+    'invalid',
+    'ambiguous'
+  ])
+  expect(reviewed.ready).toBe(1)
+  const saved = await service.run({ action: 'commit', ...draft, skipProblems: true })
+  expect(saved.imported).toBe(1)
+  expect(db.prepare('SELECT name FROM Journal ORDER BY name').all()).toEqual([
+    { name: 'Imaginary Other Review' },
+    { name: row().name }
+  ])
+  const resolved = await service.run({
+    action: 'resolve',
+    identities: [{ name: row().name, aliases: [], issns: [] }]
+  })
+  expect(resolved.matches![0].attributes).toEqual([
+    expect.objectContaining({ value: '9.4', year: 2032 })
+  ])
+})
+
+it('keeps import stages bound to their original data root', async () => {
+  const first = await setup()
+  const second = await setup()
+  let current = first.client
+  const service = first.createService(async () => current)
+  const draft = await preview(service)
+  current = second.client
+  await expect(service.run({ action: 'commit', ...draft, skipProblems: false })).rejects.toThrow(
+    'expired'
+  )
+  expect((await service.run({ action: 'list' })).datasets).toEqual([])
+})
+
+it('coalesces concurrent commits and safely retries a successful commit without writing twice', async () => {
+  const { service, changed, db } = await setup()
+  const draft = await preview(service)
+  const request = { action: 'commit' as const, ...draft, skipProblems: false }
+  const [first, concurrent] = await Promise.all([service.run(request), service.run(request)])
+  expect(concurrent).toEqual(first)
+  expect(await service.run(request)).toEqual(first)
+  expect(changed).toHaveBeenCalledTimes(1)
+  expect(db.prepare('SELECT COUNT(*) AS count FROM Journal').get()!.count).toBe(1)
+  expect(db.prepare('SELECT COUNT(*) AS count FROM JournalDatasetEntry').get()!.count).toBe(1)
+  expect(first.datasets?.[0].revision).toBe(1)
+  await expect(
+    service.run({ action: 'append', token: draft.token, offset: 0, rows: [row()] })
+  ).rejects.toThrow('busy')
+})
+
+it('reuses reviewed pages and management pages, invalidating them on saved field changes', async () => {
+  const { service, client } = await setup()
+  const count = 1000
+  const generated = Array.from({ length: count }, (_, i) =>
+    row({
+      row: i + 1,
+      name: `Imaginary Benchmark Review ${i}`,
+      aliases: [],
+      issns: [],
+      values: { signal: String(i), band: i % 2 ? 'Silver' : 'Gold' }
+    })
+  )
+  const { token } = await service.run({ action: 'begin', definition, policy: 'fill' })
+  for (let offset = 0; offset < generated.length; offset += 200)
+    await service.run({
+      action: 'append',
+      token: token!,
+      offset,
+      rows: generated.slice(offset, offset + 200)
+    })
+  const draft = await service.run({ action: 'preview', token: token!, offset: 0 })
+  expect(draft.ready).toBe(count)
+  const query = vi.spyOn(client, 'query')
+  const transaction = vi.spyOn(client, 'transaction')
+  const page = await service.run({ action: 'preview', token: token!, offset: 50 })
+  expect(page.rows?.[0].row).toBe(51)
+  expect(transaction).not.toHaveBeenCalled()
+  const saved = await service.run({
+    action: 'commit',
+    token: token!,
+    digest: draft.digest!,
+    skipProblems: false
+  })
+  const dataset = saved.datasets![0]
+  const entryRequest = {
+    action: 'entries' as const,
+    datasetId: dataset.id,
+    query: '',
+    offset: 0,
+    descending: true,
+    sortField: 'signal'
+  }
+  const first = await service.run(entryRequest)
+  expect(first.entries?.[0].values.signal).toBe(String(count - 1))
+  query.mockClear()
+  const next = await service.run({ ...entryRequest, offset: 50 })
+  expect(next.entries?.[0].values.signal).toBe(String(count - 51))
+  expect(query).toHaveBeenCalledTimes(1)
+  const identities = generated
+    .slice(0, 200)
+    .map(({ name, aliases, issns }) => ({ name, aliases, issns }))
+  await service.run({ action: 'resolve', identities })
+  query.mockClear()
+  const resolved = await service.run({ action: 'resolve', identities })
+  expect(resolved.matches).toHaveLength(200)
+  expect(query).toHaveBeenCalledTimes(1)
+  await service.run({
+    action: 'fields',
+    datasetId: dataset.id,
+    expectedRevision: dataset.revision,
+    fields: dataset.fields.map((field) => ({ ...field, visible: false }))
+  })
+  query.mockClear()
+  await service.run(entryRequest)
+  expect(query).toHaveBeenCalled()
+  expect(
+    (await service.run({ action: 'resolve', identities })).matches?.every(
+      ({ attributes }) => attributes.length === 0
+    )
+  ).toBe(true)
+  query.mockRestore()
+  transaction.mockRestore()
+}, 120_000)
+
+it('retains an in-flight commit through expiry and waits for rollback before disposal', async () => {
+  const { service, client, changed, db } = await setup()
+  const draft = await preview(service)
+  let release!: () => void
+  let entered!: () => void
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const started = new Promise<void>((resolve) => {
+    entered = resolve
+  })
+  const original = client.transaction.bind(client)
+  const transaction = vi.spyOn(client, 'transaction').mockImplementation((async (
+    callback: (tx: JournalReader) => Promise<unknown>
+  ) => {
+    entered()
+    await gate
+    return original(callback)
+  }) as typeof client.transaction)
+  const request = { action: 'commit' as const, ...draft, skipProblems: false }
+  const pending = service.run(request)
+  await started
+  const date = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 31 * 60_000)
+  const retry = service.run(request)
+  // Let the retry reach the shared committing promise before shutting down.
+  await Promise.resolve()
+  let closed = false
+  const closing = service.dispose().then(() => {
+    closed = true
+  })
+  await Promise.resolve()
+  expect(closed).toBe(false)
+  release()
+  try {
+    const results = await Promise.allSettled([pending, retry])
+    await closing
+    for (const result of results) {
+      expect(result.status).toBe('rejected')
+      if (result.status === 'rejected')
+        expect(result.reason.message).toBe('Journal service is closed.')
+    }
+    expect(db.prepare('SELECT COUNT(*) AS count FROM JournalDatasetEntry').get()!.count).toBe(0)
+    expect(closed).toBe(true)
+    expect(changed).not.toHaveBeenCalled()
+  } finally {
+    date.mockRestore()
+    transaction.mockRestore()
+  }
+})
+
+it('rolls back written batches before disposal without changing previously committed data', async () => {
+  const { service, client, changed, db } = await setup()
+  await service.run({ action: 'commit', ...(await preview(service)), skipProblems: false })
+  const draft = await preview(
+    service,
+    Array.from({ length: 200 }, (_, index) =>
+      row({
+        row: index + 2,
+        name: `Imaginary shutdown journal ${index}`,
+        aliases: [],
+        issns: []
+      })
+    ),
+    { definition: { ...definition, source: 'Interrupted fictional source' } }
+  )
+  let release!: () => void
+  let entered!: () => void
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const started = new Promise<void>((resolve) => {
+    entered = resolve
+  })
+  const original = client.transaction.bind(client)
+  const transaction = vi.spyOn(client, 'transaction').mockImplementation((async (
+    callback: (tx: JournalReader) => Promise<unknown>
+  ) =>
+    original(async (tx) => {
+      const execute = tx.execute.bind(tx)
+      vi.spyOn(tx, 'execute').mockImplementation((async (...args: Parameters<typeof execute>) => {
+        const result = await execute(...args)
+        if (args[0]?.text.includes('INSERT INTO "JournalDatasetEntry"')) {
+          entered()
+          await gate
+        }
+        return result
+      }) as typeof tx.execute)
+      return callback(tx)
+    })) as typeof client.transaction)
+  const pending = service.run({ action: 'commit', ...draft, skipProblems: false })
+  await started
+  const failed = expect(pending).rejects.toThrow('Journal service is closed.')
+  const closing = service.dispose()
+  release()
+  await Promise.all([failed, closing])
+  transaction.mockRestore()
+  expect(db.prepare('SELECT COUNT(*) AS count FROM JournalDataset').get()!.count).toBe(1)
+  expect(db.prepare('SELECT COUNT(*) AS count FROM JournalDatasetEntry').get()!.count).toBe(1)
+  expect(db.prepare('SELECT COUNT(*) AS count FROM Journal').get()!.count).toBe(1)
+  expect(changed).toHaveBeenCalledTimes(1)
+})
+
+it('shares one cold identity read across concurrent clients and retries failed reads', async () => {
+  const { service, client } = await setup()
+  await service.run({ action: 'commit', ...(await preview(service)), skipProblems: false })
+  const read = vi.spyOn(client, 'query')
+  const request = {
+    action: 'resolve' as const,
+    identities: [{ name: '', aliases: [], issns: ['1234-5679'] }]
+  }
+  read.mockRejectedValueOnce(new Error('temporary read failure'))
+  await expect(Promise.all(Array.from({ length: 8 }, () => service.run(request)))).rejects.toThrow(
+    'temporary read failure'
+  )
+  expect(read).toHaveBeenCalledTimes(1)
+  read.mockClear()
+  const results = await Promise.all(Array.from({ length: 8 }, () => service.run(request)))
+  expect(results.every((result) => result.matches?.[0].status === 'matched')).toBe(true)
+  expect(
+    read.mock.calls.filter(([sql]) => sql.text.includes('SELECT * FROM "Journal"'))
+  ).toHaveLength(1)
+  // Identity + dataset metadata once, then one bounded values read per caller.
+  expect(read).toHaveBeenCalledTimes(10)
+  read.mockRestore()
+})
+
+it('does not publish an old in-flight identity snapshot after a dataset mutation', async () => {
+  const { service, client } = await setup()
+  const saved = await service.run({
+    action: 'commit',
+    ...(await preview(service)),
+    skipProblems: false
+  })
+  const dataset = saved.datasets![0]
+  const rows = await client.query({ text: 'SELECT * FROM Journal', values: [] })
+  let release!: (rows: unknown) => void
+  const pendingRows = new Promise((resolve) => {
+    release = resolve
+  })
+  const read = vi
+    .spyOn(client, 'query')
+    .mockReturnValueOnce(pendingRows as ReturnType<JournalDatabase['query']>)
+  const request = {
+    action: 'resolve' as const,
+    identities: [{ name: row().name, aliases: [], issns: [] }]
+  }
+  const old = service.run(request)
+  const rejected = expect(old).rejects.toThrow('changed')
+  await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1))
+  await service.run({
+    action: 'fields',
+    datasetId: dataset.id,
+    expectedRevision: dataset.revision,
+    fields: dataset.fields.map((field) => ({ ...field, label: `Updated ${field.label}` }))
+  })
+  const current = await service.run(request)
+  release(rows)
+  await rejected
+  expect(current.matches?.[0].attributes[0].label).toBe('Updated Signal index')
+  read.mockClear()
+  expect(await service.run(request)).toEqual(current)
+  expect(read).toHaveBeenCalledTimes(1)
+  read.mockRestore()
+})
+
+it('round-trips a portable bundle with all rows and presentation into an independent library', async () => {
+  const { exportJournalBundle, importJournalBundle, readJournalBundle } =
+    await import('@aipoch/journal-catalog/files')
+  const origin = await setup()
+  const target = await setup()
+  const portableFields = [
+    { ...fields[1], colors: { Gold: 'blue' as const }, visible: false },
+    fields[0]
+  ]
+  const rows = Array.from({ length: 105 }, (_, index) =>
+    row({
+      row: index + 1,
+      name: `Synthetic Bundle Review ${index}`,
+      aliases: [],
+      issns: [],
+      externalIds: [{ namespace: 'nlm', value: `synthetic-${index}` }]
+    })
+  )
+  const draft = await preview(origin.service, rows, {
+    definition: { ...definition, name: 'My journal collection', fields: portableFields }
+  })
+  const saved = await origin.service.run({ action: 'commit', ...draft, skipProblems: false })
+  const dataset = saved.datasets![0]
+  const bytes = await exportJournalBundle(
+    origin.service.run.bind(origin.service),
+    dataset,
+    () => false
+  )
+  const bundle = readJournalBundle(bytes.buffer)
+  expect(bundle.dataset).toEqual({
+    name: 'My journal collection',
+    source: definition.source,
+    year: definition.year,
+    fields: portableFields
+  })
+  expect(bundle.rows).toHaveLength(105)
+  expect(new Set(bundle.rows.map(({ row }) => row)).size).toBe(105)
+  expect(bundle.rows.every((entry) => !('id' in entry))).toBe(true)
+  const result = await importJournalBundle(
+    target.service.run.bind(target.service),
+    bundle,
+    () => false
+  )
+  const imported = result.datasets![0]
+  expect(imported.id).not.toBe(dataset.id)
+  expect(imported).toMatchObject({ name: dataset.name, fields: portableFields, count: 105 })
+  const again = readJournalBundle(
+    (await exportJournalBundle(target.service.run.bind(target.service), imported, () => false))
+      .buffer
+  )
+  const content = (value: typeof bundle): JournalImportRow[] =>
+    value.rows.map((entry) => ({ ...entry, row: 1 })).sort((a, b) => a.name.localeCompare(b.name))
+  expect(content(again)).toEqual(content(bundle))
+  await expect(
+    importJournalBundle(target.service.run.bind(target.service), bundle, () => false)
+  ).rejects.toThrow('already exist')
+  expect((await target.service.run({ action: 'list' })).datasets).toHaveLength(1)
+  expect(target.db.prepare('SELECT * FROM TestBinding').all()).toEqual([])
+})
+
+it('rejects stale export pages and imports no partial bundle when a row is invalid', async () => {
+  const { exportJournalBundle, importJournalBundle, readJournalBundle } =
+    await import('@aipoch/journal-catalog/files')
+  const origin = await setup()
+  const draft = await preview(origin.service)
+  const saved = await origin.service.run({ action: 'commit', ...draft, skipProblems: false })
+  const dataset = saved.datasets![0]
+  const first = await origin.service.run({
+    action: 'export',
+    datasetId: dataset.id,
+    expectedRevision: dataset.revision
+  })
+  expect(journalResultSchema.parse(first).exportPage!.rows).toHaveLength(1)
+  const bundle = readJournalBundle(
+    (await exportJournalBundle(origin.service.run.bind(origin.service), dataset, () => false))
+      .buffer
+  )
+  await origin.service.run({
+    action: 'rename',
+    datasetId: dataset.id,
+    expectedRevision: dataset.revision,
+    name: 'Changed'
+  })
+  await expect(
+    origin.service.run({
+      action: 'export',
+      datasetId: dataset.id,
+      expectedRevision: dataset.revision,
+      snapshot: first.exportPage!.snapshot,
+      after: first.exportPage!.next
+    })
+  ).rejects.toThrow('changed')
+  const target = await setup()
+  bundle.rows[0].values.signal = 'invalid numeric value'
+  await expect(
+    importJournalBundle(target.service.run.bind(target.service), bundle, () => false)
+  ).rejects.toThrow('invalid or conflicting')
+  expect((await target.service.run({ action: 'list' })).datasets).toEqual([])
+  expect(target.db.prepare('SELECT * FROM Journal').all()).toEqual([])
+  const badVersion = new TextEncoder().encode(JSON.stringify({ ...bundle, version: 99 }))
+  expect(() => readJournalBundle(badVersion.buffer)).toThrow()
+})
+
+it('shares catalog reads across clients and export pages and invalidates after writes', async () => {
+  const { service, client } = await setup()
+  const saved = await service.run({
+    action: 'commit',
+    ...(await preview(service)),
+    skipProblems: false
+  })
+  const dataset = saved.datasets![0]
+  const read = vi.spyOn(client, 'query')
+  read.mockRejectedValueOnce(new Error('temporary catalog failure'))
+  await expect(service.run({ action: 'list' })).rejects.toThrow('temporary catalog failure')
+  read.mockClear()
+  const lists = await Promise.all(Array.from({ length: 8 }, () => service.run({ action: 'list' })))
+  expect(lists.every((result) => result.datasets![0].id === dataset.id)).toBe(true)
+  expect(read).toHaveBeenCalledTimes(1)
+  read.mockClear()
+  const first = (
+    await service.run({
+      action: 'export',
+      datasetId: dataset.id,
+      expectedRevision: dataset.revision
+    })
+  ).exportPage!
+  await service.run({
+    action: 'export',
+    datasetId: dataset.id,
+    expectedRevision: dataset.revision,
+    after: first.next,
+    snapshot: first.snapshot
+  })
+  expect(read).toHaveBeenCalledTimes(2) // Row reads only; no repeated dataset counts per export page.
+  await service.run({
+    action: 'rename',
+    datasetId: dataset.id,
+    expectedRevision: dataset.revision,
+    name: 'Updated catalog'
+  })
+  read.mockClear()
+  expect((await service.run({ action: 'list' })).datasets![0].name).toBe('Updated catalog')
+  expect(read).toHaveBeenCalledTimes(1)
+  read.mockRestore()
+})
+
+it.each(['entries', 'resolve'] as const)(
+  'rejects a late %s values read after the dataset changes',
+  async (action) => {
+    const { service, client } = await setup()
+    const saved = await service.run({
+      action: 'commit',
+      ...(await preview(service)),
+      skipProblems: false
+    })
+    const dataset = saved.datasets![0]
+    const request: JournalRequest =
+      action === 'entries'
+        ? { action, datasetId: dataset.id, offset: 0, query: '', descending: false }
+        : { action, identities: [{ name: row().name, aliases: [], issns: [] }] }
+    await service.run(request)
+    const query = client.query.bind(client)
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const read = vi.spyOn(client, 'query').mockImplementationOnce(
+      (...args) =>
+        query(...args).then(async (rows) => {
+          await gate
+          return rows
+        }) as ReturnType<JournalDatabase['query']>
+    )
+    const pending = service.run(request)
+    const rejected = expect(pending).rejects.toThrow('Journal data changed')
+    await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1))
+    await service.run({
+      action: 'fields',
+      datasetId: dataset.id,
+      expectedRevision: dataset.revision,
+      fields: dataset.fields.map((field) => ({ ...field, label: `Updated ${field.label}` }))
+    })
+    release()
+    await rejected
+    expect(await service.run(request)).toBeTruthy()
+    read.mockRestore()
+  }
+)

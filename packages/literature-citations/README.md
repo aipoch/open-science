@@ -12,3 +12,5 @@ Citation parsing, CSL formatting, style validation and DOCX/LaTeX transformation
 Supply a custom style directory and a `getMany` reader returning only document IDs, metadata revisions and bibliographic records. The host owns permissions, Library personal fields, Artifact persistence and corpus provenance; validate/preserve those fields at the host boundary. Document markers, custom style hashes and sidecar bytes retain the existing format. Reformat returns the citation portion of a manifest, not host corpus data.
 
 Run `npm run build` and `npm test` in this directory. `npm pack` includes declarations, runtime code, styles and locale assets. Consumers use the package's public exports only. Tests and source code are excluded from the archive.
+
+Identifier normalization, canonical URLs, CSL validation and formatting cases are tested in this package. Host tests verify application error translation, Artifact/corpus preservation and command wiring; renderer tests consume transport error envelopes and verify localized presentation.

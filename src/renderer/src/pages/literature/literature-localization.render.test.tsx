@@ -1,16 +1,11 @@
 // @vitest-environment jsdom
-import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { createRef } from 'react'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 
 import { i18next } from '@/i18n'
-import { LiteratureCitationStyleLibrary } from '@aipoch/literature-citations/styles'
-import { withCitationStyleErrors } from '../../../../main/literature/citation-errors'
 import {
-  toApplicationCommandErrorEnvelope,
+  type ApplicationCommandErrorEnvelope,
   unwrapApplicationCommandOutcome
 } from '../../../../shared/application-command-contract'
 import {
@@ -35,7 +30,6 @@ import { createLiteratureSelectionStore } from './list/literature-selection'
 import type { SmartCollectionCellActions } from './collections/SmartCollectionDecision'
 
 const previousApi = window.api
-const roots: string[] = []
 const locales = ['de', 'es', 'fr', 'zh-Hans', 'zh-Hant', 'ja', 'ko', 'ru'] as const
 const switchLanguage = async (language: string): Promise<void> => {
   await act(async () => {
@@ -47,7 +41,6 @@ afterEach(async () => {
   cleanup()
   window.api = previousApi
   await switchLanguage('en')
-  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 
 it('updates the selected type label without replacing the focused select trigger', async () => {
@@ -233,24 +226,17 @@ it.each([
   }
 )
 
-const importInvalidStyle = async (
-  content: string,
+// The renderer owns transport-error presentation, not CSL validation or filesystem storage.
+const importStyleWithFailure = async (
+  failure: ApplicationCommandErrorEnvelope,
   transport: 'electron' | 'web' = 'electron'
 ): Promise<string> => {
-  const root = await mkdtemp(join(tmpdir(), 'literature-i18n-'))
-  roots.push(root)
-  const library = new LiteratureCitationStyleLibrary(join(root, 'styles'))
+  const content = '<style/>'
   const citationStyles = vi.fn(async (request: { kind: 'import'; content: string }) => {
     expect(request.kind).toBe('import')
-    try {
-      await withCitationStyleErrors(() => library.import(request.content))
-      return { styles: [] }
-    } catch (cause) {
-      const error = JSON.parse(JSON.stringify(toApplicationCommandErrorEnvelope(cause)))
-      // Electron copies plain rejections; Web reconstructs errors in the renderer realm.
-      if (transport === 'electron') throw error
-      return unwrapApplicationCommandOutcome({ ok: false, error })
-    }
+    const error = JSON.parse(JSON.stringify(failure))
+    if (transport === 'electron') throw error
+    return unwrapApplicationCommandOutcome({ ok: false, error })
   })
   window.api = { literature: { citationStyles } } as unknown as Window['api']
   const onStylesChange = vi.fn()
@@ -268,40 +254,32 @@ const importInvalidStyle = async (
   return screen.getByRole('alert').textContent ?? ''
 }
 
-it.each(locales)('localizes real invalid CSL XML in %s', async (locale) => {
-  await switchLanguage(locale)
-  const message = await importInvalidStyle('<', 'web')
-  expect(message).not.toBe('The selected file is not valid CSL XML.')
-  expect(message).toBe(i18next.t('The selected file is not valid CSL XML.'))
-  await switchLanguage('en')
-  expect(screen.getByRole('alert').textContent).toBe('The selected file is not valid CSL XML.')
-  await switchLanguage(locale)
-  expect(screen.getByRole('alert').textContent).toBe(message)
-})
+it.each(locales)(
+  'localizes CSL XML transport errors and reacts to locale changes in %s',
+  async (locale) => {
+    await switchLanguage(locale)
+    const message = await importStyleWithFailure(
+      { code: 'csl-invalid-xml', message: 'The selected file is not valid CSL XML.' },
+      'web'
+    )
+    expect(message).not.toBe('The selected file is not valid CSL XML.')
+    expect(message).toBe(i18next.t('The selected file is not valid CSL XML.'))
+    await switchLanguage('en')
+    expect(screen.getByRole('alert').textContent).toBe('The selected file is not valid CSL XML.')
+    await switchLanguage(locale)
+    expect(screen.getByRole('alert').textContent).toBe(message)
+  }
+)
 
-const csl = (info: string, citation = '<text variable="title"/>'): string =>
-  `<style xmlns="http://purl.org/net/xbiblio/csl" version="1.0"><info>${info}</info><citation><layout>${citation}</layout></citation><bibliography><layout><text variable="title"/></layout></bibliography></style>`
 it.each([
+  ['csl-missing-metadata', 'The CSL style must include a title and an id.'],
   [
-    'missing title',
-    csl('<id>https://example.test/style</id>'),
-    'The CSL style must include a title and an id.'
-  ],
-  [
-    'missing id',
-    csl('<title>Original title</title>'),
-    'The CSL style must include a title and an id.'
-  ],
-  [
-    'dependent style',
-    csl(
-      '<title>Original title</title><id>https://example.test/style</id><link rel="independent-parent" href="https://example.test/parent"/>'
-    ),
+    'csl-dependent-style',
     'Dependent CSL styles are not supported yet. Import an independent style.'
   ]
-])('localizes a real %s validation error', async (_name, content, english) => {
+] as const)('localizes the %s transport error', async (code, english) => {
   await switchLanguage('zh-Hans')
-  const message = await importInvalidStyle(content)
+  const message = await importStyleWithFailure({ code, message: english })
   expect(message).not.toBe(english)
   expect(message).toBe(i18next.t(english))
 })
@@ -309,13 +287,12 @@ it.each([
 it('localizes an undefined CSL macro while preserving its exact name', async () => {
   await switchLanguage('zh-Hans')
   const macro = 'author-原名'
-  const message = await importInvalidStyle(
-    csl(
-      '<title>Original title</title><id>https://example.test/style</id>',
-      `<text macro="${macro}"/>`
-    )
-  )
-  expect.soft(message).toContain(macro)
+  const message = await importStyleWithFailure({
+    code: 'csl-undefined-macro',
+    message: `The CSL style references an undefined macro: ${macro}`,
+    parameters: { macro }
+  })
+  expect(message).toContain(macro)
   expect(message).not.toBe(`The CSL style references an undefined macro: ${macro}`)
   expect(message).toBe(
     i18next.t('The CSL style references an undefined macro: {{macro}}', { macro })
