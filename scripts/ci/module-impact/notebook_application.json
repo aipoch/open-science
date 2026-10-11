@@ -210,7 +210,9 @@
     "src/main/notebook/dependency-analysis-adapter.ts",
     "src/main/notebook/dependency-analysis-adapter.test.ts",
     "src/main/notebook/package-boundaries.architecture.test.ts",
-    "src/main/notebook/powershell-search-parser.test.ts"
+    "src/main/notebook/powershell-search-parser.test.ts",
+    "src/main/notebook/analysis-file-evidence.ts",
+    "src/main/notebook/analysis-file-evidence.test.ts"
   ],
   "interfacePaths": [
     "src/main/notebook/application-commands.ts",
@@ -270,7 +272,8 @@
     "src/main/notebook/scientific-replay.test-support.ts",
     "src/main/notebook/host-session-reading.ts",
     "src/main/notebook/code-risk-budget-fixtures.ts",
-    "src/main/notebook/dependency-analysis-adapter.ts"
+    "src/main/notebook/dependency-analysis-adapter.ts",
+    "src/main/notebook/analysis-file-evidence.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -392,7 +395,8 @@
       "src/main/notebook/auto-mode-budget.integration.test.ts",
       "src/main/notebook/dependency-analysis-adapter.test.ts",
       "src/main/notebook/package-boundaries.architecture.test.ts",
-      "src/main/notebook/powershell-search-parser.test.ts"
+      "src/main/notebook/powershell-search-parser.test.ts",
+      "src/main/notebook/analysis-file-evidence.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

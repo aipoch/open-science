@@ -1,17 +1,17 @@
 import { createHash } from 'node:crypto'
 import { open, realpath } from 'node:fs/promises'
 import { basename, isAbsolute, relative, resolve } from 'node:path'
-import type { NotebookAnalysisRun } from './run-contract'
-import type { FileGeneration } from './serialized-file-provenance'
+import type { FileGeneration } from '@aipoch/notebook-analysis'
+import type { NotebookRunRecord } from '../../shared/notebook'
 const digest = (value: unknown): value is string =>
   typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
 // Read only the small, checksummed evidence manifest. Never open or deserialize serialized data.
-export const readGenerations = async (
+export const readNotebookFileGenerations = async (
   storageRoot: string,
-  run: NotebookAnalysisRun,
+  run: { runId: string; fileEvidence?: unknown },
   budget: { remaining: number }
 ): Promise<FileGeneration[]> => {
-  const ref = run.fileEvidence
+  const ref = run.fileEvidence as NotebookRunRecord['fileEvidence']
   if (
     !ref?.storageKey ||
     !ref.evidenceId ||

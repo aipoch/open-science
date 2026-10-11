@@ -28,7 +28,7 @@
     "packages/notebook-syntax/package.json"
   ],
   "consumerModules": [
-    "notebook_analysis",
+    "notebook_analysis_engine",
     "notebook_application",
     "notebook_code_risk",
     "notebook_execution"
@@ -690,7 +690,8 @@
       "src/shared/renderer-surface-inventory.test.ts",
       "src/shared/renderer-surface-matrix.test.ts",
       "src/main/notebook/powershell-search-parser.test.ts",
-      "packages/notebook-analysis/src/write-scope.test.ts"
+      "packages/notebook-analysis/src/write-scope.test.ts",
+      "src/main/notebook/analysis-file-evidence.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

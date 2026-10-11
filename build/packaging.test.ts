@@ -16,6 +16,7 @@ import { dirname, join } from 'node:path'
 import { finished } from 'node:stream/promises'
 
 import { describe, expect, it } from 'vitest'
+import { load } from 'js-yaml'
 
 const repoRoot = join(__dirname, '..')
 // Exercise the same packaging dependencies as the installed electron-builder.
@@ -297,15 +298,16 @@ process.stdout.write(JSON.stringify({ counts, modulePath: require.resolve('tikto
     expect(existsSync(join(repoRoot, 'resources/notebook/kernel_process_host.js'))).toBe(true)
     expect(existsSync(join(repoRoot, 'resources/notebook/file_evidence_worker.js'))).toBe(true)
     const yml = readFileSync(join(repoRoot, 'electron-builder.yml'), 'utf8')
-    expect(yml).toMatch(
-      /asarUnpack:\s*\n(?:[ \t]+-[^\n]*\n)*[ \t]+-\s*resources\/(\*\*|notebook\/\*\*)/
-    )
+    const { asarUnpack } = load(yml) as { asarUnpack: string[] }
+    expect(
+      asarUnpack.some((pattern) => ['resources/**', 'resources/notebook/**'].includes(pattern))
+    ).toBe(true)
   })
 
   it('ships the versioned Specialist contribution template guidance unpacked from the asar', () => {
     expect(existsSync(join(repoRoot, 'resources/specialists/template/v1/README.txt'))).toBe(true)
     const yml = readFileSync(join(repoRoot, 'electron-builder.yml'), 'utf8')
-    expect(yml).toMatch(/asarUnpack:\s*\n(?:[ \t]+-[^\n]*\n)*[ \t]+-\s*resources\/\*\*/)
+    expect((load(yml) as { asarUnpack: string[] }).asarUnpack).toContain('resources/**')
   })
 
   it('ships micromamba as a per-platform extraResource to Contents/Resources', () => {

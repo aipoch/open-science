@@ -31,11 +31,7 @@ export type NotebookAnalysisRun = {
   }
   fileEvidence?: {
     state: 'available' | 'partial' | 'unavailable'
-    activityId?: string
-    activityKind: 'notebook-run' | 'compute-job'
-    evidenceId?: string
     checksum?: string
-    storageKey?: string
     relationCount?: number
     fileReads: 'complete' | 'partial' | 'unavailable'
     writerAttribution: 'complete' | 'partial' | 'unavailable'

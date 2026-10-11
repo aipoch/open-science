@@ -1,10 +1,10 @@
-import type { PythonArgumentShape } from './python-library-effects'
+import type { PythonArgumentShape } from './analysis-contract-primitives'
 import type {
   NotebookInvalidatedRun,
   NotebookRunRecord,
   NotebookRunStaleness
 } from './run-contract'
-import type { NotebookFileCallEffect } from './notebook-call-effects'
+import type { NotebookFileCallEffect } from './analysis-contract-primitives'
 
 type NotebookDependencyAlias = {
   target: string

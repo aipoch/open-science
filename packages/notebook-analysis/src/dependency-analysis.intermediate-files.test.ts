@@ -1,6 +1,5 @@
 import { expect, it } from 'vitest'
-import { createHash } from 'node:crypto'
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
+import { mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { NotebookRunRecord } from './analysis-test-support'
@@ -147,43 +146,23 @@ it.each(cases)(
     })
     const runs = [run(writer, 0), run(reader, 1)]
     try {
-      for (const [index, activity] of runs.entries()) {
-        const key = `evidence/${index}/evidence.json`
-        const json = JSON.stringify({
-          schemaVersion: 1,
-          evidenceId: `e-${index}`,
-          activityId: activity.runId,
-          activityKind: 'notebook-run',
-          relations: [
-            {
-              relation: index === 0 ? 'created' : 'present-before',
-              relativePath: `data/${value.path}`,
-              generation: { relativePath: `data/${value.path}`, checksum: 'a'.repeat(64) }
-            }
-          ]
-        })
-        await mkdir(join(root, 'evidence', String(index)), { recursive: true })
-        await writeFile(join(root, key), json)
+      for (const activity of runs) {
         activity.fileEvidence = {
-          schemaVersion: 1,
-          activityId: activity.runId,
-          activityKind: 'notebook-run',
-          evidenceId: `e-${index}`,
-          storageKey: key,
-          checksum: createHash('sha256').update(json).digest('hex'),
           state: 'available',
-          initialViewState: 'complete',
-          managedRootsFinalState: 'complete',
-          scientificOutputAnalysis: 'complete',
-          scientificOutputCount: 0,
+          checksum: 'a'.repeat(64),
           fileReads: 'complete',
-          externalPaths: 'complete',
-          writerAttribution: 'complete',
-          reasonCodes: []
+          writerAttribution: 'complete'
         }
       }
       const analyzer = new NotebookDependencyAnalyzer({
         storageRoot: root,
+        readFileGenerations: async (activity) => [
+          {
+            path: value.path,
+            checksum: 'a'.repeat(64),
+            relation: activity.runId === '0' ? 'created' : 'present-before'
+          }
+        ],
         repository: { readSessionRuns: async () => runs }
       })
       const projection = await analyzer.project({

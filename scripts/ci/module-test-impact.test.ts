@@ -993,8 +993,17 @@ it.each([
 
 describe('Notebook package module boundaries', () => {
   const manifest = loadModuleImpactManifest()
-  const packageModules = ['notebook_syntax', 'notebook_code_risk', 'notebook_analysis']
-  const packageRoots = packageModules.map((id) => `packages/${id.replaceAll('_', '-')}/`)
+  const packageModules = [
+    'notebook_syntax',
+    'notebook_code_risk',
+    'notebook_analysis',
+    'notebook_analysis_engine'
+  ]
+  const packageRoots = [
+    'packages/notebook-syntax/',
+    'packages/notebook-code-risk/',
+    'packages/notebook-analysis/'
+  ]
   const packageTests = (tests: string[]): string[] =>
     tests.filter((path) => packageRoots.some((root) => path.startsWith(root)))
   const graph = { status: 'unavailable-manifest-only', testFiles: [] }
@@ -1033,11 +1042,15 @@ describe('Notebook package module boundaries', () => {
   it.each([
     ['notebook_code_risk', 'packages/notebook-code-risk/src/index.ts', ['notebook_code_risk']],
     [
-      'notebook_analysis',
+      'notebook_analysis_engine',
       'packages/notebook-analysis/src/dependency-analysis.ts',
-      ['notebook_analysis']
+      ['notebook_analysis_engine']
     ],
-    ['notebook_syntax', 'packages/notebook-syntax/src/index.ts', packageModules]
+    [
+      'notebook_syntax',
+      'packages/notebook-syntax/src/index.ts',
+      ['notebook_syntax', 'notebook_code_risk', 'notebook_analysis_engine']
+    ]
   ])(
     'selects only downstream package suites and host integrations for %s',
     (id, path, selected) => {
@@ -1045,7 +1058,7 @@ describe('Notebook package module boundaries', () => {
       expect(plan.mode).toBe('selective')
       for (const candidate of packageModules) {
         const owned = manifest.modules[candidate].testFiles.owner
-        expect(owned.length).toBeGreaterThan(0)
+        if (candidate !== 'notebook_analysis') expect(owned.length).toBeGreaterThan(0)
         if (selected.includes(candidate))
           expect(plan.testFiles).toEqual(expect.arrayContaining(owned))
         else
@@ -1058,4 +1071,28 @@ describe('Notebook package module boundaries', () => {
       expect(plan.testFiles).toContain('src/main/notebook/code-risk-admission.test.ts')
     }
   )
+})
+
+it('separates analysis implementation consumers from broad shared contract consumers', () => {
+  const manifest = loadModuleImpactManifest()
+  const graph = { status: 'unavailable-manifest-only', testFiles: [] }
+  const implementation = createAffectedTestPlan(
+    [{ path: 'packages/notebook-analysis/src/dependency-analysis-python.ts', status: 'modified' }],
+    graph,
+    manifest
+  )
+  const contract = createAffectedTestPlan(
+    [{ path: 'packages/notebook-analysis/src/contracts.ts', status: 'modified' }],
+    graph,
+    manifest
+  )
+  expect(implementation.modules).toContain('notebook_analysis_engine')
+  expect(implementation.modules).not.toContain('notebook_analysis')
+  expect(implementation.modules).not.toContain('session_persistence')
+  expect(contract.modules).toEqual(
+    expect.arrayContaining(['notebook_analysis', 'notebook_analysis_engine', 'session_persistence'])
+  )
+  expect(contract.testFiles).toEqual(expect.arrayContaining(implementation.testFiles))
+  expect(implementation.testFiles).toContain('src/main/notebook/analysis-file-evidence.test.ts')
+  expect(implementation.testFiles).toContain('src/main/notebook/serialized-file-provenance.test.ts')
 })

@@ -43,6 +43,34 @@ export function validatePackageTestRegistry(registry) {
   return registry
 }
 
+// Build upstream tarballs as prerequisites, but only run unit suites selected by trusted policy.
+export function notebookPackageVerificationPlan(selectedRoots, excludedRoots) {
+  const names = ['notebook-syntax', 'notebook-code-risk', 'notebook-analysis']
+  for (const roots of [selectedRoots, excludedRoots]) {
+    if (
+      roots !== undefined &&
+      (!Array.isArray(roots) ||
+        roots.some(
+          (root) => typeof root !== 'string' || (root !== 'packages' && !rootPattern.test(root))
+        ))
+    )
+      throw new Error('Invalid package verification roots')
+  }
+  const tests = names.filter(
+    (name) =>
+      selectedRoots === undefined ||
+      selectedRoots.includes('packages') ||
+      selectedRoots.includes(`packages/${name}`) ||
+      // Newly introduced packages are absent from an older trusted registry. Silence is
+      // not exclusion evidence: verify them until the approved registry covers them.
+      (excludedRoots !== undefined && !excludedRoots.includes(`packages/${name}`))
+  )
+  const builds = names.filter(
+    (name) => tests.includes(name) || (name === 'notebook-syntax' && tests.length > 0)
+  )
+  return { builds, tests }
+}
+
 export function createPackageTestPlan(paths, registry) {
   const { packages } = validatePackageTestRegistry(registry)
   const roots = packages.map((entry) => entry.root)

@@ -2046,3 +2046,19 @@ it('derives Ubuntu package exclusions from trusted policy before either test mod
     steps.findIndex((step) => step.name === 'Test affected Module shard')
   )
 })
+
+it('gates independent Notebook tarballs using trusted directional selection', () => {
+  const job = Object.values(workflow.jobs).find((job) => job.name === 'Static checks')!
+  const steps = job.steps!
+  const selector = steps.find(
+    (step) => step.name === 'Select independent package verification from trusted policy'
+  )!
+  const check = steps.find((step) => step.id === 'notebook_packages')!
+  expect(selector.uses).toBe('./.github/actions/select-package-tests')
+  expect(selector.with?.['trusted-base']).toBe('${{ needs.preflight.outputs.trusted_base }}')
+  expect(steps.indexOf(selector)).toBeLessThan(steps.indexOf(check))
+  expect(check.run).toBe('npm run check:notebook-packages -- --ci')
+  const gate = steps.find((step) => step.name === 'Enforce selected static checks')!
+  expect(gate.env?.NOTEBOOK_PACKAGES_OUTCOME).toBe('${{ steps.notebook_packages.outcome }}')
+  expect(gate.run).toContain('check notebook_packages "$NOTEBOOK_PACKAGES_OUTCOME"')
+})

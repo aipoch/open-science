@@ -1,6 +1,7 @@
 import type { NotebookFileCallEffect } from './notebook-call-effects'
 
-export type PythonArgumentShape = 'none' | 'list' | 'scalar' | 'unknown'
+import type { PythonArgumentShape } from './analysis-contract-primitives'
+export type { PythonArgumentShape } from './analysis-contract-primitives'
 
 export type PythonLibraryMethodEffect = {
   effect: 'read' | 'mutate' | 'unknown'

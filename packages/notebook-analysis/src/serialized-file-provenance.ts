@@ -6,6 +6,7 @@ import type {
   NotebookSourceFileAccessContext
 } from './dependency-analysis-types'
 
+/** Paths share a caller-defined namespace; executionRelativeRoot locates source-relative paths. */
 export type FileGeneration = { path: string; checksum: string; relation: string }
 export type ReadFileGenerations = (
   run: NotebookRunRecord,
@@ -27,7 +28,7 @@ export const serializedSourcePath = (path: string): string | undefined => {
 export const verifiedSerializedValues = (
   files: NonNullable<NotebookSourceFileAccessContext['serializedValueFiles']>,
   generations: readonly { path: string; checksum: string }[],
-  executionRelativeRoot = 'data'
+  executionRelativeRoot = '.'
 ): NotebookSerializedValue[] =>
   files.flatMap((file) => {
     if (!generations.some((g) => g.path === file.path && g.checksum === file.checksum)) return []
@@ -42,7 +43,8 @@ export const serializedFileContext = async (
   runs: readonly NotebookRunRecord[],
   factsFor: (run: NotebookRunRecord) => NotebookRunDependencyFacts | undefined,
   currentRunId: string,
-  context?: NotebookSourceFileAccessContext
+  context?: NotebookSourceFileAccessContext,
+  executionRelativeRoot = '.'
 ): Promise<NotebookSourceFileAccessContext | undefined> => {
   const files: NonNullable<NotebookSourceFileAccessContext['serializedValueFiles']> = []
   const budget = { remaining: 8 * 1024 * 1024 }
@@ -65,7 +67,7 @@ export const serializedFileContext = async (
     const writtenPaths = new Map<string, NotebookSerializedValue>(
       facts.serializedValueWrites.flatMap((value) => {
         const normalized = serializedSourcePath(value.path)
-        return normalized ? [[`data/${normalized}`, value] as const] : []
+        return normalized ? [[posix.join(executionRelativeRoot, normalized), value] as const] : []
       })
     )
     for (const generation of await readGenerations(run, budget)) {
@@ -91,7 +93,7 @@ export const serializedFileContext = async (
   return {
     ...(context ?? { staticStrings: [], staticCollections: [], localFileWrappers: [] }),
     serializedValueFiles: files,
-    verifiedSerializedValues: verifiedSerializedValues(files, initial)
+    verifiedSerializedValues: verifiedSerializedValues(files, initial, executionRelativeRoot)
   }
 }
 

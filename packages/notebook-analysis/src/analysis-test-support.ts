@@ -1,8 +1,6 @@
 import { join } from 'node:path'
 import { NotebookDependencyAnalyzer as Analyzer } from './dependency-analysis'
 import type { NotebookAnalysisRun, NotebookWorkingFile } from './run-contract'
-import { readGenerations } from './file-generations'
-import { serializedFileContext as projectSerializedContext } from './serialized-file-provenance'
 export {
   projectNotebookDependencies,
   unavailableNotebookDependencyProjection
@@ -69,7 +67,6 @@ export class NotebookDependencyAnalyzer extends Analyzer {
           'cache',
           'dependency-analysis.json'
         ),
-      readFileGenerations: (run, budget) => readGenerations(options.storageRoot, run, budget),
       managedInterpreter:
         'managedInterpreter' in options
           ? options.managedInterpreter
@@ -77,12 +74,4 @@ export class NotebookDependencyAnalyzer extends Analyzer {
     })
   }
 }
-export const serializedFileContext = (
-  root: string,
-  ...args: Parameters<typeof projectSerializedContext> extends [unknown, ...infer Rest]
-    ? Rest
-    : never
-): ReturnType<typeof projectSerializedContext> =>
-  projectSerializedContext((run, budget) => readGenerations(root, run, budget), ...args)
-
 export type { NotebookLanguage } from './run-contract'

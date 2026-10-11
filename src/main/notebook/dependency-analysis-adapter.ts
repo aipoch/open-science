@@ -1,5 +1,6 @@
 import { join } from 'node:path'
-import { NotebookDependencyAnalyzer, readFileGenerations } from '@aipoch/notebook-analysis'
+import { NotebookDependencyAnalyzer } from '@aipoch/notebook-analysis'
+import { readNotebookFileGenerations } from './analysis-file-evidence'
 import { getNotebookSessionRoot, getRuntimeRoot } from './repository'
 import { envPrefix, pythonBin, resolveEnvName, rScriptBin } from './runtime-paths'
 
@@ -7,19 +8,24 @@ type Options = ConstructorParameters<typeof NotebookDependencyAnalyzer>[0]
 
 /** Bind host-authorized resources to the package's single analysis owner. */
 export const createNotebookDependencyAnalyzer = (
-  options: Omit<Options, 'cachePath' | 'managedInterpreter' | 'readFileGenerations'> & {
+  options: Omit<
+    Options,
+    'cachePath' | 'managedInterpreter' | 'readFileGenerations' | 'executionRelativeRoot'
+  > & {
     storageRoot: string
   }
 ): NotebookDependencyAnalyzer =>
   new NotebookDependencyAnalyzer({
     ...options,
+    executionRelativeRoot: 'data',
     cachePath: (projectId, sessionId) =>
       join(
         getNotebookSessionRoot(options.storageRoot, projectId, sessionId),
         'cache',
         'dependency-analysis.json'
       ),
-    readFileGenerations: (run, budget) => readFileGenerations(options.storageRoot, run, budget),
+    readFileGenerations: (run, budget) =>
+      readNotebookFileGenerations(options.storageRoot, run, budget),
     managedInterpreter: (run) => {
       const language = run.kernelKind === 'r' ? 'r' : 'python'
       let environment: string

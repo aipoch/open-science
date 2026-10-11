@@ -1682,6 +1682,8 @@ class NotebookDependencyAnalyzer {
       repository: {
         readSessionRuns(projectId: string, sessionId: string): Promise<NotebookRunRecord[]>
       }
+      /** Execution directory within the generation path namespace. Defaults to its root. */
+      executionRelativeRoot?: string
       readFileGenerations?: ReadFileGenerations
       managedInterpreter?: (run: NotebookRunRecord) => NotebookDependencyInterpreter | undefined
       analyze?: AnalyzeNotebookScripts
@@ -1927,7 +1929,8 @@ class NotebookDependencyAnalyzer {
               ? sidecar.runs[run.runId]?.facts
               : undefined,
           request.currentRunId,
-          context
+          context,
+          this.options.executionRelativeRoot
         )
       : context
   }
@@ -2098,7 +2101,8 @@ class NotebookDependencyAnalyzer {
               ? sidecar.runs[previous.runId]?.facts
               : undefined,
           run.runId,
-          priorContext
+          priorContext,
+          this.options.executionRelativeRoot
         )
       const helperContextKey = (module: { source: string; exports: readonly string[] }): string =>
         JSON.stringify([module.source, [...module.exports].sort()])

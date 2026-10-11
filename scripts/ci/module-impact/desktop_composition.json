@@ -1297,7 +1297,8 @@
       "src/main/skill-marketplace/service.test.ts",
       "scripts/electron-session-revision-retry.test.ts",
       "src/main/notebook/dependency-analysis-adapter.test.ts",
-      "src/main/notebook/powershell-search-parser.test.ts"
+      "src/main/notebook/powershell-search-parser.test.ts",
+      "src/main/notebook/analysis-file-evidence.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

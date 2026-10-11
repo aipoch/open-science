@@ -26,7 +26,6 @@ export { matchesWriteScope } from './write-scope'
 export { verifiedSerializedValues } from './serialized-file-provenance'
 export type { FileGeneration, ReadFileGenerations } from './serialized-file-provenance'
 export { NOTEBOOK_ANALYZER_VERSION, NOTEBOOK_ANALYZER_REVISION } from './analysis-version'
-export { readGenerations as readFileGenerations } from './file-generations'
 export {
   analyzePythonSources,
   analyzePythonNotebookSource,

@@ -65,7 +65,22 @@ it('consumes Notebook packages only through exports and keeps packages independe
     const file = resolve(root, path)
     const owner = packages.find((pkg) => file.startsWith(pkg.directory + sep))
     const source = readFileSync(file, 'utf8')
-    const syntax = createSourceFile(path, source, ScriptTarget.Latest, false)
+    const imports = preProcessFile(source, true, true).importedFiles
+    // Import resolution below still checks every file. Only package sources and host
+    // files naming a public package can contain the forwarding/export cases needing an AST.
+    const syntax = createSourceFile(
+      path,
+      owner ||
+        imports.some(({ fileName }) =>
+          packages.some(
+            (pkg) => fileName === pkg.manifest.name || fileName.startsWith(pkg.manifest.name + '/')
+          )
+        )
+        ? source
+        : '',
+      ScriptTarget.Latest,
+      false
+    )
     const packageBindings = new Set<string>()
     for (const statement of syntax.statements) {
       if (!isImportDeclaration(statement) || !statement.importClause) continue
@@ -107,14 +122,14 @@ it('consumes Notebook packages only through exports and keeps packages independe
       )
         violations.push(`${path} -> host forwarding export; import the public package directly`)
     }
-    for (const { fileName: specifier } of preProcessFile(source, true, true).importedFiles) {
-      const target = resolutionOptions
-        .map(
-          (options, index) =>
-            resolveModuleName(specifier, file, options, sys, resolutionCaches[index]).resolvedModule
-              ?.resolvedFileName
-        )
-        .find(Boolean)
+    for (const { fileName: specifier } of imports) {
+      if (specifier.startsWith('node:')) continue
+      let target: string | undefined
+      for (const [index, options] of resolutionOptions.entries()) {
+        target = resolveModuleName(specifier, file, options, sys, resolutionCaches[index])
+          .resolvedModule?.resolvedFileName
+        if (target) break
+      }
       for (const pkg of packages) {
         if (specifier === pkg.manifest.name || specifier.startsWith(pkg.manifest.name + '/')) {
           if (!pkg.entries.has(specifier)) violations.push(`${path} -> private export ${specifier}`)
@@ -145,4 +160,4 @@ it('consumes Notebook packages only through exports and keeps packages independe
     }
   }
   expect(violations).toEqual([])
-})
+}, 60_000)

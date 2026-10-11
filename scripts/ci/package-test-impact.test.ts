@@ -16,6 +16,7 @@ import { describe, expect, it } from 'vitest'
 import {
   createPackageTestPlan,
   packageTestExcludePatterns,
+  notebookPackageVerificationPlan,
   packageTestPlanFromRevisions,
   validatePackageTestRegistry
 } from './package-test-impact.mjs'
@@ -309,4 +310,54 @@ it('keeps Notebook package tests directional while retaining shared syntax consu
   expect(
     createPackageTestPlan([`${syntax}/assets/tree-sitter-python.wasm`], actual).selected
   ).toEqual([syntax, risk, analysis])
+})
+
+it.each([
+  [[], [], []],
+  [
+    ['packages/notebook-code-risk'],
+    ['notebook-syntax', 'notebook-code-risk'],
+    ['notebook-code-risk']
+  ],
+  [['packages/notebook-analysis'], ['notebook-syntax', 'notebook-analysis'], ['notebook-analysis']],
+  [
+    ['packages/notebook-syntax', 'packages/notebook-code-risk', 'packages/notebook-analysis'],
+    ['notebook-syntax', 'notebook-code-risk', 'notebook-analysis'],
+    ['notebook-syntax', 'notebook-code-risk', 'notebook-analysis']
+  ],
+  [['packages/diagnostics'], [], []],
+  [
+    undefined,
+    ['notebook-syntax', 'notebook-code-risk', 'notebook-analysis'],
+    ['notebook-syntax', 'notebook-code-risk', 'notebook-analysis']
+  ],
+  [
+    ['packages'],
+    ['notebook-syntax', 'notebook-code-risk', 'notebook-analysis'],
+    ['notebook-syntax', 'notebook-code-risk', 'notebook-analysis']
+  ]
+])('verifies only selected packages with build-only prerequisites: %j', (roots, builds, tests) => {
+  expect(notebookPackageVerificationPlan(roots)).toEqual({ builds, tests })
+})
+
+it('verifies new packages absent from an older trusted registry instead of silently skipping bootstrap', () => {
+  expect(
+    notebookPackageVerificationPlan(['packages/diagnostics'], ['packages/connector-core']).tests
+  ).toEqual(['notebook-syntax', 'notebook-code-risk', 'notebook-analysis'])
+  expect(
+    notebookPackageVerificationPlan(
+      [],
+      ['packages/notebook-syntax', 'packages/notebook-code-risk', 'packages/notebook-analysis']
+    )
+  ).toEqual({ builds: [], tests: [] })
+  expect(
+    notebookPackageVerificationPlan(
+      ['packages/notebook-analysis'],
+      ['packages/notebook-syntax', 'packages/notebook-code-risk']
+    )
+  ).toEqual({ builds: ['notebook-syntax', 'notebook-analysis'], tests: ['notebook-analysis'] })
+  expect(notebookPackageVerificationPlan([], []).tests).toHaveLength(3)
+  expect(() => notebookPackageVerificationPlan([], ['../untrusted'])).toThrow(
+    'Invalid package verification roots'
+  )
 })
