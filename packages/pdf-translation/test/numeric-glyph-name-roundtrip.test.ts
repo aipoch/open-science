@@ -1,4 +1,4 @@
-import { expect, it, onTestFinished } from 'vitest'
+import { expect, it, onTestFinished, vi } from 'vitest'
 import { PDFDocument, PDFName, PDFDict, StandardFonts } from 'pdf-lib'
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { resolve } from './paths.js'
@@ -14,6 +14,11 @@ import {
 } from '../src/reader/snapshot.js'
 import { pdfTranslationLayoutFragments } from '../src/reader/fragments.js'
 import { verifyPdfPreservation } from './support/pdf-translation-preservation.js'
+
+vi.mock('pdfjs-dist/legacy/build/pdf.mjs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('pdfjs-dist/legacy/build/pdf.mjs')>()
+  return { ...actual, getDocument: vi.fn(actual.getDocument) }
+})
 
 const fixtures = readPdfTranslationCases<{
   name: string
@@ -436,5 +441,44 @@ it.each(['resource-limit', 'unreadable-font'] as const)(
         .map((item) => item.str)
         .join('')
     ).toContain('Adjacent prose.')
+  }
+)
+
+it.each(['load', 'page', 'text', 'cleanup'] as const)(
+  'contains optional source recovery failures during %s',
+  async (stage) => {
+    const data = await interleavedPdf()
+    const { source, input } = await openSource(data)
+    const unit = input.units.find((_, index) => !source.units[index].sourceOnly)!
+    const loading = getDocument({ data: data.slice(), useSystemFonts: true })
+    const document = await loading.promise
+    const page = await document.getPage(1)
+    const destroy = loading.destroy.bind(loading)
+    onTestFinished(async () => {
+      vi.restoreAllMocks()
+      await destroy()
+    })
+    const failure = new Error('synthetic PDF.js failure')
+    if (stage === 'load')
+      vi.spyOn(loading, 'promise', 'get').mockImplementation(() => Promise.reject(failure))
+    if (stage === 'page') vi.spyOn(document, 'getPage').mockRejectedValueOnce(failure)
+    if (stage === 'text') {
+      vi.spyOn(document, 'getPage').mockResolvedValueOnce(page)
+      vi.spyOn(page, 'getTextContent').mockRejectedValueOnce(failure)
+    }
+    if (stage === 'cleanup')
+      vi.spyOn(loading, 'destroy').mockImplementationOnce(async () => {
+        await destroy()
+        throw failure
+      })
+    vi.mocked(getDocument).mockReturnValueOnce(loading)
+    const recovery = createSourceFragmentRecovery(data, input.pages)
+    try {
+      const recovered = await recovery.recover(unit)
+      if (stage === 'cleanup') expect(recovered).toBeDefined()
+      else expect(recovered).toBeUndefined()
+    } finally {
+      await expect(recovery.close()).resolves.toBeUndefined()
+    }
   }
 )
