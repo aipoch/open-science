@@ -83,8 +83,9 @@ Messages and Markdown previews defer external media until the user activates it.
 the destination hosts and exposes the full URLs on hover. This permission is local to the displayed
 media and its URL set, not a permanent domain grant. After activation, media uses the browser's
 network stack and normal redirect behavior; it is not routed through the Notebook domain policy.
-Mermaid image nodes are rejected before rendering. HTML-label images, external SVG image/use
-elements and inline HTML styles are removed before Mermaid measures labels in the live document;
+Mermaid image nodes are rejected before rendering. HTML labels allow only text formatting, tables, mathematical markup and navigation links;
+resource-loading elements and attributes (including image inputs, SVG filters and table
+backgrounds) are removed before Mermaid measures labels in the live document;
 diagram directives cannot override this sanitizer or supply custom CSS/font-family values. Use a separate Markdown
 image to load it explicitly. Ordinary diagrams and basic HTML label formatting remain available. Managed artifact previews retain their existing
 authorization. Import previews that disable media continue to suppress it entirely.

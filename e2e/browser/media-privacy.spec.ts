@@ -95,6 +95,12 @@ test('Mermaid HTML labels and diagram configuration cannot fetch images during l
     const label = `flowchart TD\n A["<b>Start</b><br/><img src='${origin}/html' srcset='${origin}/srcset 2x'>"] --> B["Finish"]`
     const sources = [
       label,
+      `flowchart TD\n A["<input type='image' src='${origin}/input'>"]`,
+      `flowchart TD\n A["<INPUT TYPE='image' SRC='${origin}/input-upper'>"]`,
+      `flowchart TD\n A["&lt;input type='image' src='${origin}/input-entity'&gt;"]`,
+      `flowchart TD\n A["<table background='${origin}/table'><tr background='${origin}/tr'><td background='${origin}/td'>Start</td></tr></table>"]`,
+      `flowchart TD\n A["<svg><filter id='f'><feImage href='${origin}/filter'/></filter><rect filter='url(#f)' width='50' height='50'/></svg>"]`,
+      `flowchart TD\n A["<svg><filter id='g'><feImage xlink:href='${origin}/filter-xlink'/></filter><rect filter='url(#g)' width='50' height='50'/></svg>"]`,
       `---\nconfig:\n  fontFamily: "Arial; background-image:url(${origin}/font)"\n---\n${label}`,
       `flowchart TD\n A["<IMG SRC='${origin}/uppercase'>"]`,
       `flowchart TD\n A["&lt;img src='${origin}/encoded'&gt;"]`,
@@ -129,6 +135,16 @@ test('Mermaid HTML labels and diagram configuration cannot fetch images during l
     await expect(svg.locator('b')).toHaveText('Start')
     await expect(svg).toContainText('Finish')
     expect((await svg.boundingBox())?.width).toBeGreaterThan(50)
+    const formatted = `flowchart TD\n A["<a href='https://example.invalid/guide' title='Guide'><em>Linked</em></a><table><tr><td>Cell</td></tr></table>"] --> B["<code>x</code><sub>1</sub><sup>2</sup>"]`
+    await page.goto(
+      `/media-privacy.html?mermaid=enabled&chart=${encodeURIComponent('```mermaid\n' + formatted + '\n```')}`
+    )
+    await expect(svg).toBeVisible()
+    await expect(svg.locator('a[href="https://example.invalid/guide"]')).toContainText('Linked')
+    await expect(svg.locator('td')).toHaveText('Cell')
+    await expect(svg.locator('code')).toHaveText('x')
+    await expect(svg.locator('sub')).toHaveText('1')
+    await expect(svg.locator('sup')).toHaveText('2')
     expect(requests).toEqual([])
   } finally {
     await new Promise<void>((resolve, reject) =>

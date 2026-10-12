@@ -58,8 +58,9 @@ describe('mermaid source-tracking plugin', () => {
           'themeCSS'
         ]),
         dompurifyConfig: expect.objectContaining({
-          FORBID_TAGS: expect.arrayContaining(['img', 'image']),
-          FORBID_ATTR: ['style']
+          ALLOWED_TAGS: expect.arrayContaining(['b', 'br', 'a', 'table']),
+          ALLOWED_ATTR: ['class', 'href', 'title', 'colspan', 'rowspan', 'align', 'dir', 'lang'],
+          ALLOW_DATA_ATTR: false
         })
       })
     )
