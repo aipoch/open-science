@@ -69,6 +69,18 @@ describe('complete module ownership', () => {
     ])
   })
 
+  it('does not route regression fixtures or non-test scripts through owner registrations', () => {
+    expect(
+      modulesForPath(manifest, 'test/fixtures/pdf-translation/compact-cjk-table-header-fit.jsonl')
+    ).toEqual([])
+    expect(modulesForPath(manifest, 'scripts/build-backend.mjs')).toEqual([])
+    // A script test can still be selected directly through its declared testFiles evidence.
+    expect(modulesForPath(manifest, 'scripts/pdf-translation-corpus.test.ts')).toContain(
+      'main_pdf_translation'
+    )
+    expect(auditModuleRouting(manifest).some(({ path }) => path.startsWith('scripts/'))).toBe(false)
+  })
+
   it('routes every declared portable test without an unknown-path fallback', () => {
     const tests = new Set(
       Object.values(manifest.modules).flatMap((module) => Object.values(module.testFiles).flat())

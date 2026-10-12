@@ -60,13 +60,24 @@ describe('independent package test direction', () => {
     'vitest.config.ts',
     'tsconfig.node.json',
     'test/setup.ts',
-    'scripts/build.mjs',
     '.github/workflows/pr-gate.yml',
+    'scripts/build-dev-packages.mjs',
+    'scripts/check-packages.mjs',
+    'scripts/ci/package-test-impact.mjs',
     'packages/unknown/index.ts',
     'unclassified/input.bin'
   ])('keeps all package tests for shared or unknown input %s', (path) => {
     expect(createPackageTestPlan([path], registry).excluded).toEqual([])
   })
+  it.each(['scripts/build.mjs', 'scripts/ci/classify-pr-changes.mjs', 'test/fixtures/case.jsonl'])(
+    'excludes unchanged package units for non-package evidence %s',
+    (path) => {
+      expect(createPackageTestPlan([path], registry)).toMatchObject({
+        selected: [],
+        excluded: [core, providers, mcp]
+      })
+    }
+  )
   it.each(['package.json', 'vitest.config.ts', 'README.md', 'src/provider.test.ts'])(
     'selects a package for its own input %s',
     (path) => {

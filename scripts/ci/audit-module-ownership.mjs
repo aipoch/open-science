@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { isModuleOwnershipPath } from './module-ownership-paths.mjs'
+import { isModuleOwnershipPath, isModuleRoutableOwnerPath } from './module-ownership-paths.mjs'
 import { loadModuleImpactManifest } from './load-module-impact.mjs'
 import { validateModuleImpactManifest } from './validate-module-impact.mjs'
 import { classifyChanges } from './classify-pr-changes.mjs'
@@ -40,7 +40,9 @@ export function auditModuleRouting(manifest) {
   // Audit every registered path, including runtime resources outside the mandatory
   // source inventory. Ownership must not be silently discarded by path routing.
   return Object.entries(manifest.modules)
-    .flatMap(([moduleId, module]) => module.ownerPaths.map((path) => [path, moduleId]))
+    .flatMap(([moduleId, module]) =>
+      module.ownerPaths.filter(isModuleRoutableOwnerPath).map((path) => [path, moduleId])
+    )
     .flatMap(([path, moduleId]) => {
       const plan = classifyChanges([{ path, status: 'modified' }], undefined, {
         moduleManifest: manifest

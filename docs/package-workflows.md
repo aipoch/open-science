@@ -46,6 +46,12 @@ The **Package test policy dry-run** is manual-only; policy and actual Vitest dis
 also run through the ordinary test suites. Queue, scheduled and manual installation checks reuse
 `.github/actions/verify-packages` and the production dispatcher.
 
+PR Gate treats package sources, package metadata, package compilation inputs and the package-test
+policy as global package inputs. Unrelated `scripts/**` changes and root regression fixture data
+are excluded from unchanged package units; fixture changes still select their declared reader
+suites through module-impact fixture routing. Unknown paths and incomplete trusted evidence keep
+the complete package baseline.
+
 The dispatcher reuses the Connector, Diagnostics, Environment, Compute, Notebook, Skills and
 PDF/Literature verifiers.
 Prerequisites need compilation; only selected packages need their own unit suites. Installed

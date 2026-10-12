@@ -15,6 +15,7 @@ import { loadModuleImpactManifest } from './load-module-impact.mjs'
 import { validateModuleImpactManifest } from './validate-module-impact.mjs'
 import { packageTestSelectedRoots, createPackageTestPlan } from './package-test-impact.mjs'
 import { resolveModuleImpactInputs } from './module-impact-inputs.mjs'
+import { isModuleRoutableOwnerPath } from './module-ownership-paths.mjs'
 
 const defaultManifest = loadModuleImpactManifest()
 const packageRegistryPath = new URL('./package-test-boundaries.json', import.meta.url)
@@ -24,7 +25,12 @@ const packageRegistry = existsSync(packageRegistryPath)
   : undefined
 function applyPackageBoundary(plan, paths) {
   if (!packageRegistry) return plan
-  const packages = createPackageTestPlan(paths, packageRegistry)
+  // Regression fixtures already map to their exact reader suites. Applying the independent
+  // package boundary to the fixture path would erase those package-owned readers merely because
+  // the data file itself is outside a package root.
+  const boundaryPaths = paths.filter((path) => !path.startsWith('test/fixtures/'))
+  if (boundaryPaths.length === 0) return plan
+  const packages = createPackageTestPlan(boundaryPaths, packageRegistry)
   const omitted = plan.testFiles.filter((path) =>
     packages.excluded.some((root) => path.startsWith(root + '/'))
   )
@@ -46,12 +52,16 @@ function declaredTests(module) {
 
 export function modulesForPath(manifest, path) {
   const owners = Object.entries(manifest.modules)
-    .filter(([, module]) => module.ownerPaths.includes(path))
+    .filter(([, module]) => isModuleRoutableOwnerPath(path) && module.ownerPaths.includes(path))
     .map(([moduleId]) => moduleId)
   if (owners.length > 0) return owners
   const explicit = Object.entries(manifest.modules)
     .filter(([, module]) =>
-      [...module.ownerPaths, ...module.interfacePaths, ...declaredTests(module)].includes(path)
+      [
+        ...module.ownerPaths.filter(isModuleRoutableOwnerPath),
+        ...module.interfacePaths,
+        ...declaredTests(module)
+      ].includes(path)
     )
     .map(([moduleId]) => moduleId)
   if (explicit.length > 0 || /\.(test|spec)\.[cm]?[jt]sx?$/.test(path)) return explicit
