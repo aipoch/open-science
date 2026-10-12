@@ -442,6 +442,7 @@ it.each([
   ["import { createRequire } from 'node:module'", true],
   ["import { expect } from 'vitest'; expect.any(Function)", true],
   ['type Callback = Function; interface API { handler: Function }', true],
+  ["const config = { module: 'commonjs' }; config.module", true],
   [
     "import { createRequire as require } from 'node:module'; const load = require(import.meta.url)",
     false
@@ -460,6 +461,13 @@ it.each([
   ["import Module = require('module'); Module['_load']('./owner')", false],
   ["export { createRequire } from 'node:module'", false],
   ["export * from 'node:module'", false],
+  ["module.constructor._load('./owner')", false],
+  ["module['constructor']['_load']('./owner')", false],
+  ["const loader = module; loader.constructor._load('./owner')", false],
+  ["process.getBuiltinModule('module')._load('./owner')", false],
+  ["process['getBuiltinModule']('module')._load('./owner')", false],
+  ["const { getBuiltinModule: load } = process; load('module')._load('./owner')", false],
+  ["process.mainModule.constructor._load('./owner')", false],
   [
     "import Module from 'node:module'; const api = Module; api.createRequire(import.meta.url)",
     false

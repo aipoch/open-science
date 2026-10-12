@@ -218,10 +218,17 @@ export function createConsumerDependencyReader(
         ].includes(node.text)
       )
         result.complete = false
-      // A loader passed as a value escapes literal-call import discovery.
+      // A loader passed as a value escapes literal-call import discovery. Without scope
+      // proof, a local binding named module also stays opaque rather than hiding a loader.
       if (
         ts.isIdentifier(node) &&
-        (['require', 'eval', 'Function'].includes(node.text) ||
+        (['require', 'eval', 'Function', 'getBuiltinModule', 'mainModule'].includes(node.text) ||
+          (node.text === 'module' &&
+            !(
+              (ts.isPropertyAccessExpression(node.parent) ||
+                ts.isPropertyAssignment(node.parent)) &&
+              node.parent.name === node
+            )) ||
           importedLoaders.has(node.text) ||
           moduleNamespaces.has(node.text))
       ) {
@@ -251,7 +258,9 @@ export function createConsumerDependencyReader(
       if (
         ts.isElementAccessExpression(node) &&
         ((ts.isStringLiteral(node.argumentExpression) &&
-          ['require', 'eval', 'Function'].includes(node.argumentExpression.text)) ||
+          ['require', 'eval', 'Function', 'getBuiltinModule', 'mainModule'].includes(
+            node.argumentExpression.text
+          )) ||
           (ts.isIdentifier(node.expression) &&
             ['globalThis', 'window', 'global'].includes(node.expression.text) &&
             !ts.isStringLiteral(node.argumentExpression)))
