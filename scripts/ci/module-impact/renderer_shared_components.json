@@ -106,7 +106,9 @@
     "src/renderer/src/components/use-settings-undo-portal.tsx",
     "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
     "src/renderer/src/components/DeferredPresentationOwner.test.tsx",
-    "src/renderer/src/components/DeferredPresentationOwner.tsx"
+    "src/renderer/src/components/DeferredPresentationOwner.tsx",
+    "src/renderer/src/components/desktop-runtime-recovery.test.tsx",
+    "src/renderer/src/components/desktop-runtime-recovery.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/components/ActionToast.tsx",
@@ -206,7 +208,8 @@
       "src/renderer/src/components/session-package-import-menu-model.test.ts",
       "src/renderer/src/components/use-settings-undo-portal.test.tsx",
       "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
-      "src/renderer/src/components/DeferredPresentationOwner.test.tsx"
+      "src/renderer/src/components/DeferredPresentationOwner.test.tsx",
+      "src/renderer/src/components/desktop-runtime-recovery.test.tsx"
     ],
     "contract": [],
     "consumer": [

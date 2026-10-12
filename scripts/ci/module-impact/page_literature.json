@@ -310,7 +310,8 @@
       "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.interaction.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/PdfNotebookView.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/PdfPreview.test.tsx",
-      "src/renderer/src/pages/workspace/pdf-annotations/PdfDocumentDialogs.test.tsx"
+      "src/renderer/src/pages/workspace/pdf-annotations/PdfDocumentDialogs.test.tsx",
+      "src/renderer/src/components/desktop-runtime-recovery.test.tsx"
     ]
   },
   "capabilityOverlays": [],

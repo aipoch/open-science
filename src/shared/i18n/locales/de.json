@@ -46,7 +46,8 @@
     "Wait for all Session activity and pending approvals to finish before forking.": "Warten Sie, bis alle Sitzungsaktivitäten und ausstehenden Freigaben abgeschlossen sind, bevor Sie eine Kopie erstellen.",
     "Close window": "Fenster schließen",
     "Review potentially destructive code": "Potenziell destruktiven Code prüfen",
-    "Confirm Notebook kernel and environment": "Notebook-Kernel und Umgebung bestätigen"
+    "Confirm Notebook kernel and environment": "Notebook-Kernel und Umgebung bestätigen",
+    "Quit app": "App beenden"
   },
   "native": {
     "Linux OS credentials require the original selected Secret Service or KWallet backend and /usr/bin/busctl. Unlock the original default keyring or wallet and restart. Do not change the password-store backend or profile to bypass this check.": "Linux-Systemzugangsdaten benötigen das ursprünglich ausgewählte Secret-Service- oder KWallet-Backend und /usr/bin/busctl. Entsperren Sie den ursprünglichen Standardschlüsselbund oder die ursprüngliche Wallet und starten Sie neu. Ändern Sie weder das password-store-Backend noch das Profil, um diese Prüfung zu umgehen.",
@@ -133,7 +134,9 @@
     "Running sessions": "Wird ausgeführt",
     "Pinned sessions": "Angeheftet",
     "Recent items": "Letzte Sitzungen",
-    "More items": "Weitere Sitzungen"
+    "More items": "Weitere Sitzungen",
+    "Quit while disconnected?": "Bei unterbrochener Verbindung beenden?",
+    "Unsaved changes may be lost. Submitted operations may have completed. The backend will not be stopped.": "Nicht gespeicherte Änderungen können verloren gehen. Gesendete Vorgänge wurden möglicherweise abgeschlossen. Das Backend wird nicht beendet."
   },
   "renderer": {
     "RNA interactions, regulatory evidence and bulk datasets from ENCORI.": "RNA-Interaktionen, regulatorische Evidenz und Massendatensätze von ENCORI.",
@@ -7324,6 +7327,11 @@
     "Selected environment": "Ausgewählte Umgebung",
     "Switching environments clears the current kernel's variables.": "Beim Wechsel der Umgebung werden die Variablen des aktuellen Kernels gelöscht.",
     "No code has run in this view yet.": "In dieser Ansicht wurde noch kein Code ausgeführt.",
-    "Code received; waiting for execution details.": "Code empfangen; Ausführungsdetails werden geladen."
+    "Code received; waiting for execution details.": "Code empfangen; Ausführungsdetails werden geladen.",
+    "Desktop connection lost": "Desktop-Verbindung unterbrochen",
+    "Restoring desktop connection…": "Desktop-Verbindung wird wiederhergestellt…",
+    "Your local drafts remain open. Submitted operations may have completed; they will not be retried.": "Ihre lokalen Entwürfe bleiben geöffnet. Gesendete Vorgänge wurden möglicherweise abgeschlossen; sie werden nicht erneut ausgeführt.",
+    "The original backend is no longer available. Quit and reopen the app to continue.": "Das ursprüngliche Backend ist nicht mehr verfügbar. Beenden und öffnen Sie die App erneut, um fortzufahren.",
+    "Reconnect": "Erneut verbinden"
   }
 }

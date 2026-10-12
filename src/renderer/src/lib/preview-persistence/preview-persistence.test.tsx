@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { useDesktopRuntimeRecoveryStore } from '../../stores/desktop-runtime-recovery-store'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -116,6 +117,11 @@ const createSession = (
 
 describe('preview persistence projections', () => {
   beforeEach(() => {
+    useDesktopRuntimeRecoveryStore.setState({
+      phase: 'connected',
+      epoch: useDesktopRuntimeRecoveryStore.getState().epoch + 1,
+      closing: false
+    })
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
     useSessionStore.setState(createInitialSessionState())
   })
@@ -1224,6 +1230,47 @@ describe('usePreviewPersistence per-project save/restore', () => {
 
     expect(save.mock.calls[1]?.[0].state.items).toEqual([])
     expect(usePreviewWorkbenchStore.getState().items).toEqual([])
+  })
+
+  it('retires queued preview saves and ignores old conflict replies after recovery', async () => {
+    await act(async () => {
+      root.render(<PersistenceHarness projectId="project-a" />)
+    })
+    await flushPreviewPersistence()
+    save.mockClear()
+    const pending = createDeferred<SavePreviewStateResult>()
+    save.mockReturnValueOnce(pending.promise)
+    act(() =>
+      usePreviewWorkbenchStore.setState({ panelState: 'open', items: [createStoredFileItem()] })
+    )
+    act(() => usePreviewWorkbenchStore.setState({ panelState: 'collapsed' }))
+    expect(save).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      useDesktopRuntimeRecoveryStore.setState({
+        phase: 'disconnected',
+        epoch: useDesktopRuntimeRecoveryStore.getState().epoch + 1
+      })
+    })
+    await act(async () => {
+      pending.resolve({
+        status: 'conflict',
+        snapshot: {
+          revision: 99,
+          state: { version: PREVIEW_STATE_VERSION, panelState: 'open', items: [] }
+        }
+      })
+    })
+    await flushPreviewPersistence()
+    expect(save).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      useDesktopRuntimeRecoveryStore.setState({ phase: 'reconciling' })
+    })
+    await act(async () => {
+      useDesktopRuntimeRecoveryStore.setState({ phase: 'connected' })
+    })
+    await flushPreviewPersistence()
+    expect(save).toHaveBeenCalledTimes(1)
+    expect(load.mock.calls.length).toBeGreaterThan(1)
   })
 
   it('rebases a user change queued after the conflicting snapshot', async () => {

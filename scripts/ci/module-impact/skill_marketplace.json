@@ -188,7 +188,9 @@
       "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts",
       "src/main/skills/conversation-import.test.ts",
       "src/main/specialist/package/reported-regressions.test.ts",
-      "src/main/specialist/package/service.test.ts"
+      "src/main/specialist/package/service.test.ts",
+      "src/main/desktop-runtime-backpressure.integration.test.ts",
+      "src/main/desktop-runtime-transport-diagnostics.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],

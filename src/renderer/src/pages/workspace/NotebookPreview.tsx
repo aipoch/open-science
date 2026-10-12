@@ -1,3 +1,9 @@
+import {
+  getDesktopRuntimeEpoch,
+  assertDesktopRuntimeWrite,
+  registerDesktopRecoveryReader,
+  useDesktopRuntimeRecoveryStore
+} from '@/stores/desktop-runtime-recovery-store'
 import { InlineNotice } from '@/components/ui/inline-notice'
 import {
   useCallback,
@@ -510,6 +516,8 @@ const TerminalInput = ({
 
 // Renders the notebook preview and keeps it synchronized with main-process runtime events.
 const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
+  const recoveryEpoch = useDesktopRuntimeRecoveryStore((state) => state.epoch)
+  const recoveryPhase = useDesktopRuntimeRecoveryStore((state) => state.phase)
   const { t } = useTranslation()
   const kernelScrollFadeRef = useHorizontalScrollFade<HTMLDivElement>()
   const environmentScrollFadeRef = useHorizontalScrollFade<HTMLDivElement>()
@@ -593,6 +601,8 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
 
   // Reads the latest notebook state from main, including its bounded recent run window.
   const loadNotebookState = useCallback(async (): Promise<boolean> => {
+    if (!['connected', 'reconciling'].includes(useDesktopRuntimeRecoveryStore.getState().phase))
+      return false
     if (stateLoadInFlight.current) {
       stateReloadQueued.current = true
       return stateLoadInFlight.current
@@ -604,9 +614,11 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
         do {
           stateReloadQueued.current = false
           const requested = latestNotebookRequest.current
+          const epoch = getDesktopRuntimeEpoch()
           try {
             const nextState = await window.api.notebook.state(requested.request)
 
+            if (epoch !== getDesktopRuntimeEpoch()) continue
             if (latestNotebookRequest.current.key === requested.key) {
               applyNotebookState(nextState)
               setActionError(null)
@@ -615,6 +627,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
               stateReloadQueued.current = true
             }
           } catch (error) {
+            if (epoch !== getDesktopRuntimeEpoch()) continue
             if (latestNotebookRequest.current.key === requested.key) {
               setActionError(getErrorMessage(error))
               succeeded = false
@@ -638,6 +651,18 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
     }
   }, [applyNotebookState])
 
+  useEffect(
+    () =>
+      registerDesktopRecoveryReader(async () => {
+        if (!(await loadNotebookState())) {
+          // Content-local failures must not invalidate a healthy replacement attachment.
+          latestNotebookState.current = undefined
+          setNotebookState(undefined)
+        }
+      }),
+    [loadNotebookState]
+  )
+
   // Defer the initial state load until after the component has mounted.
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -647,7 +672,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
     return () => {
       window.clearTimeout(timeoutId)
     }
-  }, [loadNotebookState, notebookRequestKey])
+  }, [loadNotebookState, notebookRequestKey, recoveryEpoch, recoveryPhase])
 
   // Reload whenever the shared runtime publishes a change for this notebook session.
   useEffect(() => {
@@ -903,6 +928,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
       return
     }
 
+    const epoch = getDesktopRuntimeEpoch()
     const requestId = ++namespaceRequestId.current
     const hasCurrentSnapshot =
       namespaceSnapshot !== undefined &&
@@ -921,7 +947,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
         environment: activeEnvName,
         includePrivate: showPrivateVariables
       })
-      if (namespaceRequestId.current !== requestId) return
+      if (namespaceRequestId.current !== requestId || epoch !== getDesktopRuntimeEpoch()) return
       if (result.status === 'unavailable') {
         setNamespaceSnapshot(undefined)
         setNamespaceStatus('unavailable')
@@ -931,7 +957,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
       setNamespaceSnapshot(result)
       setNamespaceStatus('ready')
     } catch (error) {
-      if (namespaceRequestId.current !== requestId) return
+      if (namespaceRequestId.current !== requestId || epoch !== getDesktopRuntimeEpoch()) return
       setNamespaceError(getErrorMessage(error))
       setNamespaceStatus('error')
     }
@@ -965,7 +991,8 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
       namespaceLoadKey.current = undefined
       return
     }
-    const loadKey = `${selectedTarget ?? ''}:${showPrivateVariables}`
+    if (recoveryPhase !== 'connected') return
+    const loadKey = `${recoveryEpoch}:${selectedTarget ?? ''}:${showPrivateVariables}`
     if (namespaceLoadKey.current === loadKey) return
     namespaceLoadKey.current = loadKey
     namespaceRefreshQueued.current = false
@@ -976,6 +1003,8 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
     isNamespaceLost,
     selectedTarget,
     showPrivateVariables,
+    recoveryEpoch,
+    recoveryPhase,
     showVariables,
     terminalInputFocused
   ])
@@ -1040,6 +1069,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
 
   // Sends terminal code through the same notebook interpreter and history path as agent code.
   const submitTerminalCode = async (): Promise<void> => {
+    const epoch = getDesktopRuntimeEpoch()
     const code = terminalCode.trim()
 
     if (!code || !activeDataLanguage || !activeEnvName || isHistoricalEnvironmentView) {
@@ -1051,7 +1081,9 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
     setActionError(null)
 
     try {
+      assertDesktopRuntimeWrite(epoch)
       if (stateLoadInFlight.current && !(await stateLoadInFlight.current)) return
+      assertDesktopRuntimeWrite(epoch)
       const executionState = latestNotebookState.current
       if (executionState?.activeWrite || executionState?.activeRunId) return
 

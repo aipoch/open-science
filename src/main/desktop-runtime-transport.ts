@@ -33,6 +33,9 @@ import { listenForDesktop } from './desktop-connection'
 import { parseRpcJson, stringifyRpcJson } from './rpc-json'
 import { InternalWebEventStream } from './web-service/internal-web-event-stream'
 import { createLogger } from '@aipoch/diagnostics/node'
+import { createDesktopFrameSender } from './desktop-frame-sender'
+
+const logger = createLogger('desktop-runtime-transport')
 
 const clientId = z.string().uuid()
 const requestSchema = z.discriminatedUnion('kind', [
@@ -75,7 +78,7 @@ const requestSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('release'), clientId }).strict(),
   z.object({ kind: z.literal('resume'), streamId: z.string().uuid(), after: z.number() }).strict()
 ])
-const MAX_BUFFERED_BYTES = 16 * 1024 * 1024
+const MAX_FRAME_BYTES = 16 * 1024 * 1024
 const MAX_PENDING_REQUESTS = 256
 const MAX_CLIENTS = 128
 
@@ -140,24 +143,21 @@ export async function startDesktopRuntimeTransport(options: {
         signal?: AbortSignal
       ) => Promise<unknown>)
     | undefined
-  const send = (socket: WebSocket, frame: string): void => {
-    if (socket.readyState !== WebSocket.OPEN) return
-    if (socket.bufferedAmount + Buffer.byteLength(frame) > MAX_BUFFERED_BYTES) {
-      createLogger('desktop-transport').warn('desktop send buffer exceeded', {
-        bufferedBytes: socket.bufferedAmount,
-        frameBytes: Buffer.byteLength(frame)
-      })
-      socket.terminate()
-      return
-    }
-    socket.send(frame)
-  }
+  const senders = new WeakMap<WebSocket, ReturnType<typeof createDesktopFrameSender>>()
+  const send = (socket: WebSocket, frame: string, onSent?: () => void): void =>
+    senders.get(socket)?.send(frame, onSent)
   const unsubscribe = options.events.subscribe((event) => {
     const frame = stream.publish(event)
     if (active) send(active, frame)
   })
   try {
     const listener = await listenForDesktop(options.version, (socket) => {
+      senders.set(
+        socket,
+        createDesktopFrameSender(socket, (failure) => {
+          logger.warn('desktop runtime transport terminated', failure)
+        })
+      )
       let unsubscribeStartup: (() => void) | undefined
       const lifecycle = options.createLifecycle?.()
       const connectionId = randomUUID()
@@ -231,6 +231,7 @@ export async function startDesktopRuntimeTransport(options: {
       }
       let highestRequestId = 0
       let closed = false
+      let shutdownPending = false
       // A released renderer document never regains authority on this attachment.
       const released = new Set<string>()
       const cleanup = (): void => {
@@ -398,11 +399,14 @@ export async function startDesktopRuntimeTransport(options: {
         }
         highestRequestId = message.id
         const request = message
-        const respond = (response: WebRpcResponse): void => {
+        let responseFailureReason: 'response-serialization' | 'response-send-failure' =
+          'response-serialization'
+        const respond = (response: WebRpcResponse, onSent?: () => void): void => {
+          responseFailureReason = 'response-serialization'
           let frame = stringifyRpcJson({ kind: 'response', id: request.id, ...response })
           // A command result can grow during JSON encoding. Reject only this response;
           // do not drop unrelated in-flight commands or retry a completed mutation.
-          if (Buffer.byteLength(frame) > MAX_BUFFERED_BYTES) {
+          if (Buffer.byteLength(frame) > MAX_FRAME_BYTES) {
             frame = stringifyRpcJson({
               kind: 'response',
               id: request.id,
@@ -414,7 +418,16 @@ export async function startDesktopRuntimeTransport(options: {
               }
             })
           }
-          send(socket, frame)
+          responseFailureReason = 'response-send-failure'
+          send(socket, frame, onSent)
+        }
+        if (shutdownPending && request.kind !== 'shutdown') {
+          respond({
+            protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+            ok: false,
+            error: { code: 'command-unavailable', message: 'Desktop runtime is shutting down.' }
+          })
+          return
         }
         if (request.kind === 'startup-retry') {
           pending.add(request.id)
@@ -470,11 +483,13 @@ export async function startDesktopRuntimeTransport(options: {
             })
             return
           }
-          respond({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, ok: true, result: null })
-          if (!shutdownRequested) {
-            shutdownRequested = true
-            setImmediate(options.requestShutdown)
-          }
+          shutdownPending = true
+          respond({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, ok: true, result: null }, () => {
+            if (!shutdownRequested) {
+              shutdownRequested = true
+              setImmediate(options.requestShutdown!)
+            }
+          })
           return
         }
         if (request.kind === 'host-invoke') {
@@ -565,6 +580,7 @@ export async function startDesktopRuntimeTransport(options: {
               })
           )
           .catch(() => {
+            logger.warn('desktop runtime transport terminated', { reason: responseFailureReason })
             socket.terminate()
             cleanup()
           })

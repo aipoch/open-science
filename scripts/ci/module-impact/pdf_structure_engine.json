@@ -2529,7 +2529,9 @@
       "packages/pdf-translation/test/pdf-cache.test.ts",
       "packages/pdf-translation/test/usage.test.ts",
       "packages/pdf-translation/test/workflow.test.ts",
-      "src/renderer/src/pages/literature/literature-localization.render.test.tsx"
+      "src/renderer/src/pages/literature/literature-localization.render.test.tsx",
+      "src/main/desktop-runtime-backpressure.integration.test.ts",
+      "src/main/desktop-runtime-transport-diagnostics.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive"],

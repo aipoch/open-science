@@ -1196,7 +1196,10 @@
       "src/main/artifacts/reproducibility-host.test.ts",
       "scripts/electron-vite-config.test.ts",
       "src/shared/artifact-version-locator.test.ts",
-      "src/renderer/src/lib/renderer-foundation-boundaries.test.ts"
+      "src/renderer/src/lib/renderer-foundation-boundaries.test.ts",
+      "src/main/desktop-runtime-backpressure.integration.test.ts",
+      "src/main/desktop-runtime-transport-diagnostics.test.ts",
+      "src/renderer/src/components/desktop-runtime-recovery.test.tsx"
     ]
   },
   "capabilityOverlays": [

@@ -1046,7 +1046,9 @@ describe('Compute service architecture', () => {
       'src/main/session-plan/session-plan-turn-outcome.test.ts',
       'src/main/acp/specialist-switch-recovery.integration.test.ts',
       'src/main/agents/production-completion-handoff.test.ts',
-      'src/renderer/src/pages/literature/literature-localization.render.test.tsx'
+      'src/renderer/src/pages/literature/literature-localization.render.test.tsx',
+      'src/main/desktop-runtime-backpressure.integration.test.ts',
+      'src/main/desktop-runtime-transport-diagnostics.test.ts'
     ])
   })
 

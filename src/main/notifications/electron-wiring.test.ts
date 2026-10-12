@@ -464,22 +464,24 @@ describe('native notification transport adapter', () => {
     const live = new Set<FakeNotification>()
     const onAction = vi.fn()
     let focused = true
-    const native = createDesktopNotificationHandler({
-      delivery: {
-        notificationCtor: FakeNotification as never,
-        liveNotifications: live as never,
-        headless: false,
-        log: createLog()
-      },
-      isAppFocused: () => focused,
-      isMainWindowFocused: () => focused,
-      confirmSessionVisible: async () => true,
-      setBadgeCount: vi.fn(),
-      requestAttention: vi.fn(),
-      clearAttention: vi.fn(),
-      activate: vi.fn(),
-      onAction
-    })
+    const create = (): ReturnType<typeof createDesktopNotificationHandler> =>
+      createDesktopNotificationHandler({
+        delivery: {
+          notificationCtor: FakeNotification as never,
+          liveNotifications: live as never,
+          headless: false,
+          log: createLog()
+        },
+        isAppFocused: () => focused,
+        isMainWindowFocused: () => focused,
+        confirmSessionVisible: async () => true,
+        setBadgeCount: vi.fn(),
+        requestAttention: vi.fn(),
+        clearAttention: vi.fn(),
+        activate: vi.fn(),
+        onAction
+      })
+    const native = create()
     const token = randomUUID()
     const request = {
       kind: 'native-request' as const,
@@ -512,5 +514,18 @@ describe('native notification transport adapter', () => {
     expect(live.size).toBe(0)
     expect(onAction).toHaveBeenCalledOnce()
     await expect(native.handle(request, signal)).rejects.toThrow('closed')
+    const replacement = create()
+    const replacementToken = randomUUID()
+    await replacement.handle(
+      { ...request, id: 3, request: { ...request.request, token: replacementToken } },
+      signal
+    )
+    remaining.fire('click')
+    expect(onAction).toHaveBeenCalledOnce()
+    const fresh = [...live][0]
+    fresh.fire('click')
+    expect(onAction).toHaveBeenCalledTimes(2)
+    expect(onAction).toHaveBeenLastCalledWith(replacementToken, 'clicked')
+    replacement.dispose()
   })
 })

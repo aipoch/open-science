@@ -661,7 +661,10 @@
       "src/main/notebook/auto-mode-budget.integration.test.ts",
       "src/main/notebook/environment-provisioning.contract.test.ts",
       "src/main/notebook/environment-recovery.contract.test.ts",
-      "src/main/literature/batch-job-journal.test.ts"
+      "src/main/literature/batch-job-journal.test.ts",
+      "src/main/desktop-runtime-backpressure.integration.test.ts",
+      "src/main/desktop-runtime-transport-diagnostics.test.ts",
+      "src/renderer/src/components/desktop-runtime-recovery.test.tsx"
     ]
   },
   "capabilityOverlays": [],

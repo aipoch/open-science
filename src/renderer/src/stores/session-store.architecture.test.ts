@@ -111,6 +111,7 @@ const publicValueExports = [
   'findMostRecentSessionId',
   'getExternallyHydratedSessionAuthority',
   'hydrateSession',
+  'retainSessionRecoveryDrafts',
   'isArtifactFinalizationError',
   'isRetryableArtifactFinalizationError',
   'isExternallyHydratedSession',
@@ -1358,7 +1359,8 @@ describe('Session Store architecture', () => {
           'src/renderer/src/lib/acp/workspace-prompt-rollback-failure.test.ts',
           'src/renderer/src/lib/acp/workspace-runtime-overflow-recovery-failures.test.ts',
           'src/renderer/src/pages/workspace/SessionHeaderMenu.test.tsx',
-          'src/renderer/src/pages/workspace/session-plan/session-plan-resume.test.tsx'
+          'src/renderer/src/pages/workspace/session-plan/session-plan-resume.test.tsx',
+          'src/renderer/src/components/desktop-runtime-recovery.test.tsx'
         ]
       },
       capabilityOverlays: ['renderer_state'],

@@ -666,7 +666,10 @@
       "src/renderer/src/pages/settings/ArchivedPanel.render.test.tsx",
       "src/renderer/src/pages/settings/ClassificationPanel.render.test.tsx",
       "src/renderer/src/pages/settings/MemoryPanel.render.test.tsx",
-      "src/renderer/src/pages/settings/ModelPanel.render.test.tsx"
+      "src/renderer/src/pages/settings/ModelPanel.render.test.tsx",
+      "src/main/desktop-runtime-backpressure.integration.test.ts",
+      "src/main/desktop-runtime-transport-diagnostics.test.ts",
+      "src/renderer/src/components/desktop-runtime-recovery.test.tsx"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

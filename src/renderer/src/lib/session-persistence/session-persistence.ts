@@ -1,3 +1,10 @@
+import {
+  useDesktopRuntimeRecoveryStore,
+  getDesktopRuntimeEpoch,
+  desktopRuntimeWritable,
+  assertDesktopRuntimeWrite,
+  completeDesktopSessionRecovery
+} from '../../stores/desktop-runtime-recovery-store'
 import type { AcpRuntimeEvent } from '../../../../shared/acp'
 import {
   reportWorkspaceOperationError,
@@ -49,6 +56,7 @@ import {
 import { PENDING_UPLOAD_SESSION_ID } from '../../../../shared/uploads'
 import {
   getExternallyHydratedSessionAuthority,
+  retainSessionRecoveryDrafts,
   hydrateSession,
   isExternallyHydratedSession,
   toPersistedSession,
@@ -993,10 +1001,15 @@ const createOrderedSessionPersistence = (
 
   // Exported targets wait outside the shared queue. Explicit writes for another Session and its
   // manifest can still establish their usual durable barrier before starting a new conversation.
-  const schedule = <Result>(target: string, task: () => Promise<Result>): Promise<Result> => {
+  const schedule = <Result>(
+    target: string,
+    task: () => Promise<Result>,
+    epoch = getDesktopRuntimeEpoch()
+  ): Promise<Result> => {
     pendingWriteCount += 1
     const run = queue.then(async () => {
       try {
+        assertDesktopRuntimeWrite(epoch)
         deferExportedSessionSave(target)
         return { kind: 'completed' as const, value: await trackWrite(target, task) }
       } catch (error) {
@@ -1012,7 +1025,7 @@ const createOrderedSessionPersistence = (
     return run
       .then(async (result) => {
         if (result.kind === 'completed') return result.value
-        const resumed = result.released.then(() => schedule(target, task))
+        const resumed = result.released.then(() => schedule(target, task, epoch))
         deferredSaves.add(resumed)
         try {
           return await resumed
@@ -1035,6 +1048,8 @@ const createOrderedSessionPersistence = (
     session: PersistedChatSession,
     options?: SaveSessionOptions
   ): Promise<PersistedChatSession> => {
+    const epoch = getDesktopRuntimeEpoch()
+    assertDesktopRuntimeWrite(epoch)
     const submitted = structuredClone(session)
     submitted.revision = Math.max(
       sessionRevision(submitted),
@@ -1044,6 +1059,7 @@ const createOrderedSessionPersistence = (
     const durable = options
       ? await api.saveSession(submitted, options)
       : await api.saveSession(submitted)
+    assertDesktopRuntimeWrite(epoch)
     acknowledgeSession(durable)
     acknowledgeSessionConversationCommands(durable)
     trackConversationCommandOutcome(`session:${submitted.id}`, options, durable)
@@ -1081,6 +1097,7 @@ const createOrderedSessionPersistence = (
       streaming,
       generation: hydrationGeneration
     }
+    const epoch = getDesktopRuntimeEpoch()
     const runTask = async (): Promise<PersistedChatSession> => {
       // A fast IPC/disk round-trip otherwise defeats latest-wins coalescing and rewrites the entire
       // Session at the live presentation frame rate. Keep the entry replaceable while it waits.
@@ -1092,6 +1109,7 @@ const createOrderedSessionPersistence = (
       }
       entry.options = activePreparationSaveOptions(entry.options)
       const durable = await entry.task(entry.options)
+      assertDesktopRuntimeWrite(epoch)
       acknowledgeSession(durable)
       trackConversationCommandOutcome(entry.target, entry.options, durable)
       return durable
@@ -1654,8 +1672,31 @@ const SESSION_SIZE_LIMIT_WRITE_ERROR =
 const loadPersistedSessions = async (
   api: SessionPersistenceApi,
   shouldHydrate: () => boolean = () => true,
-  preferredSelection?: SessionHydrationSelection | (() => SessionHydrationSelection)
+  preferredSelection?: SessionHydrationSelection | (() => SessionHydrationSelection),
+  preserveLocalDrafts = false
 ): Promise<LoadAllSessionsResult | ListSessionSummariesResult | undefined> => {
+  const previousSessions = preserveLocalDrafts ? useSessionStore.getState().sessions : []
+  const restoreLocalDrafts = (): void => {
+    if (!preserveLocalDrafts) return
+    useSessionStore.setState((state) => {
+      const sessions = state.sessions.map((session) => {
+        const previous = previousSessions.find((candidate) => candidate.id === session.id)
+        if (!previous) return session
+        return retainSessionRecoveryDrafts(session, previous)
+      })
+      for (const previous of previousSessions) {
+        if (previous.isPending && !sessions.some((session) => session.id === previous.id))
+          sessions.push(previous)
+      }
+      const preferred = currentSelection()?.sessionId
+      return {
+        sessions,
+        ...(preferred && sessions.some((session) => session.id === preferred)
+          ? { selectedSessionId: preferred }
+          : {})
+      }
+    })
+  }
   const currentSelection = (): SessionHydrationSelection | undefined =>
     typeof preferredSelection === 'function' ? preferredSelection() : preferredSelection
   if (api.list) {
@@ -1698,6 +1739,7 @@ const loadPersistedSessions = async (
         useSessionStore.getState().upsertPersistedSession(hydrated)
       }
     }
+    restoreLocalDrafts()
     return result
   }
 
@@ -1709,6 +1751,7 @@ const loadPersistedSessions = async (
   // fall through to the globally newest Session from another Project. Passing the selection into
   // hydration applies the sessions and selection atomically for all Zustand subscribers.
   useSessionStore.getState().hydrateSessions(result.sessions, result.manifest, currentSelection())
+  restoreLocalDrafts()
   return result
 }
 
@@ -2289,6 +2332,11 @@ const createStoreSaver = (
 
 // Starts session persistence and returns health/recovery state so App can gate input and surface failures.
 const useSessionPersistence = (): SessionPersistenceState => {
+  const recovery = useDesktopRuntimeRecoveryStore()
+  const recoveryLoadEpoch =
+    recovery.phase === 'connected' || recovery.phase === 'reconciling'
+      ? recovery.epoch
+      : -recovery.epoch - 1
   const { t } = useTranslation()
   const translateRef = useRef(t)
   useEffect(() => {
@@ -2596,6 +2644,12 @@ const useSessionPersistence = (): SessionPersistenceState => {
   }, [presentOutstandingWriteFailures, refreshTerminalWriteFailures, retryLoad])
 
   useEffect(() => {
+    const recovery = useDesktopRuntimeRecoveryStore.getState()
+    if (recoveryLoadEpoch < 0) {
+      liveSessionPersistence.seedAcknowledgedSessions([])
+      return
+    }
+    const recovering = recovery.epoch > 0
     let isMounted = true
     let unsubscribe: (() => void) | undefined
     let activeSaver: StoreSaver | undefined
@@ -2606,14 +2660,17 @@ const useSessionPersistence = (): SessionPersistenceState => {
 
     // Loads before subscribing so the initial empty store cannot overwrite disk state.
     const startPersistence = async (): Promise<void> => {
-      const preferredSelection = retrySelection.current
+      const preferredSelection = recovering
+        ? { sessionId: useSessionStore.getState().selectedSessionId }
+        : retrySelection.current
       try {
         const result = await loadPersistedSessions(
           window.api.sessions,
           () => isMounted,
           preferredSelection === undefined
             ? undefined
-            : () => ({ sessionId: useSessionStore.getState().selectedSessionId })
+            : () => ({ sessionId: useSessionStore.getState().selectedSessionId }),
+          recovering
         )
         if (!result || !isMounted) return
         unresolvedSessionRevisionConflictTargets.clear()
@@ -2669,6 +2726,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
           setLoadWarning(warningMessages.filter(Boolean).join(' '))
         }
       } catch (error) {
+        if (recovering) completeDesktopSessionRecovery(recovery.epoch, false)
         reportPersistenceError(error, 'session-load')
         if (isMounted) {
           setHasCompleteSessionCatalog(false)
@@ -2869,7 +2927,9 @@ const useSessionPersistence = (): SessionPersistenceState => {
         }
         void save(state).then(trimReadOnlyHistory).catch(reportPersistenceError)
       }
-      unsubscribe = useSessionStore.subscribe(onStoreChange)
+      unsubscribe = useSessionStore.subscribe((state) => {
+        if (desktopRuntimeWritable()) onStoreChange(state)
+      })
       // Navigation may change while the retry hydrates another Session's body. That selection
       // happened before this subscription, so start its lazy read without waiting for another edit.
       if (preferredSelection !== undefined) onStoreChange(useSessionStore.getState())
@@ -2877,7 +2937,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
       // Hydration intentionally uses the user's live selection instead of the older disk manifest
       // on retry. Force that tri-state selection (including an explicit empty selection) back to
       // disk before declaring persistence ready, because the saver baseline already contains it.
-      if (preferredSelection !== undefined) {
+      if (preferredSelection !== undefined && !recovering) {
         try {
           await save(useSessionStore.getState(), {
             forceTargets: new Set(['manifest'])
@@ -2893,6 +2953,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
       setIsLoading(false)
       if (retryManifestWritePending.current) return
       setIsReady(true)
+      if (recovering) completeDesktopSessionRecovery(recovery.epoch, true)
     }
 
     void startPersistence()
@@ -2902,7 +2963,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
       if (saverRef.current === activeSaver) saverRef.current = undefined
       unsubscribe?.()
     }
-  }, [loadAttempt, presentOutstandingWriteFailures])
+  }, [loadAttempt, presentOutstandingWriteFailures, recoveryLoadEpoch])
 
   return {
     isHydrated,

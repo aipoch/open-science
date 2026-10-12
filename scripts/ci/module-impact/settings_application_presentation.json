@@ -376,7 +376,8 @@
       "src/renderer/src/pages/literature/literature-localization.render.test.tsx",
       "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.interaction.test.tsx",
       "src/renderer/src/pages/workspace/pdf-annotations/PdfDocumentDialogs.test.tsx",
-      "src/renderer/src/pages/settings/mirror-view.test.ts"
+      "src/renderer/src/pages/settings/mirror-view.test.ts",
+      "src/renderer/src/components/desktop-runtime-recovery.test.tsx"
     ]
   },
   "capabilityOverlays": [],

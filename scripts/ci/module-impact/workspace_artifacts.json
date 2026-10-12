@@ -241,7 +241,8 @@
       "src/renderer/src/pages/workspace/SessionDiscussionSource.test.tsx",
       "src/renderer/src/pages/workspace/workspace-session-actions.test.tsx",
       "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.interaction.test.tsx",
-      "src/renderer/src/pages/workspace/session-plan/session-plan-resume.test.tsx"
+      "src/renderer/src/pages/workspace/session-plan/session-plan-resume.test.tsx",
+      "src/renderer/src/components/desktop-runtime-recovery.test.tsx"
     ]
   },
   "capabilityOverlays": [],

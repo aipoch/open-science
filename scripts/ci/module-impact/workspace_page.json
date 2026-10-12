@@ -188,7 +188,8 @@
       "src/renderer/src/pages/literature/imports/LiteraturePdfBatchImportDialog.test.tsx",
       "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.interaction.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/PdfPreview.test.tsx",
-      "src/renderer/src/lib/renderer-foundation-boundaries.test.ts"
+      "src/renderer/src/lib/renderer-foundation-boundaries.test.ts",
+      "src/renderer/src/components/desktop-runtime-recovery.test.tsx"
     ]
   },
   "capabilityOverlays": ["renderer_state"],

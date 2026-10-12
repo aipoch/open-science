@@ -231,7 +231,8 @@
       "src/renderer/web/bootstrap.test.ts",
       "src/renderer/web/renderer-argument-shape-characterization.test.ts",
       "src/renderer/src/pages/settings/ArchivedPanel.render.test.tsx",
-      "src/renderer/src/pages/settings/MemoryPanel.render.test.tsx"
+      "src/renderer/src/pages/settings/MemoryPanel.render.test.tsx",
+      "src/renderer/src/components/desktop-runtime-recovery.test.tsx"
     ]
   },
   "capabilityOverlays": [],

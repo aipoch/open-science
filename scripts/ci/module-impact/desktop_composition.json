@@ -216,7 +216,16 @@
     "scripts/build-backend.integration.test.ts",
     "scripts/dev-build-watch.integration.test.ts",
     "scripts/dev-build-watch.test.ts",
-    "scripts/windows-signing-policy.test.ts"
+    "scripts/windows-signing-policy.test.ts",
+    "src/main/desktop-event-delivery.test.ts",
+    "src/main/desktop-event-delivery.ts",
+    "src/main/desktop-frame-sender.test.ts",
+    "src/main/desktop-frame-sender.ts",
+    "src/main/desktop-runtime-backpressure.integration.test.ts",
+    "src/main/desktop-runtime-client-diagnostics.test.ts",
+    "src/main/desktop-runtime-recovery.test.ts",
+    "src/main/desktop-runtime-recovery.ts",
+    "src/main/desktop-runtime-transport-diagnostics.test.ts"
   ],
   "interfacePaths": [
     "src/main/app-lifecycle.ts",
@@ -361,7 +370,13 @@
       "scripts/build-dev-packages.integration.test.ts",
       "scripts/build-backend.integration.test.ts",
       "scripts/dev-build-watch.integration.test.ts",
-      "scripts/dev-build-watch.test.ts"
+      "scripts/dev-build-watch.test.ts",
+      "src/main/desktop-event-delivery.test.ts",
+      "src/main/desktop-frame-sender.test.ts",
+      "src/main/desktop-runtime-backpressure.integration.test.ts",
+      "src/main/desktop-runtime-client-diagnostics.test.ts",
+      "src/main/desktop-runtime-recovery.test.ts",
+      "src/main/desktop-runtime-transport-diagnostics.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

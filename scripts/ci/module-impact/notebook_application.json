@@ -706,7 +706,9 @@
       "src/main/notebook/content-limits.test.ts",
       "src/main/notebook/helper-module-host.test.ts",
       "src/main/notebook/loop-output-mapper.test.ts",
-      "src/main/notebook/session-aggregate.test.ts"
+      "src/main/notebook/session-aggregate.test.ts",
+      "src/main/desktop-runtime-backpressure.integration.test.ts",
+      "src/main/desktop-runtime-transport-diagnostics.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],
