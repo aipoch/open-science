@@ -81,6 +81,7 @@ export function runtimeModuleSpecifiers(source: string): string[] {
           (clause.name ||
             !clause.namedBindings ||
             ts.isNamespaceImport(clause.namedBindings) ||
+            clause.namedBindings.elements.length === 0 ||
             clause.namedBindings.elements.some((item) => !item.isTypeOnly)))
       )
         specs.push(node.moduleSpecifier.text)
@@ -91,6 +92,7 @@ export function runtimeModuleSpecifiers(source: string): string[] {
       !node.isTypeOnly &&
       (!node.exportClause ||
         !ts.isNamedExports(node.exportClause) ||
+        node.exportClause.elements.length === 0 ||
         node.exportClause.elements.some((item) => !item.isTypeOnly))
     )
       specs.push(node.moduleSpecifier.text)

@@ -75,6 +75,11 @@ describe('module boundary assertions', () => {
       void import('./lazy'); require('./required'); type H = import('./type').H;`)
     ).toEqual(['./effect', './mixed', './values', './star', './lazy', './required'])
   })
+  it('retains empty named imports and exports that can load a module for side effects', () => {
+    expect(
+      runtimeModuleSpecifiers("import {} from './import-effect'; export {} from './export-effect'")
+    ).toEqual(['./import-effect', './export-effect'])
+  })
   it('allows public type contracts but rejects runtime state and side effects', () => {
     expectTypeOnlyContract(
       'contract.ts',
