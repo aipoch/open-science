@@ -16,7 +16,7 @@ import {
   type PreviewFileItem
 } from '@/stores/preview-workbench-store'
 import { useSessionStore } from '@/stores/session-store'
-import { parseLiteratureAttachmentVersionReference } from '../../../../shared/literature'
+import { parseLiteratureAttachmentVersionReference } from '../../../../shared/literature-attachment-reference'
 import { parseNotebookInputPreviewKey } from '../../../../shared/notebook'
 import {
   MAX_SESSION_PDF_CONTEXTS,

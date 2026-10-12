@@ -148,7 +148,6 @@
     "List or read official reference tables.": "Listar o leer tablas de referencia oficiales.",
     "List bulk datasets without downloading.": "Listar conjuntos de datos masivos sin descargarlos.",
     "Download and verify one bulk dataset.": "Descargar y verificar un conjunto de datos masivo.",
-
     "Cancer proteomics studies, sample and aliquot mappings, and file discovery from PDC.": "Estudios de proteómica del cáncer, correspondencias de muestras y alícuotas, y búsqueda de archivos de PDC.",
     "Search PDC studies and versions by name or identifier.": "Buscar estudios y versiones de PDC por nombre o identificador.",
     "Retrieve PDC study metadata and available versions.": "Obtener metadatos y versiones disponibles de estudios de PDC.",
@@ -7491,6 +7490,8 @@
     "Showing {{shown}} of {{total}} findings. Review the full code below.": "Se muestran {{shown}} de {{total}} hallazgos. Revise el código completo a continuación.",
     "Current environment": "Entorno actual",
     "Selected environment": "Entorno seleccionado",
-    "Switching environments clears the current kernel's variables.": "Al cambiar de entorno se borran las variables del Kernel actual."
+    "Switching environments clears the current kernel's variables.": "Al cambiar de entorno se borran las variables del Kernel actual.",
+    "No code has run in this view yet.": "Aún no se ha ejecutado código en esta vista.",
+    "Code received; waiting for execution details.": "Código recibido; esperando los detalles de ejecución."
   }
 }

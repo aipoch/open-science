@@ -8,7 +8,7 @@ import { pathToFileURL } from 'node:url'
 
 import type { FileReference } from '../../shared/artifacts'
 import { parseArtifactVersionLocator } from '../../shared/artifact-provenance'
-import { parseLiteratureAttachmentVersionReference } from '../../shared/literature'
+import { parseLiteratureAttachmentVersionReference } from '../../shared/literature-attachment-reference'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import { MAX_UPLOAD_FILE_BYTES } from '../../shared/uploads'
 import type { ArtifactRepository } from '../artifacts/repository'

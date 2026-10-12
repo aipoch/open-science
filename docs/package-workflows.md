@@ -66,3 +66,11 @@ archive is an environment failure, not evidence that a package contract is broke
 exit codes are written to `test-results/package-verification.json` and uploaded by CI. The manually
 triggered **Package test policy dry-run** executes the same dispatcher on Ubuntu/Node 24; `packages=all`
 selects every registered package explicitly. This is the first place to debug this lane.
+
+## Package and host test layers
+
+PRs run changed package suites and bounded host adapter/contracts; downstream suites and more distant
+host consumers remain blocking in merge queue. `test:affected -- --tier pr` explains/exercises the PR
+selection; the default remains the complete affected queue selection. Full portable Ubuntu regression
+runs in Source Regression, with a focused manual `portable` mode. Run
+`node scripts/ci/audit-package-consumers.mjs HEAD` for per-package host dependency evidence.

@@ -169,7 +169,9 @@
     "src/shared/pdf-translation-models.test.ts",
     "src/shared/pdf-text.test.ts",
     "src/shared/pdf-translation.test.ts",
-    "src/shared/skill-marketplace.ts"
+    "src/shared/skill-marketplace.ts",
+    "src/shared/literature-item.ts",
+    "src/shared/literature-item.test.ts"
   ],
   "interfacePaths": [
     "src/shared/interface-scale.ts",
@@ -252,7 +254,8 @@
     "src/shared/journal-attributes.ts",
     "src/shared/provider-text-generation-failure.ts",
     "src/shared/pdf-translation-models.ts",
-    "src/shared/skill-marketplace.ts"
+    "src/shared/skill-marketplace.ts",
+    "src/shared/literature-item.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -299,7 +302,8 @@
       "src/shared/provider-text-generation-failure.test.ts",
       "src/shared/pdf-translation-models.test.ts",
       "src/shared/pdf-text.test.ts",
-      "src/shared/pdf-translation.test.ts"
+      "src/shared/pdf-translation.test.ts",
+      "src/shared/literature-item.test.ts"
     ],
     "contract": [],
     "consumer": [

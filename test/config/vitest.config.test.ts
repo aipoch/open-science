@@ -118,13 +118,17 @@ it('keeps a safe default timeout for schema-backed hooks', () => {
 })
 
 it.each([
-  ['0', undefined],
-  ['1', undefined],
-  ['0', '2'],
-  ['1', '2']
+  ['0', undefined, false],
+  ['1', undefined, false],
+  ['0', '2', false],
+  ['1', '2', false],
+  ['0', undefined, true],
+  ['1', undefined, true],
+  ['0', '2', true],
+  ['1', '2', true]
 ])(
-  'resolves real Vitest project budgets with Windows profile %s and worker cap %s',
-  (profile, override) => {
+  'resolves real Vitest project budgets with Windows profile %s, worker cap %s and host-only selection %s',
+  (profile, override, hostOnly) => {
     const probe = spawnSync(
       process.execPath,
       [
@@ -145,6 +149,13 @@ it.each([
         cwd: process.cwd(),
         env: {
           ...process.env,
+          VITEST_PORTABLE_CI: '1',
+          OPEN_SCIENCE_CI_EXCLUDED_PACKAGE_ROOTS: JSON.stringify(
+            hostOnly
+              ? ['packages/resilient-download', 'packages/durable-files', 'packages/compute']
+              : []
+          ),
+          OPEN_SCIENCE_CI_SELECTED_PACKAGE_ROOTS: '[]',
           VITEST_WINDOWS_FULL_TEST: profile,
           OPEN_SCIENCE_TEST_MAX_WORKERS: override
         },
@@ -162,9 +173,13 @@ it.each([
           profile === '1' || name !== 'default' ? 1 : resolveVitestMaxWorkers(undefined, override),
         testTimeout: 60_000
       })),
-      { name: 'resilient-download', hookTimeout: 10000, testTimeout: 60000 },
-      { name: 'durable-files', hookTimeout: 10000, testTimeout: 60000 },
-      { name: 'compute', hookTimeout: 10000, testTimeout: 60000 }
+      ...(hostOnly
+        ? []
+        : ['resilient-download', 'durable-files', 'compute'].map((name) => ({
+            name,
+            hookTimeout: 10000,
+            testTimeout: 60000
+          })))
     ])
   }
 )

@@ -20,6 +20,7 @@ type Step = {
   with?: Record<string, unknown>
 }
 type Job = {
+  env?: Record<string, string>
   if?: string
   needs?: string
   'runs-on': string
@@ -307,7 +308,13 @@ describe('independent source regression', () => {
           required: true,
           type: 'choice',
           default: 'full',
-          options: ['full', 'presentation', 'workspace-images', 'presentation-screening']
+          options: [
+            'full',
+            'portable',
+            'presentation',
+            'workspace-images',
+            'presentation-screening'
+          ]
         }
       }
     })
@@ -318,7 +325,13 @@ describe('independent source regression', () => {
       group: 'source-regression-${{ github.event_name }}-${{ github.ref }}',
       'cancel-in-progress': true
     })
-    expect(Object.keys(scheduled.jobs)).toEqual(['regression', 'packages', 'report'])
+    expect(Object.keys(scheduled.jobs)).toEqual([
+      'regression',
+      'portable',
+      'portable_report',
+      'packages',
+      'report'
+    ])
     expect(scheduled.jobs.regression.needs).toBeUndefined()
     expect(scheduled.jobs.regression['runs-on']).toBe(pr.jobs.macos_e2e['runs-on'])
     expect(scheduled.jobs.regression['continue-on-error']).toBeUndefined()
@@ -354,7 +367,7 @@ describe('independent source regression', () => {
   it('runs both scheduled rounds even when main has not changed', () => {
     expect(scheduled.jobs).not.toHaveProperty('plan')
     expect(scheduled.jobs.regression.if).toBe(
-      "github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'"
+      "${{ (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && inputs.mode != 'portable' }}"
     )
     expect(scheduled.jobs.regression.steps.some(({ run }) => run?.includes('previous'))).toBe(false)
   })
@@ -557,7 +570,12 @@ it('shares complete installed-consumer checks with queue/manual runs and reports
   expect(
     scheduled.jobs.packages.steps.some((step) => step.uses === './.github/actions/verify-packages')
   ).toBe(true)
-  expect(scheduled.jobs.report.needs).toEqual(['regression', 'packages'])
+  expect(scheduled.jobs.report.needs).toEqual([
+    'regression',
+    'packages',
+    'portable',
+    'portable_report'
+  ])
   const manual = load(
     readFileSync('.github/workflows/package-test-policy-dry-run.yml', 'utf8')
   ) as Workflow
@@ -567,3 +585,65 @@ it('shares complete installed-consumer checks with queue/manual runs and reports
       ?.with
   ).toEqual({ selection: '${{ inputs.packages }}' })
 })
+
+it('runs complete portable discovery with no package exclusions and defers thresholds until all four reports', () => {
+  const portable = scheduled.jobs.portable
+  expect(portable.if).toContain("github.event_name == 'schedule'")
+  expect(portable.if).toContain("inputs.mode == 'portable'")
+  expect(portable['continue-on-error']).toBeUndefined()
+  expect(portable.strategy?.matrix.shard).toEqual([1, 2, 3, 4])
+  expect(portable.env).toMatchObject({
+    OPEN_SCIENCE_CI_EXCLUDED_PACKAGE_ROOTS: '[]',
+    OPEN_SCIENCE_CI_SELECTED_PACKAGE_ROOTS: '[]',
+    VITEST_DEFER_COVERAGE_THRESHOLDS: '1'
+  })
+  const test = portable.steps.find(({ name }) => name === 'Test complete portable shard')!
+  expect(test.run).toContain('npm test -- --coverage')
+  expect(test.run).not.toContain('test:affected')
+  expect(portable.steps.some(({ uses }) => uses === './.github/actions/select-package-tests')).toBe(
+    false
+  )
+  const report = scheduled.jobs.portable_report
+  expect(report.env).toMatchObject({
+    OPEN_SCIENCE_CI_EXCLUDED_PACKAGE_ROOTS: '[]',
+    OPEN_SCIENCE_CI_SELECTED_PACKAGE_ROOTS: '[]'
+  })
+  expect(report.env).not.toHaveProperty('VITEST_DEFER_COVERAGE_THRESHOLDS')
+  for (const step of report.steps)
+    expect(step.env ?? {}).not.toHaveProperty('VITEST_DEFER_COVERAGE_THRESHOLDS')
+  expect(report.if).toContain('always()')
+  expect(report.needs).toEqual(['portable'])
+  expect(report.steps.find(({ name }) => name === 'Require every portable shard')?.run).toBe(
+    'test "$PORTABLE_RESULT" = success'
+  )
+  expect(report.steps.find(({ name }) => name === 'Require all four reports')?.run).toContain(
+    'for shard in 1 2 3 4'
+  )
+  expect(report.steps.find(({ name }) => name === 'Merge complete coverage')?.run).toContain(
+    '--merge-reports=vitest-reports --coverage'
+  )
+  expect(
+    report.steps.find(({ name }) => name === 'Test i18n catalog excluded from portable shards')?.env
+      ?.VITEST_PORTABLE_CI
+  ).toBe('0')
+  const outcome = scheduled.jobs.report.steps.find(({ env }) => env?.CONCLUSION)?.env?.CONCLUSION
+  for (const job of ['regression', 'packages', 'portable', 'portable_report'])
+    expect(outcome).toContain(`needs.${job}.result == 'success'`)
+  expect(scheduled.jobs.regression.if).toContain("inputs.mode != 'portable'")
+  expect(scheduled.jobs.packages.if).not.toContain("inputs.mode == 'portable'")
+})
+
+it.skipIf(process.platform === 'win32')(
+  'never reports skipped, failed or cancelled portable shards as complete coverage',
+  () => {
+    const step = scheduled.jobs.portable_report.steps.find(
+      ({ name }) => name === 'Require every portable shard'
+    )!
+    for (const result of ['success', 'failure', 'cancelled', 'skipped', '']) {
+      const run = spawnSync('bash', ['-e', '-c', step.run!], {
+        env: { ...process.env, PORTABLE_RESULT: result }
+      })
+      expect(run.status).toBe(result === 'success' ? 0 : 1)
+    }
+  }
+)

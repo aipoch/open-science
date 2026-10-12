@@ -8,7 +8,7 @@ import {
 import {
   parseLiteratureAttachmentVersionReference,
   createLiteratureAttachmentVersionReference
-} from '../../shared/literature'
+} from '../../shared/literature-attachment-reference'
 import { packageReproducibilitySchema, type PackageReproducibility } from './reproducibility'
 import { Prisma, type PrismaClient } from '@prisma/client'
 import { resolveManagedProjectFileAnnotationIdentity } from '../../shared/annotations'

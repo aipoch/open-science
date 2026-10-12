@@ -1,7 +1,5 @@
-import {
-  createLiteratureAttachmentVersionReference,
-  type LiteratureItemView
-} from '../../../../../shared/literature'
+import { createLiteratureAttachmentVersionReference } from '../../../../../shared/literature-attachment-reference'
+import type { LiteratureItemView } from '../../../../../shared/literature'
 import type { PdfReadingDocument } from '@/stores/navigation-store'
 import { LITERATURE_PREVIEW_SESSION_ID } from '../../workspace/preview-file-item'
 

@@ -4,7 +4,7 @@ import {
   type ManagedProjectFileAnnotationIdentity
 } from '../../../../../shared/annotations'
 import { parseArtifactVersionLocator } from '../../../../../shared/artifact-provenance'
-import { parseLiteratureAttachmentVersionReference } from '../../../../../shared/literature'
+import { parseLiteratureAttachmentVersionReference } from '../../../../../shared/literature-attachment-reference'
 import { parseUploadVersionReference } from '../../../../../shared/uploads'
 import { replayAnnotationTarget } from '../../../../../shared/replay-reference'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'

@@ -91,6 +91,15 @@ On macOS, you can also install with [Homebrew](https://brew.sh):
 brew install --cask open-science
 ```
 
+For the standalone CLI on macOS or Linux, use the separate [AIPOCH tap](https://github.com/aipoch/homebrew-tap):
+
+```bash
+brew install aipoch/tap/open-science
+```
+
+The CLI includes Node and runs without the desktop app. See the [standalone runtime guide](docs/standalone-runtime.md)
+for startup, prerequisites, shared profiles and upgrades.
+
 Windows reinstalls preserve research data. For a full cleanup, see the [data reset tool](scripts/windows-reset/README.md), which permanently deletes local data after confirmation.
 
 ### 2. Complete first-time setup

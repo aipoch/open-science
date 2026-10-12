@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-import { literatureItemInputSchema } from './literature'
+import { literatureItemInputSchema } from './literature-item'
 
 const ARTIFACT_LITERATURE_SIDECAR_SUFFIX = '.open-science-literature.json'
 

@@ -290,7 +290,7 @@ it('applies exclusions to real Vitest discovery across inherited projects while 
   }
 })
 
-it.each(['dependencies', 'unavailable'] as const)(
+it.each(['dependencies', 'unavailable', 'pr'] as const)(
   'executes all required package tests in a real selective shard: %s',
   (evidence) => {
     const cwd = realpathSync(mkdtempSync(join(tmpdir(), 'package-selective-shard-')))
@@ -306,7 +306,7 @@ it.each(['dependencies', 'unavailable'] as const)(
         )
       }
       const plan =
-        evidence === 'dependencies'
+        evidence !== 'unavailable'
           ? createPackageTestPlan([`${core}/src/engine.ts`], registry)
           : packageTestPlanFromRevisions('missing', 'missing', 'missing', { cwd })
       expect(
@@ -315,6 +315,7 @@ it.each(['dependencies', 'unavailable'] as const)(
             mode: 'selective',
             modules: [],
             testFiles: [`${core}/contract.test.ts`],
+            deferredPackageRoots: evidence === 'pr' ? [providers, mcp] : [],
             graphStatus: 'not-used',
             capabilityOverlays: [],
             fallbackCapabilities: [],
@@ -332,10 +333,14 @@ it.each(['dependencies', 'unavailable'] as const)(
         )
       ).toBe(0)
       const report = JSON.parse(readFileSync(join(cwd, 'result.json'), 'utf8'))
-      expect(report.numPassedTests).toBe(3)
+      expect(report.numPassedTests).toBe(evidence === 'pr' ? 1 : 3)
       expect(
         report.testResults.map(({ name }: { name: string }) => normalize(name)).sort()
-      ).toEqual([core, providers, mcp].map((root) => join(cwd, root, 'contract.test.ts')).sort())
+      ).toEqual(
+        (evidence === 'pr' ? [core] : [core, providers, mcp])
+          .map((root) => join(cwd, root, 'contract.test.ts'))
+          .sort()
+      )
     } finally {
       rmSync(cwd, { recursive: true, force: true })
     }
@@ -592,9 +597,10 @@ describe('installed-consumer input selection', () => {
       expect(plan.excluded.length).toBeGreaterThan(0)
     }
   )
-  it('keeps portable global policy independent of installed-consumer exclusions', () => {
-    const path = 'scripts/ci/module-test-impact.mjs'
-    expect(select([path]).selected).toEqual([])
-    expect(createPackageTestPlan([path], actual).excluded).toEqual([])
+  it('does not let verification rules narrow portable test or ownership policy', () => {
+    expect(select(['scripts/ci/module-test-impact.mjs']).selected).toEqual([])
+    expect(createPackageTestPlan(['scripts/ci/module-test-impact.mjs'], actual).excluded).toEqual(
+      []
+    )
   })
 })

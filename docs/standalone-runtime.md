@@ -16,6 +16,43 @@ contracts, caller leases, permission prompts and navigation revocation remain in
 requests travel back to Electron for dialogs, notifications and rendering. This is one business
 implementation, with transport and native adapters, rather than two server implementations.
 
+## Install with Homebrew (macOS/Linux)
+
+The [AIPOCH tap](https://github.com/aipoch/homebrew-tap) installs the standalone CLI on
+macOS Apple Silicon/Intel and glibc Linux ARM64/x64:
+
+```bash
+brew install aipoch/tap/open-science
+open-science start --no-open
+open-science status --json
+open-science url
+open-science stop
+```
+
+The Formula includes the pinned Node, backend and Web UI; no installed Node, npm or
+Electron is required. Python/R, Linux credential storage and sandbox prerequisites below
+still apply. Installation does not start a service. The desktop Cask remains separate:
+`brew install --cask open-science`.
+
+CLI and desktop retain their existing data and credential rules, including the
+`~/.open-science` default. Use `--config-root /absolute/path` to select another profile.
+If a desktop/npm launcher precedes Homebrew in PATH, check `type -a open-science` and use
+`"$(brew --prefix aipoch/tap/open-science)/bin/open-science"` explicitly.
+Homebrew can skip the global command link when the same-name desktop Cask is installed;
+use the explicit Formula path in that case as well.
+If an existing npm installation owns Homebrew's `bin/open-science`, installation
+reports a link conflict. Remove it with its own installer, or use
+`brew install --skip-link aipoch/tap/open-science` and the explicit Formula path above.
+Use that same install command to upgrade an unlinked installation; `brew upgrade`
+tries to link the command again.
+Avoid overwriting another installer's command link.
+
+Stop the selected profile before upgrading, then run `brew update` and
+`brew upgrade --formula aipoch/tap/open-science`. Start it again using the same profile.
+macOS Cellar path changes may require Keychain authorization again. Stop the runtime
+before `brew uninstall --formula aipoch/tap/open-science`; uninstall retains research
+data and credentials. See the tap README for checksum maintenance and installation/upgrade CI.
+
 ## Install the standalone Release archive
 
 Stable Releases attach `open-science-<version>-<target>.tar.gz` for `darwin-arm64`,

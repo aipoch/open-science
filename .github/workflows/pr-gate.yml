@@ -770,8 +770,9 @@ jobs:
         env:
           BASE_SHA: ${{ needs.preflight.outputs.base }}
           HEAD_SHA: ${{ needs.preflight.outputs.head }}
+          TEST_TIER: ${{ github.event_name == 'pull_request' && 'pr' || 'queue' }}
         run: >-
-          npm run test:affected -- --base "$BASE_SHA" --head "$HEAD_SHA" --coverage-changed "$BASE_SHA" --
+          npm run test:affected -- --base "$BASE_SHA" --head "$HEAD_SHA" --coverage-changed "$BASE_SHA" --tier "$TEST_TIER" --
           --coverage.reporter=text-summary
           --testTimeout=30000
           --shard=${{ matrix.shard }}/4
@@ -836,9 +837,10 @@ jobs:
           VITEST_PORTABLE_CI: ${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group' || fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke') && '1' || '0' }}
           BASE_SHA: ${{ needs.preflight.outputs.base }}
           HEAD_SHA: ${{ needs.preflight.outputs.head }}
+          TEST_TIER: ${{ github.event_name == 'pull_request' && 'pr' || 'queue' }}
         # The module graph selects owner, contract, and consumer tests. Coverage remains scoped to
         # changed sources without handing test discovery back to Vitest's static --changed graph.
-        run: npm run test:affected -- --base "$BASE_SHA" --head "$HEAD_SHA" --coverage-changed "$BASE_SHA"
+        run: npm run test:affected -- --base "$BASE_SHA" --head "$HEAD_SHA" --coverage-changed "$BASE_SHA" --tier "$TEST_TIER"
       - name: Download full-suite blob reports
         if: ${{ needs.unit_shard.result != 'skipped' }}
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
@@ -863,8 +865,9 @@ jobs:
           VITEST_PORTABLE_CI: '1'
           BASE_SHA: ${{ needs.preflight.outputs.base }}
           HEAD_SHA: ${{ needs.preflight.outputs.head }}
+          TEST_TIER: ${{ github.event_name == 'pull_request' && 'pr' || 'queue' }}
         # Enforce changed-source thresholds only after all partial coverage maps are combined.
-        run: npm run test:affected -- --base "$BASE_SHA" --head "$HEAD_SHA" --coverage-changed "$BASE_SHA" -- --merge-reports=vitest-reports --passWithNoTests
+        run: npm run test:affected -- --base "$BASE_SHA" --head "$HEAD_SHA" --coverage-changed "$BASE_SHA" --tier "$TEST_TIER" -- --merge-reports=vitest-reports --passWithNoTests
       - name: Upload Module coverage report
         if: ${{ always() && (steps.unit_macos_related.outcome != 'skipped' || steps.unit_macos_full.outcome != 'skipped' || steps.unit_macos_related_merge.outcome != 'skipped') }}
         continue-on-error: true

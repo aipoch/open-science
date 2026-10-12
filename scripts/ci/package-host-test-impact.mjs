@@ -2,17 +2,31 @@
 import { execFileSync } from 'node:child_process'
 import { sourceSnapshot, createConsumerDependencyReader } from './consumer-retirement.mjs'
 import { loadModuleImpactManifestAtRevision } from './load-module-impact.mjs'
-import { validatePackageTestRegistry } from './package-test-impact.mjs'
+import { createPackageTestPlan, validatePackageTestRegistry } from './package-test-impact.mjs'
 
 const tests = (module) => Object.values(module.testFiles).flat()
+
+// Direct package calls and one host-adapter hop provide fast PR integration feedback.
+// An unresolved boundary remains in PR; transitive consumers still block merge queue.
+export function isDirectPackageConsumerTest(inspect, test, owners) {
+  const direct = inspect.dependencies(test)
+  if (!direct.complete) return true
+  for (const dependency of direct.paths) {
+    if (owners.has(dependency)) return true
+    const adapter = inspect.dependencies(dependency)
+    if (!adapter.complete || [...adapter.paths].some((path) => owners.has(path))) return true
+  }
+  return false
+}
 
 // Refine execution, never preflight capabilities or directly declared boundary evidence.
 export function refinePackageHostTests(
   plan,
   changes,
   manifest,
-  { base, head, cwd = process.cwd(), graphTests = [] } = {}
+  { base, head, cwd = process.cwd(), graphTests = [], tier = 'queue' } = {}
 ) {
+  if (!['pr', 'queue'].includes(tier)) throw new Error(`Unknown test tier: ${tier}`)
   if (plan.mode !== 'selective' || !changes.length) return plan
   const changedPaths = new Set(changes.map(({ path }) => path))
   const directEvidence = new Set([
@@ -23,7 +37,10 @@ export function refinePackageHostTests(
       .flatMap(tests),
     ...plan.modules.flatMap((id) => manifest.modules[id]?.testFiles.contract ?? [])
   ])
-  if (!plan.testFiles.some((test) => test.startsWith('src/') && !directEvidence.has(test)))
+  if (
+    tier !== 'pr' &&
+    !plan.testFiles.some((test) => test.startsWith('src/') && !directEvidence.has(test))
+  )
     return plan
   try {
     const git = (...args) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim()
@@ -62,7 +79,10 @@ export function refinePackageHostTests(
         for (const module of matches) {
           if (module.fullTestReason) return plan
           for (const owner of module.ownerPaths) owners.add(owner)
-          for (const test of tests(module)) protectedTests.add(test)
+          for (const test of tier === 'pr'
+            ? [...module.testFiles.owner, ...module.testFiles.contract]
+            : tests(module))
+            protectedTests.add(test)
         }
       }
       for (const id of plan.modules) {
@@ -75,6 +95,46 @@ export function refinePackageHostTests(
     const runtimeEdges = sources.flatMap((source) =>
       Object.entries(JSON.parse(source.read('scripts/ci/module-runtime-consumers.json')))
     )
+    if (tier === 'pr') {
+      const inspectors = sources.map((source) =>
+        createConsumerDependencyReader(source, runtimeEdges, { runtimeOnly: true })
+      )
+      const deferred = plan.testFiles.filter((test) => {
+        if (!test.startsWith('src/') || protectedTests.has(test)) return false
+        // Keep tests of a direct package consumer (host adapter), plus tests importing the package.
+        // More distant integration evidence is deferred, never retired or claimed unrelated.
+        return inspectors.every((inspect) => {
+          return !isDirectPackageConsumerTest(inspect, test, owners)
+        })
+      })
+      const deferredPackageRoots = createPackageTestPlan(paths, registry).selected.filter(
+        (root) =>
+          !paths.some((path) => path.startsWith(root + '/')) &&
+          ![...protectedTests].some((test) => test.startsWith(root + '/'))
+      )
+      deferred.push(
+        ...plan.testFiles.filter((test) =>
+          deferredPackageRoots.some((root) => test.startsWith(root + '/'))
+        )
+      )
+      const deferredSet = new Set(deferred)
+      return {
+        ...plan,
+        testFiles: plan.testFiles.filter((test) => !deferredSet.has(test)),
+        deferredTestFiles: deferred,
+        deferredPackageRoots,
+        reasonChains: [
+          ...plan.reasonChains,
+          `PR package boundary -> ${plan.testFiles.length - deferred.length} retained files; ${deferred.length} consumer files deferred to blocking merge queue; typechecks and capabilities unchanged`,
+          ...deferredPackageRoots.map(
+            (root) => `${root} -> downstream package suite -> merge queue`
+          ),
+          ...deferred
+            .filter((test) => test.startsWith('src/'))
+            .map((test) => `${test} -> host consumer beyond direct adapter -> merge queue`)
+        ]
+      }
+    }
     const inspectors = sources.map((source) =>
       createConsumerDependencyReader(source, runtimeEdges, { staticOnly: true })
     )

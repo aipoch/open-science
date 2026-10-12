@@ -1243,6 +1243,20 @@ The upper-right pin toggles the current Session through the shared Session contr
 
 ## Error notices
 
+Web initial open and refresh reuse the desktop particle Logo throughout the HTML bootstrap,
+settings/session loading, and initial event connection. Keep the same centered layout on an opaque
+background until ready; do not expose the unfinished homepage. Reuse the existing animation timeline
+across those stages. Desktop startup, database checks, and onboarding retain their existing behavior.
+After the page has reached `live`, network interruptions instead pause interaction with a translucent
+spinner/status overlay, preserving the visible page context and drafts. Show the detailed recovery dialog only
+after five continuous seconds without reaching `live`; transitions between connecting,
+reconnecting, and replaying do not restart that wait. Explicit authorization or resynchronization
+failures show their recovery dialog immediately. Reaching `live` removes recovery content
+immediately, including any closing animation, so normal refreshes never flash a reload error.
+Retain draft preservation, preview leave confirmation, modal focus containment, and the App Shell
+shortcut gate. This presentation uses a transient timer and a page-local record of having reached `live`; it adds no connection enum or
+persisted state.
+
 See the [page-by-page surface decisions](error-surfaces.md) for placement, lifetime, modal layout,
 intentional exceptions and validation. Cross-panel Settings write failures use a dismissible shared
 notice above the scroll area. Global action feedback uses the top-center stack; background Notebook and recovery notices share the bottom-right stack.

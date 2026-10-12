@@ -11,7 +11,7 @@ import type { LiteratureScreening } from './screening-adapter'
 import type { JournalAttributes } from './journal-attributes'
 import { deletePdfAnnotations, readAnnotations } from '../pdf-annotations/repository'
 import { ensureBinding } from '../pdf-annotations/document-store'
-import { createLiteratureAttachmentVersionReference } from '../../shared/literature'
+import { createLiteratureAttachmentVersionReference } from '../../shared/literature-attachment-reference'
 import { ApplicationCommandError } from '../../shared/application-command-contract'
 import {
   LITERATURE_OVERSIZED_REFERENCE,

@@ -349,7 +349,10 @@ export function executeModuleTestPlan(
   const shard = testArguments.some(
     (argument) => argument === '--shard' || argument.startsWith('--shard=')
   )
-  const testFilters = sorted([...plan.testFiles, ...packageTestSelectedRoots(environment)])
+  const deferredPackageRoots = plan.mode === 'selective' ? (plan.deferredPackageRoots ?? []) : []
+  const testFilters = sorted([...plan.testFiles, ...packageTestSelectedRoots(environment)]).filter(
+    (path) => !deferredPackageRoots.some((root) => path === root || path.startsWith(root + '/'))
+  )
   if (!mergeReports && !shard && plan.mode === 'selective' && testFilters.length === 0) return 0
   // Report merging executes no tests and needs no generated Prisma client from npm's pretest.
   const npmArguments = mergeReports
@@ -358,6 +361,7 @@ export function executeModuleTestPlan(
         'test',
         '--',
         ...testArguments,
+        ...deferredPackageRoots.map((root) => `--exclude=${root}/**`),
         // An empty shard must emit its blob without falling back to unfiltered discovery.
         ...(plan.mode === 'full'
           ? []
@@ -405,6 +409,12 @@ export async function runModuleTestCli(arguments_ = process.argv.slice(2), optio
   const base = argumentValue(arguments_, '--base')
   const head = argumentValue(arguments_, '--head')
   if (!base || !head) throw new Error('--base and --head are required')
+  const tier = argumentValue(arguments_, '--tier') ?? 'queue'
+  if (
+    !['pr', 'queue'].includes(tier) ||
+    (arguments_.includes('--tier') && !argumentValue(arguments_, '--tier'))
+  )
+    throw new Error('--tier must be pr or queue')
   const coverageChanged = argumentValue(arguments_, '--coverage-changed')
   if (arguments_.includes('--coverage-changed') && !coverageChanged) {
     throw new Error('--coverage-changed requires a Git revision')
@@ -424,7 +434,8 @@ export async function runModuleTestCli(arguments_ = process.argv.slice(2), optio
   if (
     plan.mode === 'selective' &&
     changes.length &&
-    changes.every(({ path }) => path.startsWith('packages/'))
+    changes.every(({ path }) => path.startsWith('packages/')) &&
+    !packageTestSelectedRoots(options.environment ?? process.env).includes('packages')
   ) {
     try {
       const { refinePackageHostTests } = await import('./package-host-test-impact.mjs')
@@ -432,6 +443,7 @@ export async function runModuleTestCli(arguments_ = process.argv.slice(2), optio
         base,
         head,
         graphTests: graph.testFiles,
+        tier,
         ...options
       })
     } catch {

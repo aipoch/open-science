@@ -530,7 +530,7 @@ class NotebookRuntimeService {
     if (defaultManagedFirstBinding && this.runtimeBindingApproval) {
       approval = this.runtimeBindingApproval
     } else if (this.executionApproval) {
-      const { runtimes } = await this.runtimeBindingOwner.list(session)
+      const { runtimes } = await this.runtimeBindingOwner.list(session, language)
       const multiple =
         runtimes.filter((runtime) => runtime.language === language && runtime.runnable).length > 1
       if ((current && current.runtimeId !== binding.runtimeId) || (!current && multiple)) {
@@ -622,7 +622,7 @@ class NotebookRuntimeService {
       return
     await this.runtimeBindingOwner.runWrite(notebookLaneKey(session.lane), async () => {
       if (session.runtimeBinding(language)) return
-      const { runtimes } = await this.runtimeBindingOwner.list(session)
+      const { runtimes } = await this.runtimeBindingOwner.list(session, language)
       const candidates = runtimes.filter(
         (runtime) => runtime.language === language && runtime.runnable
       )

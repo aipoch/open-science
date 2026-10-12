@@ -5,6 +5,8 @@ import { fireEvent, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { i18next } from '@/i18n'
+import { createLinearConversationGraph } from '../../../../shared/conversation-graph'
+import type { ToolActivity } from '@/stores/session-store'
 
 import type {
   NotebookEnvironmentStatus,
@@ -429,7 +431,8 @@ describe('NotebookPreview per-kernel tabs', () => {
     runStaleness: NotebookSessionState['runStaleness'] = {},
     kernelStatus: NotebookSessionState['kernelStatus'] = 'idle',
     stateOverrides: Partial<NotebookSessionState> = {},
-    previewItem: NotebookPreviewItem = item
+    previewItem: NotebookPreviewItem = item,
+    deferredState?: Promise<NotebookSessionState>
   ): Promise<void> => {
     const readyStatus: ProvisionStatus = {
       pythonReady: true,
@@ -467,24 +470,26 @@ describe('NotebookPreview per-kernel tabs', () => {
 
     window.api = {
       notebook: {
-        state: vi.fn(() =>
-          Promise.resolve({
-            id: 'session-1',
-            sessionId: 'session-1',
-            cwd: '/tmp/proj',
-            notebookSessionRoot: '/tmp/proj/.notebook',
-            dataRoot: '/tmp/proj/.notebook/data',
-            runtimeRoot: '/tmp/proj/.notebook/runtime',
-            kernelStatus,
-            runJsonPath: '/tmp/proj/.notebook/run.json',
-            cells: [],
-            runCount: runs.length,
-            runs,
-            recentRuns: runs,
-            runStaleness,
-            environments: liveEnvironments,
-            ...stateOverrides
-          })
+        state: vi.fn(
+          () =>
+            deferredState ??
+            Promise.resolve({
+              id: 'session-1',
+              sessionId: 'session-1',
+              cwd: '/tmp/proj',
+              notebookSessionRoot: '/tmp/proj/.notebook',
+              dataRoot: '/tmp/proj/.notebook/data',
+              runtimeRoot: '/tmp/proj/.notebook/runtime',
+              kernelStatus,
+              runJsonPath: '/tmp/proj/.notebook/run.json',
+              cells: [],
+              runCount: runs.length,
+              runs,
+              recentRuns: runs,
+              runStaleness,
+              environments: liveEnvironments,
+              ...stateOverrides
+            })
         ),
         inspectNamespace: vi.fn((request) =>
           Promise.resolve({
@@ -544,6 +549,340 @@ describe('NotebookPreview per-kernel tabs', () => {
       })
     }
   }
+
+  const seedPendingCode = (overrides: Partial<ToolActivity> = {}): void => {
+    const messages = [
+      {
+        id: 'prompt-1',
+        role: 'user' as const,
+        content: 'Run Python',
+        status: 'complete' as const,
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ]
+    const graph = createLinearConversationGraph({
+      sessionId: 'session-1',
+      messages,
+      createdAt: 1,
+      updatedAt: 2
+    })
+    const activity: ToolActivity = {
+      id: 'tool-1',
+      kind: 'tool',
+      title: 'Notebook run',
+      status: 'in_progress',
+      providerToolName: 'open_science_notebook_notebook_execute',
+      rawInput: { language: 'python', code: 'print("first-run-code")' },
+      executionInvocationId: 'invocation-1',
+      eventIds: [],
+      sortIndex: 1,
+      createdAt: 2,
+      updatedAt: 2,
+      ...overrides
+    }
+    graph.activities = [
+      {
+        ...activity,
+        agentFrameId: graph.rootFrameId,
+        messageBranchId: graph.frames[0].activeBranchId,
+        promptMessageId: 'prompt-1',
+        runtimeSegmentId: graph.runtimeSegments[0].id
+      }
+    ]
+    useSessionStore.setState({
+      sessions: [
+        {
+          ...useSessionStore.getState().sessions[0],
+          status: 'running',
+          messages,
+          activeRun: { promptMessageId: 'prompt-1', startedAt: 1 },
+          activities: [activity],
+          conversationGraph: graph
+        }
+      ]
+    })
+  }
+
+  it.each([
+    [
+      'claude-code',
+      'mcp__open-science-notebook__notebook_execute',
+      { language: 'python', code: 'print("first-run-code")' }
+    ],
+    [
+      'opencode',
+      'open_science_notebook_notebook_execute',
+      { language: 'python', code: 'print("first-run-code")' }
+    ],
+    [
+      'codex-response',
+      'mcp__open_science_notebook__notebook_execute',
+      { language: 'python', code: 'print("first-run-code")' }
+    ],
+    [
+      'codex-bridge',
+      'open-science-notebook/notebook_execute',
+      { arguments: { language: 'python', code: 'print("first-run-code")' } }
+    ]
+  ])(
+    'shows %s code while the initial Notebook state is still waiting',
+    async (_framework, providerToolName, rawInput) => {
+      seedPendingCode({ providerToolName: providerToolName as string, rawInput })
+      await mountWithRuns([], [], {}, 'idle', {}, item, new Promise(() => undefined))
+      expect(
+        container.querySelector('[data-testid="notebook-pending-code"]')?.textContent
+      ).toContain('first-run-code')
+      expect(container.textContent).toContain('Code received; waiting for execution details.')
+      expect(container.querySelector('textarea')).toBeNull()
+      expect(window.api.notebook.execute).not.toHaveBeenCalled()
+    }
+  )
+
+  it('replaces preliminary code only when the exact Run arrives through the subscription', async () => {
+    seedPendingCode()
+    await mountWithRuns([
+      makeRun({ script: 'print("first-run-code")', executionInvocationId: 'other' })
+    ])
+    expect(container.querySelector('[data-testid="notebook-pending-code"]')).not.toBeNull()
+    const state = vi.mocked(window.api.notebook.state)
+    const initial = await state.mock.results[0].value
+    state.mockResolvedValue({
+      ...initial,
+      runs: [
+        ...initial.runs,
+        makeRun({ runId: 'actual', executionInvocationId: 'invocation-1', status: 'running' })
+      ]
+    })
+    await act(async () => {
+      vi.mocked(window.api.notebook.onChanged).mock.calls[0][0](item.notebook)
+    })
+    expect(container.querySelector('[data-testid="notebook-pending-code"]')).toBeNull()
+    expect(container.querySelector('[data-run-id="actual"]')).not.toBeNull()
+  })
+
+  it.each([true, false])(
+    'keeps returned code until Run details hydrate with invocation identity=%s',
+    async (withInvocation) => {
+      seedPendingCode({
+        status: 'completed',
+        executionInvocationId: withInvocation ? 'invocation-1' : undefined,
+        rawOutput: {
+          runId: 'actual',
+          executionInvocationId: 'invocation-1',
+          status: 'completed'
+        }
+      })
+      let resolveState!: (state: NotebookSessionState) => void
+      const pendingState = new Promise<NotebookSessionState>((resolve) => {
+        resolveState = resolve
+      })
+      await mountWithRuns([], [], {}, 'idle', {}, item, pendingState)
+      expect(container.querySelector('[data-testid="notebook-pending-code"]')).not.toBeNull()
+      const run = makeRun({ runId: 'actual', executionInvocationId: 'invocation-1' })
+      await act(async () =>
+        resolveState({
+          id: 'session-1',
+          sessionId: 'session-1',
+          cwd: '/tmp/proj',
+          kernelStatus: 'idle',
+          runCount: 1,
+          notebookSessionRoot: '/tmp/proj/.notebook',
+          dataRoot: '/tmp/proj/data',
+          runtimeRoot: '/tmp/proj/.notebook/runtime',
+          runJsonPath: '/tmp/proj/.notebook/runs.json',
+          latestRunEnvironments: {},
+          runs: [run],
+          recentRuns: [run],
+          cells: [],
+          environments: []
+        })
+      )
+      expect(container.querySelector('[data-testid="notebook-pending-code"]')).toBeNull()
+      expect(container.querySelector('[data-run-id="actual"]')).not.toBeNull()
+    }
+  )
+
+  it.each(['cancelled', 'interrupted'] as const)(
+    'removes code when the authenticated Run receipt is %s',
+    async (status) => {
+      seedPendingCode({
+        rawOutput: { runId: 'actual', executionInvocationId: 'invocation-1', status }
+      })
+      await mountWithRuns([], [], {}, 'idle', {}, item, new Promise(() => undefined))
+      expect(container.querySelector('[data-testid="notebook-pending-code"]')).toBeNull()
+    }
+  )
+
+  it('removes preliminary code when the active Branch changes without waiting for Notebook state', async () => {
+    seedPendingCode()
+    await mountWithRuns([], [], {}, 'idle', {}, item, new Promise(() => undefined))
+    const session = useSessionStore.getState().sessions[0]
+    const graph = session.conversationGraph!
+    await act(async () =>
+      useSessionStore.setState({
+        sessions: [
+          {
+            ...session,
+            conversationGraph: {
+              ...graph,
+              frames: graph.frames.map((frame) => ({ ...frame, activeBranchId: 'other-branch' })),
+              branches: [...graph.branches, { ...graph.branches[0], id: 'other-branch' }]
+            }
+          }
+        ]
+      })
+    )
+    expect(container.querySelector('[data-testid="notebook-pending-code"]')).toBeNull()
+  })
+
+  it.each(['completed', 'failed'] as const)(
+    'keeps code visible for a %s outer observer while the originating turn is live',
+    async (status) => {
+      seedPendingCode({ status })
+      await mountWithRuns([])
+      expect(container.querySelector('[data-testid="notebook-pending-code"]')).not.toBeNull()
+      expect(container.textContent).toContain('Code received; waiting for execution details.')
+    }
+  )
+
+  it.each(['declined', 'permission-closed'] as const)(
+    'removes preliminary code after %s',
+    async (toolDisposition) => {
+      seedPendingCode()
+      await mountWithRuns([])
+      const session = useSessionStore.getState().sessions[0]
+      await act(async () =>
+        useSessionStore.setState({
+          sessions: [
+            {
+              ...session,
+              activities: session.activities!.map((activity) => ({ ...activity, toolDisposition }))
+            }
+          ]
+        })
+      )
+      expect(container.querySelector('[data-testid="notebook-pending-code"]')).toBeNull()
+    }
+  )
+
+  it('removes preliminary code when the turn stops and ignores a late Notebook snapshot', async () => {
+    seedPendingCode()
+    let resolveState!: (state: NotebookSessionState) => void
+    const pendingState = new Promise<NotebookSessionState>((resolve) => {
+      resolveState = resolve
+    })
+    await mountWithRuns([], [], {}, 'idle', {}, item, pendingState)
+    const session = useSessionStore.getState().sessions[0]
+    await act(async () =>
+      useSessionStore.setState({ sessions: [{ ...session, activeRun: undefined, status: 'idle' }] })
+    )
+    expect(container.querySelector('[data-testid="notebook-pending-code"]')).toBeNull()
+    await act(async () =>
+      resolveState({
+        ...item.notebook,
+        id: 'session-1',
+        cwd: '/tmp/proj',
+        kernelStatus: 'idle',
+        runCount: 0,
+        latestRunEnvironments: {},
+        runs: [],
+        recentRuns: [],
+        cells: [{ id: 'old', code: 'print("first-run-code")', language: 'python', status: 'idle' }],
+        environments: []
+      })
+    )
+    expect(container.querySelector('[data-testid="notebook-pending-code"]')).toBeNull()
+  })
+
+  it('shows only a permission belonging to the current tool and turn', async () => {
+    seedPendingCode()
+    const session = useSessionStore.getState().sessions[0]
+    const permission = {
+      state: 'pending' as const,
+      originatingPromptMessageId: 'prompt-1',
+      fingerprint: 'fingerprint',
+      createdAt: 2,
+      request: {
+        sessionId: 'session-1',
+        requestId: 'permission',
+        toolCallId: 'tool-1',
+        title: 'Run code',
+        options: []
+      }
+    }
+    useSessionStore.setState({
+      sessions: [
+        {
+          ...session,
+          status: 'waiting-permission',
+          runtimeContext: { version: 1, revision: 1, permission }
+        }
+      ]
+    })
+    await mountWithRuns([])
+    expect(container.querySelector('[data-testid="notebook-pending-code"]')?.textContent).toContain(
+      'Needs approval'
+    )
+    await act(async () =>
+      useSessionStore.setState({
+        sessions: [
+          {
+            ...session,
+            runtimeContext: {
+              version: 1,
+              revision: 1,
+              permission: { ...permission, originatingPromptMessageId: 'old-prompt' }
+            }
+          }
+        ]
+      })
+    )
+    expect(
+      container.querySelector('[data-testid="notebook-pending-code"]')?.textContent
+    ).not.toContain('Needs approval')
+  })
+
+  it('shows the first R code before a Run and preserves source whitespace', async () => {
+    seedPendingCode({ rawInput: { language: 'r', code: '\n  print(1)' } })
+    await mountWithRuns([])
+    expect(container.querySelector('[data-testid="kernel-switcher-r"]')).not.toBeNull()
+    expect(notebookCodeBlockSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ code: '\n  print(1)', language: 'r' })
+    )
+  })
+
+  it('does not show another Frame as live preliminary code', async () => {
+    seedPendingCode()
+    const session = useSessionStore.getState().sessions[0]
+    const graph = session.conversationGraph!
+    useSessionStore.setState({
+      sessions: [
+        {
+          ...session,
+          conversationGraph: {
+            ...graph,
+            activities: graph.activities.map((activity) => ({
+              ...activity,
+              agentFrameId: 'other-frame'
+            }))
+          }
+        }
+      ]
+    })
+    await mountWithRuns([])
+    expect(container.querySelector('[data-testid="notebook-pending-code"]')).toBeNull()
+  })
+
+  it('retains a bounded code preview with a truncation notice', async () => {
+    seedPendingCode({ rawInput: { language: 'python', code: 'print(1)\n'.repeat(3000) } })
+    await mountWithRuns([])
+    expect(container.querySelector('[data-testid="notebook-pending-code"]')?.textContent).toContain(
+      'Arguments were truncated for display.'
+    )
+    expect(notebookCodeBlockSpy.mock.calls[0][0].code.length).toBeLessThan(27000)
+  })
 
   it('withholds folder recovery until the session content establishes a live local owner', async () => {
     const session = useSessionStore.getState().sessions[0]
