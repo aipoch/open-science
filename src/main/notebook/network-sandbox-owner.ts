@@ -401,13 +401,14 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
   }
 
   async status(): Promise<NotebookNetworkStatus> {
+    const settings = this.platform === 'win32' ? await this.readSettings() : undefined
     if (this.windowsSetupController || this.preparingWindowsRuntime)
       return this.recordStatus({
         kind: 'checking',
         runtimePreparation: this.windowsRuntime?.progress
       })
     if (this.initializePromise) return this.recordStatus({ kind: 'checking' })
-    if (this.platform === 'win32' && (await this.readSettings()).windowsProtectionEnabled === false)
+    if (settings?.windowsProtectionEnabled === false)
       return this.recordStatus({ kind: 'standard' })
     try {
       await resolveNotebookTrustBundle(await this.options.getCaBundlePath?.())
