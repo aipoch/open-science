@@ -31,6 +31,40 @@ it('preserves separate straight rules in a compound stroke without bridging thei
   ])
 })
 
+it('measures the actual unit rectangle painted by a solid-color mask as a thin native rule', () => {
+  const operators = {
+    fnArray: [OPS.save, OPS.transform, OPS.paintSolidColorImageMask, OPS.restore],
+    argsArray: [[], [200, 0, 0, -0.5, 20, 40], [], []]
+  }
+  const viewport = { transform: [1, 0, 0, 1, 0, 0], width: 500, height: 500 }
+  const paint = new Map()
+  const before = structuredClone(operators)
+  expect(collectTableRules(operators, viewport, paint)).toEqual([[20, 39.75, 220, 39.75]])
+  expect([...paint.values()]).toEqual([[20, 39.5, 220, 40]])
+  expect(operators).toEqual(before)
+  for (const variant of ['transparent', 'blend', 'clip', 'white', 'skew', 'nonfinite', 'wide']) {
+    const input = structuredClone(operators)
+    if (variant === 'transparent' || variant === 'blend') {
+      input.fnArray.unshift(OPS.setGState)
+      input.argsArray.unshift([
+        [variant === 'transparent' ? ['ca', 0.5] : ['BM', 'Multiply']]
+      ] as never)
+    }
+    if (variant === 'clip') {
+      input.fnArray.unshift(OPS.clip)
+      input.argsArray.unshift([])
+    }
+    if (variant === 'white') {
+      input.fnArray.unshift(OPS.setFillRGBColor)
+      input.argsArray.unshift(['#ffffff'] as never)
+    }
+    if (variant === 'skew') input.argsArray[1][1] = 5
+    if (variant === 'nonfinite') input.argsArray[1][0] = NaN
+    if (variant === 'wide') input.argsArray[1][3] = -20
+    expect(collectTableRules(input, viewport), variant).toEqual([])
+  }
+})
+
 it('excludes repeated running headers near an image but keeps labels inside its bounds', () => {
   const header = { text: 'A. Author et al.', x: 36, y: 34, width: 72, height: 8 }
   const journal = { text: 'Journal 146 (2025)', x: 420, y: 34, width: 144, height: 8 }
@@ -774,4 +808,68 @@ it('declines unknown clips and paint outside a known page without changing nativ
     collectTableRules(operators, viewport)
   )
   expect(paint.size).toBe(0)
+})
+
+it('withdraws new solid-mask rule evidence after an opaque cover while preserving unrelated legacy strokes', () => {
+  const operators = {
+    fnArray: [
+      OPS.constructPath,
+      OPS.save,
+      OPS.transform,
+      OPS.paintSolidColorImageMask,
+      OPS.restore,
+      OPS.setFillRGBColor,
+      OPS.constructPath
+    ],
+    argsArray: [
+      [OPS.stroke, [[0, 310, 10, 1, 390, 10]], [310, 10, 390, 10]],
+      [],
+      [200, 0, 0, -0.5, 20, 40],
+      [],
+      [],
+      ['#ffffff'],
+      [OPS.fill, [[0, 0, 0, 1, 300, 0, 1, 300, 100, 1, 0, 100, 4]], [0, 0, 300, 100]]
+    ]
+  }
+  const paint = new Map(),
+    before = structuredClone(operators)
+  const rules = collectTableRules(
+    operators,
+    { transform: [1, 0, 0, 1, 0, 0], width: 500, height: 500 },
+    paint
+  )
+  expect(rules).toEqual([[310, 10, 390, 10]])
+  expect([...paint.values()]).not.toContainEqual([20, 39.5, 220, 40])
+  expect(operators).toEqual(before)
+})
+
+it('limits mask invalidation to proven raster overlap and declines unknown transformed cover', () => {
+  const initial = {
+    fnArray: [OPS.save, OPS.transform, OPS.paintSolidColorImageMask, OPS.restore],
+    argsArray: [[], [200, 0, 0, -0.5, 20, 40], [], []] as unknown[][]
+  }
+  const viewport = { transform: [1, 0, 0, 1, 0, 0], width: 500, height: 500 }
+  for (const [name, x] of [
+    ['covering', 50],
+    ['disjoint', 300]
+  ] as const) {
+    const input = structuredClone(initial)
+    input.fnArray.push(OPS.save, OPS.transform, OPS.paintImageXObject, OPS.restore)
+    input.argsArray.push([], [40, 0, 0, 20, x, 30], ['anonymous-raster'], [])
+    const paint = new Map()
+    expect(collectTableRules(input, viewport, paint), name).toEqual(
+      name === 'disjoint' ? [[20, 39.75, 220, 39.75]] : []
+    )
+    expect([...paint.values()], name).toEqual(name === 'disjoint' ? [[20, 39.5, 220, 40]] : [])
+  }
+  const unknown = structuredClone(initial)
+  unknown.fnArray.push(OPS.setFillRGBColor, OPS.transform, OPS.constructPath)
+  unknown.argsArray.push(
+    ['#ffffff'],
+    [NaN, 0, 0, 1, 0, 0],
+    [OPS.fill, [[0, 0, 0, 1, 300, 0, 1, 300, 100, 1, 0, 100, 4]], [0, 0, 300, 100]]
+  )
+  const paint = new Map()
+  expect(collectTableRules(unknown, viewport, paint)).toEqual([])
+  expect([...paint.values()]).toEqual([])
 })
