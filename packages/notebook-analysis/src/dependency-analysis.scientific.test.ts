@@ -473,7 +473,7 @@ it('retains phyloseq conversion reads without certifying an unproved cross-cell 
 
 it('requires a phyloseq input before certifying DESeq2 conversion', async () => {
   for (const setup of ['', 'ps <- Seurat::CreateSeuratObject(counts)']) {
-    const { facts, fileAccess } = await analyzeRNotebookSource(
+    const { facts } = await analyzeRNotebookSource(
       `${setup}\ndds <- phyloseq::phyloseq_to_deseq2(ps, ~ treatment + batch)`
     )
     expect(facts.typeBindings?.find((binding) => binding.target === 'dds')).toBeUndefined()
