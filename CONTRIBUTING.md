@@ -449,18 +449,10 @@ ci(review): unify automated AI reviews
   its squash subject must retain the PR title's Conventional Commit format. Do not update a branch
   merely because `main` advanced; update it for conflicts or a maintainer request.
 - PR commits retain policy/CI Integrity, CodeQL (GitHub default setup, not a repository
-  workflow), AI review, static checks and selective portable tests on Ubuntu. Plans requiring the complete
-  portable suite defer its Ubuntu shards and aggregate coverage to scheduled/manual acceptance, including
-  shared full-validation owners, unknown/destructive changes and global CI inputs. PRs retain
-  module ownership/consumer evidence, interface-contract and CLI checks when full portable tests
-  are deferred. Portable execution separates host tests (four Ubuntu shards) from tests under
-  `packages/` (two Ubuntu shards), with distinct job names and reports. Both groups feed the same
-  blocking coverage aggregate; package selection and downstream evidence remain unchanged.
-  Package runners are omitted when trusted selection finds no affected packages; package fixtures
-  and shared package runtime/build inputs still count as affected evidence.
-  Preflight explains runner selection and full-suite deferral; a skipped full suite is not test evidence.
-  Selective test failures, timeouts and cancellations block the gate. If runner-side selection
-  unexpectedly expands to full, `--require-selective` fails with its reasons instead of running full.
+  workflow), AI review, static checks and selective portable tests on Ubuntu.
+  PRs and merge queue run affected host/package tests separately and skip unaffected packages.
+  Failed selected checks block merging; full portable suites run in scheduled/manual Source
+  Regression instead. See [Package workflows](docs/package-workflows.md) for selection details.
   Desktop changes run the Windows
   mainline E2E journeys on one test runner, selected from the changed modules and their declared
   consumers: projects/sessions, conversation/approval, files/previews, Notebook analysis, and native
@@ -489,14 +481,7 @@ ci(review): unify automated AI reviews
   Platform-sensitive changes add focused Darwin sandbox, process/delegation, window/second-launch
   and Notebook checks in that same job. Selected native checks must succeed; skipped is not success.
   Queue does not repeat Windows business E2E or complete Mac business/presentation suites. Existing
-  selected Windows core checks remain blocking. Bounded selective queue plans retain their module
-  tests; missing, skipped or failed selected checks block merge. Unbounded portable plans for shared
-  full-validation owners, unknown owners, destructive changes and global CI inputs defer to Source
-  Regression, just as on PR revisions. Source Regression runs complete host and package suites on
-  separate Ubuntu runners twice daily and supports manual `portable` acceptance before a release.
-  Full-suite failures may first be discovered after merge; this policy does not fix test timeouts.
-  CI policy changes themselves use the trusted base policy, so the PR introducing this scheduling
-  rule still runs the full portable suite before the new policy takes effect after merge.
+  selected Windows core checks remain blocking.
 - The platform policy uses the existing `macosProfile` values (`smoke` or `expanded`). An expanded
   queue plan selects the short core lane plus native checks on one runner. Manual `macos-smoke`,
   `source-regressions` and `e2e` runs retain their explicitly selected suites for early platform
@@ -634,8 +619,8 @@ change before proposing registration cleanup that depends on it.
 New explicit ownership cannot hide existing inferred test coverage. Unknown policy metadata and
 coverage reductions fail the check; owner approval alone does not waive these invariants.
 Module moves and consolidation must preserve surviving ownership, interfaces, test evidence and
-routing obligations, including consumer edges; their complete portable validation runs in scheduled/manual acceptance. Deliberate
-reductions require a separate CI policy change, not a registration-only PR. Trusted selection may
+routing obligations, including consumer edges. Deliberate reductions require a separate CI policy
+change, not a registration-only PR. Trusted selection may
 accept additive evidence in existing module shards: it reads candidate Git blobs as JSON, verifies
 preserved policy/evidence against the merge base, and adds evidence to the trusted manifest without
 dropping newer mainline registrations. Changed records select their module evidence, including new

@@ -28,7 +28,12 @@ group, while host, CLI and repository-policy tests run in the host group. Both g
 trusted package/module selection and feed one blocking coverage aggregate. Pure host changes omit
 package runners entirely; package fixture readers and shared runtime/build inputs still select
 package checks. Full portable plans defer to scheduled/manual Source Regression on both PRs and
-merge queue. Its complete acceptance runs the same separate host/package groups without exclusions. Installed tarball verification runs in
+merge queue. Its complete acceptance runs the same separate host/package groups without exclusions.
+Selected test failures, timeouts and cancellations block the gate. A selective runner whose plan
+unexpectedly expands to full fails with `--require-selective`; it never silently restarts full.
+Full-suite failures can first appear after merge. CI policy changes still use the trusted base policy.
+
+Installed tarball verification runs in
 **merge queue** as a separate blocking job. Static checks no longer install or execute package tarballs;
 CLI/SDK, Node 22 compatibility and published-runtime checks have their own job with unchanged selection.
 
