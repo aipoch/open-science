@@ -452,6 +452,11 @@ export async function runModuleTestCli(arguments_ = process.argv.slice(2), optio
       )
     }
   }
+  if (arguments_.includes('--require-selective') && plan.mode !== 'selective') {
+    throw new Error(
+      `Selective test plan required; refusing full execution.\n${formatModuleTestPlan(plan)}`
+    )
+  }
   if (arguments_.includes('--explain')) {
     process.stdout.write(formatModuleTestPlan(plan))
     return 0

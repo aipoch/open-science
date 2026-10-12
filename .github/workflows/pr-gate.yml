@@ -819,7 +819,7 @@ jobs:
           HEAD_SHA: ${{ needs.preflight.outputs.head }}
           TEST_TIER: ${{ github.event_name == 'pull_request' && 'pr' || 'queue' }}
         run: >-
-          npm run test:affected -- --base "$BASE_SHA" --head "$HEAD_SHA" --coverage-changed "$BASE_SHA" --tier "$TEST_TIER" --
+          npm run test:affected -- --base "$BASE_SHA" --head "$HEAD_SHA" --coverage-changed "$BASE_SHA" --tier "$TEST_TIER" --require-selective --
           --coverage.reporter=text-summary
           --testTimeout=30000
           --shard=${{ matrix.shard }}/${{ matrix.total }}
@@ -887,7 +887,7 @@ jobs:
           TEST_TIER: ${{ github.event_name == 'pull_request' && 'pr' || 'queue' }}
         # The module graph selects owner, contract, and consumer tests. Coverage remains scoped to
         # changed sources without handing test discovery back to Vitest's static --changed graph.
-        run: npm run test:affected -- --base "$BASE_SHA" --head "$HEAD_SHA" --coverage-changed "$BASE_SHA" --tier "$TEST_TIER"
+        run: npm run test:affected -- --base "$BASE_SHA" --head "$HEAD_SHA" --coverage-changed "$BASE_SHA" --tier "$TEST_TIER" --require-selective
       - name: Download full-suite blob reports
         if: ${{ needs.unit_shard.result != 'skipped' }}
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
@@ -914,7 +914,7 @@ jobs:
           HEAD_SHA: ${{ needs.preflight.outputs.head }}
           TEST_TIER: ${{ github.event_name == 'pull_request' && 'pr' || 'queue' }}
         # Enforce changed-source thresholds only after all partial coverage maps are combined.
-        run: npm run test:affected -- --base "$BASE_SHA" --head "$HEAD_SHA" --coverage-changed "$BASE_SHA" --tier "$TEST_TIER" -- --merge-reports=vitest-reports --passWithNoTests
+        run: npm run test:affected -- --base "$BASE_SHA" --head "$HEAD_SHA" --coverage-changed "$BASE_SHA" --tier "$TEST_TIER" --require-selective -- --merge-reports=vitest-reports --passWithNoTests
       - name: Upload Module coverage report
         if: ${{ always() && (steps.unit_macos_related.outcome != 'skipped' || steps.unit_macos_full.outcome != 'skipped' || steps.unit_macos_related_merge.outcome != 'skipped') }}
         continue-on-error: true

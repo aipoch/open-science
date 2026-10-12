@@ -459,6 +459,8 @@ ci(review): unify automated AI reviews
   Package runners are omitted when trusted selection finds no affected packages; package fixtures
   and shared package runtime/build inputs still count as affected evidence.
   Preflight explains runner selection and full-suite deferral; a skipped full suite is not test evidence.
+  Selective test failures, timeouts and cancellations block the gate. If runner-side selection
+  unexpectedly expands to full, `--require-selective` fails with its reasons instead of running full.
   Desktop changes run the Windows
   mainline E2E journeys on one test runner, selected from the changed modules and their declared
   consumers: projects/sessions, conversation/approval, files/previews, Notebook analysis, and native

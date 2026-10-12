@@ -188,6 +188,14 @@ describe('PR Gate workflow', () => {
     }
   )
 
+  it('requires selective execution for every affected-test step', () => {
+    const steps = Object.values(workflow.jobs)
+      .flatMap((job) => job.steps ?? [])
+      .filter((step) => step.run?.includes('npm run test:affected'))
+    expect(steps).toHaveLength(3)
+    for (const step of steps) expect(step.run).toContain('--require-selective')
+  })
+
   it('rejects module dry-runs against changed application code while allowing CI-only fixes', () => {
     const cwd = mkdtempSync(join(tmpdir(), 'module-coverage-source-'))
     const git = (...args: string[]): string =>
@@ -288,7 +296,7 @@ describe('PR Gate workflow', () => {
     expect(shards.env?.VITEST_DEFER_COVERAGE_THRESHOLDS).toBe('1')
     const merge = workflow.jobs.unit.steps?.find(({ id }) => id === 'unit_macos_related_merge')
     expect(merge?.run).toContain(
-      '--coverage-changed "$BASE_SHA" --tier "$TEST_TIER" -- --merge-reports=vitest-reports'
+      '--coverage-changed "$BASE_SHA" --tier "$TEST_TIER" --require-selective -- --merge-reports=vitest-reports'
     )
     expect(workflow.jobs.unit.env?.VITEST_DEFER_COVERAGE_THRESHOLDS).toBeUndefined()
     const serial = workflow.jobs.unit.steps?.find(({ id }) => id === 'unit_macos_related')
