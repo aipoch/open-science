@@ -2,7 +2,6 @@
   "ownerPaths": [
     "src/main/settings/repository.ts",
     "src/main/settings/record-codec.ts",
-    "src/main/settings/provider-token-limits.ts",
     "src/main/settings/document-codec.ts",
     "src/main/settings/document-store.ts",
     "src/main/settings/compute-grant-port.ts",
@@ -13,7 +12,6 @@
     "src/main/settings/document-codec.test.ts",
     "src/main/settings/document-store.test.ts",
     "src/main/settings/mirror-settings.test.ts",
-    "src/main/settings/provider-token-limits.test.ts",
     "src/main/settings/record-codec.test.ts",
     "src/main/settings/repository.test.ts",
     "src/main/settings/document-read-error.ts",
@@ -24,7 +22,6 @@
     "src/main/settings/repository.ts",
     "src/shared/network-proxy.ts",
     "src/main/settings/compute-grant-port.ts",
-    "src/main/settings/provider-token-limits.ts",
     "src/main/settings/document-store.ts"
   ],
   "consumerModules": ["settings_provider_accounts", "settings_service_facade", "compute_service"],
@@ -34,7 +31,6 @@
       "src/main/settings/document-store.test.ts",
       "src/main/settings/document-codec.test.ts",
       "src/main/settings/record-codec.test.ts",
-      "src/main/settings/provider-token-limits.test.ts",
       "src/main/settings/repository.test.ts",
       "src/main/settings/compute-grants.test.ts",
       "src/main/settings/connectors-settings.test.ts",
