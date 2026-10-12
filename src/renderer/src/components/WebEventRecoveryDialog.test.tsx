@@ -17,6 +17,7 @@ let container: HTMLDivElement
 let root: Root
 
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -25,6 +26,7 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount())
   container.remove()
+  vi.useRealTimers()
   vi.restoreAllMocks()
   revokeComposerDraftStorage()
   sessionStorage.clear()
@@ -73,6 +75,7 @@ describe('WebEventRecoveryDialog', () => {
       root.render(<WebEventRecoveryDialog active phase="reconnecting" />)
     })
 
+    await act(async () => vi.advanceTimersByTime(5000))
     const dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
     expect(dialog?.textContent).toContain('Reconnecting to Open-Science')
     expect(
@@ -87,6 +90,7 @@ describe('WebEventRecoveryDialog', () => {
       root.render(<WebEventRecoveryDialog active phase="replaying" />)
     })
 
+    await act(async () => vi.advanceTimersByTime(5000))
     const dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
     expect(dialog?.textContent).toContain('Restoring missed updates')
     expect(dialog?.textContent).not.toContain('Reload')
@@ -104,5 +108,98 @@ describe('WebEventRecoveryDialog', () => {
         (button) => button.textContent === 'Reload'
       )
     ).toBe(true)
+  })
+})
+
+describe('recovery waiting presentation', () => {
+  it('does not open a recovery alert during an immediately successful connection', async () => {
+    await act(async () => root.render(<WebEventRecoveryDialog active phase="connecting" />))
+    expect(document.body.querySelector('[role="alertdialog"]')).toBeNull()
+    expect(document.body.querySelector('[role="status"]')?.textContent).toContain('Connecting')
+    await act(async () => root.render(<WebEventRecoveryDialog active={false} phase="live" />))
+    expect(document.body.querySelector('[role="alertdialog"]')).toBeNull()
+  })
+
+  it('counts one continuous wait across connection phases and resets after recovery', async () => {
+    await act(async () => root.render(<WebEventRecoveryDialog active phase="connecting" />))
+    await act(async () => vi.advanceTimersByTime(3000))
+    await act(async () => root.render(<WebEventRecoveryDialog active phase="reconnecting" />))
+    await act(async () => vi.advanceTimersByTime(1999))
+    await act(async () => root.render(<WebEventRecoveryDialog active phase="replaying" />))
+    expect(document.body.querySelector('[role="alertdialog"]')).toBeNull()
+    expect(document.body.querySelector('[role="status"]')?.textContent).toContain('Restoring')
+    await act(async () => vi.advanceTimersByTime(1))
+    expect(document.body.querySelector('[role="alertdialog"]')?.textContent).toContain('Restoring')
+    await act(async () => root.render(<WebEventRecoveryDialog active={false} phase="live" />))
+    expect(document.body.querySelector('[role="alertdialog"]')).toBeNull()
+    expect(document.body.textContent).not.toContain('Reload required')
+    await act(async () => root.render(<WebEventRecoveryDialog active phase="reconnecting" />))
+    expect(document.body.querySelector('[role="alertdialog"]')).toBeNull()
+    await act(async () => vi.advanceTimersByTime(4999))
+    expect(document.body.querySelector('[role="alertdialog"]')).toBeNull()
+    await act(async () => vi.advanceTimersByTime(1))
+    expect(document.body.querySelector('[role="alertdialog"]')).not.toBeNull()
+  })
+
+  it('does not restart the deadline when another presentation takes priority', async () => {
+    await act(async () => root.render(<WebEventRecoveryDialog active phase="reconnecting" />))
+    await act(async () => vi.advanceTimersByTime(3000))
+    await act(async () =>
+      root.render(<WebEventRecoveryDialog active={false} phase="reconnecting" />)
+    )
+    await act(async () => vi.advanceTimersByTime(2000))
+    expect(document.body.querySelector('[role="alertdialog"]')).toBeNull()
+    await act(async () => root.render(<WebEventRecoveryDialog active phase="reconnecting" />))
+    expect(document.body.querySelector('[role="alertdialog"]')).not.toBeNull()
+  })
+
+  it.each(['authorization-required', 'reload-required'] as const)(
+    'shows %s immediately during the wait',
+    async (phase) => {
+      await act(async () => root.render(<WebEventRecoveryDialog active phase="connecting" />))
+      await act(async () => root.render(<WebEventRecoveryDialog active phase={phase} />))
+      expect(document.body.querySelector('[role="alertdialog"]')).not.toBeNull()
+      expect(document.body.querySelector('[role="status"]')).toBeNull()
+    }
+  )
+
+  it('cancels escalation when unmounted and when a connection recovers quickly', async () => {
+    await act(async () => root.render(<WebEventRecoveryDialog active phase="connecting" />))
+    await act(async () => vi.advanceTimersByTime(100))
+    await act(async () => root.render(<WebEventRecoveryDialog active={false} phase="live" />))
+    await act(async () => vi.advanceTimersByTime(5000))
+    expect(document.body.querySelector('[role="dialog"], [role="alertdialog"]')).toBeNull()
+    await act(async () => root.render(<WebEventRecoveryDialog active phase="reconnecting" />))
+    await act(async () => root.render(null))
+    await act(async () => vi.advanceTimersByTime(5000))
+    expect(vi.getTimerCount()).toBe(0)
+    expect(document.body.querySelector('[role="dialog"], [role="alertdialog"]')).toBeNull()
+  })
+  it('moves focus inside the loading modal and restores it after the shell removes inert', async () => {
+    const render = async (recovering: boolean): Promise<void> => {
+      await act(async () =>
+        root.render(
+          <>
+            <div inert={recovering}>
+              <button>Continue research</button>
+            </div>
+            <WebEventRecoveryDialog
+              active={recovering}
+              phase={recovering ? 'connecting' : 'live'}
+            />
+          </>
+        )
+      )
+    }
+    await render(false)
+    const button = container.querySelector('button')!
+    button.focus()
+    await render(true)
+    const dialog = document.body.querySelector('[role="dialog"]')!
+    expect(dialog.contains(document.activeElement)).toBe(true)
+    expect(button.closest('[inert]')).not.toBeNull()
+    await render(false)
+    await act(async () => vi.advanceTimersByTime(0))
+    expect(document.activeElement).toBe(button)
   })
 })

@@ -79,3 +79,77 @@ test('failed storage requires a saved copy and pairing failure identifies the co
   await expect(dialog.getByRole('button')).toHaveCount(0)
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
 })
+
+test('short Web recovery blocks interaction without flashing an error during exit', async ({
+  page
+}) => {
+  await page.goto('/composer-recovery.html')
+  const draft = page.getByRole('textbox', { name: 'Draft', exact: true })
+  await draft.fill('Keep this draft')
+  await page.evaluate(() => {
+    const unexpected: string[] = []
+    new MutationObserver(() => {
+      const alert = document.querySelector('[role="alertdialog"]')
+      if (alert) unexpected.push(alert.textContent ?? '')
+    }).observe(document.body, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+      attributes: true
+    })
+    Object.assign(window, { unexpectedRecoveryAlerts: unexpected })
+    window.dispatchEvent(new CustomEvent('fixture:web-recovery', { detail: 'connecting' }))
+  })
+  const loading = page.getByRole('dialog', { name: 'Connecting to Open-Science' })
+  await expect(loading).toBeVisible()
+  expect(await loading.evaluate((element) => element.contains(document.activeElement))).toBe(true)
+  await expect(page.getByRole('status')).toHaveText('Connecting to Open-Science')
+  await page.keyboard.press('Tab')
+  await page.keyboard.type('must not reach draft')
+  await page.keyboard.press('Escape')
+  await expect(loading).toBeVisible()
+  expect(await page.locator('textarea[aria-label="Draft"]').inputValue()).toBe('Keep this draft')
+  await page.evaluate(() =>
+    window.dispatchEvent(new CustomEvent('fixture:web-recovery', { detail: 'live' }))
+  )
+  await expect(loading).toHaveCount(0)
+  await expect(draft).toBeFocused()
+  // Sample real animation frames: jsdom cannot reproduce Radix's exit-animation lifetime.
+  const alerts = await page.evaluate(async () => {
+    for (let i = 0; i < 20; i++) await new Promise(requestAnimationFrame)
+    return (window as Window & { unexpectedRecoveryAlerts?: string[] }).unexpectedRecoveryAlerts
+  })
+  expect(alerts).toEqual([])
+})
+
+test('a continuous slow reconnect escalates once and disappears immediately on recovery', async ({
+  page
+}) => {
+  await page.goto('/composer-recovery.html')
+  await page.getByRole('textbox', { name: 'Draft', exact: true }).fill('Unsent draft')
+  await page.clock.install()
+  await page.evaluate(() =>
+    window.dispatchEvent(new CustomEvent('fixture:web-recovery', { detail: 'connecting' }))
+  )
+  await expect(page.getByRole('dialog')).toBeVisible()
+  await page.clock.runFor(3000)
+  await page.evaluate(() =>
+    window.dispatchEvent(new CustomEvent('fixture:web-recovery', { detail: 'replaying' }))
+  )
+  await expect(page.getByRole('status')).toHaveText('Restoring missed updates')
+  await page.clock.runFor(2000)
+  await expect(page.getByRole('alertdialog')).toContainText('Restoring missed updates')
+  await expect(page.getByRole('textbox', { name: 'Unsent drafts', exact: true })).toHaveValue(
+    /Unsent draft/
+  )
+  await page.evaluate(() =>
+    window.dispatchEvent(new CustomEvent('fixture:web-recovery', { detail: 'reconnecting' }))
+  )
+  await expect(page.getByRole('button', { name: 'Reload', exact: true })).toBeVisible()
+  await page.evaluate(() =>
+    window.dispatchEvent(new CustomEvent('fixture:web-recovery', { detail: 'live' }))
+  )
+  await expect(page.getByRole('alertdialog')).toHaveCount(0)
+  await page.clock.runFor(1000)
+  await expect(page.getByText('Reload required', { exact: true })).toHaveCount(0)
+})

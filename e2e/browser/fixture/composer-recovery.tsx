@@ -1,5 +1,5 @@
 import '@/assets/main.css'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { initI18n } from '@/i18n'
 import { WebEventRecoveryDialog } from '@/components/WebEventRecoveryDialog'
@@ -41,6 +41,12 @@ const uploads = {
 Object.defineProperty(window, 'api', { value: { uploads }, configurable: true })
 export const Harness = (): React.JSX.Element => {
   const [recovery, setRecovery] = useState<WebEventConnectionPhase>('live')
+  useEffect(() => {
+    const onRecovery = (event: Event): void =>
+      setRecovery((event as CustomEvent<WebEventConnectionPhase>).detail)
+    window.addEventListener('fixture:web-recovery', onRecovery)
+    return () => window.removeEventListener('fixture:web-recovery', onRecovery)
+  }, [])
   const [project, setProject] = useState('project')
   const composer = useWorkspaceComposerController({
     currentDraftKey: `session-${project}`,

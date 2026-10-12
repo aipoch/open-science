@@ -1243,6 +1243,16 @@ The upper-right pin toggles the current Session through the shared Session contr
 
 ## Error notices
 
+Web event recovery immediately pauses background interaction and shows a neutral translucent
+loading overlay with a spinner and connection status. Show the detailed recovery dialog only
+after five continuous seconds without reaching `live`; transitions between connecting,
+reconnecting, and replaying do not restart that wait. Explicit authorization or resynchronization
+failures show their recovery dialog immediately. Reaching `live` removes recovery content
+immediately, including any closing animation, so normal refreshes never flash a reload error.
+Retain draft preservation, preview leave confirmation, modal focus containment, and the App Shell
+shortcut gate. This presentation uses a transient timer only; it adds no connection enum or
+persisted state.
+
 See the [page-by-page surface decisions](error-surfaces.md) for placement, lifetime, modal layout,
 intentional exceptions and validation. Cross-panel Settings write failures use a dismissible shared
 notice above the scroll area. Global action feedback uses the top-center stack; background Notebook and recovery notices share the bottom-right stack.
