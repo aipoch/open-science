@@ -18,6 +18,7 @@ import { parseRpcJson, stringifyRpcJson } from './rpc-json'
 
 const logger = createLogger('runtime-payload-transfers')
 const MAX_TRANSFERS = 4
+const MAX_WAITING_READS = 32
 const MAX_TEMP_BYTES = 1024 * 1024 * 1024
 const IDLE_MS = 60_000
 const LIFETIME_MS = 300_000
@@ -47,10 +48,62 @@ export class RuntimePayloadTransfers {
   private readonly documents = new Map<ApplicationCallerLease, Transfer>()
   private root: Promise<string> | undefined
   private reservedBytes = 0
+  private pendingReads = 0
+  private readonly readWaiters = new Set<() => void>()
 
   constructor(private readonly temporaryParent = tmpdir()) {}
 
   async invoke(
+    channel: string,
+    args: readonly unknown[],
+    caller: CallerContext,
+    lease: ApplicationCallerLease,
+    options: RuntimePayloadOptions,
+    dispatch: (args: readonly unknown[]) => Promise<unknown>
+  ): Promise<unknown> {
+    const read =
+      !options.transfer && (channel === 'sessions:load-one' || channel === 'notebook:state')
+    this.authorize(caller, lease)
+    if (read) await this.acquireRead(lease)
+    try {
+      return await this.invokeAdmitted(channel, args, caller, lease, options, dispatch)
+    } finally {
+      if (read) {
+        this.pendingReads -= 1
+        this.readWaiters.values().next().value?.()
+      }
+    }
+  }
+
+  private async acquireRead(lease: ApplicationCallerLease): Promise<void> {
+    // Bound domain work before its size is known, separately from retained snapshot slots.
+    if (this.pendingReads < MAX_TRANSFERS) {
+      this.pendingReads += 1
+      return
+    }
+    if (this.readWaiters.size >= MAX_WAITING_READS)
+      throw new Error('Payload read capacity is temporarily unavailable.')
+    await new Promise<void>((resolve, reject) => {
+      const cleanup = (): void => {
+        this.readWaiters.delete(grant)
+        lease.signal.removeEventListener('abort', abort)
+      }
+      const grant = (): void => {
+        cleanup()
+        this.pendingReads += 1
+        resolve()
+      }
+      const abort = (): void => {
+        cleanup()
+        reject(new Error('Payload transfer caller is no longer authorized.'))
+      }
+      this.readWaiters.add(grant)
+      lease.signal.addEventListener('abort', abort, { once: true })
+      if (lease.signal.aborted) abort()
+    })
+  }
+
+  private async invokeAdmitted(
     channel: string,
     args: readonly unknown[],
     caller: CallerContext,

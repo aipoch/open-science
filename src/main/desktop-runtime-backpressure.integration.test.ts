@@ -120,7 +120,8 @@ it.each([367001, 342122])(
         commandNames: () => ['notebook:state', 'sessions:load-one', 'settings:get'],
         invoke: async (name) => {
           entered += 1
-          if (entered === 5) release()
+          // The transfer owner admits four reads at a time; the fifth request waits there.
+          if (entered === 4) release()
           await ready
           return name === 'notebook:state' ? notebook : session
         }

@@ -52,9 +52,13 @@ it('removes abandoned private transfer roots but preserves live and unrecognized
   })
   expect((await readdir(root)).sort()).toEqual([live, unrelated].sort())
 })
-function caller(id = 'document'): {
+function caller(
+  id = 'document',
+  acceptPayload = true
+): {
   dispatch: Mock<(args: readonly unknown[]) => Promise<unknown>>
   revoke(): void
+  disconnect(): void
   invoke(
     channel: string,
     args?: readonly unknown[],
@@ -63,15 +67,23 @@ function caller(id = 'document'): {
 } {
   let authorized = true
   const context = createWebCallerContext(id, { isAuthorizationCurrent: () => authorized })
-  const { lease } = leases.acquire(context)
+  const { lease, release } = leases.acquire(context)
   const dispatch = vi.fn(async (args: readonly unknown[]): Promise<unknown> => args)
   return {
     dispatch,
+    disconnect: release,
     revoke: () => {
       authorized = false
     },
     invoke: (channel: string, args: readonly unknown[] = [], transfer?: RuntimePayloadRequest) =>
-      owner.invoke(channel, args, context, lease, { acceptPayload: 1, transfer }, dispatch)
+      owner.invoke(
+        channel,
+        args,
+        context,
+        lease,
+        { acceptPayload: acceptPayload ? 1 : undefined, transfer },
+        dispatch
+      )
   }
 }
 
@@ -308,4 +320,105 @@ it('keeps small read results available when the temporary transfer quota is full
   const reader = caller('small-read')
   reader.dispatch.mockResolvedValue({ id: 'small' })
   await expect(reader.invoke('sessions:load-one')).resolves.toEqual({ id: 'small' })
+})
+
+it.each(['sessions:load-one', 'notebook:state'])(
+  'bounds pending %s reads before dispatch and releases admission after completion',
+  async (channel) => {
+    const result = { text: 'x'.repeat(9 * 1024 * 1024) }
+    let finish!: () => void
+    const ready = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    const readers = Array.from({ length: 4 }, (_, i) => caller(`pending-${i}`))
+    const pending = readers.map((reader, i) => {
+      reader.dispatch.mockImplementation(async () => {
+        await ready
+        return result
+      })
+      return reader.invoke(i % 2 ? 'sessions:load-one' : 'notebook:state')
+    })
+    const settled = Promise.allSettled(pending)
+    const overflow = caller('overflow')
+    overflow.dispatch.mockResolvedValue({ id: 'small' })
+    const waiting = overflow.invoke(channel)
+    const waitingOutcome = Promise.allSettled([waiting])
+    try {
+      await Promise.resolve()
+      expect(overflow.dispatch).not.toHaveBeenCalled()
+    } finally {
+      finish()
+      await settled
+      await waitingOutcome
+    }
+    await expect(waiting).resolves.toEqual({ id: 'small' })
+    expect((await settled).map((outcome) => outcome.status)).toEqual(Array(4).fill('fulfilled'))
+    // Retained snapshots must not consume pending-read slots or block a small subsequent read.
+    overflow.dispatch.mockResolvedValue({ id: 'small' })
+    await expect(overflow.invoke(channel)).resolves.toEqual({ id: 'small' })
+  }
+)
+
+it('releases pending read admission after a domain failure', async () => {
+  const reader = caller()
+  reader.dispatch.mockRejectedValue(new Error('domain failed'))
+  for (let i = 0; i < 5; i += 1)
+    await expect(reader.invoke('notebook:state')).rejects.toThrow('domain failed')
+  reader.dispatch.mockResolvedValue({ id: 'available' })
+  await expect(reader.invoke('notebook:state')).resolves.toEqual({ id: 'available' })
+})
+
+it('bounds waiting reads, removes cancelled callers and rechecks authority before FIFO dispatch', async () => {
+  let finish!: () => void
+  const ready = new Promise<void>((resolve) => {
+    finish = resolve
+  })
+  const active = Array.from({ length: 4 }, (_, i) => caller(`active-${i}`))
+  const running = Promise.allSettled(
+    active.map((client) => {
+      client.dispatch.mockImplementation(async () => {
+        await ready
+        return []
+      })
+      return client.invoke('sessions:load-one')
+    })
+  )
+  const order: number[] = []
+  const waiting = Array.from({ length: 32 }, (_, i) => caller(`waiting-${i}`, i % 2 === 0))
+  const queued = waiting.map((client, i) => {
+    client.dispatch.mockImplementation(async () => {
+      order.push(i)
+      return []
+    })
+    return client.invoke(i % 2 ? 'notebook:state' : 'sessions:load-one')
+  })
+  const queuedResults = Promise.allSettled(queued)
+  const extra = caller('extra')
+  let replacement: Promise<unknown> | undefined
+  try {
+    await expect(extra.invoke('sessions:load-one')).rejects.toThrow('capacity')
+    expect(extra.dispatch).not.toHaveBeenCalled()
+    waiting[0].disconnect()
+    await expect(queued[0]).rejects.toThrow('no longer authorized')
+    waiting[1].revoke()
+    replacement = extra.invoke('sessions:load-one')
+    active[0].disconnect()
+    // Cancelling dispatched work cannot free its slot before the domain promise settles.
+    await Promise.resolve()
+    expect(order).toEqual([])
+    expect(extra.dispatch).not.toHaveBeenCalled()
+  } finally {
+    finish()
+    await running
+    await queuedResults
+    await replacement
+  }
+  expect((await queuedResults).map((result) => result.status)).toEqual([
+    'rejected',
+    'rejected',
+    ...Array(30).fill('fulfilled')
+  ])
+  expect(order).toEqual(Array.from({ length: 30 }, (_, i) => i + 2))
+  expect(extra.dispatch).toHaveBeenCalledOnce()
+  await expect(extra.invoke('notebook:state')).resolves.toEqual([])
 })
